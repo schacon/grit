@@ -9,6 +9,7 @@ use grit_lib::config::{
     parse_bool, parse_color, parse_i64, ConfigFile, ConfigIncludeOrigin, ConfigScope, ConfigSet,
     IncludeContext, LoadConfigOptions,
 };
+use grit_lib::error::Error as LibError;
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
@@ -629,7 +630,7 @@ fn cmd_get(
         }
         let entry = entries.last().unwrap();
         let val = entry.value.as_deref().unwrap_or("true");
-        let val = format_typed_value(args, val)?;
+        let val = format_typed_value(args, Some(&get_args.key), val)?;
         print!("{val}{terminator}");
         return Ok(());
     }
@@ -649,7 +650,7 @@ fn cmd_get(
                 || args.type_name.is_some();
             let _is_bare = entry.value.is_none();
             let val = entry.value.as_deref().unwrap_or("true");
-            let val = format_typed_value(args, val)?;
+            let val = format_typed_value(args, Some(&entry.key), val)?;
             if args.name_only {
                 print!("{}{}", entry.key, terminator);
             } else if get_args.show_names {
@@ -675,7 +676,7 @@ fn cmd_get(
             std::process::exit(1);
         }
         for val in values {
-            let val = format_typed_value(args, &val)?;
+            let val = format_typed_value(args, Some(&get_args.key), &val)?;
             print!("{val}{terminator}");
         }
         return Ok(());
@@ -686,7 +687,7 @@ fn cmd_get(
         let mut values = config.get_all(&get_args.key);
         filter_values_by_pattern(&mut values, pattern, args.fixed_value)?;
         if let Some(val) = values.last() {
-            let val = format_typed_value(args, val)?;
+            let val = format_typed_value(args, Some(&get_args.key), val)?;
             print!("{val}{terminator}");
             return Ok(());
         }
@@ -709,7 +710,7 @@ fn cmd_get(
             .rev()
             .find(|v| !is_optional_missing_path(args, v));
         if let Some(val) = last_valid {
-            let val = format_typed_value(args, val)?;
+            let val = format_typed_value(args, Some(&get_args.key), val)?;
             print!("{val}{terminator}");
             return Ok(());
         }
@@ -723,7 +724,7 @@ fn cmd_get(
 
     match config.get(&get_args.key) {
         Some(val) => {
-            let val = format_typed_value(args, &val)?;
+            let val = format_typed_value(args, Some(&get_args.key), &val)?;
             print!("{val}{terminator}");
             Ok(())
         }
@@ -753,7 +754,7 @@ fn cmd_set(
     }
 
     // Canonicalize the value if a type flag is given
-    let value = canonicalize_value_for_set(args, &set_args.value)?;
+    let value = canonicalize_value_for_set(args, &set_args.key, &set_args.value)?;
     let comment = args.comment.as_deref();
 
     let mut config = match ConfigFile::from_path(file_path, scope).context("reading config file")? {
@@ -954,7 +955,7 @@ fn cmd_get_urlmatch(args: &Args, key: &str, url: &str, git_dir: Option<&Path>) -
         }
         let entry = entries.last().unwrap();
         let val = entry.value.as_deref().unwrap_or("true");
-        let val = format_typed_value(args, val)?;
+        let val = format_typed_value(args, Some(key), val)?;
         print!("{val}{terminator}");
     } else {
         // Section-only: return all variables from that section matching the URL
@@ -963,7 +964,7 @@ fn cmd_get_urlmatch(args: &Args, key: &str, url: &str, git_dir: Option<&Path>) -
             std::process::exit(1);
         }
         for (var_key, val, scope) in &entries {
-            let val = format_typed_value(args, val)?;
+            let val = format_typed_value(args, Some(var_key), val)?;
             let prefix = if args.show_scope {
                 format!("{}\t", scope)
             } else {
@@ -1064,7 +1065,7 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
         }
         for entry in matches {
             let val = entry.value.as_deref().unwrap_or("true");
-            let val = format_typed_value(args, val)?;
+            let val = format_typed_value(args, Some(&entry.key), val)?;
             if args.name_only {
                 print!("{}{}", entry.key, terminator);
             } else {
@@ -1078,7 +1079,7 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
     if let Some(ref key) = args.get_key {
         match config.get(key) {
             Some(val) => {
-                let val = format_typed_value(args, &val)?;
+                let val = format_typed_value(args, Some(key), &val)?;
                 print!("{val}{terminator}");
                 return Ok(());
             }
@@ -1093,7 +1094,7 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
             std::process::exit(1);
         }
         for val in values {
-            let val = format_typed_value(args, &val)?;
+            let val = format_typed_value(args, Some(key), &val)?;
             print!("{val}{terminator}");
         }
         return Ok(());
@@ -1101,9 +1102,10 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
 
     // Positional: `git config --blob=X key`
     if args.positional.len() == 1 {
-        match config.get(&args.positional[0]) {
+        let lookup_key = &args.positional[0];
+        match config.get(lookup_key) {
             Some(val) => {
-                let val = format_typed_value(args, &val)?;
+                let val = format_typed_value(args, Some(lookup_key), &val)?;
                 print!("{val}{terminator}");
                 return Ok(());
             }
@@ -1128,7 +1130,7 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
                     }
                     for entry in matches {
                         let val = entry.value.as_deref().unwrap_or("true");
-                        let val = format_typed_value(args, val)?;
+                        let val = format_typed_value(args, Some(&entry.key), val)?;
                         if get_args.show_names {
                             print!("{} {}{}", entry.key, val, terminator);
                         } else {
@@ -1143,14 +1145,14 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
                         std::process::exit(1);
                     }
                     for val in values {
-                        let val = format_typed_value(args, &val)?;
+                        let val = format_typed_value(args, Some(&get_args.key), &val)?;
                         print!("{val}{terminator}");
                     }
                     return Ok(());
                 }
                 match config.get(&get_args.key) {
                     Some(val) => {
-                        let val = format_typed_value(args, &val)?;
+                        let val = format_typed_value(args, Some(&get_args.key), &val)?;
                         print!("{val}{terminator}");
                         Ok(())
                     }
@@ -1176,6 +1178,11 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
+
+/// Wrap a message so the binary prints it verbatim and exits with code 128 (Git `die` convention).
+fn fatal_config_parse(msg: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(LibError::Message(msg.into()))
+}
 
 /// Filter a list of values by a value-pattern.
 ///
@@ -1496,7 +1503,7 @@ fn default_supported(args: &Args) -> bool {
 
 /// Formats a default value and adds Git-compatible context on failure.
 fn format_default_value(args: &Args, val: &str) -> Result<String> {
-    format_typed_value(args, val).context("failed to format default config value")
+    format_typed_value(args, None, val).context("failed to format default config value")
 }
 
 /// Canonicalize a value for writing based on type flags.
@@ -1505,20 +1512,28 @@ fn format_default_value(args: &Args, val: &str) -> Result<String> {
 /// When `--int` is used, the value is validated and written as a plain integer.
 /// When `--bool-or-int` is used, booleans are stored as "true"/"false" and
 /// integers as plain numbers.
-fn canonicalize_value_for_set(args: &Args, val: &str) -> Result<String> {
+fn canonicalize_value_for_set(args: &Args, config_key: &str, val: &str) -> Result<String> {
     let type_name = args.type_name.as_deref();
 
     if args.type_bool || type_name == Some("bool") {
         match parse_bool(val) {
             Ok(b) => return Ok(if b { "true" } else { "false" }.to_owned()),
-            Err(e) => bail!("{}", e),
+            Err(_) => {
+                return Err(fatal_config_parse(format!(
+                    "fatal: bad boolean config value '{val}' for '{config_key}'"
+                )));
+            }
         }
     }
 
     if args.type_int || type_name == Some("int") {
         match parse_i64(val) {
             Ok(n) => return Ok(n.to_string()),
-            Err(e) => bail!("{}", e),
+            Err(_) => {
+                return Err(fatal_config_parse(format!(
+                    "fatal: bad numeric config value '{val}' for '{config_key}'"
+                )));
+            }
         }
     }
 
@@ -1533,7 +1548,9 @@ fn canonicalize_value_for_set(args: &Args, val: &str) -> Result<String> {
         if let Ok(n) = parse_i64(val) {
             return Ok(n.to_string());
         }
-        bail!("bad bool-or-int config value '{}'", val);
+        return Err(fatal_config_parse(format!(
+            "fatal: bad bool-or-int config value '{val}' for '{config_key}'"
+        )));
     }
 
     if type_name == Some("color") {
@@ -1556,7 +1573,7 @@ fn is_optional_missing_path(args: &Args, val: &str) -> bool {
     false
 }
 
-fn format_typed_value(args: &Args, val: &str) -> Result<String> {
+fn format_typed_value(args: &Args, config_key: Option<&str>, val: &str) -> Result<String> {
     let type_name = args.type_name.as_deref();
 
     if args.type_bool || type_name == Some("bool") {
@@ -1568,14 +1585,28 @@ fn format_typed_value(args: &Args, val: &str) -> Result<String> {
                     "false".to_owned()
                 })
             }
-            Err(e) => bail!("{}", e),
+            Err(err) => {
+                if let Some(key) = config_key {
+                    return Err(fatal_config_parse(format!(
+                        "fatal: bad boolean config value '{val}' for '{key}'"
+                    )));
+                }
+                bail!("{}", err);
+            }
         }
     }
 
     if args.type_int || type_name == Some("int") {
         match parse_i64(val) {
             Ok(n) => return Ok(n.to_string()),
-            Err(e) => bail!("{}", e),
+            Err(err) => {
+                if let Some(key) = config_key {
+                    return Err(fatal_config_parse(format!(
+                        "fatal: bad numeric config value '{val}' for '{key}'"
+                    )));
+                }
+                bail!("{}", err);
+            }
         }
     }
 
@@ -1596,7 +1627,14 @@ fn format_typed_value(args: &Args, val: &str) -> Result<String> {
         // Then as integer
         match parse_i64(val) {
             Ok(n) => return Ok(n.to_string()),
-            Err(e) => bail!("{}", e),
+            Err(err) => {
+                if let Some(key) = config_key {
+                    return Err(fatal_config_parse(format!(
+                        "fatal: bad bool-or-int config value '{val}' for '{key}'"
+                    )));
+                }
+                bail!("{}", err);
+            }
         }
     }
 
