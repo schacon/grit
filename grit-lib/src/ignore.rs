@@ -579,6 +579,128 @@ fn glob_matches(pattern: &str, text: &str) -> bool {
     wildmatch(pattern.as_bytes(), text.as_bytes(), WM_PATHNAME)
 }
 
+/// One line from a sparse-checkout specification blob (`--filter=sparse:oid=…`).
+#[derive(Debug, Clone)]
+struct SparsePattern {
+    negative: bool,
+    directory_only: bool,
+    anchored: bool,
+    has_slash: bool,
+    body: String,
+}
+
+impl SparsePattern {
+    fn from_line(line: &str) -> Option<Self> {
+        let mut raw_line = line.trim_end_matches('\r').to_owned();
+        trim_trailing_spaces_git(&mut raw_line);
+        if raw_line.is_empty() || raw_line.starts_with('#') {
+            return None;
+        }
+
+        let mut raw = raw_line;
+
+        let mut negative = false;
+        if let Some(rest) = raw.strip_prefix('!') {
+            negative = true;
+            raw = rest.to_owned();
+        }
+        if raw.is_empty() {
+            return None;
+        }
+
+        let mut anchored = false;
+        if let Some(rest) = raw.strip_prefix('/') {
+            anchored = true;
+            raw = rest.to_owned();
+        }
+        if raw.is_empty() {
+            return None;
+        }
+
+        let mut directory_only = false;
+        if let Some(rest) = raw.strip_suffix('/') {
+            directory_only = true;
+            raw = rest.to_owned();
+        }
+        if raw.is_empty() {
+            return None;
+        }
+
+        let has_slash = raw.contains('/');
+        Some(Self {
+            negative,
+            directory_only,
+            anchored,
+            has_slash,
+            body: raw,
+        })
+    }
+}
+
+fn sparse_pattern_matches_path(p: &SparsePattern, pathname: &str) -> bool {
+    if p.directory_only {
+        return false;
+    }
+    if !p.has_slash && !p.anchored {
+        sparse_unanchored_basename_matches(&p.body, pathname)
+            || wildmatch(p.body.as_bytes(), pathname.as_bytes(), WM_PATHNAME)
+    } else {
+        wildmatch(p.body.as_bytes(), pathname.as_bytes(), WM_PATHNAME)
+    }
+}
+
+/// Parse sparse-checkout lines from a blob (same syntax as `info/sparse-checkout`).
+#[must_use]
+pub fn parse_sparse_patterns_from_blob(content: &str) -> Vec<String> {
+    let mut patterns = Vec::new();
+    for line in content.lines() {
+        let t = line.trim_end_matches('\r');
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        patterns.push(t.to_owned());
+    }
+    patterns
+}
+
+/// Last-match-wins sparse semantics for `rev-list --filter=sparse:oid=…` (non-cone).
+///
+/// Unanchored patterns without `/` use Git-style basename rules: `pat` matches `pat`,
+/// `pat.ext`, and `pat/…` paths. Anchored patterns and patterns containing `/` use
+/// pathname wildmatch with `WM_PATHNAME`.
+///
+/// Returns `None` if no pattern matched (`UNDECIDED`).
+#[must_use]
+pub fn path_matches_sparse_pattern_list(pathname: &str, lines: &[String]) -> Option<bool> {
+    let parsed: Vec<SparsePattern> = lines
+        .iter()
+        .filter_map(|l| SparsePattern::from_line(l))
+        .collect();
+    if parsed.is_empty() {
+        return None;
+    }
+    for p in parsed.iter().rev() {
+        if sparse_pattern_matches_path(p, pathname) {
+            return Some(!p.negative);
+        }
+    }
+    None
+}
+
+fn sparse_unanchored_basename_matches(pat: &str, path: &str) -> bool {
+    let basename = path.rsplit('/').next().unwrap_or(path);
+    if basename == pat {
+        return true;
+    }
+    if let Some(rest) = basename.strip_prefix(pat) {
+        return rest.starts_with('.') || rest.starts_with('/');
+    }
+    if path == pat {
+        return true;
+    }
+    path.starts_with(&format!("{pat}/"))
+}
+
 /// Returns the submodule path if `repo_rel_path` names something inside a gitlink entry.
 #[must_use]
 pub fn submodule_containing_path(repo_rel_path: &str, index: &Index) -> Option<String> {

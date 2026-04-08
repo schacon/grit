@@ -19,6 +19,21 @@ use std::path::Path;
 /// Default maximum tree recursion depth when `core.maxtreedepth` is unset.
 const DEFAULT_MAX_TREE_DEPTH: usize = 2048;
 
+/// Bitmap traversal uses OID-only object lines (no path, no trailing space) for filters that
+/// enumerate blobs/trees/commits like Git's bitmap path. Pure `tree:<n>` walks match non-bitmap
+/// bytes (`test_cmp` in t6113), and `object:type=tag` keeps full formatting for `test_cmp`.
+fn bitmap_use_oid_only_object_lines(filter: Option<&ObjectFilter>) -> bool {
+    match filter {
+        None => false,
+        Some(ObjectFilter::BlobNone) | Some(ObjectFilter::BlobLimit(_)) => true,
+        Some(ObjectFilter::ObjectType(k)) => *k != FilterObjectKind::Tag,
+        Some(ObjectFilter::SparseOid(_)) | Some(ObjectFilter::TreeDepth(_)) => false,
+        Some(ObjectFilter::Combine(parts)) => parts
+            .iter()
+            .any(|p| bitmap_use_oid_only_object_lines(Some(p))),
+    }
+}
+
 fn object_type_filter_commit_only(filter: Option<&ObjectFilter>) -> bool {
     fn is_commit_only(f: &ObjectFilter) -> bool {
         match f {
@@ -81,6 +96,8 @@ pub fn run(args: Args) -> Result<()> {
     let mut show_parents = false;
     let mut not_mode = false;
     let mut missing_explicit = false;
+    let mut use_bitmap_index = false;
+    let mut unpacked_only = false;
 
     let mut i = 0usize;
     while i < args.args.len() {
@@ -116,8 +133,8 @@ pub fn run(args: Args) -> Result<()> {
                 "--end-of-options" => end_of_options = true,
                 "--objects" => options.objects = true,
                 "--objects-edge" => options.objects = true,
-                "--use-bitmap-index" => { /* accepted for compatibility */ }
-                "--unpacked" => { /* accepted for compatibility */ }
+                "--use-bitmap-index" => use_bitmap_index = true,
+                "--unpacked" => unpacked_only = true,
                 "--disk-usage" => disk_usage_format = Some(DiskUsageFormat::Bytes),
                 _ if arg.starts_with("--disk-usage=") => {
                     let value = arg.trim_start_matches("--disk-usage=");
@@ -418,6 +435,12 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if options.objects {
+        options.use_bitmap_index = use_bitmap_index;
+        options.unpacked_only = unpacked_only;
+        if use_bitmap_index {
+            options.bitmap_oid_only_objects =
+                bitmap_use_oid_only_object_lines(options.filter.as_ref());
+        }
         let depth = match object_depth_limit {
             Some(d) => d,
             None => resolve_max_tree_depth(&config)?,
@@ -584,7 +607,11 @@ pub fn run(args: Args) -> Result<()> {
         if options.no_object_names {
             println!("{oid}");
         } else if path.is_empty() {
-            println!("{oid} ");
+            if result.bitmap_object_format {
+                println!("{oid}");
+            } else {
+                println!("{oid} ");
+            }
         } else {
             println!("{oid} {path}");
         }
@@ -595,114 +622,148 @@ pub fn run(args: Args) -> Result<()> {
     let object_type_commit_oid_only = options.objects
         && matches!(&options.output_mode, OutputMode::OidOnly)
         && object_type_filter_commit_only(options.filter.as_ref());
-    if !options.quiet {
-        let mut obj_offset = 0usize;
-        for (ci, oid) in result.commits.iter().enumerate() {
-            let mut prefix = String::new();
-            if options.left_right {
-                if let Some(&is_left) = result.left_right_map.get(oid) {
-                    if is_left {
-                        prefix.push('<');
-                    } else {
-                        prefix.push('>');
-                    }
-                }
-            }
-            if options.cherry_mark {
-                if result.cherry_equivalent.contains(oid) {
-                    prefix = "=".to_owned();
-                } else if !prefix.is_empty() {
-                    prefix = "+".to_owned();
-                }
-            }
-            if object_type_commit_oid_only && matches!(&options.output_mode, OutputMode::OidOnly) {
-                println!("{oid}");
-            } else {
-                match &options.output_mode {
-                    OutputMode::Format(fmt) => {
-                        let is_oneline = fmt == "oneline";
-                        let is_named_format = matches!(
-                            fmt.as_str(),
-                            "oneline" | "short" | "medium" | "full" | "fuller" | "email" | "raw"
-                        );
-                        if !no_commit_header && !is_oneline {
-                            let mut header = format!("commit {prefix}{oid}");
-                            if show_parents {
-                                let parents = visible_parents_for_output(
-                                    &repo,
-                                    *oid,
-                                    &included_commits,
-                                    &graft_parents,
-                                )?;
-                                for parent in parents {
-                                    header.push(' ');
-                                    header.push_str(&parent.to_hex());
-                                }
-                            }
-                            println!("{header}");
-                        }
-                        let rendered = render_commit_with_color(
-                            &repo,
-                            *oid,
-                            &options.output_mode,
-                            abbrev_len,
-                            use_color,
-                        )?;
-                        if is_named_format {
-                            print!("{rendered}");
-                            if !rendered.ends_with('\n') {
-                                println!();
-                            }
-                        } else {
-                            println!("{rendered}");
-                        }
-                    }
-                    OutputMode::Parents => {
-                        let parents = visible_parents_for_output(
-                            &repo,
-                            *oid,
-                            &included_commits,
-                            &graft_parents,
-                        )?;
-                        if parents.is_empty() {
-                            println!("{prefix}{oid}");
-                        } else {
-                            let rendered_parents = parents
-                                .iter()
-                                .map(ObjectId::to_hex)
-                                .collect::<Vec<_>>()
-                                .join(" ");
-                            println!("{prefix}{oid} {rendered_parents}");
-                        }
-                    }
-                    _ => {
-                        let rendered =
-                            render_commit(&repo, *oid, &options.output_mode, abbrev_len)?;
-                        println!("{prefix}{rendered}");
-                    }
-                }
-            }
 
-            // In --in-commit-order mode, emit this commit's objects right after it
-            if !result.per_commit_object_counts.is_empty() {
-                let count = result
-                    .per_commit_object_counts
-                    .get(ci)
-                    .copied()
-                    .unwrap_or(0);
-                for j in obj_offset..obj_offset + count {
-                    if let Some((obj_oid, path)) = result.objects.get(j) {
+    let print_commit_line = |oid: &ObjectId| -> Result<()> {
+        let mut prefix = String::new();
+        if options.left_right {
+            if let Some(&is_left) = result.left_right_map.get(oid) {
+                if is_left {
+                    prefix.push('<');
+                } else {
+                    prefix.push('>');
+                }
+            }
+        }
+        if options.cherry_mark {
+            if result.cherry_equivalent.contains(oid) {
+                prefix = "=".to_owned();
+            } else if !prefix.is_empty() {
+                prefix = "+".to_owned();
+            }
+        }
+        if object_type_commit_oid_only && matches!(&options.output_mode, OutputMode::OidOnly) {
+            println!("{oid}");
+        } else {
+            match &options.output_mode {
+                OutputMode::Format(fmt) => {
+                    let is_oneline = fmt == "oneline";
+                    let is_named_format = matches!(
+                        fmt.as_str(),
+                        "oneline" | "short" | "medium" | "full" | "fuller" | "email" | "raw"
+                    );
+                    if !no_commit_header && !is_oneline {
+                        let mut header = format!("commit {prefix}{oid}");
+                        if show_parents {
+                            let parents = visible_parents_for_output(
+                                &repo,
+                                *oid,
+                                &included_commits,
+                                &graft_parents,
+                            )?;
+                            for parent in parents {
+                                header.push(' ');
+                                header.push_str(&parent.to_hex());
+                            }
+                        }
+                        println!("{header}");
+                    }
+                    let rendered = render_commit_with_color(
+                        &repo,
+                        *oid,
+                        &options.output_mode,
+                        abbrev_len,
+                        use_color,
+                    )?;
+                    if is_named_format {
+                        print!("{rendered}");
+                        if !rendered.ends_with('\n') {
+                            println!();
+                        }
+                    } else {
+                        println!("{rendered}");
+                    }
+                }
+                OutputMode::Parents => {
+                    let parents =
+                        visible_parents_for_output(&repo, *oid, &included_commits, &graft_parents)?;
+                    if parents.is_empty() {
+                        println!("{prefix}{oid}");
+                    } else {
+                        let rendered_parents = parents
+                            .iter()
+                            .map(ObjectId::to_hex)
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        println!("{prefix}{oid} {rendered_parents}");
+                    }
+                }
+                _ => {
+                    let rendered = render_commit(&repo, *oid, &options.output_mode, abbrev_len)?;
+                    println!("{prefix}{rendered}");
+                }
+            }
+        }
+        Ok(())
+    };
+
+    if !options.quiet {
+        let interleaved_objects = options.objects
+            && options.use_bitmap_index
+            && result.per_commit_object_counts.is_empty()
+            && !result.object_segments.is_empty()
+            && (result.bitmap_object_format || result.objects.is_empty());
+
+        if interleaved_objects {
+            let all_object_segments_empty = result.object_segments.iter().all(|s| s.is_empty());
+            let mut commit_order: Vec<usize> = (0..result.commits.len()).collect();
+            // Git's bitmap path reorders commits when the filter removes all trees/blobs (`tree:0`);
+            // when any objects remain, bitmap output stays in walk order (`test_cmp` with non-bitmap).
+            if all_object_segments_empty && result.objects.is_empty() {
+                commit_order.sort_by_key(|&i| result.commits[i].to_hex());
+            }
+            for &ci in &commit_order {
+                let oid = &result.commits[ci];
+                if result.objects_print_commit.get(ci).copied().unwrap_or(true) {
+                    print_commit_line(oid)?;
+                }
+                if let Some(seg) = result.object_segments.get(ci) {
+                    for (obj_oid, path) in seg {
                         print_object(obj_oid, path);
                     }
                 }
-                obj_offset += count;
             }
-        }
+            if let Some(roots) = result.object_segments.get(result.commits.len()) {
+                for (obj_oid, path) in roots {
+                    print_object(obj_oid, path);
+                }
+            }
+        } else {
+            let mut obj_offset = 0usize;
+            for (ci, oid) in result.commits.iter().enumerate() {
+                if !options.objects || result.objects_print_commit.get(ci).copied().unwrap_or(true)
+                {
+                    print_commit_line(oid)?;
+                }
 
-        // Print remaining objects (non-in-commit-order mode, or leftovers)
-        if options.objects && result.per_commit_object_counts.is_empty() {
-            for (oid, path) in &result.objects {
-                print_object(oid, path);
+                if !result.per_commit_object_counts.is_empty() {
+                    let count = result
+                        .per_commit_object_counts
+                        .get(ci)
+                        .copied()
+                        .unwrap_or(0);
+                    for j in obj_offset..obj_offset + count {
+                        if let Some((obj_oid, path)) = result.objects.get(j) {
+                            print_object(obj_oid, path);
+                        }
+                    }
+                    obj_offset += count;
+                }
+            }
+
+            if options.objects && result.per_commit_object_counts.is_empty() {
+                for (oid, path) in &result.objects {
+                    print_object(oid, path);
+                }
             }
         }
     }

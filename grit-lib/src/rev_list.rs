@@ -11,11 +11,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
+use crate::ignore::{parse_sparse_patterns_from_blob, path_matches_sparse_pattern_list};
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
+use crate::pack;
 use crate::patch_ids::compute_patch_id;
 use crate::refs;
 use crate::repo::Repository;
-use crate::rev_parse::resolve_revision_for_range_end;
+use crate::rev_parse::{resolve_revision_for_range_end, resolve_treeish_path, split_treeish_spec};
 
 /// User-facing output mode for `rev-list`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +59,8 @@ pub enum ObjectFilter {
     BlobLimit(u64),
     /// `tree:<depth>` — omit trees deeper than `depth`.
     TreeDepth(u64),
+    /// `sparse:oid=<hex>` — sparse-checkout style path filter from a blob.
+    SparseOid(ObjectId),
     /// `object:type=(blob|tree|commit|tag)` — keep only objects of that type.
     ObjectType(FilterObjectKind),
     /// `combine:<filter>+<filter>+…` — apply multiple filters.
@@ -90,6 +94,12 @@ impl ObjectFilter {
                 _ => return Err(format!("invalid object type: {rest}")),
             };
             return Ok(ObjectFilter::ObjectType(kind));
+        }
+        if let Some(rest) = spec.strip_prefix("sparse:oid=") {
+            let oid = rest
+                .parse::<ObjectId>()
+                .map_err(|_| format!("invalid sparse:oid value: {rest}"))?;
+            return Ok(ObjectFilter::SparseOid(oid));
         }
         if let Some(rest) = spec.strip_prefix("combine:") {
             let parts = split_combine(rest);
@@ -128,9 +138,30 @@ impl ObjectFilter {
         match self {
             ObjectFilter::BlobNone => false,
             ObjectFilter::BlobLimit(limit) => size <= *limit,
+            // Depth is applied via [`ObjectFilter::includes_blob_under_tree`]; this stays permissive
+            // for callers that only have a size (e.g. loose-object scans).
             ObjectFilter::TreeDepth(_) => true,
+            ObjectFilter::SparseOid(_) => true,
             ObjectFilter::ObjectType(kind) => *kind == FilterObjectKind::Blob,
             ObjectFilter::Combine(filters) => filters.iter().all(|f| f.includes_blob(size)),
+        }
+    }
+
+    /// Whether a blob that lives directly under a tree at `parent_tree_depth` passes this filter.
+    ///
+    /// For `tree:<n>` filters, Git assigns blobs the traversal depth after entering the parent tree,
+    /// which matches `parent_tree_depth + 1` in our walk where the commit root tree is depth `0`.
+    #[must_use]
+    pub fn includes_blob_under_tree(&self, size: u64, parent_tree_depth: u64) -> bool {
+        match self {
+            ObjectFilter::BlobNone => false,
+            ObjectFilter::BlobLimit(limit) => size <= *limit,
+            ObjectFilter::TreeDepth(max_depth) => parent_tree_depth.saturating_add(1) < *max_depth,
+            ObjectFilter::SparseOid(_) => true,
+            ObjectFilter::ObjectType(kind) => *kind == FilterObjectKind::Blob,
+            ObjectFilter::Combine(filters) => filters
+                .iter()
+                .all(|f| f.includes_blob_under_tree(size, parent_tree_depth)),
         }
     }
 
@@ -140,6 +171,7 @@ impl ObjectFilter {
             ObjectFilter::BlobNone => true,
             ObjectFilter::BlobLimit(_) => true,
             ObjectFilter::TreeDepth(max_depth) => depth < *max_depth,
+            ObjectFilter::SparseOid(_) => true,
             ObjectFilter::ObjectType(kind) => *kind == FilterObjectKind::Tree,
             ObjectFilter::Combine(filters) => filters.iter().all(|f| f.includes_tree(depth)),
         }
@@ -155,6 +187,7 @@ impl ObjectFilter {
         match self {
             ObjectFilter::BlobNone | ObjectFilter::BlobLimit(_) => true,
             ObjectFilter::TreeDepth(_) => true,
+            ObjectFilter::SparseOid(_) => true,
             ObjectFilter::ObjectType(t) => expected == Some(*t),
             ObjectFilter::Combine(filters) => filters
                 .iter()
@@ -382,6 +415,13 @@ pub struct RevListOptions {
     pub no_kept_objects: bool,
     /// Behavior when referenced objects are missing.
     pub missing_action: MissingAction,
+    /// When set with `--objects`, omit path names from non-commit object lines (bitmap-style output).
+    pub use_bitmap_index: bool,
+    /// When set with `--objects`, list only objects not present in any pack file.
+    pub unpacked_only: bool,
+    /// With `--use-bitmap-index`, emit OID-only object lines (no paths / trailing space) for filters
+    /// that match Git's bitmap object formatting.
+    pub bitmap_oid_only_objects: bool,
 }
 
 impl Default for RevListOptions {
@@ -420,6 +460,9 @@ impl Default for RevListOptions {
             in_commit_order: false,
             no_kept_objects: false,
             missing_action: MissingAction::Error,
+            use_bitmap_index: false,
+            unpacked_only: false,
+            bitmap_oid_only_objects: false,
         }
     }
 }
@@ -446,6 +489,16 @@ pub struct RevListResult {
     /// When non-empty, `objects[sum(counts[..i])..sum(counts[..=i])]` are the objects
     /// introduced by `commits[i]`.
     pub per_commit_object_counts: Vec<usize>,
+    /// Commit OIDs given as positive revision tips (for Git `USER_GIVEN` / filter edge cases).
+    pub object_walk_tips: Vec<ObjectId>,
+    /// When `--objects` is active, whether to print the commit line before that commit's objects.
+    /// Aligns with Git marking user-given tips vs `NOT_USER_GIVEN` commits in list-objects.
+    pub objects_print_commit: Vec<bool>,
+    /// When `--objects` is active and not `--in-commit-order`, objects grouped per commit walk plus
+    /// a final segment for explicit `object_roots` (length `commits.len() + 1`).
+    pub object_segments: Vec<Vec<(ObjectId, String)>>,
+    /// True when `--use-bitmap-index --objects` should format trees/blobs as bare OIDs (no paths).
+    pub bitmap_object_format: bool,
 }
 
 /// Resolve and walk revisions for the requested options.
@@ -470,8 +523,7 @@ pub fn rev_list(
     let mut graph = CommitGraph::new(repo, options.first_parent);
 
     let (mut include, object_roots) = if options.objects {
-        let (commit_starts, roots) = resolve_specs_for_objects(repo, positive_specs)?;
-        (commit_starts, roots)
+        resolve_specs_for_objects(repo, positive_specs)?
     } else {
         (resolve_specs(repo, positive_specs)?, Vec::new())
     };
@@ -480,6 +532,12 @@ pub fn rev_list(
     if options.all_refs {
         include.extend(all_ref_tips(repo)?);
     }
+
+    let object_walk_tip_commits: Vec<ObjectId> = if options.objects {
+        include.clone()
+    } else {
+        Vec::new()
+    };
 
     if include.is_empty() && object_roots.is_empty() {
         return Err(Error::InvalidRef("no revisions specified".to_owned()));
@@ -679,38 +737,78 @@ pub fn rev_list(
         ordered.retain(|oid| !kept_set.contains(oid));
     }
 
-    // Collect reachable objects if --objects
-    let (objects, omitted_objects, missing_objects, per_commit_object_counts) = if options.objects {
-        let filter_provided = options.filter_provided_objects;
-        let (mut objs, omit, miss, counts) = if options.in_commit_order {
-            collect_reachable_objects_in_commit_order(
-                repo,
-                &mut graph,
-                &ordered,
-                &object_roots,
-                options.filter.as_ref(),
-                filter_provided,
-                options.missing_action,
-            )?
-        } else {
-            let (objs, omit, miss) = collect_reachable_objects(
-                repo,
-                &mut graph,
-                &ordered,
-                &object_roots,
-                options.filter.as_ref(),
-                filter_provided,
-                options.missing_action,
-            )?;
-            (objs, omit, miss, Vec::new())
-        };
-        if options.no_kept_objects {
-            objs.retain(|(oid, _)| !kept_set.contains(oid));
-        }
-        (objs, omit, miss, counts)
+    if options.unpacked_only {
+        let packed = packed_object_set(repo);
+        ordered.retain(|oid| !packed.contains(oid));
+    }
+
+    let commit_tips_set: HashSet<ObjectId> = object_walk_tip_commits.iter().copied().collect();
+    let objects_print_commit: Vec<bool> = if options.objects {
+        ordered
+            .iter()
+            .map(|&c| {
+                let user_given = !options.filter_provided_objects && commit_tips_set.contains(&c);
+                user_given || filter_shows_commit_line_when_not_user_given(options.filter.as_ref())
+            })
+            .collect()
     } else {
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+        Vec::new()
     };
+
+    let sparse_lines = sparse_oid_lines_from_filter(repo, options.filter.as_ref());
+    let skip_trees = skip_tree_descent_for_object_type_filter(options.filter.as_ref());
+    let bitmap_object_format = options.objects
+        && options.use_bitmap_index
+        && (options.bitmap_oid_only_objects || !object_roots.is_empty() || options.unpacked_only);
+    let omit_object_paths = bitmap_object_format;
+    let packed_set = if options.objects && options.unpacked_only {
+        Some(packed_object_set(repo))
+    } else {
+        None
+    };
+
+    // Collect reachable objects if --objects
+    let (objects, omitted_objects, missing_objects, per_commit_object_counts, object_segments) =
+        if options.objects {
+            let filter_provided = options.filter_provided_objects;
+            let (mut objs, omit, miss, counts, segments) = if options.in_commit_order {
+                let (o, om, mi, c) = collect_reachable_objects_in_commit_order(
+                    repo,
+                    &mut graph,
+                    &ordered,
+                    &object_roots,
+                    options.filter.as_ref(),
+                    filter_provided,
+                    options.missing_action,
+                    sparse_lines.as_deref(),
+                    skip_trees,
+                    omit_object_paths,
+                    packed_set.as_ref(),
+                )?;
+                (o, om, mi, c, Vec::new())
+            } else {
+                let (o, om, mi, seg) = collect_reachable_objects_segmented(
+                    repo,
+                    &mut graph,
+                    &ordered,
+                    &object_roots,
+                    options.filter.as_ref(),
+                    filter_provided,
+                    options.missing_action,
+                    sparse_lines.as_deref(),
+                    skip_trees,
+                    omit_object_paths,
+                    packed_set.as_ref(),
+                )?;
+                (o, om, mi, Vec::new(), seg)
+            };
+            if options.no_kept_objects {
+                objs.retain(|(oid, _)| !kept_set.contains(oid));
+            }
+            (objs, omit, miss, counts, segments)
+        } else {
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new())
+        };
 
     Ok(RevListResult {
         commits: ordered,
@@ -721,6 +819,10 @@ pub fn rev_list(
         left_right_map,
         cherry_equivalent,
         per_commit_object_counts,
+        object_walk_tips: object_walk_tip_commits,
+        objects_print_commit,
+        object_segments,
+        bitmap_object_format,
     })
 }
 
@@ -1779,6 +1881,75 @@ struct RootObject {
     oid: ObjectId,
     input: String,
     expected_kind: Option<ExpectedObjectKind>,
+    /// Path within the tree for `rev:path` blob roots (for correct `--objects` names).
+    root_path: Option<String>,
+}
+
+/// Whether `LOFS_COMMIT` would receive `LOFR_DO_SHOW` when the commit is `NOT_USER_GIVEN` (Git list-objects-filter).
+fn filter_shows_commit_line_when_not_user_given(filter: Option<&ObjectFilter>) -> bool {
+    match filter {
+        None => true,
+        Some(ObjectFilter::BlobNone)
+        | Some(ObjectFilter::BlobLimit(_))
+        | Some(ObjectFilter::TreeDepth(_))
+        | Some(ObjectFilter::SparseOid(_)) => true,
+        Some(ObjectFilter::ObjectType(FilterObjectKind::Commit)) => true,
+        Some(ObjectFilter::ObjectType(
+            FilterObjectKind::Blob | FilterObjectKind::Tree | FilterObjectKind::Tag,
+        )) => false,
+        Some(ObjectFilter::Combine(parts)) => parts
+            .iter()
+            .all(|p| filter_shows_commit_line_when_not_user_given(Some(p))),
+    }
+}
+
+fn skip_tree_descent_for_object_type_filter(filter: Option<&ObjectFilter>) -> bool {
+    match filter {
+        Some(ObjectFilter::ObjectType(FilterObjectKind::Commit | FilterObjectKind::Tag)) => true,
+        Some(ObjectFilter::Combine(parts)) => parts
+            .iter()
+            .any(|p| skip_tree_descent_for_object_type_filter(Some(p))),
+        _ => false,
+    }
+}
+
+fn sparse_oid_lines_from_filter(
+    repo: &Repository,
+    filter: Option<&ObjectFilter>,
+) -> Option<Vec<String>> {
+    let f = filter?;
+    match f {
+        ObjectFilter::SparseOid(oid) => {
+            let obj = repo.odb.read(oid).ok()?;
+            if obj.kind != ObjectKind::Blob {
+                return None;
+            }
+            let text = std::str::from_utf8(&obj.data).ok()?;
+            Some(parse_sparse_patterns_from_blob(text))
+        }
+        ObjectFilter::Combine(parts) => {
+            for p in parts {
+                if let Some(lines) = sparse_oid_lines_from_filter(repo, Some(p)) {
+                    return Some(lines);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn packed_object_set(repo: &Repository) -> HashSet<ObjectId> {
+    let mut out = HashSet::new();
+    let objects_dir = repo.odb.objects_dir();
+    if let Ok(indexes) = pack::read_local_pack_indexes(objects_dir) {
+        for idx in indexes {
+            for e in idx.entries {
+                out.insert(e.oid);
+            }
+        }
+    }
+    out
 }
 
 fn resolve_specs(repo: &Repository, specs: &[String]) -> Result<Vec<ObjectId>> {
@@ -1818,15 +1989,31 @@ fn resolve_specs_for_objects(
                         oid: tag.object,
                         input: spec.clone(),
                         expected_kind: Some(expected_kind),
+                        root_path: None,
                     });
                 }
                 ObjectKind::Tree | ObjectKind::Blob => roots.push(RootObject {
                     oid: raw_oid,
                     input: spec.clone(),
                     expected_kind: None,
+                    root_path: None,
                 }),
             }
             continue;
+        }
+
+        if let Some((treeish, path)) = split_treeish_spec(spec) {
+            if !path.is_empty() {
+                let treeish_oid = resolve_revision_for_range_end(repo, treeish)?;
+                let blob_oid = resolve_treeish_path(repo, treeish_oid, path)?;
+                roots.push(RootObject {
+                    oid: blob_oid,
+                    input: spec.clone(),
+                    expected_kind: Some(ExpectedObjectKind::Blob),
+                    root_path: Some(path.to_owned()),
+                });
+                continue;
+            }
         }
 
         let oid = resolve_revision_for_range_end(repo, spec)?;
@@ -1837,6 +2024,7 @@ fn resolve_specs_for_objects(
                     oid,
                     input: spec.clone(),
                     expected_kind: None,
+                    root_path: None,
                 })
             }
             Err(err) => return Err(err),
@@ -2380,19 +2568,144 @@ pub fn split_symmetric_diff(token: &str) -> Option<(String, String)> {
         .map(|(l, r)| (l.to_owned(), r.to_owned()))
 }
 
+/// Tracks which tree OIDs have been traversed, matching Git list-objects behavior.
+///
+/// For `tree:<n>` filters, the same tree OID may be revisited from a shallower path; otherwise
+/// each tree is walked at most once per top-level walk.
+#[derive(Debug)]
+enum TreeWalkState {
+    Simple(HashSet<ObjectId>),
+    TreeDepth(HashMap<ObjectId, u64>),
+}
+
+impl TreeWalkState {
+    fn new(filter: Option<&ObjectFilter>) -> Self {
+        if filter_uses_tree_depth(filter) {
+            Self::TreeDepth(HashMap::new())
+        } else {
+            Self::Simple(HashSet::new())
+        }
+    }
+
+    /// Returns `true` if this tree at `depth` should be skipped (already handled sufficiently).
+    fn should_skip_tree(&mut self, oid: ObjectId, depth: u64) -> bool {
+        match self {
+            TreeWalkState::Simple(set) => !set.insert(oid),
+            TreeWalkState::TreeDepth(map) => match map.get(&oid).copied() {
+                None => {
+                    map.insert(oid, depth);
+                    false
+                }
+                Some(prev) if depth >= prev => true,
+                Some(_) => {
+                    map.insert(oid, depth);
+                    false
+                }
+            },
+        }
+    }
+}
+
+fn filter_uses_tree_depth(filter: Option<&ObjectFilter>) -> bool {
+    match filter {
+        Some(ObjectFilter::TreeDepth(_)) => true,
+        Some(ObjectFilter::Combine(parts)) => parts.iter().any(|p| filter_uses_tree_depth(Some(p))),
+        _ => false,
+    }
+}
+
+/// All tree and blob OIDs reachable from `tree_oid` (including `tree_oid` itself).
+fn collect_tree_closure_objects(
+    repo: &Repository,
+    tree_oid: ObjectId,
+    into: &mut HashSet<ObjectId>,
+    missing_action: MissingAction,
+    missing: &mut Vec<ObjectId>,
+    missing_seen: &mut HashSet<ObjectId>,
+) -> Result<()> {
+    let mut stack = vec![tree_oid];
+    let mut expanded_trees = HashSet::new();
+    while let Some(t) = stack.pop() {
+        if !expanded_trees.insert(t) {
+            continue;
+        }
+        into.insert(t);
+        let object = match repo.odb.read(&t) {
+            Ok(o) => o,
+            Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
+                if missing_action == MissingAction::Print && missing_seen.insert(t) {
+                    missing.push(t);
+                }
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+        if object.kind != ObjectKind::Tree {
+            continue;
+        }
+        let entries = parse_tree(&object.data)?;
+        for entry in entries {
+            if entry.mode == 0o160000 {
+                continue;
+            }
+            into.insert(entry.oid);
+            if entry.mode == 0o040000 {
+                stack.push(entry.oid);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn union_parent_reachable_objects(
+    repo: &Repository,
+    parents: &[ObjectId],
+    missing_action: MissingAction,
+    missing: &mut Vec<ObjectId>,
+    missing_seen: &mut HashSet<ObjectId>,
+) -> Result<HashSet<ObjectId>> {
+    let mut out = HashSet::new();
+    for &p in parents {
+        let commit = match load_commit(repo, p) {
+            Ok(c) => c,
+            Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
+                if missing_action == MissingAction::Print && missing_seen.insert(p) {
+                    missing.push(p);
+                }
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+        collect_tree_closure_objects(
+            repo,
+            commit.tree,
+            &mut out,
+            missing_action,
+            missing,
+            missing_seen,
+        )?;
+    }
+    Ok(out)
+}
+
 /// Collect all reachable non-commit objects (trees and blobs) from a set of commits.
 /// Returns (included, omitted) object lists.
 #[allow(dead_code)]
 fn collect_reachable_objects(
     repo: &Repository,
-    _graph: &mut CommitGraph<'_>,
+    graph: &mut CommitGraph<'_>,
     commits: &[ObjectId],
     object_roots: &[RootObject],
     filter: Option<&ObjectFilter>,
     filter_provided: bool,
     missing_action: MissingAction,
+    sparse_lines: Option<&[String]>,
+    skip_trees_for_type_filter: bool,
+    omit_object_paths: bool,
+    packed_set: Option<&HashSet<ObjectId>>,
 ) -> Result<(Vec<(ObjectId, String)>, Vec<ObjectId>, Vec<ObjectId>)> {
-    let mut seen = HashSet::new();
+    let mut tree_state = TreeWalkState::new(filter);
+    let mut emitted = HashSet::new();
     let mut result = Vec::new();
     let mut omitted = Vec::new();
     let mut missing = Vec::new();
@@ -2408,13 +2721,23 @@ fn collect_reachable_objects(
             }
             Err(err) => return Err(err),
         };
+        let parents = graph.parents_of(commit_oid)?;
+        let parent_union = union_parent_reachable_objects(
+            repo,
+            &parents,
+            missing_action,
+            &mut missing,
+            &mut missing_seen,
+        )?;
         collect_tree_objects_filtered(
             repo,
             commit.tree,
             "",
             0,
             false,
-            &mut seen,
+            Some(&parent_union),
+            &mut tree_state,
+            &mut emitted,
             &mut result,
             &mut omitted,
             &mut missing,
@@ -2422,6 +2745,10 @@ fn collect_reachable_objects(
             filter,
             filter_provided,
             missing_action,
+            sparse_lines,
+            skip_trees_for_type_filter,
+            omit_object_paths,
+            packed_set,
         )?;
     }
 
@@ -2429,7 +2756,8 @@ fn collect_reachable_objects(
         collect_root_object(
             repo,
             root,
-            &mut seen,
+            &mut tree_state,
+            &mut emitted,
             &mut result,
             &mut omitted,
             &mut missing,
@@ -2437,16 +2765,123 @@ fn collect_reachable_objects(
             filter,
             filter_provided,
             missing_action,
+            sparse_lines,
+            skip_trees_for_type_filter,
+            omit_object_paths,
+            packed_set,
         )?;
     }
 
     Ok((result, omitted, missing))
 }
 
+/// Like [`collect_reachable_objects`], but also returns objects newly discovered per commit walk
+/// plus one trailing segment for `object_roots`.
+///
+/// Matches Git `traverse_commit_list_filtered`: each commit's tree is processed before moving to
+/// the next commit, with global de-duplication of emitted object OIDs across the full walk.
+fn collect_reachable_objects_segmented(
+    repo: &Repository,
+    graph: &mut CommitGraph<'_>,
+    commits: &[ObjectId],
+    object_roots: &[RootObject],
+    filter: Option<&ObjectFilter>,
+    filter_provided: bool,
+    missing_action: MissingAction,
+    sparse_lines: Option<&[String]>,
+    skip_trees_for_type_filter: bool,
+    omit_object_paths: bool,
+    packed_set: Option<&HashSet<ObjectId>>,
+) -> Result<(
+    Vec<(ObjectId, String)>,
+    Vec<ObjectId>,
+    Vec<ObjectId>,
+    Vec<Vec<(ObjectId, String)>>,
+)> {
+    let mut emitted = HashSet::new();
+    let mut result = Vec::new();
+    let mut omitted = Vec::new();
+    let mut missing = Vec::new();
+    let mut missing_seen = HashSet::new();
+    let mut segments: Vec<Vec<(ObjectId, String)>> = Vec::with_capacity(commits.len() + 1);
+
+    for &commit_oid in commits {
+        let start = result.len();
+        let commit = match load_commit(repo, commit_oid) {
+            Ok(commit) => commit,
+            Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
+                if missing_action == MissingAction::Print && missing_seen.insert(commit_oid) {
+                    missing.push(commit_oid);
+                }
+                segments.push(Vec::new());
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
+        let mut tree_state = TreeWalkState::new(filter);
+        let parents = graph.parents_of(commit_oid)?;
+        let parent_union = union_parent_reachable_objects(
+            repo,
+            &parents,
+            missing_action,
+            &mut missing,
+            &mut missing_seen,
+        )?;
+        collect_tree_objects_filtered(
+            repo,
+            commit.tree,
+            "",
+            0,
+            false,
+            Some(&parent_union),
+            &mut tree_state,
+            &mut emitted,
+            &mut result,
+            &mut omitted,
+            &mut missing,
+            &mut missing_seen,
+            filter,
+            filter_provided,
+            missing_action,
+            sparse_lines,
+            skip_trees_for_type_filter,
+            omit_object_paths,
+            packed_set,
+        )?;
+        segments.push(result[start..].to_vec());
+    }
+
+    let roots_start = result.len();
+    let mut root_tree_state = TreeWalkState::new(filter);
+    for root in object_roots {
+        collect_root_object(
+            repo,
+            root,
+            &mut root_tree_state,
+            &mut emitted,
+            &mut result,
+            &mut omitted,
+            &mut missing,
+            &mut missing_seen,
+            filter,
+            filter_provided,
+            missing_action,
+            sparse_lines,
+            skip_trees_for_type_filter,
+            omit_object_paths,
+            packed_set,
+        )?;
+    }
+    segments.push(result[roots_start..].to_vec());
+
+    Ok((result, omitted, missing, segments))
+}
+
 fn collect_root_object(
     repo: &Repository,
     root: &RootObject,
-    seen: &mut HashSet<ObjectId>,
+    tree_state: &mut TreeWalkState,
+    emitted: &mut HashSet<ObjectId>,
     result: &mut Vec<(ObjectId, String)>,
     omitted: &mut Vec<ObjectId>,
     missing: &mut Vec<ObjectId>,
@@ -2454,6 +2889,10 @@ fn collect_root_object(
     filter: Option<&ObjectFilter>,
     filter_provided: bool,
     missing_action: MissingAction,
+    sparse_lines: Option<&[String]>,
+    skip_trees_for_type_filter: bool,
+    omit_object_paths: bool,
+    packed_set: Option<&HashSet<ObjectId>>,
 ) -> Result<()> {
     let object = match repo.odb.read(&root.oid) {
         Ok(object) => object,
@@ -2479,13 +2918,22 @@ fn collect_root_object(
     match object.kind {
         ObjectKind::Commit => {
             let commit = parse_commit(&object.data)?;
+            let parent_union = union_parent_reachable_objects(
+                repo,
+                &commit.parents,
+                missing_action,
+                missing,
+                missing_seen,
+            )?;
             collect_tree_objects_filtered(
                 repo,
                 commit.tree,
                 "",
                 0,
                 false,
-                seen,
+                Some(&parent_union),
+                tree_state,
+                emitted,
                 result,
                 omitted,
                 missing,
@@ -2493,17 +2941,22 @@ fn collect_root_object(
                 filter,
                 filter_provided,
                 missing_action,
+                sparse_lines,
+                skip_trees_for_type_filter,
+                omit_object_paths,
+                packed_set,
             )?;
         }
         ObjectKind::Tree => {
-            seen.remove(&root.oid);
             collect_tree_objects_filtered(
                 repo,
                 root.oid,
                 "",
                 0,
                 true,
-                seen,
+                None,
+                tree_state,
+                emitted,
                 result,
                 omitted,
                 missing,
@@ -2511,27 +2964,44 @@ fn collect_root_object(
                 filter,
                 filter_provided,
                 missing_action,
+                sparse_lines,
+                skip_trees_for_type_filter,
+                omit_object_paths,
+                packed_set,
             )?;
         }
         ObjectKind::Blob => {
-            if !seen.insert(root.oid) {
-                return Ok(());
-            }
+            let path_for_sparse = root.root_path.as_deref().unwrap_or("");
             let blob_included = match filter {
                 None => true,
                 Some(f) => {
                     if !filter_provided {
                         true
                     } else {
-                        f.includes_blob(object.data.len() as u64)
+                        f.includes_blob_under_tree(object.data.len() as u64, 0)
                     }
                 }
             };
-            if blob_included {
-                result.push((root.oid, String::new()));
-            } else {
+            let blob_included = blob_included
+                && sparse_lines.is_none_or(|lines| {
+                    path_matches_sparse_pattern_list(path_for_sparse, lines) != Some(false)
+                });
+            if !blob_included {
                 omitted.push(root.oid);
+                return Ok(());
             }
+            if packed_set.is_some_and(|p| p.contains(&root.oid)) {
+                return Ok(());
+            }
+            if !emitted.insert(root.oid) {
+                return Ok(());
+            }
+            let out_path = if omit_object_paths {
+                String::new()
+            } else {
+                path_for_sparse.to_owned()
+            };
+            result.push((root.oid, out_path));
         }
         ObjectKind::Tag => {
             let tag = parse_tag(&object.data)?;
@@ -2546,11 +3016,13 @@ fn collect_root_object(
                 oid: tag.object,
                 input: root.input.clone(),
                 expected_kind: Some(expected_kind),
+                root_path: None,
             };
             collect_root_object(
                 repo,
                 &nested,
-                seen,
+                tree_state,
+                emitted,
                 result,
                 omitted,
                 missing,
@@ -2558,6 +3030,10 @@ fn collect_root_object(
                 filter,
                 filter_provided,
                 missing_action,
+                sparse_lines,
+                skip_trees_for_type_filter,
+                omit_object_paths,
+                packed_set,
             )?;
         }
     }
@@ -2572,7 +3048,9 @@ fn collect_tree_objects_filtered(
     prefix: &str,
     depth: u64,
     explicit_root: bool,
-    seen: &mut HashSet<ObjectId>,
+    parent_union: Option<&HashSet<ObjectId>>,
+    tree_state: &mut TreeWalkState,
+    emitted: &mut HashSet<ObjectId>,
     result: &mut Vec<(ObjectId, String)>,
     omitted: &mut Vec<ObjectId>,
     missing: &mut Vec<ObjectId>,
@@ -2580,9 +3058,20 @@ fn collect_tree_objects_filtered(
     filter: Option<&ObjectFilter>,
     filter_provided: bool,
     missing_action: MissingAction,
+    sparse_lines: Option<&[String]>,
+    skip_trees_for_type_filter: bool,
+    omit_object_paths: bool,
+    packed_set: Option<&HashSet<ObjectId>>,
 ) -> Result<()> {
-    if !seen.insert(tree_oid) {
+    if tree_state.should_skip_tree(tree_oid, depth) {
         return Ok(());
+    }
+    if !explicit_root {
+        if let Some(pu) = parent_union {
+            if pu.contains(&tree_oid) {
+                return Ok(());
+            }
+        }
     }
     let object = match repo.odb.read(&tree_oid) {
         Ok(object) => object,
@@ -2609,10 +3098,24 @@ fn collect_tree_objects_filtered(
             }
         }
     };
+    let tree_included = tree_included
+        && sparse_lines.is_none_or(|lines| {
+            path_matches_sparse_pattern_list(prefix, lines) != Some(false)
+        });
     if tree_included {
-        result.push((tree_oid, prefix.to_owned()));
+        if !packed_set.is_some_and(|p| p.contains(&tree_oid)) && emitted.insert(tree_oid) {
+            let out_path = if omit_object_paths {
+                String::new()
+            } else {
+                prefix.to_owned()
+            };
+            result.push((tree_oid, out_path));
+        }
     } else {
         omitted.push(tree_oid);
+    }
+    if skip_trees_for_type_filter && depth == 0 && !explicit_root {
+        return Ok(());
     }
     let entries = parse_tree(&object.data)?;
     for entry in entries {
@@ -2627,7 +3130,6 @@ fn collect_tree_objects_filtered(
         } else {
             format!("{prefix}/{name}")
         };
-        let seen_before = seen.contains(&entry.oid);
         let child_obj = match repo.odb.read(&entry.oid) {
             Ok(object) => object,
             Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
@@ -2645,17 +3147,21 @@ fn collect_tree_objects_filtered(
                     entry.oid
                 )));
             }
-            if seen_before {
-                continue;
+            if let Some(pu) = parent_union {
+                if pu.contains(&entry.oid) {
+                    continue;
+                }
             }
-            seen.remove(&entry.oid);
+            let child_tree_depth = depth + 1;
             collect_tree_objects_filtered(
                 repo,
                 entry.oid,
                 &path,
-                depth + 1,
+                child_tree_depth,
                 false,
-                seen,
+                parent_union,
+                tree_state,
+                emitted,
                 result,
                 omitted,
                 missing,
@@ -2663,19 +3169,17 @@ fn collect_tree_objects_filtered(
                 filter,
                 filter_provided,
                 missing_action,
+                sparse_lines,
+                skip_trees_for_type_filter,
+                omit_object_paths,
+                packed_set,
             )?;
         } else {
-            if child_obj.kind != ObjectKind::Blob && seen_before {
-                return Err(Error::CorruptObject(format!(
-                    "object {} is not a blob",
-                    entry.oid
-                )));
+            if let Some(pu) = parent_union {
+                if pu.contains(&entry.oid) {
+                    continue;
+                }
             }
-            if seen_before {
-                continue;
-            }
-            seen.insert(entry.oid);
-
             if child_obj.kind == ObjectKind::Blob {
                 let blob_included = match filter {
                     None => true,
@@ -2683,20 +3187,33 @@ fn collect_tree_objects_filtered(
                         if explicit_root && !filter_provided {
                             true
                         } else {
-                            f.includes_blob(child_obj.data.len() as u64)
+                            f.includes_blob_under_tree(child_obj.data.len() as u64, depth)
                         }
                     }
                 };
+                let blob_included = blob_included
+                    && sparse_lines.is_none_or(|lines| {
+                        path_matches_sparse_pattern_list(&path, lines) != Some(false)
+                    });
                 if blob_included {
-                    result.push((entry.oid, path));
+                    if !packed_set.is_some_and(|p| p.contains(&entry.oid))
+                        && emitted.insert(entry.oid)
+                    {
+                        let out_path = if omit_object_paths {
+                            String::new()
+                        } else {
+                            path.clone()
+                        };
+                        result.push((entry.oid, out_path));
+                    }
                 } else {
                     omitted.push(entry.oid);
                 }
             } else {
                 // Git historically tolerates lone non-blob entries in blob slots.
-                // Keep traversing while still detecting seen-object kind mismatches
-                // through the `seen_before` check above.
-                result.push((entry.oid, path));
+                if emitted.insert(entry.oid) {
+                    result.push((entry.oid, path));
+                }
             }
         }
     }
@@ -2708,19 +3225,24 @@ fn collect_tree_objects_filtered(
 /// Returns (objects, omitted, per_commit_counts).
 fn collect_reachable_objects_in_commit_order(
     repo: &Repository,
-    _graph: &mut CommitGraph<'_>,
+    graph: &mut CommitGraph<'_>,
     commits: &[ObjectId],
     object_roots: &[RootObject],
     filter: Option<&ObjectFilter>,
     filter_provided: bool,
     missing_action: MissingAction,
+    sparse_lines: Option<&[String]>,
+    skip_trees_for_type_filter: bool,
+    omit_object_paths: bool,
+    packed_set: Option<&HashSet<ObjectId>>,
 ) -> Result<(
     Vec<(ObjectId, String)>,
     Vec<ObjectId>,
     Vec<ObjectId>,
     Vec<usize>,
 )> {
-    let mut seen = HashSet::new();
+    let mut tree_state = TreeWalkState::new(filter);
+    let mut emitted = HashSet::new();
     let mut result = Vec::new();
     let mut omitted = Vec::new();
     let mut missing = Vec::new();
@@ -2739,13 +3261,23 @@ fn collect_reachable_objects_in_commit_order(
             Err(err) => return Err(err),
         };
         let before = result.len();
+        let parents = graph.parents_of(commit_oid)?;
+        let parent_union = union_parent_reachable_objects(
+            repo,
+            &parents,
+            missing_action,
+            &mut missing,
+            &mut missing_seen,
+        )?;
         collect_tree_objects_filtered(
             repo,
             commit.tree,
             "",
             0,
             false,
-            &mut seen,
+            Some(&parent_union),
+            &mut tree_state,
+            &mut emitted,
             &mut result,
             &mut omitted,
             &mut missing,
@@ -2753,6 +3285,10 @@ fn collect_reachable_objects_in_commit_order(
             filter,
             filter_provided,
             missing_action,
+            sparse_lines,
+            skip_trees_for_type_filter,
+            omit_object_paths,
+            packed_set,
         )?;
         counts.push(result.len() - before);
     }
@@ -2761,7 +3297,8 @@ fn collect_reachable_objects_in_commit_order(
         collect_root_object(
             repo,
             root,
-            &mut seen,
+            &mut tree_state,
+            &mut emitted,
             &mut result,
             &mut omitted,
             &mut missing,
@@ -2769,6 +3306,10 @@ fn collect_reachable_objects_in_commit_order(
             filter,
             filter_provided,
             missing_action,
+            sparse_lines,
+            skip_trees_for_type_filter,
+            omit_object_paths,
+            packed_set,
         )?;
     }
 

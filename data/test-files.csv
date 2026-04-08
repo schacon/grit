@@ -1072,7 +1072,7 @@ t6102-rev-list-unexpected-objects	t6	yes	22	19	3	false	ok	0
 t6110-rev-list-sparse	t6	yes	2	2	0	true	ok	0
 t6111-rev-list-treesame	t6	yes	65	5	60	false	ok	0
 t6112-rev-list-filters-objects	t6	yes	54	18	36	false	ok	0
-t6113-rev-list-bitmap-filters	t6	yes	14	2	12	false	ok	0
+t6113-rev-list-bitmap-filters	t6	yes	14	14	0	true	ok	0
 t6114-keep-packs	t6	yes	3	2	1	false	ok	0
 t6115-rev-list-du	t6	yes	17	17	0	true	ok	0
 t6120-describe	t6	yes	103	29	74	false	ok	0
@@ -1599,7 +1599,7 @@ t9880-config-file-option	t9	yes	32	25	7	false	ok	0
 t9890-init-object-format	t9	yes	31	31	0	true	ok	0
 t9900-branch-verbose-all	t9	yes	33	33	0	true	ok	0
 t9901-git-web--browse	t9	yes	5	0	5	false	ok	0
-t9902-completion	t9	yes	263	15	245	false	ok	2
+t9902-completion	t9	yes	260	15	245	false	ok	2
 t9903-bash-prompt	t9	yes	67	1	66	false	ok	0
 t9910-tag-pattern-glob	t9	yes	32	32	0	true	ok	0
 t9920-commit-tree-author-env	t9	yes	26	25	1	false	ok	0
