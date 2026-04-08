@@ -484,7 +484,7 @@ pub fn rev_list(
         return Err(Error::InvalidRef("no revisions specified".to_owned()));
     }
 
-    let (mut included, discovery_order) = if include.is_empty() {
+    let (mut included, _discovery_order) = if include.is_empty() {
         (HashSet::new(), Vec::new())
     } else {
         walk_closure_ordered(&mut graph, &include)?
@@ -525,7 +525,14 @@ pub fn rev_list(
     }
 
     let mut ordered = match options.ordering {
-        OrderingMode::Default => sort_by_commit_date_desc(&mut graph, &included, &discovery_order)?,
+        OrderingMode::Default => {
+            let tips: Vec<ObjectId> = include
+                .iter()
+                .copied()
+                .filter(|oid| included.contains(oid))
+                .collect();
+            date_order_walk(&mut graph, &tips, &included)?
+        }
         OrderingMode::Topo | OrderingMode::Date => topo_sort(&mut graph, &included)?,
     };
 
@@ -1898,29 +1905,63 @@ fn walk_closure_ordered(
     Ok((seen, order))
 }
 
-fn sort_by_commit_date_desc(
+/// Git-style default ordering: among commits ready to print, pick the one with the
+/// greatest committer timestamp; a parent becomes ready only after all of its
+/// children that remain in the walk have been emitted.
+///
+/// This matches `git rev-list` behavior (and differs from sorting the whole set by
+/// date, which can surface ancestors before descendants when dates are skewed).
+fn date_order_walk(
     graph: &mut CommitGraph<'_>,
+    tips: &[ObjectId],
     selected: &HashSet<ObjectId>,
-    discovery_order: &[ObjectId],
 ) -> Result<Vec<ObjectId>> {
-    // Build a map from OID to BFS discovery index for stable tiebreaking
-    let disc_idx: HashMap<ObjectId, usize> = discovery_order
-        .iter()
-        .enumerate()
-        .map(|(i, oid)| (*oid, i))
-        .collect();
-    let mut out: Vec<ObjectId> = selected.iter().copied().collect();
-    out.sort_by(|a, b| {
-        match graph.committer_time(*b).cmp(&graph.committer_time(*a)) {
-            Ordering::Equal => {
-                // Preserve BFS discovery order as tiebreaker
-                let da = disc_idx.get(a).copied().unwrap_or(usize::MAX);
-                let db = disc_idx.get(b).copied().unwrap_or(usize::MAX);
-                da.cmp(&db)
+    let mut unfinished_children: HashMap<ObjectId, usize> =
+        selected.iter().map(|&oid| (oid, 0usize)).collect();
+    for &child in selected {
+        for parent in graph.parents_of(child)? {
+            if selected.contains(&parent) {
+                if let Some(count) = unfinished_children.get_mut(&parent) {
+                    *count += 1;
+                }
             }
-            other => other,
         }
-    });
+    }
+
+    let mut heap = BinaryHeap::new();
+    for &tip in tips {
+        if selected.contains(&tip) {
+            heap.push(CommitDateKey {
+                oid: tip,
+                date: graph.committer_time(tip),
+            });
+        }
+    }
+
+    let mut emitted = HashSet::new();
+    let mut out = Vec::with_capacity(selected.len());
+    while let Some(item) = heap.pop() {
+        if !emitted.insert(item.oid) {
+            continue;
+        }
+        out.push(item.oid);
+        for parent in graph.parents_of(item.oid)? {
+            if !selected.contains(&parent) {
+                continue;
+            }
+            let Some(count) = unfinished_children.get_mut(&parent) else {
+                continue;
+            };
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                heap.push(CommitDateKey {
+                    oid: parent,
+                    date: graph.committer_time(parent),
+                });
+            }
+        }
+    }
+
     Ok(out)
 }
 
