@@ -604,9 +604,17 @@ fn resolve_rel(pathspec: &str, work_tree: &Path) -> Result<String> {
 
     let p = Path::new(pathspec_clean);
     if p.is_absolute() {
-        let abs = p
-            .canonicalize()
-            .unwrap_or_else(|_| lexical_normalize_path(p));
+        // Resolve lexically first so a symlink as the final component is not followed:
+        // `git rm foo` must remove path `foo`, not the symlink target (matches Git).
+        let abs_lex = lexical_normalize_path(p);
+        if let Ok(rel) = abs_lex.strip_prefix(&wt_canon) {
+            let s = rel.to_string_lossy().into_owned();
+            if s == "." || s.is_empty() {
+                return Ok(String::new());
+            }
+            return Ok(s);
+        }
+        let abs = abs_lex.canonicalize().unwrap_or(abs_lex);
         let rel = abs
             .strip_prefix(&wt_canon)
             .map_err(|_| anyhow::anyhow!("path '{}' is outside the work tree", pathspec))?;
@@ -615,10 +623,9 @@ fn resolve_rel(pathspec: &str, work_tree: &Path) -> Result<String> {
 
     let cwd = std::env::current_dir()?;
     let cwd_canon = cwd.canonicalize().unwrap_or(cwd);
-    let abs = lexical_resolve_under_cwd(pathspec_clean, &cwd_canon);
-    let abs_resolved = abs.canonicalize().unwrap_or(abs);
+    let abs_lex = lexical_resolve_under_cwd(pathspec_clean, &cwd_canon);
 
-    if let Ok(rel) = abs_resolved.strip_prefix(&wt_canon) {
+    if let Ok(rel) = abs_lex.strip_prefix(&wt_canon) {
         let s = rel.to_string_lossy().into_owned();
         if s == "." || s.is_empty() {
             return Ok(String::new());
@@ -628,8 +635,7 @@ fn resolve_rel(pathspec: &str, work_tree: &Path) -> Result<String> {
 
     // Pathspec relative to worktree root (e.g. when cwd is not under the repo).
     let from_root = lexical_normalize_path(&wt_canon.join(pathspec_clean));
-    let from_root_resolved = from_root.canonicalize().unwrap_or(from_root);
-    if let Ok(rel) = from_root_resolved.strip_prefix(&wt_canon) {
+    if let Ok(rel) = from_root.strip_prefix(&wt_canon) {
         let s = rel.to_string_lossy().into_owned();
         if s == "." || s.is_empty() {
             return Ok(String::new());

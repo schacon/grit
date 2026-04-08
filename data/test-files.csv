@@ -783,7 +783,7 @@ t4110-apply-scan	t4	yes	1	1	0	true	ok	0
 t4111-apply-subdir	t4	yes	10	3	7	false	ok	0
 t4112-apply-renames	t4	yes	2	2	0	true	ok	0
 t4113-apply-ending	t4	yes	3	1	2	false	ok	0
-t4114-apply-typechange	t4	yes	12	3	9	false	ok	0
+t4114-apply-typechange	t4	yes	12	12	0	true	ok	0
 t4115-apply-symlink	t4	yes	8	2	6	false	ok	0
 t4116-apply-reverse	t4	yes	7	7	0	true	ok	0
 t4117-apply-reject	t4	yes	8	8	0	true	ok	0
