@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   231 |
-| In progress |     2 |
-| Remaining   |   535 |
+| Completed   |   246 |
+| In progress |     4 |
+| Remaining   |   518 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 231 completed (`[x]`), 2 in progress (`[~]`), 535 remaining (`[ ]`).
+Task lines in `PLAN.md`: 246 completed (`[x]`), 4 in progress (`[~]`), 518 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t4042-diff-textconv-caching` — 8/8 tests pass (notes-backed textconv cache per driver; Git-compatible textconv subprocess layout; `diff --no-index` textconv + `core.attributesFile`; harness `nongit` aligned with upstream; `run-tests.sh` uses per-file `timeout_prefix`)
 - `t12820-diff-no-index-symlink` — 41/41 tests pass (symlink add/modify/delete, `diff`/`diff --cached`/`diff-tree`, stat/numstat/name output, multi-symlink and file↔symlink replacements; harness dashboards refreshed)
 - `t7817-grep-sparse-checkout` — 8/8 tests pass (non-cone sparse: `path_in_sparse_checkout` parent walk + last-match-wins; `sparse-checkout init` preserves cone mode and seeds `/*` + `!/*/` when recreating file; `disable` keeps pattern file so re-init reapplies `!b`; submodule `reset --hard` + sparse reapply; `grep` worktree: skip-worktree when absent, CE_VALID vs skip-worktree, unmerged paths grep worktree once; `grep_cached` per-stage for `--cached`)
 - `t7417-submodule-path-url` — 5/5 tests pass (`.gitmodules` dash paths: `mv` updates path + index blob; `escape_value` quotes leading `-`; receive-side `transfer.fsckObjects` via repo-local config only; clone `--recurse-submodules` resolves relative URLs from `origin` repo root + quoted path parsing + `GIT_QUIET` quiet mode)
