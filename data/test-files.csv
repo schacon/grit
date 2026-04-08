@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -1283,7 +1283,7 @@ t7900-maintenance	t7	yes	0	0	0	false	timeout	0
 t7901-stash-resolve-merge	t7	yes	7	7	0	true	ok	0
 t8001-annotate	t8	yes	117	97	20	false	ok	0
 t8002-blame	t8	yes	135	53	82	false	ok	0
-t8003-blame-corner-cases	t8	yes	30	24	6	false	ok	0
+t8003-blame-corner-cases	t8	yes	30	30	0	true	ok	0
 t8004-blame-with-conflicts	t8	yes	3	3	0	true	ok	0
 t8005-blame-i18n	t8	yes	5	0	5	false	ok	0
 t8006-blame-textconv	t8	yes	16	7	9	false	ok	0

@@ -10,7 +10,7 @@ use grit_lib::crlf::{
 use grit_lib::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rev_parse::{resolve_revision, resolve_revision_without_index_dwim};
 use grit_lib::state::resolve_head;
 use grit_lib::userdiff;
 use grit_lib::wildmatch::wildmatch;
@@ -1866,7 +1866,7 @@ pub fn run(args: Args) -> Result<()> {
     normalize_detection_args(&args.move_detection, &mut normalized_positional);
     normalized_positional.extend(args.args.iter().cloned());
 
-    let (rev, file_path) = parse_blame_args(&repo, &normalized_positional)?;
+    let (rev, file_path) = parse_blame_args(&odb, &repo, &normalized_positional)?;
     let use_textconv = !args.no_textconv;
     let copy_depth = args.copy_detection.len();
     let textconv_ctx = Some(BlameTextconvContext::new(&repo));
@@ -2245,7 +2245,19 @@ fn looks_like_object_id(s: &str) -> bool {
     b.iter().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-fn parse_blame_args(repo: &Repository, args: &[String]) -> Result<(Option<String>, String)> {
+/// True when `spec` resolves to an object that peels to a commit (not a lone blob/tree).
+fn spec_resolves_to_commit(odb: &Odb, repo: &Repository, spec: &str) -> bool {
+    let Ok(oid) = resolve_revision_without_index_dwim(repo, spec) else {
+        return false;
+    };
+    peel_to_commit_oid(odb, oid).ok().flatten().is_some()
+}
+
+fn parse_blame_args(
+    odb: &Odb,
+    repo: &Repository,
+    args: &[String],
+) -> Result<(Option<String>, String)> {
     match args.len() {
         0 => bail!("usage: grit blame [<rev>] [--] <file>"),
         1 => Ok((None, args[0].clone())),
@@ -2253,10 +2265,23 @@ fn parse_blame_args(repo: &Repository, args: &[String]) -> Result<(Option<String
         2 => {
             let a0 = &args[0];
             let a1 = &args[1];
-            if resolve_revision(repo, a1).is_ok() || a1 == "HEAD" || looks_like_object_id(a1) {
-                Ok((Some(a1.clone()), a0.clone()))
-            } else {
-                Ok((Some(a0.clone()), a1.clone()))
+            let c0 = spec_resolves_to_commit(odb, repo, a0);
+            let c1 = spec_resolves_to_commit(odb, repo, a1);
+            match (c0, c1) {
+                (true, false) => Ok((Some(a0.clone()), a1.clone())),
+                (false, true) => Ok((Some(a1.clone()), a0.clone())),
+                (true, true) => Ok((Some(a0.clone()), a1.clone())),
+                (false, false) => {
+                    // Neither peels to a commit; keep legacy heuristic for odd cases.
+                    if resolve_revision_without_index_dwim(repo, a1).is_ok()
+                        || a1 == "HEAD"
+                        || looks_like_object_id(a1)
+                    {
+                        Ok((Some(a1.clone()), a0.clone()))
+                    } else {
+                        Ok((Some(a0.clone()), a1.clone()))
+                    }
+                }
             }
         }
         3 if args[1] == "--" => Ok((Some(args[0].clone()), args[2].clone())),
@@ -2277,10 +2302,6 @@ fn resolve_blame_start_oid(repo: &Repository, rev_spec: &str) -> Result<ObjectId
         // Accept two-dot ranges by resolving the right side (or merge base
         // from the rev parser in cases where that is appropriate).
         return resolve_revision(repo, rhs).map_err(Into::into);
-    }
-    if let Some((_, rhs)) = rev_spec.split_once("..") {
-        let target = if rhs.is_empty() { "HEAD" } else { rhs };
-        return resolve_revision(repo, target).map_err(Into::into);
     }
     resolve_revision(repo, rev_spec).map_err(Into::into)
 }
