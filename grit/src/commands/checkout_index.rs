@@ -4,13 +4,16 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
+use grit_lib::diff::stat_matches;
 use grit_lib::index::Index;
-use grit_lib::objects::ObjectKind;
+use grit_lib::objects::{ObjectId, ObjectKind};
+use grit_lib::odb::Odb;
 use std::io::{self, BufRead};
+use std::os::unix::fs::MetadataExt;
 use std::path::Component;
 use std::path::PathBuf;
 
-use grit_lib::index::{IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::index::{IndexEntry, MODE_EXECUTABLE, MODE_REGULAR, MODE_SYMLINK};
 use grit_lib::repo::Repository;
 
 /// Stage selection for `--stage` (last occurrence wins).
@@ -212,7 +215,6 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let mut has_errors = false;
-    let mut has_conflicts = false;
     for (path, display) in selected {
         let entry = index
             .get(&path, target_stage)
@@ -230,9 +232,6 @@ pub fn run(args: Args) -> Result<()> {
             &display,
         ) {
             Ok(outcome) => {
-                if outcome.had_conflict {
-                    has_conflicts = true;
-                }
                 if let Some(updated) = outcome.updated_entry {
                     index.add_or_replace(updated);
                     index_needs_write = true;
@@ -252,7 +251,7 @@ pub fn run(args: Args) -> Result<()> {
             .context("writing index")?;
     }
 
-    if has_errors || has_conflicts {
+    if has_errors {
         std::process::exit(1);
     }
 
@@ -424,14 +423,39 @@ fn checkout_entry(
     }
 
     let existing_meta = std::fs::symlink_metadata(&abs_path).ok();
-    let should_skip_existing =
-        existing_meta.is_some() && !args.force && !args.ignore_skip_worktree_bits;
-    if should_skip_existing {
-        if !args.quiet {
-            eprintln!("warning: '{rel_path}' already exists, skipping (use --force to override)");
+    if let Some(ref meta) = existing_meta {
+        if !args.force && !args.ignore_skip_worktree_bits {
+            let unchanged = if entry.mode == MODE_SYMLINK && symlinks_enabled {
+                meta.file_type().is_symlink()
+                    && std::fs::read_link(&abs_path).ok().is_some_and(|t| {
+                        use std::os::unix::ffi::OsStrExt;
+                        t.as_os_str().as_bytes() == obj.data.as_slice()
+                    })
+            } else if !meta.file_type().is_symlink() && entry.mode != MODE_SYMLINK {
+                let wt_mode = worktree_mode_from_metadata(meta);
+                if wt_mode != entry.mode {
+                    false
+                } else if stat_matches(entry, meta) {
+                    true
+                } else {
+                    worktree_clean_blob_oid_matches(
+                        repo, index, work_tree, &path_str, &abs_path, &entry.oid,
+                    )
+                    .unwrap_or(false)
+                }
+            } else {
+                false
+            };
+            if unchanged {
+                return Ok(outcome);
+            }
+            if !args.quiet {
+                eprintln!(
+                    "warning: '{rel_path}' already exists, skipping (use --force to override)"
+                );
+            }
+            return Ok(outcome);
         }
-        outcome.had_conflict = true;
-        return Ok(outcome);
     }
 
     if let Some(parent) = abs_path.parent() {
@@ -597,7 +621,40 @@ fn checkout_all_unmerged_stages(
 struct CheckoutOutcome {
     updated_entry: Option<grit_lib::index::IndexEntry>,
     temp_output: Option<String>,
-    had_conflict: bool,
+}
+
+fn worktree_mode_from_metadata(meta: &std::fs::Metadata) -> u32 {
+    if meta.file_type().is_symlink() {
+        MODE_SYMLINK
+    } else if meta.mode() & 0o111 != 0 {
+        MODE_EXECUTABLE
+    } else {
+        MODE_REGULAR
+    }
+}
+
+/// When cached stat does not match the file (e.g. index not refreshed after `commit`), still treat
+/// the path as up to date if the cleaned working-tree content hashes to the same blob as the index
+/// (matches Git `ie_match_stat` / `hash_stat_data` behavior).
+fn worktree_clean_blob_oid_matches(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &std::path::Path,
+    path_str: &str,
+    abs_path: &std::path::Path,
+    index_oid: &ObjectId,
+) -> Result<bool> {
+    let raw = match std::fs::read(abs_path) {
+        Ok(b) => b,
+        Err(_) => return Ok(false),
+    };
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let conv = crlf::ConversionConfig::from_config(&config);
+    let attrs = crlf::load_gitattributes_for_checkout(work_tree, path_str, index, &repo.odb);
+    let file_attrs = crlf::get_file_attrs(&attrs, path_str, &config);
+    let cleaned = crlf::convert_to_git(&raw, path_str, &conv, &file_attrs).unwrap_or(raw);
+    let wt_oid = Odb::hash_object_data(ObjectKind::Blob, &cleaned);
+    Ok(wt_oid == *index_oid)
 }
 
 fn read_stdin_paths(null_terminated: bool) -> Result<Vec<PathBuf>> {
