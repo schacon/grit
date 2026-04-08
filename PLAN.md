@@ -646,7 +646,7 @@ commit → check it off → move on.
 - [ ] `t5331-pack-objects-stdin` ░░░░░░░░░░░░░░░░░░░░ 0/16 (16 left) — pack-objects --stdin
 - [ ] `t5553-set-upstream` ███░░░░░░░░░░░░░░░░░ 4/21 (17 left) — 
 - [ ] `t5606-clone-options` ███░░░░░░░░░░░░░░░░░ 4/21 (17 left) — basic clone options
-- [ ] `t5323-pack-redundant` █░░░░░░░░░░░░░░░░░░░ 1/18 (17 left) — Test git pack-redundant
+- [x] `t5323-pack-redundant` ████████████████████ 18/18 (0 left) — Test git pack-redundant
 
 - [ ] `t5528-push-default` ████████░░░░░░░░░░░░ 14/32 (18 left) — check various push.default settings
 - [ ] `t5812-proto-disable-http` ███████░░░░░░░░░░░░░ 11/29 (18 left) — test disabling of git-over-http in clone/fetch

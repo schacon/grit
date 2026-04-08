@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -890,7 +890,7 @@ t5319-multi-pack-index	t5	yes	0	0	0	false	timeout	0
 t5320-delta-islands	t5	yes	15	5	10	false	ok	0
 t5321-pack-large-objects	t5	yes	2	0	2	false	ok	0
 t5322-pack-objects-sparse	t5	yes	11	5	6	false	ok	0
-t5323-pack-redundant	t5	yes	18	2	16	false	ok	0
+t5323-pack-redundant	t5	yes	18	18	0	true	ok	0
 t5324-split-commit-graph	t5	yes	42	9	33	false	ok	0
 t5325-reverse-index	t5	yes	16	2	14	false	ok	0
 t5326-multi-pack-bitmaps	t5	yes	357	9	348	false	ok	0

@@ -796,13 +796,18 @@ fn validate_alternate_paths_exist(objects_dir: &Path) -> Result<()> {
     let Ok(content) = fs::read_to_string(&alt_file) else {
         return Ok(());
     };
+    let base = fs::canonicalize(objects_dir).unwrap_or_else(|_| objects_dir.to_path_buf());
     let mut bad = false;
     for raw in content.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let path = PathBuf::from(line);
+        let path = if Path::new(line).is_absolute() {
+            PathBuf::from(line)
+        } else {
+            base.join(line)
+        };
         if !path.exists() {
             eprintln!("error: unable to normalize alternate object path: {}", line);
             bad = true;
