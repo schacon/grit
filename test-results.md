@@ -3,6 +3,7 @@
 **Updated:** 2026-04-08
 
 - `./scripts/run-tests.sh t5403-post-checkout-hook.sh`: 14/14 passing (`post-checkout` hook on checkout/rebase/clone; clone default branch resolution with detached `HEAD` and `GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME`; harness CSV/dashboards refreshed).
+- `./scripts/run-tests.sh t7517-per-repo-email.sh`: 16/16 passing (`user.useConfigOnly`, per-role ident config, rebase noop pick; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t5704-protocol-violations.sh`: 3/3 passing (`upload-pack` v2 via `GIT_PROTOCOL`, strict flush-after-args; `ls-remote --upload-pack` v0/v2 parsing; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t6130-pathspec-noglob.sh`: 21/21 passing (pathspec globals env + `:(glob)`/`:(literal)` / `wildmatch` semantics; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t3201-branch-contains.sh`: 24/24 passing (`branch` filters, multi-flag OR/AND semantics, tracking + `-v`/`-vv`; harness CSV/dashboards refreshed).

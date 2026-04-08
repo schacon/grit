@@ -1239,7 +1239,7 @@ t7514-commit-patch	t7	yes	3	1	2	false	ok	0
 t7514-interpret-trailers-options	t7	yes	10	10	0	true	ok	0
 t7515-status-symlinks	t7	yes	3	3	0	true	ok	0
 t7516-commit-races	t7	yes	2	0	2	false	ok	0
-t7517-per-repo-email	t7	yes	16	8	8	false	ok	0
+t7517-per-repo-email	t7	yes	16	16	0	true	ok	0
 t7518-ident-corner-cases	t7	yes	5	5	0	true	ok	0
 t7519-status-fsmonitor	t7	yes	33	14	19	false	ok	0
 t7520-ignored-hook-warning	t7	yes	5	4	1	false	ok	0

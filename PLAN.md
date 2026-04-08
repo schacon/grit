@@ -829,7 +829,7 @@ commit → check it off → move on.
 - [ ] `t7111-reset-table` ████████████████░░░░ 34/42 (8 left) — Tests to check that 
 - [ ] `t7814-grep-recurse-submodules` ███████████████░░░░░ 26/34 (8 left) — Test grep recurse-submodules feature
 
-- [ ] `t7517-per-repo-email` ██████████░░░░░░░░░░ 8/16 (8 left) — per-repo forced setting of email address
+- [x] `t7517-per-repo-email` — per-repo forced setting of email address (16/16)
 - [ ] `t7525-status-rename` █████████░░░░░░░░░░░ 7/15 (8 left) — git status rename detection options
 - [ ] `t7412-submodule-absorbgitdirs` ██████░░░░░░░░░░░░░░ 4/12 (8 left) — Test submodule absorbgitdirs
 

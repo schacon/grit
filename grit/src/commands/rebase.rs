@@ -33,6 +33,8 @@ use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
 
+use crate::ident::{resolve_email, resolve_name, IdentRole};
+
 #[derive(Clone, Copy)]
 enum RebaseBackend {
     Merge,
@@ -330,17 +332,8 @@ fn print_branch_up_to_date(head: &HeadState) {
 }
 
 fn reflog_identity(repo: &Repository) -> String {
-    let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
-    let name = std::env::var("GIT_COMMITTER_NAME")
-        .ok()
-        .or_else(|| std::env::var("GIT_AUTHOR_NAME").ok())
-        .or_else(|| config.as_ref().and_then(|c| c.get("user.name")))
-        .unwrap_or_else(|| "Unknown".to_owned());
-    let email = std::env::var("GIT_COMMITTER_EMAIL")
-        .ok()
-        .or_else(|| std::env::var("GIT_AUTHOR_EMAIL").ok())
-        .or_else(|| config.as_ref().and_then(|c| c.get("user.email")))
-        .unwrap_or_default();
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let (name, email) = crate::ident::resolve_loose_committer_parts(&config);
     let now = time::OffsetDateTime::now_utc();
     let epoch = now.unix_timestamp();
     let offset = now.offset();
@@ -568,6 +561,8 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
             let subject = commit.message.lines().next().unwrap_or("");
             println!("pick {} {}", &oid.to_hex()[..7], subject);
         }
+        // Git runs the sequence editor then proceeds with the replay; we have no editor
+        // integration yet, so continue into the same replay path as non-interactive rebase.
         // Still replay commits: upstream tests expect `rebase -i` to apply the todo.
     }
 
@@ -1241,6 +1236,22 @@ fn cherry_pick_for_rebase(
     let head_commit = parse_commit(&head_obj.data)?;
     let head_tree_oid = head_commit.tree;
 
+    // Already at the picked commit's parent tip — nothing to replay (matches Git's noop pick).
+    if let Some(p) = commit.parents.first() {
+        if head_oid == *p {
+            let old_index = load_index(repo)?;
+            let mut idx = Index::new();
+            idx.entries = tree_to_index_entries(repo, &commit_tree_oid, "")?;
+            idx.sort();
+            repo.write_index(&mut idx)?;
+            if let Some(wt) = &repo.work_tree {
+                checkout_merged_index(repo, wt, &old_index, &idx)?;
+            }
+            fs::write(git_dir.join("HEAD"), format!("{}\n", commit_oid.to_hex()))?;
+            return Ok(());
+        }
+    }
+
     // Three-way merge: base=parent_tree, ours=HEAD_tree, theirs=commit_tree
     let base_entries = tree_to_map(tree_to_index_entries(repo, &parent_tree_oid, "")?);
     let ours_entries = tree_to_map(tree_to_index_entries(repo, &head_tree_oid, "")?);
@@ -1682,19 +1693,11 @@ fn load_index(repo: &Repository) -> Result<Index> {
 }
 
 fn resolve_identity(config: &ConfigSet, kind: &str) -> Result<(String, String)> {
-    let name_var = format!("GIT_{kind}_NAME");
-    let email_var = format!("GIT_{kind}_EMAIL");
-
-    let name = std::env::var(&name_var)
-        .ok()
-        .or_else(|| config.get("user.name"))
-        .unwrap_or_else(|| "Unknown".to_owned());
-    let email = std::env::var(&email_var)
-        .ok()
-        .or_else(|| config.get("user.email"))
-        .unwrap_or_default();
-
-    Ok((name, email))
+    let role = match kind {
+        "AUTHOR" => IdentRole::Author,
+        _ => IdentRole::Committer,
+    };
+    Ok((resolve_name(config, role)?, resolve_email(config, role)?))
 }
 
 fn format_ident(ident: &(String, String), now: time::OffsetDateTime) -> String {

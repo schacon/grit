@@ -21,6 +21,9 @@ use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::{
     write_tree_from_index, write_tree_from_index_subset, write_tree_partial_from_index,
 };
+
+use crate::ident::{resolve_email, resolve_name, IdentRole};
+
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::io::{self, Write};
@@ -2136,27 +2139,10 @@ fn resolve_author(
         }
     }
 
-    let name = std::env::var("GIT_AUTHOR_NAME")
-        .ok()
-        .or_else(|| config.get("user.name"));
-    let name = match name {
-        Some(n) if n.is_empty() => {
-            eprintln!("Author identity unknown");
-            bail!("empty ident name (for <author>) not allowed");
-        }
-        Some(n) => n,
-        None => {
-            eprintln!("Author identity unknown");
-            bail!("Author identity unknown\n\nPlease tell me who you are.\n\n\
-                 Run\n\n  git config user.email \"you@example.com\"\n  git config user.name \"Your Name\"");
-        }
-    };
+    let name = resolve_name(config, IdentRole::Author)?;
     validate_ident_name(&name, "author")?;
 
-    let email = std::env::var("GIT_AUTHOR_EMAIL")
-        .ok()
-        .or_else(|| config.get("user.email"))
-        .unwrap_or_default();
+    let email = resolve_email(config, IdentRole::Author)?;
 
     let date_str = args
         .date
@@ -2174,23 +2160,10 @@ fn resolve_author(
 
 /// Resolve the committer identity from env and config.
 fn resolve_committer(config: &ConfigSet, now: OffsetDateTime) -> Result<String> {
-    let name = std::env::var("GIT_COMMITTER_NAME")
-        .ok()
-        .or_else(|| config.get("user.name"));
-    let name = match name {
-        Some(n) if n.is_empty() => {
-            eprintln!("Committer identity unknown");
-            bail!("empty ident name (for <committer>) not allowed");
-        }
-        Some(n) => n,
-        None => "Unknown".to_owned(),
-    };
+    let name = resolve_name(config, IdentRole::Committer)?;
     validate_ident_name(&name, "committer")?;
 
-    let email = std::env::var("GIT_COMMITTER_EMAIL")
-        .ok()
-        .or_else(|| config.get("user.email"))
-        .unwrap_or_default();
+    let email = resolve_email(config, IdentRole::Committer)?;
 
     let date_str = std::env::var("GIT_COMMITTER_DATE").ok();
     let timestamp = match date_str {

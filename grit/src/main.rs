@@ -19,6 +19,7 @@ mod fetch_transport;
 mod git_commit_encoding;
 mod git_path;
 mod grit_exe;
+mod ident;
 pub mod pathspec;
 pub mod pkt_line;
 pub mod protocol;
