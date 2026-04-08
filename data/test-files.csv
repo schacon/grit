@@ -1072,7 +1072,7 @@ t6102-rev-list-unexpected-objects	t6	yes	22	19	3	false	ok	0
 t6110-rev-list-sparse	t6	yes	2	2	0	true	ok	0
 t6111-rev-list-treesame	t6	yes	65	5	60	false	ok	0
 t6112-rev-list-filters-objects	t6	yes	54	29	25	false	ok	0
-t6113-rev-list-bitmap-filters	t6	yes	14	2	12	false	ok	0
+t6113-rev-list-bitmap-filters	t6	yes	14	14	0	true	ok	0
 t6114-keep-packs	t6	yes	3	3	0	true	ok	0
 t6115-rev-list-du	t6	yes	17	17	0	true	ok	0
 t6120-describe	t6	yes	103	40	63	false	ok	0

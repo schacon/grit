@@ -1993,11 +1993,15 @@ fn split_treeish_colon(spec: &str) -> Option<(&str, &str)> {
     None
 }
 
-fn split_treeish_spec(spec: &str) -> Option<(&str, &str)> {
+pub(crate) fn split_treeish_spec(spec: &str) -> Option<(&str, &str)> {
     split_treeish_colon(spec)
 }
 
-fn resolve_treeish_path(repo: &Repository, treeish: ObjectId, path: &str) -> Result<ObjectId> {
+pub(crate) fn resolve_treeish_path(
+    repo: &Repository,
+    treeish: ObjectId,
+    path: &str,
+) -> Result<ObjectId> {
     let object = repo.odb.read(&treeish)?;
     let mut current_tree = match object.kind {
         ObjectKind::Commit => parse_commit(&object.data)?.tree,
