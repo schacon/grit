@@ -123,14 +123,9 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
         &theirs_ops,
         &ws_mode,
     );
-    if matches!(input.style, ConflictStyle::Merge) {
-        hunks = merge_adjacent_replace_and_trailing_insert_conflicts(hunks);
-    }
-    hunks = coalesce_nearby_conflicts(
-        hunks,
-        3,
-        matches!(algo, Algorithm::Myers) && matches!(input.style, ConflictStyle::Merge),
-    );
+    // Git keeps adjacent conflict regions separate when identical lines appear
+    // between them (e.g. t4200-rerere); do not merge Conflict+gap+Conflict.
+    hunks = coalesce_nearby_conflicts(hunks, 3, false);
     if matches!(input.style, ConflictStyle::ZealousDiff3) {
         hunks = adjust_zealous_hunks(hunks);
     }
@@ -213,6 +208,27 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
                             if suffix_len > 0 {
                                 append_lines(&mut content, &ours[ours.len() - suffix_len..]);
                             }
+                        } else if matches!(input.style, ConflictStyle::Merge) {
+                            let (prefix_len, suffix_len) = common_prefix_suffix(ours, theirs);
+                            let pre = &ours[..prefix_len];
+                            let suf_start = ours.len().saturating_sub(suffix_len);
+                            let o_mid = &ours[prefix_len..suf_start];
+                            let t_mid =
+                                &theirs[prefix_len..theirs.len().saturating_sub(suffix_len)];
+                            let suf = &ours[suf_start..];
+                            append_lines(&mut content, pre);
+                            emit_conflict(
+                                &mut content,
+                                base,
+                                o_mid,
+                                t_mid,
+                                input.label_ours,
+                                input.label_base,
+                                input.label_theirs,
+                                input.style,
+                                marker,
+                            );
+                            append_lines(&mut content, suf);
                         } else {
                             emit_conflict(
                                 &mut content,

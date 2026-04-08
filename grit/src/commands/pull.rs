@@ -361,6 +361,8 @@ fn do_merge_or_rebase(
             allow_unrelated_histories: false,
             cleanup: None,
             file: None,
+            rerere_autoupdate: false,
+            no_rerere_autoupdate: false,
         };
         super::merge::run(merge_args)
     }

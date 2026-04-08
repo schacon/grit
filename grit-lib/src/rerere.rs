@@ -1,0 +1,1114 @@
+//! Git-compatible rerere (`MERGE_RR`, `rr-cache/`, conflict ID hashing).
+//!
+//! Behaviour matches `git/rerere.c` for upstream harness tests.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use sha1::{Digest, Sha1};
+
+use crate::config::ConfigSet;
+use crate::error::Result;
+use crate::index::{Index, IndexEntry, MODE_REGULAR};
+use crate::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
+use crate::objects::{ObjectId, ObjectKind};
+use crate::repo::Repository;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RerereAutoupdate {
+    #[default]
+    FromConfig,
+    Yes,
+    No,
+}
+
+#[derive(Debug, Clone)]
+struct RerereId {
+    hex: String,
+    variant: i32,
+}
+
+#[derive(Debug, Default, Clone)]
+struct MergeRrEntry {
+    id: Option<RerereId>,
+}
+
+fn merge_rr_path(git_dir: &Path) -> PathBuf {
+    git_dir.join("MERGE_RR")
+}
+
+fn rr_root(git_dir: &Path) -> PathBuf {
+    git_dir.join("rr-cache")
+}
+
+pub fn rerere_enabled(config: &ConfigSet, git_dir: &Path) -> bool {
+    if let Some(val) = config.get("rerere.enabled") {
+        let v = val.to_ascii_lowercase();
+        if matches!(v.as_str(), "false" | "0" | "no" | "off") {
+            return false;
+        }
+        if matches!(v.as_str(), "true" | "1" | "yes" | "on") {
+            return true;
+        }
+    }
+    rr_root(git_dir).is_dir()
+}
+
+fn autoupdate_flag(config: &ConfigSet, o: RerereAutoupdate) -> bool {
+    match o {
+        RerereAutoupdate::Yes => true,
+        RerereAutoupdate::No => false,
+        RerereAutoupdate::FromConfig => config
+            .get("rerere.autoupdate")
+            .map(|v| {
+                let l = v.to_ascii_lowercase();
+                matches!(l.as_str(), "true" | "1" | "yes" | "on")
+            })
+            .unwrap_or(false),
+    }
+}
+
+fn read_merge_rr(git_dir: &Path) -> Result<BTreeMap<String, MergeRrEntry>> {
+    let path = merge_rr_path(git_dir);
+    let mut out = BTreeMap::new();
+    let Ok(data) = fs::read(&path) else {
+        return Ok(out);
+    };
+    let mut i = 0usize;
+    while i < data.len() {
+        let rest = &data[i..];
+        let Some(nul) = rest.iter().position(|&b| b == 0) else {
+            break;
+        };
+        let record = std::str::from_utf8(&rest[..nul]).unwrap_or("");
+        i += nul + 1;
+        let Some(tab) = record.find('\t') else {
+            continue;
+        };
+        let id_part = &record[..tab];
+        let path_str = record[tab + 1..].to_string();
+        let (hex, variant) = if let Some(dot) = id_part.find('.') {
+            let v: i32 = id_part[dot + 1..].parse().unwrap_or(0);
+            (id_part[..dot].to_string(), v)
+        } else {
+            (id_part.to_string(), 0)
+        };
+        out.insert(
+            path_str,
+            MergeRrEntry {
+                id: Some(RerereId { hex, variant }),
+            },
+        );
+    }
+    Ok(out)
+}
+
+fn write_merge_rr(git_dir: &Path, entries: &BTreeMap<String, MergeRrEntry>) -> Result<()> {
+    let path = merge_rr_path(git_dir);
+    if entries.is_empty() {
+        let _ = fs::remove_file(&path);
+        return Ok(());
+    }
+    let mut buf: Vec<u8> = Vec::new();
+    for (path_str, ent) in entries {
+        let Some(id) = &ent.id else {
+            continue;
+        };
+        if id.variant > 0 {
+            buf.extend_from_slice(format!("{}.{}\t{}\0", id.hex, id.variant, path_str).as_bytes());
+        } else {
+            buf.extend_from_slice(format!("{}\t{}\0", id.hex, path_str).as_bytes());
+        }
+    }
+    fs::write(&path, buf)?;
+    Ok(())
+}
+
+fn rr_hex_dir(git_dir: &Path, hex: &str) -> PathBuf {
+    rr_root(git_dir).join(hex)
+}
+
+fn preimage_path(git_dir: &Path, id: &RerereId) -> PathBuf {
+    let b = rr_hex_dir(git_dir, &id.hex);
+    if id.variant > 0 {
+        b.join(format!("preimage.{}", id.variant))
+    } else {
+        b.join("preimage")
+    }
+}
+
+fn postimage_path(git_dir: &Path, id: &RerereId) -> PathBuf {
+    let b = rr_hex_dir(git_dir, &id.hex);
+    if id.variant > 0 {
+        b.join(format!("postimage.{}", id.variant))
+    } else {
+        b.join("postimage")
+    }
+}
+
+fn is_cmarker(line: &str, marker_char: u8, marker_size: usize) -> bool {
+    let b = line.as_bytes();
+    if b.len() < marker_size {
+        return false;
+    }
+    for i in 0..marker_size {
+        if b[i] != marker_char {
+            return false;
+        }
+    }
+    let want_sp = marker_char == b'<' || marker_char == b'>';
+    if want_sp {
+        if b.get(marker_size).copied() != Some(b' ') {
+            return false;
+        }
+    } else if marker_size < b.len() {
+        let c = b[marker_size];
+        if !c.is_ascii_whitespace() {
+            return false;
+        }
+    }
+    true
+}
+
+fn put_marker(out: &mut String, ch: char, size: usize) {
+    for _ in 0..size {
+        out.push(ch);
+    }
+    out.push('\n');
+}
+
+/// Parse one conflict hunk. `i` is advanced past the closing `>>>>>>>`.
+/// First line at entry must be the line *after* the opening `<<<<<<<`.
+fn handle_conflict(
+    lines: &[String],
+    i: &mut usize,
+    marker_size: usize,
+    ctx: Option<&mut Sha1>,
+) -> std::result::Result<String, ()> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Hunk {
+        Side1,
+        Side2,
+        Orig,
+    }
+
+    let mut hunk = Hunk::Side1;
+    let mut one = String::new();
+    let mut two = String::new();
+
+    while *i < lines.len() {
+        let buf = &lines[*i];
+        if is_cmarker(buf, b'<', marker_size) {
+            *i += 1;
+            let nested = handle_conflict(lines, i, marker_size, None)?;
+            match hunk {
+                Hunk::Side1 => one.push_str(&nested),
+                Hunk::Orig => {}
+                Hunk::Side2 => two.push_str(&nested),
+            }
+        } else if is_cmarker(buf, b'|', marker_size) {
+            *i += 1;
+            if hunk != Hunk::Side1 {
+                return Err(());
+            }
+            hunk = Hunk::Orig;
+        } else if is_cmarker(buf, b'=', marker_size) {
+            *i += 1;
+            if hunk != Hunk::Side1 && hunk != Hunk::Orig {
+                return Err(());
+            }
+            hunk = Hunk::Side2;
+        } else if is_cmarker(buf, b'>', marker_size) {
+            *i += 1;
+            if hunk != Hunk::Side2 {
+                return Err(());
+            }
+            if one > two {
+                std::mem::swap(&mut one, &mut two);
+            }
+            let mut out = String::new();
+            put_marker(&mut out, '<', marker_size);
+            out.push_str(&one);
+            put_marker(&mut out, '=', marker_size);
+            out.push_str(&two);
+            put_marker(&mut out, '>', marker_size);
+            if let Some(h) = ctx {
+                h.update(one.as_bytes());
+                h.update(&[0]);
+                h.update(two.as_bytes());
+                h.update(&[0]);
+            }
+            return Ok(out);
+        } else {
+            *i += 1;
+            if hunk == Hunk::Side1 {
+                one.push_str(buf);
+                one.push('\n');
+            } else if hunk == Hunk::Orig {
+            } else {
+                two.push_str(buf);
+                two.push('\n');
+            }
+        }
+    }
+    Err(())
+}
+
+/// Returns 1 if conflict hunks found, 0 if none, -1 on parse error.
+/// Full file with conflict markers normalized (Git rerere preimage shape).
+fn normalize_conflicts(content: &str, marker_size: usize) -> std::result::Result<String, ()> {
+    let lines: Vec<String> = content.lines().map(String::from).collect();
+    let mut i = 0usize;
+    let mut out = String::new();
+    while i < lines.len() {
+        let line = &lines[i];
+        if is_cmarker(line, b'<', marker_size) {
+            i += 1;
+            out.push_str(&handle_conflict(&lines, &mut i, marker_size, None)?);
+        } else {
+            out.push_str(line);
+            out.push('\n');
+            i += 1;
+        }
+    }
+    Ok(out)
+}
+
+fn handle_path(content: &str, marker_size: usize, hash_out: Option<&mut [u8; 20]>) -> i32 {
+    let lines: Vec<String> = content.lines().map(String::from).collect();
+    let mut i = 0usize;
+    let mut ctx = if hash_out.is_some() {
+        Some(Sha1::new())
+    } else {
+        None
+    };
+    let mut out = String::new();
+    let mut found = 0i32;
+
+    while i < lines.len() {
+        let line = &lines[i];
+        if is_cmarker(line, b'<', marker_size) {
+            i += 1;
+            match handle_conflict(&lines, &mut i, marker_size, ctx.as_mut()) {
+                Ok(norm) => {
+                    found = 1;
+                    out.push_str(&norm);
+                }
+                Err(()) => return -1,
+            }
+        } else {
+            out.push_str(line);
+            out.push('\n');
+            i += 1;
+        }
+    }
+
+    if let (Some(h), Some(buf)) = (ctx, hash_out) {
+        let digest: [u8; 20] = h.finalize().into();
+        *buf = digest;
+    }
+    if found == 1 {
+        1
+    } else {
+        0
+    }
+}
+
+fn conflict_marker_size(_path: &str) -> usize {
+    7
+}
+
+fn check_one_conflict(index: &Index, start: usize) -> (usize, u8) {
+    let e = &index.entries[start];
+    if e.stage() == 0 {
+        return (start + 1, 0);
+    }
+
+    let mut i = start;
+    while i < index.entries.len()
+        && index.entries[i].path == e.path
+        && index.entries[i].stage() == 1
+    {
+        i += 1;
+    }
+
+    let mut ty = 1u8;
+    if i + 1 < index.entries.len() {
+        let e2 = &index.entries[i];
+        let e3 = &index.entries[i + 1];
+        if e2.path == e.path
+            && e3.path == e.path
+            && e2.stage() == 2
+            && e3.stage() == 3
+            && matches!(e2.mode, MODE_REGULAR | 0o100755)
+            && matches!(e3.mode, MODE_REGULAR | 0o100755)
+        {
+            ty = 2;
+        }
+    }
+
+    while i < index.entries.len() && index.entries[i].path == e.path {
+        i += 1;
+    }
+    (i, ty)
+}
+
+fn find_three_way_conflicts(index: &Index) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < index.entries.len() {
+        let (next, ty) = check_one_conflict(index, i);
+        if ty == 2 {
+            let path = String::from_utf8_lossy(&index.entries[i].path).to_string();
+            out.push(path);
+        }
+        i = next;
+    }
+    out
+}
+
+/// Add/add (and similar): unmerged path with stages 2 and 3 but no stage 1.
+fn find_two_way_unmerged(index: &Index) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < index.entries.len() {
+        let e = &index.entries[i];
+        if e.stage() == 0 {
+            i += 1;
+            continue;
+        }
+        let path = e.path.clone();
+        let mut has1 = false;
+        let mut has2 = false;
+        let mut has3 = false;
+        let mut j = i;
+        while j < index.entries.len() && index.entries[j].path == path {
+            match index.entries[j].stage() {
+                1 => has1 = true,
+                2 => has2 = true,
+                3 => has3 = true,
+                _ => {}
+            }
+            j += 1;
+        }
+        if has2 && has3 && !has1 {
+            out.push(String::from_utf8_lossy(&path).to_string());
+        }
+        i = j;
+    }
+    out
+}
+
+fn all_rerere_conflict_paths(index: &Index) -> Vec<String> {
+    let mut paths: BTreeSet<String> = BTreeSet::new();
+    for p in find_three_way_conflicts(index) {
+        paths.insert(p);
+    }
+    for p in find_two_way_unmerged(index) {
+        paths.insert(p);
+    }
+    paths.into_iter().collect()
+}
+
+fn read_blob(odb: &crate::odb::Odb, oid: ObjectId) -> Result<Vec<u8>> {
+    let obj = odb.read(&oid)?;
+    Ok(obj.data)
+}
+
+fn synthesize_conflict_from_index(
+    repo: &Repository,
+    index: &Index,
+    path: &str,
+) -> Result<Option<String>> {
+    let path_b = path.as_bytes();
+    let mut stages: [Option<IndexEntry>; 3] = [None, None, None];
+    for e in &index.entries {
+        if e.path == path_b {
+            let s = e.stage();
+            if (1..=3).contains(&s) {
+                stages[s as usize - 1] = Some(e.clone());
+            }
+        }
+    }
+    let marker_size = conflict_marker_size(path);
+    let out = match (&stages[0], &stages[1], &stages[2]) {
+        (Some(e1), Some(e2), Some(e3)) => {
+            let base = read_blob(&repo.odb, e1.oid)?;
+            let ours = read_blob(&repo.odb, e2.oid)?;
+            let theirs = read_blob(&repo.odb, e3.oid)?;
+            merge(&MergeInput {
+                base: &base,
+                ours: &ours,
+                theirs: &theirs,
+                label_ours: "ours",
+                label_base: "base",
+                label_theirs: "theirs",
+                favor: MergeFavor::None,
+                style: ConflictStyle::Merge,
+                marker_size,
+                diff_algorithm: None,
+                ignore_all_space: false,
+                ignore_space_change: false,
+                ignore_space_at_eol: false,
+                ignore_cr_at_eol: false,
+            })?
+        }
+        (None, Some(e2), Some(e3)) => {
+            let ours = read_blob(&repo.odb, e2.oid)?;
+            let theirs = read_blob(&repo.odb, e3.oid)?;
+            merge(&MergeInput {
+                base: &[],
+                ours: &ours,
+                theirs: &theirs,
+                label_ours: "HEAD",
+                label_base: "empty tree",
+                label_theirs: path,
+                favor: MergeFavor::None,
+                style: ConflictStyle::Merge,
+                marker_size,
+                diff_algorithm: None,
+                ignore_all_space: false,
+                ignore_space_change: false,
+                ignore_space_at_eol: false,
+                ignore_cr_at_eol: false,
+            })?
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(String::from_utf8_lossy(&out.content).to_string()))
+}
+
+fn try_replay_merge(
+    _repo: &Repository,
+    path: &str,
+    cur: &[u8],
+    preimage: &[u8],
+    postimage: &[u8],
+) -> Option<Vec<u8>> {
+    let marker_size = conflict_marker_size(path);
+    let out = merge(&MergeInput {
+        base: preimage,
+        ours: cur,
+        theirs: postimage,
+        label_ours: "",
+        label_base: "",
+        label_theirs: "",
+        favor: MergeFavor::None,
+        style: ConflictStyle::Merge,
+        marker_size,
+        diff_algorithm: None,
+        ignore_all_space: false,
+        ignore_space_change: false,
+        ignore_space_at_eol: false,
+        ignore_cr_at_eol: false,
+    })
+    .ok()?;
+    if out.conflicts == 0 {
+        Some(out.content)
+    } else {
+        None
+    }
+}
+
+fn touch_postimage(git_dir: &Path, id: &RerereId) {
+    let p = postimage_path(git_dir, id);
+    if let Ok(meta) = fs::metadata(&p) {
+        let len = meta.len();
+        if let Ok(f) = fs::OpenOptions::new().write(true).truncate(false).open(&p) {
+            let _ = f.set_len(len);
+        }
+    }
+}
+
+fn assign_variant(git_dir: &Path, hex: &str) -> i32 {
+    let mut v = 0i32;
+    loop {
+        let id = RerereId {
+            hex: hex.to_string(),
+            variant: v,
+        };
+        if !preimage_path(git_dir, &id).exists() && !postimage_path(git_dir, &id).exists() {
+            return v;
+        }
+        v += 1;
+    }
+}
+
+fn list_complete_variants(git_dir: &Path, hex: &str) -> Vec<i32> {
+    let mut out = Vec::new();
+    let dir = rr_hex_dir(git_dir, hex);
+    if !dir.is_dir() {
+        return out;
+    }
+    let id0 = RerereId {
+        hex: hex.to_string(),
+        variant: 0,
+    };
+    if preimage_path(git_dir, &id0).is_file() && postimage_path(git_dir, &id0).is_file() {
+        out.push(0);
+    }
+    let Ok(rd) = fs::read_dir(&dir) else {
+        return out;
+    };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if let Some(rest) = name.strip_prefix("preimage.") {
+            if let Ok(v) = rest.parse::<i32>() {
+                let id = RerereId {
+                    hex: hex.to_string(),
+                    variant: v,
+                };
+                if postimage_path(git_dir, &id).is_file() {
+                    out.push(v);
+                }
+            }
+        }
+    }
+    out.sort_unstable();
+    out
+}
+
+fn thisimage_path(git_dir: &Path, id: &RerereId) -> PathBuf {
+    let b = rr_hex_dir(git_dir, &id.hex);
+    if id.variant > 0 {
+        b.join(format!("thisimage.{}", id.variant))
+    } else {
+        b.join("thisimage")
+    }
+}
+
+fn remove_variant(git_dir: &Path, id: &RerereId) {
+    let _ = fs::remove_file(postimage_path(git_dir, id));
+    let _ = fs::remove_file(preimage_path(git_dir, id));
+    let _ = fs::remove_file(thisimage_path(git_dir, id));
+}
+
+fn write_preimage_normalized(
+    git_dir: &Path,
+    id: &RerereId,
+    work_content: &str,
+    marker_size: usize,
+) -> Result<()> {
+    let norm = match normalize_conflicts(work_content, marker_size) {
+        Ok(s) => s,
+        Err(()) => return Ok(()),
+    };
+    fs::create_dir_all(rr_hex_dir(git_dir, &id.hex))?;
+    fs::write(preimage_path(git_dir, id), norm.as_bytes())?;
+    let _ = fs::remove_file(postimage_path(git_dir, id));
+    Ok(())
+}
+
+fn stage_resolved_path(repo: &Repository, index: &mut Index, path: &str) -> Result<()> {
+    let wt = repo
+        .work_tree
+        .as_ref()
+        .ok_or_else(|| crate::error::Error::PathError("no work tree".to_string()))?;
+    let abs = wt.join(path);
+    let data = fs::read(&abs)?;
+    let oid = repo.odb.write(ObjectKind::Blob, &data)?;
+    let path_b = path.as_bytes().to_vec();
+    let template = index
+        .entries
+        .iter()
+        .find(|e| e.path == path_b && e.stage() == 2)
+        .or_else(|| {
+            index
+                .entries
+                .iter()
+                .find(|e| e.path == path_b && e.stage() == 3)
+        })
+        .cloned()
+        .unwrap_or_else(|| IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: MODE_REGULAR,
+            uid: 0,
+            gid: 0,
+            size: data.len().min(u32::MAX as usize) as u32,
+            oid,
+            flags: 0,
+            flags_extended: None,
+            path: path_b,
+        });
+    let mut entry = template;
+    entry.oid = oid;
+    entry.size = data.len().min(u32::MAX as usize) as u32;
+    entry.flags &= !0x3000;
+    index.stage_file(entry);
+    Ok(())
+}
+
+/// Invoked after mergy operations with conflicts (`merge`, `rebase`, …).
+pub fn repo_rerere(repo: &Repository, autoupdate: RerereAutoupdate) -> Result<()> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    if !rerere_enabled(&config, &repo.git_dir) {
+        return Ok(());
+    }
+    let autoupdate_on = autoupdate_flag(&config, autoupdate);
+    let wt = match &repo.work_tree {
+        Some(w) => w,
+        None => return Ok(()),
+    };
+
+    let index_path = repo.git_dir.join("index");
+    if !index_path.exists() {
+        return Ok(());
+    }
+    let mut index = repo.load_index_at(&index_path)?;
+    let mut merge_rr = read_merge_rr(&repo.git_dir)?;
+
+    fs::create_dir_all(rr_root(&repo.git_dir))?;
+
+    let conflicts = all_rerere_conflict_paths(&index);
+    for path in &conflicts {
+        let file_path = wt.join(path);
+        let work_content = if file_path.exists() {
+            fs::read_to_string(&file_path).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let marker_size = conflict_marker_size(path);
+        let mut hash = [0u8; 20];
+        let ret = handle_path(&work_content, marker_size, Some(&mut hash));
+        if ret != 1 {
+            merge_rr.remove(path);
+            continue;
+        }
+        let hex = hex::encode(hash);
+        merge_rr.insert(
+            path.clone(),
+            MergeRrEntry {
+                id: Some(RerereId { hex, variant: -1 }),
+            },
+        );
+    }
+
+    let paths: Vec<String> = merge_rr.keys().cloned().collect();
+    let mut to_stage: Vec<String> = Vec::new();
+
+    for path in paths {
+        let Some(ent) = merge_rr.get_mut(&path) else {
+            continue;
+        };
+        let Some(mut id) = ent.id.clone() else {
+            continue;
+        };
+
+        let file_path = wt.join(&path);
+        let work_content = if file_path.exists() {
+            fs::read_to_string(&file_path).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let marker_size = conflict_marker_size(&path);
+
+        if id.variant < 0 {
+            id.variant = assign_variant(&repo.git_dir, &id.hex);
+            write_preimage_normalized(&repo.git_dir, &id, &work_content, marker_size)?;
+            ent.id = Some(id);
+            eprintln!("Recorded preimage for '{path}'");
+            continue;
+        }
+
+        if handle_path(&work_content, marker_size, None) == 0 {
+            fs::copy(&file_path, postimage_path(&repo.git_dir, &id))?;
+            eprintln!("Recorded resolution for '{path}'.");
+            ent.id = None;
+            continue;
+        }
+
+        let hex = id.hex.clone();
+        let mut replayed = false;
+        for v in list_complete_variants(&repo.git_dir, &hex) {
+            let vid = RerereId {
+                hex: hex.clone(),
+                variant: v,
+            };
+            let pre = match fs::read(preimage_path(&repo.git_dir, &vid)) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            let post = match fs::read(postimage_path(&repo.git_dir, &vid)) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            if let Some(res) = try_replay_merge(repo, &path, work_content.as_bytes(), &pre, &post) {
+                fs::write(&file_path, &res)?;
+                touch_postimage(&repo.git_dir, &vid);
+                if id.variant != v {
+                    remove_variant(&repo.git_dir, &id);
+                }
+                if autoupdate_on {
+                    to_stage.push(path.clone());
+                } else {
+                    eprintln!("Resolved '{path}' using previous resolution.");
+                }
+                replayed = true;
+                break;
+            }
+        }
+        if replayed {
+            ent.id = None;
+            continue;
+        }
+
+        id.variant = assign_variant(&repo.git_dir, &id.hex);
+        write_preimage_normalized(&repo.git_dir, &id, &work_content, marker_size)?;
+        ent.id = Some(id);
+        eprintln!("Recorded preimage for '{path}'");
+    }
+
+    merge_rr.retain(|_, e| e.id.is_some());
+    write_merge_rr(&repo.git_dir, &merge_rr)?;
+
+    if !to_stage.is_empty() {
+        for p in &to_stage {
+            stage_resolved_path(repo, &mut index, p)?;
+        }
+        repo.write_index(&mut index)?;
+        for p in &to_stage {
+            eprintln!("Staged '{p}' using previous resolution.");
+        }
+    }
+
+    Ok(())
+}
+
+/// After successful commit: record postimages, clear `MERGE_RR` entries.
+pub fn rerere_post_commit(repo: &Repository) -> Result<()> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    if !rerere_enabled(&config, &repo.git_dir) {
+        return Ok(());
+    }
+    let wt = match &repo.work_tree {
+        Some(w) => w,
+        None => return Ok(()),
+    };
+    let index_path = repo.git_dir.join("index");
+    if !index_path.exists() {
+        return Ok(());
+    }
+    let mut merge_rr = read_merge_rr(&repo.git_dir)?;
+    if merge_rr.is_empty() {
+        return Ok(());
+    }
+
+    let paths: Vec<String> = merge_rr.keys().cloned().collect();
+    for path in paths {
+        let Some(ent) = merge_rr.get_mut(&path) else {
+            continue;
+        };
+        let Some(id) = ent.id.clone() else {
+            continue;
+        };
+        if id.variant < 0 {
+            continue;
+        }
+        let pre = preimage_path(&repo.git_dir, &id);
+        let post = postimage_path(&repo.git_dir, &id);
+        if !pre.exists() || post.exists() {
+            continue;
+        }
+        let fp = wt.join(&path);
+        if !fp.exists() {
+            continue;
+        }
+        let content = fs::read_to_string(&fp)?;
+        let marker_size = conflict_marker_size(&path);
+        if handle_path(&content, marker_size, None) != 0 {
+            continue;
+        }
+        fs::write(&post, content.as_bytes())?;
+        eprintln!("Recorded resolution for '{path}'.");
+        ent.id = None;
+    }
+
+    merge_rr.retain(|_, e| e.id.is_some());
+    write_merge_rr(&repo.git_dir, &merge_rr)?;
+    Ok(())
+}
+
+/// `git rerere clear` — drop unresolved preimages tracked in `MERGE_RR`, remove `MERGE_RR`.
+pub fn rerere_clear(git_dir: &Path) -> Result<()> {
+    let merge_rr = read_merge_rr(git_dir)?;
+    for (_path, ent) in &merge_rr {
+        let Some(id) = &ent.id else {
+            continue;
+        };
+        let post = postimage_path(git_dir, id);
+        if post.exists() {
+            continue;
+        }
+        let dir = rr_hex_dir(git_dir, &id.hex);
+        if dir.is_dir() {
+            let _ = fs::remove_dir_all(&dir);
+        }
+    }
+    let _ = fs::remove_file(merge_rr_path(git_dir));
+    Ok(())
+}
+
+fn parse_expiry_days_now(config: &ConfigSet, key: &str, now: i64) -> Option<i64> {
+    let s = config.get(key)?;
+    if let Ok(days) = s.parse::<i64>() {
+        return Some(now - days * 86400);
+    }
+    let tl = s.trim().to_ascii_lowercase();
+    if tl == "now" {
+        return Some(now);
+    }
+    let parts: Vec<&str> = tl.split('.').filter(|p| !p.is_empty()).collect();
+    if parts.len() >= 3 && parts[parts.len() - 2] == "ago" {
+        let unit = parts[parts.len() - 1];
+        let mut n: i64 = 0;
+        for p in &parts[..parts.len() - 2] {
+            if let Ok(v) = p.parse::<i64>() {
+                n = v;
+                break;
+            }
+        }
+        let mult = match unit {
+            "second" | "seconds" => 1,
+            "minute" | "minutes" => 60,
+            "hour" | "hours" => 3600,
+            "day" | "days" => 86400,
+            "week" | "weeks" => 7 * 86400,
+            _ => return None,
+        };
+        return Some(now - n * mult);
+    }
+    None
+}
+
+/// `git rerere gc`
+pub fn rerere_gc(git_dir: &Path) -> Result<()> {
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    if !rerere_enabled(&config, git_dir) {
+        return Ok(());
+    }
+    let now: i64 = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let mut cutoff_resolve = now - 60 * 86400;
+    let mut cutoff_unresolved = now - 15 * 86400;
+    if let Some(c) = parse_expiry_days_now(&config, "gc.rerereresolved", now) {
+        cutoff_resolve = c;
+    }
+    if let Some(c) = parse_expiry_days_now(&config, "gc.rerereunresolved", now) {
+        cutoff_unresolved = c;
+    }
+
+    let cache = rr_root(git_dir);
+    if !cache.is_dir() {
+        return Ok(());
+    }
+    let mut empty_dirs: Vec<String> = Vec::new();
+    for entry in fs::read_dir(&cache)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.len() != 40 || !name.chars().all(|c| c.is_ascii_hexdigit()) {
+            continue;
+        }
+        let hex = name;
+        let dir = entry.path();
+        let mut variants: BTreeSet<i32> = BTreeSet::new();
+        for f in fs::read_dir(&dir)? {
+            let f = f?;
+            let n = f.file_name().to_string_lossy().to_string();
+            if n == "preimage" {
+                variants.insert(0);
+            } else if let Some(r) = n.strip_prefix("preimage.") {
+                if let Ok(v) = r.parse() {
+                    variants.insert(v);
+                }
+            }
+        }
+        for v in variants {
+            let id = RerereId {
+                hex: hex.clone(),
+                variant: v,
+            };
+            let post = postimage_path(git_dir, &id);
+            let pre = preimage_path(git_dir, &id);
+            let check = if post.exists() { &post } else { &pre };
+            if !check.exists() {
+                continue;
+            }
+            let mtime = fs::metadata(check)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let cutoff = if post.exists() {
+                cutoff_resolve
+            } else {
+                cutoff_unresolved
+            };
+            if mtime < cutoff {
+                remove_variant(git_dir, &id);
+            }
+        }
+        let now_empty = fs::read_dir(&dir).map(|d| d.count() == 0).unwrap_or(true);
+        if now_empty {
+            empty_dirs.push(hex);
+        }
+    }
+    for hex in empty_dirs {
+        let _ = fs::remove_dir(rr_hex_dir(git_dir, &hex));
+    }
+    Ok(())
+}
+
+/// Lines for `git rerere status` (paths listed in `MERGE_RR`).
+pub fn rerere_status_lines(repo: &Repository) -> Result<Vec<String>> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    if !rerere_enabled(&config, &repo.git_dir) {
+        return Ok(Vec::new());
+    }
+    let mm = read_merge_rr(&repo.git_dir)?;
+    Ok(mm.keys().cloned().collect())
+}
+
+/// Unified diff: recorded preimage vs working tree (Git/xdiff style header).
+pub fn rerere_diff_for_path(repo: &Repository, path: &str) -> Result<Option<String>> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    if !rerere_enabled(&config, &repo.git_dir) {
+        return Ok(None);
+    }
+    let mm = read_merge_rr(&repo.git_dir)?;
+    let ent = match mm.get(path) {
+        Some(e) => e,
+        None => return Ok(None),
+    };
+    let Some(id) = &ent.id else {
+        return Ok(None);
+    };
+    let pre_path = preimage_path(&repo.git_dir, id);
+    if !pre_path.exists() {
+        return Ok(None);
+    }
+    let recorded = fs::read_to_string(&pre_path)?;
+    let wt = repo.work_tree.as_ref();
+    let Some(wt) = wt else {
+        return Ok(None);
+    };
+    let cur = fs::read_to_string(wt.join(path)).unwrap_or_default();
+    let mut out = String::new();
+    out.push_str(&format!("--- a/{path}\n+++ b/{path}\n"));
+    for diff in similar::TextDiff::from_lines(&recorded, &cur)
+        .unified_diff()
+        .context_radius(3)
+        .iter_hunks()
+    {
+        out.push_str(&format!("{diff}"));
+    }
+    Ok(Some(out))
+}
+
+/// Paths with unresolved conflict markers in the worktree (same set as `rerere status` in typical tests).
+pub fn rerere_remaining_lines(repo: &Repository) -> Result<Vec<String>> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    if !rerere_enabled(&config, &repo.git_dir) {
+        return Ok(Vec::new());
+    }
+    let wt = match &repo.work_tree {
+        Some(w) => w,
+        None => return Ok(Vec::new()),
+    };
+    let index_path = repo.git_dir.join("index");
+    if !index_path.exists() {
+        return Ok(Vec::new());
+    }
+    let index = repo.load_index_at(&index_path)?;
+    let mut out = Vec::new();
+    for path in all_rerere_conflict_paths(&index) {
+        let fp = wt.join(&path);
+        if !fp.exists() {
+            continue;
+        }
+        let content = fs::read_to_string(&fp).unwrap_or_default();
+        let marker_size = conflict_marker_size(&path);
+        if handle_path(&content, marker_size, None) == 1 {
+            out.push(path);
+        }
+    }
+    Ok(out)
+}
+
+/// Drop recorded resolution for `path` (working tree must show conflict markers).
+pub fn rerere_forget_path(repo: &Repository, path: &str) -> Result<()> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    if !rerere_enabled(&config, &repo.git_dir) {
+        return Ok(());
+    }
+    let wt = repo
+        .work_tree
+        .as_ref()
+        .ok_or_else(|| crate::error::Error::PathError("no work tree".to_string()))?;
+    let fp = wt.join(path);
+    if !fp.exists() {
+        return Err(crate::error::Error::PathError(format!(
+            "no such path '{path}' in the working tree"
+        )));
+    }
+    let index_path = repo.git_dir.join("index");
+    let index = repo.load_index_at(&index_path)?;
+    let synth = match synthesize_conflict_from_index(repo, &index, path)? {
+        Some(s) => s,
+        None => {
+            return Err(crate::error::Error::PathError(format!(
+                "could not parse conflict hunks in '{path}'"
+            )));
+        }
+    };
+    let marker_size = conflict_marker_size(path);
+    let mut hash = [0u8; 20];
+    if handle_path(&synth, marker_size, Some(&mut hash)) != 1 {
+        return Err(crate::error::Error::PathError(format!(
+            "could not parse conflict hunks in '{path}'"
+        )));
+    }
+    let hex = hex::encode(hash);
+    let work = fs::read_to_string(&fp)?;
+    let mut forgot_id: Option<RerereId> = None;
+    for v in list_complete_variants(&repo.git_dir, &hex) {
+        let id = RerereId {
+            hex: hex.clone(),
+            variant: v,
+        };
+        let pre = fs::read(preimage_path(&repo.git_dir, &id)).ok();
+        let post = fs::read(postimage_path(&repo.git_dir, &id)).ok();
+        let (Some(pre_b), Some(post_b)) = (pre, post) else {
+            continue;
+        };
+        if try_replay_merge(repo, path, work.as_bytes(), &pre_b, &post_b).is_some() {
+            let _ = fs::remove_file(postimage_path(&repo.git_dir, &id));
+            write_preimage_normalized(&repo.git_dir, &id, &work, marker_size)?;
+            eprintln!("Updated preimage for '{path}'");
+            eprintln!("Forgot resolution for '{path}'");
+            forgot_id = Some(id);
+            break;
+        }
+    }
+    let Some(id) = forgot_id else {
+        return Err(crate::error::Error::PathError(format!(
+            "no remembered resolution for '{path}'"
+        )));
+    };
+    let mut merge_rr = read_merge_rr(&repo.git_dir)?;
+    merge_rr.insert(path.to_string(), MergeRrEntry { id: Some(id) });
+    write_merge_rr(&repo.git_dir, &merge_rr)?;
+    Ok(())
+}

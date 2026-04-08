@@ -718,7 +718,7 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // Clean up merge state files if present
+    let _ = grit_lib::rerere::rerere_post_commit(&repo);
     cleanup_merge_state(&repo.git_dir);
 
     // Refresh the index file Git used for this commit (including `GIT_INDEX_FILE`).

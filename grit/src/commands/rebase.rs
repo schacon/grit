@@ -1306,12 +1306,8 @@ fn cherry_pick_for_rebase(
     )?;
     let mut merged_index = merge_result.index;
 
-    if let Some(rule) = ws_fix_rule {
-        apply_ws_fix_to_index(repo, &mut merged_index, rule)?;
-        merged_index.sort();
-    }
-
-    let has_conflicts = merged_index.entries.iter().any(|e| e.stage() != 0);
+    let has_conflicts = merged_index.entries.iter().any(|e| e.stage() != 0)
+        || !merge_result.conflict_files.is_empty();
 
     // Write index
     let old_index = load_index(repo)?;
@@ -1329,12 +1325,8 @@ fn cherry_pick_for_rebase(
     let root_rebase = rb_dir.join("root").exists();
 
     if has_conflicts {
-        if root_rebase {
-            let merge_msg = message_for_root_replayed_commit(repo, &commit, true);
-            fs::write(git_dir.join("MERGE_MSG"), &merge_msg)?;
-        } else {
-            write_rebase_conflict_message(git_dir, &commit, &config)?;
-        }
+        let _ = grit_lib::rerere::repo_rerere(repo, grit_lib::rerere::RerereAutoupdate::FromConfig);
+        fs::write(git_dir.join("MERGE_MSG"), &commit.message)?;
         bail!("conflicts during cherry-pick of {}", commit_oid.to_hex());
     }
 

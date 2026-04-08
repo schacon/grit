@@ -50,6 +50,7 @@ pub mod reflog;
 pub mod refs;
 pub mod reftable;
 pub mod repo;
+pub mod rerere;
 pub mod rev_list;
 pub mod rev_parse;
 #[cfg(unix)]
