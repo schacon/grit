@@ -216,7 +216,8 @@ pub fn run(args: Args) -> Result<()> {
         if repo.odb.exists(&oid) {
             return Ok(());
         }
-        if promisor_hydrate::try_lazy_fetch_promisor_object(&repo, oid).is_ok() && repo.odb.exists(&oid)
+        if promisor_hydrate::try_lazy_fetch_promisor_object(&repo, oid).is_ok()
+            && repo.odb.exists(&oid)
         {
             return Ok(());
         }
@@ -261,14 +262,12 @@ pub fn run(args: Args) -> Result<()> {
                         _current_oid = target_hex
                             .parse::<ObjectId>()
                             .map_err(|_| anyhow::anyhow!("bad tag target"))?;
-                        current_obj = match read_object_with_promisor_lazy_fetch(
-                            &repo,
-                            &_current_oid,
-                            false,
-                        ) {
-                            Ok(o) => o,
-                            Err(e) => exit_cat_file_read_error(&e, &args, obj_str),
-                        };
+                        current_obj =
+                            match read_object_with_promisor_lazy_fetch(&repo, &_current_oid, false)
+                            {
+                                Ok(o) => o,
+                                Err(e) => exit_cat_file_read_error(&e, &args, obj_str),
+                            };
                     } else {
                         bail!("object {} is of type tag, not {}", oid, kind);
                     }
@@ -276,14 +275,11 @@ pub fn run(args: Args) -> Result<()> {
                 ObjectKind::Commit if kind == ObjectKind::Tree => {
                     let commit = parse_commit(&current_obj.data)?;
                     _current_oid = commit.tree;
-                    current_obj = match read_object_with_promisor_lazy_fetch(
-                        &repo,
-                        &_current_oid,
-                        false,
-                    ) {
-                        Ok(o) => o,
-                        Err(e) => exit_cat_file_read_error(&e, &args, obj_str),
-                    };
+                    current_obj =
+                        match read_object_with_promisor_lazy_fetch(&repo, &_current_oid, false) {
+                            Ok(o) => o,
+                            Err(e) => exit_cat_file_read_error(&e, &args, obj_str),
+                        };
                 }
                 _ => {
                     if !args.allow_unknown_type {
@@ -1801,7 +1797,8 @@ fn resolve_object_with_mode_lib(
                 let parts: Vec<&str> = path_part.split('/').filter(|p| !p.is_empty()).collect();
                 let mut current_tree = tree_oid;
                 for (i, part) in parts.iter().enumerate() {
-                    let tree_obj = read_object_with_promisor_lazy_fetch(repo, &current_tree, false)?;
+                    let tree_obj =
+                        read_object_with_promisor_lazy_fetch(repo, &current_tree, false)?;
                     let entries = parse_tree(&tree_obj.data)?;
                     if let Some(entry) = entries.iter().find(|e| e.name == part.as_bytes()) {
                         if i == parts.len() - 1 {

@@ -15,8 +15,8 @@ use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::objects::ObjectId;
-use grit_lib::prune_packed::{prune_packed_objects, PrunePackedOptions};
 use grit_lib::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
+use grit_lib::prune_packed::{prune_packed_objects, PrunePackedOptions};
 use grit_lib::reflog::{expire_reflog, expire_reflog_unreachable, list_reflog_refs};
 use grit_lib::repo::Repository;
 use std::fs;
@@ -198,9 +198,8 @@ fn run_repack_for_gc(repo: &Repository, quiet: bool, gc_args: &Args) -> Result<(
     let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let objects_dir = repo.git_dir.join("objects");
     if repo_treats_promisor_packs(&repo.git_dir, &cfg) {
-        let mut promisor_ids: Vec<ObjectId> = promisor_pack_object_ids(&objects_dir)
-            .into_iter()
-            .collect();
+        let mut promisor_ids: Vec<ObjectId> =
+            promisor_pack_object_ids(&objects_dir).into_iter().collect();
         promisor_ids.sort_by_key(|o| o.to_hex());
         promisor_ids.dedup();
         if !promisor_ids.is_empty() {
@@ -290,16 +289,23 @@ fn run_promisor_merge_repack_gc(
         .arg(pack_base);
     apply_gc_pack_objects_args(&mut cmd1, quiet, gc_args);
 
-    let mut child = cmd1.spawn().context("spawn pack-objects for promisor merge")?;
+    let mut child = cmd1
+        .spawn()
+        .context("spawn pack-objects for promisor merge")?;
     {
         let mut stdin = child.stdin.take().context("pack-objects stdin")?;
         for oid in promisor_ids {
             writeln!(stdin, "{}", oid.to_hex())?;
         }
     }
-    let out1 = child.wait_with_output().context("wait pack-objects promisor merge")?;
+    let out1 = child
+        .wait_with_output()
+        .context("wait pack-objects promisor merge")?;
     if !out1.status.success() {
-        bail!("pack-objects (promisor merge) failed with status {}", out1.status);
+        bail!(
+            "pack-objects (promisor merge) failed with status {}",
+            out1.status
+        );
     }
     let hash1 = parse_pack_objects_stdout_hash(&out1.stdout)?;
     let promisor_pack_name = format!("pack-{hash1}.pack");
@@ -316,7 +322,9 @@ fn run_promisor_merge_repack_gc(
         .arg(pack_base);
     apply_gc_pack_objects_args(&mut cmd2, quiet, gc_args);
 
-    let out2 = cmd2.output().context("run pack-objects for non-promisor gc")?;
+    let out2 = cmd2
+        .output()
+        .context("run pack-objects for non-promisor gc")?;
     if !out2.status.success() {
         bail!(
             "pack-objects (non-promisor) failed with status {}",

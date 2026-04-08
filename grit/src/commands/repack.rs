@@ -156,7 +156,10 @@ pub fn run(args: Args) -> Result<()> {
 /// Deletes every `pack-*.pack` in `pack_dir` except the given basenames, unless a matching
 /// `pack-*.keep` file exists for that pack. Used by `gc` when writing both a merged promisor pack
 /// and a non-promisor pack in one pass.
-pub(crate) fn remove_superseded_packs_multi(pack_dir: &Path, keep_pack_names: &[String]) -> Result<()> {
+pub(crate) fn remove_superseded_packs_multi(
+    pack_dir: &Path,
+    keep_pack_names: &[String],
+) -> Result<()> {
     let rd = match fs::read_dir(pack_dir) {
         Ok(rd) => rd,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),

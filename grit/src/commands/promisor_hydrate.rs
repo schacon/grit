@@ -5,7 +5,9 @@
 use anyhow::{bail, Context, Result};
 use grit_lib::config::ConfigSet;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
-use grit_lib::promisor::{read_promisor_missing_oids, repo_treats_promisor_packs, write_promisor_marker};
+use grit_lib::promisor::{
+    read_promisor_missing_oids, repo_treats_promisor_packs, write_promisor_marker,
+};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use std::collections::HashSet;
@@ -168,10 +170,7 @@ pub(crate) fn try_lazy_fetch_promisor_object(repo: &Repository, oid: ObjectId) -
         }
     }
 
-    bail!(
-        "could not fetch {} from promisor remote",
-        oid.to_hex()
-    );
+    bail!("could not fetch {} from promisor remote", oid.to_hex());
 }
 
 fn resolve_remote_repo_path(base: &Path, url: &str) -> Result<PathBuf> {
