@@ -117,6 +117,9 @@ pub struct FileAttrs {
     pub working_tree_encoding: Option<String>,
     /// Legacy `crlf` / `-crlf` / `crlf=input` from `.gitattributes`.
     pub crlf_legacy: CrlfLegacyAttr,
+    /// `whitespace` attribute value: `None` if unset, `Some("set")` for bare `whitespace`,
+    /// `Some("unset")` for `-whitespace`, or `Some("trailing,...")` for `whitespace=...`.
+    pub whitespace: Option<String>,
 }
 
 impl Default for FileAttrs {
@@ -133,6 +136,7 @@ impl Default for FileAttrs {
             conflict_marker_size: None,
             working_tree_encoding: None,
             crlf_legacy: CrlfLegacyAttr::Unspecified,
+            whitespace: None,
         }
     }
 }
@@ -409,6 +413,13 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
                             "set" => CrlfLegacyAttr::Crlf,
                             _ => CrlfLegacyAttr::Unspecified,
                         };
+                    }
+                    "whitespace" => {
+                        if value == "unset" {
+                            fa.whitespace = Some("unset".to_owned());
+                        } else if !value.is_empty() {
+                            fa.whitespace = Some(value.clone());
+                        }
                     }
                     _ => {}
                 }

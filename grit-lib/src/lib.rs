@@ -55,3 +55,4 @@ pub mod unpack_objects;
 pub mod userdiff;
 pub mod wildmatch;
 pub mod write_tree;
+pub mod ws;

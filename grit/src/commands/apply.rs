@@ -20,6 +20,7 @@ use grit_lib::index::{Index, IndexEntry};
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
+use grit_lib::ws::{self, WhitespaceGitAttr, WS_BLANK_AT_EOF, WS_DEFAULT_RULE, WS_INCOMPLETE_LINE};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
@@ -152,8 +153,10 @@ struct Hunk {
     old_count: usize,
     /// 1-based line number in the new file.
     new_start: usize,
-    /// Number of lines in the new side.
+    /// Number of lines on the new side.
     new_count: usize,
+    /// 1-based line number in the patch file of the first hunk body line (line after `@@`).
+    first_body_line: usize,
     /// Lines of the hunk body (' ', '+', '-' prefixed, or bare '\' no newline).
     lines: Vec<HunkLine>,
 }
@@ -167,13 +170,24 @@ enum HunkLine {
     NoNewline,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WsCliMode {
+    Warn,
+    NoWarn,
+    Error,
+    Fix,
+}
+
+#[derive(Debug, Clone, Copy)]
 struct ApplyWhitespaceMode {
     whitespace_fix: bool,
     ignore_space_change: bool,
     inaccurate_eof: bool,
     tab_width: usize,
     context: Option<usize>,
+    ws_cli: WsCliMode,
+    /// Git suppresses excess whitespace diagnostics after this many (0 = never squelch).
+    ws_squelch: u32,
 }
 
 fn config_ignore_space_change() -> bool {
@@ -191,25 +205,20 @@ fn config_ignore_space_change() -> bool {
     )
 }
 
-fn config_tab_width() -> usize {
+fn config_whitespace_rule_bits() -> u32 {
     let Ok(repo) = Repository::discover(None) else {
-        return 8;
+        return WS_DEFAULT_RULE;
     };
     let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
         .unwrap_or_else(|_| grit_lib::config::ConfigSet::new());
     let Some(value) = config.get("core.whitespace") else {
-        return 8;
+        return WS_DEFAULT_RULE;
     };
+    ws::parse_whitespace_rule(&value).unwrap_or(WS_DEFAULT_RULE)
+}
 
-    value
-        .split(',')
-        .find_map(|part| {
-            part.trim()
-                .strip_prefix("tabwidth=")
-                .and_then(|n| n.parse::<usize>().ok())
-        })
-        .filter(|w| *w > 0)
-        .unwrap_or(8)
+fn config_tab_width() -> usize {
+    ws::ws_tab_width(config_whitespace_rule_bits()).max(1)
 }
 
 fn config_whitespace_fix() -> bool {
@@ -229,12 +238,28 @@ fn whitespace_option_was_explicitly_set() -> bool {
 }
 
 fn resolve_apply_whitespace_mode(args: &Args) -> ApplyWhitespaceMode {
-    let whitespace_fix = if whitespace_option_was_explicitly_set() {
-        args.whitespace.eq_ignore_ascii_case("fix")
+    let ws_cli = if args.whitespace.eq_ignore_ascii_case("nowarn") {
+        WsCliMode::NoWarn
     } else if args.whitespace.eq_ignore_ascii_case("warn") {
+        WsCliMode::Warn
+    } else if args.whitespace.eq_ignore_ascii_case("error")
+        || args.whitespace.eq_ignore_ascii_case("error-all")
+    {
+        WsCliMode::Error
+    } else if args.whitespace.eq_ignore_ascii_case("fix")
+        || args.whitespace.eq_ignore_ascii_case("strip")
+    {
+        WsCliMode::Fix
+    } else {
+        WsCliMode::Warn
+    };
+
+    let whitespace_fix = if whitespace_option_was_explicitly_set() {
+        matches!(ws_cli, WsCliMode::Fix)
+    } else if matches!(ws_cli, WsCliMode::Warn) {
         config_whitespace_fix()
     } else {
-        args.whitespace.eq_ignore_ascii_case("fix")
+        matches!(ws_cli, WsCliMode::Fix)
     };
     let ignore_space_change = if args.no_ignore_whitespace {
         false
@@ -243,12 +268,20 @@ fn resolve_apply_whitespace_mode(args: &Args) -> ApplyWhitespaceMode {
     } else {
         config_ignore_space_change()
     };
+    let ws_squelch = if args.whitespace.eq_ignore_ascii_case("error-all") {
+        0u32
+    } else {
+        5u32
+    };
+
     ApplyWhitespaceMode {
         whitespace_fix,
         ignore_space_change,
         inaccurate_eof: args.inaccurate_eof,
         tab_width: config_tab_width(),
         context: args.context,
+        ws_cli,
+        ws_squelch,
     }
 }
 
@@ -291,6 +324,8 @@ struct FilePatch {
     binary_patch: Option<BinaryPatchPayload>,
     /// Hunks to apply.
     hunks: Vec<Hunk>,
+    /// Merged `core.whitespace` + `whitespace` attribute (Git `ws_rule`); `0` before assignment.
+    ws_rule: u32,
 }
 
 /// Binary patch payload as compressed base85 chunks for forward/reverse apply.
@@ -374,8 +409,84 @@ impl FilePatch {
 // Parsing
 // ---------------------------------------------------------------------------
 
+/// Git `name_terminate` for `---`/`+++` parsing (`TERM_TAB` only).
+fn diff_header_name_terminate(c: u8) -> bool {
+    const TERM_SPACE: u8 = 1;
+    const TERM_TAB: u8 = 2;
+    let terminate = TERM_TAB;
+    if c == b' ' && (terminate & TERM_SPACE) == 0 {
+        return false;
+    }
+    if c == b'\t' && (terminate & TERM_TAB) == 0 {
+        return false;
+    }
+    true
+}
+
+/// Extract the file path from the remainder of a `---` / `+++` header line,
+/// matching Git's `find_name(..., TERM_TAB)`.
+///
+/// Returns `None` for quoted GNU-style names (not handled here).
+fn find_name_in_diff_header_line(line: &str, p_value: usize) -> Option<String> {
+    let b = line.as_bytes();
+    if b.first() == Some(&b'"') {
+        return None;
+    }
+
+    let mut i = 0usize;
+    let mut start = if p_value == 0 { Some(0usize) } else { None };
+    let mut p = p_value;
+
+    while i < b.len() {
+        let c = b[i];
+        if c.is_ascii_whitespace() {
+            if c == b'\n' || c == b'\r' {
+                break;
+            }
+            if diff_header_name_terminate(c) {
+                break;
+            }
+        }
+        i += 1;
+        if c == b'/' && p > 0 {
+            p -= 1;
+            if p == 0 {
+                start = Some(i);
+            }
+        }
+    }
+
+    let start = start?;
+    let end = i;
+    (end > start).then(|| line[start..end].to_string())
+}
+
+/// True when the name portion of a `---`/`+++` line is Git's `/dev/null` sentinel.
+fn is_dev_null_diff_name(line: &str) -> bool {
+    line.strip_prefix("/dev/null")
+        .map(|rest| {
+            rest.is_empty()
+                || rest
+                    .as_bytes()
+                    .first()
+                    .is_some_and(|b| b.is_ascii_whitespace())
+        })
+        .unwrap_or(false)
+}
+
+/// Like [`find_name_in_diff_header_line`], but never returns `None` for normal
+/// unquoted lines (falls back to text before the first tab).
+fn header_line_file_path(line: &str, p_value: usize) -> String {
+    let line = line.trim_end_matches(['\r', '\n']);
+    if is_dev_null_diff_name(line) {
+        return "/dev/null".to_string();
+    }
+    find_name_in_diff_header_line(line, p_value)
+        .unwrap_or_else(|| line.split('\t').next().unwrap_or(line).to_string())
+}
+
 /// Parse a unified diff into a list of `FilePatch` entries.
-fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
+fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
     let lines: Vec<&str> = input.lines().collect();
     let mut patches = Vec::new();
     let mut i = 0;
@@ -402,6 +513,7 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 new_oid: None,
                 binary_patch: None,
                 hunks: Vec::new(),
+                ws_rule: 0,
             };
 
             // Parse "diff --git a/foo b/foo"
@@ -467,12 +579,12 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
             // Parse ---/+++ headers if present
             if i < lines.len() && lines[i].starts_with("--- ") {
                 let old_p = &lines[i]["--- ".len()..];
-                fp.old_path = Some(old_p.to_string());
+                fp.old_path = Some(header_line_file_path(old_p, strip));
                 fp.saw_old_header = true;
                 i += 1;
                 if i < lines.len() && lines[i].starts_with("+++ ") {
                     let new_p = &lines[i]["+++ ".len()..];
-                    fp.new_path = Some(new_p.to_string());
+                    fp.new_path = Some(header_line_file_path(new_p, strip));
                     fp.saw_new_header = true;
                     i += 1;
                 }
@@ -510,14 +622,15 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 new_oid: None,
                 binary_patch: None,
                 hunks: Vec::new(),
+                ws_rule: 0,
             };
 
             let old_p = &lines[i]["--- ".len()..];
-            fp.old_path = Some(old_p.to_string());
+            fp.old_path = Some(header_line_file_path(old_p, strip));
             fp.saw_old_header = true;
             i += 1;
             let new_p = &lines[i]["+++ ".len()..];
-            fp.new_path = Some(new_p.to_string());
+            fp.new_path = Some(header_line_file_path(new_p, strip));
             fp.saw_new_header = true;
             i += 1;
 
@@ -718,6 +831,7 @@ fn parse_hunk(lines: &[&str], start: usize) -> Result<(Hunk, usize)> {
         old_count,
         new_start,
         new_count,
+        first_body_line: start + 2,
         lines: Vec::new(),
     };
 
@@ -798,6 +912,14 @@ fn strip_components(path: &str, n: usize) -> String {
         }
     }
     remaining.to_string()
+}
+
+/// Strip `-p` prefix from a path the same way as [`adjust_path`] (without `--directory`).
+fn path_after_strip(path: &str, strip: usize) -> String {
+    if path == "/dev/null" {
+        return path.to_string();
+    }
+    strip_components(path, strip)
 }
 
 /// Apply -p and --directory transforms to a path.
@@ -1008,7 +1130,85 @@ fn reverse_patches(patches: &mut [FilePatch]) {
     patches.reverse();
 }
 
-fn validate_patch_headers(patches: &[FilePatch]) -> Result<()> {
+/// When `diff --git` lists two different paths but `---` / `+++` agree on the
+/// real file (same path after stripping `a/` / `b/`), treat the patch as a
+/// normal same-file diff.
+///
+/// This matches Git's tolerance for a common mistake: `sed` with a single
+/// substitution per line only rewrites the first `a/file` or `b/file` on the
+/// `diff --git` line, leaving `a/target b/file` while both traditional headers
+/// say `target` (see `t4124-apply-ws-rule.sh`).
+fn assign_ws_rules(patches: &mut [FilePatch], args: &Args) {
+    let cfg_rule = config_whitespace_rule_bits();
+    let Ok(repo) = Repository::discover(None) else {
+        for fp in patches {
+            fp.ws_rule = cfg_rule;
+        }
+        return;
+    };
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let rules = repo
+        .work_tree
+        .as_ref()
+        .map(|wt| crlf::load_gitattributes(wt))
+        .unwrap_or_default();
+
+    for fp in patches.iter_mut() {
+        let path_for_attr = fp
+            .target_path()
+            .or_else(|| fp.effective_path())
+            .unwrap_or("");
+        let adjusted = adjust_path(path_for_attr, args.strip, args.directory.as_deref());
+        let fa = crlf::get_file_attrs(&rules, &adjusted, &config);
+        let attr = match fa.whitespace.as_deref() {
+            None => WhitespaceGitAttr::Unspecified,
+            Some("unset") => WhitespaceGitAttr::False,
+            Some("set") => WhitespaceGitAttr::True,
+            Some(s) => WhitespaceGitAttr::String(s.to_owned()),
+        };
+        fp.ws_rule = attr.merge_with_config(cfg_rule).unwrap_or(cfg_rule);
+
+        let mode = fp.new_mode.as_deref().or(fp.old_mode.as_deref());
+        if mode == Some("120000") {
+            fp.ws_rule &= !WS_INCOMPLETE_LINE;
+        }
+    }
+}
+
+fn normalize_mismatched_diff_git_paths(patches: &mut [FilePatch], strip: usize) {
+    fn strip_leading_ab(p: &str) -> &str {
+        p.strip_prefix("a/")
+            .or_else(|| p.strip_prefix("b/"))
+            .unwrap_or(p)
+    }
+
+    for fp in patches.iter_mut() {
+        let (Some(d_old_raw), Some(d_new_raw)) =
+            (fp.diff_old_path.as_deref(), fp.diff_new_path.as_deref())
+        else {
+            continue;
+        };
+        let d_old = path_after_strip(d_old_raw, strip);
+        let d_new = path_after_strip(d_new_raw, strip);
+        if d_old == d_new {
+            continue;
+        }
+        let (Some(o), Some(n)) = (fp.old_path.as_deref(), fp.new_path.as_deref()) else {
+            continue;
+        };
+        if o == "/dev/null" || n == "/dev/null" {
+            continue;
+        }
+        let ho = strip_leading_ab(o);
+        let hn = strip_leading_ab(n);
+        if ho == hn {
+            fp.diff_old_path = Some(format!("a/{ho}"));
+            fp.diff_new_path = Some(format!("b/{hn}"));
+        }
+    }
+}
+
+fn validate_patch_headers(patches: &[FilePatch], strip: usize) -> Result<()> {
     for fp in patches {
         if (fp.diff_old_path.is_some() || fp.diff_new_path.is_some())
             && !fp.hunks.is_empty()
@@ -1021,7 +1221,7 @@ fn validate_patch_headers(patches: &[FilePatch]) -> Result<()> {
             if let (Some(diff_old), Some(old)) =
                 (fp.diff_old_path.as_deref(), fp.old_path.as_deref())
             {
-                if old != "/dev/null" && diff_old != old {
+                if old != "/dev/null" && path_after_strip(diff_old, strip) != old {
                     bail!("inconsistent old filename");
                 }
             }
@@ -1031,7 +1231,7 @@ fn validate_patch_headers(patches: &[FilePatch]) -> Result<()> {
             if let (Some(diff_new), Some(new)) =
                 (fp.diff_new_path.as_deref(), fp.new_path.as_deref())
             {
-                if new != "/dev/null" && diff_new != new {
+                if new != "/dev/null" && path_after_strip(diff_new, strip) != new {
                     bail!("inconsistent new filename");
                 }
             }
@@ -1284,6 +1484,43 @@ fn normalize_ws_fix_line(line: &str, tab_width: usize) -> String {
     canonicalize_ws_line(&out)
 }
 
+fn patch_line_body_for_ws(s: &str, has_newline: bool) -> String {
+    if has_newline {
+        format!("{s}\n")
+    } else {
+        s.to_string()
+    }
+}
+
+fn record_ws_error(
+    ws_mode: &ApplyWhitespaceMode,
+    ws_errors: &mut u32,
+    flags: u32,
+    patch_file: &str,
+    patch_linenr: usize,
+    incomplete_line_body: Option<&str>,
+) {
+    if flags == 0 {
+        return;
+    }
+    *ws_errors += 1;
+    if ws_mode.ws_squelch > 0 && ws_mode.ws_squelch < *ws_errors {
+        return;
+    }
+    if flags & WS_INCOMPLETE_LINE != 0 {
+        if let Some(body) = incomplete_line_body {
+            eprintln!("{patch_file}:{patch_linenr}: no newline at the end of file.\n{body}");
+        }
+    } else if flags & WS_BLANK_AT_EOF != 0 {
+        eprintln!("{patch_file}:{patch_linenr}: new blank line at EOF.");
+    } else {
+        eprintln!(
+            "{patch_file}:{patch_linenr}: {}.",
+            ws::whitespace_error_string(flags)
+        );
+    }
+}
+
 fn lines_equal(expected: &str, actual: &str, ws_mode: ApplyWhitespaceMode) -> bool {
     if expected == actual {
         return true;
@@ -1304,7 +1541,14 @@ fn lines_equal(expected: &str, actual: &str, ws_mode: ApplyWhitespaceMode) -> bo
             == normalize_ws_fix_line(actual, ws_mode.tab_width)
 }
 
-fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) -> Result<String> {
+fn apply_hunks(
+    old_content: &str,
+    fp: &FilePatch,
+    ws_mode: ApplyWhitespaceMode,
+    forward: bool,
+    patch_input_display: &str,
+) -> Result<String> {
+    let hunks = &fp.hunks;
     // Split into lines, keeping track of trailing newline
     let has_trailing_newline = old_content.is_empty() || old_content.ends_with('\n');
     let old_lines: Vec<&str> = if old_content.is_empty() {
@@ -1316,8 +1560,12 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
     let mut result: Vec<String> = Vec::new();
     let mut old_idx: usize = 0; // 0-based index into old_lines
     let mut offset: isize = 0; // accumulated offset from previous hunks
+    let mut ws_errors: u32 = 0;
 
     for hunk in hunks {
+        let mut eof_new_blank = 0usize;
+        let mut eof_found_line = 0usize;
+
         let required_context = ws_mode
             .context
             .unwrap_or(hunk.old_count)
@@ -1353,11 +1601,36 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
         }
 
         // Apply hunk
-        let mut remove_no_newline = false;
-        let mut add_no_newline = false;
-        for hl in &hunk.lines {
-            match hl {
+        let mut li = 0usize;
+        let mut cur_patch_line = hunk.first_body_line;
+        let mut pending_incomplete_body: Option<String> = None;
+        while li < hunk.lines.len() {
+            match &hunk.lines[li] {
                 HunkLine::Context(s) => {
+                    pending_incomplete_body = None;
+                    let has_nl = !matches!(hunk.lines.get(li + 1), Some(HunkLine::NoNewline));
+                    let body = patch_line_body_for_ws(s, has_nl);
+                    let plen = if has_nl {
+                        body.len().saturating_sub(1)
+                    } else {
+                        body.len()
+                    };
+                    let is_blank_context = (fp.ws_rule & WS_BLANK_AT_EOF) != 0
+                        && (plen == 0 || ws::ws_blank_line(&body[..plen]));
+                    if !is_blank_context {
+                        eof_new_blank = 0;
+                    }
+                    if ws_mode.whitespace_fix {
+                        let flags = ws::ws_check(&body, fp.ws_rule);
+                        record_ws_error(
+                            &ws_mode,
+                            &mut ws_errors,
+                            flags,
+                            patch_input_display,
+                            cur_patch_line,
+                            None,
+                        );
+                    }
                     if old_idx >= old_lines.len() {
                         bail!(
                             "context mismatch at line {}: expected {:?}, got EOF",
@@ -1366,7 +1639,6 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
                         );
                     }
                     let actual_line = old_lines[old_idx];
-                    // Verify context matches
                     if !lines_equal(s, actual_line, ws_mode) {
                         if ws_mode.context.is_some()
                             && !matched_old_side
@@ -1375,6 +1647,12 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
                             result.push(actual_line.to_string());
                             old_idx += 1;
                             leading_context_fuzz_remaining -= 1;
+                            cur_patch_line += 1;
+                            li += 1;
+                            if !has_nl {
+                                cur_patch_line += 1;
+                                li += 1;
+                            }
                             continue;
                         }
                         bail!(
@@ -1387,8 +1665,49 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
                     old_idx += 1;
                     result.push(actual_line.to_string());
                     matched_old_side = true;
+                    cur_patch_line += 1;
+                    li += 1;
+                    if !has_nl {
+                        cur_patch_line += 1;
+                        li += 1;
+                    }
                 }
                 HunkLine::Remove(s) => {
+                    eof_new_blank = 0;
+                    let has_nl = !matches!(hunk.lines.get(li + 1), Some(HunkLine::NoNewline));
+                    let check_side = if forward {
+                        false
+                    } else {
+                        ws_mode.ws_cli != WsCliMode::NoWarn
+                    };
+                    if check_side {
+                        let body = patch_line_body_for_ws(s, has_nl);
+                        let flags = ws::ws_check(&body, fp.ws_rule);
+                        if !has_nl && (flags & WS_INCOMPLETE_LINE) != 0 {
+                            pending_incomplete_body = Some(s.clone());
+                            let rest = flags & !WS_INCOMPLETE_LINE;
+                            record_ws_error(
+                                &ws_mode,
+                                &mut ws_errors,
+                                rest,
+                                patch_input_display,
+                                cur_patch_line,
+                                None,
+                            );
+                        } else {
+                            pending_incomplete_body = None;
+                            record_ws_error(
+                                &ws_mode,
+                                &mut ws_errors,
+                                flags,
+                                patch_input_display,
+                                cur_patch_line,
+                                None,
+                            );
+                        }
+                    } else if !has_nl {
+                        pending_incomplete_body = None;
+                    }
                     if old_idx >= old_lines.len() {
                         bail!(
                             "remove mismatch at line {}: expected {:?}, got EOF",
@@ -1405,27 +1724,134 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
                         );
                     }
                     old_idx += 1;
-                    remove_no_newline = false;
                     matched_old_side = true;
+                    if !has_nl {
+                        if let Some(body) = pending_incomplete_body.take() {
+                            if ws_mode.ws_cli != WsCliMode::NoWarn {
+                                record_ws_error(
+                                    &ws_mode,
+                                    &mut ws_errors,
+                                    WS_INCOMPLETE_LINE,
+                                    patch_input_display,
+                                    cur_patch_line + 1,
+                                    Some(body.as_str()),
+                                );
+                            }
+                        }
+                        cur_patch_line += 2;
+                        li += 2;
+                    } else {
+                        cur_patch_line += 1;
+                        li += 1;
+                    }
                 }
                 HunkLine::Add(s) => {
-                    if ws_mode.whitespace_fix {
-                        result.push(normalize_ws_fix_line(s, ws_mode.tab_width));
+                    let has_nl = !matches!(hunk.lines.get(li + 1), Some(HunkLine::NoNewline));
+                    let body = patch_line_body_for_ws(s, has_nl);
+                    let plen = if has_nl {
+                        body.len().saturating_sub(1)
                     } else {
-                        result.push(s.clone());
+                        body.len()
+                    };
+                    let added_blank =
+                        (fp.ws_rule & WS_BLANK_AT_EOF) != 0 && ws::ws_blank_line(&body[..plen]);
+                    if added_blank {
+                        if eof_new_blank == 0 {
+                            eof_found_line = cur_patch_line;
+                        }
+                        eof_new_blank += 1;
+                    } else {
+                        eof_new_blank = 0;
                     }
-                    add_no_newline = false;
+                    let check_side = if forward {
+                        ws_mode.ws_cli != WsCliMode::NoWarn
+                    } else {
+                        false
+                    };
+                    if check_side {
+                        let flags = ws::ws_check(&body, fp.ws_rule);
+                        if !has_nl && (flags & WS_INCOMPLETE_LINE) != 0 {
+                            pending_incomplete_body = Some(s.clone());
+                            let rest = flags & !WS_INCOMPLETE_LINE;
+                            record_ws_error(
+                                &ws_mode,
+                                &mut ws_errors,
+                                rest,
+                                patch_input_display,
+                                cur_patch_line,
+                                None,
+                            );
+                        } else {
+                            pending_incomplete_body = None;
+                            record_ws_error(
+                                &ws_mode,
+                                &mut ws_errors,
+                                flags,
+                                patch_input_display,
+                                cur_patch_line,
+                                None,
+                            );
+                        }
+                    } else if !has_nl {
+                        pending_incomplete_body = None;
+                    }
+                    let out_line = if ws_mode.whitespace_fix {
+                        let body_in = patch_line_body_for_ws(s, has_nl);
+                        let (fixed, _) = ws::ws_fix_copy_line(&body_in, fp.ws_rule);
+                        fixed.trim_end_matches('\n').to_string()
+                    } else {
+                        s.clone()
+                    };
+                    result.push(out_line);
                     matched_old_side = true;
+                    if !has_nl {
+                        if let Some(body) = pending_incomplete_body.take() {
+                            if ws_mode.ws_cli != WsCliMode::NoWarn {
+                                record_ws_error(
+                                    &ws_mode,
+                                    &mut ws_errors,
+                                    WS_INCOMPLETE_LINE,
+                                    patch_input_display,
+                                    cur_patch_line + 1,
+                                    Some(body.as_str()),
+                                );
+                            }
+                        }
+                        cur_patch_line += 2;
+                        li += 2;
+                    } else {
+                        cur_patch_line += 1;
+                        li += 1;
+                    }
                 }
                 HunkLine::NoNewline => {
-                    // This applies to whichever side the previous line was on.
-                    // We track it but the main effect is on trailing newline.
-                    remove_no_newline = true;
-                    add_no_newline = true;
+                    cur_patch_line += 1;
+                    li += 1;
                 }
             }
         }
-        let _ = (remove_no_newline, add_no_newline);
+
+        if old_idx == old_lines.len()
+            && eof_new_blank > 0
+            && (fp.ws_rule & WS_BLANK_AT_EOF) != 0
+            && ws_mode.ws_cli != WsCliMode::NoWarn
+        {
+            record_ws_error(
+                &ws_mode,
+                &mut ws_errors,
+                WS_BLANK_AT_EOF,
+                patch_input_display,
+                eof_found_line,
+                None,
+            );
+            if ws_mode.whitespace_fix {
+                for _ in 0..eof_new_blank {
+                    if result.last().is_some_and(|l| ws::ws_blank_line(l)) {
+                        result.pop();
+                    }
+                }
+            }
+        }
     }
 
     // Copy remaining lines after the last hunk
@@ -1472,6 +1898,10 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
         out.push('\n');
     }
 
+    if ws_errors > 0 && matches!(ws_mode.ws_cli, WsCliMode::Error) {
+        bail!("{} line adds whitespace errors.", ws_errors);
+    }
+
     Ok(out)
 }
 
@@ -1480,9 +1910,12 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
 /// Returns `(new_content, rejected_hunks)`.
 fn apply_hunks_with_reject(
     old_content: &str,
-    hunks: &[Hunk],
+    fp: &FilePatch,
     ws_mode: ApplyWhitespaceMode,
+    forward: bool,
+    patch_input_display: &str,
 ) -> Result<(String, Vec<Hunk>)> {
+    let hunks = &fp.hunks;
     let has_trailing_newline = old_content.is_empty() || old_content.ends_with('\n');
     let mut lines: Vec<String> = if old_content.is_empty() {
         Vec::new()
@@ -1495,8 +1928,12 @@ fn apply_hunks_with_reject(
 
     let mut offset: isize = 0;
     let mut rejected: Vec<Hunk> = Vec::new();
+    let mut ws_errors: u32 = 0;
 
     for hunk in hunks {
+        let mut eof_new_blank = 0usize;
+        let mut eof_found_line = 0usize;
+
         let nominal_start = match nominal_hunk_start(hunk, lines.len()) {
             Ok(start) => start as isize,
             Err(_) => {
@@ -1519,9 +1956,36 @@ fn apply_hunks_with_reject(
         let mut replacement: Vec<String> = Vec::new();
         let mut failed = false;
 
-        for hl in &hunk.lines {
-            match hl {
+        let mut li = 0usize;
+        let mut cur_patch_line = hunk.first_body_line;
+        let mut pending_incomplete_body: Option<String> = None;
+        while li < hunk.lines.len() {
+            match &hunk.lines[li] {
                 HunkLine::Context(s) => {
+                    pending_incomplete_body = None;
+                    let has_nl = !matches!(hunk.lines.get(li + 1), Some(HunkLine::NoNewline));
+                    let body = patch_line_body_for_ws(s, has_nl);
+                    let plen = if has_nl {
+                        body.len().saturating_sub(1)
+                    } else {
+                        body.len()
+                    };
+                    let is_blank_context = (fp.ws_rule & WS_BLANK_AT_EOF) != 0
+                        && (plen == 0 || ws::ws_blank_line(&body[..plen]));
+                    if !is_blank_context {
+                        eof_new_blank = 0;
+                    }
+                    if ws_mode.whitespace_fix {
+                        let flags = ws::ws_check(&body, fp.ws_rule);
+                        record_ws_error(
+                            &ws_mode,
+                            &mut ws_errors,
+                            flags,
+                            patch_input_display,
+                            cur_patch_line,
+                            None,
+                        );
+                    }
                     if idx >= lines.len() || !lines_equal(s, &lines[idx], ws_mode) {
                         failed = true;
                         break;
@@ -1529,22 +1993,156 @@ fn apply_hunks_with_reject(
                     let actual_line = lines[idx].clone();
                     idx += 1;
                     replacement.push(actual_line);
+                    cur_patch_line += 1;
+                    li += 1;
+                    if !has_nl {
+                        cur_patch_line += 1;
+                        li += 1;
+                    }
                 }
                 HunkLine::Remove(s) => {
+                    eof_new_blank = 0;
+                    let has_nl = !matches!(hunk.lines.get(li + 1), Some(HunkLine::NoNewline));
+                    let check_side = if forward {
+                        false
+                    } else {
+                        ws_mode.ws_cli != WsCliMode::NoWarn
+                    };
+                    if check_side {
+                        let body = patch_line_body_for_ws(s, has_nl);
+                        let flags = ws::ws_check(&body, fp.ws_rule);
+                        if !has_nl && (flags & WS_INCOMPLETE_LINE) != 0 {
+                            pending_incomplete_body = Some(s.clone());
+                            let rest = flags & !WS_INCOMPLETE_LINE;
+                            record_ws_error(
+                                &ws_mode,
+                                &mut ws_errors,
+                                rest,
+                                patch_input_display,
+                                cur_patch_line,
+                                None,
+                            );
+                        } else {
+                            pending_incomplete_body = None;
+                            record_ws_error(
+                                &ws_mode,
+                                &mut ws_errors,
+                                flags,
+                                patch_input_display,
+                                cur_patch_line,
+                                None,
+                            );
+                        }
+                    } else if !has_nl {
+                        pending_incomplete_body = None;
+                    }
                     if idx >= lines.len() || !lines_equal(s, &lines[idx], ws_mode) {
                         failed = true;
                         break;
                     }
                     idx += 1;
-                }
-                HunkLine::Add(s) => {
-                    if ws_mode.whitespace_fix {
-                        replacement.push(normalize_ws_fix_line(s, ws_mode.tab_width));
+                    if !has_nl {
+                        if let Some(body) = pending_incomplete_body.take() {
+                            if ws_mode.ws_cli != WsCliMode::NoWarn {
+                                record_ws_error(
+                                    &ws_mode,
+                                    &mut ws_errors,
+                                    WS_INCOMPLETE_LINE,
+                                    patch_input_display,
+                                    cur_patch_line + 1,
+                                    Some(body.as_str()),
+                                );
+                            }
+                        }
+                        cur_patch_line += 2;
+                        li += 2;
                     } else {
-                        replacement.push(s.clone());
+                        cur_patch_line += 1;
+                        li += 1;
                     }
                 }
-                HunkLine::NoNewline => {}
+                HunkLine::Add(s) => {
+                    let has_nl = !matches!(hunk.lines.get(li + 1), Some(HunkLine::NoNewline));
+                    let body = patch_line_body_for_ws(s, has_nl);
+                    let plen = if has_nl {
+                        body.len().saturating_sub(1)
+                    } else {
+                        body.len()
+                    };
+                    let added_blank =
+                        (fp.ws_rule & WS_BLANK_AT_EOF) != 0 && ws::ws_blank_line(&body[..plen]);
+                    if added_blank {
+                        if eof_new_blank == 0 {
+                            eof_found_line = cur_patch_line;
+                        }
+                        eof_new_blank += 1;
+                    } else {
+                        eof_new_blank = 0;
+                    }
+                    let check_side = if forward {
+                        ws_mode.ws_cli != WsCliMode::NoWarn
+                    } else {
+                        false
+                    };
+                    if check_side {
+                        let flags = ws::ws_check(&body, fp.ws_rule);
+                        if !has_nl && (flags & WS_INCOMPLETE_LINE) != 0 {
+                            pending_incomplete_body = Some(s.clone());
+                            let rest = flags & !WS_INCOMPLETE_LINE;
+                            record_ws_error(
+                                &ws_mode,
+                                &mut ws_errors,
+                                rest,
+                                patch_input_display,
+                                cur_patch_line,
+                                None,
+                            );
+                        } else {
+                            pending_incomplete_body = None;
+                            record_ws_error(
+                                &ws_mode,
+                                &mut ws_errors,
+                                flags,
+                                patch_input_display,
+                                cur_patch_line,
+                                None,
+                            );
+                        }
+                    } else if !has_nl {
+                        pending_incomplete_body = None;
+                    }
+                    let out_line = if ws_mode.whitespace_fix {
+                        let body_in = patch_line_body_for_ws(s, has_nl);
+                        let (fixed, _) = ws::ws_fix_copy_line(&body_in, fp.ws_rule);
+                        fixed.trim_end_matches('\n').to_string()
+                    } else {
+                        s.clone()
+                    };
+                    replacement.push(out_line);
+                    if !has_nl {
+                        if let Some(body) = pending_incomplete_body.take() {
+                            if ws_mode.ws_cli != WsCliMode::NoWarn {
+                                record_ws_error(
+                                    &ws_mode,
+                                    &mut ws_errors,
+                                    WS_INCOMPLETE_LINE,
+                                    patch_input_display,
+                                    cur_patch_line + 1,
+                                    Some(body.as_str()),
+                                );
+                            }
+                        }
+                        cur_patch_line += 2;
+                        li += 2;
+                    } else {
+                        cur_patch_line += 1;
+                        li += 1;
+                    }
+                }
+                HunkLine::NoNewline => {
+                    cur_patch_line += 1;
+                    li += 1;
+                }
             }
         }
 
@@ -1553,9 +2151,35 @@ fn apply_hunks_with_reject(
             continue;
         }
 
+        if idx == lines.len()
+            && eof_new_blank > 0
+            && (fp.ws_rule & WS_BLANK_AT_EOF) != 0
+            && ws_mode.ws_cli != WsCliMode::NoWarn
+        {
+            record_ws_error(
+                &ws_mode,
+                &mut ws_errors,
+                WS_BLANK_AT_EOF,
+                patch_input_display,
+                eof_found_line,
+                None,
+            );
+            if ws_mode.whitespace_fix {
+                for _ in 0..eof_new_blank {
+                    if replacement.last().is_some_and(|l| ws::ws_blank_line(l)) {
+                        replacement.pop();
+                    }
+                }
+            }
+        }
+
         let removed_count = idx.saturating_sub(actual_start);
         lines.splice(actual_start..idx, replacement.iter().cloned());
         offset += replacement.len() as isize - removed_count as isize;
+    }
+
+    if ws_errors > 0 && matches!(ws_mode.ws_cli, WsCliMode::Error) {
+        bail!("{} line adds whitespace errors.", ws_errors);
     }
 
     if lines.is_empty() {
@@ -1782,15 +2406,23 @@ pub fn run(args: Args) -> Result<()> {
         buf
     };
 
-    let mut patches = parse_patch(&input)?;
-    validate_patch_headers(&patches)?;
+    let mut patches = parse_patch(&input, args.strip)?;
+    normalize_mismatched_diff_git_paths(&mut patches, args.strip);
+    validate_patch_headers(&patches, args.strip)?;
 
     if args.reverse {
         reverse_patches(&mut patches);
     }
+    assign_ws_rules(&mut patches, &args);
     if patches.is_empty() && !args.allow_empty {
         bail!("No valid patches in input");
     }
+
+    let patch_input_display = if args.patches.len() == 1 && args.patches[0].as_os_str() != "-" {
+        args.patches[0].to_string_lossy().into_owned()
+    } else {
+        "<stdin>".to_string()
+    };
 
     // Info-only modes unless explicitly overridden by --apply.
     let info_only = (args.stat || args.numstat || args.summary) && !args.apply;
@@ -1817,10 +2449,10 @@ pub fn run(args: Args) -> Result<()> {
     // For --cached, we need a repository and index.
     // For working tree apply, we may or may not be in a repo.
     if args.cached {
-        apply_to_index(&patches, &args, ws_mode)?;
+        apply_to_index(&patches, &args, ws_mode, &patch_input_display)?;
     } else {
         if args.check {
-            check_patches(&patches, &args, ws_mode)?;
+            check_patches(&patches, &args, ws_mode, &patch_input_display)?;
             if !args.apply {
                 return Ok(());
             }
@@ -1828,10 +2460,10 @@ pub fn run(args: Args) -> Result<()> {
 
         if args.index {
             verify_worktree_matches_index(&patches, &args)?;
-            apply_to_worktree(&patches, &args, ws_mode)?;
-            apply_to_index(&patches, &args, ws_mode)?;
+            apply_to_worktree(&patches, &args, ws_mode, &patch_input_display)?;
+            apply_to_index(&patches, &args, ws_mode, &patch_input_display)?;
         } else {
-            apply_to_worktree(&patches, &args, ws_mode)?;
+            apply_to_worktree(&patches, &args, ws_mode, &patch_input_display)?;
             if args.intent_to_add {
                 apply_intent_to_add_entries(&patches, &args)?;
             }
@@ -2335,6 +2967,7 @@ fn apply_to_worktree(
     patches: &[FilePatch],
     args: &Args,
     ws_mode: ApplyWhitespaceMode,
+    patch_input_display: &str,
 ) -> Result<()> {
     let crlf_ctx = ApplyCrlfContext::load();
     let mut had_rejects = false;
@@ -2393,9 +3026,10 @@ fn apply_to_worktree(
                 fs::create_dir_all(&path)?;
                 continue;
             }
-            let content = apply_hunks("", &fp.hunks, ws_mode).with_context(|| {
-                format!("failed to apply hunks for new file {}", path.display())
-            })?;
+            let content = apply_hunks("", fp, ws_mode, !args.reverse, patch_input_display)
+                .with_context(|| {
+                    format!("failed to apply hunks for new file {}", path.display())
+                })?;
             write_worktree_path(
                 &path,
                 &content,
@@ -2532,11 +3166,23 @@ fn apply_to_worktree(
         }
 
         let (new_content, rejected_hunks) = if args.reject {
-            apply_hunks_with_reject(&old_content, &fp.hunks, ws_mode)
-                .with_context(|| format!("failed to apply patch to {}", path.display()))?
+            apply_hunks_with_reject(
+                &old_content,
+                fp,
+                ws_mode,
+                !args.reverse,
+                patch_input_display,
+            )
+            .with_context(|| format!("failed to apply patch to {}", path.display()))?
         } else {
-            let content = apply_hunks(&old_content, &fp.hunks, ws_mode)
-                .with_context(|| format!("failed to apply patch to {}", path.display()))?;
+            let content = apply_hunks(
+                &old_content,
+                fp,
+                ws_mode,
+                !args.reverse,
+                patch_input_display,
+            )
+            .with_context(|| format!("failed to apply patch to {}", path.display()))?;
             (content, Vec::new())
         };
         if source_contains_target {
@@ -2573,7 +3219,12 @@ fn apply_to_worktree(
 }
 
 /// Apply patches to the index only (--cached).
-fn apply_to_index(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMode) -> Result<()> {
+fn apply_to_index(
+    patches: &[FilePatch],
+    args: &Args,
+    ws_mode: ApplyWhitespaceMode,
+    patch_input_display: &str,
+) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let mut index = match repo.load_index() {
         Ok(idx) => idx,
@@ -2726,8 +3377,14 @@ fn apply_to_index(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMo
         let new_content = if fp.hunks.is_empty() {
             old_content.clone()
         } else {
-            apply_hunks(&old_content, &fp.hunks, ws_mode)
-                .with_context(|| format!("failed to apply patch to {target_adjusted}"))?
+            apply_hunks(
+                &old_content,
+                fp,
+                ws_mode,
+                !args.reverse,
+                patch_input_display,
+            )
+            .with_context(|| format!("failed to apply patch to {target_adjusted}"))?
         };
 
         // Write new blob to ODB
@@ -2853,7 +3510,12 @@ fn apply_intent_to_add_entries(patches: &[FilePatch], args: &Args) -> Result<()>
 }
 
 /// Check if patches apply cleanly without modifying anything.
-fn check_patches(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMode) -> Result<()> {
+fn check_patches(
+    patches: &[FilePatch],
+    args: &Args,
+    ws_mode: ApplyWhitespaceMode,
+    patch_input_display: &str,
+) -> Result<()> {
     let crlf_ctx = ApplyCrlfContext::load();
     for fp in patches {
         let path_str = fp
@@ -2874,12 +3536,7 @@ fn check_patches(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMod
                 bail!("{}: already exists", path.display());
             }
             // Verify hunks apply to empty content
-            apply_hunks("", &fp.hunks, ws_mode).with_context(|| {
-                format!(
-                    "patch does not apply cleanly to new file {}",
-                    path.display()
-                )
-            })?;
+            apply_hunks("", fp, ws_mode, !args.reverse, patch_input_display)?;
             continue;
         }
 
@@ -2916,8 +3573,13 @@ fn check_patches(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMod
         if let Some(expected_oid) = fp.old_oid.as_deref() {
             verify_old_oid_matches_content(expected_oid, &old_content)?;
         }
-        apply_hunks(&old_content, &fp.hunks, ws_mode)
-            .with_context(|| format!("patch does not apply cleanly to {}", path.display()))?;
+        apply_hunks(
+            &old_content,
+            fp,
+            ws_mode,
+            !args.reverse,
+            patch_input_display,
+        )?;
     }
 
     Ok(())
