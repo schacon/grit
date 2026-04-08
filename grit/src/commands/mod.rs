@@ -103,6 +103,7 @@ pub mod rebase;
 pub mod receive_pack;
 pub mod reflog;
 pub mod refs;
+pub mod remerge_diff;
 pub mod remote;
 pub mod repack;
 pub mod replace;

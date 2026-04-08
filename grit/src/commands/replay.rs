@@ -181,7 +181,7 @@ pub fn run(args: Args) -> Result<()> {
             let reason = merge_result
                 .conflict_descriptions
                 .first()
-                .map(|entry| entry.1.as_str())
+                .map(|entry| entry.subject_path.as_str())
                 .unwrap_or("conflict");
             bail!("replay stopped due to merge conflict in {reason}");
         }

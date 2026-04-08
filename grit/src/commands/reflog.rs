@@ -226,6 +226,7 @@ fn run_show(args: ShowArgs) -> Result<()> {
         follow: false,
         diff_filter: None,
         find_object: None,
+        pickaxe: None,
         abbrev: if args.no_abbrev_commit {
             Some("40".to_owned())
         } else if args.abbrev_commit {
@@ -242,6 +243,7 @@ fn run_show(args: ShowArgs) -> Result<()> {
         diff_merges: None,
         no_diff_merges: false,
         cc: false,
+        remerge_diff: false,
         color_moved: None,
         abbrev_commit: args.abbrev_commit,
         color: None,

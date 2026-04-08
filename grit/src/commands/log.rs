@@ -168,6 +168,10 @@ pub struct Args {
     #[arg(long = "find-object")]
     pub find_object: Option<String>,
 
+    /// Pickaxe: only show commits whose remerge diff touches this string (with `--remerge-diff`).
+    #[arg(short = 'S', value_name = "STRING", allow_hyphen_values = true)]
+    pub pickaxe: Option<String>,
+
     /// Abbreviate commit hashes to N characters.
     #[arg(long = "abbrev", value_name = "N", default_missing_value = "7", num_args = 0..=1, require_equals = true)]
     pub abbrev: Option<String>,
@@ -207,6 +211,10 @@ pub struct Args {
     /// Produce dense combined diff for merge commits.
     #[arg(long = "cc")]
     pub cc: bool,
+
+    /// Show diff against a mechanical re-merge of the parents (two-parent merges).
+    #[arg(long = "remerge-diff")]
+    pub remerge_diff: bool,
 
     /// Color moved lines differently.
     #[arg(long = "color-moved", default_missing_value = "default", num_args = 0..=1, require_equals = true)]
@@ -1783,7 +1791,8 @@ pub fn run(mut args: Args) -> Result<()> {
         || args.name_only
         || args.name_status
         || args.raw
-        || args.cc;
+        || args.cc
+        || args.remerge_diff;
 
     let mut notes_cache = NotesMapCache::new(&repo);
     let flush_each = out.is_terminal();
@@ -1807,6 +1816,7 @@ pub fn run(mut args: Args) -> Result<()> {
         let mut shown = 0usize;
         while let Some((oid, commit_data)) = iter.next_commit()? {
             if !commit_passes_post_walk_filters(
+                &repo,
                 &repo.odb,
                 &oid,
                 &commit_data,
@@ -1848,7 +1858,7 @@ pub fn run(mut args: Args) -> Result<()> {
             )?;
 
             if show_diff {
-                write_commit_diff(&mut out, &repo.odb, &commit_data, &args)?;
+                write_commit_diff(&mut out, &repo, &commit_data, &args, effective_pathspecs)?;
             }
             if flush_each {
                 out.flush()?;
@@ -2001,7 +2011,7 @@ pub fn run(mut args: Args) -> Result<()> {
             )?;
 
             if show_diff {
-                write_commit_diff(&mut out, &repo.odb, commit_data, &args)?;
+                write_commit_diff(&mut out, &repo, commit_data, &args, &combined_pathspecs)?;
             }
         }
     }
@@ -2227,7 +2237,8 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
         || args.name_only
         || args.name_status
         || args.raw
-        || args.cc;
+        || args.cc
+        || args.remerge_diff;
 
     let mut notes_cache = NotesMapCache::new(repo);
 
@@ -2246,7 +2257,7 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
             &repo.odb,
         )?;
         if show_diff {
-            write_commit_diff(&mut out, &repo.odb, commit_data, args)?;
+            write_commit_diff(&mut out, repo, commit_data, args, &args.pathspecs)?;
         }
     }
 
@@ -3057,6 +3068,7 @@ fn write_notes(
 
 /// Post-walk filters applied after [`walk_commits`] (diff-filter, find-object, decoration, dates).
 fn commit_passes_post_walk_filters(
+    repo: &Repository,
     odb: &Odb,
     oid: &ObjectId,
     info: &CommitInfo,
@@ -3074,7 +3086,15 @@ fn commit_passes_post_walk_filters(
             .filter(|c| c.is_lowercase())
             .map(|c| c.to_uppercase().next().unwrap_or(c))
             .collect();
-        let passes = if !include_chars.is_empty() {
+        let passes = if args.remerge_diff && info.parents.len() == 2 {
+            if !include_chars.is_empty() {
+                commit_has_remerge_diff_status(repo, info, &include_chars).unwrap_or(true)
+            } else if !exclude_chars.is_empty() {
+                commit_has_remerge_diff_status_not_in(repo, info, &exclude_chars).unwrap_or(true)
+            } else {
+                true
+            }
+        } else if !include_chars.is_empty() {
             commit_has_diff_status(odb, info, &include_chars).unwrap_or(true)
         } else if !exclude_chars.is_empty() {
             commit_has_diff_status_not_in(odb, info, &exclude_chars).unwrap_or(true)
@@ -3086,8 +3106,23 @@ fn commit_passes_post_walk_filters(
         }
     }
     if let Some(fo) = find_oid {
-        if !commit_has_object(odb, info, &fo).unwrap_or_default() {
+        let has = if args.remerge_diff && info.parents.len() == 2 {
+            commit_has_remerge_object(repo, info, &fo).unwrap_or_default()
+        } else {
+            commit_has_object(odb, info, &fo).unwrap_or_default()
+        };
+        if !has {
             return Ok(false);
+        }
+    }
+    if let Some(ref p) = args.pickaxe {
+        if args.remerge_diff {
+            if info.parents.len() != 2 {
+                return Ok(false);
+            }
+            if !commit_remerge_pickaxe_matches(repo, info, p.as_bytes())? {
+                return Ok(false);
+            }
         }
     }
     if args.simplify_by_decoration {
@@ -4398,10 +4433,32 @@ fn compute_commit_diff(odb: &Odb, info: &CommitInfo) -> Result<Vec<DiffEntry>> {
 /// Write diff output for a single commit.
 fn write_commit_diff(
     out: &mut impl Write,
-    odb: &Odb,
+    repo: &Repository,
     info: &CommitInfo,
     args: &Args,
+    pathspecs: &[String],
 ) -> Result<()> {
+    let odb = &repo.odb;
+
+    if args.remerge_diff && info.parents.len() == 2 {
+        use crate::commands::remerge_diff::{write_remerge_diff, RemergeDiffOptions};
+        let find_oid = if let Some(ref s) = args.find_object {
+            Some(grit_lib::rev_parse::resolve_revision(repo, s)?)
+        } else {
+            None
+        };
+        let opts = RemergeDiffOptions {
+            pathspecs,
+            diff_filter: args.diff_filter.as_deref(),
+            // Pickaxe filters which commits appear; the displayed remerge diff is always full.
+            pickaxe: None,
+            find_object: find_oid,
+            submodule_mode: None,
+            context_lines: args.unified.unwrap_or(3),
+        };
+        return write_remerge_diff(out, repo, &info.tree, &info.parents, &opts);
+    }
+
     let is_merge = info.parents.len() > 1;
     let mut entries = compute_commit_diff(odb, info)?;
     if entries.is_empty() {
@@ -4775,6 +4832,77 @@ fn commit_has_diff_status(odb: &Odb, info: &CommitInfo, filter_chars: &[char]) -
     for entry in &entries {
         let letter = entry.status.letter();
         if filter_chars.contains(&letter) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn blob_contains_pickaxe(odb: &Odb, oid: &ObjectId, needle: &[u8]) -> Result<bool> {
+    if oid.is_zero() {
+        return Ok(false);
+    }
+    let obj = odb.read(oid)?;
+    Ok(obj.data.windows(needle.len()).any(|w| w == needle))
+}
+
+fn commit_remerge_pickaxe_matches(
+    repo: &Repository,
+    info: &CommitInfo,
+    needle: &[u8],
+) -> Result<bool> {
+    for e in remerge_diff_entries(repo, info)? {
+        if blob_contains_pickaxe(&repo.odb, &e.old_oid, needle)?
+            || blob_contains_pickaxe(&repo.odb, &e.new_oid, needle)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn remerge_diff_entries(repo: &Repository, info: &CommitInfo) -> Result<Vec<DiffEntry>> {
+    use crate::commands::merge::remerge_merge_tree;
+    use grit_lib::diff::detect_renames;
+
+    if info.parents.len() != 2 {
+        return Ok(Vec::new());
+    }
+    let (remerge_tree, _) = remerge_merge_tree(repo, info.parents[0], info.parents[1])?;
+    let raw = diff_trees(&repo.odb, Some(&remerge_tree), Some(&info.tree), "")?;
+    Ok(detect_renames(&repo.odb, raw, 50))
+}
+
+fn commit_has_remerge_diff_status(
+    repo: &Repository,
+    info: &CommitInfo,
+    filter_chars: &[char],
+) -> Result<bool> {
+    for e in remerge_diff_entries(repo, info)? {
+        if filter_chars.contains(&e.status.letter()) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn commit_has_remerge_diff_status_not_in(
+    repo: &Repository,
+    info: &CommitInfo,
+    exclude_chars: &[char],
+) -> Result<bool> {
+    Ok(!remerge_diff_entries(repo, info)?
+        .iter()
+        .any(|e| exclude_chars.contains(&e.status.letter())))
+}
+
+fn commit_has_remerge_object(
+    repo: &Repository,
+    info: &CommitInfo,
+    target: &ObjectId,
+) -> Result<bool> {
+    for e in remerge_diff_entries(repo, info)? {
+        if e.old_oid == *target || e.new_oid == *target {
             return Ok(true);
         }
     }

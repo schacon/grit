@@ -17,8 +17,9 @@ use grit_lib::merge_diff::{
 };
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
+use grit_lib::refs::{list_refs, resolve_ref};
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rev_parse::{resolve_revision, resolve_revision_without_index_dwim};
 use std::collections::HashMap;
 use std::io::{self, Write};
 
@@ -157,6 +158,30 @@ pub struct Args {
     /// Show numstat summary.
     #[arg(long = "numstat")]
     pub numstat: bool,
+
+    /// Show diff against a mechanical re-merge of the parents (merge commits).
+    #[arg(long = "remerge-diff")]
+    pub remerge_diff: bool,
+
+    /// Limit diff to certain change types (same letters as `git log`).
+    #[arg(long = "diff-filter", value_name = "FILTER")]
+    pub diff_filter: Option<String>,
+
+    /// Submodule diff format (`log` suppresses remerge-diff body in tests).
+    #[arg(long = "submodule", value_name = "MODE")]
+    pub submodule: Option<String>,
+
+    /// Only include commits whose remerge diff touches this string (pickaxe).
+    #[arg(short = 'S', value_name = "STRING", allow_hyphen_values = true)]
+    pub pickaxe: Option<String>,
+
+    /// Only include commits whose remerge diff touches this object.
+    #[arg(long = "find-object", value_name = "OBJECT")]
+    pub find_object: Option<String>,
+
+    /// All refs (honoured with pickaxe / find-object filtering).
+    #[arg(long = "all")]
+    pub all: bool,
 }
 
 /// Run the `show` command.
@@ -164,22 +189,134 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     maybe_warn_deprecated_grafts(&repo)?;
 
-    let specs: Vec<&str> = if args.objects.is_empty() {
-        vec!["HEAD"]
+    let (rev_strings_owned, pathspecs): (Vec<String>, Vec<String>) = if args.objects.is_empty() {
+        (vec!["HEAD".to_string()], Vec::new())
+    } else if let Some(i) = args.objects.iter().position(|s| s == "--") {
+        let left: Vec<String> = args.objects[..i].to_vec();
+        let right: Vec<String> = args.objects[i + 1..].to_vec();
+        if left.is_empty() {
+            (vec!["HEAD".to_string()], right)
+        } else {
+            (left, right)
+        }
     } else {
-        // Split on -- to separate objects from pathspecs
-        args.objects.iter().map(|s| s.as_str()).collect()
+        let mut split_at = 0usize;
+        for s in &args.objects {
+            // Do not use index DWIM here: a tracked filename like `numbers` must be a pathspec
+            // (`git show rev -- numbers`), not mis-parsed as an extra revision (t4069.15).
+            if resolve_revision_without_index_dwim(&repo, s).is_ok() {
+                split_at += 1;
+            } else {
+                break;
+            }
+        }
+        if split_at == 0 {
+            (vec!["HEAD".to_string()], args.objects.clone())
+        } else {
+            (
+                args.objects[..split_at].to_vec(),
+                args.objects[split_at..].to_vec(),
+            )
+        }
     };
+    let rev_strings: Vec<&str> = rev_strings_owned.iter().map(|s| s.as_str()).collect();
 
     let notes_map = load_notes_map(&repo);
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    for spec in &specs {
-        if *spec == "--" {
-            break;
+    let remerge_scan =
+        args.remerge_diff && (args.pickaxe.is_some() || args.find_object.is_some() || args.all);
+
+    if remerge_scan {
+        use crate::commands::remerge_diff::{
+            remerge_diff_matches_pickaxe_or_find, RemergeDiffOptions,
+        };
+        use std::collections::BTreeSet;
+
+        let find_oid = if let Some(ref s) = args.find_object {
+            Some(resolve_revision(&repo, s).with_context(|| format!("unknown revision: '{s}'"))?)
+        } else {
+            None
+        };
+
+        let opts = RemergeDiffOptions {
+            pathspecs: &pathspecs,
+            diff_filter: args.diff_filter.as_deref(),
+            pickaxe: args.pickaxe.as_deref(),
+            find_object: find_oid,
+            submodule_mode: args.submodule.as_deref(),
+            context_lines: args.unified.unwrap_or(3),
+        };
+
+        let mut candidates: BTreeSet<ObjectId> = BTreeSet::new();
+
+        if args.all {
+            let gd = &repo.git_dir;
+            if let Ok(oid) = resolve_ref(gd, "HEAD") {
+                candidates.insert(oid);
+            }
+            for prefix in ["refs/heads/", "refs/tags/", "refs/remotes/"] {
+                if let Ok(refs) = list_refs(gd, prefix) {
+                    for (_name, oid) in refs {
+                        candidates.insert(oid);
+                    }
+                }
+            }
+        } else {
+            for spec in &rev_strings {
+                let oid = resolve_revision(&repo, spec)
+                    .with_context(|| format!("unknown revision or path: '{spec}'"))?;
+                candidates.insert(oid);
+            }
         }
+
+        let mut matched: Vec<ObjectId> = Vec::new();
+        for oid in candidates {
+            let obj = match repo.odb.read(&oid) {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            if obj.kind != ObjectKind::Commit {
+                continue;
+            }
+            let commit = parse_commit(&obj.data).context("parsing commit")?;
+            if remerge_diff_matches_pickaxe_or_find(&repo, &commit.tree, &commit.parents, &opts)? {
+                matched.push(oid);
+            }
+        }
+
+        if matched.is_empty() {
+            return Ok(());
+        }
+
+        let emit_opts = RemergeDiffOptions {
+            pathspecs: &pathspecs,
+            diff_filter: args.diff_filter.as_deref(),
+            pickaxe: None,
+            find_object: None,
+            submodule_mode: args.submodule.as_deref(),
+            context_lines: args.unified.unwrap_or(3),
+        };
+
+        for oid in matched {
+            let obj = repo.odb.read(&oid).context("reading object")?;
+            show_commit(
+                &mut out,
+                &repo,
+                &oid,
+                &obj.data,
+                &args,
+                &notes_map,
+                &pathspecs,
+                Some(&emit_opts),
+            )?;
+        }
+        return Ok(());
+    }
+
+    for spec in &rev_strings {
         let oid = resolve_revision(&repo, spec)
             .with_context(|| format!("unknown revision or path: '{spec}'"))?;
 
@@ -187,7 +324,9 @@ pub fn run(args: Args) -> Result<()> {
 
         match obj.kind {
             ObjectKind::Commit => {
-                show_commit(&mut out, &repo, &oid, &obj.data, &args, &notes_map)?;
+                show_commit(
+                    &mut out, &repo, &oid, &obj.data, &args, &notes_map, &pathspecs, None,
+                )?;
             }
             ObjectKind::Tag => {
                 show_tag(&mut out, &repo, &obj.data, &args, &notes_map)?;
@@ -243,6 +382,8 @@ fn show_commit(
     data: &[u8],
     args: &Args,
     notes_map: &HashMap<ObjectId, Vec<u8>>,
+    pathspecs: &[String],
+    remerge_emit_opts: Option<&crate::commands::remerge_diff::RemergeDiffOptions<'_>>,
 ) -> Result<()> {
     let odb = &repo.odb;
     let commit = parse_commit(data).context("parsing commit")?;
@@ -250,6 +391,48 @@ fn show_commit(
 
     if args.oneline || args.format.as_deref() == Some("oneline") {
         let first_line = commit.message.lines().next().unwrap_or("");
+        if args.remerge_diff && !(args.quiet || args.no_patch) && commit.parents.len() == 2 {
+            use crate::commands::remerge_diff::{write_remerge_diff, RemergeDiffOptions};
+            let mut remerge_buf = Vec::new();
+            match remerge_emit_opts {
+                Some(o) => {
+                    write_remerge_diff(&mut remerge_buf, repo, &commit.tree, &commit.parents, o)?
+                }
+                None => {
+                    let find_oid = if let Some(ref s) = args.find_object {
+                        Some(
+                            resolve_revision(repo, s)
+                                .with_context(|| format!("unknown revision: '{s}'"))?,
+                        )
+                    } else {
+                        None
+                    };
+                    let o = RemergeDiffOptions {
+                        pathspecs,
+                        diff_filter: args.diff_filter.as_deref(),
+                        pickaxe: args.pickaxe.as_deref(),
+                        find_object: find_oid,
+                        submodule_mode: args.submodule.as_deref(),
+                        context_lines: args.unified.unwrap_or(3),
+                    };
+                    write_remerge_diff(&mut remerge_buf, repo, &commit.tree, &commit.parents, &o)?;
+                }
+            }
+            let suppress_commit_line = remerge_buf.is_empty()
+                && (args.diff_filter.is_some()
+                    || args.pickaxe.is_some()
+                    || args.find_object.is_some());
+            if suppress_commit_line {
+                return Ok(());
+            }
+            writeln!(out, "{} {}", &hex[..7], first_line)?;
+            out.write_all(&remerge_buf)?;
+            // Pathspecs limit remerge-diff only; do not also emit the default parent diff.
+            if !pathspecs.is_empty() {
+                return Ok(());
+            }
+            return Ok(());
+        }
         writeln!(out, "{} {}", &hex[..7], first_line)?;
         return Ok(());
     }
@@ -362,6 +545,33 @@ fn show_commit(
     }
 
     if args.quiet || args.no_patch {
+        return Ok(());
+    }
+
+    if args.remerge_diff && commit.parents.len() == 2 {
+        use crate::commands::remerge_diff::{write_remerge_diff, RemergeDiffOptions};
+        match remerge_emit_opts {
+            Some(o) => write_remerge_diff(out, repo, &commit.tree, &commit.parents, o)?,
+            None => {
+                let find_oid = if let Some(ref s) = args.find_object {
+                    Some(
+                        resolve_revision(repo, s)
+                            .with_context(|| format!("unknown revision: '{s}'"))?,
+                    )
+                } else {
+                    None
+                };
+                let o = RemergeDiffOptions {
+                    pathspecs,
+                    diff_filter: args.diff_filter.as_deref(),
+                    pickaxe: args.pickaxe.as_deref(),
+                    find_object: find_oid,
+                    submodule_mode: args.submodule.as_deref(),
+                    context_lines: args.unified.unwrap_or(3),
+                };
+                write_remerge_diff(out, repo, &commit.tree, &commit.parents, &o)?;
+            }
+        }
         return Ok(());
     }
 
@@ -850,6 +1060,19 @@ fn write_diffstat(
 
 /// Write a `diff --git a/path b/path` header plus index/mode lines.
 fn write_diff_header(out: &mut impl Write, entry: &grit_lib::diff::DiffEntry) -> Result<()> {
+    write_diff_header_with_remerge(out, entry, None, true)
+}
+
+/// Same as [`write_diff_header`] but inserts an optional `remerge CONFLICT` line after `diff --git`.
+///
+/// When `include_index_lines` is `false`, only the `diff --git` line (and optional remerge line) are
+/// written — matching `git show --remerge-diff --diff-filter=U` output.
+pub(crate) fn write_diff_header_with_remerge(
+    out: &mut impl Write,
+    entry: &grit_lib::diff::DiffEntry,
+    remerge_line: Option<&str>,
+    include_index_lines: bool,
+) -> Result<()> {
     use grit_lib::diff::DiffStatus;
 
     let old_path = entry
@@ -862,6 +1085,13 @@ fn write_diff_header(out: &mut impl Write, entry: &grit_lib::diff::DiffEntry) ->
         .unwrap_or(entry.old_path.as_deref().unwrap_or(""));
 
     writeln!(out, "diff --git a/{old_path} b/{new_path}")?;
+    if let Some(line) = remerge_line {
+        writeln!(out, "{line}")?;
+    }
+
+    if !include_index_lines {
+        return Ok(());
+    }
 
     match entry.status {
         DiffStatus::Added => {
@@ -937,7 +1167,16 @@ fn show_tag(
     let tagged_obj = odb.read(&tag.object).context("reading tagged object")?;
     match tagged_obj.kind {
         ObjectKind::Commit => {
-            show_commit(out, repo, &tag.object, &tagged_obj.data, args, notes_map)?;
+            show_commit(
+                out,
+                repo,
+                &tag.object,
+                &tagged_obj.data,
+                args,
+                notes_map,
+                &[],
+                None,
+            )?;
         }
         ObjectKind::Tag => {
             show_tag(out, repo, &tagged_obj.data, args, notes_map)?;
