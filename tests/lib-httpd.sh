@@ -22,34 +22,70 @@
 
 # HTTP transport tests need real git for client operations since grit
 # doesn't support HTTP transport yet. Override the wrapper to use real git.
-REAL_GIT="$(command -v git 2>/dev/null || echo /usr/bin/git)"
-# If command -v returns a grit wrapper/binary, prefer a non-grit git on PATH.
-if printf "%s" "$REAL_GIT" | grep -q "grit"; then
-	for _p in $(echo "$PATH" | tr ':' ' '); do
-		if test -x "$_p/git" && ! grep -q 'GUST_BIN\|grit' "$_p/git" 2>/dev/null; then
-			REAL_GIT="$_p/git"
-			break
-		fi
-	done
-	if test -z "$REAL_GIT" || printf "%s" "$REAL_GIT" | grep -q "grit"; then
-		REAL_GIT="$(command -v git 2>/dev/null | head -n 1)"
+#
+# `command -v git` is unreliable here: PATH starts with BIN_DIRECTORY, whose
+# `git` may be a grit wrapper, or (after a previous buggy run) a self-exec
+# stub. Prefer a system git, then scan PATH skipping test bin directories.
+REAL_GIT=""
+for _candidate in /usr/bin/git /usr/local/bin/git /bin/git; do
+	if test -x "$_candidate"; then
+		REAL_GIT="$_candidate"
+		break
 	fi
+done
+if test -z "$REAL_GIT"; then
+	for _p in $(echo "$PATH" | tr ':' ' '); do
+		case "$_p" in
+		*/bin.t*|*/.bin) continue ;;
+		esac
+		_g="$_p/git"
+		if test ! -x "$_g"; then
+			continue
+		fi
+		if grep -q 'GUST_BIN\|grit' "$_g" 2>/dev/null; then
+			continue
+		fi
+		if grep -qF "exec \"$_g\"" "$_g" 2>/dev/null; then
+			continue
+		fi
+		REAL_GIT="$_g"
+		break
+	done
 fi
+REAL_GIT="${REAL_GIT:-/usr/bin/git}"
 
-# Replace the git wrapper with real git for HTTP transport
-if test -n "$BIN_DIRECTORY" && test -d "$BIN_DIRECTORY"; then
-	cat >"$BIN_DIRECTORY/git" <<EOFWRAP
+# Hybrid git wrapper: upstream git for HTTP(S) transport, grit otherwise.
+# Tests after start_httpd need real git for clone/fetch over http(s) while still
+# exercising grit for file:// and local commands (e.g. backfill).
+write_hybrid_git_wrapper () {
+	_target="$1"
+	_grit="${GUST_BIN:-}"
+	if test -z "$_grit"; then
+		_grit="$REAL_GIT"
+	fi
+	cat >"$_target" <<EOFWRAP
 #!/bin/sh
-exec "$REAL_GIT" "\$@"
+REAL_GIT='$REAL_GIT'
+GUST_BIN='$_grit'
+_http=0
+for _a in "\$@"; do
+	case "\$_a" in
+	http://*|https://*) _http=1; break ;;
+	esac
+done
+if test "\$_http" = 1; then
+	exec "\$REAL_GIT" "\$@"
+fi
+exec "\$GUST_BIN" "\$@"
 EOFWRAP
-	chmod +x "$BIN_DIRECTORY/git"
+	chmod +x "$_target"
+}
+
+if test -n "$BIN_DIRECTORY" && test -d "$BIN_DIRECTORY"; then
+	write_hybrid_git_wrapper "$BIN_DIRECTORY/git"
 fi
 if test -n "$TRASH_DIRECTORY" && test -d "$TRASH_DIRECTORY/.bin"; then
-	cat >"$TRASH_DIRECTORY/.bin/git" <<EOFWRAP
-#!/bin/sh
-exec "$REAL_GIT" "\$@"
-EOFWRAP
-	chmod +x "$TRASH_DIRECTORY/.bin/git"
+	write_hybrid_git_wrapper "$TRASH_DIRECTORY/.bin/git"
 fi
 
 # Find the test-httpd binary

@@ -93,6 +93,7 @@ pub mod pack_objects;
 pub mod pack_redundant;
 pub mod pack_refs;
 pub mod patch_id;
+pub mod promisor_hydrate;
 pub mod prune;
 pub mod prune_packed;
 pub mod pull;

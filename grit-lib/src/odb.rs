@@ -74,6 +74,16 @@ impl Odb {
             .join(oid.loose_suffix())
     }
 
+    /// Whether the object exists under this database directory only (loose or local packs).
+    ///
+    /// Unlike [`Self::exists`], this ignores `info/alternates` and
+    /// `GIT_ALTERNATE_OBJECT_DIRECTORIES`. Used for partial-clone bookkeeping where
+    /// objects reachable via alternates are still treated as "missing" until copied locally.
+    #[must_use]
+    pub fn exists_local(&self, oid: &ObjectId) -> bool {
+        self.exists_in_dir(&self.objects_dir, oid)
+    }
+
     /// Check whether an object exists in the loose store or any pack file.
     #[must_use]
     pub fn exists(&self, oid: &ObjectId) -> bool {
@@ -82,7 +92,7 @@ impl Odb {
         if oid.to_hex() == EMPTY_TREE {
             return true;
         }
-        if self.exists_in_dir(&self.objects_dir, oid) {
+        if self.exists_local(oid) {
             return true;
         }
         // Check alternates from info/alternates file.

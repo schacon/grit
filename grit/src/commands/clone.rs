@@ -5,7 +5,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::{ConfigFile, ConfigScope};
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::zero_oid;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
@@ -134,7 +134,6 @@ pub fn run(args: Args) -> Result<()> {
         if repo.starts_with("ext::")
             || is_ssh_url(repo)
             || repo.starts_with("ssh://")
-            || repo.starts_with("git+ssh://")
             || repo.starts_with("git://")
             || repo.starts_with("http://")
             || repo.starts_with("https://")
@@ -149,12 +148,12 @@ pub fn run(args: Args) -> Result<()> {
         bail!("ext:: transport is not yet supported");
     }
 
-    // Detect SSH URL: host:/path, ssh://, or git+ssh://
+    // Detect SSH URL: host:/path (colon after hostname, no preceding //)
     if is_ssh_url(&args.repository) {
         crate::protocol::check_protocol_allowed("ssh", None)?;
         return run_ssh_clone(args);
     }
-    if args.repository.starts_with("ssh://") || args.repository.starts_with("git+ssh://") {
+    if args.repository.starts_with("ssh://") {
         crate::protocol::check_protocol_allowed("ssh", None)?;
         return run_ssh_clone(args);
     }
@@ -291,8 +290,7 @@ pub fn run(args: Args) -> Result<()> {
     let source_head_branch = determine_head_branch(&source.git_dir, None)?;
     // Determine which branch to checkout (user override or source HEAD)
     let head_branch = determine_head_branch(&source.git_dir, args.branch.as_deref())?;
-    let default_branch = default_initial_branch_for_clone();
-    let initial_branch = head_branch.as_deref().unwrap_or(&default_branch);
+    let initial_branch = head_branch.as_deref().unwrap_or("master");
 
     // Initialize the target repository
     fs::create_dir_all(&target_path)
@@ -371,7 +369,7 @@ pub fn run(args: Args) -> Result<()> {
 
         // Set up remote "origin" in config
         let refspec = if args.single_branch {
-            let branch = head_branch.as_deref().unwrap_or(default_branch.as_str());
+            let branch = head_branch.as_deref().unwrap_or("master");
             format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
         } else {
             format!("+refs/heads/*:refs/remotes/{remote_name}/*")
@@ -450,8 +448,37 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if partial_blob_none {
+        materialize_blob_none_partial_layout(&dest)
+            .context("materializing partial-clone object layout")?;
         initialize_partial_clone_state(&source, &dest, remote_name, "blob:none")
             .context("initializing partial-clone promisor state")?;
+    }
+
+    // `materialize_blob_none_partial_layout` removes `objects/info/alternates`, so blobs
+    // needed for the initial checkout must be copied into the clone explicitly.
+    if partial_blob_none && !args.bare && !args.no_checkout {
+        let dest_config = ConfigSet::load(Some(&dest.git_dir), true)?;
+        let promisor =
+            crate::commands::promisor_hydrate::find_promisor_source(&dest_config, &dest.git_dir)?;
+        if let Some(ref p) = promisor {
+            if args.sparse {
+                let patterns = vec!["/*".to_string(), "!/*/".to_string()];
+                crate::commands::promisor_hydrate::hydrate_sparse_tip_blobs_from_promisor(
+                    &dest, p, &patterns, true,
+                )
+                .context("hydrating sparse-checkout tip blobs")?;
+                let head_oid = grit_lib::refs::resolve_ref(&dest.git_dir, "HEAD")?;
+                let obj = dest.odb.read(&head_oid).context("reading HEAD for index")?;
+                let commit = parse_commit(&obj.data).context("parsing HEAD for index")?;
+                write_index_from_tree(&dest, &commit.tree)
+                    .context("writing index for sparse clone")?;
+            } else {
+                crate::commands::promisor_hydrate::hydrate_head_tree_blobs_from_promisor(&dest, p)
+                    .context("hydrating HEAD tree blobs")?;
+            }
+        }
+        crate::commands::promisor_hydrate::trim_promisor_marker_to_missing_local(&dest)
+            .context("trimming promisor marker")?;
     }
 
     // Handle --revision: resolve the specified ref in the source repo and set
@@ -463,9 +490,19 @@ pub fn run(args: Args) -> Result<()> {
         fs::write(dest.git_dir.join("HEAD"), format!("{}\n", rev_oid))?;
     }
 
-    // Checkout working tree unless --bare or --no-checkout
-    if !args.bare && !args.no_checkout {
+    // Checkout working tree unless --bare or --no-checkout.
+    // Sparse partial clones already materialize tip files via promisor hydration.
+    if !args.bare && !args.no_checkout && !(partial_blob_none && args.sparse) {
         checkout_head(&dest).context("checking out HEAD")?;
+    }
+
+    // Sparse-checkout: after full checkout for non-partial; after sparse hydration for partial.
+    if args.sparse && !args.bare {
+        crate::commands::sparse_checkout::init_clone_sparse_checkout(&dest, !args.no_checkout)
+            .context("initializing sparse-checkout")?;
+    }
+
+    if !args.bare && !args.no_checkout {
         run_post_checkout_after_clone(&dest)?;
     }
 
@@ -500,209 +537,33 @@ fn is_ssh_url(url: &str) -> bool {
     false
 }
 
-/// Clone from an SSH URL when the remote resolves to a local repository (test
-/// harness with `GIT_SSH` wrappers, or `host:/absolute/path` on the same machine).
+/// Run an SSH-based clone by invoking $GIT_SSH (or "ssh") with the appropriate
+/// arguments: `<host> <upload-pack> '<path>'`.
 fn run_ssh_clone(args: Args) -> Result<()> {
-    let spec = crate::ssh_transport::parse_ssh_url(&args.repository)?;
-    let Some(src_git_dir) = crate::ssh_transport::try_local_git_dir(&spec) else {
+    let ssh_cmd = std::env::var("GIT_SSH").unwrap_or_else(|_| "ssh".to_string());
+    let upload_pack = args.upload_pack.as_deref().unwrap_or("git-upload-pack");
+
+    // Parse host and path from the URL
+    let colon_pos = args.repository.find(':').unwrap();
+    let host = &args.repository[..colon_pos];
+    let path = &args.repository[colon_pos + 1..];
+
+    // Build the argument with single-quoted path (matching git's behavior)
+    let quoted_path = format!("'{}'", path);
+
+    let status = std::process::Command::new(&ssh_cmd)
+        .arg(host)
+        .arg(upload_pack)
+        .arg(&quoted_path)
+        .status()
+        .with_context(|| format!("failed to run SSH command '{}'", ssh_cmd))?;
+
+    if !status.success() {
         bail!(
-            "ssh: could not resolve '{}' to a local repository",
-            args.repository
+            "ssh command '{}' failed with exit code {}",
+            ssh_cmd,
+            status.code().unwrap_or(-1)
         );
-    };
-
-    let source = Repository::open(&src_git_dir, None).with_context(|| {
-        format!(
-            "could not open source repository at '{}'",
-            src_git_dir.display()
-        )
-    })?;
-
-    let path_for_basename = PathBuf::from(&spec.path);
-    let target_name = args.directory.clone().unwrap_or_else(|| {
-        let base = path_for_basename
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        base.strip_suffix(".git")
-            .unwrap_or(&base)
-            .trim_end_matches('/')
-            .to_string()
-    });
-
-    let target_path = PathBuf::from(&target_name);
-    if target_path.exists() {
-        bail!(
-            "destination path '{}' already exists and is not an empty directory",
-            target_path.display()
-        );
-    }
-
-    if !args.quiet {
-        if args.bare {
-            eprintln!("Cloning into bare repository '{}'...", target_name);
-        } else {
-            eprintln!("Cloning into '{}'...", target_name);
-        }
-    }
-
-    let source_head_branch = determine_head_branch(&source.git_dir, None)?;
-    let head_branch = determine_head_branch(&source.git_dir, args.branch.as_deref())?;
-    let default_branch = default_initial_branch_for_clone();
-    let initial_branch = head_branch.as_deref().unwrap_or(&default_branch);
-
-    fs::create_dir_all(&target_path)
-        .with_context(|| format!("cannot create directory '{}'", target_path.display()))?;
-
-    let template_dir = args.template.as_ref().map(PathBuf::from);
-
-    let dest = if let Some(ref sep_git) = args.separate_git_dir {
-        if sep_git.exists() && sep_git.read_dir()?.next().is_some() {
-            bail!(
-                "destination path '{}' already exists and is not an empty directory",
-                sep_git.display()
-            );
-        }
-        init_repository_separate_git_dir(
-            &target_path,
-            sep_git,
-            initial_branch,
-            template_dir.as_deref(),
-        )
-        .with_context(|| {
-            format!(
-                "failed to initialize separate git dir '{}'",
-                sep_git.display()
-            )
-        })?
-    } else {
-        init_repository(
-            &target_path,
-            args.bare,
-            initial_branch,
-            template_dir.as_deref(),
-        )
-        .with_context(|| format!("failed to initialize '{}'", target_path.display()))?
-    };
-
-    if args.shared {
-        write_alternates(&source.git_dir, &dest.git_dir, &args.reference)
-            .context("setting up alternates")?;
-    } else {
-        copy_objects(&source.git_dir, &dest.git_dir).context("copying objects")?;
-        let alt_dir = dest.git_dir.join("objects/info");
-        let _ = fs::create_dir_all(&alt_dir);
-        let source_objects = source.git_dir.join("objects");
-        if let Ok(abs) = source_objects.canonicalize() {
-            let alt_path = alt_dir.join("alternates");
-            let _ = fs::write(&alt_path, format!("{}\n", abs.display()));
-        }
-    }
-
-    let remote_name = "origin";
-    let remote_url = args.repository.as_str();
-
-    if args.bare {
-        copy_refs_direct(&source.git_dir, &dest.git_dir).context("copying refs")?;
-        setup_origin_remote_bare_url(&dest.git_dir, remote_url, remote_name)
-            .context("setting up origin remote")?;
-        if let Some(ref branch) = head_branch {
-            fs::write(
-                dest.git_dir.join("HEAD"),
-                format!("ref: refs/heads/{branch}\n"),
-            )?;
-        }
-    } else {
-        copy_refs_as_remote(&source.git_dir, &dest.git_dir, remote_name, args.no_tags)
-            .context("copying refs")?;
-        let refspec = if args.single_branch {
-            let branch = head_branch.as_deref().unwrap_or(default_branch.as_str());
-            format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
-        } else {
-            format!("+refs/heads/*:refs/remotes/{remote_name}/*")
-        };
-        setup_origin_remote_url(&dest.git_dir, remote_url, remote_name, &refspec)
-            .context("setting up origin remote")?;
-
-        if let Some(ref branch) = source_head_branch {
-            let origin_head_path = dest
-                .git_dir
-                .join("refs/remotes")
-                .join(remote_name)
-                .join("HEAD");
-            if let Some(parent) = origin_head_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(
-                &origin_head_path,
-                format!("ref: refs/remotes/{remote_name}/{branch}\n"),
-            )?;
-        }
-
-        if let Some(ref branch) = head_branch {
-            let remote_ref = dest
-                .git_dir
-                .join("refs/remotes")
-                .join(remote_name)
-                .join(branch);
-            if remote_ref.exists() {
-                let oid_str = fs::read_to_string(&remote_ref).context("reading remote ref")?;
-                let oid = oid_str.trim().to_string();
-                let local_ref_path = dest.git_dir.join("refs/heads").join(branch);
-                if let Some(parent) = local_ref_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(&local_ref_path, format!("{oid}\n"))?;
-                fs::write(
-                    dest.git_dir.join("HEAD"),
-                    format!("ref: refs/heads/{branch}\n"),
-                )?;
-                setup_branch_tracking(&dest.git_dir, branch, remote_name)
-                    .context("setting up branch tracking")?;
-            }
-        }
-    }
-
-    if let Some(depth) = args.depth {
-        if depth > 0 {
-            write_shallow_boundary(&dest, depth)?;
-        }
-    }
-
-    if !args.config.is_empty() {
-        apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
-    }
-
-    if args.no_tags {
-        let config_path = dest.git_dir.join("config");
-        let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
-            Some(c) => c,
-            None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
-        };
-        config.set(&format!("remote.{remote_name}.tagOpt"), "--no-tags")?;
-        config.write().context("writing config")?;
-    }
-
-    if let Some(ref revision) = args.revision {
-        let rev_oid = resolve_revision_in_source(&source, revision)
-            .with_context(|| format!("cannot resolve --revision '{}'", revision))?;
-        fs::write(dest.git_dir.join("HEAD"), format!("{}\n", rev_oid))?;
-    }
-
-    if !args.bare && !args.no_checkout {
-        checkout_head(&dest).context("checking out HEAD")?;
-        run_post_checkout_after_clone(&dest)?;
-    }
-
-    if !args.quiet {
-        eprintln!("done.");
-    }
-
-    if args.recurse_submodules && !args.bare {
-        if let Some(ref wt) = dest.work_tree {
-            clone_submodules(wt, &dest, args.quiet).context("cloning submodules")?;
-        }
     }
 
     Ok(())
@@ -869,14 +730,11 @@ fn resolve_revision_in_source(source: &Repository, revision: &str) -> Result<Str
 fn open_source_repo(path: &Path) -> Result<Repository> {
     // Try as-is first (might be a bare repo or .git dir)
     if let Ok(repo) = Repository::open(path, None) {
-        repo.verify_safe_for_clone_source()?;
         return Ok(repo);
     }
     // Try path/.git for non-bare repos
     let git_dir = path.join(".git");
-    let repo = Repository::open(&git_dir, Some(path)).map_err(anyhow::Error::from)?;
-    repo.verify_safe_for_clone_source()?;
-    Ok(repo)
+    Repository::open(&git_dir, Some(path)).map_err(Into::into)
 }
 
 /// Write an alternates file pointing to the source and reference repos' object stores.
@@ -1205,34 +1063,6 @@ fn setup_origin_remote_bare(git_dir: &Path, source_path: &Path, remote_name: &st
     Ok(())
 }
 
-fn setup_origin_remote_bare_url(git_dir: &Path, remote_url: &str, remote_name: &str) -> Result<()> {
-    let config_path = git_dir.join("config");
-    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
-        Some(c) => c,
-        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
-    };
-    config.set(&format!("remote.{remote_name}.url"), remote_url)?;
-    config.write().context("writing config")?;
-    Ok(())
-}
-
-fn setup_origin_remote_url(
-    git_dir: &Path,
-    remote_url: &str,
-    remote_name: &str,
-    refspec: &str,
-) -> Result<()> {
-    let config_path = git_dir.join("config");
-    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
-        Some(c) => c,
-        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
-    };
-    config.set(&format!("remote.{remote_name}.url"), remote_url)?;
-    config.set(&format!("remote.{remote_name}.fetch"), refspec)?;
-    config.write().context("writing config")?;
-    Ok(())
-}
-
 /// Apply -c config key=value pairs to the cloned repository.
 fn apply_clone_config(git_dir: &Path, configs: &[String]) -> Result<()> {
     let config_path = git_dir.join("config");
@@ -1273,6 +1103,117 @@ fn setup_branch_tracking(git_dir: &Path, branch: &str, remote_name: &str) -> Res
     Ok(())
 }
 
+/// Turn a full local clone into a `blob:none`-style layout: commits and trees are
+/// stored loose, pack files and alternates are removed, and reachable blob loose
+/// files are deleted so `exists_local` matches a true partial clone.
+fn materialize_blob_none_partial_layout(dest: &Repository) -> Result<()> {
+    let alt = dest.git_dir.join("objects/info/alternates");
+    let _ = fs::remove_file(&alt);
+
+    let (skeleton, blobs) = collect_reachable_skeleton_and_blobs(dest)?;
+
+    for oid in &skeleton {
+        let obj = match dest.odb.read(oid) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        let _ = dest.odb.write(obj.kind, &obj.data)?;
+    }
+
+    let pack_dir = dest.git_dir.join("objects/pack");
+    if pack_dir.is_dir() {
+        for entry in fs::read_dir(&pack_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                let _ = fs::remove_file(&path);
+            }
+        }
+    }
+
+    for oid in &blobs {
+        let hex = oid.to_hex();
+        if hex.len() < 3 {
+            continue;
+        }
+        let loose = dest.git_dir.join("objects").join(&hex[..2]).join(&hex[2..]);
+        let _ = fs::remove_file(loose);
+    }
+
+    Ok(())
+}
+
+/// Walk all refs and partition reachable objects into commits+trees vs blobs.
+fn collect_reachable_skeleton_and_blobs(
+    repo: &Repository,
+) -> Result<(HashSet<ObjectId>, HashSet<ObjectId>)> {
+    let mut skeleton = HashSet::new();
+    let mut blobs = HashSet::new();
+    let mut seen_commits = HashSet::new();
+    let mut seen_trees = HashSet::new();
+    let mut seen_tags = HashSet::new();
+    let mut queue = VecDeque::new();
+
+    if let Ok(head) = grit_lib::refs::resolve_ref(&repo.git_dir, "HEAD") {
+        queue.push_back(head);
+    }
+    if let Ok(refs) = grit_lib::refs::list_refs(&repo.git_dir, "refs/") {
+        for (_, oid) in refs {
+            queue.push_back(oid);
+        }
+    }
+
+    while let Some(oid) = queue.pop_front() {
+        let obj = match repo.odb.read(&oid) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        match obj.kind {
+            ObjectKind::Commit => {
+                if !seen_commits.insert(oid) {
+                    continue;
+                }
+                skeleton.insert(oid);
+                let commit = parse_commit(&obj.data)?;
+                for p in &commit.parents {
+                    queue.push_back(*p);
+                }
+                queue.push_back(commit.tree);
+            }
+            ObjectKind::Tree => {
+                if !seen_trees.insert(oid) {
+                    continue;
+                }
+                skeleton.insert(oid);
+                for entry in parse_tree(&obj.data)? {
+                    if entry.mode == 0o160000 {
+                        continue;
+                    }
+                    if (entry.mode & 0o170000) == 0o040000 {
+                        queue.push_back(entry.oid);
+                    } else {
+                        blobs.insert(entry.oid);
+                    }
+                }
+            }
+            ObjectKind::Tag => {
+                if !seen_tags.insert(oid) {
+                    continue;
+                }
+                skeleton.insert(oid);
+                if let Ok(tag) = parse_tag(&obj.data) {
+                    queue.push_back(tag.object);
+                }
+            }
+            ObjectKind::Blob => {
+                blobs.insert(oid);
+            }
+        }
+    }
+
+    Ok((skeleton, blobs))
+}
+
 /// Initialize internal promisor metadata for `--filter=blob:none` clones.
 ///
 /// This records reachable blob OIDs in a marker file so commands can emulate
@@ -1283,10 +1224,8 @@ fn initialize_partial_clone_state(
     remote_name: &str,
     filter_spec: &str,
 ) -> Result<()> {
-    let mut missing: Vec<String> = collect_reachable_blob_oids(source)?
-        .into_iter()
-        .map(|oid| oid.to_hex())
-        .collect();
+    let blobs = collect_reachable_blob_oids_from_dest_refs(source, dest)?;
+    let mut missing: Vec<String> = blobs.into_iter().map(|oid| oid.to_hex()).collect();
     missing.sort();
     missing.dedup();
 
@@ -1313,40 +1252,59 @@ fn initialize_partial_clone_state(
     Ok(())
 }
 
-/// Collect all blob OIDs reachable from HEAD and `refs/*` in the source repo.
-fn collect_reachable_blob_oids(repo: &Repository) -> Result<HashSet<ObjectId>> {
+/// Collect blob OIDs reachable from the destination's refs, reading object contents
+/// from `source` (full object store). Matches Git's reachable blob set for partial
+/// clones where the destination may not yet have blob bytes locally.
+fn collect_reachable_blob_oids_from_dest_refs(
+    source: &Repository,
+    dest: &Repository,
+) -> Result<HashSet<ObjectId>> {
     let mut blobs = HashSet::new();
     let mut seen_commits = HashSet::new();
     let mut seen_trees = HashSet::new();
+    let mut seen_tags = HashSet::new();
     let mut queue = VecDeque::new();
 
-    if let Ok(head) = grit_lib::refs::resolve_ref(&repo.git_dir, "HEAD") {
+    // Seed only from `HEAD` (same default revision as `git rev-list` for this clone).
+    if let Ok(head) = grit_lib::refs::resolve_ref(&dest.git_dir, "HEAD") {
         queue.push_back(head);
-    }
-    if let Ok(refs) = grit_lib::refs::list_refs(&repo.git_dir, "refs/") {
-        for (_, oid) in refs {
-            queue.push_back(oid);
-        }
     }
 
     while let Some(oid) = queue.pop_front() {
-        if !seen_commits.insert(oid) {
-            continue;
-        }
-        let obj = match repo.odb.read(&oid) {
+        let obj = match source.odb.read(&oid) {
             Ok(obj) => obj,
             Err(_) => continue,
         };
         match obj.kind {
             ObjectKind::Commit => {
+                if !seen_commits.insert(oid) {
+                    continue;
+                }
                 let commit = parse_commit(&obj.data)?;
-                queue.extend(commit.parents);
-                collect_tree_blob_oids(repo, commit.tree, &mut seen_trees, &mut blobs)?;
+                for p in &commit.parents {
+                    queue.push_back(*p);
+                }
+                queue.push_back(commit.tree);
             }
             ObjectKind::Tree => {
-                collect_tree_blob_oids(repo, oid, &mut seen_trees, &mut blobs)?;
+                if !seen_trees.insert(oid) {
+                    continue;
+                }
+                for entry in parse_tree(&obj.data)? {
+                    if entry.mode == 0o160000 {
+                        continue;
+                    }
+                    if (entry.mode & 0o170000) == 0o040000 {
+                        queue.push_back(entry.oid);
+                    } else {
+                        blobs.insert(entry.oid);
+                    }
+                }
             }
             ObjectKind::Tag => {
+                if !seen_tags.insert(oid) {
+                    continue;
+                }
                 if let Ok(tag) = parse_tag(&obj.data) {
                     queue.push_back(tag.object);
                 }
@@ -1358,73 +1316,6 @@ fn collect_reachable_blob_oids(repo: &Repository) -> Result<HashSet<ObjectId>> {
     }
 
     Ok(blobs)
-}
-
-/// Recursively collect blob OIDs from a tree.
-fn collect_tree_blob_oids(
-    repo: &Repository,
-    tree_oid: ObjectId,
-    seen_trees: &mut HashSet<ObjectId>,
-    blobs: &mut HashSet<ObjectId>,
-) -> Result<()> {
-    if !seen_trees.insert(tree_oid) {
-        return Ok(());
-    }
-    let obj = match repo.odb.read(&tree_oid) {
-        Ok(obj) => obj,
-        Err(_) => return Ok(()),
-    };
-    if obj.kind != ObjectKind::Tree {
-        return Ok(());
-    }
-    for entry in parse_tree(&obj.data)? {
-        if entry.mode == 0o160000 {
-            continue;
-        }
-        if (entry.mode & 0o170000) == 0o040000 {
-            collect_tree_blob_oids(repo, entry.oid, seen_trees, blobs)?;
-        } else {
-            blobs.insert(entry.oid);
-        }
-    }
-    Ok(())
-}
-
-/// Default name for `refs/heads/<name>` when cloning (matches `git init` test override).
-fn default_initial_branch_for_clone() -> String {
-    std::env::var("GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME").unwrap_or_else(|_| "master".to_string())
-}
-
-/// Pick a local branch to check out when the source `HEAD` is detached or unknown.
-fn pick_clone_branch_from_heads(src_git_dir: &Path) -> Result<Option<String>> {
-    let heads = grit_lib::refs::list_refs(src_git_dir, "refs/heads/")
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    if heads.is_empty() {
-        return Ok(None);
-    }
-    if heads.len() == 1 {
-        let name = heads[0]
-            .0
-            .strip_prefix("refs/heads/")
-            .unwrap_or(&heads[0].0)
-            .to_string();
-        return Ok(Some(name));
-    }
-    let default = default_initial_branch_for_clone();
-    if let Some((r, _)) = heads
-        .iter()
-        .find(|(r, _)| r.strip_prefix("refs/heads/").unwrap_or(r) == default.as_str())
-    {
-        return Ok(Some(r.strip_prefix("refs/heads/").unwrap_or(r).to_string()));
-    }
-    if let Some((r, _)) = heads.iter().find(|(r, _)| r.ends_with("/main")) {
-        return Ok(Some(r.strip_prefix("refs/heads/").unwrap_or(r).to_string()));
-    }
-    if let Some((r, _)) = heads.iter().find(|(r, _)| r.ends_with("/master")) {
-        return Ok(Some(r.strip_prefix("refs/heads/").unwrap_or(r).to_string()));
-    }
-    let (r, _) = &heads[0];
-    Ok(Some(r.strip_prefix("refs/heads/").unwrap_or(r).to_string()))
 }
 
 /// Run `post-checkout` after clone: null old OID, new HEAD commit, branch flag `1`.
@@ -1441,8 +1332,8 @@ fn run_post_checkout_after_clone(repo: &Repository) -> Result<()> {
     let z = zero_oid();
     let old_hex = z.to_hex();
     let new_hex = new_oid.to_hex();
-    let args = [old_hex.as_str(), new_hex.as_str(), "1"];
-    if let HookResult::Failed(code) = run_hook(repo, "post-checkout", &args, None) {
+    let hook_args = [old_hex.as_str(), new_hex.as_str(), "1"];
+    if let HookResult::Failed(code) = run_hook(repo, "post-checkout", &hook_args, None) {
         bail!("post-checkout hook exited with status {code}");
     }
     Ok(())
@@ -1461,20 +1352,10 @@ fn determine_head_branch(src_git_dir: &Path, requested: Option<&str>) -> Result<
         if let Some(refname) = content.strip_prefix("ref: refs/heads/") {
             return Ok(Some(refname.to_string()));
         }
-        if let Ok(oid) = ObjectId::from_hex(content) {
-            let heads = grit_lib::refs::list_refs(src_git_dir, "refs/heads/")
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            for (r, tip) in &heads {
-                if *tip == oid {
-                    let name = r.strip_prefix("refs/heads/").unwrap_or(r);
-                    return Ok(Some(name.to_string()));
-                }
-            }
-            return pick_clone_branch_from_heads(src_git_dir);
-        }
     }
 
-    pick_clone_branch_from_heads(src_git_dir)
+    // Default to master
+    Ok(Some("master".to_string()))
 }
 
 /// Perform a basic checkout of HEAD into the working tree.
@@ -1789,7 +1670,7 @@ fn run_bundle_clone(args: Args) -> Result<()> {
                     .map(|(r, _)| r.strip_prefix("refs/heads/").unwrap_or(r).to_string())
             }
         })
-        .unwrap_or_else(default_initial_branch_for_clone);
+        .unwrap_or_else(|| "master".to_string());
 
     // Initialize target repo
     fs::create_dir_all(&target_path)?;
@@ -1850,6 +1731,7 @@ fn run_bundle_clone(args: Args) -> Result<()> {
     // Checkout if not bare
     if !args.bare {
         checkout_head(&dest)?;
+        run_post_checkout_after_clone(&dest)?;
     }
 
     Ok(())

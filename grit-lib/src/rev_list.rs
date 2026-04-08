@@ -2860,7 +2860,11 @@ fn flatten_tree(
         } else {
             format!("{prefix}/{name}")
         };
-        let child = repo.odb.read(&entry.oid)?;
+        let child = match repo.odb.read(&entry.oid) {
+            Ok(o) => o,
+            Err(Error::ObjectNotFound(_)) => continue,
+            Err(err) => return Err(err),
+        };
         if child.kind == ObjectKind::Tree {
             result.extend(flatten_tree(repo, entry.oid, &path)?);
         } else {

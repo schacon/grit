@@ -264,6 +264,27 @@ fn trace2_write_json_event(path: &str, event: &str, data: &str) -> std::io::Resu
     Ok(())
 }
 
+/// Emit a trace2 `data` JSON event (`trace2_data_string` / `trace2_data_intmax` compatible).
+pub(crate) fn trace2_write_json_data_line(
+    path: &str,
+    category: &str,
+    key: &str,
+    value: &str,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let now = chrono_now();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(
+        file,
+        r#"{{"event":"data","sid":"grit-0","time":"{}","category":"{}","key":"{}","value":"{}"}}"#,
+        now, category, key, value
+    )?;
+    Ok(())
+}
+
 /// Write a trace2 JSON cmd_ancestry event line with an ancestry array.
 fn trace2_write_json_ancestry(path: &str, ancestry: &[String]) -> std::io::Result<()> {
     use std::io::Write;
