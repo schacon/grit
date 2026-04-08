@@ -1026,6 +1026,7 @@ fn validate_repository_format(git_dir: &Path) -> Result<()> {
                 | "objectformat"
                 | "compatobjectformat"
                 | "refstorage"
+                | "submodulepathconfig"
         ) {
             continue;
         }
@@ -1607,6 +1608,28 @@ fn resolve_git_dir_env_path(git_dir: &Path) -> Result<PathBuf> {
         return parse_gitfile(&content, base);
     }
     Ok(git_dir.to_path_buf())
+}
+
+/// Resolves a work tree's `.git` path (directory or gitfile) to the real git directory.
+///
+/// # Errors
+///
+/// Returns [`Error::NotARepository`] when `.git` is missing, invalid, or the gitfile target is absent.
+pub fn resolve_dot_git(dot_git: &Path) -> Result<PathBuf> {
+    if dot_git.is_dir() {
+        return dot_git
+            .canonicalize()
+            .map_err(|_| Error::NotARepository(dot_git.display().to_string()));
+    }
+    if dot_git.is_file() {
+        let content =
+            fs::read_to_string(dot_git).map_err(|e| Error::NotARepository(e.to_string()))?;
+        let base = dot_git
+            .parent()
+            .ok_or_else(|| Error::NotARepository(dot_git.display().to_string()))?;
+        return parse_gitfile(&content, base);
+    }
+    Err(Error::NotARepository(dot_git.display().to_string()))
 }
 
 /// Parse a gitfile's `"gitdir: <path>"` line.

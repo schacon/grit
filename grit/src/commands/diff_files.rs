@@ -445,9 +445,7 @@ fn collect_changes(
                     let idx_canonical = canonicalize_mode(*idx_mode);
                     // Content and mode match the index: treat as clean even if the index entry
                     // was created without racily-clean stat data (e.g. `git apply --index`).
-                    if wt_oid != *idx_oid
-                        || wt_mode != idx_canonical
-                        || is_stat_smudged(idx_entry)
+                    if wt_oid != *idx_oid || wt_mode != idx_canonical || is_stat_smudged(idx_entry)
                     {
                         // Detect type changes (e.g., symlink ↔ regular, regular ↔ submodule)
                         let status = if mode_type(idx_canonical) != mode_type(wt_mode) {

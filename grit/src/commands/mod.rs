@@ -134,6 +134,7 @@ pub mod stash;
 pub mod status;
 pub mod stripspace;
 pub mod submodule;
+pub mod submodule_helper;
 pub mod switch;
 pub mod symbolic_ref;
 pub mod tag;

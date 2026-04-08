@@ -5,7 +5,7 @@ use clap::Args as ClapArgs;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use grit_lib::config::ConfigSet;
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 
 /// `guess_repository_type` from git/builtin/init-db.c (used when `--bare` was not passed).
 fn guess_repository_type(git_dir: &Path, cwd: &Path, raw_git_dir_env: Option<&str>) -> bool {
@@ -333,6 +333,21 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
         ref_format,
         work_tree_abs.as_deref(),
     )?;
+
+    if !is_reinit
+        && !bare
+        && config
+            .get("init.defaultSubmodulePathConfig")
+            .as_deref()
+            .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1"))
+    {
+        let config_path = real_git_dir.join("config");
+        let content = fs::read_to_string(&config_path).unwrap_or_default();
+        let mut cfg = ConfigFile::parse(&config_path, &content, ConfigScope::Local)?;
+        cfg.set("core.repositoryformatversion", "1")?;
+        cfg.set("extensions.submodulePathConfig", "true")?;
+        cfg.write()?;
+    }
 
     // Handle --separate-git-dir: write gitfile at path/.git
     if args.separate_git_dir.is_some() && !bare {
