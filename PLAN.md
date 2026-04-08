@@ -835,7 +835,7 @@ commit → check it off → move on.
 
 - [ ] `t7413-submodule-is-active` ████░░░░░░░░░░░░░░░░ 2/10 (8 left) — Test with test-tool submodule is-active
 
-- [ ] `t7817-grep-sparse-checkout` ░░░░░░░░░░░░░░░░░░░░ 0/8 (8 left) — grep in sparse checkout
+- [x] `t7817-grep-sparse-checkout` ████████████████████ 8/8 (0 left) — grep in sparse checkout
 
 - [ ] `t7611-merge-abort` ██████████░░░░░░░░░░ 10/19 (9 left) — test aborting in-progress merges
 
