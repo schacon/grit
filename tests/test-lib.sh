@@ -46,6 +46,15 @@ fi
 GUST_BIN="$(cd "$(dirname "$GUST_BIN")" && pwd)/$(basename "$GUST_BIN")"
 export GUST_BIN
 
+# Shell used for nested test scripts (lib-subtest.sh).
+TEST_SHELL_PATH="${TEST_SHELL_PATH:-/bin/sh}"
+export TEST_SHELL_PATH
+
+# Original stdio for framework messages (matches git/t/test-lib.sh fd layout).
+exec 5>&1
+exec 6<&0
+exec 7>&2
+
 # Test environment (honour TEST_DIRECTORY when exported, e.g. subtests in a subdir)
 if test -z "$TEST_DIRECTORY"
 then
@@ -61,7 +70,15 @@ fi
 # Use a per-test trash directory to avoid interference between tests.
 # Derive from the test script name (e.g., t4050-diff.sh -> trash.t4050-diff)
 _test_basename="$(basename "$0" .sh)"
-TRASH_DIRECTORY="${TRASH_DIRECTORY:-$TEST_DIRECTORY/trash.$_test_basename}"
+# Nested tests (lib-subtest.sh) set TEST_OUTPUT_DIRECTORY_OVERRIDE to their cwd
+# so trash paths and ../../ references match upstream git/t behavior.
+if test -n "${TEST_OUTPUT_DIRECTORY_OVERRIDE:-}"
+then
+	_test_output_base="$TEST_OUTPUT_DIRECTORY_OVERRIDE"
+else
+	_test_output_base="$TEST_DIRECTORY"
+fi
+TRASH_DIRECTORY="${TRASH_DIRECTORY:-$_test_output_base/trash.$_test_basename}"
 # BIN_DIRECTORY lives *outside* the working tree so that `git clean -x`
 # (used in pristine_detach and similar helpers) cannot remove the wrapper
 # scripts.  Using a sibling directory keeps things self-contained.
@@ -445,7 +462,8 @@ _x05='[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'
 _x35="$_x05$_x05$_x05$_x05$_x05$_x05$_x05"
 _x40="$_x35$_x05"
 OID_REGEX="$_x40"
-EMPTY_TREE=4b825dc642cb6eb9a060e54bf899d69f7c6948d4
+# Canonical SHA-1 empty tree (matches `git hash-object -t tree --stdin </dev/null`).
+EMPTY_TREE=4b825dc642cb6eb9a060e54bf8d69288fbee4904
 EMPTY_BLOB=e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 export OID_REGEX _x05 _x35 _x40 ZERO_OID EMPTY_TREE EMPTY_BLOB
 
@@ -525,6 +543,24 @@ test_oid () {
 			fi
 		fi
 		case "$1" in
+		empty_blob)
+			if test "$effective" = sha256
+			then
+				echo "473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813"
+			else
+				echo "$EMPTY_BLOB"
+			fi
+			return
+			;;
+		empty_tree)
+			if test "$effective" = sha256
+			then
+				echo "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321"
+			else
+				echo "$EMPTY_TREE"
+			fi
+			return
+			;;
 		''|*[!0-9]*) ;;
 		*)
 			if test "$effective" = sha256
@@ -757,6 +793,24 @@ test_have_prereq () {
 		fi
 		return 0
 	fi
+
+	case " $lazily_tested_prereq " in
+	*" $_p "*)
+		;;
+	*)
+		case " $lazily_testable_prereq " in
+		*" $_p "*)
+			eval "script=\$test_prereq_lazily_${_p}"
+			if test_run_lazy_prereq "$_p" "$script"
+			then
+				test_set_prereq "$_p"
+			fi
+			lazily_tested_prereq="$lazily_tested_prereq$_p "
+			;;
+		esac
+		;;
+	esac
+
 	case "$_p" in
 	POSIXPERM) return 0 ;;
 	SYMLINKS)  return 0 ;;
@@ -790,6 +844,29 @@ test_set_prereq () {
 	eval "_prereq_$1=set"
 }
 
+# Lazy prerequisites (git/t0000 nested-lazy): script runs in a temp dir under trash.
+lazily_testable_prereq=
+lazily_tested_prereq=
+
+test_lazy_prereq () {
+	lazily_testable_prereq="$lazily_testable_prereq$1 "
+	eval "test_prereq_lazily_$1=\"\$2\""
+}
+
+test_run_lazy_prereq () {
+	_name="$1"
+	_script="$2"
+	_pd="$TRASH_DIRECTORY/prereq-test-dir-$_name"
+	rm -rf "$_pd"
+	mkdir -p "$_pd" &&
+	(
+		cd "$_pd" && eval "$_script"
+	)
+	_ret=$?
+	rm -rf "$_pd"
+	return "$_ret"
+}
+
 # TAR for tests that need it
 TAR=${TAR:-tar}
 export TAR
@@ -818,10 +895,10 @@ test_skip_or_die () {
 	test_done
 }
 
-# error MSG — print an error and exit
+# error MSG — print an error and exit (fd 7 = original stderr, matches git test-lib)
 error () {
-	echo "error: $*" >&2
-	exit 1
+	echo "error: $*" >&7
+	_error_exit
 }
 
 # test_env — run command with additional env vars
@@ -1067,11 +1144,69 @@ test_export () {
 	done
 }
 
+test_cleanup=:
+
 test_when_finished () {
-	# Register a command to run after the current test body completes.
-	# Multiple calls accumulate in LIFO order (matching git's real test-lib),
-	# so later registrations run first.
-	_twf_cmd="$*${_twf_cmd:+; $_twf_cmd}"
+	test_cleanup="{ $*
+		} && (exit \"\$eval_ret\"); eval_ret=\$?; $test_cleanup"
+}
+
+test_atexit_cleanup=:
+
+test_atexit () {
+	test_atexit_cleanup="{ $*
+		} && (exit \"\$eval_ret\"); eval_ret=\$?; $test_atexit_cleanup"
+}
+
+test_atexit_handler () {
+	test : != "$test_atexit_cleanup" || return 0
+	test_eval_ "$test_atexit_cleanup"
+	test_atexit_cleanup=:
+}
+
+test_eval_inner_ () {
+	eval "$1"
+}
+
+# Run test body with stdin / stdout / stderr wired like git's test-lib (fd 3/4).
+test_eval_ () {
+	test_eval_inner_ </dev/null >&3 2>&4 "$1"
+	return $?
+}
+
+test_run_ () {
+	test_cleanup=:
+	expecting_failure=$2
+	test_eval_ "$1"
+	eval_ret=$?
+	if test -z "$immediate" || test "$eval_ret" -eq 0 ||
+		{ test -n "$expecting_failure" && test "$test_cleanup" != ":"; }
+	then
+		test_eval_ "$test_cleanup"
+	fi
+	return "$eval_ret"
+}
+
+# Normal exits set GIT_EXIT_OK so the EXIT trap does not print FATAL (git test-lib).
+GIT_EXIT_OK=
+
+die () {
+	code=$?
+	test_atexit_handler || code=$?
+	if test -n "$GIT_EXIT_OK"
+	then
+		exit "$code"
+	else
+		echo >&5 "FATAL: Unexpected exit with code $code"
+		exit 1
+	fi
+}
+
+trap 'die' EXIT
+
+_error_exit () {
+	GIT_EXIT_OK=t
+	exit 1
 }
 
 . "$TEST_DIRECTORY"/test-lib-tap.sh

@@ -3,6 +3,8 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::io::{self, BufRead};
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 use std::path::Component;
 use std::path::{Path, PathBuf};
 
@@ -351,6 +353,32 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
                 eprintln!("error: git update-index: --cacheinfo cannot add a null sha1");
                 std::process::exit(1);
             }
+            // Directory/file conflicts: reject adding a blob under an existing
+            // file prefix, or a file when the index already has longer paths
+            // under that directory (matches git's update-index checks).
+            if mode != grit_lib::index::MODE_TREE && mode != grit_lib::index::MODE_GITLINK {
+                let rel_str = String::from_utf8_lossy(&path_bytes);
+                if args.replace {
+                    remove_index_path_conflicts_for_replace(&mut index, &path_bytes);
+                } else {
+                    let mut prefix = rel_str.as_ref();
+                    while let Some(pos) = prefix.rfind('/') {
+                        prefix = &prefix[..pos];
+                        if index.get(prefix.as_bytes(), 0).is_some() {
+                            bail!("error: invalid path '{}'", rel_str);
+                        }
+                    }
+                    let dir_prefix = format!("{rel_str}/");
+                    let has_dir_entries = index.entries.iter().any(|e| {
+                        let p = String::from_utf8_lossy(&e.path);
+                        p.starts_with(dir_prefix.as_str())
+                    });
+                    if has_dir_entries {
+                        bail!("error: invalid path '{}'", rel_str);
+                    }
+                }
+            }
+
             let entry = IndexEntry {
                 ctime_sec: 0,
                 ctime_nsec: 0,
@@ -546,22 +574,26 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         let is_gitlink = meta.file_type().is_dir() && abs_path.join(".git").exists();
         if path_mode == PathMode::Add && !is_gitlink {
             let rel_str = String::from_utf8_lossy(&rel_bytes);
-            // Check if any ancestor path is already a file in the index
-            let mut prefix = rel_str.as_ref();
-            while let Some(pos) = prefix.rfind('/') {
-                prefix = &prefix[..pos];
-                if index.get(prefix.as_bytes(), 0).is_some() {
+            if args.replace {
+                remove_index_path_conflicts_for_replace(&mut index, &rel_bytes);
+            } else {
+                // Check if any ancestor path is already a file in the index
+                let mut prefix = rel_str.as_ref();
+                while let Some(pos) = prefix.rfind('/') {
+                    prefix = &prefix[..pos];
+                    if index.get(prefix.as_bytes(), 0).is_some() {
+                        bail!("error: invalid path '{}'", rel_str);
+                    }
+                }
+                // Check if any existing index entry has this path as a prefix
+                let dir_prefix = format!("{rel_str}/");
+                let has_dir_entries = index.entries.iter().any(|e| {
+                    let p = String::from_utf8_lossy(&e.path);
+                    p.starts_with(dir_prefix.as_str())
+                });
+                if has_dir_entries {
                     bail!("error: invalid path '{}'", rel_str);
                 }
-            }
-            // Check if any existing index entry has this path as a prefix
-            let dir_prefix = format!("{rel_str}/");
-            let has_dir_entries = index.entries.iter().any(|e| {
-                let p = String::from_utf8_lossy(&e.path);
-                p.starts_with(dir_prefix.as_str())
-            });
-            if has_dir_entries {
-                bail!("error: invalid path '{}'", rel_str);
             }
         }
 
@@ -958,6 +990,37 @@ fn refresh_index(
         match std::fs::symlink_metadata(&abs) {
             Ok(meta) => {
                 use std::os::unix::fs::MetadataExt;
+                // Symlinks: compare link target to the blob Git stores (matches
+                // readlink + hash, not `read()` which follows the link).
+                if meta.file_type().is_symlink() {
+                    let target = std::fs::read_link(&abs)?;
+                    let data = target.as_os_str().as_bytes();
+                    let actual_oid = grit_lib::odb::Odb::hash_object_data(
+                        grit_lib::objects::ObjectKind::Blob,
+                        data,
+                    );
+                    let stat_changed =
+                        entry.mtime_sec != meta.mtime() as u32 || entry.size != meta.size() as u32;
+                    if actual_oid != entry.oid {
+                        eprintln!("{path_str}: needs update");
+                        all_uptodate = false;
+                    } else if stat_changed {
+                        entry.ctime_sec = meta.ctime() as u32;
+                        entry.ctime_nsec = meta.ctime_nsec() as u32;
+                        entry.mtime_sec = meta.mtime() as u32;
+                        entry.mtime_nsec = meta.mtime_nsec() as u32;
+                        entry.size = meta.size() as u32;
+                        index_modified = true;
+                    } else {
+                        let new_ctime = meta.ctime() as u32;
+                        if entry.ctime_sec != new_ctime {
+                            entry.ctime_sec = new_ctime;
+                            entry.ctime_nsec = meta.ctime_nsec() as u32;
+                            index_modified = true;
+                        }
+                    }
+                    continue;
+                }
                 // Check if stat data differs from index
                 let stat_changed =
                     entry.mtime_sec != meta.mtime() as u32 || entry.size != meta.size() as u32;
@@ -1123,6 +1186,22 @@ fn resolve_gitdir(dot_git: &Path) -> anyhow::Result<PathBuf> {
 
 fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
     err.to_string().contains("Permission denied") || err.to_string().contains("permission denied")
+}
+
+/// Remove index entries that conflict with adding `new_path` when `--replace` is set:
+/// descendants (`new_path/...`) and ancestor files (`prefix` where `new_path` is `prefix/...`).
+fn remove_index_path_conflicts_for_replace(index: &mut Index, new_path: &[u8]) {
+    let mut child_prefix = new_path.to_vec();
+    child_prefix.push(b'/');
+
+    index.entries.retain(|e| {
+        if e.path.starts_with(&child_prefix) {
+            return false;
+        }
+        let mut anc = e.path.clone();
+        anc.push(b'/');
+        !new_path.starts_with(&anc)
+    });
 }
 
 fn core_symlinks_enabled(repo: &Repository) -> bool {

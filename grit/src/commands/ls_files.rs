@@ -633,7 +633,14 @@ enum Pathspec {
 impl Pathspec {
     fn matches(&self, path: &[u8]) -> bool {
         match self {
-            Pathspec::Literal(spec) => path == spec.as_slice() || path.starts_with(spec),
+            // Directory pathspecs match the path itself and children (`dir/`),
+            // but not unrelated paths that merely share a prefix (`dirfoo`).
+            Pathspec::Literal(spec) => {
+                path == spec.as_slice()
+                    || (path.starts_with(spec)
+                        && path.len() > spec.len()
+                        && path[spec.len()] == b'/')
+            }
             Pathspec::Glob(pattern) => {
                 // Try literal match first (for files with glob chars in names)
                 if path == pattern.as_bytes() {

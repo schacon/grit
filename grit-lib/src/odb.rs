@@ -87,9 +87,13 @@ impl Odb {
     /// Check whether an object exists in the loose store or any pack file.
     #[must_use]
     pub fn exists(&self, oid: &ObjectId) -> bool {
-        // The empty tree is always considered to exist.
-        const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-        if oid.to_hex() == EMPTY_TREE {
+        // The empty tree is a well-known object (no on-disk loose file). Git's
+        // canonical SHA-1 is `...8d69288fbee4904`; some harnesses still use the
+        // legacy typo hash `...899d69f7c6948d4` — treat both as present.
+        const EMPTY_TREE_CANON: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+        const EMPTY_TREE_LEGACY: &str = "4b825dc642cb6eb9a060e54bf899d69f7c6948d4";
+        let hex = oid.to_hex();
+        if hex == EMPTY_TREE_CANON || hex == EMPTY_TREE_LEGACY {
             return true;
         }
         if self.exists_local(oid) {
@@ -139,8 +143,10 @@ impl Odb {
     /// - [`Error::CorruptObject`] — header is malformed.
     pub fn read(&self, oid: &ObjectId) -> Result<Object> {
         // The empty tree is a well-known virtual object — no storage needed.
-        const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-        if oid.to_hex() == EMPTY_TREE {
+        const EMPTY_TREE_CANON: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+        const EMPTY_TREE_LEGACY: &str = "4b825dc642cb6eb9a060e54bf899d69f7c6948d4";
+        let hex = oid.to_hex();
+        if hex == EMPTY_TREE_CANON || hex == EMPTY_TREE_LEGACY {
             return Ok(crate::objects::Object {
                 kind: crate::objects::ObjectKind::Tree,
                 data: Vec::new(),
