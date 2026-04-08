@@ -759,6 +759,10 @@ pub fn run(args: Args) -> Result<()> {
         run_post_checkout_after_clone(&dest)?;
     }
 
+    if args.sparse && !args.bare {
+        crate::commands::sparse_checkout::finalize_sparse_clone(&dest, !args.no_checkout)?;
+    }
+
     if !args.quiet {
         eprintln!("done.");
     }
@@ -1028,6 +1032,10 @@ fn run_ssh_clone(args: Args) -> Result<()> {
             checkout_head(&dest).context("checking out HEAD")?;
             run_post_checkout_after_clone(&dest)?;
         }
+    }
+
+    if args.sparse && !args.bare {
+        crate::commands::sparse_checkout::finalize_sparse_clone(&dest, !args.no_checkout)?;
     }
 
     if !args.quiet {
@@ -2189,6 +2197,28 @@ fn setup_remote_tracking_head(
         }
     }
 
+    Ok(())
+}
+
+/// Build `.git/index` from `HEAD` when missing (e.g. `clone --no-checkout` before sparse-checkout).
+pub(crate) fn ensure_index_from_head_if_missing(repo: &Repository) -> Result<()> {
+    let index_path = repo.index_path();
+    if index_path.exists() {
+        return Ok(());
+    }
+    let head_content = fs::read_to_string(repo.git_dir.join("HEAD")).context("reading HEAD")?;
+    let head = head_content.trim();
+    let oid = if let Some(refname) = head.strip_prefix("ref: ") {
+        let ref_path = repo.git_dir.join(refname);
+        let oid_str =
+            fs::read_to_string(&ref_path).with_context(|| format!("reading ref {refname}"))?;
+        ObjectId::from_hex(oid_str.trim()).with_context(|| format!("invalid OID in {refname}"))?
+    } else {
+        ObjectId::from_hex(head).context("invalid OID in HEAD")?
+    };
+    let obj = repo.odb.read(&oid).context("reading HEAD commit")?;
+    let commit = parse_commit(&obj.data).context("parsing HEAD commit")?;
+    write_index_from_tree(repo, &commit.tree)?;
     Ok(())
 }
 

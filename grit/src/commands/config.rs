@@ -1310,6 +1310,17 @@ fn load_config(args: &Args, git_dir: Option<&Path>) -> Result<ConfigSet> {
         return Ok(set);
     }
 
+    if args.worktree {
+        let mut set = ConfigSet::new();
+        if let Some(gd) = git_dir {
+            let p = gd.join("config.worktree");
+            if let Some(f) = ConfigFile::from_path(&p, ConfigScope::Worktree)? {
+                set.merge(&f);
+            }
+        }
+        return Ok(set);
+    }
+
     // Default: full cascade
     Ok(ConfigSet::load(git_dir, true)?)
 }

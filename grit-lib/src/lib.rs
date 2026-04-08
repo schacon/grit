@@ -52,6 +52,7 @@ pub mod rev_list;
 pub mod rev_parse;
 #[cfg(unix)]
 pub mod simple_ipc;
+pub mod sparse_checkout;
 #[cfg(not(unix))]
 pub mod simple_ipc {
     /// Whether simple IPC is supported on this platform.

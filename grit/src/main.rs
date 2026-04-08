@@ -2100,6 +2100,43 @@ fn preprocess_config_argv(rest: &[String]) -> Vec<String> {
     out
 }
 
+fn preprocess_sparse_checkout_argv(rest: &[String]) -> Vec<String> {
+    if rest.first().map(|s| s.as_str()) != Some("set") {
+        return rest.to_vec();
+    }
+    const SET_FLAGS: &[&str] = &[
+        "--cone",
+        "--no-cone",
+        "--sparse-index",
+        "--no-sparse-index",
+        "--skip-checks",
+        "--stdin",
+        "--end-of-options",
+    ];
+    let mut i = 1usize;
+    while i < rest.len() {
+        let a = rest[i].as_str();
+        if a == "--" {
+            return rest.to_vec();
+        }
+        if a.starts_with('-') {
+            if let Some((opt, _val)) = a.split_once('=') {
+                if SET_FLAGS.contains(&opt) {
+                    i += 1;
+                    continue;
+                }
+            } else if SET_FLAGS.contains(&a) {
+                i += 1;
+                continue;
+            }
+        }
+        let mut out = rest.to_vec();
+        out.insert(i, "--".to_owned());
+        return out;
+    }
+    rest.to_vec()
+}
+
 fn preprocess_status_argv(rest: &[String]) -> Vec<String> {
     fn next_is_pathspec_after_bare_porcelain(next: Option<&str>) -> bool {
         let Some(n) = next else {
@@ -3135,7 +3172,10 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "show-branch" => commands::show_branch::run(parse_cmd_args(subcmd, rest)),
         "show-index" => commands::show_index::run(parse_cmd_args(subcmd, rest)),
         "show-ref" => commands::show_ref::run(parse_cmd_args(subcmd, rest)),
-        "sparse-checkout" => commands::sparse_checkout::run(parse_cmd_args(subcmd, rest)),
+        "sparse-checkout" => commands::sparse_checkout::run(parse_cmd_args(
+            subcmd,
+            &preprocess_sparse_checkout_argv(rest),
+        )),
         "stage" => commands::stage::run(parse_cmd_args(subcmd, rest)),
         "stash" => commands::stash::run(parse_cmd_args(subcmd, rest)),
         "status" => commands::status::run(parse_cmd_args(subcmd, &preprocess_status_argv(rest))),

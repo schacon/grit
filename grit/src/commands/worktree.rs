@@ -710,6 +710,8 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         populate_worktree(&repo, &commit_oid, &wt_path, &wt_admin)?;
     }
 
+    crate::commands::sparse_checkout::copy_sparse_checkout_to_admin(&repo.git_dir, &wt_admin)?;
+
     Ok(())
 }
 

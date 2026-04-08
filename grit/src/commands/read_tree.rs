@@ -14,6 +14,7 @@ use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
+use grit_lib::sparse_checkout::{load_sparse_checkout_with_warnings, path_in_sparse_checkout};
 
 /// Arguments for `grit read-tree`.
 #[derive(Debug, ClapArgs)]
@@ -814,7 +815,7 @@ fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {
     index.entries.push(e);
 }
 
-/// Check if core.sparsecheckout is enabled and apply skip-worktree bits.
+/// Check if `core.sparseCheckout` is enabled and apply skip-worktree bits.
 fn apply_sparse_checkout(git_dir: &Path, index: &mut Index) -> Result<()> {
     let config = ConfigSet::load(Some(git_dir), true).unwrap_or_else(|_| ConfigSet::new());
     let sparse_enabled = config
@@ -826,113 +827,50 @@ fn apply_sparse_checkout(git_dir: &Path, index: &mut Index) -> Result<()> {
         return Ok(());
     }
 
-    // Read sparse-checkout patterns from .git/info/sparse-checkout
-    let sparse_path = git_dir.join("info").join("sparse-checkout");
-    let patterns = match std::fs::read_to_string(&sparse_path) {
-        Ok(content) => parse_sparse_patterns(&content),
-        Err(_) => return Ok(()), // No sparse-checkout file, nothing to do
-    };
+    let cone_config = config
+        .get("core.sparsecheckoutcone")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(true);
 
-    // Apply skip-worktree to all entries not matching any pattern
+    let mut warnings = Vec::new();
+    let (_cone_ok, _cone_loaded, non_cone) =
+        load_sparse_checkout_with_warnings(git_dir, cone_config, &mut warnings);
+    for line in warnings {
+        eprintln!("{line}");
+    }
+
+    let sparse_path = git_dir.join("info").join("sparse-checkout");
+    let file_content = std::fs::read_to_string(&sparse_path).unwrap_or_default();
+    let cone_struct = if cone_config {
+        grit_lib::sparse_checkout::ConePatterns::try_parse(&file_content)
+    } else {
+        None
+    };
+    let effective_cone = cone_config && cone_struct.is_some();
+
     let mut any_skip = false;
     for entry in &mut index.entries {
         if entry.stage() != 0 {
             continue;
         }
         let path_str = String::from_utf8_lossy(&entry.path);
-        let matches = sparse_matches(&patterns, &path_str);
-        entry.set_skip_worktree(!matches);
-        if !matches {
+        let included = path_in_sparse_checkout(
+            path_str.as_ref(),
+            effective_cone,
+            cone_struct.as_ref(),
+            &non_cone,
+        );
+        entry.set_skip_worktree(!included);
+        if !included {
             any_skip = true;
         }
     }
 
-    // Promote to v3 so skip-worktree extended flags are written
     if any_skip && index.version < 3 {
         index.version = 3;
     }
 
     Ok(())
-}
-
-/// Parse sparse-checkout file into a list of patterns.
-/// Each non-empty, non-comment line is a pattern.
-fn parse_sparse_patterns(content: &str) -> Vec<String> {
-    content
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(|l| l.to_owned())
-        .collect()
-}
-
-/// Check if a path matches any sparse-checkout pattern.
-/// Patterns work like gitignore:
-/// - "sub/" matches any path starting with "sub/"
-/// - "*.c" matches any path ending in .c
-/// - "/foo" anchored to root
-fn sparse_matches(patterns: &[String], path: &str) -> bool {
-    if patterns.is_empty() {
-        return false;
-    }
-
-    for pattern in patterns {
-        if sparse_pattern_matches(pattern, path) {
-            return true;
-        }
-    }
-    false
-}
-
-/// Match a single sparse-checkout pattern against a path.
-fn sparse_pattern_matches(pattern: &str, path: &str) -> bool {
-    let pat = pattern.trim();
-    if pat.is_empty() {
-        return false;
-    }
-
-    // Directory pattern: "sub/" matches paths like "sub/foo"
-    if pat.ends_with('/') {
-        let dir = &pat[..pat.len() - 1];
-        // Remove leading slash if present
-        let dir = dir.strip_prefix('/').unwrap_or(dir);
-        // Match if path starts with "dir/" or path equals dir
-        return path.starts_with(&format!("{dir}/")) || path == dir;
-    }
-
-    // Anchored pattern (starts with /)
-    let pat = if pat.starts_with('/') { &pat[1..] } else { pat };
-
-    // Simple glob matching
-    sparse_glob_match(pat, path)
-}
-
-/// Simple glob matching for sparse patterns.
-fn sparse_glob_match(pattern: &str, text: &str) -> bool {
-    let pat = pattern.as_bytes();
-    let txt = text.as_bytes();
-    let (mut pi, mut ti) = (0, 0);
-    let (mut star_pi, mut star_ti) = (usize::MAX, 0);
-    while ti < txt.len() {
-        if pi < pat.len() && (pat[pi] == b'?' || pat[pi] == txt[ti]) {
-            pi += 1;
-            ti += 1;
-        } else if pi < pat.len() && pat[pi] == b'*' {
-            star_pi = pi;
-            star_ti = ti;
-            pi += 1;
-        } else if star_pi != usize::MAX {
-            pi = star_pi + 1;
-            star_ti += 1;
-            ti = star_ti;
-        } else {
-            return false;
-        }
-    }
-    while pi < pat.len() && pat[pi] == b'*' {
-        pi += 1;
-    }
-    pi == pat.len()
 }
 
 /// True if the working tree already has this index entry (blob/symlink) at `abs_path`.
