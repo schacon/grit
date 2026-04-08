@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -367,7 +367,7 @@ t1307-config-blob	t1	yes	13	11	2	false	ok	0
 t13070-for-each-ref-points-at	t1	yes	32	32	0	true	ok	0
 t1308-config-set	t1	yes	0	0	0	false	timeout	0
 t13080-show-ref-loose-packed	t1	yes	31	31	0	true	ok	0
-t1309-early-config	t1	yes	8	4	4	false	ok	2
+t1309-early-config	t1	yes	10	10	0	true	ok	0
 t1310-config-default	t1	yes	5	5	0	true	ok	0
 t1311-config-optional	t1	yes	3	3	0	true	ok	0
 t13120-diff-no-index-dir-file	t1	yes	37	36	1	false	ok	0

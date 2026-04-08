@@ -67,19 +67,7 @@ pub struct Repository {
 }
 
 impl Repository {
-    /// Open a repository from an explicit git-dir and optional work-tree.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::NotARepository`] if `git_dir` does not look like a
-    /// valid git directory (missing `objects/`, `HEAD`, etc.).
-    pub fn open(git_dir: &Path, work_tree: Option<&Path>) -> Result<Self> {
-        let git_dir = git_dir
-            .canonicalize()
-            .map_err(|_| Error::NotARepository(git_dir.display().to_string()))?;
-
-        validate_repository_format(&git_dir)?;
-
+    fn from_canonical_git_dir(git_dir: PathBuf, work_tree: Option<&Path>) -> Result<Self> {
         // Check HEAD exists or is a symlink (linked worktrees have a symlink HEAD)
         let head_path = git_dir.join("HEAD");
         if !head_path.exists() && !head_path.is_symlink() {
@@ -133,6 +121,36 @@ impl Repository {
             work_tree_from_env: false,
             discovery_via_gitfile: false,
         })
+    }
+
+    /// Open a repository from an explicit git-dir and optional work-tree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotARepository`] if `git_dir` does not look like a
+    /// valid git directory (missing `objects/`, `HEAD`, etc.).
+    pub fn open(git_dir: &Path, work_tree: Option<&Path>) -> Result<Self> {
+        let git_dir = git_dir
+            .canonicalize()
+            .map_err(|_| Error::NotARepository(git_dir.display().to_string()))?;
+
+        validate_repository_format(&git_dir)?;
+
+        Self::from_canonical_git_dir(git_dir, work_tree)
+    }
+
+    /// Like [`Self::open`] but skips [`validate_repository_format`].
+    ///
+    /// Used after repository discovery when the format is unsupported so callers still learn
+    /// the git directory (Git `GIT_DIR_INVALID_FORMAT` still records gitdir for `read_early_config`).
+    pub fn open_skipping_format_validation(
+        git_dir: &Path,
+        work_tree: Option<&Path>,
+    ) -> Result<Self> {
+        let git_dir = git_dir
+            .canonicalize()
+            .map_err(|_| Error::NotARepository(git_dir.display().to_string()))?;
+        Self::from_canonical_git_dir(git_dir, work_tree)
     }
 
     /// Discover the repository starting from `start` (defaults to cwd if `None`).
@@ -208,21 +226,25 @@ impl Repository {
             cwd.join(start)
         };
 
-        // Parse GIT_CEILING_DIRECTORIES — colon-separated list of absolute
-        // directory paths that limit upward repository discovery.
-        let ceiling_dirs = parse_ceiling_directories();
+        // Parse GIT_CEILING_DIRECTORIES — mirror Git `setup_git_directory_gently_1` +
+        // `longest_ancestor_length` on the canonical cwd path.
+        let ceiling_dirs: Vec<String> = parse_ceiling_directories()
+            .into_iter()
+            .map(|p| path_for_ceiling_compare(&p))
+            .collect();
 
-        let mut current = start.as_path();
-        let mut first = true;
+        let start_canon = start.canonicalize().unwrap_or_else(|_| start.clone());
+        let mut dir_buf = path_for_ceiling_compare(&start_canon);
+        let min_offset = offset_1st_component(&dir_buf);
+        let mut ceil_offset: isize = longest_ancestor_length(&dir_buf, &ceiling_dirs)
+            .map(|n| n as isize)
+            .unwrap_or(-1);
+        if ceil_offset < 0 {
+            ceil_offset = min_offset as isize - 2;
+        }
+
         loop {
-            // On the first iteration we always check the starting directory.
-            // On subsequent iterations, check whether this parent directory is
-            // blocked by a ceiling entry before probing for .git.
-            if !first && is_ceiling_blocked(current, &ceiling_dirs) {
-                break;
-            }
-            first = false;
-
+            let current = Path::new(&dir_buf);
             if let Some(DiscoveredAt { mut repo, gitfile }) = try_open_at(current)? {
                 if let Some(ref wt) = env_work_tree {
                     repo.work_tree = Some(wt.canonicalize().unwrap_or_else(|_| wt.clone()));
@@ -255,10 +277,34 @@ impl Repository {
                 }
                 return Ok(repo);
             }
-            match current.parent() {
-                Some(p) => current = p,
-                None => break,
+
+            let mut offset: isize = dir_buf.len() as isize;
+            if offset <= min_offset as isize {
+                break;
             }
+            loop {
+                offset -= 1;
+                if offset <= ceil_offset {
+                    break;
+                }
+                if dir_buf
+                    .as_bytes()
+                    .get(offset as usize)
+                    .is_some_and(|b| *b == b'/')
+                {
+                    break;
+                }
+            }
+            if offset <= ceil_offset {
+                break;
+            }
+            let off_u = offset as usize;
+            let new_len = if off_u > min_offset {
+                off_u
+            } else {
+                min_offset
+            };
+            dir_buf.truncate(new_len);
         }
 
         Err(Error::NotARepository(start.display().to_string()))
@@ -914,6 +960,150 @@ fn resolve_common_dir(git_dir: &Path) -> Option<PathBuf> {
     Some(common_dir.canonicalize().unwrap_or(common_dir))
 }
 
+/// Directory holding `config` for early-config reads (`commondir` when present).
+#[must_use]
+pub fn common_git_dir_for_config(git_dir: &Path) -> PathBuf {
+    resolve_common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf())
+}
+
+/// True when `extensions.worktreeConfig` is enabled in the common `config`.
+pub fn worktree_config_enabled(common_dir: &Path) -> bool {
+    let path = common_dir.join("config");
+    let Ok(content) = fs::read_to_string(&path) else {
+        return false;
+    };
+    let mut in_extensions = false;
+    for raw_line in content.lines() {
+        let mut line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if line.starts_with('[') {
+            let Some(end_idx) = line.find(']') else {
+                continue;
+            };
+            let section = line[1..end_idx].trim();
+            let section_name = section
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            in_extensions = section_name == "extensions";
+            let remainder = line[end_idx + 1..].trim();
+            if remainder.is_empty() || remainder.starts_with('#') || remainder.starts_with(';') {
+                continue;
+            }
+            line = remainder;
+        }
+        if in_extensions {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            if key.trim().eq_ignore_ascii_case("worktreeconfig") {
+                let v = value.trim();
+                return v.eq_ignore_ascii_case("true")
+                    || v.eq_ignore_ascii_case("yes")
+                    || v.eq_ignore_ascii_case("on")
+                    || v == "1";
+            }
+        }
+    }
+    false
+}
+
+/// If the common `config` declares a repository format newer than Git's
+/// `GIT_REPO_VERSION_READ`, return the human message Git prints for
+/// `discover_git_directory_reason` / t1309.
+pub fn early_config_ignore_repo_reason(common_dir: &Path) -> Option<String> {
+    const GIT_REPO_VERSION_READ: u32 = 1;
+    let path = common_dir.join("config");
+    let content = fs::read_to_string(&path).ok()?;
+    let mut version = 0u32;
+    let mut in_core = false;
+    for raw_line in content.lines() {
+        let mut line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if line.starts_with('[') {
+            let Some(end_idx) = line.find(']') else {
+                continue;
+            };
+            let section = line[1..end_idx].trim();
+            let section_name = section
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            in_core = section_name == "core";
+            let remainder = line[end_idx + 1..].trim();
+            if remainder.is_empty() || remainder.starts_with('#') || remainder.starts_with(';') {
+                continue;
+            }
+            line = remainder;
+        }
+        if in_core {
+            if let Some((key, value)) = line.split_once('=') {
+                if key.trim().eq_ignore_ascii_case("repositoryformatversion") {
+                    if let Ok(v) = value.trim().parse::<u32>() {
+                        version = v;
+                    }
+                }
+            }
+        }
+    }
+    if version > GIT_REPO_VERSION_READ {
+        Some(format!(
+            "Expected git repo version <= {GIT_REPO_VERSION_READ}, found {version}"
+        ))
+    } else {
+        None
+    }
+}
+
+fn path_for_ceiling_compare(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn offset_1st_component(path: &str) -> usize {
+    if path.starts_with('/') {
+        1
+    } else {
+        0
+    }
+}
+
+/// Git `longest_ancestor_length`: longest strict ancestor prefix among ceilings.
+fn longest_ancestor_length(path: &str, ceilings: &[String]) -> Option<usize> {
+    if path == "/" {
+        return None;
+    }
+    let mut max_len: Option<usize> = None;
+    for ceil in ceilings {
+        let mut len = ceil.len();
+        while len > 0 && ceil.as_bytes().get(len - 1) == Some(&b'/') {
+            len -= 1;
+        }
+        if len == 0 {
+            continue;
+        }
+        if path.len() <= len + 1 {
+            continue;
+        }
+        if !path.starts_with(&ceil[..len]) {
+            continue;
+        }
+        if path.as_bytes().get(len) != Some(&b'/') {
+            continue;
+        }
+        if path.as_bytes().get(len + 1).is_none() {
+            continue;
+        }
+        max_len = Some(max_len.map_or(len, |m| m.max(len)));
+    }
+    max_len
+}
+
 /// Determine the config file path for a repository or linked worktree.
 fn repository_config_path(git_dir: &Path) -> Option<PathBuf> {
     let local = git_dir.join("config");
@@ -982,12 +1172,10 @@ fn validate_repository_format(git_dir: &Path) -> Result<()> {
         if in_core {
             if let Some((key, value)) = line.split_once('=') {
                 if key.trim().eq_ignore_ascii_case("repositoryformatversion") {
-                    repo_version = value.trim().parse::<u32>().map_err(|_| {
-                        Error::ConfigError(format!(
-                            "invalid core.repositoryformatversion in {}",
-                            config_path.display()
-                        ))
-                    })?;
+                    // Match Git's `read_repository_format`: bad values are ignored (version stays 0).
+                    if let Ok(v) = value.trim().parse::<u32>() {
+                        repo_version = v;
+                    }
                 }
             }
         }
@@ -1087,7 +1275,7 @@ fn try_open_at(dir: &Path) -> Result<Option<DiscoveredAt>> {
         let content =
             fs::read_to_string(&dot_git).map_err(|e| Error::NotARepository(e.to_string()))?;
         let git_dir = parse_gitfile(&content, dir)?;
-        let mut repo = Repository::open(&git_dir, Some(dir))?;
+        let mut repo = Repository::open_skipping_format_validation(&git_dir, Some(dir))?;
         let root = if dir.is_absolute() {
             dir.to_path_buf()
         } else {
@@ -1114,7 +1302,7 @@ fn try_open_at(dir: &Path) -> Result<Option<DiscoveredAt>> {
         };
         // Try to open; if the directory is empty or invalid, continue
         // walking up (e.g. an empty .git/ directory should be ignored).
-        match Repository::open(&open_path, Some(dir)) {
+        match Repository::open_skipping_format_validation(&open_path, Some(dir)) {
             Ok(mut repo) => {
                 // Restore the original path so rev-parse shows .git not the
                 // resolved symlink target.
@@ -1931,34 +2119,6 @@ fn parse_ceiling_directories() -> Vec<PathBuf> {
             }))
         })
         .collect()
-}
-
-/// Check whether `dir` is blocked by any ceiling directory.
-///
-/// A ceiling directory `C` prevents looking at `C` itself and any of its
-/// ancestors during the upward walk.  Directories strictly below `C` are
-/// not blocked — i.e. if `dir` is a child of `C`, the walk may still look
-/// there.
-///
-/// In path terms: `dir` is blocked when the ceiling IS `dir` or IS a
-/// descendant of `dir` (meaning `ceil.starts_with(dir)`).
-fn is_ceiling_blocked(dir: &Path, ceilings: &[PathBuf]) -> bool {
-    if ceilings.is_empty() {
-        return false;
-    }
-    // Canonicalize `dir` for reliable comparison; if it fails (e.g. the path
-    // doesn't exist) fall back to the raw path.
-    let canon = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-    for ceil in ceilings {
-        // Block when the walk has reached exactly the ceiling directory.
-        // Git's semantics: the ceiling prevents looking at the ceiling
-        // itself and anything above it.  Since we walk upward, once we hit
-        // the ceiling we stop.
-        if canon == *ceil {
-            return true;
-        }
-    }
-    false
 }
 
 /// Validate the repository format version from config text.

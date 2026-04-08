@@ -3933,19 +3933,18 @@ fn run_test_tool_config(rest: &[String]) -> Result<()> {
     let cfg = grit_lib::config::ConfigSet::load(git_dir, true).unwrap_or_default();
 
     match subcmd {
-        "read_early_config" => {
-            let gd = git_dir.ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
-            match grit_lib::config::ConfigSet::read_early_config(gd, key) {
-                Ok(Some(val)) => {
-                    println!("{val}");
-                    Ok(())
-                }
-                Ok(None) => {
+        "read_early_config" => match grit_lib::config::ConfigSet::read_early_config(git_dir, key) {
+            Ok(values) => {
+                if values.is_empty() {
                     std::process::exit(0);
                 }
-                Err(e) => Err(anyhow::anyhow!("{}", e)),
+                for v in values {
+                    println!("{v}");
+                }
+                Ok(())
             }
-        }
+            Err(e) => Err(anyhow::anyhow!("{}", e)),
+        },
         "get_value" | "get" => match cfg.get(key) {
             Some(val) => {
                 println!("{val}");
