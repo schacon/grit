@@ -283,6 +283,12 @@ fn run_show(args: ShowArgs) -> Result<()> {
         full_history: false,
         simplify_merges: false,
         sparse: false,
+        output_indicator_new: None,
+        output_indicator_old: None,
+        output_indicator_context: None,
+        no_prefix: false,
+        no_notes: false,
+        notes_refs: Vec::new(),
     })
 }
 
