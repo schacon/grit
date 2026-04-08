@@ -558,7 +558,6 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
                     println!("add '{}'", rel_path.display());
                     println!("chmod {} '{}'", chmod_val, rel_path.display());
                 }
-                apply_chmod_to_worktree(&abs_path, chmod_val)?;
                 continue;
             }
             // With --add --chmod, fall through to add/update the file first,
@@ -719,7 +718,6 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
             if args.verbose {
                 println!("chmod {} '{}'", chmod_val, rel_path.display());
             }
-            apply_chmod_to_worktree(&abs_path, chmod_val)?;
         }
     }
 
@@ -1119,32 +1117,6 @@ fn normalize_path(path: &Path) -> PathBuf {
         }
     }
     out
-}
-
-fn apply_chmod_to_worktree(path: &Path, chmod_val: &str) -> Result<()> {
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-
-    let meta = match std::fs::symlink_metadata(path) {
-        Ok(meta) => meta,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e.into()),
-    };
-
-    if !meta.file_type().is_file() {
-        return Ok(());
-    }
-
-    let mut mode = meta.mode();
-    match chmod_val {
-        "+x" => mode |= 0o111,
-        "-x" => mode &= !0o111,
-        other => bail!("--chmod param '{}' must be either +x or -x", other),
-    }
-
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-        .with_context(|| format!("updating worktree mode for '{}'", path.display()))?;
-
-    Ok(())
 }
 
 fn resolve_gitdir(dot_git: &Path) -> anyhow::Result<PathBuf> {

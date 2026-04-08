@@ -690,15 +690,9 @@ pub fn diff_index_to_worktree(
                 });
             }
             Ok(meta) => {
-                // Check if the file has changed using stat data first
-                if stat_matches(ie, &meta) {
-                    // Stat data matches content-wise, but also check mode.
-                    // The index mode might have been changed via --chmod=+x.
-                    let worktree_mode = mode_from_metadata(&meta);
-                    if worktree_mode == ie.mode {
-                        continue; // Fast path: stat+mode match, assume unchanged
-                    }
-                    // Mode differs — emit a mode-only change entry.
+                let worktree_mode = mode_from_metadata(&meta);
+                // Mode-only change: stat still matches the index entry but executable bit differs.
+                if stat_matches(ie, &meta) && worktree_mode != ie.mode {
                     let path_owned = path_str_ref.to_owned();
                     result.push(DiffEntry {
                         status: DiffStatus::Modified,
@@ -713,10 +707,11 @@ pub fn diff_index_to_worktree(
                     continue;
                 }
 
-                // Stat differs — hash the file to check actual content
+                // Hash the worktree blob. We cannot skip hashing when stat matches: two different
+                // contents can share the same size (e.g. `foo` vs `bar`), and rapid edits can
+                // leave timestamps looking "unchanged" relative to the index (t4015-diff-whitespace).
                 let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
                 let worktree_oid = hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, path_str_ref)?;
-                let worktree_mode = mode_from_metadata(&meta);
 
                 // If clean conversion disagrees with the index but raw bytes match the
                 // blob (e.g. mixed line endings committed with autocrlf off), Git reports
@@ -852,10 +847,6 @@ pub fn worktree_differs_from_index_entry(
     let worktree_mode = mode_from_metadata(&meta);
     if worktree_mode != ie.mode {
         return Ok(true);
-    }
-
-    if stat_matches(ie, &meta) {
-        return Ok(false);
     }
 
     let git_dir = work_tree.join(".git");

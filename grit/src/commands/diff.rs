@@ -291,6 +291,20 @@ pub struct Args {
     #[arg(short = 'p', long = "patch")]
     pub patch: bool,
 
+    /// Suppress all patch output (`-s` / `--no-patch`, same as Git).
+    #[arg(short = 's', long = "no-patch")]
+    pub no_patch: bool,
+
+    /// Directory-level diffstat (`--dirstat=lines`, etc.). Empty value means `lines`.
+    #[arg(
+        long = "dirstat",
+        value_name = "PARAM",
+        default_missing_value = "",
+        num_args = 0..=1,
+        require_equals = true
+    )]
+    pub dirstat: Option<String>,
+
     /// Number of context lines in unified diff output (default: 3).
     #[arg(
         short = 'U',
@@ -419,6 +433,8 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let repo = Repository::discover(None).context("not a git repository")?;
 
+    let emit_unified_patch = diff_emit_unified_patch_from_argv(&raw_args);
+
     // Resolve diff prefixes from config and command-line options
     let (src_prefix, dst_prefix) = resolve_diff_prefixes(&args, &repo);
 
@@ -470,6 +486,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     stat_enabled = true;
                 }
                 "--exit-code" => args.exit_code = true,
+                "--no-patch" => args.no_patch = true,
                 "--raw" => args.raw = true,
                 "--no-abbrev" => args.no_abbrev = true,
                 "--full-index" => args.full_index = true,
@@ -574,6 +591,12 @@ pub fn run(mut args: Args) -> Result<()> {
                 }
                 "--pickaxe-all" => {
                     // Accepted for compatibility
+                }
+                s if s == "--dirstat" => {
+                    args.dirstat = Some(String::new());
+                }
+                s if s.starts_with("--dirstat=") => {
+                    args.dirstat = Some(s.strip_prefix("--dirstat=").unwrap_or("").to_owned());
                 }
                 _ => {
                     extra_revs.push(r.clone());
@@ -1048,7 +1071,23 @@ pub fn run(mut args: Args) -> Result<()> {
         return Ok(());
     }
 
-    if !args.quiet {
+    // `--quiet` alone suppresses stdout, but it still must honor `--exit-code` (below). `-s` /
+    // `--no-patch` suppresses the unified patch without implying `--quiet`.
+    let format_besides_unified_patch = args.shortstat
+        || stat_enabled
+        || args.stat_count.is_some()
+        || args.stat_width.is_some()
+        || args.stat_graph_width.is_some()
+        || args.stat_name_width.is_some()
+        || args.raw
+        || args.numstat
+        || args.name_only
+        || args.name_status
+        || (args.summary && !stat_enabled)
+        || args.dirstat.is_some();
+    let quiet_suppresses_stdout = args.quiet && !format_besides_unified_patch;
+
+    if !quiet_suppresses_stdout {
         let config_context = if args.unified.is_none() {
             // Read diff.context from config
             grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
@@ -1117,24 +1156,32 @@ pub fn run(mut args: Args) -> Result<()> {
             } else {
                 7
             };
-            for patch in &conflict_combined_patches {
-                write!(out, "{patch}")?;
+            let show_unified = emit_unified_patch && !args.no_patch;
+            if show_unified {
+                for patch in &conflict_combined_patches {
+                    write!(out, "{patch}")?;
+                }
             }
-            write_patch_with_prefix(
-                &mut out,
-                &entries,
-                &repo.odb,
-                context_lines,
-                use_color,
-                word_diff,
-                wt_for_content,
-                suppress_blank_empty,
-                patch_abbrev,
-                args.inter_hunk_context,
-                args.binary,
-                &src_prefix,
-                &dst_prefix,
-            )?;
+            if args.dirstat.is_some() {
+                write_dirstat_lines(&mut out, &entries, &repo.odb, wt_for_content)?;
+            }
+            if show_unified {
+                write_patch_with_prefix(
+                    &mut out,
+                    &entries,
+                    &repo.odb,
+                    context_lines,
+                    use_color,
+                    word_diff,
+                    wt_for_content,
+                    suppress_blank_empty,
+                    patch_abbrev,
+                    args.inter_hunk_context,
+                    args.binary,
+                    &src_prefix,
+                    &dst_prefix,
+                )?;
+            }
         }
     }
 
@@ -1195,7 +1242,8 @@ fn run_diff_blob_vs_file(
     }
 
     let mut out = io::stdout().lock();
-    if !args.quiet {
+    let show_blob_patch = !args.quiet && !args.no_patch;
+    if show_blob_patch {
         let old_label = format!("{src_prefix}{rev_path}");
         let new_label = format!("{dst_prefix}{file_path}");
         let patch = unified_diff(
@@ -1236,7 +1284,7 @@ fn run_diff_blob_vs_file(
     if (args.exit_code || args.quiet) && has_diff {
         std::process::exit(1);
     }
-    if has_diff && !args.exit_code && !args.quiet {
+    if has_diff && !args.exit_code && show_blob_patch {
         // differences were printed; match `git diff` non-exit-code behavior (exit 0)
     }
     Ok(())
@@ -1672,6 +1720,86 @@ fn apply_diff_filter(entries: Vec<DiffEntry>, filter: &str) -> Vec<DiffEntry> {
             true
         })
         .collect()
+}
+
+/// Whether to emit unified patch hunks for this `git diff` invocation.
+///
+/// Git uses last-flag-wins among `-s` / `--no-patch` (suppress) and `-p` / `--patch` / `-u` /
+/// `-U` / `--unified` (show patch). Combined short flags (e.g. `-sp`) are expanded per character.
+fn diff_emit_unified_patch_from_argv(argv: &[String]) -> bool {
+    let Some(diff_pos) = argv.iter().position(|a| a == "diff") else {
+        return true;
+    };
+    let mut emit = true;
+    for arg in argv.iter().skip(diff_pos + 1) {
+        if arg == "--" {
+            break;
+        }
+        if arg == "-s" || arg == "--no-patch" {
+            emit = false;
+            continue;
+        }
+        if arg == "-p" || arg == "--patch" || arg == "-u" {
+            emit = true;
+            continue;
+        }
+        if arg.starts_with("-U") || arg.starts_with("--unified") {
+            emit = true;
+            continue;
+        }
+        if arg.starts_with('-') && !arg.starts_with("--") && arg.len() > 2 {
+            const COMBINABLE: &[u8] = b"spuwqRb";
+            let bytes = arg.as_bytes();
+            let tail = &bytes[1..];
+            if !tail.is_empty() && tail.iter().all(|b| COMBINABLE.contains(b)) {
+                for &b in tail {
+                    match b {
+                        b's' => emit = false,
+                        b'p' | b'u' => emit = true,
+                        b'w' | b'b' | b'q' | b'R' => {}
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    emit
+}
+
+/// Lines-mode `--dirstat`: one line per top-level directory, `pct% path/`.
+fn write_dirstat_lines(
+    out: &mut impl Write,
+    entries: &[DiffEntry],
+    odb: &Odb,
+    work_tree: Option<&Path>,
+) -> Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let mut total_lines: usize = 0;
+    let mut per_dir: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for e in entries {
+        let path = e.path();
+        let top = path.split('/').next().unwrap_or(path).to_string();
+        let old = read_content(odb, &e.old_oid, None, path);
+        let new = read_content(odb, &e.new_oid, work_tree, path);
+        let old_lc = old.lines().count();
+        let new_lc = new.lines().count();
+        let delta = old_lc.abs_diff(new_lc);
+        total_lines = total_lines.saturating_add(delta);
+        *per_dir.entry(top).or_insert(0) += delta;
+    }
+    if total_lines == 0 {
+        return Ok(());
+    }
+    for (dir, lines) in per_dir {
+        if lines == 0 {
+            continue;
+        }
+        let pct = (lines as f64) * 100.0 / (total_lines as f64);
+        writeln!(out, " {pct:.1}% {dir}/")?;
+    }
+    Ok(())
 }
 
 fn parse_rev_and_paths(args: &[String], has_separator: bool) -> (Vec<String>, Vec<String>) {
