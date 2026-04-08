@@ -18,6 +18,7 @@ use grit_lib::merge_diff::{
 };
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
+use grit_lib::pathspec::{context_from_mode_octal, matches_pathspec_with_context};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use std::io::{self, BufRead, Write};
@@ -312,12 +313,11 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         i += 1;
     }
 
-    // Patch, stat, summary, name-only, name-status all imply recursion.
+    // Patch and stat imply recursion (Git shows nested file paths). `--name-only`
+    // and `--name-status` follow plain `diff-tree` rules: top-level entries only
+    // unless `-r` is given (see t4010-diff-pathspec).
     match opts.format {
-        OutputFormat::Patch
-        | OutputFormat::Stat
-        | OutputFormat::NameOnly
-        | OutputFormat::NameStatus => {
+        OutputFormat::Patch | OutputFormat::Stat => {
             opts.recursive = true;
         }
         _ => {}
@@ -1549,17 +1549,42 @@ fn filter_pathspecs(entries: Vec<DiffEntry>, pathspecs: &[String]) -> Vec<DiffEn
     }
     entries
         .into_iter()
-        .filter(|e| {
-            let path = e.path();
-            pathspecs.iter().any(|spec| {
-                if let Some(prefix) = spec.strip_suffix('/') {
-                    path == prefix || path.starts_with(&format!("{prefix}/"))
-                } else {
-                    path == spec || path.starts_with(&format!("{spec}/"))
-                }
-            })
-        })
+        .filter(|e| diff_entry_matches_pathspecs(e, pathspecs))
         .collect()
+}
+
+fn diff_entry_pathspec_context(entry: &DiffEntry) -> grit_lib::pathspec::PathspecMatchContext {
+    use grit_lib::pathspec::PathspecMatchContext;
+
+    match entry.status {
+        DiffStatus::Deleted => context_from_mode_octal(&entry.old_mode),
+        DiffStatus::Added => context_from_mode_octal(&entry.new_mode),
+        _ => {
+            let old = context_from_mode_octal(&entry.old_mode);
+            let new = context_from_mode_octal(&entry.new_mode);
+            PathspecMatchContext {
+                is_directory: old.is_directory || new.is_directory,
+                is_git_submodule: old.is_git_submodule || new.is_git_submodule,
+            }
+        }
+    }
+}
+
+fn diff_entry_matches_pathspecs(entry: &DiffEntry, pathspecs: &[String]) -> bool {
+    let ctx = diff_entry_pathspec_context(entry);
+    pathspecs.iter().any(|spec| {
+        if let Some(ref p) = entry.new_path {
+            if matches_pathspec_with_context(spec, p, ctx) {
+                return true;
+            }
+        }
+        if let Some(ref p) = entry.old_path {
+            if entry.new_path.as_ref() != Some(p) && matches_pathspec_with_context(spec, p, ctx) {
+                return true;
+            }
+        }
+        false
+    })
 }
 
 /// Parse a whitespace-separated list of OID strings.
