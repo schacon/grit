@@ -753,7 +753,7 @@ commit → check it off → move on.
 - [x] `t6424-merge-unrelated-index-changes` — merges with unrelated index changes (19/19)
 - [ ] `t6019-rev-list-ancestry-path` █░░░░░░░░░░░░░░░░░░░ 1/18 (17 left) — --ancestry-path
 - [ ] `t6101-rev-parse-parents` ██████████░░░░░░░░░░ 20/38 (18 left) — Test git rev-parse with different parent options
-- [ ] `t6137-pathspec-wildcards-literal` █████░░░░░░░░░░░░░░░ 7/25 (18 left) — test wildcards and literals with git add/commit (subshell style)
+- [x] `t6137-pathspec-wildcards-literal` — 25/25 tests pass (pathspec `simple_length` + wildmatch; partial commit trees; skip `.git` on `*` expansion; bracket pathspec also matches literal `[abc]` filename)
 - [ ] `t6411-merge-filemode` █░░░░░░░░░░░░░░░░░░░ 1/19 (18 left) — merge: handle file mode
 - [ ] `t6500-gc` ████████░░░░░░░░░░░░ 15/35 (20 left) — basic git gc tests
 

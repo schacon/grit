@@ -18,8 +18,10 @@ use grit_lib::refs::append_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
-use grit_lib::write_tree::write_tree_from_index;
-use std::collections::BTreeSet;
+use grit_lib::write_tree::{
+    write_tree_from_index, write_tree_from_index_subset, write_tree_partial_from_index,
+};
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -306,12 +308,15 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // If pathspec given, stage those specific files first
-    if !args.pathspec.is_empty() {
-        if let Some(wt) = work_tree {
-            stage_pathspec_files(&repo, wt, &args.pathspec)?;
-        }
-    }
+    // If pathspec given, stage those specific files first (returns paths included in this commit)
+    let pathspec_matched: Option<HashSet<Vec<u8>>> = if !args.pathspec.is_empty() {
+        let Some(wt) = work_tree else {
+            bail!("pathspec requires a work tree");
+        };
+        Some(stage_pathspec_files(&repo, wt, &args.pathspec)?)
+    } else {
+        None
+    };
 
     let index_path = resolved_index_path(&repo);
 
@@ -322,23 +327,62 @@ pub fn run(args: Args) -> Result<()> {
         Err(e) => return Err(e.into()),
     };
 
-    // Write tree from index
-    let tree_oid = match write_tree_from_index(&repo.odb, &index, "") {
-        Ok(oid) => oid,
-        Err(err) => {
-            if is_permission_denied_error(&err) {
-                eprintln!(
-                    "error: insufficient permission for adding an object to repository database .git/objects"
-                );
-                eprintln!("error: Error building trees");
-                std::process::exit(128);
-            }
-            return Err(err.into());
-        }
+    // Resolve HEAD for parent(s) and optional base tree for partial commits
+    let head = resolve_head(&repo.git_dir)?;
+    let parent_tree_oid = if let Some(head_oid) = head.oid() {
+        let obj = repo.odb.read(head_oid)?;
+        let commit = grit_lib::objects::parse_commit(&obj.data)?;
+        Some(commit.tree)
+    } else {
+        None
     };
 
-    // Resolve HEAD for parent(s)
-    let head = resolve_head(&repo.git_dir)?;
+    // Write tree: pathspec commits record only matched paths (Git partial / initial pathspec commit)
+    let tree_oid = match (&pathspec_matched, &parent_tree_oid) {
+        (Some(paths), Some(base)) if !paths.is_empty() => {
+            match write_tree_partial_from_index(&repo.odb, &index, base, paths) {
+                Ok(oid) => oid,
+                Err(err) => {
+                    if is_permission_denied_error(&err) {
+                        eprintln!(
+                            "error: insufficient permission for adding an object to repository database .git/objects"
+                        );
+                        eprintln!("error: Error building trees");
+                        std::process::exit(128);
+                    }
+                    return Err(err.into());
+                }
+            }
+        }
+        (Some(paths), None) if !paths.is_empty() => {
+            match write_tree_from_index_subset(&repo.odb, &index, paths) {
+                Ok(oid) => oid,
+                Err(err) => {
+                    if is_permission_denied_error(&err) {
+                        eprintln!(
+                            "error: insufficient permission for adding an object to repository database .git/objects"
+                        );
+                        eprintln!("error: Error building trees");
+                        std::process::exit(128);
+                    }
+                    return Err(err.into());
+                }
+            }
+        }
+        _ => match write_tree_from_index(&repo.odb, &index, "") {
+            Ok(oid) => oid,
+            Err(err) => {
+                if is_permission_denied_error(&err) {
+                    eprintln!(
+                        "error: insufficient permission for adding an object to repository database .git/objects"
+                    );
+                    eprintln!("error: Error building trees");
+                    std::process::exit(128);
+                }
+                return Err(err.into());
+            }
+        },
+    };
     let mut parents = Vec::new();
     let old_head_oid = head.oid().cloned();
 
@@ -924,7 +968,15 @@ fn walk_untracked(
 }
 
 /// Stage specific files given as pathspec arguments to `commit`.
-fn stage_pathspec_files(repo: &Repository, work_tree: &Path, pathspecs: &[String]) -> Result<()> {
+///
+/// Returns the set of repository-relative paths that were staged (or removed) for this commit.
+fn stage_pathspec_files(
+    repo: &Repository,
+    work_tree: &Path,
+    pathspecs: &[String],
+) -> Result<HashSet<Vec<u8>>> {
+    use std::os::unix::fs::MetadataExt;
+
     let index_path = resolved_index_path(repo);
     let mut index = match repo.load_index_at(&index_path) {
         Ok(idx) => idx,
@@ -932,52 +984,103 @@ fn stage_pathspec_files(repo: &Repository, work_tree: &Path, pathspecs: &[String
         Err(e) => return Err(e.into()),
     };
 
-    // Resolve pathspecs relative to the current directory
     let cwd = std::env::current_dir().unwrap_or_else(|_| work_tree.to_path_buf());
-    // Canonicalize work_tree to resolve symlinks for proper prefix stripping
-    let canon_work_tree = work_tree
-        .canonicalize()
-        .unwrap_or_else(|_| work_tree.to_path_buf());
+    let prefix = crate::pathspec::pathdiff(&cwd, work_tree);
+
+    let mut matched_paths = HashSet::new();
 
     for spec in pathspecs {
-        // Resolve the pathspec relative to cwd
-        let abs_path = if std::path::Path::new(spec).is_absolute() {
-            PathBuf::from(spec)
-        } else {
-            cwd.join(spec)
-        };
-        // Canonicalize to resolve symlinks, then compute relative path to work_tree
-        let canon_path = abs_path.canonicalize().unwrap_or(abs_path.clone());
-        let rel_path = canon_path
-            .strip_prefix(&canon_work_tree)
-            .unwrap_or_else(|_| {
-                // Fallback: try stripping non-canonical work_tree
-                abs_path
-                    .strip_prefix(work_tree)
-                    .unwrap_or(std::path::Path::new(spec))
-            });
-        let rel_str = rel_path.to_string_lossy().to_string();
-        if let Ok(meta) = fs::symlink_metadata(&canon_path) {
-            use std::os::unix::fs::MetadataExt;
-            let data = if meta.file_type().is_symlink() {
-                let target = fs::read_link(&canon_path)?;
-                target.to_string_lossy().into_owned().into_bytes()
+        let resolved = crate::pathspec::resolve_pathspec(spec, work_tree, prefix.as_deref());
+        if !crate::pathspec::has_glob_chars(&resolved) {
+            let abs_path = work_tree.join(&resolved);
+            if let Ok(meta) = fs::symlink_metadata(&abs_path) {
+                let data = if meta.file_type().is_symlink() {
+                    let target = fs::read_link(&abs_path)?;
+                    target.to_string_lossy().into_owned().into_bytes()
+                } else {
+                    fs::read(&abs_path)?
+                };
+                let oid = repo.odb.write(ObjectKind::Blob, &data)?;
+                let mode = grit_lib::index::normalize_mode(meta.mode());
+                let raw_path = resolved.as_bytes().to_vec();
+                let entry = grit_lib::index::entry_from_stat(&abs_path, &raw_path, oid, mode)?;
+                index.add_or_replace(entry);
+                matched_paths.insert(raw_path);
             } else {
-                fs::read(&canon_path)?
-            };
-            let oid = repo.odb.write(ObjectKind::Blob, &data)?;
-            let mode = grit_lib::index::normalize_mode(meta.mode());
-            let raw_path = rel_str.as_bytes().to_vec();
-            let entry = grit_lib::index::entry_from_stat(&canon_path, &raw_path, oid, mode)?;
-            index.add_or_replace(entry);
+                index.remove(resolved.as_bytes());
+                matched_paths.insert(resolved.as_bytes().to_vec());
+            }
+            continue;
+        }
+
+        let (dir_prefix, pattern) = if let Some(slash_pos) = resolved.rfind('/') {
+            (&resolved[..slash_pos], &resolved[slash_pos + 1..])
         } else {
-            // File deleted — remove from index
-            index.remove(rel_str.as_bytes());
+            ("", resolved.as_str())
+        };
+
+        let search_dir = if dir_prefix.is_empty() {
+            work_tree.to_path_buf()
+        } else {
+            work_tree.join(dir_prefix)
+        };
+
+        let mut spec_matched = false;
+        let mut matched_rels: Vec<String> = Vec::new();
+        if let Ok(entries) = fs::read_dir(&search_dir) {
+            for entry in entries.flatten() {
+                let name_str = entry.file_name().to_string_lossy().to_string();
+                if name_str == ".git" {
+                    continue;
+                }
+                if !grit_lib::wildmatch::wildmatch(pattern.as_bytes(), name_str.as_bytes(), 0) {
+                    continue;
+                }
+                let rel = if dir_prefix.is_empty() {
+                    name_str.clone()
+                } else {
+                    format!("{dir_prefix}/{name_str}")
+                };
+                matched_rels.push(rel);
+            }
+        }
+        if pattern.contains('[') && fs::symlink_metadata(search_dir.join(pattern)).is_ok() {
+            let rel = if dir_prefix.is_empty() {
+                pattern.to_string()
+            } else {
+                format!("{dir_prefix}/{pattern}")
+            };
+            if !matched_rels.contains(&rel) {
+                matched_rels.push(rel);
+            }
+        }
+
+        for rel in matched_rels {
+            let abs_path = work_tree.join(&rel);
+            if let Ok(meta) = fs::symlink_metadata(&abs_path) {
+                let data = if meta.file_type().is_symlink() {
+                    let target = fs::read_link(&abs_path)?;
+                    target.to_string_lossy().into_owned().into_bytes()
+                } else {
+                    fs::read(&abs_path)?
+                };
+                let oid = repo.odb.write(ObjectKind::Blob, &data)?;
+                let mode = grit_lib::index::normalize_mode(meta.mode());
+                let raw_path = rel.as_bytes().to_vec();
+                let entry = grit_lib::index::entry_from_stat(&abs_path, &raw_path, oid, mode)?;
+                index.add_or_replace(entry);
+                spec_matched = true;
+                matched_paths.insert(raw_path);
+            }
+        }
+
+        if !spec_matched {
+            bail!("pathspec '{spec}' did not match any file(s) known to git");
         }
     }
 
     repo.write_index_at(&index_path, &mut index)?;
-    Ok(())
+    Ok(matched_paths)
 }
 
 /// Auto-stage tracked files (for `commit -a`).
