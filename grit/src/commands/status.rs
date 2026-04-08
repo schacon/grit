@@ -8,7 +8,7 @@ use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::{detect_renames, diff_index_to_tree, diff_index_to_worktree, DiffStatus};
 use grit_lib::error::Error;
 use grit_lib::ignore::IgnoreMatcher;
-use grit_lib::index::{Index, MODE_TREE};
+use grit_lib::index::{Index, MODE_GITLINK, MODE_TREE};
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::Repository;
 use grit_lib::state::{detect_in_progress, resolve_head, HeadState};
@@ -366,8 +366,22 @@ fn collect_untracked_and_ignored(
         .map(|ie| String::from_utf8_lossy(&ie.path).to_string())
         .collect();
 
+    let gitlinks: BTreeSet<String> = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0 && e.mode == MODE_GITLINK)
+        .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+        .collect();
+
     let mut all_untracked = Vec::new();
-    walk_for_untracked(work_tree, work_tree, &tracked, &mut all_untracked, show_all)?;
+    walk_for_untracked(
+        work_tree,
+        work_tree,
+        &tracked,
+        &gitlinks,
+        &mut all_untracked,
+        show_all,
+    )?;
     all_untracked.sort();
 
     // Build ignore matcher
@@ -393,7 +407,14 @@ fn collect_untracked_and_ignored(
             // Git hides directories whose entire contents are ignored.
             let dir_path = work_tree.join(check_path);
             let mut sub_files = Vec::new();
-            walk_for_untracked(&dir_path, work_tree, &tracked, &mut sub_files, true)?;
+            walk_for_untracked(
+                &dir_path,
+                work_tree,
+                &tracked,
+                &gitlinks,
+                &mut sub_files,
+                true,
+            )?;
             let all_ignored = !sub_files.is_empty()
                 && sub_files.iter().all(|f| {
                     let f_is_dir = f.ends_with('/');
@@ -902,9 +923,22 @@ fn find_untracked(work_tree: &Path, index: &Index) -> Result<Vec<String>> {
         .iter()
         .map(|ie| String::from_utf8_lossy(&ie.path).to_string())
         .collect();
+    let gitlinks: BTreeSet<String> = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0 && e.mode == MODE_GITLINK)
+        .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+        .collect();
 
     let mut untracked = Vec::new();
-    walk_for_untracked(work_tree, work_tree, &tracked, &mut untracked, false)?;
+    walk_for_untracked(
+        work_tree,
+        work_tree,
+        &tracked,
+        &gitlinks,
+        &mut untracked,
+        false,
+    )?;
     untracked.sort();
     Ok(untracked)
 }
@@ -914,6 +948,7 @@ fn walk_for_untracked(
     dir: &Path,
     work_tree: &Path,
     tracked: &BTreeSet<String>,
+    gitlinks: &BTreeSet<String>,
     out: &mut Vec<String>,
     show_all: bool,
 ) -> Result<()> {
@@ -941,9 +976,14 @@ fn walk_for_untracked(
         // Use file_type() from DirEntry — avoids extra stat syscall on Linux
         let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
 
+        if is_dir && gitlinks.contains(&rel) {
+            // Submodule checkout: only `k` is in the index, not `k/file` — do not scan inside.
+            continue;
+        }
+
         if is_dir {
             if show_all {
-                walk_for_untracked(&path, work_tree, tracked, out, show_all)?;
+                walk_for_untracked(&path, work_tree, tracked, gitlinks, out, show_all)?;
             } else {
                 let prefix = format!("{rel}/");
                 let has_tracked = tracked
@@ -951,12 +991,12 @@ fn walk_for_untracked(
                     .next()
                     .is_some_and(|t| t.starts_with(&prefix));
                 if has_tracked {
-                    walk_for_untracked(&path, work_tree, tracked, out, show_all)?;
+                    walk_for_untracked(&path, work_tree, tracked, gitlinks, out, show_all)?;
                 } else {
                     // Check if dir has any files (recursively);
                     // empty directories are not shown by git.
                     let mut sub = Vec::new();
-                    walk_for_untracked(&path, work_tree, tracked, &mut sub, false)?;
+                    walk_for_untracked(&path, work_tree, tracked, gitlinks, &mut sub, false)?;
                     if !sub.is_empty() {
                         out.push(format!("{rel}/"));
                     }

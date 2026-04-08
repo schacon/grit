@@ -497,15 +497,26 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
 
     let grit_bin = grit_exe::grit_executable();
 
+    let super_index = repo.load_index().ok();
+
     for m in &selected {
         let sub_path = work_tree.join(&m.path);
-        let recorded = read_submodule_commit(&repo, &m.path)?;
-        let recorded_oid = match &recorded {
-            Some(oid) => oid.as_str(),
-            None => {
-                eprintln!("Skipping submodule '{}': not in index", m.path);
-                continue;
-            }
+        let path_bytes = m.path.as_bytes();
+        let recorded_from_index = super_index
+            .as_ref()
+            .and_then(|idx| idx.get(path_bytes, 0))
+            .filter(|e| e.mode == 0o160000)
+            .map(|e| e.oid.to_hex());
+        // Only use the tree when the index has no gitlink: if HEAD no longer has a submodule at
+        // this path (e.g. branch switched `f` from gitlink to tree `f/f`), skip entirely — do not
+        // fall back to `.gitmodules` + old paths (`t2080` clone --recurse-submodules on B2).
+        let recorded = if recorded_from_index.is_some() {
+            recorded_from_index
+        } else {
+            read_submodule_commit(&repo, &m.path)?
+        };
+        let Some(recorded_oid) = recorded.as_deref() else {
+            continue;
         };
 
         // Read URL from local config (must be initialized).
@@ -524,7 +535,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             }
         }
 
-        let modules_dir = repo.git_dir.join("modules").join(&m.name);
+        let modules_dir = repo.git_dir.join("modules").join(&m.path);
 
         let needs_clone = if sub_path.exists() {
             // Directory exists but might be empty (from superproject clone).
@@ -562,12 +573,10 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
                         .unwrap_or_else(|| m.url.clone())
                 };
 
-                // If sub_path is an empty directory, remove it first (clone wants to create it).
-                if sub_path.exists() && sub_path.is_dir() {
-                    let is_empty = fs::read_dir(&sub_path)?.next().is_none();
-                    if is_empty {
-                        fs::remove_dir(&sub_path)?;
-                    }
+                // `git clone` requires the destination to be absent or empty; remove a leftover
+                // directory (e.g. `cp -R` copied an uninitialized submodule path without `.git`).
+                if sub_path.exists() {
+                    let _ = fs::remove_dir_all(&sub_path);
                 }
 
                 let url_base = if repo
@@ -591,7 +600,9 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
                 };
                 let clone_src_str = clone_src.to_string_lossy().into_owned();
 
-                let status = Command::new(&grit_bin)
+                let mut status_cmd = Command::new(&grit_bin);
+                grit_exe::strip_trace2_env(&mut status_cmd);
+                let status = status_cmd
                     .arg("clone")
                     .arg("--no-checkout")
                     .arg("--separate-git-dir")
@@ -612,7 +623,9 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
         // Determine which commit to checkout.
         let checkout_oid = if args.remote {
             // Fetch from remote and use the remote tracking branch.
-            let fetch_status = Command::new(&grit_bin)
+            let mut fetch_cmd = Command::new(&grit_bin);
+            grit_exe::strip_trace2_env(&mut fetch_cmd);
+            let fetch_status = fetch_cmd
                 .args(["fetch", "origin"])
                 .current_dir(&sub_path)
                 .status()
@@ -637,7 +650,9 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             };
 
             // Resolve origin/<branch> to an OID.
-            let output = Command::new(&grit_bin)
+            let mut rev_cmd = Command::new(&grit_bin);
+            grit_exe::strip_trace2_env(&mut rev_cmd);
+            let output = rev_cmd
                 .args(["rev-parse", &format!("origin/{branch}")])
                 .current_dir(&sub_path)
                 .output()
@@ -659,7 +674,9 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
         }
 
         // Checkout the target commit.
-        let status = Command::new(&grit_bin)
+        let mut co_cmd = Command::new(&grit_bin);
+        grit_exe::strip_trace2_env(&mut co_cmd);
+        let status = co_cmd
             .arg("checkout")
             .arg("--quiet")
             .arg(&checkout_oid)
@@ -691,7 +708,9 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             if parse_gitmodules(&sub_path).unwrap_or_default().is_empty() {
                 continue;
             }
-            let status = Command::new(&grit_bin)
+            let mut nested_cmd = Command::new(&grit_bin);
+            grit_exe::strip_trace2_env(&mut nested_cmd);
+            let status = nested_cmd
                 .args(["submodule", "update", "--init", "--recursive"])
                 .current_dir(&sub_path)
                 .status()
@@ -715,7 +734,9 @@ fn attach_existing_submodule_worktree(
     }
     let gitfile = sub_path.join(".git");
     fs::write(&gitfile, format!("gitdir: {}\n", modules_dir.display()))?;
-    let _ = Command::new(grit_bin)
+    let mut cfg_cmd = Command::new(grit_bin);
+    grit_exe::strip_trace2_env(&mut cfg_cmd);
+    let _ = cfg_cmd
         .arg("--git-dir")
         .arg(modules_dir)
         .arg("config")
@@ -793,7 +814,9 @@ fn run_add(args: &AddArgs) -> Result<()> {
         };
         let clone_source_str = clone_source.to_string_lossy().into_owned();
 
-        let status = Command::new(&grit_bin)
+        let mut clone_cmd = Command::new(&grit_bin);
+        grit_exe::strip_trace2_env(&mut clone_cmd);
+        let status = clone_cmd
             .arg("clone")
             .arg("--no-checkout")
             .arg("--separate-git-dir")
@@ -808,6 +831,20 @@ fn run_add(args: &AddArgs) -> Result<()> {
 
         if !status.success() {
             bail!("failed to clone submodule from '{}'", args.url);
+        }
+
+        // `clone --no-checkout` only materializes the default branch; fetch so other branches
+        // from the remote exist (tests use `git -C k checkout B2` after `submodule add -b B1`).
+        let mut fetch_cmd = Command::new(&grit_bin);
+        grit_exe::strip_trace2_env(&mut fetch_cmd);
+        let fetch_status = fetch_cmd
+            .arg("-C")
+            .arg(&sub_path)
+            .args(["fetch", "origin"])
+            .status()
+            .context("fetching submodule refs")?;
+        if !fetch_status.success() {
+            bail!("failed to fetch in newly cloned submodule '{}'", path);
         }
     }
 
@@ -825,6 +862,9 @@ fn run_add(args: &AddArgs) -> Result<()> {
 
     config.set(&format!("submodule.{name}.path"), &path)?;
     config.set(&format!("submodule.{name}.url"), &args.url)?;
+    if let Some(ref b) = args.branch {
+        config.set(&format!("submodule.{name}.branch"), b)?;
+    }
     config.write()?;
 
     // Also register the submodule in the local .git/config (like git does).
@@ -837,12 +877,17 @@ fn run_add(args: &AddArgs) -> Result<()> {
     };
     local_config.set(&format!("submodule.{name}.url"), &args.url)?;
     local_config.set(&format!("submodule.{name}.active"), "true")?;
+    if let Some(ref b) = args.branch {
+        local_config.set(&format!("submodule.{name}.branch"), b)?;
+    }
     local_config.write()?;
 
     // Add the submodule path to the index.
     // Use --no-warn-embedded-repo so the add doesn't warn about the
     // embedded git repository we just cloned on purpose.
-    let status = Command::new(&grit_bin)
+    let mut add_cmd = Command::new(&grit_bin);
+    grit_exe::strip_trace2_env(&mut add_cmd);
+    let status = add_cmd
         .arg("add")
         .arg("--no-warn-embedded-repo")
         .arg(".gitmodules")
@@ -866,10 +911,11 @@ fn run_foreach(args: &ForeachArgs) -> Result<()> {
 
     let cmd_str = args.command.join(" ");
 
-    run_foreach_in(work_tree, &modules, &cmd_str, args.recursive, "")
+    run_foreach_in(&repo, work_tree, &modules, &cmd_str, args.recursive, "")
 }
 
 fn run_foreach_in(
+    super_repo: &Repository,
     work_tree: &Path,
     modules: &[SubmoduleInfo],
     cmd_str: &str,
@@ -878,7 +924,9 @@ fn run_foreach_in(
 ) -> Result<()> {
     for m in modules {
         let sub_path = work_tree.join(&m.path);
-        if !sub_path.exists() {
+        // Follow symlinks: `g -> b` where `b` is a file must be skipped (Git does not `cd` there).
+        let ok_to_enter = fs::metadata(&sub_path).map(|m| m.is_dir()).unwrap_or(false);
+        if !ok_to_enter {
             continue;
         }
 
@@ -888,17 +936,157 @@ fn run_foreach_in(
             format!("{}/{}", prefix, m.path)
         };
 
+        let super_git = work_tree.join(".git");
+        let local_modules = super_git.join("modules").join(&m.path);
+        let gitfile = sub_path.join(".git");
+        // `cp -R` can drop submodule gitfiles while copying `.git/modules/<path>`. Recreate so nested
+        // commands target the submodule instead of discovering the superproject.
+        if local_modules.join("HEAD").exists() && !gitfile.exists() {
+            let modules_abs = local_modules
+                .canonicalize()
+                .unwrap_or_else(|_| local_modules.clone());
+            if let Ok(meta) = fs::symlink_metadata(&sub_path) {
+                if meta.file_type().is_symlink() || meta.is_file() {
+                    let _ = fs::remove_file(&sub_path);
+                }
+            }
+            fs::create_dir_all(&sub_path)?;
+            fs::write(&gitfile, format!("gitdir: {}\n", modules_abs.display()))?;
+            let wt_abs = sub_path.canonicalize().unwrap_or_else(|_| sub_path.clone());
+            let grit_bin = grit_exe::grit_executable();
+            let mut cfg_cmd = Command::new(&grit_bin);
+            grit_exe::strip_trace2_env(&mut cfg_cmd);
+            let _ = cfg_cmd
+                .arg("--git-dir")
+                .arg(&modules_abs)
+                .args(["config", "core.worktree"])
+                .arg(&wt_abs)
+                .status();
+        }
+        // Uninitialized submodule: empty directory without `.git` and no `.git/modules/<path>`.
+        // Running nested Git here would discover the superproject and corrupt `update-index`.
+        if !gitfile.exists() && !local_modules.join("HEAD").exists() {
+            continue;
+        }
+
         eprintln!("Entering '{}'", displaypath);
-        let status = Command::new("sh")
-            .arg("-c")
+        let grit_bin = grit_exe::grit_executable();
+
+        let mut sub_git_dir = match fs::symlink_metadata(&gitfile) {
+            Ok(meta) if meta.file_type().is_symlink() => fs::read_link(&gitfile)?,
+            Ok(meta) if meta.is_file() => {
+                let content = fs::read_to_string(&gitfile)?;
+                let gitdir = content
+                    .lines()
+                    .find_map(|l| l.strip_prefix("gitdir: "))
+                    .context("invalid gitfile in submodule")?
+                    .trim();
+                if Path::new(gitdir).is_absolute() {
+                    PathBuf::from(gitdir)
+                } else {
+                    sub_path.join(gitdir)
+                }
+            }
+            Ok(_) => gitfile,
+            Err(_) => {
+                if local_modules.join("HEAD").exists() {
+                    local_modules.clone()
+                } else {
+                    continue;
+                }
+            }
+        };
+
+        // After `cp -R`, gitfiles may still reference another superproject's `.git/modules/`.
+        // Prefer this repository's module directory when it exists (matches Git test layouts).
+        if local_modules.join("HEAD").exists() {
+            let sg = super_git
+                .canonicalize()
+                .unwrap_or_else(|_| super_git.clone());
+            let cur = sub_git_dir
+                .canonicalize()
+                .unwrap_or_else(|_| sub_git_dir.clone());
+            if !cur.starts_with(&sg) {
+                sub_git_dir = local_modules;
+            }
+        }
+
+        let sub_git_dir = sub_git_dir.canonicalize().unwrap_or(sub_git_dir);
+        let sub_path_abs = sub_path.canonicalize().unwrap_or_else(|_| sub_path.clone());
+        // Submodule config may still reference the source superproject's work tree after `cp -R`.
+        let mut cfg_cmd = Command::new(&grit_bin);
+        grit_exe::strip_trace2_env(&mut cfg_cmd);
+        let _ = cfg_cmd
+            .arg("--git-dir")
+            .arg(&sub_git_dir)
+            .args(["config", "core.worktree"])
+            .arg(&sub_path_abs)
+            .status();
+        let work_tree_abs = work_tree
+            .canonicalize()
+            .unwrap_or_else(|_| work_tree.to_path_buf());
+
+        let mut cmd = Command::new("sh");
+        cmd.env_clear();
+        if let Ok(p) = std::env::var("PATH") {
+            cmd.env("PATH", p);
+        }
+        for key in ["HOME", "TMPDIR", "USER", "LANG", "LC_ALL"] {
+            if let Ok(v) = std::env::var(key) {
+                cmd.env(key, v);
+            }
+        }
+        // `cp -R` can copy `.git/modules` with a different HEAD than the superproject index records.
+        // Check out the gitlink OID from the superproject index (t2080: foreach update-index).
+        {
+            let index = super_repo.load_index().unwrap_or_default();
+            let path_bytes = m.path.as_bytes();
+            let target = index
+                .get(path_bytes, 0)
+                .filter(|e| e.mode == 0o160000)
+                .map(|e| e.oid.to_hex());
+            let mut prep = Command::new(&grit_bin);
+            grit_exe::strip_trace2_env(&mut prep);
+            prep.env_clear();
+            if let Ok(p) = std::env::var("PATH") {
+                prep.env("PATH", p);
+            }
+            for key in ["HOME", "TMPDIR", "USER", "LANG", "LC_ALL"] {
+                if let Ok(v) = std::env::var(key) {
+                    prep.env(key, v);
+                }
+            }
+            prep.current_dir(&sub_path_abs)
+                .env("GIT_DIR", &sub_git_dir)
+                .env("GIT_WORK_TREE", &sub_path_abs)
+                .env(
+                    "GIT_CEILING_DIRECTORIES",
+                    work_tree_abs.to_string_lossy().as_ref(),
+                );
+            if let Some(hex) = target {
+                prep.args(["checkout", "--quiet", hex.as_str()]);
+            } else {
+                prep.args(["checkout", "--quiet", "HEAD"]);
+            }
+            let _ = prep.status();
+        }
+
+        cmd.arg("-c")
             .arg(cmd_str)
-            .current_dir(&sub_path)
+            .current_dir(&sub_path_abs)
+            .env("GIT_DIR", &sub_git_dir)
+            .env("GIT_WORK_TREE", &sub_path_abs)
+            .env(
+                "GIT_CEILING_DIRECTORIES",
+                work_tree_abs.to_string_lossy().as_ref(),
+            )
+            .env("GUST_BIN", &grit_bin)
             .env("name", &m.name)
             .env("sm_path", &m.path)
             .env("displaypath", &displaypath)
-            .env("toplevel", work_tree.to_string_lossy().as_ref())
-            .status()
-            .context("failed to run foreach command")?;
+            .env("toplevel", work_tree_abs.to_string_lossy().as_ref());
+
+        let status = cmd.status().context("failed to run foreach command")?;
 
         if !status.success() {
             bail!(
@@ -910,7 +1098,16 @@ fn run_foreach_in(
         if recursive {
             let nested = parse_gitmodules(&sub_path).unwrap_or_default();
             if !nested.is_empty() {
-                run_foreach_in(&sub_path, &nested, cmd_str, true, &displaypath)?;
+                if let Ok(nested_repo) = Repository::open(&sub_git_dir, Some(&sub_path_abs)) {
+                    run_foreach_in(
+                        &nested_repo,
+                        &sub_path,
+                        &nested,
+                        cmd_str,
+                        true,
+                        &displaypath,
+                    )?;
+                }
             }
         }
     }
@@ -1061,7 +1258,9 @@ fn run_sync(args: &SyncArgs) -> Result<()> {
                     // Use the grit binary for recursive sync in nested submodules.
                     let grit_bin =
                         std::env::current_exe().unwrap_or_else(|_| PathBuf::from("grit"));
-                    let _status = Command::new(&grit_bin)
+                    let mut sync_cmd = Command::new(&grit_bin);
+                    grit_exe::strip_trace2_env(&mut sync_cmd);
+                    let _status = sync_cmd
                         .arg("submodule")
                         .arg("sync")
                         .arg("--recursive")
@@ -1173,7 +1372,7 @@ fn run_absorbgitdirs(args: &AbsorbgitdirsArgs) -> Result<()> {
             continue;
         }
 
-        let modules_dir = repo.git_dir.join("modules").join(&m.name);
+        let modules_dir = repo.git_dir.join("modules").join(&m.path);
 
         // Create the modules directory if needed.
         fs::create_dir_all(modules_dir.parent().unwrap())?;

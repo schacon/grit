@@ -1035,6 +1035,12 @@ fn stage_file(
 
     let meta = fs::symlink_metadata(abs_path)?;
 
+    // Submodule / embedded repo roots appear as directories with `.git`; `walk_directory` records
+    // the directory path without recursing, so we must stage them as gitlinks here.
+    if meta.is_dir() && !meta.file_type().is_symlink() && abs_path.join(".git").exists() {
+        return stage_gitlink(odb, index, _work_tree, rel_path, abs_path, args);
+    }
+
     if args.intent_to_add {
         // Don't clobber existing entries — only add the intent marker if not already staged
         if index.get(rel_path.as_bytes(), 0).is_some() {
@@ -1293,6 +1299,13 @@ fn walk_directory(
         }
 
         if is_dir {
+            // Nested repository (submodule or embedded repo): record the directory itself so
+            // `git add .` does not treat an existing gitlink as deleted (the inner `.git` is
+            // skipped below and would otherwise hide the whole tree from the scan).
+            if path.join(".git").exists() {
+                out.push(rel);
+                continue;
+            }
             walk_directory(&path, work_tree, out, repo, ignore_matcher, force)?;
         } else {
             out.push(rel);
