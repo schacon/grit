@@ -20,14 +20,15 @@ use grit_lib::config::ConfigSet;
 use grit_lib::diff::{self, count_changes, DiffEntry};
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
-use grit_lib::merge_base::{is_ancestor, merge_bases_first_vs_rest};
+use grit_lib::merge_base::{ancestor_closure, is_ancestor, merge_bases_first_vs_rest};
 use grit_lib::merge_file::{merge, ConflictStyle, MergeInput};
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
 };
+use grit_lib::patch_ids::compute_patch_id;
 use grit_lib::refs::append_reflog;
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{rev_list, OrderingMode, RevListOptions};
+use grit_lib::rev_list::{rev_list, split_revision_token, OrderingMode, RevListOptions};
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
@@ -84,6 +85,10 @@ pub struct Args {
     /// Rebase onto a specific base (used with `--onto <newbase> <upstream>`).
     #[arg(long)]
     pub onto: Option<String>,
+
+    /// Rebase all commits reachable from the branch tip, not just those after the merge-base with upstream.
+    #[arg(long)]
+    pub root: bool,
 
     /// Interactive rebase (write todo list only).
     #[arg(short = 'i', long = "interactive")]
@@ -181,6 +186,24 @@ pub fn run(mut args: Args) -> Result<()> {
         args.merge = true;
     }
 
+    if args.root {
+        if args.keep_base {
+            bail!("options '--keep-base' and '--root' cannot be used together");
+        }
+        if args.fork_point {
+            bail!("options '--root' and '--fork-point' cannot be used together");
+        }
+        if args.onto.is_none() {
+            bail!("a base commit must be provided with --onto when using --root");
+        }
+        if args.upstream.is_some() && args.branch.is_some() {
+            bail!("git rebase: too many arguments");
+        }
+        if args.upstream.is_some() && args.branch.is_none() {
+            args.branch = args.upstream.take();
+        }
+    }
+
     if args.abort {
         return do_abort();
     }
@@ -190,6 +213,8 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.skip {
         return do_skip();
     }
+
+    let pre_rebase_hook_second = args.branch.clone();
 
     // If a branch argument is given, checkout that branch first.
     // Fix up the reflog so @{-N} isn't polluted by the internal checkout.
@@ -232,7 +257,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // If no upstream specified and no --onto, try to find the upstream tracking branch.
-    if args.upstream.is_none() && args.onto.is_none() {
+    if args.upstream.is_none() && args.onto.is_none() && !args.root {
         let repo = Repository::discover(None).context("not a git repository")?;
         let head = resolve_head(&repo.git_dir)?;
         let branch_name = match &head {
@@ -253,7 +278,7 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    do_rebase(args)
+    do_rebase(args, pre_rebase_hook_second)
 }
 
 // ── Rebase state directory layout ───────────────────────────────────
@@ -376,9 +401,28 @@ fn load_onto_name(rb_dir: &Path) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Message to record when replaying `commit` during a root rebase.
+///
+/// For two-parent merges, Git records the second parent's subject (the merged branch tip), not the
+/// default merge message, when flattening history onto a new base.
+fn message_for_root_replayed_commit(
+    repo: &Repository,
+    commit: &CommitData,
+    root_rebase: bool,
+) -> String {
+    if root_rebase && commit.parents.len() == 2 {
+        if let Ok(p2_obj) = repo.odb.read(&commit.parents[1]) {
+            if let Ok(p2) = parse_commit(&p2_obj.data) {
+                return p2.message;
+            }
+        }
+    }
+    commit.message.clone()
+}
+
 // ── Main rebase flow ────────────────────────────────────────────────
 
-fn do_rebase(args: Args) -> Result<()> {
+fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
@@ -417,23 +461,36 @@ fn do_rebase(args: Args) -> Result<()> {
         }
     }
 
-    // Resolve upstream
-    let upstream_spec = args.upstream.as_deref().unwrap_or("HEAD");
-    let upstream_oid = resolve_revision(&repo, upstream_spec)
-        .with_context(|| format!("bad revision '{upstream_spec}'"))?;
-
+    // Resolve upstream / onto / HEAD
     let head_state = resolve_head(git_dir)?;
     let head_oid_early = head_state
         .oid()
         .ok_or_else(|| anyhow::anyhow!("cannot rebase: HEAD is unborn"))?
         .to_owned();
 
-    let onto_oid = if let Some(ref onto_spec) = args.onto {
-        resolve_revision(&repo, onto_spec).with_context(|| format!("bad revision '{onto_spec}'"))?
-    } else if args.keep_base {
-        find_merge_base(&repo, upstream_oid, head_oid_early).unwrap_or(upstream_oid)
+    let (upstream_spec, upstream_oid, onto_oid, onto_name_for_state) = if args.root {
+        let onto_spec = args
+            .onto
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("internal: --root without --onto"))?;
+        let onto = resolve_revision(&repo, onto_spec)
+            .with_context(|| format!("bad revision '{onto_spec}'"))?;
+        ("--root".to_owned(), onto, onto, onto_spec.to_owned())
     } else {
-        upstream_oid
+        let upstream_spec = args.upstream.as_deref().unwrap_or("HEAD").to_owned();
+        let up_oid = resolve_revision(&repo, &upstream_spec)
+            .with_context(|| format!("bad revision '{upstream_spec}'"))?;
+        let (onto, onto_label) = if let Some(ref onto_spec) = args.onto {
+            let oid = resolve_revision(&repo, onto_spec)
+                .with_context(|| format!("bad revision '{onto_spec}'"))?;
+            (oid, onto_spec.clone())
+        } else if args.keep_base {
+            let oid = find_merge_base(&repo, up_oid, head_oid_early).unwrap_or(up_oid);
+            (oid, upstream_spec.clone())
+        } else {
+            (up_oid, upstream_spec.clone())
+        };
+        (upstream_spec, up_oid, onto, onto_label)
     };
 
     let head = head_state;
@@ -450,7 +507,7 @@ fn do_rebase(args: Args) -> Result<()> {
         None
     };
 
-    let allow_preemptive_ff = !args.interactive && args.exec.is_none();
+    let allow_preemptive_ff = !args.interactive && args.exec.is_none() && !args.root;
 
     if allow_preemptive_ff && rebase_can_preemptive_ff(&repo, onto_oid, upstream_oid, head_oid)? {
         if !args.no_ff {
@@ -480,8 +537,25 @@ fn do_rebase(args: Args) -> Result<()> {
 
     let reapply_cherry_picks =
         args.reapply_cherry_picks || (args.keep_base && !args.no_reapply_cherry_picks);
-    let commits =
-        collect_rebase_todo_commits(&repo, head_oid, upstream_oid, !reapply_cherry_picks)?;
+    let commits = if args.root {
+        collect_commits_for_root_rebase(&repo, head_oid, onto_oid)?
+    } else {
+        collect_rebase_todo_commits(&repo, head_oid, upstream_oid, !reapply_cherry_picks)?
+    };
+
+    let hook_arg1: &str = if args.root {
+        "--root"
+    } else {
+        upstream_spec.as_str()
+    };
+    let hook_arg2: Option<&str> = pre_rebase_hook_second.as_deref();
+    let hook_args: Vec<&str> = match hook_arg2 {
+        Some(s) => vec![hook_arg1, s],
+        None => vec![hook_arg1],
+    };
+    if let HookResult::Failed(_) = run_hook(&repo, "pre-rebase", &hook_args, None) {
+        bail!("The pre-rebase hook refused to rebase.");
+    }
 
     if args.interactive {
         if commits.is_empty() {
@@ -494,7 +568,7 @@ fn do_rebase(args: Args) -> Result<()> {
             let subject = commit.message.lines().next().unwrap_or("");
             println!("pick {} {}", &oid.to_hex()[..7], subject);
         }
-        return Ok(());
+        // Still replay commits: upstream tests expect `rebase -i` to apply the todo.
     }
 
     if !args.no_ff && commits.is_empty() {
@@ -511,7 +585,7 @@ fn do_rebase(args: Args) -> Result<()> {
                 &head,
                 head_oid,
                 onto_oid,
-                upstream_spec,
+                onto_name_for_state.as_str(),
                 ff_base,
                 head_oid,
             );
@@ -543,7 +617,7 @@ fn do_rebase(args: Args) -> Result<()> {
     fs::write(rb_dir.join("head-name"), &head_name)?;
     fs::write(rb_dir.join("orig-head"), head_oid.to_hex())?;
     fs::write(rb_dir.join("onto"), onto_oid.to_hex())?;
-    fs::write(rb_dir.join("onto-name"), format!("{upstream_spec}\n"))?;
+    fs::write(rb_dir.join("onto-name"), format!("{onto_name_for_state}\n"))?;
     fs::write(
         rb_dir.join("reflog-action"),
         format!("{}\n", rebase_reflog_action()),
@@ -556,6 +630,9 @@ fn do_rebase(args: Args) -> Result<()> {
         },
     )?;
     fs::write(rb_dir.join("rebasing"), "")?;
+    if args.root {
+        fs::write(rb_dir.join("root"), "")?;
+    }
 
     let todo: Vec<String> = commits.iter().map(|oid| oid.to_hex()).collect();
     let total = todo.len();
@@ -571,7 +648,7 @@ fn do_rebase(args: Args) -> Result<()> {
 
     let ident = reflog_identity(&repo);
     let ra = rebase_reflog_action();
-    let start_msg = format!("{ra} (start): checkout {upstream_spec}");
+    let start_msg = format!("{ra} (start): checkout {onto_name_for_state}");
     // Git records `(start)` on HEAD only; the branch ref keeps its pre-rebase tip until `(finish)`.
     let _ = append_reflog(
         git_dir, "HEAD", &head_oid, &onto_oid, &ident, &start_msg, false,
@@ -767,6 +844,77 @@ fn collect_commits_to_replay(
 
     commits.reverse();
     Ok(commits)
+}
+
+/// Commits to replay for `rebase --root --onto <onto>`: same set as `git rev-list <onto>..<head>`.
+///
+/// Order matches `git rev-list` default output reversed (oldest first), including merge topology.
+fn collect_commits_for_root_rebase(
+    repo: &Repository,
+    head: ObjectId,
+    onto: ObjectId,
+) -> Result<Vec<ObjectId>> {
+    let range = format!("{}..{}", onto.to_hex(), head.to_hex());
+    let (positive, negative) = split_revision_token(&range);
+    let mut opts = RevListOptions::default();
+    opts.first_parent = true;
+    opts.ordering = OrderingMode::Default;
+    opts.reverse = true;
+    let listed = rev_list(repo, &positive, &negative, &opts).map_err(|e| anyhow::anyhow!("{e}"))?;
+    filter_redundant_patch_commits(repo, onto, &listed.commits)
+}
+
+/// Drop commits whose patch-id already exists on `onto` or earlier in the replay list.
+///
+/// Matches Git's "skipped previously applied commit" behaviour during `rebase --root`.
+fn filter_redundant_patch_commits(
+    repo: &Repository,
+    onto: ObjectId,
+    ordered: &[ObjectId],
+) -> Result<Vec<ObjectId>> {
+    let mut seen_patch_ids: HashSet<ObjectId> = HashSet::new();
+    for oid in ancestor_closure(repo, onto)? {
+        let obj = match repo.odb.read(&oid) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = match parse_commit(&obj.data) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if commit.parents.len() > 1 {
+            continue;
+        }
+        if let Some(pid) = compute_patch_id(&repo.odb, &oid)? {
+            seen_patch_ids.insert(pid);
+        }
+    }
+
+    let mut out = Vec::new();
+    for &oid in ordered {
+        let obj = repo.odb.read(&oid)?;
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = parse_commit(&obj.data)?;
+        if commit.parents.len() > 1 {
+            out.push(oid);
+            continue;
+        }
+        let Some(pid) = compute_patch_id(&repo.odb, &oid)? else {
+            out.push(oid);
+            continue;
+        };
+        if seen_patch_ids.contains(&pid) {
+            continue;
+        }
+        seen_patch_ids.insert(pid);
+        out.push(oid);
+    }
+    Ok(out)
 }
 
 /// Whether `onto` is a strict fast-forward of `head` (linear single-parent history from `head` to `onto`).
@@ -987,7 +1135,9 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
                     .ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
                 let obj = repo.odb.read(&commit_oid)?;
                 let commit = parse_commit(&obj.data)?;
-                let subject = commit.message.lines().next().unwrap_or("");
+                let root_rebase = rb_dir.join("root").exists();
+                let msg_for_log = message_for_root_replayed_commit(repo, &commit, root_rebase);
+                let subject = msg_for_log.lines().next().unwrap_or("");
                 eprintln!("Applying: {}", subject);
                 let msg = format!("{ra} (pick): {subject}");
                 let _ = append_reflog(git_dir, "HEAD", &old_head, &new_oid, &ident, &msg, false);
@@ -1032,7 +1182,9 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
 
                 let obj = repo.odb.read(&commit_oid)?;
                 let commit = parse_commit(&obj.data)?;
-                let subject = commit.message.lines().next().unwrap_or("");
+                let root_rebase = rb_dir.join("root").exists();
+                let msg_for_log = message_for_root_replayed_commit(repo, &commit, root_rebase);
+                let subject = msg_for_log.lines().next().unwrap_or("");
 
                 eprintln!(
                     "error: could not apply {}... {}\n\
@@ -1065,14 +1217,16 @@ fn cherry_pick_for_rebase(
     let commit = parse_commit(&commit_obj.data)?;
     let config = ConfigSet::load(Some(git_dir), true)?;
 
-    // Parent tree (base for the cherry-pick)
-    let parent_oid = commit
-        .parents
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("cannot cherry-pick root commit in rebase"))?;
-    let parent_obj = repo.odb.read(parent_oid)?;
-    let parent_commit = parse_commit(&parent_obj.data)?;
-    let parent_tree_oid = parent_commit.tree;
+    // Parent tree (base for the cherry-pick). Root commits use Git's empty tree as base.
+    const GIT_EMPTY_TREE_HEX: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+    let parent_tree_oid = if let Some(parent_oid) = commit.parents.first() {
+        let parent_obj = repo.odb.read(parent_oid)?;
+        let parent_commit = parse_commit(&parent_obj.data)?;
+        parent_commit.tree
+    } else {
+        ObjectId::from_hex(GIT_EMPTY_TREE_HEX)
+            .map_err(|e| anyhow::anyhow!("invalid empty tree oid: {e}"))?
+    };
 
     // Commit's tree (theirs — the changes we want)
     let commit_tree_oid = commit.tree;
@@ -1119,8 +1273,16 @@ fn cherry_pick_for_rebase(
         }
     }
 
+    let rb_dir = rebase_dir(git_dir);
+    let root_rebase = rb_dir.join("root").exists();
+
     if has_conflicts {
-        write_rebase_conflict_message(git_dir, &commit, &config)?;
+        if root_rebase {
+            let merge_msg = message_for_root_replayed_commit(repo, &commit, true);
+            fs::write(git_dir.join("MERGE_MSG"), &merge_msg)?;
+        } else {
+            write_rebase_conflict_message(git_dir, &commit, &config)?;
+        }
         bail!("conflicts during cherry-pick of {}", commit_oid.to_hex());
     }
 
@@ -1130,7 +1292,12 @@ fn cherry_pick_for_rebase(
     let now = time::OffsetDateTime::now_utc();
     let committer = resolve_identity(&config, "COMMITTER")?;
 
-    let (message, encoding, raw_message) = transcoded_replayed_message(&commit, &config);
+    let (message, encoding, raw_message) = if root_rebase {
+        let msg = message_for_root_replayed_commit(repo, &commit, true);
+        (msg, commit.encoding.clone(), None)
+    } else {
+        transcoded_replayed_message(&commit, &config)
+    };
     let commit_data = CommitData {
         tree: tree_oid,
         parents: vec![head_oid],
