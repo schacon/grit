@@ -20,6 +20,7 @@ mod git_commit_encoding;
 mod git_path;
 mod grit_exe;
 mod ident;
+mod pack_objects_upload;
 pub mod pathspec;
 pub mod pkt_line;
 pub mod protocol;

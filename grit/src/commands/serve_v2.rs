@@ -6,9 +6,11 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::objects::{self, ObjectKind};
+use grit_lib::merge_base;
+use grit_lib::objects::{self, ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
+use std::collections::HashSet;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
@@ -307,27 +309,116 @@ fn peel_to_commit(
     }
 }
 
-/// Handle the `fetch` command — validate arguments.
-fn cmd_fetch(_git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()> {
-    // Validate arguments
+/// Handle the `fetch` command (protocol v2): negotiation + `packfile` section with raw pack bytes.
+fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()> {
+    let repo = Repository::open(git_dir, None)
+        .with_context(|| format!("could not open repository at '{}'", git_dir.display()))?;
+
+    let mut wants: Vec<ObjectId> = Vec::new();
+    let mut have_oids: Vec<ObjectId> = Vec::new();
+    let mut wait_for_done = false;
+    let mut seen_done = false;
+
     for arg in args {
         match arg.as_str() {
-            "thin-pack" | "no-progress" | "include-tag" | "ofs-delta" | "wait-for-done" => {}
-            s if s.starts_with("want ") => {}
-            s if s.starts_with("have ") => {}
-            s if s.starts_with("shallow ") => {}
-            s if s.starts_with("deepen ") => {}
-            s if s.starts_with("deepen-since ") => {}
-            s if s.starts_with("deepen-not ") => {}
+            "thin-pack" | "no-progress" | "include-tag" | "ofs-delta" => {}
+            "wait-for-done" => wait_for_done = true,
+            "done" => seen_done = true,
             "deepen-relative" => {}
-            "done" => {}
+            s if s.starts_with("want ") => {
+                let rest = s.strip_prefix("want ").unwrap_or("").trim();
+                let hex = rest.split_whitespace().next().unwrap_or(rest);
+                wants.push(
+                    ObjectId::from_hex(hex).with_context(|| format!("invalid want oid: {hex}"))?,
+                );
+            }
+            s if s.starts_with("have ") => {
+                let hex = s.strip_prefix("have ").unwrap_or("").trim();
+                if let Ok(oid) = ObjectId::from_hex(hex) {
+                    have_oids.push(oid);
+                }
+            }
+            s if s.starts_with("shallow ")
+                || s.starts_with("deepen ")
+                || s.starts_with("deepen-since ")
+                || s.starts_with("deepen-not ") => {}
             s if s.starts_with("want-ref ") => {}
             s if s.starts_with("filter ") => {}
+            s if s.starts_with("packfile-uris ") => {}
+            s if s.starts_with("sideband-all") => {}
             other => bail!("unexpected line: '{other}'"),
         }
     }
-    // For now, just send an empty response
+
+    if wants.is_empty() && !wait_for_done {
+        pkt_line::write_flush(out)?;
+        return Ok(());
+    }
+
+    let want_set: HashSet<ObjectId> = wants.iter().copied().collect();
+    let mut have_commits: Vec<ObjectId> = Vec::new();
+    for h in &have_oids {
+        if let Ok(obj) = repo.odb.read(h) {
+            if obj.kind == ObjectKind::Commit {
+                have_commits.push(*h);
+            }
+        }
+    }
+
+    if !have_oids.is_empty() && !seen_done {
+        pkt_line::write_line(out, "acknowledgments")?;
+        pkt_line::write_line(out, "NAK")?;
+        if ok_to_give_up_v2(&repo, &want_set, &have_commits) {
+            pkt_line::write_line(out, "ready")?;
+            pkt_line::write_delim(out)?;
+        } else {
+            pkt_line::write_flush(out)?;
+        }
+        return Ok(());
+    }
+
+    pkt_line::write_line(out, "packfile")?;
+    let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(git_dir)?;
+    {
+        let mut pin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("pack-objects stdin"))?;
+        crate::pack_objects_upload::write_pack_objects_revs_stdin(&mut pin, &wants, &have_commits)?;
+    }
+    crate::pack_objects_upload::drain_pack_objects_child(child, out, false)?;
     pkt_line::write_flush(out)?;
+    Ok(())
+}
+
+fn ok_to_give_up_v2(
+    repo: &Repository,
+    wants: &HashSet<ObjectId>,
+    have_commits: &[ObjectId],
+) -> bool {
+    if have_commits.is_empty() {
+        return false;
+    }
+    let mut client_known: HashSet<ObjectId> = HashSet::new();
+    for h in have_commits {
+        if merge_ancestors_into_v2(repo, *h, &mut client_known).is_err() {
+            return false;
+        }
+    }
+    wants.iter().all(|w| {
+        client_known
+            .iter()
+            .any(|h| merge_base::is_ancestor(repo, *h, *w).unwrap_or(false))
+    })
+}
+
+fn merge_ancestors_into_v2(
+    repo: &Repository,
+    tip: ObjectId,
+    into: &mut HashSet<ObjectId>,
+) -> anyhow::Result<()> {
+    let anc = merge_base::ancestor_closure(repo, tip)?;
+    into.extend(anc);
     Ok(())
 }
 

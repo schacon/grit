@@ -964,7 +964,7 @@ t5541-remote-subcommands	t5	yes	5	5	0	true	ok	0
 t5542-push-advanced	t5	yes	4	4	0	true	ok	0
 t5542-push-http-shallow	t5	yes	3	1	2	false	ok	0
 t5543-atomic-push	t5	yes	13	7	6	false	ok	0
-t5544-pack-objects-hook	t5	yes	7	3	4	false	ok	0
+t5544-pack-objects-hook	t5	yes	7	7	0	true	ok	0
 t5545-push-options	t5	yes	13	5	8	false	ok	0
 t5546-receive-limits	t5	yes	17	14	3	false	ok	0
 t5547-push-quarantine	t5	yes	6	5	1	false	ok	0

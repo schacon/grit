@@ -1582,6 +1582,79 @@ impl ConfigSet {
         Ok(set)
     }
 
+    /// Load configuration the way Git loads **protected** config (e.g. `uploadpack.packObjectsHook`).
+    ///
+    /// This matches Git's `read_protected_config`: system (optional), global files only (no
+    /// repository or worktree `config`), then command-line overrides from `GIT_CONFIG_COUNT` /
+    /// `GIT_CONFIG_PARAMETERS`. It does **not** read `$GIT_CONFIG` (Git omits that for protected
+    /// config).
+    ///
+    /// Global file order matches Git: XDG `git/config` first (when present), then `~/.gitconfig`,
+    /// unless `GIT_CONFIG_GLOBAL` is set (single file). When both global files exist, both are
+    /// merged so later entries win for duplicate keys.
+    pub fn load_protected(include_system: bool) -> Result<Self> {
+        let mut set = Self::new();
+        let ctx = IncludeContext {
+            git_dir: None,
+            command_line_relative_include_is_error: false,
+        };
+
+        if include_system && std::env::var("GIT_CONFIG_NOSYSTEM").is_err() {
+            let system_path = std::env::var("GIT_CONFIG_SYSTEM")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::path::PathBuf::from("/etc/gitconfig"));
+            if let Ok(Some(f)) = ConfigFile::from_path(&system_path, ConfigScope::System) {
+                Self::merge_with_includes(&mut set, &f, true, 0, &ctx)?;
+            }
+        }
+
+        if let Ok(p) = std::env::var("GIT_CONFIG_GLOBAL") {
+            let path = PathBuf::from(p);
+            if let Ok(Some(f)) = ConfigFile::from_path(&path, ConfigScope::Global) {
+                Self::merge_with_includes(&mut set, &f, true, 0, &ctx)?;
+            }
+        } else {
+            let mut global_paths = Vec::new();
+            if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+                global_paths.push(PathBuf::from(xdg).join("git/config"));
+            } else if let Some(home) = home_dir() {
+                global_paths.push(home.join(".config/git/config"));
+            }
+            if let Some(home) = home_dir() {
+                global_paths.push(home.join(".gitconfig"));
+            }
+            for path in global_paths {
+                if let Ok(Some(f)) = ConfigFile::from_path(&path, ConfigScope::Global) {
+                    Self::merge_with_includes(&mut set, &f, true, 0, &ctx)?;
+                }
+            }
+        }
+
+        if let Ok(count_str) = std::env::var("GIT_CONFIG_COUNT") {
+            if let Ok(count) = count_str.parse::<usize>() {
+                for i in 0..count {
+                    let key_var = format!("GIT_CONFIG_KEY_{i}");
+                    let val_var = format!("GIT_CONFIG_VALUE_{i}");
+                    if let (Ok(key), Ok(val)) = (std::env::var(&key_var), std::env::var(&val_var)) {
+                        let _ = set.add_command_override(&key, &val);
+                    }
+                }
+            }
+        }
+
+        if let Ok(params) = std::env::var("GIT_CONFIG_PARAMETERS") {
+            for entry in parse_config_parameters(&params) {
+                if let Some((key, val)) = entry.split_once('=') {
+                    let _ = set.add_command_override(key.trim(), val);
+                } else {
+                    let _ = set.add_command_override(entry.trim(), "true");
+                }
+            }
+        }
+
+        Ok(set)
+    }
+
     /// Merge a file, processing `[include]` and `[includeIf]` directives.
     fn merge_with_includes(
         set: &mut Self,
