@@ -14,6 +14,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::crlf::{get_file_attrs, parse_gitattributes_content, DiffAttr};
 use grit_lib::diff::{
     anchored_unified_diff, count_changes, count_git_lines, detect_renames, diff_index_to_tree,
     diff_index_to_worktree, diff_tree_to_worktree, diff_trees, should_break_rewrite_for_stat,
@@ -21,14 +22,17 @@ use grit_lib::diff::{
 };
 use grit_lib::error::Error;
 use grit_lib::index::Index;
-use grit_lib::merge_diff::format_worktree_conflict_combined;
+use grit_lib::merge_diff::{
+    blob_text_for_diff_with_oid, diff_textconv_active, format_worktree_conflict_combined,
+    run_textconv,
+};
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{resolve_revision, split_treeish_colon};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use unicode_width::UnicodeWidthStr;
 
 /// ANSI color codes for diff output.
@@ -1166,10 +1170,14 @@ pub fn run(mut args: Args) -> Result<()> {
                 write_dirstat_lines(&mut out, &entries, &repo.odb, wt_for_content)?;
             }
             if show_unified {
+                let diff_config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+                    .unwrap_or_default();
                 write_patch_with_prefix(
                     &mut out,
                     &entries,
                     &repo.odb,
+                    &repo.git_dir,
+                    &diff_config,
                     context_lines,
                     use_color,
                     word_diff,
@@ -1178,6 +1186,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     patch_abbrev,
                     args.inter_hunk_context,
                     args.binary,
+                    !args.no_textconv,
                     &src_prefix,
                     &dst_prefix,
                 )?;
@@ -1290,6 +1299,42 @@ fn run_diff_blob_vs_file(
     Ok(())
 }
 
+fn no_index_attr_rules(config: &grit_lib::config::ConfigSet) -> Vec<grit_lib::crlf::AttrRule> {
+    let mut rules = Vec::new();
+    if let Some(p) = config.get("core.attributesfile") {
+        let path = Path::new(p.trim());
+        let path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(path)
+        };
+        if let Ok(content) = fs::read_to_string(&path) {
+            rules.extend(parse_gitattributes_content(&content));
+        }
+    }
+    rules
+}
+
+fn no_index_apply_textconv(
+    raw: &[u8],
+    path_display: &str,
+    rules: &[grit_lib::crlf::AttrRule],
+    config: &grit_lib::config::ConfigSet,
+    command_cwd: &Path,
+) -> String {
+    let fa = get_file_attrs(rules, path_display, config);
+    let DiffAttr::Driver(ref driver) = fa.diff_attr else {
+        return String::from_utf8_lossy(raw).into_owned();
+    };
+    if grit_lib::merge_diff::diff_textconv_cmd_line(config, driver).is_none() {
+        return String::from_utf8_lossy(raw).into_owned();
+    }
+    run_textconv(command_cwd, config, driver, raw)
+        .unwrap_or_else(|| String::from_utf8_lossy(raw).into_owned())
+}
+
 /// Split args on `--` to separate revisions from paths.
 ///
 /// Run `diff --no-index <path_a> <path_b>` — compare two files outside a repo.
@@ -1326,7 +1371,25 @@ fn run_no_index(args: &Args) -> Result<()> {
     let data_a = read_path_or_symlink(path_a, paths[0])?;
     let data_b = read_path_or_symlink(path_b, paths[1])?;
 
-    if data_a == data_b {
+    let config = grit_lib::config::ConfigSet::load(None, true).unwrap_or_default();
+    let attr_rules = no_index_attr_rules(&config);
+    let textconv_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let text_a = no_index_apply_textconv(
+        &data_a,
+        paths[0].as_str(),
+        &attr_rules,
+        &config,
+        &textconv_cwd,
+    );
+    let text_b = no_index_apply_textconv(
+        &data_b,
+        paths[1].as_str(),
+        &attr_rules,
+        &config,
+        &textconv_cwd,
+    );
+
+    if text_a == text_b {
         return Ok(());
     }
 
@@ -1343,8 +1406,6 @@ fn run_no_index(args: &Args) -> Result<()> {
         std::process::exit(1);
     }
 
-    let text_a = String::from_utf8_lossy(&data_a);
-    let text_b = String::from_utf8_lossy(&data_b);
     if ws_mode.any() && ws_mode.normalize(&text_a) == ws_mode.normalize(&text_b) {
         return Ok(());
     }
@@ -1418,7 +1479,7 @@ fn run_no_index(args: &Args) -> Result<()> {
     } else {
         false
     };
-    let diff_output = if use_anchored {
+    let body = if use_anchored {
         anchored_unified_diff(
             &text_a,
             &text_b,
@@ -1430,6 +1491,22 @@ fn run_no_index(args: &Args) -> Result<()> {
     } else {
         unified_diff(&text_a, &text_b, paths[0], paths[1], context_lines)
     };
+
+    let abbrev = if args.full_index {
+        40
+    } else if let Some(n) = args.abbrev {
+        n.max(4).min(40)
+    } else {
+        7
+    };
+    let old_hex = Odb::hash_object_data(ObjectKind::Blob, &data_a).to_hex();
+    let new_hex = Odb::hash_object_data(ObjectKind::Blob, &data_b).to_hex();
+    let old_abbrev = &old_hex[..abbrev.min(old_hex.len())];
+    let new_abbrev = &new_hex[..abbrev.min(new_hex.len())];
+    let diff_output = format!(
+        "diff --git a/{} b/{}\nindex {}..{} 100644\n{}",
+        paths[0], paths[1], old_abbrev, new_abbrev, body
+    );
 
     // Determine color mode
     let use_color = match args.color.as_deref() {
@@ -2246,6 +2323,8 @@ fn write_patch_with_prefix(
     out: &mut impl Write,
     entries: &[DiffEntry],
     odb: &Odb,
+    git_dir: &Path,
+    config: &grit_lib::config::ConfigSet,
     context_lines: usize,
     use_color: bool,
     word_diff: bool,
@@ -2254,6 +2333,7 @@ fn write_patch_with_prefix(
     abbrev_len: usize,
     _inter_hunk_context: Option<usize>,
     show_binary: bool,
+    use_textconv: bool,
     src_prefix: &str,
     dst_prefix: &str,
 ) -> Result<()> {
@@ -2324,7 +2404,9 @@ fn write_patch_with_prefix(
             continue;
         }
 
-        if is_binary(&old_content_raw) || is_binary(&new_content_raw) {
+        let path_for_attrs = entry.path();
+        let textconv_patch = use_textconv && diff_textconv_active(git_dir, config, path_for_attrs);
+        if !textconv_patch && (is_binary(&old_content_raw) || is_binary(&new_content_raw)) {
             if show_binary {
                 // --binary: output a "GIT binary patch" block
                 write_git_binary_patch(
@@ -2344,8 +2426,36 @@ fn write_patch_with_prefix(
             continue;
         }
 
-        let old_content = String::from_utf8_lossy(&old_content_raw).into_owned();
-        let new_content = String::from_utf8_lossy(&new_content_raw).into_owned();
+        let old_content = if entry.old_oid == zero_oid() {
+            String::new()
+        } else if use_textconv {
+            blob_text_for_diff_with_oid(
+                odb,
+                git_dir,
+                config,
+                path_for_attrs,
+                &old_content_raw,
+                &entry.old_oid,
+                true,
+            )
+        } else {
+            String::from_utf8_lossy(&old_content_raw).into_owned()
+        };
+        let new_content = if entry.new_oid == zero_oid() {
+            String::new()
+        } else if use_textconv {
+            blob_text_for_diff_with_oid(
+                odb,
+                git_dir,
+                config,
+                path_for_attrs,
+                &new_content_raw,
+                &entry.new_oid,
+                true,
+            )
+        } else {
+            String::from_utf8_lossy(&new_content_raw).into_owned()
+        };
 
         // For Added files, show --- /dev/null; for Deleted files, show +++ /dev/null
         let display_old = if entry.status == DiffStatus::Added {

@@ -186,7 +186,7 @@ run_one() {
             GIT_SOURCE_DIR="$REPO/git" \
             GIT_CONFIG_NOSYSTEM=1 \
             GIT_CONFIG_PARAMETERS= \
-            "${TIMEOUT_PREFIX[@]}" bash "$f" 2>&1
+            "${timeout_prefix[@]}" bash "$f" 2>&1
     ) || true
     summary=$(echo "$output" | grep "^# Tests:" | tail -1) || true
     total=0 pass=0 fail=0 status="error"

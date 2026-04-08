@@ -7,11 +7,14 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use tempfile::NamedTempFile;
+
 use crate::config::ConfigSet;
 use crate::crlf::{get_file_attrs, load_gitattributes, DiffAttr, FileAttrs};
 use crate::diff::{diff_trees, DiffStatus};
 use crate::objects::{parse_commit, ObjectId};
 use crate::odb::Odb;
+use crate::textconv_cache::{read_textconv_cache, write_textconv_cache};
 
 /// Paths that differ between the merge result tree and **every** parent tree.
 #[must_use]
@@ -64,36 +67,106 @@ pub fn is_binary_for_diff(git_dir: &Path, path: &str, blob: &[u8]) -> bool {
     crate::crlf::is_binary(blob)
 }
 
-/// Run `diff.<driver>.textconv` feeding `input` on stdin; returns raw stdout on success.
+/// True when Git would wrap the textconv command with `sh -c 'cmd "$@"' -- ...`
+/// (`prepare_shell_cmd` in Git's `run-command.c`).
+fn textconv_cmd_needs_shell_wrapper(cmd_line: &str) -> bool {
+    cmd_line.chars().any(|c| {
+        matches!(
+            c,
+            '|' | '&'
+                | ';'
+                | '<'
+                | '>'
+                | '('
+                | ')'
+                | '$'
+                | '`'
+                | '\\'
+                | '"'
+                | '\''
+                | ' '
+                | '\t'
+                | '\n'
+                | '*'
+                | '?'
+                | '['
+                | '#'
+                | '~'
+                | '='
+                | '%'
+        )
+    })
+}
+
+/// Run `diff.<driver>.textconv` on `input`; returns raw stdout on success.
 ///
-/// Matches Git's `run_textconv` stdin-based drivers (config lines ending with ` <` are
-/// normalized the same way as [`run_textconv`]).
+/// Matches Git's `run_textconv` / `prepare_shell_cmd`: by default the blob is written to a
+/// temporary file and passed as an argument after `--`. Commands that contain shell
+/// metacharacters (including spaces) use `sh -c 'pgm "$@"' -- pgm <tempfile>`. Config lines
+/// ending with ` <` use stdin instead of a tempfile.
 pub fn run_textconv_raw(
-    git_dir: &Path,
+    command_cwd: &Path,
     config: &ConfigSet,
     driver: &str,
     input: &[u8],
 ) -> Option<Vec<u8>> {
     let mut cmd_line = config.get(&format!("diff.{driver}.textconv"))?;
     cmd_line = cmd_line.trim_end().to_string();
-    if cmd_line.ends_with('<') {
+    let stdin_mode = if cmd_line.ends_with('<') {
         let t = cmd_line.trim_end_matches('<').trim_end();
         cmd_line = t.to_string();
+        true
+    } else {
+        false
+    };
+    if stdin_mode {
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(&cmd_line)
+            .current_dir(command_cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+        let mut stdin = child.stdin.take()?;
+        stdin.write_all(input).ok()?;
+        drop(stdin);
+        let out = child.wait_with_output().ok()?;
+        return if out.status.success() {
+            Some(out.stdout)
+        } else {
+            None
+        };
     }
-    let work_tree = git_dir.parent().unwrap_or(git_dir);
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(&cmd_line)
-        .current_dir(work_tree)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let mut stdin = child.stdin.take()?;
-    stdin.write_all(input).ok()?;
-    drop(stdin);
-    let out = child.wait_with_output().ok()?;
+
+    let mut tmp = NamedTempFile::new().ok()?;
+    tmp.write_all(input).ok()?;
+    tmp.flush().ok()?;
+    let path = tmp.path().to_owned();
+
+    let out = if textconv_cmd_needs_shell_wrapper(&cmd_line) {
+        Command::new("sh")
+            .current_dir(command_cwd)
+            .arg("-c")
+            .arg(format!("{} \"$@\"", cmd_line))
+            .arg(&cmd_line)
+            .arg(&path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?
+    } else {
+        Command::new("sh")
+            .current_dir(command_cwd)
+            .arg(&cmd_line)
+            .arg(&path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?
+    };
+
     if !out.status.success() {
         return None;
     }
@@ -102,13 +175,109 @@ pub fn run_textconv_raw(
 
 /// Run `diff.<driver>.textconv` feeding `input` on stdin; returns UTF-8 lossy text on success.
 pub fn run_textconv(
-    git_dir: &Path,
+    command_cwd: &Path,
     config: &ConfigSet,
     driver: &str,
     input: &[u8],
 ) -> Option<String> {
-    run_textconv_raw(git_dir, config, driver, input)
+    run_textconv_raw(command_cwd, config, driver, input)
         .map(|b| String::from_utf8_lossy(&b).into_owned())
+}
+
+pub fn diff_textconv_cmd_line(config: &ConfigSet, driver: &str) -> Option<String> {
+    let mut cmd_line = config.get(&format!("diff.{driver}.textconv"))?;
+    cmd_line = cmd_line.trim_end().to_string();
+    if cmd_line.ends_with('<') {
+        let t = cmd_line.trim_end_matches('<').trim_end();
+        cmd_line = t.to_string();
+    }
+    Some(cmd_line)
+}
+
+pub fn diff_cachetextconv_enabled(config: &ConfigSet, driver: &str) -> bool {
+    config
+        .get(&format!("diff.{driver}.cachetextconv"))
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "1" | "on"))
+        .unwrap_or(false)
+}
+
+/// Returns true when `path` has a `diff=<driver>` attribute and `diff.<driver>.textconv` is set.
+///
+/// When this holds, Git treats the path as textual for diff purposes (even if the blob contains
+/// NUL), running textconv instead of emitting `Binary files differ`.
+#[must_use]
+pub fn diff_textconv_active(git_dir: &Path, config: &ConfigSet, path: &str) -> bool {
+    let fa = attrs_for_repo_path(git_dir, path);
+    let DiffAttr::Driver(ref driver) = fa.diff_attr else {
+        return false;
+    };
+    diff_textconv_cmd_line(config, driver).is_some()
+}
+
+fn textconv_command_cwd(git_dir: &Path) -> std::path::PathBuf {
+    git_dir.parent().unwrap_or(git_dir).to_path_buf()
+}
+
+fn blob_text_for_diff_inner(
+    odb: Option<&Odb>,
+    git_dir: &Path,
+    config: &ConfigSet,
+    path: &str,
+    blob: &[u8],
+    blob_oid: Option<&ObjectId>,
+    use_textconv: bool,
+) -> String {
+    if !use_textconv {
+        return String::from_utf8_lossy(blob).into_owned();
+    }
+    let fa = attrs_for_repo_path(git_dir, path);
+    let DiffAttr::Driver(ref driver) = fa.diff_attr else {
+        return String::from_utf8_lossy(blob).into_owned();
+    };
+    let Some(cmd_line) = diff_textconv_cmd_line(config, driver) else {
+        return String::from_utf8_lossy(blob).into_owned();
+    };
+    let want_cache = diff_cachetextconv_enabled(config, driver);
+    if want_cache {
+        if let (Some(odb), Some(oid)) = (odb, blob_oid) {
+            if let Some(bytes) = read_textconv_cache(odb, git_dir, driver, &cmd_line, oid) {
+                return String::from_utf8_lossy(&bytes).into_owned();
+            }
+        }
+    }
+    let cwd = textconv_command_cwd(git_dir);
+    let Some(t) = run_textconv(&cwd, config, driver, blob) else {
+        return String::from_utf8_lossy(blob).into_owned();
+    };
+    if want_cache {
+        if let (Some(odb), Some(oid)) = (odb, blob_oid) {
+            write_textconv_cache(odb, git_dir, driver, &cmd_line, oid, t.as_bytes());
+        }
+    }
+    t
+}
+
+/// Like [`blob_text_for_diff`], but uses `refs/notes/textconv/<driver>` when
+/// `diff.<driver>.cachetextconv` is true and `blob_oid` is known.
+#[must_use]
+pub fn blob_text_for_diff_with_oid(
+    odb: &Odb,
+    git_dir: &Path,
+    config: &ConfigSet,
+    path: &str,
+    blob: &[u8],
+    blob_oid: &ObjectId,
+    use_textconv: bool,
+) -> String {
+    blob_text_for_diff_inner(
+        Some(odb),
+        git_dir,
+        config,
+        path,
+        blob,
+        Some(blob_oid),
+        use_textconv,
+    )
 }
 
 /// Blob bytes after smudge/EOL conversion for `path`, using the same rules as checkout.
@@ -132,10 +301,13 @@ pub fn convert_blob_to_worktree_for_path(
     };
     let file_attrs = crate::crlf::get_file_attrs(&rules, path, &config);
     crate::crlf::convert_to_worktree(blob, path, &conv, &file_attrs, oid_hex, None)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        .map_err(std::io::Error::other)
 }
 
 /// Prepare blob bytes for diff: optional textconv when `use_textconv` and `diff=<driver>`.
+///
+/// Does not read or write the textconv notes cache; use [`blob_text_for_diff_with_oid`] when the
+/// blob OID is known (e.g. commit diffs with `cachetextconv`).
 pub fn blob_text_for_diff(
     git_dir: &Path,
     config: &ConfigSet,
@@ -143,19 +315,11 @@ pub fn blob_text_for_diff(
     blob: &[u8],
     use_textconv: bool,
 ) -> String {
-    if !use_textconv {
-        return String::from_utf8_lossy(blob).into_owned();
-    }
-    let fa = attrs_for_repo_path(git_dir, path);
-    if let DiffAttr::Driver(ref driver) = fa.diff_attr {
-        if let Some(t) = run_textconv(git_dir, config, driver, blob) {
-            return t;
-        }
-    }
-    String::from_utf8_lossy(blob).into_owned()
+    blob_text_for_diff_inner(None, git_dir, config, path, blob, None, use_textconv)
 }
 
 /// `diff --git` against parent `p` for merge commit `-m` output.
+#[allow(clippy::too_many_arguments)]
 pub fn format_parent_patch(
     git_dir: &Path,
     config: &ConfigSet,
@@ -175,8 +339,10 @@ pub fn format_parent_patch(
 
     let old_blob = read_blob(odb, &entry.old_oid);
     let new_blob = read_blob(odb, &entry.new_oid);
-    let binary = is_binary_for_diff(git_dir, path, &old_blob)
-        || is_binary_for_diff(git_dir, path, &new_blob);
+    let textconv_for_patch = use_textconv && diff_textconv_active(git_dir, config, path);
+    let binary = !textconv_for_patch
+        && (is_binary_for_diff(git_dir, path, &old_blob)
+            || is_binary_for_diff(git_dir, path, &new_blob));
 
     let old_abbrev = abbrev_hex(&entry.old_oid, abbrev);
     let new_abbrev = abbrev_hex(&entry.new_oid, abbrev);
@@ -199,8 +365,16 @@ pub fn format_parent_patch(
         return Some(out);
     }
 
-    let old_t = blob_text_for_diff(git_dir, config, path, &old_blob, use_textconv);
-    let new_t = blob_text_for_diff(git_dir, config, path, &new_blob, use_textconv);
+    let old_t = if textconv_for_patch {
+        blob_text_for_diff_with_oid(odb, git_dir, config, path, &old_blob, &entry.old_oid, true)
+    } else {
+        blob_text_for_diff(git_dir, config, path, &old_blob, use_textconv)
+    };
+    let new_t = if textconv_for_patch {
+        blob_text_for_diff_with_oid(odb, git_dir, config, path, &new_blob, &entry.new_oid, true)
+    } else {
+        blob_text_for_diff(git_dir, config, path, &new_blob, use_textconv)
+    };
     let patch = crate::diff::unified_diff(&old_t, &new_t, path, path, context);
     out.push_str(&patch);
     Some(out)
@@ -233,6 +407,7 @@ pub fn format_combined_binary(
 }
 
 /// Combined text diff with textconv (two parents, single-file focus).
+#[allow(clippy::too_many_arguments)]
 pub fn format_combined_textconv_patch(
     git_dir: &Path,
     config: &ConfigSet,
@@ -255,32 +430,41 @@ pub fn format_combined_textconv_patch(
     }
     let result_blob = read_blob_at_path(odb, result_tree, path)?;
 
-    if parent_blobs
-        .iter()
-        .any(|b| is_binary_for_diff(git_dir, path, b))
-        || is_binary_for_diff(git_dir, path, &result_blob)
+    let p0oid = blob_oid_at_path(odb, &parent_trees[0], path)?;
+    let p1oid = blob_oid_at_path(odb, &parent_trees[1], path)?;
+    let roid = blob_oid_at_path(odb, result_tree, path)?;
+
+    let textconv_for_patch = use_textconv && diff_textconv_active(git_dir, config, path);
+    if !textconv_for_patch
+        && (parent_blobs
+            .iter()
+            .any(|b| is_binary_for_diff(git_dir, path, b))
+            || is_binary_for_diff(git_dir, path, &result_blob))
     {
-        let mut poids = Vec::new();
-        for t in parent_trees {
-            poids.push(blob_oid_at_path(odb, t, path)?);
-        }
-        let roid = blob_oid_at_path(odb, result_tree, path)?;
         return Some(format_combined_binary(
             path,
-            &[poids[0], poids[1]],
+            &[p0oid, p1oid],
             &roid,
             abbrev,
             use_cc_word,
         ));
     }
 
-    let t0 = blob_text_for_diff(git_dir, config, path, &parent_blobs[0], use_textconv);
-    let t1 = blob_text_for_diff(git_dir, config, path, &parent_blobs[1], use_textconv);
-    let tr = blob_text_for_diff(git_dir, config, path, &result_blob, use_textconv);
-
-    let p0oid = blob_oid_at_path(odb, &parent_trees[0], path)?;
-    let p1oid = blob_oid_at_path(odb, &parent_trees[1], path)?;
-    let roid = blob_oid_at_path(odb, result_tree, path)?;
+    let t0 = if textconv_for_patch {
+        blob_text_for_diff_with_oid(odb, git_dir, config, path, &parent_blobs[0], &p0oid, true)
+    } else {
+        blob_text_for_diff(git_dir, config, path, &parent_blobs[0], use_textconv)
+    };
+    let t1 = if textconv_for_patch {
+        blob_text_for_diff_with_oid(odb, git_dir, config, path, &parent_blobs[1], &p1oid, true)
+    } else {
+        blob_text_for_diff(git_dir, config, path, &parent_blobs[1], use_textconv)
+    };
+    let tr = if textconv_for_patch {
+        blob_text_for_diff_with_oid(odb, git_dir, config, path, &result_blob, &roid, true)
+    } else {
+        blob_text_for_diff(git_dir, config, path, &result_blob, use_textconv)
+    };
     let p1a = abbrev_hex(&p0oid, abbrev);
     let p2a = abbrev_hex(&p1oid, abbrev);
     let ra = abbrev_hex(&roid, abbrev);
@@ -297,6 +481,7 @@ pub fn format_combined_textconv_patch(
 }
 
 /// `git diff` / `git diff --cc` during a conflict: worktree file with markers.
+#[allow(clippy::too_many_arguments)]
 pub fn format_worktree_conflict_combined(
     git_dir: &Path,
     config: &ConfigSet,
@@ -313,9 +498,18 @@ pub fn format_worktree_conflict_combined(
     let _base_blob = read_blob(odb, stage1_oid);
 
     let use_conv = !worktree_bytes.contains(&0);
-    let t_ours = blob_text_for_diff(git_dir, config, path, &ours_blob, use_conv);
-    let t_theirs = blob_text_for_diff(git_dir, config, path, &theirs_blob, use_conv);
-    let wt_text = if use_conv {
+    let textconv_cache_path = diff_textconv_active(git_dir, config, path);
+    let t_ours = if textconv_cache_path {
+        blob_text_for_diff_with_oid(odb, git_dir, config, path, &ours_blob, stage2_oid, true)
+    } else {
+        blob_text_for_diff(git_dir, config, path, &ours_blob, use_conv)
+    };
+    let t_theirs = if textconv_cache_path {
+        blob_text_for_diff_with_oid(odb, git_dir, config, path, &theirs_blob, stage3_oid, true)
+    } else {
+        blob_text_for_diff(git_dir, config, path, &theirs_blob, use_conv)
+    };
+    let wt_text = if textconv_cache_path || use_conv {
         blob_text_for_diff(git_dir, config, path, worktree_bytes, true)
     } else {
         String::from_utf8_lossy(worktree_bytes).into_owned()

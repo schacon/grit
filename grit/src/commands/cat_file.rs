@@ -1293,7 +1293,7 @@ fn cat_file_batch_blob_payload(
         DiffAttr::Driver(d) => d.as_str(),
         _ => return Ok(smudged),
     };
-    match run_textconv_raw(&repo.git_dir, &config, driver, &smudged) {
+    match run_textconv_raw(work_tree, &config, driver, &smudged) {
         Some(b) => Ok(b),
         None => {
             eprintln!("fatal: unable to read files to diff");
@@ -1717,7 +1717,11 @@ fn cat_file_emit_transformed(
                 return Ok(());
             }
         };
-        match run_textconv_raw(&repo.git_dir, &config, driver, &smudged) {
+        let textconv_cwd = repo
+            .work_tree
+            .as_deref()
+            .unwrap_or_else(|| repo.git_dir.parent().unwrap_or(&repo.git_dir));
+        match run_textconv_raw(textconv_cwd, &config, driver, &smudged) {
             Some(b) => b,
             None => {
                 eprintln!("fatal: unable to read files to diff");
