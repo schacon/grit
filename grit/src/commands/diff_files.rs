@@ -444,9 +444,9 @@ fn collect_changes(
                 WorktreeStatus::Modified(wt_mode, wt_oid) => {
                     let idx_canonical = canonicalize_mode(*idx_mode);
                     // Content and mode match the index: treat as clean even if the index entry
-                    // was created without racily-clean stat data (e.g. `git apply --index`).
-                    if wt_oid != *idx_oid || wt_mode != idx_canonical || is_stat_smudged(idx_entry)
-                    {
+                    // was created without racily-clean stat data (e.g. `git apply --index`,
+                    // `git am`). Smudged stat metadata alone must not imply a diff-files hit.
+                    if wt_oid != *idx_oid || wt_mode != idx_canonical {
                         // Detect type changes (e.g., symlink ↔ regular, regular ↔ submodule)
                         let status = if mode_type(idx_canonical) != mode_type(wt_mode) {
                             'T'
@@ -856,17 +856,6 @@ fn matches_diff_filter(status: char, spec: &str) -> bool {
         return false;
     }
     true
-}
-
-/// `read-tree`-style entries carry zeroed stat data and are considered dirty
-/// until an explicit refresh (e.g. `checkout-index -u` / `update-index --refresh`).
-fn is_stat_smudged(entry: &IndexEntry) -> bool {
-    entry.ctime_sec == 0
-        && entry.ctime_nsec == 0
-        && entry.mtime_sec == 0
-        && entry.mtime_nsec == 0
-        && entry.dev == 0
-        && entry.ino == 0
 }
 
 // ── Worktree probing ─────────────────────────────────────────────────
