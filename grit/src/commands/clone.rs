@@ -863,11 +863,14 @@ fn resolve_revision_in_source(source: &Repository, revision: &str) -> Result<Str
 fn open_source_repo(path: &Path) -> Result<Repository> {
     // Try as-is first (might be a bare repo or .git dir)
     if let Ok(repo) = Repository::open(path, None) {
+        repo.verify_safe_for_clone_source()?;
         return Ok(repo);
     }
     // Try path/.git for non-bare repos
     let git_dir = path.join(".git");
-    Repository::open(&git_dir, Some(path)).map_err(Into::into)
+    let repo = Repository::open(&git_dir, Some(path)).map_err(anyhow::Error::from)?;
+    repo.verify_safe_for_clone_source()?;
+    Ok(repo)
 }
 
 /// Write an alternates file pointing to the source and reference repos' object stores.

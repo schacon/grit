@@ -192,7 +192,7 @@ impl Repository {
             }
             first = false;
 
-            if let Some(mut repo) = try_open_at(current)? {
+            if let Some(DiscoveredAt { mut repo, gitfile }) = try_open_at(current)? {
                 if let Some(ref wt) = env_work_tree {
                     repo.work_tree = Some(wt.canonicalize().unwrap_or_else(|_| wt.clone()));
                 } else {
@@ -203,7 +203,23 @@ impl Repository {
                         repo.work_tree = Some(resolve_core_worktree_path(&repo.git_dir, &raw)?);
                     }
                 }
-                repo.enforce_safe_directory()?;
+                let assume_different = env::var("GIT_TEST_ASSUME_DIFFERENT_OWNER")
+                    .ok()
+                    .map(|v| {
+                        let lower = v.to_ascii_lowercase();
+                        v == "1" || lower == "true" || lower == "yes" || lower == "on"
+                    })
+                    .unwrap_or(false);
+                if assume_different {
+                    repo.enforce_safe_directory()?;
+                } else {
+                    #[cfg(unix)]
+                    ensure_valid_ownership(
+                        gitfile.as_deref(),
+                        repo.work_tree.as_deref(),
+                        &repo.git_dir,
+                    )?;
+                }
                 return Ok(repo);
             }
             match current.parent() {
@@ -688,7 +704,14 @@ fn validate_repository_format(git_dir: &Path) -> Result<()> {
 ///
 /// Returns `Ok(None)` when `dir` is not a repository root (the caller should
 /// walk up); returns `Err` on a structural problem.
-fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
+/// Result of probing a single directory during [`Repository::discover`].
+struct DiscoveredAt {
+    repo: Repository,
+    /// When discovery used a `.git` gitfile, the path to that file (for ownership checks).
+    gitfile: Option<PathBuf>,
+}
+
+fn try_open_at(dir: &Path) -> Result<Option<DiscoveredAt>> {
     let dot_git = dir.join(".git");
 
     // Check for special file types (FIFO, socket, etc.) — reject them
@@ -728,7 +751,10 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
             fs::read_to_string(&dot_git).map_err(|e| Error::NotARepository(e.to_string()))?;
         let git_dir = parse_gitfile(&content, dir)?;
         let repo = Repository::open(&git_dir, Some(dir))?;
-        return Ok(Some(repo));
+        return Ok(Some(DiscoveredAt {
+            repo,
+            gitfile: Some(dot_git.clone()),
+        }));
     }
 
     if dot_git.is_dir() {
@@ -755,7 +781,10 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
                     };
                     repo.git_dir = abs_dot_git;
                 }
-                return Ok(Some(repo));
+                return Ok(Some(DiscoveredAt {
+                    repo,
+                    gitfile: None,
+                }));
             }
             Err(Error::NotARepository(_)) => return Ok(None),
             Err(e) => return Err(e),
@@ -767,7 +796,10 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
     if dir.join("HEAD").is_file() && dir.join("commondir").is_file() {
         maybe_trace_implicit_bare_repository(dir);
         let repo = Repository::open(dir, None)?;
-        return Ok(Some(repo));
+        return Ok(Some(DiscoveredAt {
+            repo,
+            gitfile: None,
+        }));
     }
 
     // Check if `dir` itself is a bare repo (has objects/ and HEAD directly)
@@ -786,7 +818,10 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
             }
         }
         let repo = Repository::open(dir, None)?;
-        return Ok(Some(repo));
+        return Ok(Some(DiscoveredAt {
+            repo,
+            gitfile: None,
+        }));
     }
 
     Ok(None)
@@ -805,6 +840,127 @@ fn maybe_trace_implicit_bare_repository(dir: &Path) {
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(file, "setup: implicit-bare-repository:{}", dir.display());
     }
+}
+
+/// Collect effective `safe.directory` values from protected config (system/global/command),
+/// applying empty-value resets like Git.
+fn safe_directory_effective_values(git_dir: &Path) -> Vec<String> {
+    let cfg = crate::config::ConfigSet::load(Some(git_dir), true)
+        .unwrap_or_else(|_| crate::config::ConfigSet::new());
+    let mut values: Vec<String> = Vec::new();
+    for e in cfg.entries() {
+        if e.key == "safe.directory"
+            && e.scope != crate::config::ConfigScope::Local
+            && e.scope != crate::config::ConfigScope::Worktree
+        {
+            values.push(e.value.clone().unwrap_or_else(|| "true".to_owned()));
+        }
+    }
+    let mut effective: Vec<String> = Vec::new();
+    for v in values {
+        if v.is_empty() {
+            effective.clear();
+        } else {
+            effective.push(v);
+        }
+    }
+    effective
+}
+
+fn ensure_safe_directory_allows(git_dir: &Path, checked: &Path) -> Result<()> {
+    let effective = safe_directory_effective_values(git_dir);
+    let checked_s = checked.to_string_lossy().to_string();
+    if std::env::var("GRIT_DEBUG_SAFE_DIR").is_ok() {
+        eprintln!("debug-safe-directory values={:?}", effective);
+    }
+    if effective
+        .iter()
+        .any(|v| safe_directory_matches(v, &checked_s))
+    {
+        return Ok(());
+    }
+    Err(Error::DubiousOwnership(checked_s))
+}
+
+#[cfg(unix)]
+fn path_lstat_uid(path: &Path) -> std::io::Result<u32> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::symlink_metadata(path)?;
+    Ok(meta.uid())
+}
+
+#[cfg(unix)]
+fn extract_uid_from_env(name: &str) -> Option<u32> {
+    let raw = std::env::var(name).ok()?;
+    if raw.is_empty() {
+        return None;
+    }
+    raw.parse::<u32>().ok()
+}
+
+/// Match Git's `ensure_valid_ownership`: check gitfile, worktree, and gitdir ownership,
+/// then `safe.directory` when any path is not owned by the effective user.
+#[cfg(unix)]
+fn ensure_valid_ownership(
+    gitfile: Option<&Path>,
+    worktree: Option<&Path>,
+    gitdir: &Path,
+) -> Result<()> {
+    const ROOT_UID: u32 = 0;
+
+    fn owned_by_effective_user(path: &Path) -> std::io::Result<bool> {
+        let st_uid = path_lstat_uid(path)?;
+        let mut euid = unsafe { libc::geteuid() };
+        if euid == ROOT_UID {
+            if st_uid == ROOT_UID {
+                return Ok(true);
+            }
+            if let Some(sudo_uid) = extract_uid_from_env("SUDO_UID") {
+                euid = sudo_uid;
+            }
+        }
+        Ok(st_uid == euid)
+    }
+
+    let assume_different = std::env::var("GIT_TEST_ASSUME_DIFFERENT_OWNER")
+        .ok()
+        .map(|v| {
+            let lower = v.to_ascii_lowercase();
+            v == "1" || lower == "true" || lower == "yes" || lower == "on"
+        })
+        .unwrap_or(false);
+    if !assume_different {
+        let gitfile_ok = gitfile
+            .map(owned_by_effective_user)
+            .transpose()?
+            .unwrap_or(true);
+        let wt_ok = worktree
+            .map(owned_by_effective_user)
+            .transpose()?
+            .unwrap_or(true);
+        let gd_ok = owned_by_effective_user(gitdir)?;
+        if gitfile_ok && wt_ok && gd_ok {
+            return Ok(());
+        }
+    }
+
+    let data_path = if let Some(wt) = worktree {
+        wt.canonicalize().unwrap_or_else(|_| wt.to_path_buf())
+    } else {
+        gitdir
+            .canonicalize()
+            .unwrap_or_else(|_| gitdir.to_path_buf())
+    };
+    ensure_safe_directory_allows(gitdir, &data_path)
+}
+
+#[cfg(not(unix))]
+fn ensure_valid_ownership(
+    _gitfile: Option<&Path>,
+    _worktree: Option<&Path>,
+    _gitdir: &Path,
+) -> Result<()> {
+    Ok(())
 }
 
 impl Repository {
@@ -913,40 +1069,34 @@ impl Repository {
     }
 
     fn enforce_safe_directory_checked(&self, checked: &Path) -> Result<()> {
-        let cfg = crate::config::ConfigSet::load(Some(&self.git_dir), true)
-            .unwrap_or_else(|_| crate::config::ConfigSet::new());
-        let mut values: Vec<String> = Vec::new();
-        for e in cfg.entries() {
-            if e.key == "safe.directory"
-                && e.scope != crate::config::ConfigScope::Local
-                && e.scope != crate::config::ConfigScope::Worktree
+        ensure_safe_directory_allows(&self.git_dir, checked)
+    }
+
+    /// Verify the repository is safe to use as a `git clone` source (local clone).
+    ///
+    /// When `GIT_TEST_ASSUME_DIFFERENT_OWNER` is set, applies the same `safe.directory`
+    /// rules as discovery. Otherwise checks filesystem ownership of the git directory
+    /// only (matching Git's `die_upon_dubious_ownership` for clone).
+    pub fn verify_safe_for_clone_source(&self) -> Result<()> {
+        let assume_different = std::env::var("GIT_TEST_ASSUME_DIFFERENT_OWNER")
+            .ok()
+            .map(|v| {
+                let lower = v.to_ascii_lowercase();
+                v == "1" || lower == "true" || lower == "yes" || lower == "on"
+            })
+            .unwrap_or(false);
+        if assume_different {
+            self.enforce_safe_directory_git_dir()
+        } else {
+            #[cfg(unix)]
             {
-                values.push(e.value.clone().unwrap_or_else(|| "true".to_owned()));
+                ensure_valid_ownership(None, None, &self.git_dir)
+            }
+            #[cfg(not(unix))]
+            {
+                Ok(())
             }
         }
-
-        // Last empty assignment resets the list.
-        let mut effective: Vec<String> = Vec::new();
-        for v in values {
-            if v.is_empty() {
-                effective.clear();
-            } else {
-                effective.push(v);
-            }
-        }
-
-        let checked_s = checked.to_string_lossy().to_string();
-        if std::env::var("GRIT_DEBUG_SAFE_DIR").is_ok() {
-            eprintln!("debug-safe-directory values={:?}", effective);
-        }
-        if effective
-            .iter()
-            .any(|v| safe_directory_matches(v, &checked_s))
-        {
-            return Ok(());
-        }
-
-        Err(Error::DubiousOwnership(checked_s))
     }
 }
 
