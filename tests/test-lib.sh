@@ -825,6 +825,11 @@ test_lazy_prereq () {
 	fi
 }
 
+test_lazy_prereq ICONV '
+	test -z "$NO_ICONV" &&
+	iconv -f utf8 -t utf8 </dev/null
+'
+
 # write_script FILE [INTERPRETER] — write a script from stdin
 write_script () {
 	{
