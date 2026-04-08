@@ -10,11 +10,11 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
-use grit_lib::diff::{read_submodule_head_for_checkout, zero_oid};
+use grit_lib::diff::zero_oid;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
@@ -752,6 +752,18 @@ fn switch_branch(
                 let target_tree = commit_to_tree(repo, &target_oid)?;
                 return force_reset_to_tree(repo, &target_tree);
             }
+            // Bare clone leaves an empty index while HEAD already points at the branch.
+            // Git still materializes the tree on `checkout <that-branch>`; match that.
+            let index_empty = repo
+                .load_index()
+                .map(|idx| idx.entries.is_empty())
+                .unwrap_or(true);
+            if index_empty {
+                let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
+                    .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
+                let target_tree = commit_to_tree(repo, &target_oid)?;
+                switch_to_tree(repo, &head, &target_tree, false)?;
+            }
             let tip = head
                 .oid()
                 .copied()
@@ -1254,7 +1266,13 @@ fn detach_head_inner(repo: &Repository, oid: &ObjectId, force: bool, explicit: b
     let old_head_commit = head.oid().copied();
 
     let already_at_target = head.oid() == Some(oid);
-    if !already_at_target || force {
+    let index_empty = repo
+        .load_index()
+        .map(|idx| idx.entries.is_empty())
+        .unwrap_or(true);
+    // `clone --no-checkout` leaves HEAD at a branch tip but no index / empty work tree; a detached
+    // checkout of that same OID must still materialize the tree (submodule clone uses this path).
+    if !already_at_target || force || index_empty {
         let target_tree = commit_to_tree(repo, oid)?;
         switch_to_tree(repo, &head, &target_tree, force)?;
     } else {
@@ -1717,11 +1735,10 @@ fn is_worktree_dirty(
     abs_path: &std::path::Path,
 ) -> Result<bool> {
     if entry.mode == MODE_GITLINK {
-        let wt_head = read_submodule_head_for_checkout(abs_path);
-        return Ok(match wt_head {
-            Some(oid) => oid != entry.oid,
-            None => false,
-        });
+        let Some(current) = read_submodule_head_oid_for_checkout(abs_path) else {
+            return Ok(true);
+        };
+        return Ok(current != entry.oid);
     }
     if entry.mode == MODE_SYMLINK {
         // For symlinks, compare the target
@@ -1749,6 +1766,32 @@ fn is_worktree_dirty(
             Err(_) => grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &raw),
         };
         Ok(oid != entry.oid)
+    }
+}
+
+fn read_submodule_head_oid_for_checkout(sub_path: &Path) -> Option<ObjectId> {
+    let dot_git = sub_path.join(".git");
+    let git_dir = if dot_git.is_file() {
+        let content = std::fs::read_to_string(&dot_git).ok()?;
+        let gitdir = content.strip_prefix("gitdir: ")?.trim();
+        if Path::new(gitdir).is_absolute() {
+            PathBuf::from(gitdir)
+        } else {
+            sub_path.join(gitdir)
+        }
+    } else if dot_git.is_dir() {
+        dot_git
+    } else {
+        return None;
+    };
+    let head_content = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head_content = head_content.trim();
+    if let Some(refname) = head_content.strip_prefix("ref: ") {
+        let ref_path = git_dir.join(refname);
+        let oid_hex = std::fs::read_to_string(&ref_path).ok()?;
+        ObjectId::from_hex(oid_hex.trim()).ok()
+    } else {
+        ObjectId::from_hex(head_content).ok()
     }
 }
 

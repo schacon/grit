@@ -17,6 +17,27 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Spawn grit for a nested operation without inheriting the superproject's `GIT_DIR` /
+/// `GIT_WORK_TREE` (tests and detached work trees set those in the parent shell).
+fn grit_subprocess(grit_bin: &Path) -> Command {
+    let mut cmd = Command::new(grit_bin);
+    cmd.env_remove("GIT_DIR");
+    cmd.env_remove("GIT_WORK_TREE");
+    cmd
+}
+
+/// Set `core.worktree` in a separate git-dir so checkouts materialize files (matches Git after
+/// `clone --separate-git-dir`).
+fn set_separate_gitdir_worktree(grit_bin: &Path, git_dir: &Path, work_tree: &Path) {
+    let _ = grit_subprocess(grit_bin)
+        .arg("--git-dir")
+        .arg(git_dir)
+        .arg("config")
+        .arg("core.worktree")
+        .arg(work_tree)
+        .status();
+}
+
 /// Arguments for `grit submodule`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Initialize, update, or inspect submodules")]
@@ -618,7 +639,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
                 };
                 let clone_src_str = clone_src.to_string_lossy().into_owned();
 
-                let status = Command::new(&grit_bin)
+                let status = grit_subprocess(&grit_bin)
                     .arg("clone")
                     .arg("--no-checkout")
                     .arg("--separate-git-dir")
@@ -640,7 +661,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
         // Determine which commit to checkout.
         let checkout_oid = if args.remote {
             // Fetch from remote and use the remote tracking branch.
-            let fetch_status = Command::new(&grit_bin)
+            let fetch_status = grit_subprocess(&grit_bin)
                 .args(["fetch", "origin"])
                 .current_dir(&sub_path)
                 .status()
@@ -665,7 +686,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             };
 
             // Resolve origin/<branch> to an OID.
-            let output = Command::new(&grit_bin)
+            let output = grit_subprocess(&grit_bin)
                 .args(["rev-parse", &format!("origin/{branch}")])
                 .current_dir(&sub_path)
                 .output()
@@ -687,7 +708,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
         }
 
         // Checkout the target commit.
-        let status = Command::new(&grit_bin)
+        let status = grit_subprocess(&grit_bin)
             .arg("checkout")
             .arg("--quiet")
             .arg(&checkout_oid)
@@ -743,7 +764,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             if parse_gitmodules(&sub_path).unwrap_or_default().is_empty() {
                 continue;
             }
-            let status = Command::new(&grit_bin)
+            let status = grit_subprocess(&grit_bin)
                 .args(["submodule", "update", "--init", "--recursive"])
                 .current_dir(&sub_path)
                 .status()
@@ -852,7 +873,7 @@ fn run_add(args: &AddArgs) -> Result<()> {
         };
         let clone_source_str = clone_source.to_string_lossy().into_owned();
 
-        let status = Command::new(&grit_bin)
+        let status = grit_subprocess(&grit_bin)
             .arg("clone")
             .arg("--no-checkout")
             .arg("--separate-git-dir")
@@ -860,14 +881,13 @@ fn run_add(args: &AddArgs) -> Result<()> {
             .arg(&clone_source_str)
             .arg(&sub_path)
             .current_dir(work_tree)
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_DIR")
             .status()
             .context("failed to clone submodule")?;
 
         if !status.success() {
             bail!("failed to clone submodule from '{}'", args.url);
         }
+        set_separate_gitdir_worktree(&grit_bin, &modules_dir, &sub_path);
     }
 
     // Derive the submodule name (use --name if provided, otherwise path).
@@ -1120,7 +1140,7 @@ fn run_sync(args: &SyncArgs) -> Result<()> {
                     // Use the grit binary for recursive sync in nested submodules.
                     let grit_bin =
                         std::env::current_exe().unwrap_or_else(|_| PathBuf::from("grit"));
-                    let _status = Command::new(&grit_bin)
+                    let _status = grit_subprocess(&grit_bin)
                         .arg("submodule")
                         .arg("sync")
                         .arg("--recursive")

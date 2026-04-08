@@ -8,7 +8,7 @@ use clap::Args as ClapArgs;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
 
 use grit_lib::config::ConfigSet;
@@ -1713,6 +1713,14 @@ fn bail_if_merge_would_overwrite_local_changes(
 }
 
 fn is_worktree_entry_dirty(repo: &Repository, entry: &IndexEntry, abs_path: &Path) -> Result<bool> {
+    if entry.mode == MODE_GITLINK {
+        // Submodule: compare checked-out commit to the gitlink OID; do not use `read` on the path
+        // (it is a directory — that would incorrectly count as "dirty" and block merges/pulls).
+        let Some(current) = read_submodule_head_oid(abs_path) else {
+            return Ok(true);
+        };
+        return Ok(current != entry.oid);
+    }
     if entry.mode == MODE_SYMLINK {
         match fs::read_link(abs_path) {
             Ok(target) => {
@@ -1730,6 +1738,33 @@ fn is_worktree_entry_dirty(repo: &Repository, entry: &IndexEntry, abs_path: &Pat
             }
             Err(_) => Ok(true),
         }
+    }
+}
+
+/// Resolve the submodule's current HEAD commit from its working directory.
+fn read_submodule_head_oid(sub_path: &Path) -> Option<ObjectId> {
+    let dot_git = sub_path.join(".git");
+    let git_dir = if dot_git.is_file() {
+        let content = fs::read_to_string(&dot_git).ok()?;
+        let gitdir = content.strip_prefix("gitdir: ")?.trim();
+        if Path::new(gitdir).is_absolute() {
+            PathBuf::from(gitdir)
+        } else {
+            sub_path.join(gitdir)
+        }
+    } else if dot_git.is_dir() {
+        dot_git
+    } else {
+        return None;
+    };
+    let head_content = fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head_content = head_content.trim();
+    if let Some(refname) = head_content.strip_prefix("ref: ") {
+        let ref_path = git_dir.join(refname);
+        let oid_hex = fs::read_to_string(&ref_path).ok()?;
+        ObjectId::from_hex(oid_hex.trim()).ok()
+    } else {
+        ObjectId::from_hex(head_content).ok()
     }
 }
 
