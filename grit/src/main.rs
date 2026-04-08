@@ -20,6 +20,7 @@ mod fetch_transport;
 mod git_commit_encoding;
 mod git_path;
 mod grit_exe;
+mod http_bundle_uri;
 mod ident;
 mod pack_objects_upload;
 pub mod pathspec;
@@ -3518,6 +3519,22 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                         remaining -= chunk;
                     }
                     Ok(())
+                }
+                "bundle-uri" => {
+                    let sub = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+                    match sub {
+                        "ls-remote" => {
+                            let url = rest.get(2).map(|s| s.as_str()).unwrap_or("");
+                            if url.is_empty() {
+                                bail!("usage: test-tool bundle-uri ls-remote <url>");
+                            }
+                            let pairs = crate::http_bundle_uri::fetch_bundle_uri_lines_http(url)
+                                .with_context(|| "could not get the bundle-uri list")?;
+                            crate::http_bundle_uri::print_bundle_list_from_pairs(&pairs);
+                            Ok(())
+                        }
+                        other => bail!("test-tool bundle-uri: unknown subcommand '{other}'"),
+                    }
                 }
                 "simple-ipc" => {
                     let code = grit_lib::simple_ipc::run_simple_ipc_tool(&rest[1..]);

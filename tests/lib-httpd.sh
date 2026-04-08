@@ -73,6 +73,10 @@ for _a in "\$@"; do
 	http://*|https://*) _http=1; break ;;
 	esac
 done
+# test-tool bundle-uri ls-remote <url> must use grit: system git has no test-tool.
+case "\$*" in
+*"test-tool"*"bundle-uri"*) _http=0 ;;
+esac
 if test "\$_http" = 1; then
 	exec "\$REAL_GIT" "\$@"
 fi

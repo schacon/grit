@@ -22,6 +22,7 @@ regex = "1"
 unicode-width = "0.2"
 libc = "0.2"
 hungarian = "1.1.1"
+ureq = "2.12"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
