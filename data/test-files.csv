@@ -352,7 +352,7 @@ t12990-commit-reuse-message	t1	yes	32	32	0	true	ok	0
 t1300-config	t1	yes	497	265	232	false	ok	0
 t13000-add-bulk-paths	t1	yes	31	31	0	true	ok	0
 t1301-shared-repo	t1	yes	22	2	20	false	ok	0
-t13010-rm-ignore-unmatch	t1	yes	30	29	1	false	ok	0
+t13010-rm-ignore-unmatch	t1	yes	30	30	0	true	ok	0
 t1302-repo-version	t1	yes	18	18	0	true	ok	0
 t13020-mv-force-overwrite	t1	yes	30	29	1	false	ok	0
 t1303-wacky-config	t1	yes	11	11	0	true	ok	0
@@ -1599,7 +1599,7 @@ t9880-config-file-option	t9	yes	32	25	7	false	ok	0
 t9890-init-object-format	t9	yes	31	31	0	true	ok	0
 t9900-branch-verbose-all	t9	yes	33	33	0	true	ok	0
 t9901-git-web--browse	t9	yes	5	0	5	false	ok	0
-t9902-completion	t9	yes	263	15	245	false	ok	2
+t9902-completion	t9	yes	260	15	245	false	ok	2
 t9903-bash-prompt	t9	yes	67	1	66	false	ok	0
 t9910-tag-pattern-glob	t9	yes	32	32	0	true	ok	0
 t9920-commit-tree-author-env	t9	yes	26	25	1	false	ok	0

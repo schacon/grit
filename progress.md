@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 229 completed (`[x]`), 2 in progress (`[~]`), 537 remai
 
 ## Recently completed
 
+- `t13010-rm-ignore-unmatch` — 30/30 tests pass (verified `grit rm`: `--ignore-unmatch`, `--cached`, `--force`, `-r`, dry-run, quiet, globs, subdir paths, symlinks; harness CSV/dashboards refreshed)
 - `t6137-pathspec-wildcards-literal` — 25/25 tests pass (Git-style pathspec glob boundaries with `\` escapes; `add`/`commit` pathspec expansion uses `wildmatch`, ignores `.git` for `*`/`**`, bracket patterns also pick up a literal `[abc]` file; `commit` with pathspec builds partial trees: merge with `HEAD^{tree}` or subset tree on root commit)
 - `t7517-per-repo-email` — 16/16 tests pass (`user.useConfigOnly` strict email; `author.*`/`committer.*` overrides; rebase `-i` continues into replay; noop pick when HEAD is already the parent)
 - `t7409-submodule-detached-work-tree` — 3/3 tests pass (submodule `clone --separate-git-dir` sets `core.worktree`; checkout populates work tree when index empty on same branch/detached OID; merge/checkout treat gitlinks as clean when submodule HEAD matches; nested grit subprocesses clear inherited `GIT_DIR`/`GIT_WORK_TREE`; harness clears those env vars per test)
