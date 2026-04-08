@@ -649,6 +649,7 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
 
     repo.write_index_at(&index_path, &mut new_index)
         .context("writing index")?;
+    crate::commands::sparse_checkout::reapply_sparse_checkout_if_configured(repo)?;
     Ok(())
 }
 

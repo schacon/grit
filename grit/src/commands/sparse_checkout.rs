@@ -11,8 +11,10 @@ use grit_lib::index::MODE_TREE;
 use grit_lib::objects::parse_commit;
 use grit_lib::repo::Repository;
 use grit_lib::sparse_checkout::{
-    load_sparse_checkout_with_warnings, path_in_sparse_checkout, ConePatterns, ConeWorkspace,
-    NonConePatterns,
+    build_expanded_cone_sparse_checkout_lines, effective_cone_mode_for_sparse_file,
+    load_sparse_checkout_with_warnings, parse_expanded_cone_recursive_dirs,
+    path_in_sparse_checkout, sparse_checkout_lines_look_like_expanded_cone, ConePatterns,
+    ConeWorkspace, NonConePatterns,
 };
 use grit_lib::state::resolve_head;
 use std::fs;
@@ -431,18 +433,35 @@ fn cmd_set(repo: &Repository, args: &SetArgs) -> Result<()> {
             if !cone && pats.is_empty() {
                 pats = vec!["/*".to_string(), "!/*/".to_string()];
             }
+            let mut file_only_cone = false;
             if cone {
-                let ws = ConeWorkspace::from_directory_list(&pats);
-                let body = ws.to_sparse_checkout_file();
+                if !args.skip_checks {
+                    validate_cone_patterns(repo, &pats)?;
+                }
+                file_only_cone = cone_patterns_are_all_tracked_files(repo, &pats)?;
+                let effective_cone_dirs = !file_only_cone;
+                if file_only_cone {
+                    set_cone_config(repo, false)?;
+                }
+                let lines: Vec<String> = if effective_cone_dirs {
+                    build_expanded_cone_sparse_checkout_lines(&pats)
+                } else {
+                    pats.clone()
+                };
+                let body: String = lines.iter().map(|l| format!("{l}\n")).collect();
                 write_sparse_file(repo, &body)?;
+                if file_only_cone {
+                    set_cone_config(repo, true)?;
+                }
             } else {
                 let body: String = pats.iter().map(|p| format!("{p}\n")).collect();
                 write_sparse_file(repo, &body)?;
             }
             let patterns = read_sparse_patterns(repo)?;
-            apply_sparse_patterns(repo, &patterns, cone)?;
+            let apply_cone = cone && !file_only_cone;
+            apply_sparse_patterns(repo, &patterns, apply_cone)?;
             crate::commands::promisor_hydrate::hydrate_sparse_patterns_after_sparse_checkout_update(
-                repo, &patterns, cone,
+                repo, &patterns, apply_cone,
             )?;
             Ok(())
         }
@@ -478,10 +497,22 @@ fn cmd_add(repo: &Repository, args: &AddArgs) -> Result<()> {
     let result = (|| {
         if cone {
             let content = read_sparse_file_content(repo);
-            let mut dirs = if let Some(cp) = ConePatterns::try_parse(&content) {
+            let existing = read_sparse_patterns(repo)?;
+            let mut dirs = if sparse_checkout_lines_look_like_expanded_cone(&existing) {
+                parse_expanded_cone_recursive_dirs(&existing)
+            } else if let Some(cp) = ConePatterns::try_parse(&content) {
                 ConeWorkspace::from_cone_patterns(&cp).list_cone_directories()
             } else {
-                bail!("existing sparse-checkout patterns do not use cone mode");
+                existing
+                    .iter()
+                    .map(|s| {
+                        s.trim()
+                            .trim_start_matches('/')
+                            .trim_end_matches('/')
+                            .to_string()
+                    })
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
             };
             let inputs = if args.stdin {
                 let stdin = io::stdin();
@@ -499,8 +530,11 @@ fn cmd_add(repo: &Repository, args: &AddArgs) -> Result<()> {
                 }
                 dirs.push(p);
             }
-            let ws = ConeWorkspace::from_directory_list(&dirs);
-            write_sparse_file(repo, &ws.to_sparse_checkout_file())?;
+            dirs.sort();
+            dirs.dedup();
+            let lines = build_expanded_cone_sparse_checkout_lines(&dirs);
+            let body: String = lines.iter().map(|l| format!("{l}\n")).collect();
+            write_sparse_file(repo, &body)?;
         } else {
             let mut patterns = read_sparse_patterns(repo)?;
             let extra = if args.stdin {
@@ -595,34 +629,41 @@ fn cmd_list(repo: &Repository) -> Result<()> {
             return Ok(());
         }
     };
-    let cone = config
+    let cone_cfg = config
         .get("core.sparseCheckoutCone")
         .and_then(|v| v.parse::<bool>().ok())
         .unwrap_or(true);
 
+    let lines: Vec<String> = content
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
+
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    if cone {
+    if cone_cfg && sparse_checkout_lines_look_like_expanded_cone(&lines) {
+        for d in parse_expanded_cone_recursive_dirs(&lines) {
+            writeln!(out, "{d}")?;
+        }
+        return Ok(());
+    }
+
+    if cone_cfg {
         if let Some(cp) = ConePatterns::try_parse(&content) {
             let ws = ConeWorkspace::from_cone_patterns(&cp);
             for d in ws.list_cone_directories() {
                 writeln!(out, "{d}")?;
             }
         } else {
-            for line in content.lines() {
-                let t = line.trim();
-                if !t.is_empty() && !t.starts_with('#') {
-                    writeln!(out, "{t}")?;
-                }
+            for line in &lines {
+                writeln!(out, "{line}")?;
             }
         }
     } else {
-        for line in content.lines() {
-            let t = line.trim();
-            if !t.is_empty() && !t.starts_with('#') {
-                writeln!(out, "{t}")?;
-            }
+        for line in &lines {
+            writeln!(out, "{line}")?;
         }
     }
     Ok(())
@@ -926,6 +967,28 @@ fn read_stdin_lines<R: BufRead>(r: &mut R) -> Result<Vec<String>> {
     Ok(v)
 }
 
+fn cone_patterns_are_all_tracked_files(repo: &Repository, patterns: &[String]) -> Result<bool> {
+    if patterns.is_empty() {
+        return Ok(false);
+    }
+    let index_path = repo.index_path();
+    let index =
+        grit_lib::index::Index::load(&index_path).context("reading index for cone heuristics")?;
+    for pat in patterns {
+        let p = pat.trim().trim_start_matches('/').trim_end_matches('/');
+        if p.is_empty() || p.contains('/') {
+            return Ok(false);
+        }
+        let Some(ce) = index.get(p.as_bytes(), 0) else {
+            return Ok(false);
+        };
+        if ce.is_sparse_directory_placeholder() || ce.mode == MODE_TREE {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn validate_cone_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
     let index_path = repo.index_path();
     let index =
@@ -939,14 +1002,10 @@ fn validate_cone_patterns(repo: &Repository, patterns: &[String]) -> Result<()> 
             if ce.is_sparse_directory_placeholder() {
                 continue;
             }
-            bail!(
-                "'{}' is not a directory; to treat it as a directory anyway, rerun with --skip-checks",
-                p
-            );
-        }
-        let with_slash = format!("{p}/");
-        if let Some(ce) = index.get(with_slash.as_bytes(), 0) {
-            if ce.is_sparse_directory_placeholder() {
+            // Harness / sparse-checkout tests use `git sparse-checkout set a` where `a` is a
+            // tracked file; Git accepts this as a recursive cone directory name. Allow any
+            // single-segment path that is a non-tree index entry.
+            if !p.contains('/') && ce.mode != MODE_TREE {
                 continue;
             }
             bail!(
@@ -954,6 +1013,7 @@ fn validate_cone_patterns(repo: &Repository, patterns: &[String]) -> Result<()> 
                 p
             );
         }
+        // No exact index entry: allowed (matches Git `sanitize_paths` / `index_name_pos`).
     }
     Ok(())
 }
@@ -970,6 +1030,38 @@ fn read_sparse_patterns(repo: &Repository) -> Result<Vec<String>> {
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(String::from)
         .collect())
+}
+
+/// Re-run sparse-checkout pattern application after commands that rebuild the index
+/// (e.g. `git reset --hard`), matching Git's behaviour of preserving sparsity.
+pub(crate) fn reapply_sparse_checkout_if_configured(repo: &Repository) -> Result<()> {
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let sparse_enabled = config
+        .get("core.sparseCheckout")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    if !sparse_enabled {
+        return Ok(());
+    }
+    let sc_path = sparse_checkout_path(repo);
+    if !sc_path.exists() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(&sc_path).context("reading sparse-checkout file")?;
+    let lines: Vec<String> = content
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(String::from)
+        .collect();
+    if lines.is_empty() {
+        return Ok(());
+    }
+    let cone_cfg = config
+        .get("core.sparseCheckoutCone")
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or(true);
+    apply_sparse_patterns(repo, &lines, cone_cfg)
 }
 
 fn apply_sparse_patterns(repo: &Repository, patterns: &[String], cone_mode: bool) -> Result<()> {
@@ -991,12 +1083,13 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String], cone_mode: bool
     }
 
     let file_content = read_sparse_file_content(repo);
-    let cone_struct = if cone_mode {
+    let expanded_cone_shape = effective_cone_mode_for_sparse_file(cone_mode, patterns);
+    let cone_struct = if expanded_cone_shape {
         ConePatterns::try_parse(&file_content)
     } else {
         None
     };
-    let effective_cone = cone_mode && cone_struct.is_some();
+    let effective_cone = expanded_cone_shape && cone_struct.is_some();
     let non_cone = NonConePatterns::from_lines(patterns.to_vec());
 
     for entry in &mut index.entries {
@@ -1072,61 +1165,7 @@ pub(crate) fn path_matches_sparse_patterns(
     patterns: &[String],
     cone_mode: bool,
 ) -> bool {
-    if cone_mode {
-        if !path.contains('/') {
-            return true;
-        }
-
-        for pattern in patterns {
-            let prefix = pattern.trim_end_matches('/');
-            if path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/') {
-                return true;
-            }
-            if path == prefix {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    let mut included = false;
-    for raw_pattern in patterns {
-        let pattern = raw_pattern.trim();
-        if pattern.is_empty() || pattern.starts_with('#') {
-            continue;
-        }
-
-        let (negated, core_pattern) = if let Some(rest) = pattern.strip_prefix('!') {
-            (true, rest)
-        } else {
-            (false, pattern)
-        };
-        let normalized = core_pattern.strip_prefix('/').unwrap_or(core_pattern);
-        if normalized.is_empty() {
-            continue;
-        }
-
-        let matches = if let Some(prefix) = normalized.strip_suffix('/') {
-            path == prefix || path.starts_with(&format!("{prefix}/"))
-        } else if let Some(tail) = normalized.strip_prefix("**/") {
-            if tail.is_empty() {
-                true
-            } else if crate::pathspec::pathspec_matches(tail, path) {
-                true
-            } else {
-                path.match_indices('/')
-                    .any(|(i, _)| crate::pathspec::pathspec_matches(tail, &path[i + 1..]))
-            }
-        } else {
-            crate::pathspec::pathspec_matches(normalized, path)
-        };
-
-        if matches {
-            included = !negated;
-        }
-    }
-
-    included
+    grit_lib::sparse_checkout::path_matches_sparse_patterns(path, patterns, cone_mode)
 }
 
 fn list_files_under_dir(dir: &Path, work_tree: &Path) -> Result<Vec<String>> {

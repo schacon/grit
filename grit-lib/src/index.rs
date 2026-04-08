@@ -414,7 +414,7 @@ impl Index {
 
         for pref in ordered {
             let pref_str = String::from_utf8_lossy(&pref);
-            if directory_in_cone(&pref_str, patterns) {
+            if directory_in_cone(&pref_str, patterns, cone_mode) {
                 continue;
             }
             let Some(subtree_oid) = tree_oid_for_prefix(odb, head_tree, &pref)? else {
@@ -837,23 +837,8 @@ fn path_under_prefix(path: &[u8], prefix: &[u8]) -> bool {
     path.len() > prefix.len() && path.starts_with(prefix) && path[prefix.len()] == b'/'
 }
 
-fn directory_in_cone(dir_path: &str, patterns: &[String]) -> bool {
-    for pattern in patterns {
-        let prefix = pattern.trim_end_matches('/');
-        if prefix.is_empty() {
-            continue;
-        }
-        if dir_path == prefix {
-            return true;
-        }
-        if dir_path.starts_with(prefix) && dir_path.as_bytes().get(prefix.len()) == Some(&b'/') {
-            return true;
-        }
-        if prefix.starts_with(dir_path) && prefix.as_bytes().get(dir_path.len()) == Some(&b'/') {
-            return true;
-        }
-    }
-    false
+fn directory_in_cone(dir_path: &str, patterns: &[String], cone_mode: bool) -> bool {
+    crate::sparse_checkout::path_matches_sparse_patterns(dir_path, patterns, cone_mode)
 }
 
 fn collect_directory_prefixes(path: &[u8], out: &mut BTreeSet<Vec<u8>>) {
@@ -952,7 +937,8 @@ fn walk_sparse_aware(
         } else {
             let path_len = path.len().min(0xFFF) as u16;
             let path_str = String::from_utf8_lossy(&path);
-            if cone_mode && path_matches_cone_sparse(&path_str, patterns) {
+            if crate::sparse_checkout::path_matches_sparse_patterns(&path_str, patterns, cone_mode)
+            {
                 continue;
             }
             let mut e = IndexEntry {
@@ -976,22 +962,6 @@ fn walk_sparse_aware(
         }
     }
     Ok(())
-}
-
-fn path_matches_cone_sparse(path: &str, patterns: &[String]) -> bool {
-    if !path.contains('/') {
-        return true;
-    }
-    for pattern in patterns {
-        let prefix = pattern.trim_end_matches('/');
-        if path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/') {
-            return true;
-        }
-        if path == prefix {
-            return true;
-        }
-    }
-    false
 }
 
 fn flatten_tree_blobs(odb: &Odb, tree_oid: &ObjectId, prefix: &[u8]) -> Result<Vec<IndexEntry>> {

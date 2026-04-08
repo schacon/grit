@@ -5,18 +5,25 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
+use grit_lib::diff::worktree_differs_from_index_entry;
 use grit_lib::error::Error;
 use grit_lib::index::Index;
 use grit_lib::repo::Repository;
+use grit_lib::sparse_checkout::{
+    parse_sparse_checkout_file, path_in_cone_mode_sparse_checkout, path_in_sparse_checkout_patterns,
+};
+use std::collections::HashSet;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Arguments for `grit mv`.
 #[derive(Debug, ClapArgs)]
 #[command(
     about = "Move or rename a file, a directory, or a symlink",
-    override_usage = "grit mv [-v] [-f] [-n] [-k] <source> <destination>\n       \
-                      grit mv [-v] [-f] [-n] [-k] <source>... <destination-directory>"
+    override_usage = "grit mv [-v] [-f] [-n] [-k] [--sparse] <source> <destination>\n       \
+                      grit mv [-v] [-f] [-n] [-k] [--sparse] <source>... <destination-directory>"
 )]
 pub struct Args {
     /// Source(s) and destination — last element is always the destination.
@@ -36,26 +43,40 @@ pub struct Args {
     #[arg(short = 'k')]
     pub skip_errors: bool,
 
+    /// Allow updating index entries outside the sparse-checkout cone.
+    #[arg(long = "sparse")]
+    pub sparse: bool,
+
     /// Be verbose.
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
 }
 
-/// A planned rename operation.
-struct MoveOp {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DstSparseMode {
+    Normal,
+    /// Destination is a directory path outside sparse cone with only skip-worktree entries.
+    SkipWorktreeDir,
+    /// Single-file destination outside cone (cone mode only).
+    SparseFile,
+}
+
+#[derive(Clone, Debug)]
+struct MoveRow {
     src: String,
     dst: String,
-    /// True when this move covers only the index (no on-disk rename needed,
-    /// e.g. when the whole directory expansion is already handled by a parent).
+    /// On-disk rename for this row (false when a parent directory move handles it).
+    do_fs_rename: bool,
+    /// Only update index (used for files under a renamed directory).
     index_only: bool,
+    /// Source was skip-worktree (sparse) before the move.
+    sparse_source: bool,
 }
 
 /// Run the `mv` command.
 pub fn run(args: Args) -> Result<()> {
-    // The last path is the destination; everything before is a source.
     let (raw_sources, raw_dest) = {
         let mut all = args.paths;
-        // clap guarantees num_args >= 2, so this is always Some.
         let dest = all
             .pop()
             .ok_or_else(|| anyhow::anyhow!("usage: grit mv <source> ... <destination>"))?;
@@ -74,55 +95,79 @@ pub fn run(args: Args) -> Result<()> {
         Err(e) => return Err(e.into()),
     };
 
-    // Resolve the current working directory relative to the worktree so that
-    // relative paths typed by the user work correctly when they `cd` into a
-    // subdirectory.
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let sparse_enabled = config
+        .get("core.sparseCheckout")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let cone_cfg = config
+        .get("core.sparseCheckoutCone")
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or(true);
+    let sparse_patterns = if sparse_enabled {
+        let sc_path = repo.git_dir.join("info").join("sparse-checkout");
+        match fs::read_to_string(&sc_path) {
+            Ok(s) => parse_sparse_checkout_file(&s),
+            Err(_) => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
     let cwd = std::env::current_dir()?;
     let prefix = compute_prefix(&cwd, work_tree);
 
-    // Canonicalise sources relative to worktree.
     let sources: Vec<String> = raw_sources
         .iter()
         .map(|s| resolve_path(s, prefix.as_deref(), work_tree))
         .collect();
 
-    // Validate that all sources are inside the worktree.
     for (raw, resolved) in raw_sources.iter().zip(sources.iter()) {
         if Path::new(resolved).is_absolute() {
             bail!("source '{}' is outside the work tree", raw);
         }
     }
 
-    // Destination: strip trailing slashes for stat purposes, but remember
-    // whether the user supplied one (it forces "must be a directory" check).
     let dest_has_trailing_slash = raw_dest.ends_with('/') || raw_dest.ends_with('\\');
     let dest_trimmed = raw_dest.trim_end_matches('/').trim_end_matches('\\');
     let dest_rel = resolve_path(dest_trimmed, prefix.as_deref(), work_tree);
 
-    // Validate that destination is inside the worktree (reject absolute
-    // paths that point outside).
     if Path::new(&dest_rel).is_absolute() {
         bail!("destination '{}' is outside the work tree", raw_dest);
     }
 
     let dest_abs = work_tree.join(&dest_rel);
 
-    // Build the list of (src, dst) pairs.
-    let mut ops: Vec<MoveOp> = Vec::new();
+    let dest_with_slash = if dest_rel.is_empty() {
+        String::new()
+    } else {
+        format!("{}/", dest_rel.trim_end_matches('/'))
+    };
 
-    // Determine if the destination is a directory.
+    let mut dst_mode = DstSparseMode::Normal;
     let dest_is_dir = dest_abs.is_dir()
-        || dest_rel.is_empty() // "." normalises to ""
-        || is_index_dir(&dest_rel, &index);
+        || dest_rel.is_empty()
+        || is_index_dir(&dest_rel, &index)
+        || (!dest_abs.exists()
+            && !path_in_sparse_checkout_patterns(&dest_with_slash, &sparse_patterns, cone_cfg)
+            && empty_dir_has_sparse_contents(&dest_rel, &index)
+            && sparse_enabled);
+
+    // Git: `builtin/mv.c` sets `SKIP_WORKTREE_DIR` when the destination directory is
+    // outside the sparse cone but the index still has skip-worktree entries under it
+    // (typical after sparse-checkout removed those files from the worktree).
+    if sparse_enabled
+        && !dest_rel.is_empty()
+        && !path_in_sparse_checkout_patterns(&dest_with_slash, &sparse_patterns, cone_cfg)
+        && empty_dir_has_sparse_contents(&dest_rel, &index)
+    {
+        dst_mode = DstSparseMode::SkipWorktreeDir;
+    }
 
     if !dest_is_dir && sources.len() > 1 {
         bail!("destination '{}' is not a directory", dest_trimmed);
     }
 
-    // Destination must exist if user gave trailing slash and it doesn't
-    // resolve to a directory (unless src is a dir being moved there).
     if dest_has_trailing_slash && !dest_abs.is_dir() && !dest_abs.exists() {
-        // Allow "git mv dir/ no-such-dir/" only when src is a dir.
         let single_src_is_dir = sources.len() == 1 && {
             let sabs = work_tree.join(&sources[0]);
             sabs.is_dir() || is_index_dir(&sources[0], &index)
@@ -132,8 +177,6 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // Detect conflicting moves: a file and its parent directory cannot both
-    // be moved at the same time.
     if sources.len() > 1 {
         for (i, src_a) in sources.iter().enumerate() {
             let src_a_clean = src_a.trim_end_matches('/').trim_end_matches('\\');
@@ -154,17 +197,27 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    if sources.len() == 1
+        && !dest_is_dir
+        && sparse_enabled
+        && cone_cfg
+        && !path_in_cone_mode_sparse_checkout(&dest_rel, &sparse_patterns, cone_cfg)
+    {
+        dst_mode = DstSparseMode::SparseFile;
+    }
+
+    let mut rows: Vec<MoveRow> = Vec::new();
+    let mut sparse_blocklist: Vec<String> = Vec::new();
+    let mut moved_dir_roots: HashSet<String> = HashSet::new();
+
     for src_rel in &sources {
-        // Strip trailing slashes from source for stat.
         let src_rel = src_rel
             .trim_end_matches('/')
             .trim_end_matches('\\')
             .to_owned();
         let src_abs = work_tree.join(&src_rel);
 
-        // Compute the destination path for this source.
         let dst_rel: String = if dest_is_dir {
-            // Move into directory: basename of source goes under dest.
             let basename = Path::new(&src_rel)
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -177,25 +230,53 @@ pub fn run(args: Args) -> Result<()> {
         } else {
             dest_rel.clone()
         };
-
         let dst_abs = work_tree.join(&dst_rel);
 
-        // Validate source.
+        let sparse_path_pairs: Vec<(String, String)> = if src_abs.is_dir() {
+            if index.get(src_rel.as_bytes(), 0).is_some() {
+                vec![(src_rel.clone(), dst_rel.clone())]
+            } else {
+                expand_dir_sources(&src_rel, &dst_rel, &index)
+            }
+        } else if !src_abs.exists() && empty_dir_has_sparse_contents(&src_rel, &index) {
+            expand_dir_sources(&src_rel, &dst_rel, &index)
+        } else {
+            vec![(src_rel.clone(), dst_rel.clone())]
+        };
+
+        if !args.sparse && sparse_enabled {
+            let mut blocked = false;
+            for (fsrc, fdst) in &sparse_path_pairs {
+                if !path_in_sparse_checkout_patterns(fsrc, &sparse_patterns, cone_cfg) {
+                    sparse_blocklist.push(fsrc.clone());
+                    blocked = true;
+                }
+                if !path_in_sparse_checkout_patterns(fdst, &sparse_patterns, cone_cfg) {
+                    sparse_blocklist.push(fdst.clone());
+                    blocked = true;
+                }
+            }
+            if blocked {
+                continue;
+            }
+        }
+
+        let mut sparse_source = false;
+
         if src_abs.exists() {
             if src_abs.is_dir() {
-                // A submodule path is represented as a gitlink entry (mode
-                // 160000) at the directory root. Treat it like a regular
-                // path move instead of expanding tracked files beneath it.
                 if index.get(src_rel.as_bytes(), 0).is_some() {
-                    ops.push(MoveOp {
+                    rows.push(MoveRow {
                         src: src_rel.clone(),
                         dst: dst_rel.clone(),
+                        do_fs_rename: true,
                         index_only: false,
+                        sparse_source: false,
                     });
                     continue;
                 }
-                // Expand directory to individual index entries.
-                let expanded = expand_dir_sources(&src_rel, &dst_rel, &index);
+
+                let expanded = sparse_path_pairs;
                 if expanded.is_empty() {
                     let msg = format!("source directory is empty or not tracked: '{src_rel}'");
                     if args.skip_errors {
@@ -203,7 +284,6 @@ pub fn run(args: Args) -> Result<()> {
                     }
                     bail!("{msg}");
                 }
-                // Check destination directory does not already exist.
                 if dst_abs.is_dir() {
                     let msg = format!("destination already exists: '{dst_rel}'");
                     if args.skip_errors {
@@ -211,26 +291,99 @@ pub fn run(args: Args) -> Result<()> {
                     }
                     bail!("{msg}");
                 }
-                // Add the directory-level op (triggers the on-disk rename).
-                ops.push(MoveOp {
+                moved_dir_roots.insert(src_rel.clone());
+                rows.push(MoveRow {
                     src: src_rel.clone(),
                     dst: dst_rel.clone(),
+                    do_fs_rename: true,
                     index_only: false,
+                    sparse_source: false,
                 });
-                // Add index-only ops for every file inside.
                 for (fsrc, fdst) in expanded {
-                    ops.push(MoveOp {
+                    let ce = index.get(fsrc.as_bytes(), 0);
+                    let sw = ce.is_some_and(|e| e.skip_worktree());
+                    rows.push(MoveRow {
                         src: fsrc,
                         dst: fdst,
+                        do_fs_rename: false,
                         index_only: true,
+                        sparse_source: sw,
                     });
                 }
                 continue;
             }
         } else {
-            // Source doesn't exist on disk — must be tracked in the index.
-            let any_entry = index.entries.iter().any(|e| e.path == src_rel.as_bytes());
-            if !any_entry {
+            let pos = index
+                .entries
+                .iter()
+                .position(|e| e.path == src_rel.as_bytes());
+            if pos.is_none() && !src_abs.exists() && empty_dir_has_sparse_contents(&src_rel, &index)
+            {
+                let expanded = sparse_path_pairs;
+                if expanded.is_empty() {
+                    let msg = format!("source directory is empty or not tracked: '{src_rel}'");
+                    if args.skip_errors {
+                        continue;
+                    }
+                    bail!("{msg}");
+                }
+                if dst_abs.is_dir() {
+                    let msg = format!("destination already exists: '{dst_rel}'");
+                    if args.skip_errors {
+                        continue;
+                    }
+                    bail!("{msg}");
+                }
+                moved_dir_roots.insert(src_rel.clone());
+                rows.push(MoveRow {
+                    src: src_rel.clone(),
+                    dst: dst_rel.clone(),
+                    do_fs_rename: false,
+                    index_only: false,
+                    sparse_source: false,
+                });
+                for (fsrc, fdst) in expanded {
+                    let ce = index.get(fsrc.as_bytes(), 0);
+                    let sw = ce.is_some_and(|e| e.skip_worktree());
+                    rows.push(MoveRow {
+                        src: fsrc,
+                        dst: fdst,
+                        do_fs_rename: false,
+                        index_only: true,
+                        sparse_source: sw,
+                    });
+                }
+                continue;
+            }
+
+            if let Some(p) = pos {
+                let ce = &index.entries[p];
+                if !ce.skip_worktree() {
+                    let msg = format!(
+                        "not under version control, source='{src_rel}', destination='{dst_rel}'"
+                    );
+                    if args.skip_errors {
+                        continue;
+                    }
+                    bail!("{msg}");
+                }
+                if !args.sparse {
+                    sparse_blocklist.push(src_rel.clone());
+                    continue;
+                }
+                if index.get(dst_rel.as_bytes(), 0).is_none() {
+                    sparse_source = true;
+                } else if !args.force {
+                    let msg =
+                        format!("destination exists, source='{src_rel}', destination='{dst_rel}'");
+                    if args.skip_errors {
+                        continue;
+                    }
+                    bail!("{msg}");
+                } else {
+                    sparse_source = true;
+                }
+            } else {
                 let msg = format!(
                     "not under version control, source='{src_rel}', destination='{dst_rel}'"
                 );
@@ -241,13 +394,10 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
 
-        // Source must be tracked; check for conflicts (stage > 0 entries, no stage-0 entry).
-        let stage0 = index.get(src_rel.as_bytes(), 0);
         let has_conflict = index
             .entries
             .iter()
             .any(|e| e.path == src_rel.as_bytes() && e.stage() > 0);
-
         if has_conflict {
             let msg = format!("conflicted, source='{src_rel}', destination='{dst_rel}'");
             if args.skip_errors {
@@ -256,6 +406,7 @@ pub fn run(args: Args) -> Result<()> {
             bail!("{msg}");
         }
 
+        let stage0 = index.get(src_rel.as_bytes(), 0);
         if stage0.is_none() && !src_abs.is_dir() {
             let msg =
                 format!("not under version control, source='{src_rel}', destination='{dst_rel}'");
@@ -265,7 +416,23 @@ pub fn run(args: Args) -> Result<()> {
             bail!("{msg}");
         }
 
-        // Check destination doesn't already exist (unless -f).
+        if args.sparse
+            && matches!(
+                dst_mode,
+                DstSparseMode::SkipWorktreeDir | DstSparseMode::SparseFile
+            )
+            && index.get(dst_rel.as_bytes(), 0).is_some()
+            && !args.force
+        {
+            let msg = format!(
+                "destination exists in the index, source='{src_rel}', destination='{dst_rel}'"
+            );
+            if args.skip_errors {
+                continue;
+            }
+            bail!("{msg}");
+        }
+
         if dst_abs.exists()
             && !(args.force && (dst_abs.is_file() || dst_abs.is_symlink()) && !dst_abs.is_dir())
         {
@@ -277,7 +444,6 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 bail!("{msg}");
             }
-            // force but dst is a directory: cannot overwrite directory
             if dst_abs.is_dir() {
                 let msg = format!("Cannot overwrite, source='{src_rel}', destination='{dst_rel}'");
                 if args.skip_errors {
@@ -287,9 +453,7 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
 
-        // Destination ends with / but doesn't exist as a dir.
         if dest_has_trailing_slash && !dest_abs.exists() && sources.len() == 1 {
-            // Not reaching here for single dir src (handled above).
             let msg = format!("destination directory does not exist: '{dest_trimmed}/'");
             if args.skip_errors {
                 continue;
@@ -297,51 +461,147 @@ pub fn run(args: Args) -> Result<()> {
             bail!("{msg}");
         }
 
-        ops.push(MoveOp {
-            src: src_rel.clone(),
-            dst: dst_rel.clone(),
+        rows.push(MoveRow {
+            src: src_rel,
+            dst: dst_rel,
+            do_fs_rename: true,
             index_only: false,
+            sparse_source,
         });
     }
 
-    // Execute operations.
-    for op in &ops {
+    sparse_blocklist.sort();
+    sparse_blocklist.dedup();
+    if !sparse_blocklist.is_empty() {
+        emit_sparse_path_advice(&mut std::io::stderr(), &config, &sparse_blocklist)?;
+        if !args.skip_errors {
+            // Match Git: exit non-zero after advice with no extra `error:` line (tests compare stderr).
+            std::process::exit(1);
+        }
+    }
+
+    for row in &rows {
+        let needle = row.src.trim_end_matches('/');
+        if needle.is_empty() {
+            continue;
+        }
+        for other in &rows {
+            if other.src == row.src {
+                continue;
+            }
+            let o = other.src.trim_end_matches('/');
+            if o.starts_with(needle) && o.as_bytes().get(needle.len()) == Some(&b'/') {
+                if moved_dir_roots.contains(needle) {
+                    continue;
+                }
+                bail!(
+                    "cannot move both '{}' and its parent directory '{}'",
+                    other.src,
+                    needle
+                );
+            }
+        }
+    }
+
+    let mut dirty_advice: Vec<String> = Vec::new();
+
+    for row in &rows {
         if args.verbose || args.dry_run {
-            println!("Renaming {} to {}", op.src, op.dst);
+            println!("Renaming {} to {}", row.src, row.dst);
         }
         if args.dry_run {
             continue;
         }
 
-        let src_abs = work_tree.join(&op.src);
-        let dst_abs = work_tree.join(&op.dst);
+        let src_abs = work_tree.join(&row.src);
+        let dst_abs = work_tree.join(&row.dst);
 
-        if !op.index_only {
-            // Create parent directories if needed.
+        if row.do_fs_rename
+            && !row.index_only
+            && !matches!(
+                dst_mode,
+                DstSparseMode::SkipWorktreeDir | DstSparseMode::SparseFile
+            )
+        {
             if let Some(parent) = dst_abs.parent() {
                 if !parent.exists() {
                     fs::create_dir_all(parent)?;
                 }
             }
-            // Rename on disk.
             if src_abs.exists() {
                 fs::rename(&src_abs, &dst_abs)
-                    .with_context(|| format!("renaming '{}' failed", op.src))?;
+                    .with_context(|| format!("renaming '{}' failed", row.src))?;
             }
         }
 
-        // Update index: clone the old entry, change its path, re-insert.
-        if let Some(old_entry) = index.get(op.src.as_bytes(), 0).cloned() {
-            let new_path = op.dst.as_bytes().to_vec();
-            let path_len = new_path.len().min(0x0FFF);
-            let mut new_entry = old_entry;
-            // Preserve flags except path length bits (low 12 bits of flags).
-            new_entry.flags = (new_entry.flags & !0x0FFF) | path_len as u16;
-            new_entry.path = new_path;
+        let Some(old_entry) = index.get(row.src.as_bytes(), 0).cloned() else {
+            continue;
+        };
 
-            index.remove(op.src.as_bytes());
-            index.add_or_replace(new_entry);
+        let mut sparse_and_dirty = false;
+        if args.sparse && sparse_enabled && cone_cfg && !row.sparse_source && src_abs.exists() {
+            sparse_and_dirty = worktree_differs_from_index_entry(&repo.odb, work_tree, &old_entry)?;
         }
+
+        let new_path = row.dst.as_bytes().to_vec();
+        let path_len = new_path.len().min(0x0FFF);
+        let mut new_entry = old_entry;
+        new_entry.flags = (new_entry.flags & !0x0FFF) | path_len as u16;
+        new_entry.path = new_path;
+
+        index.remove(row.src.as_bytes());
+        index.add_or_replace(new_entry);
+
+        if args.sparse && sparse_enabled && cone_cfg {
+            let dst_in = path_in_sparse_checkout_patterns(&row.dst, &sparse_patterns, cone_cfg);
+            if row.sparse_source && dst_in {
+                let dst_pos = index
+                    .entries
+                    .iter()
+                    .position(|e| e.path == row.dst.as_bytes() && e.stage() == 0);
+                if let Some(p) = dst_pos {
+                    index.entries[p].set_skip_worktree(false);
+                }
+                if dst_abs.parent().is_some_and(|p| !p.exists()) {
+                    fs::create_dir_all(dst_abs.parent().unwrap())?;
+                }
+                if let Some(ent) = index.get(row.dst.as_bytes(), 0).cloned() {
+                    let data = repo.odb.read(&ent.oid)?.data;
+                    fs::write(&dst_abs, data)?;
+                }
+            } else if matches!(
+                dst_mode,
+                DstSparseMode::SkipWorktreeDir | DstSparseMode::SparseFile
+            ) && !row.sparse_source
+                && !dst_in
+            {
+                let dst_pos = index
+                    .entries
+                    .iter()
+                    .position(|e| e.path == row.dst.as_bytes() && e.stage() == 0);
+                if let Some(p) = dst_pos {
+                    if !sparse_and_dirty {
+                        index.entries[p].set_skip_worktree(true);
+                        let _ = fs::remove_file(&src_abs);
+                    } else {
+                        if let Some(parent) = dst_abs.parent() {
+                            fs::create_dir_all(parent)?;
+                        }
+                        if src_abs.exists() {
+                            fs::rename(&src_abs, &dst_abs)
+                                .with_context(|| format!("renaming '{}' failed", row.src))?;
+                        }
+                        dirty_advice.push(row.dst.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    dirty_advice.sort();
+    dirty_advice.dedup();
+    if !dirty_advice.is_empty() {
+        emit_dirty_sparse_advice(&mut std::io::stderr(), &config, &dirty_advice)?;
     }
 
     if !args.dry_run {
@@ -351,10 +611,86 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-/// Expand all index entries under `src_dir/` to their new paths under `dst_dir/`.
-///
-/// Returns a list of `(old_index_path, new_index_path)` pairs for every file
-/// inside the directory.
+fn emit_sparse_path_advice(w: &mut impl Write, config: &ConfigSet, paths: &[String]) -> Result<()> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    if !advice_update_sparse_path_enabled(config) {
+        return Ok(());
+    }
+    writeln!(
+        w,
+        "The following paths and/or pathspecs matched paths that exist\n\
+outside of your sparse-checkout definition, so will not be\n\
+updated in the index:"
+    )?;
+    for p in paths {
+        writeln!(w, "{p}")?;
+    }
+    writeln!(
+        w,
+        "hint: If you intend to update such entries, try one of the following:\n\
+hint: * Use the --sparse option.\n\
+hint: * Disable or modify the sparsity rules.\n\
+hint: Disable this message with \"git config set advice.updateSparsePath false\""
+    )?;
+    Ok(())
+}
+
+fn emit_dirty_sparse_advice(
+    w: &mut impl Write,
+    config: &ConfigSet,
+    paths: &[String],
+) -> Result<()> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    if !advice_update_sparse_path_enabled(config) {
+        return Ok(());
+    }
+    writeln!(
+        w,
+        "The following paths have been moved outside the\n\
+sparse-checkout definition but are not sparse due to local\n\
+modifications."
+    )?;
+    for p in paths {
+        writeln!(w, "{p}")?;
+    }
+    writeln!(
+        w,
+        "hint: To correct the sparsity of these paths, do the following:\n\
+hint: * Use \"git add --sparse <paths>\" to update the index\n\
+hint: * Use \"git sparse-checkout reapply\" to apply the sparsity rules\n\
+hint: Disable this message with \"git config set advice.updateSparsePath false\""
+    )?;
+    Ok(())
+}
+
+fn advice_update_sparse_path_enabled(config: &ConfigSet) -> bool {
+    if let Ok(v) = std::env::var("GIT_ADVICE") {
+        if v == "0" || v.eq_ignore_ascii_case("false") {
+            return false;
+        }
+        if v == "1" || v.eq_ignore_ascii_case("true") {
+            return true;
+        }
+    }
+    config
+        .get_bool("advice.updateSparsePath")
+        .and_then(|r| r.ok())
+        .unwrap_or(true)
+}
+
+fn empty_dir_has_sparse_contents(name: &str, index: &Index) -> bool {
+    let with_slash = format!("{}/", name.trim_end_matches('/'));
+    let prefix = with_slash.as_bytes();
+    index
+        .entries
+        .iter()
+        .any(|e| e.path.starts_with(prefix) && e.stage() == 0 && e.skip_worktree())
+}
+
 fn expand_dir_sources(src_dir: &str, dst_dir: &str, index: &Index) -> Vec<(String, String)> {
     let prefix = format!("{}/", src_dir);
     index
@@ -373,8 +709,6 @@ fn expand_dir_sources(src_dir: &str, dst_dir: &str, index: &Index) -> Vec<(Strin
         .collect()
 }
 
-/// Returns `true` when `path` acts as a virtual directory in the index
-/// (i.e. there are index entries whose path starts with `path/`).
 fn is_index_dir(path: &str, index: &Index) -> bool {
     let prefix = format!("{}/", path);
     index
@@ -383,8 +717,6 @@ fn is_index_dir(path: &str, index: &Index) -> bool {
         .any(|e| String::from_utf8_lossy(&e.path).starts_with(&prefix))
 }
 
-/// Compute the path of `cwd` relative to `work_tree`, if `cwd` is inside
-/// `work_tree`.  Returns `None` (meaning: no prefix) when they are the same.
 fn compute_prefix(cwd: &Path, work_tree: &Path) -> Option<String> {
     let cwd_c = cwd.canonicalize().ok()?;
     let wt_c = work_tree.canonicalize().ok()?;
@@ -397,12 +729,9 @@ fn compute_prefix(cwd: &Path, work_tree: &Path) -> Option<String> {
         .map(|p| p.to_string_lossy().to_string())
 }
 
-/// Resolve a user-provided path (possibly relative to the subdirectory they
-/// are in) to a worktree-relative path.
 fn resolve_path(path: &str, prefix: Option<&str>, work_tree: &Path) -> String {
     let p = Path::new(path);
 
-    // Handle absolute paths by stripping the worktree prefix.
     if p.is_absolute() {
         let wt_canon = work_tree
             .canonicalize()
@@ -410,12 +739,9 @@ fn resolve_path(path: &str, prefix: Option<&str>, work_tree: &Path) -> String {
         if let Ok(rel) = p.strip_prefix(&wt_canon) {
             return normalise_path(&rel.to_string_lossy());
         }
-        // Also try without canonicalising (in case worktree is already canonical).
         if let Ok(rel) = p.strip_prefix(work_tree) {
             return normalise_path(&rel.to_string_lossy());
         }
-        // Absolute path outside the worktree — return as-is so the caller
-        // can detect the error.
         return path.to_owned();
     }
 
@@ -428,7 +754,6 @@ fn resolve_path(path: &str, prefix: Option<&str>, work_tree: &Path) -> String {
     }
 }
 
-/// Collapse `/./` and `foo/../` sequences in a slash-separated path string.
 fn normalise_path(path: &str) -> String {
     let mut parts: Vec<&str> = Vec::new();
     for component in path.split('/') {

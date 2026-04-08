@@ -1,6 +1,9 @@
 # Harness helpers for TAP output compatible with git/t/test-lib.sh (t0000 self-tests).
 # Sourced from test-lib.sh after TEST_DIRECTORY is set.
 
+# Upstream `test-lib-functions.sh` helper; several sparse/mv tests rely on it.
+test_path_exists () { test -e "$1"; }
+
 # Defaults (may be set by environment before parse)
 GIT_SKIP_TESTS=${GIT_SKIP_TESTS:-}
 run_list=
