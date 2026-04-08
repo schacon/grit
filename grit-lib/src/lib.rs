@@ -81,3 +81,4 @@ pub mod userdiff;
 pub mod whitespace_rule;
 pub mod wildmatch;
 pub mod write_tree;
+pub mod ws;
