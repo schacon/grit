@@ -2020,9 +2020,11 @@ fn commit_touches_paths(
         if sparse {
             return Ok(true);
         }
-        return Ok(commit_map
-            .keys()
-            .any(|path| paths.iter().any(|spec| pathspec_matches(spec, path))));
+        return Ok(commit_map.keys().any(|path| {
+            paths
+                .iter()
+                .any(|spec| crate::pathspec::pathspec_matches(spec, path))
+        }));
     }
 
     // Single-parent commit: include only when requested paths changed.
@@ -2078,7 +2080,10 @@ fn path_differs_for_specs(
     paths.extend(parent.keys().cloned());
 
     for path in &paths {
-        if !specs.iter().any(|spec| pathspec_matches(spec, path)) {
+        if !specs
+            .iter()
+            .any(|spec| crate::pathspec::pathspec_matches(spec, path))
+        {
             continue;
         }
         if current.get(path) != parent.get(path) {
@@ -2086,27 +2091,6 @@ fn path_differs_for_specs(
         }
     }
     false
-}
-
-fn pathspec_matches(spec: &str, path: &str) -> bool {
-    let normalized = spec.strip_prefix("./").unwrap_or(spec);
-    if normalized == "." || normalized.is_empty() {
-        return true;
-    }
-
-    if normalized.contains('*') || normalized.contains('?') || normalized.contains('[') {
-        return crate::wildmatch::wildmatch(
-            normalized.as_bytes(),
-            path.as_bytes(),
-            crate::wildmatch::WM_PATHNAME,
-        );
-    }
-
-    if let Some(prefix) = normalized.strip_suffix('/') {
-        return path == prefix || path.starts_with(&format!("{prefix}/"));
-    }
-
-    path == normalized || path.starts_with(&format!("{normalized}/"))
 }
 
 fn load_commit(repo: &Repository, oid: ObjectId) -> Result<crate::objects::CommitData> {
