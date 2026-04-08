@@ -108,6 +108,24 @@ pub fn encode_prefix_extension_delta(base: &[u8], target: &[u8]) -> Result<Vec<u
     Ok(out)
 }
 
+/// Encode a binary delta using the longest common prefix of `base` and `target`.
+///
+/// The reconstructed object is `target`; this matches Git's thin-pack deltas when successive
+/// versions share a long prefix but are not strict extensions (e.g. `…\\n9` vs `…\\n10`).
+pub fn encode_lcp_delta(base: &[u8], target: &[u8]) -> Result<Vec<u8>> {
+    let lcp = base
+        .iter()
+        .zip(target.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut out = Vec::new();
+    write_delta_varint(&mut out, base.len());
+    write_delta_varint(&mut out, target.len());
+    push_copy(&mut out, 0, lcp)?;
+    push_insert(&mut out, &target[lcp..]);
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,6 +138,15 @@ mod tests {
         target.extend_from_slice(b"\nextra suffix\n");
         let delta = encode_prefix_extension_delta(&base, &target).unwrap();
         let got = apply_delta(&base, &delta).unwrap();
+        assert_eq!(got, target);
+    }
+
+    #[test]
+    fn roundtrip_lcp_delta() {
+        let base = b"padding\n9";
+        let target = b"padding\n10";
+        let delta = encode_lcp_delta(base, target).unwrap();
+        let got = apply_delta(base, &delta).unwrap();
         assert_eq!(got, target);
     }
 }
