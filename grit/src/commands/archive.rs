@@ -951,7 +951,7 @@ fn collect_entries(
             let mut data = if is_symlink {
                 blob.data.clone()
             } else {
-                convert_to_worktree(&blob.data, &attr_path, conv, &fa, Some(&oid_hex))
+                convert_to_worktree(&blob.data, &attr_path, conv, &fa, Some(&oid_hex), None)
                     .map_err(|e| anyhow::anyhow!("smudge filter failed for {attr_path}: {e}"))?
             };
             if fa.export_subst {

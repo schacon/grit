@@ -85,8 +85,8 @@ pub fn run(args: Args) -> Result<()> {
             let output = if let Some(ref cfg) = config {
                 let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, path, cfg);
                 let conv = grit_lib::crlf::ConversionConfig::from_config(cfg);
-                grit_lib::crlf::convert_to_worktree(content, path, &conv, &file_attrs, None)
-                    .map_err(|e| anyhow::anyhow!("smudge filter failed for {path}: {e}"))?
+                grit_lib::crlf::convert_to_worktree(content, path, &conv, &file_attrs, None, None)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
             } else {
                 content.clone()
             };
@@ -324,8 +324,18 @@ fn checkout_entries(
         } else {
             let data = if let (Some(config), Some(conv)) = (&config, &conv) {
                 let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, config);
-                grit_lib::crlf::convert_to_worktree(&obj.data, &path_str, conv, &file_attrs, None)
-                    .map_err(|e| anyhow::anyhow!("smudge filter failed for {path_str}: {e}"))?
+                let oid_hex = entry.oid.to_string();
+                let smudge_meta =
+                    grit_lib::filter_process::smudge_meta_for_checkout(repo, &oid_hex);
+                grit_lib::crlf::convert_to_worktree(
+                    &obj.data,
+                    &path_str,
+                    conv,
+                    &file_attrs,
+                    None,
+                    Some(&smudge_meta),
+                )
+                .map_err(|e| anyhow::anyhow!("{e}"))?
             } else {
                 obj.data.clone()
             };

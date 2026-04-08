@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::config::ConfigSet;
+use crate::filter_process::{apply_process_clean, apply_process_smudge, FilterSmudgeMeta};
 
 /// What `core.autocrlf` is set to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,8 +113,14 @@ pub struct FileAttrs {
     pub export_subst: bool,
     pub filter_clean: Option<String>,
     pub filter_smudge: Option<String>,
-    /// Whether `filter.<name>.required` is set for the active smudge filter.
+    /// `filter.<name>.process` — long-running filter (takes precedence over clean/smudge commands).
+    pub filter_process: Option<String>,
+    /// Driver name from the active `filter=<name>` gitattribute (for error messages).
+    pub filter_driver_name: Option<String>,
+    /// Whether `filter.<name>.required` is set for this path's filter driver.
     pub filter_smudge_required: bool,
+    /// Same config key as smudge; clean direction fails when unset if true.
+    pub filter_clean_required: bool,
     pub ident: bool,
     pub merge: MergeAttr,
     pub conflict_marker_size: Option<String>,
@@ -136,7 +143,10 @@ impl Default for FileAttrs {
             export_subst: false,
             filter_clean: None,
             filter_smudge: None,
+            filter_process: None,
+            filter_driver_name: None,
             filter_smudge_required: false,
+            filter_clean_required: false,
             ident: false,
             merge: MergeAttr::Unspecified,
             conflict_marker_size: None,
@@ -372,15 +382,28 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
                         if value == "unset" {
                             fa.filter_clean = None;
                             fa.filter_smudge = None;
+                            fa.filter_process = None;
+                            fa.filter_driver_name = None;
                             fa.filter_smudge_required = false;
+                            fa.filter_clean_required = false;
                         } else {
                             let clean_key = format!("filter.{value}.clean");
                             let smudge_key = format!("filter.{value}.smudge");
+                            let process_key = format!("filter.{value}.process");
                             let req_key = format!("filter.{value}.required");
-                            fa.filter_clean = config.get(&clean_key);
-                            fa.filter_smudge = config.get(&smudge_key);
-                            fa.filter_smudge_required =
+                            fa.filter_driver_name = Some(value.clone());
+                            fa.filter_process = config.get(&process_key).filter(|s| !s.is_empty());
+                            if fa.filter_process.is_some() {
+                                fa.filter_clean = None;
+                                fa.filter_smudge = None;
+                            } else {
+                                fa.filter_clean = config.get(&clean_key);
+                                fa.filter_smudge = config.get(&smudge_key);
+                            }
+                            let required =
                                 config.get(&req_key).is_some_and(|v| config_bool_truthy(&v));
+                            fa.filter_smudge_required = required;
+                            fa.filter_clean_required = required;
                         }
                     }
                     "diff" => {
@@ -577,10 +600,35 @@ pub fn convert_to_git(
 ) -> Result<Vec<u8>, String> {
     let mut buf = data.to_vec();
 
-    // 1. Run clean filter if configured
-    if let Some(ref clean_cmd) = file_attrs.filter_clean {
-        buf = run_filter(clean_cmd, &buf, rel_path)
-            .map_err(|e| format!("clean filter failed: {e}"))?;
+    // 1. Run clean filter if configured (long-running `process` overrides clean command)
+    if let Some(ref proc_cmd) = file_attrs.filter_process {
+        let name = file_attrs.filter_driver_name.as_deref().unwrap_or_default();
+        buf = apply_process_clean(proc_cmd, rel_path, &buf).map_err(|_e| {
+            if file_attrs.filter_clean_required {
+                format!("fatal: {rel_path}: clean filter '{name}' failed")
+            } else {
+                format!("clean filter failed: {_e}")
+            }
+        })?;
+    } else {
+        match file_attrs.filter_clean.as_ref() {
+            Some(clean_cmd) => {
+                buf = run_filter(clean_cmd, &buf, rel_path).map_err(|e| {
+                    let name = file_attrs.filter_driver_name.as_deref().unwrap_or_default();
+                    if file_attrs.filter_clean_required {
+                        format!("fatal: {rel_path}: clean filter '{name}' failed")
+                    } else {
+                        format!("clean filter failed: {e}")
+                    }
+                })?;
+            }
+            None => {
+                if file_attrs.filter_clean_required {
+                    let name = file_attrs.filter_driver_name.as_deref().unwrap_or_default();
+                    return Err(format!("fatal: {rel_path}: clean filter '{name}' failed"));
+                }
+            }
+        }
     }
 
     // 2. Determine if we should do CRLF→LF conversion
@@ -786,7 +834,8 @@ pub fn convert_to_worktree(
     conv: &ConversionConfig,
     file_attrs: &FileAttrs,
     oid_hex: Option<&str>,
-) -> std::io::Result<Vec<u8>> {
+    smudge_meta: Option<&FilterSmudgeMeta>,
+) -> Result<Vec<u8>, String> {
     let mut buf = data.to_vec();
 
     // 1. Ident expansion
@@ -796,13 +845,29 @@ pub fn convert_to_worktree(
         }
     }
 
-    // 2. Smudge filter (before EOL conversion) — matches Git's checkout pipeline
-    if let Some(ref smudge_cmd) = file_attrs.filter_smudge {
-        match run_filter(smudge_cmd, &buf, rel_path) {
-            Ok(filtered) => buf = filtered,
-            Err(e) => {
+    // 2. Smudge filter (before EOL conversion) — process driver overrides shell smudge
+    let driver = file_attrs.filter_driver_name.as_deref().unwrap_or("");
+    if let Some(ref proc_cmd) = file_attrs.filter_process {
+        buf = apply_process_smudge(proc_cmd, rel_path, &buf, smudge_meta).map_err(|_e| {
+            if file_attrs.filter_smudge_required {
+                format!("fatal: {rel_path}: smudge filter {driver} failed")
+            } else {
+                _e
+            }
+        })?;
+    } else {
+        match file_attrs.filter_smudge.as_ref() {
+            Some(smudge_cmd) => match run_filter(smudge_cmd, &buf, rel_path) {
+                Ok(filtered) => buf = filtered,
+                Err(_e) => {
+                    if file_attrs.filter_smudge_required {
+                        return Err(format!("fatal: {rel_path}: smudge filter {driver} failed"));
+                    }
+                }
+            },
+            None => {
                 if file_attrs.filter_smudge_required {
-                    return Err(e);
+                    return Err(format!("fatal: {rel_path}: smudge filter {driver} failed"));
                 }
             }
         }
@@ -897,30 +962,116 @@ fn output_eol_is_crlf(conv: &ConversionConfig) -> bool {
 }
 
 /// Expand `$Id$` → `$Id: <oid>$` in data.
+///
+/// Matches Git's `ident_to_worktree` in `convert.c`: same-line `$` terminator, and foreign
+/// idents (internal spaces before the closing `$`) are left unchanged.
 fn expand_ident(data: &[u8], oid: &str) -> Vec<u8> {
-    let needle = b"$Id$";
+    if !count_ident_regions(data) {
+        return data.to_vec();
+    }
     let replacement = format!("$Id: {oid} $");
     let mut out = Vec::with_capacity(data.len() + 60);
     let mut i = 0;
     while i < data.len() {
-        if i + needle.len() <= data.len() && &data[i..i + needle.len()] == needle {
-            out.extend_from_slice(replacement.as_bytes());
-            i += needle.len();
-        } else if i + 4 <= data.len() && &data[i..i + 4] == b"$Id:" {
-            // Already expanded — replace existing expansion
-            if let Some(end) = data[i + 4..].iter().position(|&b| b == b'$') {
+        if data[i] != b'$' {
+            out.push(data[i]);
+            i += 1;
+            continue;
+        }
+        if i + 3 > data.len() || data[i + 1] != b'I' || data[i + 2] != b'd' {
+            out.push(data[i]);
+            i += 1;
+            continue;
+        }
+        let after_id = i + 3;
+        let ch = data.get(after_id).copied();
+        match ch {
+            Some(b'$') => {
                 out.extend_from_slice(replacement.as_bytes());
-                i += 4 + end + 1;
-            } else {
+                i = after_id + 1;
+            }
+            Some(b':') => {
+                let rest = &data[after_id + 1..];
+                let line_end = rest
+                    .iter()
+                    .position(|&b| b == b'\n' || b == b'\r')
+                    .unwrap_or(rest.len());
+                let line = &rest[..line_end];
+                let Some(dollar_rel) = line.iter().position(|&b| b == b'$') else {
+                    out.push(data[i]);
+                    i += 1;
+                    continue;
+                };
+                if line[..dollar_rel].contains(&b'\n') {
+                    out.push(data[i]);
+                    i += 1;
+                    continue;
+                }
+                // Foreign ident (Git `ident_to_worktree`): first space in the payload after the
+                // byte following `:` must not be the last character before `$`.
+                let payload = &line[..dollar_rel];
+                let foreign = payload.len() > 1
+                    && payload[1..]
+                        .iter()
+                        .position(|&b| b == b' ')
+                        .is_some_and(|rel| {
+                            let pos = 1 + rel;
+                            pos < payload.len().saturating_sub(1)
+                        });
+                if foreign {
+                    out.push(data[i]);
+                    i += 1;
+                    continue;
+                }
+                out.extend_from_slice(replacement.as_bytes());
+                i = after_id + 1 + dollar_rel + 1;
+            }
+            _ => {
                 out.push(data[i]);
                 i += 1;
             }
-        } else {
-            out.push(data[i]);
-            i += 1;
         }
     }
     out
+}
+
+/// Whether the buffer contains any `$Id$` / `$Id: ... $` regions Git would rewrite (`count_ident`).
+fn count_ident_regions(data: &[u8]) -> bool {
+    let mut i = 0usize;
+    while i < data.len() {
+        if data[i] != b'$' {
+            i += 1;
+            continue;
+        }
+        if i + 3 > data.len() || data[i + 1] != b'I' || data[i + 2] != b'd' {
+            i += 1;
+            continue;
+        }
+        let after = i + 3;
+        match data.get(after).copied() {
+            Some(b'$') => return true,
+            Some(b':') => {
+                let mut j = after + 1;
+                let mut found = false;
+                while j < data.len() {
+                    match data[j] {
+                        b'$' => {
+                            found = true;
+                            break;
+                        }
+                        b'\n' | b'\r' => break,
+                        _ => j += 1,
+                    }
+                }
+                if found {
+                    return true;
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    false
 }
 
 /// Collapse `$Id: ... $` back to `$Id$`.
@@ -929,7 +1080,13 @@ pub fn collapse_ident(data: &[u8]) -> Vec<u8> {
     let mut i = 0;
     while i < data.len() {
         if i + 4 <= data.len() && &data[i..i + 4] == b"$Id:" {
-            if let Some(end) = data[i + 4..].iter().position(|&b| b == b'$') {
+            let rest = &data[i + 4..];
+            let line_end = rest
+                .iter()
+                .position(|&b| b == b'\n' || b == b'\r')
+                .unwrap_or(rest.len());
+            let line = &rest[..line_end];
+            if let Some(end) = line.iter().position(|&b| b == b'$') {
                 out.extend_from_slice(b"$Id$");
                 i += 4 + end + 1;
                 continue;
@@ -941,19 +1098,64 @@ pub fn collapse_ident(data: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Shell-quote `s` with single quotes, matching Git's `sq_quote_buf` (`'` → `'\''`).
+fn sq_quote_buf(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// Expand Git filter command placeholders: `%%` → `%`, `%f` → quoted repository-relative path.
+fn expand_filter_command(cmd: &str, rel_path: &str) -> String {
+    let mut out = String::with_capacity(cmd.len() + rel_path.len() + 8);
+    let mut chars = cmd.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            match chars.peek() {
+                Some('%') => {
+                    chars.next();
+                    out.push('%');
+                }
+                Some('f') => {
+                    chars.next();
+                    out.push_str(&sq_quote_buf(rel_path));
+                }
+                _ => out.push('%'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Run a filter command, piping data through stdin→stdout.
-fn run_filter(cmd: &str, data: &[u8], _rel_path: &str) -> Result<Vec<u8>, std::io::Error> {
+fn run_filter(cmd: &str, data: &[u8], rel_path: &str) -> Result<Vec<u8>, std::io::Error> {
+    let expanded = expand_filter_command(cmd, rel_path);
     let mut child = Command::new("sh")
         .arg("-c")
-        .arg(cmd)
+        .arg(&expanded)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()?;
 
-    use std::io::Write;
+    use std::io::{ErrorKind, Write};
     if let Some(ref mut stdin) = child.stdin {
-        stdin.write_all(data)?;
+        if let Err(e) = stdin.write_all(data) {
+            // Match Git: if the filter exits without reading stdin, ignore EPIPE.
+            if e.kind() != ErrorKind::BrokenPipe {
+                return Err(e);
+            }
+        }
     }
     drop(child.stdin.take());
 
@@ -1016,7 +1218,7 @@ mod tests {
             safecrlf: SafeCrlf::False,
         };
         let attrs = FileAttrs::default();
-        let out = convert_to_worktree(&blob, "mixed", &conv, &attrs, None).unwrap();
+        let out = convert_to_worktree(&blob, "mixed", &conv, &attrs, None, None).unwrap();
         assert_eq!(out, blob);
     }
 
@@ -1029,7 +1231,7 @@ mod tests {
             safecrlf: SafeCrlf::False,
         };
         let attrs = FileAttrs::default();
-        let out = convert_to_worktree(blob, "x", &conv, &attrs, None).unwrap();
+        let out = convert_to_worktree(blob, "x", &conv, &attrs, None, None).unwrap();
         assert_eq!(out, b"a\r\nb\r\n");
     }
 
@@ -1046,5 +1248,26 @@ mod tests {
         assert_eq!(expanded, b"$Id: abc123 $");
         let collapsed = collapse_ident(&expanded);
         assert_eq!(collapsed, b"$Id$");
+    }
+
+    #[test]
+    fn expand_ident_does_not_span_lines_for_partial_keyword() {
+        let data = b"$Id: NoTerminatingSymbol\n$Id: deadbeef $\n";
+        let expanded = expand_ident(data, "newoid");
+        assert_eq!(expanded, b"$Id: NoTerminatingSymbol\n$Id: newoid $\n");
+    }
+
+    #[test]
+    fn expand_ident_preserves_foreign_id_with_internal_spaces() {
+        let data = b"$Id: Foreign Commit With Spaces $\n";
+        let expanded = expand_ident(data, "abc");
+        assert_eq!(expanded, data);
+    }
+
+    #[test]
+    fn expand_filter_command_percent_f_quotes_path() {
+        let s = expand_filter_command("sh ./x.sh %f --extra", "name  with 'sq'");
+        assert_eq!(s, "sh ./x.sh 'name  with '\\''sq'\\''' --extra");
+        assert_eq!(expand_filter_command("a %% b", "p"), "a % b");
     }
 }

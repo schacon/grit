@@ -17,7 +17,7 @@ t0017-env-helper	t0	yes	5	5	0	true	ok	0
 t0018-advice	t0	yes	6	6	0	true	ok	0
 t0019-json-writer	t0	yes	16	16	0	true	ok	0
 t0020-crlf	t0	yes	36	36	0	true	ok	0
-t0021-conversion	t0	yes	42	20	22	false	ok	0
+t0021-conversion	t0	yes	42	32	10	false	ok	0
 t0022-crlf-rename	t0	yes	2	2	0	true	ok	0
 t0023-crlf-am	t0	yes	2	2	0	true	ok	0
 t0024-crlf-archive	t0	yes	3	3	0	true	ok	0
@@ -191,7 +191,7 @@ t1090-sparse-checkout-scope	t1	yes	7	3	4	false	ok	0
 t10900-for-each-ref-pattern-sort	t1	yes	34	34	0	true	ok	0
 t1091-sparse-checkout-builtin	t1	yes	76	53	23	false	ok	1
 t10910-show-ref-tags-branches	t1	yes	35	35	0	true	ok	0
-t1092-sparse-checkout-compatibility	t1	yes	104	36	68	false	ok	3
+t1092-sparse-checkout-compatibility	t1	yes	104	39	65	false	ok	3
 t10920-update-ref-create-delete	t1	yes	29	29	0	true	ok	0
 t10930-symbolic-ref-read-write	t1	yes	29	28	1	false	ok	0
 t10940-check-ignore-dir-pattern	t1	yes	35	35	0	true	ok	0

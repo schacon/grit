@@ -19,6 +19,7 @@ use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::diff::read_submodule_head_oid;
 use grit_lib::diff::zero_oid;
+use grit_lib::filter_process;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
@@ -1369,7 +1370,7 @@ fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> 
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let _ = write_blob_to_worktree(
-            repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index,
+            repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index, true,
         )?;
     }
 
@@ -1414,7 +1415,7 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let _ = write_blob_to_worktree(
-            repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index,
+            repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index, true,
         )?;
     }
 
@@ -2211,7 +2212,7 @@ fn checkout_paths(
                         let p = String::from_utf8_lossy(&ie.path).to_string();
                         if glob_matches(&rel, &p) {
                             let w = write_blob_to_worktree(
-                                repo, work_tree, &p, &ie.oid, ie.mode, &index,
+                                repo, work_tree, &p, &ie.oid, ie.mode, &index, false,
                             );
                             if w.is_ok() {
                                 matched = true;
@@ -2242,7 +2243,9 @@ fn checkout_paths(
                         }
                         let p = String::from_utf8_lossy(&ie.path).to_string();
                         checkout_record_path_result(
-                            write_blob_to_worktree(repo, work_tree, &p, &ie.oid, ie.mode, &index),
+                            write_blob_to_worktree(
+                                repo, work_tree, &p, &ie.oid, ie.mode, &index, false,
+                            ),
                             &mut updated_paths,
                             &mut path_errors,
                         );
@@ -2251,7 +2254,7 @@ fn checkout_paths(
                     // Exact file match
                     checkout_record_path_result(
                         write_blob_to_worktree(
-                            repo, work_tree, &rel, &entry.oid, entry.mode, &index,
+                            repo, work_tree, &rel, &entry.oid, entry.mode, &index, false,
                         ),
                         &mut updated_paths,
                         &mut path_errors,
@@ -2281,6 +2284,7 @@ fn checkout_paths(
                             &new_entry.oid,
                             new_entry.mode,
                             &index,
+                            false,
                         ),
                         &mut updated_paths,
                         &mut path_errors,
@@ -2319,7 +2323,7 @@ fn checkout_paths(
                         let p = String::from_utf8_lossy(&ie.path).to_string();
                         if p.starts_with(&prefix) {
                             let w = write_blob_to_worktree(
-                                repo, work_tree, &p, &ie.oid, ie.mode, &index,
+                                repo, work_tree, &p, &ie.oid, ie.mode, &index, false,
                             );
                             if w.is_ok() {
                                 matched = true;
@@ -2375,6 +2379,7 @@ fn checkout_paths(
                             &flat_entry.oid,
                             flat_entry.mode,
                             &index,
+                            false,
                         );
                         if w.is_ok() {
                             index.add_or_replace(flat_entry.clone());
@@ -2462,6 +2467,7 @@ fn checkout_paths(
                             &flat_entry.oid,
                             flat_entry.mode,
                             &index,
+                            false,
                         );
                         if w.is_ok() {
                             index.add_or_replace(flat_entry.clone());
@@ -2535,7 +2541,9 @@ fn checkout_paths(
                     })?;
 
                     // Write to working tree with CRLF conversion
-                    let w = write_blob_to_worktree(repo, work_tree, &rel, &blob_oid, mode, &index);
+                    let w = write_blob_to_worktree(
+                        repo, work_tree, &rel, &blob_oid, mode, &index, false,
+                    );
                     if w.is_ok() {
                         // Read blob size for index entry
                         let obj = repo
@@ -3426,7 +3434,7 @@ fn checkout_index_to_worktree(
 
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let _ = write_blob_to_worktree(
-            repo, work_tree, &path_str, &entry.oid, entry.mode, new_index,
+            repo, work_tree, &path_str, &entry.oid, entry.mode, new_index, true,
         )?;
     }
 
@@ -3456,6 +3464,9 @@ fn git_dir_is_nested_modules_repo(git_dir: &Path) -> bool {
 ///
 /// Returns `Ok(true)` when the path was written or updated, `Ok(false)` when the work tree already
 /// matched (so user-facing counts like "Updated N paths" stay accurate; t2080).
+///
+/// `full_smudge_meta`: when true, process smudge gets `ref=` / `treeish=` (branch/tree checkout).
+/// Path-only checkout passes blob id only.
 fn write_blob_to_worktree(
     repo: &Repository,
     work_tree: &std::path::Path,
@@ -3463,6 +3474,7 @@ fn write_blob_to_worktree(
     oid: &ObjectId,
     mode: u32,
     index: &Index,
+    full_smudge_meta: bool,
 ) -> Result<bool> {
     if mode == MODE_GITLINK {
         // Path checkout from index: always materialize (may follow symlinked submodule paths).
@@ -3475,6 +3487,25 @@ fn write_blob_to_worktree(
         bail!("cannot checkout non-blob at '{rel_path}'");
     }
 
+    // Path-only checkout: if the work tree already matches the index blob (clean pipeline agrees),
+    // skip smudge entirely — matches Git / t0021 filter log expectations.
+    if !full_smudge_meta && mode != MODE_SYMLINK {
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let conv = crlf::ConversionConfig::from_config(&config);
+        let attrs = crlf::load_gitattributes_for_checkout(work_tree, rel_path, index, &repo.odb);
+        let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
+        if file_attrs.working_tree_encoding.is_none() {
+            let abs_path = work_tree.join(rel_path);
+            if let Ok(wt_raw) = std::fs::read(&abs_path) {
+                if let Ok(cleaned) = crlf::convert_to_git(&wt_raw, rel_path, &conv, &file_attrs) {
+                    if cleaned == obj.data {
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+    }
+
     // Apply CRLF / smudge conversion for checkout
     let data = if mode != MODE_SYMLINK {
         let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
@@ -3482,8 +3513,20 @@ fn write_blob_to_worktree(
         let attrs = crlf::load_gitattributes_for_checkout(work_tree, rel_path, index, &repo.odb);
         let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
         let oid_hex = format!("{oid}");
-        crlf::convert_to_worktree(&obj.data, rel_path, &conv, &file_attrs, Some(&oid_hex))
-            .map_err(|e| anyhow::anyhow!("smudge filter failed for {rel_path}: {e}"))?
+        let smudge_meta = if full_smudge_meta {
+            filter_process::smudge_meta_for_checkout(repo, &oid_hex)
+        } else {
+            filter_process::smudge_meta_blob_only(&oid_hex)
+        };
+        crlf::convert_to_worktree(
+            &obj.data,
+            rel_path,
+            &conv,
+            &file_attrs,
+            Some(&oid_hex),
+            Some(&smudge_meta),
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?
     } else {
         obj.data
     };

@@ -532,7 +532,7 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
                     };
                     let mut new_index = Index::new();
                     if let Some(_wt) = &repo.work_tree {
-                        checkout_index_to_worktree(repo, &old_index, &mut new_index.clone())?;
+                        checkout_index_to_worktree(repo, &old_index, &mut new_index.clone(), None)?;
                     }
                     repo.write_index_at(&index_path, &mut new_index)
                         .context("writing index")?;
@@ -611,7 +611,12 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
                     }
                 }
             }
-            checkout_index_to_worktree(repo, &old_index, &mut new_index)?;
+            checkout_index_to_worktree(
+                repo,
+                &old_index,
+                &mut new_index,
+                Some((&target_oid, Some(commit_spec))),
+            )?;
         }
         if !quiet {
             print_head_message(repo, &target_oid)?;
@@ -1013,10 +1018,16 @@ fn tree_to_flat_entries(
 ///
 /// Deletes files removed from the index and writes/updates files added or
 /// changed.
+///
+/// When `smudge` is `Some((commit, spec))`, process smudge metadata matches `git reset --hard`:
+/// `ref=` / `treeish=` for symbolic ref specs (e.g. `old-main`), `treeish=` only for raw hex.
+/// `Some((commit, None))` is treeish-only (e.g. restore by commit OID). `None` uses checkout-style
+/// metadata from `HEAD`.
 fn checkout_index_to_worktree(
     repo: &Repository,
     old_index: &Index,
     new_index: &mut Index,
+    smudge: Option<(&ObjectId, Option<&str>)>,
 ) -> Result<()> {
     let work_tree = match &repo.work_tree {
         Some(p) => p.clone(),
@@ -1140,14 +1151,25 @@ fn checkout_index_to_worktree(
             let data = if let (Some(ref cfg), Some(ref cv)) = (&config, &conv) {
                 let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, cfg);
                 let oid_hex = format!("{}", entry.oid);
+                let smudge_meta = match smudge {
+                    None => grit_lib::filter_process::smudge_meta_for_checkout(repo, &oid_hex),
+                    Some((tip, None)) => grit_lib::filter_process::smudge_meta_treeish_only(
+                        &tip.to_string(),
+                        &oid_hex,
+                    ),
+                    Some((tip, Some(spec))) => {
+                        grit_lib::filter_process::smudge_meta_for_reset(repo, spec, tip, &oid_hex)
+                    }
+                };
                 grit_lib::crlf::convert_to_worktree(
                     &obj.data,
                     &path_str,
                     cv,
                     &file_attrs,
                     Some(&oid_hex),
+                    Some(&smudge_meta),
                 )
-                .map_err(|e| anyhow::anyhow!("smudge filter failed for {path_str}: {e}"))?
+                .map_err(|e| anyhow::anyhow!("{e}"))?
             } else {
                 obj.data.clone()
             };

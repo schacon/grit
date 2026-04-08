@@ -7,7 +7,7 @@
 
 #![allow(dead_code)] // test-tool and harness helpers not fully wired through dispatch
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -3389,6 +3389,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 "userdiff" => run_test_tool_userdiff(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
                 "ref-store" => run_test_tool_ref_store(rest),
+                "rot13-filter" => commands::test_tool_rot13_filter::run(&rest[1..]),
                 "path-utils" => run_test_tool_path_utils(&rest[1..]),
                 "submodule" => run_test_tool_submodule(&rest[1..]),
                 "config" => run_test_tool_config(&rest[1..]),
@@ -3453,28 +3454,53 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                     Err(e) => bail!("{e}"),
                 },
                 "genrandom" => {
-                    // Generate N random bytes
+                    // Match `git/t/helper/test-genrandom.c`: `test-tool genrandom <seed> [<size>]`.
+                    // With two args only, emit until the pipe breaks (size omitted → unbounded).
                     use std::io::Write;
-                    let seed = rest.get(1).map(|s| s.as_str()).unwrap_or("0");
-                    let n: usize = rest.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-                    // Simple LCG random
+                    if rest.len() < 2 {
+                        bail!("usage: test-tool genrandom <seed_string> [<size>]");
+                    }
+                    let seed = rest[1].as_str();
+                    let count: Option<usize> = if rest.len() >= 3 {
+                        Some(rest[2].parse().with_context(|| {
+                            format!("cannot parse genrandom size '{}'", rest[2])
+                        })?)
+                    } else {
+                        None
+                    };
                     let mut state: u64 = seed
                         .bytes()
                         .fold(0u64, |a, b| a.wrapping_mul(31).wrapping_add(b as u64));
                     let stdout = std::io::stdout();
                     let mut out = stdout.lock();
                     let mut buf = vec![0u8; 8192];
-                    let mut remaining = n;
-                    while remaining > 0 {
-                        let chunk = remaining.min(8192);
-                        for b in &mut buf[..chunk] {
-                            state = state
-                                .wrapping_mul(6364136223846793005)
-                                .wrapping_add(1442695040888963407);
-                            *b = ((state >> 33) ^ state) as u8;
+                    match count {
+                        Some(mut remaining) => {
+                            while remaining > 0 {
+                                let chunk = remaining.min(8192);
+                                for b in &mut buf[..chunk] {
+                                    state = state
+                                        .wrapping_mul(6364136223846793005)
+                                        .wrapping_add(1442695040888963407);
+                                    *b = ((state >> 33) ^ state) as u8;
+                                }
+                                out.write_all(&buf[..chunk])?;
+                                remaining -= chunk;
+                            }
                         }
-                        out.write_all(&buf[..chunk])?;
-                        remaining -= chunk;
+                        None => loop {
+                            for b in &mut buf {
+                                state = state
+                                    .wrapping_mul(6364136223846793005)
+                                    .wrapping_add(1442695040888963407);
+                                *b = ((state >> 33) ^ state) as u8;
+                            }
+                            match out.write_all(&buf) {
+                                Ok(()) => {}
+                                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => break,
+                                Err(e) => return Err(e.into()),
+                            }
+                        },
                     }
                     Ok(())
                 }

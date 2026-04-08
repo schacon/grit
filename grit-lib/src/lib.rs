@@ -24,6 +24,7 @@ pub mod diff;
 pub mod error;
 pub mod fast_import;
 pub mod fetch_negotiator;
+pub mod filter_process;
 pub mod fmt_merge_msg;
 pub mod fsck_standalone;
 pub mod git_date;
