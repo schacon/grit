@@ -188,6 +188,8 @@ pub fn run(args: Args) -> Result<()> {
             && !args.unmerged
             && !args.killed);
     let show_stage = args.stage || args.unmerged;
+    // Match git ls-files.c: --deduplicate is ignored with -t/-s/-u (show_tag/show_stage).
+    let dedup_paths = args.deduplicate && !args.show_tag && !show_stage;
 
     let mut pathspec_filter: Vec<Pathspec> = args
         .pathspecs
@@ -260,11 +262,10 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
 
-        // --deleted / --modified: show entries that are deleted or modified.
-        // When both are set, show if EITHER condition is true.
-        // Unmerged entries (stage != 0) always pass through — they represent
-        // conflict states that git treats as "modified".
-        if (args.deleted || args.modified) && !show_cached && entry.stage() == 0 {
+        // --deleted / --modified: show entries that are deleted or modified on disk.
+        // Applies to every index stage (including unmerged); matches git ls-files.c.
+        // When both -d and -m are set, show if EITHER condition is true.
+        if (args.deleted || args.modified) && !show_cached {
             if entry.skip_worktree() {
                 continue;
             }
@@ -283,14 +284,14 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
 
-        // For -d/-m with -t/-v, compute tags. A deleted file with both -d and -m
-        // produces TWO output lines: 'R path' and 'C path'.
+        // For -d/-m with -t/-v, compute tags. Git uses "C" for modified (including
+        // unmerged conflict paths under -d/-m), not the unmerged "M" tag from -u/-s.
+        // A deleted file with both -d and -m produces TWO output lines: 'R path' and 'C path'.
         let (tag, extra_tag) = if args.show_tag || args.show_untracked_cache_tag {
-            if (args.deleted || args.modified) && entry.stage() == 0 {
+            if args.deleted || args.modified {
                 let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
                 if !full.exists() {
                     if args.deleted && args.modified {
-                        // Both -d and -m: show R (deleted) and C (modified)
                         (Some('R'), Some('C'))
                     } else {
                         (Some('R'), None)
