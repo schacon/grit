@@ -1027,14 +1027,6 @@ fn checkout_index_to_worktree(
         if entry.stage() != 0 {
             continue;
         }
-        // Submodule entries point at commits in a different object store.
-        // Do not try to materialize them as blobs in the superproject.
-        if entry.mode == 0o160000 {
-            let path_str = String::from_utf8_lossy(&entry.path).into_owned();
-            let submodule_dir = work_tree.join(&path_str);
-            let _ = std::fs::create_dir_all(&submodule_dir);
-            continue;
-        }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let abs_path = work_tree.join(&path_str);
 
@@ -1048,6 +1040,22 @@ fn checkout_index_to_worktree(
             // Materialize only the directory path in the superproject.
             if abs_path.is_file() || abs_path.is_symlink() {
                 std::fs::remove_file(&abs_path)?;
+            } else if abs_path.is_dir() && abs_path.join(".git").exists() {
+                if let Ok(meta) = std::fs::symlink_metadata(&abs_path) {
+                    use std::os::unix::fs::MetadataExt;
+                    entry.ctime_sec = meta.ctime() as u32;
+                    entry.ctime_nsec = meta.ctime_nsec() as u32;
+                    entry.mtime_sec = meta.mtime() as u32;
+                    entry.mtime_nsec = meta.mtime_nsec() as u32;
+                    entry.dev = meta.dev() as u32;
+                    entry.ino = meta.ino() as u32;
+                    entry.uid = meta.uid();
+                    entry.gid = meta.gid();
+                    entry.size = meta.len() as u32;
+                }
+                continue;
+            } else if abs_path.is_dir() {
+                std::fs::remove_dir_all(&abs_path)?;
             }
             std::fs::create_dir_all(&abs_path)?;
 

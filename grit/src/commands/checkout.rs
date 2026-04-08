@@ -723,7 +723,13 @@ fn switch_branch(
                 let target_tree = commit_to_tree(repo, &target_oid)?;
                 return force_reset_to_tree(repo, &target_tree);
             }
-            return Ok(());
+            let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
+                .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
+            let target_tree = commit_to_tree(repo, &target_oid)?;
+            if index_matches_flat_tree(repo, &target_tree)? {
+                return Ok(());
+            }
+            return switch_to_tree(repo, &head, &target_tree, false);
         }
     }
 
@@ -1207,8 +1213,10 @@ fn detach_head_inner(repo: &Repository, oid: &ObjectId, force: bool, explicit: b
     let head = resolve_head(&repo.git_dir)?;
 
     let already_at_target = head.oid() == Some(oid);
-    if !already_at_target || force {
-        let target_tree = commit_to_tree(repo, oid)?;
+    let target_tree = commit_to_tree(repo, oid)?;
+    let needs_checkout =
+        !already_at_target || force || !index_matches_flat_tree(repo, &target_tree)?;
+    if needs_checkout {
         switch_to_tree(repo, &head, &target_tree, force)?;
     }
 
@@ -1625,6 +1633,42 @@ fn check_dirty_worktree(
     Ok(())
 }
 
+/// Resolve the commit OID checked out in a submodule working tree (gitlink path).
+fn read_submodule_worktree_head(submodule_path: &Path) -> Result<ObjectId> {
+    let dot_git = submodule_path.join(".git");
+    let git_dir = if dot_git.is_file() {
+        let content = std::fs::read_to_string(&dot_git).context("read submodule .git gitfile")?;
+        let gitdir = content
+            .strip_prefix("gitdir:")
+            .ok_or_else(|| anyhow::anyhow!("invalid submodule gitfile"))?
+            .trim();
+        let p = Path::new(gitdir);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            submodule_path.join(p)
+        }
+    } else if dot_git.is_dir() {
+        dot_git
+    } else {
+        bail!("submodule path has no .git");
+    };
+    let head_file = git_dir.join("HEAD");
+    let content = std::fs::read_to_string(&head_file).context("read submodule HEAD")?;
+    let content = content.trim();
+    let oid_str = if let Some(refname) = content.strip_prefix("ref: ") {
+        std::fs::read_to_string(git_dir.join(refname))
+            .context("read submodule symbolic ref")?
+            .trim()
+            .to_string()
+    } else {
+        content.to_string()
+    };
+    oid_str
+        .parse()
+        .map_err(|e| anyhow::anyhow!("invalid submodule HEAD oid: {e}"))
+}
+
 /// Check if a working tree file differs from its index entry.
 ///
 /// Compares the clean (CRLF-normalized) hash of the worktree file to the
@@ -1636,6 +1680,22 @@ fn is_worktree_dirty(
     entry: &IndexEntry,
     abs_path: &std::path::Path,
 ) -> Result<bool> {
+    // Gitlinks (submodules): compare recorded commit to the submodule's HEAD,
+    // not blob content (reading a directory as a file would always look "dirty").
+    if entry.mode == 0o160000 {
+        if abs_path.is_file() || abs_path.is_symlink() {
+            return Ok(true);
+        }
+        let dot_git = abs_path.join(".git");
+        if !dot_git.exists() {
+            // Deinitialized or never-populated submodule: no embedded repo to protect.
+            return Ok(false);
+        }
+        return match read_submodule_worktree_head(abs_path) {
+            Ok(head_oid) => Ok(head_oid != entry.oid),
+            Err(_) => Ok(true),
+        };
+    }
     if entry.mode == MODE_SYMLINK {
         // For symlinks, compare the target
         match std::fs::read_link(abs_path) {
@@ -2642,6 +2702,32 @@ fn tree_to_flat_entries(
         }
     }
     Ok(result)
+}
+
+/// True when the index's stage-0 paths match the flattened tree (mode + OID per path).
+fn index_matches_flat_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<bool> {
+    let index_path = repo.index_path();
+    let old_index = repo.load_index_at(&index_path).unwrap_or_default();
+    let new_entries = tree_to_flat_entries(repo, tree_oid, "")?;
+    let old_stage0: Vec<&IndexEntry> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .collect();
+    if old_stage0.len() != new_entries.len() {
+        return Ok(false);
+    }
+    let mut old_sorted: Vec<_> = old_stage0
+        .into_iter()
+        .map(|e| (&e.path[..], e.mode, e.oid))
+        .collect();
+    let mut new_sorted: Vec<_> = new_entries
+        .iter()
+        .map(|e| (e.path.as_slice(), e.mode, e.oid))
+        .collect();
+    old_sorted.sort_by(|a, b| a.0.cmp(b.0));
+    new_sorted.sort_by(|a, b| a.0.cmp(b.0));
+    Ok(old_sorted == new_sorted)
 }
 
 /// Walk a tree to find the blob (OID, mode) at `path` (slash-separated).

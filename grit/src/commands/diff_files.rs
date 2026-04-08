@@ -902,8 +902,18 @@ fn read_worktree_info_fast(
 ) -> Result<WorktreeStatus> {
     let meta = match fs::symlink_metadata(abs_path) {
         Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(WorktreeStatus::Missing),
-        Err(e) if path_component_is_not_directory(&e) => return Ok(WorktreeStatus::Missing),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if canonicalize_mode(index_entry.mode) == MODE_GITLINK {
+                return Ok(WorktreeStatus::Unchanged);
+            }
+            return Ok(WorktreeStatus::Missing);
+        }
+        Err(e) if path_component_is_not_directory(&e) => {
+            if canonicalize_mode(index_entry.mode) == MODE_GITLINK {
+                return Ok(WorktreeStatus::Unchanged);
+            }
+            return Ok(WorktreeStatus::Missing);
+        }
         Err(e) => return Err(e.into()),
     };
 
@@ -950,6 +960,11 @@ fn read_worktree_info_fast(
             // Treat as a submodule (mode 160000)
             let sub_oid = read_submodule_head(abs_path).unwrap_or(index_entry.oid);
             return Ok(WorktreeStatus::Modified(0o160000, sub_oid));
+        }
+        // Superproject gitlink with an empty placeholder directory (no embedded
+        // repo yet) matches the index — same as Git after merge/checkout.
+        if canonicalize_mode(index_entry.mode) == MODE_GITLINK {
+            return Ok(WorktreeStatus::Unchanged);
         }
     }
 

@@ -547,6 +547,8 @@ fn cmd_update(args: UpdateArgs) -> Result<()> {
             negotiate_only: false,
             update_head_ok: false,
             update_refs: false,
+            recurse_submodules: None,
+            no_recurse_submodules: false,
         };
         super::fetch::run(fetch_args)?;
     }

@@ -758,15 +758,25 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<
     for (path, url) in &submodules {
         let sub_dest = work_tree.join(path);
 
-        // Resolve relative URLs
+        // Resolve relative URLs: Git resolves `../` against the superproject work tree
+        // (the directory that contains `.git`), not the `origin` URL's parent.
         let resolved_url = if url.starts_with("./") || url.starts_with("../") {
-            if let Some(ref parent) = parent_url {
-                let base = PathBuf::from(parent);
-                let resolved = base.parent().unwrap_or(&base).join(url);
-                resolved.to_string_lossy().to_string()
-            } else {
-                url.clone()
-            }
+            work_tree
+                .join(url)
+                .canonicalize()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| {
+                    if let Some(ref parent) = parent_url {
+                        let base = PathBuf::from(parent);
+                        base.parent()
+                            .unwrap_or(&base)
+                            .join(url)
+                            .to_string_lossy()
+                            .into_owned()
+                    } else {
+                        url.clone()
+                    }
+                })
         } else {
             url.clone()
         };
@@ -1463,8 +1473,14 @@ fn checkout_tree(
         let is_tree = (entry.mode & 0o170000) == 0o040000;
         let is_gitlink = entry.mode == 0o160000;
         if is_gitlink {
-            // Gitlink (submodule) — skip during checkout; the submodule
-            // directory will be populated by `git submodule update` later.
+            // Gitlink (submodule): ensure an empty directory exists (Git does not
+            // check out submodule contents during clone).
+            if full_path.is_file() || full_path.is_symlink() {
+                let _ = fs::remove_file(&full_path);
+            } else if full_path.is_dir() && !full_path.join(".git").exists() {
+                let _ = fs::remove_dir_all(&full_path);
+            }
+            let _ = fs::create_dir_all(&full_path);
             continue;
         } else if is_tree {
             fs::create_dir_all(&full_path)?;
