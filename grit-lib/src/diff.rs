@@ -585,7 +585,11 @@ pub fn diff_index_to_worktree(
         if ie.mode == 0o160000 {
             let sub_dir = work_tree.join(path_str_ref);
             let sub_head_oid = read_submodule_head(&sub_dir);
-            if sub_head_oid.as_ref() != Some(&ie.oid) {
+            let matches_index = match sub_head_oid {
+                Some(oid) => oid == ie.oid,
+                None => submodule_worktree_is_unpopulated_placeholder(&sub_dir),
+            };
+            if !matches_index {
                 let path_owned = path_str_ref.to_owned();
                 let new_oid = sub_head_oid.unwrap_or_else(zero_oid);
                 result.push(DiffEntry {
@@ -2186,6 +2190,24 @@ fn format_path(prefix: &str, name: &str) -> String {
 /// Format a numeric mode as a zero-padded octal string.
 fn format_mode(mode: u32) -> String {
     format!("{mode:06o}")
+}
+
+/// Read the HEAD commit OID from a submodule checkout directory.
+///
+/// Returns `None` if the path is missing, not a submodule checkout, or has no resolvable HEAD.
+#[must_use]
+pub fn read_submodule_head_for_checkout(sub_dir: &Path) -> Option<ObjectId> {
+    read_submodule_head(sub_dir)
+}
+
+/// True when `sub_dir` is an empty directory (or missing), i.e. the placeholder left by
+/// `git apply --index` before `git submodule update`.
+fn submodule_worktree_is_unpopulated_placeholder(sub_dir: &Path) -> bool {
+    match fs::read_dir(sub_dir) {
+        Ok(mut it) => it.next().is_none(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+        Err(_) => false,
+    }
 }
 
 /// Read the HEAD commit OID from a submodule directory.

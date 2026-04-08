@@ -467,7 +467,7 @@ test_submodule_switch_common () {
 	'
 	# Replacing it with a file must fail as it could throw away any local
 	# work tree changes ...
-	test_expect_failure "$command: replace submodule with a file must fail" '
+	test_expect_success "$command: replace submodule with a file must fail" '
 		prolog &&
 		reset_work_tree_to add_sub1 &&
 		(
@@ -480,7 +480,7 @@ test_submodule_switch_common () {
 	'
 	# ... or even destroy unpushed parts of submodule history if that
 	# still uses a .git directory.
-	test_expect_failure "$command: replace submodule containing a .git directory with a file must fail" '
+	test_expect_success "$command: replace submodule containing a .git directory with a file must fail" '
 		prolog &&
 		reset_work_tree_to add_sub1 &&
 		(

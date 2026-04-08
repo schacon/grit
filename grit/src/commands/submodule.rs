@@ -7,6 +7,7 @@ use crate::grit_exe;
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::config::{ConfigFile, ConfigScope};
+use grit_lib::index::MODE_GITLINK;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
@@ -297,8 +298,21 @@ fn filter_submodules<'a>(modules: &'a [SubmoduleInfo], paths: &[String]) -> Vec<
 
 // ── Read recorded commit from the index ──────────────────────────────
 
-/// Read the commit OID recorded in `HEAD`’s tree for a submodule path (gitlink).
+/// Read the commit OID for a submodule path (gitlink).
+///
+/// Prefer the **index** when it contains a stage-0 gitlink at `submodule_path`, so
+/// `git submodule update` works after `git apply --index` / partial index updates while `HEAD`
+/// still points at an older commit. Fall back to `HEAD`'s tree when the path is not in the index.
 fn read_submodule_commit(repo: &Repository, submodule_path: &str) -> Result<Option<String>> {
+    let index_path = repo.index_path();
+    if let Ok(index) = repo.load_index_at(&index_path) {
+        if let Some(entry) = index.get(submodule_path.as_bytes(), 0) {
+            if entry.mode == MODE_GITLINK {
+                return Ok(Some(entry.oid.to_hex()));
+            }
+        }
+    }
+
     let head = resolve_head(&repo.git_dir)?;
     let commit_oid = match head.oid() {
         Some(o) => *o,
@@ -526,6 +540,19 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
 
         let modules_dir = repo.git_dir.join("modules").join(&m.name);
 
+        // Submodule checkouts must use a gitfile at `<path>/.git` pointing at
+        // `.git/modules/<name>/`. A nested `.git` directory breaks `git rev-parse --git-dir`
+        // and `replace_gitfile_with_git_dir` in `lib-submodule-update.sh` (t4137).
+        if sub_path.join(".git").is_dir() && modules_dir.join("HEAD").exists() {
+            fs::remove_dir_all(sub_path.join(".git")).with_context(|| {
+                format!(
+                    "failed to normalize submodule .git at {}",
+                    sub_path.display()
+                )
+            })?;
+            attach_existing_submodule_worktree(&grit_bin, &modules_dir, &sub_path)?;
+        }
+
         let needs_clone = if sub_path.exists() {
             // Directory exists but might be empty (from superproject clone).
             // Check if it has a .git file/dir.
@@ -606,6 +633,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
                     eprintln!("error: failed to clone submodule from '{}'", clone_url);
                     bail!("failed to clone submodule '{}'", m.name);
                 }
+                set_submodule_core_worktree(&grit_bin, &modules_dir, &sub_path);
             }
         }
 
@@ -675,6 +703,30 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             );
         }
 
+        // `checkout` must leave the submodule index matching `HEAD`; otherwise
+        // `git status` inside the submodule shows spurious staged deletions
+        // (t4137-apply-submodule `test_submodule_content`).
+        let reset_status = Command::new(&grit_bin)
+            .args(["reset", "--hard", "--quiet"])
+            .current_dir(&sub_path)
+            .status()
+            .context("failed to reset submodule index after checkout")?;
+        if !reset_status.success() {
+            bail!("failed to reset submodule '{}' after checkout", m.name);
+        }
+
+        // `checkout`/`reset` must not replace the submodule gitfile with a nested `.git/` directory;
+        // normalize again so `git rev-parse --git-dir` matches Git (t4137 `replace_gitfile_with_git_dir`).
+        if sub_path.join(".git").is_dir() && modules_dir.join("HEAD").exists() {
+            fs::remove_dir_all(sub_path.join(".git")).with_context(|| {
+                format!(
+                    "failed to normalize submodule .git after checkout for {}",
+                    sub_path.display()
+                )
+            })?;
+            attach_existing_submodule_worktree(&grit_bin, &modules_dir, &sub_path)?;
+        }
+
         eprintln!(
             "Submodule path '{}': checked out '{}'",
             m.path,
@@ -705,6 +757,19 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
     Ok(())
 }
 
+fn set_submodule_core_worktree(grit_bin: &Path, modules_dir: &Path, sub_path: &Path) {
+    // Match Git: store a path relative to the module git dir so `test_git_directory_is_unchanged`
+    // can compare `.git/modules/<name>` with a copied `<path>/.git` (t4137).
+    let wt = pathdiff_relative(modules_dir, sub_path);
+    let _ = Command::new(grit_bin)
+        .arg("--git-dir")
+        .arg(modules_dir)
+        .arg("config")
+        .arg("core.worktree")
+        .arg(&wt)
+        .status();
+}
+
 fn attach_existing_submodule_worktree(
     grit_bin: &Path,
     modules_dir: &Path,
@@ -715,13 +780,7 @@ fn attach_existing_submodule_worktree(
     }
     let gitfile = sub_path.join(".git");
     fs::write(&gitfile, format!("gitdir: {}\n", modules_dir.display()))?;
-    let _ = Command::new(grit_bin)
-        .arg("--git-dir")
-        .arg(modules_dir)
-        .arg("config")
-        .arg("core.worktree")
-        .arg(sub_path)
-        .status();
+    set_submodule_core_worktree(grit_bin, modules_dir, sub_path);
     Ok(())
 }
 

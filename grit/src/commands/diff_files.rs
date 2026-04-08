@@ -443,8 +443,9 @@ fn collect_changes(
                 WorktreeStatus::Unchanged => { /* skip — stat says identical */ }
                 WorktreeStatus::Modified(wt_mode, wt_oid) => {
                     let idx_canonical = canonicalize_mode(*idx_mode);
-                    if wt_oid != *idx_oid || wt_mode != idx_canonical || is_stat_smudged(idx_entry)
-                    {
+                    // Content and mode match the index: treat as clean even if the index entry
+                    // was created without racily-clean stat data (e.g. `git apply --index`).
+                    if wt_oid != *idx_oid || wt_mode != idx_canonical {
                         // Detect type changes (e.g., symlink ↔ regular, regular ↔ submodule)
                         let status = if mode_type(idx_canonical) != mode_type(wt_mode) {
                             'T'
@@ -856,17 +857,6 @@ fn matches_diff_filter(status: char, spec: &str) -> bool {
     true
 }
 
-/// `read-tree`-style entries carry zeroed stat data and are considered dirty
-/// until an explicit refresh (e.g. `checkout-index -u` / `update-index --refresh`).
-fn is_stat_smudged(entry: &IndexEntry) -> bool {
-    entry.ctime_sec == 0
-        && entry.ctime_nsec == 0
-        && entry.mtime_sec == 0
-        && entry.mtime_nsec == 0
-        && entry.dev == 0
-        && entry.ino == 0
-}
-
 // ── Worktree probing ─────────────────────────────────────────────────
 
 /// Result of probing a working-tree file against its index entry.
@@ -950,6 +940,14 @@ fn read_worktree_info_fast(
             // Treat as a submodule (mode 160000)
             let sub_oid = read_submodule_head(abs_path).unwrap_or(index_entry.oid);
             return Ok(WorktreeStatus::Modified(0o160000, sub_oid));
+        }
+        if index_entry.mode == MODE_GITLINK {
+            let is_empty = fs::read_dir(abs_path)
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(false);
+            if is_empty {
+                return Ok(WorktreeStatus::Unchanged);
+            }
         }
     }
 
