@@ -185,6 +185,7 @@ pub fn run(args: Args) -> Result<()> {
         negotiate_only: false,
         update_head_ok: false,
         update_refs: false,
+        upload_pack: None,
     };
     super::fetch::run(fetch_args)?;
 

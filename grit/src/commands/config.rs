@@ -19,6 +19,12 @@ use std::path::{Path, PathBuf};
     allow_negative_numbers = true
 )]
 pub struct Args {
+    /// Run as if started in this directory (repeatable).
+    ///
+    /// Declared before `subcommand` so `git config -C <dir> key value` parses like Git.
+    #[arg(short = 'C', value_name = "PATH", global = true)]
+    pub change_dir: Vec<PathBuf>,
+
     #[command(subcommand)]
     pub subcommand: Option<ConfigSubcommand>,
 
@@ -42,10 +48,6 @@ pub struct Args {
     /// Use the given config file.
     #[arg(short = 'f', long = "file", global = true)]
     pub file: Option<PathBuf>,
-
-    /// Run as if started in this directory (affects repository discovery).
-    #[arg(short = 'C', value_name = "PATH", global = true)]
-    pub change_dir: Option<PathBuf>,
 
     /// Read config from a blob object (e.g. HEAD:.gitmodules).
     #[arg(long = "blob", value_name = "BLOB_ISH")]
@@ -292,6 +294,11 @@ pub struct EditArgs {}
 
 /// Run the `config` command.
 pub fn run(args: Args) -> Result<()> {
+    for dir in &args.change_dir {
+        std::env::set_current_dir(dir)
+            .with_context(|| format!("cannot change to '{}'", dir.display()))?;
+    }
+
     // If --blob is given, read config from the blob and handle read-only ops
     if let Some(ref blob_spec) = args.blob {
         // --blob is incompatible with file-scope flags

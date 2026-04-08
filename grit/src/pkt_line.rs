@@ -17,6 +17,14 @@ pub fn write_line(w: &mut impl Write, data: &str) -> io::Result<()> {
     writeln!(w, "{:04x}{}", len, data)
 }
 
+/// Append a pkt-line encoding of `data` (with trailing newline) to `buf`.
+pub fn write_line_to_vec(buf: &mut Vec<u8>, data: &str) -> io::Result<()> {
+    let len = 4 + data.len() + 1;
+    let line = format!("{:04x}{}\n", len, data);
+    buf.extend_from_slice(line.as_bytes());
+    Ok(())
+}
+
 /// Write a flush packet (`0000`).
 pub fn write_flush(w: &mut impl Write) -> io::Result<()> {
     write!(w, "0000")
@@ -65,6 +73,7 @@ pub fn read_packet(r: &mut impl Read) -> io::Result<Option<Packet>> {
             let payload_len = n - 4;
             let mut buf = vec![0u8; payload_len];
             r.read_exact(&mut buf)?;
+            // NUL is valid UTF-8; avoid lossy conversion (would break ref advertisement \0).
             let s = String::from_utf8(buf)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             Ok(Some(Packet::Data(
