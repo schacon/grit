@@ -1650,16 +1650,19 @@ fn write_fresh_git_directory(
     initial_branch: &str,
     template_dir: Option<&Path>,
 ) -> Result<()> {
-    for sub in &[
+    let mut subs = vec![
         "objects",
         "objects/info",
         "objects/pack",
         "refs",
         "refs/heads",
         "refs/tags",
-        "info",
-        "hooks",
-    ] {
+    ];
+    if !bare {
+        subs.push("info");
+        subs.push("hooks");
+    }
+    for sub in subs {
         fs::create_dir_all(git_dir.join(sub))?;
     }
 

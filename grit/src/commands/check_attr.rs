@@ -1,7 +1,9 @@
 //! `grit check-attr` — display gitattributes information.
+//!
+//! Argument parsing follows Git `builtin/check-attr.c` manually: clap cannot preserve a lone `--`
+//! after `--stdin`, which changes whether trailing tokens are attributes or pathspecs.
 
 use anyhow::{bail, Context, Result};
-use clap::Args as ClapArgs;
 use grit_lib::attributes::{
     builtin_objectmode_index, builtin_objectmode_worktree, collect_attrs_for_path,
     load_gitattributes_bare, load_gitattributes_from_index, load_gitattributes_from_tree,
@@ -13,102 +15,151 @@ use grit_lib::repo::Repository;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
-/// Arguments for `grit check-attr`.
-#[derive(Debug, ClapArgs)]
-#[command(about = "Display gitattributes information")]
-pub struct Args {
-    /// Report all attributes set for each file.
-    #[arg(short = 'a', long = "all")]
-    pub all: bool,
-
-    /// Read paths from stdin (one per line).
-    #[arg(long = "stdin")]
-    pub stdin: bool,
-
-    /// Use .gitattributes from the index only.
-    #[arg(long = "cached")]
-    pub cached: bool,
-
-    /// Read attributes from the given tree-ish.
-    #[arg(long = "source", value_name = "TREEISH")]
-    pub source: Option<String>,
-
-    /// Use NUL as delimiter with --stdin / output.
-    #[arg(short = 'Z')]
-    pub nul: bool,
-
-    /// Attribute names and pathnames (after `--`).
-    #[arg(required = true, allow_hyphen_values = true, trailing_var_arg = true)]
-    pub args: Vec<String>,
+struct CheckAttrOptions {
+    all: bool,
+    stdin_mode: bool,
+    cached: bool,
+    source: Option<String>,
+    nul: bool,
+    positionals: Vec<String>,
 }
 
-fn parse_attrs_paths(args: &Args) -> (Vec<String>, Vec<String>) {
-    if args.all {
-        let mut paths = Vec::new();
-        for a in &args.args {
-            if a == "--" {
-                continue;
+fn parse_check_attr_argv(rest: &[String]) -> Result<CheckAttrOptions> {
+    let mut all = false;
+    let mut stdin_mode = false;
+    let mut cached = false;
+    let mut source: Option<String> = None;
+    let mut nul = false;
+    let mut positionals: Vec<String> = Vec::new();
+
+    let mut i = 0usize;
+    while i < rest.len() {
+        let arg = rest[i].as_str();
+        match arg {
+            "-a" | "--all" => {
+                all = true;
+                i += 1;
             }
-            paths.push(a.clone());
+            "--stdin" => {
+                stdin_mode = true;
+                i += 1;
+            }
+            "--cached" => {
+                cached = true;
+                i += 1;
+            }
+            "-Z" => {
+                nul = true;
+                i += 1;
+            }
+            "--source" => {
+                i += 1;
+                let Some(v) = rest.get(i) else {
+                    bail!("a value is required for '--source <TREEISH>' but none was supplied");
+                };
+                source = Some(v.clone());
+                i += 1;
+            }
+            s if s.starts_with("--source=") => {
+                source = Some(s["--source=".len()..].to_string());
+                i += 1;
+            }
+            s if s.starts_with('-') && s != "-" && s != "--" => {
+                bail!("unknown option '{s}'");
+            }
+            _ => {
+                positionals.push(rest[i].clone());
+                i += 1;
+            }
         }
-        return (Vec::new(), paths);
     }
-    let mut attrs = Vec::new();
-    let mut paths = Vec::new();
-    let mut after = false;
-    for a in &args.args {
-        if a == "--" {
-            after = true;
-            continue;
-        }
-        if after {
-            paths.push(a.clone());
-        } else {
-            attrs.push(a.clone());
-        }
-    }
-    if !after && attrs.len() > 1 {
-        paths.push(attrs.pop().unwrap_or_default());
-    } else if !after && attrs.len() == 1 && paths.is_empty() {
-        paths.push(attrs.remove(0));
-    }
-    (attrs, paths)
+
+    Ok(CheckAttrOptions {
+        all,
+        stdin_mode,
+        cached,
+        source,
+        nul,
+        positionals,
+    })
 }
 
-fn validate_cli(attrs: &[String], paths: &[String], args: &Args) -> Result<()> {
-    if args.stdin {
-        if attrs.is_empty() && !args.all {
-            bail!("usage: missing attribute name");
+/// Split positionals like Git `cmd_check_attr` after `parse_options`.
+fn split_attrs_paths(
+    all: bool,
+    stdin_mode: bool,
+    positionals: &[String],
+) -> Result<(Vec<String>, Vec<String>)> {
+    let doubledash = positionals.iter().position(|a| a == "--");
+
+    if all {
+        if doubledash.is_some_and(|dd| dd >= 1) {
+            bail!("usage: Attributes and --all both specified");
         }
-        if !paths.is_empty() {
-            bail!("usage: pathspec with --stdin");
-        }
-        return Ok(());
+        let paths = if let Some(dd) = doubledash {
+            positionals[dd + 1..].to_vec()
+        } else {
+            positionals.to_vec()
+        };
+        return Ok((Vec::new(), paths));
     }
-    if attrs.is_empty() && !args.all {
+
+    if doubledash == Some(0) {
         bail!("usage: missing attribute name");
     }
-    if paths.is_empty() {
-        bail!("usage: missing pathspec");
+
+    let (attrs, paths) = if let Some(dd) = doubledash {
+        let attrs = positionals[..dd].to_vec();
+        let paths = positionals[dd + 1..].to_vec();
+        (attrs, paths)
+    } else if stdin_mode {
+        (positionals.to_vec(), Vec::new())
+    } else {
+        let mut attrs = positionals.to_vec();
+        let paths = if attrs.len() >= 2 {
+            attrs.split_off(1)
+        } else {
+            Vec::new()
+        };
+        (attrs, paths)
+    };
+
+    if attrs.is_empty() {
+        bail!("usage: missing attribute name");
     }
-    for a in attrs {
+    for a in &attrs {
         if a.is_empty() {
             bail!("usage: empty attribute name");
         }
     }
-    Ok(())
-}
-
-fn load_parsed_for_run(repo: &Repository, args: &Args) -> Result<ParsedGitAttributes> {
-    let treeish = resolve_attr_treeish(repo, args.source.as_deref())?;
-
-    if let Some(spec) = treeish.filter(|s| !s.is_empty()) {
-        let oid = resolve_tree_oid(repo, &spec)
-            .map_err(|_| anyhow::anyhow!("fatal: bad --attr-source or GIT_ATTR_SOURCE"))?;
-        return load_gitattributes_from_tree(&repo.odb, &oid).context("load tree attributes");
+    if !stdin_mode && paths.is_empty() {
+        bail!("usage: missing pathspec");
     }
 
-    if args.cached {
+    Ok((attrs, paths))
+}
+
+fn load_parsed_for_run(
+    repo: &Repository,
+    source: Option<&str>,
+    cached: bool,
+) -> Result<ParsedGitAttributes> {
+    let (treeish, ignore_bad_tree) = resolve_attr_treeish(repo, source)?;
+
+    if let Some(spec) = treeish.filter(|s| !s.is_empty()) {
+        match resolve_tree_oid(repo, &spec) {
+            Ok(oid) => {
+                return load_gitattributes_from_tree(&repo.odb, &oid)
+                    .context("load tree attributes");
+            }
+            Err(_) if ignore_bad_tree => {}
+            Err(_) => {
+                bail!("fatal: bad --attr-source or GIT_ATTR_SOURCE");
+            }
+        }
+    }
+
+    if cached {
         let index_path = std::env::var("GIT_INDEX_FILE")
             .ok()
             .map(PathBuf::from)
@@ -126,12 +177,24 @@ fn load_parsed_for_run(repo: &Repository, args: &Args) -> Result<ParsedGitAttrib
     load_gitattributes_stack(repo, wt).context("work tree attributes")
 }
 
-/// Run the `check-attr` command.
-pub fn run(args: Args) -> Result<()> {
-    let (attrs, mut paths) = parse_attrs_paths(&args);
-    validate_cli(&attrs, &paths, &args)?;
+fn write_line(out: &mut dyn Write, path_out: &str, attr: &str, val: &str, nul: bool) -> Result<()> {
+    if nul {
+        write!(out, "{path_out}\0{attr}\0{val}\0")?;
+    } else {
+        writeln!(out, "{path_out}: {attr}: {val}")?;
+    }
+    Ok(())
+}
 
-    if args.stdin {
+/// Run `check-attr` from argv after the subcommand (matches Git `cmd_check_attr` argv).
+pub fn run_from_argv(rest: &[String]) -> Result<()> {
+    let opts = parse_check_attr_argv(rest)?;
+    let (attrs, mut paths) = split_attrs_paths(opts.all, opts.stdin_mode, &opts.positionals)?;
+    if opts.stdin_mode && !paths.is_empty() {
+        bail!("usage: pathspec with --stdin");
+    }
+
+    if opts.stdin_mode {
         let mut stdin = io::stdin().lock();
         let mut line = String::new();
         while stdin.read_line(&mut line)? > 0 {
@@ -141,11 +204,22 @@ pub fn run(args: Args) -> Result<()> {
             }
             line.clear();
         }
+        if attrs.is_empty() && !opts.all {
+            bail!("usage: missing attribute name");
+        }
+        if paths.is_empty() {
+            bail!("usage: missing pathspec");
+        }
+        for a in &attrs {
+            if a.is_empty() {
+                bail!("usage: empty attribute name");
+            }
+        }
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;
 
-    let parsed = load_parsed_for_run(&repo, &args)?;
+    let parsed = load_parsed_for_run(&repo, opts.source.as_deref(), opts.cached)?;
 
     for w in &parsed.warnings {
         eprintln!("{w}");
@@ -177,14 +251,14 @@ pub fn run(args: Args) -> Result<()> {
 
         let map = collect_attrs_for_path(&parsed.rules, &parsed.macros, &rel, ignore_case);
 
-        if args.all {
+        if opts.all {
             let mut names: Vec<String> = map.keys().cloned().collect();
             names.sort();
             for name in names {
                 if let Some(v) = map.get(&name) {
                     let disp = v.display();
                     if disp != "unspecified" {
-                        write_line(&mut out, &path_out, &name, disp, args.nul)?;
+                        write_line(&mut out, &path_out, &name, disp, opts.nul)?;
                     }
                 }
             }
@@ -193,7 +267,7 @@ pub fn run(args: Args) -> Result<()> {
 
         for a in &attrs {
             if a == "builtin_objectmode" {
-                let mode = if args.cached {
+                let mode = if opts.cached {
                     index_cached
                         .as_ref()
                         .and_then(|i| builtin_objectmode_index(i, &rel))
@@ -201,25 +275,16 @@ pub fn run(args: Args) -> Result<()> {
                     builtin_objectmode_worktree(&repo, &rel)
                 };
                 let val = mode.unwrap_or_else(|| "unspecified".to_string());
-                write_line(&mut out, &path_out, a, &val, args.nul)?;
+                write_line(&mut out, &path_out, a, &val, opts.nul)?;
                 continue;
             }
             let val = match map.get(a) {
                 Some(v) => v.display().to_string(),
                 None => "unspecified".to_string(),
             };
-            write_line(&mut out, &path_out, a, &val, args.nul)?;
+            write_line(&mut out, &path_out, a, &val, opts.nul)?;
         }
     }
 
-    Ok(())
-}
-
-fn write_line(out: &mut dyn Write, path_out: &str, attr: &str, val: &str, nul: bool) -> Result<()> {
-    if nul {
-        write!(out, "{path_out}\0{attr}\0{val}\0")?;
-    } else {
-        writeln!(out, "{path_out}: {attr}: {val}")?;
-    }
     Ok(())
 }

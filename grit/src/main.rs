@@ -3096,7 +3096,14 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "bugreport" => commands::bugreport::run(parse_cmd_args(subcmd, rest)),
         "bundle" => commands::bundle::run(parse_cmd_args(subcmd, rest)),
         "cat-file" => commands::cat_file::run(parse_cmd_args(subcmd, rest)),
-        "check-attr" => commands::check_attr::run(parse_cmd_args(subcmd, rest)),
+        "check-attr" => {
+            if rest.len() == 1 && (rest[0] == "-h" || rest[0] == "--help") {
+                if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd) {
+                    print_upstream_synopsis_and_exit(subcmd, syn, 129);
+                }
+            }
+            commands::check_attr::run_from_argv(rest)
+        }
         "check-ignore" => commands::check_ignore::run(parse_cmd_args(subcmd, rest)),
         "check-mailmap" => commands::check_mailmap::run(parse_cmd_args(subcmd, rest)),
         "check-ref-format" => commands::check_ref_format::run(parse_cmd_args(subcmd, rest)),
