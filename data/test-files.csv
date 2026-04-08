@@ -832,7 +832,7 @@ t4208-diff-pathspec-magic	t4	yes	22	21	1	false	ok	0
 t4208-log-magic-pathspec	t4	yes	21	12	9	false	ok	0
 t4209-log-pickaxe	t4	yes	0	0	0	false	timeout	0
 t4210-log-i18n	t4	yes	21	17	4	false	ok	0
-t4211-line-log	t4	yes	53	4	49	false	ok	0
+t4211-line-log	t4	yes	53	31	22	false	ok	0
 t4212-log-corrupt	t4	yes	13	3	10	false	ok	0
 t4213-log-tabexpand	t4	yes	9	1	8	false	ok	0
 t4214-log-graph-octopus	t4	yes	17	6	11	false	ok	0

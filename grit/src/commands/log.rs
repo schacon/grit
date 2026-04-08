@@ -8,6 +8,9 @@ use clap::Args as ClapArgs;
 use grit_lib::diff::{
     count_changes, diff_trees, format_raw, format_stat_line, unified_diff, DiffEntry, DiffStatus,
 };
+use grit_lib::line_log::{
+    format_line_log_diff, line_log_filter_commits, parse_line_log_ranges, rewritten_first_parent,
+};
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::odb::Odb;
 use grit_lib::reflog::read_reflog;
@@ -19,6 +22,7 @@ use grit_lib::rev_parse::resolve_revision_as_commit;
 use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
 use std::collections::{HashMap, HashSet};
+use std::fs::OpenOptions;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
@@ -132,6 +136,10 @@ pub struct Args {
     /// Show unified diff (patch) after each commit.
     #[arg(short = 'p', long = "patch", alias = "unified")]
     pub patch: bool,
+
+    /// Do not show diff after commits.
+    #[arg(long = "no-patch")]
+    pub no_patch: bool,
 
     /// Alias for --patch.
     #[arg(short = 'u', hide = true)]
@@ -364,6 +372,327 @@ pub struct Args {
     /// Generate diff with N lines of context.
     #[arg(short = 'U', long = "unified", value_name = "N")]
     pub unified: Option<usize>,
+
+    /// Trace line range history (`git log -L`).
+    #[arg(short = 'L', value_name = "range:file", allow_hyphen_values = true)]
+    pub line_range: Vec<String>,
+
+    /// Print parent hashes on the first line of each commit (after rewrite).
+    #[arg(long = "parents")]
+    pub show_parents: bool,
+
+    /// Write normal log output to a file; diff still goes to stdout.
+    #[arg(long = "output", value_name = "file")]
+    pub output_path: Option<PathBuf>,
+
+    /// Suppress diff output (line-log: show commits only).
+    #[arg(short = 's')]
+    pub suppress_diff: bool,
+}
+
+fn run_line_log(repo: &Repository, args: Args) -> Result<()> {
+    if !args.pathspecs.is_empty() {
+        anyhow::bail!("-L<range>:<file> cannot be used with pathspec");
+    }
+    if args.follow {
+        anyhow::bail!("options '-L' and '--follow' cannot be used together");
+    }
+    if args.raw {
+        anyhow::bail!("--raw is incompatible with -L");
+    }
+    if args.reverse && args.graph {
+        anyhow::bail!("options '--reverse' and '--graph' cannot be used together");
+    }
+
+    let use_color = if args.no_color {
+        false
+    } else if let Some(ref c) = args.color {
+        c == "always" || c == "true" || c.is_empty()
+    } else {
+        let mut c = false;
+        if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
+            if let Some(val) = config.get("color.diff") {
+                match val.as_str() {
+                    "always" | "true" => c = true,
+                    "auto" => {
+                        c = std::io::IsTerminal::is_terminal(&std::io::stdout())
+                            || std::env::var_os("GIT_PAGER_IN_USE").is_some()
+                    }
+                    _ => {}
+                }
+            }
+        }
+        c
+    };
+
+    let (start_oids, exclude_oids) = if args.all {
+        (collect_all_ref_oids(&repo.git_dir)?, Vec::new())
+    } else if args.revisions.is_empty() {
+        let head = resolve_head(&repo.git_dir)?;
+        match head.oid() {
+            Some(oid) => (vec![*oid], Vec::new()),
+            None => anyhow::bail!("your current branch does not have any commits yet"),
+        }
+    } else {
+        let mut oids = Vec::new();
+        let mut excludes = Vec::new();
+        for rev in &args.revisions {
+            if let Some(stripped) = rev.strip_prefix('^') {
+                excludes.push(resolve_revision_as_commit(repo, stripped)?);
+            } else {
+                oids.push(resolve_revision_as_commit(repo, rev)?);
+            }
+        }
+        if oids.is_empty() {
+            let head = resolve_head(&repo.git_dir)?;
+            if let Some(oid) = head.oid() {
+                oids.push(*oid);
+            }
+        }
+        (oids, excludes)
+    };
+
+    if start_oids.len() != 1 {
+        anyhow::bail!("More than one commit to dig from");
+    }
+    let tip = start_oids[0];
+
+    let excluded_set: HashSet<ObjectId> = if exclude_oids.is_empty() {
+        HashSet::new()
+    } else {
+        collect_reachable(&repo.odb, &exclude_oids)?
+    };
+
+    let rename_threshold = args
+        .find_renames
+        .as_deref()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(50);
+
+    let walk = walk_commits(
+        &repo.odb,
+        &repo.git_dir,
+        &[tip],
+        None,
+        args.skip,
+        args.first_parent,
+        None,
+        None,
+        None,
+        args.no_merges,
+        args.merges,
+        &[][..],
+        &excluded_set,
+    )?;
+    let order: Vec<ObjectId> = walk.iter().map(|(o, _)| *o).collect();
+
+    let initial = parse_line_log_ranges(&repo.odb, &tip, &args.line_range)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let paths: Vec<String> = initial.iter().map(|f| f.path.clone()).collect();
+
+    let (filtered, _state, displays) = line_log_filter_commits(
+        &repo.odb,
+        order,
+        tip,
+        initial,
+        paths,
+        rename_threshold,
+        args.first_parent,
+    )
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let mut filtered = filtered;
+    if let Some(threshold) = args.until.as_ref().and_then(|s| parse_date_to_epoch(s)) {
+        filtered.retain(|oid| {
+            load_commit_info(repo, *oid)
+                .map(|info| extract_epoch_from_ident(&info.committer) <= threshold)
+                .unwrap_or(false)
+        });
+    }
+
+    let filtered_set: HashSet<ObjectId> = filtered.iter().copied().collect();
+
+    let mut out_main: Box<dyn Write> = if let Some(ref p) = args.output_path {
+        Box::new(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(p)
+                .with_context(|| format!("open --output {}", p.display()))?,
+        )
+    } else {
+        Box::new(io::stdout().lock())
+    };
+
+    let line_prefix = args.line_prefix.as_deref().unwrap_or("");
+    let mut notes_cache = NotesMapCache::new(repo);
+
+    let format_requires_decorations = args
+        .format
+        .as_deref()
+        .map(|fmt| {
+            let template = fmt
+                .strip_prefix("format:")
+                .or_else(|| fmt.strip_prefix("tformat:"))
+                .unwrap_or(fmt);
+            template.contains("%d") || template.contains("%D")
+        })
+        .unwrap_or(false);
+    let (show_decorations, decorate_full) =
+        resolve_decoration_display(&args, format_requires_decorations);
+    let decorations = if !show_decorations {
+        None
+    } else {
+        Some(collect_decorations(repo, decorate_full)?)
+    };
+
+    let show_patch = !args.suppress_diff && !args.no_patch;
+
+    if args.graph {
+        let mut nodes = Vec::new();
+        let mut seen = HashSet::new();
+        for oid in &filtered {
+            if !seen.insert(*oid) {
+                continue;
+            }
+            let parents: Vec<ObjectId> = load_raw_parents(repo, *oid)?
+                .into_iter()
+                .filter(|p| filtered_set.contains(p))
+                .collect();
+            nodes.push(GraphCommitNode {
+                oid: *oid,
+                parents,
+                is_boundary: false,
+            });
+        }
+
+        let abbrev_len = parse_abbrev(&args.abbrev);
+        let stdout = io::stdout();
+        let mut out = stdout.lock();
+        let mut graph = AsciiGraph::new();
+
+        let node_count = nodes.len();
+        for (node_idx, node) in nodes.into_iter().enumerate() {
+            let info = load_commit_info(repo, node.oid)?;
+            graph.update(node.clone());
+
+            loop {
+                let (line, shown_commit_line) = graph.next_line();
+                if shown_commit_line {
+                    let parent_line: Vec<ObjectId> = if args.show_parents {
+                        rewritten_first_parent(&repo.odb, &node.oid, &filtered_set)
+                            .map_err(|e| anyhow::anyhow!("{}", e))?
+                            .into_iter()
+                            .collect()
+                    } else {
+                        node.parents.clone()
+                    };
+                    let rendered = render_graph_commit_text(
+                        &node,
+                        &info,
+                        &args,
+                        decorations.as_ref(),
+                        abbrev_len,
+                        &parent_line,
+                    );
+                    writeln!(out, "{line_prefix}{line}{rendered}")?;
+                    break;
+                }
+                writeln!(out, "{line_prefix}{line}")?;
+            }
+
+            while !graph.is_commit_finished() {
+                let (line, _) = graph.next_line();
+                writeln!(out, "{line_prefix}{line}")?;
+            }
+
+            if show_patch {
+                if let Some(ds) = displays.get(&node.oid) {
+                    for d in ds {
+                        write!(
+                            out,
+                            "{}",
+                            format_line_log_diff(
+                                line_prefix,
+                                &d.old_path,
+                                &d.new_path,
+                                &d.old_bytes,
+                                &d.new_bytes,
+                                &d.commit_ranges,
+                                &d.touched,
+                            )
+                        )?;
+                    }
+                    if node_idx + 1 < node_count {
+                        writeln!(out)?;
+                    }
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    let is_format_separator = args
+        .format
+        .as_deref()
+        .map(|f| f.starts_with("format:"))
+        .unwrap_or(false);
+
+    let n_filtered = filtered.len();
+    for (i, oid) in filtered.iter().enumerate() {
+        if is_format_separator && i > 0 {
+            if args.null_terminator {
+                write!(out_main, "\0")?;
+            } else {
+                writeln!(out_main)?;
+            }
+        }
+        let info = load_commit_info(repo, *oid)?;
+        let parent_override: Option<Vec<ObjectId>> = if args.show_parents {
+            rewritten_first_parent(&repo.odb, oid, &filtered_set)
+                .map_err(|e| anyhow::anyhow!("{}", e))?
+                .map(|p| vec![p])
+        } else {
+            None
+        };
+        format_commit(
+            &mut out_main,
+            oid,
+            &info,
+            &args,
+            decorations.as_ref(),
+            use_color,
+            &mut notes_cache,
+            &repo.odb,
+            parent_override.as_deref(),
+            true,
+        )?;
+        if show_patch {
+            if let Some(ds) = displays.get(oid) {
+                for d in ds {
+                    write!(
+                        out_main,
+                        "{}",
+                        format_line_log_diff(
+                            line_prefix,
+                            &d.old_path,
+                            &d.new_path,
+                            &d.old_bytes,
+                            &d.new_bytes,
+                            &d.commit_ranges,
+                            &d.touched,
+                        )
+                    )?;
+                }
+                if i + 1 < n_filtered {
+                    writeln!(out_main)?;
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Extract epoch timestamp from a Git ident string.
@@ -631,8 +960,14 @@ fn run_graph_log(repo: &Repository, args: &Args) -> Result<()> {
         loop {
             let (line, shown_commit_line) = graph.next_line();
             if shown_commit_line {
-                let rendered =
-                    render_graph_commit_text(&node, &info, args, decorations.as_ref(), abbrev_len);
+                let rendered = render_graph_commit_text(
+                    &node,
+                    &info,
+                    args,
+                    decorations.as_ref(),
+                    abbrev_len,
+                    &node.parents,
+                );
                 writeln!(out, "{line_prefix}{line}{rendered}")?;
                 break;
             }
@@ -1004,6 +1339,7 @@ fn render_graph_commit_text(
     args: &Args,
     decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
     abbrev_len: usize,
+    parent_line: &[ObjectId],
 ) -> String {
     let hex = node.oid.to_hex();
     if args.oneline || args.format.as_deref() == Some("oneline") {
@@ -1035,6 +1371,7 @@ fn render_graph_commit_text(
                 abbrev_len,
                 false,
                 None,
+                parent_line,
             );
         }
         if fmt.contains('%') {
@@ -1047,6 +1384,7 @@ fn render_graph_commit_text(
                 abbrev_len,
                 false,
                 None,
+                parent_line,
             );
         }
     }
@@ -1603,7 +1941,16 @@ impl AsciiGraph {
 
 /// Run the `log` command.
 pub fn run(mut args: Args) -> Result<()> {
+    let saw_bare_l = args.line_range.iter().any(|s| s.is_empty());
+    args.line_range.retain(|s| !s.is_empty());
+    if saw_bare_l && args.line_range.is_empty() {
+        anyhow::bail!("switch `L' requires a value");
+    }
+
     let repo = Repository::discover(None).context("not a git repository")?;
+    if !args.line_range.is_empty() {
+        return run_line_log(&repo, args);
+    }
     validate_pathspec_scope(&repo, &args.pathspecs)?;
     let mut implied_pathspecs: Vec<String> = Vec::new();
 
@@ -1891,6 +2238,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 use_color,
                 &mut notes_cache,
                 &repo.odb,
+                None,
+                false,
             )?;
 
             if show_diff {
@@ -2044,6 +2393,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 use_color,
                 &mut notes_cache,
                 &repo.odb,
+                None,
+                false,
             )?;
 
             if show_diff {
@@ -2291,6 +2642,8 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
             false,
             &mut notes_cache,
             &repo.odb,
+            None,
+            false,
         )?;
         if show_diff {
             write_commit_diff(&mut out, repo, commit_data, args, &args.pathspecs)?;
@@ -3198,6 +3551,9 @@ fn commit_passes_post_walk_filters(
 }
 
 /// Format and print a single commit.
+///
+/// When `parent_line_override` is set (e.g. `log --parents` after line-log rewrite), `%p` / `%P`
+/// and the `Merge:` header use these hashes instead of the raw commit parents.
 fn format_commit(
     out: &mut impl Write,
     oid: &ObjectId,
@@ -3207,9 +3563,12 @@ fn format_commit(
     use_color: bool,
     notes_cache: &mut NotesMapCache<'_>,
     odb: &Odb,
+    parent_line_override: Option<&[ObjectId]>,
+    line_log: bool,
 ) -> Result<()> {
     let hex = oid.to_hex();
     let abbrev_len = parse_abbrev(&args.abbrev);
+    let display_parents = parent_line_override.unwrap_or(info.parents.as_slice());
 
     if args.oneline || args.format.as_deref() == Some("oneline") {
         let first_line = info.message.lines().next().unwrap_or("");
@@ -3245,6 +3604,7 @@ fn format_commit(
                 abbrev_len,
                 use_color,
                 note_bytes,
+                display_parents,
             );
             if is_tformat {
                 if args.null_terminator {
@@ -3259,9 +3619,8 @@ fn format_commit(
         Some("short") => {
             let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
-            if info.parents.len() > 1 {
-                let parent_abbrevs: Vec<String> = info
-                    .parents
+            if display_parents.len() > 1 {
+                let parent_abbrevs: Vec<String> = display_parents
                     .iter()
                     .map(|p| {
                         let h = p.to_hex();
@@ -3285,9 +3644,8 @@ fn format_commit(
             } else {
                 writeln!(out, "commit {hex}{dec}")?;
             }
-            if info.parents.len() > 1 {
-                let parent_abbrevs: Vec<String> = info
-                    .parents
+            if display_parents.len() > 1 {
+                let parent_abbrevs: Vec<String> = display_parents
                     .iter()
                     .map(|p| {
                         let h = p.to_hex();
@@ -3307,14 +3665,15 @@ fn format_commit(
                 writeln!(out, "    {line}")?;
             }
             write_notes(out, oid, notes_cache, odb)?;
-            writeln!(out)?;
+            if !line_log {
+                writeln!(out)?;
+            }
         }
         Some("full") => {
             let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
-            if info.parents.len() > 1 {
-                let parent_abbrevs: Vec<String> = info
-                    .parents
+            if display_parents.len() > 1 {
+                let parent_abbrevs: Vec<String> = display_parents
                     .iter()
                     .map(|p| {
                         let h = p.to_hex();
@@ -3335,9 +3694,8 @@ fn format_commit(
         Some("fuller") => {
             let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
-            if info.parents.len() > 1 {
-                let parent_abbrevs: Vec<String> = info
-                    .parents
+            if display_parents.len() > 1 {
+                let parent_abbrevs: Vec<String> = display_parents
                     .iter()
                     .map(|p| {
                         let h = p.to_hex();
@@ -3377,6 +3735,7 @@ fn format_commit(
                 abbrev_len,
                 use_color,
                 note_bytes,
+                display_parents,
             );
             writeln!(out, "{formatted}")?;
         }
@@ -3395,6 +3754,7 @@ fn apply_format_string(
     abbrev_len: usize,
     use_color: bool,
     notes_raw: Option<&[u8]>,
+    display_parents: &[ObjectId],
 ) -> String {
     let hex = oid.to_hex();
 
@@ -3605,13 +3965,12 @@ fn apply_format_string(
                 }
                 Some('P') => {
                     chars.next();
-                    let parents: Vec<String> = info.parents.iter().map(|p| p.to_hex()).collect();
+                    let parents: Vec<String> = display_parents.iter().map(|p| p.to_hex()).collect();
                     result.push_str(&parents.join(" "));
                 }
                 Some('p') => {
                     chars.next();
-                    let parents: Vec<String> = info
-                        .parents
+                    let parents: Vec<String> = display_parents
                         .iter()
                         .map(|p| {
                             let ph = p.to_hex();

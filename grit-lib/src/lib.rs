@@ -29,6 +29,7 @@ pub mod git_date;
 pub mod hooks;
 pub mod ignore;
 pub mod index;
+pub mod line_log;
 pub mod ls_remote;
 pub mod merge_base;
 pub mod merge_diff;
