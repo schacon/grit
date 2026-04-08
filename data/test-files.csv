@@ -1,8 +1,8 @@
 file	group	in_scope	tests_total	passed_last	failing	fully_passing	status	expect_failure
-t0000-basic	t0	yes	92	75	17	false	ok	8
-t0001-init	t0	yes	102	67	35	false	ok	0
+t0000-basic	t0	yes	92	91	1	false	ok	8
+t0001-init	t0	yes	102	72	30	false	ok	0
 t0002-gitfile	t0	yes	14	14	0	true	ok	0
-t0003-attributes	t0	yes	55	38	17	false	ok	0
+t0003-attributes	t0	yes	55	40	15	false	ok	0
 t0004-unwritable	t0	yes	9	9	0	true	ok	0
 t0005-signals	t0	yes	5	5	0	true	ok	0
 t0006-date	t0	yes	129	129	0	true	ok	0
@@ -118,7 +118,7 @@ t10160-commit-amend-author	t1	yes	30	30	0	true	ok	0
 t10180-rm-recursive-quiet	t1	yes	34	34	0	true	ok	0
 t10190-mv-directory-rename	t1	yes	34	34	0	true	ok	0
 t1020-subdirectory	t1	yes	15	12	3	false	ok	0
-t10200-switch-orphan-detach	t1	yes	31	24	7	false	ok	0
+t10200-switch-orphan-detach	t1	yes	31	31	0	true	ok	0
 t10210-restore-staged-source	t1	yes	34	34	0	true	ok	0
 t1022-read-tree-partial-clone	t1	yes	1	1	0	true	ok	0
 t10220-reset-soft-commit	t1	yes	34	34	0	true	ok	0
@@ -359,7 +359,7 @@ t1303-wacky-config	t1	yes	11	11	0	true	ok	0
 t13030-switch-quiet-verbose	t1	yes	30	9	21	false	ok	0
 t1304-default-acl	t1	yes	4	4	0	true	ok	0
 t13040-restore-quiet-progress	t1	yes	30	29	1	false	ok	0
-t1305-config-include	t1	yes	37	13	24	false	ok	0
+t1305-config-include	t1	yes	37	14	23	false	ok	0
 t13050-reset-hard-untracked	t1	yes	30	30	0	true	ok	0
 t1306-xdg-files	t1	yes	21	20	1	false	ok	0
 t13060-cherry-pick-mainline	t1	yes	31	2	29	false	ok	0
@@ -444,7 +444,7 @@ t1506-rev-parse-diagnosis	t1	yes	30	14	16	false	ok	0
 t1507-rev-parse-upstream	t1	yes	29	20	9	false	ok	0
 t1508-at-combinations	t1	yes	35	30	5	false	ok	0
 t1509-root-work-tree	t1	yes	0	0	0	false	ok	0
-t1510-repo-setup	t1	yes	109	13	96	false	ok	0
+t1510-repo-setup	t1	yes	109	38	71	false	ok	0
 t1511-rev-parse-caret	t1	yes	17	11	6	false	ok	0
 t1512-rev-parse-disambiguation	t1	yes	38	38	0	true	ok	0
 t1513-rev-parse-prefix	t1	yes	11	11	0	true	ok	0
@@ -642,7 +642,7 @@ t3507-cherry-pick-conflict	t3	yes	44	12	32	false	ok	0
 t3508-cherry-pick-many-commits	t3	yes	14	8	6	false	ok	0
 t3509-cherry-pick-merge-df	t3	yes	9	6	3	false	ok	0
 t3510-cherry-pick	t3	yes	65	63	2	false	ok	0
-t3510-cherry-pick-sequence	t3	yes	55	27	28	false	ok	0
+t3510-cherry-pick-sequence	t3	yes	0	0	0	false	timeout	0
 t3511-cherry-pick-x	t3	yes	22	10	12	false	ok	0
 t3512-cherry-pick-submodule	t3	yes	13	0	13	false	ok	0
 t3513-revert-submodule	t3	yes	12	0	12	false	ok	0
@@ -663,7 +663,7 @@ t3900-i18n-commit	t3	yes	0	0	0	false	ok	0
 t3901-i18n-patch	t3	yes	0	0	0	false	ok	0
 t3902-quoted	t3	yes	13	5	8	false	ok	0
 t3902-quoted-ls-tree	t3	yes	8	8	0	true	ok	0
-t3903-stash	t3	yes	142	57	85	false	ok	0
+t3903-stash	t3	yes	0	0	0	false	timeout	0
 t3904-stash-patch	t3	yes	10	4	6	false	ok	0
 t3905-stash-include-untracked	t3	yes	34	12	22	false	ok	0
 t3906-stash-submodule	t3	yes	6	0	6	false	ok	0
@@ -815,7 +815,7 @@ t4150-am	t4	yes	87	17	70	false	ok	0
 t4151-am-abort	t4	yes	20	3	17	false	ok	0
 t4152-am-subjects	t4	yes	13	13	0	true	ok	0
 t4153-am-resume-override-opts	t4	yes	6	6	0	true	ok	0
-t4200-rerere	t4	yes	36	7	29	false	ok	0
+t4200-rerere	t4	yes	36	9	27	false	ok	0
 t4201-log-graph	t4	yes	23	22	1	false	ok	0
 t4201-shortlog	t4	yes	32	7	25	false	ok	0
 t4202-log	t4	skip	145	0	0	false	ok	0
@@ -876,7 +876,7 @@ t5306-pack-nobase	t5	yes	4	4	0	true	ok	0
 t5307-pack-missing-commit	t5	yes	5	5	0	true	ok	0
 t5308-pack-detect-duplicates	t5	yes	6	2	4	false	ok	0
 t5309-pack-delta-cycles	t5	yes	7	2	5	false	ok	0
-t5310-pack-bitmaps	t5	yes	236	22	214	false	ok	0
+t5310-pack-bitmaps	t5	yes	236	25	211	false	ok	0
 t5311-pack-bitmaps-shallow	t5	yes	6	6	0	true	ok	0
 t5312-prune-corruption	t5	yes	11	5	6	false	ok	0
 t5313-pack-bounds-checks	t5	yes	9	2	7	false	ok	0
@@ -987,7 +987,7 @@ t5564-http-proxy	t5	yes	8	5	3	false	ok	0
 t5565-push-multiple	t5	yes	2	2	0	true	ok	0
 t5570-git-daemon	t5	yes	0	0	0	false	timeout	0
 t5571-pre-push-hook	t5	yes	11	5	6	false	ok	0
-t5572-pull-submodule	t5	yes	61	5	56	false	ok	0
+t5572-pull-submodule	t5	yes	69	5	64	false	ok	0
 t5573-pull-verify-signatures	t5	skip	16	0	0	false	ok	0
 t5574-fetch-output	t5	yes	14	1	13	false	ok	0
 t5580-unc-paths	t5	skip	8	0	0	false	ok	0
@@ -1015,7 +1015,7 @@ t5617-clone-submodules-remote	t5	yes	9	2	7	false	ok	0
 t5618-alternate-refs	t5	yes	6	2	4	false	ok	0
 t5619-clone-local-ambiguous-transport	t5	yes	2	0	2	false	ok	0
 t5620-backfill	t5	yes	10	10	0	true	ok	0
-t5621-clone-revision	t5	yes	12	3	9	false	ok	0
+t5621-clone-revision	t5	yes	12	12	0	true	ok	0
 t5700-protocol-v1	t5	yes	24	4	20	false	ok	0
 t5701-git-serve	t5	yes	25	25	0	true	ok	0
 t5702-protocol-v2	t5	yes	85	10	75	false	ok	0
@@ -1099,7 +1099,7 @@ t6302-for-each-ref-filter	t6	skip	51	0	0	false	ok	0
 t6304-for-each-ref-detached-head	t6	yes	10	10	0	true	ok	0
 t6400-merge-df	t6	yes	7	7	0	true	ok	0
 t6401-merge-criss-cross	t6	yes	4	4	0	true	ok	0
-t6402-merge-rename	t6	yes	46	24	22	false	ok	0
+t6402-merge-rename	t6	yes	0	0	0	false	timeout	0
 t6403-merge-file	t6	yes	39	37	2	false	ok	0
 t6404-recursive-merge	t6	yes	6	6	0	true	ok	0
 t6405-merge-symlinks	t6	yes	7	7	0	true	ok	0
@@ -1145,7 +1145,7 @@ t6600-test-reach	t6	yes	47	12	35	false	ok	0
 t6601-path-walk	t6	yes	15	0	15	false	ok	0
 t6700-tree-depth	t6	yes	10	4	6	false	ok	0
 t7001-mv	t7	yes	54	40	14	false	ok	0
-t7002-mv-sparse-checkout	t7	yes	22	1	21	false	ok	0
+t7002-mv-sparse-checkout	t7	yes	22	2	20	false	ok	0
 t7003-filter-branch	t7	skip	48	0	0	false	ok	0
 t7004-tag	t7	skip	219	0	0	false	ok	0
 t7005-editor	t7	yes	11	0	11	false	ok	0
@@ -1531,7 +1531,7 @@ t9560-commit-message-variants	t9	yes	33	31	2	false	ok	0
 t9580-rm-cached-worktree	t9	yes	40	40	0	true	ok	0
 t9590-mv-cross-directory	t9	yes	40	35	5	false	ok	0
 t9600-cvsimport	t9	skip	15	0	0	false	ok	0
-t9600-switch-branch-create	t9	yes	40	12	28	false	ok	0
+t9600-switch-branch-create	t9	yes	40	19	21	false	ok	0
 t9601-cvsimport-vendor-branch	t9	skip	9	0	0	false	ok	1
 t9602-cvsimport-branches-tags	t9	skip	11	0	0	false	ok	6
 t9603-cvsimport-patchsets	t9	skip	1	0	0	false		1

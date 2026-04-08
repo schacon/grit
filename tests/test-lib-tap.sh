@@ -266,7 +266,6 @@ test_must_fail_inner () {
 	set +e
 	"$@" 2>&7
 	exit_code=$?
-	set -e
 	if test "$exit_code" -eq 0 && ! echo "$_test_ok" | grep -q success
 	then
 		echo "test_must_fail: command succeeded: $*" >&4

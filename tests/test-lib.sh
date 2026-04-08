@@ -928,14 +928,6 @@ test_env () {
 	return $_te_ret
 }
 
-# test_lazy_prereq NAME SCRIPT — define a prereq checked lazily
-test_lazy_prereq () {
-	if eval "$2" >/dev/null 2>&1
-	then
-		test_set_prereq "$1"
-	fi
-}
-
 test_lazy_prereq ICONV '
 	test -z "$NO_ICONV" &&
 	iconv -f utf8 -t utf8 </dev/null
