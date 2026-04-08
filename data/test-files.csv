@@ -19,7 +19,7 @@ t0019-json-writer	t0	yes	16	16	0	true	ok	0
 t0020-crlf	t0	yes	36	36	0	true	ok	0
 t0021-conversion	t0	yes	42	20	22	false	ok	0
 t0022-crlf-rename	t0	yes	2	2	0	true	ok	0
-t0023-crlf-am	t0	yes	2	1	1	false	ok	0
+t0023-crlf-am	t0	yes	2	2	0	true	ok	0
 t0024-crlf-archive	t0	yes	3	3	0	true	ok	0
 t0025-crlf-renormalize	t0	yes	3	3	0	true	ok	0
 t0026-eol-config	t0	yes	6	6	0	true	ok	0
