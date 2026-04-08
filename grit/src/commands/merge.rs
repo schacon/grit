@@ -27,6 +27,9 @@ use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
 use time::OffsetDateTime;
 
+use crate::commands::diff_index;
+use crate::explicit_exit::ExplicitExit;
+
 /// Arguments for `grit merge`.
 #[derive(Debug, Clone, ClapArgs)]
 #[command(about = "Join two or more development histories together")]
@@ -849,6 +852,15 @@ fn do_fast_forward(
     let old_tree = commit_tree(repo, head_oid)?;
     let mut new_index = compose_fast_forward_index(repo, commit.tree, old_tree, &current_index)?;
     let old_entries = tree_to_map(tree_to_index_entries(repo, &old_tree, "")?);
+    if !args.autostash && diff_index::index_cached_differs_from_head(repo)? {
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 2,
+            message: "Your local changes to the following files would be overwritten by merge:\n\
+Please commit your changes or stash them before you merge.\n\
+Aborting"
+                .to_string(),
+        }));
+    }
     bail_if_merge_would_overwrite_local_changes(repo, &old_entries, &new_index, false)?;
 
     update_head(&repo.git_dir, head, &merge_oid)?;
@@ -1264,6 +1276,18 @@ fn do_real_merge(
     // the working tree and this merge would update that path, abort before
     // touching the index/worktree so user data is preserved.
     bail_if_merge_touches_present_skip_worktree(repo, &ours_entries, &theirs_entries)?;
+
+    // Git: refuse merge when the index is not aligned with HEAD (exit 2), before
+    // running the merge machinery.
+    if !args.autostash && diff_index::index_cached_differs_from_head(repo)? {
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 2,
+            message: "Your local changes to the following files would be overwritten by merge:\n\
+Please commit your changes or stash them before you merge.\n\
+Aborting"
+                .to_string(),
+        }));
+    }
 
     // Save ORIG_HEAD
     fs::write(
@@ -1795,7 +1819,8 @@ fn bail_if_merge_would_overwrite_local_changes(
         if append_strategy_failed {
             msg.push_str("\nMerge with strategy ort failed.");
         }
-        bail!("{msg}");
+        let code = if !overwrite_local.is_empty() { 128 } else { 1 };
+        return Err(anyhow::Error::new(ExplicitExit { code, message: msg }));
     }
 
     Ok(())

@@ -450,12 +450,14 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Case: checkout --orphan <name> [<start_point>]
     if let Some(ref orphan_name) = args.orphan {
-        // Extract start point from positional args
-        let start_point = if !args.rest.is_empty() {
-            Some(args.rest[0].as_str())
-        } else {
-            None
-        };
+        // Optional start point is the first non-`-q` token in `rest` (tests use
+        // `checkout --orphan branch -q`, which would otherwise treat `-q` as
+        // the start point).
+        let start_point = args
+            .rest
+            .iter()
+            .find(|s| *s != "-q" && *s != "--quiet")
+            .map(|s| s.as_str());
         return create_orphan_branch(&repo, orphan_name, start_point);
     }
 

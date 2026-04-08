@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 mod alias;
 mod commands;
 mod dotfile;
+mod explicit_exit;
 mod fetch_transport;
 mod git_commit_encoding;
 mod git_path;
@@ -86,6 +87,9 @@ fn main() {
             if is_broken_pipe_error(&e) {
                 // Match shell signal convention for SIGPIPE.
                 exit_code = 128 + 13;
+            } else if let Some(ex) = e.downcast_ref::<crate::explicit_exit::ExplicitExit>() {
+                eprintln!("{ex}");
+                exit_code = ex.code;
             } else if let Some(msg) = verbatim_lib_error_message(&e) {
                 eprintln!("{msg}");
                 exit_code = 128;
