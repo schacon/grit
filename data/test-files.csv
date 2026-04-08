@@ -663,7 +663,7 @@ t3900-i18n-commit	t3	yes	38	11	27	false	ok	0
 t3901-i18n-patch	t3	yes	20	0	20	false	ok	0
 t3902-quoted	t3	yes	13	5	8	false	ok	0
 t3902-quoted-ls-tree	t3	yes	8	8	0	true	ok	0
-t3903-stash	t3	yes	0	0	0	false	timeout	0
+t3903-stash	t3	yes	142	73	69	false	ok	0
 t3904-stash-patch	t3	yes	10	4	6	false	ok	0
 t3905-stash-include-untracked	t3	yes	34	13	21	false	ok	0
 t3906-stash-submodule	t3	yes	8	1	7	false	ok	0

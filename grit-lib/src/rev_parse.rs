@@ -1358,6 +1358,12 @@ fn resolve_base(
     if let Ok(oid) = refs::resolve_ref(&repo.git_dir, spec) {
         return Ok(oid);
     }
+    // DWIM: bare `stash` refers to `refs/stash` (like upstream Git), not `.git/stash`.
+    if spec == "stash" {
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, "refs/stash") {
+            return Ok(oid);
+        }
+    }
     // Prefer tags over branches for short names: `test_commit` creates tags named like the
     // commit message, and branch names like `main`/`master` can shadow unrelated heads.
     for candidate in &[
