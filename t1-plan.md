@@ -122,7 +122,7 @@
 - [ ] t12580-log-oneline-all.sh
 - [x] t12590-log-format-tformat.sh
 - [ ] t12600-rev-list-not-exclude.sh
-- [ ] t12610-rev-list-all-branches.sh
+- [x] t12610-rev-list-all-branches.sh
 - [ ] t12620-rev-parse-resolve-ref.sh
 - [ ] t12630-rev-parse-is-bare.sh
 - [ ] t12650-config-null-value.sh

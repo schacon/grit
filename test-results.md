@@ -2,6 +2,7 @@
 
 **Updated:** 2026-04-08
 
+- `./scripts/run-tests.sh t12610-rev-list-all-branches.sh`: 32/32 passing (setup returns cwd to trash root for harness that persists cwd between tests).
 - `./scripts/run-tests.sh t13180-log-patch-stat.sh`: 35/35 passing (`grit log` oneline/graph/decorate/skip/max-count/reverse/format; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t10560-switch-create-detach.sh`: 28/28 passing (`switch -- <branch>` disambiguation; invalid `-c`/`-C`/`--orphan` branch names rejected like Git; harness CSV/dashboards refreshed).
 - `cargo test -p grit-lib --lib`: 110/110 passing.

@@ -10,7 +10,8 @@ test_expect_success 'setup linear history' '
     git config user.email "t@t.com" && git config user.name "T" &&
     echo one >file.txt && grit add file.txt && grit commit -m "c1" &&
     echo two >file2.txt && grit add file2.txt && grit commit -m "c2" &&
-    echo three >file3.txt && grit add file3.txt && grit commit -m "c3"
+    echo three >file3.txt && grit add file3.txt && grit commit -m "c3" &&
+    cd ..
 '
 
 test_expect_success 'rev-list --all on single branch' '
