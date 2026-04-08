@@ -148,7 +148,7 @@ pub fn run(args: Args) -> Result<()> {
     let index_path = repo.index_path();
     let mut index = repo.load_index_at(&index_path).context("loading index")?;
 
-    let cwd = std::env::current_dir().context("resolving current directory")?;
+    let cwd = repo.effective_pathspec_cwd();
 
     let prefix = args.prefix.as_deref().unwrap_or("");
     let symlinks_enabled = core_symlinks_enabled(&repo);

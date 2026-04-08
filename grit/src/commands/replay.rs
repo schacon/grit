@@ -170,6 +170,8 @@ pub fn run(args: Args) -> Result<()> {
             &theirs_entries,
             &short_oid(commit_oid),
             &short_oid(parent_oid),
+            &replayed_tip.to_hex(),
+            &commit_oid.to_hex(),
             MergeFavor::None,
             None,
             merge_renormalize,

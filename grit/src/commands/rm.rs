@@ -623,9 +623,13 @@ fn resolve_rel(pathspec: &str, work_tree: &Path) -> Result<String> {
 
     let cwd = std::env::current_dir()?;
     let cwd_canon = cwd.canonicalize().unwrap_or(cwd);
-    let abs_lex = lexical_resolve_under_cwd(pathspec_clean, &cwd_canon);
-
-    if let Ok(rel) = abs_lex.strip_prefix(&wt_canon) {
+    let abs = lexical_resolve_under_cwd(pathspec_clean, &cwd_canon);
+    // Strip using lexical paths only — `canonicalize` follows symlinks and can
+    // collapse a tracked symlink like `foo -> .` to the work tree root, which
+    // would make `git rm foo` match every index entry (t6430 cherry-pick).
+    let wt_norm = lexical_normalize_path(&wt_canon);
+    let abs_norm = lexical_normalize_path(&abs);
+    if let Ok(rel) = abs_norm.strip_prefix(&wt_norm) {
         let s = rel.to_string_lossy().into_owned();
         if s == "." || s.is_empty() {
             return Ok(String::new());
@@ -635,7 +639,7 @@ fn resolve_rel(pathspec: &str, work_tree: &Path) -> Result<String> {
 
     // Pathspec relative to worktree root (e.g. when cwd is not under the repo).
     let from_root = lexical_normalize_path(&wt_canon.join(pathspec_clean));
-    if let Ok(rel) = from_root.strip_prefix(&wt_canon) {
+    if let Ok(rel) = from_root.strip_prefix(&wt_norm) {
         let s = rel.to_string_lossy().into_owned();
         if s == "." || s.is_empty() {
             return Ok(String::new());

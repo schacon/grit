@@ -231,6 +231,30 @@ impl Repository {
         Err(Error::NotARepository(start.display().to_string()))
     }
 
+    /// Current directory to use for pathspec / cwd-prefix logic.
+    ///
+    /// When `GIT_WORK_TREE` points at a directory that does not contain the process cwd
+    /// (alternate work tree + index from the main repo directory), Git treats pathspecs as
+    /// relative to the work tree root — use that root as the effective cwd.
+    #[must_use]
+    pub fn effective_pathspec_cwd(&self) -> PathBuf {
+        let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let Some(wt) = self.work_tree.as_ref() else {
+            return cwd;
+        };
+        let inside_lexical = cwd.strip_prefix(wt).is_ok();
+        let inside_canon = cwd
+            .canonicalize()
+            .ok()
+            .zip(wt.canonicalize().ok())
+            .is_some_and(|(c, w)| c.starts_with(&w));
+        if inside_lexical || inside_canon {
+            cwd
+        } else {
+            wt.clone()
+        }
+    }
+
     /// Path to the index file.
     #[must_use]
     pub fn index_path(&self) -> PathBuf {

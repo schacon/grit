@@ -177,6 +177,36 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
         return ("HEAD".to_owned(), vec![]);
     }
 
+    // Skip reset mode / misc flags that can appear in the trailing var-arg slice
+    // when argv is parsed loosely (e.g. `reset --hard main` must not treat `--hard`
+    // as the first pathspec).
+    let mut i = 0usize;
+    while i < rest.len() {
+        let a = rest[i].as_str();
+        if matches!(
+            a,
+            "--soft"
+                | "--mixed"
+                | "--hard"
+                | "--merge"
+                | "--keep"
+                | "-q"
+                | "--quiet"
+                | "-N"
+                | "--intent-to-add"
+                | "--no-refresh"
+                | "--refresh"
+        ) {
+            i += 1;
+            continue;
+        }
+        break;
+    }
+    let rest = if i > 0 { &rest[i..] } else { rest };
+    if rest.is_empty() {
+        return ("HEAD".to_owned(), vec![]);
+    }
+
     // Detect an explicit `--` or `--end-of-options` separator.
     if let Some(sep) = rest
         .iter()
@@ -202,7 +232,27 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
 
     if first_is_commit {
         // First arg is the commit; remaining args are paths (may be empty).
-        (first.clone(), rest[1..].to_vec())
+        let paths: Vec<String> = rest[1..]
+            .iter()
+            .filter(|a| {
+                !matches!(
+                    a.as_str(),
+                    "--soft"
+                        | "--mixed"
+                        | "--hard"
+                        | "--merge"
+                        | "--keep"
+                        | "-q"
+                        | "--quiet"
+                        | "-N"
+                        | "--intent-to-add"
+                        | "--no-refresh"
+                        | "--refresh"
+                )
+            })
+            .cloned()
+            .collect();
+        (first.clone(), paths)
     } else {
         // First arg is not a commit: treat all args as paths against HEAD.
         ("HEAD".to_owned(), rest.to_vec())

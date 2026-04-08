@@ -131,8 +131,8 @@ pub fn run(args: Args) -> Result<()> {
             .with_context(|| format!("cannot change to directory '{}'", target.display()))?;
     }
 
-    let cwd = std::env::current_dir().context("resolving current directory")?;
     let repo = Repository::discover(None).context("not a git repository")?;
+    let cwd = repo.effective_pathspec_cwd();
     let work_tree = if let Some(wt) = repo.work_tree.as_deref() {
         wt
     } else {

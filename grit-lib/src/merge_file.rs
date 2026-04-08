@@ -123,6 +123,9 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
         &theirs_ops,
         &ws_mode,
     );
+    if matches!(input.style, ConflictStyle::Merge) {
+        hunks = merge_adjacent_replace_and_trailing_insert_conflicts(hunks);
+    }
     hunks = coalesce_nearby_conflicts(
         hunks,
         3,
@@ -705,6 +708,50 @@ fn adjust_zealous_hunks(hunks: Vec<Hunk>) -> Vec<Hunk> {
     out
 }
 
+/// If one side replaces base lines and the other appends an insertion immediately after
+/// that base span, `compute_hunks` emits two hunks (`Only*` + trailing insert). Git treats
+/// the combined region as one conflict (e.g. base `hello\n`, ours adds `hello\n`, theirs
+/// replaces with `remove-conflict\n`).
+fn merge_adjacent_replace_and_trailing_insert_conflicts(hunks: Vec<Hunk>) -> Vec<Hunk> {
+    let mut out: Vec<Hunk> = Vec::with_capacity(hunks.len());
+    let mut i = 0usize;
+    while i < hunks.len() {
+        let merged = match (&hunks[i], hunks.get(i + 1)) {
+            (Hunk::OnlyTheirs { base, theirs }, Some(Hunk::OnlyOurs { base: bo, ours: o }))
+                if !base.is_empty() && bo.is_empty() && !o.is_empty() && !theirs.is_empty() =>
+            {
+                Some(Hunk::Conflict {
+                    base: base.clone(),
+                    ours: o.clone(),
+                    theirs: theirs.clone(),
+                })
+            }
+            (
+                Hunk::OnlyOurs { base, ours },
+                Some(Hunk::OnlyTheirs {
+                    base: bt,
+                    theirs: t,
+                }),
+            ) if !base.is_empty() && bt.is_empty() && !t.is_empty() && !ours.is_empty() => {
+                Some(Hunk::Conflict {
+                    base: base.clone(),
+                    ours: ours.clone(),
+                    theirs: t.clone(),
+                })
+            }
+            _ => None,
+        };
+        if let Some(h) = merged {
+            out.push(h);
+            i += 2;
+        } else {
+            out.push(hunks[i].clone());
+            i += 1;
+        }
+    }
+    out
+}
+
 fn coalesce_nearby_conflicts(hunks: Vec<Hunk>, max_gap_lines: usize, enable: bool) -> Vec<Hunk> {
     if !enable {
         return hunks;
@@ -999,6 +1046,16 @@ mod tests {
         let base = "a\nb\nc\n";
         let ours = "c\n"; // deleted a and b
         let theirs = "A\nb\nc\n"; // changed a → A
+        let (r, c) = do_merge(base, ours, theirs);
+        assert_eq!(c, 1, "expected conflict, got: {r:?}");
+    }
+
+    #[test]
+    fn conflict_replace_vs_insert_after_same_line() {
+        // Base one line; ours duplicates it; theirs replaces it — Git reports content conflict.
+        let base = "hello\n";
+        let ours = "hello\nhello\n";
+        let theirs = "remove-conflict\n";
         let (r, c) = do_merge(base, ours, theirs);
         assert_eq!(c, 1, "expected conflict, got: {r:?}");
     }

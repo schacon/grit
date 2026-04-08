@@ -740,6 +740,30 @@ impl Index {
         self.entries.len() < before
     }
 
+    /// Remove every index entry whose path lies strictly under `path` (all stages).
+    ///
+    /// Used when staging a file at `path` that replaces a former directory: Git removes
+    /// tracked paths like `path/child` from the index so they do not remain alongside
+    /// the new blob entry.
+    pub fn remove_descendants_under_path(&mut self, path: &str) {
+        let prefix = path.as_bytes();
+        if prefix.is_empty() {
+            return;
+        }
+        let plen = prefix.len();
+        self.entries.retain(|e| {
+            let ep = e.path.as_slice();
+            if ep.len() <= plen {
+                return true;
+            }
+            if !ep.starts_with(prefix) {
+                return true;
+            }
+            // Drop paths strictly under `prefix/` (keep same-length prefix matches like "d-other").
+            ep[plen] != b'/'
+        });
+    }
+
     /// Sort entries in Git's canonical order: by path, then by stage.
     pub fn sort(&mut self) {
         self.entries
@@ -1471,6 +1495,17 @@ mod tests {
         assert_eq!(loaded.entries.len(), 2);
         assert_eq!(loaded.entries[0].path, b"bar/baz.txt");
         assert_eq!(loaded.entries[1].path, b"foo.txt");
+    }
+
+    #[test]
+    fn remove_descendants_under_path_drops_nested_only() {
+        let mut idx = Index::new();
+        idx.add_or_replace(make_entry("d/e"));
+        idx.add_or_replace(make_entry("d-other"));
+        idx.add_or_replace(make_entry("prefix/d"));
+        idx.remove_descendants_under_path("d");
+        let paths: Vec<_> = idx.entries.iter().map(|e| e.path.as_slice()).collect();
+        assert_eq!(paths, vec![b"d-other".as_slice(), b"prefix/d".as_slice()]);
     }
 
     #[test]
