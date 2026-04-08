@@ -1130,6 +1130,25 @@ fn delete_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         .name
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("branch name required"))?;
+
+    if args.remotes {
+        let refname = if name_input.starts_with("refs/remotes/") {
+            name_input.to_owned()
+        } else {
+            format!("refs/remotes/{name_input}")
+        };
+        let branch_oid = grit_lib::refs::resolve_ref(&repo.git_dir, &refname).map_err(|_| {
+            anyhow::anyhow!("error: remote-tracking branch '{name_input}' not found.")
+        })?;
+        grit_lib::refs::delete_ref(&repo.git_dir, &refname).map_err(|e| anyhow::anyhow!("{e}"))?;
+        if !args.quiet {
+            let hex = branch_oid.to_hex();
+            let short = &hex[..7.min(hex.len())];
+            eprintln!("Deleted remote-tracking branch {name_input} (was {short}).");
+        }
+        return Ok(());
+    }
+
     let resolved_ref =
         symbolic_full_name(repo, name_input).filter(|full| full.starts_with("refs/heads/"));
     let (name, refname) = if let Some(full) = resolved_ref {

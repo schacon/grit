@@ -114,7 +114,6 @@ test_expect_success() {
 	fi
 	test_cleanup=:
 	test -z "$verbose" || say "expecting success of $TEST_NUMBER.$test_count '$description': $commands"
-	cd "$TRASH_DIRECTORY" || exit 1
 	test -f "$TRASH_DIRECTORY/.test-exports" && . "$TRASH_DIRECTORY/.test-exports"
 	test_run_ "$commands"
 	result=$?
@@ -197,7 +196,6 @@ test_expect_failure() {
 	test_cleanup=:
 	test -z "$verbose" || say "checking known breakage of $TEST_NUMBER.$test_count '$description': $commands"
 	_exports_file="$TRASH_DIRECTORY/.test-exports"
-	cd "$TRASH_DIRECTORY" || exit 1
 	test -f "$_exports_file" && . "$_exports_file"
 	test_run_ "$commands" expecting_failure
 	result=$?
