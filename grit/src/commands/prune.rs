@@ -53,7 +53,7 @@ pub fn run(args: Args) -> Result<()> {
     let objects_dir = repo.git_dir.join("objects");
     let odb = Odb::new(&objects_dir);
 
-    let expire_time = parse_expire_time(args.expire.as_deref())?;
+    let expire_policy = parse_expire_time(args.expire.as_deref())?;
 
     // 1. Collect all reachable object IDs.
     let reachable = collect_reachable(&repo, &odb, &objects_dir)
@@ -70,15 +70,19 @@ pub fn run(args: Args) -> Result<()> {
         }
 
         // Check modification time against expire threshold.
-        if let Some(threshold) = expire_time {
-            match fs::metadata(path).and_then(|m| m.modified()) {
-                Ok(mtime) => {
-                    if mtime >= threshold {
-                        continue; // too new to prune
+        match expire_policy {
+            ExpirePolicy::Never => continue,
+            ExpirePolicy::All => {}
+            ExpirePolicy::OlderThan(threshold) => {
+                match fs::metadata(path).and_then(|m| m.modified()) {
+                    Ok(mtime) => {
+                        if mtime >= threshold {
+                            continue; // too new to prune
+                        }
                     }
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                    Err(_) => {} // can't read mtime, prune anyway
                 }
-                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
-                Err(_) => {} // can't read mtime, prune anyway
             }
         }
 
@@ -120,29 +124,38 @@ fn repository_has_precious_objects(repo: &Repository) -> Result<bool> {
     Ok(matches!(normalized.as_str(), "1" | "true" | "yes" | "on"))
 }
 
-/// Parse the `--expire` value into a [`SystemTime`] threshold.
+/// Result of parsing [`Args::expire`](Args::expire): either a cutoff time, prune everything, or
+/// never prune (Git `--expire=never` / `gc.pruneExpire=never`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExpirePolicy {
+    /// Prune unreachable loose objects older than this instant.
+    OlderThan(SystemTime),
+    /// Prune all unreachable loose objects (Git `now`).
+    All,
+    /// Do not remove unreachable loose objects based on reachability (Git `never`).
+    Never,
+}
+
+/// Parse the `--expire` value into an [`ExpirePolicy`].
 ///
-/// - `None` or `"2.weeks.ago"` → 2 weeks before now
-/// - `"now"` → current time (prune everything regardless of age)
-fn parse_expire_time(expire: Option<&str>) -> Result<Option<SystemTime>> {
+/// - `None` → 2 weeks before now (Git default)
+/// - `"now"` → prune all unreachable loose objects
+/// - `"never"` → do not prune unreachable loose objects
+fn parse_expire_time(expire: Option<&str>) -> Result<ExpirePolicy> {
     match expire {
         None => {
-            // Default: 2 weeks ago.
             let two_weeks = Duration::from_secs(14 * 24 * 60 * 60);
-            Ok(Some(
+            Ok(ExpirePolicy::OlderThan(
                 SystemTime::now()
                     .checked_sub(two_weeks)
                     .unwrap_or(SystemTime::UNIX_EPOCH),
             ))
         }
-        Some("now") => {
-            // Prune everything: no age filter.
-            Ok(None)
-        }
+        Some("now") => Ok(ExpirePolicy::All),
+        Some(s) if s.eq_ignore_ascii_case("never") => Ok(ExpirePolicy::Never),
         Some(s) => {
-            // Try to parse durations like "2.weeks.ago", "1.day.ago", etc.
             if let Some(threshold) = parse_relative_time(s) {
-                Ok(Some(threshold))
+                Ok(ExpirePolicy::OlderThan(threshold))
             } else {
                 anyhow::bail!("unsupported --expire value: {s:?}");
             }

@@ -7,6 +7,7 @@
 //! (including **`--aggressive`** and cruft / keep-largest-pack forwarding).
 
 use crate::commands::pack_refs;
+use crate::commands::prune;
 use crate::commands::repack;
 use crate::commands::update_server_info;
 use crate::grit_exe;
@@ -50,8 +51,20 @@ pub struct Args {
     #[arg(long)]
     pub force: bool,
 
-    /// Do not prune loose objects that are already packed.
-    #[arg(long)]
+    /// Prune unreachable loose objects older than the given date (Git `--prune[=<date>]`).
+    ///
+    /// Bare `--prune` uses `gc.pruneExpire` when set, otherwise `2.weeks.ago`.
+    #[arg(
+        long = "prune",
+        num_args = 0..=1,
+        value_name = "DATE",
+        default_missing_value = "",
+        overrides_with = "no_prune"
+    )]
+    pub prune: Option<Option<String>>,
+
+    /// Do not run loose-object pruning (`git prune`).
+    #[arg(long = "no-prune", overrides_with = "prune")]
     pub no_prune: bool,
 
     /// Detach to background (accepted; always runs in foreground in grit).
@@ -96,13 +109,11 @@ pub fn run(args: Args) -> Result<()> {
     let _gc_pid_guard = acquire_gc_pid(&repo.git_dir, args.force)?;
 
     let objects_dir = repo.git_dir.join("objects");
-    if !args.no_prune {
-        let opts = PrunePackedOptions {
-            dry_run: false,
-            quiet,
-        };
-        prune_packed_objects(&objects_dir, opts).map_err(|e| anyhow::anyhow!("{e}"))?;
-    }
+    let opts = PrunePackedOptions {
+        dry_run: false,
+        quiet,
+    };
+    prune_packed_objects(&objects_dir, opts).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     pack_refs::run(pack_refs::Args {
         all: true,
@@ -112,11 +123,41 @@ pub fn run(args: Args) -> Result<()> {
 
     run_repack_for_gc(&repo, quiet, &args)?;
 
+    if !args.no_prune {
+        if let Some(expire) = gc_prune_expire_cli(&args, &cfg) {
+            prune::run(prune::Args {
+                dry_run: false,
+                verbose: false,
+                expire: Some(expire),
+                no_progress: quiet,
+                progress: false,
+            })
+            .context("git prune during gc")?;
+        }
+    }
+
     run_reflog_expire_for_gc(&repo, &cfg)?;
     run_reflog_expire_unreachable_for_gc(&repo, &cfg)?;
     run_commit_graph_for_gc(&repo, &cfg, quiet)?;
 
     Ok(())
+}
+
+/// Expire argument for `git prune` during `gc`: `None` means skip pruning (Git `never`).
+fn gc_prune_expire_cli(args: &Args, cfg: &ConfigSet) -> Option<String> {
+    let from_flag = match &args.prune {
+        Some(Some(s)) if s.is_empty() => cfg.get("gc.pruneexpire").clone(),
+        Some(Some(s)) => Some(s.clone()),
+        Some(None) => cfg.get("gc.pruneexpire").clone(),
+        None => cfg.get("gc.pruneexpire").clone(),
+    };
+    let expire = from_flag.unwrap_or_else(|| "2.weeks.ago".to_string());
+    let normalized = expire.trim().to_ascii_lowercase();
+    if normalized == "never" {
+        None
+    } else {
+        Some(expire)
+    }
 }
 
 fn gc_hostname() -> String {

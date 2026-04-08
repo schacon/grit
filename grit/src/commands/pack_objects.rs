@@ -230,7 +230,7 @@ pub fn run(args: Args) -> Result<()> {
     let pack_list = collect_oids(&repo, &args)?;
 
     if pack_list.oids.is_empty() {
-        if !args.stdout {
+        if !args.stdout && !args.quiet {
             eprintln!("Total 0 (delta 0), reused 0 (delta 0)");
         }
         return Ok(());
@@ -331,12 +331,14 @@ pub fn run(args: Args) -> Result<()> {
         std::fs::write(&idx_path, &idx_bytes)?;
 
         println!("{pack_hash}");
-        eprintln!(
-            "Total {} (delta {}), reused 0 (delta {})",
-            write_entries.len(),
-            new_deltas + reused_deltas,
-            reused_deltas
-        );
+        if !args.quiet {
+            eprintln!(
+                "Total {} (delta {}), reused 0 (delta {})",
+                write_entries.len(),
+                new_deltas + reused_deltas,
+                reused_deltas
+            );
+        }
     }
 
     Ok(())

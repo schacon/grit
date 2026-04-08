@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -1140,7 +1140,7 @@ t6437-submodule-merge	t6	yes	20	8	12	false	ok	2
 t6438-submodule-directory-file-conflicts	t6	yes	56	12	44	false	ok	0
 t6439-merge-co-error-msgs	t6	yes	6	6	0	true	ok	0
 t6500-gc	t6	yes	0	0	0	false	timeout	0
-t6501-freshen-objects	t6	yes	42	33	9	false	ok	0
+t6501-freshen-objects	t6	yes	42	42	0	true	ok	0
 t6600-test-reach	t6	yes	47	12	35	false	ok	0
 t6601-path-walk	t6	yes	15	1	14	false	ok	0
 t6700-tree-depth	t6	yes	10	4	6	false	ok	0
