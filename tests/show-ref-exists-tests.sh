@@ -71,3 +71,5 @@ test_expect_success '--exists succeeds for refs/heads/master' '
 	cd repo &&
 	${git_show_ref_exists} refs/heads/master
 '
+
+test_done

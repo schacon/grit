@@ -422,7 +422,7 @@ t1418-reflog-exists	t1	yes	6	6	0	true	ok	0
 t1419-exclude-refs	t1	skip	13	1	12	false	ok	0
 t1420-lost-found	t1	yes	2	2	0	true	ok	0
 t1421-reflog-write	t1	yes	10	5	5	false	ok	0
-t1422-show-ref-exists	t1	yes	0	0	0	false	timeout	0
+t1422-show-ref-exists	t1	yes	12	12	0	true	ok	0
 t1423-ref-backend	t1	skip	9	0	0	false	ok	0
 t1430-bad-ref-name	t1	yes	40	6	34	false	ok	2
 t1450-fsck	t1	skip	74	0	0	false	ok	0
@@ -431,7 +431,7 @@ t1450-fsck-flags	t1	yes	10	8	2	false	ok	0
 t1451-fsck-buffer	t1	yes	72	10	62	false	ok	0
 t1460-refs-migrate	t1	skip	22	0	0	false	ok	0
 t1461-refs-list	t1	yes	0	0	0	false	timeout	0
-t1462-refs-exists	t1	yes	0	0	0	false	timeout	0
+t1462-refs-exists	t1	yes	12	3	9	false	ok	0
 t1463-refs-optimize	t1	yes	0	0	0	false	ok	0
 t1500-rev-parse	t1	yes	81	50	31	false	ok	0
 t1501-work-tree	t1	yes	39	21	18	false	ok	0
