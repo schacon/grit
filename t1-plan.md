@@ -147,7 +147,7 @@
 - [ ] t12990-commit-reuse-message.sh
 - [ ] t1300-config.sh
 - [ ] t1301-shared-repo.sh
-- [ ] t13010-rm-ignore-unmatch.sh
+- [x] t13010-rm-ignore-unmatch.sh
 - [ ] t13020-mv-force-overwrite.sh
 - [ ] t13030-switch-quiet-verbose.sh
 - [ ] t13040-restore-quiet-progress.sh
