@@ -1364,6 +1364,7 @@ fn resolve_base(
         format!("refs/tags/{spec}"),
         format!("refs/heads/{spec}"),
         format!("refs/remotes/{spec}"),
+        format!("refs/notes/{spec}"),
     ] {
         if let Ok(oid) = refs::resolve_ref(&repo.git_dir, candidate) {
             return Ok(oid);

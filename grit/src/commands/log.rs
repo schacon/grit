@@ -1034,6 +1034,7 @@ fn render_graph_commit_text(
                 args.date.as_deref(),
                 abbrev_len,
                 false,
+                None,
             );
         }
         if fmt.contains('%') {
@@ -1045,6 +1046,7 @@ fn render_graph_commit_text(
                 args.date.as_deref(),
                 abbrev_len,
                 false,
+                None,
             );
         }
     }
@@ -3029,7 +3031,7 @@ impl<'a> NotesMapCache<'a> {
 /// Returns a map from commit OID to the notes blob OID.
 fn load_notes_map(repo: &Repository) -> std::collections::HashMap<ObjectId, Vec<u8>> {
     use grit_lib::config::ConfigSet;
-    use grit_lib::objects::parse_tree;
+    use grit_lib::objects::{parse_commit, ObjectKind};
     use grit_lib::refs::resolve_ref;
 
     let mut map = std::collections::HashMap::new();
@@ -3057,35 +3059,44 @@ fn load_notes_map(repo: &Repository) -> std::collections::HashMap<ObjectId, Vec<
     };
 
     let tree_oid = match obj.kind {
-        grit_lib::objects::ObjectKind::Commit => match parse_commit(&obj.data) {
+        ObjectKind::Commit => match parse_commit(&obj.data) {
             Ok(c) => c.tree,
             Err(_) => return map,
         },
-        grit_lib::objects::ObjectKind::Tree => notes_oid,
+        ObjectKind::Tree => notes_oid,
         _ => return map,
     };
 
-    let tree_obj = match repo.odb.read(&tree_oid) {
-        Ok(o) => o,
-        Err(_) => return map,
-    };
+    collect_notes_map_recursive(repo, &tree_oid, String::new(), &mut map);
+    map
+}
 
+fn collect_notes_map_recursive(
+    repo: &Repository,
+    tree_oid: &grit_lib::objects::ObjectId,
+    prefix: String,
+    map: &mut std::collections::HashMap<grit_lib::objects::ObjectId, Vec<u8>>,
+) {
+    use grit_lib::objects::parse_tree;
+    let tree_obj = match repo.odb.read(tree_oid) {
+        Ok(o) => o,
+        Err(_) => return,
+    };
     let entries = match parse_tree(&tree_obj.data) {
         Ok(e) => e,
-        Err(_) => return map,
+        Err(_) => return,
     };
-
     for entry in entries {
         let name = String::from_utf8_lossy(&entry.name);
-        if let Ok(commit_oid) = name.parse::<ObjectId>() {
-            // Read the blob to get note content
+        let full_hex = format!("{prefix}{name}");
+        if entry.mode == 0o040000 {
+            collect_notes_map_recursive(repo, &entry.oid, full_hex, map);
+        } else if let Ok(commit_oid) = full_hex.parse::<grit_lib::objects::ObjectId>() {
             if let Ok(blob) = repo.odb.read(&entry.oid) {
                 map.insert(commit_oid, blob.data);
             }
         }
     }
-
-    map
 }
 
 /// Write notes for a commit if any exist.
@@ -3224,6 +3235,7 @@ fn format_commit(
             } else {
                 &fmt[8..]
             };
+            let note_bytes = notes_cache.map().get(oid).map(Vec::as_slice);
             let formatted = apply_format_string(
                 template,
                 oid,
@@ -3232,6 +3244,7 @@ fn format_commit(
                 date_format,
                 abbrev_len,
                 use_color,
+                note_bytes,
             );
             if is_tformat {
                 if args.null_terminator {
@@ -3354,6 +3367,7 @@ fn format_commit(
         }
         Some(other) => {
             // Try as a format string directly
+            let note_bytes = notes_cache.map().get(oid).map(Vec::as_slice);
             let formatted = apply_format_string(
                 other,
                 oid,
@@ -3362,6 +3376,7 @@ fn format_commit(
                 date_format,
                 abbrev_len,
                 use_color,
+                note_bytes,
             );
             writeln!(out, "{formatted}")?;
         }
@@ -3379,6 +3394,7 @@ fn apply_format_string(
     date_format: Option<&str>,
     abbrev_len: usize,
     use_color: bool,
+    notes_raw: Option<&[u8]>,
 ) -> String {
     let hex = oid.to_hex();
 
@@ -3753,6 +3769,12 @@ fn apply_format_string(
                 Some('n') => {
                     chars.next();
                     result.push('\n');
+                }
+                Some('N') => {
+                    chars.next();
+                    if let Some(raw) = notes_raw {
+                        result.push_str(&String::from_utf8_lossy(raw));
+                    }
                 }
                 Some('%') => {
                     chars.next();

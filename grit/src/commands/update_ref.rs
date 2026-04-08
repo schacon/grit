@@ -472,6 +472,13 @@ fn resolve_oid_or_ref(repo: &Repository, s: &str) -> Result<ObjectId> {
     if let Ok(oid) = s.parse::<ObjectId>() {
         return Ok(oid);
     }
+    // Full ref names must be resolved via the ref store first; `rev_parse` can
+    // treat `refs/...` as ambiguous against worktree paths.
+    if s.starts_with("refs/") {
+        if let Ok(oid) = resolve_ref(&repo.git_dir, s) {
+            return Ok(oid);
+        }
+    }
     if let Ok(oid) = grit_lib::rev_parse::resolve_revision(repo, s) {
         return Ok(oid);
     }
@@ -479,7 +486,7 @@ fn resolve_oid_or_ref(repo: &Repository, s: &str) -> Result<ObjectId> {
         return Ok(oid);
     }
     // Try DWIM-style resolution: refs/heads/<s>, refs/tags/<s>, refs/remotes/<s>
-    for prefix in &["refs/heads/", "refs/tags/", "refs/remotes/"] {
+    for prefix in &["refs/heads/", "refs/tags/", "refs/remotes/", "refs/notes/"] {
         let full = format!("{prefix}{s}");
         if let Ok(oid) = resolve_ref(&repo.git_dir, &full) {
             return Ok(oid);

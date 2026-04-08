@@ -1,4 +1,4 @@
-//! `grit notes` — add, show, list, remove, and append object notes.
+//! `grit notes` — add, show, list, remove, append, and merge object notes.
 //!
 //! Notes are stored as blobs in a tree referenced by `refs/notes/commits`
 //! (or a custom namespace via `--ref`).  Each entry in the notes tree is
@@ -6,16 +6,20 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
+use merge3::{Merge3, StandardMarkers};
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::fs;
 use std::process::Command;
 
 use grit_lib::config::ConfigSet;
+use grit_lib::diff::{diff_trees, zero_oid, DiffStatus};
+use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::objects::{
-    parse_tree, serialize_commit, serialize_tree, tree_entry_cmp, CommitData, ObjectId, ObjectKind,
-    TreeEntry,
+    parse_commit, parse_tree, serialize_commit, serialize_tree, tree_entry_cmp, CommitData,
+    ObjectId, ObjectKind, TreeEntry,
 };
-use grit_lib::refs::{resolve_ref, write_ref};
+use grit_lib::refs::{delete_ref, read_symbolic_ref, resolve_ref, write_ref, write_symbolic_ref};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::resolve_head;
@@ -115,9 +119,21 @@ pub enum NotesSubcommand {
         #[arg()]
         object: Option<String>,
     },
-    /// Merge notes refs (no-op placeholder).
+    /// Merge notes refs.
     Merge {
-        /// Notes ref to merge from.
+        /// Finalize a notes merge after resolving conflicts.
+        #[arg(long)]
+        commit: bool,
+
+        /// Abort an in-progress notes merge.
+        #[arg(long)]
+        abort: bool,
+
+        /// Merge strategy (manual, ours, theirs, union, cat_sort_uniq).
+        #[arg(short = 's', long = "strategy")]
+        strategy: Option<String>,
+
+        /// Notes ref to merge from (with `git notes merge <ref>`).
         #[arg()]
         source_ref: Option<String>,
     },
@@ -142,7 +158,18 @@ pub fn run(args: Args) -> Result<()> {
     let notes_ref = args
         .notes_ref
         .or_else(|| std::env::var("GIT_NOTES_REF").ok())
-        .unwrap_or_else(|| "refs/notes/commits".to_owned());
+        .unwrap_or_else(|| {
+            ConfigSet::load(Some(&repo.git_dir), true)
+                .ok()
+                .and_then(|c| c.get("core.notesRef"))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "refs/notes/commits".to_owned())
+        });
+    let notes_ref = if notes_ref.starts_with("refs/") {
+        notes_ref
+    } else {
+        format!("refs/notes/{notes_ref}")
+    };
 
     // Validate the notes ref — refuse refs outside refs/notes/.
     if notes_ref.starts_with("refs/heads/") || notes_ref.starts_with("refs/remotes/") {
@@ -198,9 +225,19 @@ pub fn run(args: Args) -> Result<()> {
         Some(NotesSubcommand::Copy { force, from, to }) => {
             copy_note(&repo, &notes_ref, &from, &to, force)
         }
-        Some(NotesSubcommand::Merge { source_ref }) => {
-            merge_notes(&repo, &notes_ref, source_ref.as_deref())
-        }
+        Some(NotesSubcommand::Merge {
+            commit,
+            abort,
+            strategy,
+            source_ref,
+        }) => merge_notes_dispatch(
+            &repo,
+            &notes_ref,
+            commit,
+            abort,
+            strategy.as_deref(),
+            source_ref.as_deref(),
+        ),
         Some(NotesSubcommand::Prune { dry_run, verbose }) => {
             prune_notes(&repo, &notes_ref, dry_run, verbose)
         }
@@ -581,7 +618,7 @@ fn add_note(
         None
     };
 
-    let msg = if direct_note_oid.is_some() {
+    let mut msg = if direct_note_oid.is_some() {
         String::new() // unused when direct_note_oid is set
     } else if let Some(m) = message {
         m
@@ -602,6 +639,10 @@ fn add_note(
         }
         edited
     };
+
+    if direct_note_oid.is_none() && !msg.is_empty() && !msg.ends_with('\n') {
+        msg.push('\n');
+    }
 
     // Remove existing note entry (will re-add below)
     entries.retain(|e| note_object_name(&e.path).as_deref() != Some(hex.as_str()));
@@ -754,18 +795,31 @@ fn append_note(
     // Remove old entry if present
     entries.retain(|e| note_object_name(&e.path).as_deref() != Some(hex.as_str()));
 
-    // Build new content
+    // Build new content (match Git: one `\n` between previous blob and new `-m` text when both exist).
     let new_content = match existing_content {
         Some(old) => {
             let mut s = old;
-            if !s.ends_with('\n') {
+            if !msg.is_empty() && !s.is_empty() {
+                if !s.ends_with('\n') {
+                    s.push('\n');
+                }
                 s.push('\n');
             }
-            s.push('\n');
             s.push_str(&msg);
+            if !s.ends_with('\n') && !s.is_empty() {
+                s.push('\n');
+            }
             s
         }
-        None => msg,
+        None => {
+            if msg.is_empty() {
+                msg
+            } else if msg.ends_with('\n') {
+                msg
+            } else {
+                format!("{msg}\n")
+            }
+        }
     };
 
     // Write new blob
@@ -828,55 +882,648 @@ fn copy_note(repo: &Repository, notes_ref: &str, from: &str, to: &str, force: bo
     Ok(())
 }
 
-/// Merge notes refs. This is a simplified implementation that copies
-/// non-conflicting notes from the source ref into the target ref.
-fn merge_notes(repo: &Repository, notes_ref: &str, source_ref: Option<&str>) -> Result<()> {
-    let src =
-        source_ref.ok_or_else(|| anyhow::anyhow!("must specify a notes ref to merge from"))?;
+const NOTES_MERGE_PARTIAL: &str = "NOTES_MERGE_PARTIAL";
+const NOTES_MERGE_REF: &str = "NOTES_MERGE_REF";
+const NOTES_MERGE_WORKTREE: &str = "NOTES_MERGE_WORKTREE";
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NotesMergeStrategy {
+    Manual,
+    Ours,
+    Theirs,
+    Union,
+    CatSortUniq,
+}
 
-    // Try the ref as-is first, then with refs/notes/ prefix
-    let src_entries = if let Ok(entries) = read_notes_tree(repo, src) {
-        if !entries.is_empty() {
-            entries
-        } else if !src.starts_with("refs/") {
-            let full_src = format!("refs/notes/{}", src);
-            read_notes_tree(repo, &full_src)?
-        } else {
-            entries
-        }
-    } else if !src.starts_with("refs/") {
-        let full_src = format!("refs/notes/{}", src);
-        read_notes_tree(repo, &full_src)?
+#[derive(Clone, Debug)]
+enum LocalNoteState {
+    Unset,
+    Deleted,
+    Present(ObjectId),
+}
+
+#[derive(Clone, Debug)]
+struct NotesMergePair {
+    obj: ObjectId,
+    base_blob: Option<ObjectId>,
+    remote_blob: Option<ObjectId>,
+    local: LocalNoteState,
+}
+
+fn expand_notes_ref(short_or_full: &str) -> String {
+    if short_or_full.starts_with("refs/") {
+        short_or_full.to_owned()
     } else {
-        bail!("notes ref '{}' not found", src);
-    };
-    let mut dst_entries = read_notes_tree(repo, notes_ref)?;
+        format!("refs/notes/{short_or_full}")
+    }
+}
 
-    let dst_names: std::collections::HashSet<Vec<u8>> =
-        dst_entries.iter().map(|e| e.path.clone()).collect();
+fn notes_merge_worktree_path(git_dir: &std::path::Path) -> std::path::PathBuf {
+    git_dir.join(NOTES_MERGE_WORKTREE)
+}
 
-    let mut added = 0usize;
-    for entry in &src_entries {
-        if !dst_names.contains(&entry.path) {
-            dst_entries.push(NotesTreeEntry {
-                mode: entry.mode,
-                path: entry.path.clone(),
-                oid: entry.oid,
-            });
-            added += 1;
+fn parse_notes_merge_strategy(s: &str) -> Result<NotesMergeStrategy> {
+    match s {
+        "manual" => Ok(NotesMergeStrategy::Manual),
+        "ours" => Ok(NotesMergeStrategy::Ours),
+        "theirs" => Ok(NotesMergeStrategy::Theirs),
+        "union" => Ok(NotesMergeStrategy::Union),
+        "cat_sort_uniq" => Ok(NotesMergeStrategy::CatSortUniq),
+        _ => bail!("unknown -s/--strategy: {s}"),
+    }
+}
+
+fn note_path_to_object_id(path: &str) -> Option<ObjectId> {
+    let compact: String = path.chars().filter(|c| *c != '/').collect();
+    if compact.len() != 40 || !compact.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    ObjectId::from_hex(&compact).ok()
+}
+
+fn diff_note_blob_changes(
+    repo: &Repository,
+    old_tree: Option<&ObjectId>,
+    new_tree: Option<&ObjectId>,
+) -> Result<Vec<(ObjectId, Option<ObjectId>, Option<ObjectId>)>> {
+    let entries = diff_trees(&repo.odb, old_tree, new_tree, "")?;
+    let mut out = Vec::new();
+    for e in entries {
+        let Some(obj) = e
+            .path()
+            .parse::<ObjectId>()
+            .ok()
+            .or_else(|| note_path_to_object_id(e.path()))
+        else {
+            continue;
+        };
+        match e.status {
+            DiffStatus::Added => {
+                if e.new_oid != zero_oid() {
+                    out.push((obj, None, Some(e.new_oid)));
+                }
+            }
+            DiffStatus::Deleted => {
+                if e.old_oid != zero_oid() {
+                    out.push((obj, Some(e.old_oid), None));
+                }
+            }
+            DiffStatus::Modified | DiffStatus::TypeChanged => {
+                out.push((obj, Some(e.old_oid), Some(e.new_oid)));
+            }
+            _ => {}
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
+}
+
+fn build_merge_pairs(
+    base_tree: Option<ObjectId>,
+    local_tree: ObjectId,
+    remote_tree: ObjectId,
+    repo: &Repository,
+) -> Result<Vec<NotesMergePair>> {
+    let remote_raw = diff_note_blob_changes(repo, base_tree.as_ref(), Some(&remote_tree))?;
+    let local_raw = diff_note_blob_changes(repo, base_tree.as_ref(), Some(&local_tree))?;
+    let mut map: HashMap<ObjectId, NotesMergePair> = HashMap::new();
+    for (obj, old_b, new_b) in remote_raw {
+        map.insert(
+            obj,
+            NotesMergePair {
+                obj,
+                base_blob: old_b,
+                remote_blob: new_b,
+                local: LocalNoteState::Unset,
+            },
+        );
+    }
+
+    for (obj, old_b, new_b) in local_raw {
+        if let Some(p) = map.get_mut(&obj) {
+            if new_b.is_none() {
+                p.local = LocalNoteState::Deleted;
+            } else {
+                let new_oid = new_b.expect("add or modify has new blob");
+                p.local = LocalNoteState::Present(new_oid);
+            }
+        } else {
+            map.insert(
+                obj,
+                NotesMergePair {
+                    obj,
+                    base_blob: old_b,
+                    remote_blob: old_b,
+                    local: if new_b.is_none() {
+                        LocalNoteState::Deleted
+                    } else {
+                        LocalNoteState::Present(new_b.expect("local add/modify"))
+                    },
+                },
+            );
         }
     }
 
-    if added > 0 {
-        write_notes_commit(
-            repo,
-            notes_ref,
-            &dst_entries,
-            &format!("notes: Merged notes from {src}"),
-        )?;
-    }
+    let mut v: Vec<_> = map.into_values().collect();
+    v.sort_by(|a, b| a.obj.cmp(&b.obj));
+    Ok(v)
+}
 
+fn read_blob_bytes(repo: &Repository, oid: &ObjectId) -> Result<Vec<u8>> {
+    let obj = repo.odb.read(oid)?;
+    if obj.kind != ObjectKind::Blob {
+        bail!("expected blob for note");
+    }
+    Ok(obj.data)
+}
+
+fn blob_to_lines(data: &[u8]) -> Vec<String> {
+    if data.is_empty() {
+        return vec![String::new()];
+    }
+    let s = String::from_utf8_lossy(data).into_owned();
+    s.split_inclusive('\n').map(|l| l.to_owned()).collect()
+}
+
+fn merge_note_blobs_conflict_markers(
+    repo: &Repository,
+    base: Option<&ObjectId>,
+    local: &ObjectId,
+    remote: &ObjectId,
+    local_ref: &str,
+    remote_ref: &str,
+) -> Result<Vec<u8>> {
+    let base_lines: Vec<String> = match base {
+        Some(b) => blob_to_lines(&read_blob_bytes(repo, b)?),
+        None => vec![String::new()],
+    };
+    let local_lines = blob_to_lines(&read_blob_bytes(repo, local)?);
+    let remote_lines = blob_to_lines(&read_blob_bytes(repo, remote)?);
+
+    let base_refs: Vec<&str> = base_lines.iter().map(|s| s.as_str()).collect();
+    let local_refs: Vec<&str> = local_lines.iter().map(|s| s.as_str()).collect();
+    let remote_refs: Vec<&str> = remote_lines.iter().map(|s| s.as_str()).collect();
+    let m3 = Merge3::new(&base_refs, &local_refs, &remote_refs);
+    let markers = StandardMarkers::new(Some(local_ref), Some(remote_ref));
+    let merged: String = m3
+        .merge_lines(false, &markers)
+        .into_iter()
+        .map(|cow| cow.into_owned())
+        .collect();
+    Ok(merged.into_bytes())
+}
+
+fn write_note_conflict_file(
+    path: &std::path::Path,
+    repo: &Repository,
+    pair: &NotesMergePair,
+    local_ref: &str,
+    remote_ref: &str,
+) -> Result<()> {
+    let data = match (&pair.local, &pair.remote_blob) {
+        (LocalNoteState::Deleted, Some(r)) => read_blob_bytes(repo, r)?,
+        (LocalNoteState::Present(l), None) => read_blob_bytes(repo, l)?,
+        (LocalNoteState::Present(l), Some(r)) => merge_note_blobs_conflict_markers(
+            repo,
+            pair.base_blob.as_ref(),
+            l,
+            r,
+            local_ref,
+            remote_ref,
+        )?,
+        _ => bail!("unexpected notes merge conflict shape"),
+    };
+    fs::write(path, data)?;
     Ok(())
+}
+
+fn merge_one_note_change(
+    repo: &Repository,
+    pair: &NotesMergePair,
+    strategy: NotesMergeStrategy,
+    local_ref: &str,
+    remote_ref: &str,
+    worktree: &std::path::Path,
+    commit_msg: &mut String,
+    entries: &mut Vec<NotesTreeEntry>,
+    has_worktree: &mut bool,
+) -> Result<bool> {
+    let obj_hex = pair.obj.to_hex();
+    let path = worktree.join(&obj_hex);
+    match strategy {
+        NotesMergeStrategy::Manual => {
+            if !commit_msg.contains("Conflicts:") {
+                commit_msg.push_str("\n\nConflicts:\n");
+            }
+            commit_msg.push_str(&format!("\t{obj_hex}\n"));
+            if !*has_worktree {
+                let test = worktree.join(".test");
+                fs::create_dir_all(worktree)?;
+                fs::write(&test, b"")?;
+                let _ = fs::remove_file(test);
+                *has_worktree = true;
+            }
+            write_note_conflict_file(&path, repo, pair, local_ref, remote_ref)?;
+            entries.retain(|e| note_object_name(&e.path).as_deref() != Some(obj_hex.as_str()));
+            Ok(true)
+        }
+        NotesMergeStrategy::Ours => Ok(false),
+        NotesMergeStrategy::Theirs => {
+            if let Some(r) = pair.remote_blob {
+                upsert_note_entry(entries, &obj_hex, r);
+            } else {
+                entries.retain(|e| note_object_name(&e.path).as_deref() != Some(obj_hex.as_str()));
+            }
+            Ok(false)
+        }
+        NotesMergeStrategy::Union | NotesMergeStrategy::CatSortUniq => {
+            bail!("notes merge strategy {:?} is not implemented yet", strategy);
+        }
+    }
+}
+
+fn upsert_note_entry(entries: &mut Vec<NotesTreeEntry>, hex: &str, blob: ObjectId) {
+    entries.retain(|e| note_object_name(&e.path).as_deref() != Some(hex));
+    entries.push(NotesTreeEntry {
+        mode: 0o100644,
+        path: hex.as_bytes().to_vec(),
+        oid: blob,
+    });
+}
+
+fn remote_unchanged(base: Option<ObjectId>, remote: Option<ObjectId>) -> bool {
+    match (base, remote) {
+        (Some(b), Some(r)) => b == r,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn same_change_local_remote(p: &NotesMergePair) -> bool {
+    match (&p.local, p.remote_blob) {
+        (LocalNoteState::Present(l), Some(r)) => l == &r,
+        (LocalNoteState::Deleted, None) => true,
+        (LocalNoteState::Unset, Some(r)) => Some(r) == p.base_blob,
+        (LocalNoteState::Unset, None) => p.base_blob.is_none(),
+        _ => false,
+    }
+}
+
+fn no_local_change(local: &LocalNoteState, base: Option<ObjectId>) -> bool {
+    match local {
+        LocalNoteState::Unset => true,
+        LocalNoteState::Present(l) => Some(*l) == base,
+        LocalNoteState::Deleted => false,
+    }
+}
+
+fn adopt_remote_note(entries: &mut Vec<NotesTreeEntry>, obj_hex: &str, remote: Option<ObjectId>) {
+    match remote {
+        Some(oid) => upsert_note_entry(entries, obj_hex, oid),
+        None => entries.retain(|e| note_object_name(&e.path).as_deref() != Some(obj_hex)),
+    }
+}
+
+fn merge_changes_into_entries(
+    repo: &Repository,
+    pairs: &[NotesMergePair],
+    strategy: NotesMergeStrategy,
+    local_ref: &str,
+    remote_ref: &str,
+    worktree: &std::path::Path,
+    commit_msg: &mut String,
+    entries: &mut Vec<NotesTreeEntry>,
+) -> Result<usize> {
+    let mut conflicts = 0usize;
+    let mut has_worktree = false;
+    for p in pairs {
+        if remote_unchanged(p.base_blob, p.remote_blob) {
+            continue;
+        }
+        if same_change_local_remote(p) {
+            continue;
+        }
+        if no_local_change(&p.local, p.base_blob) {
+            adopt_remote_note(entries, &p.obj.to_hex(), p.remote_blob);
+            continue;
+        }
+        if merge_one_note_change(
+            repo,
+            p,
+            strategy,
+            local_ref,
+            remote_ref,
+            worktree,
+            commit_msg,
+            entries,
+            &mut has_worktree,
+        )? {
+            conflicts += 1;
+        }
+    }
+    Ok(conflicts)
+}
+
+fn resolve_commit_tree(repo: &Repository, commit_oid: &ObjectId) -> Result<ObjectId> {
+    let obj = repo.odb.read(commit_oid)?;
+    if obj.kind != ObjectKind::Commit {
+        bail!("expected commit");
+    }
+    Ok(parse_commit(&obj.data)?.tree)
+}
+
+fn resolve_notes_commit_optional(repo: &Repository, notes_ref: &str) -> Result<Option<ObjectId>> {
+    let oid = match resolve_ref(&repo.git_dir, notes_ref) {
+        Ok(o) => o,
+        Err(_) => return Ok(None),
+    };
+    let obj = repo.odb.read(&oid)?;
+    if obj.kind != ObjectKind::Commit {
+        bail!("{notes_ref} does not point to a commit");
+    }
+    Ok(Some(oid))
+}
+
+fn write_notes_commit_with_parents(
+    repo: &Repository,
+    _notes_ref: &str,
+    entries: &[NotesTreeEntry],
+    message: &str,
+    parents: &[ObjectId],
+) -> Result<ObjectId> {
+    let fanout = notes_fanout(entries);
+    let rewritten_entries: Vec<_> = entries
+        .iter()
+        .map(|entry| NotesTreeEntry {
+            mode: entry.mode,
+            path: note_object_name(&entry.path)
+                .map(|name| path_with_fanout(&name, fanout))
+                .unwrap_or_else(|| entry.path.clone()),
+            oid: entry.oid,
+        })
+        .collect();
+    let tree_oid = write_notes_subtree(repo, &rewritten_entries)?;
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let now = OffsetDateTime::now_utc();
+    let ident = build_ident(&config, now);
+    let commit = CommitData {
+        tree: tree_oid,
+        parents: parents.to_vec(),
+        author: ident.clone(),
+        committer: ident,
+        encoding: None,
+        message: if message.ends_with('\n') {
+            message.to_owned()
+        } else {
+            format!("{message}\n")
+        },
+        raw_message: None,
+    };
+    let commit_data = serialize_commit(&commit);
+    repo.odb
+        .write(ObjectKind::Commit, &commit_data)
+        .map_err(|e| anyhow::anyhow!(e))
+}
+
+fn notes_merge_inner(
+    repo: &Repository,
+    local_ref: &str,
+    remote_ref: &str,
+    strategy: NotesMergeStrategy,
+) -> Result<std::result::Result<ObjectId, ObjectId>> {
+    let local_commit = resolve_notes_commit_optional(repo, local_ref)?;
+    let remote_commit = resolve_notes_commit_optional(repo, remote_ref)?;
+    match (local_commit, remote_commit) {
+        (None, None) => {
+            bail!("Cannot merge empty notes ref ({remote_ref}) into empty notes ref ({local_ref})")
+        }
+        (None, Some(r)) => Ok(Ok(r)),
+        (Some(l), None) => Ok(Ok(l)),
+        (Some(local_oid), Some(remote_oid)) => {
+            if local_oid == remote_oid {
+                return Ok(Ok(local_oid));
+            }
+            let bases = merge_bases_first_vs_rest(repo, local_oid, &[remote_oid])?;
+            let base_commit = bases.into_iter().next();
+            if Some(local_oid) == base_commit {
+                return Ok(Ok(remote_oid));
+            }
+            if Some(remote_oid) == base_commit {
+                return Ok(Ok(local_oid));
+            }
+            let base_tree = base_commit
+                .map(|bc| resolve_commit_tree(repo, &bc))
+                .transpose()?;
+            let local_tree = resolve_commit_tree(repo, &local_oid)?;
+            let remote_tree = resolve_commit_tree(repo, &remote_oid)?;
+            let mut commit_msg = format!("Merged notes from {remote_ref} into {local_ref}\n\n");
+            let pairs = build_merge_pairs(base_tree, local_tree, remote_tree, repo)?;
+            let mut entries = read_notes_tree(repo, local_ref)?;
+            let worktree = notes_merge_worktree_path(&repo.git_dir);
+            let conflicts = merge_changes_into_entries(
+                repo,
+                &pairs,
+                strategy,
+                local_ref,
+                remote_ref,
+                &worktree,
+                &mut commit_msg,
+                &mut entries,
+            )?;
+            let merge_parents = vec![local_oid, remote_oid];
+            if conflicts > 0 {
+                let partial = write_notes_commit_with_parents(
+                    repo,
+                    local_ref,
+                    &entries,
+                    &commit_msg,
+                    &merge_parents,
+                )?;
+                return Ok(Err(partial));
+            }
+            let new_oid = write_notes_commit_with_parents(
+                repo,
+                local_ref,
+                &entries,
+                &commit_msg,
+                &[local_oid],
+            )?;
+            Ok(Ok(new_oid))
+        }
+    }
+}
+
+fn clean_notes_merge_worktree(worktree: &std::path::Path) -> Result<()> {
+    if !worktree.is_dir() {
+        return Ok(());
+    }
+    for e in fs::read_dir(worktree)? {
+        let e = e?;
+        let t = e.file_type()?;
+        if t.is_file() {
+            let _ = fs::remove_file(e.path());
+        }
+    }
+    Ok(())
+}
+
+fn merge_notes_abort(repo: &Repository) -> Result<()> {
+    let _ = delete_ref(&repo.git_dir, NOTES_MERGE_PARTIAL);
+    let _ = delete_ref(&repo.git_dir, NOTES_MERGE_REF);
+    clean_notes_merge_worktree(&notes_merge_worktree_path(&repo.git_dir))?;
+    Ok(())
+}
+
+fn merge_notes_commit_cmd(repo: &Repository) -> Result<()> {
+    let partial_oid = resolve_ref(&repo.git_dir, NOTES_MERGE_PARTIAL)?;
+    let target_ref = read_symbolic_ref(&repo.git_dir, NOTES_MERGE_REF)?
+        .ok_or_else(|| anyhow::anyhow!("failed to resolve NOTES_MERGE_REF"))?;
+    let partial_obj = repo.odb.read(&partial_oid)?;
+    if partial_obj.kind != ObjectKind::Commit {
+        bail!("could not parse commit from NOTES_MERGE_PARTIAL.");
+    }
+    let partial_commit = parse_commit(&partial_obj.data)?;
+    let worktree = notes_merge_worktree_path(&repo.git_dir);
+    let mut entries = read_notes_tree(repo, NOTES_MERGE_PARTIAL)?;
+    if worktree.is_dir() {
+        for e in fs::read_dir(&worktree)? {
+            let e = e?;
+            let name = e.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str == "." || name_str == ".." {
+                continue;
+            }
+            if !e.file_type()?.is_file() {
+                continue;
+            }
+            let Ok(obj) = ObjectId::from_hex(name_str.trim()) else {
+                continue;
+            };
+            let data = fs::read(e.path())?;
+            let blob_oid = repo.odb.write(ObjectKind::Blob, &data)?;
+            upsert_note_entry(&mut entries, &obj.to_hex(), blob_oid);
+        }
+    }
+    let msg = partial_commit.message.clone();
+    if msg.trim().is_empty() {
+        bail!("partial notes commit has empty message");
+    }
+    let current_target = resolve_ref(&repo.git_dir, &target_ref).ok();
+    let expected_first_parent = partial_commit.parents.first().copied();
+    if let (Some(cur), Some(exp)) = (current_target, expected_first_parent) {
+        if cur != exp {
+            bail!(
+                "The notes ref {} is at {} but NOTES_MERGE_PARTIAL^1 expects {}. \
+Finalize the merge from the correct ref or abort.",
+                target_ref,
+                cur.to_hex(),
+                exp.to_hex()
+            );
+        }
+    }
+    let new_oid = write_notes_commit_with_parents(
+        repo,
+        &target_ref,
+        &entries,
+        &msg,
+        &partial_commit.parents,
+    )?;
+    write_ref(&repo.git_dir, &target_ref, &new_oid)?;
+    merge_notes_abort(repo)?;
+    Ok(())
+}
+
+fn merge_notes_dispatch(
+    repo: &Repository,
+    notes_ref: &str,
+    do_commit: bool,
+    do_abort: bool,
+    strategy: Option<&str>,
+    source_ref: Option<&str>,
+) -> Result<()> {
+    let do_merge = strategy.is_some() || (!do_commit && !do_abort);
+    if (do_merge as u8) + (do_commit as u8) + (do_abort as u8) != 1 {
+        bail!("cannot mix --commit, --abort or -s/--strategy");
+    }
+    if do_merge && source_ref.is_none() {
+        bail!("must specify a notes ref to merge");
+    }
+    if !do_merge && source_ref.is_some() {
+        bail!("too many arguments");
+    }
+    if do_abort {
+        return merge_notes_abort(repo);
+    }
+    if do_commit {
+        return merge_notes_commit_cmd(repo);
+    }
+    let src_raw = source_ref.expect("checked");
+    let remote_ref = expand_notes_ref(src_raw);
+    let strategy = if let Some(s) = strategy {
+        parse_notes_merge_strategy(s)?
+    } else {
+        let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+        let short = notes_ref.strip_prefix("refs/notes/").unwrap_or(notes_ref);
+        let key = format!("notes.{short}.mergeStrategy");
+        if let Some(v) = config.get(&key) {
+            parse_notes_merge_strategy(&v)?
+        } else if let Some(v) = config.get("notes.mergeStrategy") {
+            parse_notes_merge_strategy(&v)?
+        } else {
+            NotesMergeStrategy::Manual
+        }
+    };
+    if resolve_ref(&repo.git_dir, NOTES_MERGE_PARTIAL).is_ok() {
+        let blocks = match read_symbolic_ref(&repo.git_dir, NOTES_MERGE_REF) {
+            Ok(Some(target)) => target == notes_ref,
+            Ok(None) => true,
+            Err(_) => true,
+        };
+        if blocks {
+            let notes_merge_glob = if let Some(wt) = repo.work_tree.as_ref() {
+                match repo.git_dir.strip_prefix(wt) {
+                    Ok(rel) if !rel.as_os_str().is_empty() => {
+                        format!("{}/NOTES_MERGE_*", rel.display())
+                    }
+                    _ => format!("{}/NOTES_MERGE_*", repo.git_dir.display()),
+                }
+            } else {
+                format!("{}/NOTES_MERGE_*", repo.git_dir.display())
+            };
+            bail!(
+                "You have not concluded your previous notes merge ({} exists).\n\
+Please, use 'git notes merge --commit' or 'git notes merge --abort' to commit/abort the \
+previous merge before you start a new notes merge.",
+                notes_merge_glob
+            );
+        }
+    }
+    let merge_result = notes_merge_inner(repo, notes_ref, &remote_ref, strategy)?;
+    match merge_result {
+        Ok(new_oid) => {
+            write_ref(&repo.git_dir, notes_ref, &new_oid)?;
+            Ok(())
+        }
+        Err(partial_oid) => {
+            write_ref(&repo.git_dir, NOTES_MERGE_PARTIAL, &partial_oid)?;
+            write_symbolic_ref(&repo.git_dir, NOTES_MERGE_REF, notes_ref)?;
+            let wt_display = if let Some(wt) = repo.work_tree.as_ref() {
+                match repo.git_dir.strip_prefix(wt) {
+                    Ok(rel) if !rel.as_os_str().is_empty() => {
+                        format!("{}/NOTES_MERGE_WORKTREE", rel.display())
+                    }
+                    _ => format!("{}/NOTES_MERGE_WORKTREE", repo.git_dir.display()),
+                }
+            } else {
+                format!("{}/NOTES_MERGE_WORKTREE", repo.git_dir.display())
+            };
+            bail!(
+                "Automatic notes merge failed. Fix conflicts in {} \
+and commit the result with 'git notes merge --commit', \
+or abort the merge with 'git notes merge --abort'.",
+                wt_display
+            );
+        }
+    }
 }
 
 /// Prune notes for objects that no longer exist in the object database.

@@ -331,7 +331,7 @@ commit → check it off → move on.
 - [ ] `t3501-revert-cherry-pick` ███░░░░░░░░░░░░░░░░░ 4/21 (17 left) — miscellaneous basic tests for cherry-pick and revert
 - [ ] `t3424-rebase-empty` ███░░░░░░░░░░░░░░░░░ 3/20 (17 left) — git rebase of commits that start or become empty
 - [ ] `t3407-rebase-abort` ░░░░░░░░░░░░░░░░░░░░ 0/17 (17 left) — git rebase --abort tests
-- [ ] `t3310-notes-merge-manual-resolve` ███░░░░░░░░░░░░░░░░░ 4/22 (18 left) — Test notes merging with manual conflict resolution
+- [x] `t3310-notes-merge-manual-resolve` — Test notes merging with manual conflict resolution
 - [ ] `t3207-branch-submodule` ██░░░░░░░░░░░░░░░░░░ 2/20 (18 left) — git branch submodule tests
 - [ ] `t3705-add-sparse-checkout` ██░░░░░░░░░░░░░░░░░░ 2/20 (18 left) — git add in sparse checked out working trees
 - [ ] `t3436-rebase-more-options` █░░░░░░░░░░░░░░░░░░░ 1/19 (18 left) — tests to ensure compatibility between am and interactive backends
