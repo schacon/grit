@@ -67,6 +67,11 @@ pub struct Args {
 
 /// Run `grit switch`.
 pub fn run(args: Args) -> Result<()> {
+    if args.orphan.is_some() && (args.create.is_some() || args.force_create.is_some()) {
+        eprintln!("fatal: options '-c', '-C', and '--orphan' cannot be used together");
+        std::process::exit(128);
+    }
+
     let mut checkout_tail: Vec<String> = Vec::new();
 
     if let Some(b) = &args.create {

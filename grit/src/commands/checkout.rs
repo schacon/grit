@@ -326,7 +326,6 @@ pub fn run(mut args: Args) -> Result<()> {
         // Append to existing rest args
         args.rest.extend(pathspecs);
     }
-    let switch_force = args.force || args.merge;
 
     // Post-process rest: extract -b/-B/--new-branch/--force-new-branch that
     // appeared after a positional arg (e.g. `checkout <rev> -b <branch>`).
@@ -389,6 +388,9 @@ pub fn run(mut args: Args) -> Result<()> {
         }
         args.rest = new_rest;
     }
+
+    // After peeling `-f` / `--force` from `rest` (e.g. `switch --discard-changes` → `-f`).
+    let switch_force = args.force || args.merge;
 
     // `git checkout <branch> -q` places `-q` in trailing positionals; peel it so it is not
     // mistaken for a pathspec.
@@ -456,7 +458,15 @@ pub fn run(mut args: Args) -> Result<()> {
         } else {
             None
         };
-        return create_orphan_branch(&repo, orphan_name, start_point);
+        return create_orphan_branch(
+            &repo,
+            orphan_name,
+            start_point,
+            CreateOrphanOptions {
+                switch_style: args.switch_mode,
+                force: switch_force,
+            },
+        );
     }
 
     // Case: checkout -B <name> [<start_point>] (force create/reset)
@@ -1260,18 +1270,53 @@ fn force_create_and_switch_branch(
     Ok(())
 }
 
+/// Options for [`create_orphan_branch`].
+struct CreateOrphanOptions {
+    /// When true, this came from `git switch --orphan`: empty index/worktree, no start point.
+    switch_style: bool,
+    /// `-f` / `--discard-changes` / `-m` (same as branch switch force).
+    force: bool,
+}
+
 /// Create an orphan branch (`checkout --orphan <name> [<start_point>]`).
 ///
 /// Sets HEAD to the new branch but does NOT create the ref (no commit yet).
 /// If a start_point is given, populates the index/worktree from that commit.
-fn create_orphan_branch(repo: &Repository, name: &str, start_point: Option<&str>) -> Result<()> {
+///
+/// `git switch --orphan` uses [`CreateOrphanOptions::switch_style`]: it clears the index and
+/// worktree to the empty tree (like switching to an empty branch) and rejects a start point.
+fn create_orphan_branch(
+    repo: &Repository,
+    name: &str,
+    start_point: Option<&str>,
+    opts: CreateOrphanOptions,
+) -> Result<()> {
     validate_new_branch_name(name)?;
     let branch_ref = format!("refs/heads/{name}");
 
-    // Re-creating an orphan branch name removes the old ref (matches `git switch --orphan`
-    // when re-running the same branch name in a test script).
     if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-        refs::delete_ref(&repo.git_dir, &branch_ref)?;
+        eprintln!("fatal: a branch named '{name}' already exists");
+        std::process::exit(128);
+    }
+
+    if opts.switch_style {
+        if start_point.is_some() {
+            bail!("fatal: '--orphan' cannot take <start-point>");
+        }
+        let head = resolve_head(&repo.git_dir)?;
+        let empty_tree: ObjectId = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+            .parse()
+            .map_err(|_| anyhow::anyhow!("internal error: empty tree OID"))?;
+        switch_to_tree(
+            repo,
+            &head,
+            &empty_tree,
+            opts.force,
+            RECURSE_SUBMODULES.with(|r| r.get()),
+        )?;
+        std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
+        checkout_eprintln!("Switched to a new branch '{}'", name);
+        return Ok(());
     }
 
     // If a start point is given, populate the index/worktree from it
