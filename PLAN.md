@@ -267,7 +267,7 @@ commit → check it off → move on.
 - [ ] `t3103-ls-tree-misc` ████████████░░░░░░░░ 6/10 (4 left) — 
 
 - [ ] `t3401-rebase-and-am-rename` ████████████░░░░░░░░ 6/10 (4 left) — git rebase + directory rename tests
-- [ ] `t3419-rebase-patch-id` ██████████░░░░░░░░░░ 4/8 (4 left) — git rebase - test patch id computation
+- [x] `t3419-rebase-patch-id` ████████████████████ 8/8 (0 left) — git rebase - test patch id computation
 - [ ] `t3429-rebase-edit-todo` ████████░░░░░░░░░░░░ 3/7 (4 left) — rebase should reread the todo file if an exec modifies it
 - [ ] `t3703-add-magic-pathspec` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — magic pathspec tests using git-add
 - [ ] `t3601-rm-pathspec-file` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — rm --pathspec-from-file
