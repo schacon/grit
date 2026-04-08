@@ -161,7 +161,7 @@
 - [ ] t1309-early-config.sh
 - [ ] t13120-diff-no-index-dir-file.sh
 - [ ] t13150-diff-stat-insertions-deletions.sh
-- [ ] t13180-log-patch-stat.sh
+- [x] t13180-log-patch-stat.sh
 - [ ] t13210-rev-list-count-all.sh
 - [ ] t13220-rev-parse-worktree.sh
 - [ ] t13240-config-get-all-values.sh
