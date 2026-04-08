@@ -676,6 +676,10 @@ impl Pathspec {
             // Directory pathspecs match the path itself and children (`dir/`),
             // but not unrelated paths that merely share a prefix (`dirfoo`).
             Pathspec::Literal(spec) => {
+                if spec.is_empty() {
+                    // `:/` alone — match from work tree root (all paths).
+                    return true;
+                }
                 path == spec.as_slice()
                     || (path.starts_with(spec)
                         && path.len() > spec.len()

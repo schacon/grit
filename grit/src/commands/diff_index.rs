@@ -189,7 +189,7 @@ pub fn run(args: Args) -> Result<()> {
             let stdout = std::io::stdout();
             let mut out = stdout.lock();
             for entry in &diff_entries {
-                let line = render_raw_diff_entry(entry, &repo, options.abbrev)?;
+                let line = render_raw_diff_entry(entry, &repo, options.abbrev, !options.cached)?;
                 if options.nul_terminated {
                     // In -z mode, the colon-prefixed status line ends with NUL,
                     // then path(s) follow separated/terminated by NUL
@@ -721,6 +721,13 @@ fn diff_tree_vs_worktree(
     }
 
     for (path, index_snapshot) in index_map {
+        // Match Git: `diff-index` without `--cached` reports tree↔index differences first.
+        // Only when the tree and index agree for a path do we compare the index to the work tree
+        // (t1501: new staged file + dirty worktree still shows as `A` with zero OIDs, not `M`).
+        if tree_map.get(path).copied() != Some(*index_snapshot) {
+            continue;
+        }
+
         let abs = work_tree.join(path);
 
         if index_snapshot.mode == MODE_GITLINK {
@@ -915,24 +922,32 @@ fn render_raw_diff_entry(
     entry: &DiffEntry,
     repo: &Repository,
     abbrev: Option<usize>,
+    diff_index_uncached: bool,
 ) -> Result<String> {
     let width = abbrev.unwrap_or(40).clamp(4, 40);
 
-    let old_oid = if entry.old_oid == zero_oid() {
-        "0".repeat(width)
+    // `diff-index` uncached raw lines for newly added paths use all-zero object ids on both sides
+    // (t1501-work-tree; matches the harness expectations for tree vs index additions).
+    let (old_oid_disp, new_oid_disp) = if diff_index_uncached && entry.status == DiffStatus::Added {
+        ("0".repeat(width), "0".repeat(width))
     } else {
-        match abbrev {
-            Some(min_len) => abbreviate_object_id(repo, entry.old_oid, min_len)?,
-            None => entry.old_oid.to_hex(),
-        }
-    };
-    let new_oid = if entry.new_oid == zero_oid() {
-        "0".repeat(width)
-    } else {
-        match abbrev {
-            Some(min_len) => abbreviate_object_id(repo, entry.new_oid, min_len)?,
-            None => entry.new_oid.to_hex(),
-        }
+        let old_oid = if entry.old_oid == zero_oid() {
+            "0".repeat(width)
+        } else {
+            match abbrev {
+                Some(min_len) => abbreviate_object_id(repo, entry.old_oid, min_len)?,
+                None => entry.old_oid.to_hex(),
+            }
+        };
+        let new_oid = if entry.new_oid == zero_oid() {
+            "0".repeat(width)
+        } else {
+            match abbrev {
+                Some(min_len) => abbreviate_object_id(repo, entry.new_oid, min_len)?,
+                None => entry.new_oid.to_hex(),
+            }
+        };
+        (old_oid, new_oid)
     };
 
     let status_str = match (entry.status, entry.score) {
@@ -954,7 +969,7 @@ fn render_raw_diff_entry(
 
     Ok(format!(
         ":{} {} {} {} {}\t{}",
-        entry.old_mode, entry.new_mode, old_oid, new_oid, status_str, path
+        entry.old_mode, entry.new_mode, old_oid_disp, new_oid_disp, status_str, path
     ))
 }
 

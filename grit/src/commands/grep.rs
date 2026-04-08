@@ -11,8 +11,23 @@ use grit_lib::index::{MODE_GITLINK, MODE_TREE};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{discover_optional, resolve_revision};
+use grit_lib::rev_parse::{discover_optional, resolve_revision, show_prefix};
 use grit_lib::wildmatch::wildmatch;
+
+use crate::pathspec::resolve_pathspec;
+
+/// Strip [`show_prefix`] from a work-tree-relative path for user-facing output (t1501 `git grep`
+/// from `work/sub`).
+fn grep_output_path(repo: &Repository, full_worktree_relative: &str) -> String {
+    let Ok(cwd) = std::env::current_dir() else {
+        return full_worktree_relative.to_owned();
+    };
+    let pfx = show_prefix(repo, &cwd);
+    if !pfx.is_empty() && full_worktree_relative.starts_with(&pfx) {
+        return full_worktree_relative[pfx.len()..].to_owned();
+    }
+    full_worktree_relative.to_owned()
+}
 
 /// Arguments for `grit grep`.
 #[derive(Debug, ClapArgs)]
@@ -369,6 +384,24 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Parse positional arguments: [pattern] [tree-ish] [-- pathspec...]
     let (mut patterns, tree_ish, pathspecs) = parse_positional(&args, &repo)?;
+    let cwd = std::env::current_dir().context("cannot get current directory")?;
+    let pathspec_prefix = repo
+        .work_tree
+        .as_ref()
+        .map(|_| show_prefix(&repo, &cwd))
+        .filter(|p| !p.is_empty())
+        .map(|mut p| {
+            p.pop();
+            p
+        });
+    let pathspecs: Vec<String> = if let Some(wt) = repo.work_tree.as_ref() {
+        pathspecs
+            .into_iter()
+            .map(|p| resolve_pathspec(&p, wt, pathspec_prefix.as_deref()))
+            .collect()
+    } else {
+        pathspecs
+    };
 
     // Read patterns from file if -f is given
     if let Some(ref pattern_file) = args.pattern_file {
@@ -523,11 +556,16 @@ fn grep_cached(
 
     for entry in &index.entries {
         let path_str = String::from_utf8_lossy(&entry.path).to_string();
-        let display_path = format!("{path_prefix}{path_str}");
+        let full_path = if path_prefix.is_empty() {
+            path_str.clone()
+        } else {
+            format!("{path_prefix}{path_str}")
+        };
+        let output_path = grep_output_path(repo, &full_path);
 
         // Pathspec filtering is relative to the superproject
         let is_submodule = entry.mode == MODE_GITLINK;
-        if !pathspecs.is_empty() && !any_pathspec_matches(&display_path, pathspecs, is_submodule) {
+        if !pathspecs.is_empty() && !any_pathspec_matches(&full_path, pathspecs, is_submodule) {
             continue;
         }
 
@@ -545,7 +583,7 @@ fn grep_cached(
                     if let Ok(sub_repo) = open_submodule_repo(&sub_path) {
                         if grep_cached(
                             &sub_repo,
-                            &format!("{display_path}/"),
+                            &format!("{full_path}/"),
                             matchers,
                             args,
                             pathspecs,
@@ -562,7 +600,7 @@ fn grep_cached(
         }
 
         if let Some(max_depth) = args.effective_max_depth() {
-            let depth = display_path.matches('/').count();
+            let depth = full_path.matches('/').count();
             if depth > max_depth {
                 continue;
             }
@@ -587,7 +625,7 @@ fn grep_cached(
                 if args.count || args.files_with_matches || args.files_without_match || args.quiet {
                     let content = String::from_utf8_lossy(&obj.data);
                     if grep_content(
-                        &display_path,
+                        &output_path,
                         &content,
                         matchers,
                         args,
@@ -602,14 +640,14 @@ fn grep_cached(
                     let content = String::from_utf8_lossy(&obj.data);
                     let has_match = matchers.iter().any(|re| re.is_match(&content));
                     if has_match {
-                        writeln!(out, "Binary file {} matches", display_path)?;
+                        writeln!(out, "Binary file {} matches", output_path)?;
                         found_any = true;
                     }
                 }
             } else {
                 let content = String::from_utf8_lossy(&obj.data);
                 if grep_content(
-                    &display_path,
+                    &output_path,
                     &content,
                     matchers,
                     args,
@@ -649,7 +687,7 @@ fn grep_cached(
             if args.count || args.files_with_matches || args.files_without_match || args.quiet {
                 let content = String::from_utf8_lossy(&obj.data);
                 if grep_content(
-                    &display_path,
+                    &output_path,
                     &content,
                     matchers,
                     args,
@@ -664,14 +702,14 @@ fn grep_cached(
                 let content = String::from_utf8_lossy(&obj.data);
                 let has_match = matchers.iter().any(|re| re.is_match(&content));
                 if has_match {
-                    writeln!(out, "Binary file {} matches", display_path)?;
+                    writeln!(out, "Binary file {} matches", output_path)?;
                     found_any = true;
                 }
             }
         } else {
             let content = String::from_utf8_lossy(&obj.data);
             if grep_content(
-                &display_path,
+                &output_path,
                 &content,
                 matchers,
                 args,
@@ -712,11 +750,16 @@ fn grep_worktree(
 
     for entry in &index.entries {
         let path_str = String::from_utf8_lossy(&entry.path).to_string();
-        let display_path = format!("{path_prefix}{path_str}");
+        let full_rel = if path_prefix.is_empty() {
+            path_str.clone()
+        } else {
+            format!("{path_prefix}{path_str}")
+        };
+        let output_path = grep_output_path(repo, &full_rel);
 
         // Pathspec filtering is relative to the superproject
         let is_submodule = entry.mode == MODE_GITLINK;
-        if !pathspecs.is_empty() && !any_pathspec_matches(&display_path, pathspecs, is_submodule) {
+        if !pathspecs.is_empty() && !any_pathspec_matches(&full_rel, pathspecs, is_submodule) {
             continue;
         }
 
@@ -737,7 +780,7 @@ fn grep_worktree(
                 if let Ok(sub_repo) = open_submodule_repo(&sub_path) {
                     if grep_worktree(
                         &sub_repo,
-                        &format!("{display_path}/"),
+                        &format!("{full_rel}/"),
                         matchers,
                         args,
                         pathspecs,
@@ -754,7 +797,7 @@ fn grep_worktree(
 
         // Apply max-depth filter
         if let Some(max_depth) = args.effective_max_depth() {
-            let depth = display_path.matches('/').count();
+            let depth = full_rel.matches('/').count();
             if depth > max_depth {
                 continue;
             }
@@ -785,7 +828,7 @@ fn grep_worktree(
                 if args.count || args.files_with_matches || args.files_without_match || args.quiet {
                     let content_str = String::from_utf8_lossy(&content);
                     if grep_content(
-                        &display_path,
+                        &output_path,
                         &content_str,
                         matchers,
                         args,
@@ -800,14 +843,14 @@ fn grep_worktree(
                     let content_str = String::from_utf8_lossy(&content);
                     let has_match = matchers.iter().any(|re| re.is_match(&content_str));
                     if has_match {
-                        writeln!(out, "Binary file {} matches", display_path)?;
+                        writeln!(out, "Binary file {} matches", output_path)?;
                         found_any = true;
                     }
                 }
             } else {
                 let content_str = String::from_utf8_lossy(&content);
                 if grep_content(
-                    &display_path,
+                    &output_path,
                     &content_str,
                     matchers,
                     args,
@@ -855,7 +898,7 @@ fn grep_worktree(
                 if args.count || args.files_with_matches || args.files_without_match || args.quiet {
                     let content_str = String::from_utf8_lossy(&obj.data);
                     if grep_content(
-                        &display_path,
+                        &output_path,
                         &content_str,
                         matchers,
                         args,
@@ -870,14 +913,14 @@ fn grep_worktree(
                     let content_str = String::from_utf8_lossy(&obj.data);
                     let has_match = matchers.iter().any(|re| re.is_match(&content_str));
                     if has_match {
-                        writeln!(out, "Binary file {} matches", display_path)?;
+                        writeln!(out, "Binary file {} matches", output_path)?;
                         found_any = true;
                     }
                 }
             } else {
                 let content_str = String::from_utf8_lossy(&obj.data);
                 if grep_content(
-                    &display_path,
+                    &output_path,
                     &content_str,
                     matchers,
                     args,
@@ -917,7 +960,7 @@ fn grep_worktree(
             if args.count || args.files_with_matches || args.files_without_match || args.quiet {
                 let content_str = String::from_utf8_lossy(&content);
                 if grep_content(
-                    &display_path,
+                    &output_path,
                     &content_str,
                     matchers,
                     args,
@@ -932,14 +975,14 @@ fn grep_worktree(
                 let content_str = String::from_utf8_lossy(&content);
                 let has_match = matchers.iter().any(|re| re.is_match(&content_str));
                 if has_match {
-                    writeln!(out, "Binary file {} matches", display_path)?;
+                    writeln!(out, "Binary file {} matches", output_path)?;
                     found_any = true;
                 }
             }
         } else {
             let content_str = String::from_utf8_lossy(&content);
             if grep_content(
-                &display_path,
+                &output_path,
                 &content_str,
                 matchers,
                 args,

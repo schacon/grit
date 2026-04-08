@@ -28,6 +28,7 @@ use crate::error::{Error, Result};
 use crate::index::Index;
 use crate::objects::parse_commit;
 use crate::odb::Odb;
+use crate::rev_parse::is_inside_work_tree;
 use crate::sparse_checkout::effective_cone_mode_for_sparse_file;
 use crate::state::resolve_head;
 
@@ -161,6 +162,14 @@ impl Repository {
                     cwd.join(p)
                 }
             });
+            if let Some(ref wt_path) = work_tree {
+                if env::var("GIT_WORK_TREE")
+                    .ok()
+                    .is_some_and(|raw| Path::new(&raw).is_absolute())
+                {
+                    validate_git_work_tree_path(wt_path)?;
+                }
+            }
             if work_tree.is_some() {
                 let mut repo = Self::open(&git_dir, work_tree.as_deref())?;
                 repo.explicit_git_dir = true;
@@ -201,6 +210,14 @@ impl Repository {
                 cwd.join(p)
             }
         });
+        if let Some(ref p) = env_work_tree {
+            if env::var("GIT_WORK_TREE")
+                .ok()
+                .is_some_and(|raw| Path::new(&raw).is_absolute())
+            {
+                validate_git_work_tree_path(p)?;
+            }
+        }
         let start = start.unwrap_or(&cwd);
         let start = if start.is_absolute() {
             start.to_path_buf()
@@ -229,11 +246,19 @@ impl Repository {
                     repo.work_tree_from_env = true;
                 } else {
                     repo.work_tree_from_env = false;
-                    let (is_bare, core_wt) = read_core_bare_and_worktree(&repo.git_dir)?;
-                    if is_bare {
-                        repo.work_tree = None;
-                    } else if let Some(raw) = core_wt {
-                        repo.work_tree = Some(resolve_core_worktree_path(&repo.git_dir, &raw)?);
+                    // Linked worktree (gitfile → admin dir with `commondir`): `Repository::open`
+                    // already set `work_tree` to the directory that contains the `.git` file.
+                    // Do not replace it with `core.worktree` from the common config — it may be
+                    // stale (t1501 multi-worktree) or point at another linked checkout.
+                    let linked_gitfile =
+                        repo.discovery_via_gitfile && resolve_common_dir(&repo.git_dir).is_some();
+                    if !linked_gitfile {
+                        let (is_bare, core_wt) = read_core_bare_and_worktree(&repo.git_dir)?;
+                        if is_bare {
+                            repo.work_tree = None;
+                        } else if let Some(raw) = core_wt {
+                            repo.work_tree = Some(resolve_core_worktree_path(&repo.git_dir, &raw)?);
+                        }
                     }
                 }
                 let assume_different = env::var("GIT_TEST_ASSUME_DIFFERENT_OWNER")
@@ -1088,6 +1113,20 @@ fn try_open_at(dir: &Path) -> Result<Option<DiscoveredAt>> {
             fs::read_to_string(&dot_git).map_err(|e| Error::NotARepository(e.to_string()))?;
         let git_dir = parse_gitfile(&content, dir)?;
         let mut repo = Repository::open(&git_dir, Some(dir))?;
+        // Linked worktree: `core.worktree` in the common config may point at another directory
+        // (t1501). When the process cwd is not inside that configured tree, Git uses the
+        // discovery directory as the work tree (commondir overrides for ops under the real tree).
+        if resolve_common_dir(&git_dir).is_some() {
+            let cwd = env::current_dir().map_err(Error::Io)?;
+            if repo.work_tree.is_some() && !is_inside_work_tree(&repo, &cwd) {
+                let root = if dir.is_absolute() {
+                    dir.to_path_buf()
+                } else {
+                    cwd.join(dir)
+                };
+                repo.work_tree = Some(root.canonicalize().unwrap_or(root));
+            }
+        }
         let root = if dir.is_absolute() {
             dir.to_path_buf()
         } else {
@@ -1582,6 +1621,35 @@ fn read_core_bare_and_worktree(git_dir: &Path) -> Result<(bool, Option<String>)>
         }
     }
     Ok((bare, worktree))
+}
+
+/// Reject impossible `GIT_WORK_TREE` values before repository setup (matches Git's
+/// `validate_worktree` / `die` on bogus absolute paths, e.g. t1501).
+fn validate_git_work_tree_path(path: &Path) -> Result<()> {
+    if !path.is_absolute() {
+        return Ok(());
+    }
+    let mut cur = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::Prefix(p) => cur.push(p.as_os_str()),
+            Component::RootDir => cur.push(comp.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let _ = cur.pop();
+            }
+            Component::Normal(seg) => {
+                cur.push(seg);
+                if !cur.exists() {
+                    return Err(Error::PathError(format!(
+                        "Invalid path '{}': No such file or directory",
+                        cur.display()
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn resolve_core_worktree_path(git_dir: &Path, raw: &str) -> Result<PathBuf> {

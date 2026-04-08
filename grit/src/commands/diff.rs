@@ -12,6 +12,7 @@
 //! Exit codes: `--exit-code` / `--quiet` return exit code 1 if there are
 //! differences.
 
+use crate::pathspec::resolve_pathspec;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
@@ -25,7 +26,8 @@ use grit_lib::merge_diff::format_worktree_conflict_combined;
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{resolve_revision, split_treeish_colon};
+use grit_lib::rev_parse::{resolve_revision, show_prefix, split_treeish_colon};
+use std::env;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
@@ -434,6 +436,27 @@ pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
     let emit_unified_patch = diff_emit_unified_patch_from_argv(&raw_args);
+
+    let cwd = env::current_dir().context("failed to read current directory")?;
+    let pathspec_prefix = repo
+        .work_tree
+        .as_ref()
+        .map(|_| show_prefix(&repo, &cwd))
+        .filter(|p| !p.is_empty())
+        .map(|mut p| {
+            p.pop(); // trailing '/'
+            p
+        });
+    let paths: Vec<String> = paths
+        .into_iter()
+        .map(|p| {
+            if let Some(wt) = repo.work_tree.as_ref() {
+                resolve_pathspec(&p, wt, pathspec_prefix.as_deref())
+            } else {
+                p
+            }
+        })
+        .collect();
 
     // Resolve diff prefixes from config and command-line options
     let (src_prefix, dst_prefix) = resolve_diff_prefixes(&args, &repo);
@@ -1180,6 +1203,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     args.binary,
                     &src_prefix,
                     &dst_prefix,
+                    args.cached,
                 )?;
             }
         }
@@ -1951,6 +1975,14 @@ fn read_content_raw_or_worktree(
     path: &str,
 ) -> Vec<u8> {
     if *oid == zero_oid() {
+        // Empty tree / new file side: read from the work tree when available (t1501 tree diffs).
+        if let Some(wt) = work_tree {
+            if path != "/dev/null" {
+                if let Ok(data) = std::fs::read(wt.join(path)) {
+                    return data;
+                }
+            }
+        }
         return Vec::new();
     }
     // Try ODB first
@@ -2256,6 +2288,7 @@ fn write_patch_with_prefix(
     show_binary: bool,
     src_prefix: &str,
     dst_prefix: &str,
+    cached: bool,
 ) -> Result<()> {
     for entry in entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
@@ -2316,6 +2349,12 @@ fn write_patch_with_prefix(
         let old_content_raw = read_content_raw(odb, &entry.old_oid);
         let new_content_raw =
             read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, new_path);
+
+        // `git diff --cached` for a newly staged empty file: header + index line only, no hunks
+        // (t1501-work-tree `diff-TREE-cached.expected`).
+        if cached && entry.status == DiffStatus::Added && new_content_raw.is_empty() {
+            continue;
+        }
 
         if entry.status == DiffStatus::Modified
             && entry.old_oid == entry.new_oid
