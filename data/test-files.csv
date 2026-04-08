@@ -153,7 +153,7 @@ t10520-commit-date-author	t1	yes	31	31	0	true	ok	0
 t10530-add-verbose-dry-run	t1	yes	32	32	0	true	ok	0
 t10540-rm-ignore-unmatch	t1	yes	31	31	0	true	ok	0
 t10550-mv-verbose-dry-run	t1	yes	28	28	0	true	ok	0
-t10560-switch-create-detach	t1	yes	28	6	22	false	ok	0
+t10560-switch-create-detach	t1	yes	28	28	0	true	ok	0
 t10570-restore-worktree-only	t1	yes	28	28	0	true	ok	0
 t10580-reset-path-mixed	t1	yes	25	25	0	true	ok	0
 t1060-object-corruption	t1	yes	16	12	4	false	ok	1
@@ -1599,7 +1599,7 @@ t9880-config-file-option	t9	yes	32	25	7	false	ok	0
 t9890-init-object-format	t9	yes	31	31	0	true	ok	0
 t9900-branch-verbose-all	t9	yes	33	33	0	true	ok	0
 t9901-git-web--browse	t9	yes	5	0	5	false	ok	0
-t9902-completion	t9	yes	263	15	245	false	ok	2
+t9902-completion	t9	yes	260	15	245	false	ok	2
 t9903-bash-prompt	t9	yes	67	1	66	false	ok	0
 t9910-tag-pattern-glob	t9	yes	32	32	0	true	ok	0
 t9920-commit-tree-author-env	t9	yes	26	25	1	false	ok	0

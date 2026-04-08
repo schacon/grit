@@ -29,7 +29,7 @@
 - [ ] t10520-commit-date-author.sh
 - [ ] t10540-rm-ignore-unmatch.sh
 - [ ] t10550-mv-verbose-dry-run.sh
-- [ ] t10560-switch-create-detach.sh
+- [x] t10560-switch-create-detach.sh
 - [ ] t10570-restore-worktree-only.sh
 - [ ] t1060-object-corruption.sh                                                                        - [ ] t10610-show-ref-dereference-extra.sh
 - [ ] t10620-update-ref-nul-stdin.sh

@@ -12,6 +12,7 @@ use clap::Args as ClapArgs;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::diff::zero_oid;
@@ -142,6 +143,10 @@ pub struct Args {
     /// Read pathspec from file.
     #[arg(long = "pathspec-from-file")]
     pub pathspec_from_file: Option<String>,
+
+    /// Internal: set by `grit switch` so `-- <name>` is interpreted as a branch, not a path.
+    #[arg(long = "__grit_switch_mode", hide = true, default_value_t = false)]
+    pub switch_mode: bool,
 
     /// Remaining positional arguments: `[<branch|commit>] [--] [<paths>...]`
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -317,7 +322,12 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // Parse rest into (target, paths) handling `--` separator
-    let (target, paths) = split_target_and_paths(&args.rest, has_separator, separator_at_end);
+    let (target, paths) = split_target_and_paths(
+        &args.rest,
+        has_separator,
+        separator_at_end,
+        args.switch_mode,
+    );
 
     // Resolve @{-N} in start point if present
     let target = target.map(|t| resolve_at_minus(&repo, &t).unwrap_or(t));
@@ -676,6 +686,7 @@ fn split_target_and_paths(
     rest: &[String],
     has_separator: bool,
     separator_at_end: bool,
+    switch_mode: bool,
 ) -> (Option<String>, Vec<String>) {
     if rest.is_empty() {
         return (None, vec![]);
@@ -695,6 +706,11 @@ fn split_target_and_paths(
             return (None, vec![]);
         }
         if separator_at_end {
+            return (Some(rest[0].clone()), vec![]);
+        }
+        // `git switch -- <branch>`: a single token after `--` is always the branch name, even if
+        // it matches a tracked path (`git switch -- file1.txt-branch`).
+        if switch_mode && rest.len() == 1 {
             return (Some(rest[0].clone()), vec![]);
         }
         return (None, rest.to_vec());
@@ -868,6 +884,18 @@ fn switch_branch(
     Ok(())
 }
 
+/// Reject branch names that cannot exist as `refs/heads/<name>` (matches `git switch -c`).
+fn validate_new_branch_name(name: &str) -> Result<()> {
+    let opts = RefNameOptions {
+        allow_onelevel: true,
+        ..Default::default()
+    };
+    if check_refname_format(name, &opts).is_err() {
+        bail!("'{name}' is not a valid branch name");
+    }
+    Ok(())
+}
+
 /// Create a new branch and switch to it.
 fn create_and_switch_branch(
     repo: &Repository,
@@ -875,6 +903,7 @@ fn create_and_switch_branch(
     start: Option<&str>,
     force: bool,
 ) -> Result<()> {
+    validate_new_branch_name(name)?;
     // Check for HEAD.lock (another process is writing)
     let head_lock = repo.git_dir.join("HEAD.lock");
     if head_lock.exists() {
@@ -959,6 +988,7 @@ fn force_create_and_switch_branch(
     start: Option<&str>,
     force: bool,
 ) -> Result<()> {
+    validate_new_branch_name(name)?;
     let branch_ref = format!("refs/heads/{name}");
 
     // Check if branch is checked out in another worktree (including main)
@@ -1089,6 +1119,7 @@ fn force_create_and_switch_branch(
 /// Sets HEAD to the new branch but does NOT create the ref (no commit yet).
 /// If a start_point is given, populates the index/worktree from that commit.
 fn create_orphan_branch(repo: &Repository, name: &str, start_point: Option<&str>) -> Result<()> {
+    validate_new_branch_name(name)?;
     let branch_ref = format!("refs/heads/{name}");
 
     // Re-creating an orphan branch name removes the old ref (matches `git switch --orphan`

@@ -133,6 +133,7 @@ pub fn run(args: Args) -> Result<()> {
         std::process::exit(128);
     }
     checkout::run(checkout::Args {
+        switch_mode: true,
         rest: checkout_tail,
         ..Default::default()
     })
