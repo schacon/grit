@@ -1,8 +1,8 @@
 //! `grit sparse-checkout` — manage sparse checkout patterns.
 //!
-//! Sparse checkout allows only a subset of files to be checked out
-//! in the working tree. Patterns are stored in `.git/info/sparse-checkout`
-//! and controlled by `core.sparseCheckout` config.
+//! Patterns live in `.git/info/sparse-checkout`. `core.sparseCheckout` and
+//! `core.sparseCheckoutCone` are stored in `config.worktree` when present,
+//! matching Git's worktree-local sparse settings.
 
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
@@ -10,9 +10,14 @@ use grit_lib::config::{ConfigFile, ConfigScope};
 use grit_lib::index::MODE_TREE;
 use grit_lib::objects::parse_commit;
 use grit_lib::repo::Repository;
+use grit_lib::sparse_checkout::{
+    load_sparse_checkout_with_warnings, path_in_sparse_checkout, ConePatterns, ConeWorkspace,
+    NonConePatterns,
+};
 use grit_lib::state::resolve_head;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, BufRead, Write};
+use std::path::{Path, PathBuf};
 
 /// Arguments for `grit sparse-checkout`.
 #[derive(Debug, ClapArgs)]
@@ -24,106 +29,133 @@ pub struct Args {
 
 #[derive(Debug, Subcommand)]
 pub enum SparseCheckoutSubcommand {
-    /// Initialize sparse checkout.
     Init(InitArgs),
-    /// Set sparse checkout patterns.
     Set(SetArgs),
-    /// Add patterns to sparse checkout.
     Add(AddArgs),
-    /// Reapply sparse checkout patterns.
     Reapply(ReapplyArgs),
-    /// List current sparse checkout patterns.
     List,
-    /// Disable sparse checkout.
     Disable,
+    CheckRules(CheckRulesArgs),
+    Clean(CleanArgs),
 }
 
 #[derive(Debug, ClapArgs)]
 pub struct InitArgs {
-    /// Use cone mode (directory-based) sparse checkout.
     #[arg(long)]
     pub cone: bool,
-
-    /// Use non-cone mode (pattern-based) sparse checkout.
     #[arg(long = "no-cone")]
     pub no_cone: bool,
-
-    /// Store the index in sparse form (sparse directory entries) when possible.
     #[arg(long)]
     pub sparse_index: bool,
-
-    /// Do not use a sparse index.
     #[arg(long = "no-sparse-index")]
     pub no_sparse_index: bool,
 }
 
 #[derive(Debug, ClapArgs)]
 pub struct SetArgs {
-    /// Use cone mode (directory-based) sparse checkout.
     #[arg(long)]
     pub cone: bool,
-
-    /// Use non-cone mode (pattern-based) sparse checkout.
     #[arg(long = "no-cone")]
     pub no_cone: bool,
-
-    /// Store the index in sparse form when possible.
     #[arg(long)]
     pub sparse_index: bool,
-
-    /// Do not use a sparse index.
     #[arg(long = "no-sparse-index")]
     pub no_sparse_index: bool,
-
-    /// Skip validation that each pattern names an existing directory (cone mode).
     #[arg(long = "skip-checks")]
     pub skip_checks: bool,
-
-    /// Patterns to include in sparse checkout.
+    #[arg(long)]
+    pub stdin: bool,
+    #[arg(long = "end-of-options", hide = true)]
+    pub end_of_options: bool,
     pub patterns: Vec<String>,
 }
 
 #[derive(Debug, ClapArgs)]
 pub struct AddArgs {
-    /// Skip validation that each pattern names an existing directory (cone mode).
     #[arg(long = "skip-checks")]
     pub skip_checks: bool,
-
-    /// Patterns to add to sparse checkout.
-    #[arg(required = true)]
+    #[arg(long)]
+    pub stdin: bool,
+    #[arg(long = "end-of-options", hide = true)]
+    pub end_of_options: bool,
     pub patterns: Vec<String>,
 }
 
 #[derive(Debug, ClapArgs)]
 pub struct ReapplyArgs {
-    /// Use cone mode (directory-based) sparse checkout.
     #[arg(long)]
     pub cone: bool,
-
-    /// Use non-cone mode (pattern-based) sparse checkout.
     #[arg(long = "no-cone")]
     pub no_cone: bool,
-
-    /// Store the index in sparse form when possible.
     #[arg(long)]
     pub sparse_index: bool,
-
-    /// Do not use a sparse index.
     #[arg(long = "no-sparse-index")]
     pub no_sparse_index: bool,
 }
 
-/// Run `grit sparse-checkout`.
+#[derive(Debug, ClapArgs)]
+pub struct CheckRulesArgs {
+    #[arg(short = 'z')]
+    pub nul: bool,
+    #[arg(long)]
+    pub cone: bool,
+    #[arg(long = "no-cone")]
+    pub no_cone: bool,
+    #[arg(long = "rules-file", value_name = "FILE")]
+    pub rules_file: Option<PathBuf>,
+}
+
+#[derive(Debug, ClapArgs)]
+pub struct CleanArgs {
+    #[arg(short = 'n', long = "dry-run")]
+    pub dry_run: bool,
+    #[arg(short = 'f', long)]
+    pub force: bool,
+    #[arg(short = 'v', long)]
+    pub verbose: bool,
+}
+
+/// After `git clone --sparse`: enable cone sparse-checkout and optionally shrink the tree.
+/// Copy `.git/info/sparse-checkout` from the main repo into a linked worktree admin dir.
+pub(crate) fn copy_sparse_checkout_to_admin(source_git_dir: &Path, admin_dir: &Path) -> Result<()> {
+    let src = source_git_dir.join("info").join("sparse-checkout");
+    if !src.exists() {
+        return Ok(());
+    }
+    let dst_dir = admin_dir.join("info");
+    fs::create_dir_all(&dst_dir)?;
+    fs::copy(&src, dst_dir.join("sparse-checkout"))?;
+    Ok(())
+}
+
+pub(crate) fn finalize_sparse_clone(repo: &Repository, apply_to_index: bool) -> Result<()> {
+    if apply_to_index {
+        crate::commands::clone::ensure_index_from_head_if_missing(repo)?;
+    }
+    init_worktree_config(repo)?;
+    set_sparse_config(repo, true)?;
+    set_cone_config(repo, true)?;
+    let ws = ConeWorkspace::default();
+    write_sparse_file(repo, &ws.to_sparse_checkout_file())?;
+    if apply_to_index {
+        let patterns = read_sparse_patterns(repo)?;
+        apply_sparse_patterns(repo, &patterns, true)?;
+    }
+    Ok(())
+}
+
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
     match args.subcommand {
-        SparseCheckoutSubcommand::Init(init_args) => cmd_init(&repo, &init_args),
-        SparseCheckoutSubcommand::Set(set_args) => cmd_set(&repo, &set_args),
-        SparseCheckoutSubcommand::Add(add_args) => cmd_add(&repo, &add_args),
-        SparseCheckoutSubcommand::Reapply(reapply_args) => cmd_reapply(&repo, &reapply_args),
+        SparseCheckoutSubcommand::Init(a) => cmd_init(&repo, &a),
+        SparseCheckoutSubcommand::Set(a) => cmd_set(&repo, &a),
+        SparseCheckoutSubcommand::Add(a) => cmd_add(&repo, &a),
+        SparseCheckoutSubcommand::Reapply(a) => cmd_reapply(&repo, &a),
         SparseCheckoutSubcommand::List => cmd_list(&repo),
         SparseCheckoutSubcommand::Disable => cmd_disable(&repo),
+        SparseCheckoutSubcommand::CheckRules(a) => cmd_check_rules(&repo, &a),
+        SparseCheckoutSubcommand::Clean(a) => cmd_clean(&repo, &a),
     }
 }
 
@@ -145,11 +177,119 @@ fn tri_bool_sparse(sparse: bool, no_sparse: bool) -> Result<Option<bool>> {
     }
 }
 
+fn worktree_config_path(repo: &Repository) -> PathBuf {
+    repo.git_dir.join("config.worktree")
+}
+
+fn init_worktree_config(repo: &Repository) -> Result<()> {
+    let p = worktree_config_path(repo);
+    if p.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = p.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    fs::write(&p, "").context("creating config.worktree")?;
+    Ok(())
+}
+
+fn load_merged_config(repo: &Repository) -> grit_lib::config::ConfigSet {
+    grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default()
+}
+
+fn sparse_checkout_path(repo: &Repository) -> PathBuf {
+    repo.git_dir.join("info").join("sparse-checkout")
+}
+
+fn acquire_sparse_lock(repo: &Repository) -> Result<std::fs::File> {
+    let lock_path = repo.git_dir.join("info").join("sparse-checkout.lock");
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+    {
+        Ok(f) => Ok(f),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            bail!("Unable to create {}: File exists.", lock_path.display());
+        }
+        Err(e) => Err(e).context("sparse-checkout lock")?,
+    }
+}
+
+fn release_sparse_lock(repo: &Repository) {
+    let _ = fs::remove_file(repo.git_dir.join("info").join("sparse-checkout.lock"));
+}
+
+fn set_sparse_config(repo: &Repository, enable: bool) -> Result<()> {
+    init_worktree_config(repo)?;
+    let path = worktree_config_path(repo);
+    let content = fs::read_to_string(&path).unwrap_or_default();
+    let mut cfg = ConfigFile::parse(&path, &content, ConfigScope::Worktree)?;
+    cfg.set("core.sparseCheckout", if enable { "true" } else { "false" })?;
+    cfg.write()?;
+    Ok(())
+}
+
+fn set_cone_config(repo: &Repository, cone: bool) -> Result<()> {
+    init_worktree_config(repo)?;
+    let path = worktree_config_path(repo);
+    let content = fs::read_to_string(&path).unwrap_or_default();
+    let mut cfg = ConfigFile::parse(&path, &content, ConfigScope::Worktree)?;
+    cfg.set(
+        "core.sparseCheckoutCone",
+        if cone { "true" } else { "false" },
+    )?;
+    cfg.write()?;
+    Ok(())
+}
+
+fn set_sparse_index_config(repo: &Repository, enable: bool) -> Result<()> {
+    init_worktree_config(repo)?;
+    let path = worktree_config_path(repo);
+    let content = fs::read_to_string(&path).unwrap_or_default();
+    let mut cfg = ConfigFile::parse(&path, &content, ConfigScope::Worktree)?;
+    cfg.set("index.sparse", if enable { "true" } else { "false" })?;
+    cfg.write()?;
+    Ok(())
+}
+
+fn read_sparse_file_content(repo: &Repository) -> String {
+    let p = sparse_checkout_path(repo);
+    fs::read_to_string(&p).unwrap_or_default()
+}
+
+fn write_sparse_file(repo: &Repository, content: &str) -> Result<()> {
+    let sc_path = sparse_checkout_path(repo);
+    if let Some(parent) = sc_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&sc_path, content).context("writing sparse-checkout file")?;
+    Ok(())
+}
+
+fn head_tree_oid(repo: &Repository) -> Result<Option<grit_lib::objects::ObjectId>> {
+    let head = resolve_head(&repo.git_dir).context("reading HEAD")?;
+    let Some(commit_oid) = head.oid() else {
+        return Ok(None);
+    };
+    let obj = repo.odb.read(commit_oid).context("reading HEAD commit")?;
+    let commit = parse_commit(&obj.data).context("parsing HEAD commit")?;
+    Ok(Some(commit.tree))
+}
+
 fn cmd_init(repo: &Repository, args: &InitArgs) -> Result<()> {
+    let _work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+
     let cone_opt = tri_bool(args.cone, args.no_cone)?;
     let sparse_idx_opt = tri_bool_sparse(args.sparse_index, args.no_sparse_index)?;
 
-    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let config = load_merged_config(repo);
     let was_sparse = config
         .get("core.sparseCheckout")
         .map(|v| v == "true")
@@ -167,67 +307,126 @@ fn cmd_init(repo: &Repository, args: &InitArgs) -> Result<()> {
 
     set_sparse_config(repo, true)?;
     set_cone_config(repo, cone)?;
-
     if let Some(enable) = sparse_idx_opt {
         set_sparse_index_config(repo, enable)?;
     }
 
     let sc_path = sparse_checkout_path(repo);
     if let Some(parent) = sc_path.parent() {
-        fs::create_dir_all(parent).context("creating info directory")?;
+        fs::create_dir_all(parent)?;
     }
 
-    if !sc_path.exists() {
-        fs::write(&sc_path, "/*\n").context("writing sparse-checkout file")?;
+    if sc_path.exists() {
+        let patterns = read_sparse_patterns(repo)?;
+        apply_sparse_patterns(repo, &patterns, cone)?;
+        return Ok(());
     }
 
+    if head_tree_oid(repo)?.is_none() {
+        write_sparse_file(repo, "/*\n!/*/\n")?;
+        return Ok(());
+    }
+
+    if cone {
+        let ws = ConeWorkspace::default();
+        write_sparse_file(repo, &ws.to_sparse_checkout_file())?;
+    } else {
+        write_sparse_file(repo, "/*\n!/*/\n")?;
+    }
     let patterns = read_sparse_patterns(repo)?;
-    apply_sparse_patterns(repo, &patterns)?;
+    apply_sparse_patterns(repo, &patterns, cone)?;
     Ok(())
 }
 
 fn cmd_set(repo: &Repository, args: &SetArgs) -> Result<()> {
+    let _wt = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+
     let cone_opt = tri_bool(args.cone, args.no_cone)?;
     let sparse_idx_opt = tri_bool_sparse(args.sparse_index, args.no_sparse_index)?;
 
-    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let config = load_merged_config(repo);
     let prev_cone = config
         .get("core.sparseCheckoutCone")
         .and_then(|v| v.parse::<bool>().ok())
         .unwrap_or(true);
-
     let cone = cone_opt.unwrap_or(prev_cone);
 
     set_sparse_config(repo, true)?;
     set_cone_config(repo, cone)?;
-
     if let Some(enable) = sparse_idx_opt {
         set_sparse_index_config(repo, enable)?;
     }
 
-    let patterns = args.patterns.clone();
-    if !args.skip_checks && cone {
-        validate_cone_patterns(repo, &patterns)?;
-    }
-
-    let sc_path = sparse_checkout_path(repo);
-    if let Some(parent) = sc_path.parent() {
-        fs::create_dir_all(parent).context("creating info directory")?;
-    }
-
-    let mut content = String::new();
-    for pat in &patterns {
-        content.push_str(pat);
-        content.push('\n');
-    }
-    fs::write(&sc_path, &content).context("writing sparse-checkout file")?;
-
-    apply_sparse_patterns(repo, &patterns)?;
-    Ok(())
+    let _lock = acquire_sparse_lock(repo)?;
+    let result = (|| {
+        if args.stdin {
+            let stdin = io::stdin();
+            let mut stdin = stdin.lock();
+            let lines = read_stdin_lines(&mut stdin)?;
+            if cone {
+                let mut dirs = Vec::new();
+                for line in lines {
+                    let p = normalize_cone_input_line(&line)?;
+                    if !args.skip_checks {
+                        validate_cone_patterns(repo, std::slice::from_ref(&p))?;
+                    }
+                    dirs.push(p);
+                }
+                let ws = ConeWorkspace::from_directory_list(&dirs);
+                let body = ws.to_sparse_checkout_file();
+                write_sparse_file(repo, &body)?;
+                let patterns = read_sparse_patterns(repo)?;
+                apply_sparse_patterns(repo, &patterns, true)?;
+            } else {
+                let mut lines = lines;
+                if lines.is_empty() {
+                    lines = vec!["/*".to_string(), "!/*/".to_string()];
+                }
+                let body: String = lines.iter().map(|l| format!("{l}\n")).collect();
+                write_sparse_file(repo, &body)?;
+                let patterns = read_sparse_patterns(repo)?;
+                apply_sparse_patterns(repo, &patterns, false)?;
+            }
+            Ok(())
+        } else {
+            let mut pats = args.patterns.clone();
+            sanitize_set_paths(
+                repo,
+                worktree_prefix(repo)?,
+                cone,
+                args.skip_checks,
+                &mut pats,
+            )?;
+            if !cone && pats.is_empty() {
+                pats = vec!["/*".to_string(), "!/*/".to_string()];
+            }
+            if cone {
+                let ws = ConeWorkspace::from_directory_list(&pats);
+                let body = ws.to_sparse_checkout_file();
+                write_sparse_file(repo, &body)?;
+            } else {
+                let body: String = pats.iter().map(|p| format!("{p}\n")).collect();
+                write_sparse_file(repo, &body)?;
+            }
+            let patterns = read_sparse_patterns(repo)?;
+            apply_sparse_patterns(repo, &patterns, cone)?;
+            Ok(())
+        }
+    })();
+    release_sparse_lock(repo);
+    result
 }
 
 fn cmd_add(repo: &Repository, args: &AddArgs) -> Result<()> {
-    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)?;
+    let _wt = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+
+    let config = load_merged_config(repo);
     let sparse_enabled = config
         .get("core.sparseCheckout")
         .map(|v| v == "true")
@@ -235,37 +434,74 @@ fn cmd_add(repo: &Repository, args: &AddArgs) -> Result<()> {
     if !sparse_enabled {
         bail!("no sparse-checkout to add to");
     }
-
     let cone = config
         .get("core.sparseCheckoutCone")
         .and_then(|v| v.parse::<bool>().ok())
         .unwrap_or(true);
 
-    let mut patterns = read_sparse_patterns(repo)?;
-    if !args.skip_checks && cone {
-        validate_cone_patterns(repo, &args.patterns)?;
-    }
-    for pat in &args.patterns {
-        if !patterns.iter().any(|p| p == pat) {
-            patterns.push(pat.clone());
-        }
+    if !args.stdin && args.patterns.is_empty() {
+        bail!("specify directories to add");
     }
 
-    let sc_path = sparse_checkout_path(repo);
-    if let Some(parent) = sc_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let content: String = patterns.iter().map(|p| format!("{p}\n")).collect();
-    fs::write(&sc_path, &content)?;
-    apply_sparse_patterns(repo, &patterns)?;
-    Ok(())
+    let _lock = acquire_sparse_lock(repo)?;
+    let result = (|| {
+        if cone {
+            let content = read_sparse_file_content(repo);
+            let mut dirs = if let Some(cp) = ConePatterns::try_parse(&content) {
+                ConeWorkspace::from_cone_patterns(&cp).list_cone_directories()
+            } else {
+                bail!("existing sparse-checkout patterns do not use cone mode");
+            };
+            let inputs = if args.stdin {
+                let stdin = io::stdin();
+                let mut stdin = stdin.lock();
+                read_stdin_lines(&mut stdin)?
+            } else {
+                let mut p = args.patterns.clone();
+                sanitize_add_paths(repo, worktree_prefix(repo)?, args.skip_checks, &mut p)?;
+                p
+            };
+            for line in inputs {
+                let p = normalize_cone_input_line(&line)?;
+                if !args.skip_checks {
+                    validate_cone_patterns(repo, std::slice::from_ref(&p))?;
+                }
+                dirs.push(p);
+            }
+            let ws = ConeWorkspace::from_directory_list(&dirs);
+            write_sparse_file(repo, &ws.to_sparse_checkout_file())?;
+        } else {
+            let mut patterns = read_sparse_patterns(repo)?;
+            let extra = if args.stdin {
+                let stdin = io::stdin();
+                let mut stdin = stdin.lock();
+                read_stdin_lines(&mut stdin)?
+            } else {
+                let mut p = args.patterns.clone();
+                sanitize_add_paths(repo, worktree_prefix(repo)?, args.skip_checks, &mut p)?;
+                p
+            };
+            for pat in extra {
+                patterns.push(pat);
+            }
+            let body: String = patterns.iter().map(|p| format!("{p}\n")).collect();
+            write_sparse_file(repo, &body)?;
+        }
+        let patterns = read_sparse_patterns(repo)?;
+        apply_sparse_patterns(repo, &patterns, cone)?;
+        Ok(())
+    })();
+    release_sparse_lock(repo);
+    result
 }
 
 fn cmd_reapply(repo: &Repository, args: &ReapplyArgs) -> Result<()> {
-    let cone_opt = tri_bool(args.cone, args.no_cone)?;
-    let sparse_idx_opt = tri_bool_sparse(args.sparse_index, args.no_sparse_index)?;
+    let _wt = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
 
-    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)?;
+    let config = load_merged_config(repo);
     let sparse_enabled = config
         .get("core.sparseCheckout")
         .map(|v| v == "true")
@@ -274,31 +510,383 @@ fn cmd_reapply(repo: &Repository, args: &ReapplyArgs) -> Result<()> {
         bail!("must be in a sparse-checkout to reapply sparsity patterns");
     }
 
+    let cone_opt = tri_bool(args.cone, args.no_cone)?;
+    let sparse_idx_opt = tri_bool_sparse(args.sparse_index, args.no_sparse_index)?;
+
     if let Some(cone) = cone_opt {
         set_cone_config(repo, cone)?;
     }
-
     if let Some(enable) = sparse_idx_opt {
         set_sparse_index_config(repo, enable)?;
     }
 
+    let config = load_merged_config(repo);
+    let cone = config
+        .get("core.sparseCheckoutCone")
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or(true);
     let patterns = read_sparse_patterns(repo)?;
-    apply_sparse_patterns(repo, &patterns)?;
+    apply_sparse_patterns(repo, &patterns, cone)?;
     Ok(())
 }
 
-fn read_sparse_patterns(repo: &Repository) -> Result<Vec<String>> {
+fn cmd_list(repo: &Repository) -> Result<()> {
+    let _wt = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+
+    let config = load_merged_config(repo);
+    let sparse_enabled = config
+        .get("core.sparseCheckout")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    if !sparse_enabled {
+        bail!("this worktree is not sparse");
+    }
+
     let sc_path = sparse_checkout_path(repo);
     if !sc_path.exists() {
-        return Ok(Vec::new());
+        eprintln!("warning: this worktree is not sparse (sparse-checkout file may not exist)");
+        return Ok(());
     }
-    let content = fs::read_to_string(&sc_path).context("reading sparse-checkout file")?;
-    Ok(content
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(String::from)
-        .collect())
+
+    let content = match fs::read_to_string(&sc_path) {
+        Ok(c) => c,
+        Err(_) => {
+            eprintln!("warning: this worktree is not sparse (sparse-checkout file may not exist)");
+            return Ok(());
+        }
+    };
+    let cone = config
+        .get("core.sparseCheckoutCone")
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or(true);
+
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    if cone {
+        if let Some(cp) = ConePatterns::try_parse(&content) {
+            let ws = ConeWorkspace::from_cone_patterns(&cp);
+            for d in ws.list_cone_directories() {
+                writeln!(out, "{d}")?;
+            }
+        } else {
+            for line in content.lines() {
+                let t = line.trim();
+                if !t.is_empty() && !t.starts_with('#') {
+                    writeln!(out, "{t}")?;
+                }
+            }
+        }
+    } else {
+        for line in content.lines() {
+            let t = line.trim();
+            if !t.is_empty() && !t.starts_with('#') {
+                writeln!(out, "{t}")?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn cmd_disable(repo: &Repository) -> Result<()> {
+    let _work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+
+    set_sparse_config(repo, true)?;
+    set_sparse_index_config(repo, false)?;
+
+    write_sparse_file(repo, "/*\n")?;
+
+    let patterns = vec!["/*".to_string()];
+    apply_sparse_patterns(repo, &patterns, false)?;
+
+    unset_sparse_keys_all_layers(repo)?;
+    Ok(())
+}
+
+fn unset_sparse_keys_all_layers(repo: &Repository) -> Result<()> {
+    for (path, scope) in [
+        (worktree_config_path(repo), ConfigScope::Worktree),
+        (repo.git_dir.join("config"), ConfigScope::Local),
+    ] {
+        if path.exists() {
+            let content = fs::read_to_string(&path).unwrap_or_default();
+            let mut cfg = ConfigFile::parse(&path, &content, scope)?;
+            let _ = cfg.unset("core.sparseCheckout");
+            let _ = cfg.unset("core.sparseCheckoutCone");
+            let _ = cfg.unset("index.sparse");
+            cfg.write()?;
+        }
+    }
+    Ok(())
+}
+
+fn cmd_check_rules(repo: &Repository, args: &CheckRulesArgs) -> Result<()> {
+    let cone_opt = tri_bool(args.cone, args.no_cone)?;
+    let config = load_merged_config(repo);
+    let mut cone = config
+        .get("core.sparseCheckoutCone")
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or(true);
+    if let Some(c) = cone_opt {
+        cone = c;
+    }
+    if args.rules_file.is_some() && cone_opt.is_none() {
+        cone = true;
+    }
+
+    let (cone_pat, non_cone, effective_cone) = if let Some(ref rf) = args.rules_file {
+        let text = fs::read_to_string(rf).with_context(|| rf.display().to_string())?;
+        if cone {
+            let mut dirs = Vec::new();
+            for line in text.lines() {
+                let t = line.trim();
+                if t.is_empty() || t.starts_with('#') {
+                    continue;
+                }
+                let p = normalize_cone_input_line(t)?;
+                dirs.push(p);
+            }
+            let ws = ConeWorkspace::from_directory_list(&dirs);
+            let file_body = ws.to_sparse_checkout_file();
+            let mut w = Vec::new();
+            let cp = ConePatterns::try_parse_with_warnings(&file_body, &mut w);
+            let ec = cp.is_some();
+            (cp, NonConePatterns::parse(&file_body), ec)
+        } else {
+            (None, NonConePatterns::parse(&text), false)
+        }
+    } else {
+        let mut w = Vec::new();
+        let (_ok, cp, nc) = load_sparse_checkout_with_warnings(&repo.git_dir, cone, &mut w);
+        let sparse_content = read_sparse_file_content(repo);
+        let ec = cone && ConePatterns::try_parse(&sparse_content).is_some();
+        (cp, nc, ec)
+    };
+
+    let stdin = io::stdin();
+    let mut stdin = stdin.lock();
+    let mut line = Vec::new();
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    if args.nul {
+        loop {
+            line.clear();
+            let n = stdin.read_until(0, &mut line)?;
+            if n == 0 {
+                break;
+            }
+            if line.last() == Some(&0) {
+                line.pop();
+            }
+            let path = String::from_utf8_lossy(&line);
+            let path = path.as_ref();
+            if path_in_sparse_checkout(path, effective_cone, cone_pat.as_ref(), &non_cone) {
+                out.write_all(line.as_slice())?;
+                out.write_all(&[0])?;
+            }
+        }
+    } else {
+        loop {
+            line.clear();
+            let n = stdin.read_until(b'\n', &mut line)?;
+            if n == 0 {
+                break;
+            }
+            while line.last() == Some(&b'\n') || line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            let path = String::from_utf8_lossy(&line);
+            let path = path.as_ref();
+            if path_in_sparse_checkout(path, effective_cone, cone_pat.as_ref(), &non_cone) {
+                writeln!(out, "{path}")?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn cmd_clean(repo: &Repository, args: &CleanArgs) -> Result<()> {
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+
+    let config = load_merged_config(repo);
+    let sparse_enabled = config
+        .get("core.sparseCheckout")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    if !sparse_enabled {
+        bail!("must be in a sparse-checkout to clean directories");
+    }
+    let cone = config
+        .get("core.sparseCheckoutCone")
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or(true);
+    if !cone {
+        bail!("must be in a cone-mode sparse-checkout to clean directories");
+    }
+
+    let require_force = config
+        .get("clean.requireForce")
+        .map(|v| v == "true")
+        .unwrap_or(true);
+    if require_force && !args.force && !args.dry_run {
+        bail!("for safety, refusing to clean without one of --force or --dry-run");
+    }
+
+    let index_path = repo.index_path();
+    let index = repo.load_index_at(&index_path).context("reading index")?;
+
+    let msg_remove = "Removing ";
+    let msg_would = "Would remove ";
+    let msg = if args.dry_run { msg_would } else { msg_remove };
+
+    for entry in &index.entries {
+        if entry.mode != MODE_TREE || !entry.is_sparse_directory_placeholder() {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&entry.path);
+        let full = work_tree.join(path_str.as_ref());
+        if !full.is_dir() {
+            continue;
+        }
+        if args.verbose {
+            for rel in list_files_under_dir(&full, work_tree)? {
+                writeln!(io::stdout(), "{msg}{rel}")?;
+            }
+        } else {
+            writeln!(io::stdout(), "{msg}{path_str}/")?;
+        }
+        if !args.dry_run {
+            let _ = fs::remove_dir_all(&full);
+        }
+    }
+
+    Ok(())
+}
+
+fn worktree_prefix(repo: &Repository) -> Result<String> {
+    let wt = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("bare"))?;
+    let cwd = std::env::current_dir()?;
+    let wt = wt.canonicalize().unwrap_or_else(|_| wt.to_path_buf());
+    let cwd = cwd.canonicalize().unwrap_or(cwd);
+    if let Ok(rest) = cwd.strip_prefix(&wt) {
+        let s = rest.to_string_lossy().replace('\\', "/");
+        if s.is_empty() {
+            return Ok(String::new());
+        }
+        Ok(format!("{}/", s.trim_end_matches('/')))
+    } else {
+        Ok(String::new())
+    }
+}
+
+fn sanitize_set_paths(
+    repo: &Repository,
+    prefix: String,
+    cone: bool,
+    skip_checks: bool,
+    args: &mut Vec<String>,
+) -> Result<()> {
+    if !prefix.is_empty() && cone {
+        for a in args.iter_mut() {
+            if let Some(p) =
+                crate::git_path::prefix_path_gently(&prefix, a, repo.work_tree.as_ref().unwrap())
+            {
+                *a = p;
+            }
+        }
+    }
+    if !prefix.is_empty() && !cone {
+        bail!("please run from the toplevel directory in non-cone mode");
+    }
+    if cone {
+        for a in args.iter() {
+            if a.starts_with('/') {
+                bail!("specify directories rather than patterns (no leading slash)");
+            }
+            if a.starts_with('!') {
+                bail!("specify directories rather than patterns.  If your directory starts with a '!', pass --skip-checks");
+            }
+            if a.contains('*') || a.contains('?') || a.contains('[') {
+                bail!("specify directories rather than patterns.  If your directory really has any of '*?[]\\' in it, pass --skip-checks");
+            }
+        }
+    }
+    if !skip_checks {
+        validate_cone_patterns(repo, args)?;
+    }
+    Ok(())
+}
+
+fn sanitize_add_paths(
+    repo: &Repository,
+    prefix: String,
+    skip_checks: bool,
+    args: &mut Vec<String>,
+) -> Result<()> {
+    let config = load_merged_config(repo);
+    let cone = config
+        .get("core.sparseCheckoutCone")
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or(true);
+    sanitize_set_paths(repo, prefix, cone, skip_checks, args)
+}
+
+fn normalize_cone_input_line(line: &str) -> Result<String> {
+    let mut s = line.trim().to_string();
+    if s.starts_with('"') {
+        s = unquote_c_style(&s)?;
+    }
+    s = s.trim_end_matches('/').to_string();
+    let normalized = crate::git_path::normalize_path_copy(&s)
+        .map_err(|_| anyhow::anyhow!("could not normalize path {s}"))?;
+    Ok(normalized.trim_start_matches('/').to_string())
+}
+
+fn unquote_c_style(s: &str) -> Result<String> {
+    if !s.starts_with('"') || !s.ends_with('"') || s.len() < 2 {
+        return Ok(s.to_string());
+    }
+    let inner = &s[1..s.len() - 1];
+    let mut out = String::new();
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            let Some(n) = chars.next() else {
+                bail!("invalid escape");
+            };
+            match n {
+                'n' => out.push('\n'),
+                't' => out.push('\t'),
+                '"' => out.push('"'),
+                '\\' => out.push('\\'),
+                _ => out.push(n),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    Ok(out)
+}
+
+fn read_stdin_lines<R: BufRead>(r: &mut R) -> Result<Vec<String>> {
+    let mut v = Vec::new();
+    for line in r.lines() {
+        v.push(line?);
+    }
+    Ok(v)
 }
 
 fn validate_cone_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
@@ -329,33 +917,30 @@ fn validate_cone_patterns(repo: &Repository, patterns: &[String]) -> Result<()> 
                 p
             );
         }
-        // No exact index entry: allowed (Git treats as missing / directory prefix only).
     }
     Ok(())
 }
 
-fn head_tree_oid(repo: &Repository) -> Result<Option<grit_lib::objects::ObjectId>> {
-    let head = resolve_head(&repo.git_dir).context("reading HEAD")?;
-    let Some(commit_oid) = head.oid() else {
-        return Ok(None);
-    };
-    let obj = repo.odb.read(commit_oid).context("reading HEAD commit")?;
-    let commit = parse_commit(&obj.data).context("parsing HEAD commit")?;
-    Ok(Some(commit.tree))
+fn read_sparse_patterns(repo: &Repository) -> Result<Vec<String>> {
+    let sc_path = sparse_checkout_path(repo);
+    if !sc_path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = fs::read_to_string(&sc_path).context("reading sparse-checkout file")?;
+    Ok(content
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(String::from)
+        .collect())
 }
 
-/// Apply sparse checkout patterns: remove files from the working tree that
-/// don't match any pattern, and set skip-worktree bit in the index.
-fn apply_sparse_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
+fn apply_sparse_patterns(repo: &Repository, patterns: &[String], cone_mode: bool) -> Result<()> {
     let work_tree = repo
         .work_tree
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("bare repository cannot use sparse checkout"))?;
-    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-    let cone_mode = config
-        .get("core.sparseCheckoutCone")
-        .and_then(|v| v.parse::<bool>().ok())
-        .unwrap_or(true);
+    let config = load_merged_config(repo);
     let sparse_index_enabled = config
         .get("index.sparse")
         .map(|v| v == "true")
@@ -368,12 +953,22 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
         index.version = 3;
     }
 
+    let file_content = read_sparse_file_content(repo);
+    let cone_struct = if cone_mode {
+        ConePatterns::try_parse(&file_content)
+    } else {
+        None
+    };
+    let effective_cone = cone_mode && cone_struct.is_some();
+    let non_cone = NonConePatterns::from_lines(patterns.to_vec());
+
     for entry in &mut index.entries {
         if entry.mode == MODE_TREE {
             continue;
         }
         let path_str = String::from_utf8_lossy(&entry.path).to_string();
-        let matches = path_matches_sparse_patterns(&path_str, patterns, cone_mode);
+        let matches =
+            path_in_sparse_checkout(&path_str, effective_cone, cone_struct.as_ref(), &non_cone);
 
         if matches {
             if entry.skip_worktree() {
@@ -405,7 +1000,7 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
             &repo.odb,
             &tree_oid,
             patterns,
-            cone_mode,
+            effective_cone,
             sparse_index_enabled,
         )?;
     } else {
@@ -417,56 +1012,27 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn path_matches_sparse_patterns(path: &str, patterns: &[String], cone_mode: bool) -> bool {
-    if cone_mode {
-        if !path.contains('/') {
-            return true;
-        }
-
-        for pattern in patterns {
-            let prefix = pattern.trim_end_matches('/');
-            if path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/') {
-                return true;
+fn list_files_under_dir(dir: &Path, work_tree: &Path) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for ent in fs::read_dir(&d).with_context(|| d.display().to_string())? {
+            let ent = ent?;
+            let p = ent.path();
+            let meta = ent.metadata()?;
+            if meta.is_dir() {
+                stack.push(p);
+            } else if meta.is_file() {
+                let rel = p.strip_prefix(work_tree).unwrap_or(&p);
+                out.push(rel.to_string_lossy().replace('\\', "/"));
             }
-            if path == prefix {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    let mut included = false;
-    for raw_pattern in patterns {
-        let pattern = raw_pattern.trim();
-        if pattern.is_empty() || pattern.starts_with('#') {
-            continue;
-        }
-
-        let (negated, core_pattern) = if let Some(rest) = pattern.strip_prefix('!') {
-            (true, rest)
-        } else {
-            (false, pattern)
-        };
-        let normalized = core_pattern.strip_prefix('/').unwrap_or(core_pattern);
-        if normalized.is_empty() {
-            continue;
-        }
-
-        let matches = if let Some(prefix) = normalized.strip_suffix('/') {
-            path == prefix || path.starts_with(&format!("{prefix}/"))
-        } else {
-            crate::pathspec::pathspec_matches(normalized, path)
-        };
-
-        if matches {
-            included = !negated;
         }
     }
-
-    included
+    out.sort();
+    Ok(out)
 }
 
-fn remove_empty_dirs_up_to(dir: &std::path::Path, stop: &std::path::Path) {
+fn remove_empty_dirs_up_to(dir: &Path, stop: &Path) {
     let mut current = dir.to_path_buf();
     while current != stop {
         if let Ok(mut entries) = fs::read_dir(&current) {
@@ -482,127 +1048,4 @@ fn remove_empty_dirs_up_to(dir: &std::path::Path, stop: &std::path::Path) {
             None => break,
         }
     }
-}
-
-fn cmd_list(repo: &Repository) -> Result<()> {
-    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)?;
-    let sparse_enabled = config
-        .get("core.sparseCheckout")
-        .map(|v| v == "true")
-        .unwrap_or(false);
-    if !sparse_enabled {
-        bail!("this worktree is not sparse");
-    }
-
-    let sc_path = sparse_checkout_path(repo);
-    if !sc_path.exists() {
-        return Ok(());
-    }
-
-    let content = fs::read_to_string(&sc_path).context("reading sparse-checkout file")?;
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if !trimmed.is_empty() && !trimmed.starts_with('#') {
-            writeln!(out, "{trimmed}")?;
-        }
-    }
-    Ok(())
-}
-
-fn cmd_disable(repo: &Repository) -> Result<()> {
-    set_sparse_config(repo, false)?;
-    set_sparse_index_config(repo, false)?;
-
-    let work_tree = match repo.work_tree.as_deref() {
-        Some(wt) => wt,
-        None => return Ok(()),
-    };
-
-    let index_path = repo.index_path();
-    let mut index = repo.load_index_at(&index_path).context("reading index")?;
-
-    if index.version < 3 {
-        index.version = 3;
-    }
-
-    for entry in &mut index.entries {
-        if entry.mode == MODE_TREE {
-            continue;
-        }
-        if entry.skip_worktree() {
-            entry.set_skip_worktree(false);
-            let path_str = String::from_utf8_lossy(&entry.path).to_string();
-            let full_path = work_tree.join(&path_str);
-            if !full_path.exists() {
-                if let Some(parent) = full_path.parent() {
-                    let _ = fs::create_dir_all(parent);
-                }
-                if entry.oid != grit_lib::diff::zero_oid() {
-                    if let Ok(obj) = repo.odb.read(&entry.oid) {
-                        let _ = fs::write(&full_path, &obj.data);
-                    }
-                }
-            }
-        }
-    }
-
-    index.sparse_directories = false;
-    repo.write_index_at(&index_path, &mut index)
-        .context("writing index")?;
-
-    let sc_path = sparse_checkout_path(repo);
-    let _ = fs::remove_file(&sc_path);
-
-    Ok(())
-}
-
-fn sparse_checkout_path(repo: &Repository) -> std::path::PathBuf {
-    repo.git_dir.join("info").join("sparse-checkout")
-}
-
-fn set_sparse_config(repo: &Repository, enable: bool) -> Result<()> {
-    let config_path = repo.git_dir.join("config");
-    let mut config = if config_path.exists() {
-        let content = fs::read_to_string(&config_path).context("reading repo config")?;
-        ConfigFile::parse(&config_path, &content, ConfigScope::Local)?
-    } else {
-        ConfigFile::parse(&config_path, "", ConfigScope::Local)?
-    };
-
-    let value = if enable { "true" } else { "false" };
-    config.set("core.sparseCheckout", value)?;
-    config.write().context("writing repo config")?;
-    Ok(())
-}
-
-fn set_cone_config(repo: &Repository, cone: bool) -> Result<()> {
-    let config_path = repo.git_dir.join("config");
-    let mut config = if config_path.exists() {
-        let content = fs::read_to_string(&config_path).context("reading repo config")?;
-        ConfigFile::parse(&config_path, &content, ConfigScope::Local)?
-    } else {
-        ConfigFile::parse(&config_path, "", ConfigScope::Local)?
-    };
-
-    let value = if cone { "true" } else { "false" };
-    config.set("core.sparseCheckoutCone", value)?;
-    config.write().context("writing repo config")?;
-    Ok(())
-}
-
-fn set_sparse_index_config(repo: &Repository, enable: bool) -> Result<()> {
-    let config_path = repo.git_dir.join("config");
-    let mut config = if config_path.exists() {
-        let content = fs::read_to_string(&config_path).context("reading repo config")?;
-        ConfigFile::parse(&config_path, &content, ConfigScope::Local)?
-    } else {
-        ConfigFile::parse(&config_path, "", ConfigScope::Local)?
-    };
-
-    let value = if enable { "true" } else { "false" };
-    config.set("index.sparse", value)?;
-    config.write().context("writing repo config")?;
-    Ok(())
 }
