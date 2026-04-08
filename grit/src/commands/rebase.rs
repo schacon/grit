@@ -14,6 +14,8 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
@@ -459,6 +461,33 @@ fn load_onto_name(rb_dir: &Path) -> Option<String> {
         .ok()
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
+}
+
+/// Append one `old_oid new_oid` line to `.git/<rebase-dir>/rewritten` for the post-rewrite hook.
+fn append_rebase_rewrite_line(rb_dir: &Path, old_oid: &ObjectId, new_oid: &ObjectId) -> Result<()> {
+    let path = rb_dir.join("rewritten");
+    let mut f = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .with_context(|| format!("open {}", path.display()))?;
+    writeln!(f, "{} {}", old_oid.to_hex(), new_oid.to_hex())?;
+    Ok(())
+}
+
+/// If `rewritten` has content, run `post-rewrite rebase` with that file on stdin (matches `git am`).
+fn run_post_rewrite_after_rebase(repo: &Repository, rb_dir: &Path) {
+    let path = rb_dir.join("rewritten");
+    let Ok(meta) = fs::metadata(&path) else {
+        return;
+    };
+    if meta.len() == 0 {
+        return;
+    }
+    let Ok(bytes) = fs::read(&path) else {
+        return;
+    };
+    let _ = run_hook(repo, "post-rewrite", &["rebase"], Some(&bytes));
 }
 
 /// Message to record when replaying `commit` during a root rebase.
@@ -1420,7 +1449,7 @@ fn replay_remaining(
             .unwrap_or_else(diff::zero_oid);
 
         let pick_backend = load_rebase_backend(rb_dir);
-        match cherry_pick_for_rebase(repo, &commit_oid, pick_backend) {
+        match cherry_pick_for_rebase(repo, rb_dir, &commit_oid, pick_backend) {
             Ok(()) => {
                 let head = resolve_head(git_dir)?;
                 let new_oid = *head
@@ -1499,8 +1528,12 @@ fn replay_remaining(
 }
 
 /// Cherry-pick a single commit onto current HEAD for rebase purposes.
+///
+/// `rb_dir` is the active state directory (`rebase-apply` or `rebase-merge`), not `rebase_dir()`
+/// (which wrongly prefers `rebase-merge` whenever that path exists).
 fn cherry_pick_for_rebase(
     repo: &Repository,
+    rb_dir: &Path,
     commit_oid: &ObjectId,
     backend: RebaseBackend,
 ) -> Result<()> {
@@ -1533,22 +1566,6 @@ fn cherry_pick_for_rebase(
     let head_obj = repo.odb.read(&head_oid)?;
     let head_commit = parse_commit(&head_obj.data)?;
     let head_tree_oid = head_commit.tree;
-
-    // Already at the picked commit's parent tip — nothing to replay (matches Git's noop pick).
-    if let Some(p) = commit.parents.first() {
-        if head_oid == *p {
-            let old_index = load_index(repo)?;
-            let mut idx = Index::new();
-            idx.entries = tree_to_index_entries(repo, &commit_tree_oid, "")?;
-            idx.sort();
-            repo.write_index(&mut idx)?;
-            if let Some(wt) = &repo.work_tree {
-                checkout_merged_index(repo, wt, &old_index, &idx)?;
-            }
-            fs::write(git_dir.join("HEAD"), format!("{}\n", commit_oid.to_hex()))?;
-            return Ok(());
-        }
-    }
 
     // Three-way merge: base=parent_tree, ours=HEAD_tree, theirs=commit_tree
     let ws_fix_rule = load_ws_fix_rule_from_rebase_state(git_dir);
@@ -1591,7 +1608,6 @@ fn cherry_pick_for_rebase(
         }
     }
 
-    let rb_dir = rebase_dir(git_dir);
     let root_rebase = rb_dir.join("root").exists();
 
     if has_conflicts {
@@ -1627,6 +1643,8 @@ fn cherry_pick_for_rebase(
 
     // Update HEAD (detached)
     fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
+
+    append_rebase_rewrite_line(rb_dir, commit_oid, &new_oid)?;
 
     Ok(())
 }
@@ -1700,6 +1718,8 @@ fn finish_rebase(
     } else {
         head_name
     };
+
+    run_post_rewrite_after_rebase(repo, rb_dir);
 
     match backend {
         RebaseBackend::Merge => {
@@ -1789,6 +1809,8 @@ fn do_continue() -> Result<()> {
     fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
     let _ = fs::remove_file(rb_dir.join("message"));
+
+    append_rebase_rewrite_line(&rb_dir, &current_oid, &new_oid)?;
 
     let subject = original_commit.message.lines().next().unwrap_or("");
     eprintln!("Applying: {}", subject);

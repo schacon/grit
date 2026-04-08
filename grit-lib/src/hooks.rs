@@ -69,6 +69,17 @@ fn hook_command_path(repo: &Repository, hooks_dir: &Path, hook_name: &str, cwd: 
     hooks_dir.join(hook_name)
 }
 
+/// Path passed to `execve` must be absolute or relative to the process cwd. We run hooks with
+/// `current_dir` set to the work tree (or `GIT_DIR`), so a path like `.git/hooks/foo` would
+/// otherwise be resolved against the wrong directory and fail to start.
+fn hook_argv0(command_path: &Path, current_dir: &Path) -> PathBuf {
+    if command_path.is_absolute() {
+        command_path.to_path_buf()
+    } else {
+        current_dir.join(command_path)
+    }
+}
+
 /// Run a hook by name with the given arguments.
 ///
 /// The hook is looked up in the hooks directory (respecting `core.hooksPath`).
@@ -116,8 +127,9 @@ pub fn run_hook(
 
     let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
     let command_path = hook_command_path(repo, &hooks_dir, hook_name, work_dir);
+    let argv0 = hook_argv0(&command_path, work_dir);
 
-    let mut cmd = Command::new(&command_path);
+    let mut cmd = Command::new(&argv0);
     cmd.args(args)
         .current_dir(work_dir)
         .env("GIT_DIR", &repo.git_dir);
@@ -177,7 +189,8 @@ pub fn run_hook_in_git_dir(
     }
 
     let command_path = hook_command_path(repo, &hooks_dir, hook_name, &repo.git_dir);
-    let mut cmd = Command::new(&command_path);
+    let argv0 = hook_argv0(&command_path, &repo.git_dir);
+    let mut cmd = Command::new(&argv0);
     cmd.args(args)
         .current_dir(&repo.git_dir) // receive-side hooks run from GIT_DIR
         .env("GIT_DIR", &repo.git_dir)
@@ -245,8 +258,9 @@ pub fn run_hook_with_env(
 
     let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
     let command_path = hook_command_path(repo, &hooks_dir, hook_name, work_dir);
+    let argv0 = hook_argv0(&command_path, work_dir);
 
-    let mut cmd = Command::new(&command_path);
+    let mut cmd = Command::new(&argv0);
     cmd.args(args)
         .current_dir(work_dir)
         .env("GIT_DIR", &repo.git_dir)
@@ -312,8 +326,9 @@ pub fn run_hook_capture(
 
     let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
     let command_path = hook_command_path(repo, &hooks_dir, hook_name, work_dir);
+    let argv0 = hook_argv0(&command_path, work_dir);
 
-    let mut cmd = Command::new(&command_path);
+    let mut cmd = Command::new(&argv0);
     cmd.args(args)
         .current_dir(work_dir)
         .env("GIT_DIR", &repo.git_dir)
