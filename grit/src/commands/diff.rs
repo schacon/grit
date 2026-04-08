@@ -888,10 +888,10 @@ pub fn run(mut args: Args) -> Result<()> {
             .map(|mut e| {
                 std::mem::swap(&mut e.old_oid, &mut e.new_oid);
                 std::mem::swap(&mut e.old_mode, &mut e.new_mode);
-                if let Some(ref op) = e.old_path.clone() {
-                    e.old_path = e.new_path.take();
-                    e.new_path = Some(op.clone());
-                }
+                // Swap paths for every entry, including additions/deletions where one side
+                // is `None`. The previous `if let Some(old_path)` branch skipped Added files
+                // and produced invalid patches (`--- /dev/null` + `+++ /dev/null`).
+                std::mem::swap(&mut e.old_path, &mut e.new_path);
                 // Invert the status
                 e.status = match e.status {
                     grit_lib::diff::DiffStatus::Added => grit_lib::diff::DiffStatus::Deleted,
