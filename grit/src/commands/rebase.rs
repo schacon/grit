@@ -112,6 +112,10 @@ pub struct Args {
     #[arg(long = "apply")]
     pub apply: bool,
 
+    /// Rebase merge commits (accepted for compatibility; uses `rebase-merge/` state layout when set).
+    #[arg(long = "rebase-merges", alias = "r")]
+    pub rebase_merges: bool,
+
     /// Force rebase even if the current branch is up to date.
     #[arg(long = "no-ff", alias = "force-rebase")]
     pub no_ff: bool,
@@ -160,6 +164,10 @@ pub struct Args {
 /// Run the `rebase` command.
 pub fn run(mut args: Args) -> Result<()> {
     validate_compat_options(&args)?;
+
+    if args.rebase_merges {
+        args.merge = true;
+    }
 
     if args.abort {
         return do_abort();
@@ -294,12 +302,24 @@ fn reflog_identity(repo: &Repository) -> String {
     format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}")
 }
 
-fn rebase_dir(git_dir: &Path) -> std::path::PathBuf {
+fn rebase_apply_dir(git_dir: &Path) -> std::path::PathBuf {
     git_dir.join("rebase-apply")
 }
 
+fn rebase_merge_dir(git_dir: &Path) -> std::path::PathBuf {
+    git_dir.join("rebase-merge")
+}
+
+fn rebase_dir(git_dir: &Path) -> std::path::PathBuf {
+    if rebase_merge_dir(git_dir).exists() {
+        rebase_merge_dir(git_dir)
+    } else {
+        rebase_apply_dir(git_dir)
+    }
+}
+
 fn is_rebase_in_progress(git_dir: &Path) -> bool {
-    rebase_dir(git_dir).exists()
+    rebase_apply_dir(git_dir).exists() || rebase_merge_dir(git_dir).exists()
 }
 
 fn choose_rebase_backend(args: &Args) -> RebaseBackend {
@@ -484,7 +504,11 @@ fn do_rebase(args: Args) -> Result<()> {
     }
 
     let backend = choose_rebase_backend(&args);
-    let rb_dir = rebase_dir(git_dir);
+    let rb_dir = if args.merge {
+        rebase_merge_dir(git_dir)
+    } else {
+        rebase_apply_dir(git_dir)
+    };
     fs::create_dir_all(&rb_dir)?;
 
     let head_name = match &head {
@@ -973,6 +997,7 @@ fn cherry_pick_for_rebase(
 
     let commit_obj = repo.odb.read(commit_oid)?;
     let commit = parse_commit(&commit_obj.data)?;
+    let config = ConfigSet::load(Some(git_dir), true)?;
 
     // Parent tree (base for the cherry-pick)
     let parent_oid = commit
@@ -1029,26 +1054,25 @@ fn cherry_pick_for_rebase(
     }
 
     if has_conflicts {
-        // Save MERGE_MSG for --continue
-        fs::write(git_dir.join("MERGE_MSG"), &commit.message)?;
+        write_rebase_conflict_message(git_dir, &commit, &config)?;
         bail!("conflicts during cherry-pick of {}", commit_oid.to_hex());
     }
 
     // Create the rebased commit, preserving the original author
     let tree_oid = write_tree_from_index(&repo.odb, &merged_index, "")?;
 
-    let config = ConfigSet::load(Some(git_dir), true)?;
     let now = time::OffsetDateTime::now_utc();
     let committer = resolve_identity(&config, "COMMITTER")?;
 
+    let (message, encoding, raw_message) = transcoded_replayed_message(&commit, &config);
     let commit_data = CommitData {
         tree: tree_oid,
         parents: vec![head_oid],
         author: commit.author.clone(), // preserve original author
         committer: format_ident(&committer, now),
-        encoding: commit.encoding.clone(),
-        message: commit.message.clone(),
-        raw_message: None,
+        encoding,
+        message,
+        raw_message,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -1137,7 +1161,7 @@ fn do_continue() -> Result<()> {
     let git_dir = &repo.git_dir;
 
     if !is_rebase_in_progress(git_dir) {
-        bail!("error: no rebase in progress");
+        bail!("no rebase in progress");
     }
 
     let rb_dir = rebase_dir(git_dir);
@@ -1159,11 +1183,9 @@ fn do_continue() -> Result<()> {
     let commit_obj = repo.odb.read(&current_oid)?;
     let original_commit = parse_commit(&commit_obj.data)?;
 
-    // Read message (might have been edited)
-    let message = match fs::read_to_string(git_dir.join("MERGE_MSG")) {
-        Ok(m) => m,
-        Err(_) => original_commit.message.clone(),
-    };
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    let (message, encoding, raw_message) =
+        read_rebase_continue_message(git_dir, &original_commit, &config)?;
 
     let head = resolve_head(git_dir)?;
     let head_oid = head
@@ -1172,7 +1194,6 @@ fn do_continue() -> Result<()> {
         .to_owned();
 
     let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
-    let config = ConfigSet::load(Some(git_dir), true)?;
     let now = time::OffsetDateTime::now_utc();
     let committer = resolve_identity(&config, "COMMITTER")?;
 
@@ -1181,9 +1202,9 @@ fn do_continue() -> Result<()> {
         parents: vec![head_oid],
         author: original_commit.author.clone(),
         committer: format_ident(&committer, now),
-        encoding: original_commit.encoding.clone(),
+        encoding,
         message,
-        raw_message: None,
+        raw_message,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -1192,6 +1213,7 @@ fn do_continue() -> Result<()> {
     // Update HEAD (detached)
     fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
+    let _ = fs::remove_file(rb_dir.join("message"));
 
     let subject = original_commit.message.lines().next().unwrap_or("");
     eprintln!("Applying: {}", subject);
@@ -1219,7 +1241,7 @@ fn do_skip() -> Result<()> {
     let git_dir = &repo.git_dir;
 
     if !is_rebase_in_progress(git_dir) {
-        bail!("error: no rebase in progress");
+        bail!("no rebase in progress");
     }
 
     let _rb_dir = rebase_dir(git_dir);
@@ -1258,7 +1280,7 @@ fn do_abort() -> Result<()> {
     let git_dir = &repo.git_dir;
 
     if !is_rebase_in_progress(git_dir) {
-        bail!("error: no rebase in progress");
+        bail!("no rebase in progress");
     }
 
     let rb_dir = rebase_dir(git_dir);
@@ -1332,9 +1354,92 @@ fn do_abort() -> Result<()> {
 // ── Cleanup ─────────────────────────────────────────────────────────
 
 fn cleanup_rebase_state(git_dir: &Path) {
-    let rb_dir = rebase_dir(git_dir);
-    let _ = fs::remove_dir_all(&rb_dir);
+    let _ = fs::remove_dir_all(rebase_apply_dir(git_dir));
+    let _ = fs::remove_dir_all(rebase_merge_dir(git_dir));
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
+}
+
+fn commit_message_unicode(commit: &CommitData) -> String {
+    if let Some(raw) = &commit.raw_message {
+        return crate::git_commit_encoding::decode_bytes(commit.encoding.as_deref(), raw);
+    }
+    commit.message.clone()
+}
+
+fn finalize_message_for_commit_encoding(
+    unicode: String,
+    config: &ConfigSet,
+) -> (String, Option<String>, Option<Vec<u8>>) {
+    let commit_enc = config
+        .get("i18n.commitEncoding")
+        .or_else(|| config.get("i18n.commitencoding"));
+    let is_utf8 = match commit_enc.as_deref() {
+        None => true,
+        Some(e) => e.eq_ignore_ascii_case("utf-8") || e.eq_ignore_ascii_case("utf8"),
+    };
+    if is_utf8 {
+        return (unicode, None, None);
+    }
+    let Some(label) = commit_enc else {
+        return (unicode, None, None);
+    };
+    let Some(raw) = crate::git_commit_encoding::encode_unicode(&label, &unicode) else {
+        return (unicode, None, None);
+    };
+    (unicode, Some(label), Some(raw))
+}
+
+fn transcoded_replayed_message(
+    commit: &CommitData,
+    config: &ConfigSet,
+) -> (String, Option<String>, Option<Vec<u8>>) {
+    finalize_message_for_commit_encoding(commit_message_unicode(commit), config)
+}
+
+fn write_rebase_conflict_message(
+    git_dir: &Path,
+    commit: &CommitData,
+    config: &ConfigSet,
+) -> Result<()> {
+    let (unicode, _enc, raw_opt) = transcoded_replayed_message(commit, config);
+    let merge_msg = git_dir.join("MERGE_MSG");
+    let bytes = raw_opt.unwrap_or_else(|| unicode.into_bytes());
+    fs::write(&merge_msg, &bytes)?;
+    if rebase_merge_dir(git_dir).exists() {
+        fs::write(rebase_merge_dir(git_dir).join("message"), bytes)?;
+    }
+    Ok(())
+}
+
+fn read_rebase_continue_message(
+    git_dir: &Path,
+    original: &CommitData,
+    config: &ConfigSet,
+) -> Result<(String, Option<String>, Option<Vec<u8>>)> {
+    let rb = rebase_dir(git_dir);
+    let from_state = rb.join("message");
+    let bytes = if from_state.exists() {
+        fs::read(&from_state)?
+    } else {
+        let merge_msg = git_dir.join("MERGE_MSG");
+        if merge_msg.exists() {
+            fs::read(&merge_msg)?
+        } else {
+            return Ok(transcoded_replayed_message(original, config));
+        }
+    };
+    let enc_name = config
+        .get("i18n.commitEncoding")
+        .or_else(|| config.get("i18n.commitencoding"));
+    let unicode = match enc_name.as_deref() {
+        Some(e) if !e.eq_ignore_ascii_case("utf-8") && !e.eq_ignore_ascii_case("utf8") => {
+            crate::git_commit_encoding::decode_bytes(Some(e), &bytes)
+        }
+        _ => String::from_utf8(bytes.clone()).unwrap_or_else(|_| {
+            crate::git_commit_encoding::decode_bytes(enc_name.as_deref(), &bytes)
+        }),
+    };
+    Ok(finalize_message_for_commit_encoding(unicode, config))
 }
 
 // ── Helpers (mirrored from revert.rs) ───────────────────────────────

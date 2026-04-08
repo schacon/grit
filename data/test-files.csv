@@ -620,7 +620,7 @@ t3430-rebase-merges	t3	yes	34	1	33	false	ok	0
 t3431-rebase-fork-point	t3	yes	26	7	19	false	ok	0
 t3432-rebase-fast-forward	t3	yes	219	213	6	false	ok	0
 t3433-rebase-across-mode-change	t3	yes	4	4	0	true	ok	0
-t3434-rebase-i18n	t3	yes	0	0	0	false	ok	0
+t3434-rebase-i18n	t3	yes	6	6	0	true	ok	0
 t3435-rebase-gpg-sign	t3	skip	11	0	0	false	ok	0
 t3436-rebase-more-options	t3	yes	19	2	17	false	ok	0
 t3437-rebase-fixup-options	t3	yes	13	0	13	false	ok	0

@@ -214,6 +214,7 @@ fn do_merge_or_rebase(
             exec: None,
             merge: false,
             apply: false,
+            rebase_merges: false,
             no_ff: false,
             keep_base: false,
             fork_point: false,

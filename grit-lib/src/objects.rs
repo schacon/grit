@@ -346,58 +346,68 @@ pub struct CommitData {
 ///
 /// Returns [`Error::CorruptObject`] if required headers are missing.
 pub fn parse_commit(data: &[u8]) -> Result<CommitData> {
-    // Use lossy UTF-8 conversion so commits with non-UTF-8 encoded
-    // messages (e.g. iso-8859-7 with an `encoding` header) can still
-    // be parsed.  The header fields are always ASCII-safe.
-    let text = String::from_utf8_lossy(data);
-
+    // Headers are ASCII; the message body may be in another encoding (see
+    // `encoding` header). Find the blank line that separates headers from the
+    // body without interpreting body bytes as UTF-8.
+    let mut pos = 0usize;
     let mut tree = None;
     let mut parents = Vec::new();
     let mut author = None;
     let mut committer = None;
     let mut encoding = None;
-    let mut message = String::new();
-    let mut in_message = false;
 
-    for line in text.split('\n') {
-        if in_message {
-            message.push_str(line);
-            message.push('\n');
-            continue;
+    while pos < data.len() {
+        let line_start = pos;
+        let mut line_end = pos;
+        while line_end < data.len() && data[line_end] != b'\n' {
+            line_end += 1;
         }
+        let line = &data[line_start..line_end];
+        let after_nl = line_end.saturating_add(1);
         if line.is_empty() {
-            in_message = true;
-            continue;
+            // Blank line: remainder is the message body (may be non-UTF-8).
+            let body = data.get(after_nl..).unwrap_or_default();
+            let mut raw_body = body.to_vec();
+            if raw_body.ends_with(b"\n") {
+                raw_body.pop();
+            }
+            let message = String::from_utf8_lossy(&raw_body).into_owned();
+            let raw_message = std::str::from_utf8(&raw_body).is_err().then_some(raw_body);
+            return Ok(CommitData {
+                tree: tree
+                    .ok_or_else(|| Error::CorruptObject("commit missing tree header".to_owned()))?,
+                parents,
+                author: author.ok_or_else(|| {
+                    Error::CorruptObject("commit missing author header".to_owned())
+                })?,
+                committer: committer.ok_or_else(|| {
+                    Error::CorruptObject("commit missing committer header".to_owned())
+                })?,
+                encoding,
+                message,
+                raw_message,
+            });
         }
-        if let Some(rest) = line.strip_prefix("tree ") {
+        let line_str = std::str::from_utf8(line).map_err(|_| {
+            Error::CorruptObject("commit header line is not valid UTF-8".to_owned())
+        })?;
+        if let Some(rest) = line_str.strip_prefix("tree ") {
             tree = Some(rest.trim().parse::<ObjectId>()?);
-        } else if let Some(rest) = line.strip_prefix("parent ") {
+        } else if let Some(rest) = line_str.strip_prefix("parent ") {
             parents.push(rest.trim().parse::<ObjectId>()?);
-        } else if let Some(rest) = line.strip_prefix("author ") {
+        } else if let Some(rest) = line_str.strip_prefix("author ") {
             author = Some(rest.to_owned());
-        } else if let Some(rest) = line.strip_prefix("committer ") {
+        } else if let Some(rest) = line_str.strip_prefix("committer ") {
             committer = Some(rest.to_owned());
-        } else if let Some(rest) = line.strip_prefix("encoding ") {
+        } else if let Some(rest) = line_str.strip_prefix("encoding ") {
             encoding = Some(rest.to_owned());
         }
+        pos = after_nl;
     }
 
-    // Strip one trailing newline that split adds
-    if message.ends_with('\n') {
-        message.pop();
-    }
-
-    Ok(CommitData {
-        tree: tree.ok_or_else(|| Error::CorruptObject("commit missing tree header".to_owned()))?,
-        parents,
-        author: author
-            .ok_or_else(|| Error::CorruptObject("commit missing author header".to_owned()))?,
-        committer: committer
-            .ok_or_else(|| Error::CorruptObject("commit missing committer header".to_owned()))?,
-        encoding,
-        message,
-        raw_message: None,
-    })
+    Err(Error::CorruptObject(
+        "commit missing blank line before message".to_owned(),
+    ))
 }
 
 /// Parsed representation of an annotated tag object.
@@ -510,12 +520,18 @@ pub fn serialize_commit(c: &CommitData) -> Vec<u8> {
     out.push(b'\n');
     // Use raw_message bytes if available (for non-UTF-8 commit messages),
     // otherwise fall back to the UTF-8 message field.
-    // Callers are responsible for trailing newlines (commit-tree preserves
-    // stdin exactly; other callers use ensure_trailing_newline).
+    // Git's commit object format ends the message body with a newline when the
+    // body is non-empty (matches `git commit` and upstream tests).
     if let Some(raw) = &c.raw_message {
         out.extend_from_slice(raw);
-    } else {
+        if !raw.is_empty() && !raw.ends_with(b"\n") {
+            out.push(b'\n');
+        }
+    } else if !c.message.is_empty() {
         out.extend_from_slice(c.message.as_bytes());
+        if !c.message.ends_with('\n') {
+            out.push(b'\n');
+        }
     }
     out
 }

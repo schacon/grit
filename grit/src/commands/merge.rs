@@ -1043,11 +1043,9 @@ fn do_real_merge(
 
     // Create merge commit
     let tree_oid = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let effective_custom_msg = if let Some(ref file_path) = args.file {
-        Some(
-            fs::read_to_string(file_path)
-                .with_context(|| format!("could not read merge message file: {file_path}"))?,
-        )
+        Some(read_merge_message_from_file(Path::new(file_path), &config)?)
     } else {
         args.message.clone()
     };
@@ -1071,7 +1069,6 @@ fn do_real_merge(
         }
     }
 
-    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let now = OffsetDateTime::now_utc();
     let author = resolve_ident(&config, "author", now)?;
     let committer = resolve_ident(&config, "committer", now)?;
@@ -1093,14 +1090,15 @@ fn do_real_merge(
         msg = cleanup_message(&msg, mode);
     }
 
+    let finalized = finalize_merge_commit_message(msg, &config);
     let commit_data = CommitData {
         tree: tree_oid,
         parents: vec![head_oid, merge_oid],
         author,
         committer,
-        encoding: None,
-        message: msg,
-        raw_message: None,
+        encoding: finalized.encoding,
+        message: finalized.message,
+        raw_message: finalized.raw_message,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -4438,6 +4436,64 @@ fn append_signoff(msg: &str, name: &str, email: &str) -> String {
     }
     let trimmed = msg.trim_end();
     format!("{}\n\n{}\n", trimmed, trailer)
+}
+
+/// UTF-8 merge message plus optional raw bytes and `encoding` header for the commit object.
+struct MergeCommitMessage {
+    message: String,
+    encoding: Option<String>,
+    raw_message: Option<Vec<u8>>,
+}
+
+fn read_merge_message_from_file(path: &Path, config: &ConfigSet) -> Result<String> {
+    let bytes =
+        fs::read(path).with_context(|| format!("could not read merge message file: {path:?}"))?;
+    if let Ok(s) = String::from_utf8(bytes.clone()) {
+        return Ok(s);
+    }
+    let enc_name = config
+        .get("i18n.commitEncoding")
+        .or_else(|| config.get("i18n.commitencoding"));
+    Ok(crate::git_commit_encoding::decode_bytes(
+        enc_name.as_deref(),
+        &bytes,
+    ))
+}
+
+fn finalize_merge_commit_message(msg: String, config: &ConfigSet) -> MergeCommitMessage {
+    let commit_enc = config
+        .get("i18n.commitEncoding")
+        .or_else(|| config.get("i18n.commitencoding"));
+    let is_utf8 = match commit_enc.as_deref() {
+        None => true,
+        Some(e) => e.eq_ignore_ascii_case("utf-8") || e.eq_ignore_ascii_case("utf8"),
+    };
+    if is_utf8 {
+        return MergeCommitMessage {
+            message: msg,
+            encoding: None,
+            raw_message: None,
+        };
+    }
+    let Some(label) = commit_enc else {
+        return MergeCommitMessage {
+            message: msg,
+            encoding: None,
+            raw_message: None,
+        };
+    };
+    let Some(raw) = crate::git_commit_encoding::encode_unicode(&label, &msg) else {
+        return MergeCommitMessage {
+            message: msg,
+            encoding: None,
+            raw_message: None,
+        };
+    };
+    MergeCommitMessage {
+        message: msg,
+        encoding: Some(label),
+        raw_message: Some(raw),
+    }
 }
 
 fn build_merge_message(
