@@ -1975,13 +1975,17 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
         std::env::set_var("GIT_WORK_TREE", wt);
     }
     if !opts.config_overrides.is_empty() {
-        let params: String = opts
+        let extra: String = opts
             .config_overrides
             .iter()
             .map(|kv| format!("'{}'", kv))
             .collect::<Vec<_>>()
             .join(" ");
-        std::env::set_var("GIT_CONFIG_PARAMETERS", params);
+        let merged = match std::env::var("GIT_CONFIG_PARAMETERS") {
+            Ok(existing) if !existing.trim().is_empty() => format!("{extra} {existing}"),
+            _ => extra,
+        };
+        std::env::set_var("GIT_CONFIG_PARAMETERS", merged);
     }
     if opts.no_advice {
         std::env::set_var("GIT_ADVICE", "false");
@@ -3858,6 +3862,19 @@ fn run_test_tool_config(rest: &[String]) -> Result<()> {
     let cfg = grit_lib::config::ConfigSet::load(git_dir, true).unwrap_or_default();
 
     match subcmd {
+        "read_early_config" => {
+            let gd = git_dir.ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
+            match grit_lib::config::ConfigSet::read_early_config(gd, key) {
+                Ok(Some(val)) => {
+                    println!("{val}");
+                    Ok(())
+                }
+                Ok(None) => {
+                    std::process::exit(0);
+                }
+                Err(e) => Err(anyhow::anyhow!("{}", e)),
+            }
+        }
         "get_value" | "get" => match cfg.get(key) {
             Some(val) => {
                 println!("{val}");

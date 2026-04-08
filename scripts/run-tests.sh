@@ -184,8 +184,9 @@ run_one() {
             EDITOR=: VISUAL=: LC_ALL=C LANG=C _prereq_DEFAULT_REPO_FORMAT=set GRIT_TEST_LIB_SUMMARY=1 GUST_BIN="$(pwd)/grit" \
             GIT_TEST_BUILTIN_HASH=sha1 \
             GIT_SOURCE_DIR="$REPO/git" \
-            GIT_TEST_ALLOW_SUDO="${git_test_allow_sudo:-}" \
-            "${timeout_prefix[@]}" bash "$f" 2>&1
+            GIT_CONFIG_NOSYSTEM=1 \
+            GIT_CONFIG_PARAMETERS= \
+            "${TIMEOUT_PREFIX[@]}" bash "$f" 2>&1
     ) || true
     summary=$(echo "$output" | grep "^# Tests:" | tail -1) || true
     total=0 pass=0 fail=0 status="error"
