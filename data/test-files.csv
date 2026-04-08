@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -1229,7 +1229,7 @@ t7505-prepare-commit-msg	t7	yes	30	30	0	true	ok	0
 t7505-prepare-commit-msg-hook	t7	yes	23	7	16	false	ok	0
 t7506-status-submodule	t7	yes	40	6	34	false	ok	0
 t7507-commit-verbose	t7	yes	45	19	26	false	ok	0
-t7508-status	t7	yes	126	39	87	false	ok	0
+t7508-status	t7	yes	126	85	41	false	ok	0
 t7509-commit-authorship	t7	yes	12	4	8	false	ok	0
 t7510-signed-commit	t7	skip	28	0	0	false	ok	0
 t7511-status-index	t7	yes	24	24	0	true	ok	0

@@ -65,7 +65,7 @@ impl DiffStatus {
 }
 
 /// A single diff entry representing one changed path.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffEntry {
     /// The status of this change.
     pub status: DiffStatus,

@@ -322,24 +322,40 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    // If pathspec given, stage those specific files first (returns paths included in this commit)
-    let pathspec_matched: Option<HashSet<Vec<u8>>> = if !args.pathspec.is_empty() {
-        let Some(wt) = work_tree else {
-            bail!("pathspec requires a work tree");
-        };
-        Some(stage_pathspec_files(&repo, wt, &args.pathspec)?)
-    } else {
-        None
-    };
-
     let index_path = resolved_index_path(&repo);
 
-    // Load index
-    let index = match repo.load_index_at(&index_path) {
+    // If pathspec given, stage those files. A real commit persists to disk; `--dry-run` only
+    // simulates staging in memory so status output matches Git without mutating the index.
+    let mut pathspec_matched: Option<HashSet<Vec<u8>>> =
+        if !args.pathspec.is_empty() && !args.dry_run {
+            let Some(wt) = work_tree else {
+                bail!("pathspec requires a work tree");
+            };
+            Some(stage_pathspec_files(&repo, wt, &args.pathspec)?)
+        } else {
+            None
+        };
+
+    // Load index (after non-dry-run pathspec staging has updated the file on disk).
+    let mut index = match repo.load_index_at(&index_path) {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e.into()),
     };
+
+    if args.dry_run && !args.pathspec.is_empty() {
+        let Some(wt) = work_tree else {
+            bail!("pathspec requires a work tree");
+        };
+        let mut idx = index.clone();
+        pathspec_matched = Some(apply_pathspec_to_index(
+            &repo,
+            wt,
+            &mut idx,
+            &args.pathspec,
+        )?);
+        index = idx;
+    }
 
     // Resolve HEAD for parent(s) and optional base tree for partial commits
     let head = resolve_head(&repo.git_dir)?;
@@ -507,7 +523,15 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // --dry-run: show what would be committed and exit
     if args.dry_run {
-        print_dry_run(&head, &staged, &unstaged, &untracked)?;
+        print_dry_run(
+            &repo,
+            &config,
+            &head,
+            &staged,
+            &unstaged,
+            &untracked,
+            pathspec_matched.as_ref(),
+        )?;
         return Ok(());
     }
 
@@ -838,71 +862,117 @@ pub fn run(mut args: Args) -> Result<()> {
 
 /// Print dry-run output (like `git commit --dry-run`).
 fn print_dry_run(
+    repo: &Repository,
+    config: &ConfigSet,
     head: &HeadState,
     staged: &[DiffEntry],
     unstaged: &[DiffEntry],
     untracked: &[String],
+    pathspec_matched: Option<&HashSet<Vec<u8>>>,
 ) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    match head {
-        HeadState::Branch {
-            short_name,
-            oid: Some(_),
-            ..
-        } => {
-            writeln!(out, "On branch {short_name}")?;
-        }
-        HeadState::Branch {
-            short_name,
-            oid: None,
-            ..
-        } => {
-            writeln!(out, "On branch {short_name}")?;
-            writeln!(out)?;
-            writeln!(out, "No commits yet")?;
-        }
-        HeadState::Detached { oid } => {
-            let short = &oid.to_hex()[..7];
-            writeln!(out, "HEAD detached at {short}")?;
-        }
-        HeadState::Invalid => {
-            writeln!(out, "Not currently on any branch.")?;
-        }
-    }
+    let config_hints = match config.get("advice.statusHints") {
+        Some(v) if v == "false" || v == "no" || v == "off" || v == "0" => false,
+        _ => true,
+    };
+    let show_hints = std::env::var("GIT_ADVICE")
+        .ok()
+        .and_then(|v| match v.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        })
+        .unwrap_or(config_hints);
 
-    if !staged.is_empty() {
+    let orphan_line = if head.oid().is_none() {
+        Some("Initial commit")
+    } else {
+        None
+    };
+    crate::commands::status::write_status_branch_header(
+        &mut out,
+        head,
+        repo,
+        "",
+        show_hints,
+        false,
+        true,
+        orphan_line,
+    )?;
+
+    let (staged_show, unstaged_show, extra_untracked) = if let Some(matched) = pathspec_matched {
+        let mut staged_in = Vec::new();
+        let mut staged_out = Vec::new();
+        for e in staged {
+            let p = e.path().as_bytes();
+            if matched.contains(p) {
+                staged_in.push(e.clone());
+            } else {
+                staged_out.push(e.clone());
+            }
+        }
+        let unstaged_paths: HashSet<String> =
+            unstaged.iter().map(|e| e.path().to_string()).collect();
+        let mut u = unstaged.to_vec();
+        let mut extra_ut = Vec::new();
+        for e in staged_out {
+            if unstaged_paths.contains(e.path()) {
+                continue;
+            }
+            // Git: fully staged paths excluded from the commit are listed like untracked in
+            // `--dry-run` output when the worktree matches the index (e.g. new files).
+            if e.status == DiffStatus::Added {
+                extra_ut.push(e.path().to_string());
+            } else {
+                u.push(e);
+            }
+        }
+        (staged_in, u, extra_ut)
+    } else {
+        (staged.to_vec(), unstaged.to_vec(), Vec::new())
+    };
+
+    if !staged_show.is_empty() {
         writeln!(out)?;
         writeln!(out, "Changes to be committed:")?;
         writeln!(out, "  (use \"git restore --staged <file>...\" to unstage)")?;
-        for entry in staged {
+        for entry in &staged_show {
             let label = status_label_staged(entry.status);
             writeln!(out, "\t{label}:   {}", entry.path())?;
         }
     }
 
-    if !unstaged.is_empty() {
+    if !unstaged_show.is_empty() {
         writeln!(out)?;
         writeln!(out, "Changes not staged for commit:")?;
         writeln!(
             out,
             "  (use \"git add <file>...\" to update what will be committed)"
         )?;
-        for entry in unstaged {
+        writeln!(
+            out,
+            "  (use \"git restore <file>...\" to discard changes in working directory)"
+        )?;
+        for entry in &unstaged_show {
             let label = status_label_unstaged(entry.status);
             writeln!(out, "\t{label}:   {}", entry.path())?;
         }
     }
 
-    if !untracked.is_empty() {
+    let mut all_untracked: Vec<String> = untracked.to_vec();
+    all_untracked.extend(extra_untracked);
+    all_untracked.sort();
+
+    if !all_untracked.is_empty() {
         writeln!(out)?;
         writeln!(out, "Untracked files:")?;
         writeln!(
             out,
             "  (use \"git add <file>...\" to include in what will be committed)"
         )?;
-        for path in untracked {
+        for path in &all_untracked {
             writeln!(out, "\t{path}")?;
         }
     }
@@ -981,22 +1051,16 @@ fn walk_untracked(
     Ok(())
 }
 
-/// Stage specific files given as pathspec arguments to `commit`.
+/// Apply pathspec staging to `index` in memory (no disk write).
 ///
 /// Returns the set of repository-relative paths that were staged (or removed) for this commit.
-fn stage_pathspec_files(
+fn apply_pathspec_to_index(
     repo: &Repository,
     work_tree: &Path,
+    index: &mut Index,
     pathspecs: &[String],
 ) -> Result<HashSet<Vec<u8>>> {
     use std::os::unix::fs::MetadataExt;
-
-    let index_path = resolved_index_path(repo);
-    let mut index = match repo.load_index_at(&index_path) {
-        Ok(idx) => idx,
-        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
-        Err(e) => return Err(e.into()),
-    };
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| work_tree.to_path_buf());
     let prefix = crate::pathspec::pathdiff(&cwd, work_tree);
@@ -1093,8 +1157,26 @@ fn stage_pathspec_files(
         }
     }
 
-    repo.write_index_at(&index_path, &mut index)?;
     Ok(matched_paths)
+}
+
+/// Stage specific files given as pathspec arguments to `commit` and persist the index.
+///
+/// Returns the set of repository-relative paths that were staged (or removed) for this commit.
+fn stage_pathspec_files(
+    repo: &Repository,
+    work_tree: &Path,
+    pathspecs: &[String],
+) -> Result<HashSet<Vec<u8>>> {
+    let index_path = resolved_index_path(repo);
+    let mut index = match repo.load_index_at(&index_path) {
+        Ok(idx) => idx,
+        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
+        Err(e) => return Err(e.into()),
+    };
+    let matched = apply_pathspec_to_index(repo, work_tree, &mut index, pathspecs)?;
+    repo.write_index_at(&index_path, &mut index)?;
+    Ok(matched)
 }
 
 /// Auto-stage tracked files (for `commit -a`).

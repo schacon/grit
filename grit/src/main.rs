@@ -17,6 +17,7 @@ mod commands;
 mod dotfile;
 mod explicit_exit;
 mod fetch_transport;
+mod git_column;
 mod git_commit_encoding;
 mod git_path;
 mod grit_exe;
