@@ -2009,6 +2009,13 @@ fn write_entry_to_worktree(repo: &Repository, abs_path: &Path, entry: &IndexEntr
     // try to check out content — the OID references a commit in the
     // submodule's own object store.
     if entry.mode == 0o160000 {
+        if abs_path.is_file() || abs_path.is_symlink() {
+            let _ = fs::remove_file(abs_path);
+        } else if abs_path.is_dir() && abs_path.join(".git").exists() {
+            return Ok(());
+        } else if abs_path.is_dir() {
+            let _ = fs::remove_dir_all(abs_path);
+        }
         let _ = fs::create_dir_all(abs_path);
         return Ok(());
     }

@@ -111,6 +111,14 @@ pub struct Args {
     /// Command to run on the remote side for pack transfer (protocol v0).
     #[arg(long = "upload-pack", value_name = "PATH")]
     pub upload_pack: Option<String>,
+
+    /// Recurse into submodules and fetch each default remote.
+    #[arg(long = "recurse-submodules", num_args = 0..=1, default_missing_value = "true", require_equals = true)]
+    pub recurse_submodules: Option<String>,
+
+    /// Disable submodule recursion (overrides config).
+    #[arg(long = "no-recurse-submodules")]
+    pub no_recurse_submodules: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -130,7 +138,7 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    if args.all {
+    let result = if args.all {
         let remotes = collect_remote_names(&config);
         if remotes.is_empty() {
             bail!("no remotes configured");
@@ -155,7 +163,34 @@ pub fn run(args: Args) -> Result<()> {
         } else {
             fetch_remote(&git_dir, &config, remote_name, None, &args)
         }
+    };
+
+    if result.is_ok() && should_recurse_fetch_submodules(&config, &args) {
+        super::submodule::recursive_fetch_submodules(true)?;
     }
+    result
+}
+
+fn should_recurse_fetch_submodules(config: &ConfigSet, args: &Args) -> bool {
+    if args.no_recurse_submodules {
+        return false;
+    }
+    if args.recurse_submodules.as_deref() == Some("no")
+        || args.recurse_submodules.as_deref() == Some("false")
+    {
+        return false;
+    }
+    if args.recurse_submodules.is_some() {
+        return true;
+    }
+    config
+        .get("fetch.recursesubmodules")
+        .or_else(|| config.get("fetch.recurseSubmodules"))
+        .map(|v| {
+            let l = v.to_ascii_lowercase();
+            l == "true" || l == "yes" || l == "on" || l == "1"
+        })
+        .unwrap_or(false)
 }
 
 /// Fetch from a single remote.

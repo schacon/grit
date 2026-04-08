@@ -1164,8 +1164,9 @@ fn clone_submodules(work_tree: &Path, relative_url_base: &Path, quiet: bool) -> 
 
         let sub_dest = work_tree.join(path);
 
-        // Resolve relative URLs against the source superproject root (e.g. `../sub` from
-        // `.gitmodules` in `various/` → sibling `sub/`, not relative to the clone destination).
+        // Resolve relative URLs against the superproject work tree (the directory that contains
+        // `.git`), e.g. `../sub` from `.gitmodules` in `various/` → sibling `sub/`, not relative
+        // to the clone destination alone.
         let resolved_url = if url.starts_with("./") || url.starts_with("../") {
             let resolved = url_base.join(url);
             resolved
@@ -2285,8 +2286,14 @@ fn checkout_tree(
         let is_tree = (entry.mode & 0o170000) == 0o040000;
         let is_gitlink = entry.mode == 0o160000;
         if is_gitlink {
-            // Gitlink (submodule) — skip during checkout; the submodule
-            // directory will be populated by `git submodule update` later.
+            // Gitlink (submodule): ensure an empty directory exists (Git does not
+            // check out submodule contents during clone).
+            if full_path.is_file() || full_path.is_symlink() {
+                let _ = fs::remove_file(&full_path);
+            } else if full_path.is_dir() && !full_path.join(".git").exists() {
+                let _ = fs::remove_dir_all(&full_path);
+            }
+            let _ = fs::create_dir_all(&full_path);
             continue;
         } else if is_tree {
             fs::create_dir_all(&full_path)?;

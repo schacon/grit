@@ -63,6 +63,14 @@ pub struct Args {
     /// Do not include one-line descriptions.
     #[arg(long = "no-log")]
     pub no_log: bool,
+
+    /// After merge/rebase, run `submodule update --init --recursive`.
+    #[arg(long = "recurse-submodules", num_args = 0..=1, default_missing_value = "true", require_equals = true)]
+    pub recurse_submodules: Option<String>,
+
+    /// Do not recurse into submodules after pull.
+    #[arg(long = "no-recurse-submodules")]
+    pub no_recurse_submodules: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -142,7 +150,11 @@ pub fn run(args: Args) -> Result<()> {
         let fetch_head = format!("{}\t\t{}\n", remote_oid.to_hex(), merge_branch);
         std::fs::write(repo.git_dir.join("FETCH_HEAD"), &fetch_head)?;
 
-        return do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &merge_branch);
+        let res = do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &merge_branch);
+        if res.is_ok() {
+            maybe_update_submodules_after_pull(&args, &config)?;
+        }
+        return res;
     } else if is_local_dot {
         // "." remote — merge the configured upstream ref (e.g. `refs/heads/main`), not a
         // synthetic `refs/remotes/./main` remote-tracking ref (matches git pull).
@@ -157,10 +169,30 @@ pub fn run(args: Args) -> Result<()> {
         let fetch_head = format!("{}\t\t{}\n", remote_oid.to_hex(), merge_branch);
         std::fs::write(repo.git_dir.join("FETCH_HEAD"), &fetch_head)?;
 
-        return do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &merge_ref);
+        let res = do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &merge_ref);
+        if res.is_ok() {
+            maybe_update_submodules_after_pull(&args, &config)?;
+        }
+        return res;
     }
 
     // Step 1: Fetch
+    let fetch_recurse = if args.no_recurse_submodules {
+        None
+    } else if config
+        .get("fetch.recursesubmodules")
+        .or_else(|| config.get("fetch.recurseSubmodules"))
+        .map(|v| {
+            let l = v.to_ascii_lowercase();
+            l == "true" || l == "yes" || l == "on" || l == "1"
+        })
+        .unwrap_or(false)
+    {
+        Some("true".to_owned())
+    } else {
+        None
+    };
+
     let fetch_args = super::fetch::Args {
         remote: Some(remote_name.to_owned()),
         refspecs: Vec::new(),
@@ -185,6 +217,8 @@ pub fn run(args: Args) -> Result<()> {
         update_head_ok: false,
         update_refs: false,
         upload_pack: None,
+        recurse_submodules: fetch_recurse,
+        no_recurse_submodules: args.no_recurse_submodules,
     };
     super::fetch::run(fetch_args)?;
 
@@ -193,7 +227,51 @@ pub fn run(args: Args) -> Result<()> {
     let remote_oid = refs::resolve_ref(&repo.git_dir, &tracking_ref)
         .with_context(|| format!("no tracking ref '{tracking_ref}' after fetch"))?;
 
-    do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &tracking_ref)
+    let res = do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &tracking_ref);
+    if res.is_ok() {
+        maybe_update_submodules_after_pull(&args, &config)?;
+    }
+    res
+}
+
+fn maybe_update_submodules_after_pull(args: &Args, config: &ConfigSet) -> Result<()> {
+    if args.no_recurse_submodules {
+        return Ok(());
+    }
+    let fetch_wants_recurse = config
+        .get("fetch.recursesubmodules")
+        .or_else(|| config.get("fetch.recurseSubmodules"))
+        .map(|v| {
+            let l = v.to_ascii_lowercase();
+            l == "true" || l == "yes" || l == "on" || l == "1"
+        })
+        .unwrap_or(false);
+    let cli = args.recurse_submodules.as_deref();
+    let explicit_on = matches!(
+        cli,
+        Some("true") | Some("yes") | Some("on") | Some("1") | Some("")
+    );
+    let explicit_off = matches!(cli, Some("no") | Some("false") | Some("off") | Some("0"));
+    let config_recurse = config
+        .get("submodule.recurse")
+        .map(|v| {
+            let l = v.to_ascii_lowercase();
+            l == "true" || l == "yes" || l == "on" || l == "1"
+        })
+        .unwrap_or(false);
+    let should_update = if explicit_off {
+        false
+    } else if explicit_on {
+        true
+    } else if fetch_wants_recurse {
+        false
+    } else {
+        config_recurse
+    };
+    if should_update {
+        super::submodule::update_after_superproject_merge(true, true)?;
+    }
+    Ok(())
 }
 
 fn do_merge_or_rebase(

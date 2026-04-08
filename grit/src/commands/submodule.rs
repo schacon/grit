@@ -15,6 +15,8 @@ use grit_lib::state::resolve_head;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -215,6 +217,92 @@ struct SubmoduleInfo {
     name: String,
     path: String,
     url: String,
+}
+
+/// Update submodule working trees to the commits recorded in the superproject index.
+///
+/// Used after `pull` / `merge` when `--recurse-submodules` or `submodule.recurse` applies.
+pub(crate) fn update_after_superproject_merge(init: bool, recursive: bool) -> Result<()> {
+    run_update(&UpdateArgs {
+        paths: vec![],
+        init,
+        checkout: false,
+        remote: false,
+        recursive,
+    })
+}
+
+/// Refresh cached stat data for a gitlink in the superproject index after checkout.
+fn refresh_gitlink_index_stat(repo: &Repository, rel_path: &str) -> Result<()> {
+    let work_tree = repo.work_tree.as_ref().context("bare repository")?;
+    let abs = work_tree.join(rel_path);
+    let index_path = repo.index_path();
+    let mut index = repo.load_index_at(&index_path)?;
+    let path_bytes = rel_path.as_bytes().to_vec();
+    let Some(entry) = index
+        .entries
+        .iter_mut()
+        .find(|e| e.stage() == 0 && e.path == path_bytes)
+    else {
+        return Ok(());
+    };
+    if entry.mode != 0o160000 {
+        return Ok(());
+    }
+    if let Ok(meta) = fs::symlink_metadata(&abs) {
+        #[cfg(unix)]
+        {
+            entry.ctime_sec = meta.ctime() as u32;
+            entry.ctime_nsec = meta.ctime_nsec() as u32;
+            entry.mtime_sec = meta.mtime() as u32;
+            entry.mtime_nsec = meta.mtime_nsec() as u32;
+            entry.dev = meta.dev() as u32;
+            entry.ino = meta.ino() as u32;
+            entry.size = meta.len() as u32;
+        }
+    }
+    repo.write_index_at(&index_path, &mut index)?;
+    Ok(())
+}
+
+/// Run `grit fetch` in each initialized submodule (and nested submodules when `recursive`).
+pub(crate) fn recursive_fetch_submodules(recursive: bool) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let work_tree = repo.work_tree.as_ref().context("bare repository")?;
+    let modules = parse_gitmodules_with_repo(work_tree, Some(&repo))?;
+    let grit_bin = grit_exe::grit_executable();
+
+    fn fetch_one(
+        grit_bin: &std::path::Path,
+        sub_path: &std::path::Path,
+        recursive: bool,
+    ) -> Result<()> {
+        if !sub_path.join(".git").exists() {
+            return Ok(());
+        }
+        let status = std::process::Command::new(grit_bin)
+            .args(["fetch", "origin"])
+            .current_dir(sub_path)
+            .status()
+            .context("submodule fetch")?;
+        if !status.success() {
+            bail!("submodule fetch failed in {}", sub_path.display());
+        }
+        if recursive {
+            let sub_repo = Repository::discover(Some(sub_path)).context("open submodule repo")?;
+            let sub_wt = sub_repo.work_tree.as_ref().context("bare submodule")?;
+            let nested = parse_gitmodules_with_repo(sub_wt, Some(&sub_repo)).unwrap_or_default();
+            for m in nested {
+                fetch_one(grit_bin, &sub_wt.join(&m.path), true)?;
+            }
+        }
+        Ok(())
+    }
+
+    for m in modules {
+        fetch_one(&grit_bin, &work_tree.join(&m.path), recursive)?;
+    }
+    Ok(())
 }
 
 /// Run the `submodule` command.
@@ -1057,6 +1145,14 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
         if !reset_status.success() {
             bail!("failed to reset submodule '{}' after checkout", m.name);
         }
+
+        refresh_gitlink_index_stat(&repo, &m.path)?;
+
+        eprintln!(
+            "Submodule path '{}': checked out '{}'",
+            m.path,
+            &checkout_oid[..checkout_oid.len().min(12)]
+        );
 
         // `checkout`/`reset` must not replace the submodule gitfile with a nested `.git/` directory;
         // normalize again so `git rev-parse --git-dir` matches Git (t4137 `replace_gitfile_with_git_dir`).

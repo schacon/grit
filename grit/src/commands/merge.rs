@@ -8,6 +8,7 @@ use clap::Args as ClapArgs;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::Write;
+use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
 
@@ -804,6 +805,7 @@ fn merge_unborn(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> 
     if let Some(ref wt) = repo.work_tree {
         checkout_entries(repo, wt, &index, None)?;
     }
+    refresh_index_stat_cache_from_worktree(repo, &mut index)?;
     repo.write_index(&mut index)?;
 
     if !args.quiet {
@@ -846,6 +848,7 @@ fn do_fast_forward(
         remove_deleted_files(wt, &old_entries, &new_index)?;
         checkout_entries(repo, wt, &new_index, None)?;
     }
+    refresh_index_stat_cache_from_worktree(repo, &mut new_index)?;
     repo.write_index(&mut new_index)?;
 
     if !args.quiet {
@@ -1302,9 +1305,6 @@ fn do_real_merge(
         )?;
     }
 
-    // Write index
-    repo.write_index(&mut merge_result.index)?;
-
     // Update working tree
     if let Some(ref wt) = repo.work_tree {
         // Remove files that were in ours but are no longer in the merged index
@@ -1329,6 +1329,9 @@ fn do_real_merge(
             fs::write(&abs, &output)?;
         }
     }
+
+    refresh_index_stat_cache_from_worktree(repo, &mut merge_result.index)?;
+    repo.write_index(&mut merge_result.index)?;
 
     if merge_result.has_conflicts {
         if args.squash {
@@ -1530,6 +1533,46 @@ fn bail_if_merge_would_overwrite_local_changes(
         .map(|e| e.path.clone())
         .collect();
 
+    // Do not replace a checked-out submodule (gitlink with .git in work tree)
+    // with regular tree content — Git refuses this merge/pull.
+    for (path, old_entry) in old_entries {
+        if old_entry.mode != MODE_GITLINK {
+            continue;
+        }
+        let rel = String::from_utf8_lossy(path).to_string();
+        let abs = work_tree.join(&rel);
+        if !abs.join(".git").exists() {
+            continue;
+        }
+        let new_at_path = new_map.get(path.as_slice()).copied();
+        let replaced_by_tree = new_index.entries.iter().any(|e| {
+            if e.stage() != 0 {
+                return false;
+            }
+            e.path.starts_with(path)
+                && e.path.len() > path.len()
+                && e.path.get(path.len()) == Some(&b'/')
+        });
+        match new_at_path {
+            Some(ne) if ne.mode == MODE_GITLINK => continue, // pointer update only
+            Some(_ne) => {
+                bail!(
+                    "refusing to merge: cannot replace submodule '{rel}' while it is checked out\n\
+                     (local submodule work tree would be overwritten).\n\
+                     Aborting"
+                );
+            }
+            None if replaced_by_tree => {
+                bail!(
+                    "refusing to merge: cannot replace submodule '{rel}' while it is checked out\n\
+                     (local submodule work tree would be overwritten).\n\
+                     Aborting"
+                );
+            }
+            None => continue, // submodule removed from tree — allowed (work tree kept on disk)
+        }
+    }
+
     // Dirty tracked paths from HEAD that would change in the target.
     for (path, old_entry) in old_entries {
         let changed = match new_map.get(path.as_slice()) {
@@ -1643,6 +1686,14 @@ fn bail_if_merge_would_overwrite_local_changes(
                 && path.get(new_entry.path.len()) == Some(&b'/')
         });
         if !has_tracked_prefix && !replaces_tracked_dir {
+            // Git allows merging in a new submodule when the path is an empty
+            // directory (e.g. `mkdir sub1` before pull adds the submodule).
+            if new_entry.mode == 0o160000
+                && abs.is_dir()
+                && is_empty_dir_for_submodule_placeholder(&abs)
+            {
+                continue;
+            }
             overwrite_untracked.insert(rel);
         }
     }
@@ -1734,8 +1785,12 @@ fn bail_if_merge_would_overwrite_local_changes(
 
 fn is_worktree_entry_dirty(repo: &Repository, entry: &IndexEntry, abs_path: &Path) -> Result<bool> {
     if entry.mode == MODE_GITLINK {
-        // Submodule: compare checked-out commit to the gitlink OID; do not use `read` on the path
-        // (it is a directory — that would incorrectly count as "dirty" and block merges/pulls).
+        if abs_path.is_file() || abs_path.is_symlink() {
+            return Ok(true);
+        }
+        if !abs_path.join(".git").exists() {
+            return Ok(false);
+        }
         let Some(current) = read_submodule_head_oid(abs_path) else {
             return Ok(true);
         };
@@ -2198,6 +2253,8 @@ fn do_octopus_merge(
     if let Some(ref wt) = repo.work_tree {
         checkout_entries(repo, wt, &final_index, None)?;
     }
+    refresh_index_stat_cache_from_worktree(repo, &mut final_index)?;
+    repo.write_index(&mut final_index)?;
 
     if args.squash {
         let msg = build_squash_msg(repo, head_oid, &merge_oids)?;
@@ -2493,6 +2550,7 @@ fn do_strategy_theirs(
         remove_deleted_files(wt, &old_entries, &new_index)?;
         checkout_entries(repo, wt, &new_index, None)?;
     }
+    refresh_index_stat_cache_from_worktree(repo, &mut new_index)?;
     repo.write_index(&mut new_index)?;
 
     if !args.quiet {
@@ -2701,6 +2759,7 @@ fn do_squash(
     if let Some(ref wt) = repo.work_tree {
         checkout_entries(repo, wt, &new_index, None)?;
     }
+    refresh_index_stat_cache_from_worktree(repo, &mut new_index)?;
     repo.write_index(&mut new_index)?;
 
     // Write SQUASH_MSG
@@ -2769,6 +2828,7 @@ fn merge_abort() -> Result<()> {
     if let Some(ref wt) = repo.work_tree {
         checkout_entries(&repo, wt, &index, None)?;
     }
+    refresh_index_stat_cache_from_worktree(&repo, &mut index)?;
     repo.write_index(&mut index)?;
 
     // Clean up merge state files
@@ -5433,6 +5493,47 @@ fn print_diffstat(repo: &Repository, entries: &[DiffEntry], compact: bool) {
     }
 }
 
+/// True if `dir` exists and contains only `.` and `..` (safe to replace with a submodule gitlink).
+fn is_empty_dir_for_submodule_placeholder(dir: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+    for e in entries.flatten() {
+        let name = e.file_name();
+        if name != "." && name != ".." {
+            return false;
+        }
+    }
+    true
+}
+
+/// Refresh cached stat data for every stage-0 index entry from the work tree.
+///
+/// Tree-built indexes start with zeroed stat fields; without refreshing,
+/// `git diff-files` falsely reports every tracked file as modified.
+fn refresh_index_stat_cache_from_worktree(repo: &Repository, index: &mut Index) -> Result<()> {
+    let Some(work_tree) = repo.work_tree.as_deref() else {
+        return Ok(());
+    };
+    for entry in &mut index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&entry.path);
+        let abs = work_tree.join(path_str.as_ref());
+        if let Ok(meta) = fs::symlink_metadata(&abs) {
+            entry.ctime_sec = meta.ctime() as u32;
+            entry.ctime_nsec = meta.ctime_nsec() as u32;
+            entry.mtime_sec = meta.mtime() as u32;
+            entry.mtime_nsec = meta.mtime_nsec() as u32;
+            entry.dev = meta.dev() as u32;
+            entry.ino = meta.ino() as u32;
+            entry.size = meta.len() as u32;
+        }
+    }
+    Ok(())
+}
+
 /// Recursively flatten a tree into index entries.
 fn tree_to_index_entries(
     repo: &Repository,
@@ -5714,14 +5815,26 @@ fn remove_deleted_files(
         .iter()
         .map(|e| e.path.as_slice())
         .collect();
-    for path in old_entries.keys() {
-        if !new_paths.contains(path.as_slice()) {
-            let path_str = String::from_utf8_lossy(path);
-            let abs = work_tree.join(path_str.as_ref());
-            if abs.is_file() || abs.is_symlink() {
-                let _ = fs::remove_file(&abs);
-            } else if abs.is_dir() {
+    for (path, old_entry) in old_entries {
+        if new_paths.contains(path.as_slice()) {
+            continue;
+        }
+        let has_nested_under = new_index.entries.iter().any(|e| {
+            e.path.starts_with(path)
+                && e.path.len() > path.len()
+                && e.path.get(path.len()) == Some(&b'/')
+        });
+        // Submodule removed from the superproject: keep the on-disk work tree.
+        if old_entry.mode == MODE_GITLINK && !has_nested_under {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(path);
+        let abs = work_tree.join(path_str.as_ref());
+        if abs.exists() || fs::symlink_metadata(&abs).is_ok() {
+            if abs.is_dir() {
                 let _ = fs::remove_dir_all(&abs);
+            } else {
+                let _ = fs::remove_file(&abs);
             }
             remove_empty_parent_dirs_merge(work_tree, &abs);
         }
@@ -5792,9 +5905,17 @@ fn checkout_entries(
             fs::create_dir_all(parent)?;
         }
 
-        // Submodule entries (gitlinks) point to commits in a different object
-        // store; they should not be checked out as blobs.
+        // Submodule entries (gitlinks): materialize an empty directory in the
+        // superproject (Git does not check out submodule contents on merge).
         if entry.mode == 0o160000 {
+            if abs_path.is_file() || abs_path.is_symlink() {
+                let _ = fs::remove_file(&abs_path);
+            } else if abs_path.is_dir() && abs_path.join(".git").exists() {
+                continue;
+            } else if abs_path.is_dir() {
+                let _ = fs::remove_dir_all(&abs_path);
+            }
+            let _ = fs::create_dir_all(&abs_path);
             continue;
         }
 

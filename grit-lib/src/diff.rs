@@ -586,7 +586,8 @@ pub fn diff_index_to_worktree(
         let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");
         let is_intent_to_add = ie.intent_to_add();
 
-        // Gitlink entries (submodules) are directories — compare HEAD commit.
+        // Gitlink entries (submodules): compare checked-out HEAD to the recorded commit.
+        // An uninitialized path (no `.git` in the directory) is not dirty — same as Git.
         if ie.mode == 0o160000 {
             let sub_dir = work_tree.join(path_str_ref);
             let sub_head_oid = read_submodule_head_oid(&sub_dir);

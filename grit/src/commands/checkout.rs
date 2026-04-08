@@ -896,16 +896,14 @@ fn switch_branch(
                 let target_tree = commit_to_tree(repo, &target_oid)?;
                 return force_reset_to_tree(repo, &target_tree);
             }
-            // Bare clone leaves an empty index while HEAD already points at the branch.
-            // Git still materializes the tree on `checkout <that-branch>`; match that.
+            let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
+                .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
+            let target_tree = commit_to_tree(repo, &target_oid)?;
             let index_empty = repo
                 .load_index()
                 .map(|idx| idx.entries.is_empty())
                 .unwrap_or(true);
-            if index_empty {
-                let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
-                    .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
-                let target_tree = commit_to_tree(repo, &target_oid)?;
+            if index_empty || !index_matches_flat_tree(repo, &target_tree)? {
                 switch_to_tree(
                     repo,
                     &head,
@@ -1475,10 +1473,10 @@ fn detach_head_inner(repo: &Repository, oid: &ObjectId, force: bool, explicit: b
         .load_index()
         .map(|idx| idx.entries.is_empty())
         .unwrap_or(true);
-    // `clone --no-checkout` leaves HEAD at a branch tip but no index / empty work tree; a detached
-    // checkout of that same OID must still materialize the tree (submodule clone uses this path).
-    if !already_at_target || force || index_empty {
-        let target_tree = commit_to_tree(repo, oid)?;
+    let target_tree = commit_to_tree(repo, oid)?;
+    let needs_checkout =
+        !already_at_target || force || index_empty || !index_matches_flat_tree(repo, &target_tree)?;
+    if needs_checkout {
         switch_to_tree(
             repo,
             &head,
@@ -2017,6 +2015,9 @@ fn is_worktree_dirty(
     abs_path: &std::path::Path,
 ) -> Result<bool> {
     if entry.mode == MODE_GITLINK {
+        if abs_path.is_file() || abs_path.is_symlink() {
+            return Ok(true);
+        }
         let Some(git_dir) = submodule_worktree_git_dir(abs_path) else {
             return Ok(false);
         };
@@ -3237,6 +3238,32 @@ fn tree_to_flat_entries(
         }
     }
     Ok(result)
+}
+
+/// True when the index's stage-0 paths match the flattened tree (mode + OID per path).
+fn index_matches_flat_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<bool> {
+    let index_path = repo.index_path();
+    let old_index = repo.load_index_at(&index_path).unwrap_or_default();
+    let new_entries = tree_to_flat_entries(repo, tree_oid, "")?;
+    let old_stage0: Vec<&IndexEntry> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .collect();
+    if old_stage0.len() != new_entries.len() {
+        return Ok(false);
+    }
+    let mut old_sorted: Vec<_> = old_stage0
+        .into_iter()
+        .map(|e| (&e.path[..], e.mode, e.oid))
+        .collect();
+    let mut new_sorted: Vec<_> = new_entries
+        .iter()
+        .map(|e| (e.path.as_slice(), e.mode, e.oid))
+        .collect();
+    old_sorted.sort_by(|a, b| a.0.cmp(b.0));
+    new_sorted.sort_by(|a, b| a.0.cmp(b.0));
+    Ok(old_sorted == new_sorted)
 }
 
 /// Walk a tree to find the blob (OID, mode) at `path` (slash-separated).

@@ -548,6 +548,8 @@ fn cmd_update(args: UpdateArgs) -> Result<()> {
             update_head_ok: false,
             update_refs: false,
             upload_pack: None,
+            recurse_submodules: None,
+            no_recurse_submodules: false,
         };
         super::fetch::run(fetch_args)?;
     }
