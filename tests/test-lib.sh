@@ -1233,7 +1233,10 @@ test_eval_ () {
 test_run_ () {
 	test_cleanup=:
 	expecting_failure=$2
-	test_eval_ "$1"
+	# Reset cwd like upstream git/t: each case can `cd` freely; the next case
+	# still starts from the trash root (t8070 and similar use `cd repo` without
+	# returning).
+	test_eval_ "cd \"\$TRASH_DIRECTORY\" || exit 1; $1"
 	eval_ret=$?
 	if test -z "$immediate" || test "$eval_ret" -eq 0 ||
 		{ test -n "$expecting_failure" && test "$test_cleanup" != ":"; }
