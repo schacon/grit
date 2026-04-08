@@ -117,6 +117,8 @@ test_expect_success() {
 	test -f "$TRASH_DIRECTORY/.test-exports" && . "$TRASH_DIRECTORY/.test-exports"
 	test_run_ "$commands"
 	result=$?
+	# Bash keeps cwd across tests; Git's test-lib stays in the trash root between cases.
+	cd "$TRASH_DIRECTORY" 2>/dev/null || true
 	test -f "$TRASH_DIRECTORY/.test-exports" && . "$TRASH_DIRECTORY/.test-exports"
 	if test -f "$_TICK_FILE"
 	then
@@ -199,6 +201,7 @@ test_expect_failure() {
 	test -f "$_exports_file" && . "$_exports_file"
 	test_run_ "$commands" expecting_failure
 	result=$?
+	cd "$TRASH_DIRECTORY" 2>/dev/null || true
 	test -f "$_exports_file" && . "$_exports_file"
 	if test -f "$_TICK_FILE"
 	then
