@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -1234,7 +1234,7 @@ t7509-commit-authorship	t7	yes	12	4	8	false	ok	0
 t7510-signed-commit	t7	skip	28	0	0	false	ok	0
 t7511-status-index	t7	yes	24	24	0	true	ok	0
 t7512-status-help	t7	yes	47	7	40	false	ok	0
-t7513-interpret-trailers	t7	yes	99	11	88	false	ok	0
+t7513-interpret-trailers	t7	yes	99	99	0	true	ok	0
 t7514-commit-patch	t7	yes	3	1	2	false	ok	0
 t7514-interpret-trailers-options	t7	yes	10	10	0	true	ok	0
 t7515-status-symlinks	t7	yes	3	1	2	false	ok	0
