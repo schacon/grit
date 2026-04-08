@@ -7,6 +7,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
+use grit_lib::refs;
 use grit_lib::repo::{init_repository, init_repository_separate_git_dir, Repository};
 use std::collections::{HashSet, VecDeque};
 use std::fs;
@@ -423,13 +424,6 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // Handle shallow depth — write .git/shallow with boundary commits
-    if let Some(depth) = args.depth {
-        if depth > 0 {
-            write_shallow_boundary(&dest, depth)?;
-        }
-    }
-
     // Apply -c config values
     if !args.config.is_empty() {
         apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
@@ -451,13 +445,20 @@ pub fn run(args: Args) -> Result<()> {
             .context("initializing partial-clone promisor state")?;
     }
 
-    // Handle --revision: resolve the specified ref in the source repo and set
-    // the destination to a detached HEAD at that commit.
+    // Handle --revision: detached HEAD at the resolved commit, no local refs,
+    // and no remote.fetch (matches git clone --revision).
     if let Some(ref revision) = args.revision {
-        let rev_oid = resolve_revision_in_source(&source, revision)
-            .with_context(|| format!("cannot resolve --revision '{}'", revision))?;
-        // Set HEAD to the resolved OID directly (detached)
+        let rev_oid = resolve_revision_for_clone(&source, revision, remote_name)?;
+        strip_refs_under(&dest.git_dir.join("refs"))?;
         fs::write(dest.git_dir.join("HEAD"), format!("{}\n", rev_oid))?;
+        remove_revision_clone_remote_config(&dest.git_dir, remote_name)?;
+    }
+
+    // Shallow boundary must be computed from the final HEAD (after --revision).
+    if let Some(depth) = args.depth {
+        if depth > 0 {
+            write_shallow_boundary(&dest, depth)?;
+        }
     }
 
     // Checkout working tree unless --bare or --no-checkout
@@ -659,12 +660,6 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         }
     }
 
-    if let Some(depth) = args.depth {
-        if depth > 0 {
-            write_shallow_boundary(&dest, depth)?;
-        }
-    }
-
     if !args.config.is_empty() {
         apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
     }
@@ -680,9 +675,16 @@ fn run_ssh_clone(args: Args) -> Result<()> {
     }
 
     if let Some(ref revision) = args.revision {
-        let rev_oid = resolve_revision_in_source(&source, revision)
-            .with_context(|| format!("cannot resolve --revision '{}'", revision))?;
+        let rev_oid = resolve_revision_for_clone(&source, revision, remote_name)?;
+        strip_refs_under(&dest.git_dir.join("refs"))?;
         fs::write(dest.git_dir.join("HEAD"), format!("{}\n", rev_oid))?;
+        remove_revision_clone_remote_config(&dest.git_dir, remote_name)?;
+    }
+
+    if let Some(depth) = args.depth {
+        if depth > 0 {
+            write_shallow_boundary(&dest, depth)?;
+        }
     }
 
     if !args.bare && !args.no_checkout {
@@ -829,34 +831,116 @@ fn extract_remote_url(config: &str, remote_name: &str) -> Option<String> {
     None
 }
 
-/// Resolve a revision string (ref, OID, HEAD) in the source repository.
-/// For tags, peels to the commit. Returns the OID string.
-fn resolve_revision_in_source(source: &Repository, revision: &str) -> Result<String> {
-    use grit_lib::refs;
+/// Resolve `--revision` in the source repo to a **commit** OID (hex).
+///
+/// Stricter than general `rev-parse`: parent/ancestor syntax (`^`, `~`) is not
+/// accepted (Git's transport treats the revision as a refspec-like name).
+fn resolve_revision_for_clone(
+    source: &Repository,
+    revision: &str,
+    remote_name: &str,
+) -> Result<String> {
+    if revision.contains('^') || revision.contains('~') {
+        bail!("fatal: Remote revision {revision} not found in upstream {remote_name}");
+    }
 
-    // Try resolving as a ref first
-    if let Ok(oid) = refs::resolve_ref(&source.git_dir, revision) {
-        // If it's a tag, peel it to the commit
+    let git_dir = &source.git_dir;
+
+    let oid = if revision == "HEAD" {
+        refs::resolve_ref(git_dir, "HEAD").map_err(|_| {
+            anyhow::anyhow!("fatal: Remote revision HEAD not found in upstream {remote_name}")
+        })?
+    } else if let Ok(oid) = revision.parse::<ObjectId>() {
+        // Only full 40-hex IDs are accepted as raw object names (matches git's
+        // `--revision` transport behaviour; short OIDs are not resolved).
+        if revision.len() != 40 {
+            bail!("fatal: Remote revision {revision} not found in upstream {remote_name}");
+        }
+        if !source.odb.exists(&oid) {
+            bail!("fatal: Remote revision {revision} not found in upstream {remote_name}");
+        }
+        oid
+    } else if let Ok(oid) = refs::resolve_ref(git_dir, revision) {
+        oid
+    } else if let Ok(oid) = refs::resolve_ref(git_dir, &format!("refs/heads/{revision}")) {
+        oid
+    } else if let Ok(oid) = refs::resolve_ref(git_dir, &format!("refs/tags/{revision}")) {
+        oid
+    } else if let Ok(oid) = refs::resolve_ref(git_dir, &format!("refs/remotes/{revision}")) {
+        oid
+    } else if looks_like_hex_object_id(revision) {
+        bail!("fatal: Remote revision {revision} not found in upstream {remote_name}");
+    } else {
+        bail!("cannot resolve --revision '{revision}'");
+    };
+
+    let commit_oid = peel_revision_to_commit(source, oid)?;
+    Ok(commit_oid.to_hex())
+}
+
+/// Peel tags until `oid` names a commit; error if the result is a tree or blob.
+fn peel_revision_to_commit(source: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
+    loop {
         let obj = source.odb.read(&oid)?;
-        if obj.kind == grit_lib::objects::ObjectKind::Tag {
-            // Parse tag to find the target object
-            let text = std::str::from_utf8(&obj.data).unwrap_or("");
-            if let Some(line) = text.lines().find(|l| l.starts_with("object ")) {
-                let target_hex = line.trim_start_matches("object ").trim();
-                return Ok(target_hex.to_string());
+        match obj.kind {
+            ObjectKind::Commit => return Ok(oid),
+            ObjectKind::Tag => {
+                let tag = parse_tag(&obj.data)?;
+                oid = tag.object;
+            }
+            ObjectKind::Tree => {
+                bail!("object {} is a tree, not a commit", oid.to_hex());
+            }
+            ObjectKind::Blob => {
+                bail!("object {} is a blob, not a commit", oid.to_hex());
             }
         }
-        return Ok(oid.to_hex());
     }
+}
 
-    // Try as a hex OID
-    if let Ok(oid) = ObjectId::from_hex(revision) {
-        if source.odb.exists(&oid) {
-            return Ok(oid.to_hex());
+fn looks_like_hex_object_id(s: &str) -> bool {
+    let len = s.len();
+    (4..=40).contains(&len) && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Remove every ref under `refs/` (files and empty dirs), for revision-only clones.
+fn strip_refs_under(refs_root: &Path) -> Result<()> {
+    if !refs_root.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(refs_root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            strip_refs_under(&path)?;
+            let _ = fs::remove_dir(&path);
+        } else {
+            let _ = fs::remove_file(&path);
         }
     }
+    Ok(())
+}
 
-    bail!("revision '{}' not found in source repository", revision);
+/// Drop `remote.<name>.fetch` and `branch.*` sections left over from init / clone setup.
+fn remove_revision_clone_remote_config(git_dir: &Path, remote_name: &str) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    let _ = config.unset(&format!("remote.{remote_name}.fetch"))?;
+    let to_remove: Vec<String> = config
+        .entries
+        .iter()
+        .filter(|e| e.key.starts_with("branch.") && e.key.contains(".remote"))
+        .filter(|e| e.value.as_deref() == Some(remote_name))
+        .filter_map(|e| e.key.rsplit_once('.').map(|(prefix, _)| prefix.to_string()))
+        .collect();
+    for branch_sec in to_remove {
+        let _ = config.remove_section(&branch_sec)?;
+    }
+    config.write().context("writing config")?;
+    Ok(())
 }
 
 /// Open a source repository (bare or non-bare).
