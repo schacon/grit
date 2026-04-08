@@ -11,7 +11,8 @@ use grit_lib::merge_file::MergeFavor;
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::Repository;
 use std::collections::HashMap;
-use std::path::Path;
+use std::env;
+use std::path::{Path, PathBuf};
 
 use super::merge::{merge_trees_for_replay, MergeDirectoryRenamesMode};
 
@@ -26,7 +27,7 @@ pub struct Args {
 
 /// Run `grit merge-recursive`.
 pub fn run(args: Args) -> Result<()> {
-    let repo = Repository::discover(None).context("not a git repository")?;
+    let repo = discover_repo_for_merge_recursive().context("not a git repository")?;
     let (ws, positional) = parse_args(&args.args)?;
     if positional.len() != 3 {
         bail!("usage: git merge-recursive [<options>] <base> -- <head> <remote> [<base>...]");
@@ -53,6 +54,8 @@ pub fn run(args: Args) -> Result<()> {
         &theirs_entries,
         &their_name,
         &base_label,
+        &ours_oid.to_hex(),
+        &theirs_oid.to_hex(),
         MergeFavor::None,
         None,
         false,
@@ -100,6 +103,22 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Discover the repo for `merge-recursive` when using an alternate `GIT_WORK_TREE` (and
+/// optional `GIT_INDEX_FILE`) that is a sibling of the main repo — walk up from the work
+/// tree, not from cwd (t6430 empty work tree tests).
+fn discover_repo_for_merge_recursive() -> Result<Repository> {
+    if env::var("GIT_DIR").is_ok() {
+        return Repository::discover(None).map_err(|e| e.into());
+    }
+    if let Ok(wt_raw) = env::var("GIT_WORK_TREE") {
+        let cwd = env::current_dir()?;
+        let wt = PathBuf::from(wt_raw);
+        let wt_abs = if wt.is_absolute() { wt } else { cwd.join(wt) };
+        return Repository::discover(Some(wt_abs.as_path())).map_err(|e| e.into());
+    }
+    Repository::discover(None).map_err(|e| e.into())
 }
 
 #[derive(Clone, Copy, Debug, Default)]

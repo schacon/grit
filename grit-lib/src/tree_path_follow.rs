@@ -173,7 +173,7 @@ pub fn get_tree_entry_follow_symlinks(
             }
 
             let mut new_path = String::from_utf8_lossy(&obj.data)
-                .trim_end_matches(|c| c == '\n' || c == '\r')
+                .trim_end_matches(['\n', '\r'])
                 .to_string();
             if let Some(r) = rest {
                 new_path.push('/');

@@ -931,6 +931,9 @@ fn stage_gitlink(
         return Ok(());
     }
 
+    remove_obstructing_parent_file_entries(index, rel_path);
+    index.remove_descendants_under_path(rel_path);
+
     let meta = fs::metadata(abs_path)?;
     let entry = IndexEntry {
         ctime_sec: meta.ctime() as u32,
@@ -999,6 +1002,7 @@ fn stage_file(
     }
 
     remove_obstructing_parent_file_entries(index, rel_path);
+    index.remove_descendants_under_path(rel_path);
 
     if rel_path.ends_with(".gitattributes") && !path_is_symlink(abs_path) {
         let content = fs::read_to_string(abs_path).unwrap_or_default();

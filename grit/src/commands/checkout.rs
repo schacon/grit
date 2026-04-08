@@ -1237,6 +1237,31 @@ fn detach_head_inner(repo: &Repository, oid: &ObjectId, force: bool, explicit: b
     Ok(())
 }
 
+/// True if a staged path cannot coexist with the target tree's paths (D/F mismatch).
+///
+/// Git drops the carry-over of a staged entry when it would imply both a file and a
+/// descendant path (e.g. staged blob `d` while the target tree has `d/e`).
+fn staged_path_conflicts_with_tree_paths(staged: &[u8], tree_paths: &HashSet<Vec<u8>>) -> bool {
+    for tp in tree_paths {
+        let b = tp.as_slice();
+        if staged == b {
+            continue;
+        }
+        let (shorter, longer) = if staged.len() <= b.len() {
+            (staged, b)
+        } else {
+            (b, staged)
+        };
+        if longer.len() > shorter.len()
+            && longer.starts_with(shorter)
+            && longer[shorter.len()] == b'/'
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Switch the working tree and index from the current HEAD tree to a new tree.
 ///
 /// If `force` is false, checks for dirty tracked files that would be overwritten.
@@ -1319,8 +1344,11 @@ fn switch_to_tree(
                 // If target differs from HEAD, that's a real conflict
                 // (already caught by check_dirty_worktree).
             } else {
-                // File not in target tree: preserve staged change.
-                new_index.add_or_replace(old_entry.clone());
+                // File not in target tree: preserve staged change unless it would
+                // collide with a different shape under the same path prefix (D/F).
+                if !staged_path_conflicts_with_tree_paths(&old_entry.path, &new_paths) {
+                    new_index.add_or_replace(old_entry.clone());
+                }
             }
         }
         new_index.sort();
