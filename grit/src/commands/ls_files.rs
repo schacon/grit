@@ -415,10 +415,8 @@ pub fn run(args: Args) -> Result<()> {
             // since they have distinct stage info that should be visible.
             // With -u/--unmerged, each stage must appear on its own line (t6402).
             // Without -t/-u, deduplicate all entries including unmerged.
-            if args.deduplicate
-                && !(args.show_tag && entry.stage() != 0)
-                && !(args.unmerged && entry.stage() != 0)
-            {
+            // `dedup_paths` encodes git ls-files.c: --deduplicate is ignored with -t/-s/-u.
+            if dedup_paths {
                 if let Some(ref last) = last_dedup_path {
                     if last == &entry.path {
                         continue;
