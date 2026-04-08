@@ -22,7 +22,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::config::ConfigSet;
+use crate::config::{ConfigFile, ConfigScope, ConfigSet};
 use crate::error::{Error, Result};
 use crate::index::Index;
 use crate::objects::parse_commit;
@@ -1150,6 +1150,33 @@ fn write_fresh_git_directory(
         "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n"
     };
     fs::write(git_dir.join("config"), config_content)?;
+
+    // Merge `config` from the template on top of the default (matches `git clone --template`).
+    if let Some(tmpl) = template_dir {
+        if tmpl.is_dir() {
+            let tmpl_config = tmpl.join("config");
+            if tmpl_config.is_file() {
+                let tmpl_text = fs::read_to_string(&tmpl_config)?;
+                let tmpl_parsed = ConfigFile::parse(&tmpl_config, &tmpl_text, ConfigScope::Local)?;
+                let dest_path = git_dir.join("config");
+                let dest_text = fs::read_to_string(&dest_path)?;
+                let mut dest_parsed =
+                    ConfigFile::parse(&dest_path, &dest_text, ConfigScope::Local)?;
+                for e in &tmpl_parsed.entries {
+                    // Git clone ignores `core.bare` from templates (non-bare clone must stay non-bare).
+                    if e.key == "core.bare" {
+                        continue;
+                    }
+                    if let Some(v) = &e.value {
+                        let _ = dest_parsed.set(&e.key, v);
+                    } else {
+                        let _ = dest_parsed.set(&e.key, "true");
+                    }
+                }
+                dest_parsed.write()?;
+            }
+        }
+    }
 
     fs::write(
         git_dir.join("description"),

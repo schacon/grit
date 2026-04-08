@@ -353,9 +353,23 @@ test_set_sequence_editor () {
 }
 
 test_config () {
-	local key="$1" val="$2"
-	git config "$key" "$val" &&
-	test_when_finished "git config --unset '$key'"
+	config_dir=
+	if test "$1" = -C
+	then
+		shift
+		config_dir=$1
+		shift
+	fi
+
+	is_worktree=
+	if test "$1" = --worktree
+	then
+		is_worktree=1
+		shift
+	fi
+
+	test_when_finished "test_unconfig ${config_dir:+-C '$config_dir'} ${is_worktree:+--worktree} '$1'" &&
+	git ${config_dir:+-C "$config_dir"} config ${is_worktree:+--worktree} "$@"
 }
 
 test_config_global () {
@@ -364,10 +378,6 @@ test_config_global () {
 	test_when_finished "git config --global --unset '$key'"
 }
 
-test_unconfig () {
-	git config --unset-all "$@" 2>/dev/null
-	return 0
-}
 test_file_not_empty () {
 	if ! test -s "$1"
 	then
@@ -650,13 +660,27 @@ test_cmp_rev () {
 	fi
 }
 
-# test_unconfig KEY...
+# test_unconfig [-C <dir>] [--worktree] KEY...
 test_unconfig () {
-	while test $# -gt 0; do
-		git config --unset-all "$1" 2>/dev/null
+	config_dir=
+	if test "$1" = -C
+	then
 		shift
-	done
-	return 0
+		config_dir=$1
+		shift
+	fi
+	is_worktree=
+	if test "$1" = --worktree
+	then
+		is_worktree=1
+		shift
+	fi
+	git ${config_dir:+-C "$config_dir"} config ${is_worktree:+--worktree} --unset-all "$@" 2>/dev/null
+	config_status=$?
+	case "$config_status" in
+	5) config_status=0 ;;
+	esac
+	return $config_status
 }
 
 nongit () {
