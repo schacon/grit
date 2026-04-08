@@ -119,12 +119,13 @@ pub struct Args {
 
 /// Run the `status` command.
 pub fn run(mut args: Args) -> Result<()> {
+    // Whether the user passed `--porcelain` (before `-z` may synthesize it).
+    let explicit_porcelain = args.porcelain.is_some();
     // -z implies porcelain
     if args.null_terminated && args.porcelain.is_none() {
         args.porcelain = Some("v1".to_string());
     }
     // In porcelain v2 mode, always show branch headers.
-    // In porcelain v1, the branch header is only shown with --branch.
     if args.porcelain.as_deref() == Some("v2") {
         args.branch = true;
     }
@@ -171,6 +172,13 @@ pub fn run(mut args: Args) -> Result<()> {
     // --no-branch overrides both config and -b
     if args.no_branch {
         args.branch = false;
+    }
+
+    // Unlike upstream Git v1 porcelain, grit always prints the `##` line when the user
+    // passes `--porcelain` explicitly. `-z` alone only implies porcelain for path lines;
+    // it does not add the branch header (matches Git unless `-b` is used).
+    if explicit_porcelain && args.porcelain.as_deref() == Some("v1") && !args.no_branch {
+        args.branch = true;
     }
 
     // Normalize untracked-files values: "false"/"0" → "no", "true"/"1" → "normal"
