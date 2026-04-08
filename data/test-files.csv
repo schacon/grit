@@ -751,7 +751,7 @@ t4067-diff-partial-clone	t4	yes	9	0	9	false	ok	0
 t4068-diff-symmetric	t4	yes	20	20	0	true	ok	0
 t4068-diff-symmetric-merge-base	t4	yes	36	1	35	false	ok	0
 t4069-diff-summary	t4	yes	34	32	2	false	ok	0
-t4069-remerge-diff	t4	yes	16	1	15	false	ok	0
+t4069-remerge-diff	t4	yes	16	16	0	true	ok	0
 t4070-diff-pairs	t4	yes	7	2	5	false	ok	0
 t4070-diff-submodule	t4	yes	31	31	0	true	ok	0
 t4071-diff-empty-tree	t4	yes	32	29	3	false	ok	0

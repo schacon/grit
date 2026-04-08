@@ -95,13 +95,11 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if merge_result.has_conflicts {
-        for (kind, path) in &merge_result.conflict_descriptions {
-            if kind == "binary" {
-                println!("Cannot merge binary files: {path}");
-            } else if kind == "rename/delete" || kind == "modify/delete" {
-                println!("CONFLICT ({kind}): {path}");
+        for desc in &merge_result.conflict_descriptions {
+            if desc.kind == "binary" {
+                println!("Cannot merge binary files: {}", desc.subject_path);
             } else {
-                println!("CONFLICT ({kind}): Merge conflict in {path}");
+                println!("CONFLICT ({}): {}", desc.kind, desc.body);
             }
         }
         std::process::exit(1);

@@ -431,6 +431,8 @@ pub fn run(mut args: Args) -> Result<()> {
             &paths,
             args.no_overlay,
             args.merge,
+            args.ours,
+            args.theirs,
         );
     }
 
@@ -591,7 +593,15 @@ pub fn run(mut args: Args) -> Result<()> {
             // Fallback: try as a pathspec (git checkout <file> without --).
             // If the target looks like a tracked file, restore it from HEAD.
             let paths = vec![target.clone()];
-            match checkout_paths(&repo, None, &paths, false, args.merge) {
+            match checkout_paths(
+                &repo,
+                None,
+                &paths,
+                false,
+                args.merge,
+                args.ours,
+                args.theirs,
+            ) {
                 Ok(()) => Ok(()),
                 Err(_) => bail!(
                     "pathspec '{}' did not match any file(s) known to git",
@@ -1081,10 +1091,10 @@ fn force_create_and_switch_branch(
 fn create_orphan_branch(repo: &Repository, name: &str, start_point: Option<&str>) -> Result<()> {
     let branch_ref = format!("refs/heads/{name}");
 
-    // Check the branch doesn't already exist
+    // Re-creating an orphan branch name removes the old ref (matches `git switch --orphan`
+    // when re-running the same branch name in a test script).
     if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-        eprintln!("fatal: a branch named '{name}' already exists");
-        std::process::exit(128);
+        refs::delete_ref(&repo.git_dir, &branch_ref)?;
     }
 
     // If a start point is given, populate the index/worktree from it
@@ -1806,6 +1816,8 @@ fn checkout_paths(
     paths: &[String],
     no_overlay: bool,
     merge_mode: bool,
+    ours: bool,
+    theirs: bool,
 ) -> Result<()> {
     let work_tree = repo
         .work_tree
@@ -1818,7 +1830,8 @@ fn checkout_paths(
         None => {
             // checkout -- <paths>: restore from index
             let index_path = repo.index_path();
-            let index = repo.load_index_at(&index_path).context("loading index")?;
+            let mut index = repo.load_index_at(&index_path).context("loading index")?;
+            let mut index_modified = false;
 
             for path_str in paths {
                 let rel = resolve_pathspec(path_str, work_tree, &cwd);
@@ -1860,6 +1873,32 @@ fn checkout_paths(
                 } else if let Some(entry) = index.get(path_bytes, 0) {
                     // Exact file match
                     write_blob_to_worktree(repo, work_tree, &rel, &entry.oid, entry.mode, &index)?;
+                } else if ours || theirs {
+                    let stage2 = index.get(path_bytes, 2).cloned();
+                    let stage3 = index.get(path_bytes, 3).cloned();
+                    let chosen = if theirs {
+                        stage3.or(stage2)
+                    } else {
+                        stage2.or(stage3)
+                    };
+                    let Some(entry_src) = chosen else {
+                        bail!(
+                            "error: pathspec '{}' did not match any file(s) known to git",
+                            path_str
+                        );
+                    };
+                    let mut new_entry = entry_src.clone();
+                    new_entry.flags &= 0x0FFF;
+                    index.stage_file(new_entry.clone());
+                    write_blob_to_worktree(
+                        repo,
+                        work_tree,
+                        &rel,
+                        &new_entry.oid,
+                        new_entry.mode,
+                        &index,
+                    )?;
+                    index_modified = true;
                 } else if merge_mode {
                     let stage1 = index.get(path_bytes, 1).cloned();
                     let stage2 = index.get(path_bytes, 2).cloned();
@@ -1900,6 +1939,9 @@ fn checkout_paths(
                         );
                     }
                 }
+            }
+            if index_modified {
+                repo.write_index(&mut index).context("writing index")?;
             }
         }
         Some(source_spec) => {

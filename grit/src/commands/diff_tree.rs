@@ -113,6 +113,8 @@ struct Options {
     exit_code: bool,
     /// Suppress all output, implies exit_code.
     quiet: bool,
+    /// Re-merge parents and diff against merge result tree.
+    remerge_diff: bool,
 }
 
 impl Default for Options {
@@ -147,6 +149,7 @@ impl Default for Options {
             max_depth: None,
             exit_code: false,
             quiet: false,
+            remerge_diff: false,
         }
     }
 }
@@ -202,6 +205,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     opts.quiet = true;
                     opts.exit_code = true;
                 }
+                "--remerge-diff" => opts.remerge_diff = true,
                 "--full-index" => opts.full_index = true,
                 _ if arg.starts_with("--max-depth=") => {
                     let val = &arg["--max-depth=".len()..];
@@ -413,6 +417,27 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                         print_diff(out, &repo.odb, &filtered, opts, None, &repo.git_dir)?;
                     }
                 }
+            } else if commit.parents.len() == 2
+                && opts.remerge_diff
+                && opts.format == OutputFormat::Patch
+            {
+                use crate::commands::remerge_diff::{write_remerge_diff, RemergeDiffOptions};
+                let ro = RemergeDiffOptions {
+                    pathspecs: &opts.pathspecs,
+                    diff_filter: None,
+                    pickaxe: None,
+                    find_object: None,
+                    submodule_mode: None,
+                    context_lines: opts.context_lines,
+                };
+                let mut buf = Vec::new();
+                write_remerge_diff(&mut buf, repo, &commit.tree, &commit.parents, &ro)?;
+                let hd = !buf.is_empty();
+                has_diff = hd;
+                if !opts.quiet && (hd || opts.pretty.is_some()) {
+                    write_commit_header(out, &oid, &obj.data, opts)?;
+                    out.write_all(&buf)?;
+                }
             } else if commit.parents.len() > 1
                 && opts.combined_patch
                 && opts.format == OutputFormat::Patch
@@ -562,8 +587,10 @@ fn process_stdin_commit(
         return Ok(false);
     }
 
-    // Skip merge commits unless -m.
-    if commit.parents.len() > 1 && !opts.show_merges {
+    // Skip merge commits unless -m or remerge-diff patch.
+    let remerge_merge_stdin =
+        commit.parents.len() == 2 && opts.remerge_diff && opts.format == OutputFormat::Patch;
+    if commit.parents.len() > 1 && !opts.show_merges && !remerge_merge_stdin {
         return Ok(false);
     }
 
@@ -575,7 +602,22 @@ fn process_stdin_commit(
         extra_parents
     };
 
-    let has_diff = if parent_oids.is_empty() {
+    let has_diff = if remerge_merge_stdin && parent_oids.len() == 2 {
+        use crate::commands::remerge_diff::{write_remerge_diff, RemergeDiffOptions};
+        let ro = RemergeDiffOptions {
+            pathspecs: &opts.pathspecs,
+            diff_filter: None,
+            pickaxe: None,
+            find_object: None,
+            submodule_mode: None,
+            context_lines: opts.context_lines,
+        };
+        let mut buf = Vec::new();
+        write_remerge_diff(&mut buf, repo, &commit.tree, &parent_oids, &ro)?;
+        let hd = !buf.is_empty();
+        out.write_all(&buf)?;
+        hd
+    } else if parent_oids.is_empty() {
         if opts.root {
             let entries = diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
             let filtered = filter_entries(entries, opts);

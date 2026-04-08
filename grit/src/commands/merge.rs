@@ -14,7 +14,9 @@ use tempfile::NamedTempFile;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::MergeAttr;
 use grit_lib::diff::{count_changes, detect_renames, diff_trees, DiffEntry, DiffStatus};
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
+use grit_lib::index::{
+    Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK, MODE_TREE,
+};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{
@@ -869,7 +871,7 @@ fn do_fast_forward(
 /// Perform a real three-way merge.
 /// Create a virtual merge base by recursively merging multiple merge bases.
 /// This handles criss-cross merge situations where there are multiple LCA commits.
-fn create_virtual_merge_base(
+pub(crate) fn create_virtual_merge_base(
     repo: &Repository,
     bases: &[ObjectId],
     favor: MergeFavor,
@@ -948,6 +950,7 @@ fn create_virtual_merge_base(
             false,
             MergeDirectoryRenamesMode::FromConfig,
             MergeRenameOptions::from_config(repo),
+            None,
         )?;
 
         // Build a tree from the merged index:
@@ -1021,6 +1024,26 @@ fn create_empty_base_commit(repo: &Repository) -> Result<ObjectId> {
 fn short_oid(oid: ObjectId) -> String {
     let hex = oid.to_hex();
     hex[..7.min(hex.len())].to_string()
+}
+
+/// `%h (%s)` style label for remerge-diff conflict markers (matches Git).
+fn commit_remerge_marker_label(repo: &Repository, oid: &ObjectId) -> String {
+    let h = short_oid(*oid);
+    let subj = repo
+        .odb
+        .read(oid)
+        .ok()
+        .and_then(|obj| parse_commit(&obj.data).ok())
+        .and_then(|c| {
+            c.message
+                .lines()
+                .next()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "?".to_owned());
+    format!("{h} ({subj})")
 }
 
 fn apply_subtree_shift(
@@ -1259,6 +1282,7 @@ fn do_real_merge(
         false,
         MergeDirectoryRenamesMode::FromConfig,
         MergeRenameOptions::from_config(repo),
+        None,
     )?;
 
     let append_strategy_failed = std::env::var("GIT_MERGE_VERBOSITY")
@@ -1314,8 +1338,8 @@ fn do_real_merge(
             let mut msg = build_squash_msg(repo, head_oid, &[merge_oid])?;
             // Append conflict info
             msg.push_str("# Conflicts:\n");
-            for (_ctype, cpath) in &merge_result.conflict_descriptions {
-                msg.push_str(&format!("#\t{cpath}\n"));
+            for desc in &merge_result.conflict_descriptions {
+                msg.push_str(&format!("#\t{}\n", desc.subject_path));
             }
             fs::write(repo.git_dir.join("SQUASH_MSG"), &msg)?;
         } else {
@@ -1330,14 +1354,12 @@ fn do_real_merge(
         }
 
         // Print per-file conflict messages to stdout (git sends these to stdout)
-        for (ctype, cpath) in &merge_result.conflict_descriptions {
-            if ctype == "binary" {
-                println!("warning: Cannot merge binary files: {cpath}");
-                println!("Cannot merge binary files: {cpath}");
-            } else if ctype == "rename/delete" || ctype == "modify/delete" {
-                println!("CONFLICT ({ctype}): {cpath}");
+        for desc in &merge_result.conflict_descriptions {
+            if desc.kind == "binary" {
+                println!("warning: Cannot merge binary files: {}", desc.subject_path);
+                println!("Cannot merge binary files: {}", desc.subject_path);
             } else {
-                println!("CONFLICT ({ctype}): Merge conflict in {cpath}");
+                println!("CONFLICT ({}): {}", desc.kind, desc.body);
             }
         }
         println!("Automatic merge failed; fix conflicts and then commit the result.");
@@ -2049,6 +2071,7 @@ fn do_octopus_merge(
                 false,
                 MergeDirectoryRenamesMode::FromConfig,
                 MergeRenameOptions::from_config(repo),
+                None,
             )?;
 
             if merge_result.has_conflicts {
@@ -2138,6 +2161,7 @@ fn do_octopus_merge(
             false,
             MergeDirectoryRenamesMode::FromConfig,
             MergeRenameOptions::from_config(repo),
+            None,
         )?;
 
         if merge_result.has_conflicts {
@@ -2849,9 +2873,32 @@ struct MergeResult {
     has_conflicts: bool,
     /// Files with conflict markers: (path, content).
     conflict_files: Vec<(String, Vec<u8>)>,
-    /// Conflict descriptions for output: (conflict_type, path).
-    /// e.g. ("content", "file.txt") or ("modify/delete", "file.txt")
-    conflict_descriptions: Vec<(String, String)>,
+    conflict_descriptions: Vec<ConflictDescription>,
+}
+
+/// One recorded merge conflict for stdout and for remerge-diff headers.
+#[derive(Debug, Clone)]
+pub(crate) struct ConflictDescription {
+    /// Short type tag: `content`, `modify/delete`, `rename/rename`, …
+    pub kind: &'static str,
+    /// Text after `CONFLICT (kind): ` on the standard merge output line.
+    pub body: String,
+    /// Path or label replay uses in error messages (legacy second tuple field).
+    pub subject_path: String,
+    /// When set, remerge-diff matches this path to a diff entry (e.g. rename/rename uses the source path).
+    pub remerge_anchor_path: Option<String>,
+    /// For `rename/rename(1to2)`: our-side rename destination in the index (mechanical merge tree).
+    pub rename_rr_ours_dest: Option<String>,
+    /// For `rename/rename(1to2)`: their-side rename destination in the index.
+    pub rename_rr_theirs_dest: Option<String>,
+}
+
+impl ConflictDescription {
+    /// Full line body prefixed for `remerge` diff headers (matches Git).
+    #[must_use]
+    pub fn remerge_header_line(&self) -> String {
+        format!("remerge CONFLICT ({}): {}", self.kind, self.body)
+    }
 }
 
 /// Tree-merge result exported for replay-style callers.
@@ -2863,7 +2910,7 @@ pub(crate) struct ReplayTreeMergeResult {
     /// Files with conflict marker content to materialize in worktree.
     pub conflict_files: Vec<(String, Vec<u8>)>,
     /// Human-readable conflict summaries.
-    pub conflict_descriptions: Vec<(String, String)>,
+    pub conflict_descriptions: Vec<ConflictDescription>,
 }
 
 #[derive(Debug)]
@@ -3514,6 +3561,7 @@ fn merge_trees(
     ignore_cr_at_eol: bool,
     merge_directory_renames_mode: MergeDirectoryRenamesMode,
     rename_options: MergeRenameOptions,
+    forced_branch_labels: Option<(String, String)>,
 ) -> Result<MergeResult> {
     // Detect renames on each side
     let (mut ours_renames, mut theirs_renames) =
@@ -3575,11 +3623,18 @@ fn merge_trees(
     let mut index = Index::new();
     let mut has_conflicts = false;
     let mut conflict_files: Vec<(String, Vec<u8>)> = Vec::new();
-    let mut conflict_descriptions: Vec<(String, String)> = Vec::new();
+    let mut conflict_descriptions: Vec<ConflictDescription> = Vec::new();
 
     let labels = resolve_conflict_labels(repo, their_name, base_label_prefix);
-    let ours_label = labels.ours;
     let base_label = labels.base;
+    let ours_label: &str = match &forced_branch_labels {
+        Some((o, _)) => o.as_str(),
+        None => labels.ours,
+    };
+    let their_name: &str = match &forced_branch_labels {
+        Some((_, t)) => t.as_str(),
+        None => their_name,
+    };
     let has_descendant = |tree: &HashMap<Vec<u8>, IndexEntry>, path: &[u8]| -> bool {
         tree.keys().any(|candidate| {
             candidate.len() > path.len()
@@ -3670,7 +3725,14 @@ fn merge_trees(
                             let mut te_at_new = te.clone();
                             te_at_new.path = ours_new_path.clone();
                             stage_entry(&mut index, &te_at_new, 3);
-                            conflict_descriptions.push(("content".to_string(), path_str.clone()));
+                            conflict_descriptions.push(ConflictDescription {
+                                kind: "content",
+                                body: format!("Merge conflict in {path_str}"),
+                                subject_path: path_str.clone(),
+                                remerge_anchor_path: None,
+                                rename_rr_ours_dest: None,
+                                rename_rr_theirs_dest: None,
+                            });
                             conflict_files.push((path_str, content));
                         }
                         ContentMergeResult::BinaryConflict(content) => {
@@ -3683,10 +3745,15 @@ fn merge_trees(
                             let mut te_at_new = te.clone();
                             te_at_new.path = ours_new_path.clone();
                             stage_entry(&mut index, &te_at_new, 3);
-                            conflict_descriptions.push((
-                                "binary".to_string(),
-                                format!("{path_str} ({ours_label} vs. {their_name})"),
-                            ));
+                            let b = format!("{path_str} ({ours_label} vs. {their_name})");
+                            conflict_descriptions.push(ConflictDescription {
+                                kind: "binary",
+                                body: b.clone(),
+                                subject_path: b,
+                                remerge_anchor_path: None,
+                                rename_rr_ours_dest: None,
+                                rename_rr_theirs_dest: None,
+                            });
                             conflict_files.push((path_str, content));
                         }
                     }
@@ -3737,8 +3804,14 @@ fn merge_trees(
                                     stage_entry(&mut index, &be_at_new, 1);
                                     stage_entry(&mut index, oe, 2);
                                     stage_entry(&mut index, te_at_new, 3);
-                                    conflict_descriptions
-                                        .push(("content".to_string(), path_str.clone()));
+                                    conflict_descriptions.push(ConflictDescription {
+                                        kind: "content",
+                                        body: format!("Merge conflict in {path_str}"),
+                                        subject_path: path_str.clone(),
+                                        remerge_anchor_path: None,
+                                        rename_rr_ours_dest: None,
+                                        rename_rr_theirs_dest: None,
+                                    });
                                     conflict_files.push((path_str, content));
                                 }
                                 ContentMergeResult::BinaryConflict(content) => {
@@ -3749,10 +3822,15 @@ fn merge_trees(
                                     stage_entry(&mut index, &be_at_new, 1);
                                     stage_entry(&mut index, oe, 2);
                                     stage_entry(&mut index, te_at_new, 3);
-                                    conflict_descriptions.push((
-                                        "binary".to_string(),
-                                        format!("{path_str} ({ours_label} vs. {their_name})"),
-                                    ));
+                                    let b = format!("{path_str} ({ours_label} vs. {their_name})");
+                                    conflict_descriptions.push(ConflictDescription {
+                                        kind: "binary",
+                                        body: b.clone(),
+                                        subject_path: b,
+                                        remerge_anchor_path: None,
+                                        rename_rr_ours_dest: None,
+                                        rename_rr_theirs_dest: None,
+                                    });
                                     conflict_files.push((path_str, content));
                                 }
                             }
@@ -3776,9 +3854,17 @@ fn merge_trees(
                     if let Ok(obj) = repo.odb.read(&oe.oid) {
                         conflict_files.push((new_path_str.clone(), obj.data));
                     }
-                    conflict_descriptions.push(("rename/delete".to_string(), format!(
+                    let body = format!(
                         "{base_path_str} deleted in {their_name} and renamed to {new_path_str} in {ours_label}. Version {ours_label} of {new_path_str} left in tree."
-                    )));
+                    );
+                    conflict_descriptions.push(ConflictDescription {
+                        kind: "rename/delete",
+                        body: body.clone(),
+                        subject_path: new_path_str.clone(),
+                        remerge_anchor_path: None,
+                        rename_rr_ours_dest: None,
+                        rename_rr_theirs_dest: None,
+                    });
                 }
             }
 
@@ -3822,7 +3908,14 @@ fn merge_trees(
                             | ContentMergeResult::BinaryConflict(content) => content,
                         };
                         conflict_files.push((path_str.clone(), conflict_content));
-                        conflict_descriptions.push(("rename/add".to_string(), path_str));
+                        conflict_descriptions.push(ConflictDescription {
+                            kind: "rename/add",
+                            body: format!("Merge conflict in {path_str}"),
+                            subject_path: path_str.clone(),
+                            remerge_anchor_path: None,
+                            rename_rr_ours_dest: None,
+                            rename_rr_theirs_dest: None,
+                        });
                     }
                 }
             }
@@ -3854,17 +3947,40 @@ fn merge_trees(
                 if let Some(ours_target) = ours_renames.get(base_path) {
                     if ours_target != theirs_new_path {
                         // rename/rename(1to2) conflict
-                        if let Some(te) = theirs_entries.get(theirs_new_path) {
+                        if let (Some(oe), Some(te)) = (
+                            ours_entries.get(ours_target),
+                            theirs_entries.get(theirs_new_path),
+                        ) {
                             let path_str = String::from_utf8_lossy(theirs_new_path).to_string();
                             has_conflicts = true;
+                            index.remove(base_path);
+                            index.remove(ours_target);
+                            index.remove(theirs_new_path);
                             if let Some(be) = base.get(base_path) {
-                                let mut be_at_new = be.clone();
-                                be_at_new.path = theirs_new_path.clone();
-                                stage_entry(&mut index, &be_at_new, 1);
+                                stage_entry(&mut index, be, 1);
                             }
+                            stage_entry(&mut index, oe, 2);
                             stage_entry(&mut index, te, 3);
-                            conflict_descriptions.push(("rename/rename".to_string(), path_str));
-                            // Also add the theirs version to the working tree
+                            let base_utf = String::from_utf8_lossy(base_path);
+                            let ours_tgt_utf = String::from_utf8_lossy(ours_target);
+                            let theirs_tgt_utf = String::from_utf8_lossy(theirs_new_path);
+                            let body = format!(
+                                "{base_utf} renamed to {ours_tgt_utf} in {ours_label} and to {theirs_tgt_utf} in {their_name}."
+                            );
+                            conflict_descriptions.push(ConflictDescription {
+                                kind: "rename/rename",
+                                body: body.clone(),
+                                subject_path: path_str.clone(),
+                                remerge_anchor_path: Some(base_utf.to_string()),
+                                rename_rr_ours_dest: Some(ours_tgt_utf.to_string()),
+                                rename_rr_theirs_dest: Some(theirs_tgt_utf.to_string()),
+                            });
+                            if let Ok(obj) = repo.odb.read(&oe.oid) {
+                                conflict_files.push((
+                                    String::from_utf8_lossy(ours_target).to_string(),
+                                    obj.data,
+                                ));
+                            }
                             if let Ok(obj) = repo.odb.read(&te.oid) {
                                 conflict_files.push((
                                     String::from_utf8_lossy(theirs_new_path).to_string(),
@@ -3939,7 +4055,14 @@ fn merge_trees(
                             oe_at_new.path = theirs_new_path.clone();
                             stage_entry(&mut index, &oe_at_new, 2);
                             stage_entry(&mut index, te, 3);
-                            conflict_descriptions.push(("content".to_string(), path_str.clone()));
+                            conflict_descriptions.push(ConflictDescription {
+                                kind: "content",
+                                body: format!("Merge conflict in {path_str}"),
+                                subject_path: path_str.clone(),
+                                remerge_anchor_path: None,
+                                rename_rr_ours_dest: None,
+                                rename_rr_theirs_dest: None,
+                            });
                             conflict_files.push((path_str, content));
                         }
                         ContentMergeResult::BinaryConflict(content) => {
@@ -3952,10 +4075,15 @@ fn merge_trees(
                             oe_at_new.path = theirs_new_path.clone();
                             stage_entry(&mut index, &oe_at_new, 2);
                             stage_entry(&mut index, te, 3);
-                            conflict_descriptions.push((
-                                "binary".to_string(),
-                                format!("{path_str} ({ours_label} vs. {their_name})"),
-                            ));
+                            let b = format!("{path_str} ({ours_label} vs. {their_name})");
+                            conflict_descriptions.push(ConflictDescription {
+                                kind: "binary",
+                                body: b.clone(),
+                                subject_path: b,
+                                remerge_anchor_path: None,
+                                rename_rr_ours_dest: None,
+                                rename_rr_theirs_dest: None,
+                            });
                             conflict_files.push((path_str, content));
                         }
                     }
@@ -3975,9 +4103,17 @@ fn merge_trees(
                 if let Ok(obj) = repo.odb.read(&te.oid) {
                     conflict_files.push((new_path_str.clone(), obj.data));
                 }
-                conflict_descriptions.push(("rename/delete".to_string(), format!(
+                let body = format!(
                     "{base_path_str} deleted in {ours_label} and renamed to {new_path_str} in {their_name}. Version {their_name} of {new_path_str} left in tree."
-                )));
+                );
+                conflict_descriptions.push(ConflictDescription {
+                    kind: "rename/delete",
+                    body: body.clone(),
+                    subject_path: new_path_str.clone(),
+                    remerge_anchor_path: None,
+                    rename_rr_ours_dest: None,
+                    rename_rr_theirs_dest: None,
+                });
             }
 
             // If ours also has a NEW file at theirs_new_path (add/add at rename target)
@@ -4017,7 +4153,14 @@ fn merge_trees(
                         | ContentMergeResult::BinaryConflict(content) => content,
                     };
                     conflict_files.push((path_str.clone(), conflict_content));
-                    conflict_descriptions.push(("rename/add".to_string(), path_str));
+                    conflict_descriptions.push(ConflictDescription {
+                        kind: "rename/add",
+                        body: format!("Merge conflict in {path_str}"),
+                        subject_path: path_str.clone(),
+                        remerge_anchor_path: None,
+                        rename_rr_ours_dest: None,
+                        rename_rr_theirs_dest: None,
+                    });
                 }
             }
 
@@ -4034,6 +4177,20 @@ fn merge_trees(
             }
         }
     }
+
+    apply_directory_file_conflicts(
+        repo,
+        their_name,
+        ours_label,
+        &ours_entries,
+        &theirs_entries,
+        &mut index,
+        &all_paths,
+        &mut handled_paths,
+        &mut conflict_descriptions,
+        &mut conflict_files,
+        &mut has_conflicts,
+    )?;
 
     // Second pass: handle non-rename paths
     for path in &all_paths {
@@ -4079,12 +4236,16 @@ fn merge_trees(
                     if let Ok(obj) = repo.odb.read(&oe.oid) {
                         conflict_files.push((conflict_path.clone(), obj.data));
                     }
-                    conflict_descriptions.push((
-                        "directory/file".to_string(),
-                        format!(
+                    conflict_descriptions.push(ConflictDescription {
+                        kind: "directory/file",
+                        body: format!(
                             "There is a directory with name {path_str} in {their_name}. Adding {path_str} as {conflict_path}"
                         ),
-                    ));
+                        subject_path: conflict_path.clone(),
+                        remerge_anchor_path: None,
+                        rename_rr_ours_dest: None,
+                        rename_rr_theirs_dest: None,
+                    });
                 } else {
                     index.entries.push(oe.clone());
                 }
@@ -4103,12 +4264,16 @@ fn merge_trees(
                     if let Ok(obj) = repo.odb.read(&te.oid) {
                         conflict_files.push((conflict_path.clone(), obj.data));
                     }
-                    conflict_descriptions.push((
-                        "directory/file".to_string(),
-                        format!(
+                    conflict_descriptions.push(ConflictDescription {
+                        kind: "directory/file",
+                        body: format!(
                             "There is a directory with name {path_str} in {ours_label}. Adding {path_str} as {conflict_path}"
                         ),
-                    ));
+                        subject_path: conflict_path.clone(),
+                        remerge_anchor_path: None,
+                        rename_rr_ours_dest: None,
+                        rename_rr_theirs_dest: None,
+                    });
                 } else {
                     index.entries.push(te.clone());
                 }
@@ -4159,7 +4324,14 @@ fn merge_trees(
                         stage_entry(&mut index, be, 1);
                         stage_entry(&mut index, oe, 2);
                         stage_entry(&mut index, te, 3);
-                        conflict_descriptions.push(("content".to_string(), path_str.clone()));
+                        conflict_descriptions.push(ConflictDescription {
+                            kind: "content",
+                            body: format!("Merge conflict in {path_str}"),
+                            subject_path: path_str.clone(),
+                            remerge_anchor_path: None,
+                            rename_rr_ours_dest: None,
+                            rename_rr_theirs_dest: None,
+                        });
                         conflict_files.push((path_str, content));
                     }
                     ContentMergeResult::BinaryConflict(content) => {
@@ -4167,10 +4339,15 @@ fn merge_trees(
                         stage_entry(&mut index, be, 1);
                         stage_entry(&mut index, oe, 2);
                         stage_entry(&mut index, te, 3);
-                        conflict_descriptions.push((
-                            "binary".to_string(),
-                            format!("{path_str} ({ours_label} vs. {their_name})"),
-                        ));
+                        let b = format!("{path_str} ({ours_label} vs. {their_name})");
+                        conflict_descriptions.push(ConflictDescription {
+                            kind: "binary",
+                            body: b.clone(),
+                            subject_path: b,
+                            remerge_anchor_path: None,
+                            rename_rr_ours_dest: None,
+                            rename_rr_theirs_dest: None,
+                        });
                         conflict_files.push((path_str, content));
                     }
                 }
@@ -4217,8 +4394,17 @@ fn merge_trees(
                                 stage_entry(&mut index, be, 1);
                                 stage_entry(&mut index, te, 3);
                             }
-                            conflict_descriptions
-                                .push(("modify/delete".to_string(), path_str.clone()));
+                            let body = format!(
+                                "{path_str} deleted in {ours_label} and modified in {their_name}.  Version {their_name} of {path_str} left in tree."
+                            );
+                            conflict_descriptions.push(ConflictDescription {
+                                kind: "modify/delete",
+                                body,
+                                subject_path: path_str.clone(),
+                                remerge_anchor_path: None,
+                                rename_rr_ours_dest: None,
+                                rename_rr_theirs_dest: None,
+                            });
                         }
                     }
                 }
@@ -4264,8 +4450,17 @@ fn merge_trees(
                                 stage_entry(&mut index, be, 1);
                                 stage_entry(&mut index, oe, 2);
                             }
-                            conflict_descriptions
-                                .push(("modify/delete".to_string(), path_str.clone()));
+                            let body = format!(
+                                "{path_str} deleted in {their_name} and modified in {ours_label}.  Version {ours_label} of {path_str} left in tree."
+                            );
+                            conflict_descriptions.push(ConflictDescription {
+                                kind: "modify/delete",
+                                body,
+                                subject_path: path_str.clone(),
+                                remerge_anchor_path: None,
+                                rename_rr_ours_dest: None,
+                                rename_rr_theirs_dest: None,
+                            });
                         }
                     }
                 }
@@ -4299,7 +4494,14 @@ fn merge_trees(
                         remove_stage_zero_entry(&mut index, path);
                         stage_entry(&mut index, oe, 2);
                         stage_entry(&mut index, te, 3);
-                        conflict_descriptions.push(("add/add".to_string(), path_str.clone()));
+                        conflict_descriptions.push(ConflictDescription {
+                            kind: "add/add",
+                            body: format!("Merge conflict in {path_str}"),
+                            subject_path: path_str.clone(),
+                            remerge_anchor_path: None,
+                            rename_rr_ours_dest: None,
+                            rename_rr_theirs_dest: None,
+                        });
                         conflict_files.push((path_str, content));
                     }
                     ContentMergeResult::BinaryConflict(content) => {
@@ -4307,10 +4509,15 @@ fn merge_trees(
                         remove_stage_zero_entry(&mut index, path);
                         stage_entry(&mut index, oe, 2);
                         stage_entry(&mut index, te, 3);
-                        conflict_descriptions.push((
-                            "binary".to_string(),
-                            format!("{path_str} ({ours_label} vs. {their_name})"),
-                        ));
+                        let b = format!("{path_str} ({ours_label} vs. {their_name})");
+                        conflict_descriptions.push(ConflictDescription {
+                            kind: "binary",
+                            body: b.clone(),
+                            subject_path: b,
+                            remerge_anchor_path: None,
+                            rename_rr_ours_dest: None,
+                            rename_rr_theirs_dest: None,
+                        });
                         conflict_files.push((path_str, content));
                     }
                 }
@@ -4328,6 +4535,223 @@ fn merge_trees(
         conflict_files,
         conflict_descriptions,
     })
+}
+
+/// Re-merge two parents the same way `git merge` would, returning the resulting tree OID
+/// and conflict descriptions for `--remerge-diff` headers.
+///
+/// `parent1` is treated as the first parent (ours); `parent2` as the second (theirs).
+pub(crate) fn remerge_merge_tree(
+    repo: &Repository,
+    parent1: ObjectId,
+    parent2: ObjectId,
+) -> Result<(ObjectId, Vec<ConflictDescription>)> {
+    let bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, parent1, &[parent2])?;
+    let base_oid = if bases.is_empty() {
+        create_empty_base_commit(repo)?
+    } else if bases.len() > 1 {
+        create_virtual_merge_base(repo, &bases, MergeFavor::None, false)?
+    } else {
+        bases[0]
+    };
+    let base_label_prefix = if bases.is_empty() {
+        "empty tree".to_string()
+    } else if bases.len() > 1 {
+        "merged common ancestors".to_string()
+    } else {
+        short_oid(bases[0])
+    };
+
+    let base_tree = commit_tree(repo, base_oid)?;
+    let ours_tree = commit_tree(repo, parent1)?;
+    let theirs_tree = commit_tree(repo, parent2)?;
+
+    let base_entries = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
+    let ours_entries = tree_to_map(tree_to_index_entries(repo, &ours_tree, "")?);
+    let theirs_entries = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
+
+    let p1_l = commit_remerge_marker_label(repo, &parent1);
+    let p2_l = commit_remerge_marker_label(repo, &parent2);
+    let forced = Some((p1_l.clone(), p2_l.clone()));
+
+    let head = HeadState::Detached { oid: parent1 };
+    let mut merge_result = merge_trees(
+        repo,
+        &base_entries,
+        &ours_entries,
+        &theirs_entries,
+        &head,
+        "remerge",
+        &base_label_prefix,
+        &parent1.to_hex(),
+        &parent2.to_hex(),
+        MergeFavor::None,
+        None,
+        false,
+        false,
+        false,
+        false,
+        false,
+        MergeDirectoryRenamesMode::FromConfig,
+        MergeRenameOptions::from_config(repo),
+        forced,
+    )?;
+
+    let labels = resolve_conflict_labels(repo, "remerge", &base_label_prefix);
+    let base_merge_label = labels.base;
+
+    materialize_unmerged_entries_for_remerge_tree(
+        repo,
+        &mut merge_result.index,
+        &merge_result.conflict_descriptions,
+        base_merge_label,
+        &p1_l,
+        &p2_l,
+    )?;
+
+    let tree_oid = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
+    Ok((tree_oid, merge_result.conflict_descriptions))
+}
+
+fn materialize_unmerged_entries_for_remerge_tree(
+    repo: &Repository,
+    index: &mut Index,
+    conflict_descs: &[ConflictDescription],
+    base_label: &str,
+    ours_label: &str,
+    theirs_label: &str,
+) -> Result<()> {
+    for desc in conflict_descs {
+        if desc.kind != "rename/rename" {
+            continue;
+        }
+        let (Some(anchor), Some(ours_dest), Some(theirs_dest)) = (
+            desc.remerge_anchor_path.as_deref(),
+            desc.rename_rr_ours_dest.as_deref(),
+            desc.rename_rr_theirs_dest.as_deref(),
+        ) else {
+            continue;
+        };
+        let be = index.get(anchor.as_bytes(), 1).cloned();
+        let oe = index.get(ours_dest.as_bytes(), 2).cloned();
+        let te = index.get(theirs_dest.as_bytes(), 3).cloned();
+        if let (Some(_be), Some(oe), Some(te)) = (be, oe, te) {
+            index.remove(anchor.as_bytes());
+            index.remove(ours_dest.as_bytes());
+            index.remove(theirs_dest.as_bytes());
+            let mut ours_e = oe;
+            ours_e.flags &= 0x0FFF;
+            index.add_or_replace(ours_e);
+            let mut theirs_e = te;
+            theirs_e.flags &= 0x0FFF;
+            index.add_or_replace(theirs_e);
+        }
+    }
+
+    let paths: Vec<Vec<u8>> = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() != 0)
+        .map(|e| e.path.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
+    for path in paths {
+        if index.get(&path, 0).is_some() {
+            continue;
+        }
+        let s1 = index.get(&path, 1);
+        let s2 = index.get(&path, 2);
+        let s3 = index.get(&path, 3);
+        let path_str = String::from_utf8_lossy(&path).to_string();
+        let new_entry = match (s1, s2, s3) {
+            (Some(be), Some(oe), Some(te)) => {
+                match try_content_merge(
+                    repo,
+                    &path_str,
+                    be,
+                    oe,
+                    te,
+                    ours_label,
+                    base_label,
+                    theirs_label,
+                    MergeFavor::None,
+                    None,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                )? {
+                    ContentMergeResult::Clean(oid, mode) => {
+                        let mut e = oe.clone();
+                        e.oid = oid;
+                        e.mode = mode;
+                        e.flags &= 0x0FFF;
+                        e
+                    }
+                    ContentMergeResult::Conflict(content)
+                    | ContentMergeResult::BinaryConflict(content) => {
+                        let oid = repo.odb.write(ObjectKind::Blob, &content)?;
+                        let mut e = oe.clone();
+                        e.oid = oid;
+                        e.flags &= 0x0FFF;
+                        e
+                    }
+                }
+            }
+            (Some(_be), None, Some(te)) => {
+                let mut e = te.clone();
+                e.flags &= 0x0FFF;
+                e
+            }
+            (Some(_be), Some(oe), None) => {
+                // modify/delete: recorded merge tree keeps our side's blob (matches Git remerge-diff).
+                let mut e = oe.clone();
+                e.flags &= 0x0FFF;
+                e
+            }
+            (None, Some(oe), Some(te)) => {
+                match try_content_merge_add_add(
+                    repo,
+                    &path_str,
+                    oe,
+                    te,
+                    ours_label,
+                    theirs_label,
+                    MergeFavor::None,
+                    None,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                )? {
+                    ContentMergeResult::Clean(oid, mode) => {
+                        let mut e = oe.clone();
+                        e.oid = oid;
+                        e.mode = mode;
+                        e.flags &= 0x0FFF;
+                        e
+                    }
+                    ContentMergeResult::Conflict(content)
+                    | ContentMergeResult::BinaryConflict(content) => {
+                        let oid = repo.odb.write(ObjectKind::Blob, &content)?;
+                        let mut e = oe.clone();
+                        e.oid = oid;
+                        e.flags &= 0x0FFF;
+                        e
+                    }
+                }
+            }
+            _ => continue,
+        };
+        index.remove(&path);
+        index.add_or_replace(new_entry);
+    }
+    index.sort();
+    Ok(())
 }
 
 /// Perform a single three-way tree merge with merge-ort style rename handling.
@@ -4374,6 +4798,7 @@ pub(crate) fn merge_trees_for_replay(
         ignore_cr_at_eol,
         merge_directory_renames_mode,
         rename_options,
+        None,
     )?;
     Ok(ReplayTreeMergeResult {
         index: result.index,
@@ -4736,6 +5161,86 @@ fn remove_stage_zero_entry(index: &mut Index, path: &[u8]) {
     index
         .entries
         .retain(|entry| !(entry.stage() == 0 && entry.path == path));
+}
+
+fn path_has_tree_descendant(map: &HashMap<Vec<u8>, IndexEntry>, path: &[u8]) -> bool {
+    map.keys()
+        .any(|k| k.len() > path.len() && k.starts_with(path) && k.get(path.len()) == Some(&b'/'))
+}
+
+/// Directory/file conflicts: one side has a file at `P`, the other only has paths under `P/`.
+fn apply_directory_file_conflicts(
+    repo: &Repository,
+    their_name: &str,
+    ours_label: &str,
+    ours_entries: &HashMap<Vec<u8>, IndexEntry>,
+    theirs_entries: &HashMap<Vec<u8>, IndexEntry>,
+    index: &mut Index,
+    all_paths: &BTreeSet<Vec<u8>>,
+    handled_paths: &mut BTreeSet<Vec<u8>>,
+    conflict_descriptions: &mut Vec<ConflictDescription>,
+    conflict_files: &mut Vec<(String, Vec<u8>)>,
+    has_conflicts: &mut bool,
+) -> Result<()> {
+    let mut df_cases: Vec<(Vec<u8>, bool)> = Vec::new();
+    for path in all_paths {
+        let o = ours_entries.get(path);
+        let t = theirs_entries.get(path);
+        if let Some(oe) = o {
+            if oe.mode != MODE_TREE && path_has_tree_descendant(theirs_entries, path) && t.is_none()
+            {
+                df_cases.push((path.clone(), true));
+            }
+        }
+        if let Some(te) = t {
+            if te.mode != MODE_TREE && path_has_tree_descendant(ours_entries, path) && o.is_none() {
+                df_cases.push((path.clone(), false));
+            }
+        }
+    }
+
+    for (path, file_is_ours) in df_cases {
+        handled_paths.insert(path.clone());
+
+        let file_entry = if file_is_ours {
+            ours_entries.get(&path)
+        } else {
+            theirs_entries.get(&path)
+        }
+        .ok_or_else(|| anyhow::anyhow!("directory/file conflict: missing file entry"))?;
+
+        let branch_desc = if file_is_ours { ours_label } else { their_name };
+        let new_path_str = format!("{}~{}", String::from_utf8_lossy(&path), branch_desc);
+        let new_path = new_path_str.as_bytes().to_vec();
+
+        let body = format!(
+            "directory in the way of {} from {}; moving it to {} instead.",
+            String::from_utf8_lossy(&path),
+            branch_desc,
+            new_path_str
+        );
+        conflict_descriptions.push(ConflictDescription {
+            kind: "file/directory",
+            body,
+            subject_path: new_path_str.clone(),
+            remerge_anchor_path: Some(String::from_utf8_lossy(&path).into_owned()),
+            rename_rr_ours_dest: None,
+            rename_rr_theirs_dest: None,
+        });
+
+        index.entries.retain(|e| e.path != path);
+        let stage = if file_is_ours { 2u8 } else { 3u8 };
+        let mut staged = file_entry.clone();
+        staged.path = new_path.clone();
+        stage_entry(index, &staged, stage);
+
+        if let Ok(obj) = repo.odb.read(&file_entry.oid) {
+            conflict_files.push((new_path_str, obj.data));
+        }
+        *has_conflicts = true;
+    }
+
+    Ok(())
 }
 
 /// Get the tree OID from a commit.
@@ -5271,6 +5776,19 @@ fn checkout_entries(
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let abs_path = work_tree.join(&path_str);
+
+        // Directory/file conflicts: a tracked file may occupy a path that the merge
+        // result needs as a directory (e.g. `path/file` while `path` was a file).
+        let mut cur = abs_path.parent();
+        while let Some(dir) = cur {
+            if dir == work_tree {
+                break;
+            }
+            if dir.exists() && !dir.is_dir() {
+                let _ = fs::remove_file(dir);
+            }
+            cur = dir.parent();
+        }
 
         if let Some(parent) = abs_path.parent() {
             fs::create_dir_all(parent)?;
