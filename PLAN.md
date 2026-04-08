@@ -757,7 +757,7 @@ commit → check it off → move on.
 - [ ] `t6411-merge-filemode` █░░░░░░░░░░░░░░░░░░░ 1/19 (18 left) — merge: handle file mode
 - [ ] `t6500-gc` ████████░░░░░░░░░░░░ 15/35 (20 left) — basic git gc tests
 
-- [ ] `t6434-merge-recursive-rename-options` ███░░░░░░░░░░░░░░░░░ 5/27 (22 left) — merge-recursive rename options
+- [x] `t6434-merge-recursive-rename-options` ████████████████████ 27/27 (0 left) — merge-recursive rename options
 
 - [ ] `t6007-rev-list-cherry-pick-file` ░░░░░░░░░░░░░░░░░░░░ 1/23 (22 left) — test git rev-list --cherry-pick -- file
 - [ ] `t6050-replace` ██████░░░░░░░░░░░░░░ 12/37 (25 left) — Tests replace refs functionality
