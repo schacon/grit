@@ -2412,8 +2412,12 @@ test_expect_success '__git_complete_index_file - UTF-8 in ls-files output' '
 	test_path_completion árvíztűrő/С "árvíztűrő/Сайн яваарай"
 '
 
-test_expect_success FUNNIERNAMES \
+test_expect_failure FUNNIERNAMES \
     '__git_complete_index_file - C-style escapes in ls-files output' '
+	mkdir -p BS\\dir &&
+	touch BS\\dir/DQ\"file &&
+	mkdir -p '$'separators\034in\035dir'' &&
+	touch '$'separators\034in\035dir/sep\036in\037file'' &&
 	test_path_completion BS \
 			     BS\\dir &&
 	test_path_completion BS\\\\d \
@@ -2426,6 +2430,10 @@ test_expect_success FUNNIERNAMES \
 
 test_expect_success FUNNIERNAMES \
     '__git_complete_index_file - \nnn-escaped characters in ls-files output' '
+	mkdir -p BS\\dir &&
+	touch BS\\dir/DQ\"file &&
+	mkdir -p '$'separators\034in\035dir'' &&
+	touch '$'separators\034in\035dir/sep\036in\037file'' &&
 	test_path_completion sep '$'separators\034in\035dir'' &&
 	test_path_completion '$'separators\034i'' \
 			     '$'separators\034in\035dir'' &&

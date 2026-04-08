@@ -44,7 +44,7 @@ pub struct Args {
     pub force: bool,
 
     /// Overwrite ignored files (allow checkout to clobber ignored files).
-    #[arg(long = "overwrite-ignore")]
+    #[arg(long = "overwrite-ignore", hide = true)]
     pub overwrite_ignore: bool,
 
     /// Suppress feedback messages.
