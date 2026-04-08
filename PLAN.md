@@ -749,7 +749,7 @@ commit → check it off → move on.
 - [ ] `t6006-rev-list-format` ███████████████░░░░░ 63/80 (17 left) — git rev-list --pretty=format test
 - [ ] `t6422-merge-rename-corner-cases` ██████░░░░░░░░░░░░░░ 9/26 (17 left) — recursive merge corner cases w/ renames but not criss-crosses
 - [ ] `t6000-rev-list-misc` █████░░░░░░░░░░░░░░░ 6/23 (17 left) — miscellaneous rev-list tests
-- [ ] `t6130-pathspec-noglob` ███░░░░░░░░░░░░░░░░░ 4/21 (17 left) — test globbing (and noglob) of pathspec limiting
+- [x] `t6130-pathspec-noglob` ████████████████████ 21/21 (0 left) — test globbing (and noglob) of pathspec limiting
 - [x] `t6424-merge-unrelated-index-changes` — merges with unrelated index changes (19/19)
 - [ ] `t6019-rev-list-ancestry-path` █░░░░░░░░░░░░░░░░░░░ 1/18 (17 left) — --ancestry-path
 - [ ] `t6101-rev-parse-parents` ██████████░░░░░░░░░░ 20/38 (18 left) — Test git rev-parse with different parent options

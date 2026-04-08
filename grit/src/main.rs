@@ -1769,6 +1769,7 @@ pub(crate) struct GlobalOpts {
     bare: bool,
     no_advice: bool,
     literal_pathspecs: bool,
+    no_literal_pathspecs: bool,
     glob_pathspecs: bool,
     noglob_pathspecs: bool,
     icase_pathspecs: bool,
@@ -1893,6 +1894,11 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             i += 1;
             continue;
         }
+        if arg == "--no-literal-pathspecs" {
+            opts.no_literal_pathspecs = true;
+            i += 1;
+            continue;
+        }
         if arg == "--glob-pathspecs" {
             opts.glob_pathspecs = true;
             i += 1;
@@ -1980,6 +1986,24 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
     }
     if let Some(attr_source) = &opts.attr_source {
         std::env::set_var("GIT_ATTR_SOURCE", attr_source);
+    }
+    // Pathspec globals (same env vars as Git's git.c).
+    if opts.literal_pathspecs {
+        std::env::set_var("GIT_LITERAL_PATHSPECS", "1");
+    } else if opts.no_literal_pathspecs {
+        std::env::set_var("GIT_LITERAL_PATHSPECS", "0");
+    }
+    if opts.glob_pathspecs {
+        std::env::set_var("GIT_GLOB_PATHSPECS", "1");
+    }
+    if opts.noglob_pathspecs {
+        std::env::set_var("GIT_NOGLOB_PATHSPECS", "1");
+    }
+    if opts.icase_pathspecs {
+        std::env::set_var("GIT_ICASE_PATHSPECS", "1");
+    }
+    if let Err(msg) = grit_lib::pathspec::validate_global_pathspec_flags() {
+        bail!("fatal: {msg}");
     }
     Ok(())
 }
