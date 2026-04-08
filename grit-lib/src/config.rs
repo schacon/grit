@@ -1488,79 +1488,303 @@ pub fn parse_i64(s: &str) -> std::result::Result<i64, String> {
 }
 
 /// Parse a Git color value and return the ANSI escape sequence.
+///
+/// Matches Git's `color_parse_mem` (`git/color.c`): whitespace-separated words,
+/// optional leading `reset`, up to two color tokens (foreground then background),
+/// then graphic rendition attributes. Attribute codes are accumulated as a
+/// bitmask keyed by SGR number (so `bold` sets bit 1, `nobold` sets bit 22).
 pub fn parse_color(s: &str) -> std::result::Result<String, String> {
-    let s = s.trim();
-    if s.is_empty() || s == "reset" || s == "normal" {
-        return Ok("\x1b[m".to_owned());
+    const COLOR_BACKGROUND_OFFSET: i32 = 10;
+    const COLOR_FOREGROUND_ANSI: i32 = 30;
+    const COLOR_FOREGROUND_RGB: i32 = 38;
+    const COLOR_FOREGROUND_256: i32 = 38;
+    const COLOR_FOREGROUND_BRIGHT_ANSI: i32 = 90;
+
+    #[derive(Clone, Copy, Default)]
+    struct Color {
+        kind: u8,
+        value: u8,
+        red: u8,
+        green: u8,
+        blue: u8,
     }
 
-    let mut codes: Vec<String> = Vec::new();
-    let mut fg_set = false;
-    let mut bg_set = false;
+    const COLOR_UNSPECIFIED: u8 = 0;
+    const COLOR_NORMAL: u8 = 1;
+    const COLOR_ANSI: u8 = 2;
+    const COLOR_256: u8 = 3;
+    const COLOR_RGB: u8 = 4;
 
-    for token in s.split_whitespace() {
-        match token.to_lowercase().as_str() {
-            "bold" => codes.push("1".to_owned()),
-            "dim" => codes.push("2".to_owned()),
-            "italic" => codes.push("3".to_owned()),
-            "ul" | "underline" => codes.push("4".to_owned()),
-            "blink" => codes.push("5".to_owned()),
-            "reverse" => codes.push("7".to_owned()),
-            "strike" => codes.push("9".to_owned()),
-            "nobold" | "nodim" => codes.push("22".to_owned()),
-            "noitalic" => codes.push("23".to_owned()),
-            "noul" | "nounderline" => codes.push("24".to_owned()),
-            "noblink" => codes.push("25".to_owned()),
-            "noreverse" => codes.push("27".to_owned()),
-            "nostrike" => codes.push("29".to_owned()),
-            name => {
-                if let Some(code) = color_name_to_ansi(name) {
-                    if !fg_set {
-                        codes.push(format!("3{code}"));
-                        fg_set = true;
-                    } else if !bg_set {
-                        codes.push(format!("4{code}"));
-                        bg_set = true;
-                    } else {
-                        return Err(format!("bad color value '{s}'"));
-                    }
-                } else if let Ok(n) = token.parse::<u8>() {
-                    if !fg_set {
-                        codes.push(format!("38;5;{n}"));
-                        fg_set = true;
-                    } else if !bg_set {
-                        codes.push(format!("48;5;{n}"));
-                        bg_set = true;
-                    } else {
-                        return Err(format!("bad color value '{s}'"));
-                    }
-                } else {
-                    return Err(format!("bad color value '{s}'"));
-                }
+    fn color_empty(c: &Color) -> bool {
+        c.kind == COLOR_UNSPECIFIED || c.kind == COLOR_NORMAL
+    }
+
+    fn parse_ansi_color(name: &str) -> Option<Color> {
+        let color_names = [
+            "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+        ];
+        let color_offset = COLOR_FOREGROUND_ANSI;
+
+        if name.eq_ignore_ascii_case("default") {
+            return Some(Color {
+                kind: COLOR_ANSI,
+                value: (9 + color_offset) as u8,
+                ..Default::default()
+            });
+        }
+
+        let (name, color_offset) = if name.len() >= 6 && name[..6].eq_ignore_ascii_case("bright") {
+            (&name[6..], COLOR_FOREGROUND_BRIGHT_ANSI)
+        } else {
+            (name, COLOR_FOREGROUND_ANSI)
+        };
+
+        for (i, cn) in color_names.iter().enumerate() {
+            if name.eq_ignore_ascii_case(cn) {
+                return Some(Color {
+                    kind: COLOR_ANSI,
+                    value: (i as i32 + color_offset) as u8,
+                    ..Default::default()
+                });
             }
+        }
+        None
+    }
+
+    fn hex_val(b: u8) -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
         }
     }
 
-    if codes.is_empty() {
+    fn get_hex_color(chars: &[u8], width: usize) -> Option<(u8, usize)> {
+        assert!(width == 1 || width == 2);
+        if chars.len() < width {
+            return None;
+        }
+        let v = if width == 2 {
+            let hi = hex_val(chars[0])?;
+            let lo = hex_val(chars[1])?;
+            (hi << 4) | lo
+        } else {
+            let n = hex_val(chars[0])?;
+            (n << 4) | n
+        };
+        Some((v, width))
+    }
+
+    fn parse_single_color(word: &str) -> Option<Color> {
+        if word.eq_ignore_ascii_case("normal") {
+            return Some(Color {
+                kind: COLOR_NORMAL,
+                ..Default::default()
+            });
+        }
+
+        let bytes = word.as_bytes();
+        if (bytes.len() == 7 || bytes.len() == 4) && bytes.first() == Some(&b'#') {
+            let width = if bytes.len() == 7 { 2 } else { 1 };
+            let mut idx = 1;
+            let (r, n1) = get_hex_color(&bytes[idx..], width)?;
+            idx += n1;
+            let (g, n2) = get_hex_color(&bytes[idx..], width)?;
+            idx += n2;
+            let (b, n3) = get_hex_color(&bytes[idx..], width)?;
+            idx += n3;
+            if idx != bytes.len() {
+                return None;
+            }
+            return Some(Color {
+                kind: COLOR_RGB,
+                red: r,
+                green: g,
+                blue: b,
+                ..Default::default()
+            });
+        }
+
+        if let Some(c) = parse_ansi_color(word) {
+            return Some(c);
+        }
+
+        let Ok(val) = word.parse::<i64>() else {
+            return None;
+        };
+        if val < -1 {
+            return None;
+        }
+        if val < 0 {
+            return Some(Color {
+                kind: COLOR_NORMAL,
+                ..Default::default()
+            });
+        }
+        if val < 8 {
+            return Some(Color {
+                kind: COLOR_ANSI,
+                value: (val as i32 + COLOR_FOREGROUND_ANSI) as u8,
+                ..Default::default()
+            });
+        }
+        if val < 16 {
+            return Some(Color {
+                kind: COLOR_ANSI,
+                value: (val as i32 - 8 + COLOR_FOREGROUND_BRIGHT_ANSI) as u8,
+                ..Default::default()
+            });
+        }
+        if val < 256 {
+            return Some(Color {
+                kind: COLOR_256,
+                value: val as u8,
+                ..Default::default()
+            });
+        }
+        None
+    }
+
+    fn parse_attr(word: &str) -> Option<u8> {
+        const ATTRS: [(&str, u8, u8); 8] = [
+            ("bold", 1, 22),
+            ("dim", 2, 22),
+            ("italic", 3, 23),
+            ("ul", 4, 24),
+            ("underline", 4, 24),
+            ("blink", 5, 25),
+            ("reverse", 7, 27),
+            ("strike", 9, 29),
+        ];
+
+        let mut negate = false;
+        let mut rest = word;
+        if let Some(stripped) = rest.strip_prefix("no") {
+            negate = true;
+            rest = stripped;
+            if let Some(s) = rest.strip_prefix('-') {
+                rest = s;
+            }
+        }
+
+        for (name, val, neg) in ATTRS {
+            if rest == name {
+                return Some(if negate { neg } else { val });
+            }
+        }
+        None
+    }
+
+    fn append_color_output(out: &mut String, c: &Color, background: bool) {
+        let offset = if background {
+            COLOR_BACKGROUND_OFFSET
+        } else {
+            0
+        };
+        match c.kind {
+            COLOR_UNSPECIFIED | COLOR_NORMAL => {}
+            COLOR_ANSI => {
+                use std::fmt::Write;
+                let _ = write!(out, "{}", i32::from(c.value) + offset);
+            }
+            COLOR_256 => {
+                use std::fmt::Write;
+                let _ = write!(out, "{};5;{}", COLOR_FOREGROUND_256 + offset, c.value);
+            }
+            COLOR_RGB => {
+                use std::fmt::Write;
+                let _ = write!(
+                    out,
+                    "{};2;{};{};{}",
+                    COLOR_FOREGROUND_RGB + offset,
+                    c.red,
+                    c.green,
+                    c.blue
+                );
+            }
+            _ => {}
+        }
+    }
+
+    let s = s.trim();
+    if s.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut has_reset = false;
+    let mut attr: u64 = 0;
+    let mut fg = Color::default();
+    let mut bg = Color::default();
+    fg.kind = COLOR_UNSPECIFIED;
+    bg.kind = COLOR_UNSPECIFIED;
+
+    for word in s.split_whitespace() {
+        if word.eq_ignore_ascii_case("reset") {
+            has_reset = true;
+            continue;
+        }
+
+        if let Some(c) = parse_single_color(word) {
+            if fg.kind == COLOR_UNSPECIFIED {
+                fg = c;
+                continue;
+            }
+            if bg.kind == COLOR_UNSPECIFIED {
+                bg = c;
+                continue;
+            }
+            return Err(format!("bad color value '{s}'"));
+        }
+
+        if let Some(code) = parse_attr(word) {
+            attr |= 1u64 << u64::from(code);
+            continue;
+        }
+
         return Err(format!("bad color value '{s}'"));
     }
 
-    Ok(format!("\x1b[{}m", codes.join(";")))
-}
-
-fn color_name_to_ansi(name: &str) -> Option<&'static str> {
-    match name.to_lowercase().as_str() {
-        "normal" | "default" => Some("9"),
-        "black" => Some("0"),
-        "red" => Some("1"),
-        "green" => Some("2"),
-        "yellow" => Some("3"),
-        "blue" => Some("4"),
-        "magenta" => Some("5"),
-        "cyan" => Some("6"),
-        "white" => Some("7"),
-        _ => None,
+    if !has_reset && attr == 0 && color_empty(&fg) && color_empty(&bg) {
+        return Err(format!("bad color value '{s}'"));
     }
+
+    let mut out = String::from("\x1b[");
+    let mut sep = if has_reset { 1u32 } else { 0u32 };
+
+    let mut attr_bits = attr;
+    let mut i = 0u32;
+    while attr_bits != 0 {
+        let bit = 1u64 << i;
+        if attr_bits & bit == 0 {
+            i += 1;
+            continue;
+        }
+        attr_bits &= !bit;
+        if sep > 0 {
+            out.push(';');
+        }
+        sep += 1;
+        use std::fmt::Write;
+        let _ = write!(out, "{i}");
+        i += 1;
+    }
+
+    if !color_empty(&fg) {
+        if sep > 0 {
+            out.push(';');
+        }
+        sep += 1;
+        append_color_output(&mut out, &fg, false);
+    }
+    if !color_empty(&bg) {
+        if sep > 0 {
+            out.push(';');
+        }
+        append_color_output(&mut out, &bg, true);
+    }
+    out.push('m');
+    Ok(out)
 }
 
 /// Match a URL against a URL pattern from config.

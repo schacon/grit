@@ -15,7 +15,8 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, ClapArgs)]
 #[command(
     about = "Get and set repository or global options",
-    after_help = "Use subcommands (get, set, unset, list) or legacy flags (--get, key value)."
+    after_help = "Use subcommands (get, set, unset, list) or legacy flags (--get, key value).",
+    allow_negative_numbers = true
 )]
 pub struct Args {
     #[command(subcommand)]
@@ -156,7 +157,10 @@ pub struct Args {
 
     // ── Positional args for legacy set (`git config key value`) ──
     /// Positional arguments (key, value, value-pattern for legacy mode).
-    #[arg(trailing_var_arg = true)]
+    ///
+    /// `allow_negative_numbers` is required so `git config --get-color SLOT -1` treats `-1` as
+    /// a default color (Git synonym for `normal`), not as a clap flag.
+    #[arg(trailing_var_arg = true, allow_negative_numbers = true)]
     pub positional: Vec<String>,
 }
 

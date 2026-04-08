@@ -500,7 +500,7 @@ commit → check it off → move on.
 - [ ] `t4002-diff-basic` █████████████░░░░░░░ 44/63 (19 left) — Test diff raw-output.
 
 - [ ] `t4045-diff-relative` ██████████░░░░░░░░░░ 20/39 (19 left) — diff --relative tests
-- [ ] `t4026-color` ████████░░░░░░░░░░░░ 15/34 (19 left) — Test diff/status color escape codes
+- [x] `t4026-color` ████████████████████ 34/34 (0 left) — Test diff/status color escape codes (`parse_color` matches Git `color.c`; `config --get-color` argv joins default tokens and inserts `--` for leading `-` defaults)
 - [ ] `t4027-diff-submodule` █░░░░░░░░░░░░░░░░░░░ 1/20 (19 left) — difference in submodules
 - [ ] `t4038-diff-combined` ████░░░░░░░░░░░░░░░░ 6/26 (20 left) — combined diff
 - [ ] `t4032-diff-inter-hunk-context` ████████░░░░░░░░░░░░ 16/37 (21 left) — diff hunk fusing

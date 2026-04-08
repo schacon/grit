@@ -703,7 +703,7 @@ t4022-diff-rewrite	t4	yes	11	6	5	false	ok	0
 t4023-diff-rename-typechange	t4	yes	4	0	4	false	ok	0
 t4024-diff-optimize-common	t4	yes	2	2	0	true	ok	0
 t4025-hunk-header	t4	yes	2	2	0	true	ok	0
-t4026-color	t4	yes	34	15	19	false	ok	0
+t4026-color	t4	yes	34	34	0	true	ok	0
 t4027-diff-submodule	t4	yes	20	2	18	false	ok	0
 t4028-format-patch-mime-headers	t4	yes	3	3	0	true	ok	0
 t4029-diff-trailing-space	t4	yes	1	1	0	true	ok	0

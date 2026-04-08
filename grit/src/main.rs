@@ -2021,6 +2021,37 @@ fn print_upstream_synopsis_and_exit(subcmd: &str, syn: &str) -> ! {
 /// (Git convention for usage errors) instead of clap's default exit code 0.
 /// Git allows `git status --porcelain path`; clap would treat `path` as the optional porcelain
 /// version unless we insert `--` after a bare `--porcelain` when the next token is a pathspec.
+/// `git config --get-color <slot> <default>` allows a multi-word default (e.g. `-1 black`).
+/// The shell passes `-1` and `black` as separate argv entries; clap would treat `-1` as a flag.
+/// Join all arguments after the slot into one default string, like Git's argv consumption.
+fn preprocess_config_argv(rest: &[String]) -> Vec<String> {
+    let Some(pos) = rest.iter().position(|a| a == "--get-color") else {
+        return rest.to_vec();
+    };
+    let key_idx = pos + 1;
+    if key_idx >= rest.len() {
+        return rest.to_vec();
+    }
+    let mut tail_idx = key_idx + 1;
+    if tail_idx >= rest.len() {
+        return rest.to_vec();
+    }
+    if rest[tail_idx] == "--" {
+        tail_idx += 1;
+        if tail_idx >= rest.len() {
+            return rest.to_vec();
+        }
+    }
+    let default_str = rest[tail_idx..].join(" ");
+    let mut out = rest[..=key_idx].to_vec();
+    // Values starting with `-` must follow `--` or clap treats them as flags.
+    if default_str.starts_with('-') {
+        out.push("--".to_owned());
+    }
+    out.push(default_str);
+    out
+}
+
 fn preprocess_status_argv(rest: &[String]) -> Vec<String> {
     fn next_is_pathspec_after_bare_porcelain(next: Option<&str>) -> bool {
         let Some(n) = next else {
@@ -2848,7 +2879,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "commit" => commands::commit::run(parse_cmd_args(subcmd, rest)),
         "commit-graph" => commands::commit_graph::run(parse_cmd_args(subcmd, rest)),
         "commit-tree" => commands::commit_tree::run(parse_cmd_args(subcmd, rest)),
-        "config" => commands::config::run(parse_cmd_args(subcmd, rest)),
+        "config" => commands::config::run(parse_cmd_args(subcmd, &preprocess_config_argv(rest))),
         "count-objects" => commands::count_objects::run(parse_cmd_args(subcmd, rest)),
         "credential" => commands::credential::run(parse_cmd_args(subcmd, rest)),
         "credential-cache" => commands::credential_cache::run(parse_cmd_args(subcmd, rest)),
