@@ -1510,7 +1510,7 @@ t9400-git-cvsserver-server	t9	skip	45	0	0	false	ok	1
 t9401-git-cvsserver-crlf	t9	skip	18	0	0	false	ok	0
 t9402-git-cvsserver-refs	t9	skip	37	0	0	false	ok	0
 t9410-show-ref-verify	t9	yes	31	20	11	false	ok	0
-t9420-update-ref-delete	t9	yes	24	23	1	false	ok	0
+t9420-update-ref-delete	t9	yes	24	24	0	true	ok	0
 t9430-symbolic-ref-delete	t9	yes	28	24	4	false	ok	0
 t9440-check-ref-format-branch	t9	yes	34	33	1	false	ok	0
 t9450-merge-base-ancestor	t9	yes	32	27	5	false	ok	0
