@@ -98,6 +98,10 @@ pub struct Args {
     /// Remaining positional arguments: `[<commit>] [--] [<path>…]`.
     #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
     pub rest: Vec<String>,
+
+    /// When true, `reset --merge` does not remove `CHERRY_PICK_HEAD` / `REVERT_HEAD` (sequencer abort).
+    #[arg(skip)]
+    pub skip_sequencer_head_cleanup: bool,
 }
 
 /// Pre-validate raw arguments before clap parsing, catching Git-specific
@@ -129,7 +133,7 @@ pub fn filter_args(raw_args: &[String]) -> Vec<String> {
 }
 
 /// Run `grit reset`.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
     let mode = parse_mode(&args)?;
 
     let repo = Repository::discover(None).context("not a git repository")?;
@@ -150,7 +154,7 @@ pub fn run(args: Args) -> Result<()> {
         return reset_paths(&repo, &commit_spec, &paths, args.quiet, args.intent_to_add);
     }
 
-    reset_commit(&repo, &commit_spec, mode, args.quiet)
+    reset_commit(&repo, &commit_spec, mode, args.quiet, &mut args)
 }
 
 /// Parse the reset mode from the flag combination.
@@ -485,7 +489,13 @@ fn reset_paths(
 }
 
 /// Reset HEAD (and optionally index + working tree) to the given commit.
-fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bool) -> Result<()> {
+fn reset_commit(
+    repo: &Repository,
+    commit_spec: &str,
+    mode: ResetMode,
+    quiet: bool,
+    extra: &mut Args,
+) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
 
     // --soft fails when there are unmerged entries or a merge is in progress.
@@ -551,6 +561,14 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
         check_keep_safety(repo, &head, &target_oid)?;
     }
 
+    // `--merge` matches Git's twoway merge reset: refuse when the working tree
+    // or index is out of sync with HEAD on paths that differ between HEAD and
+    // the target (e.g. cherry-pick --abort after a local edit to an unrelated
+    // file). When HEAD already matches the target, this is a no-op check.
+    if mode == ResetMode::Merge {
+        check_keep_safety(repo, &head, &target_oid)?;
+    }
+
     // Get the old OID for reflog and ORIG_HEAD.
     let old_oid = head.oid().copied().unwrap_or_else(zero_oid);
 
@@ -570,8 +588,10 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
         let _ = std::fs::remove_file(repo.git_dir.join("MERGE_HEAD"));
         let _ = std::fs::remove_file(repo.git_dir.join("MERGE_MSG"));
         let _ = std::fs::remove_file(repo.git_dir.join("MERGE_MODE"));
-        let _ = std::fs::remove_file(repo.git_dir.join("CHERRY_PICK_HEAD"));
-        let _ = std::fs::remove_file(repo.git_dir.join("REVERT_HEAD"));
+        if !extra.skip_sequencer_head_cleanup {
+            let _ = std::fs::remove_file(repo.git_dir.join("CHERRY_PICK_HEAD"));
+            let _ = std::fs::remove_file(repo.git_dir.join("REVERT_HEAD"));
+        }
     }
 
     if mode == ResetMode::Soft {
@@ -597,12 +617,9 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
             bail!("fatal: this operation must be run in a work tree");
         }
         if repo.work_tree.is_some() {
+            let wt = repo.work_tree.as_deref().expect("worktree checked above");
             if mode == ResetMode::Merge || mode == ResetMode::Keep {
-                let obstruction = find_untracked_obstruction(
-                    repo.work_tree.as_deref().expect("worktree checked above"),
-                    &old_index,
-                    &new_index,
-                );
+                let obstruction = find_untracked_obstruction(wt, &old_index, &new_index);
                 if let Some((path, is_dir)) = obstruction {
                     if is_dir {
                         bail!("Updating '{}' would lose untracked files in it", path);
@@ -781,17 +798,25 @@ fn hash_blob_content(data: &[u8]) -> ObjectId {
     Odb::hash_object_data(ObjectKind::Blob, data)
 }
 
+pub(crate) fn check_untracked_cherry_pick_obstruction(
+    work_tree: &Path,
+    old_index: &Index,
+    merged_index: &Index,
+) -> Result<()> {
+    if let Some((path, _is_dir)) = find_untracked_obstruction(work_tree, old_index, merged_index) {
+        bail!(
+            "The following untracked working tree files would be overwritten by merge:\n\t{path}\nPlease move or remove them before you merge."
+        );
+    }
+    Ok(())
+}
+
 fn find_untracked_obstruction(
     work_tree: &Path,
     old_index: &Index,
     new_index: &Index,
 ) -> Option<(String, bool)> {
-    let old_paths: HashSet<Vec<u8>> = old_index
-        .entries
-        .iter()
-        .filter(|e| e.stage() == 0)
-        .map(|e| e.path.clone())
-        .collect();
+    let old_paths: HashSet<Vec<u8>> = old_index.entries.iter().map(|e| e.path.clone()).collect();
 
     for entry in &new_index.entries {
         if entry.stage() != 0 {
@@ -1012,6 +1037,179 @@ fn tree_to_flat_entries(
         }
     }
     Ok(result)
+}
+
+/// Like [`checkout_index_to_worktree`] but for `reset --merge` after sequencer
+/// rollback: keep local modifications to paths whose staged (target) blob is
+/// unchanged from the pre-reset index, matching Git's twoway merge behavior.
+fn checkout_merge_reset_worktree(
+    repo: &Repository,
+    old_index: &Index,
+    new_index: &mut Index,
+) -> Result<()> {
+    let work_tree = match &repo.work_tree {
+        Some(p) => p.clone(),
+        None => return Ok(()),
+    };
+
+    let old_stage0: HashMap<Vec<u8>, &IndexEntry> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| (e.path.clone(), e))
+        .collect();
+
+    let old_paths: HashSet<Vec<u8>> = old_index.entries.iter().map(|e| e.path.clone()).collect();
+    let new_paths: HashSet<Vec<u8>> = new_index.entries.iter().map(|e| e.path.clone()).collect();
+
+    for old_path in old_paths.difference(&new_paths) {
+        let rel = String::from_utf8_lossy(old_path).into_owned();
+        let abs = work_tree.join(&rel);
+        if abs.is_file() || abs.is_symlink() {
+            let _ = std::fs::remove_file(&abs);
+        } else if abs.is_dir() {
+            let _ = std::fs::remove_dir_all(&abs);
+        }
+        remove_empty_parent_dirs(&work_tree, &abs);
+    }
+
+    let old_unmerged_paths: HashSet<Vec<u8>> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() != 0)
+        .map(|e| e.path.clone())
+        .collect();
+    for path in &old_unmerged_paths {
+        if !new_paths.contains(path) {
+            let rel = String::from_utf8_lossy(path).into_owned();
+            let abs = work_tree.join(&rel);
+            if abs.is_file() || abs.is_symlink() {
+                let _ = std::fs::remove_file(&abs);
+                remove_empty_parent_dirs(&work_tree, &abs);
+            }
+        }
+    }
+
+    for entry in &mut new_index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        if entry.mode == 0o160000 || entry.mode == MODE_GITLINK {
+            let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+            let submodule_dir = work_tree.join(&path_str);
+            let _ = std::fs::create_dir_all(&submodule_dir);
+            continue;
+        }
+
+        let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+        let abs_path = work_tree.join(&path_str);
+
+        if let Some(old_e) = old_stage0.get(&entry.path) {
+            if old_e.oid == entry.oid
+                && old_e.mode == entry.mode
+                && local_worktree_differs_from_blob(repo, &abs_path, entry)?
+            {
+                continue;
+            }
+        }
+
+        if let Some(parent) = abs_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        if entry.mode == MODE_SYMLINK {
+            let obj = repo
+                .odb
+                .read(&entry.oid)
+                .context("reading object for merge-reset checkout")?;
+            let target = String::from_utf8(obj.data)
+                .map_err(|_| anyhow::anyhow!("symlink target is not UTF-8"))?;
+            if abs_path.exists() || abs_path.is_symlink() {
+                std::fs::remove_file(&abs_path)?;
+            }
+            std::os::unix::fs::symlink(target, &abs_path)?;
+        } else {
+            let obj = repo
+                .odb
+                .read(&entry.oid)
+                .context("reading object for merge-reset checkout")?;
+            if obj.kind != ObjectKind::Blob {
+                bail!("cannot checkout non-blob at '{path_str}'");
+            }
+            if abs_path.is_dir() {
+                std::fs::remove_dir_all(&abs_path)?;
+            }
+            let attr_rules = grit_lib::crlf::load_gitattributes(&work_tree);
+            let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
+            let conv = config
+                .as_ref()
+                .map(grit_lib::crlf::ConversionConfig::from_config);
+            let data = if let (Some(ref cfg), Some(ref cv)) = (&config, &conv) {
+                let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, cfg);
+                let oid_hex = format!("{}", entry.oid);
+                grit_lib::crlf::convert_to_worktree(
+                    &obj.data,
+                    &path_str,
+                    cv,
+                    &file_attrs,
+                    Some(&oid_hex),
+                )
+                .map_err(|e| anyhow::anyhow!("smudge filter failed for {path_str}: {e}"))?
+            } else {
+                obj.data.clone()
+            };
+            std::fs::write(&abs_path, &data)?;
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&abs_path)?.permissions();
+            if entry.mode == MODE_EXECUTABLE {
+                perms.set_mode(0o755);
+            } else {
+                perms.set_mode(0o644);
+            }
+            std::fs::set_permissions(&abs_path, perms)?;
+        }
+
+        if let Ok(meta) = std::fs::symlink_metadata(&abs_path) {
+            use std::os::unix::fs::MetadataExt;
+            entry.ctime_sec = meta.ctime() as u32;
+            entry.ctime_nsec = meta.ctime_nsec() as u32;
+            entry.mtime_sec = meta.mtime() as u32;
+            entry.mtime_nsec = meta.mtime_nsec() as u32;
+            entry.dev = meta.dev() as u32;
+            entry.ino = meta.ino() as u32;
+            entry.uid = meta.uid();
+            entry.gid = meta.gid();
+            entry.size = meta.len() as u32;
+        }
+    }
+
+    Ok(())
+}
+
+/// True when the path exists on disk and its content differs from `entry`'s blob.
+fn local_worktree_differs_from_blob(
+    repo: &Repository,
+    abs_path: &Path,
+    entry: &IndexEntry,
+) -> Result<bool> {
+    if entry.mode == MODE_SYMLINK {
+        if !abs_path.is_symlink() {
+            return Ok(true);
+        }
+        let target = std::fs::read_link(abs_path)?;
+        let obj = repo.odb.read(&entry.oid)?;
+        let expected = String::from_utf8_lossy(&obj.data);
+        return Ok(target.to_string_lossy() != expected.as_ref());
+    }
+    if entry.mode == 0o040000 {
+        return Ok(false);
+    }
+    if !abs_path.is_file() {
+        return Ok(true);
+    }
+    let disk = std::fs::read(abs_path)?;
+    let wt_oid = hash_blob_content(&disk);
+    Ok(wt_oid != entry.oid)
 }
 
 /// Update the working tree to match the new index (used for `--hard`/`--keep` reset).

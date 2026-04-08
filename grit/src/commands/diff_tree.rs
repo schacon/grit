@@ -1432,6 +1432,16 @@ fn write_commit_header(
             writeln!(out, "{oid} {first_line}")?;
             return Ok(false);
         }
+        if let Some(template) = pretty_fmt
+            .strip_prefix("tformat:")
+            .or_else(|| pretty_fmt.strip_prefix("format:"))
+        {
+            if template == "%s" {
+                let first_line = commit.message.lines().next().unwrap_or("");
+                writeln!(out, "{first_line}")?;
+                return Ok(false);
+            }
+        }
         writeln!(out, "commit {oid}")?;
         // Parse author line: "Name <email> timestamp tz"
         let author = &commit.author;

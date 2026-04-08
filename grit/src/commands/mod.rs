@@ -119,6 +119,7 @@ pub mod revert;
 pub mod rm;
 pub mod scalar;
 pub mod send_pack;
+pub mod sequencer;
 pub mod serve_v2;
 pub mod sh_i18n;
 pub mod sh_setup;
