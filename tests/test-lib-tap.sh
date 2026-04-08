@@ -373,17 +373,12 @@ test_done() {
 			GIT_EXIT_OK=t
 			exit 0
 		fi
-		;;
-	esac
-	if test -n "${GRIT_TEST_LIB_SUMMARY:-}"
-	then
-		echo "# Tests: $test_count  Pass: $test_pass  Fail: $test_fail  Skip: $test_skip"
-	fi
-	if test "$test_failure" -gt 0
-	then
+		if test -n "${GRIT_TEST_LIB_SUMMARY:-}"
+		then
+			echo "# Tests: $test_count  Pass: $test_pass  Fail: $test_fail  Skip: $test_skip"
+		fi
 		GIT_EXIT_OK=t
 		exit 1
-	fi
-	GIT_EXIT_OK=t
-	exit 0
+		;;
+	esac
 }

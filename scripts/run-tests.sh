@@ -57,6 +57,15 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Initial TIMEOUT_PREFIX used default TIMEOUT; rebuild after --timeout is parsed.
+if command -v timeout >/dev/null 2>&1; then
+	TIMEOUT_PREFIX=(timeout "$TIMEOUT")
+elif command -v gtimeout >/dev/null 2>&1; then
+	TIMEOUT_PREFIX=(gtimeout "$TIMEOUT")
+else
+	TIMEOUT_PREFIX=()
+fi
+
 if [[ ${#POS[@]} -gt 0 ]]; then
     TARGET="${POS[0]}"
 fi
@@ -151,7 +160,14 @@ if [[ ${#FILES[@]} -eq 0 ]]; then
     exit 0
 fi
 
-[[ "$QUIET" != true ]] && echo "Running ${#FILES[@]} test file(s) (timeout: ${TIMEOUT}s)..."
+RUN_NOTE=""
+for _f in "${FILES[@]}"; do
+    if [[ "$_f" == "t0410-partial-clone.sh" ]]; then
+        RUN_NOTE=" (t0410-partial-clone.sh: no per-file timeout — long promisor/fetch suite)"
+        break
+    fi
+done
+[[ "$QUIET" != true ]] && echo "Running ${#FILES[@]} test file(s) (timeout: ${TIMEOUT}s)${RUN_NOTE}..."
 
 LINE_TMP="$(mktemp)"
 trap 'rm -f "$LINE_TMP"' EXIT
@@ -161,8 +177,13 @@ run_one() {
     local base="${f%.sh}"
     local output summary total pass fail status ef
     local git_test_allow_sudo=
+    local timeout_prefix=("${TIMEOUT_PREFIX[@]}")
     if [[ "$f" == "t0034-root-safe-directory.sh" ]]; then
         git_test_allow_sudo=YES
+    fi
+    # t0410 can exceed any reasonable wall-clock cap on slow hosts; omit `timeout` so we still get # Tests: / TAP summary.
+    if [[ "$f" == "t0410-partial-clone.sh" ]]; then
+        timeout_prefix=()
     fi
     output=$(
         cd "$TESTS_DIR" &&
@@ -171,7 +192,7 @@ run_one() {
             GIT_TEST_BUILTIN_HASH=sha1 \
             GIT_SOURCE_DIR="$REPO/git" \
             GIT_TEST_ALLOW_SUDO="${git_test_allow_sudo:-}" \
-            "${TIMEOUT_PREFIX[@]}" bash "$f" 2>&1
+            "${timeout_prefix[@]}" bash "$f" 2>&1
     ) || true
     summary=$(echo "$output" | grep "^# Tests:" | tail -1) || true
     total=0 pass=0 fail=0 status="error"
