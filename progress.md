@@ -16,6 +16,7 @@ Task lines in `PLAN.md`: 229 completed (`[x]`), 2 in progress (`[~]`), 537 remai
 ## Recently completed
 
 - `t10750-status-deleted-renamed` — 40/40 tests pass (short/porcelain `-s` output now prints `old -> new` for renames/copies; `-z` uses Git’s NUL-separated `new\0old\0` path layout after the XY prefix)
+- `t6424-merge-unrelated-index-changes` — 19/19 tests pass (`merge`: fast-forward index composition for unrelated staged adds, Git-style overwrite checks, multiple `-s` strategy attempts with index restore, octopus preflight + unrelated path preservation; `test_path_exists` harness helper)
 - `t5403-post-checkout-hook` — 14/14 tests pass (`checkout`/`rebase`/`clone`: `post-checkout` hook with Git-compatible args; clone resolves detached `HEAD` to the right local branch and honors `GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME`; harness CSV refreshed)
 - `t6434-merge-recursive-rename-options` — 27/27 tests pass (`merge-recursive`: `--find-renames` / `--rename-threshold` with `%`, truncation, last-flag wins vs `--no-renames`, invalid args; config `merge.renames` / `diff.renames`; merge core threads `MergeRenameOptions` into `detect_merge_renames`; `diff`: `-M<n>%` no longer misparsed as a revision, `--diff-filter`, percentage threshold parsing)
 - `t5704-protocol-violations` — 3/3 tests pass (`upload-pack` honors `GIT_PROTOCOL=version=2` with flush-after-args validation for `ls-refs`/`fetch`; `ls-remote --upload-pack` parses v0 ref ads with space/NUL-separated fields and v2 `ls-refs` responses; `serve-v2` default loop fixed)

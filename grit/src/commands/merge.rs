@@ -27,7 +27,7 @@ use grit_lib::write_tree::write_tree_from_index;
 use time::OffsetDateTime;
 
 /// Arguments for `grit merge`.
-#[derive(Debug, ClapArgs)]
+#[derive(Debug, Clone, ClapArgs)]
 #[command(about = "Join two or more development histories together")]
 pub struct Args {
     /// Branch or commit to merge.
@@ -63,8 +63,9 @@ pub struct Args {
     pub continue_merge: bool,
 
     /// Merge strategy to use (e.g. recursive, ort, resolve, octopus, ours).
-    #[arg(short = 's', long = "strategy")]
-    pub strategy: Option<String>,
+    /// May be passed multiple times (`-s ort -s octopus`); each is tried in order until one succeeds.
+    #[arg(short = 's', long = "strategy", action = clap::ArgAction::Append)]
+    pub strategy: Vec<String>,
 
     /// Strategy-specific option (e.g. ours, theirs).
     #[arg(short = 'X', long = "strategy-option")]
@@ -162,6 +163,202 @@ enum SubtreeShift {
     Prefix(String),
 }
 
+/// First `-s` strategy wins for merge-tree behavior; empty means default (ort).
+fn primary_merge_strategy(args: &Args) -> Option<&str> {
+    args.strategy.first().map(String::as_str)
+}
+
+/// Subtree path shifting for `merge_trees`: `-s subtree` implies auto-detect unless `-X subtree` set a prefix.
+fn effective_subtree_shift(
+    primary_strategy: Option<&str>,
+    configured: &SubtreeShift,
+) -> SubtreeShift {
+    if primary_strategy == Some("subtree") {
+        match configured {
+            SubtreeShift::Disabled => SubtreeShift::Auto,
+            other => other.clone(),
+        }
+    } else {
+        configured.clone()
+    }
+}
+
+/// True when every stage-0 index entry matches `HEAD^{tree}` and every HEAD path is present
+/// in the index (no staged add/delete/modify vs HEAD).
+///
+/// Uses entry-by-entry comparison — not `write_tree_from_index` — so intent-to-add and other
+/// entries omitted from the written tree still make the index "dirty" vs HEAD when appropriate.
+fn index_matches_head_tree(repo: &Repository, head_oid: ObjectId) -> Result<bool> {
+    let index = repo.load_index()?;
+    let head_tree = commit_tree(repo, head_oid)?;
+    let head_entries = tree_to_map(tree_to_index_entries(repo, &head_tree, "")?);
+    let mut index_paths: BTreeSet<Vec<u8>> = BTreeSet::new();
+    for e in index.entries.iter().filter(|e| e.stage() == 0) {
+        index_paths.insert(e.path.clone());
+        match head_entries.get(&e.path) {
+            Some(he) => {
+                if he.oid != e.oid || he.mode != e.mode {
+                    return Ok(false);
+                }
+            }
+            None => return Ok(false),
+        }
+    }
+    for path in head_entries.keys() {
+        if !index_paths.contains(path) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Refuse merge when the index does not match `HEAD^{tree}`. Used for octopus and for
+/// recursive/ort/subtree single-parent merges (t6424). `--autostash` skips this check.
+fn bail_if_index_tree_differs_from_head(
+    repo: &Repository,
+    head_oid: ObjectId,
+    autostash: bool,
+) -> Result<()> {
+    if autostash {
+        return Ok(());
+    }
+    if index_matches_head_tree(repo, head_oid)? {
+        return Ok(());
+    }
+    bail!(
+        "Your local changes to the following files would be overwritten by merge:\n\
+         \t(index does not match HEAD)\n\
+         Please commit your changes or stash them before you merge.\n\
+         Aborting"
+    );
+}
+
+/// The resolve strategy does not allow *any* staged difference from HEAD (including removals),
+/// unlike recursive/ort which only care when the merge would touch those paths.
+fn bail_if_resolve_index_not_clean_vs_head(
+    repo: &Repository,
+    head_oid: ObjectId,
+    autostash: bool,
+) -> Result<()> {
+    if autostash {
+        return Ok(());
+    }
+    let index = repo.load_index()?;
+    let head_tree = commit_tree(repo, head_oid)?;
+    let head_entries = tree_to_map(tree_to_index_entries(repo, &head_tree, "")?);
+    let mut dirty_paths: BTreeSet<String> = BTreeSet::new();
+    for e in index.entries.iter().filter(|e| e.stage() == 0) {
+        let rel = String::from_utf8_lossy(&e.path).to_string();
+        match head_entries.get(&e.path) {
+            Some(he) => {
+                if he.oid != e.oid || he.mode != e.mode {
+                    dirty_paths.insert(rel);
+                }
+            }
+            None => {
+                dirty_paths.insert(rel);
+            }
+        }
+    }
+    for path in head_entries.keys() {
+        if !index
+            .entries
+            .iter()
+            .any(|e| e.stage() == 0 && e.path == *path)
+        {
+            dirty_paths.insert(String::from_utf8_lossy(path).to_string());
+        }
+    }
+    if dirty_paths.is_empty() {
+        return Ok(());
+    }
+    let mut msg =
+        String::from("Your local changes to the following files would be overwritten by merge:\n");
+    for path in &dirty_paths {
+        msg.push_str(&format!("\t{path}\n"));
+    }
+    msg.push_str("Please commit your changes or stash them before you merge.\nAborting");
+    bail!("{msg}");
+}
+
+/// Fast-forward index: the merge target tree plus **unrelated** staged additions (paths not in
+/// `HEAD^{tree}` and not in the target tree). Paths present in HEAD but absent from the target
+/// (deletes/renames) must not be copied from the index — only the target layout wins.
+fn compose_fast_forward_index(
+    repo: &Repository,
+    target_tree: ObjectId,
+    head_tree: ObjectId,
+    current_index: &Index,
+) -> Result<Index> {
+    let mut new_entries = tree_to_index_entries(repo, &target_tree, "")?;
+    let target_paths: BTreeSet<Vec<u8>> = new_entries.iter().map(|e| e.path.clone()).collect();
+    let head_entries = tree_to_map(tree_to_index_entries(repo, &head_tree, "")?);
+    for e in &current_index.entries {
+        if e.stage() != 0 {
+            continue;
+        }
+        if target_paths.contains(&e.path) {
+            continue;
+        }
+        // Staged addition: not in HEAD — keep alongside the fast-forwarded tree.
+        if !head_entries.contains_key(&e.path) {
+            new_entries.push(e.clone());
+        }
+    }
+    let mut index = Index::new();
+    index.entries = new_entries;
+    index.sort();
+    Ok(index)
+}
+
+/// Preserve staged paths from before an octopus merge that the merge result does not touch
+/// (e.g. unrelated `git add`), matching Git's index composition.
+fn compose_octopus_final_index(pre_merge_index: &Index, final_index: &mut Index) {
+    let final_paths: BTreeSet<Vec<u8>> = final_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.clone())
+        .collect();
+    for e in &pre_merge_index.entries {
+        if e.stage() != 0 {
+            continue;
+        }
+        if final_paths.contains(&e.path) {
+            continue;
+        }
+        final_index.entries.push(e.clone());
+    }
+    final_index.sort();
+}
+
+/// Restore index and working tree to match `head_oid` after a failed merge attempt
+/// (used when trying multiple `-s` strategies so a failed strategy leaves no residue).
+/// Write `index_snapshot` to disk and refresh the work tree (clears merge state files).
+fn restore_index_and_worktree(repo: &Repository, index_snapshot: &Index) -> Result<()> {
+    let _ = fs::remove_file(repo.git_dir.join("MERGE_HEAD"));
+    let _ = fs::remove_file(repo.git_dir.join("MERGE_MSG"));
+    let _ = fs::remove_file(repo.git_dir.join("MERGE_MODE"));
+    let mut index = Index::new();
+    index.entries = index_snapshot.entries.clone();
+    index.sort();
+    if let Some(ref wt) = repo.work_tree {
+        checkout_entries(repo, wt, &index, None)?;
+    }
+    repo.write_index(&mut index)?;
+    Ok(())
+}
+
+fn restore_repo_to_head(repo: &Repository, head_oid: ObjectId) -> Result<()> {
+    let commit_obj = repo.odb.read(&head_oid)?;
+    let commit = parse_commit(&commit_obj.data)?;
+    let entries = tree_to_index_entries(repo, &commit.tree, "")?;
+    let mut index = Index::new();
+    index.entries = entries;
+    index.sort();
+    restore_index_and_worktree(repo, &index)
+}
+
 /// Apply branch.<name>.mergeoptions to the args.
 /// Only applies settings that weren't explicitly set on the command line.
 fn apply_mergeoptions(args: &mut Args, opts: &str) {
@@ -215,7 +412,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // Handle -s help early (before commit check)
-    if args.strategy.as_deref() == Some("help") {
+    if args.strategy.iter().any(|s| s == "help") {
         eprintln!("Could not find merge strategy 'help'.");
         eprintln!("Available strategies are: octopus ours recursive resolve subtree theirs.");
         std::process::exit(1);
@@ -298,36 +495,18 @@ pub fn run(mut args: Args) -> Result<()> {
         bail!("fatal: You cannot combine --squash with --commit.");
     }
 
-    // Validate --strategy: accept known names, warn on unsupported ones.
-    if let Some(ref strat) = args.strategy {
+    // Validate --strategy: accept known names for every `-s` occurrence.
+    for strat in &args.strategy {
         match strat.as_str() {
-            "recursive" | "ort" | "resolve" => {
-                // These are compatible with our three-way merge implementation.
-            }
-            "octopus" => {
-                // Octopus is handled separately when multiple commits are given.
-            }
-            "ours" | "theirs" | "subtree" => {
-                // "ours" strategy: keep our tree, just make a merge commit.
-                // "theirs" strategy: keep their tree, just make a merge commit.
-                // "subtree" strategy: variant of recursive.
-                // We handle this specially below.
-            }
-            // "help" is handled above before the commit check
-            other => {
-                bail!("Could not find merge strategy '{}'", other);
-            }
+            "recursive" | "ort" | "resolve" | "octopus" | "ours" | "theirs" | "subtree" => {}
+            other => bail!("Could not find merge strategy '{}'", other),
         }
     }
 
     // Parse -X strategy options
     let mut favor = MergeFavor::None;
     let mut diff_algorithm: Option<String> = None;
-    let mut subtree_shift = if args.strategy.as_deref() == Some("subtree") {
-        SubtreeShift::Auto
-    } else {
-        SubtreeShift::Disabled
-    };
+    let mut subtree_shift = SubtreeShift::Disabled;
     for xopt in &args.strategy_option {
         if let Some(algo) = xopt.strip_prefix("diff-algorithm=") {
             diff_algorithm = Some(algo.to_string());
@@ -399,34 +578,12 @@ pub fn run(mut args: Args) -> Result<()> {
             diff_algorithm.as_deref(),
             &subtree_shift,
             merge_renormalize,
+            true,
         );
     }
 
     // Resolve merge target
     let merge_oid = resolve_merge_target(&repo, &args.commits[0])?;
-
-    // Handle -s ours: keep our tree, just create merge commit
-    if args.strategy.as_deref() == Some("ours") {
-        // Even with -s ours, if merge target is ancestor of HEAD, already up-to-date
-        if merge_oid == head_oid || is_ancestor(&repo, merge_oid, head_oid)? {
-            if !args.quiet {
-                eprintln!("Already up to date.");
-            }
-            return Ok(());
-        }
-        return do_strategy_ours(&repo, &head, head_oid, merge_oid, &args);
-    }
-
-    // Handle -s theirs: keep their tree, just create merge commit
-    if args.strategy.as_deref() == Some("theirs") {
-        if merge_oid == head_oid || is_ancestor(&repo, merge_oid, head_oid)? {
-            if !args.quiet {
-                eprintln!("Already up to date.");
-            }
-            return Ok(());
-        }
-        return do_strategy_theirs(&repo, &head, head_oid, merge_oid, &args);
-    }
 
     // Already up-to-date?
     if head_oid == merge_oid {
@@ -439,7 +596,21 @@ pub fn run(mut args: Args) -> Result<()> {
     // Check if head is ancestor of merge target → fast-forward
     if is_ancestor(&repo, head_oid, merge_oid)? {
         if args.no_ff && !args.ff_only {
-            // Force a merge commit even though we could fast-forward
+            bail_if_index_tree_differs_from_head(&repo, head_oid, args.autostash)?;
+            if args.strategy.len() > 1 {
+                return try_merge_strategies(
+                    &repo,
+                    &head,
+                    head_oid,
+                    merge_oid,
+                    &args,
+                    favor,
+                    diff_algorithm.as_deref(),
+                    &subtree_shift,
+                    merge_renormalize,
+                );
+            }
+            let eff_shift = effective_subtree_shift(primary_merge_strategy(&args), &subtree_shift);
             return do_real_merge(
                 &repo,
                 &head,
@@ -448,8 +619,9 @@ pub fn run(mut args: Args) -> Result<()> {
                 &args,
                 favor,
                 diff_algorithm.as_deref(),
-                &subtree_shift,
+                &eff_shift,
                 merge_renormalize,
+                true,
             );
         }
         return do_fast_forward(&repo, &head, head_oid, merge_oid, &args);
@@ -468,6 +640,45 @@ pub fn run(mut args: Args) -> Result<()> {
         bail!("Not possible to fast-forward, aborting.");
     }
 
+    if args.strategy.len() > 1 {
+        return try_merge_strategies(
+            &repo,
+            &head,
+            head_oid,
+            merge_oid,
+            &args,
+            favor,
+            diff_algorithm.as_deref(),
+            &subtree_shift,
+            merge_renormalize,
+        );
+    }
+
+    if args.strategy.len() == 1 {
+        match args.strategy[0].as_str() {
+            "ours" => {
+                if merge_oid == head_oid || is_ancestor(&repo, merge_oid, head_oid)? {
+                    if !args.quiet {
+                        eprintln!("Already up to date.");
+                    }
+                    return Ok(());
+                }
+                return do_strategy_ours(&repo, &head, head_oid, merge_oid, &args);
+            }
+            "theirs" => {
+                if merge_oid == head_oid || is_ancestor(&repo, merge_oid, head_oid)? {
+                    if !args.quiet {
+                        eprintln!("Already up to date.");
+                    }
+                    return Ok(());
+                }
+                return do_strategy_theirs(&repo, &head, head_oid, merge_oid, &args);
+            }
+            _ => {}
+        }
+    }
+
+    let eff_shift = effective_subtree_shift(primary_merge_strategy(&args), &subtree_shift);
     do_real_merge(
         &repo,
         &head,
@@ -476,9 +687,101 @@ pub fn run(mut args: Args) -> Result<()> {
         &args,
         favor,
         diff_algorithm.as_deref(),
-        &subtree_shift,
+        &eff_shift,
         merge_renormalize,
+        true,
     )
+}
+
+/// Try each `-s` strategy in order until one succeeds (Git-compatible multi-strategy merge).
+fn try_merge_strategies(
+    repo: &Repository,
+    head: &HeadState,
+    head_oid: ObjectId,
+    merge_oid: ObjectId,
+    args: &Args,
+    favor: MergeFavor,
+    diff_algorithm: Option<&str>,
+    subtree_shift_config: &SubtreeShift,
+    merge_renormalize: bool,
+) -> Result<()> {
+    let pre_index = repo.load_index()?;
+    let mut last_err: Option<anyhow::Error> = None;
+
+    for strat_name in &args.strategy {
+        if strat_name == "resolve" {
+            bail_if_resolve_index_not_clean_vs_head(repo, head_oid, args.autostash)?;
+        }
+        if !args.quiet {
+            println!("Trying merge strategy {strat_name}...");
+        }
+        let mut sub = args.clone();
+        sub.strategy = vec![strat_name.clone()];
+        let eff_shift = effective_subtree_shift(Some(strat_name.as_str()), subtree_shift_config);
+
+        let attempt: Result<()> = match strat_name.as_str() {
+            "ours" => {
+                if merge_oid == head_oid || is_ancestor(repo, merge_oid, head_oid)? {
+                    if !args.quiet {
+                        eprintln!("Already up to date.");
+                    }
+                    Ok(())
+                } else {
+                    do_strategy_ours(repo, head, head_oid, merge_oid, &sub)
+                }
+            }
+            "theirs" => {
+                if merge_oid == head_oid || is_ancestor(repo, merge_oid, head_oid)? {
+                    if !args.quiet {
+                        eprintln!("Already up to date.");
+                    }
+                    Ok(())
+                } else {
+                    do_strategy_theirs(repo, head, head_oid, merge_oid, &sub)
+                }
+            }
+            "octopus" => do_octopus_merge(
+                repo,
+                head,
+                head_oid,
+                &sub,
+                favor,
+                diff_algorithm,
+                subtree_shift_config,
+                merge_renormalize,
+                false,
+            ),
+            "recursive" | "ort" | "resolve" | "subtree" => do_real_merge(
+                repo,
+                head,
+                head_oid,
+                merge_oid,
+                &sub,
+                favor,
+                diff_algorithm,
+                &eff_shift,
+                merge_renormalize,
+                false,
+            ),
+            other => bail!("Could not find merge strategy '{other}'"),
+        };
+
+        match attempt {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if !args.quiet {
+                    eprintln!("{e}");
+                }
+                last_err = Some(e);
+            }
+        }
+    }
+
+    restore_index_and_worktree(repo, &pre_index)?;
+    if !args.quiet {
+        println!("No merge strategy handled the merge.");
+    }
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("merge failed")))
 }
 
 /// Handle merge when HEAD is unborn — just set HEAD to merge target.
@@ -528,12 +831,9 @@ fn do_fast_forward(
     // Update index and working tree
     let commit_obj = repo.odb.read(&merge_oid)?;
     let commit = parse_commit(&commit_obj.data)?;
-    let entries = tree_to_index_entries(repo, &commit.tree, "")?;
-    let mut new_index = Index::new();
-    new_index.entries = entries;
-    new_index.sort();
-
+    let current_index = repo.load_index()?;
     let old_tree = commit_tree(repo, head_oid)?;
+    let mut new_index = compose_fast_forward_index(repo, commit.tree, old_tree, &current_index)?;
     let old_entries = tree_to_map(tree_to_index_entries(repo, &old_tree, "")?);
     bail_if_merge_would_overwrite_local_changes(repo, &old_entries, &new_index, false)?;
 
@@ -861,7 +1161,19 @@ fn do_real_merge(
     diff_algorithm: Option<&str>,
     subtree_shift: &SubtreeShift,
     merge_renormalize: bool,
+    exit_on_merge_conflict: bool,
 ) -> Result<()> {
+    if primary_merge_strategy(args) == Some("resolve") {
+        bail_if_resolve_index_not_clean_vs_head(repo, head_oid, args.autostash)?;
+    } else if matches!(
+        primary_merge_strategy(args),
+        Some("recursive" | "ort" | "subtree" | "octopus")
+    ) {
+        bail_if_index_tree_differs_from_head(repo, head_oid, args.autostash)?;
+    }
+
+    let pre_merge_index_snapshot = repo.load_index()?;
+
     // Find merge base(s)
     let bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, head_oid, &[merge_oid])?;
     if bases.is_empty() && !args.allow_unrelated_histories {
@@ -873,7 +1185,7 @@ fn do_real_merge(
     let base_oid = if bases.is_empty() {
         create_empty_base_commit(repo)?
     } else if bases.len() > 1 {
-        if args.strategy.as_deref() == Some("resolve") {
+        if primary_merge_strategy(args) == Some("resolve") {
             bail!("merge: warning: multiple common ancestors found");
         }
         create_virtual_merge_base(repo, &bases, favor, merge_renormalize)?
@@ -943,11 +1255,16 @@ fn do_real_merge(
         MergeRenameOptions::from_config(repo),
     )?;
 
-    // Refuse merges that would overwrite local changes or untracked files.
     let append_strategy_failed = std::env::var("GIT_MERGE_VERBOSITY")
         .ok()
         .as_deref()
         .is_some_and(|v| v.trim() == "0");
+
+    if merge_result.has_conflicts && !exit_on_merge_conflict {
+        restore_index_and_worktree(repo, &pre_merge_index_snapshot)?;
+        bail!("Automatic merge failed; fix conflicts and then commit the result.");
+    }
+
     if !args.autostash {
         bail_if_merge_would_overwrite_local_changes(
             repo,
@@ -1119,7 +1436,7 @@ fn do_real_merge(
         println!("[{branch} {short}] {first_line}");
 
         // Print strategy message (to stdout, as git does)
-        let strategy_name = args.strategy.as_deref().unwrap_or("ort");
+        let strategy_name = primary_merge_strategy(args).unwrap_or("ort");
         println!("Merge made by the '{}' strategy.", strategy_name);
 
         // Show diffstat unless suppressed
@@ -1182,7 +1499,7 @@ fn bail_if_merge_would_overwrite_local_changes(
         }
     }
 
-    // Staged changes (including staged additions) that would be overwritten.
+    // Staged changes on paths the merge result actually touches vs HEAD.
     for idx_entry in &current_index.entries {
         if idx_entry.stage() != 0 {
             continue;
@@ -1197,29 +1514,38 @@ fn bail_if_merge_would_overwrite_local_changes(
         }
 
         let new_entry = new_map.get(idx_entry.path.as_slice()).copied();
-        let staged_matches_target = match new_entry {
-            Some(ne) => ne.oid == idx_entry.oid && ne.mode == idx_entry.mode,
-            None => false,
-        };
-        if staged_matches_target {
-            continue;
-        }
-
-        let target_changes = match (head_entry, new_entry) {
+        let merge_touches = match (head_entry, new_entry) {
             (Some(head), Some(ne)) => ne.oid != head.oid || ne.mode != head.mode,
             (Some(_), None) => true,
-            (None, Some(_)) => true,
+            // Staged addition: conflict only if merge result also creates this path with different content.
+            // When `new_index` was composed (fast-forward), the staged path is copied in and matches `ne`.
+            (None, Some(ne)) => ne.oid != idx_entry.oid || ne.mode != idx_entry.mode,
             (None, None) => false,
         };
-        if !target_changes {
-            continue;
-        }
-
-        if new_entry.is_none() && head_entry.is_some() {
+        if !merge_touches {
             continue;
         }
 
         overwrite_local.insert(String::from_utf8_lossy(&idx_entry.path).to_string());
+    }
+
+    // Staged removal: path in HEAD but absent from index stage 0.
+    for (path, head_entry) in old_entries {
+        let in_index = current_index
+            .entries
+            .iter()
+            .any(|e| e.stage() == 0 && e.path == *path);
+        if in_index {
+            continue;
+        }
+        let new_entry = new_map.get(path.as_slice()).copied();
+        let merge_touches = match new_entry {
+            Some(ne) => ne.oid != head_entry.oid || ne.mode != head_entry.mode,
+            None => true,
+        };
+        if merge_touches {
+            overwrite_local.insert(String::from_utf8_lossy(path).to_string());
+        }
     }
 
     let mut overwrite_untracked: BTreeSet<String> = BTreeSet::new();
@@ -1507,6 +1833,7 @@ fn do_octopus_merge(
     diff_algorithm: Option<&str>,
     subtree_shift: &SubtreeShift,
     merge_renormalize: bool,
+    exit_on_conflict: bool,
 ) -> Result<()> {
     // Resolve all merge targets, deduplicating and filtering ancestors of HEAD
     let mut merge_oids = Vec::new();
@@ -1551,6 +1878,7 @@ fn do_octopus_merge(
                 diff_algorithm,
                 subtree_shift,
                 merge_renormalize,
+                true,
             );
         }
         if is_ancestor(repo, head_oid, merge_oid)? {
@@ -1566,6 +1894,7 @@ fn do_octopus_merge(
             diff_algorithm,
             subtree_shift,
             merge_renormalize,
+            true,
         );
     }
 
@@ -1583,6 +1912,94 @@ fn do_octopus_merge(
             if is_ancestor(repo, head_oid, merge_oid)? {
                 return do_fast_forward(repo, head, head_oid, merge_oid, args);
             }
+        }
+    }
+
+    // True octopus (multiple merge heads): index must match HEAD — unlike two-parent merge,
+    // unrelated staged paths are not allowed (t6424).
+    bail_if_index_tree_differs_from_head(repo, head_oid, args.autostash)?;
+
+    let pre_merge_index = repo.load_index()?;
+    let head_tree = commit_tree(repo, head_oid)?;
+    let head_entries = tree_to_map(tree_to_index_entries(repo, &head_tree, "")?);
+
+    // Simulate the full octopus result to detect conflicts and unrelated index changes
+    // before mutating the repo (matches git merge behavior).
+    {
+        let mut sim_entries = tree_to_index_entries(repo, &head_tree, "")?;
+        for (i, merge_oid) in merge_oids.iter().enumerate() {
+            let bases =
+                grit_lib::merge_base::merge_bases_first_vs_rest(repo, head_oid, &[*merge_oid])?;
+            if bases.is_empty() && !args.allow_unrelated_histories {
+                bail!("refusing to merge unrelated histories");
+            }
+            let base_oid = if bases.is_empty() {
+                create_empty_base_commit(repo)?
+            } else {
+                bases[0]
+            };
+            let base_tree = commit_tree(repo, base_oid)?;
+            let theirs_tree = commit_tree(repo, *merge_oid)?;
+
+            let base_entries = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
+            let ours_entries = tree_to_map(sim_entries.clone());
+            let theirs_entries = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
+
+            let base_label_prefix = if bases.is_empty() {
+                "empty tree".to_string()
+            } else {
+                short_oid(bases[0])
+            };
+
+            let merge_result = merge_trees(
+                repo,
+                &base_entries,
+                &ours_entries,
+                &theirs_entries,
+                head,
+                &merge_names[i],
+                &base_label_prefix,
+                favor,
+                diff_algorithm,
+                merge_renormalize,
+                false,
+                false,
+                false,
+                false,
+                MergeDirectoryRenamesMode::FromConfig,
+                MergeRenameOptions::from_config(repo),
+            )?;
+
+            if merge_result.has_conflicts {
+                let mut orig_index = Index::new();
+                orig_index.entries = pre_merge_index.entries.clone();
+                orig_index.sort();
+                repo.write_index(&mut orig_index)?;
+                if let Some(ref wt) = repo.work_tree {
+                    checkout_entries(repo, wt, &orig_index, None)?;
+                }
+                let _ = fs::remove_file(repo.git_dir.join("MERGE_HEAD"));
+                let _ = fs::remove_file(repo.git_dir.join("MERGE_MSG"));
+                let _ = fs::remove_file(repo.git_dir.join("MERGE_MODE"));
+                if !args.quiet {
+                    eprintln!("Merge with strategy octopus failed.");
+                    println!("Should not be doing an octopus.");
+                    eprintln!("fatal: merge program failed");
+                }
+                if exit_on_conflict {
+                    std::process::exit(2);
+                }
+                bail!("fatal: merge program failed");
+            }
+
+            sim_entries = merge_result.index.entries;
+        }
+
+        let mut sim_index = Index::new();
+        sim_index.entries = sim_entries;
+        sim_index.sort();
+        if !args.autostash {
+            bail_if_merge_would_overwrite_local_changes(repo, &head_entries, &sim_index, false)?;
         }
     }
 
@@ -1627,7 +2044,7 @@ fn do_octopus_merge(
             &ours_entries,
             &theirs_entries,
             head,
-            &args.commits[i],
+            &merge_names[i],
             &base_label_prefix,
             favor,
             diff_algorithm,
@@ -1641,11 +2058,8 @@ fn do_octopus_merge(
         )?;
 
         if merge_result.has_conflicts {
-            // Octopus strategy cannot handle conflicts - restore original state
-            let orig_tree = commit_tree(repo, head_oid)?;
-            let orig_entries = tree_to_index_entries(repo, &orig_tree, "")?;
             let mut orig_index = Index::new();
-            orig_index.entries = orig_entries;
+            orig_index.entries = pre_merge_index.entries.clone();
             orig_index.sort();
             repo.write_index(&mut orig_index)?;
             if let Some(ref wt) = repo.work_tree {
@@ -1654,10 +2068,15 @@ fn do_octopus_merge(
             let _ = fs::remove_file(repo.git_dir.join("MERGE_HEAD"));
             let _ = fs::remove_file(repo.git_dir.join("MERGE_MSG"));
             let _ = fs::remove_file(repo.git_dir.join("MERGE_MODE"));
-            eprintln!("Merge with strategy octopus failed.");
-            println!("Should not be doing an octopus.");
-            eprintln!("fatal: merge program failed");
-            std::process::exit(2);
+            if !args.quiet {
+                eprintln!("Merge with strategy octopus failed.");
+                println!("Should not be doing an octopus.");
+                eprintln!("fatal: merge program failed");
+            }
+            if exit_on_conflict {
+                std::process::exit(2);
+            }
+            bail!("fatal: merge program failed");
         }
 
         // Advance current_tree_entries to the merged result
@@ -1668,6 +2087,7 @@ fn do_octopus_merge(
     let mut final_index = Index::new();
     final_index.entries = current_tree_entries;
     final_index.sort();
+    compose_octopus_final_index(&pre_merge_index, &mut final_index);
     repo.write_index(&mut final_index)?;
 
     if let Some(ref wt) = repo.work_tree {
@@ -1879,6 +2299,8 @@ fn do_strategy_ours(
     merge_oid: ObjectId,
     args: &Args,
 ) -> Result<()> {
+    bail_if_index_tree_differs_from_head(repo, head_oid, args.autostash)?;
+
     // Save ORIG_HEAD
     fs::write(
         repo.git_dir.join("ORIG_HEAD"),
@@ -1924,6 +2346,8 @@ fn do_strategy_theirs(
     merge_oid: ObjectId,
     args: &Args,
 ) -> Result<()> {
+    bail_if_index_tree_differs_from_head(repo, head_oid, args.autostash)?;
+
     // Save ORIG_HEAD
     fs::write(
         repo.git_dir.join("ORIG_HEAD"),
