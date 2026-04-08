@@ -962,6 +962,7 @@ fn resolve_base(repo: &Repository, spec: &str, index_dwim: bool) -> Result<Objec
         format!("refs/heads/{spec}"),
         format!("refs/tags/{spec}"),
         format!("refs/remotes/{spec}"),
+        format!("refs/notes/{spec}"),
     ] {
         if let Ok(oid) = refs::resolve_ref(&repo.git_dir, candidate) {
             return Ok(oid);

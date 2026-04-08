@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   229 |
+| Completed   |   230 |
 | In progress |     2 |
-| Remaining   |   537 |
+| Remaining   |   536 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 229 completed (`[x]`), 2 in progress (`[~]`), 537 remaining (`[ ]`).
+Task lines in `PLAN.md`: 230 completed (`[x]`), 2 in progress (`[~]`), 536 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t3310-notes-merge-manual-resolve` — 22/22 tests pass (`notes merge`: manual 3-way merge with `NOTES_MERGE_*` state, `--commit`/`--abort`, conflict worktree paths and messages; `notes` honors `core.notesRef` and `--ref` short names; `append` matches Git blob layout; `log` `%N` + fanout notes trees; `update-ref` resolves `refs/notes/*`; root merge refs stored in main git dir)
 - `t5403-post-checkout-hook` — 14/14 tests pass (`checkout`/`rebase`/`clone`: `post-checkout` hook with Git-compatible args; clone resolves detached `HEAD` to the right local branch and honors `GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME`; harness CSV refreshed)
 - `t6434-merge-recursive-rename-options` — 27/27 tests pass (`merge-recursive`: `--find-renames` / `--rename-threshold` with `%`, truncation, last-flag wins vs `--no-renames`, invalid args; config `merge.renames` / `diff.renames`; merge core threads `MergeRenameOptions` into `detect_merge_renames`; `diff`: `-M<n>%` no longer misparsed as a revision, `--diff-filter`, percentage threshold parsing)
 - `t5704-protocol-violations` — 3/3 tests pass (`upload-pack` honors `GIT_PROTOCOL=version=2` with flush-after-args validation for `ls-refs`/`fetch`; `ls-remote --upload-pack` parses v0 ref ads with space/NUL-separated fields and v2 `ls-refs` responses; `serve-v2` default loop fixed)

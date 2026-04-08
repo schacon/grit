@@ -185,6 +185,25 @@ fn lookup_packed_ref(git_dir: &Path, refname: &str) -> Result<Option<ObjectId>> 
 /// # Errors
 ///
 /// Returns [`Error::Io`] on filesystem errors.
+/// Write a symbolic ref (e.g. `NOTES_MERGE_REF` → `refs/notes/m`).
+///
+/// For reftable-backed repositories this dispatches to the reftable writer.
+pub fn write_symbolic_ref(git_dir: &Path, refname: &str, target: &str) -> Result<()> {
+    if crate::reftable::is_reftable_repo(git_dir) {
+        return crate::reftable::reftable_write_symref(git_dir, refname, target, None, None);
+    }
+    let storage_dir = ref_storage_dir(git_dir, refname);
+    let path = storage_dir.join(refname);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let content = format!("ref: {target}\n");
+    let lock = path.with_extension("lock");
+    fs::write(&lock, &content)?;
+    fs::rename(&lock, &path)?;
+    Ok(())
+}
+
 pub fn write_ref(git_dir: &Path, refname: &str, oid: &ObjectId) -> Result<()> {
     if crate::reftable::is_reftable_repo(git_dir) {
         return crate::reftable::reftable_write_ref(git_dir, refname, oid, None, None);
@@ -511,7 +530,11 @@ pub fn append_reflog(
 }
 
 fn ref_storage_dir(git_dir: &Path, refname: &str) -> PathBuf {
-    if refname == "HEAD" || refname.starts_with("refs/bisect/") {
+    if refname == "HEAD"
+        || refname == "NOTES_MERGE_PARTIAL"
+        || refname == "NOTES_MERGE_REF"
+        || refname.starts_with("refs/bisect/")
+    {
         return git_dir.to_path_buf();
     }
     common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf())
