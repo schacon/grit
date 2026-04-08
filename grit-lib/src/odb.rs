@@ -30,6 +30,31 @@ use crate::error::{Error, Result};
 use crate::objects::{Object, ObjectId, ObjectKind};
 use crate::pack;
 
+/// Decompress a zlib-wrapped loose object payload from an open file.
+///
+/// When the zlib wrapper advertises a preset dictionary (FDICT), `flate2` typically fails with a
+/// generic corrupt-stream error; map that to `"needs dictionary"` so callers match Git's messages
+/// (`t1006-cat-file` zlib-dictionary test).
+fn read_zlib_loose_payload(mut file: fs::File) -> Result<Vec<u8>> {
+    let mut hdr = [0u8; 2];
+    file.read_exact(&mut hdr).map_err(|e| Error::Io(e.into()))?;
+    let cmf_flg = u16::from(hdr[0]) << 8 | u16::from(hdr[1]);
+    let looks_like_zlib_header = cmf_flg != 0 && cmf_flg % 31 == 0;
+    let preset_dictionary = looks_like_zlib_header && (hdr[1] & 0x20) != 0;
+    let mut decoder = ZlibDecoder::new(hdr.as_slice().chain(file));
+    let mut raw = Vec::new();
+    match decoder.read_to_end(&mut raw) {
+        Ok(_) => Ok(raw),
+        Err(e) => {
+            if preset_dictionary {
+                Err(Error::Zlib("needs dictionary".to_owned()))
+            } else {
+                Err(Error::Zlib(e.to_string()))
+            }
+        }
+    }
+}
+
 /// A loose-object database rooted at a given `objects/` directory.
 #[derive(Debug, Clone)]
 pub struct Odb {
@@ -134,6 +159,30 @@ impl Odb {
         false
     }
 
+    /// Read a loose object file at `path`, verifying the uncompressed payload hashes to `expected_oid`.
+    ///
+    /// Git stores loose objects under paths derived from the OID; if the file contents hash to a
+    /// different id (for example after a mistaken `mv`), this returns [`Error::LooseHashMismatch`].
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Zlib`] — decompression failed.
+    /// - [`Error::CorruptObject`] — header is malformed.
+    /// - [`Error::LooseHashMismatch`] — payload OID does not match `expected_oid`.
+    pub fn read_loose_verify_oid(path: &Path, expected_oid: &ObjectId) -> Result<Object> {
+        let file = fs::File::open(path).map_err(|e| Error::Io(e))?;
+        let raw = read_zlib_loose_payload(file)?;
+        let obj = parse_object_bytes(&raw)?;
+        let computed = hash_object_from_parsed(&obj);
+        if computed != *expected_oid {
+            return Err(Error::LooseHashMismatch {
+                path: path.display().to_string(),
+                real_oid: computed.to_hex(),
+            });
+        }
+        Ok(obj)
+    }
+
     /// Read and decompress an object from the loose store.
     ///
     /// # Errors
@@ -156,11 +205,7 @@ impl Odb {
         let path = self.object_path(oid);
         match fs::File::open(&path) {
             Ok(file) => {
-                let mut decoder = ZlibDecoder::new(file);
-                let mut raw = Vec::new();
-                decoder
-                    .read_to_end(&mut raw)
-                    .map_err(|e| Error::Zlib(e.to_string()))?;
+                let raw = read_zlib_loose_payload(file)?;
                 return parse_object_bytes_with_oid(&raw, oid);
             }
             Err(_) => {
@@ -198,11 +243,7 @@ impl Odb {
             .join(oid.loose_prefix())
             .join(oid.loose_suffix());
         if let Ok(file) = fs::File::open(&loose) {
-            let mut decoder = ZlibDecoder::new(file);
-            let mut raw = Vec::new();
-            decoder
-                .read_to_end(&mut raw)
-                .map_err(|e| Error::Zlib(e.to_string()))?;
+            let raw = read_zlib_loose_payload(file)?;
             return parse_object_bytes_with_oid(&raw, oid);
         }
         pack::read_object_from_packs(objects_dir, oid)
@@ -297,6 +338,10 @@ impl Odb {
 
         Ok(oid)
     }
+}
+
+fn hash_object_from_parsed(obj: &Object) -> ObjectId {
+    Odb::hash_object_data(obj.kind, &obj.data)
 }
 
 /// Compute the SHA-1 of a byte slice and return it as an [`ObjectId`].
@@ -490,6 +535,8 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
+    use flate2::read::ZlibDecoder;
+    use std::io::Read;
     use tempfile::TempDir;
 
     #[test]

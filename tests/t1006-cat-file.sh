@@ -194,14 +194,7 @@ $content"
 	test_cmp expect actual
     '
 
-    # FIXME: %(rest) is incompatible with object names that include whitespace,
-    # e.g. HEAD:path/to/a/file with spaces. Use the resolved OID as input to
-    # test this instead of the raw object name.
-    if echo "$object_name" | grep -q " "; then
-	test_rest=test_expect_failure
-    else
-	test_rest=test_expect_success
-    fi
+    test_rest=test_expect_success
 
     $test_rest '--batch-check with %(rest)' '
 	echo "$type this is some extra content" >expect &&

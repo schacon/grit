@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::zero_oid;
+use grit_lib::error::Error as LibError;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pack::read_local_pack_indexes;
@@ -83,6 +84,10 @@ enum Issue {
     Unreachable { oid: ObjectId, kind: ObjectKind },
     /// Reflog references an object that is not present and not a promisor object.
     InvalidReflog { refname: String, oid: ObjectId },
+    /// Loose file path does not match the OID of the stored bytes.
+    HashPathMismatch { real_oid_hex: String, path: String },
+    /// Raw `error:` lines matching Git's `fsck` / `read_loose_object` diagnostics.
+    FsckMessage(String),
 }
 
 /// Run `grit fsck`.
@@ -141,6 +146,8 @@ pub fn run(args: Args) -> Result<()> {
 
     // 2. Enumerate all known objects (loose + packed).
     let all_objects = enumerate_all_objects(&odb, &objects_dir)?;
+    let loose_pairs = scan_loose_objects(&objects_dir)?;
+    let loose_oids: HashSet<ObjectId> = loose_pairs.iter().map(|(o, _)| *o).collect();
 
     // 3. Find unreachable/dangling objects.
     if show_dangling || show_unreachable {
@@ -177,8 +184,14 @@ pub fn run(args: Args) -> Result<()> {
 
     // 4. If not connectivity-only, validate ALL objects (including unreachable).
     if !connectivity_only {
+        let git_dir = repo.git_dir.as_path();
+        for (oid, path) in &loose_pairs {
+            validate_loose_object_file(git_dir, path, oid, &mut issues);
+        }
         for oid in &all_objects {
-            // Skip objects we already validated during the walk.
+            if loose_oids.contains(oid) {
+                continue;
+            }
             if walked_kinds.contains(oid) {
                 continue;
             }
@@ -290,6 +303,14 @@ pub fn run(args: Args) -> Result<()> {
             }
             Issue::InvalidReflog { refname, oid } => {
                 eprintln!("error: {}: invalid reflog entry {}", refname, oid.to_hex());
+                has_errors = true;
+            }
+            Issue::HashPathMismatch { real_oid_hex, path } => {
+                eprintln!("error: {real_oid_hex}: hash-path mismatch, found at: {path}");
+                has_errors = true;
+            }
+            Issue::FsckMessage(msg) => {
+                eprintln!("error: {msg}");
                 has_errors = true;
             }
         }
@@ -494,6 +515,59 @@ fn parse_reflog_line_oids(line: &str) -> Option<(ObjectId, ObjectId)> {
     let old_hex = &before_tab[..40];
     let new_hex = &before_tab[41..81];
     Some((old_hex.parse().ok()?, new_hex.parse().ok()?))
+}
+
+fn loose_path_display_for_fsck(git_dir: &Path, path: &Path) -> String {
+    let rel = path.strip_prefix(git_dir).unwrap_or(path);
+    format!("./{}", rel.display().to_string().replace('\\', "/"))
+}
+
+fn git_style_inflate_message(zlib_detail: &str) -> String {
+    let lower = zlib_detail.to_ascii_lowercase();
+    if lower.contains("dictionary") {
+        "inflate: needs dictionary".to_owned()
+    } else if lower.contains("incorrect header")
+        || lower.contains("invalid stored block")
+        || lower.contains("invalid code")
+        || lower.contains("corrupt deflate")
+    {
+        "inflate: data stream error (incorrect header check)".to_owned()
+    } else {
+        format!("inflate: {zlib_detail}")
+    }
+}
+
+/// Validate a loose object file, including Git's hash-vs-path check.
+fn validate_loose_object_file(
+    git_dir: &Path,
+    path: &Path,
+    oid: &ObjectId,
+    issues: &mut Vec<Issue>,
+) {
+    let display_path = loose_path_display_for_fsck(git_dir, path);
+    match Odb::read_loose_verify_oid(path, oid) {
+        Ok(obj) => validate_object_data(oid, &obj.kind, &obj.data, issues),
+        Err(LibError::LooseHashMismatch { path: _, real_oid }) => {
+            issues.push(Issue::HashPathMismatch {
+                real_oid_hex: real_oid,
+                path: display_path,
+            });
+        }
+        Err(LibError::Zlib(msg)) => {
+            let inflate = git_style_inflate_message(&msg);
+            issues.push(Issue::FsckMessage(inflate));
+            issues.push(Issue::FsckMessage(format!(
+                "unable to unpack header of {display_path}"
+            )));
+            issues.push(Issue::FsckMessage(format!(
+                "{}: object corrupt or missing: {display_path}",
+                oid.to_hex()
+            )));
+        }
+        Err(e) => {
+            issues.push(Issue::FsckMessage(e.to_string()));
+        }
+    }
 }
 
 /// Validate an object's content can be parsed correctly.
