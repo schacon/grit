@@ -35,7 +35,7 @@ t0040-parse-options	t0	yes	94	73	21	false	ok	0
 t0041-usage	t0	yes	16	14	2	false	ok	0
 t0050-filesystem	t0	yes	13	9	4	false	ok	2
 t0051-windows-named-pipe	t0	skip	1	0	0	false	ok	0
-t0052-simple-ipc	t0	yes	0	0	0	false	ok	0
+t0052-simple-ipc	t0	yes	9	9	0	true	ok	0
 t0055-beyond-symlinks	t0	yes	3	3	0	true	ok	0
 t0056-git-C	t0	yes	11	11	0	true	ok	0
 t0060-path-utils	t0	yes	219	219	0	true	ok	0

@@ -3289,6 +3289,10 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                     }
                     Ok(())
                 }
+                "simple-ipc" => {
+                    let code = grit_lib::simple_ipc::run_simple_ipc_tool(&rest[1..]);
+                    std::process::exit(code);
+                }
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }
