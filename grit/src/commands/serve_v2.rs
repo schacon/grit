@@ -9,7 +9,7 @@ use clap::Args as ClapArgs;
 use grit_lib::objects::{self, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::Path;
 
 use crate::pkt_line;
@@ -28,7 +28,7 @@ pub struct Args {
 }
 
 /// Known commands and their feature strings.
-struct ServerCaps {
+pub struct ServerCaps {
     agent: String,
     object_format: String,
     advertise_object_info: bool,
@@ -36,7 +36,8 @@ struct ServerCaps {
 }
 
 impl ServerCaps {
-    fn load(git_dir: &Path) -> Self {
+    /// Load advertised capabilities from repository config at `git_dir`.
+    pub fn load(git_dir: &Path) -> Self {
         let version = crate::version_string();
         let agent = format!("agent=git/{version}-");
 
@@ -52,7 +53,7 @@ impl ServerCaps {
     }
 
     /// Write the capability advertisement to `w` in pkt-line format.
-    fn advertise(&self, w: &mut impl Write) -> io::Result<()> {
+    pub fn advertise(&self, w: &mut impl Write) -> io::Result<()> {
         pkt_line::write_line(w, "version 2")?;
         pkt_line::write_line(w, &self.agent)?;
         pkt_line::write_line(w, "ls-refs=unborn")?;
@@ -69,7 +70,7 @@ impl ServerCaps {
         w.flush()
     }
 
-    fn is_valid_command(&self, cmd: &str) -> bool {
+    pub fn is_valid_command(&self, cmd: &str) -> bool {
         match cmd {
             "ls-refs" | "fetch" => true,
             "object-info" if self.advertise_object_info => true,
@@ -78,7 +79,7 @@ impl ServerCaps {
         }
     }
 
-    fn is_valid_capability(&self, cap: &str) -> bool {
+    pub fn is_valid_capability(&self, cap: &str) -> bool {
         // Capabilities that may appear in a request
         cap.starts_with("agent=")
             || cap.starts_with("object-format=")
@@ -98,41 +99,47 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if args.stateless_rpc {
-        return stateless_rpc(&git_dir, &caps);
+        let _ = process_one_v2_request(&mut io::stdin().lock(), &git_dir, &caps)?;
+        return Ok(());
     }
 
-    // Default: advertise + serve loop
+    // Default: advertise + serve loop (matches `git serve-v2` / upload-pack v2).
     let stdout = io::stdout();
     let mut out = stdout.lock();
     caps.advertise(&mut out)?;
     drop(out);
-    stateless_rpc(&git_dir, &caps)
+    serve_loop(&mut io::stdin().lock(), &git_dir, &caps)
 }
 
-fn stateless_rpc(git_dir: &Path, caps: &ServerCaps) -> Result<()> {
-    let stdin = io::stdin();
-    let mut input = stdin.lock();
-
-    // Read the request header (up to flush packet).
-    let (header_lines, terminator) = pkt_line::read_until_flush_or_delim(&mut input)?;
-
-    // Empty request (or EOF): just exit silently.
-    if header_lines.is_empty() {
-        if terminator.is_some() {
-            // Got a flush with no content — that's fine for stateless-rpc
-            return Ok(());
+/// Read requests from `input` until EOF or a headerless flush (client hang-up).
+pub fn serve_loop(input: &mut impl Read, git_dir: &Path, caps: &ServerCaps) -> Result<()> {
+    loop {
+        if process_one_v2_request(input, git_dir, caps)? {
+            break;
         }
-        // EOF with no data
-        return Ok(());
+    }
+    Ok(())
+}
+
+/// Process a single protocol v2 request from `input`.
+///
+/// Returns `Ok(true)` when the client ended the session (EOF or flush with no keys).
+pub fn process_one_v2_request(
+    input: &mut impl Read,
+    git_dir: &Path,
+    caps: &ServerCaps,
+) -> Result<bool> {
+    let (header_lines, terminator) = pkt_line::read_until_flush_or_delim(input)?;
+
+    if header_lines.is_empty() {
+        return Ok(matches!(terminator, Some(pkt_line::Packet::Flush) | None));
     }
 
-    // Parse command and capabilities from header lines.
     let mut command: Option<String> = None;
     let mut client_object_format: Option<String> = None;
 
     for line in &header_lines {
         if let Some(cmd) = line.strip_prefix("command=") {
-            // Reject command=value=extra
             if cmd.contains('=') {
                 bail!("invalid command '{cmd}'");
             }
@@ -140,7 +147,6 @@ fn stateless_rpc(git_dir: &Path, caps: &ServerCaps) -> Result<()> {
         } else if let Some(fmt) = line.strip_prefix("object-format=") {
             client_object_format = Some(fmt.to_owned());
         } else if caps.is_valid_capability(line) {
-            // valid capability, ignore
         } else {
             bail!("unknown capability '{line}'");
         }
@@ -151,7 +157,6 @@ fn stateless_rpc(git_dir: &Path, caps: &ServerCaps) -> Result<()> {
         None => bail!("no command requested"),
     };
 
-    // Validate object-format if provided
     if let Some(ref fmt) = client_object_format {
         if fmt != &caps.object_format {
             bail!(
@@ -161,16 +166,21 @@ fn stateless_rpc(git_dir: &Path, caps: &ServerCaps) -> Result<()> {
         }
     }
 
-    // Check that the command is valid
     if !caps.is_valid_command(&cmd) {
         eprintln!("fatal: invalid command '{cmd}'");
         std::process::exit(128);
     }
 
-    // Read arguments section (after delimiter, up to flush).
+    let flush_err = match cmd.as_str() {
+        "ls-refs" => "expected flush after ls-refs arguments",
+        "fetch" => "expected flush after fetch arguments",
+        "object-info" => "object-info: expected flush after arguments",
+        "bundle-uri" => "bundle-uri: expected flush after arguments",
+        _ => "expected flush after command arguments",
+    };
+
     let args = if terminator == Some(pkt_line::Packet::Delim) {
-        let (arg_lines, _) = pkt_line::read_until_flush_or_delim(&mut input)?;
-        arg_lines
+        pkt_line::read_data_lines_until_flush(input, flush_err).map_err(anyhow::Error::from)?
     } else {
         Vec::new()
     };
@@ -187,7 +197,7 @@ fn stateless_rpc(git_dir: &Path, caps: &ServerCaps) -> Result<()> {
     }
 
     out.flush()?;
-    Ok(())
+    Ok(false)
 }
 
 /// Handle the `ls-refs` command.

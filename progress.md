@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   226 |
+| Completed   |   227 |
 | In progress |     2 |
-| Remaining   |   540 |
+| Remaining   |   539 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 226 completed (`[x]`), 2 in progress (`[~]`), 540 remaining (`[ ]`).
+Task lines in `PLAN.md`: 227 completed (`[x]`), 2 in progress (`[~]`), 539 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5704-protocol-violations` — 3/3 tests pass (`upload-pack` honors `GIT_PROTOCOL=version=2` with flush-after-args validation for `ls-refs`/`fetch`; `ls-remote --upload-pack` parses v0 ref ads with space/NUL-separated fields and v2 `ls-refs` responses; `serve-v2` default loop fixed)
 - `t7509-commit-authorship` — 12/12 tests pass (`commit`: `--reset-author` with `-C`/`-c`/`--amend` and when `CHERRY_PICK_HEAD`/`REBASE_HEAD` exists; author from `CHERRY_PICK_HEAD` when finishing cherry-pick with `MERGE_MSG`; `--author` now formats full ident with current date; amend rejects empty/malformed prior author; mutual exclusion with `--reset-author`)
 - `t4026-color` — 34/34 tests pass (Git-compatible `config::parse_color` per `git/color.c`; `git config --get-color` merges argv after the slot into one default and uses `--` when the default begins with `-` so clap accepts `-1 black`)
 - `t3704-add-pathspec-file` — 11/11 tests pass (`git add --pathspec-from-file` / `--pathspec-file-nul`: raw bytes + CRLF/LF/NUL splitting, C-quoted lines, conflict checks vs `--interactive`/`--patch`/`--edit`/pathspecs; shared `pathspec::parse_pathspecs_from_file`; error text matches grep expectations)

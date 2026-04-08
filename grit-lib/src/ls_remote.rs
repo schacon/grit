@@ -165,6 +165,13 @@ fn resolve_common_git_dir(git_dir: &Path) -> Option<PathBuf> {
 /// A match occurs when:
 /// - `refname == pattern` exactly, **or**
 /// - `refname` ends with `/<pattern>` (suffix component match).
+///
+/// Exposed for callers that need the same rules as `git ls-remote` without
+/// duplicating glob logic (for example protocol v2 `ls-refs` filtering).
+pub fn ref_matches_ls_remote_patterns(refname: &str, patterns: &[String]) -> bool {
+    pattern_matches(refname, patterns)
+}
+
 fn pattern_matches(refname: &str, patterns: &[String]) -> bool {
     if patterns.is_empty() {
         return true;

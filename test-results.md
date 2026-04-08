@@ -1,5 +1,10 @@
 # Test Results
 
+**Updated:** 2026-04-08
+
+- `./scripts/run-tests.sh t5704-protocol-violations.sh`: 3/3 passing (`upload-pack` v2 via `GIT_PROTOCOL`, strict flush-after-args; `ls-remote --upload-pack` v0/v2 parsing; harness CSV/dashboards refreshed).
+- `cargo test -p grit-lib --lib`: 105/105 passing.
+
 **Updated:** 2026-04-07
 
 - `./scripts/run-tests.sh t5813-proto-disable-ssh.sh`: 81/81 passing (SSH protocol allow/deny, `GIT_ALLOW_PROTOCOL` comma lists, `protocol.*.allow=user` + `GIT_PROTOCOL_FROM_USER`, pkt-line `upload-pack`/`receive-pack` with side-band pack; harness CSV/dashboards refreshed).

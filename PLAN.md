@@ -570,7 +570,7 @@ commit → check it off → move on.
 - [ ] `t5536-fetch-conflicts` ███████████░░░░░░░░░ 4/7 (3 left) — fetch handles conflicting refspecs correctly
 - [ ] `t5308-pack-detect-duplicates` ██████████░░░░░░░░░░ 3/6 (3 left) — handling of duplicate objects in incoming packfiles
 - [ ] `t5549-fetch-push-http` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — fetch/push functionality using the HTTP protocol
-- [ ] `t5704-protocol-violations` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — Test responses to violations of the network protocol. In most
+- [x] `t5704-protocol-violations` ████████████████████ 3/3 — Test responses to violations of the network protocol. In most
 
 - [ ] `t5002-archive-attr-pattern` ███████████████░░░░░ 15/19 (4 left) — git archive attribute pattern tests
 - [ ] `t5004-archive-corner-cases` ██████████████░░░░░░ 10/14 (4 left) — test corner cases of git-archive

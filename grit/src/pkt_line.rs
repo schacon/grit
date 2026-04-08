@@ -89,6 +89,35 @@ pub fn read_until_flush_or_delim(r: &mut impl Read) -> io::Result<(Vec<String>, 
     }
 }
 
+/// Read data pkt-lines until a flush packet, matching Git's command argument sections.
+///
+/// A delimiter or response-end packet is treated as a protocol violation and reported with
+/// `err_not_flush` (for example: `"expected flush after ls-refs arguments"`).
+pub fn read_data_lines_until_flush(
+    r: &mut impl Read,
+    err_not_flush: &str,
+) -> io::Result<Vec<String>> {
+    let mut lines = Vec::new();
+    loop {
+        match read_packet(r)? {
+            None => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    err_not_flush.to_string(),
+                ));
+            }
+            Some(Packet::Flush) => return Ok(lines),
+            Some(Packet::Delim) | Some(Packet::ResponseEnd) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    err_not_flush.to_string(),
+                ));
+            }
+            Some(Packet::Data(s)) => lines.push(s),
+        }
+    }
+}
+
 /// `grit pkt-line pack`: read text lines from stdin, write pkt-line to stdout.
 pub fn cmd_pack() -> io::Result<()> {
     let stdin = io::stdin();

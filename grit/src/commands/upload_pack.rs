@@ -13,6 +13,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::commands::serve_v2::{serve_loop, ServerCaps};
 use crate::grit_exe::grit_executable;
 use crate::pkt_line;
 
@@ -36,6 +37,24 @@ pub fn run(args: Args) -> Result<()> {
             args.directory.display()
         )
     })?;
+
+    if server_protocol_version_from_env() == 2 {
+        let caps = ServerCaps::load(&repo.git_dir);
+        if args.advertise_refs {
+            let mut out = io::stdout();
+            caps.advertise(&mut out)?;
+            out.flush()?;
+            return Ok(());
+        }
+        let stdin = io::stdin();
+        let mut input = stdin.lock();
+        let stdout = io::stdout();
+        let mut out = stdout.lock();
+        caps.advertise(&mut out)?;
+        out.flush()?;
+        drop(out);
+        return serve_loop(&mut input, &repo.git_dir, &caps);
+    }
 
     if args.advertise_refs {
         return advertise_refs_with_caps(&repo);
@@ -227,6 +246,26 @@ fn list_all_refs(git_dir: &Path) -> Result<Vec<(String, ObjectId)>> {
 }
 
 /// Open a repository (bare or non-bare).
+/// Highest protocol version requested via `GIT_PROTOCOL` (`version=0`, `version=1`, `version=2`).
+///
+/// When unset, returns 0 so behaviour matches historical Git upload-pack defaults.
+fn server_protocol_version_from_env() -> u8 {
+    let Ok(raw) = std::env::var("GIT_PROTOCOL") else {
+        return 0;
+    };
+    let mut best = 0u8;
+    for part in raw.split(':') {
+        let Some(rest) = part.strip_prefix("version=") else {
+            continue;
+        };
+        let v = rest.parse::<u8>().unwrap_or(0);
+        if v > best {
+            best = v;
+        }
+    }
+    best
+}
+
 fn open_repo(path: &Path) -> Result<Repository> {
     if let Ok(repo) = Repository::open(path, None) {
         return Ok(repo);

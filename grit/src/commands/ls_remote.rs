@@ -3,12 +3,17 @@
 //! Only the **local path** transport is supported.  Network URLs are not
 //! handled in v1.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::ls_remote::{ls_remote, Options};
+use grit_lib::ls_remote::{ls_remote, Options, RefEntry};
+use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
+use std::io::{Cursor, Read, Write};
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
+
+use crate::pkt_line;
 
 /// Arguments for `grit ls-remote`.
 #[derive(Debug, ClapArgs)]
@@ -54,15 +59,18 @@ pub struct Args {
 ///
 /// Exits with status 1 when no refs match (same behaviour as `git ls-remote`).
 pub fn run(args: Args) -> Result<()> {
-    // Accepted for compatibility; local-path implementation does not use it.
-    let _ = &args.upload_pack;
-
     // If the repository argument is a configured remote name, resolve its URL
     let effective_path = resolve_remote_or_path(&args.repository);
 
     // Check if the path is a bundle file
     if is_bundle_file(&effective_path) {
         return run_bundle_ls_remote(&effective_path, &args);
+    }
+
+    if let Some(upload_pack) = args.upload_pack.as_deref() {
+        if !upload_pack.is_empty() {
+            return run_ls_remote_via_upload_pack(&effective_path, upload_pack, &args);
+        }
     }
 
     let repo = open_local_repo(&effective_path)?;
@@ -95,6 +103,273 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn run_ls_remote_via_upload_pack(repo_path: &Path, upload_pack: &str, args: &Args) -> Result<()> {
+    let repo = open_local_repo(repo_path)?;
+    let repo_dir = repo
+        .work_tree
+        .clone()
+        .unwrap_or_else(|| repo.git_dir.clone());
+
+    let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
+
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(upload_pack)
+        .arg(repo_dir.to_string_lossy().as_ref())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("failed to run upload-pack via sh -c '{upload_pack}'"))?;
+
+    let mut stdin = child.stdin.take().context("upload-pack stdin")?;
+    let mut stdout = child.stdout.take().context("upload-pack stdout")?;
+    let mut stderr = child.stderr.take().context("upload-pack stderr")?;
+
+    let stderr_buf = std::thread::spawn(move || {
+        let mut v = Vec::new();
+        let _ = stderr.read_to_end(&mut v);
+        v
+    });
+
+    let entries = read_ls_remote_upload_pack_output(&mut stdin, &mut stdout, &default_hash, args)?;
+    drop(stdin);
+
+    let status = child.wait()?;
+    let err_bytes = stderr_buf.join().unwrap_or_default();
+    if !err_bytes.is_empty() {
+        let _ = std::io::stderr().write_all(&err_bytes);
+    }
+    if !status.success() {
+        bail!(
+            "upload-pack exited with status {}",
+            status.code().unwrap_or(-1)
+        );
+    }
+    if entries.is_empty() {
+        return Ok(());
+    }
+    if args.quiet {
+        return Ok(());
+    }
+    for entry in &entries {
+        if let Some(target) = &entry.symref_target {
+            println!("ref: {target}\t{}", entry.name);
+        }
+        println!("{}\t{}", entry.oid, entry.name);
+    }
+    Ok(())
+}
+
+fn read_ls_remote_upload_pack_output(
+    stdin: &mut impl Write,
+    stdout: &mut impl Read,
+    object_format: &str,
+    args: &Args,
+) -> Result<Vec<RefEntry>> {
+    let first = match pkt_line::read_packet(stdout).context("read upload-pack first packet")? {
+        None => bail!("unexpected EOF from upload-pack"),
+        Some(p) => p,
+    };
+
+    match first {
+        pkt_line::Packet::Data(ref line) if line == "version 2" => {
+            skip_rest_of_v2_capability_advertisement(stdout)?;
+            write_v2_ls_refs_request(stdin, object_format, args)?;
+            stdin.flush()?;
+            let mut buf = Vec::new();
+            stdout
+                .take(512 * 1024)
+                .read_to_end(&mut buf)
+                .context("read v2 ls-refs response")?;
+            parse_v2_ls_refs_output(&buf, args)
+        }
+        pkt_line::Packet::Data(line) => {
+            let mut entries = parse_v0_ref_advertisement_line(&line, args)?;
+            loop {
+                match pkt_line::read_packet(stdout)? {
+                    None => break,
+                    Some(pkt_line::Packet::Flush) => break,
+                    Some(pkt_line::Packet::Data(l)) => {
+                        entries.extend(parse_v0_ref_advertisement_line(&l, args)?);
+                    }
+                    Some(other) => bail!("unexpected packet in v0 ref advertisement: {other:?}"),
+                }
+            }
+            Ok(entries)
+        }
+        other => bail!("unexpected first packet from upload-pack: {other:?}"),
+    }
+}
+
+/// Consume pkt-lines after the initial `version 2` line until `0000` flush.
+fn skip_rest_of_v2_capability_advertisement(r: &mut impl Read) -> Result<()> {
+    loop {
+        match pkt_line::read_packet(r).context("read v2 capability packet")? {
+            None => bail!("unexpected EOF in v2 capability advertisement"),
+            Some(pkt_line::Packet::Flush) => return Ok(()),
+            Some(pkt_line::Packet::Data(_)) => {}
+            Some(other) => bail!("unexpected packet in v2 capability advertisement: {other:?}"),
+        }
+    }
+}
+
+fn symref_head_target_from_caps(caps: &str) -> Option<String> {
+    for word in caps.split_whitespace() {
+        if let Some(t) = word.strip_prefix("symref=HEAD:") {
+            return Some(t.to_owned());
+        }
+    }
+    None
+}
+
+/// Parse one v0/v1 ref advertisement pkt-line (`<oid>\t<ref>[\0<capabilities>]`).
+fn parse_v0_ref_advertisement_line(raw: &str, args: &Args) -> Result<Vec<RefEntry>> {
+    let (payload, caps_opt) = match raw.split_once('\0') {
+        Some((p, c)) => (p, Some(c)),
+        None => (raw, None),
+    };
+    let (oid_hex, refname) = payload
+        .split_once('\t')
+        .or_else(|| payload.split_once(' '))
+        .ok_or_else(|| anyhow::anyhow!("malformed v0 ref advertisement: {raw}"))?;
+    let refname = refname.split('\0').next().unwrap_or(refname).trim();
+    let oid = ObjectId::from_hex(oid_hex.trim())
+        .with_context(|| format!("bad oid in v0 ref advertisement: {oid_hex}"))?;
+
+    if args.heads && refname != "HEAD" && !refname.starts_with("refs/heads/") {
+        return Ok(vec![]);
+    }
+    if args.tags && !refname.starts_with("refs/tags/") {
+        return Ok(vec![]);
+    }
+    if args.refs_only && (refname == "HEAD" || refname.ends_with("^{}")) {
+        return Ok(vec![]);
+    }
+    if !grit_lib::ls_remote::ref_matches_ls_remote_patterns(refname, &args.patterns) {
+        return Ok(vec![]);
+    }
+
+    let symref_target = if args.symref && refname == "HEAD" {
+        caps_opt.and_then(symref_head_target_from_caps)
+    } else {
+        None
+    };
+
+    Ok(vec![RefEntry {
+        name: refname.to_owned(),
+        oid,
+        symref_target,
+    }])
+}
+
+fn write_v2_ls_refs_request(w: &mut impl Write, object_format: &str, args: &Args) -> Result<()> {
+    pkt_line::write_line(w, "command=ls-refs")?;
+    pkt_line::write_line(w, &format!("object-format={object_format}"))?;
+    pkt_line::write_delim(w)?;
+    if args.symref {
+        pkt_line::write_line(w, "symrefs")?;
+    }
+    if !args.refs_only {
+        pkt_line::write_line(w, "peel")?;
+    }
+    if args.heads {
+        pkt_line::write_line(w, "ref-prefix refs/heads/")?;
+    }
+    if args.tags {
+        pkt_line::write_line(w, "ref-prefix refs/tags/")?;
+    }
+    for p in &args.patterns {
+        pkt_line::write_line(w, &format!("ref-prefix {p}"))?;
+    }
+    pkt_line::write_flush(w)?;
+    Ok(())
+}
+
+fn parse_v2_ls_refs_output(data: &[u8], args: &Args) -> Result<Vec<RefEntry>> {
+    let mut cursor = Cursor::new(data);
+    let mut entries: Vec<RefEntry> = Vec::new();
+
+    loop {
+        let pkt = match pkt_line::read_packet(&mut cursor)? {
+            None => break,
+            Some(pkt_line::Packet::Flush) => break,
+            Some(pkt_line::Packet::Data(line)) => line,
+            Some(other) => bail!("unexpected pkt-line in ls-refs response: {other:?}"),
+        };
+
+        let (name, oid, peeled, symref_target) = parse_ls_refs_v2_line(&pkt)?;
+        if !grit_lib::ls_remote::ref_matches_ls_remote_patterns(&name, &args.patterns) {
+            continue;
+        }
+
+        entries.push(RefEntry {
+            name: name.clone(),
+            oid,
+            symref_target: symref_target.clone(),
+        });
+
+        if let Some(poid) = peeled {
+            if !args.refs_only {
+                entries.push(RefEntry {
+                    name: format!("{name}^{{}}"),
+                    oid: poid,
+                    symref_target: None,
+                });
+            }
+        }
+    }
+
+    entries.sort_by(|a, b| {
+        let rank = |n: &str| if n == "HEAD" { 0 } else { 1 };
+        match rank(&a.name).cmp(&rank(&b.name)) {
+            std::cmp::Ordering::Equal => a.name.cmp(&b.name),
+            o => o,
+        }
+    });
+
+    Ok(entries)
+}
+
+/// Parse one `ls-refs` v2 data line: `<oid> <ref> [peeled:<hex>] [symref-target:<path>]`.
+fn parse_ls_refs_v2_line(
+    line: &str,
+) -> Result<(String, ObjectId, Option<ObjectId>, Option<String>)> {
+    const PEEL: &str = " peeled:";
+    const SYM: &str = " symref-target:";
+
+    let (oid_hex, after_oid) = line
+        .split_once(' ')
+        .ok_or_else(|| anyhow::anyhow!("bad ls-refs line: {line}"))?;
+    let oid =
+        ObjectId::from_hex(oid_hex).with_context(|| format!("bad oid in ls-refs: {oid_hex}"))?;
+
+    let mut peeled = None;
+    let mut symref_target = None;
+
+    if let Some(pos) = after_oid.find(PEEL) {
+        let name = after_oid[..pos].to_owned();
+        let tail = &after_oid[pos + PEEL.len()..];
+        let hex_end = tail.find(' ').unwrap_or(tail.len());
+        let ph = &tail[..hex_end];
+        peeled = Some(ObjectId::from_hex(ph).with_context(|| format!("bad peeled oid: {ph}"))?);
+        let rest = tail[hex_end..].trim_start();
+        if let Some(s) = rest.strip_prefix("symref-target:") {
+            symref_target = Some(s.to_owned());
+        }
+        return Ok((name, oid, peeled, symref_target));
+    }
+
+    if let Some(pos) = after_oid.find(SYM) {
+        let name = after_oid[..pos].to_owned();
+        let target = after_oid[pos + SYM.len()..].to_owned();
+        symref_target = Some(target);
+        return Ok((name, oid, peeled, symref_target));
+    }
+
+    Ok((after_oid.to_owned(), oid, None, None))
 }
 
 /// Open a local repository given a user-supplied path.
