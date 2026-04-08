@@ -2040,9 +2040,16 @@ fn commit_touches_paths(
             return Ok(true);
         }
         return Ok(commit_map.keys().any(|path| {
-            paths
-                .iter()
-                .any(|spec| crate::pathspec::pathspec_matches(spec, path))
+            paths.iter().any(|spec| {
+                crate::pathspec::matches_pathspec_with_context(
+                    spec,
+                    path,
+                    crate::pathspec::PathspecMatchContext {
+                        is_directory: false,
+                        is_git_submodule: false,
+                    },
+                )
+            })
         }));
     }
 
@@ -2101,7 +2108,7 @@ fn path_differs_for_specs(
     for path in &paths {
         if !specs
             .iter()
-            .any(|spec| crate::pathspec::pathspec_matches(spec, path))
+            .any(|spec| crate::pathspec::matches_pathspec(spec, path))
         {
             continue;
         }

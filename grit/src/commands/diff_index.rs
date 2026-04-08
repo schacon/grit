@@ -10,6 +10,7 @@ use grit_lib::index::{
 };
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
+use grit_lib::pathspec::{context_from_mode_bits, matches_pathspec_with_context};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
 use std::collections::{BTreeMap, BTreeSet};
@@ -44,12 +45,15 @@ pub fn run(args: Args) -> Result<()> {
             continue;
         }
         if let Ok(path) = String::from_utf8(entry.path.clone()) {
-            if matches_pathspec(&path, &options.pathspecs) {
+            let ctx = context_from_mode_bits(entry.mode);
+            if entry_matches_pathspecs(&path, &options.pathspecs, ctx) {
                 index_map.insert(path, Snapshot::from_index_entry(entry.mode, entry.oid));
             }
         }
     }
-    tree_map.retain(|path, _| matches_pathspec(path, &options.pathspecs));
+    tree_map.retain(|path, snap| {
+        entry_matches_pathspecs(path, &options.pathspecs, context_from_mode_bits(snap.mode))
+    });
 
     let changes = if options.cached {
         diff_tree_vs_index(&tree_map, &index_map)
@@ -794,54 +798,17 @@ fn canonicalize_mode(raw_mode: u32) -> u32 {
     }
 }
 
-fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {
+fn entry_matches_pathspecs(
+    path: &str,
+    pathspecs: &[String],
+    ctx: grit_lib::pathspec::PathspecMatchContext,
+) -> bool {
     if pathspecs.is_empty() {
         return true;
     }
-    pathspecs.iter().any(|spec| {
-        if spec.contains('*') || spec.contains('?') || spec.contains('[') {
-            // Glob pattern
-            glob_match_pathspec(spec, path)
-        } else if let Some(prefix) = spec.strip_suffix('/') {
-            path.starts_with(&format!("{prefix}/"))
-        } else {
-            path == spec || path.starts_with(&format!("{spec}/"))
-        }
-    })
-}
-
-/// Simple glob matching for pathspecs.
-fn glob_match_pathspec(pattern: &str, text: &str) -> bool {
-    let pat = pattern.as_bytes();
-    let txt = text.as_bytes();
-    let mut pi = 0;
-    let mut ti = 0;
-    let mut star_pi = usize::MAX;
-    let mut star_ti = 0;
-
-    while ti < txt.len() {
-        if pi < pat.len() && pat[pi] == b'?' && txt[ti] != b'/' {
-            pi += 1;
-            ti += 1;
-        } else if pi < pat.len() && pat[pi] == b'*' {
-            star_pi = pi;
-            star_ti = ti;
-            pi += 1;
-        } else if pi < pat.len() && pat[pi] == txt[ti] {
-            pi += 1;
-            ti += 1;
-        } else if star_pi != usize::MAX {
-            star_ti += 1;
-            ti = star_ti;
-            pi = star_pi + 1;
-        } else {
-            return false;
-        }
-    }
-    while pi < pat.len() && pat[pi] == b'*' {
-        pi += 1;
-    }
-    pi == pat.len()
+    pathspecs
+        .iter()
+        .any(|spec| matches_pathspec_with_context(spec, path, ctx))
 }
 
 fn effective_index_path(repo: &Repository) -> Result<PathBuf> {
