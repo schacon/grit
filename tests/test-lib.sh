@@ -166,6 +166,9 @@ EOF
 exec "$GUST_BIN" scalar "\$@"
 EOF
 	chmod +x "$BIN_DIRECTORY/scalar"
+	# Save PATH before grit/git wrappers so test_done can restore the caller's environment.
+	TEST_LIB_ORIG_PATH=$PATH
+	export TEST_LIB_ORIG_PATH
 	# Prepend BIN_DIRECTORY to PATH so every subshell sees 'git' → grit
 PATH="$TEST_DIRECTORY:$PATH"
 	export PATH="$BIN_DIRECTORY:$PATH"
@@ -178,6 +181,15 @@ PATH="$TEST_DIRECTORY:$PATH"
 		"$GUST_BIN" init >/dev/null 2>&1 ||
 			echo "warning: could not git init trash directory" >&2
 
+	fi
+}
+
+# Restore PATH to the value before `setup_trash` added grit/git wrappers (real `git` again).
+test_lib_restore_path () {
+	if test -n "${TEST_LIB_ORIG_PATH-}"
+	then
+		PATH=$TEST_LIB_ORIG_PATH
+		export PATH
 	fi
 }
 
@@ -1237,6 +1249,7 @@ GIT_EXIT_OK=
 die () {
 	code=$?
 	test_atexit_handler || code=$?
+	test_lib_restore_path
 	if test -n "$GIT_EXIT_OK"
 	then
 		exit "$code"

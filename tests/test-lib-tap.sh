@@ -302,6 +302,7 @@ test_must_fail () {
 test_done() {
 	test_atexit_handler
 	rm -rf "$BIN_DIRECTORY" 2>/dev/null
+	test_lib_restore_path
 	if test -n "$skip_all"
 	then
 		echo "1..0 # SKIP $skip_all"
