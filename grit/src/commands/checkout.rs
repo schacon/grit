@@ -12,6 +12,7 @@ use clap::Args as ClapArgs;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
@@ -280,6 +281,11 @@ pub fn run(mut args: Args) -> Result<()> {
             }
             if (s == "--detach" || s == "-d") && !args.detach {
                 args.detach = true;
+                i += 1;
+                continue;
+            }
+            if (s == "-f" || s == "--force") && !args.force {
+                args.force = true;
                 i += 1;
                 continue;
             }
@@ -699,6 +705,19 @@ fn split_target_and_paths(
 // Branch switching
 // ---------------------------------------------------------------------------
 
+/// Exit with status 128 if `name` is not a valid branch ref (`refs/heads/<name>`).
+fn validate_new_branch_name(name: &str) {
+    let full = format!("refs/heads/{name}");
+    let opts = RefNameOptions {
+        allow_onelevel: true,
+        ..Default::default()
+    };
+    if check_refname_format(&full, &opts).is_err() {
+        eprintln!("fatal: '{name}' is not a valid branch name");
+        std::process::exit(128);
+    }
+}
+
 /// Switch HEAD to an existing branch, updating the working tree and index.
 fn switch_branch(
     repo: &Repository,
@@ -829,6 +848,7 @@ fn create_and_switch_branch(
 
     // Check the branch doesn't already exist
     let branch_ref = format!("refs/heads/{name}");
+    validate_new_branch_name(name);
     if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
         eprintln!("fatal: a branch named '{name}' already exists");
         std::process::exit(128);
@@ -896,6 +916,7 @@ fn force_create_and_switch_branch(
     force: bool,
 ) -> Result<()> {
     let branch_ref = format!("refs/heads/{name}");
+    validate_new_branch_name(name);
 
     // Check if branch is checked out in another worktree (including main)
     {
@@ -1022,6 +1043,7 @@ fn force_create_and_switch_branch(
 /// If a start_point is given, populates the index/worktree from that commit.
 fn create_orphan_branch(repo: &Repository, name: &str, start_point: Option<&str>) -> Result<()> {
     let branch_ref = format!("refs/heads/{name}");
+    validate_new_branch_name(name);
 
     // Check the branch doesn't already exist
     if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {

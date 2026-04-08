@@ -40,6 +40,10 @@ pub struct Args {
     #[arg(long = "merge", short = 'm')]
     pub merge: bool,
 
+    /// Proceed even if local changes would be overwritten (same as checkout `--force`).
+    #[arg(long = "discard-changes")]
+    pub discard_changes: bool,
+
     #[arg(long = "guess")]
     pub guess: bool,
 
@@ -88,6 +92,9 @@ pub fn run(args: Args) -> Result<()> {
     }
     if args.merge {
         checkout_tail.push("-m".to_string());
+    }
+    if args.discard_changes {
+        checkout_tail.push("-f".to_string());
     }
     if args.guess {
         checkout_tail.push("--guess".to_string());
