@@ -191,6 +191,10 @@ pub fn run(args: Args) -> Result<()> {
         bail!("Only one of -m, -F, -C, -c can be used.");
     }
 
+    if args.reset_author && args.author.is_some() {
+        bail!("options '--reset-author' and '--author' cannot be used together");
+    }
+
     // -a and explicit pathspec don't mix
     if args.all && !args.pathspec.is_empty() {
         bail!(
@@ -205,6 +209,16 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;
+
+    let reset_author_allowed = args.amend
+        || args.reuse_message.is_some()
+        || args.reedit_message.is_some()
+        || repo.git_dir.join("CHERRY_PICK_HEAD").exists()
+        || repo.git_dir.join("REBASE_HEAD").exists();
+    if args.reset_author && !reset_author_allowed {
+        bail!("--reset-author can be used only with -C, -c or --amend.");
+    }
+
     let work_tree = repo.work_tree.as_deref();
 
     // If -a, stage all tracked file changes first
@@ -335,6 +349,7 @@ pub fn run(args: Args) -> Result<()> {
 
     // When amending, preserve original author unless explicitly overridden
     let amend_author = if args.amend
+        && !args.reset_author
         && args.author.is_none()
         && args.reuse_message.is_none()
         && args.reedit_message.is_none()
@@ -343,6 +358,7 @@ pub fn run(args: Args) -> Result<()> {
         if let Some(head_oid) = head.oid() {
             let obj = repo.odb.read(head_oid)?;
             let commit = grit_lib::objects::parse_commit(&obj.data)?;
+            validate_amend_source_author(&commit.author)?;
             Some(commit.author)
         } else {
             None
@@ -353,7 +369,7 @@ pub fn run(args: Args) -> Result<()> {
     let author = if let Some(preserved) = amend_author {
         preserved
     } else {
-        resolve_author(&args, &config, now)?
+        resolve_author(&args, &config, &repo, now)?
     };
     let committer = resolve_committer(&config, now)?;
 
@@ -982,7 +998,87 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
     bail!("no commit message provided (use -m or -F)");
 }
 
-/// Resolve the author identity from args, env, and config.
+/// Parse `git commit --author="Name <email>"` parameter into name and email.
+fn parse_force_author_parameter(author: &str) -> Result<(String, String)> {
+    let Some(lt) = author.find('<') else {
+        bail!("malformed --author parameter");
+    };
+    let Some(gt) = author.rfind('>') else {
+        bail!("malformed --author parameter");
+    };
+    if gt <= lt {
+        bail!("malformed --author parameter");
+    }
+    let name = author[..lt].trim_end();
+    let email = author[lt + 1..gt].trim();
+    if name.is_empty() {
+        bail!("empty ident name (for <author>) not allowed");
+    }
+    if email.is_empty() {
+        bail!("malformed --author parameter");
+    }
+    if lt > 0 && author.as_bytes()[lt - 1] != b' ' {
+        bail!("malformed --author parameter");
+    }
+    Ok((name.to_string(), email.to_string()))
+}
+
+/// Split a stored author line (`name <email> <epoch> <tz>`) into name, email, and optional date tail.
+fn split_stored_author_line(author: &str) -> Result<(String, String, Option<String>)> {
+    let Some(lt) = author.find('<') else {
+        bail!("malformed author line");
+    };
+    let Some(gt) = author.rfind('>') else {
+        bail!("malformed author line");
+    };
+    if gt <= lt {
+        bail!("malformed author line");
+    }
+    let name = author[..lt].trim_end();
+    let email = author[lt + 1..gt].trim();
+    let after_gt = author[gt + 1..].trim_start();
+    let date_tail = if after_gt.is_empty() {
+        None
+    } else {
+        Some(after_gt.to_string())
+    };
+    Ok((name.to_string(), email.to_string(), date_tail))
+}
+
+/// Reject empty/malformed author identity when amending (matches Git's strictness for t7509).
+fn validate_amend_source_author(author: &str) -> Result<()> {
+    let (name, email, date_tail) = split_stored_author_line(author)
+        .map_err(|_| anyhow::anyhow!("commit has malformed author line"))?;
+    if name.is_empty() {
+        bail!("empty ident name (for <author>) not allowed");
+    }
+    validate_ident_name(&name, "author")?;
+    if email.is_empty() {
+        bail!("empty ident name (for <author>) not allowed");
+    }
+    if date_tail.is_none() || date_tail.as_ref().is_some_and(|s| s.is_empty()) {
+        bail!("empty ident name (for <author>) not allowed");
+    }
+    Ok(())
+}
+
+fn read_cherry_pick_head_author(repo: &Repository) -> Result<Option<String>> {
+    let path = repo.git_dir.join("CHERRY_PICK_HEAD");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(&path).context("read CHERRY_PICK_HEAD")?;
+    let hex = content.trim();
+    if hex.is_empty() {
+        return Ok(None);
+    }
+    let oid: ObjectId = hex
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid CHERRY_PICK_HEAD"))?;
+    let obj = repo.odb.read(&oid)?;
+    let commit = grit_lib::objects::parse_commit(&obj.data)?;
+    Ok(Some(commit.author))
+}
 
 /// Check if an ident name is valid (not empty and not all special characters).
 fn validate_ident_name(name: &str, kind: &str) -> Result<()> {
@@ -1009,19 +1105,53 @@ fn validate_ident_name(name: &str, kind: &str) -> Result<()> {
     Ok(())
 }
 
-fn resolve_author(args: &Args, config: &ConfigSet, now: OffsetDateTime) -> Result<String> {
-    // --reuse-message / --reedit-message: reuse the original commit's author
-    let reuse_rev = args.reuse_message.as_ref().or(args.reedit_message.as_ref());
-    if let Some(rev) = reuse_rev {
-        let repo = Repository::discover(None)?;
-        let oid = resolve_revision(&repo, rev)?;
-        let obj = repo.odb.read(&oid)?;
-        let commit = grit_lib::objects::parse_commit(&obj.data)?;
-        return Ok(commit.author);
+fn resolve_author(
+    args: &Args,
+    config: &ConfigSet,
+    repo: &Repository,
+    now: OffsetDateTime,
+) -> Result<String> {
+    if let Some(ref author) = args.author {
+        let (name, email) = parse_force_author_parameter(author)?;
+        validate_ident_name(&name, "author")?;
+        let date_str = args
+            .date
+            .as_deref()
+            .map(String::from)
+            .or_else(|| std::env::var("GIT_AUTHOR_DATE").ok());
+        let timestamp = match date_str {
+            Some(d) => parse_date_to_git_timestamp(&d).unwrap_or(d),
+            None => format_git_timestamp(now),
+        };
+        return Ok(format!("{name} <{email}> {timestamp}"));
     }
 
-    if let Some(ref author) = args.author {
-        return Ok(author.clone());
+    let reuse_rev = args.reuse_message.as_ref().or(args.reedit_message.as_ref());
+    if let Some(rev) = reuse_rev {
+        if !args.reset_author {
+            let oid = resolve_revision(repo, rev)?;
+            let obj = repo.odb.read(&oid)?;
+            let commit = grit_lib::objects::parse_commit(&obj.data)?;
+            if let Some(ref d) = args.date {
+                let (name, email, _) = split_stored_author_line(&commit.author)?;
+                validate_ident_name(&name, "author")?;
+                let timestamp = parse_date_to_git_timestamp(d).unwrap_or_else(|| d.to_string());
+                return Ok(format!("{name} <{email}> {timestamp}"));
+            }
+            return Ok(commit.author);
+        }
+    }
+
+    if !args.reset_author {
+        if let Some(cp_author) = read_cherry_pick_head_author(repo)? {
+            if let Some(ref d) = args.date {
+                let (name, email, _) = split_stored_author_line(&cp_author)?;
+                validate_ident_name(&name, "author")?;
+                let timestamp = parse_date_to_git_timestamp(d).unwrap_or_else(|| d.to_string());
+                return Ok(format!("{name} <{email}> {timestamp}"));
+            }
+            return Ok(cp_author);
+        }
     }
 
     let name = std::env::var("GIT_AUTHOR_NAME")

@@ -1230,7 +1230,7 @@ t7505-prepare-commit-msg-hook	t7	yes	23	5	18	false	ok	0
 t7506-status-submodule	t7	yes	40	4	36	false	ok	0
 t7507-commit-verbose	t7	yes	45	19	26	false	ok	0
 t7508-status	t7	yes	126	38	88	false	ok	0
-t7509-commit-authorship	t7	yes	12	5	7	false	ok	0
+t7509-commit-authorship	t7	yes	12	12	0	true	ok	0
 t7510-signed-commit	t7	skip	28	0	0	false	ok	0
 t7511-status-index	t7	yes	24	24	0	true	ok	0
 t7512-status-help	t7	yes	47	7	40	false	ok	0

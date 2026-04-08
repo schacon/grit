@@ -846,7 +846,7 @@ commit → check it off → move on.
 - [ ] `t7031-verify-tag-signed-ssh` █████░░░░░░░░░░░░░░░ 4/14 (10 left) — signed tag tests
 - [ ] `t7010-setup` ██████░░░░░░░░░░░░░░ 5/16 (11 left) — setup taking and sanitizing funny paths
 - [ ] `t7424-submodule-mixed-ref-formats` ████░░░░░░░░░░░░░░░░ 3/14 (11 left) — submodules handle mixed ref storage formats
-- [ ] `t7509-commit-authorship` █░░░░░░░░░░░░░░░░░░░ 1/12 (11 left) — commit tests of various authorhip options. 
+- [x] `t7509-commit-authorship` ████████████████████ 12/12 (0 left) — commit tests of various authorhip options. 
 - [ ] `t7521-ignored-mode` █░░░░░░░░░░░░░░░░░░░ 1/12 (11 left) — git status ignored modes
 - [ ] `t7005-editor` ░░░░░░░░░░░░░░░░░░░░ 0/11 (11 left) — GIT_EDITOR, core.editor, and stuff
 - [ ] `t7107-reset-pathspec-file` ░░░░░░░░░░░░░░░░░░░░ 0/11 (11 left) — reset --pathspec-from-file
