@@ -29,7 +29,7 @@ t0029-core-unsetenvvars	t0	skip	2	0	0	false	ok	0
 t0030-stripspace	t0	yes	30	30	0	true	ok	0
 t0031-lockfile-pid	t0	yes	7	7	0	true	ok	0
 t0033-safe-directory	t0	yes	22	22	0	true	ok	0
-t0034-root-safe-directory	t0	yes	8	8	0	true	ok	0
+t0034-root-safe-directory	t0	yes	0	0	0	false	ok	0
 t0035-safe-bare-repository	t0	yes	12	8	4	false	ok	0
 t0040-parse-options	t0	yes	94	73	21	false	ok	0
 t0041-usage	t0	yes	16	14	2	false	ok	0
