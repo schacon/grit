@@ -643,6 +643,7 @@ fn create_virtual_merge_base(
             false,
             false,
             MergeDirectoryRenamesMode::FromConfig,
+            MergeRenameOptions::from_config(repo),
         )?;
 
         // Build a tree from the merged index:
@@ -939,6 +940,7 @@ fn do_real_merge(
         false,
         false,
         MergeDirectoryRenamesMode::FromConfig,
+        MergeRenameOptions::from_config(repo),
     )?;
 
     // Refuse merges that would overwrite local changes or untracked files.
@@ -1635,6 +1637,7 @@ fn do_octopus_merge(
             false,
             false,
             MergeDirectoryRenamesMode::FromConfig,
+            MergeRenameOptions::from_config(repo),
         )?;
 
         if merge_result.has_conflicts {
@@ -2577,6 +2580,48 @@ fn parse_conflict_marker_size(
     }
 }
 
+/// Rename detection settings for tree merge (CLI and `merge.renames` / `diff.renames`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct MergeRenameOptions {
+    /// When false, skip all rename detection (exact and similarity-based).
+    pub detect: bool,
+    /// Minimum similarity percentage (0–100) for similarity-based renames.
+    pub threshold: u32,
+}
+
+impl MergeRenameOptions {
+    /// Load defaults from config: `merge.renames` overrides `diff.renames`; threshold is 50%.
+    pub fn from_config(repo: &Repository) -> Self {
+        let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
+        let detect = merge_renames_enabled_from_config(config.as_ref());
+        Self {
+            detect,
+            threshold: 50,
+        }
+    }
+}
+
+fn merge_renames_enabled_from_config(config: Option<&ConfigSet>) -> bool {
+    let Some(c) = config else {
+        return true;
+    };
+    if let Some(v) = c.get("merge.renames") {
+        return config_value_enables_renames(&v);
+    }
+    if let Some(v) = c.get("diff.renames") {
+        return config_value_enables_renames(&v);
+    }
+    true
+}
+
+fn config_value_enables_renames(val: &str) -> bool {
+    let lowered = val.trim().to_ascii_lowercase();
+    matches!(
+        lowered.as_str(),
+        "true" | "yes" | "on" | "1" | "" | "copies" | "copy"
+    )
+}
+
 /// Build rename maps from base to each side.
 ///
 /// Detects renames by looking for base blobs that appear at different paths
@@ -2590,8 +2635,12 @@ fn detect_merge_renames(
     base: &HashMap<Vec<u8>, IndexEntry>,
     ours: &HashMap<Vec<u8>, IndexEntry>,
     theirs: &HashMap<Vec<u8>, IndexEntry>,
+    rename_opts: MergeRenameOptions,
 ) -> (HashMap<Vec<u8>, Vec<u8>>, HashMap<Vec<u8>, Vec<u8>>) {
-    let threshold = 50u32;
+    if !rename_opts.detect {
+        return (HashMap::new(), HashMap::new());
+    }
+    let threshold = rename_opts.threshold.min(100);
     // Read merge.renamelimit or fall back to diff.renamelimit
     let rename_limit: usize = {
         let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
@@ -2951,9 +3000,11 @@ fn merge_trees(
     ignore_space_at_eol: bool,
     ignore_cr_at_eol: bool,
     merge_directory_renames_mode: MergeDirectoryRenamesMode,
+    rename_options: MergeRenameOptions,
 ) -> Result<MergeResult> {
     // Detect renames on each side
-    let (mut ours_renames, mut theirs_renames) = detect_merge_renames(repo, base, ours, theirs);
+    let (mut ours_renames, mut theirs_renames) =
+        detect_merge_renames(repo, base, ours, theirs, rename_options);
     let mut ours_entries = ours.clone();
     let mut theirs_entries = theirs.clone();
 
@@ -3715,6 +3766,7 @@ pub(crate) fn merge_trees_for_replay(
     ignore_space_at_eol: bool,
     ignore_cr_at_eol: bool,
     merge_directory_renames_mode: MergeDirectoryRenamesMode,
+    rename_options: MergeRenameOptions,
 ) -> Result<ReplayTreeMergeResult> {
     let head = HeadState::Invalid;
     let result = merge_trees(
@@ -3733,6 +3785,7 @@ pub(crate) fn merge_trees_for_replay(
         ignore_space_at_eol,
         ignore_cr_at_eol,
         merge_directory_renames_mode,
+        rename_options,
     )?;
     Ok(ReplayTreeMergeResult {
         index: result.index,

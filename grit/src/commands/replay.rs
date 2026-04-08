@@ -4,7 +4,9 @@
 //! tree merging for each replayed commit and printing an `update-ref --stdin`
 //! command for the updated branch.
 
-use crate::commands::merge::{merge_trees_for_replay, MergeDirectoryRenamesMode};
+use crate::commands::merge::{
+    merge_trees_for_replay, MergeDirectoryRenamesMode, MergeRenameOptions,
+};
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
@@ -176,6 +178,7 @@ pub fn run(args: Args) -> Result<()> {
             false,
             false,
             MergeDirectoryRenamesMode::Disabled,
+            MergeRenameOptions::from_config(&repo),
         )?;
         if merge_result.has_conflicts {
             let reason = merge_result

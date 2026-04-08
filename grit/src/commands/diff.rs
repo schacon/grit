@@ -367,6 +367,10 @@ pub struct Args {
     #[arg(skip)]
     pub pickaxe_grep: Option<String>,
 
+    /// Filter diff output by change type (e.g. `R` for renames only). Parsed from trailing args.
+    #[arg(skip)]
+    pub diff_filter: Option<String>,
+
     /// Treat the string given to -S as a POSIX extended regex.
     #[arg(long = "pickaxe-regex")]
     pub pickaxe_regex: bool,
@@ -509,9 +513,14 @@ pub fn run(mut args: Args) -> Result<()> {
                     args.line_prefix =
                         Some(s.strip_prefix("--line-prefix=").unwrap_or("").to_owned());
                 }
+                s if s.starts_with("--diff-filter=") => {
+                    args.diff_filter =
+                        Some(s.strip_prefix("--diff-filter=").unwrap_or("").to_owned());
+                }
                 s if s == "-M"
-                    || s.starts_with("-M")
-                        && s[2..].bytes().all(|b| b.is_ascii_digit() || b == b'%') =>
+                    || (s.starts_with("-M")
+                        && s.len() > 2
+                        && s[2..].bytes().all(|b| b.is_ascii_digit() || b == b'%')) =>
                 {
                     let val = if s.len() > 2 { &s[2..] } else { "50" };
                     args.find_renames = Some(val.to_owned());
@@ -683,7 +692,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Apply rename detection if requested (explicit -M flag or diff.renames config).
     let rename_threshold: Option<u32> = if let Some(ref threshold_str) = args.find_renames {
-        Some(threshold_str.parse().unwrap_or(50))
+        Some(parse_diff_rename_threshold(threshold_str))
     } else {
         // Check diff.renames config.
         use grit_lib::config::ConfigSet;
@@ -717,6 +726,16 @@ pub fn run(mut args: Args) -> Result<()> {
                 e.old_mode != "160000" && e.new_mode != "160000"
             })
             .collect()
+    } else {
+        entries
+    };
+
+    let entries = if let Some(ref df) = args.diff_filter {
+        if df.is_empty() {
+            entries
+        } else {
+            apply_diff_filter(entries, df)
+        }
     } else {
         entries
     };
@@ -1473,6 +1492,42 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 /// If `--` is present, everything before is revisions, everything after is paths.
 /// Otherwise, we try each arg: if it exists as a file, treat it (and all
 /// subsequent args) as paths rather than revisions.
+/// Parse `-M` / `--find-renames` similarity: optional trailing `%`, capped at 100 (Git truncates).
+fn parse_diff_rename_threshold(raw: &str) -> u32 {
+    let t = raw.trim();
+    let num = t.strip_suffix('%').unwrap_or(t);
+    num.parse::<u32>().unwrap_or(50).min(100)
+}
+
+/// Apply `--diff-filter` (include uppercase status letters, exclude lowercase).
+fn apply_diff_filter(entries: Vec<DiffEntry>, filter: &str) -> Vec<DiffEntry> {
+    let mut include: Option<std::collections::HashSet<char>> = None;
+    let mut exclude: std::collections::HashSet<char> = std::collections::HashSet::new();
+    for c in filter.chars() {
+        if c == '*' {
+            continue;
+        }
+        if c.is_ascii_uppercase() {
+            include.get_or_insert_with(Default::default).insert(c);
+        } else if c.is_ascii_lowercase() {
+            exclude.insert(c.to_ascii_uppercase());
+        }
+    }
+    entries
+        .into_iter()
+        .filter(|e| {
+            let ch = e.status.letter();
+            if exclude.contains(&ch) {
+                return false;
+            }
+            if let Some(ref inc) = include {
+                return inc.contains(&ch);
+            }
+            true
+        })
+        .collect()
+}
+
 fn parse_rev_and_paths(args: &[String], has_separator: bool) -> (Vec<String>, Vec<String>) {
     if let Some(sep) = args.iter().position(|a| a == "--") {
         let revs = args[..sep].to_vec();

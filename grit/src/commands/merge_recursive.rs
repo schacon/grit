@@ -13,7 +13,7 @@ use grit_lib::repo::Repository;
 use std::collections::HashMap;
 use std::path::Path;
 
-use super::merge::{merge_trees_for_replay, MergeDirectoryRenamesMode};
+use super::merge::{merge_trees_for_replay, MergeDirectoryRenamesMode, MergeRenameOptions};
 
 /// Arguments for `grit merge-recursive`.
 #[derive(Debug, ClapArgs)]
@@ -27,7 +27,11 @@ pub struct Args {
 /// Run `grit merge-recursive`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    let (ws, positional) = parse_args(&args.args)?;
+    let MergeRecursiveParsed {
+        ws,
+        rename_options,
+        positional,
+    } = parse_args(&repo, &args.args)?;
     if positional.len() != 3 {
         bail!("usage: git merge-recursive [<options>] <base> -- <head> <remote> [<base>...]");
     }
@@ -61,6 +65,7 @@ pub fn run(args: Args) -> Result<()> {
         ws.ignore_space_at_eol,
         ws.ignore_cr_at_eol,
         MergeDirectoryRenamesMode::FromConfig,
+        rename_options,
     )?;
 
     repo.write_index(&mut merge_result.index)?;
@@ -110,8 +115,31 @@ struct WhitespaceOptions {
     ignore_cr_at_eol: bool,
 }
 
-fn parse_args(args: &[String]) -> Result<(WhitespaceOptions, Vec<String>)> {
+struct MergeRecursiveParsed {
+    ws: WhitespaceOptions,
+    rename_options: MergeRenameOptions,
+    positional: Vec<String>,
+}
+
+/// Parse `--find-renames` / `--rename-threshold` percentage like Git (optional `%`, capped at 100).
+fn parse_merge_rename_percent(raw: &str) -> Result<u32> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        bail!("invalid similarity index: {raw}");
+    }
+    let num = trimmed.strip_suffix('%').unwrap_or(trimmed);
+    let value: i64 = num
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid similarity index: {raw}"))?;
+    if value < 0 {
+        bail!("invalid similarity index: {raw}");
+    }
+    Ok((value as u32).min(100))
+}
+
+fn parse_args(repo: &Repository, args: &[String]) -> Result<MergeRecursiveParsed> {
     let mut ws = WhitespaceOptions::default();
+    let mut rename_options = MergeRenameOptions::from_config(repo);
     let mut positional = Vec::new();
     let mut end_of_options = false;
 
@@ -132,10 +160,25 @@ fn parse_args(args: &[String]) -> Result<(WhitespaceOptions, Vec<String>)> {
                 "--ignore-cr-at-eol" => ws.ignore_cr_at_eol = true,
                 "--patience" | "--histogram" | "--minimal" => { /* accepted, ignored */ }
                 "--renormalize" | "--no-renormalize" => { /* accepted, ignored for now */ }
-                "--no-renames" | "--find-renames" => { /* accepted, ignored for now */ }
-                _ if arg.starts_with("--find-renames=")
-                    || arg.starts_with("--rename-threshold=") =>
-                { /* accepted */ }
+                "--no-renames" => {
+                    rename_options.detect = false;
+                }
+                "--find-renames" => {
+                    rename_options.detect = true;
+                    rename_options.threshold = 50;
+                }
+                _ if arg.starts_with("--find-renames=") => {
+                    let val = &arg["--find-renames=".len()..];
+                    rename_options.detect = true;
+                    rename_options.threshold = parse_merge_rename_percent(val)
+                        .with_context(|| format!("bad --find-renames argument: {val}"))?;
+                }
+                _ if arg.starts_with("--rename-threshold=") => {
+                    let val = &arg["--rename-threshold=".len()..];
+                    rename_options.detect = true;
+                    rename_options.threshold = parse_merge_rename_percent(val)
+                        .with_context(|| format!("bad --rename-threshold argument: {val}"))?;
+                }
                 _ => bail!("unknown option: {arg}"),
             }
             i += 1;
@@ -146,7 +189,11 @@ fn parse_args(args: &[String]) -> Result<(WhitespaceOptions, Vec<String>)> {
         i += 1;
     }
 
-    Ok((ws, positional))
+    Ok(MergeRecursiveParsed {
+        ws,
+        rename_options,
+        positional,
+    })
 }
 
 fn resolve_commit_oid(repo: &Repository, spec: &str) -> Result<ObjectId> {
