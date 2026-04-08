@@ -1014,7 +1014,8 @@ fn cherry_pick_for_rebase(
     )?;
     let mut merged_index = merge_result.index;
 
-    let has_conflicts = merged_index.entries.iter().any(|e| e.stage() != 0);
+    let has_conflicts = merged_index.entries.iter().any(|e| e.stage() != 0)
+        || !merge_result.conflict_files.is_empty();
 
     // Write index
     let old_index = load_index(repo)?;
@@ -1029,7 +1030,7 @@ fn cherry_pick_for_rebase(
     }
 
     if has_conflicts {
-        // Save MERGE_MSG for --continue
+        let _ = grit_lib::rerere::repo_rerere(repo, grit_lib::rerere::RerereAutoupdate::FromConfig);
         fs::write(git_dir.join("MERGE_MSG"), &commit.message)?;
         bail!("conflicts during cherry-pick of {}", commit_oid.to_hex());
     }

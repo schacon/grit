@@ -815,7 +815,7 @@ t4150-am	t4	yes	87	17	70	false	ok	0
 t4151-am-abort	t4	yes	20	3	17	false	ok	0
 t4152-am-subjects	t4	yes	13	13	0	true	ok	0
 t4153-am-resume-override-opts	t4	yes	6	6	0	true	ok	0
-t4200-rerere	t4	yes	36	7	29	false	ok	0
+t4200-rerere	t4	yes	36	20	16	false	ok	0
 t4201-log-graph	t4	yes	23	22	1	false	ok	0
 t4201-shortlog	t4	yes	32	7	25	false	ok	0
 t4202-log	t4	skip	145	0	0	false	ok	0

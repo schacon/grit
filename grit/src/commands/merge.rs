@@ -153,6 +153,14 @@ pub struct Args {
     /// Read the commit message from the given file.
     #[arg(short = 'F', long = "file", value_name = "FILE")]
     pub file: Option<String>,
+
+    /// After a failed merge, record conflict preimages / replay recorded resolutions and optionally stage.
+    #[arg(long = "rerere-autoupdate")]
+    pub rerere_autoupdate: bool,
+
+    /// Do not update the index when a recorded rerere resolution is replayed.
+    #[arg(long = "no-rerere-autoupdate")]
+    pub no_rerere_autoupdate: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,6 +208,8 @@ fn apply_mergeoptions(args: &mut Args, opts: &str) {
             "--no-edit" if !args.edit => args.no_edit = true,
             "--quiet" | "-q" => args.quiet = true,
             "--summary" if !cli_no_stat => args.summary = true,
+            "--rerere-autoupdate" => args.rerere_autoupdate = true,
+            "--no-rerere-autoupdate" => args.no_rerere_autoupdate = true,
             _ => {} // ignore unknown options
         }
     }
@@ -1016,6 +1026,14 @@ fn do_real_merge(
             }
         }
         println!("Automatic merge failed; fix conflicts and then commit the result.");
+        let rr = if args.no_rerere_autoupdate {
+            grit_lib::rerere::RerereAutoupdate::No
+        } else if args.rerere_autoupdate {
+            grit_lib::rerere::RerereAutoupdate::Yes
+        } else {
+            grit_lib::rerere::RerereAutoupdate::FromConfig
+        };
+        let _ = grit_lib::rerere::repo_rerere(repo, rr);
         std::process::exit(1);
     }
 

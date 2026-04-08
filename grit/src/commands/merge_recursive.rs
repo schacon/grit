@@ -87,6 +87,8 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if merge_result.has_conflicts {
+        let _ =
+            grit_lib::rerere::repo_rerere(&repo, grit_lib::rerere::RerereAutoupdate::FromConfig);
         for (kind, path) in &merge_result.conflict_descriptions {
             if kind == "binary" {
                 println!("Cannot merge binary files: {path}");

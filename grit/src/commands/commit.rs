@@ -487,7 +487,7 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // Clean up merge state files if present
+    let _ = grit_lib::rerere::rerere_post_commit(&repo);
     cleanup_merge_state(&repo.git_dir);
 
     // Run post-commit hook (informational, don't abort on failure)
