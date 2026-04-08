@@ -32,7 +32,7 @@
 - [x] t10560-switch-create-detach.sh
 - [ ] t10570-restore-worktree-only.sh
 - [ ] t1060-object-corruption.sh                                                                        - [ ] t10610-show-ref-dereference-extra.sh
-- [ ] t10620-update-ref-nul-stdin.sh
+- [x] t10620-update-ref-nul-stdin.sh
 - [ ] t10630-symbolic-ref-chain-extra.sh
 - [ ] t10640-check-ignore-negation.sh
 - [ ] t10650-merge-file-zdiff3.sh
