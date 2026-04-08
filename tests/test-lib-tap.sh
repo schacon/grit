@@ -117,6 +117,12 @@ test_expect_success() {
 	test -f "$TRASH_DIRECTORY/.test-exports" && . "$TRASH_DIRECTORY/.test-exports"
 	test_run_ "$commands"
 	result=$?
+	# Test bodies run in this shell; restore trash root so later cases do not
+	# inherit a stray `cd` from setup (matches always starting from trash).
+	cd "$TRASH_DIRECTORY" || {
+		echo >&2 "BUG: cannot cd to TRASH_DIRECTORY=$TRASH_DIRECTORY"
+		result=1
+	}
 	test -f "$TRASH_DIRECTORY/.test-exports" && . "$TRASH_DIRECTORY/.test-exports"
 	if test -f "$_TICK_FILE"
 	then
@@ -199,6 +205,10 @@ test_expect_failure() {
 	test -f "$_exports_file" && . "$_exports_file"
 	test_run_ "$commands" expecting_failure
 	result=$?
+	cd "$TRASH_DIRECTORY" || {
+		echo >&2 "BUG: cannot cd to TRASH_DIRECTORY=$TRASH_DIRECTORY"
+		result=1
+	}
 	test -f "$_exports_file" && . "$_exports_file"
 	if test -f "$_TICK_FILE"
 	then

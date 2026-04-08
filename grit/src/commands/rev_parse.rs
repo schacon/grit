@@ -541,15 +541,16 @@ pub fn run(args: Args) -> Result<()> {
                 let Some(current) = repo.as_ref() else {
                     bail!("not a git repository (or any of the parent directories)");
                 };
-                if cwd == current.git_dir.as_path() {
+                let git_dir = current.git_dir.as_path();
+                if cwd == git_dir {
                     println!(".");
-                } else if current.git_dir == cwd.join(".git") {
-                    // At worktree root: git prints ".git"
-                    println!(".git");
+                } else if cwd.starts_with(git_dir) {
+                    // Inside the git directory (e.g. `.git/hooks`): Git prints an absolute path.
+                    println!("{}", git_dir.display());
+                } else if let Ok(rel) = git_dir.strip_prefix(&cwd) {
+                    println!("{}", rel.display());
                 } else {
-                    // From subdirectories or non-standard layouts,
-                    // git prints the absolute path
-                    println!("{}", current.git_dir.display());
+                    println!("{}", relative_path_from(&cwd, git_dir).display());
                 }
             }
             Action::ShowGitCommonDir => {
