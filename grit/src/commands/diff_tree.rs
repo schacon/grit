@@ -115,6 +115,8 @@ struct Options {
     quiet: bool,
     /// Re-merge parents and diff against merge result tree.
     remerge_diff: bool,
+    /// Swap the two tree sides (`-R`), inverting raw/patch output like Git.
+    reverse: bool,
 }
 
 impl Default for Options {
@@ -150,6 +152,7 @@ impl Default for Options {
             exit_code: false,
             quiet: false,
             remerge_diff: false,
+            reverse: false,
         }
     }
 }
@@ -289,6 +292,17 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 }
                 // Silently accept common diff options that we do not implement.
                 "--no-rename-empty" | "--always" | "--diff-merges=off" | "--check" => {}
+                "-R" => opts.reverse = true,
+                _ if arg.len() > 2 && arg.starts_with("-R") => {
+                    opts.reverse = true;
+                    let rest = arg[2..].chars();
+                    for ch in rest {
+                        match ch {
+                            'p' | 'u' => opts.format = OutputFormat::Patch,
+                            _ => bail!("unknown option: -{ch}"),
+                        }
+                    }
+                }
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("--diff-merges=")
                     || arg.starts_with("--format=")
@@ -297,7 +311,6 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     || arg.starts_with("--pickaxe-all")
                     || arg.starts_with("--pickaxe-regex")
                     || arg.starts_with("-O")
-                    || arg.starts_with("-R")
                     || arg.starts_with("--relative") =>
                 {
                     // ignored
@@ -365,8 +378,13 @@ pub fn run(args: Args) -> Result<()> {
 // ── Two-tree mode ────────────────────────────────────────────────────
 
 fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<bool> {
-    let oid1 = resolve_to_tree(repo, &opts.objects[0])?;
-    let oid2 = resolve_to_tree(repo, &opts.objects[1])?;
+    let (spec_a, spec_b) = if opts.reverse {
+        (&opts.objects[1], &opts.objects[0])
+    } else {
+        (&opts.objects[0], &opts.objects[1])
+    };
+    let oid1 = resolve_to_tree(repo, spec_a)?;
+    let oid2 = resolve_to_tree(repo, spec_b)?;
     let max_tree_depth = resolve_max_tree_depth(repo)?;
     let old_tree = if is_magic_empty_tree_oid(&oid1) {
         None
@@ -658,7 +676,12 @@ fn process_stdin_two_trees(
     // Print both tree OIDs.
     writeln!(out, "{} {}", oid1.to_hex(), oid2.to_hex())?;
 
-    let entries = diff_with_opts(&repo.odb, Some(oid1), Some(&oid2), opts)?;
+    let (old_side, new_side) = if opts.reverse {
+        (Some(&oid2), Some(oid1))
+    } else {
+        (Some(oid1), Some(&oid2))
+    };
+    let entries = diff_with_opts(&repo.odb, old_side, new_side, opts)?;
     let filtered = filter_entries(entries, opts);
     print_diff(out, &repo.odb, &filtered, opts, None, &repo.git_dir)
 }
@@ -1178,6 +1201,8 @@ fn write_patch_entry(
     full_index: bool,
     git_dir: &Path,
 ) -> Result<bool> {
+    let (old_content, new_content) = read_blob_pair(odb, entry)?;
+
     let old_path = entry
         .old_path
         .as_deref()
@@ -1239,7 +1264,6 @@ fn write_patch_entry(
         DiffStatus::Unmerged => {}
     }
 
-    let (old_content, new_content) = read_blob_pair(odb, entry)?;
     let display_old = if entry.status == DiffStatus::Added {
         "/dev/null"
     } else {
@@ -1551,25 +1575,35 @@ fn commit_tree(odb: &Odb, commit_oid: &ObjectId) -> Result<ObjectId> {
 }
 
 /// Read both blob sides of a diff entry as UTF-8 strings.
+///
+/// Fails with `unable to read <oid>` when a side stores the null OID but a real
+/// blob mode (bogus tree entry), or when a non-null OID is missing from the ODB,
+/// matching `git diff-tree` / `git diff-index` patch behavior.
 fn read_blob_pair(odb: &Odb, entry: &DiffEntry) -> Result<(String, String)> {
     let zero = grit_lib::diff::zero_oid();
 
     let old_content = if entry.old_oid == zero {
+        if entry.old_mode != "000000" {
+            bail!("unable to read {}", zero.to_hex());
+        }
         String::new()
     } else {
-        match odb.read(&entry.old_oid) {
-            Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
-            Err(_) => String::new(),
-        }
+        let obj = odb
+            .read(&entry.old_oid)
+            .map_err(|_| anyhow::anyhow!("unable to read {}", entry.old_oid.to_hex()))?;
+        String::from_utf8_lossy(&obj.data).into_owned()
     };
 
     let new_content = if entry.new_oid == zero {
+        if entry.new_mode != "000000" {
+            bail!("unable to read {}", zero.to_hex());
+        }
         String::new()
     } else {
-        match odb.read(&entry.new_oid) {
-            Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
-            Err(_) => String::new(),
-        }
+        let obj = odb
+            .read(&entry.new_oid)
+            .map_err(|_| anyhow::anyhow!("unable to read {}", entry.new_oid.to_hex()))?;
+        String::from_utf8_lossy(&obj.data).into_owned()
     };
 
     Ok((old_content, new_content))
