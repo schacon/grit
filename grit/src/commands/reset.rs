@@ -1153,6 +1153,7 @@ fn checkout_merge_reset_worktree(
                     cv,
                     &file_attrs,
                     Some(&oid_hex),
+                    None,
                 )
                 .map_err(|e| anyhow::anyhow!("smudge filter failed for {path_str}: {e}"))?
             } else {
