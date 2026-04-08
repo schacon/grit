@@ -226,7 +226,7 @@ pub fn run(args: Args) -> Result<()> {
 
     let obj = match read_object_with_promisor_lazy_fetch(&repo, &oid, false) {
         Ok(o) => o,
-        Err(e) => exit_cat_file_read_error(&e, &args, obj_str),
+        Err(e) => exit_cat_file_read_error(&e, &args, obj_str, &repo, &oid),
     };
 
     if args.show_type {
@@ -266,7 +266,13 @@ pub fn run(args: Args) -> Result<()> {
                             match read_object_with_promisor_lazy_fetch(&repo, &_current_oid, false)
                             {
                                 Ok(o) => o,
-                                Err(e) => exit_cat_file_read_error(&e, &args, obj_str),
+                                Err(e) => exit_cat_file_read_error(
+                                    &e,
+                                    &args,
+                                    obj_str,
+                                    &repo,
+                                    &_current_oid,
+                                ),
                             };
                     } else {
                         bail!("object {} is of type tag, not {}", oid, kind);
@@ -278,7 +284,9 @@ pub fn run(args: Args) -> Result<()> {
                     current_obj =
                         match read_object_with_promisor_lazy_fetch(&repo, &_current_oid, false) {
                             Ok(o) => o,
-                            Err(e) => exit_cat_file_read_error(&e, &args, obj_str),
+                            Err(e) => {
+                                exit_cat_file_read_error(&e, &args, obj_str, &repo, &_current_oid)
+                            }
                         };
                 }
                 _ => {
@@ -347,8 +355,31 @@ fn read_object_with_promisor_lazy_fetch(
     }
 }
 
+fn cat_file_zlib_stderr(msg: &str, loose_path: &str) -> ! {
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("dictionary") {
+        eprintln!("error: inflate: needs dictionary");
+    } else if lower.contains("incorrect header")
+        || lower.contains("invalid stored block")
+        || lower.contains("invalid code")
+        || lower.contains("corrupt deflate")
+    {
+        eprintln!("error: inflate: data stream error (incorrect header check)");
+    } else {
+        eprintln!("error: inflate: {msg}");
+    }
+    eprintln!("error: unable to unpack header of {loose_path}");
+    std::process::exit(128);
+}
+
 /// Map ODB read failures to `git cat-file` stderr (exit 128).
-fn exit_cat_file_read_error(err: &LibError, args: &Args, obj_spec: &str) -> ! {
+fn exit_cat_file_read_error(
+    err: &LibError,
+    args: &Args,
+    obj_spec: &str,
+    repo: &Repository,
+    oid: &ObjectId,
+) -> ! {
     match err {
         LibError::UnknownObjectType(_) => {
             eprintln!("fatal: invalid object type");
@@ -374,6 +405,10 @@ fn exit_cat_file_read_error(err: &LibError, args: &Args, obj_spec: &str) -> ! {
                 eprintln!("fatal: git cat-file: could not get object info");
             }
             std::process::exit(128);
+        }
+        LibError::Zlib(msg) => {
+            let loose_path = repo.odb.object_path(oid).display().to_string();
+            cat_file_zlib_stderr(msg, &loose_path);
         }
         _ => {
             eprintln!("fatal: git cat-file: could not get object info");
@@ -559,26 +594,6 @@ fn check_cat_file_filter_prefixes(spec: &str) {
         eprintln!("usage: objects filter not supported: '{name}'");
         std::process::exit(129);
     }
-}
-
-const DEFAULT_MAX_TREE_DEPTH: usize = 2048;
-
-fn max_tree_depth_object_filter(repo: &Repository) -> Result<ObjectFilter> {
-    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
-    let depth = if let Some(raw) = config.get("core.maxtreedepth") {
-        raw.parse::<usize>()
-            .map_err(|_| anyhow::anyhow!("invalid core.maxtreedepth: '{raw}'"))?
-    } else {
-        DEFAULT_MAX_TREE_DEPTH
-    };
-    Ok(ObjectFilter::TreeDepth(depth as u64))
-}
-
-fn merged_cat_file_object_filter(repo: &Repository, user: ObjectFilter) -> Result<ObjectFilter> {
-    Ok(ObjectFilter::Combine(vec![
-        max_tree_depth_object_filter(repo)?,
-        user,
-    ]))
 }
 
 fn collect_all_loose_object_ids(objects_dir: &Path, oids: &mut BTreeSet<ObjectId>) -> Result<()> {
@@ -966,8 +981,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                 rev_list::reachable_object_ids_for_cat_file(repo, None, false)
                     .context("reachable objects for cat-file --batch-all-objects --no-filter")?
             } else if let Some(ref f) = objects_filter {
-                let merged = merged_cat_file_object_filter(repo, f.clone())?;
-                rev_list::object_ids_for_cat_file_filtered(repo, &merged)?
+                rev_list::object_ids_for_cat_file_filtered(repo, f)?
             } else {
                 collect_all_object_ids(repo)?
             };

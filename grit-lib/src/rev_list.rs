@@ -230,8 +230,10 @@ pub fn reachable_object_ids_for_cat_file(
     };
     let result = rev_list(repo, &[], &[], &opts)?;
     let mut set = BTreeSet::new();
-    for oid in &result.commits {
-        set.insert(*oid);
+    for (i, oid) in result.commits.iter().enumerate() {
+        if result.objects_print_commit.get(i).copied().unwrap_or(true) {
+            set.insert(*oid);
+        }
     }
     for (oid, _) in &result.objects {
         set.insert(*oid);

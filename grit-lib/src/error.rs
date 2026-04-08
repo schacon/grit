@@ -58,6 +58,15 @@ pub enum Error {
     #[error("zlib error: {0}")]
     Zlib(String),
 
+    /// Loose object bytes hash to a different OID than the file path implies (`git fsck` / `read_loose_object`).
+    #[error("{real_oid}: hash-path mismatch, found at: {path}")]
+    LooseHashMismatch {
+        /// Repository-relative or filesystem path to the loose object file.
+        path: String,
+        /// Hex object id of the unpacked contents.
+        real_oid: String,
+    },
+
     /// The index file is missing, truncated, or has a bad header.
     #[error("index error: {0}")]
     IndexError(String),
