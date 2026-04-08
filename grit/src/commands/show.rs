@@ -875,6 +875,11 @@ fn show_commit(
             blob_text_for_diff(git_dir, &config, path_for_attrs, &new_raw, use_textconv);
 
         let patch = if !args.anchored.is_empty() {
+            let line_algo = if args.patience {
+                similar::Algorithm::Patience
+            } else {
+                similar::Algorithm::Myers
+            };
             anchored_unified_diff(
                 &old_content,
                 &new_content,
@@ -882,6 +887,7 @@ fn show_commit(
                 new_path,
                 context,
                 &args.anchored,
+                line_algo,
             )
         } else {
             unified_diff(&old_content, &new_content, old_path, new_path, context)

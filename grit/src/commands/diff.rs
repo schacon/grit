@@ -26,6 +26,7 @@ use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{resolve_revision, split_treeish_colon};
+use similar::{ChangeTag, TextDiff};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
@@ -108,6 +109,251 @@ impl WhitespaceMode {
 
         s
     }
+
+    /// Byte-oriented line normalisation for diffing (aligned with merge three-way compare rules).
+    fn normalize_line_bytes(&self, line: &[u8]) -> Vec<u8> {
+        let mut bytes = line.to_vec();
+
+        if self.ignore_cr_at_eol && bytes.ends_with(b"\r\n") {
+            let len = bytes.len();
+            bytes.remove(len - 2);
+        }
+
+        if self.ignore_all_space {
+            return bytes
+                .into_iter()
+                .filter(|b| !b.is_ascii_whitespace())
+                .collect();
+        }
+
+        if self.ignore_space_change {
+            let mut out = Vec::with_capacity(bytes.len());
+            let mut in_ws = false;
+            for ch in bytes {
+                if ch.is_ascii_whitespace() {
+                    if !in_ws {
+                        out.push(b' ');
+                        in_ws = true;
+                    }
+                } else {
+                    out.push(ch);
+                    in_ws = false;
+                }
+            }
+            while out.last().is_some_and(|b| b.is_ascii_whitespace()) {
+                out.pop();
+            }
+            return out;
+        }
+
+        if self.ignore_space_at_eol {
+            if bytes.last().copied() == Some(b'\n') {
+                let mut body = bytes[..bytes.len() - 1].to_vec();
+                while body.last().is_some_and(|b| b.is_ascii_whitespace()) {
+                    body.pop();
+                }
+                body.push(b'\n');
+                bytes = body;
+            } else {
+                while bytes.last().is_some_and(|b| b.is_ascii_whitespace()) {
+                    bytes.pop();
+                }
+            }
+        }
+
+        bytes
+    }
+}
+
+/// One logical line for `--no-index` diffing: compare key plus original bytes for output.
+struct NoIndexLineSlot {
+    display: Vec<u8>,
+    compare: Vec<u8>,
+}
+
+/// Split blob bytes into lines, each retaining a trailing `\n` when present (Git line convention).
+fn no_index_split_lines(data: &[u8]) -> Vec<Vec<u8>> {
+    if data.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for i in 0..data.len() {
+        if data[i] == b'\n' {
+            lines.push(data[start..=i].to_vec());
+            start = i + 1;
+        }
+    }
+    if start < data.len() {
+        lines.push(data[start..].to_vec());
+    }
+    lines
+}
+
+fn no_index_line_body_is_blank(line: &[u8]) -> bool {
+    let end = if line.last().copied() == Some(b'\n') {
+        line.len().saturating_sub(1)
+    } else {
+        line.len()
+    };
+    let end = if end > 0 && line.get(end - 1) == Some(&b'\r') {
+        end - 1
+    } else {
+        end
+    };
+    line[..end].iter().all(|b| b.is_ascii_whitespace())
+}
+
+fn no_index_build_line_slots(data: &[u8], mode: &WhitespaceMode) -> Vec<NoIndexLineSlot> {
+    no_index_split_lines(data)
+        .into_iter()
+        .filter(|line| !mode.ignore_blank_lines || !no_index_line_body_is_blank(line))
+        .map(|line| NoIndexLineSlot {
+            compare: mode.normalize_line_bytes(&line),
+            display: line,
+        })
+        .collect()
+}
+
+/// Unified diff body (`---` / `+++` / hunks) for `--no-index`, optional algorithm and whitespace rules.
+fn no_index_unified_patch_body(
+    old_bytes: &[u8],
+    new_bytes: &[u8],
+    old_path: &str,
+    new_path: &str,
+    context_lines: usize,
+    mode: &WhitespaceMode,
+    algorithm: similar::Algorithm,
+) -> String {
+    let old_slots = no_index_build_line_slots(old_bytes, mode);
+    let new_slots = no_index_build_line_slots(new_bytes, mode);
+
+    // Compare keys must not include trailing `\n`: `similar`'s unified writer adds a newline
+    // when `newline_terminated` is false (slice diff); a `\n` in the value would double spacing.
+    let line_key = |bytes: &[u8]| -> String {
+        let mut end = bytes.len();
+        if end > 0 && bytes[end - 1] == b'\n' {
+            end -= 1;
+        }
+        if end > 0 && bytes[end - 1] == b'\r' {
+            end -= 1;
+        }
+        String::from_utf8_lossy(&bytes[..end]).into_owned()
+    };
+    let old_compare_owned: Vec<String> = old_slots.iter().map(|s| line_key(&s.compare)).collect();
+    let new_compare_owned: Vec<String> = new_slots.iter().map(|s| line_key(&s.compare)).collect();
+    let old_compare: Vec<&str> = old_compare_owned.iter().map(|s| s.as_str()).collect();
+    let new_compare: Vec<&str> = new_compare_owned.iter().map(|s| s.as_str()).collect();
+
+    let diff = TextDiff::configure()
+        .algorithm(algorithm)
+        .diff_slices(&old_compare, &new_compare);
+
+    let old_label = if old_path == "/dev/null" {
+        "--- /dev/null\n".to_string()
+    } else {
+        format!("--- a/{old_path}\n")
+    };
+    let new_label = if new_path == "/dev/null" {
+        "+++ /dev/null\n".to_string()
+    } else {
+        format!("+++ b/{new_path}\n")
+    };
+
+    let line_body_for_patch = |line: &[u8]| -> String {
+        let mut end = line.len();
+        if end > 0 && line[end - 1] == b'\n' {
+            end -= 1;
+        }
+        if end > 0 && line[end - 1] == b'\r' {
+            end -= 1;
+        }
+        String::from_utf8_lossy(&line[..end]).into_owned()
+    };
+
+    let mut output = String::new();
+    output.push_str(&old_label);
+    output.push_str(&new_label);
+
+    for hunk in diff
+        .unified_diff()
+        .context_radius(context_lines)
+        .iter_hunks()
+    {
+        output.push_str(&format!("{}\n", hunk.header()));
+        for change in hunk.iter_changes() {
+            match change.tag() {
+                ChangeTag::Equal => {
+                    let idx = change.new_index().expect("equal change has new_index");
+                    let raw = &new_slots[idx].display;
+                    output.push(' ');
+                    output.push_str(&line_body_for_patch(raw));
+                    output.push('\n');
+                }
+                ChangeTag::Delete => {
+                    let idx = change.old_index().expect("delete has old_index");
+                    let raw = &old_slots[idx].display;
+                    output.push('-');
+                    output.push_str(&line_body_for_patch(raw));
+                    output.push('\n');
+                }
+                ChangeTag::Insert => {
+                    let idx = change.new_index().expect("insert has new_index");
+                    let raw = &new_slots[idx].display;
+                    output.push('+');
+                    output.push_str(&line_body_for_patch(raw));
+                    output.push('\n');
+                }
+            }
+        }
+    }
+
+    output
+}
+
+/// Resolve line-diff algorithm for `git diff` from flags and argv order (last wins).
+fn effective_line_diff_algorithm(args: &Args) -> similar::Algorithm {
+    let raw: Vec<String> = std::env::args().collect();
+    let mut best: Option<(usize, similar::Algorithm)> = None;
+    let mut record = |pos: Option<usize>, algo: similar::Algorithm| {
+        if let Some(p) = pos {
+            if best.is_none_or(|(bp, _)| p >= bp) {
+                best = Some((p, algo));
+            }
+        }
+    };
+    record(
+        raw.iter().rposition(|a| a == "--histogram"),
+        similar::Algorithm::Patience,
+    );
+    record(
+        raw.iter().rposition(|a| a == "--patience"),
+        similar::Algorithm::Patience,
+    );
+    record(
+        raw.iter().rposition(|a| a == "--minimal"),
+        similar::Algorithm::Myers,
+    );
+    if let Some(name) = args.diff_algorithm.as_deref() {
+        let pos = raw
+            .iter()
+            .rposition(|a| a == "--diff-algorithm" || a.starts_with("--diff-algorithm="));
+        let algo = match name.to_lowercase().as_str() {
+            "histogram" | "patience" => similar::Algorithm::Patience,
+            "minimal" | "myers" => similar::Algorithm::Myers,
+            _ => similar::Algorithm::Myers,
+        };
+        record(pos, algo);
+    }
+    best.map(|(_, a)| a).unwrap_or(similar::Algorithm::Myers)
+}
+
+/// Short blob id for `index` lines (matches `git rev-parse --short` default length).
+fn no_index_blob_abbrev(data: &[u8]) -> String {
+    let oid = Odb::hash_object_data(ObjectKind::Blob, data);
+    let hex = oid.to_hex();
+    let len = 7_usize.min(hex.len());
+    hex[..len].to_owned()
 }
 
 /// Arguments for `grit diff`.
@@ -1418,7 +1664,8 @@ fn run_no_index(args: &Args) -> Result<()> {
     } else {
         false
     };
-    let diff_output = if use_anchored {
+    let line_algo = effective_line_diff_algorithm(args);
+    let diff_body = if use_anchored {
         anchored_unified_diff(
             &text_a,
             &text_b,
@@ -1426,9 +1673,35 @@ fn run_no_index(args: &Args) -> Result<()> {
             paths[1],
             context_lines,
             &args.anchored,
+            line_algo,
         )
     } else {
-        unified_diff(&text_a, &text_b, paths[0], paths[1], context_lines)
+        let algo = line_algo;
+        no_index_unified_patch_body(
+            &data_a,
+            &data_b,
+            paths[0],
+            paths[1],
+            context_lines,
+            &ws_mode,
+            algo,
+        )
+    };
+
+    let old_abbrev = no_index_blob_abbrev(&data_a);
+    let new_abbrev = no_index_blob_abbrev(&data_b);
+    let mode_str = if path_a
+        .symlink_metadata()
+        .ok()
+        .is_some_and(|m| m.file_type().is_symlink())
+        || path_b
+            .symlink_metadata()
+            .ok()
+            .is_some_and(|m| m.file_type().is_symlink())
+    {
+        "120000"
+    } else {
+        "100644"
     };
 
     // Determine color mode
@@ -1440,7 +1713,12 @@ fn run_no_index(args: &Args) -> Result<()> {
     };
 
     if use_color {
-        for line in diff_output.lines() {
+        writeln!(out, "{BOLD}diff --git a/{} b/{}{RESET}", paths[0], paths[1])?;
+        writeln!(
+            out,
+            "{BOLD}index {old_abbrev}..{new_abbrev} {mode_str}{RESET}"
+        )?;
+        for line in diff_body.lines() {
             if line.starts_with("@@") {
                 writeln!(out, "{CYAN}{line}{RESET}")?;
             } else if line.starts_with('+') && !line.starts_with("+++") {
@@ -1457,7 +1735,9 @@ fn run_no_index(args: &Args) -> Result<()> {
             }
         }
     } else {
-        write!(out, "{diff_output}")?;
+        writeln!(out, "diff --git a/{} b/{}", paths[0], paths[1])?;
+        writeln!(out, "index {old_abbrev}..{new_abbrev} {mode_str}")?;
+        write!(out, "{diff_body}")?;
     }
 
     // Exit with code 1 to indicate differences (like git)

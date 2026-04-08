@@ -1850,6 +1850,8 @@ pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
 /// forced to match, splitting the diff into segments around those anchor points.
 /// This produces diffs where the anchored text stays as context and surrounding
 /// lines are shown as additions/removals.
+///
+/// Segment diffs use `algorithm` (Git maps `--histogram` to patience-style line diff in our stack).
 pub fn anchored_unified_diff(
     old_content: &str,
     new_content: &str,
@@ -1857,6 +1859,7 @@ pub fn anchored_unified_diff(
     new_path: &str,
     context_lines: usize,
     anchors: &[String],
+    algorithm: similar::Algorithm,
 ) -> String {
     use similar::TextDiff;
 
@@ -1893,7 +1896,17 @@ pub fn anchored_unified_diff(
 
     // If no valid anchors, fall back to normal diff
     if anchor_pairs.is_empty() {
-        return unified_diff(old_content, new_content, old_path, new_path, context_lines);
+        return unified_diff_with_prefix_and_funcname_and_algorithm(
+            old_content,
+            new_content,
+            old_path,
+            new_path,
+            context_lines,
+            "a/",
+            "b/",
+            None,
+            algorithm,
+        );
     }
 
     // Sort anchor pairs by their position in the old file
@@ -1945,7 +1958,9 @@ pub fn anchored_unified_diff(
             } else {
                 format!("{}\n", new_seg_text)
             };
-            let seg_diff = TextDiff::from_lines(&old_seg_input, &new_seg_input);
+            let seg_diff = TextDiff::configure()
+                .algorithm(algorithm)
+                .diff_lines(&old_seg_input, &new_seg_input);
             for change in seg_diff.iter_all_changes() {
                 let tag = match change.tag() {
                     similar::ChangeTag::Equal => ' ',
@@ -1986,7 +2001,9 @@ pub fn anchored_unified_diff(
         } else {
             format!("{}\n", new_seg_text)
         };
-        let seg_diff = TextDiff::from_lines(&old_seg_input, &new_seg_input);
+        let seg_diff = TextDiff::configure()
+            .algorithm(algorithm)
+            .diff_lines(&old_seg_input, &new_seg_input);
         for change in seg_diff.iter_all_changes() {
             let tag = match change.tag() {
                 similar::ChangeTag::Equal => ' ',
