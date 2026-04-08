@@ -3067,9 +3067,8 @@ fn collect_tree_objects_filtered(
         }
     };
     let tree_included = tree_included
-        && sparse_lines.is_none_or(|lines| {
-            path_matches_sparse_pattern_list(prefix, lines) != Some(false)
-        });
+        && sparse_lines
+            .is_none_or(|lines| path_matches_sparse_pattern_list(prefix, lines) != Some(false));
     if tree_included {
         if !packed_set.is_some_and(|p| p.contains(&tree_oid)) && emitted.insert(tree_oid) {
             let out_path = if omit_object_paths {
