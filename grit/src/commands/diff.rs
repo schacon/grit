@@ -1303,6 +1303,21 @@ fn run_no_index(args: &Args) -> Result<()> {
 fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
     use std::collections::BTreeSet;
 
+    /// Leaf content for diff: symlink target as bytes, or regular file bytes. Directories are not
+    /// leaves (caller only collects real dirs and symlink files).
+    fn read_no_index_leaf(path: &Path) -> Option<Vec<u8>> {
+        let meta = std::fs::symlink_metadata(path).ok()?;
+        if meta.file_type().is_symlink() {
+            return std::fs::read_link(path)
+                .ok()
+                .map(|t| t.to_string_lossy().into_owned().into_bytes());
+        }
+        if meta.is_file() {
+            return std::fs::read(path).ok();
+        }
+        None
+    }
+
     fn collect_files(dir: &Path, prefix: &str, out: &mut BTreeSet<String>) -> Result<()> {
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
@@ -1312,7 +1327,11 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
             } else {
                 format!("{prefix}/{name}")
             };
-            if entry.file_type()?.is_dir() {
+            let ft = entry.file_type()?;
+            // Do not follow symlinks: `c -> b` must be one leaf (t2080), not a walk into `b/`.
+            if ft.is_symlink() {
+                out.insert(rel);
+            } else if ft.is_dir() {
                 collect_files(&entry.path(), &rel, out)?;
             } else {
                 out.insert(rel);
@@ -1342,16 +1361,8 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
     for rel in &all_files {
         let fa = dir_a.join(rel);
         let fb = dir_b.join(rel);
-        let data_a = if fa.is_file() {
-            std::fs::read(&fa).ok()
-        } else {
-            None
-        };
-        let data_b = if fb.is_file() {
-            std::fs::read(&fb).ok()
-        } else {
-            None
-        };
+        let data_a = read_no_index_leaf(&fa);
+        let data_b = read_no_index_leaf(&fb);
 
         match (&data_a, &data_b) {
             (Some(a), Some(b)) if a == b => continue,
@@ -1399,10 +1410,20 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
             "/dev/null".to_string()
         };
         writeln!(out, "diff --git a/{} b/{}", rel, rel)?;
+        let mode_a = fa
+            .symlink_metadata()
+            .ok()
+            .and_then(|m| m.file_type().is_symlink().then_some("120000"))
+            .unwrap_or("100644");
+        let mode_b = fb
+            .symlink_metadata()
+            .ok()
+            .and_then(|m| m.file_type().is_symlink().then_some("120000"))
+            .unwrap_or("100644");
         if data_a.is_none() {
-            writeln!(out, "new file mode 100644")?;
+            writeln!(out, "new file mode {mode_b}")?;
         } else if data_b.is_none() {
-            writeln!(out, "deleted file mode 100644")?;
+            writeln!(out, "deleted file mode {mode_a}")?;
         }
         let patch =
             grit_lib::diff::unified_diff(&text_a, &text_b, &old_label, &new_label, context_lines);

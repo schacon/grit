@@ -3,7 +3,8 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
-    detect_copies, detect_renames, stat_matches, zero_oid, DiffEntry, DiffStatus,
+    detect_copies, detect_renames, read_submodule_head_oid, stat_matches, zero_oid, DiffEntry,
+    DiffStatus,
 };
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
@@ -58,7 +59,14 @@ pub fn run(args: Args) -> Result<()> {
     let changes = if options.cached {
         diff_tree_vs_index(&tree_map, &index_map)
     } else {
-        diff_tree_vs_worktree(&repo, &tree_map, &index_map, &index, options.match_missing)?
+        diff_tree_vs_worktree(
+            &repo,
+            &tree_map,
+            &index_map,
+            &index,
+            options.match_missing,
+            options.ignore_submodules,
+        )?
     };
 
     // Convert to DiffEntry for rename detection and output.
@@ -329,6 +337,8 @@ struct Options {
     pathspecs: Vec<String>,
     cached: bool,
     match_missing: bool,
+    /// When true, submodule (gitlink) paths are not compared against the work tree.
+    ignore_submodules: bool,
     quiet: bool,
     exit_code: bool,
     abbrev: Option<usize>,
@@ -373,6 +383,7 @@ struct RawChange {
 fn parse_options(argv: &[String]) -> Result<Options> {
     let mut cached = false;
     let mut match_missing = false;
+    let mut ignore_submodules = false;
     let mut quiet = false;
     let mut exit_code = false;
     let mut abbrev: Option<usize> = None;
@@ -511,6 +522,17 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     abbrev = Some(parsed);
                 }
                 "--check" => { /* accepted for compatibility */ }
+                "--ignore-submodules" => {
+                    ignore_submodules = true;
+                }
+                _ if arg.starts_with("--ignore-submodules=") => {
+                    let val = arg.trim_start_matches("--ignore-submodules=");
+                    ignore_submodules = match val {
+                        "none" => false,
+                        "all" | "dirty" | "untracked" => true,
+                        _ => bail!("unsupported option: {arg}"),
+                    };
+                }
                 _ => bail!("unsupported option: {arg}"),
             }
             idx += 1;
@@ -534,6 +556,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         pathspecs,
         cached,
         match_missing,
+        ignore_submodules,
         quiet,
         exit_code,
         abbrev,
@@ -678,6 +701,7 @@ fn diff_tree_vs_worktree(
     index_map: &BTreeMap<String, Snapshot>,
     index: &Index,
     match_missing: bool,
+    ignore_submodules: bool,
 ) -> Result<Vec<RawChange>> {
     let Some(work_tree) = &repo.work_tree else {
         bail!("this operation must be run in a work tree");
@@ -698,6 +722,34 @@ fn diff_tree_vs_worktree(
 
     for (path, index_snapshot) in index_map {
         let abs = work_tree.join(path);
+
+        if index_snapshot.mode == MODE_GITLINK {
+            if ignore_submodules {
+                continue;
+            }
+            let sub_head = read_submodule_head_oid(&abs);
+            // Uninitialized / empty submodule worktree: no resolvable HEAD — do not report as
+            // modified vs index (matches Git; fixes `diff-index --ignore-submodules=none` on clones).
+            if sub_head.is_none() {
+                continue;
+            }
+            if sub_head.as_ref() != Some(&index_snapshot.oid) {
+                let old = tree_map.get(path).copied().or(Some(*index_snapshot));
+                merged.insert(
+                    path.clone(),
+                    RawChange {
+                        path: path.clone(),
+                        status: 'M',
+                        old,
+                        new: Some(Snapshot {
+                            mode: MODE_GITLINK,
+                            oid: sub_head.unwrap_or_else(zero_oid),
+                        }),
+                    },
+                );
+            }
+            continue;
+        }
 
         // Fast path: use stat cache to skip unchanged files
         let meta = match fs::symlink_metadata(&abs) {

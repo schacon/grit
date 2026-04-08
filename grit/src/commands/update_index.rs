@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
+use grit_lib::diff::read_submodule_head_oid;
 use grit_lib::index::{entry_from_stat, normalize_mode, Index, IndexEntry};
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
@@ -944,39 +945,12 @@ fn refresh_index(
             if ignore_submodules {
                 continue; // ignore submodule changes
             }
-            // Check if the submodule's HEAD matches the stored OID
             let path_str2 = std::str::from_utf8(&entry.path).unwrap_or("");
             let sub_dir = work_tree.join(path_str2);
-            let sub_head_path = sub_dir.join(".git").join("HEAD");
-            // Try to read the HEAD of the submodule
-            let submodule_matches = if let Ok(head_content) =
-                std::fs::read_to_string(&sub_head_path)
-            {
-                if let Some(refname) = head_content.strip_prefix("ref: ").map(|s| s.trim()) {
-                    let ref_file = sub_dir.join(".git").join(refname);
-                    if let Ok(ref_content) = std::fs::read_to_string(&ref_file) {
-                        if let Ok(sub_oid) =
-                            ref_content.trim().parse::<grit_lib::objects::ObjectId>()
-                        {
-                            sub_oid == entry.oid
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    // Detached HEAD
-                    if let Ok(sub_oid) = head_content.trim().parse::<grit_lib::objects::ObjectId>()
-                    {
-                        sub_oid == entry.oid
-                    } else {
-                        false
-                    }
-                }
-            } else {
-                true
-            }; // if we can't read, assume ok
+            let submodule_matches = match read_submodule_head_oid(&sub_dir) {
+                Some(h) => h == entry.oid,
+                None => true, // uninitialized / no checkout — do not block refresh (matches Git)
+            };
             if !submodule_matches {
                 eprintln!("{path_str2}: needs update");
                 all_uptodate = false;

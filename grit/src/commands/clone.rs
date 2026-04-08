@@ -17,6 +17,10 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
+use crate::commands::checkout::{
+    checkout_parallel_worker_spawns, trace2_emit_checkout_parallel_workers,
+};
+
 /// Arguments for `grit clone`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Clone a repository into a new directory")]
@@ -762,7 +766,13 @@ pub fn run(args: Args) -> Result<()> {
     // Recurse into submodules if requested
     if args.recurse_submodules && !args.bare {
         if let Some(ref wt) = dest.work_tree {
-            clone_submodules(wt, &dest, args.quiet).context("cloning submodules")?;
+            let url_base = source.work_tree.as_deref().unwrap_or_else(|| {
+                source_path
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(source_path.as_path())
+            });
+            clone_submodules(wt, url_base, args.quiet).context("cloning submodules")?;
         }
     }
 
@@ -1026,7 +1036,13 @@ fn run_ssh_clone(args: Args) -> Result<()> {
 
     if args.recurse_submodules && !args.bare {
         if let Some(ref wt) = dest.work_tree {
-            clone_submodules(wt, &dest, args.quiet).context("cloning submodules")?;
+            let url_base = source.work_tree.as_deref().unwrap_or_else(|| {
+                path_for_basename
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(path_for_basename.as_path())
+            });
+            clone_submodules(wt, url_base, args.quiet).context("cloning submodules")?;
         }
     }
 
@@ -1036,9 +1052,56 @@ fn run_ssh_clone(args: Args) -> Result<()> {
 /// Clone submodules listed in .gitmodules.
 ///
 /// Reads `.gitmodules` from the work tree, resolves each submodule's URL
-/// (relative paths are resolved against the parent repo's remote URL),
+/// (relative paths are resolved against the **source repository root** so `../sub` from
+/// `trash/various/.gitmodules` resolves next to `various/`),
 /// and uses `grit clone` to clone each submodule.
-fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<()> {
+/// Paths that are gitlink (submodule) entries in the current `HEAD` tree.
+fn gitlink_paths_at_head(work_tree: &Path) -> Result<HashSet<String>> {
+    let git_dir = work_tree.join(".git");
+    let repo = Repository::open(&git_dir, Some(work_tree))?;
+    let head_content = fs::read_to_string(repo.git_dir.join("HEAD")).context("reading HEAD")?;
+    let head = head_content.trim();
+    let oid = if let Some(refname) = head.strip_prefix("ref: ") {
+        let ref_path = repo.git_dir.join(refname);
+        let oid_str =
+            fs::read_to_string(&ref_path).with_context(|| format!("reading ref {refname}"))?;
+        ObjectId::from_hex(oid_str.trim()).with_context(|| format!("invalid OID in {refname}"))?
+    } else {
+        ObjectId::from_hex(head).context("invalid OID in HEAD")?
+    };
+    let obj = repo.odb.read(&oid).context("reading HEAD commit")?;
+    let commit = parse_commit(&obj.data).context("parsing HEAD commit")?;
+    let mut out = HashSet::new();
+    collect_gitlink_paths(&repo, &commit.tree, "", &mut out)?;
+    Ok(out)
+}
+
+fn collect_gitlink_paths(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+    prefix: &str,
+    out: &mut HashSet<String>,
+) -> Result<()> {
+    let obj = repo.odb.read(tree_oid).context("reading tree")?;
+    let entries = parse_tree(&obj.data).context("parsing tree")?;
+    for entry in &entries {
+        let name = String::from_utf8_lossy(&entry.name).into_owned();
+        let path = if prefix.is_empty() {
+            name
+        } else {
+            format!("{prefix}/{name}")
+        };
+        let is_tree = (entry.mode & 0o170000) == 0o040000;
+        if entry.mode == 0o160000 {
+            out.insert(path);
+        } else if is_tree {
+            collect_gitlink_paths(repo, &entry.oid, &path, out)?;
+        }
+    }
+    Ok(())
+}
+
+fn clone_submodules(work_tree: &Path, relative_url_base: &Path, quiet: bool) -> Result<()> {
     let gitmodules_path = work_tree.join(".gitmodules");
     if !gitmodules_path.exists() {
         return Ok(());
@@ -1077,27 +1140,31 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<
         submodules.push((p, u));
     }
 
-    // Get the parent's remote URL to resolve relative submodule URLs
-    let parent_url = {
-        let config_path = repo.git_dir.join("config");
-        let config_content = fs::read_to_string(&config_path).unwrap_or_default();
-        extract_remote_url(&config_content, "origin")
-    };
-
     let grit_bin = crate::grit_exe::grit_executable();
 
+    let url_base = relative_url_base;
+
+    // Only clone paths that are submodules at the checked-out commit. `.gitmodules` can list paths
+    // that are plain files on this branch (e.g. `f` as submodule on B1 but `f/f` as file on B2);
+    // cloning would delete the checked-out tree (`t2080` clone + verify_checkout).
+    let gitlink_paths = gitlink_paths_at_head(work_tree).unwrap_or_default();
+
     for (path, url) in &submodules {
+        if !gitlink_paths.contains(path) {
+            continue;
+        }
+
         let sub_dest = work_tree.join(path);
 
-        // Resolve relative URLs
+        // Resolve relative URLs against the source superproject root (e.g. `../sub` from
+        // `.gitmodules` in `various/` → sibling `sub/`, not relative to the clone destination).
         let resolved_url = if url.starts_with("./") || url.starts_with("../") {
-            if let Some(ref parent) = parent_url {
-                let base = PathBuf::from(parent);
-                let resolved = base.parent().unwrap_or(&base).join(url);
-                resolved.to_string_lossy().to_string()
-            } else {
-                url.clone()
-            }
+            let resolved = url_base.join(url);
+            resolved
+                .canonicalize()
+                .unwrap_or(resolved)
+                .to_string_lossy()
+                .into_owned()
         } else {
             url.clone()
         };
@@ -1106,12 +1173,17 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<
             eprintln!("Cloning into '{}'...", sub_dest.display());
         }
 
-        // Remove the placeholder directory if it exists
-        if sub_dest.exists() {
-            let _ = fs::remove_dir_all(&sub_dest);
+        // Remove placeholder path (directory, empty dir, or symlink left from a type-change branch).
+        if let Ok(meta) = fs::symlink_metadata(&sub_dest) {
+            if meta.file_type().is_symlink() || meta.is_file() {
+                let _ = fs::remove_file(&sub_dest);
+            } else {
+                let _ = fs::remove_dir_all(&sub_dest);
+            }
         }
 
         let mut cmd = std::process::Command::new(&grit_bin);
+        crate::grit_exe::strip_trace2_env(&mut cmd);
         cmd.arg("clone")
             .arg("-c")
             .arg("protocol.file.allow=always")
@@ -1133,6 +1205,17 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<
                 sub_dest.display()
             );
         }
+    }
+
+    let mut upd = std::process::Command::new(&grit_bin);
+    crate::grit_exe::strip_trace2_env(&mut upd);
+    let status = upd
+        .args(["submodule", "update", "--init", "--recursive"])
+        .current_dir(work_tree)
+        .status()
+        .context("submodule update after clone")?;
+    if !status.success() {
+        bail!("submodule update failed after clone");
     }
 
     Ok(())
@@ -2136,7 +2219,8 @@ fn checkout_head(repo: &Repository) -> Result<()> {
     let commit = parse_commit(&obj.data).context("parsing HEAD commit")?;
 
     // Checkout the tree recursively
-    checkout_tree(&repo.odb, &commit.tree, work_tree, "")?;
+    let work_units = checkout_tree(&repo.odb, &commit.tree, work_tree, "")?;
+    trace2_emit_checkout_parallel_workers(checkout_parallel_worker_spawns(repo, work_units));
 
     // Write the index
     // Use grit's checkout-index style — we'll build a simple index
@@ -2152,12 +2236,13 @@ fn checkout_tree(
     tree_oid: &ObjectId,
     work_tree: &Path,
     prefix: &str,
-) -> Result<()> {
+) -> Result<usize> {
     use grit_lib::objects::parse_tree;
 
     let obj = odb.read(tree_oid).context("reading tree")?;
     let entries = parse_tree(&obj.data).context("parsing tree")?;
 
+    let mut work_units = 0usize;
     for entry in &entries {
         let name = String::from_utf8_lossy(&entry.name);
         let path = if prefix.is_empty() {
@@ -2175,7 +2260,7 @@ fn checkout_tree(
             continue;
         } else if is_tree {
             fs::create_dir_all(&full_path)?;
-            checkout_tree(odb, &entry.oid, work_tree, &path)?;
+            work_units += checkout_tree(odb, &entry.oid, work_tree, &path)?;
         } else {
             // Regular file or symlink
             if let Some(parent) = full_path.parent() {
@@ -2184,19 +2269,42 @@ fn checkout_tree(
             let blob = odb
                 .read(&entry.oid)
                 .with_context(|| format!("reading blob for {path}"))?;
-            fs::write(&full_path, &blob.data)?;
 
-            // Set executable bit if mode is 100755
-            #[cfg(unix)]
-            if entry.mode == 0o100755 {
-                use std::os::unix::fs::PermissionsExt;
-                let perms = fs::Permissions::from_mode(0o755);
-                fs::set_permissions(&full_path, perms)?;
+            use grit_lib::index::MODE_SYMLINK;
+            if entry.mode == MODE_SYMLINK {
+                #[cfg(unix)]
+                {
+                    let target = std::str::from_utf8(&blob.data)
+                        .with_context(|| format!("symlink target for '{path}' is not UTF-8"))?;
+                    if let Ok(prev) = full_path.symlink_metadata() {
+                        let _ = if prev.is_dir() && !prev.file_type().is_symlink() {
+                            fs::remove_dir_all(&full_path)
+                        } else {
+                            fs::remove_file(&full_path)
+                        };
+                    }
+                    std::os::unix::fs::symlink(target, &full_path)
+                        .with_context(|| format!("creating symlink '{path}'"))?;
+                }
+                #[cfg(not(unix))]
+                {
+                    fs::write(&full_path, &blob.data)?;
+                }
+            } else {
+                fs::write(&full_path, &blob.data)?;
+                // Set executable bit if mode is 100755
+                #[cfg(unix)]
+                if entry.mode == 0o100755 {
+                    use std::os::unix::fs::PermissionsExt;
+                    let perms = fs::Permissions::from_mode(0o755);
+                    fs::set_permissions(&full_path, perms)?;
+                }
             }
+            work_units += 1;
         }
     }
 
-    Ok(())
+    Ok(work_units)
 }
 
 /// Write the index file from a tree (simple version).

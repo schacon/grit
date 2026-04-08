@@ -24,6 +24,7 @@ fn grit_subprocess(grit_bin: &Path) -> Command {
     let mut cmd = Command::new(grit_bin);
     cmd.env_remove("GIT_DIR");
     cmd.env_remove("GIT_WORK_TREE");
+    grit_exe::strip_trace2_env(&mut cmd);
     cmd
 }
 
@@ -677,16 +678,17 @@ fn checkout_submodule_worktree(
     // `--force`: after `clone --no-checkout`, HEAD may already equal `oid` while the index and
     // work tree are empty; without force, `checkout` skips `switch_to_tree` and leaves no files.
     let status = if modules_dir.join("HEAD").exists() {
-        Command::new(grit_bin)
-            .env("GIT_DIR", &modules_dir)
+        let mut cmd = Command::new(grit_bin);
+        grit_exe::strip_trace2_env(&mut cmd);
+        cmd.env("GIT_DIR", &modules_dir)
             .env("GIT_WORK_TREE", &sub_path)
             .current_dir(&sub_path)
             .args(["checkout", "--force", "--quiet", oid])
             .status()
     } else {
-        // Run from inside the submodule so discovery follows `sub_path/.git`, not a parent repo.
-        Command::new(grit_bin)
-            .args(["checkout", "--force", "--quiet", oid])
+        let mut cmd = Command::new(grit_bin);
+        grit_exe::strip_trace2_env(&mut cmd);
+        cmd.args(["checkout", "--force", "--quiet", oid])
             .current_dir(&sub_path)
             .status()
     }
@@ -861,16 +863,23 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
     let selected = filter_submodules(&modules, &args.paths);
 
     let grit_bin = grit_exe::grit_executable();
+    let super_index = repo.load_index().ok();
 
     for m in &selected {
         let sub_path = work_tree.join(&m.path);
-        let recorded = read_submodule_commit(&repo, &m.path)?;
-        let recorded_oid = match &recorded {
-            Some(oid) => oid.as_str(),
-            None => {
-                eprintln!("Skipping submodule '{}': not in index", m.path);
-                continue;
-            }
+        let path_bytes = m.path.as_bytes();
+        let recorded_from_index = super_index
+            .as_ref()
+            .and_then(|idx| idx.get(path_bytes, 0))
+            .filter(|e| e.mode == 0o160000)
+            .map(|e| e.oid.to_hex());
+        let recorded = if recorded_from_index.is_some() {
+            recorded_from_index
+        } else {
+            read_submodule_commit(&repo, &m.path)?
+        };
+        let Some(recorded_oid) = recorded.as_deref() else {
+            continue;
         };
 
         // Read URL from local config (must be initialized).
@@ -940,12 +949,10 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
                         .unwrap_or_else(|| m.url.clone())
                 };
 
-                // If sub_path is an empty directory, remove it first (clone wants to create it).
-                if sub_path.exists() && sub_path.is_dir() {
-                    let is_empty = fs::read_dir(&sub_path)?.next().is_none();
-                    if is_empty {
-                        fs::remove_dir(&sub_path)?;
-                    }
+                // `git clone` requires the destination to be absent or empty; remove a leftover
+                // directory (e.g. `cp -R` copied an uninitialized submodule path without `.git`).
+                if sub_path.exists() {
+                    let _ = fs::remove_dir_all(&sub_path);
                 }
 
                 let clone_src_str =

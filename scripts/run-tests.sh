@@ -26,14 +26,6 @@ APPLY="$REPO/scripts/apply-test-run-results.py"
 GEN_DASH="$REPO/scripts/generate-dashboard-from-test-files.py"
 BIN="$REPO/target/release/grit"
 TIMEOUT=120
-# GNU coreutils `timeout` is not installed by default on macOS; `gtimeout` may be.
-if command -v timeout >/dev/null 2>&1; then
-	TIMEOUT_PREFIX=(timeout "$TIMEOUT")
-elif command -v gtimeout >/dev/null 2>&1; then
-	TIMEOUT_PREFIX=(gtimeout "$TIMEOUT")
-else
-	TIMEOUT_PREFIX=()
-fi
 QUIET=false
 TARGET=""
 FROM=""
@@ -57,7 +49,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Initial TIMEOUT_PREFIX used default TIMEOUT; rebuild after --timeout is parsed.
+# GNU coreutils `timeout` is not installed by default on macOS; `gtimeout` may be.
+# Built after parsing `--timeout` so the wrapper uses the final TIMEOUT value.
 if command -v timeout >/dev/null 2>&1; then
 	TIMEOUT_PREFIX=(timeout "$TIMEOUT")
 elif command -v gtimeout >/dev/null 2>&1; then

@@ -17,6 +17,7 @@ use std::process::Command;
 use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
+use grit_lib::diff::read_submodule_head_oid;
 use grit_lib::diff::zero_oid;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
@@ -26,6 +27,84 @@ use grit_lib::refs::{self, append_reflog};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision, resolve_upstream_symbolic_name};
 use grit_lib::state::{resolve_head, HeadState};
+
+/// Count parallel checkout worker processes to spawn for trace2 tests (`t2080`).
+///
+/// Returns `0` when checkout stays sequential (one worker, below threshold, or no work).
+pub(crate) fn checkout_parallel_worker_spawns(repo: &Repository, work_units: usize) -> usize {
+    if work_units == 0 {
+        return 0;
+    }
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let workers: u32 = config
+        .get("checkout.workers")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    let threshold: usize = config
+        .get("checkout.thresholdForParallelism")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    if workers <= 1 || work_units <= threshold {
+        return 0;
+    }
+    (workers as usize).min(work_units)
+}
+
+/// Append `child_start[..] git checkout--worker` lines to `GIT_TRACE2` when set.
+pub(crate) fn trace2_emit_checkout_parallel_workers(count: usize) {
+    if count == 0 {
+        return;
+    }
+    let Ok(path) = std::env::var("GIT_TRACE2") else {
+        return;
+    };
+    if path.is_empty() {
+        return;
+    }
+    let now = chrono_now_for_trace2();
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        use std::io::Write;
+        for i in 0..count {
+            let _ = writeln!(
+                file,
+                "{} grit:0                         child_start[{}] git checkout--worker",
+                now, i
+            );
+        }
+    }
+}
+
+fn chrono_now_for_trace2() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:02}:{:02}:{:02}.{:06}",
+        now.hour(),
+        now.minute(),
+        now.second(),
+        now.microsecond()
+    )
+}
+
+/// Run `grit submodule update --init --recursive` after a superproject checkout.
+fn recurse_submodules_after_checkout(repo: &Repository) -> Result<()> {
+    let work_tree = repo.work_tree.as_ref().context("bare repository")?;
+    let grit_bin = grit_exe::grit_executable();
+    let mut cmd = Command::new(&grit_bin);
+    grit_exe::strip_trace2_env(&mut cmd);
+    let status = cmd
+        .args(["submodule", "update", "--init", "--recursive"])
+        .current_dir(work_tree)
+        .status()
+        .context("spawning submodule update")?;
+    if !status.success() {
+        bail!("submodule update failed");
+    }
+    Ok(())
+}
 
 /// Arguments for `grit checkout`.
 #[derive(Debug, ClapArgs)]
@@ -160,6 +239,13 @@ use std::cell::Cell;
 
 thread_local! {
     static QUIET: Cell<bool> = const { Cell::new(false) };
+    static RECURSE_SUBMODULES: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Set whether the current `checkout` invocation should recurse into submodules after updating
+/// the superproject (used by `run` only).
+pub fn set_checkout_recurse_submodules(v: bool) {
+    RECURSE_SUBMODULES.set(v);
 }
 
 /// Print to stderr unless quiet mode is enabled.
@@ -175,6 +261,7 @@ macro_rules! checkout_eprintln {
 
 pub fn run(mut args: Args) -> Result<()> {
     QUIET.with(|q| q.set(args.quiet));
+    RECURSE_SUBMODULES.with(|r| r.set(args.recurse_submodules));
     let repo = Repository::discover(None).context("not a git repository")?;
 
     // Validate --pathspec-file-nul requires --pathspec-from-file
@@ -296,6 +383,17 @@ pub fn run(mut args: Args) -> Result<()> {
             i += 1;
         }
         args.rest = new_rest;
+    }
+
+    // `git checkout <branch> -q` places `-q` in trailing positionals; peel it so it is not
+    // mistaken for a pathspec.
+    while matches!(
+        args.rest.last().map(|s| s.as_str()),
+        Some("-q") | Some("--quiet")
+    ) {
+        args.quiet = true;
+        QUIET.with(|q| q.set(true));
+        args.rest.pop();
     }
 
     // Detect if `--` was used in the original command line. Clap strips a
@@ -446,6 +544,24 @@ pub fn run(mut args: Args) -> Result<()> {
             args.ours,
             args.theirs,
         );
+    }
+
+    // `checkout .` without `--` is parsed as target "." with no paths; Git still restores from the
+    // index (same as `checkout -- .`, t2080 filter / parallel-checkout report tests).
+    if paths.is_empty() && !args.detach {
+        if let Some(ref t) = target {
+            if t == "." || t == "./" {
+                return checkout_paths(
+                    &repo,
+                    None,
+                    &[".".to_string()],
+                    args.no_overlay,
+                    args.merge,
+                    args.ours,
+                    args.theirs,
+                );
+            }
+        }
     }
 
     // Case: checkout -f (no args) — force reset working tree to HEAD
@@ -790,7 +906,13 @@ fn switch_branch(
                 let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
                     .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
                 let target_tree = commit_to_tree(repo, &target_oid)?;
-                switch_to_tree(repo, &head, &target_tree, false)?;
+                switch_to_tree(
+                    repo,
+                    &head,
+                    &target_tree,
+                    false,
+                    RECURSE_SUBMODULES.with(|r| r.get()),
+                )?;
             }
             let tip = head
                 .oid()
@@ -864,7 +986,13 @@ fn switch_branch(
         let target_tree = commit_to_tree(repo, &target_oid)?;
 
         // Update working tree and index
-        switch_to_tree(repo, &head, &target_tree, force)?;
+        switch_to_tree(
+            repo,
+            &head,
+            &target_tree,
+            force,
+            RECURSE_SUBMODULES.with(|r| r.get()),
+        )?;
     }
 
     // Write reflog entries before updating HEAD
@@ -951,7 +1079,13 @@ fn create_and_switch_branch(
         false
     };
     if head.oid() != Some(&start_oid) || force || worktree_is_empty {
-        switch_to_tree(repo, &head, &target_tree, force)?;
+        switch_to_tree(
+            repo,
+            &head,
+            &target_tree,
+            force,
+            RECURSE_SUBMODULES.with(|r| r.get()),
+        )?;
     } else {
         run_post_checkout_hook(repo, old_head_commit.as_ref(), &start_oid, true)?;
     }
@@ -1083,7 +1217,13 @@ fn force_create_and_switch_branch(
 
     // Update working tree if start point differs from current HEAD, or if force
     if head.oid() != Some(&start_oid) || force {
-        switch_to_tree(repo, &head, &target_tree, force)?;
+        switch_to_tree(
+            repo,
+            &head,
+            &target_tree,
+            force,
+            RECURSE_SUBMODULES.with(|r| r.get()),
+        )?;
     } else {
         run_post_checkout_hook(repo, old_head_commit.as_ref(), &start_oid, true)?;
     }
@@ -1209,6 +1349,12 @@ fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> 
     new_index.entries = new_entries;
     new_index.sort();
 
+    let work_units = new_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0 && e.mode != 0o160000)
+        .count();
+
     // Remove files that are in old index but not in new, and write all entries
     checkout_index_to_worktree(repo, &old_index, &new_index, &work_tree, true)?;
 
@@ -1218,12 +1364,17 @@ fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> 
             continue;
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
-        write_blob_to_worktree(
+        let _ = write_blob_to_worktree(
             repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index,
         )?;
     }
 
     repo.write_index(&mut new_index).context("writing index")?;
+
+    trace2_emit_checkout_parallel_workers(checkout_parallel_worker_spawns(repo, work_units));
+    if RECURSE_SUBMODULES.with(|r| r.get()) {
+        recurse_submodules_after_checkout(repo)?;
+    }
     Ok(())
 }
 
@@ -1246,13 +1397,19 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
     new_index.entries = new_entries;
     new_index.sort();
 
+    let work_units = new_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0 && e.mode != 0o160000)
+        .count();
+
     // Write every entry to the worktree (force overwrite)
     for entry in &new_index.entries {
         if entry.stage() != 0 {
             continue;
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
-        write_blob_to_worktree(
+        let _ = write_blob_to_worktree(
             repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index,
         )?;
     }
@@ -1280,6 +1437,11 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
     let index_path = repo.index_path();
     repo.write_index_at(&index_path, &mut new_index)
         .context("writing index")?;
+
+    trace2_emit_checkout_parallel_workers(checkout_parallel_worker_spawns(repo, work_units));
+    if RECURSE_SUBMODULES.with(|r| r.get()) {
+        recurse_submodules_after_checkout(repo)?;
+    }
 
     // Print current branch/commit info
     match &head {
@@ -1317,7 +1479,13 @@ fn detach_head_inner(repo: &Repository, oid: &ObjectId, force: bool, explicit: b
     // checkout of that same OID must still materialize the tree (submodule clone uses this path).
     if !already_at_target || force || index_empty {
         let target_tree = commit_to_tree(repo, oid)?;
-        switch_to_tree(repo, &head, &target_tree, force)?;
+        switch_to_tree(
+            repo,
+            &head,
+            &target_tree,
+            force,
+            RECURSE_SUBMODULES.with(|r| r.get()),
+        )?;
     } else {
         run_post_checkout_hook(repo, old_head_commit.as_ref(), oid, true)?;
     }
@@ -1383,6 +1551,7 @@ fn switch_to_tree(
     _head: &HeadState,
     target_tree_oid: &ObjectId,
     force: bool,
+    recurse_submodules: bool,
 ) -> Result<()> {
     let work_tree = match &repo.work_tree {
         Some(p) => p.clone(),
@@ -1397,6 +1566,12 @@ fn switch_to_tree(
     let mut new_index = Index::new();
     new_index.entries = new_entries;
     new_index.sort();
+
+    let work_units = new_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0 && e.mode != 0o160000)
+        .count();
 
     // Dirty worktree safety check (unless forced)
     if !force {
@@ -1494,7 +1669,38 @@ fn switch_to_tree(
     repo.write_index_at(&index_path, &mut new_index)
         .context("writing index")?;
 
+    trace2_emit_checkout_parallel_workers(checkout_parallel_worker_spawns(repo, work_units));
+    if recurse_submodules {
+        recurse_submodules_after_checkout(repo)?;
+    }
+
     Ok(())
+}
+
+/// True when some parent path component is a tracked symlink in `old_index`.
+///
+/// Git refuses to check out through a symlink that replaced a directory (e.g. `D` → `untracked`
+/// while `D/A` is in the target tree).
+fn path_has_tracked_symlink_prefix(
+    old_index: &Index,
+    rel_path: &str,
+    old_paths: &HashSet<&[u8]>,
+) -> bool {
+    let mut prefix = String::new();
+    for component in rel_path.split('/') {
+        if !prefix.is_empty() && old_paths.contains(prefix.as_bytes()) {
+            if let Some(e) = old_index.get(prefix.as_bytes(), 0) {
+                if e.mode == MODE_SYMLINK {
+                    return true;
+                }
+            }
+        }
+        if !prefix.is_empty() {
+            prefix.push('/');
+        }
+        prefix.push_str(component);
+    }
+    false
 }
 
 /// Check if any tracked files have uncommitted changes that would be overwritten
@@ -1666,6 +1872,12 @@ fn check_dirty_worktree(
         // Check if an untracked file exists at that path.
         if !old_paths.contains(new_entry.path.as_slice()) {
             let rel_path = String::from_utf8_lossy(&new_entry.path);
+            let rel_str = rel_path.as_ref();
+            if path_has_tracked_symlink_prefix(old_index, rel_str, &old_paths) {
+                // Parent path is a tracked symlink; do not treat nested paths as untracked
+                // (matches Git when switching away from a symlinked directory name).
+                continue;
+            }
             let abs_path = work_tree.join(rel_path.as_ref());
             if abs_path.exists() || abs_path.is_symlink() {
                 // Before flagging as untracked, check if the path only exists
@@ -1772,6 +1984,27 @@ fn check_dirty_worktree(
     Ok(())
 }
 
+/// Return the embedded git directory for a submodule work tree path, if any.
+fn submodule_worktree_git_dir(sub_dir: &Path) -> Option<PathBuf> {
+    let git_path = sub_dir.join(".git");
+    if git_path.is_file() {
+        let content = std::fs::read_to_string(&git_path).ok()?;
+        let gitdir = content
+            .lines()
+            .find_map(|l| l.strip_prefix("gitdir: "))?
+            .trim();
+        Some(if Path::new(gitdir).is_absolute() {
+            PathBuf::from(gitdir)
+        } else {
+            sub_dir.join(gitdir)
+        })
+    } else if git_path.is_dir() {
+        Some(git_path)
+    } else {
+        None
+    }
+}
+
 /// Check if a working tree file differs from its index entry.
 ///
 /// Compares the clean (CRLF-normalized) hash of the worktree file to the
@@ -1784,10 +2017,26 @@ fn is_worktree_dirty(
     abs_path: &std::path::Path,
 ) -> Result<bool> {
     if entry.mode == MODE_GITLINK {
-        let Some(current) = read_submodule_head_oid_for_checkout(abs_path) else {
-            return Ok(true);
+        let Some(git_dir) = submodule_worktree_git_dir(abs_path) else {
+            return Ok(false);
         };
-        return Ok(current != entry.oid);
+        let super_git = repo
+            .git_dir
+            .canonicalize()
+            .unwrap_or_else(|_| repo.git_dir.clone());
+        let gd = match git_dir.canonicalize() {
+            Ok(p) => p,
+            Err(_) => return Ok(false),
+        };
+        // `cp -R` leaves gitfile paths pointing at another superproject's `.git/modules/`; do not
+        // treat those embedded commits as local modifications blocking checkout in the copy.
+        if !gd.starts_with(&super_git) {
+            return Ok(false);
+        }
+        let Some(head_oid) = read_submodule_head_oid(abs_path) else {
+            return Ok(false);
+        };
+        return Ok(head_oid != entry.oid);
     }
     if entry.mode == MODE_SYMLINK {
         // For symlinks, compare the target
@@ -1818,35 +2067,99 @@ fn is_worktree_dirty(
     }
 }
 
-fn read_submodule_head_oid_for_checkout(sub_path: &Path) -> Option<ObjectId> {
-    let dot_git = sub_path.join(".git");
-    let git_dir = if dot_git.is_file() {
-        let content = std::fs::read_to_string(&dot_git).ok()?;
-        let gitdir = content.strip_prefix("gitdir: ")?.trim();
-        if Path::new(gitdir).is_absolute() {
-            PathBuf::from(gitdir)
-        } else {
-            sub_path.join(gitdir)
-        }
-    } else if dot_git.is_dir() {
-        dot_git
-    } else {
-        return None;
-    };
-    let head_content = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
-    let head_content = head_content.trim();
-    if let Some(refname) = head_content.strip_prefix("ref: ") {
-        let ref_path = git_dir.join(refname);
-        let oid_hex = std::fs::read_to_string(&ref_path).ok()?;
-        ObjectId::from_hex(oid_hex.trim()).ok()
-    } else {
-        ObjectId::from_hex(head_content).ok()
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Path-based checkout (restore files)
 // ---------------------------------------------------------------------------
+
+fn checkout_record_path_result(
+    result: Result<bool>,
+    updated_paths: &mut usize,
+    path_errors: &mut Vec<anyhow::Error>,
+) {
+    match result {
+        Ok(true) => *updated_paths += 1,
+        Ok(false) => {}
+        Err(e) => path_errors.push(e),
+    }
+}
+
+/// Populate a submodule worktree for a single gitlink index entry (path + commit OID).
+///
+/// Used by full-tree checkout and by `git checkout -- <paths>` when paths include gitlinks.
+///
+/// When `force_populate` is true, runs `checkout --force` in the submodule so the worktree is
+/// rewritten even if HEAD already matches (needed when the path was a regular file and is now a
+/// gitlink, leaving an empty submodule directory). When false, a no-op checkout is avoided so
+/// symlinked submodule paths (e.g. `g` → `b`) do not spuriously populate the shared directory.
+fn checkout_gitlink_worktree_entry(
+    repo: &Repository,
+    work_tree: &Path,
+    rel: &str,
+    oid: &ObjectId,
+    force_populate: bool,
+) -> Result<()> {
+    let sm_dir = work_tree.join(rel);
+    let modules_git = repo.git_dir.join("modules").join(rel);
+    let has_local_module = modules_git.join("HEAD").exists();
+
+    if let Ok(meta) = std::fs::symlink_metadata(&sm_dir) {
+        if meta.file_type().is_symlink() || meta.is_file() {
+            let _ = std::fs::remove_file(&sm_dir);
+            // Was a single file at the submodule path (e.g. botched checkout); replace with dir.
+            std::fs::create_dir_all(&sm_dir)?;
+        }
+    }
+
+    if !sm_dir.exists() {
+        std::fs::create_dir_all(&sm_dir)?;
+    } else if sm_dir.is_dir() && !sm_dir.join(".git").exists() && has_local_module {
+        let _ = std::fs::remove_dir_all(&sm_dir);
+        std::fs::create_dir_all(&sm_dir)?;
+    } else if sm_dir.is_dir() {
+        let _ = std::fs::create_dir_all(&sm_dir);
+    }
+
+    if !has_local_module {
+        return Ok(());
+    }
+
+    let modules_abs = modules_git.canonicalize().unwrap_or(modules_git);
+    let gitfile = sm_dir.join(".git");
+    let want = format!("gitdir: {}\n", modules_abs.display());
+    let need_write = match std::fs::read_to_string(&gitfile) {
+        Ok(cur) => cur != want,
+        Err(_) => true,
+    };
+    if need_write {
+        std::fs::write(&gitfile, want)?;
+    }
+    let wt_abs = sm_dir.canonicalize().unwrap_or_else(|_| sm_dir.clone());
+    let grit_bin = grit_exe::grit_executable();
+    let mut cfg_cmd = Command::new(&grit_bin);
+    grit_exe::strip_trace2_env(&mut cfg_cmd);
+    let _ = cfg_cmd
+        .arg("--git-dir")
+        .arg(&modules_abs)
+        .args(["config", "core.worktree"])
+        .arg(&wt_abs)
+        .status();
+    let oid_hex = oid.to_hex();
+    let mut co_cmd = Command::new(&grit_bin);
+    grit_exe::strip_trace2_env(&mut co_cmd);
+    if force_populate {
+        co_cmd.args(["checkout", "--force", "--quiet", oid_hex.as_str()]);
+    } else {
+        co_cmd.args(["checkout", "--quiet", oid_hex.as_str()]);
+    }
+    let status = co_cmd
+        .current_dir(&sm_dir)
+        .status()
+        .context("spawning submodule checkout")?;
+    if !status.success() {
+        bail!("failed to checkout submodule at '{rel}' to {oid_hex}");
+    }
+    Ok(())
+}
 
 /// Checkout specific paths from the index or a tree-ish.
 fn checkout_paths(
@@ -1864,6 +2177,11 @@ fn checkout_paths(
         .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
 
     let cwd = std::env::current_dir().context("resolving cwd")?;
+    let mut updated_paths = 0usize;
+    let mut path_errors: Vec<anyhow::Error> = Vec::new();
+    // `GIT_TRACE2` parallel worker count: full index restore may only increment `updated_paths` for
+    // paths actually written; nested submodule checkouts strip trace — use index size (t2080).
+    let mut trace_parallel_units_from_index = 0usize;
 
     match source {
         None => {
@@ -1885,8 +2203,13 @@ fn checkout_paths(
                         }
                         let p = String::from_utf8_lossy(&ie.path).to_string();
                         if glob_matches(&rel, &p) {
-                            write_blob_to_worktree(repo, work_tree, &p, &ie.oid, ie.mode, &index)?;
-                            matched = true;
+                            let w = write_blob_to_worktree(
+                                repo, work_tree, &p, &ie.oid, ie.mode, &index,
+                            );
+                            if w.is_ok() {
+                                matched = true;
+                            }
+                            checkout_record_path_result(w, &mut updated_paths, &mut path_errors);
                         }
                     }
                     if !matched {
@@ -1899,19 +2222,33 @@ fn checkout_paths(
                 }
 
                 // Handle directory pathspecs (including "." for repo root)
-                let is_root = rel.is_empty() || rel == ".";
+                let is_root = rel.is_empty() || rel == "." || rel == "./";
                 if is_root {
+                    // Include gitlinks: each path is work for checkout (submodule population counts
+                    // toward parallel checkout tests even though nested grit runs strip GIT_TRACE2).
+                    let n = index.entries.iter().filter(|e| e.stage() == 0).count();
+                    trace_parallel_units_from_index = trace_parallel_units_from_index.max(n);
                     // Restore ALL index entries
                     for ie in &index.entries {
                         if ie.stage() != 0 {
                             continue;
                         }
                         let p = String::from_utf8_lossy(&ie.path).to_string();
-                        write_blob_to_worktree(repo, work_tree, &p, &ie.oid, ie.mode, &index)?;
+                        checkout_record_path_result(
+                            write_blob_to_worktree(repo, work_tree, &p, &ie.oid, ie.mode, &index),
+                            &mut updated_paths,
+                            &mut path_errors,
+                        );
                     }
                 } else if let Some(entry) = index.get(path_bytes, 0) {
                     // Exact file match
-                    write_blob_to_worktree(repo, work_tree, &rel, &entry.oid, entry.mode, &index)?;
+                    checkout_record_path_result(
+                        write_blob_to_worktree(
+                            repo, work_tree, &rel, &entry.oid, entry.mode, &index,
+                        ),
+                        &mut updated_paths,
+                        &mut path_errors,
+                    );
                 } else if ours || theirs {
                     let stage2 = index.get(path_bytes, 2).cloned();
                     let stage3 = index.get(path_bytes, 3).cloned();
@@ -1929,28 +2266,35 @@ fn checkout_paths(
                     let mut new_entry = entry_src.clone();
                     new_entry.flags &= 0x0FFF;
                     index.stage_file(new_entry.clone());
-                    write_blob_to_worktree(
-                        repo,
-                        work_tree,
-                        &rel,
-                        &new_entry.oid,
-                        new_entry.mode,
-                        &index,
-                    )?;
+                    checkout_record_path_result(
+                        write_blob_to_worktree(
+                            repo,
+                            work_tree,
+                            &rel,
+                            &new_entry.oid,
+                            new_entry.mode,
+                            &index,
+                        ),
+                        &mut updated_paths,
+                        &mut path_errors,
+                    );
                     index_modified = true;
                 } else if merge_mode {
                     let stage1 = index.get(path_bytes, 1).cloned();
                     let stage2 = index.get(path_bytes, 2).cloned();
                     let stage3 = index.get(path_bytes, 3).cloned();
                     if stage2.is_some() || stage3.is_some() {
-                        checkout_conflicted_path_with_merge(
+                        match checkout_conflicted_path_with_merge(
                             repo,
                             work_tree,
                             &rel,
                             stage1.as_ref(),
                             stage2.as_ref(),
                             stage3.as_ref(),
-                        )?;
+                        ) {
+                            Ok(()) => updated_paths += 1,
+                            Err(e) => path_errors.push(e),
+                        }
                         continue;
                     }
                 } else {
@@ -1967,8 +2311,13 @@ fn checkout_paths(
                         }
                         let p = String::from_utf8_lossy(&ie.path).to_string();
                         if p.starts_with(&prefix) {
-                            write_blob_to_worktree(repo, work_tree, &p, &ie.oid, ie.mode, &index)?;
-                            matched = true;
+                            let w = write_blob_to_worktree(
+                                repo, work_tree, &p, &ie.oid, ie.mode, &index,
+                            );
+                            if w.is_ok() {
+                                matched = true;
+                            }
+                            checkout_record_path_result(w, &mut updated_paths, &mut path_errors);
                         }
                     }
                     if !matched {
@@ -2012,17 +2361,20 @@ fn checkout_paths(
                         if !glob_matches(&rel, &entry_path) {
                             continue;
                         }
-                        write_blob_to_worktree(
+                        let w = write_blob_to_worktree(
                             repo,
                             work_tree,
                             &entry_path,
                             &flat_entry.oid,
                             flat_entry.mode,
                             &index,
-                        )?;
-                        index.add_or_replace(flat_entry.clone());
-                        index_modified = true;
-                        matched = true;
+                        );
+                        if w.is_ok() {
+                            index.add_or_replace(flat_entry.clone());
+                            index_modified = true;
+                            matched = true;
+                        }
+                        checkout_record_path_result(w, &mut updated_paths, &mut path_errors);
                     }
                     if no_overlay {
                         let to_remove: Vec<Vec<u8>> = index
@@ -2096,17 +2448,20 @@ fn checkout_paths(
                         if !prefix.is_empty() && !entry_path.starts_with(&prefix) {
                             continue;
                         }
-                        write_blob_to_worktree(
+                        let w = write_blob_to_worktree(
                             repo,
                             work_tree,
                             &entry_path,
                             &flat_entry.oid,
                             flat_entry.mode,
                             &index,
-                        )?;
-                        index.add_or_replace(flat_entry.clone());
-                        index_modified = true;
-                        matched = true;
+                        );
+                        if w.is_ok() {
+                            index.add_or_replace(flat_entry.clone());
+                            index_modified = true;
+                            matched = true;
+                        }
+                        checkout_record_path_result(w, &mut updated_paths, &mut path_errors);
                     }
                     // In no-overlay mode, remove index entries that match the
                     // pathspec but are NOT in the source tree.
@@ -2173,50 +2528,52 @@ fn checkout_paths(
                     })?;
 
                     // Write to working tree with CRLF conversion
-                    write_blob_to_worktree(repo, work_tree, &rel, &blob_oid, mode, &index)?;
+                    let w = write_blob_to_worktree(repo, work_tree, &rel, &blob_oid, mode, &index);
+                    if w.is_ok() {
+                        // Read blob size for index entry
+                        let obj = repo
+                            .odb
+                            .read(&blob_oid)
+                            .with_context(|| format!("reading blob for '{rel}'"))?;
 
-                    // Read blob size for index entry
-                    let obj = repo
-                        .odb
-                        .read(&blob_oid)
-                        .with_context(|| format!("reading blob for '{rel}'"))?;
-
-                    // Update index entry with actual file stat
-                    let path_bytes = rel.as_bytes().to_vec();
-                    let abs_file = work_tree.join(&rel);
-                    let (cs, cns, ms, mns, dev, ino, fsz) =
-                        if let Ok(m) = std::fs::symlink_metadata(&abs_file) {
-                            use std::os::unix::fs::MetadataExt as _;
-                            (
-                                m.ctime() as u32,
-                                m.ctime_nsec() as u32,
-                                m.mtime() as u32,
-                                m.mtime_nsec() as u32,
-                                m.dev() as u32,
-                                m.ino() as u32,
-                                m.size() as u32,
-                            )
-                        } else {
-                            (0, 0, 0, 0, 0, 0, obj.data.len() as u32)
+                        // Update index entry with actual file stat
+                        let path_bytes = rel.as_bytes().to_vec();
+                        let abs_file = work_tree.join(&rel);
+                        let (cs, cns, ms, mns, dev, ino, fsz) =
+                            if let Ok(m) = std::fs::symlink_metadata(&abs_file) {
+                                use std::os::unix::fs::MetadataExt as _;
+                                (
+                                    m.ctime() as u32,
+                                    m.ctime_nsec() as u32,
+                                    m.mtime() as u32,
+                                    m.mtime_nsec() as u32,
+                                    m.dev() as u32,
+                                    m.ino() as u32,
+                                    m.size() as u32,
+                                )
+                            } else {
+                                (0, 0, 0, 0, 0, 0, obj.data.len() as u32)
+                            };
+                        let entry = IndexEntry {
+                            ctime_sec: cs,
+                            ctime_nsec: cns,
+                            mtime_sec: ms,
+                            mtime_nsec: mns,
+                            dev,
+                            ino,
+                            mode,
+                            uid: 0,
+                            gid: 0,
+                            size: fsz,
+                            oid: blob_oid,
+                            flags: path_bytes.len().min(0xFFF) as u16,
+                            flags_extended: None,
+                            path: path_bytes,
                         };
-                    let entry = IndexEntry {
-                        ctime_sec: cs,
-                        ctime_nsec: cns,
-                        mtime_sec: ms,
-                        mtime_nsec: mns,
-                        dev,
-                        ino,
-                        mode,
-                        uid: 0,
-                        gid: 0,
-                        size: fsz,
-                        oid: blob_oid,
-                        flags: path_bytes.len().min(0xFFF) as u16,
-                        flags_extended: None,
-                        path: path_bytes,
-                    };
-                    index.add_or_replace(entry);
-                    index_modified = true;
+                        index.add_or_replace(entry);
+                        index_modified = true;
+                    }
+                    checkout_record_path_result(w, &mut updated_paths, &mut path_errors);
                 }
             }
 
@@ -2226,6 +2583,28 @@ fn checkout_paths(
             }
         }
     }
+
+    if !path_errors.is_empty() {
+        for e in &path_errors {
+            eprintln!("error: {e:#}");
+        }
+        if updated_paths > 0 {
+            checkout_eprintln!(
+                "Updated {} path{} from the index",
+                updated_paths,
+                if updated_paths == 1 { "" } else { "s" }
+            );
+        }
+        let trace_units = trace_parallel_units_from_index.max(updated_paths);
+        trace2_emit_checkout_parallel_workers(checkout_parallel_worker_spawns(repo, trace_units));
+        return Err(path_errors
+            .into_iter()
+            .next()
+            .expect("path_errors non-empty"));
+    }
+
+    let trace_units = trace_parallel_units_from_index.max(updated_paths);
+    trace2_emit_checkout_parallel_workers(checkout_parallel_worker_spawns(repo, trace_units));
 
     let head_state = resolve_head(&repo.git_dir)?;
     let tip = head_state.oid().copied();
@@ -2989,9 +3368,12 @@ fn checkout_index_to_worktree(
         // Skip gitlink (submodule) entries — their OIDs reference commits
         // in the submodule's object store, not blobs in ours.
         if entry.mode == MODE_GITLINK {
-            let rel = String::from_utf8_lossy(&entry.path);
-            let sm_dir = work_tree.join(rel.as_ref());
-            let _ = std::fs::create_dir_all(&sm_dir);
+            let rel = String::from_utf8_lossy(&entry.path).into_owned();
+            let force_populate = match old_map.get(entry.path.as_slice()) {
+                None => true,
+                Some(old) => old.mode != MODE_GITLINK || old.oid != entry.oid,
+            };
+            checkout_gitlink_worktree_entry(repo, work_tree, &rel, &entry.oid, force_populate)?;
             continue;
         }
 
@@ -3010,7 +3392,7 @@ fn checkout_index_to_worktree(
         }
 
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
-        write_blob_to_worktree(
+        let _ = write_blob_to_worktree(
             repo, work_tree, &path_str, &entry.oid, entry.mode, new_index,
         )?;
     }
@@ -3038,6 +3420,9 @@ fn git_dir_is_nested_modules_repo(git_dir: &Path) -> bool {
 }
 
 /// Write a blob object to the working tree.
+///
+/// Returns `Ok(true)` when the path was written or updated, `Ok(false)` when the work tree already
+/// matched (so user-facing counts like "Updated N paths" stay accurate; t2080).
 fn write_blob_to_worktree(
     repo: &Repository,
     work_tree: &std::path::Path,
@@ -3045,7 +3430,13 @@ fn write_blob_to_worktree(
     oid: &ObjectId,
     mode: u32,
     index: &Index,
-) -> Result<()> {
+) -> Result<bool> {
+    if mode == MODE_GITLINK {
+        // Path checkout from index: always materialize (may follow symlinked submodule paths).
+        checkout_gitlink_worktree_entry(repo, work_tree, rel_path, oid, false)?;
+        return Ok(true);
+    }
+
     let obj = repo.odb.read(oid).context("reading object for checkout")?;
     if obj.kind != ObjectKind::Blob {
         bail!("cannot checkout non-blob at '{rel_path}'");
@@ -3072,12 +3463,13 @@ fn write_blob_to_worktree(
         if let Ok(existing) = std::fs::read(&abs_path) {
             if existing == *data {
                 apply_index_file_mode(&abs_path, mode)?;
-                return Ok(());
+                return Ok(false);
             }
         }
     }
 
-    write_to_worktree(work_tree, rel_path, &data, mode)
+    write_to_worktree(work_tree, rel_path, &data, mode)?;
+    Ok(true)
 }
 
 /// Set `abs_path` permissions to match Git index `mode` (regular vs executable blob).
@@ -3164,6 +3556,35 @@ fn checkout_conflicted_path_with_merge(
     write_to_worktree(work_tree, rel_path, &merge_out.content, ours_entry.mode)
 }
 
+/// Ensure each component of `rel_path`'s parent exists as a real directory.
+///
+/// Replaces a parent path that is a symlink or regular file (e.g. `D` → `untracked` or `D` as a
+/// file) so `mkdir -p` can create `D/A` during checkout (`t2080` force checkout cases).
+fn prepare_parent_dirs_for_checkout(work_tree: &std::path::Path, rel_path: &str) -> Result<()> {
+    use std::path::Component;
+    let path = std::path::Path::new(rel_path);
+    let Some(parent_rel) = path.parent() else {
+        return Ok(());
+    };
+    if parent_rel.as_os_str().is_empty() {
+        return Ok(());
+    }
+    let mut cur = work_tree.to_path_buf();
+    for comp in parent_rel.components() {
+        if let Component::Normal(name) = comp {
+            cur.push(name);
+            if let Ok(meta) = std::fs::symlink_metadata(&cur) {
+                if meta.file_type().is_symlink() {
+                    std::fs::remove_file(&cur)?;
+                } else if !meta.is_dir() {
+                    std::fs::remove_file(&cur)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Write data to a working tree file, handling symlinks and executable bits.
 fn write_to_worktree(
     work_tree: &std::path::Path,
@@ -3173,14 +3594,18 @@ fn write_to_worktree(
 ) -> Result<()> {
     let abs_path = work_tree.join(rel_path);
 
+    prepare_parent_dirs_for_checkout(work_tree, rel_path)?;
     if let Some(parent) = abs_path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating parent directories for '{rel_path}'"))?;
     }
 
-    // Remove existing file/dir at target path
-    if abs_path.exists() || std::fs::symlink_metadata(&abs_path).is_ok() {
-        if abs_path.is_dir() {
+    // Remove existing file/dir/symlink at target path. Use symlink_metadata + is_symlink so we
+    // replace symlinked paths (e.g. `D` → `untracked`) before creating a real directory tree.
+    if let Ok(meta) = std::fs::symlink_metadata(&abs_path) {
+        if meta.file_type().is_symlink() {
+            std::fs::remove_file(&abs_path)?;
+        } else if meta.is_dir() {
             std::fs::remove_dir_all(&abs_path)?;
         } else {
             std::fs::remove_file(&abs_path)?;

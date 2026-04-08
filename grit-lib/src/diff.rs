@@ -589,7 +589,7 @@ pub fn diff_index_to_worktree(
         // Gitlink entries (submodules) are directories — compare HEAD commit.
         if ie.mode == 0o160000 {
             let sub_dir = work_tree.join(path_str_ref);
-            let sub_head_oid = read_submodule_head(&sub_dir);
+            let sub_head_oid = read_submodule_head_oid(&sub_dir);
             let matches_index = match sub_head_oid {
                 Some(oid) => oid == ie.oid,
                 None => submodule_worktree_is_unpopulated_placeholder(&sub_dir),
@@ -959,7 +959,7 @@ pub fn diff_tree_to_worktree(
         if is_gitlink {
             if let Some(te) = tree_entry {
                 let sub_dir = work_tree.join(path);
-                let sub_head = read_submodule_head(&sub_dir);
+                let sub_head = read_submodule_head_oid(&sub_dir);
                 if sub_head.as_ref() != Some(&te.oid) {
                     let new_oid = sub_head.unwrap_or_else(zero_oid);
                     result.push(DiffEntry {
@@ -2251,27 +2251,80 @@ fn submodule_worktree_is_unpopulated_placeholder(sub_dir: &Path) -> bool {
     }
 }
 
-/// Read the HEAD commit OID from a submodule directory.
-/// Returns `None` if the submodule dir doesn't exist or has no HEAD.
 fn read_submodule_head(sub_dir: &Path) -> Option<ObjectId> {
-    // Also handle gitfile: .git is a file containing "gitdir: <path>"
-    let git_dir = if sub_dir.join(".git").is_file() {
-        let content = fs::read_to_string(sub_dir.join(".git")).ok()?;
+    read_submodule_head_oid(sub_dir)
+}
+
+/// Resolve the embedded git directory for a submodule work tree (`sub_dir/.git`).
+fn submodule_embedded_git_dir(sub_dir: &Path) -> Option<PathBuf> {
+    let gitfile = sub_dir.join(".git");
+    if gitfile.is_file() {
+        let content = fs::read_to_string(&gitfile).ok()?;
         let gitdir = content
             .lines()
             .find_map(|l| l.strip_prefix("gitdir: "))?
-            .trim()
-            .to_owned();
-        if Path::new(&gitdir).is_absolute() {
+            .trim();
+        Some(if Path::new(gitdir).is_absolute() {
             PathBuf::from(gitdir)
         } else {
             sub_dir.join(gitdir)
-        }
-    } else if sub_dir.join(".git").is_dir() {
-        sub_dir.join(".git")
+        })
+    } else if gitfile.is_dir() {
+        Some(gitfile)
     } else {
-        return None;
-    };
+        None
+    }
+}
+
+/// Walk upward from `sub_dir` to find the nearest containing Git work tree.
+fn find_superproject_git(sub_dir: &Path) -> Option<(PathBuf, PathBuf)> {
+    let mut cur = sub_dir.parent()?;
+    loop {
+        let git_path = cur.join(".git");
+        if git_path.exists() {
+            let gd = if git_path.is_file() {
+                let content = fs::read_to_string(&git_path).ok()?;
+                let line = content
+                    .lines()
+                    .find_map(|l| l.strip_prefix("gitdir: "))?
+                    .trim();
+                if Path::new(line).is_absolute() {
+                    PathBuf::from(line)
+                } else {
+                    cur.join(line)
+                }
+            } else {
+                git_path
+            };
+            return Some((cur.to_path_buf(), gd));
+        }
+        cur = cur.parent()?;
+    }
+}
+
+/// Read the HEAD commit OID from a submodule working tree directory.
+///
+/// Handles both embedded `.git` directories and `gitdir:` gitfiles pointing at
+/// `.git/modules/...` (or other locations). Returns `None` if the path is not
+/// a checkout or has no resolvable HEAD.
+pub fn read_submodule_head_oid(sub_dir: &Path) -> Option<ObjectId> {
+    // Submodule `.git` may be a gitfile pointing at `.git/modules/<name>` in another superproject
+    // after `cp -R`. Prefer the current superproject's module dir when present.
+    let mut git_dir = submodule_embedded_git_dir(sub_dir)?;
+    if let Some((super_wt, super_git_dir)) = find_superproject_git(sub_dir) {
+        let rel = sub_dir.strip_prefix(&super_wt).ok()?;
+        let rel_str = rel.to_string_lossy().replace('\\', "/");
+        let local_mod = super_git_dir
+            .join("modules")
+            .join(rel_str.trim_start_matches('/'));
+        if local_mod.join("HEAD").exists() {
+            let sg = super_git_dir.canonicalize().unwrap_or(super_git_dir);
+            let cur = git_dir.canonicalize().unwrap_or_else(|_| git_dir.clone());
+            if !cur.starts_with(&sg) {
+                git_dir = local_mod;
+            }
+        }
+    }
     let head_content = fs::read_to_string(git_dir.join("HEAD")).ok()?;
     let head_content = head_content.trim();
     if let Some(refname) = head_content.strip_prefix("ref: ") {

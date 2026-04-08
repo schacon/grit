@@ -1371,6 +1371,29 @@ fn resolve_base(
         }
     }
 
+    // DWIM: `checkout B2` when only `refs/remotes/origin/B2` exists (common after `fetch`).
+    if !spec.contains('/') && spec != "HEAD" && spec != "FETCH_HEAD" && spec != "MERGE_HEAD" {
+        const REMOTES: &str = "refs/remotes/";
+        if let Ok(remote_refs) = refs::list_refs(&repo.git_dir, REMOTES) {
+            let matches: Vec<ObjectId> = remote_refs
+                .into_iter()
+                .filter(|(r, _)| {
+                    r.strip_prefix(REMOTES)
+                        .is_some_and(|rest| rest == spec || rest.ends_with(&format!("/{spec}")))
+                })
+                .map(|(_, oid)| oid)
+                .collect();
+            if matches.len() == 1 {
+                return Ok(matches[0]);
+            }
+            if matches.len() > 1 {
+                return Err(Error::InvalidRef(format!(
+                    "ambiguous refname '{spec}': matches multiple remote-tracking branches"
+                )));
+            }
+        }
+    }
+
     // As a last resort, try resolving as an index path (porcelain / DWIM only).
     if !spec.contains(':') && !spec.starts_with('-') {
         if index_dwim {
