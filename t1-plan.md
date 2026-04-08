@@ -141,7 +141,7 @@
 - [ ] t12810-merge-file-binary-text.sh
 - [ ] t12820-diff-no-index-symlink.sh
 - [ ] t12830-diff-cached-mode-change.sh
-- [ ] t12880-log-notes-display.sh
+- [x] t12880-log-notes-display.sh
 - [ ] t12950-config-regexp-match.sh
 - [ ] t12980-tag-force-replace.sh
 - [ ] t12990-commit-reuse-message.sh

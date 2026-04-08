@@ -391,6 +391,42 @@ fn parse_date_to_epoch(s: &str) -> Option<i64> {
     s.parse::<i64>().ok()
 }
 
+/// Whether to load ref decorations and whether to use full ref names (`refs/heads/...`).
+///
+/// Mirrors Git's handling of `--decorate`, `--no-decorate`, and `log.showDecoration`
+/// for the common case: `--oneline` defaults to short decorations when not disabled.
+fn resolve_decoration_display(args: &Args, format_requires_decorations: bool) -> (bool, bool) {
+    let mut show = format_requires_decorations;
+    let mut full = format_requires_decorations;
+    for arg in std::env::args() {
+        if arg == "--no-decorate" {
+            show = false;
+            full = false;
+        } else if arg.starts_with("--decorate") {
+            show = true;
+            full = arg == "--decorate=full";
+        }
+    }
+    if args.decorate.is_some() {
+        show = true;
+        if let Some(Some(mode)) = &args.decorate {
+            if mode == "full" {
+                full = true;
+            }
+        }
+    }
+    if args.no_decorate {
+        show = false;
+        full = false;
+    }
+    let oneline_like = args.oneline || args.format.as_deref() == Some("oneline");
+    if oneline_like && !args.no_decorate && !show {
+        show = true;
+        full = false;
+    }
+    (show, full)
+}
+
 fn run_graph_log(repo: &Repository, args: &Args) -> Result<()> {
     let mut implied_pathspecs: Vec<String> = Vec::new();
     let mut revision_specs = Vec::new();
@@ -554,8 +590,21 @@ fn run_graph_log(repo: &Repository, args: &Args) -> Result<()> {
         node.parents.retain(|p| interesting.contains(p));
     }
 
-    let decorations = if args.simplify_by_decoration {
-        Some(collect_decorations(repo, false)?)
+    let format_requires_decorations_graph = args
+        .format
+        .as_deref()
+        .map(|fmt| {
+            let template = fmt
+                .strip_prefix("format:")
+                .or_else(|| fmt.strip_prefix("tformat:"))
+                .unwrap_or(fmt);
+            template.contains("%d") || template.contains("%D")
+        })
+        .unwrap_or(false);
+    let (show_decorations_graph, decorate_full_graph) =
+        resolve_decoration_display(args, format_requires_decorations_graph);
+    let decorations = if args.simplify_by_decoration || show_decorations_graph {
+        Some(collect_decorations(repo, decorate_full_graph)?)
     } else {
         None
     };
@@ -950,7 +999,13 @@ fn render_graph_commit_text(
     let hex = node.oid.to_hex();
     if args.oneline || args.format.as_deref() == Some("oneline") {
         let first_line = info.message.lines().next().unwrap_or("");
-        return format!("{} {}", &hex[..abbrev_len.min(hex.len())], first_line);
+        let dec = format_decoration(&hex, decorations);
+        return format!(
+            "{}{} {}",
+            &hex[..abbrev_len.min(hex.len())],
+            dec,
+            first_line
+        );
     }
 
     if let Some(fmt) = args.format.as_deref() {
@@ -1714,30 +1769,8 @@ pub fn run(mut args: Args) -> Result<()> {
         })
         .unwrap_or(false);
 
-    // Collect ref decorations — manually determine last-wins for
-    // --decorate / --no-decorate so that flag order is respected.
-    let (show_decorations, decorate_full) = {
-        // Default: decorations off, except when the chosen format asks for
-        // `%d` / `%D` placeholders.
-        let mut show = format_requires_decorations;
-        let mut full = format_requires_decorations;
-        for arg in std::env::args() {
-            if arg == "--no-decorate" {
-                show = false;
-                full = false;
-            } else if arg.starts_with("--decorate") {
-                show = true;
-                full = arg == "--decorate=full";
-            }
-        }
-        if args.decorate.is_some() {
-            show = true;
-        }
-        if args.no_decorate {
-            show = false;
-        }
-        (show, full)
-    };
+    let (show_decorations, decorate_full) =
+        resolve_decoration_display(&args, format_requires_decorations);
     let decorations = if !show_decorations {
         None
     } else {
@@ -4176,7 +4209,6 @@ fn collect_decorations(
     full: bool,
 ) -> Result<std::collections::HashMap<String, Vec<String>>> {
     let mut map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-    let mut head_target: Option<(String, String)> = None;
 
     // HEAD
     let head = resolve_head(&repo.git_dir)?;
@@ -4184,12 +4216,6 @@ fn collect_decorations(
         let hex = oid.to_hex();
         let label = match &head {
             HeadState::Branch { short_name, .. } => {
-                let branch_label = if full {
-                    format!("refs/heads/{short_name}")
-                } else {
-                    short_name.to_owned()
-                };
-                head_target = Some((hex.clone(), branch_label));
                 if full {
                     format!("HEAD -> refs/heads/{short_name}")
                 } else {
@@ -4231,14 +4257,6 @@ fn collect_decorations(
             "tag: ",
             &mut map,
         )?;
-    }
-
-    // Avoid duplicate current branch decoration when we already show
-    // "HEAD -> <branch>" for the same commit.
-    if let Some((head_hex, branch_label)) = head_target {
-        if let Some(refs) = map.get_mut(&head_hex) {
-            refs.retain(|r| r != &branch_label || r.starts_with("HEAD -> "));
-        }
     }
 
     // De-duplicate while preserving order.
