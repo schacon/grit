@@ -179,6 +179,11 @@ impl Repository {
             } else if let Some(raw) = core_wt {
                 Some(resolve_core_worktree_path(&git_dir, &raw)?)
             } else {
+                // Without `GIT_WORK_TREE`, Git uses the current working directory as the work
+                // tree root (see git-config(1) / `git help repository-layout`), not the parent
+                // of `$GIT_DIR`. This matches upstream tests that run
+                // `GIT_DIR=other/.git git …` from the top-level repo while manipulating paths
+                // under `$PWD` (e.g. t5402-post-merge-hook).
                 Some(cwd.canonicalize().unwrap_or_else(|_| cwd.clone()))
             };
             let mut repo = Self::open(&git_dir, resolved_wt.as_deref())?;

@@ -15,6 +15,7 @@ use tempfile::NamedTempFile;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::MergeAttr;
 use grit_lib::diff::{count_changes, detect_renames, diff_trees, DiffEntry, DiffStatus};
+use grit_lib::hooks::run_hook;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
@@ -29,6 +30,14 @@ use time::OffsetDateTime;
 
 use crate::commands::diff_index;
 use crate::explicit_exit::ExplicitExit;
+
+/// Run Git's `post-merge` hook with one argument: `0` for a normal merge, `1` for squash.
+///
+/// Matches upstream `merge.c` `finish()`: hook failures are ignored (Git does not abort the merge).
+fn run_post_merge_hook(repo: &Repository, squash: bool) {
+    let flag = if squash { "1" } else { "0" };
+    let _ = run_hook(repo, "post-merge", &[flag], None);
+}
 
 /// Arguments for `grit merge`.
 #[derive(Debug, Clone, ClapArgs)]
@@ -200,6 +209,31 @@ fn effective_subtree_shift(
 ///
 /// Uses entry-by-entry comparison — not `write_tree_from_index` — so intent-to-add and other
 /// entries omitted from the written tree still make the index "dirty" vs HEAD when appropriate.
+/// Like [`index_matches_head_tree`] but compares the index to an arbitrary commit's tree.
+fn index_matches_commit_tree(repo: &Repository, commit_oid: ObjectId) -> Result<bool> {
+    let index = repo.load_index()?;
+    let tree_oid = commit_tree(repo, commit_oid)?;
+    let tree_entries = tree_to_map(tree_to_index_entries(repo, &tree_oid, "")?);
+    let mut index_paths: BTreeSet<Vec<u8>> = BTreeSet::new();
+    for e in index.entries.iter().filter(|e| e.stage() == 0) {
+        index_paths.insert(e.path.clone());
+        match tree_entries.get(&e.path) {
+            Some(te) => {
+                if te.oid != e.oid || te.mode != e.mode {
+                    return Ok(false);
+                }
+            }
+            None => return Ok(false),
+        }
+    }
+    for path in tree_entries.keys() {
+        if !index_paths.contains(path) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn index_matches_head_tree(repo: &Repository, head_oid: ObjectId) -> Result<bool> {
     let index = repo.load_index()?;
     let head_tree = commit_tree(repo, head_oid)?;
@@ -852,7 +886,9 @@ fn do_fast_forward(
     let old_tree = commit_tree(repo, head_oid)?;
     let mut new_index = compose_fast_forward_index(repo, commit.tree, old_tree, &current_index)?;
     let old_entries = tree_to_map(tree_to_index_entries(repo, &old_tree, "")?);
-    if !args.autostash && diff_index::index_cached_differs_from_head(repo)? {
+    let index_dirty_vs_head = diff_index::index_cached_differs_from_head(repo)?;
+    let index_already_at_target = index_matches_commit_tree(repo, merge_oid)?;
+    if !args.autostash && index_dirty_vs_head && !index_already_at_target {
         return Err(anyhow::Error::new(ExplicitExit {
             code: 2,
             message: "Your local changes to the following files would be overwritten by merge:\n\
@@ -861,7 +897,9 @@ Aborting"
                 .to_string(),
         }));
     }
-    bail_if_merge_would_overwrite_local_changes(repo, &old_entries, &new_index, false)?;
+    if !index_already_at_target {
+        bail_if_merge_would_overwrite_local_changes(repo, &old_entries, &new_index, false)?;
+    }
 
     update_head(&repo.git_dir, head, &merge_oid)?;
 
@@ -888,6 +926,7 @@ Aborting"
             print_diffstat(repo, &diff_entries, args.compact_summary);
         }
     }
+    run_post_merge_hook(repo, false);
     Ok(())
 }
 
@@ -1428,6 +1467,7 @@ Aborting"
         if !args.quiet {
             eprintln!("Automatic merge went well; stopped before committing as requested");
         }
+        run_post_merge_hook(repo, false);
         return Ok(());
     }
 
@@ -1521,6 +1561,7 @@ Aborting"
         }
     }
 
+    run_post_merge_hook(repo, false);
     Ok(())
 }
 
@@ -2305,6 +2346,7 @@ fn do_octopus_merge(
         if !args.quiet {
             eprintln!("Squash commit -- not updating HEAD");
         }
+        run_post_merge_hook(repo, true);
         return Ok(());
     }
 
@@ -2320,6 +2362,7 @@ fn do_octopus_merge(
         if !args.quiet {
             eprintln!("Automatic merge went well; stopped before committing as requested");
         }
+        run_post_merge_hook(repo, false);
         return Ok(());
     }
 
@@ -2359,6 +2402,7 @@ fn do_octopus_merge(
         println!("[{branch} {short}] {first_line}");
     }
 
+    run_post_merge_hook(repo, false);
     Ok(())
 }
 
@@ -2541,6 +2585,7 @@ fn do_strategy_ours(
         println!("[{branch} {short}] {first_line}");
     }
 
+    run_post_merge_hook(repo, false);
     Ok(())
 }
 
@@ -2603,6 +2648,7 @@ fn do_strategy_theirs(
         println!("[{branch} {short}] {first_line}");
     }
 
+    run_post_merge_hook(repo, false);
     Ok(())
 }
 
@@ -2817,6 +2863,7 @@ fn do_squash(
             &merge_oid.to_hex()[..7]
         );
     }
+    run_post_merge_hook(repo, true);
     Ok(())
 }
 
@@ -2837,6 +2884,7 @@ fn do_squash_from_merge(
     if !args.quiet {
         eprintln!("Squash commit -- not updating HEAD");
     }
+    run_post_merge_hook(repo, true);
     Ok(())
 }
 

@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -906,7 +906,7 @@ t5335-compact-multi-pack-index	t5	yes	10	0	10	false	ok	0
 t5351-unpack-large-objects	t5	yes	7	4	3	false	ok	0
 t5400-send-pack	t5	yes	17	10	7	false	ok	0
 t5401-update-hooks	t5	yes	13	4	9	false	ok	0
-t5402-post-merge-hook	t5	yes	7	3	4	false	ok	0
+t5402-post-merge-hook	t5	yes	7	7	0	true	ok	0
 t5403-post-checkout-hook	t5	yes	14	14	0	true	ok	0
 t5404-tracking-branches	t5	yes	7	3	4	false	ok	0
 t5405-send-pack-rewind	t5	yes	3	3	0	true	ok	0

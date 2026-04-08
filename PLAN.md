@@ -582,7 +582,7 @@ commit → check it off → move on.
 - [ ] `t5614-clone-submodules-shallow` ████████░░░░░░░░░░░░ 4/9 (5 left) — Test shallow cloning of repos with submodules
 - [ ] `t5200-update-server-info` ███████░░░░░░░░░░░░░ 3/8 (5 left) — Test git update-server-info
 - [ ] `t5564-http-proxy` ███████░░░░░░░░░░░░░ 3/8 (5 left) — test fetching through http proxy
-- [ ] `t5402-post-merge-hook` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — Test the post-merge hook.
+- [x] `t5402-post-merge-hook` ████████████████████ 7/7 (0 left) — Test the post-merge hook.
 - [ ] `t5502-quickfetch` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — test quickfetch from local
 - [x] `t5544-pack-objects-hook` ████████████████████ 7/7 (0 left) — test custom script in place of pack-objects
 - [ ] `t5316-pack-delta-depth` ░░░░░░░░░░░░░░░░░░░░ 0/5 (5 left) — pack-objects breaks long cross-pack delta chains

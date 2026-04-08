@@ -54,18 +54,12 @@ pub fn resolve_hooks_dir(repo: &Repository) -> PathBuf {
     repo.git_dir.join("hooks")
 }
 
-fn hook_command_path(repo: &Repository, hooks_dir: &Path, hook_name: &str, cwd: &Path) -> PathBuf {
-    let default_hooks_dir = repo.git_dir.join("hooks");
-    if hooks_dir == default_hooks_dir {
-        if cwd == repo.git_dir {
-            return PathBuf::from("hooks").join(hook_name);
-        }
-        if let Some(work_tree) = repo.work_tree.as_deref() {
-            if cwd == work_tree {
-                return PathBuf::from(".git").join("hooks").join(hook_name);
-            }
-        }
-    }
+/// Executable argv[0] for spawning a hook.
+///
+/// Always uses an absolute path. Relative paths like `.git/hooks/name` only work when the child
+/// process cwd matches that layout; merge with `GIT_DIR=clone/.git` runs with cwd at the parent
+/// work tree, so a relative hook argv0 would not resolve (t5402-post-merge-hook).
+fn hook_executable_path(hooks_dir: &Path, hook_name: &str) -> PathBuf {
     hooks_dir.join(hook_name)
 }
 
@@ -115,7 +109,7 @@ pub fn run_hook(
     }
 
     let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
-    let command_path = hook_command_path(repo, &hooks_dir, hook_name, work_dir);
+    let command_path = hook_executable_path(&hooks_dir, hook_name);
 
     let mut cmd = Command::new(&command_path);
     cmd.args(args)
@@ -176,7 +170,7 @@ pub fn run_hook_in_git_dir(
         return (HookResult::NotFound, Vec::new());
     }
 
-    let command_path = hook_command_path(repo, &hooks_dir, hook_name, &repo.git_dir);
+    let command_path = hook_executable_path(&hooks_dir, hook_name);
     let mut cmd = Command::new(&command_path);
     cmd.args(args)
         .current_dir(&repo.git_dir) // receive-side hooks run from GIT_DIR
@@ -244,7 +238,7 @@ pub fn run_hook_with_env(
     }
 
     let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
-    let command_path = hook_command_path(repo, &hooks_dir, hook_name, work_dir);
+    let command_path = hook_executable_path(&hooks_dir, hook_name);
 
     let mut cmd = Command::new(&command_path);
     cmd.args(args)
@@ -311,7 +305,7 @@ pub fn run_hook_capture(
     }
 
     let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
-    let command_path = hook_command_path(repo, &hooks_dir, hook_name, work_dir);
+    let command_path = hook_executable_path(&hooks_dir, hook_name);
 
     let mut cmd = Command::new(&command_path);
     cmd.args(args)
