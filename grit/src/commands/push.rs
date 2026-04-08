@@ -264,6 +264,8 @@ fn push_to_url(
         )
     })?;
 
+    let remote_config = ConfigSet::load(Some(&remote_repo.git_dir), false)?;
+
     // Build list of ref updates
     let mut updates = Vec::new();
 
@@ -307,6 +309,8 @@ fn push_to_url(
                 });
             }
         }
+    } else if args.refspecs.len() == 1 && args.refspecs[0] == ":" {
+        collect_matching_push_updates(repo, &remote_repo, remote_name, args, &mut updates)?;
     } else if push_all {
         // Push all branches (refs/heads/*)
         let local_branches = refs::list_refs(&repo.git_dir, "refs/heads/")?;
@@ -333,7 +337,9 @@ fn push_to_url(
             let remote_ref = normalize_ref(spec);
             let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
             if old_oid.is_none() {
-                bail!("remote ref '{}' not found", spec);
+                // Git skips delete refspecs when the remote ref is already absent
+                // (e.g. tracking ref removed locally first).
+                continue;
             }
             let expected_oid = resolve_force_with_lease_expect(
                 &args.force_with_lease,
@@ -366,7 +372,7 @@ fn push_to_url(
                 let remote_ref = normalize_ref(&dst);
                 let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
                 if old_oid.is_none() {
-                    bail!("remote ref '{}' not found", dst);
+                    continue;
                 }
                 let expected_oid = resolve_force_with_lease_expect(
                     &args.force_with_lease,
@@ -612,10 +618,11 @@ fn push_to_url(
         return Ok(());
     }
 
-    // Validate updates (fast-forward check unless --force or --force-with-lease)
-    for update in &updates {
-        // force-with-lease: verify remote ref matches what we think it is
-        // (i.e., what our remote-tracking ref says)
+    // Per-ref validation. Force-with-lease still fails the whole push when stale.
+    // Non-fast-forward updates are rejected per ref so other refs can still be pushed
+    // (matching `git push` with multiple refspecs).
+    let mut pre_reject: Vec<Option<String>> = vec![None; updates.len()];
+    for (i, update) in updates.iter().enumerate() {
         if let Some(expected) = &update.expected_oid {
             let actual_remote = refs::resolve_ref(&remote_repo.git_dir, &update.remote_ref).ok();
             if actual_remote.as_ref() != Some(expected) {
@@ -636,12 +643,12 @@ fn push_to_url(
                 && args.force_with_lease.is_none()
                 && !is_ancestor(repo, *old, *new)?
             {
-                bail!(
+                pre_reject[i] = Some(format!(
                     "Updates were rejected because the tip of your current branch is behind\n\
                      its remote counterpart. If you want to force the update, use --force.\n\
                      remote ref: {}",
                     update.remote_ref
-                );
+                ));
             }
         }
     }
@@ -786,11 +793,14 @@ fn push_to_url(
         println!("To {url}");
     }
 
-    // Build stdin for pre-receive / post-receive hooks
+    // Build stdin for pre-receive / post-receive hooks (omit client-side rejected refs).
     let zero_oid_str = "0".repeat(40);
     let hook_stdin = {
         let mut lines = String::new();
-        for update in &updates {
+        for (i, update) in updates.iter().enumerate() {
+            if pre_reject[i].is_some() {
+                continue;
+            }
             let old_hex = update
                 .old_oid
                 .map(|o| o.to_hex())
@@ -845,7 +855,13 @@ fn push_to_url(
     let mut applied_updates: Vec<(&RefUpdate, Option<ObjectId>)> = Vec::new();
     let mut rejected: Vec<(&RefUpdate, String)> = Vec::new();
 
-    for update in &updates {
+    for (i, update) in updates.iter().enumerate() {
+        if let Some(msg) = &pre_reject[i] {
+            eprintln!("{msg}");
+            rejected.push((update, "non-fast-forward".to_string()));
+            continue;
+        }
+
         // Run the remote's `update` hook: update <refname> <old-oid> <new-oid>
         if !args.dry_run {
             let old_hex = update
@@ -901,15 +917,40 @@ fn push_to_url(
             }
         }
 
-        let result = apply_ref_update(repo, &remote_repo, remote_name, update, args, url);
+        let result = apply_ref_update(
+            repo,
+            &remote_repo,
+            remote_name,
+            update,
+            args,
+            url,
+            config,
+            &remote_config,
+        );
 
         match result {
-            Ok(()) => {
+            Ok(ApplyRefResult::Applied) => {
                 applied_updates.push((update, update.old_oid));
+            }
+            Ok(ApplyRefResult::RemoteRejected(reason)) => {
+                if args.atomic {
+                    for (prev_update, prev_old) in &applied_updates {
+                        if let Some(old_oid) = prev_old {
+                            let _ = refs::write_ref(
+                                &remote_repo.git_dir,
+                                &prev_update.remote_ref,
+                                old_oid,
+                            );
+                        } else {
+                            let _ = refs::delete_ref(&remote_repo.git_dir, &prev_update.remote_ref);
+                        }
+                    }
+                    bail!("failed to push some refs to '{url}'");
+                }
+                rejected.push((update, reason));
             }
             Err(e) => {
                 if args.atomic {
-                    // Rollback all applied updates
                     for (prev_update, prev_old) in &applied_updates {
                         if let Some(old_oid) = prev_old {
                             let _ = refs::write_ref(
@@ -1056,6 +1097,191 @@ fn push_to_url(
     Ok(())
 }
 
+/// Git `receive.denyCurrentBranch` / `receive.denyDeleteCurrent` policy (subset).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReceiveDenyAction {
+    Unconfigured,
+    Ignore,
+    Warn,
+    Refuse,
+    UpdateInstead,
+}
+
+fn parse_receive_deny_action(value: Option<&str>) -> ReceiveDenyAction {
+    match value.map(str::trim) {
+        None => ReceiveDenyAction::Ignore,
+        Some(s) if s.eq_ignore_ascii_case("ignore") => ReceiveDenyAction::Ignore,
+        Some(s) if s.eq_ignore_ascii_case("warn") => ReceiveDenyAction::Warn,
+        Some(s) if s.eq_ignore_ascii_case("refuse") => ReceiveDenyAction::Refuse,
+        Some(s) if s.eq_ignore_ascii_case("updateinstead") => ReceiveDenyAction::UpdateInstead,
+        Some(s) => match parse_bool(s) {
+            Ok(true) => ReceiveDenyAction::Refuse,
+            Ok(false) => ReceiveDenyAction::Ignore,
+            Err(_) => ReceiveDenyAction::Ignore,
+        },
+    }
+}
+
+fn read_receive_deny_current(cfg: &ConfigSet) -> ReceiveDenyAction {
+    let v = cfg
+        .get("receive.denyCurrentBranch")
+        .or_else(|| cfg.get("receive.denycurrentbranch"));
+    parse_receive_deny_action(v.as_deref())
+}
+
+fn read_receive_deny_delete_current(cfg: &ConfigSet) -> ReceiveDenyAction {
+    let v = cfg
+        .get("receive.denyDeleteCurrent")
+        .or_else(|| cfg.get("receive.denydeletecurrent"));
+    parse_receive_deny_action(v.as_deref())
+}
+
+/// Enforce receive-pack rules for the non-bare remote (checked-out branch updates/deletes).
+///
+/// Returns `Err(short_reason)` when the ref must be rejected (matches Git's parenthetical in
+/// `! [remote rejected] ... (reason)`).
+fn check_receive_pack_policy(
+    remote_repo: &Repository,
+    remote_config: &ConfigSet,
+    pushing_config: &ConfigSet,
+    update: &RefUpdate,
+) -> std::result::Result<(), String> {
+    if remote_repo.is_bare() {
+        return Ok(());
+    }
+
+    let head = resolve_head(&remote_repo.git_dir).map_err(|e| e.to_string())?;
+    let head_ref = match head {
+        grit_lib::state::HeadState::Branch { refname, .. } => refname,
+        _ => return Ok(()),
+    };
+
+    let style = RemoteMessageColorStyle::from_config(pushing_config);
+
+    if update.remote_ref != head_ref {
+        return Ok(());
+    }
+
+    if update.new_oid.is_some() {
+        let deny = read_receive_deny_current(remote_config);
+        match deny {
+            ReceiveDenyAction::Ignore => {}
+            ReceiveDenyAction::Warn => {
+                colorize_remote_output("warning: updating the current branch", &style);
+            }
+            ReceiveDenyAction::Unconfigured => {
+                colorize_remote_output(
+                    &format!("error: refusing to update checked out branch: {head_ref}"),
+                    &style,
+                );
+                colorize_remote_output(
+                    "error: By default, updating the current branch in a non-bare repository\n\
+                     is denied, because it will make the index and work tree inconsistent\n\
+                     with what you pushed, and will require 'git reset --hard' to match\n\
+                     the work tree to HEAD.\n\
+                     \n\
+                     You can set the 'receive.denyCurrentBranch' configuration variable\n\
+                     to 'ignore' or 'warn' in the remote repository to allow pushing into\n\
+                     its current branch; however, this is not recommended unless you\n\
+                     arranged to update its work tree to match what you pushed in some\n\
+                     other way.\n\
+                     \n\
+                     To squelch this message and still keep the default behaviour, set\n\
+                     'receive.denyCurrentBranch' configuration variable to 'refuse'.",
+                    &style,
+                );
+                return Err("branch is currently checked out".to_owned());
+            }
+            ReceiveDenyAction::Refuse => {
+                colorize_remote_output(
+                    &format!("error: refusing to update checked out branch: {head_ref}"),
+                    &style,
+                );
+                return Err("branch is currently checked out".to_owned());
+            }
+            ReceiveDenyAction::UpdateInstead => {
+                return Err("denyCurrentBranch = updateInstead is not supported".to_owned());
+            }
+        }
+    } else {
+        let deny = read_receive_deny_delete_current(remote_config);
+        match deny {
+            ReceiveDenyAction::Ignore => {}
+            ReceiveDenyAction::Warn => {
+                colorize_remote_output("warning: deleting the current branch", &style);
+            }
+            ReceiveDenyAction::Unconfigured => {
+                colorize_remote_output(
+                    "error: By default, deleting the current branch is denied, because the next\n\
+                     'git clone' won't result in any file checked out, causing confusion.\n\
+                     \n\
+                     You can set 'receive.denyDeleteCurrent' configuration variable to\n\
+                     'warn' or 'ignore' in the remote repository to allow deleting the\n\
+                     current branch, with or without a warning message.\n\
+                     \n\
+                     To squelch this message, you can set it to 'refuse'.",
+                    &style,
+                );
+                colorize_remote_output(
+                    &format!("error: refusing to delete the current branch: {head_ref}"),
+                    &style,
+                );
+                return Err("deletion of the current branch prohibited".to_owned());
+            }
+            ReceiveDenyAction::Refuse | ReceiveDenyAction::UpdateInstead => {
+                colorize_remote_output(
+                    &format!("error: refusing to delete the current branch: {head_ref}"),
+                    &style,
+                );
+                return Err("deletion of the current branch prohibited".to_owned());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Outcome of applying one ref update on the remote.
+enum ApplyRefResult {
+    Applied,
+    RemoteRejected(String),
+}
+
+/// Matching refspec `:` — push every `refs/heads/*` whose tip differs from the remote.
+fn collect_matching_push_updates(
+    repo: &Repository,
+    remote_repo: &Repository,
+    remote_name: &str,
+    args: &Args,
+    updates: &mut Vec<RefUpdate>,
+) -> Result<()> {
+    let local_branches = refs::list_refs(&repo.git_dir, "refs/heads/")?;
+    for (refname, local_oid) in &local_branches {
+        let old_oid = refs::resolve_ref(&remote_repo.git_dir, refname).ok();
+        if old_oid.as_ref() == Some(local_oid) {
+            continue;
+        }
+        let dst = refname
+            .strip_prefix("refs/heads/")
+            .unwrap_or(refname.as_str());
+        let expected_oid = resolve_force_with_lease_expect(
+            &args.force_with_lease,
+            &repo.git_dir,
+            remote_name,
+            dst,
+        );
+        updates.push(RefUpdate {
+            local_ref: Some(refname.clone()),
+            remote_ref: refname.clone(),
+            old_oid,
+            new_oid: Some(*local_oid),
+            expected_oid,
+            refspec_force: false,
+        });
+    }
+    Ok(())
+}
+
 /// Apply a single ref update on the remote, printing output as appropriate.
 fn apply_ref_update(
     repo: &Repository,
@@ -1064,7 +1290,15 @@ fn apply_ref_update(
     update: &RefUpdate,
     args: &Args,
     _url: &str,
-) -> Result<()> {
+    pushing_config: &ConfigSet,
+    remote_config: &ConfigSet,
+) -> Result<ApplyRefResult> {
+    if let Err(reason) =
+        check_receive_pack_policy(remote_repo, remote_config, pushing_config, update)
+    {
+        return Ok(ApplyRefResult::RemoteRejected(reason));
+    }
+
     let zero_oid = "0".repeat(40);
 
     match (&update.new_oid, &update.old_oid) {
@@ -1164,7 +1398,7 @@ fn apply_ref_update(
         _ => {}
     }
 
-    Ok(())
+    Ok(ApplyRefResult::Applied)
 }
 
 /// Update local remote-tracking refs after a successful push.
