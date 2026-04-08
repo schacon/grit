@@ -5,7 +5,10 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::diff::{count_changes, format_stat_line, stat_matches, unified_diff, zero_oid};
+use grit_lib::diff::{
+    count_changes, detect_copies, format_stat_line, stat_matches, unified_diff, zero_oid,
+    DiffEntry, DiffStatus,
+};
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
 };
@@ -45,38 +48,97 @@ pub fn run(args: Args) -> Result<()> {
 
     let changes = collect_changes(&repo, &index, &work_tree, &options)?;
 
+    let mut diff_entries: Vec<DiffEntry> = changes.iter().map(change_to_diff_entry).collect();
+
+    if options.reverse {
+        diff_entries = diff_entries
+            .into_iter()
+            .map(reverse_diff_entry_for_diff_files)
+            .collect();
+    }
+
+    if options.find_copies {
+        let threshold = options.find_renames.unwrap_or(50);
+        let source_index_entries: Vec<(String, String, ObjectId)> = index
+            .entries
+            .iter()
+            .filter(|e| e.stage() == 0)
+            .filter_map(|e| {
+                let path = String::from_utf8(e.path.clone()).ok()?;
+                if options.ignore_submodules && e.mode == MODE_GITLINK {
+                    return None;
+                }
+                if !matches_pathspec(&path, &options.pathspecs) {
+                    return None;
+                }
+                let mode = format!("{:06o}", canonicalize_mode(e.mode));
+                Some((path, mode, e.oid))
+            })
+            .collect();
+        diff_entries = detect_copies(
+            &repo.odb,
+            diff_entries,
+            threshold,
+            options.find_copies_harder,
+            &source_index_entries,
+        );
+    } else if let Some(threshold) = options.find_renames {
+        diff_entries = grit_lib::diff::detect_renames(&repo.odb, diff_entries, threshold);
+    }
+
     if !options.quiet && !options.suppress_diff {
         match options.format {
             OutputFormat::Raw => {
-                for change in &changes {
-                    println!("{}", render_raw(change, &repo, options.abbrev)?);
+                for entry in &diff_entries {
+                    println!(
+                        "{}",
+                        render_raw_diff_entry(entry, &repo, options.abbrev, options.reverse)?
+                    );
                 }
             }
             OutputFormat::NameOnly => {
-                for change in &changes {
-                    println!("{}", change.path);
+                for entry in &diff_entries {
+                    println!("{}", entry.path());
                 }
             }
             OutputFormat::NameStatus => {
-                for change in &changes {
-                    println!("{}\t{}", change.status, change.path);
+                for entry in &diff_entries {
+                    match (entry.status, entry.score) {
+                        (DiffStatus::Renamed, Some(s)) => {
+                            println!(
+                                "R{s:03}\t{}\t{}",
+                                entry.old_path.as_deref().unwrap_or(""),
+                                entry.new_path.as_deref().unwrap_or("")
+                            );
+                        }
+                        (DiffStatus::Copied, Some(s)) => {
+                            println!(
+                                "C{s:03}\t{}\t{}",
+                                entry.old_path.as_deref().unwrap_or(""),
+                                entry.new_path.as_deref().unwrap_or("")
+                            );
+                        }
+                        _ => {
+                            println!("{}\t{}", entry.status.letter(), entry.path());
+                        }
+                    }
                 }
             }
             OutputFormat::Patch => {
-                for change in &changes {
-                    print_patch(change, &repo, &work_tree)?;
+                for entry in &diff_entries {
+                    print_patch_from_diff_entry(entry, &repo, &work_tree)?;
                 }
             }
             OutputFormat::Stat => {
-                print_stat(&changes, &repo, &work_tree)?;
+                print_stat_from_diff_entries(&diff_entries, &repo, &work_tree)?;
             }
             OutputFormat::NumStat => {
-                print_numstat(&changes, &repo, &work_tree)?;
+                print_numstat_from_diff_entries(&diff_entries, &repo, &work_tree)?;
             }
         }
     }
 
-    if (options.exit_code || options.quiet) && !changes.is_empty() {
+    if (options.exit_code || options.quiet) && !diff_entries.is_empty() {
         std::process::exit(1);
     }
     Ok(())
@@ -122,6 +184,14 @@ struct Options {
     diff_filter: Option<String>,
     /// Omit submodule entries (gitlinks) from the diff.
     ignore_submodules: bool,
+    /// Rename similarity threshold (percent); `None` disables rename detection.
+    find_renames: Option<u32>,
+    /// Enable copy detection (`-C` / `--find-copies`).
+    find_copies: bool,
+    /// Consider unmodified index entries as copy sources (`--find-copies-harder`).
+    find_copies_harder: bool,
+    /// Swap old/new sides (reverse diff).
+    reverse: bool,
 }
 
 /// A single changed file: index side vs working tree.
@@ -137,6 +207,8 @@ struct Change {
     new_mode: u32,
     /// Index-side OID.
     old_oid: ObjectId,
+    /// Working-tree blob OID (hashed content); zero when unknown or deleted from worktree.
+    new_oid: ObjectId,
 }
 
 // ── Option parsing ───────────────────────────────────────────────────
@@ -151,6 +223,11 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut suppress_diff = false;
     let mut diff_filter: Option<String> = None;
     let mut ignore_submodules = false;
+    let mut find_renames: Option<u32> = None;
+    let mut find_copies = false;
+    let mut find_copies_harder = false;
+    let mut c_count = 0u32;
+    let mut reverse = false;
     let mut end_of_options = false;
 
     let mut idx = 0usize;
@@ -163,6 +240,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         }
         if !end_of_options && arg.starts_with('-') {
             match arg.as_str() {
+                "-R" => reverse = true,
                 "--raw" => {
                     format = OutputFormat::Raw;
                     suppress_diff = false;
@@ -220,8 +298,48 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 | "--full-index"
                 | "--no-ext-diff"
                 | "--no-prefix"
-                | "--no-renames"
                 | "--no-abbrev" => {}
+                "-M" | "--find-renames" => {
+                    find_renames = Some(50);
+                }
+                "--no-renames" => {
+                    find_renames = None;
+                }
+                _ if arg.starts_with("-M") && arg.len() > 2 => {
+                    let val = &arg[2..];
+                    let pct = if val.ends_with('%') {
+                        val[..val.len() - 1].parse::<u32>().unwrap_or(50)
+                    } else {
+                        val.parse::<u32>().unwrap_or(50)
+                    };
+                    find_renames = Some(pct);
+                }
+                _ if arg.starts_with("--find-renames=") => {
+                    let val = &arg["--find-renames=".len()..];
+                    let pct = if val.ends_with('%') {
+                        val[..val.len() - 1].parse::<u32>().unwrap_or(50)
+                    } else {
+                        val.parse::<u32>().unwrap_or(50)
+                    };
+                    find_renames = Some(pct);
+                }
+                "-C" | "--find-copies" => {
+                    c_count += 1;
+                    find_copies = true;
+                    if c_count >= 2 {
+                        find_copies_harder = true;
+                    }
+                    if find_renames.is_none() {
+                        find_renames = Some(50);
+                    }
+                }
+                "--find-copies-harder" => {
+                    find_copies = true;
+                    find_copies_harder = true;
+                    if find_renames.is_none() {
+                        find_renames = Some(50);
+                    }
+                }
                 "--diff-filter" => {
                     if idx + 1 < argv.len() {
                         diff_filter = Some(argv[idx + 1].clone());
@@ -269,6 +387,10 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         suppress_diff,
         diff_filter,
         ignore_submodules,
+        find_renames,
+        find_copies,
+        find_copies_harder,
+        reverse,
     })
 }
 
@@ -337,6 +459,7 @@ fn collect_changes(
                                 old_mode: idx_canonical,
                                 new_mode: wt_mode,
                                 old_oid: *idx_oid,
+                                new_oid: wt_oid,
                             },
                         );
                     }
@@ -351,6 +474,7 @@ fn collect_changes(
                             old_mode: canonicalize_mode(*idx_mode),
                             new_mode: 0,
                             old_oid: *idx_oid,
+                            new_oid: zero_oid(),
                         },
                     );
                 }
@@ -373,6 +497,7 @@ fn collect_changes(
                     old_mode: 0,
                     new_mode: 0,
                     old_oid: zero_oid(),
+                    new_oid: zero_oid(),
                 },
             );
         }
@@ -381,7 +506,7 @@ fn collect_changes(
         for (path, (idx_mode, idx_oid)) in &staged {
             let abs = work_tree.join(path);
             match read_worktree_info(repo, &abs)? {
-                Some((wt_mode, _wt_oid)) => {
+                Some((wt_mode, wt_oid)) => {
                     changes.insert(
                         path.clone(),
                         Change {
@@ -390,6 +515,7 @@ fn collect_changes(
                             old_mode: canonicalize_mode(*idx_mode),
                             new_mode: wt_mode,
                             old_oid: *idx_oid,
+                            new_oid: wt_oid,
                         },
                     );
                 }
@@ -402,6 +528,7 @@ fn collect_changes(
                             old_mode: canonicalize_mode(*idx_mode),
                             new_mode: 0,
                             old_oid: *idx_oid,
+                            new_oid: zero_oid(),
                         },
                     );
                 }
@@ -414,6 +541,293 @@ fn collect_changes(
         out.retain(|change| matches_diff_filter(change.status, spec));
     }
     Ok(out)
+}
+
+fn change_to_diff_entry(c: &Change) -> DiffEntry {
+    let old_mode_str = format!("{:06o}", c.old_mode);
+    let new_mode_str = format!("{:06o}", c.new_mode);
+    match c.status {
+        'D' => DiffEntry {
+            status: DiffStatus::Deleted,
+            old_path: Some(c.path.clone()),
+            new_path: None,
+            old_mode: old_mode_str,
+            new_mode: new_mode_str,
+            old_oid: c.old_oid,
+            new_oid: zero_oid(),
+            score: None,
+        },
+        'U' => DiffEntry {
+            status: DiffStatus::Unmerged,
+            old_path: Some(c.path.clone()),
+            new_path: Some(c.path.clone()),
+            old_mode: old_mode_str,
+            new_mode: new_mode_str,
+            old_oid: c.old_oid,
+            new_oid: c.new_oid,
+            score: None,
+        },
+        'T' => DiffEntry {
+            status: DiffStatus::TypeChanged,
+            old_path: Some(c.path.clone()),
+            new_path: Some(c.path.clone()),
+            old_mode: old_mode_str,
+            new_mode: new_mode_str,
+            old_oid: c.old_oid,
+            new_oid: c.new_oid,
+            score: None,
+        },
+        _ => DiffEntry {
+            status: DiffStatus::Modified,
+            old_path: Some(c.path.clone()),
+            new_path: Some(c.path.clone()),
+            old_mode: old_mode_str,
+            new_mode: new_mode_str,
+            old_oid: c.old_oid,
+            new_oid: c.new_oid,
+            score: None,
+        },
+    }
+}
+
+/// Swap old/new sides for `diff-files -R` before rename/copy detection.
+fn reverse_diff_entry_for_diff_files(mut e: DiffEntry) -> DiffEntry {
+    match e.status {
+        DiffStatus::Added => {
+            e.status = DiffStatus::Deleted;
+            e.old_path = e.new_path.take();
+            e.new_path = None;
+            std::mem::swap(&mut e.old_mode, &mut e.new_mode);
+            std::mem::swap(&mut e.old_oid, &mut e.new_oid);
+        }
+        DiffStatus::Deleted => {
+            e.status = DiffStatus::Added;
+            e.new_path = e.old_path.take();
+            e.old_path = None;
+            std::mem::swap(&mut e.old_mode, &mut e.new_mode);
+            std::mem::swap(&mut e.old_oid, &mut e.new_oid);
+        }
+        DiffStatus::Renamed | DiffStatus::Copied => {
+            std::mem::swap(&mut e.old_path, &mut e.new_path);
+            std::mem::swap(&mut e.old_mode, &mut e.new_mode);
+            std::mem::swap(&mut e.old_oid, &mut e.new_oid);
+        }
+        DiffStatus::Modified | DiffStatus::TypeChanged | DiffStatus::Unmerged => {
+            std::mem::swap(&mut e.old_mode, &mut e.new_mode);
+            std::mem::swap(&mut e.old_oid, &mut e.new_oid);
+        }
+    }
+    e
+}
+
+fn render_raw_diff_entry(
+    entry: &DiffEntry,
+    repo: &Repository,
+    abbrev: Option<usize>,
+    reverse: bool,
+) -> Result<String> {
+    let width = abbrev.unwrap_or(40).clamp(4, 40);
+    let old_oid = format_oid_for_raw(entry.old_oid, repo, abbrev, width)?;
+    let new_oid = if reverse {
+        format_oid_for_raw(entry.new_oid, repo, abbrev, width)?
+    } else {
+        "0".repeat(width)
+    };
+
+    let status_str = match (entry.status, entry.score) {
+        (DiffStatus::Renamed, Some(s)) => format!("R{s:03}"),
+        (DiffStatus::Copied, Some(s)) => format!("C{s:03}"),
+        _ => entry.status.letter().to_string(),
+    };
+
+    let path = match entry.status {
+        DiffStatus::Renamed | DiffStatus::Copied => format!(
+            "{}\t{}",
+            entry.old_path.as_deref().unwrap_or(""),
+            entry.new_path.as_deref().unwrap_or("")
+        ),
+        _ => entry.path().to_owned(),
+    };
+
+    Ok(format!(
+        ":{} {} {} {} {}\t{}",
+        entry.old_mode, entry.new_mode, old_oid, new_oid, status_str, path
+    ))
+}
+
+fn format_oid_for_raw(
+    oid: ObjectId,
+    repo: &Repository,
+    abbrev: Option<usize>,
+    width: usize,
+) -> Result<String> {
+    if oid == zero_oid() {
+        return Ok("0".repeat(width));
+    }
+    match abbrev {
+        Some(min_len) => abbreviate_object_id(repo, oid, min_len).map_err(Into::into),
+        None => Ok(oid.to_hex()),
+    }
+}
+
+fn print_patch_from_diff_entry(
+    entry: &DiffEntry,
+    repo: &Repository,
+    work_tree: &Path,
+) -> Result<()> {
+    let (old_content, new_content) = load_patch_contents_for_diff_entry(entry, repo, work_tree)?;
+    let old_path = entry
+        .old_path
+        .as_deref()
+        .unwrap_or(entry.new_path.as_deref().unwrap_or(""));
+    let new_path = entry
+        .new_path
+        .as_deref()
+        .unwrap_or(entry.old_path.as_deref().unwrap_or(""));
+
+    let old_label = match entry.status {
+        DiffStatus::Added => "/dev/null".to_owned(),
+        _ => format!("a/{old_path}"),
+    };
+    let new_label = match entry.status {
+        DiffStatus::Deleted => "/dev/null".to_owned(),
+        _ => format!("b/{new_path}"),
+    };
+
+    let display_path = entry.path();
+    let mut header = format!("diff --git a/{old_path} b/{new_path}");
+    match entry.status {
+        DiffStatus::Deleted => {
+            header.push_str(&format!("\ndeleted file mode {}", entry.old_mode));
+        }
+        DiffStatus::Added => {
+            header.push_str(&format!("\nnew file mode {}", entry.new_mode));
+        }
+        DiffStatus::Renamed => {
+            let sim = entry.score.unwrap_or(100);
+            header.push_str(&format!(
+                "\nsimilarity index {sim}%\nrename from {old_path}\nrename to {new_path}"
+            ));
+        }
+        DiffStatus::Copied => {
+            let sim = entry.score.unwrap_or(100);
+            header.push_str(&format!(
+                "\nsimilarity index {sim}%\ncopy from {old_path}\ncopy to {new_path}"
+            ));
+        }
+        _ => {
+            if entry.old_mode != entry.new_mode {
+                header.push_str(&format!(
+                    "\nold mode {}\nnew mode {}",
+                    entry.old_mode, entry.new_mode
+                ));
+            }
+        }
+    }
+
+    if (entry.status == DiffStatus::Renamed || entry.status == DiffStatus::Copied)
+        && entry.old_oid == entry.new_oid
+    {
+        println!("{header}");
+        return Ok(());
+    }
+
+    if old_content == new_content
+        && entry.old_mode != entry.new_mode
+        && entry.status != DiffStatus::Renamed
+        && entry.status != DiffStatus::Copied
+    {
+        println!("{header}");
+    } else if old_content != new_content {
+        let patch = unified_diff(&old_content, &new_content, display_path, display_path, 3);
+        let body: String = patch.lines().skip(2).map(|l| format!("\n{l}")).collect();
+        println!("{header}\n--- {old_label}\n+++ {new_label}{body}");
+    } else {
+        println!("{header}\n--- {old_label}\n+++ {new_label}");
+    }
+    Ok(())
+}
+
+fn print_stat_from_diff_entries(
+    entries: &[DiffEntry],
+    repo: &Repository,
+    work_tree: &Path,
+) -> Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let max_len = entries.iter().map(|e| e.path().len()).max().unwrap_or(0);
+    let mut total_ins = 0usize;
+    let mut total_del = 0usize;
+    for entry in entries {
+        let (old, new) = load_patch_contents_for_diff_entry(entry, repo, work_tree)?;
+        let (ins, del) = count_changes(&old, &new);
+        total_ins += ins;
+        total_del += del;
+        println!("{}", format_stat_line(entry.path(), ins, del, max_len));
+    }
+    let files = entries.len();
+    let mut summary = format!(
+        " {} file{} changed",
+        files,
+        if files == 1 { "" } else { "s" },
+    );
+    if total_ins > 0 || (total_ins == 0 && total_del == 0) {
+        summary.push_str(&format!(
+            ", {} insertion{}(+)",
+            total_ins,
+            if total_ins == 1 { "" } else { "s" }
+        ));
+    }
+    if total_del > 0 || (total_ins == 0 && total_del == 0) {
+        summary.push_str(&format!(
+            ", {} deletion{}(-)",
+            total_del,
+            if total_del == 1 { "" } else { "s" }
+        ));
+    }
+    println!("{summary}");
+    Ok(())
+}
+
+fn print_numstat_from_diff_entries(
+    entries: &[DiffEntry],
+    repo: &Repository,
+    work_tree: &Path,
+) -> Result<()> {
+    for entry in entries {
+        let (old, new) = load_patch_contents_for_diff_entry(entry, repo, work_tree)?;
+        let (ins, del) = count_changes(&old, &new);
+        println!("{}\t{}\t{}", ins, del, entry.path());
+    }
+    Ok(())
+}
+
+fn load_patch_contents_for_diff_entry(
+    entry: &DiffEntry,
+    repo: &Repository,
+    work_tree: &Path,
+) -> Result<(String, String)> {
+    let old_content = if entry.status == DiffStatus::Added || entry.old_oid == zero_oid() {
+        String::new()
+    } else {
+        let obj = repo.odb.read(&entry.old_oid)?;
+        String::from_utf8(obj.data).unwrap_or_default()
+    };
+
+    let new_content = if entry.status == DiffStatus::Deleted {
+        String::new()
+    } else {
+        let path = entry.new_path.as_deref().unwrap_or(entry.path());
+        let abs = work_tree.join(path);
+        match fs::read(&abs) {
+            Ok(bytes) => String::from_utf8(bytes).unwrap_or_default(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(e.into()),
+        }
+    };
+
+    Ok((old_content, new_content))
 }
 
 fn matches_diff_filter(status: char, spec: &str) -> bool {
@@ -588,164 +1002,6 @@ fn read_worktree_info(repo: &Repository, abs_path: &Path) -> Result<Option<(u32,
     }
 
     Ok(None)
-}
-
-// ── Output renderers ─────────────────────────────────────────────────
-
-/// Format a change in Git's raw diff format.
-///
-/// For `diff-files` the working-tree OID is always shown as zeros —
-/// the worktree side has not been committed into the object store.
-fn render_raw(change: &Change, repo: &Repository, abbrev: Option<usize>) -> Result<String> {
-    let width = abbrev.unwrap_or(40).clamp(4, 40);
-    let old_oid = format_oid(change.old_oid, repo, abbrev, width)?;
-    // Working-tree OID is always zeros in diff-files output.
-    let new_oid = "0".repeat(width);
-    Ok(format!(
-        ":{:06o} {:06o} {} {} {}\t{}",
-        change.old_mode, change.new_mode, old_oid, new_oid, change.status, change.path
-    ))
-}
-
-/// Print unified patch output for a single change.
-fn print_patch(change: &Change, repo: &Repository, work_tree: &Path) -> Result<()> {
-    let (old_content, new_content) = load_patch_contents(change, repo, work_tree)?;
-    let path = &change.path;
-    let old_label = if change.status == 'A' {
-        "/dev/null".to_owned()
-    } else {
-        format!("a/{path}")
-    };
-    let new_label = if change.status == 'D' {
-        "/dev/null".to_owned()
-    } else {
-        format!("b/{path}")
-    };
-
-    // Build mode header lines
-    let mut header = format!("diff --git a/{path} b/{path}");
-    if change.status == 'D' {
-        header.push_str(&format!("\ndeleted file mode {:06o}", change.old_mode));
-    } else if change.status == 'A' {
-        header.push_str(&format!("\nnew file mode {:06o}", change.new_mode));
-    } else if change.old_mode != change.new_mode {
-        header.push_str(&format!(
-            "\nold mode {:06o}\nnew mode {:06o}",
-            change.old_mode, change.new_mode
-        ));
-    }
-
-    if old_content == new_content && change.old_mode != change.new_mode {
-        // Mode-only change, no content diff needed
-        println!("{header}");
-    } else if old_content != new_content {
-        let patch = unified_diff(&old_content, &new_content, path, path, 3);
-        // unified_diff already includes the --- / +++ lines; strip them.
-        let body: String = patch.lines().skip(2).map(|l| format!("\n{l}")).collect();
-        println!("{header}\n--- {old_label}\n+++ {new_label}{body}");
-    } else {
-        println!("{header}\n--- {old_label}\n+++ {new_label}");
-    }
-    Ok(())
-}
-
-/// Print `--stat` output for all changes.
-fn print_stat(changes: &[Change], repo: &Repository, work_tree: &Path) -> Result<()> {
-    if changes.is_empty() {
-        return Ok(());
-    }
-    let max_len = changes.iter().map(|c| c.path.len()).max().unwrap_or(0);
-    let mut total_ins = 0usize;
-    let mut total_del = 0usize;
-    for change in changes {
-        let (old, new) = load_patch_contents(change, repo, work_tree)?;
-        let (ins, del) = count_changes(&old, &new);
-        total_ins += ins;
-        total_del += del;
-        println!("{}", format_stat_line(&change.path, ins, del, max_len));
-    }
-    let files = changes.len();
-    let mut summary = format!(
-        " {} file{} changed",
-        files,
-        if files == 1 { "" } else { "s" },
-    );
-    if total_ins > 0 || (total_ins == 0 && total_del == 0) {
-        summary.push_str(&format!(
-            ", {} insertion{}(+)",
-            total_ins,
-            if total_ins == 1 { "" } else { "s" }
-        ));
-    }
-    if total_del > 0 || (total_ins == 0 && total_del == 0) {
-        summary.push_str(&format!(
-            ", {} deletion{}(-)",
-            total_del,
-            if total_del == 1 { "" } else { "s" }
-        ));
-    }
-    println!("{summary}");
-    Ok(())
-}
-
-/// Print `--numstat` output for all changes.
-fn print_numstat(changes: &[Change], repo: &Repository, work_tree: &Path) -> Result<()> {
-    for change in changes {
-        let (old, new) = load_patch_contents(change, repo, work_tree)?;
-        let (ins, del) = count_changes(&old, &new);
-        println!("{}\t{}\t{}", ins, del, change.path);
-    }
-    Ok(())
-}
-
-/// Load old (index) and new (worktree) content for a change as UTF-8 strings.
-///
-/// Binary or unreadable content is returned as an empty string so that the
-/// caller still produces correct insertion/deletion counts (zero vs zero).
-fn load_patch_contents(
-    change: &Change,
-    repo: &Repository,
-    work_tree: &Path,
-) -> Result<(String, String)> {
-    // Old side: read blob from object database.
-    let old_content = if change.status == 'A' || change.old_oid == zero_oid() {
-        String::new()
-    } else {
-        let obj = repo.odb.read(&change.old_oid)?;
-        String::from_utf8(obj.data).unwrap_or_default()
-    };
-
-    // New side: read file from working tree.
-    let new_content = if change.status == 'D' || change.new_mode == 0 {
-        String::new()
-    } else {
-        let abs = work_tree.join(&change.path);
-        match fs::read(&abs) {
-            Ok(bytes) => String::from_utf8(bytes).unwrap_or_default(),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(e) => return Err(e.into()),
-        }
-    };
-
-    Ok((old_content, new_content))
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────
-
-/// Format an OID, optionally abbreviated.
-fn format_oid(
-    oid: ObjectId,
-    repo: &Repository,
-    abbrev: Option<usize>,
-    width: usize,
-) -> Result<String> {
-    if oid == zero_oid() {
-        return Ok("0".repeat(width));
-    }
-    match abbrev {
-        Some(min_len) => abbreviate_object_id(repo, oid, min_len).map_err(Into::into),
-        None => Ok(oid.to_hex()),
-    }
 }
 
 /// Canonicalize a raw file mode to one of the four Git modes.

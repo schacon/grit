@@ -679,7 +679,7 @@ t4003-diff-rename-1	t4	yes	7	7	0	true	ok	0
 t4004-diff-rename-symlink	t4	yes	4	4	0	true	ok	0
 t4005-diff-rename-2	t4	yes	4	4	0	true	ok	0
 t4006-diff-mode	t4	yes	7	6	1	false	ok	0
-t4007-rename-3	t4	yes	13	11	2	false	ok	0
+t4007-rename-3	t4	yes	13	13	0	true	ok	0
 t4008-diff-break-rewrite	t4	yes	14	5	9	false	ok	0
 t4009-diff-rename-4	t4	yes	7	4	3	false	ok	0
 t4010-diff-pathspec	t4	yes	17	12	5	false	ok	0

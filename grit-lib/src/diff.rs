@@ -1254,8 +1254,13 @@ pub fn detect_copies(
 
     // Build score matrix: (score, source_idx, added_idx)
     let mut scores: Vec<(u32, usize, usize)> = Vec::new();
-    for (si, (_, src_oid, _)) in sources.iter().enumerate() {
+    for (si, (src_path, src_oid, _)) in sources.iter().enumerate() {
         for (ai, add) in added.iter().enumerate() {
+            // Never pair a path with itself as copy source (matches Git; avoids
+            // arbitrary tie-breaking when several sources share the same blob).
+            if add.new_path.as_deref() == Some(src_path.as_str()) {
+                continue;
+            }
             if *src_oid == add.new_oid {
                 scores.push((100, si, ai));
                 continue;
