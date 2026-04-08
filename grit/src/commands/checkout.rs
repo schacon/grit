@@ -14,6 +14,8 @@ use std::path::Path;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
+use grit_lib::diff::zero_oid;
+use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
@@ -699,6 +701,33 @@ fn split_target_and_paths(
 // Branch switching
 // ---------------------------------------------------------------------------
 
+/// Run Git's `post-checkout` hook: `<old-oid> <new-oid> <flag>` where `flag` is `1` for a branch
+/// checkout and `0` for a path (file) checkout. Missing `old_oid` uses the null OID (clone-style).
+///
+/// # Errors
+///
+/// Returns an error when the hook exits with a non-zero status.
+fn run_post_checkout_hook(
+    repo: &Repository,
+    old_oid: Option<&ObjectId>,
+    new_oid: &ObjectId,
+    is_branch_checkout: bool,
+) -> Result<()> {
+    let z = zero_oid();
+    let old_hex = old_oid.unwrap_or(&z).to_hex();
+    let new_hex = new_oid.to_hex();
+    let flag = if is_branch_checkout { "1" } else { "0" };
+    if let HookResult::Failed(code) = run_hook(
+        repo,
+        "post-checkout",
+        &[old_hex.as_str(), new_hex.as_str(), flag],
+        None,
+    ) {
+        bail!("post-checkout hook exited with status {code}");
+    }
+    Ok(())
+}
+
 /// Switch HEAD to an existing branch, updating the working tree and index.
 fn switch_branch(
     repo: &Repository,
@@ -723,6 +752,11 @@ fn switch_branch(
                 let target_tree = commit_to_tree(repo, &target_oid)?;
                 return force_reset_to_tree(repo, &target_tree);
             }
+            let tip = head
+                .oid()
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("HEAD has no commit"))?;
+            run_post_checkout_hook(repo, Some(&tip), &tip, true)?;
             return Ok(());
         }
     }
@@ -780,6 +814,8 @@ fn switch_branch(
     let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
         .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
 
+    let old_head_commit = head.oid().copied();
+
     // If target commit is the same as current HEAD, just re-attach
     // without touching the working tree or index (preserves dirty state).
     // But with -f, always rebuild.
@@ -792,10 +828,7 @@ fn switch_branch(
     }
 
     // Write reflog entries before updating HEAD
-    let old_oid = head
-        .oid()
-        .copied()
-        .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+    let old_oid = old_head_commit.unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
     let from_desc = match &head {
         HeadState::Branch { short_name, .. } => short_name.clone(),
         HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
@@ -806,6 +839,8 @@ fn switch_branch(
 
     // Update HEAD to point to the branch
     std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
+
+    run_post_checkout_hook(repo, old_head_commit.as_ref(), &target_oid, true)?;
 
     checkout_eprintln!("Switched to branch '{}'", branch_name);
     Ok(())
@@ -836,6 +871,7 @@ fn create_and_switch_branch(
 
     // Resolve start point (default: HEAD)
     let head = resolve_head(&repo.git_dir)?;
+    let old_head_commit = head.oid().copied();
     let start_oid = match start {
         Some(s) => resolve_to_commit(repo, s)?,
         None => {
@@ -863,6 +899,8 @@ fn create_and_switch_branch(
     };
     if head.oid() != Some(&start_oid) || force || worktree_is_empty {
         switch_to_tree(repo, &head, &target_tree, force)?;
+    } else {
+        run_post_checkout_hook(repo, old_head_commit.as_ref(), &start_oid, true)?;
     }
 
     // Create the branch ref
@@ -883,6 +921,10 @@ fn create_and_switch_branch(
 
     // Update HEAD to point to the new branch
     std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
+
+    if head.oid() != Some(&start_oid) || force || worktree_is_empty {
+        run_post_checkout_hook(repo, old_head_commit.as_ref(), &start_oid, true)?;
+    }
 
     checkout_eprintln!("Switched to a new branch '{}'", name);
     Ok(())
@@ -982,18 +1024,18 @@ fn force_create_and_switch_branch(
     };
 
     let head = resolve_head(&repo.git_dir)?;
+    let old_head_commit = head.oid().copied();
     let target_tree = commit_to_tree(repo, &start_oid)?;
 
     // Update working tree if start point differs from current HEAD, or if force
     if head.oid() != Some(&start_oid) || force {
         switch_to_tree(repo, &head, &target_tree, force)?;
+    } else {
+        run_post_checkout_hook(repo, old_head_commit.as_ref(), &start_oid, true)?;
     }
 
     // Write reflog before updating refs
-    let old_oid = head
-        .oid()
-        .copied()
-        .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+    let old_oid = old_head_commit.unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
     let from_desc = match &head {
         HeadState::Branch { short_name, .. } => short_name.clone(),
         HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
@@ -1007,6 +1049,10 @@ fn force_create_and_switch_branch(
 
     // Update HEAD to point to the new branch
     std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
+
+    if head.oid() != Some(&start_oid) || force {
+        run_post_checkout_hook(repo, old_head_commit.as_ref(), &start_oid, true)?;
+    }
 
     if branch_existed {
         checkout_eprintln!("Switched to and reset branch '{}'", name);
@@ -1205,18 +1251,18 @@ pub(crate) fn detach_head(repo: &Repository, oid: &ObjectId, force: bool) -> Res
 
 fn detach_head_inner(repo: &Repository, oid: &ObjectId, force: bool, explicit: bool) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
+    let old_head_commit = head.oid().copied();
 
     let already_at_target = head.oid() == Some(oid);
     if !already_at_target || force {
         let target_tree = commit_to_tree(repo, oid)?;
         switch_to_tree(repo, &head, &target_tree, force)?;
+    } else {
+        run_post_checkout_hook(repo, old_head_commit.as_ref(), oid, true)?;
     }
 
     // Write reflog entries
-    let old_oid = head
-        .oid()
-        .copied()
-        .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+    let old_oid = old_head_commit.unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
     let from_desc = match &head {
         HeadState::Branch { short_name, .. } => short_name.clone(),
         HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
@@ -1228,6 +1274,12 @@ fn detach_head_inner(repo: &Repository, oid: &ObjectId, force: bool, explicit: b
 
     // Write detached HEAD
     std::fs::write(repo.git_dir.join("HEAD"), format!("{oid}\n"))?;
+
+    if already_at_target && !force {
+        // post-checkout already ran for same-commit detach
+    } else {
+        run_post_checkout_hook(repo, old_head_commit.as_ref(), oid, true)?;
+    }
 
     if explicit {
         print_detached_head_message_explicit(repo, oid)?;
@@ -2015,6 +2067,11 @@ fn checkout_paths(
             }
         }
     }
+
+    let head_state = resolve_head(&repo.git_dir)?;
+    let tip = head_state.oid().copied();
+    let new_tip = tip.unwrap_or_else(zero_oid);
+    run_post_checkout_hook(repo, tip.as_ref(), &new_tip, false)?;
 
     Ok(())
 }

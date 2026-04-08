@@ -625,7 +625,7 @@ commit → check it off → move on.
 - [ ] `t5003-archive-zip` █████████████████░░░ 71/82 (11 left) — git archive --format=zip test
 - [ ] `t5334-incremental-multi-pack-index` ██████░░░░░░░░░░░░░░ 5/16 (11 left) — incremental multi-pack-index
 - [ ] `t5607-clone-bundle` ██████░░░░░░░░░░░░░░ 5/16 (11 left) — some bundle related tests
-- [ ] `t5403-post-checkout-hook` ████░░░░░░░░░░░░░░░░ 3/14 (11 left) — Test the post-checkout hook.
+- [x] `t5403-post-checkout-hook` ████████████████████ 14/14 (0 left) — Test the post-checkout hook.
 - [ ] `t5610-clone-detached` ███░░░░░░░░░░░░░░░░░ 2/13 (11 left) — test cloning a repository with detached HEAD
 - [ ] `t5605-clone-local` █████████░░░░░░░░░░░ 11/23 (12 left) — test local clone
 - [ ] `t5325-reverse-index` █████░░░░░░░░░░░░░░░ 4/16 (12 left) — on-disk reverse index

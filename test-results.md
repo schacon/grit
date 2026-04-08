@@ -2,6 +2,7 @@
 
 **Updated:** 2026-04-08
 
+- `./scripts/run-tests.sh t5403-post-checkout-hook.sh`: 14/14 passing (`post-checkout` hook on checkout/rebase/clone; clone default branch resolution with detached `HEAD` and `GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME`; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t5704-protocol-violations.sh`: 3/3 passing (`upload-pack` v2 via `GIT_PROTOCOL`, strict flush-after-args; `ls-remote --upload-pack` v0/v2 parsing; harness CSV/dashboards refreshed).
 - `cargo test -p grit-lib --lib`: 105/105 passing.
 

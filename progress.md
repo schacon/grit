@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   228 |
+| Completed   |   229 |
 | In progress |     2 |
-| Remaining   |   538 |
+| Remaining   |   537 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 228 completed (`[x]`), 2 in progress (`[~]`), 538 remaining (`[ ]`).
+Task lines in `PLAN.md`: 229 completed (`[x]`), 2 in progress (`[~]`), 537 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5403-post-checkout-hook` — 14/14 tests pass (`checkout`/`rebase`/`clone`: `post-checkout` hook with Git-compatible args; clone resolves detached `HEAD` to the right local branch and honors `GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME`; harness CSV refreshed)
 - `t6434-merge-recursive-rename-options` — 27/27 tests pass (`merge-recursive`: `--find-renames` / `--rename-threshold` with `%`, truncation, last-flag wins vs `--no-renames`, invalid args; config `merge.renames` / `diff.renames`; merge core threads `MergeRenameOptions` into `detect_merge_renames`; `diff`: `-M<n>%` no longer misparsed as a revision, `--diff-filter`, percentage threshold parsing)
 - `t5704-protocol-violations` — 3/3 tests pass (`upload-pack` honors `GIT_PROTOCOL=version=2` with flush-after-args validation for `ls-refs`/`fetch`; `ls-remote --upload-pack` parses v0 ref ads with space/NUL-separated fields and v2 `ls-refs` responses; `serve-v2` default loop fixed)
 - `t7509-commit-authorship` — 12/12 tests pass (`commit`: `--reset-author` with `-C`/`-c`/`--amend` and when `CHERRY_PICK_HEAD`/`REBASE_HEAD` exists; author from `CHERRY_PICK_HEAD` when finishing cherry-pick with `MERGE_MSG`; `--author` now formats full ident with current date; amend rejects empty/malformed prior author; mutual exclusion with `--reset-author`)

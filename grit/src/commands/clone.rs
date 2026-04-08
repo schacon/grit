@@ -6,6 +6,8 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope};
+use grit_lib::diff::zero_oid;
+use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::repo::{init_repository, init_repository_separate_git_dir, Repository};
 use std::collections::{HashSet, VecDeque};
@@ -289,7 +291,8 @@ pub fn run(args: Args) -> Result<()> {
     let source_head_branch = determine_head_branch(&source.git_dir, None)?;
     // Determine which branch to checkout (user override or source HEAD)
     let head_branch = determine_head_branch(&source.git_dir, args.branch.as_deref())?;
-    let initial_branch = head_branch.as_deref().unwrap_or("master");
+    let default_branch = default_initial_branch_for_clone();
+    let initial_branch = head_branch.as_deref().unwrap_or(&default_branch);
 
     // Initialize the target repository
     fs::create_dir_all(&target_path)
@@ -368,7 +371,7 @@ pub fn run(args: Args) -> Result<()> {
 
         // Set up remote "origin" in config
         let refspec = if args.single_branch {
-            let branch = head_branch.as_deref().unwrap_or("master");
+            let branch = head_branch.as_deref().unwrap_or(default_branch.as_str());
             format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
         } else {
             format!("+refs/heads/*:refs/remotes/{remote_name}/*")
@@ -463,6 +466,7 @@ pub fn run(args: Args) -> Result<()> {
     // Checkout working tree unless --bare or --no-checkout
     if !args.bare && !args.no_checkout {
         checkout_head(&dest).context("checking out HEAD")?;
+        run_post_checkout_after_clone(&dest)?;
     }
 
     if !args.quiet {
@@ -545,7 +549,8 @@ fn run_ssh_clone(args: Args) -> Result<()> {
 
     let source_head_branch = determine_head_branch(&source.git_dir, None)?;
     let head_branch = determine_head_branch(&source.git_dir, args.branch.as_deref())?;
-    let initial_branch = head_branch.as_deref().unwrap_or("master");
+    let default_branch = default_initial_branch_for_clone();
+    let initial_branch = head_branch.as_deref().unwrap_or(&default_branch);
 
     fs::create_dir_all(&target_path)
         .with_context(|| format!("cannot create directory '{}'", target_path.display()))?;
@@ -612,7 +617,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         copy_refs_as_remote(&source.git_dir, &dest.git_dir, remote_name, args.no_tags)
             .context("copying refs")?;
         let refspec = if args.single_branch {
-            let branch = head_branch.as_deref().unwrap_or("master");
+            let branch = head_branch.as_deref().unwrap_or(default_branch.as_str());
             format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
         } else {
             format!("+refs/heads/*:refs/remotes/{remote_name}/*")
@@ -687,6 +692,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
 
     if !args.bare && !args.no_checkout {
         checkout_head(&dest).context("checking out HEAD")?;
+        run_post_checkout_after_clone(&dest)?;
     }
 
     if !args.quiet {
@@ -1384,6 +1390,64 @@ fn collect_tree_blob_oids(
     Ok(())
 }
 
+/// Default name for `refs/heads/<name>` when cloning (matches `git init` test override).
+fn default_initial_branch_for_clone() -> String {
+    std::env::var("GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME").unwrap_or_else(|_| "master".to_string())
+}
+
+/// Pick a local branch to check out when the source `HEAD` is detached or unknown.
+fn pick_clone_branch_from_heads(src_git_dir: &Path) -> Result<Option<String>> {
+    let heads = grit_lib::refs::list_refs(src_git_dir, "refs/heads/")
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    if heads.is_empty() {
+        return Ok(None);
+    }
+    if heads.len() == 1 {
+        let name = heads[0]
+            .0
+            .strip_prefix("refs/heads/")
+            .unwrap_or(&heads[0].0)
+            .to_string();
+        return Ok(Some(name));
+    }
+    let default = default_initial_branch_for_clone();
+    if let Some((r, _)) = heads
+        .iter()
+        .find(|(r, _)| r.strip_prefix("refs/heads/").unwrap_or(r) == default.as_str())
+    {
+        return Ok(Some(r.strip_prefix("refs/heads/").unwrap_or(r).to_string()));
+    }
+    if let Some((r, _)) = heads.iter().find(|(r, _)| r.ends_with("/main")) {
+        return Ok(Some(r.strip_prefix("refs/heads/").unwrap_or(r).to_string()));
+    }
+    if let Some((r, _)) = heads.iter().find(|(r, _)| r.ends_with("/master")) {
+        return Ok(Some(r.strip_prefix("refs/heads/").unwrap_or(r).to_string()));
+    }
+    let (r, _) = &heads[0];
+    Ok(Some(r.strip_prefix("refs/heads/").unwrap_or(r).to_string()))
+}
+
+/// Run `post-checkout` after clone: null old OID, new HEAD commit, branch flag `1`.
+fn run_post_checkout_after_clone(repo: &Repository) -> Result<()> {
+    let head_content = fs::read_to_string(repo.git_dir.join("HEAD")).context("reading HEAD")?;
+    let head = head_content.trim();
+    let new_oid = if let Some(refname) = head.strip_prefix("ref: ") {
+        let oid_str = fs::read_to_string(repo.git_dir.join(refname))
+            .with_context(|| format!("reading ref {refname}"))?;
+        ObjectId::from_hex(oid_str.trim()).with_context(|| format!("invalid OID in {refname}"))?
+    } else {
+        ObjectId::from_hex(head).context("invalid OID in HEAD")?
+    };
+    let z = zero_oid();
+    let old_hex = z.to_hex();
+    let new_hex = new_oid.to_hex();
+    let args = [old_hex.as_str(), new_hex.as_str(), "1"];
+    if let HookResult::Failed(code) = run_hook(repo, "post-checkout", &args, None) {
+        bail!("post-checkout hook exited with status {code}");
+    }
+    Ok(())
+}
+
 /// Determine which branch HEAD should point to.
 fn determine_head_branch(src_git_dir: &Path, requested: Option<&str>) -> Result<Option<String>> {
     if let Some(branch) = requested {
@@ -1397,10 +1461,20 @@ fn determine_head_branch(src_git_dir: &Path, requested: Option<&str>) -> Result<
         if let Some(refname) = content.strip_prefix("ref: refs/heads/") {
             return Ok(Some(refname.to_string()));
         }
+        if let Ok(oid) = ObjectId::from_hex(content) {
+            let heads = grit_lib::refs::list_refs(src_git_dir, "refs/heads/")
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            for (r, tip) in &heads {
+                if *tip == oid {
+                    let name = r.strip_prefix("refs/heads/").unwrap_or(r);
+                    return Ok(Some(name.to_string()));
+                }
+            }
+            return pick_clone_branch_from_heads(src_git_dir);
+        }
     }
 
-    // Default to master
-    Ok(Some("master".to_string()))
+    pick_clone_branch_from_heads(src_git_dir)
 }
 
 /// Perform a basic checkout of HEAD into the working tree.
@@ -1715,7 +1789,7 @@ fn run_bundle_clone(args: Args) -> Result<()> {
                     .map(|(r, _)| r.strip_prefix("refs/heads/").unwrap_or(r).to_string())
             }
         })
-        .unwrap_or_else(|| "master".to_string());
+        .unwrap_or_else(default_initial_branch_for_clone);
 
     // Initialize target repo
     fs::create_dir_all(&target_path)?;

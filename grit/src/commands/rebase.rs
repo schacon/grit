@@ -17,9 +17,9 @@ use std::fs;
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
-
 use grit_lib::diff::{self, count_changes, DiffEntry};
+use grit_lib::hooks::{run_hook, HookResult};
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_base::{is_ancestor, merge_bases_first_vs_rest};
 use grit_lib::merge_file::{merge, ConflictStyle, MergeInput};
 use grit_lib::objects::{
@@ -272,6 +272,16 @@ fn validate_compat_options(args: &Args) -> Result<()> {
 
 fn rebase_reflog_action() -> String {
     std::env::var("GIT_REFLOG_ACTION").unwrap_or_else(|_| "rebase".to_owned())
+}
+
+fn run_post_checkout_hook(repo: &Repository, old_oid: &ObjectId, new_oid: &ObjectId) -> Result<()> {
+    let old_hex = old_oid.to_hex();
+    let new_hex = new_oid.to_hex();
+    let args = [old_hex.as_str(), new_hex.as_str(), "1"];
+    if let HookResult::Failed(code) = run_hook(repo, "post-checkout", &args, None) {
+        bail!("post-checkout hook exited with status {code}");
+    }
+    Ok(())
 }
 
 fn print_branch_up_to_date(head: &HeadState) {
@@ -570,6 +580,8 @@ fn do_rebase(args: Args) -> Result<()> {
         checkout_merged_index(&repo, wt, &old_index, &idx)?;
     }
 
+    run_post_checkout_hook(&repo, &head_oid, &onto_oid)?;
+
     eprintln!(
         "rebasing {} commits onto {}",
         total,
@@ -621,6 +633,8 @@ fn fast_forward_rebase(
     if let Some(wt) = &repo.work_tree {
         checkout_merged_index(repo, wt, &old_index, &idx)?;
     }
+
+    run_post_checkout_hook(repo, &head_oid, &onto_oid)?;
 
     let branch_disp = head
         .branch_name()
