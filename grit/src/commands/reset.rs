@@ -21,7 +21,7 @@ use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::refs::{append_reflog, write_ref};
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
+use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision_as_commit};
 use grit_lib::state::{resolve_head, HeadState};
 
 /// The zero OID for reflog entries when there is no previous value.
@@ -225,10 +225,7 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
     let first = &rest[0];
     // Attempt to resolve first arg as a commit-ish.
     // Must actually resolve to a commit (not just any object like a blob).
-    let first_is_commit = resolve_revision(repo, first)
-        .ok()
-        .and_then(|oid| peel_to_commit(repo, oid).ok())
-        .is_some();
+    let first_is_commit = resolve_revision_as_commit(repo, first).is_ok();
 
     if first_is_commit {
         // First arg is the commit; remaining args are paths (may be empty).
@@ -935,9 +932,7 @@ fn print_head_message(repo: &Repository, oid: &ObjectId) -> Result<()> {
 
 /// Resolve a revision spec to a commit OID, peeling through tags.
 fn resolve_to_commit(repo: &Repository, spec: &str) -> Result<ObjectId> {
-    let oid =
-        resolve_revision(repo, spec).with_context(|| format!("unknown revision: '{spec}'"))?;
-    peel_to_commit(repo, oid)
+    resolve_revision_as_commit(repo, spec).with_context(|| format!("unknown revision: '{spec}'"))
 }
 
 /// Peel an OID to a commit (follows tag chains).

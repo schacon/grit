@@ -14,7 +14,7 @@ use crate::error::{Error, Result};
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::refs;
 use crate::repo::Repository;
-use crate::rev_parse::resolve_revision;
+use crate::rev_parse::resolve_revision_for_range_end;
 
 /// User-facing output mode for `rev-list`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -713,7 +713,7 @@ pub fn rev_list(
 /// - `<rev>` => positive `<rev>`
 #[must_use]
 pub fn split_revision_token(token: &str) -> (Vec<String>, Vec<String>) {
-    if let Some((lhs, rhs)) = token.split_once("..") {
+    if let Some((lhs, rhs)) = crate::rev_parse::split_double_dot_range(token) {
         let positive = if rhs.is_empty() {
             "HEAD".to_owned()
         } else {
@@ -1765,7 +1765,7 @@ struct RootObject {
 fn resolve_specs(repo: &Repository, specs: &[String]) -> Result<Vec<ObjectId>> {
     let mut out = Vec::with_capacity(specs.len());
     for spec in specs {
-        let oid = resolve_revision(repo, spec)?;
+        let oid = resolve_revision_for_range_end(repo, spec)?;
         let commit_oid = peel_to_commit(repo, oid)?;
         out.push(commit_oid);
     }
@@ -1810,7 +1810,7 @@ fn resolve_specs_for_objects(
             continue;
         }
 
-        let oid = resolve_revision(repo, spec)?;
+        let oid = resolve_revision_for_range_end(repo, spec)?;
         match peel_to_commit(repo, oid) {
             Ok(commit_oid) => commits.push(commit_oid),
             Err(Error::CorruptObject(_)) | Err(Error::ObjectNotFound(_)) => {

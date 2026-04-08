@@ -12,8 +12,12 @@ use std::path::{Component, Path, PathBuf};
 
 use regex::Regex;
 
+use std::collections::HashSet;
+
+use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use crate::pack;
 use crate::reflog::read_reflog;
 use crate::refs;
 use crate::repo::Repository;
@@ -463,15 +467,82 @@ pub fn split_triple_dot_range(spec: &str) -> Option<(&str, &str)> {
 /// Like [`resolve_revision`], but does not treat a bare filename as an index path
 /// (matches `git rev-parse` / plumbing, where `file.txt` stays ambiguous).
 pub fn resolve_revision_without_index_dwim(repo: &Repository, spec: &str) -> Result<ObjectId> {
-    resolve_revision_impl(repo, spec, false)
+    resolve_revision_impl(repo, spec, false, false, true, false, false, false)
 }
 
 /// Resolve a revision string to an object ID.
 pub fn resolve_revision(repo: &Repository, spec: &str) -> Result<ObjectId> {
-    resolve_revision_impl(repo, spec, true)
+    resolve_revision_impl(repo, spec, true, false, true, false, false, false)
 }
 
-fn resolve_revision_impl(repo: &Repository, spec: &str, index_dwim: bool) -> Result<ObjectId> {
+/// Resolve `spec` when it appears as the end of a revision range (`A..B`, `A...B`, etc.):
+/// abbreviated hex and `core.disambiguate` prefer a commit (porcelain range parsing).
+pub fn resolve_revision_for_range_end(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    resolve_revision_impl(repo, spec, true, true, true, false, false, false)
+}
+
+/// First argument to `commit-tree`: ambiguous short hex uses tree-ish rules (blob vs tree).
+pub fn resolve_revision_for_commit_tree_tree(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    resolve_revision_impl(repo, spec, true, false, true, false, true, false)
+}
+
+/// Old blob OID from a patch `index <old>..<new>` line (`git apply --build-fake-ancestor`).
+pub fn resolve_revision_for_patch_old_blob(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    resolve_revision_impl(repo, spec, true, false, true, false, false, true)
+}
+
+/// Resolve `spec` to a commit OID for porcelain history commands (`log`, `reset`, etc.).
+///
+/// Handles `A..B` / `..B` / `A..` (tip is the right side, defaulting to `HEAD`) and
+/// `A...B` symmetric diff (returns the merge base). Other specs are resolved and peeled
+/// to a commit (tags peeled, abbreviated hex disambiguated as commit-ish on range ends).
+pub fn resolve_revision_as_commit(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    if let Some((left, right)) = split_triple_dot_range(spec) {
+        let left_tip = if left.is_empty() {
+            resolve_revision_for_range_end(repo, "HEAD")?
+        } else {
+            resolve_revision_for_range_end(repo, left)?
+        };
+        let right_tip = if right.is_empty() {
+            resolve_revision_for_range_end(repo, "HEAD")?
+        } else {
+            resolve_revision_for_range_end(repo, right)?
+        };
+        let left_c = peel_to_commit_for_merge_base(repo, left_tip)?;
+        let right_c = peel_to_commit_for_merge_base(repo, right_tip)?;
+        let bases = crate::merge_base::merge_bases_first_vs_rest(repo, left_c, &[right_c])?;
+        return bases
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::ObjectNotFound(format!("no merge base for '{spec}'")));
+    }
+    if let Some((left, right)) = split_double_dot_range(spec) {
+        if left.is_empty() {
+            peel_to_commit_for_merge_base(repo, resolve_revision_for_range_end(repo, "HEAD")?)?;
+        } else {
+            peel_to_commit_for_merge_base(repo, resolve_revision_for_range_end(repo, left)?)?;
+        }
+        let tip = if right.is_empty() {
+            resolve_revision_for_range_end(repo, "HEAD")?
+        } else {
+            resolve_revision_for_range_end(repo, right)?
+        };
+        return peel_to_commit_for_merge_base(repo, tip);
+    }
+    let oid = resolve_revision_for_range_end(repo, spec)?;
+    peel_to_commit_for_merge_base(repo, oid)
+}
+
+fn resolve_revision_impl(
+    repo: &Repository,
+    spec: &str,
+    index_dwim: bool,
+    commit_only_hex: bool,
+    use_disambiguate_config: bool,
+    treeish_colon_lhs: bool,
+    implicit_tree_abbrev: bool,
+    implicit_blob_abbrev: bool,
+) -> Result<ObjectId> {
     // Handle `:/message` early — it can contain any characters so must
     // not be confused with peel/nav syntax.
     if let Some(pattern) = spec.strip_prefix(":/") {
@@ -489,17 +560,53 @@ fn resolve_revision_impl(repo: &Repository, spec: &str, index_dwim: bool) -> Res
             let left_oid = peel_to_commit_for_merge_base(
                 repo,
                 if left_raw.is_empty() {
-                    resolve_revision_impl(repo, "HEAD", index_dwim)?
+                    resolve_revision_impl(
+                        repo,
+                        "HEAD",
+                        index_dwim,
+                        commit_only_hex,
+                        use_disambiguate_config,
+                        false,
+                        false,
+                        false,
+                    )?
                 } else {
-                    resolve_revision_impl(repo, left_raw, index_dwim)?
+                    resolve_revision_impl(
+                        repo,
+                        left_raw,
+                        index_dwim,
+                        commit_only_hex,
+                        use_disambiguate_config,
+                        false,
+                        false,
+                        false,
+                    )?
                 },
             )?;
             let right_oid = peel_to_commit_for_merge_base(
                 repo,
                 if right_raw.is_empty() {
-                    resolve_revision_impl(repo, "HEAD", index_dwim)?
+                    resolve_revision_impl(
+                        repo,
+                        "HEAD",
+                        index_dwim,
+                        commit_only_hex,
+                        use_disambiguate_config,
+                        false,
+                        false,
+                        false,
+                    )?
                 } else {
-                    resolve_revision_impl(repo, right_raw, index_dwim)?
+                    resolve_revision_impl(
+                        repo,
+                        right_raw,
+                        index_dwim,
+                        commit_only_hex,
+                        use_disambiguate_config,
+                        false,
+                        false,
+                        false,
+                    )?
                 },
             )?;
             let bases = crate::merge_base::merge_bases_first_vs_rest(repo, left_oid, &[right_oid])?;
@@ -516,7 +623,16 @@ fn resolve_revision_impl(repo: &Repository, spec: &str, index_dwim: bool) -> Res
     if let Some((before, after)) = split_treeish_colon(spec) {
         if !before.is_empty() && !spec.starts_with(":/") {
             // <rev>:<path> — resolve rev to tree, then navigate path
-            let rev_oid = match resolve_revision_impl(repo, before, index_dwim) {
+            let rev_oid = match resolve_revision_impl(
+                repo,
+                before,
+                index_dwim,
+                commit_only_hex,
+                use_disambiguate_config,
+                true,
+                false,
+                false,
+            ) {
                 Ok(o) => o,
                 Err(Error::ObjectNotFound(s)) if s == before => {
                     return Err(Error::Message(format!(
@@ -557,7 +673,19 @@ fn resolve_revision_impl(repo: &Repository, spec: &str, index_dwim: bool) -> Res
 
     let (base_with_nav, peel) = parse_peel_suffix(spec);
     let (base, nav_steps) = parse_nav_steps(base_with_nav);
-    let mut oid = resolve_base(repo, base, index_dwim)?;
+    let peel_for_hex = peel
+        .or(((treeish_colon_lhs || implicit_tree_abbrev) && peel.is_none()).then_some("tree"))
+        .or((implicit_blob_abbrev && peel.is_none()).then_some("blob"));
+    let mut oid = resolve_base(
+        repo,
+        base,
+        index_dwim,
+        commit_only_hex,
+        use_disambiguate_config,
+        peel_for_hex,
+        implicit_tree_abbrev,
+        implicit_blob_abbrev,
+    )?;
     for step in nav_steps {
         oid = apply_nav_step(repo, oid, step).map_err(|e| {
             if matches!(e, Error::ObjectNotFound(_)) {
@@ -833,10 +961,233 @@ pub fn to_relative_path(path: &Path, cwd: &Path) -> String {
     }
 }
 
-fn resolve_base(repo: &Repository, spec: &str, index_dwim: bool) -> Result<ObjectId> {
+fn object_storage_dirs_for_abbrev(repo: &Repository) -> Result<Vec<PathBuf>> {
+    let mut dirs = Vec::new();
+    let primary = repo.odb.objects_dir().to_path_buf();
+    dirs.push(primary.clone());
+    if let Ok(alts) = pack::read_alternates_recursive(&primary) {
+        for alt in alts {
+            if !dirs.iter().any(|d| d == &alt) {
+                dirs.push(alt);
+            }
+        }
+    }
+    Ok(dirs)
+}
+
+fn collect_pack_oids_with_prefix(objects_dir: &Path, prefix: &str) -> Result<Vec<ObjectId>> {
+    let mut out = Vec::new();
+    for idx in pack::read_local_pack_indexes(objects_dir)? {
+        for e in idx.entries {
+            if e.oid.to_hex().starts_with(prefix) {
+                out.push(e.oid);
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn disambiguate_kind_rank(kind: ObjectKind) -> u8 {
+    match kind {
+        ObjectKind::Tag => 0,
+        ObjectKind::Commit => 1,
+        ObjectKind::Tree => 2,
+        ObjectKind::Blob => 3,
+    }
+}
+
+fn oid_satisfies_peel_filter(repo: &Repository, oid: ObjectId, peel_inner: &str) -> bool {
+    apply_peel(repo, oid, Some(peel_inner)).is_ok()
+}
+
+/// Lines for `hint:` output when a short object id is ambiguous (type order, then hex).
+pub fn ambiguous_object_hint_lines(
+    repo: &Repository,
+    short_prefix: &str,
+    peel_filter: Option<&str>,
+) -> Result<Vec<String>> {
+    let mut typed: Vec<(u8, String, &'static str)> = Vec::new();
+    let mut bad_hex: Vec<String> = Vec::new();
+    for oid in list_all_abbrev_matches(repo, short_prefix)? {
+        let hex = oid.to_hex();
+        match repo.odb.read(&oid) {
+            Ok(obj) => {
+                let ok = peel_filter.is_none_or(|p| oid_satisfies_peel_filter(repo, oid, p));
+                if ok {
+                    typed.push((disambiguate_kind_rank(obj.kind), hex, obj.kind.as_str()));
+                }
+            }
+            Err(_) => bad_hex.push(hex),
+        }
+    }
+    if typed.is_empty() && peel_filter.is_some() {
+        return ambiguous_object_hint_lines(repo, short_prefix, None);
+    }
+    bad_hex.sort();
+    typed.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    let mut out = Vec::new();
+    for h in bad_hex {
+        out.push(format!("hint:   {h} [bad object]"));
+    }
+    for (_, hex, kind) in typed {
+        out.push(format!("hint:   {hex} {kind}"));
+    }
+    Ok(out)
+}
+
+fn read_core_disambiguate(repo: &Repository) -> Option<&'static str> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let v = config.get("core.disambiguate")?;
+    match v.to_ascii_lowercase().as_str() {
+        "committish" | "commit" => Some("commit"),
+        "treeish" | "tree" => Some("tree"),
+        "blob" => Some("blob"),
+        "tag" => Some("tag"),
+        "none" => None,
+        _ => None,
+    }
+}
+
+fn disambiguate_hex_by_peel(
+    repo: &Repository,
+    spec: &str,
+    matches: &[ObjectId],
+    peel: &str,
+) -> Result<ObjectId> {
+    let peel_some = Some(peel);
+    let filtered: Vec<ObjectId> = matches
+        .iter()
+        .copied()
+        .filter(|oid| apply_peel(repo, *oid, peel_some).is_ok())
+        .collect();
+    if filtered.len() == 1 {
+        return Ok(filtered[0]);
+    }
+    if filtered.is_empty() {
+        return Err(Error::InvalidRef(format!(
+            "short object ID {spec} is ambiguous"
+        )));
+    }
+    let mut peeled_targets: HashSet<ObjectId> = HashSet::new();
+    for oid in &filtered {
+        if let Ok(p) = apply_peel(repo, *oid, peel_some) {
+            peeled_targets.insert(p);
+        }
+    }
+    if peeled_targets.len() == 1 {
+        // Several objects (e.g. commit + tag) may peel to the same commit; any representative
+        // is valid for subsequent `apply_peel` in `resolve_revision_impl`.
+        let mut sorted = filtered;
+        sorted.sort_by_key(|o| o.to_hex());
+        return Ok(sorted[0]);
+    }
+    Err(Error::InvalidRef(format!(
+        "short object ID {spec} is ambiguous"
+    )))
+}
+
+fn commit_reachable_closure(repo: &Repository, start: ObjectId) -> Result<HashSet<ObjectId>> {
+    use std::collections::VecDeque;
+    let mut seen = HashSet::new();
+    let mut q = VecDeque::from([start]);
+    while let Some(oid) = q.pop_front() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        let obj = match repo.odb.read(&oid) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = match parse_commit(&obj.data) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        for p in &commit.parents {
+            q.push_back(*p);
+        }
+    }
+    Ok(seen)
+}
+
+/// `git rev-list --count <tag>..<head>` — commits reachable from `head` but not from `tag`.
+fn describe_generation_count(
+    repo: &Repository,
+    head: ObjectId,
+    tag_commit: ObjectId,
+) -> Result<usize> {
+    let from_tag = commit_reachable_closure(repo, tag_commit)?;
+    let from_head = commit_reachable_closure(repo, head)?;
+    Ok(from_head.difference(&from_tag).count())
+}
+
+fn try_resolve_describe_name(repo: &Repository, spec: &str) -> Result<Option<ObjectId>> {
+    let re = Regex::new(r"(?i)^(.+)-(\d+)-g([0-9a-fA-F]+)$")
+        .map_err(|_| Error::Message("internal: describe regex".to_owned()))?;
+    let Some(caps) = re.captures(spec) else {
+        return Ok(None);
+    };
+    let tag_name = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+    let gen: usize = caps
+        .get(2)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let hex_abbrev = caps.get(3).map(|m| m.as_str()).unwrap_or("");
+    if tag_name.is_empty() || hex_abbrev.is_empty() {
+        return Ok(None);
+    }
+    let hex_lower = hex_abbrev.to_ascii_lowercase();
+    let tag_oid = match refs::resolve_ref(&repo.git_dir, &format!("refs/tags/{tag_name}"))
+        .or_else(|_| refs::resolve_ref(&repo.git_dir, tag_name))
+    {
+        Ok(o) => o,
+        Err(_) => return Ok(None),
+    };
+    let tag_commit = peel_to_commit_for_merge_base(repo, tag_oid)?;
+    let mut candidates: Vec<ObjectId> = find_abbrev_matches(repo, &hex_lower)?
+        .into_iter()
+        .filter(|oid| {
+            repo.odb
+                .read(oid)
+                .map(|o| o.kind == ObjectKind::Commit)
+                .unwrap_or(false)
+                && describe_generation_count(repo, *oid, tag_commit).ok() == Some(gen)
+        })
+        .collect();
+    candidates.sort_by_key(|o| o.to_hex());
+    match candidates.len() {
+        0 => Err(Error::ObjectNotFound(spec.to_owned())),
+        1 => Ok(Some(candidates[0])),
+        _ => Err(Error::InvalidRef(format!(
+            "short object ID {hex_abbrev} is ambiguous"
+        ))),
+    }
+}
+
+fn resolve_base(
+    repo: &Repository,
+    spec: &str,
+    index_dwim: bool,
+    commit_only_hex: bool,
+    use_disambiguate_config: bool,
+    peel_for_disambig: Option<&str>,
+    implicit_tree_abbrev: bool,
+    implicit_blob_abbrev: bool,
+) -> Result<ObjectId> {
     // Standalone `@` is an alias for `HEAD` in revision parsing.
     if spec == "@" {
-        return resolve_base(repo, "HEAD", index_dwim);
+        return resolve_base(
+            repo,
+            "HEAD",
+            index_dwim,
+            commit_only_hex,
+            use_disambiguate_config,
+            peel_for_disambig,
+            implicit_tree_abbrev,
+            implicit_blob_abbrev,
+        );
     }
 
     // `@{-N}` must run before reflog parsing so `@{-1}@{1}` is not misread as `@{-1}` + `@{1}`.
@@ -853,7 +1204,16 @@ fn resolve_base(repo: &Repository, spec: &str, index_dwim: bool) -> Result<Objec
                     } else {
                         let branch = resolve_at_minus_to_branch(repo, n)?;
                         let new_spec = format!("{branch}{suffix}");
-                        return resolve_base(repo, &new_spec, index_dwim);
+                        return resolve_base(
+                            repo,
+                            &new_spec,
+                            index_dwim,
+                            commit_only_hex,
+                            use_disambiguate_config,
+                            peel_for_disambig,
+                            implicit_tree_abbrev,
+                            implicit_blob_abbrev,
+                        );
                     }
                 }
             }
@@ -932,14 +1292,41 @@ fn resolve_base(repo: &Repository, spec: &str, index_dwim: bool) -> Result<Objec
     }
 
     if let Some((treeish, path)) = split_treeish_spec(spec) {
-        let root_oid = resolve_revision_impl(repo, treeish, index_dwim)?;
+        let root_oid = resolve_revision_impl(
+            repo,
+            treeish,
+            index_dwim,
+            commit_only_hex,
+            use_disambiguate_config,
+            false,
+            false,
+            false,
+        )?;
         return resolve_treeish_path(repo, root_oid, path);
     }
 
     if let Ok(oid) = spec.parse::<ObjectId>() {
         // A full 40-hex OID is always accepted, even if the object
         // doesn't exist in the ODB (matches git behavior).
+        let rn = format!("refs/heads/{spec}");
+        if refs::resolve_ref(&repo.git_dir, &rn).is_ok() {
+            eprintln!("warning: refname '{spec}' is ambiguous.");
+        }
         return Ok(oid);
+    }
+
+    match try_resolve_describe_name(repo, spec) {
+        Ok(Some(oid)) => return Ok(oid),
+        Err(e) => return Err(e),
+        Ok(None) => {}
+    }
+
+    if is_hex_prefix(spec) && spec.len() < 40 {
+        let branch_ref = format!("refs/heads/{spec}");
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &branch_ref) {
+            eprintln!("warning: refname '{spec}' is ambiguous.");
+            return Ok(oid);
+        }
     }
 
     if is_hex_prefix(spec) {
@@ -948,6 +1335,19 @@ fn resolve_base(repo: &Repository, spec: &str, index_dwim: bool) -> Result<Objec
             return Ok(matches[0]);
         }
         if matches.len() > 1 {
+            if commit_only_hex {
+                return disambiguate_hex_by_peel(repo, spec, &matches, "commit");
+            }
+            if let Some(p) = peel_for_disambig {
+                return disambiguate_hex_by_peel(repo, spec, &matches, p);
+            }
+            if use_disambiguate_config {
+                if let Some(pref) = read_core_disambiguate(repo) {
+                    if let Ok(oid) = disambiguate_hex_by_peel(repo, spec, &matches, pref) {
+                        return Ok(oid);
+                    }
+                }
+            }
             return Err(Error::InvalidRef(format!(
                 "short object ID {} is ambiguous",
                 spec
@@ -1702,7 +2102,9 @@ fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Resul
     }
 }
 
-fn parse_peel_suffix(spec: &str) -> (&str, Option<&str>) {
+/// Split `spec` into `(base, peel_inner)` for `^{...}` / `^0` suffixes (same rules as revision parsing).
+#[must_use]
+pub fn parse_peel_suffix(spec: &str) -> (&str, Option<&str>) {
     if let Some(base) = spec.strip_suffix("^{}") {
         return (base, Some(""));
     }
@@ -1784,21 +2186,35 @@ fn find_abbrev_matches(repo: &Repository, prefix: &str) -> Result<Vec<ObjectId>>
     if !is_hex_prefix(prefix) || !(4..=40).contains(&prefix.len()) {
         return Ok(Vec::new());
     }
-    let all = collect_loose_object_ids(repo)?;
+    let mut seen = HashSet::new();
     let mut matches = Vec::new();
-    for candidate in all {
-        if candidate.starts_with(prefix) {
-            matches.push(candidate.parse::<ObjectId>()?);
+    for objects_dir in object_storage_dirs_for_abbrev(repo)? {
+        for hex in collect_loose_object_ids_in_dir(&objects_dir)? {
+            if hex.starts_with(prefix) {
+                let oid = hex.parse::<ObjectId>()?;
+                if seen.insert(oid) {
+                    matches.push(oid);
+                }
+            }
+        }
+        for oid in collect_pack_oids_with_prefix(&objects_dir, prefix)? {
+            if seen.insert(oid) {
+                matches.push(oid);
+            }
         }
     }
     Ok(matches)
 }
 
 fn collect_loose_object_ids(repo: &Repository) -> Result<Vec<String>> {
+    collect_loose_object_ids_in_dir(repo.odb.objects_dir())
+}
+
+fn collect_loose_object_ids_in_dir(objects_dir: &Path) -> Result<Vec<String>> {
     let mut ids = Vec::new();
-    let objects_dir = repo.odb.objects_dir();
     let read = match fs::read_dir(objects_dir) {
         Ok(read) => read,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(ids),
         Err(err) => return Err(Error::Io(err)),
     };
 
@@ -1936,7 +2352,12 @@ fn resolve_commit_message_search(
     Err(Error::ObjectNotFound(format!(":/{pattern}")))
 }
 
+/// All object IDs (loose and packed) whose hex form starts with `prefix`.
+pub fn list_all_abbrev_matches(repo: &Repository, prefix: &str) -> Result<Vec<ObjectId>> {
+    find_abbrev_matches(repo, prefix)
+}
+
 /// Public: find all object IDs whose hex prefix matches the given string.
 pub fn list_loose_abbrev_matches(repo: &Repository, prefix: &str) -> Result<Vec<ObjectId>> {
-    find_abbrev_matches(repo, prefix)
+    list_all_abbrev_matches(repo, prefix)
 }

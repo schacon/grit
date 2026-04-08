@@ -226,7 +226,7 @@ test_expect_success 'first tag' '
 	git tag -a -m j7cp83um v1.0.0
 '
 
-test_expect_failure 'two semi-ambiguous commit-ish' '
+test_expect_success 'two semi-ambiguous commit-ish' '
 	# At this point, we have a tag 0000000000f8f that points
 	# at a commit 0000000000e4f, and a tree and a blob that
 	# share 0000000000 prefix with these tag and commit.
@@ -247,7 +247,7 @@ test_expect_failure 'two semi-ambiguous commit-ish' '
 	git log 0000000000...
 '
 
-test_expect_failure 'three semi-ambiguous tree-ish' '
+test_expect_success 'three semi-ambiguous tree-ish' '
 	# Likewise for tree-ish.  HEAD, v1.0.0 and HEAD^{tree} share
 	# the prefix but peeling them to tree yields the same thing
 	git rev-parse --verify 0000000000^{tree}
@@ -311,7 +311,7 @@ test_expect_success 'more history' '
 
 '
 
-test_expect_failure 'parse describe name taking advantage of generation' '
+test_expect_success 'parse describe name taking advantage of generation' '
 	# ambiguous at the object name level, but there is only one
 	# such commit at generation 0
 	git rev-parse --verify v1.0.0-0-g000000000 &&

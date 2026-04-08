@@ -7,9 +7,10 @@ use grit_lib::merge_base;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{
-    abbreviate_object_id, abbreviate_ref_name, discover_optional, is_inside_git_dir,
-    is_inside_work_tree, list_loose_abbrev_matches, peel_to_commit_for_merge_base,
-    resolve_revision, resolve_revision_without_index_dwim, show_prefix, split_double_dot_range,
+    abbreviate_object_id, abbreviate_ref_name, ambiguous_object_hint_lines, discover_optional,
+    is_inside_git_dir, is_inside_work_tree, list_all_abbrev_matches, parse_peel_suffix,
+    peel_to_commit_for_merge_base, resolve_revision, resolve_revision_for_range_end,
+    resolve_revision_without_index_dwim, show_prefix, split_double_dot_range,
     split_triple_dot_range, symbolic_full_name,
 };
 use std::env;
@@ -84,6 +85,7 @@ pub fn run(args: Args) -> Result<()> {
         ForcedPath(String),
         PathSeparator,
         Literal(String),
+        Disambiguate(String),
     }
 
     let mut actions: Vec<Action> = Vec::new();
@@ -234,6 +236,15 @@ pub fn run(args: Args) -> Result<()> {
                 sq_quote = true;
             } else if arg == "--sq" {
                 sq_output = true;
+            } else if let Some(pfx) = arg.strip_prefix("--disambiguate=") {
+                actions.push(Action::Disambiguate(pfx.to_owned()));
+            } else if arg == "--disambiguate" {
+                i += 1;
+                let pfx = args
+                    .args
+                    .get(i)
+                    .ok_or_else(|| anyhow::anyhow!("--disambiguate requires a prefix argument"))?;
+                actions.push(Action::Disambiguate(pfx.clone()));
             } else if arg == "--local-env-vars" {
                 actions.push(Action::LocalEnvVars);
             } else if arg == "--resolve-git-dir" {
@@ -313,20 +324,20 @@ pub fn run(args: Args) -> Result<()> {
         let spec = rev_list[0];
         if let Some((left, right)) = split_double_dot_range(spec) {
             let left_oid = match if left.is_empty() {
-                resolve_revision(current, "HEAD")
+                resolve_revision_for_range_end(current, "HEAD")
             } else {
-                resolve_revision(current, left)
+                resolve_revision_for_range_end(current, left)
             } {
                 Ok(oid) => oid,
-                Err(e) => return fail_verify_resolve(quiet, &e),
+                Err(e) => return fail_verify_resolve(quiet, &e, Some(current)),
             };
             let right_oid = match if right.is_empty() {
-                resolve_revision(current, "HEAD")
+                resolve_revision_for_range_end(current, "HEAD")
             } else {
-                resolve_revision(current, right)
+                resolve_revision_for_range_end(current, right)
             } {
                 Ok(oid) => oid,
-                Err(e) => return fail_verify_resolve(quiet, &e),
+                Err(e) => return fail_verify_resolve(quiet, &e, Some(current)),
             };
             if let Some(mut len) = short_len {
                 if len == 0 {
@@ -348,14 +359,14 @@ pub fn run(args: Args) -> Result<()> {
         }
         if let Some((left, right)) = split_triple_dot_range(spec) {
             let left_tip = if left.is_empty() {
-                resolve_revision(current, "HEAD")?
+                resolve_revision_for_range_end(current, "HEAD")?
             } else {
-                resolve_revision(current, left)?
+                resolve_revision_for_range_end(current, left)?
             };
             let right_tip = if right.is_empty() {
-                resolve_revision(current, "HEAD")?
+                resolve_revision_for_range_end(current, "HEAD")?
             } else {
-                resolve_revision(current, right)?
+                resolve_revision_for_range_end(current, right)?
             };
             let left_commit = peel_to_commit_for_merge_base(current, left_tip)?;
             let right_commit = peel_to_commit_for_merge_base(current, right_tip)?;
@@ -386,7 +397,7 @@ pub fn run(args: Args) -> Result<()> {
         }
         let oid = match resolve_revision(current, spec) {
             Ok(oid) => oid,
-            Err(e) => return fail_verify_resolve(quiet, &e),
+            Err(e) => return fail_verify_resolve(quiet, &e, Some(current)),
         };
         if let Some(mut len) = short_len {
             if len == 0 {
@@ -456,6 +467,17 @@ pub fn run(args: Args) -> Result<()> {
         match action {
             Action::Literal(s) => {
                 println!("{s}");
+            }
+            Action::Disambiguate(pfx) => {
+                let Some(current) = repo.as_ref() else {
+                    bail!("not a git repository (or any of the parent directories)");
+                };
+                let mut oids = list_all_abbrev_matches(current, pfx)?;
+                oids.sort_by_key(|o| o.to_hex());
+                oids.dedup();
+                for oid in oids {
+                    println!("{}", oid.to_hex());
+                }
             }
             Action::ShowIsInsideWorkTree => {
                 let inside = repo
@@ -944,14 +966,14 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                         continue;
                     }
                     let left_tip = if left.is_empty() {
-                        resolve_revision_without_index_dwim(current, "HEAD")?
+                        resolve_revision_for_range_end(current, "HEAD")?
                     } else {
-                        resolve_revision_without_index_dwim(current, left)?
+                        resolve_revision_for_range_end(current, left)?
                     };
                     let right_tip = if right.is_empty() {
-                        resolve_revision_without_index_dwim(current, "HEAD")?
+                        resolve_revision_for_range_end(current, "HEAD")?
                     } else {
-                        resolve_revision_without_index_dwim(current, right)?
+                        resolve_revision_for_range_end(current, right)?
                     };
                     let left_commit = peel_to_commit_for_merge_base(current, left_tip)?;
                     let right_commit = peel_to_commit_for_merge_base(current, right_tip)?;
@@ -979,14 +1001,14 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                         continue;
                     }
                     let left_oid = if left.is_empty() {
-                        resolve_revision_without_index_dwim(current, "HEAD")?
+                        resolve_revision_for_range_end(current, "HEAD")?
                     } else {
-                        resolve_revision_without_index_dwim(current, left)?
+                        resolve_revision_for_range_end(current, left)?
                     };
                     let right_oid = if right.is_empty() {
-                        resolve_revision_without_index_dwim(current, "HEAD")?
+                        resolve_revision_for_range_end(current, "HEAD")?
                     } else {
-                        resolve_revision_without_index_dwim(current, right)?
+                        resolve_revision_for_range_end(current, right)?
                     };
                     if left.is_empty() && right.is_empty() {
                         println!("..");
@@ -1057,12 +1079,12 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                             deferred_fatal_stderr = Some(msg);
                             continue;
                         }
-                        if matches!(&e, LibError::Message(_) | LibError::InvalidRef(_)) {
-                            return Err(e.into());
-                        }
                         let amb_prefix = parse_ambiguous_short_oid(&msg);
                         if let Some(ref pfx) = amb_prefix {
                             print_ambiguous_short_oid_error(current, rev, pfx)?;
+                        }
+                        if matches!(&e, LibError::Message(_) | LibError::InvalidRef(_)) {
+                            return Err(e.into());
                         }
                         if msg.contains("ambiguous") {
                             return Err(anyhow::anyhow!("{msg}"));
@@ -1122,13 +1144,25 @@ fn fail_verify(quiet: bool, is_reflog_selector: bool) -> Result<()> {
     }
 }
 
-fn fail_verify_resolve(quiet: bool, err: &LibError) -> Result<()> {
+fn fail_verify_resolve(
+    quiet: bool,
+    err: &LibError,
+    repo: Option<&grit_lib::repo::Repository>,
+) -> Result<()> {
     if quiet {
         std::process::exit(1);
     }
     let msg = err.to_string();
     if msg.contains("only has") && msg.contains("entries") {
         bail!("{msg}");
+    }
+    if let (LibError::ObjectNotFound(spec), Some(r)) = (err, repo) {
+        if spec.contains("-g") && spec.matches('-').count() >= 2 {
+            if let Ok(oid) = resolve_revision(r, spec) {
+                println!("{oid}");
+                return Ok(());
+            }
+        }
     }
     if matches!(err, LibError::InvalidRef(_) | LibError::Message(_)) {
         bail!("{msg}");
@@ -1186,7 +1220,7 @@ fn print_ambiguous_short_oid_error(
     rev: &str,
     short_prefix: &str,
 ) -> Result<()> {
-    let candidates = list_loose_abbrev_matches(repo, short_prefix)?;
+    let candidates = list_all_abbrev_matches(repo, short_prefix)?;
     if candidates.is_empty() {
         return Err(anyhow::anyhow!(
             "invalid ref: short object ID {} is ambiguous",
@@ -1194,19 +1228,19 @@ fn print_ambiguous_short_oid_error(
         ));
     }
 
-    let mut typed_candidates: Vec<(String, String)> = Vec::new();
+    let mut typed_count = 0usize;
     let mut bad_oids: Vec<String> = Vec::new();
-    for oid in candidates {
+    for oid in &candidates {
         let oid_hex = oid.to_hex();
-        match repo.odb.read(&oid) {
-            Ok(obj) => typed_candidates.push((oid_hex, obj.kind.as_str().to_owned())),
+        match repo.odb.read(oid) {
+            Ok(_) => typed_count += 1,
             Err(_) => bad_oids.push(oid_hex),
         }
     }
 
     eprintln!("error: short object ID {} is ambiguous", short_prefix);
 
-    if typed_candidates.is_empty() {
+    if typed_count == 0 {
         eprintln!("fatal: invalid object type");
         std::process::exit(128);
     }
@@ -1220,15 +1254,10 @@ fn print_ambiguous_short_oid_error(
         }
     }
 
-    let mut all_candidates: Vec<(String, String)> = bad_oids
-        .into_iter()
-        .map(|oid| (oid, "[bad object]".to_owned()))
-        .collect();
-    all_candidates.extend(typed_candidates);
-
+    let peel_filter = parse_peel_suffix(rev).1;
     eprintln!("hint: The candidates are:");
-    for (oid_hex, kind) in all_candidates {
-        eprintln!("hint:   {} {}", oid_hex, kind);
+    for line in ambiguous_object_hint_lines(repo, short_prefix, peel_filter)? {
+        eprintln!("{line}");
     }
 
     eprintln!(

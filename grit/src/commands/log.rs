@@ -15,6 +15,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
     collect_revision_specs_with_stdin, rev_list, OrderingMode, RevListOptions,
 };
+use grit_lib::rev_parse::resolve_revision_as_commit;
 use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
 use std::collections::{HashMap, HashSet};
@@ -438,20 +439,20 @@ fn run_graph_log(repo: &Repository, args: &Args) -> Result<()> {
             continue;
         }
         if let Some(stripped) = rev.strip_prefix('^') {
-            match resolve_revision(repo, stripped) {
+            match resolve_revision_as_commit(repo, stripped) {
                 Ok(_) => revision_specs.push(rev.clone()),
                 Err(_err) if is_likely_pathspec_during_rev_parse(stripped) => {
                     implied_pathspecs.push(stripped.to_owned())
                 }
-                Err(err) => return Err(err),
+                Err(err) => return Err(err.into()),
             }
         } else {
-            match resolve_revision(repo, rev) {
+            match resolve_revision_as_commit(repo, rev) {
                 Ok(_) => revision_specs.push(rev.clone()),
                 Err(_err) if is_likely_pathspec_during_rev_parse(rev) => {
                     implied_pathspecs.push(rev.clone())
                 }
-                Err(err) => return Err(err),
+                Err(err) => return Err(err.into()),
             }
         }
     }
@@ -1692,15 +1693,15 @@ pub fn run(mut args: Args) -> Result<()> {
         let mut excludes = Vec::new();
         for rev in &args.revisions {
             if let Some(stripped) = rev.strip_prefix('^') {
-                let oid = resolve_revision(&repo, stripped)?;
+                let oid = resolve_revision_as_commit(&repo, stripped)?;
                 excludes.push(oid);
             } else {
-                match resolve_revision(&repo, rev) {
+                match resolve_revision_as_commit(&repo, rev) {
                     Ok(oid) => oids.push(oid),
                     Err(_err) if is_likely_pathspec_during_rev_parse(rev) => {
                         implied_pathspecs.push(rev.clone());
                     }
-                    Err(err) => return Err(err),
+                    Err(err) => return Err(err.into()),
                 }
             }
         }
@@ -2201,7 +2202,7 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
         }
     } else {
         for rev in &args.revisions {
-            let oid = resolve_revision(repo, rev)?;
+            let oid = resolve_revision_as_commit(repo, rev)?;
             oids.push(oid);
         }
     }
