@@ -1291,7 +1291,7 @@ t8007-cat-file-textconv	t8	yes	15	9	6	false	ok	0
 t8008-blame-formats	t8	yes	5	5	0	true	ok	0
 t8009-blame-vs-topicbranches	t8	yes	2	2	0	true	ok	0
 t8010-cat-file-batch	t8	yes	26	26	0	true	ok	0
-t8010-cat-file-filters	t8	yes	9	4	5	false	ok	0
+t8010-cat-file-filters	t8	yes	9	9	0	true	ok	0
 t8011-blame-split-file	t8	yes	10	10	0	true	ok	0
 t8012-blame-colors	t8	yes	4	0	4	false	ok	0
 t8013-blame-ignore-revs	t8	yes	19	19	0	true	ok	0
