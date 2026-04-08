@@ -79,8 +79,14 @@ impl Odb {
     /// Unlike [`Self::exists`], this ignores `info/alternates` and
     /// `GIT_ALTERNATE_OBJECT_DIRECTORIES`. Used for partial-clone bookkeeping where
     /// objects reachable via alternates are still treated as "missing" until copied locally.
+    ///
+    /// The empty tree object is treated as present without a loose file (matches Git).
     #[must_use]
     pub fn exists_local(&self, oid: &ObjectId) -> bool {
+        const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+        if oid.to_hex() == EMPTY_TREE {
+            return true;
+        }
         self.exists_in_dir(&self.objects_dir, oid)
     }
 
@@ -236,7 +242,7 @@ impl Odb {
         let oid = hash_bytes(&store_bytes);
 
         let path = self.object_path(&oid);
-        if path.exists() {
+        if path.exists() || self.exists(&oid) {
             return Ok(oid);
         }
 
@@ -275,7 +281,7 @@ impl Odb {
 
         let oid = hash_bytes(store_bytes);
         let path = self.object_path(&oid);
-        if path.exists() {
+        if path.exists() || self.exists(&oid) {
             return Ok(oid);
         }
 

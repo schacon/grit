@@ -546,6 +546,10 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
+    if crate::trace_packet::trace_packet_dest().is_some() {
+        crate::trace_packet::trace_packet_line(b"clone> packfile negotiation complete");
+    }
+
     if args.bare {
         // Bare clone: copy refs directly (mirror-style), no remote tracking
         copy_refs_direct(&source.git_dir, &dest.git_dir).context("copying refs")?;

@@ -315,6 +315,13 @@ fn fetch_remote(
         (heads, tags)
     };
 
+    let tip_oids: Vec<ObjectId> = remote_heads
+        .iter()
+        .chain(remote_tags.iter())
+        .map(|(_, oid)| *oid)
+        .collect();
+    crate::trace_packet::trace_fetch_tip_availability(&git_dir.join("objects"), &tip_oids);
+
     // Handle --depth / --deepen: write shallow graft info
     let effective_depth = args.depth.or(args.deepen);
     if let Some(depth) = effective_depth {

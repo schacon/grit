@@ -25,6 +25,7 @@ pub mod pathspec;
 pub mod pkt_line;
 pub mod protocol;
 mod ssh_transport;
+mod trace_packet;
 
 mod upstream_help_builtin_synopsis {
     include!(concat!(env!("OUT_DIR"), "/upstream_help_synopsis.rs"));
