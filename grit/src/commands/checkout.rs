@@ -1755,7 +1755,7 @@ fn path_has_tracked_symlink_prefix(
 
 /// Check if any tracked files have uncommitted changes that would be overwritten
 /// by switching to the new index.
-fn check_dirty_worktree(
+pub(crate) fn check_dirty_worktree(
     repo: &Repository,
     old_index: &Index,
     new_index: &Index,

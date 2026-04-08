@@ -24,8 +24,8 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
-use crate::index::{Index, IndexEntry};
-use crate::objects::{parse_tree, ObjectId, ObjectKind, TreeEntry};
+use crate::index::{Index, IndexEntry, MODE_GITLINK};
+use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
 use crate::userdiff::FuncnameMatcher;
 

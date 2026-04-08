@@ -2129,6 +2129,78 @@ fn apply_stash_impl(
     Ok(has_conflicts)
 }
 
+/// Stash the current WIP for `git rebase --autostash`, update `refs/stash`, reset to HEAD, and
+/// print `Created autostash: <full hex>` to stdout. Returns `None` when there is nothing to stash.
+pub fn autostash_for_rebase(repo: &Repository) -> Result<Option<ObjectId>> {
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("cannot autostash in a bare repository"))?;
+
+    let head = resolve_head(&repo.git_dir)?;
+    let head_oid = head
+        .oid()
+        .ok_or_else(|| anyhow::anyhow!("cannot autostash on an unborn branch"))?
+        .to_owned();
+
+    let index = match repo.load_index() {
+        Ok(idx) => idx,
+        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
+        Err(e) => return Err(e.into()),
+    };
+
+    let head_obj = repo.odb.read(&head_oid)?;
+    let head_commit = parse_commit(&head_obj.data)?;
+    let staged = diff_index_to_tree(&repo.odb, &index, Some(&head_commit.tree))?;
+    let unstaged = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
+
+    if staged.is_empty() && unstaged.is_empty() {
+        return Ok(None);
+    }
+
+    let stash_oid =
+        create_stash_commit(repo, &head, &head_oid, &index, work_tree, None, false, &[])?;
+
+    update_stash_ref(repo, &stash_oid, "autostash")?;
+    reset_to_head(repo, &head_oid, work_tree)?;
+
+    println!("Created autostash: {}", stash_oid.to_hex());
+    Ok(Some(stash_oid))
+}
+
+/// Pop the top stash entry if it points at `stash_oid`, restoring the working tree (and index
+/// state per stash apply rules). Used when rebase aborts before completion or a hook fails.
+pub fn pop_autostash_if_top(repo: &Repository, stash_oid: &ObjectId) -> Result<()> {
+    let top = resolve_stash_ref(repo, None)?;
+    if top != *stash_oid {
+        return Ok(());
+    }
+    do_pop(None, false, true)?;
+    Ok(())
+}
+
+/// Remove `stash_oid` from the stash reflog when it is still the tip entry (after a successful
+/// apply that left the stash object in the reflog).
+pub fn drop_stash_tip_if_matches(repo: &Repository, stash_oid: &ObjectId) -> Result<()> {
+    let Ok(top) = resolve_stash_ref(repo, None) else {
+        return Ok(());
+    };
+    if top == *stash_oid {
+        drop_stash_entry(repo, 0)?;
+    }
+    Ok(())
+}
+
+/// Apply a stash created by [`autostash_for_rebase`]. Returns `true` when the apply stopped on
+/// conflicts (index may contain unmerged entries).
+pub fn apply_autostash_for_rebase(repo: &Repository, stash_oid: &ObjectId) -> Result<bool> {
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("cannot apply autostash in a bare repository"))?;
+    apply_stash_impl(repo, work_tree, stash_oid, false, true)
+}
+
 /// Helper to add a staged entry at a specific stage to the index.
 fn add_stage_entry(
     index: &mut Index,

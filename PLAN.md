@@ -363,7 +363,7 @@ commit → check it off → move on.
 - [ ] `t3432-rebase-fast-forward` ████████████████░░░░ 189/225 (36 left) — ensure rebase fast-forwards commits when possible
 - [ ] `t3206-range-diff` ██░░░░░░░░░░░░░░░░░░ 5/48 (43 left) — range-diff tests
 - [ ] `t3105-ls-tree-output` ████░░░░░░░░░░░░░░░░ 13/60 (47 left) — ls-tree output
-- [ ] `t3420-rebase-autostash` █░░░░░░░░░░░░░░░░░░░ 4/52 (48 left) — git rebase --autostash tests
+- [~] `t3420-rebase-autostash` ███████████████░░░░░ 41/54 (13 left) — git rebase --autostash tests
 - [ ] `t3421-rebase-topology-linear` ███░░░░░░░░░░░░░░░░░ 11/64 (53 left) — basic rebase topology tests
 - [ ] `t3800-mktag` █████████░░░░░░░░░░░ 68/151 (83 left) — git mktag: tag object verify test
 - [ ] `t3903-stash` ████████░░░░░░░░░░░░ 57/142 (85 left) — Test git stash

@@ -457,7 +457,8 @@ fn create_git_dir(
                  # For a project mostly in C, the following would be a good set of\n\
                  # temporary files to exclude:\n\
                  #.*.[oa]\n\
-                 #*~\n",
+                 #*~\n\
+                 .test_tick\n",
             )?;
         }
     }
