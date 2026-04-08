@@ -34,3 +34,4 @@ hex.workspace = true
 flate2.workspace = true
 unicode-width.workspace = true
 encoding_rs = "0.8.35"
+hungarian.workspace = true

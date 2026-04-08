@@ -6,12 +6,12 @@
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
-    count_changes, diff_trees, format_raw, format_stat_line, unified_diff, DiffEntry, DiffStatus,
+    count_changes, diff_trees, format_raw, format_stat_line, DiffEntry, DiffStatus,
 };
 use grit_lib::line_log::{
     format_line_log_diff, line_log_filter_commits, parse_line_log_ranges, rewritten_first_parent,
 };
-use grit_lib::objects::{parse_commit, ObjectId};
+use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
@@ -269,6 +269,16 @@ pub struct Args {
     #[arg(long = "no-abbrev")]
     pub no_abbrev: bool,
 
+    /// Replace `+`/`-`/context prefixes in unified diff hunks (Git `range-diff` / `fast-import` tests).
+    #[arg(long = "output-indicator-new", value_name = "C", hide = true)]
+    pub output_indicator_new: Option<String>,
+
+    #[arg(long = "output-indicator-old", value_name = "C", hide = true)]
+    pub output_indicator_old: Option<String>,
+
+    #[arg(long = "output-indicator-context", value_name = "C", hide = true)]
+    pub output_indicator_context: Option<String>,
+
     /// Grep log messages.
     #[arg(long = "grep", value_name = "PATTERN")]
     pub grep_patterns: Vec<String>,
@@ -336,6 +346,24 @@ pub struct Args {
     /// Show full object hashes in diff output.
     #[arg(long = "full-index")]
     pub full_index: bool,
+
+    /// Omit `a/` and `b/` prefixes from diff paths (Git `--no-prefix`).
+    #[arg(long = "no-prefix")]
+    pub no_prefix: bool,
+
+    /// Do not show commit notes (Git `log --no-notes`).
+    #[arg(long = "no-notes")]
+    pub no_notes: bool,
+
+    /// Additional notes refs (`--notes` → default ref; `--notes=ref` → `refs/notes/<ref>`).
+    #[arg(
+        long = "notes",
+        value_name = "REF",
+        action = clap::ArgAction::Append,
+        num_args = 0..=1,
+        default_missing_value = ""
+    )]
+    pub notes_refs: Vec<String>,
 
     /// Show binary diffs in git-apply format.
     #[arg(long = "binary")]
@@ -3372,6 +3400,10 @@ impl<'a> NotesMapCache<'a> {
         Self { repo, map: None }
     }
 
+    fn repo(&self) -> &'a Repository {
+        self.repo
+    }
+
     fn map(&mut self) -> &std::collections::HashMap<ObjectId, Vec<u8>> {
         if self.map.is_none() {
             self.map = Some(load_notes_map(self.repo));
@@ -3384,12 +3416,7 @@ impl<'a> NotesMapCache<'a> {
 /// Returns a map from commit OID to the notes blob OID.
 fn load_notes_map(repo: &Repository) -> std::collections::HashMap<ObjectId, Vec<u8>> {
     use grit_lib::config::ConfigSet;
-    use grit_lib::objects::{parse_commit, ObjectKind};
-    use grit_lib::refs::resolve_ref;
 
-    let mut map = std::collections::HashMap::new();
-
-    // Determine notes ref: check core.notesRef, GIT_NOTES_REF env, or default
     let notes_ref = std::env::var("GIT_NOTES_REF")
         .ok()
         .filter(|s| !s.is_empty())
@@ -3399,9 +3426,19 @@ fn load_notes_map(repo: &Repository) -> std::collections::HashMap<ObjectId, Vec<
                 .get("core.notesRef")
                 .unwrap_or_else(|| "refs/notes/commits".to_string())
         });
+    load_notes_map_for_ref(repo, &notes_ref)
+}
+
+fn load_notes_map_for_ref(
+    repo: &Repository,
+    notes_ref: &str,
+) -> std::collections::HashMap<ObjectId, Vec<u8>> {
+    use grit_lib::refs::resolve_ref;
+
+    let mut map = std::collections::HashMap::new();
 
     // Resolve notes ref to a commit, then get its tree
-    let notes_oid = match resolve_ref(&repo.git_dir, &notes_ref) {
+    let notes_oid = match resolve_ref(&repo.git_dir, notes_ref) {
         Ok(oid) => oid,
         Err(_) => return map,
     };
@@ -3457,15 +3494,45 @@ fn write_notes(
     out: &mut impl Write,
     oid: &ObjectId,
     notes_cache: &mut NotesMapCache<'_>,
+    args: &Args,
     _odb: &Odb,
 ) -> Result<()> {
-    let notes_map = notes_cache.map();
-    if let Some(note_data) = notes_map.get(oid) {
-        let note_text = String::from_utf8_lossy(note_data);
-        writeln!(out)?;
-        writeln!(out, "Notes:")?;
-        for line in note_text.lines() {
-            writeln!(out, "    {line}")?;
+    if args.no_notes {
+        return Ok(());
+    }
+    if args.notes_refs.is_empty() {
+        let notes_map = notes_cache.map();
+        if let Some(note_data) = notes_map.get(oid) {
+            let note_text = String::from_utf8_lossy(note_data);
+            writeln!(out)?;
+            writeln!(out, "Notes:")?;
+            for line in note_text.lines() {
+                writeln!(out, "    {line}")?;
+            }
+        }
+        return Ok(());
+    }
+    for spec in &args.notes_refs {
+        let (header, refname) = if spec.is_empty() {
+            ("Notes".to_owned(), "refs/notes/commits".to_owned())
+        } else {
+            let s = spec.as_str();
+            let refname = if s.starts_with("refs/") {
+                s.to_owned()
+            } else {
+                format!("refs/notes/{s}")
+            };
+            let short = s.strip_prefix("refs/notes/").unwrap_or(s);
+            (format!("Notes ({short})"), refname)
+        };
+        let map = load_notes_map_for_ref(notes_cache.repo(), &refname);
+        if let Some(note_data) = map.get(oid) {
+            let note_text = String::from_utf8_lossy(note_data);
+            writeln!(out)?;
+            writeln!(out, "{header}:")?;
+            for line in note_text.lines() {
+                writeln!(out, "    {line}")?;
+            }
         }
     }
     Ok(())
@@ -3567,7 +3634,11 @@ fn format_commit(
     line_log: bool,
 ) -> Result<()> {
     let hex = oid.to_hex();
-    let abbrev_len = parse_abbrev(&args.abbrev);
+    let abbrev_len = if args.no_abbrev {
+        40
+    } else {
+        parse_abbrev(&args.abbrev)
+    };
     let display_parents = parent_line_override.unwrap_or(info.parents.as_slice());
 
     if args.oneline || args.format.as_deref() == Some("oneline") {
@@ -3664,7 +3735,7 @@ fn format_commit(
             for line in info.message.lines() {
                 writeln!(out, "    {line}")?;
             }
-            write_notes(out, oid, notes_cache, odb)?;
+            write_notes(out, oid, notes_cache, args, odb)?;
             if !line_log {
                 writeln!(out)?;
             }
@@ -3688,7 +3759,7 @@ fn format_commit(
             for line in info.message.lines() {
                 writeln!(out, "    {line}")?;
             }
-            write_notes(out, oid, notes_cache, odb)?;
+            write_notes(out, oid, notes_cache, args, odb)?;
             writeln!(out)?;
         }
         Some("fuller") => {
@@ -3720,7 +3791,7 @@ fn format_commit(
             for line in info.message.lines() {
                 writeln!(out, "    {line}")?;
             }
-            write_notes(out, oid, notes_cache, odb)?;
+            write_notes(out, oid, notes_cache, args, odb)?;
             writeln!(out)?;
         }
         Some(other) => {
@@ -4952,7 +5023,7 @@ fn write_commit_diff(
             &entries
         };
         for entry in show_entries {
-            log_write_patch_entry(out, odb, entry, args.unified.unwrap_or(3))?;
+            log_write_patch_entry(out, odb, entry, args)?;
         }
     }
 
@@ -4964,8 +5035,9 @@ fn log_write_patch_entry(
     out: &mut impl Write,
     odb: &Odb,
     entry: &DiffEntry,
-    context_lines: usize,
+    args: &Args,
 ) -> Result<()> {
+    let context_lines = args.unified.unwrap_or(3);
     let old_path = entry
         .old_path
         .as_deref()
@@ -4975,7 +5047,11 @@ fn log_write_patch_entry(
         .as_deref()
         .unwrap_or(entry.old_path.as_deref().unwrap_or(""));
 
-    writeln!(out, "diff --git a/{old_path} b/{new_path}")?;
+    if args.no_prefix {
+        writeln!(out, "diff --git {old_path} {new_path}")?;
+    } else {
+        writeln!(out, "diff --git a/{old_path} b/{new_path}")?;
+    }
 
     match entry.status {
         DiffStatus::Added => {
@@ -5046,16 +5122,69 @@ fn log_write_patch_entry(
     } else {
         new_path
     };
-    let patch = unified_diff(
+    let (src_pfx, dst_pfx) = if args.no_prefix {
+        ("", "")
+    } else {
+        ("a/", "b/")
+    };
+    let patch = grit_lib::diff::unified_diff_with_prefix(
         &old_content,
         &new_content,
         display_old,
         display_new,
         context_lines,
+        src_pfx,
+        dst_pfx,
     );
+    let patch = apply_diff_output_indicators(&patch, args);
     write!(out, "{patch}")?;
 
     Ok(())
+}
+
+fn apply_diff_output_indicators(patch: &str, args: &Args) -> String {
+    if args.output_indicator_new.is_none()
+        && args.output_indicator_old.is_none()
+        && args.output_indicator_context.is_none()
+    {
+        return patch.to_owned();
+    }
+    let new_c = args
+        .output_indicator_new
+        .as_deref()
+        .and_then(|s| s.chars().next())
+        .unwrap_or('>');
+    let old_c = args
+        .output_indicator_old
+        .as_deref()
+        .and_then(|s| s.chars().next())
+        .unwrap_or('<');
+    let ctx_c = args
+        .output_indicator_context
+        .as_deref()
+        .and_then(|s| s.chars().next())
+        .unwrap_or('#');
+    let mut out = String::with_capacity(patch.len());
+    for line in patch.split_inclusive('\n') {
+        let bytes = line.as_bytes();
+        if bytes.first() == Some(&b'+') && bytes.get(1) != Some(&b'+') && !line.starts_with("+++ ")
+        {
+            out.push(new_c);
+            out.push_str(&line[1..]);
+        } else if bytes.first() == Some(&b'-')
+            && bytes.get(1) != Some(&b'-')
+            && !line.starts_with("--- ")
+        {
+            out.push(old_c);
+            out.push_str(&line[1..]);
+        } else if bytes.first() == Some(&b' ') {
+            out.push(ctx_c);
+            out.push_str(&line[1..]);
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
 /// Write a `--stat` summary for log.

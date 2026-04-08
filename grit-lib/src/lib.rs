@@ -22,6 +22,7 @@ pub mod crlf;
 pub mod delta_encode;
 pub mod diff;
 pub mod error;
+pub mod fast_import;
 pub mod fetch_negotiator;
 pub mod fmt_merge_msg;
 pub mod fsck_standalone;
