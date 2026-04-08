@@ -461,7 +461,15 @@ pub fn run(mut args: Args) -> Result<()> {
             .iter()
             .find(|s| *s != "-q" && *s != "--quiet")
             .map(|s| s.as_str());
-        return create_orphan_branch(&repo, orphan_name, start_point);
+        return create_orphan_branch(
+            &repo,
+            orphan_name,
+            start_point,
+            CreateOrphanOptions {
+                switch_style: false,
+                force: args.force,
+            },
+        );
     }
 
     // Case: checkout -B <name> [<start_point>] (force create/reset)
