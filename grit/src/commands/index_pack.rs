@@ -5,13 +5,17 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
 use sha1::{Digest, Sha1};
+use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
+use grit_lib::pack::verify_pack_and_collect;
 use grit_lib::unpack_objects::apply_delta;
 
 /// Arguments for `grit index-pack`.
@@ -30,8 +34,21 @@ pub struct Args {
     pub pack_file: Option<String>,
 
     /// Verify the pack file integrity (check all objects).
-    #[arg(long = "verify", short = 'v')]
+    #[arg(long = "verify")]
     pub verify: bool,
+
+    /// Like `--verify` but also print delta chain statistics.
+    #[arg(long = "verify-stat")]
+    pub verify_stat: bool,
+
+    /// Print delta chain statistics only (no per-object listing).
+    #[arg(long = "verify-stat-only")]
+    pub verify_stat_only: bool,
+
+    /// Verbose progress on stderr (matches Git `-v`; trace2 `region_enter` for progress when
+    /// `GIT_TRACE2_EVENT` is set).
+    #[arg(short = 'v', long = "verbose")]
+    pub verbose: bool,
 
     /// Hash algorithm (accepted for compat, only sha1).
     #[arg(long = "object-format")]
@@ -58,12 +75,14 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // --verify mode: verify an existing pack + index.
-    if args.verify {
+    let verify_requested = args.verify || args.verify_stat || args.verify_stat_only;
+
+    // --verify / --verify-stat* modes: verify an existing pack + index.
+    if verify_requested {
         return run_verify(&args);
     }
 
-    let pack_bytes = if args.stdin {
+    let pack_raw = if args.stdin {
         let mut buf = Vec::new();
         io::stdin().lock().read_to_end(&mut buf)?;
         buf
@@ -73,21 +92,45 @@ pub fn run(args: Args) -> Result<()> {
         bail!("usage: grit index-pack [--stdin | <pack-file>]");
     };
 
-    // Validate pack header.
-    if pack_bytes.len() < 12 + 20 {
+    if args.verbose {
+        trace2_region_scope("Receiving objects", || Ok(()))?;
+    }
+
+    // Validate pack header and checksum; work on body without trailing 20-byte hash.
+    if pack_raw.len() < 12 + 20 {
         bail!("pack too small");
     }
-    if &pack_bytes[0..4] != b"PACK" {
+    if &pack_raw[0..4] != b"PACK" {
         bail!("not a pack file: invalid signature");
     }
-    let version = u32::from_be_bytes(pack_bytes[4..8].try_into()?);
+    let version = u32::from_be_bytes(pack_raw[4..8].try_into()?);
     if version != 2 && version != 3 {
         bail!("unsupported pack version {version}");
     }
-    let nr_objects = u32::from_be_bytes(pack_bytes[8..12].try_into()?) as usize;
+    let pack_end = pack_raw.len() - 20;
+    {
+        let mut h = Sha1::new();
+        h.update(&pack_raw[..pack_end]);
+        let digest = h.finalize();
+        if digest.as_slice() != &pack_raw[pack_end..] {
+            bail!("pack trailing checksum mismatch");
+        }
+    }
+    let mut pack_data = pack_raw[..pack_end].to_vec();
 
-    // Parse all objects, resolve deltas, collect entries.
-    let resolved = parse_and_resolve(&pack_bytes, nr_objects, args.fix_thin)?;
+    // Parse all objects, resolve deltas, collect entries (extend pack on --fix-thin).
+    let resolved = if args.verbose {
+        trace2_region_scope("Resolving deltas", || {
+            parse_and_resolve(&mut pack_data, args.fix_thin)
+        })?
+    } else {
+        parse_and_resolve(&mut pack_data, args.fix_thin)?
+    };
+
+    let mut pack_bytes = pack_data;
+    let mut h = Sha1::new();
+    h.update(&pack_bytes);
+    pack_bytes.extend_from_slice(h.finalize().as_slice());
 
     // --strict: reject packs with duplicate objects.
     if args.strict {
@@ -101,12 +144,8 @@ pub fn run(args: Args) -> Result<()> {
 
     // Determine output paths.
     let (pack_path, idx_path) = if args.stdin {
-        // Compute pack checksum to derive filename.
-        let pack_hash = {
-            let mut h = Sha1::new();
-            h.update(&pack_bytes);
-            hex::encode(h.finalize())
-        };
+        // Compute pack checksum to derive filename (trailing 20 bytes).
+        let pack_hash = hex::encode(&pack_bytes[pack_bytes.len() - 20..]);
         // We need to discover a repo to find objects/pack/.
         let repo = grit_lib::repo::Repository::discover(None)
             .context("not a git repository (needed for --stdin)")?;
@@ -140,29 +179,71 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-/// Parse all pack objects and resolve deltas.
-fn parse_and_resolve(
-    pack_bytes: &[u8],
-    nr_objects: usize,
-    fix_thin: bool,
-) -> Result<Vec<ResolvedObject>> {
+fn encode_pack_object_header(buf: &mut Vec<u8>, type_code: u8, payload_len: usize) {
+    let mut size = payload_len;
+    let first = ((type_code & 0x7) << 4) | (size & 0x0f) as u8;
+    size >>= 4;
+    if size > 0 {
+        buf.push(first | 0x80);
+        while size > 0 {
+            let b = (size & 0x7f) as u8;
+            size >>= 7;
+            buf.push(if size > 0 { b | 0x80 } else { b });
+        }
+    } else {
+        buf.push(first);
+    }
+}
+
+/// Append a full zlib-compressed object to `pack_body` (no trailing pack checksum).
+/// Returns offset, object id, and CRC32 of the raw pack entry bytes.
+fn append_full_object_to_pack(
+    pack_body: &mut Vec<u8>,
+    kind: ObjectKind,
+    data: &[u8],
+) -> Result<(u64, ObjectId, u32)> {
+    let offset = pack_body.len() as u64;
+    let type_code: u8 = match kind {
+        ObjectKind::Commit => 1,
+        ObjectKind::Tree => 2,
+        ObjectKind::Blob => 3,
+        ObjectKind::Tag => 4,
+    };
+    encode_pack_object_header(pack_body, type_code, data.len());
+    let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+    enc.write_all(data)?;
+    let compressed = enc.finish()?;
+    pack_body.extend_from_slice(&compressed);
+    let oid = Odb::hash_object_data(kind, data);
+    let crc = crc32_slice(&pack_body[offset as usize..]);
+    Ok((offset, oid, crc))
+}
+
+/// Parse all pack objects and resolve deltas. When `fix_thin`, missing `REF_DELTA` bases are read
+/// from the ODB and appended to the pack (Git `index-pack --fix-thin`), and the object count in
+/// the header is updated.
+fn parse_and_resolve(pack_body: &mut Vec<u8>, fix_thin: bool) -> Result<Vec<ResolvedObject>> {
     use std::collections::HashMap;
+
+    if pack_body.len() < 12 {
+        bail!("pack too small");
+    }
+    let nr_objects_initial = u32::from_be_bytes(pack_body[8..12].try_into()?) as usize;
 
     // For CRC32 we need to track the byte range of each object entry in the pack.
     let mut entries: Vec<(u64, u8, usize, Vec<u8>, Option<ObjectId>, Option<u64>)> = Vec::new();
     // (offset, type_code, header_size, data, base_oid_for_ref, base_offset_for_ofs)
 
     let mut pos = 12usize; // skip header
-    let pack_end = pack_bytes.len() - 20; // before trailing checksum
 
-    for _ in 0..nr_objects {
+    for _ in 0..nr_objects_initial {
         let obj_start = pos;
         let (type_code, _size, data, base_oid, base_offset) =
-            read_pack_entry(pack_bytes, &mut pos, obj_start as u64)?;
+            read_pack_entry(pack_body, &mut pos, obj_start as u64)?;
         let obj_end = pos;
 
         // CRC32 over the raw bytes of this entry.
-        let _crc = crc32_slice(&pack_bytes[obj_start..obj_end]);
+        let _crc = crc32_slice(&pack_body[obj_start..obj_end]);
 
         entries.push((
             obj_start as u64,
@@ -174,14 +255,8 @@ fn parse_and_resolve(
         ));
     }
 
-    // Verify trailing checksum.
-    {
-        let mut h = Sha1::new();
-        h.update(&pack_bytes[..pack_end]);
-        let digest = h.finalize();
-        if digest.as_slice() != &pack_bytes[pack_end..pack_end + 20] {
-            bail!("pack trailing checksum mismatch");
-        }
+    if pos != pack_body.len() {
+        bail!("junk after pack objects");
     }
 
     // Resolve: first non-delta objects, then iteratively resolve deltas.
@@ -210,7 +285,7 @@ fn parse_and_resolve(
     for (offset, type_code, _entry_len, data, base_oid, base_offset) in &entries {
         let obj_start = *offset as usize;
         let obj_end = obj_start + _entry_len;
-        let crc = crc32_slice(&pack_bytes[obj_start..obj_end]);
+        let crc = crc32_slice(&pack_body[obj_start..obj_end]);
 
         match type_code {
             1..=4 => {
@@ -240,12 +315,57 @@ fn parse_and_resolve(
         }
     }
 
-    // Iterative delta resolution.
+    // Iterative delta resolution, with optional thin-pack base injection.
     let mut remaining = pending;
     loop {
         if remaining.is_empty() {
             break;
         }
+
+        if fix_thin {
+            if let Some(ref o) = odb {
+                let mut bases_to_add: Vec<ObjectId> = Vec::new();
+                for (_, type_code, _, base_oid_opt, _, _, _) in &remaining {
+                    if *type_code != 7 {
+                        continue;
+                    }
+                    let Some(bo) = base_oid_opt else {
+                        continue;
+                    };
+                    if by_oid.contains_key(bo) {
+                        continue;
+                    }
+                    if o.read(bo).is_ok() {
+                        bases_to_add.push(*bo);
+                    }
+                }
+                bases_to_add.sort();
+                bases_to_add.dedup();
+                for bo in bases_to_add {
+                    let obj = o.read(&bo)?;
+                    let (new_off, oid, crc) =
+                        append_full_object_to_pack(pack_body, obj.kind, &obj.data)?;
+                    if oid != bo {
+                        bail!(
+                            "object hash mismatch when appending thin-pack base (expected {}, got {})",
+                            bo.to_hex(),
+                            oid.to_hex()
+                        );
+                    }
+                    by_offset.insert(new_off, (obj.kind, obj.data.clone()));
+                    by_oid.insert(bo, (obj.kind, obj.data));
+                    resolved.push(ResolvedObject {
+                        oid: bo,
+                        _kind: obj.kind,
+                        offset: new_off,
+                        crc32: crc,
+                    });
+                    let nr = u32::from_be_bytes(pack_body[8..12].try_into()?) + 1;
+                    pack_body[8..12].copy_from_slice(&nr.to_be_bytes());
+                }
+            }
+        }
+
         let before = remaining.len();
         let mut still_pending = Vec::new();
 
@@ -497,6 +617,26 @@ fn run_verify(args: &Args) -> Result<()> {
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("usage: grit index-pack --verify <pack-file>"))?;
 
+    let stat_only = args.verify_stat_only;
+    let show_stat = stat_only || args.verify_stat;
+
+    if stat_only {
+        let mut idx_path = PathBuf::from(pack_path);
+        idx_path.set_extension("idx");
+        let records = verify_pack_and_collect(&idx_path)
+            .with_context(|| format!("verify failed for {}", idx_path.display()))?;
+        let mut hist: BTreeMap<u64, usize> = BTreeMap::new();
+        for rec in &records {
+            let depth = rec.depth.unwrap_or(0);
+            *hist.entry(depth).or_insert(0) += 1;
+        }
+        for (depth, count) in hist {
+            println!("chain length = {depth}: {count} object(s)");
+        }
+        println!("{}: ok", pack_path);
+        return Ok(());
+    }
+
     let pack_bytes = fs::read(pack_path).with_context(|| format!("cannot read {pack_path}"))?;
 
     // Validate pack header.
@@ -510,8 +650,6 @@ fn run_verify(args: &Args) -> Result<()> {
     if version != 2 && version != 3 {
         bail!("unsupported pack version {version}");
     }
-    let nr_objects = u32::from_be_bytes(pack_bytes[8..12].try_into()?) as usize;
-
     // Verify trailing checksum.
     let pack_end = pack_bytes.len() - 20;
     {
@@ -524,7 +662,8 @@ fn run_verify(args: &Args) -> Result<()> {
     }
 
     // Parse all objects to verify they can be resolved.
-    let resolved = parse_and_resolve(&pack_bytes, nr_objects, false)?;
+    let mut body = pack_bytes[..pack_end].to_vec();
+    let resolved = parse_and_resolve(&mut body, false)?;
 
     // Verify each object's OID matches its content.
     for obj in &resolved {
@@ -533,7 +672,7 @@ fn run_verify(args: &Args) -> Result<()> {
     }
 
     // Check if .idx file exists and verify it.
-    let mut idx_path = std::path::PathBuf::from(pack_path);
+    let mut idx_path = PathBuf::from(pack_path);
     idx_path.set_extension("idx");
     if idx_path.exists() {
         let existing_idx = fs::read(&idx_path)?;
@@ -551,6 +690,19 @@ fn run_verify(args: &Args) -> Result<()> {
         }
     }
 
+    if show_stat {
+        let records = verify_pack_and_collect(&idx_path)
+            .with_context(|| format!("verify-stat failed for {}", idx_path.display()))?;
+        let mut hist: BTreeMap<u64, usize> = BTreeMap::new();
+        for rec in &records {
+            let depth = rec.depth.unwrap_or(0);
+            *hist.entry(depth).or_insert(0) += 1;
+        }
+        for (depth, count) in hist {
+            println!("chain length = {depth}: {count} object(s)");
+        }
+    }
+
     // Print pack checksum and status.
     let pack_checksum = &pack_bytes[pack_bytes.len() - 20..];
     let pack_hex = hex::encode(pack_checksum);
@@ -558,4 +710,35 @@ fn run_verify(args: &Args) -> Result<()> {
     println!("{pack_hex}");
 
     Ok(())
+}
+
+/// Emit trace2 JSON `region_enter` / `region_leave` for `GIT_TRACE2_EVENT` (used by tests that
+/// count balanced progress regions).
+fn trace2_region_scope<T>(label: &str, inner: impl FnOnce() -> Result<T>) -> Result<T> {
+    let path = match std::env::var("GIT_TRACE2_EVENT") {
+        Ok(p) if !p.is_empty() => p,
+        _ => return inner(),
+    };
+    trace2_append_json_line(
+        &path,
+        &format!(
+            r#"{{"event":"region_enter","sid":"grit-0","category":"progress","label":"{label}"}}"#
+        ),
+    )?;
+    let res = inner();
+    trace2_append_json_line(
+        &path,
+        &format!(
+            r#"{{"event":"region_leave","sid":"grit-0","category":"progress","label":"{label}","t_rel":0.0}}"#
+        ),
+    )?;
+    res
+}
+
+fn trace2_append_json_line(path: &str, line: &str) -> io::Result<()> {
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(file, "{line}")
 }

@@ -732,9 +732,89 @@ pub fn read_object_from_packs(objects_dir: &Path, oid: &ObjectId) -> Result<Obje
 
 /// When `oid` is stored as a delta in a pack, return its delta base object id.
 /// Returns [`None`] for loose objects and for non-delta packed objects.
-pub fn packed_delta_base_oid(objects_dir: &Path, oid: &ObjectId) -> Result<Option<ObjectId>> {
-    let indexes = read_local_pack_indexes(objects_dir)?;
+/// If `oid` is stored as `REF_DELTA` or `OFS_DELTA` in a local pack and its base OID is in
+/// `packed_set`, return the base OID and the **uncompressed** delta payload (Git binary delta).
+///
+/// Callers re-zlib when writing a new pack so we do not depend on copying raw deflate streams.
+///
+/// # Errors
+///
+/// Returns [`Error::CorruptObject`] when the pack stream is malformed.
+pub fn packed_ref_delta_reuse_slice(
+    objects_dir: &Path,
+    oid: &ObjectId,
+    packed_set: &HashSet<ObjectId>,
+) -> Result<Option<(ObjectId, Vec<u8>)>> {
+    let mut indexes = read_local_pack_indexes(objects_dir)?;
+    sort_pack_indexes_oldest_first(&mut indexes);
     for idx in indexes {
+        let Some(entry) = idx.entries.iter().find(|e| e.oid == *oid) else {
+            continue;
+        };
+        let pack_bytes = fs::read(&idx.pack_path).map_err(Error::Io)?;
+        let mut p = entry.offset as usize;
+        let (packed_type, _size) = parse_pack_object_header(&pack_bytes, &mut p)?;
+        let base = match packed_type {
+            PackedType::RefDelta => {
+                if p + 20 > pack_bytes.len() {
+                    return Err(Error::CorruptObject(
+                        "truncated ref-delta base oid while scanning for reuse".to_owned(),
+                    ));
+                }
+                let oid = ObjectId::from_bytes(&pack_bytes[p..p + 20])?;
+                p += 20;
+                oid
+            }
+            PackedType::OfsDelta => {
+                let base_off = parse_ofs_delta_base(&pack_bytes, &mut p, entry.offset)?;
+                let Some(base_entry) = idx.entries.iter().find(|e| e.offset == base_off) else {
+                    continue;
+                };
+                base_entry.oid
+            }
+            _ => {
+                // Same OID may exist as a full object in an older pack and as a delta in a newer
+                // one; keep scanning packs.
+                continue;
+            }
+        };
+        if !packed_set.contains(&base) {
+            continue;
+        }
+        let zlib_start = p;
+        let mut end_pos = zlib_start;
+        if skip_one_pack_object(&pack_bytes, &mut end_pos, entry.offset).is_err() {
+            continue;
+        }
+        let compressed = &pack_bytes[zlib_start..end_pos];
+        let mut dec = ZlibDecoder::new(compressed);
+        let mut delta = Vec::new();
+        if dec.read_to_end(&mut delta).is_err() {
+            continue;
+        }
+        return Ok(Some((base, delta)));
+    }
+    Ok(None)
+}
+
+/// Prefer older packs when the same OID exists as a full object in a fresh repack and as a delta
+/// in an earlier thin pack (t5316).
+fn sort_pack_indexes_oldest_first(indexes: &mut [PackIndex]) {
+    indexes.sort_by(|a, b| {
+        let ta = fs::metadata(&a.pack_path)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let tb = fs::metadata(&b.pack_path)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        ta.cmp(&tb).then_with(|| a.pack_path.cmp(&b.pack_path))
+    });
+}
+
+pub fn packed_delta_base_oid(objects_dir: &Path, oid: &ObjectId) -> Result<Option<ObjectId>> {
+    let mut indexes = read_local_pack_indexes(objects_dir)?;
+    sort_pack_indexes_oldest_first(&mut indexes);
+    for idx in &indexes {
         let Some(entry) = idx.entries.iter().find(|e| e.oid == *oid) else {
             continue;
         };
@@ -756,7 +836,7 @@ pub fn packed_delta_base_oid(objects_dir: &Path, oid: &ObjectId) -> Result<Optio
                     .find(|e| e.offset == base_off)
                     .map(|e| e.oid));
             }
-            _ => return Ok(None),
+            _ => continue,
         }
     }
     Ok(None)
