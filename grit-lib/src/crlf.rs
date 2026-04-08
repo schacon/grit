@@ -106,6 +106,10 @@ pub struct FileAttrs {
     pub eol: EolAttr,
     /// Effect of the `diff` gitattribute on diff output.
     pub diff_attr: DiffAttr,
+    /// `export-ignore` — omit from `git archive`.
+    pub export_ignore: bool,
+    /// `export-subst` — expand `$Format:` placeholders using the archived commit.
+    pub export_subst: bool,
     pub filter_clean: Option<String>,
     pub filter_smudge: Option<String>,
     /// Whether `filter.<name>.required` is set for the active smudge filter.
@@ -125,6 +129,8 @@ impl Default for FileAttrs {
             text: TextAttr::Unspecified,
             eol: EolAttr::Unspecified,
             diff_attr: DiffAttr::Unspecified,
+            export_ignore: false,
+            export_subst: false,
             filter_clean: None,
             filter_smudge: None,
             filter_smudge_required: false,
@@ -383,6 +389,12 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
                     "ident" => {
                         fa.ident = value == "set";
                     }
+                    "export-ignore" => {
+                        fa.export_ignore = value != "unset";
+                    }
+                    "export-subst" => {
+                        fa.export_subst = value != "unset";
+                    }
                     "merge" => {
                         fa.merge = match value.as_str() {
                             "unset" => MergeAttr::Unset,
@@ -417,6 +429,26 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
     }
 
     fa
+}
+
+/// Returns whether gitattribute `attr_name` is set (last matching rule wins), for arbitrary
+/// attribute names used by pathspec `:(attr:...)`.
+#[must_use]
+pub fn path_has_gitattribute(rules: &[AttrRule], path: &str, attr_name: &str) -> bool {
+    let mut last: Option<&str> = None;
+    for rule in rules {
+        if pattern_matches(&rule.pattern, path) {
+            for (name, value) in &rule.attrs {
+                if name == attr_name {
+                    last = Some(value.as_str());
+                }
+            }
+        }
+    }
+    match last {
+        None | Some("unset") => false,
+        Some(_) => true,
+    }
 }
 
 /// Simple gitattributes pattern matching.

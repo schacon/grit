@@ -1,16 +1,18 @@
-//! `grit upload-archive` -- send archive to client (server side).
+//! `grit upload-archive` — server side of `git archive --remote`.
 //!
-//! Server-side counterpart of `git archive --remote`.  Opens the repository
-//! at `<dir>`, reads archive arguments from stdin, and delegates to the
-//! archive logic.
+//! Reads pkt-line framed `argument ...` lines from stdin, replies with `ACK` + flush, then emits
+//! the archive on sideband channel 1 (matching Git's upload-archive child).
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
-use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
-use std::io::{self, BufRead};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+
+use crate::commands::archive::{
+    archive_bytes_for_repo, parse_archive_argv, tar_filters_from_config, token_format, ArchiveToken,
+};
+use crate::pkt_line;
 
 /// Arguments for `grit upload-archive`.
 #[derive(Debug, ClapArgs)]
@@ -21,6 +23,7 @@ pub struct Args {
     pub directory: PathBuf,
 }
 
+/// Run `grit upload-archive` (invoked as `git upload-archive <dir>`).
 pub fn run(args: Args) -> Result<()> {
     let repo = open_repo(&args.directory).with_context(|| {
         format!(
@@ -29,117 +32,83 @@ pub fn run(args: Args) -> Result<()> {
         )
     })?;
 
-    // Read arguments from stdin (one per line, terminated by empty line)
+    let archive_args = read_argument_packets()?;
+    let mut rest = archive_args;
+    if rest.first().is_some_and(|s| s == "archive") {
+        rest.remove(0);
+    }
+
+    let parsed = parse_archive_argv(&rest)?;
+
+    if parsed
+        .tokens
+        .iter()
+        .any(|t| matches!(t, ArchiveToken::List))
+    {
+        if parsed.tree_ish.is_some() || !parsed.pathspecs.is_empty() {
+            bail!("extra parameter to git archive --list");
+        }
+        let mut list_out = Vec::new();
+        write_list_formats(&mut list_out, true)?;
+        respond_ack_and_send(&list_out)?;
+        return Ok(());
+    }
+
+    let tree_ish = parsed
+        .tree_ish
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("must specify tree-ish"))?;
+
+    let format = token_format(&parsed)
+        .map(str::to_string)
+        .unwrap_or_else(|| "tar".to_string());
+
+    let bytes = archive_bytes_for_repo(&repo, &parsed, tree_ish, &format, true)?;
+    respond_ack_and_send(&bytes)?;
+    Ok(())
+}
+
+fn read_argument_packets() -> Result<Vec<String>> {
     let stdin = io::stdin();
-    let mut archive_args: Vec<String> = Vec::new();
-
-    for line in stdin.lock().lines() {
-        let line = line.context("reading stdin")?;
-        let line = line.trim().to_string();
-        if line.is_empty() {
-            break;
-        }
-        // Strip "argument " prefix (git protocol sends "argument <arg>")
-        if let Some(arg) = line.strip_prefix("argument ") {
-            archive_args.push(arg.to_owned());
-        } else {
-            archive_args.push(line);
+    let mut input = stdin.lock();
+    let mut out = Vec::new();
+    loop {
+        match pkt_line::read_packet(&mut input)? {
+            None => break,
+            Some(pkt_line::Packet::Flush) => break,
+            Some(pkt_line::Packet::Data(line)) => {
+                let arg = line.strip_prefix("argument ").unwrap_or(&line).to_string();
+                out.push(arg);
+            }
+            Some(other) => bail!("upload-archive: unexpected packet: {other:?}"),
         }
     }
+    Ok(out)
+}
 
-    // Parse archive arguments: expect at least a tree-ish
-    let mut format = "tar".to_string();
-    let mut prefix: Option<String> = None;
-    let mut tree_ish = "HEAD".to_string();
-
-    let mut i = 0;
-    while i < archive_args.len() {
-        match archive_args[i].as_str() {
-            "--format" if i + 1 < archive_args.len() => {
-                i += 1;
-                format = archive_args[i].clone();
-            }
-            f if f.starts_with("--format=") => {
-                if let Some(val) = f.strip_prefix("--format=") {
-                    format = val.to_string();
-                }
-            }
-            "--prefix" if i + 1 < archive_args.len() => {
-                i += 1;
-                prefix = Some(archive_args[i].clone());
-            }
-            p if p.starts_with("--prefix=") => {
-                if let Some(val) = p.strip_prefix("--prefix=") {
-                    prefix = Some(val.to_string());
-                }
-            }
-            "--" => {
-                break;
-            }
-            arg if !arg.starts_with('-') => {
-                tree_ish = arg.to_owned();
-            }
-            other => {
-                bail!("unsupported archive argument: {other}");
-            }
+fn write_list_formats(w: &mut impl Write, remote: bool) -> Result<()> {
+    use grit_lib::config::ConfigSet;
+    let config = ConfigSet::load(None, true).unwrap_or_default();
+    writeln!(w, "tar")?;
+    writeln!(w, "zip")?;
+    for (name, _, rem) in tar_filters_from_config(&config) {
+        if !remote || rem {
+            writeln!(w, "{name}")?;
         }
-        i += 1;
     }
-
-    // Resolve tree-ish to a tree OID
-    let oid = resolve_ref(&repo.git_dir, &tree_ish)
-        .or_else(|_| ObjectId::from_hex(&tree_ish))
-        .with_context(|| format!("cannot resolve '{tree_ish}'"))?;
-
-    let obj = repo.odb.read(&oid)?;
-    let tree_oid = if obj.kind == ObjectKind::Commit {
-        let commit = parse_commit(&obj.data).context("parsing commit")?;
-        commit.tree
-    } else if obj.kind == ObjectKind::Tree {
-        oid
-    } else {
-        bail!("'{}' is not a tree or commit", tree_ish);
-    };
-
-    eprintln!(
-        "upload-archive: generating {} archive for {} (tree {})",
-        format,
-        tree_ish,
-        &tree_oid.to_hex()[..7]
-    );
-
-    // Output a listing of the tree (full archive generation reuses the archive module)
-    print_tree_listing(&repo, &tree_oid, prefix.as_deref().unwrap_or(""))?;
-
     Ok(())
 }
 
-/// Recursively print tree entries (placeholder for full archive generation).
-fn print_tree_listing(repo: &Repository, tree_oid: &ObjectId, prefix: &str) -> Result<()> {
-    let obj = repo.odb.read(tree_oid)?;
-    let entries = parse_tree(&obj.data).context("parsing tree")?;
-
-    for entry in &entries {
-        let name = String::from_utf8_lossy(&entry.name);
-        let path = if prefix.is_empty() {
-            name.to_string()
-        } else {
-            format!("{prefix}{name}")
-        };
-
-        if entry.mode == 0o40000 {
-            // Directory - recurse
-            let sub_prefix = format!("{path}/");
-            print_tree_listing(repo, &entry.oid, &sub_prefix)?;
-        } else {
-            println!("{}\t{}", entry.oid.to_hex(), path);
-        }
-    }
-
+fn respond_ack_and_send(payload: &[u8]) -> Result<()> {
+    let mut out = io::stdout().lock();
+    pkt_line::write_line(&mut out, "ACK")?;
+    pkt_line::write_flush(&mut out)?;
+    pkt_line::write_sideband_channel1_64k(&mut out, payload)?;
+    pkt_line::write_flush(&mut out)?;
+    out.flush()?;
     Ok(())
 }
 
-/// Open a repository (bare or non-bare).
 fn open_repo(path: &Path) -> Result<Repository> {
     if let Ok(repo) = Repository::open(path, None) {
         return Ok(repo);
