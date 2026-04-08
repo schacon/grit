@@ -7,6 +7,7 @@ use crate::grit_exe;
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::config::{ConfigFile, ConfigScope};
+use grit_lib::error::Error as LibError;
 use grit_lib::index::MODE_GITLINK;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::repo::Repository;
@@ -236,6 +237,210 @@ pub fn run(args: Args) -> Result<()> {
     }
 }
 
+/// Built-in helper invoked as `git submodule--helper …` (matches Git's plumbing).
+///
+/// Currently implements `get-default-remote` only.
+pub fn run_submodule_helper(rest: &[String]) -> Result<()> {
+    if rest.is_empty() {
+        submodule_helper_usage_get_default_remote();
+    }
+    match rest[0].as_str() {
+        "get-default-remote" => {
+            if rest.len() != 2 {
+                submodule_helper_usage_get_default_remote();
+            }
+            let path = &rest[1];
+            let name = get_default_remote_for_path(path)?;
+            println!("{name}");
+            Ok(())
+        }
+        _ => {
+            eprintln!("Unknown subcommand: {}", rest[0]);
+            submodule_helper_usage_get_default_remote();
+        }
+    }
+}
+
+fn submodule_helper_usage_get_default_remote() -> ! {
+    eprintln!("usage: git submodule--helper get-default-remote <path>");
+    std::process::exit(129);
+}
+
+fn submodule_path_not_handle_error<T>(path: &str) -> Result<T> {
+    Err(LibError::Message(format!(
+        "fatal: could not get a repository handle for submodule '{path}'"
+    ))
+    .into())
+}
+
+fn worktree_relative_posix(work_tree: &Path, abs_path: &Path) -> Result<String> {
+    let wt = work_tree
+        .canonicalize()
+        .with_context(|| format!("cannot canonicalize {}", work_tree.display()))?;
+    let abs = abs_path
+        .canonicalize()
+        .with_context(|| format!("cannot canonicalize {}", abs_path.display()))?;
+    let rel = abs.strip_prefix(&wt).with_context(|| {
+        format!(
+            "path {} is not inside work tree {}",
+            abs.display(),
+            wt.display()
+        )
+    })?;
+    Ok(rel
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/"))
+}
+
+fn urls_match(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    if a.contains("://") || b.contains("://") {
+        return false;
+    }
+    let pa = Path::new(a);
+    let pb = Path::new(b);
+    match (pa.canonicalize(), pb.canonicalize()) {
+        (Ok(ca), Ok(cb)) => ca == cb,
+        _ => false,
+    }
+}
+
+fn remote_names_with_urls(config: &ConfigFile) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for e in &config.entries {
+        let Some(rest) = e.key.strip_prefix("remote.") else {
+            continue;
+        };
+        let Some(name) = rest.strip_suffix(".url") else {
+            continue;
+        };
+        if let Some(url) = e.value.as_deref() {
+            out.push((name.to_string(), url.to_string()));
+        }
+    }
+    out
+}
+
+fn config_last_value(config: &ConfigFile, key: &str) -> Option<String> {
+    config
+        .entries
+        .iter()
+        .rev()
+        .find(|e| e.key == key)
+        .and_then(|e| e.value.clone())
+}
+
+fn remote_from_resolved_url(config: &ConfigFile, resolved_url: &str) -> Option<String> {
+    for (name, url) in remote_names_with_urls(config) {
+        if urls_match(resolved_url, &url) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+fn default_remote_for_config(config: &ConfigFile, head_branch: Option<&str>) -> String {
+    if let Some(bn) = head_branch {
+        let key = format!("branch.{bn}.remote");
+        if let Some(r) = config_last_value(config, &key) {
+            if !r.is_empty() {
+                return r;
+            }
+        }
+    }
+    let names: std::collections::BTreeSet<String> = remote_names_with_urls(config)
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
+    if names.len() == 1 {
+        return names
+            .iter()
+            .next()
+            .cloned()
+            .unwrap_or_else(|| "origin".to_string());
+    }
+    "origin".to_string()
+}
+
+fn get_default_remote_for_path(path: &str) -> Result<String> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let path_buf = Path::new(path);
+    let abs_sub = if path_buf.is_absolute() {
+        path_buf.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path_buf)
+    };
+    let work_tree = repo.work_tree.as_ref().context("bare repository")?;
+    let sub_rel = match worktree_relative_posix(work_tree, &abs_sub) {
+        Ok(s) => s,
+        Err(_) => {
+            return submodule_path_not_handle_error(path);
+        }
+    };
+    let (final_git_dir, _final_wt, super_wt, super_git_dir, sm) =
+        resolve_submodule_chain(&repo, path, &sub_rel)?;
+
+    let resolved_url = resolve_submodule_super_url(&super_wt, &super_git_dir, &sm.url)?;
+    let config_path = final_git_dir.join("config");
+    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    let config = ConfigFile::parse(&config_path, &content, ConfigScope::Local)
+        .context("parse submodule config")?;
+
+    if let Some(name) = remote_from_resolved_url(&config, &resolved_url) {
+        return Ok(name);
+    }
+
+    let head = resolve_head(&final_git_dir)?;
+    let branch = head.branch_name().map(str::to_owned);
+    Ok(default_remote_for_config(&config, branch.as_deref()))
+}
+
+fn resolve_submodule_chain(
+    top_repo: &Repository,
+    display_path: &str,
+    sub_rel: &str,
+) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf, SubmoduleInfo)> {
+    let components: Vec<&str> = sub_rel.split('/').filter(|c| !c.is_empty()).collect();
+    if components.is_empty() {
+        return submodule_path_not_handle_error(display_path);
+    }
+
+    let top_work = top_repo.work_tree.as_ref().context("bare repository")?;
+    let mut parent_wt = top_work.to_path_buf();
+    let mut parent_git = top_repo.git_dir.clone();
+
+    for (idx, seg) in components.iter().enumerate() {
+        let is_last = idx + 1 == components.len();
+        let parent_repo = Repository::open(&parent_git, Some(&parent_wt))
+            .context("open repository for submodule walk")?;
+        let modules = parse_gitmodules_with_repo(&parent_wt, Some(&parent_repo))?;
+        let Some(sm) = modules.iter().find(|m| m.path == *seg) else {
+            return submodule_path_not_handle_error(sub_rel);
+        };
+
+        let seg_work = parent_wt.join(seg);
+        if !seg_work.join(".git").exists() {
+            return submodule_path_not_handle_error(display_path);
+        }
+        let Some(git_dir) = resolve_submodule_git_dir(&seg_work) else {
+            return submodule_path_not_handle_error(display_path);
+        };
+
+        if is_last {
+            return Ok((git_dir, seg_work, parent_wt, parent_git, sm.clone()));
+        }
+
+        parent_wt = seg_work;
+        parent_git = git_dir;
+    }
+
+    Err(anyhow::anyhow!(
+        "internal error: submodule path walk did not complete"
+    ))
+}
+
 // ── .gitmodules parsing ──────────────────────────────────────────────
 
 /// Parse `.gitmodules` into a list of submodule entries.
@@ -307,7 +512,7 @@ fn parse_gitmodules_with_repo(
 
 /// Filter submodules by path args (empty = all).
 fn filter_submodules<'a>(modules: &'a [SubmoduleInfo], paths: &[String]) -> Vec<&'a SubmoduleInfo> {
-    if paths.is_empty() {
+    if paths.is_empty() || paths.iter().any(|p| p == ".") {
         modules.iter().collect()
     } else {
         modules
@@ -504,7 +709,7 @@ fn run_init(args: &InitArgs) -> Result<()> {
         }
 
         // Resolve relative URLs to absolute.
-        let resolved_url = resolve_submodule_url(work_tree, &repo.git_dir, &m.url);
+        let resolved_url = resolve_submodule_super_url(work_tree, &repo.git_dir, &m.url)?;
 
         config.set(&url_key, &resolved_url)?;
         eprintln!(
@@ -618,26 +823,8 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
                     }
                 }
 
-                let url_base = if repo
-                    .git_dir
-                    .parent()
-                    .and_then(|p| p.file_name())
-                    .is_some_and(|n| n == "modules")
-                {
-                    work_tree.parent().ok_or_else(|| {
-                        anyhow::anyhow!("cannot resolve nested submodule clone URL")
-                    })?
-                } else {
-                    work_tree
-                };
-                let clone_src = if clone_url.starts_with("./") || clone_url.starts_with("../") {
-                    url_base.join(&clone_url).canonicalize().with_context(|| {
-                        format!("cannot resolve submodule clone URL '{clone_url}'")
-                    })?
-                } else {
-                    PathBuf::from(&clone_url)
-                };
-                let clone_src_str = clone_src.to_string_lossy().into_owned();
+                let clone_src_str =
+                    resolve_submodule_super_url(work_tree, &repo.git_dir, &clone_url)?;
 
                 let status = grit_subprocess(&grit_bin)
                     .arg("clone")
@@ -647,14 +834,32 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
                     .arg(&clone_src_str)
                     .arg(&sub_path)
                     .current_dir(work_tree)
+                    .env_remove("GIT_DIR")
+                    .env_remove("GIT_WORK_TREE")
                     .status()
                     .context("failed to clone submodule")?;
 
                 if !status.success() {
-                    eprintln!("error: failed to clone submodule from '{}'", clone_url);
+                    eprintln!("error: failed to clone submodule from '{}'", clone_src_str);
                     bail!("failed to clone submodule '{}'", m.name);
                 }
                 set_submodule_core_worktree(&grit_bin, &modules_dir, &sub_path);
+
+                let abs_origin = if Path::new(&clone_src_str).is_absolute() {
+                    Path::new(&clone_src_str).canonicalize()
+                } else {
+                    work_tree.join(&clone_src_str).canonicalize()
+                };
+                if let Ok(p) = abs_origin {
+                    let sub_cfg_path = modules_dir.join("config");
+                    if sub_cfg_path.exists() {
+                        let sub_content = fs::read_to_string(&sub_cfg_path)?;
+                        let mut sub_cfg =
+                            ConfigFile::parse(&sub_cfg_path, &sub_content, ConfigScope::Local)?;
+                        sub_cfg.set("remote.origin.url", &p.to_string_lossy())?;
+                        sub_cfg.write()?;
+                    }
+                }
             }
         }
 
@@ -997,33 +1202,211 @@ fn run_foreach_in(
     Ok(())
 }
 
-/// Resolve a potentially relative submodule URL against the superproject remote.
-fn resolve_submodule_url(work_tree: &Path, git_dir: &Path, raw_url: &str) -> String {
+/// Resolve a relative `.gitmodules` URL for superproject config / clone / URL matching.
+/// Matches Git's `resolve_relative_url(url, NULL)` (`relative_url` with no `up_path`).
+fn resolve_submodule_super_url(
+    work_tree: &Path,
+    repo_git_dir: &Path,
+    raw_url: &str,
+) -> Result<String> {
     if !raw_url.starts_with("./") && !raw_url.starts_with("../") {
-        return raw_url.to_string();
+        return Ok(raw_url.to_string());
     }
 
-    // Try to get the superproject's origin URL.
-    let base_url = get_origin_url(git_dir)
-        .or_else(|| {
-            // Fall back to the work tree path as a URL.
-            Some(work_tree.to_string_lossy().into_owned())
-        })
-        .unwrap_or_default();
+    let super_git = superproject_git_dir_for_nested_modules(repo_git_dir)
+        .unwrap_or_else(|| repo_git_dir.to_path_buf());
+    let super_wt = super_git
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| work_tree.to_path_buf());
 
-    resolve_relative_url(&base_url, raw_url)
+    let mut base = default_remote_url_raw(&super_git)
+        .unwrap_or_else(|| super_wt.to_string_lossy().into_owned());
+    if url_is_local_not_ssh(&base)
+        && !is_absolute_path_url(&base)
+        && (base.starts_with("./") || base.starts_with("../"))
+    {
+        base = canonicalize_local_remote_url_base(&super_wt, &super_git, &base);
+    }
+    git_relative_url(&base, raw_url, None)
 }
 
-/// Get the origin URL from git config.
-fn get_origin_url(git_dir: &Path) -> Option<String> {
+/// URL written to a checked-out submodule's `remote.<name>.url` (Git `sync`: `get_up_path` + `relative_url`).
+fn resolve_submodule_sub_origin_url(
+    work_tree: &Path,
+    repo_git_dir: &Path,
+    submodule_path: &str,
+    raw_url: &str,
+) -> Result<String> {
+    if !raw_url.starts_with("./") && !raw_url.starts_with("../") {
+        return Ok(raw_url.to_string());
+    }
+    let super_git = superproject_git_dir_for_nested_modules(repo_git_dir)
+        .unwrap_or_else(|| repo_git_dir.to_path_buf());
+    let super_wt = super_git
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| work_tree.to_path_buf());
+
+    let mut base = default_remote_url_raw(&super_git)
+        .unwrap_or_else(|| super_wt.to_string_lossy().into_owned());
+    if url_is_local_not_ssh(&base)
+        && !is_absolute_path_url(&base)
+        && (base.starts_with("./") || base.starts_with("../"))
+    {
+        base = canonicalize_local_remote_url_base(&super_wt, &super_git, &base);
+    }
+    let up = submodule_up_path(submodule_path);
+    let up_ref = (!up.is_empty()).then_some(up.as_str());
+    git_relative_url(&base, raw_url, up_ref)
+}
+
+/// `.../super/.git` when `git_dir` is `.../super/.git/modules/<name>` (submodule object store).
+fn superproject_git_dir_for_nested_modules(git_dir: &Path) -> Option<PathBuf> {
+    let mut p = git_dir.to_path_buf();
+    while let Some(parent) = p.parent() {
+        if p.file_name().is_some_and(|n| n == "modules")
+            && parent.file_name().is_some_and(|n| n == ".git")
+        {
+            return Some(parent.to_path_buf());
+        }
+        p = parent.to_path_buf();
+    }
+    None
+}
+
+/// Superproject work tree when `git_dir` is under `.git/modules/<name>/` (else `None`).
+fn superproject_work_tree_for_nested_git_dir(git_dir: &Path) -> Option<PathBuf> {
+    superproject_git_dir_for_nested_modules(git_dir).and_then(|g| g.parent().map(Path::to_path_buf))
+}
+
+/// Join and canonicalize a possibly-relative remote URL; uses the submodule's work tree, or the
+/// outer superproject tree for paths under `.git/modules/` (so `../sub` matches Git).
+fn canonicalize_local_remote_url_base(work_tree: &Path, git_dir: &Path, url: &str) -> String {
+    if !url_is_local_not_ssh(url)
+        || is_absolute_path_url(url)
+        || (!url.starts_with("./") && !url.starts_with("../"))
+    {
+        return url.to_string();
+    }
+    let base_dir = superproject_work_tree_for_nested_git_dir(git_dir)
+        .unwrap_or_else(|| work_tree.to_path_buf());
+    let joined = base_dir.join(url);
+    let joined_s = joined.to_string_lossy().into_owned();
+    joined
+        .canonicalize()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| {
+            crate::git_path::normalize_path_copy(&joined_s).unwrap_or_else(|_| url.to_string())
+        })
+}
+
+/// Raw `remote.<default>.url` from config (may be `../sub`); matches Git's
+/// `get_default_remote` + config lookup passed to `relative_url`.
+fn default_remote_url_raw(git_dir: &Path) -> Option<String> {
     let config_path = git_dir.join("config");
     let content = fs::read_to_string(&config_path).ok()?;
     let config = ConfigFile::parse(&config_path, &content, ConfigScope::Local).ok()?;
-    config
-        .entries
-        .iter()
-        .find(|e| e.key == "remote.origin.url")
-        .and_then(|e| e.value.clone())
+    let mut raw_url = None;
+    if let Ok(head) = resolve_head(git_dir) {
+        if let Some(bn) = head.branch_name() {
+            if let Some(rn) = config_last_value(&config, &format!("branch.{bn}.remote")) {
+                if !rn.is_empty() {
+                    raw_url = config_last_value(&config, &format!("remote.{rn}.url"));
+                }
+            }
+        }
+    }
+    if raw_url.is_none() {
+        let remotes = remote_names_with_urls(&config);
+        if remotes.len() == 1 {
+            raw_url = Some(remotes[0].1.clone());
+        } else {
+            raw_url = config_last_value(&config, "remote.origin.url");
+        }
+    }
+    raw_url
+}
+
+fn count_slashes_in_submodule_path(path: &str) -> usize {
+    path.bytes().filter(|&b| b == b'/').count()
+}
+
+/// Git's `get_up_path(path)` for submodule URL resolution (`relative_url` `up_path`).
+fn submodule_up_path(path: &str) -> String {
+    let mut s = String::new();
+    for _ in 0..count_slashes_in_submodule_path(path) {
+        s.push_str("../");
+    }
+    if !path.is_empty() && !path.ends_with('/') {
+        s.push_str("../");
+    }
+    s
+}
+
+fn url_is_local_not_ssh(url: &str) -> bool {
+    !url.contains("://") || url.starts_with("file://")
+}
+
+fn is_absolute_path_url(url: &str) -> bool {
+    url.starts_with('/') || url.len() > 2 && url.as_bytes().get(1) == Some(&b':')
+}
+
+fn chop_last_dir_git(remoteurl: &mut String, is_relative: bool) -> Result<bool> {
+    if let Some(pos) = remoteurl.rfind('/') {
+        remoteurl.truncate(pos);
+        return Ok(false);
+    }
+    if let Some(pos) = remoteurl.rfind(':') {
+        remoteurl.truncate(pos);
+        return Ok(true);
+    }
+    if is_relative || remoteurl == "." {
+        bail!("cannot strip one component off url '{remoteurl}'");
+    }
+    *remoteurl = ".".to_string();
+    Ok(false)
+}
+
+/// Git's `relative_url(remote_url, url, up_path)` for local paths (see `git/remote.c`).
+fn git_relative_url(remote_url: &str, url: &str, up_path: Option<&str>) -> Result<String> {
+    let url = url.trim_end_matches('/');
+    if !url_is_local_not_ssh(url) || is_absolute_path_url(url) {
+        return Ok(url.to_string());
+    }
+    let mut remoteurl = remote_url.trim_end_matches('/').to_string();
+    if remoteurl.is_empty() {
+        return Ok(url.to_string());
+    }
+    let is_relative = url_is_local_not_ssh(&remoteurl) && !is_absolute_path_url(&remoteurl);
+    if is_relative && !remoteurl.starts_with("./") && !remoteurl.starts_with("../") {
+        remoteurl = format!("./{remoteurl}");
+    }
+    let mut rest = url;
+    let mut colonsep = false;
+    while rest.starts_with("../") {
+        rest = &rest[3..];
+        colonsep |= chop_last_dir_git(&mut remoteurl, is_relative)?;
+    }
+    while rest.starts_with("./") {
+        rest = &rest[2..];
+    }
+    let sep = if colonsep { ":" } else { "/" };
+    let mut out = format!("{remoteurl}{sep}{rest}");
+    if out.ends_with('/') {
+        out.pop();
+    }
+    let mut out = if out.starts_with("./") {
+        out[2..].to_string()
+    } else {
+        out
+    };
+    if let Some(up) = up_path {
+        if is_relative {
+            out = format!("{up}{out}");
+        }
+    }
+    Ok(out)
 }
 
 /// Resolve a relative URL (starting with ./ or ../) against a base URL.
@@ -1106,13 +1489,15 @@ fn run_sync(args: &SyncArgs) -> Result<()> {
             continue;
         }
 
-        // Resolve the URL from .gitmodules (might be relative).
-        let resolved_url = resolve_submodule_url(work_tree, &repo.git_dir, &m.url);
-
-        config.set(&url_key, &resolved_url)?;
+        // Superproject config: resolve_relative_url(url, NULL).
+        let super_url = resolve_submodule_super_url(work_tree, &repo.git_dir, &m.url)?;
+        config.set(&url_key, &super_url)?;
         eprintln!("Synchronizing submodule url for '{}'", m.path);
 
-        // Also update the submodule's remote origin URL if checked out.
+        // Submodule working tree remote: relative_url with get_up_path (see git submodule sync).
+        let sub_origin_url =
+            resolve_submodule_sub_origin_url(work_tree, &repo.git_dir, &m.path, &m.url)?;
+
         let sub_path = work_tree.join(&m.path);
         if sub_path.join(".git").exists() {
             let sub_git_dir = resolve_submodule_git_dir(&sub_path);
@@ -1122,7 +1507,7 @@ fn run_sync(args: &SyncArgs) -> Result<()> {
                     let sub_content = fs::read_to_string(&sub_config_path)?;
                     let mut sub_config =
                         ConfigFile::parse(&sub_config_path, &sub_content, ConfigScope::Local)?;
-                    sub_config.set("remote.origin.url", &resolved_url)?;
+                    sub_config.set("remote.origin.url", &sub_origin_url)?;
                     sub_config.write()?;
                 }
             }
@@ -1405,7 +1790,8 @@ fn run_set_url(args: &SetUrlArgs) -> Result<()> {
     }
 
     // Sync the submodule's remote.origin.url (like git submodule sync does).
-    let resolved_url = resolve_submodule_url(work_tree, &repo.git_dir, &args.newurl);
+    let resolved_url =
+        resolve_submodule_sub_origin_url(work_tree, &repo.git_dir, &sm.path, &args.newurl)?;
     let sub_path = work_tree.join(&sm.path);
     if sub_path.join(".git").exists() {
         let sub_git_dir = resolve_submodule_git_dir(&sub_path);
