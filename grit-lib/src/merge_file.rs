@@ -123,7 +123,10 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
         &theirs_ops,
         &ws_mode,
     );
-    hunks = merge_adjacent_replace_and_trailing_insert_conflicts(hunks);
+    // Zealous diff3 (`adjust_zealous_hunks`) assumes the raw `compute_hunks` sequence.
+    if !matches!(input.style, ConflictStyle::ZealousDiff3) {
+        hunks = merge_adjacent_replace_and_trailing_insert_conflicts(hunks);
+    }
     // Git keeps adjacent conflict regions separate when identical lines appear
     // between them (e.g. t4200-rerere); do not merge Conflict+gap+Conflict.
     hunks = coalesce_nearby_conflicts(hunks, 3, false);
