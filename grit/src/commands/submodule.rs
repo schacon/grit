@@ -3,6 +3,7 @@
 //! Supports: status, init, update, add, foreach.
 //! Reads `.gitmodules` and manages `.git/modules/` directory.
 
+use crate::commands::sparse_checkout::reapply_sparse_checkout_if_enabled;
 use crate::grit_exe;
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
@@ -700,6 +701,14 @@ fn checkout_submodule_worktree(
         );
     }
 
+    if let Ok(sub_repo) = Repository::open(&modules_dir, Some(&sub_path)) {
+        let _ = reapply_sparse_checkout_if_enabled(&sub_repo);
+    } else if sub_path.join(".git").exists() {
+        if let Ok(sub_repo) = Repository::discover(Some(&sub_path)) {
+            let _ = reapply_sparse_checkout_if_enabled(&sub_repo);
+        }
+    }
+
     eprintln!(
         "Submodule path '{}': checked out '{}'",
         submodule_path,
@@ -1049,6 +1058,14 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             .context("failed to reset submodule index after checkout")?;
         if !reset_status.success() {
             bail!("failed to reset submodule '{}' after checkout", m.name);
+        }
+
+        // `reset --hard` materializes every path from `HEAD`; reapply sparse-checkout so cone
+        // submodules stay trimmed (matches Git; t7817 expects only `sub/B/b`).
+        if let Ok(sub_repo) = Repository::open(&modules_dir, Some(&sub_path)) {
+            let _ = reapply_sparse_checkout_if_enabled(&sub_repo);
+        } else if let Ok(sub_repo) = Repository::discover(Some(&sub_path)) {
+            let _ = reapply_sparse_checkout_if_enabled(&sub_repo);
         }
 
         // `checkout`/`reset` must not replace the submodule gitfile with a nested `.git/` directory;

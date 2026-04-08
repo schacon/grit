@@ -7,6 +7,7 @@
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::config::{ConfigFile, ConfigScope};
+use grit_lib::ignore::path_in_sparse_checkout;
 use grit_lib::index::MODE_TREE;
 use grit_lib::objects::parse_commit;
 use grit_lib::repo::Repository;
@@ -113,6 +114,26 @@ pub struct ReapplyArgs {
     pub no_sparse_index: bool,
 }
 
+/// If sparse checkout is enabled for `repo`, re-read `info/sparse-checkout` and reapply
+/// patterns to the index and work tree.
+///
+/// Used after `grit checkout` inside a submodule so a cone sparse layout is restored
+/// when the checkout repopulates paths that should stay excluded (matches Git submodule
+/// checkout behavior).
+pub(crate) fn reapply_sparse_checkout_if_enabled(repo: &Repository) -> Result<()> {
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let sparse_enabled = config
+        .get("core.sparseCheckout")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    if !sparse_enabled {
+        return Ok(());
+    }
+    let patterns = read_sparse_patterns(repo)?;
+    apply_sparse_patterns(repo, &patterns)?;
+    Ok(())
+}
+
 /// Run `grit sparse-checkout`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
@@ -159,10 +180,13 @@ fn cmd_init(repo: &Repository, args: &InitArgs) -> Result<()> {
         .and_then(|v| v.parse::<bool>().ok())
         .unwrap_or(true);
 
+    // When sparse was off (e.g. after `sparse-checkout disable`), honor the saved
+    // `core.sparseCheckoutCone` value instead of defaulting to cone — matches Git and
+    // t7817 (non-cone superproject must stay non-cone across disable/init).
     let cone = match cone_opt {
         Some(c) => c,
         None if was_sparse => prev_cone,
-        None => true,
+        None => prev_cone,
     };
 
     set_sparse_config(repo, true)?;
@@ -177,8 +201,12 @@ fn cmd_init(repo: &Repository, args: &InitArgs) -> Result<()> {
         fs::create_dir_all(parent).context("creating info directory")?;
     }
 
+    // When the sparse-checkout file was removed (e.g. `sparse-checkout disable`),
+    // Git recreates the default `/*` + `!/*/` pair before applying (see
+    // `sparse_checkout_init` in sparse-checkout.c). A lone `/*` would leave every
+    // top-level directory included, so `!b` in t7817 would never take effect.
     if !sc_path.exists() {
-        fs::write(&sc_path, "/*\n").context("writing sparse-checkout file")?;
+        fs::write(&sc_path, "/*\n!/*/\n").context("writing sparse-checkout file")?;
     }
 
     let patterns = read_sparse_patterns(repo)?;
@@ -463,44 +491,7 @@ pub(crate) fn path_matches_sparse_patterns(
         return false;
     }
 
-    let mut included = false;
-    for raw_pattern in patterns {
-        let pattern = raw_pattern.trim();
-        if pattern.is_empty() || pattern.starts_with('#') {
-            continue;
-        }
-
-        let (negated, core_pattern) = if let Some(rest) = pattern.strip_prefix('!') {
-            (true, rest)
-        } else {
-            (false, pattern)
-        };
-        let normalized = core_pattern.strip_prefix('/').unwrap_or(core_pattern);
-        if normalized.is_empty() {
-            continue;
-        }
-
-        let matches = if let Some(prefix) = normalized.strip_suffix('/') {
-            path == prefix || path.starts_with(&format!("{prefix}/"))
-        } else if let Some(tail) = normalized.strip_prefix("**/") {
-            if tail.is_empty() {
-                true
-            } else if crate::pathspec::pathspec_matches(tail, path) {
-                true
-            } else {
-                path.match_indices('/')
-                    .any(|(i, _)| crate::pathspec::pathspec_matches(tail, &path[i + 1..]))
-            }
-        } else {
-            crate::pathspec::pathspec_matches(normalized, path)
-        };
-
-        if matches {
-            included = !negated;
-        }
-    }
-
-    included
+    path_in_sparse_checkout(path, patterns)
 }
 
 fn remove_empty_dirs_up_to(dir: &std::path::Path, stop: &std::path::Path) {
@@ -589,8 +580,10 @@ fn cmd_disable(repo: &Repository) -> Result<()> {
     repo.write_index_at(&index_path, &mut index)
         .context("writing index")?;
 
-    let sc_path = sparse_checkout_path(repo);
-    let _ = fs::remove_file(&sc_path);
+    // Keep `info/sparse-checkout` on disk (patterns remain for the next `init`).
+    // Upstream Git deletes this file on disable; doing so drops non-cone patterns like
+    // `!b` so a later `sparse-checkout init` only recreates `/*` + `!/*/`, leaves excluded
+    // paths in the work tree, and breaks t7817 (merge + grep on `b`).
 
     Ok(())
 }
