@@ -1244,7 +1244,7 @@ t7518-ident-corner-cases	t7	yes	5	5	0	true	ok	0
 t7519-status-fsmonitor	t7	yes	33	14	19	false	ok	0
 t7520-ignored-hook-warning	t7	yes	5	4	1	false	ok	0
 t7521-ignored-mode	t7	yes	12	1	11	false	ok	0
-t7524-commit-summary	t7	yes	2	1	1	false	ok	0
+t7524-commit-summary	t7	yes	2	2	0	true	ok	0
 t7525-status-rename	t7	yes	15	10	5	false	ok	0
 t7526-commit-pathspec-file	t7	yes	11	2	9	false	ok	0
 t7527-builtin-fsmonitor	t7	yes	0	0	0	false	ok	0

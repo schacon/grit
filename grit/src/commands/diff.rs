@@ -15,9 +15,9 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
-    anchored_unified_diff, count_changes, detect_renames, diff_index_to_tree,
-    diff_index_to_worktree, diff_tree_to_worktree, diff_trees, unified_diff, zero_oid, DiffEntry,
-    DiffStatus,
+    anchored_unified_diff, count_changes, count_git_lines, detect_renames, diff_index_to_tree,
+    diff_index_to_worktree, diff_tree_to_worktree, diff_trees, should_break_rewrite_for_stat,
+    unified_diff, zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::error::Error;
 use grit_lib::index::Index;
@@ -1026,7 +1026,13 @@ pub fn run(mut args: Args) -> Result<()> {
         };
         let context_lines = args.unified.or(config_context).unwrap_or(3);
         if args.shortstat {
-            write_shortstat(&mut out, &entries, &repo.odb, wt_for_content)?;
+            write_shortstat(
+                &mut out,
+                &entries,
+                &repo.odb,
+                wt_for_content,
+                args.break_rewrites,
+            )?;
         } else if stat_enabled
             || args.stat_count.is_some()
             || args.stat_width.is_some()
@@ -1041,6 +1047,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 args.stat_count,
                 args.stat_width,
                 args.stat_name_width,
+                args.break_rewrites,
             )?;
             if args.summary {
                 write_diff_summary(&mut out, &entries)?;
@@ -1055,7 +1062,13 @@ pub fn run(mut args: Args) -> Result<()> {
             };
             write_raw(&mut out, &entries, oid_len)?;
         } else if args.numstat {
-            write_numstat(&mut out, &entries, &repo.odb, wt_for_content)?;
+            write_numstat(
+                &mut out,
+                &entries,
+                &repo.odb,
+                wt_for_content,
+                args.break_rewrites,
+            )?;
         } else if args.name_only {
             write_name_only(&mut out, &entries)?;
         } else if args.name_status {
@@ -1645,6 +1658,31 @@ fn is_binary(data: &[u8]) -> bool {
     data[..check_len].contains(&0)
 }
 
+/// Insertion/deletion counts for `--stat` / `--shortstat` / `--numstat`.
+///
+/// When `--break-rewrites` is set and Git would treat the pair as a complete rewrite,
+/// counts match Git's diffstat path (full line counts) instead of Myers line diff.
+fn stat_ins_del_for_entry(
+    odb: &Odb,
+    entry: &DiffEntry,
+    work_tree: Option<&Path>,
+    break_rewrites: bool,
+) -> (usize, usize) {
+    let old_raw = read_content_raw(odb, &entry.old_oid);
+    let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, entry.path());
+    if break_rewrites
+        && entry.status == DiffStatus::Modified
+        && !is_binary(&old_raw)
+        && !is_binary(&new_raw)
+        && should_break_rewrite_for_stat(&old_raw, &new_raw)
+    {
+        return (count_git_lines(&new_raw), count_git_lines(&old_raw));
+    }
+    let old_content = String::from_utf8_lossy(&old_raw).into_owned();
+    let new_content = String::from_utf8_lossy(&new_raw).into_owned();
+    count_changes(&old_content, &new_content)
+}
+
 /// Write a GIT binary patch block (used by --binary).
 ///
 /// Outputs a "GIT binary patch" header followed by a deflated+base85
@@ -2187,6 +2225,7 @@ fn write_shortstat(
     entries: &[DiffEntry],
     odb: &Odb,
     work_tree: Option<&Path>,
+    break_rewrites: bool,
 ) -> Result<()> {
     if entries.is_empty() {
         return Ok(());
@@ -2197,9 +2236,7 @@ fn write_shortstat(
     let mut files_changed = 0usize;
 
     for entry in entries {
-        let old_content = read_content(odb, &entry.old_oid, None, entry.path());
-        let new_content = read_content(odb, &entry.new_oid, work_tree, entry.path());
-        let (ins, del) = count_changes(&old_content, &new_content);
+        let (ins, del) = stat_ins_del_for_entry(odb, entry, work_tree, break_rewrites);
         total_ins += ins;
         total_del += del;
         files_changed += 1;
@@ -2350,6 +2387,7 @@ fn write_stat(
     stat_count: Option<usize>,
     stat_width: Option<usize>,
     stat_name_width: Option<usize>,
+    break_rewrites: bool,
 ) -> Result<()> {
     if entries.is_empty() {
         return Ok(());
@@ -2389,9 +2427,7 @@ fn write_stat(
             file_stats.push((&display_paths[i], 0, 0));
             // Binary files don't count towards insertions/deletions in summary
         } else {
-            let old_content = String::from_utf8_lossy(&old_raw).into_owned();
-            let new_content = String::from_utf8_lossy(&new_raw).into_owned();
-            let (ins, del) = count_changes(&old_content, &new_content);
+            let (ins, del) = stat_ins_del_for_entry(odb, entry, work_tree, break_rewrites);
             file_stats.push((&display_paths[i], ins, del));
             total_ins += ins;
             total_del += del;
@@ -2551,11 +2587,10 @@ fn write_numstat(
     entries: &[DiffEntry],
     odb: &Odb,
     work_tree: Option<&Path>,
+    break_rewrites: bool,
 ) -> Result<()> {
     for entry in entries {
-        let old_content = read_content(odb, &entry.old_oid, None, entry.path());
-        let new_content = read_content(odb, &entry.new_oid, work_tree, entry.path());
-        let (ins, del) = count_changes(&old_content, &new_content);
+        let (ins, del) = stat_ins_del_for_entry(odb, entry, work_tree, break_rewrites);
         match entry.status {
             DiffStatus::Renamed | DiffStatus::Copied => {
                 let old = entry.old_path.as_deref().unwrap_or("");
