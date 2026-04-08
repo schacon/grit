@@ -5,7 +5,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::config::{parse_bool, parse_color, ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::hooks::{run_hook, run_hook_capture, HookResult};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::ObjectId;
@@ -13,6 +13,7 @@ use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
 use std::fs;
+use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 
 /// Arguments for `grit push`.
@@ -780,8 +781,8 @@ fn push_to_url(
         );
         if !hook_output.is_empty() {
             let output_str = String::from_utf8_lossy(&hook_output);
-            let color_remote = resolve_color_remote(repo, args);
-            colorize_remote_output(&output_str, color_remote);
+            let color_remote = RemoteMessageColorStyle::from_config(config);
+            colorize_remote_output(&output_str, &color_remote);
         }
         if let HookResult::Failed(_code) = hook_result {
             // Quarantine rollback: remove copied objects
@@ -826,8 +827,8 @@ fn push_to_url(
             // Forward hook output to stderr, optionally colorized
             if !hook_output.is_empty() {
                 let output_str = String::from_utf8_lossy(&hook_output);
-                let color_remote = resolve_color_remote(repo, args);
-                colorize_remote_output(&output_str, color_remote);
+                let color_remote = RemoteMessageColorStyle::from_config(config);
+                colorize_remote_output(&output_str, &color_remote);
             }
             if let HookResult::Failed(_code) = hook_result {
                 if args.atomic {
@@ -941,8 +942,8 @@ fn push_to_url(
         );
         if !prep_output.is_empty() {
             let output_str = String::from_utf8_lossy(&prep_output);
-            let color_remote = resolve_color_remote(repo, args);
-            colorize_remote_output(&output_str, color_remote);
+            let color_remote = RemoteMessageColorStyle::from_config(config);
+            colorize_remote_output(&output_str, &color_remote);
         }
         if let HookResult::Failed(_) = prep_result {
             bail!("remote reference-transaction hook declined the push in 'preparing' phase");
@@ -957,8 +958,8 @@ fn push_to_url(
         );
         if !prepared_output.is_empty() {
             let output_str = String::from_utf8_lossy(&prepared_output);
-            let color_remote = resolve_color_remote(repo, args);
-            colorize_remote_output(&output_str, color_remote);
+            let color_remote = RemoteMessageColorStyle::from_config(config);
+            colorize_remote_output(&output_str, &color_remote);
         }
         if let HookResult::Failed(_) = prepared_result {
             bail!("remote reference-transaction hook declined the push in 'prepared' phase");
@@ -973,8 +974,8 @@ fn push_to_url(
         );
         if !committed_output.is_empty() {
             let output_str = String::from_utf8_lossy(&committed_output);
-            let color_remote = resolve_color_remote(repo, args);
-            colorize_remote_output(&output_str, color_remote);
+            let color_remote = RemoteMessageColorStyle::from_config(config);
+            colorize_remote_output(&output_str, &color_remote);
         }
         if let HookResult::Failed(_) = committed_result {
             // Keep compatibility with git: failures in committed state do not
@@ -993,8 +994,8 @@ fn push_to_url(
         );
         if !hook_output.is_empty() {
             let output_str = String::from_utf8_lossy(&hook_output);
-            let color_remote = resolve_color_remote(repo, args);
-            colorize_remote_output(&output_str, color_remote);
+            let color_remote = RemoteMessageColorStyle::from_config(config);
+            colorize_remote_output(&output_str, &color_remote);
         }
     }
 
@@ -1417,65 +1418,144 @@ fn open_repo(path: &Path) -> Result<Repository> {
     Repository::open(&git_dir, Some(path)).map_err(Into::into)
 }
 
-/// Determine if remote messages should be colorized.
-fn resolve_color_remote(repo: &Repository, _args: &Args) -> bool {
-    // Check -c color.remote=always from environment
-    // GIT_CONFIG_COUNT / GIT_CONFIG_KEY / GIT_CONFIG_VALUE override
-    for (key, val) in std::env::vars() {
-        if key.starts_with("GIT_CONFIG_KEY_") && val == "color.remote" {
-            let idx = key.strip_prefix("GIT_CONFIG_KEY_").unwrap_or("");
-            let val_key = format!("GIT_CONFIG_VALUE_{idx}");
-            if let Ok(v) = std::env::var(&val_key) {
-                return v == "always" || v == "true";
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GitColorBool {
+    Never,
+    Always,
+    Auto,
+}
+
+/// Match `git_config_colorbool` / `use_sideband_colors` in `git/sideband.c`.
+fn git_config_colorbool(value: &str) -> GitColorBool {
+    let v = value.trim();
+    if !v.is_empty() {
+        if v.eq_ignore_ascii_case("never") {
+            return GitColorBool::Never;
+        }
+        if v.eq_ignore_ascii_case("always") {
+            return GitColorBool::Always;
+        }
+        if v.eq_ignore_ascii_case("auto") {
+            return GitColorBool::Auto;
+        }
+    }
+    match parse_bool(v) {
+        Ok(false) => GitColorBool::Never,
+        Ok(true) => GitColorBool::Auto,
+        Err(_) => GitColorBool::Auto,
+    }
+}
+
+fn want_color_stderr(mode: GitColorBool) -> bool {
+    match mode {
+        GitColorBool::Never => false,
+        GitColorBool::Always => true,
+        GitColorBool::Auto => io::stderr().is_terminal(),
+    }
+}
+
+/// Per-keyword ANSI open sequences for remote hook output (`git/sideband.c`).
+struct RemoteMessageColorStyle {
+    enabled: bool,
+    hint: String,
+    warning: String,
+    success: String,
+    error: String,
+}
+
+impl RemoteMessageColorStyle {
+    fn from_config(config: &ConfigSet) -> Self {
+        let color_mode = config
+            .get("color.remote")
+            .map(|v| git_config_colorbool(&v))
+            .or_else(|| config.get("color.ui").map(|v| git_config_colorbool(&v)))
+            .unwrap_or(GitColorBool::Auto);
+        let enabled = want_color_stderr(color_mode);
+
+        let mut hint = parse_color("yellow").unwrap_or_default();
+        let mut warning = parse_color("bold yellow").unwrap_or_default();
+        let mut success = parse_color("bold green").unwrap_or_default();
+        let mut error = parse_color("bold red").unwrap_or_default();
+
+        if let Some(v) = config.get("color.remote.hint") {
+            if let Ok(seq) = parse_color(&v) {
+                hint = seq;
             }
         }
-    }
-    // Check repo config
-    if let Ok(config) = ConfigSet::load(Some(&repo.git_dir), true) {
-        if let Some(val) = config.get("color.remote") {
-            return val == "always" || val == "true";
+        if let Some(v) = config.get("color.remote.warning") {
+            if let Ok(seq) = parse_color(&v) {
+                warning = seq;
+            }
+        }
+        if let Some(v) = config.get("color.remote.success") {
+            if let Ok(seq) = parse_color(&v) {
+                success = seq;
+            }
+        }
+        if let Some(v) = config.get("color.remote.error") {
+            if let Ok(seq) = parse_color(&v) {
+                error = seq;
+            }
+        }
+
+        Self {
+            enabled,
+            hint,
+            warning,
+            success,
+            error,
         }
     }
-    false
+}
+
+fn match_remote_keyword_prefix(line_after_ws: &str, keyword: &str) -> Option<usize> {
+    let kw_len = keyword.len();
+    if line_after_ws.len() < kw_len {
+        return None;
+    }
+    if !line_after_ws[..kw_len].eq_ignore_ascii_case(keyword) {
+        return None;
+    }
+    match line_after_ws[kw_len..].chars().next() {
+        None => Some(kw_len),
+        Some(c) if !c.is_ascii_alphanumeric() => Some(kw_len),
+        _ => None,
+    }
 }
 
 /// Write remote messages to stderr, colorizing keywords if enabled.
-fn colorize_remote_output(output: &str, colorize: bool) {
+fn colorize_remote_output(output: &str, style: &RemoteMessageColorStyle) {
     use std::io::Write;
+    const RESET: &str = "\x1b[m";
     let stderr = std::io::stderr();
     let mut err = stderr.lock();
     for line in output.lines() {
-        if colorize {
-            let colored = colorize_remote_line(line);
-            let _ = writeln!(err, "remote: {colored}");
+        let body = if style.enabled {
+            colorize_remote_line(line, style, RESET)
         } else {
-            let _ = writeln!(err, "remote: {line}");
-        }
+            line.to_string()
+        };
+        let _ = writeln!(err, "remote: {body}");
     }
 }
 
-/// Colorize a single remote message line based on keyword prefix.
-fn colorize_remote_line(line: &str) -> String {
-    // ANSI escape codes (separate bold + color for compatibility)
-    let bold_red = "\x1b[1m\x1b[31m";
-    let bold_yellow = "\x1b[1m\x1b[33m";
-    let bold_green = "\x1b[1m\x1b[32m";
-    let bold_cyan = "\x1b[1m\x1b[36m";
-    let reset = "\x1b[m";
+/// Colorize a single remote message line (`maybe_colorize_sideband` in `git/sideband.c`).
+fn colorize_remote_line(line: &str, style: &RemoteMessageColorStyle, reset: &str) -> String {
+    let trimmed = line.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let ws_prefix_len = line.len() - trimmed.len();
+    let prefix = &line[..ws_prefix_len];
 
-    // Check for keyword prefixes
-    let keywords: &[(&str, &str)] = &[
-        ("error", bold_red),
-        ("warning", bold_yellow),
-        ("hint", bold_cyan),
-        ("success", bold_green),
+    let keywords: [(&str, &str); 4] = [
+        ("hint", style.hint.as_str()),
+        ("warning", style.warning.as_str()),
+        ("success", style.success.as_str()),
+        ("error", style.error.as_str()),
     ];
-
-    for (keyword, color) in keywords {
-        if let Some(rest) = line.strip_prefix(keyword) {
-            if rest.starts_with(':') || rest.starts_with(' ') {
-                return format!("{color}{keyword}{reset}{rest}");
-            }
+    for (kw, open_seq) in keywords {
+        if let Some(kw_len) = match_remote_keyword_prefix(trimmed, kw) {
+            let orig = &trimmed[..kw_len];
+            let rest = &trimmed[kw_len..];
+            return format!("{prefix}{open_seq}{orig}{reset}{rest}");
         }
     }
     line.to_string()

@@ -6,31 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   230 |
+| Completed   |   227 |
 | In progress |     2 |
-| Remaining   |   536 |
+| Remaining   |   539 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 230 completed (`[x]`), 2 in progress (`[~]`), 536 remaining (`[ ]`).
+Task lines in `PLAN.md`: 227 completed (`[x]`), 2 in progress (`[~]`), 539 remaining (`[ ]`).
 
 ## Recently completed
 
-- `t5310-pack-bitmaps` — in progress: 127/236 pass after `fast-import` via `grit_lib::fast_import`, `test-tool name-hash`, and sourcing `test-lib-commit-bulk.sh` from `lib-bitmap.sh`; remaining work is full pack bitmap write/read (`repack`, `rev-list --test-bitmap`, bitmap traversal ordering, fetch paths). See `logs/2026-04-08-t5310-pack-bitmaps-progress.md`.
-- `t7426-submodule-get-default-remote` — 15/15 tests pass (`submodule--helper get-default-remote`; nested submodule URL resolution uses outer superproject `remote.*.url` + Git `relative_url`; `pull` resolves local path remotes from `remote.<name>.url` for detached HEAD; `submodule update` treats path `.` as all submodules; submodule clone clears `GIT_DIR` and rewrites `remote.origin.url` to canonical path)
-- `t10560-switch-create-detach` — 28/28 tests pass (`switch`: `-- <branch>` treats a single token as the branch even when it matches a tracked path; `-c`/`-C`/`--orphan` reject invalid ref names via `check_refname_format` with Git-style `is not a valid branch name`)
-- `t3310-notes-merge-manual-resolve` — 22/22 tests pass (`notes merge`: manual 3-way merge with `NOTES_MERGE_*` state, `--commit`/`--abort`, conflict worktree paths and messages; `notes` honors `core.notesRef` and `--ref` short names; `append` matches Git blob layout; `log` `%N` + fanout notes trees; `update-ref` resolves `refs/notes/*`; root merge refs stored in main git dir)
-- `t6137-pathspec-wildcards-literal` — 25/25 tests pass (Git-style pathspec glob boundaries with `\` escapes; `add`/`commit` pathspec expansion uses `wildmatch`, ignores `.git` for `*`/`**`, bracket patterns also pick up a literal `[abc]` file; `commit` with pathspec builds partial trees: merge with `HEAD^{tree}` or subset tree on root commit)
-- `t7517-per-repo-email` — 16/16 tests pass (`user.useConfigOnly` strict email; `author.*`/`committer.*` overrides; rebase `-i` continues into replay; noop pick when HEAD is already the parent)
-- `t7409-submodule-detached-work-tree` — 3/3 tests pass (submodule `clone --separate-git-dir` sets `core.worktree`; checkout populates work tree when index empty on same branch/detached OID; merge/checkout treat gitlinks as clean when submodule HEAD matches; nested grit subprocesses clear inherited `GIT_DIR`/`GIT_WORK_TREE`; harness clears those env vars per test)
-- `t3419-rebase-patch-id` — 8/8 tests pass (rebase todo uses symmetric `rev_list` cherry-pick; Git-aligned `compute_patch_id`; checkout mode sync; mode-only three-way merge; `diff` mode-only output; harness CSV refreshed)
-- `t10750-status-deleted-renamed` — 40/40 tests pass (short/porcelain `-s` output now prints `old -> new` for renames/copies; `-z` uses Git’s NUL-separated `new\0old\0` path layout after the XY prefix)
-- `t6424-merge-unrelated-index-changes` — 19/19 tests pass (`merge`: fast-forward index composition for unrelated staged adds, Git-style overwrite checks, multiple `-s` strategy attempts with index restore, octopus preflight + unrelated path preservation; `test_path_exists` harness helper)
-- `t12880-log-notes-display` — 34/34 tests pass (`log --oneline` now shows short ref decorations by default like Git on a TTY, including both `HEAD -> <branch>` and the branch name; `--graph --oneline` includes the same suffix; harness CSV refreshed)
-- `t5403-post-checkout-hook` — 14/14 tests pass (`checkout`/`rebase`/`clone`: `post-checkout` hook with Git-compatible args; clone resolves detached `HEAD` to the right local branch and honors `GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME`; harness CSV refreshed)
-- `t6434-merge-recursive-rename-options` — 27/27 tests pass (`merge-recursive`: `--find-renames` / `--rename-threshold` with `%`, truncation, last-flag wins vs `--no-renames`, invalid args; config `merge.renames` / `diff.renames`; merge core threads `MergeRenameOptions` into `detect_merge_renames`; `diff`: `-M<n>%` no longer misparsed as a revision, `--diff-filter`, percentage threshold parsing)
-- `t5704-protocol-violations` — 3/3 tests pass (`upload-pack` honors `GIT_PROTOCOL=version=2` with flush-after-args validation for `ls-refs`/`fetch`; `ls-remote --upload-pack` parses v0 ref ads with space/NUL-separated fields and v2 `ls-refs` responses; `serve-v2` default loop fixed)
-- `t8010-cat-file-filters` — 9/9 tests pass (`cat-file --filters` / `--textconv`: smudge + EOL via checkout-style attributes; `--batch` + `--textconv` with per-line path; validation aligned with Git for `--path`, bare repo, and `--batch-all-objects`)
-- `t5621-clone-revision` — 12/12 tests pass (`clone --revision`: detached HEAD, strip `refs/*`, drop `remote.origin.fetch` and branch tracking; shallow boundary from final HEAD; strict revision resolution with Git-style `fatal: Remote revision` / tree errors; `test_commit --annotate` in `tests/test-lib.sh` for annotated tags)
+- `t5409-colorize-remote-messages` — 11/11 tests pass (`push` local transport: `color.remote`/`color.ui` colorbool + TTY `auto`, `color.remote.<slot>` via `parse_color` with invalid-slot fallback, keyword order and whole-word case-insensitive matching per `git/sideband.c`; harness `test_decode_color` now uses upstream `awk` so combined SGR like `1;31` decodes to `<BOLD;RED>`)
 - `t7509-commit-authorship` — 12/12 tests pass (`commit`: `--reset-author` with `-C`/`-c`/`--amend` and when `CHERRY_PICK_HEAD`/`REBASE_HEAD` exists; author from `CHERRY_PICK_HEAD` when finishing cherry-pick with `MERGE_MSG`; `--author` now formats full ident with current date; amend rejects empty/malformed prior author; mutual exclusion with `--reset-author`)
 - `t6130-pathspec-noglob` — 21/21 tests pass (Git-style pathspec globals via `GIT_*_PATHSPECS` env; `:(glob)`/`:(literal)` magic; default pathspec globs use `wildmatch` without `WM_PATHNAME` so `[` `]` are character classes; `:(glob)` and `--glob-pathspecs` use `WM_PATHNAME` for `**/`; incompatible global flag combinations fatal like Git)
 - `t3201-branch-contains` — 24/24 tests pass (`branch`: OR semantics for repeated `--contains` / `--merged`, AND for repeated `--no-merged`; reject filter options with `-d`/`-m`/`-c`; commit-only `--contains` errors; `Append` for `--merged`/`--no-merged`; `--track` writes local upstream; `-v`/`-vv` tracking brackets match Git; no tracking for `branch zzz topic` without `--track`)

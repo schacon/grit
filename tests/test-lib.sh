@@ -450,6 +450,8 @@ test_cmp_bin () {
 	cmp "$@"
 }
 
+# Decode ANSI SGR sequences to tagged text (matches git/t/test-lib-functions.sh).
+# A sed-only decoder cannot represent combined codes like ESC[1;31m as <BOLD;RED>.
 test_decode_color () {
 	awk '
 		function name(n) {
