@@ -379,6 +379,7 @@ pub fn read_pack_index(idx_path: &Path) -> Result<PackIndex> {
     let mut pack_path = idx_path.to_path_buf();
     pack_path.set_extension("pack");
 
+    // Trailing 20 bytes are SHA-1 over all preceding index bytes (Git format).
     if bytes.len() < 20 {
         return Err(Error::CorruptObject(format!(
             "index file {} missing checksum",
@@ -594,6 +595,7 @@ pub fn verify_pack_and_collect(idx_path: &Path) -> Result<Vec<VerifyObjectRecord
         records[i].depth = Some(base_depth + 1);
     }
 
+    // Confirm each index OID matches the resolved object bytes (catches swapped .idx/.pack pairs).
     for entry in &idx.entries {
         let obj = read_object_from_pack(&idx, &entry.oid)?;
         let computed = Odb::hash_object_data(obj.kind, &obj.data);

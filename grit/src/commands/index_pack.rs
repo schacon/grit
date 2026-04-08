@@ -189,10 +189,13 @@ pub fn run(args: Args) -> Result<()> {
             idx_out = o.clone();
         }
         fs::write(&pack_out, &pack_bytes)?;
-        if args.keep.is_some() {
-            let mut keep_path = pack_out.clone();
-            keep_path.set_extension("keep");
-            fs::write(&keep_path, b"")?;
+        if let Some(ref reason) = args.keep {
+            let keep_name = pack_out
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| format!("{n}.{reason}"))
+                .unwrap_or_else(|| format!("pack-{pack_hash}.pack.{reason}"));
+            fs::write(pack_dir.join(keep_name), b"")?;
         }
         (pack_out, idx_out)
     } else {
