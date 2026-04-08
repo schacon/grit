@@ -118,7 +118,7 @@ t10160-commit-amend-author	t1	yes	30	30	0	true	ok	0
 t10180-rm-recursive-quiet	t1	yes	34	34	0	true	ok	0
 t10190-mv-directory-rename	t1	yes	34	34	0	true	ok	0
 t1020-subdirectory	t1	yes	15	12	3	false	ok	0
-t10200-switch-orphan-detach	t1	yes	31	11	20	false	ok	0
+t10200-switch-orphan-detach	t1	yes	31	24	7	false	ok	0
 t10210-restore-staged-source	t1	yes	34	34	0	true	ok	0
 t1022-read-tree-partial-clone	t1	yes	1	1	0	true	ok	0
 t10220-reset-soft-commit	t1	yes	34	34	0	true	ok	0
@@ -663,7 +663,7 @@ t3900-i18n-commit	t3	yes	0	0	0	false	ok	0
 t3901-i18n-patch	t3	yes	0	0	0	false	ok	0
 t3902-quoted	t3	yes	13	5	8	false	ok	0
 t3902-quoted-ls-tree	t3	yes	8	8	0	true	ok	0
-t3903-stash	t3	yes	142	56	86	false	ok	0
+t3903-stash	t3	yes	142	57	85	false	ok	0
 t3904-stash-patch	t3	yes	10	4	6	false	ok	0
 t3905-stash-include-untracked	t3	yes	34	12	22	false	ok	0
 t3906-stash-submodule	t3	yes	6	0	6	false	ok	0
@@ -876,7 +876,7 @@ t5306-pack-nobase	t5	yes	4	4	0	true	ok	0
 t5307-pack-missing-commit	t5	yes	5	5	0	true	ok	0
 t5308-pack-detect-duplicates	t5	yes	6	2	4	false	ok	0
 t5309-pack-delta-cycles	t5	yes	7	2	5	false	ok	0
-t5310-pack-bitmaps	t5	yes	236	25	211	false	ok	0
+t5310-pack-bitmaps	t5	yes	236	22	214	false	ok	0
 t5311-pack-bitmaps-shallow	t5	yes	6	6	0	true	ok	0
 t5312-prune-corruption	t5	yes	11	5	6	false	ok	0
 t5313-pack-bounds-checks	t5	yes	9	2	7	false	ok	0
@@ -987,7 +987,7 @@ t5564-http-proxy	t5	yes	8	5	3	false	ok	0
 t5565-push-multiple	t5	yes	2	2	0	true	ok	0
 t5570-git-daemon	t5	yes	0	0	0	false	timeout	0
 t5571-pre-push-hook	t5	yes	11	5	6	false	ok	0
-t5572-pull-submodule	t5	yes	61	1	60	false	ok	0
+t5572-pull-submodule	t5	yes	61	5	56	false	ok	0
 t5573-pull-verify-signatures	t5	skip	16	0	0	false	ok	0
 t5574-fetch-output	t5	yes	14	1	13	false	ok	0
 t5580-unc-paths	t5	skip	8	0	0	false	ok	0
@@ -1099,7 +1099,7 @@ t6302-for-each-ref-filter	t6	skip	51	0	0	false	ok	0
 t6304-for-each-ref-detached-head	t6	yes	10	10	0	true	ok	0
 t6400-merge-df	t6	yes	7	7	0	true	ok	0
 t6401-merge-criss-cross	t6	yes	4	4	0	true	ok	0
-t6402-merge-rename	t6	yes	46	30	16	false	ok	0
+t6402-merge-rename	t6	yes	46	24	22	false	ok	0
 t6403-merge-file	t6	yes	39	37	2	false	ok	0
 t6404-recursive-merge	t6	yes	6	6	0	true	ok	0
 t6405-merge-symlinks	t6	yes	7	7	0	true	ok	0
@@ -1207,7 +1207,7 @@ t7412-submodule-absorbgitdirs	t7	yes	12	5	7	false	ok	0
 t7413-submodule-is-active	t7	yes	10	1	9	false	ok	0
 t7414-submodule-mistakes	t7	yes	5	4	1	false	ok	0
 t7416-submodule-dash-url	t7	yes	18	3	15	false	ok	0
-t7417-submodule-path-url	t7	yes	5	2	3	false	ok	0
+t7417-submodule-path-url	t7	yes	5	3	2	false	ok	0
 t7418-submodule-sparse-gitmodules	t7	yes	9	3	6	false	ok	0
 t7419-submodule-set-branch	t7	yes	9	2	7	false	ok	0
 t7420-submodule-set-url	t7	yes	3	1	2	false	ok	0
@@ -1215,8 +1215,8 @@ t7421-submodule-summary-add	t7	yes	5	1	4	false	ok	0
 t7422-submodule-output	t7	yes	18	0	18	false	ok	0
 t7423-submodule-symlinks	t7	yes	6	3	3	false	ok	0
 t7424-submodule-mixed-ref-formats	t7	skip	14	3	11	false	ok	0
-t7425-submodule-gitdir-path-extension	t7	yes	23	4	19	false	ok	0
-t7426-submodule-get-default-remote	t7	yes	15	1	14	false	ok	0
+t7425-submodule-gitdir-path-extension	t7	yes	23	6	17	false	ok	0
+t7426-submodule-get-default-remote	t7	yes	15	3	12	false	ok	0
 t7450-bad-git-dotfiles	t7	yes	50	7	43	false	ok	0
 t7500-commit-template-squash-signoff	t7	yes	57	57	0	true	ok	0
 t7501-commit-basic	t7	yes	146	140	6	false	ok	0
@@ -1340,7 +1340,7 @@ t8450-merge-base-complex	t8	yes	35	35	0	true	ok	0
 t8460-commit-tree-multi	t8	yes	27	25	2	false	ok	0
 t8470-stripspace-extra	t8	yes	33	33	0	true	ok	0
 t8480-check-ignore-extra	t8	yes	31	23	8	false	ok	0
-t8490-ls-remote-extra	t8	yes	32	30	2	false	ok	0
+t8490-ls-remote-extra	t8	yes	32	31	1	false	ok	0
 t8500-show-index-extra	t8	yes	26	26	0	true	ok	0
 t8510-branch-force	t8	yes	27	27	0	true	ok	0
 t8520-tag-message	t8	yes	31	29	2	false	ok	0
@@ -1531,7 +1531,7 @@ t9560-commit-message-variants	t9	yes	33	31	2	false	ok	0
 t9580-rm-cached-worktree	t9	yes	40	40	0	true	ok	0
 t9590-mv-cross-directory	t9	yes	40	35	5	false	ok	0
 t9600-cvsimport	t9	skip	15	0	0	false	ok	0
-t9600-switch-branch-create	t9	yes	40	5	35	false	ok	0
+t9600-switch-branch-create	t9	yes	40	12	28	false	ok	0
 t9601-cvsimport-vendor-branch	t9	skip	9	0	0	false	ok	1
 t9602-cvsimport-branches-tags	t9	skip	11	0	0	false	ok	6
 t9603-cvsimport-patchsets	t9	skip	1	0	0	false		1
@@ -1599,7 +1599,7 @@ t9880-config-file-option	t9	yes	32	25	7	false	ok	0
 t9890-init-object-format	t9	yes	31	31	0	true	ok	0
 t9900-branch-verbose-all	t9	yes	33	33	0	true	ok	0
 t9901-git-web--browse	t9	yes	5	0	5	false	ok	0
-t9902-completion	t9	yes	260	15	245	false	ok	2
+t9902-completion	t9	yes	263	15	245	false	ok	2
 t9903-bash-prompt	t9	yes	67	1	66	false	ok	0
 t9910-tag-pattern-glob	t9	yes	32	32	0	true	ok	0
 t9920-commit-tree-author-env	t9	yes	26	25	1	false	ok	0

@@ -63,8 +63,10 @@ struct Cli {
 enum Command {
     /// Poll cloud agents, merge results, run tests, push, and spawn new agents.
     Run,
-    /// Mark tasks `completed` in SQLite when `data/test-files.csv` has `fully_passing=true`.
+    /// Re-run harness for `failed` tasks, then mark `completed` in SQLite when the CSV has `fully_passing=true`.
     Update,
+    /// Show task counts by status from `.git/cloud.sqlite`.
+    Summary,
 }
 
 fn main() -> Result<()> {
@@ -81,11 +83,17 @@ fn main() -> Result<()> {
             orchestrator::run_loop(&repo_root)?;
         }
         Some(Command::Update) => {
+            orchestrator::update_harness(&repo_root)?;
             orchestrator::sync_completed_from_csv(&repo_root)?;
+        }
+        Some(Command::Summary) => {
+            orchestrator::summary(&repo_root)?;
         }
         None => {
             if !cli.init {
-                anyhow::bail!("expected `--init`, `run`, or `update` (see --help)");
+                anyhow::bail!(
+                    "expected `--init` or a subcommand: `run`, `update`, `summary` (see --help)"
+                );
             }
         }
     }

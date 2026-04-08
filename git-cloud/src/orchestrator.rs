@@ -100,7 +100,7 @@ pub fn sync_completed_from_csv(repo: &Path) -> Result<()> {
     }
 
     println!(
-        "{}{}git-cloud update{}: marked {} task row(s) completed from {}{}",
+        "{}{}git-cloud sync-from-csv{}: marked {} task row(s) completed from {}{}",
         BOLD,
         GREEN,
         RESET,
@@ -108,6 +108,72 @@ pub fn sync_completed_from_csv(repo: &Path) -> Result<()> {
         repo.join("data/test-files.csv").display(),
         RESET
     );
+    Ok(())
+}
+
+/// Re-run `./scripts/run-tests.sh` for each **`failed`** task (merge/pipeline failure), re-read
+/// `data/test-files.csv`, and mark tasks `completed` when the CSV reports `fully_passing`.
+///
+/// Does not contact Cursor Cloud; safe to use while agents are idle or to refresh local harness state.
+pub fn update_harness(repo: &Path) -> Result<()> {
+    let gd = git_dir(repo);
+    if !gd.is_dir() {
+        anyhow::bail!("not a git repository: {}", repo.display());
+    }
+    let db_path = gd.join("cloud.sqlite");
+    if !db_path.is_file() {
+        anyhow::bail!(
+            "missing {} — run `git-cloud --init` first",
+            db_path.display()
+        );
+    }
+    let mut conn = db::open_db(&gd)?;
+    let failed = db::list_failed_tasks(&conn)?;
+    println!(
+        "{}{}git-cloud update{} — {} failed task(s){}\n",
+        BOLD,
+        CYAN,
+        RESET,
+        failed.len(),
+        RESET
+    );
+    reverify_tasks_for_harness(&mut conn, repo, failed)?;
+    let (p, r, c, f, canc) = db::summary_counts(&conn)?;
+    println!(
+        "{}{}Done.{} pending={} running={} completed={} failed={} cancelled={}{}",
+        BOLD, GREEN, RESET, p, r, c, f, canc, RESET
+    );
+    Ok(())
+}
+
+/// Print task counts by status from `.git/cloud.sqlite`.
+pub fn summary(repo: &Path) -> Result<()> {
+    let gd = git_dir(repo);
+    if !gd.is_dir() {
+        anyhow::bail!("not a git repository: {}", repo.display());
+    }
+    let db_path = gd.join("cloud.sqlite");
+    if !db_path.is_file() {
+        anyhow::bail!(
+            "missing {} — run `git-cloud --init` first",
+            db_path.display()
+        );
+    }
+    let conn = db::open_db(&gd)?;
+    let (pending, running, completed, failed, cancelled) = db::summary_counts(&conn)?;
+    println!(
+        "{}{}git-cloud summary{} {}{}",
+        BOLD,
+        CYAN,
+        RESET,
+        db_path.display(),
+        RESET
+    );
+    println!("  pending:   {}", pending);
+    println!("  running:   {}", running);
+    println!("  completed: {}", completed);
+    println!("  failed:    {}", failed);
+    println!("  cancelled: {}", cancelled);
     Ok(())
 }
 
@@ -321,6 +387,63 @@ fn finish_success(
         "{}Completed task {}{} (passed={}/{})",
         GREEN, task.filename, RESET, passed, total
     );
+    Ok(())
+}
+
+/// Re-run harness / sync from CSV for the given tasks (e.g. all `failed`).
+fn reverify_tasks_for_harness(
+    conn: &mut Connection,
+    repo: &Path,
+    tasks: Vec<TaskRow>,
+) -> Result<()> {
+    if tasks.is_empty() {
+        return Ok(());
+    }
+    let script = repo.join("scripts/run-tests.sh");
+    for t in tasks {
+        let rows = harness::read_test_files_csv(repo)?;
+        let Some(csv_row) = harness::row_for_file(&rows, &t.filename) else {
+            continue;
+        };
+        if csv_row.in_scope == "skip" {
+            continue;
+        }
+        if csv_row.fully_passing {
+            db::update_tests_for_file(conn, &t.filename, csv_row.passed_last, csv_row.tests_total)?;
+            db::set_completed(conn, t.id)?;
+            println!(
+                "{}Task already fully passing in CSV — marked completed {}{}",
+                GREEN, t.filename, RESET
+            );
+            continue;
+        }
+        let test_sh = format!("{}.sh", t.filename);
+        println!("{}Re-verifying {}{}", BLUE, test_sh, RESET);
+        let status = std::process::Command::new("bash")
+            .current_dir(repo)
+            .arg(&script)
+            .arg(&test_sh)
+            .status()
+            .with_context(|| format!("run {}", script.display()))?;
+        if !status.success() {
+            println!(
+                "{}Harness exited with {} for {}{}",
+                YELLOW, status, t.filename, RESET
+            );
+        }
+        let rows = harness::read_test_files_csv(repo)?;
+        let Some(csv_row) = harness::row_for_file(&rows, &t.filename) else {
+            continue;
+        };
+        db::update_tests_for_file(conn, &t.filename, csv_row.passed_last, csv_row.tests_total)?;
+        if csv_row.fully_passing {
+            db::set_completed(conn, t.id)?;
+            println!(
+                "{}Re-verify: {} fully passing ({}/{}){}",
+                GREEN, t.filename, csv_row.passed_last, csv_row.tests_total, RESET
+            );
+        }
+    }
     Ok(())
 }
 

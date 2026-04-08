@@ -22,6 +22,7 @@ pub enum TaskStatus {
     Pending,
     Running,
     Completed,
+    /// Merge or post-merge pipeline failed after the cloud agent finished; use `git-cloud update` to re-run harness.
     Failed,
     Cancelled,
 }
@@ -51,7 +52,51 @@ impl TaskStatus {
 
 pub fn open_db(git_dir: &Path) -> Result<Connection> {
     let path = git_dir.join("cloud.sqlite");
-    Connection::open(&path).with_context(|| format!("open sqlite {}", path.display()))
+    let conn =
+        Connection::open(&path).with_context(|| format!("open sqlite {}", path.display()))?;
+    migrate_tasks_failed_status(&conn)?;
+    Ok(conn)
+}
+
+/// Recreate `tasks` if it was created before `failed` existed in the status CHECK constraint.
+fn migrate_tasks_failed_status(conn: &Connection) -> Result<()> {
+    let sql_opt: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .context("read tasks DDL")?;
+    let Some(sql) = sql_opt else {
+        return Ok(());
+    };
+    if sql.contains("'failed'") {
+        return Ok(());
+    }
+    conn
+        .execute_batch(
+            r"
+            BEGIN;
+            CREATE TABLE tasks_migr (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filename TEXT NOT NULL UNIQUE,
+                family TEXT NOT NULL,
+                tests_total INTEGER NOT NULL,
+                tests_passing INTEGER NOT NULL,
+                cloud_id TEXT,
+                status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed'))
+            );
+            INSERT INTO tasks_migr SELECT id, filename, family, tests_total, tests_passing, cloud_id, status FROM tasks;
+            DROP TABLE tasks;
+            ALTER TABLE tasks_migr RENAME TO tasks;
+            CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+            CREATE INDEX IF NOT EXISTS idx_tasks_cloud ON tasks(cloud_id);
+            COMMIT;
+            ",
+        )
+        .context("migrate tasks table to allow failed status")?;
+    Ok(())
 }
 
 pub fn init_schema(conn: &Connection) -> Result<()> {
@@ -162,6 +207,35 @@ pub fn list_running_with_cloud_id(conn: &Connection) -> Result<Vec<TaskRow>> {
             })
         })
         .context("query running tasks")?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+pub fn list_failed_tasks(conn: &Connection) -> Result<Vec<TaskRow>> {
+    let mut stmt = conn
+        .prepare(
+            r"SELECT id, filename, family, tests_total, tests_passing, cloud_id, status
+              FROM tasks WHERE status = 'failed' ORDER BY filename",
+        )
+        .context("prepare list failed")?;
+    let rows = stmt
+        .query_map([], |row| {
+            let status_s: String = row.get(6)?;
+            let status = TaskStatus::parse(&status_s).unwrap_or(TaskStatus::Pending);
+            Ok(TaskRow {
+                id: row.get(0)?,
+                filename: row.get(1)?,
+                family: row.get(2)?,
+                tests_total: row.get(3)?,
+                tests_passing: row.get(4)?,
+                cloud_id: row.get(5)?,
+                status,
+            })
+        })
+        .context("query failed tasks")?;
     let mut out = Vec::new();
     for r in rows {
         out.push(r?);

@@ -56,6 +56,11 @@ pub fn read_test_files_csv(repo: &Path) -> Result<Vec<CsvRow>> {
     Ok(out)
 }
 
+/// Returns the CSV row for a test file stem (e.g. `t0000-basic`), if present.
+pub fn row_for_file<'a>(rows: &'a [CsvRow], stem: &str) -> Option<&'a CsvRow> {
+    rows.iter().find(|r| r.file == stem)
+}
+
 /// Rows that should be tracked: in harness scope and not yet fully passing.
 pub fn incomplete_in_scope_rows<'a>(rows: &'a [CsvRow]) -> impl Iterator<Item = &'a CsvRow> + 'a {
     rows.iter()
