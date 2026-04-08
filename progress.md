@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 227 completed (`[x]`), 2 in progress (`[~]`), 539 remai
 
 ## Recently completed
 
+- `t7417-submodule-path-url` — 5/5 tests pass (`.gitmodules` dash paths: `mv` updates path + index blob; `escape_value` quotes leading `-`; receive-side `transfer.fsckObjects` via repo-local config only; clone `--recurse-submodules` resolves relative URLs from `origin` repo root + quoted path parsing + `GIT_QUIET` quiet mode)
 - `t13180-log-patch-stat` — 35/35 tests pass (`grit log` display: oneline, graph, decorate, skip/max-count/reverse, `%H`/`%h`, `--first-parent`, `--no-decorate`; harness CSV refreshed)
 - `t7426-submodule-get-default-remote` — 15/15 tests pass (`submodule--helper get-default-remote`; nested submodule URL resolution uses outer superproject `remote.*.url` + Git `relative_url`; `pull` resolves local path remotes from `remote.<name>.url` for detached HEAD; `submodule update` treats path `.` as all submodules; submodule clone clears `GIT_DIR` and rewrites `remote.origin.url` to canonical path)
 - `t10560-switch-create-detach` — 28/28 tests pass (`switch`: `-- <branch>` treats a single token as the branch even when it matches a tracked path; `-c`/`-C`/`--orphan` reject invalid ref names via `check_refname_format` with Git-style `is not a valid branch name`)

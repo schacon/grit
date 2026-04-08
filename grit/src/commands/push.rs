@@ -6,6 +6,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{parse_bool, parse_color, ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::gitmodules::{oids_from_copied_object_paths, verify_gitmodules_for_commit};
 use grit_lib::hooks::{run_hook, run_hook_capture, HookResult};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::ObjectId;
@@ -688,6 +689,43 @@ fn push_to_url(
     if !args.dry_run {
         copied_objects = copy_objects_tracked(&repo.git_dir, &remote_repo.git_dir)
             .context("copying objects to remote")?;
+
+        let remote_config = ConfigSet::load_repo_local_only(&remote_repo.git_dir)?;
+        let fsck_receive = remote_config
+            .get_bool("receive.fsckobjects")
+            .or_else(|| remote_config.get_bool("receive.fsckObjects"));
+        let fsck_transfer = remote_config
+            .get_bool("transfer.fsckobjects")
+            .or_else(|| remote_config.get_bool("transfer.fsckObjects"));
+        let fsck_enabled = match (fsck_receive, fsck_transfer) {
+            (Some(Ok(true)), _) => true,
+            (Some(Ok(false)), _) => false,
+            (None, Some(Ok(true))) => true,
+            _ => false,
+        };
+
+        if fsck_enabled {
+            let remote_objects = remote_repo.git_dir.join("objects");
+            let remote_odb = grit_lib::odb::Odb::new(&remote_objects);
+            let copied_oids = oids_from_copied_object_paths(&copied_objects)
+                .context("collecting pushed object ids")?;
+            for update in &updates {
+                let Some(new_oid) = update.new_oid else {
+                    continue;
+                };
+                if !copied_oids.contains(&new_oid) {
+                    continue;
+                }
+                if let Some(rest) = verify_gitmodules_for_commit(&remote_odb, new_oid)? {
+                    for path in &copied_objects {
+                        let _ = fs::remove_file(path);
+                    }
+                    eprintln!("remote: error: object {rest}");
+                    eprintln!("remote: fatal: fsck error in pack objects");
+                    bail!("remote unpack failed: unpack-objects abnormal exit");
+                }
+            }
+        }
     }
 
     // For --atomic, check if the remote advertises atomic support

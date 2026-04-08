@@ -501,7 +501,10 @@ fn escape_subsection(s: &str) -> String {
 }
 
 fn escape_value(s: &str) -> String {
-    let needs_quoting = s.starts_with(' ')
+    // Quote leading `-` so values are not mistaken for config options (Git does this for
+    // submodule paths like `-sub` in `.gitmodules`).
+    let needs_quoting = s.starts_with('-')
+        || s.starts_with(' ')
         || s.starts_with('\t')
         || s.ends_with(' ')
         || s.ends_with('\t')
@@ -1559,6 +1562,24 @@ impl ConfigSet {
         ctx: &IncludeContext,
     ) -> Result<()> {
         Self::merge_with_includes(self, file, process_includes, 0, ctx)
+    }
+
+    /// Load only the repository's own `config` file (plus any `[include]` targets).
+    ///
+    /// Unlike [`Self::load`], this ignores system/global config and environment
+    /// overrides. Used for receive-side options (e.g. `transfer.fsckObjects`) so a
+    /// pusher's global configuration cannot weaken the remote repository's policy.
+    pub fn load_repo_local_only(git_dir: &Path) -> Result<Self> {
+        let mut set = Self::new();
+        let local_path = git_dir.join("config");
+        let ctx = IncludeContext {
+            git_dir: Some(git_dir.to_path_buf()),
+            command_line_relative_include_is_error: false,
+        };
+        if let Ok(Some(f)) = ConfigFile::from_path(&local_path, ConfigScope::Local) {
+            Self::merge_with_includes(&mut set, &f, true, 0, &ctx)?;
+        }
+        Ok(set)
     }
 
     /// Merge a file, processing `[include]` and `[includeIf]` directives.

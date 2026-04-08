@@ -5,10 +5,11 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::ConfigSet;
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::worktree_differs_from_index_entry;
 use grit_lib::error::Error;
-use grit_lib::index::Index;
+use grit_lib::index::{Index, MODE_GITLINK};
+use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
 use grit_lib::sparse_checkout::{
     parse_sparse_checkout_file, path_in_cone_mode_sparse_checkout, path_in_sparse_checkout_patterns,
@@ -513,6 +514,16 @@ pub fn run(args: Args) -> Result<()> {
             continue;
         }
 
+        if !row.index_only {
+            if let Some(e) = index.get(row.src.as_bytes(), 0) {
+                if e.mode == MODE_GITLINK {
+                    update_gitmodules_submodule_path(
+                        &repo, work_tree, &mut index, &row.src, &row.dst,
+                    )?;
+                }
+            }
+        }
+
         let src_abs = work_tree.join(&row.src);
         let dst_abs = work_tree.join(&row.dst);
 
@@ -691,6 +702,74 @@ fn empty_dir_has_sparse_contents(name: &str, index: &Index) -> bool {
         .any(|e| e.path.starts_with(prefix) && e.stage() == 0 && e.skip_worktree())
 }
 
+/// When renaming a submodule (gitlink), update `submodule.*.path` in `.gitmodules`
+/// and refresh the `.gitmodules` blob in the index.
+fn update_gitmodules_submodule_path(
+    repo: &Repository,
+    work_tree: &Path,
+    index: &mut Index,
+    old_path: &str,
+    new_path: &str,
+) -> Result<()> {
+    let path = work_tree.join(".gitmodules");
+    if !path.is_file() {
+        return Ok(());
+    }
+    let content =
+        fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let mut config = ConfigFile::parse(&path, &content, ConfigScope::Local)
+        .with_context(|| format!("parsing {}", path.display()))?;
+
+    let mut matched = false;
+    for entry in &config.entries.clone() {
+        let key = &entry.key;
+        let Some(rest) = key.strip_prefix("submodule.") else {
+            continue;
+        };
+        let Some(name) = rest.strip_suffix(".path") else {
+            continue;
+        };
+        let Some(val) = entry.value.as_deref() else {
+            continue;
+        };
+        if val.trim() == old_path {
+            config.set(&format!("submodule.{name}.path"), new_path)?;
+            matched = true;
+        }
+    }
+
+    if matched {
+        config
+            .write()
+            .with_context(|| format!("writing {}", path.display()))?;
+        refresh_index_gitmodules(repo, work_tree, index)?;
+    }
+    Ok(())
+}
+
+fn refresh_index_gitmodules(repo: &Repository, work_tree: &Path, index: &mut Index) -> Result<()> {
+    let path = work_tree.join(".gitmodules");
+    if !path.is_file() {
+        return Ok(());
+    }
+    let data = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+    let oid = repo
+        .odb
+        .write(ObjectKind::Blob, &data)
+        .context("writing .gitmodules object")?;
+    if let Some(mut entry) = index.get(b".gitmodules", 0).cloned() {
+        entry.oid = oid;
+        entry.size = data.len().try_into().unwrap_or(u32::MAX);
+        index.remove(b".gitmodules");
+        index.add_or_replace(entry);
+    }
+    Ok(())
+}
+
+/// Expand all index entries under `src_dir/` to their new paths under `dst_dir/`.
+///
+/// Returns a list of `(old_index_path, new_index_path)` pairs for every file
+/// inside the directory.
 fn expand_dir_sources(src_dir: &str, dst_dir: &str, index: &Index) -> Vec<(String, String)> {
     let prefix = format!("{}/", src_dir);
     index

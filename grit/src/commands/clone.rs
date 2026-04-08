@@ -300,7 +300,7 @@ fn checkout_head_allow_unborn(repo: &Repository) -> Result<()> {
     Ok(())
 }
 
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
     let partial_blob_none = matches!(args.filter.as_deref(), Some("blob:none"));
 
     let deepen =
@@ -309,6 +309,12 @@ pub fn run(args: Args) -> Result<()> {
         bail!(
             "options '--bundle-uri' and '--depth/--shallow-since/--shallow-exclude' cannot be used together"
         );
+    }
+
+    // Test harness (`tests/test-lib.sh`) sets `GIT_QUIET=-q` unless `TEST_VERBOSE` is set,
+    // mirroring Git's quiet default for commands invoked from the suite.
+    if !args.quiet && std::env::var_os("GIT_QUIET").as_deref() == Some(std::ffi::OsStr::new("-q")) {
+        args.quiet = true;
     }
 
     // --revision conflicts with --branch and --mirror
@@ -770,13 +776,7 @@ pub fn run(args: Args) -> Result<()> {
     // Recurse into submodules if requested
     if args.recurse_submodules && !args.bare {
         if let Some(ref wt) = dest.work_tree {
-            let url_base = source.work_tree.as_deref().unwrap_or_else(|| {
-                source_path
-                    .parent()
-                    .filter(|p| !p.as_os_str().is_empty())
-                    .unwrap_or(source_path.as_path())
-            });
-            clone_submodules(wt, url_base, args.quiet).context("cloning submodules")?;
+            clone_submodules(wt, &dest, args.quiet).context("cloning submodules")?;
         }
     }
 
@@ -1044,13 +1044,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
 
     if args.recurse_submodules && !args.bare {
         if let Some(ref wt) = dest.work_tree {
-            let url_base = source.work_tree.as_deref().unwrap_or_else(|| {
-                path_for_basename
-                    .parent()
-                    .filter(|p| !p.as_os_str().is_empty())
-                    .unwrap_or(path_for_basename.as_path())
-            });
-            clone_submodules(wt, url_base, args.quiet).context("cloning submodules")?;
+            clone_submodules(wt, &dest, args.quiet).context("cloning submodules")?;
         }
     }
 
@@ -1109,13 +1103,16 @@ fn collect_gitlink_paths(
     Ok(())
 }
 
-fn clone_submodules(work_tree: &Path, relative_url_base: &Path, quiet: bool) -> Result<()> {
+fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<()> {
     let gitmodules_path = work_tree.join(".gitmodules");
     if !gitmodules_path.exists() {
         return Ok(());
     }
 
     let content = fs::read_to_string(&gitmodules_path).context("reading .gitmodules")?;
+
+    grit_lib::gitmodules::write_gitmodules_cli_option_warnings(&mut std::io::stderr(), &content)
+        .ok();
 
     // Simple parser for .gitmodules
     let mut submodules: Vec<(String, String)> = Vec::new(); // (path, url)
@@ -1135,22 +1132,28 @@ fn clone_submodules(work_tree: &Path, relative_url_base: &Path, quiet: bool) -> 
             .strip_prefix("path = ")
             .or_else(|| trimmed.strip_prefix("path="))
         {
-            current_path = Some(val.trim().to_string());
+            current_path = Some(gitmodules_config_value(val));
         }
         if let Some(val) = trimmed
             .strip_prefix("url = ")
             .or_else(|| trimmed.strip_prefix("url="))
         {
-            current_url = Some(val.trim().to_string());
+            current_url = Some(gitmodules_config_value(val));
         }
     }
     if let (Some(p), Some(u)) = (current_path.take(), current_url.take()) {
         submodules.push((p, u));
     }
 
-    let grit_bin = crate::grit_exe::grit_executable();
+    // Relative submodule URLs resolve against the default remote's repository root (Git parity),
+    // not the current work tree — so a clone into `dst/` still finds `../upstream` next to `.`.
+    let origin_repo_root = {
+        let config_path = repo.git_dir.join("config");
+        let config_content = fs::read_to_string(&config_path).unwrap_or_default();
+        extract_remote_url(&config_content, "origin").map(PathBuf::from)
+    };
 
-    let url_base = relative_url_base;
+    let grit_bin = crate::grit_exe::grit_executable();
 
     // Only clone paths that are submodules at the checked-out commit. `.gitmodules` can list paths
     // that are plain files on this branch (e.g. `f` as submodule on B1 but `f/f` as file on B2);
@@ -1164,16 +1167,16 @@ fn clone_submodules(work_tree: &Path, relative_url_base: &Path, quiet: bool) -> 
 
         let sub_dest = work_tree.join(path);
 
-        // Resolve relative URLs against the superproject work tree (the directory that contains
-        // `.git`), e.g. `../sub` from `.gitmodules` in `various/` → sibling `sub/`, not relative
-        // to the clone destination alone.
         let resolved_url = if url.starts_with("./") || url.starts_with("../") {
-            let resolved = url_base.join(url);
-            resolved
-                .canonicalize()
-                .unwrap_or(resolved)
+            let base = origin_repo_root
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| work_tree.to_path_buf());
+            let joined = base.join(url);
+            fs::canonicalize(&joined)
+                .unwrap_or(joined)
                 .to_string_lossy()
-                .into_owned()
+                .to_string()
         } else {
             url.clone()
         };
@@ -1228,6 +1231,18 @@ fn clone_submodules(work_tree: &Path, relative_url_base: &Path, quiet: bool) -> 
     }
 
     Ok(())
+}
+
+/// Strip Git config-style quoting from a `.gitmodules` value (`path = "-sub"` → `-sub`).
+fn gitmodules_config_value(raw: &str) -> String {
+    let t = raw.trim();
+    if t.len() >= 2 && t.starts_with('"') && t.ends_with('"') {
+        t[1..t.len() - 1]
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\")
+    } else {
+        t.to_string()
+    }
 }
 
 /// Extract a remote URL from config content.
