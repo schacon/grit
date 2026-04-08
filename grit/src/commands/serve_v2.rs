@@ -6,6 +6,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::{ConfigFile, ConfigScope};
 use grit_lib::merge_base;
 use grit_lib::objects::{self, ObjectId, ObjectKind};
 use grit_lib::refs;
@@ -194,7 +195,7 @@ pub fn process_one_v2_request(
         "ls-refs" => cmd_ls_refs(git_dir, &args, &mut out)?,
         "fetch" => cmd_fetch(git_dir, &args, &mut out)?,
         "object-info" => cmd_object_info(git_dir, &args, &mut out)?,
-        "bundle-uri" => bail!("bundle-uri requires uploadpack.advertiseBundleURIs=true"),
+        "bundle-uri" => cmd_bundle_uri(git_dir, &args, &mut out)?,
         _ => bail!("invalid command '{cmd}'"),
     }
 
@@ -450,6 +451,31 @@ fn cmd_object_info(git_dir: &Path, args: &[String], out: &mut impl Write) -> Res
         }
     }
 
+    pkt_line::write_flush(out)?;
+    Ok(())
+}
+
+/// Handle the `bundle-uri` command: stream `bundle.*` config as `key=value` pkt-lines.
+fn cmd_bundle_uri(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()> {
+    if !args.is_empty() {
+        bail!("bundle-uri: unexpected argument: '{}'", args[0]);
+    }
+    let path = git_dir.join("config");
+    let content =
+        std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let cfg = ConfigFile::parse(&path, &content, ConfigScope::Local)?;
+    let mut lines: Vec<(String, String)> = Vec::new();
+    for e in &cfg.entries {
+        if e.key.starts_with("bundle.") {
+            if let Some(v) = e.value.as_deref() {
+                lines.push((e.key.clone(), v.to_string()));
+            }
+        }
+    }
+    lines.sort_by(|a, b| a.0.cmp(&b.0));
+    for (k, v) in lines {
+        pkt_line::write_line(out, &format!("{k}={v}"))?;
+    }
     pkt_line::write_flush(out)?;
     Ok(())
 }
