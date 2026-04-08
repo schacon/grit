@@ -1233,6 +1233,10 @@ test_eval_ () {
 test_run_ () {
 	test_cleanup=:
 	expecting_failure=$2
+	# Each test body assumes a cwd of the trash root (matches upstream git test-lib).
+	# Without this, a prior test that ends inside a subdirectory breaks relative paths
+	# like `cd repo` in the next test.
+	cd "$TRASH_DIRECTORY" || exit 1
 	test_eval_ "$1"
 	eval_ret=$?
 	if test -z "$immediate" || test "$eval_ret" -eq 0 ||
