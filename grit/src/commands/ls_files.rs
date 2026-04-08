@@ -129,6 +129,14 @@ pub struct Args {
     #[arg(short = 'C', value_name = "DIR")]
     pub change_dir: Option<PathBuf>,
 
+    /// Pretend paths removed since this tree are still in the index (for cached listings).
+    #[arg(long = "with-tree", value_name = "TREEISH")]
+    pub with_tree: Option<String>,
+
+    /// Recurse into submodules (not compatible with all `ls-files` modes).
+    #[arg(long = "recurse-submodules")]
+    pub recurse_submodules: bool,
+
     /// Pathspecs to restrict output.
     pub pathspecs: Vec<PathBuf>,
 }
@@ -166,11 +174,26 @@ pub fn run(args: Args) -> Result<()> {
         Some(Err(_)) | None => true,
     };
     let index_path = resolved_env_index_path(&repo);
-    let index = if args.sparse {
+    let mut index = if args.sparse {
         grit_lib::index::Index::load(&index_path).context("loading index")?
     } else {
         repo.load_index_at(&index_path).context("loading index")?
     };
+
+    if args.recurse_submodules
+        && (args.deleted
+            || args.others
+            || args.unmerged
+            || args.killed
+            || args.modified
+            || args.with_tree.is_some())
+    {
+        anyhow::bail!("fatal: ls-files --recurse-submodules unsupported mode");
+    }
+
+    if args.with_tree.is_some() && (args.unmerged || args.stage) {
+        anyhow::bail!("fatal: options 'ls-files --with-tree' and '-s/-u' cannot be used together");
+    }
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -198,6 +221,16 @@ pub fn run(args: Args) -> Result<()> {
         .collect::<Result<Vec<_>>>()?;
     if pathspec_filter.is_empty() && !cwd_prefix.is_empty() && !args.full_name {
         pathspec_filter.push(Pathspec::Literal(cwd_prefix.clone()));
+    }
+
+    if let Some(ref treeish) = args.with_tree {
+        let mut overlay_prefix = common_pathspec_prefix_for_overlay(&pathspec_filter);
+        while overlay_prefix.last() == Some(&b'/') {
+            overlay_prefix.pop();
+        }
+        index
+            .overlay_tree_on_index(&repo, treeish, &overlay_prefix)
+            .with_context(|| format!("overlay tree '{treeish}' on index"))?;
     }
 
     // Track which pathspecs matched at least one entry (for --error-unmatch).
@@ -231,6 +264,9 @@ pub fn run(args: Args) -> Result<()> {
 
     let mut last_dedup_path: Option<Vec<u8>> = None;
     for entry in &index.entries {
+        if entry.overlay_tree_skip_output() {
+            continue;
+        }
         // Filter by pathspec
         if !pathspec_filter.is_empty() {
             let idx = pathspec_filter
@@ -676,10 +712,17 @@ impl Pathspec {
             // Directory pathspecs match the path itself and children (`dir/`),
             // but not unrelated paths that merely share a prefix (`dirfoo`).
             Pathspec::Literal(spec) => {
-                path == spec.as_slice()
-                    || (path.starts_with(spec)
-                        && path.len() > spec.len()
-                        && path[spec.len()] == b'/')
+                let spec = spec.as_slice();
+                // `cwd_prefix` uses a trailing slash (`sub/`); Git pathspecs treat that as the
+                // directory `sub`, so `sub/file` must match (see t3060 from a subdirectory).
+                let dir_prefix = spec
+                    .strip_suffix(b"/")
+                    .filter(|p| !p.is_empty())
+                    .unwrap_or(spec);
+                path == spec
+                    || path == dir_prefix
+                    || (path.starts_with(dir_prefix)
+                        && (path.len() == dir_prefix.len() || path[dir_prefix.len()] == b'/'))
             }
             Pathspec::Glob(pattern) => {
                 // Try literal match first (for files with glob chars in names)
@@ -1036,4 +1079,34 @@ fn status_tag(entry: &IndexEntry) -> char {
     } else {
         'H' // regular cached
     }
+}
+
+/// Longest common byte prefix of all literal pathspecs, or empty when unknown (globs / magic / none).
+///
+/// Used for `ls-files --with-tree` to limit the tree overlay like Git's `common_prefix` pathspec.
+fn common_pathspec_prefix_for_overlay(filters: &[Pathspec]) -> Vec<u8> {
+    if filters.is_empty() {
+        return Vec::new();
+    }
+    let mut literals: Vec<&[u8]> = Vec::new();
+    for f in filters {
+        match f {
+            Pathspec::Literal(p) => literals.push(p.as_slice()),
+            Pathspec::Glob(_) | Pathspec::Magic(_) => return Vec::new(),
+        }
+    }
+    if literals.is_empty() {
+        return Vec::new();
+    }
+    let first = literals[0];
+    let mut end = first.len();
+    for lit in literals.iter().skip(1) {
+        end = end.min(
+            lit.iter()
+                .zip(first.iter())
+                .take_while(|(a, b)| a == b)
+                .count(),
+        );
+    }
+    first[..end].to_vec()
 }

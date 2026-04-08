@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -550,7 +550,7 @@ t3030-merge-recursive	t3	yes	26	25	1	false	ok	0
 t3040-subprojects-basic	t3	yes	11	10	1	false	ok	0
 t3050-ls-files-unmerged	t3	yes	23	22	1	false	ok	0
 t3050-subprojects-fetch	t3	yes	4	4	0	true	ok	0
-t3060-ls-files-with-tree	t3	yes	0	0	0	false	timeout	0
+t3060-ls-files-with-tree	t3	yes	8	8	0	true	ok	0
 t3070-wildmatch	t3	yes	1901	1901	0	true	ok	3
 t3100-ls-tree-restrict	t3	yes	14	13	1	false	ok	0
 t3101-ls-tree-dirname	t3	yes	19	18	1	false	ok	0

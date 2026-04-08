@@ -24,8 +24,10 @@ use sha1::{Digest, Sha1};
 
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
-use crate::objects::{parse_tree, ObjectId, ObjectKind};
+use crate::objects::{parse_tree, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
+use crate::repo::Repository;
+use crate::rev_parse;
 
 /// File mode for a regular (non-executable) file.
 pub const MODE_REGULAR: u32 = 0o100644;
@@ -79,6 +81,10 @@ impl IndexEntry {
     #[must_use]
     pub fn stage(&self) -> u8 {
         ((self.flags >> 12) & 0x3) as u8
+    }
+
+    pub(crate) fn set_stage(&mut self, stage: u8) {
+        self.flags = (self.flags & 0x0FFF) | ((stage as u16 & 0x3) << 12);
     }
 
     /// Whether the assume-unchanged bit is set.
@@ -142,6 +148,27 @@ impl IndexEntry {
     #[must_use]
     pub fn is_sparse_directory_placeholder(&self) -> bool {
         self.mode == MODE_TREE && self.stage() == 0 && self.skip_worktree()
+    }
+
+    /// In-memory only: `ls-files --with-tree` hides stage-1 overlay rows that duplicate stage 0.
+    const FLAG_EXT_OVERLAY_TREE_SKIP: u16 = 0x8000;
+
+    #[must_use]
+    pub fn overlay_tree_skip_output(&self) -> bool {
+        self.flags_extended
+            .is_some_and(|fe| fe & Self::FLAG_EXT_OVERLAY_TREE_SKIP != 0)
+    }
+
+    fn set_overlay_tree_skip_output(&mut self, value: bool) {
+        let fe = self.flags_extended.get_or_insert(0);
+        if value {
+            *fe |= Self::FLAG_EXT_OVERLAY_TREE_SKIP;
+        } else {
+            *fe &= !Self::FLAG_EXT_OVERLAY_TREE_SKIP;
+            if *fe == 0 {
+                self.flags_extended = None;
+            }
+        }
     }
 }
 
@@ -783,6 +810,166 @@ impl Index {
         self.entries
             .iter_mut()
             .find(|e| e.path == path && e.stage() == stage)
+    }
+
+    /// Merge tree contents from `treeish` into this index as virtual stage-1 entries, matching
+    /// Git's `overlay_tree_on_index` used by `git ls-files --with-tree`.
+    ///
+    /// Existing unmerged entries (stages 1–3) are shifted to stage 3 so stage 1 is free for the
+    /// overlay. Stage-1 paths that already exist at stage 0 are marked so `ls-files` can skip
+    /// them (Git's `CE_UPDATE` on the stage-1 entry).
+    ///
+    /// # Parameters
+    ///
+    /// - `repo` — repository whose object database is used to read the tree.
+    /// - `treeish` — revision or tree OID string (`HEAD`, `HEAD~1`, full SHA, etc.).
+    /// - `prefix` — optional path prefix (bytes, no trailing slash except empty); only paths under
+    ///   this prefix are considered from the tree. Pass empty slice for the full tree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] if `treeish` cannot be resolved, the tree cannot be read, or an object is
+    /// missing from the ODB.
+    pub fn overlay_tree_on_index(
+        &mut self,
+        repo: &Repository,
+        treeish: &str,
+        prefix: &[u8],
+    ) -> Result<()> {
+        let oid = rev_parse::resolve_revision(repo, treeish)?;
+        let tree_oid = peel_to_tree_oid(repo, oid)?;
+        for e in self.entries.iter_mut() {
+            if e.stage() != 0 {
+                e.set_stage(3);
+            }
+        }
+        self.sort();
+        let has_stage1 = self.entries.iter().any(|e| e.stage() == 1);
+        let mut appended: Vec<IndexEntry> = Vec::new();
+        read_tree_into_overlay(repo, &tree_oid, prefix, &[], has_stage1, &mut appended)?;
+        for e in appended {
+            self.add_or_replace(e);
+        }
+        if !has_stage1 {
+            self.sort();
+        }
+        let mut last_stage0: Option<&[u8]> = None;
+        for e in &mut self.entries {
+            match e.stage() {
+                0 => {
+                    last_stage0 = Some(e.path.as_slice());
+                }
+                1 => {
+                    if last_stage0.is_some_and(|p| p == e.path.as_slice()) {
+                        e.set_overlay_tree_skip_output(true);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+}
+
+fn peel_to_tree_oid(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
+    let obj = repo.odb.read(&oid)?;
+    match obj.kind {
+        ObjectKind::Tree => Ok(oid),
+        ObjectKind::Commit => {
+            let commit = crate::objects::parse_commit(&obj.data)?;
+            Ok(commit.tree)
+        }
+        ObjectKind::Tag => {
+            let tag = crate::objects::parse_tag(&obj.data)?;
+            peel_to_tree_oid(repo, tag.object)
+        }
+        _ => Err(Error::ObjectNotFound(format!(
+            "cannot peel {oid} to tree for --with-tree"
+        ))),
+    }
+}
+
+fn read_tree_into_overlay(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+    prefix: &[u8],
+    rel_base: &[u8],
+    use_replace_path: bool,
+    out: &mut Vec<IndexEntry>,
+) -> Result<()> {
+    let obj = repo.odb.read(tree_oid)?;
+    if obj.kind != ObjectKind::Tree {
+        return Err(Error::ObjectNotFound(format!(
+            "object {tree_oid} is not a tree"
+        )));
+    }
+    let entries = parse_tree(&obj.data)?;
+    for TreeEntry { mode, name, oid } in entries {
+        if mode == MODE_TREE {
+            let mut path = rel_base.to_vec();
+            if !path.is_empty() {
+                path.push(b'/');
+            }
+            path.extend_from_slice(&name);
+            if !prefix_under_or_equal(prefix, &path) {
+                continue;
+            }
+            read_tree_into_overlay(repo, &oid, prefix, &path, use_replace_path, out)?;
+            continue;
+        }
+        if mode == MODE_GITLINK {
+            continue;
+        }
+        let mut path = rel_base.to_vec();
+        if !path.is_empty() {
+            path.push(b'/');
+        }
+        path.extend_from_slice(&name);
+        if !prefix_under_or_equal(prefix, &path) {
+            continue;
+        }
+        let entry = synthetic_stage1_index_entry(mode, &path, oid);
+        if use_replace_path {
+            if let Some(pos) = out.iter().position(|e| e.path == path && e.stage() == 1) {
+                out[pos] = entry;
+            } else {
+                out.push(entry);
+            }
+        } else {
+            out.push(entry);
+        }
+    }
+    Ok(())
+}
+
+fn prefix_under_or_equal(prefix: &[u8], path: &[u8]) -> bool {
+    if prefix.is_empty() {
+        return true;
+    }
+    if path == prefix {
+        return true;
+    }
+    path.len() > prefix.len() && path.starts_with(prefix) && path[prefix.len()] == b'/'
+}
+
+fn synthetic_stage1_index_entry(mode: u32, path: &[u8], oid: ObjectId) -> IndexEntry {
+    let path_len = path.len().min(0xFFF) as u16;
+    let flags = (1u16 << 12) | path_len;
+    IndexEntry {
+        ctime_sec: 0,
+        ctime_nsec: 0,
+        mtime_sec: 0,
+        mtime_nsec: 0,
+        dev: 0,
+        ino: 0,
+        mode,
+        uid: 0,
+        gid: 0,
+        size: 0,
+        oid,
+        flags,
+        flags_extended: None,
+        path: path.to_vec(),
     }
 }
 

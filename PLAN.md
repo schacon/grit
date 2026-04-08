@@ -286,7 +286,7 @@ commit → check it off → move on.
 - [ ] `t3904-stash-patch` ████████░░░░░░░░░░░░ 4/10 (6 left) — stash -p
 - [ ] `t3504-cherry-pick-rerere` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — cherry-pick should rerere for conflicts
 - [ ] `t3509-cherry-pick-merge-df` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — Test cherry-pick with directory/file conflicts
-- [ ] `t3060-ls-files-with-tree` █████░░░░░░░░░░░░░░░ 2/8 (6 left) — git ls-files test (--with-tree).
+- [x] `t3060-ls-files-with-tree` — git ls-files `--with-tree` (overlay tree on index, usage, conflict + missing index cases; 8/8 harness).
 
 - [ ] `t3428-rebase-signoff` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — git rebase --signoff
 
