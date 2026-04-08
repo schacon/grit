@@ -126,7 +126,7 @@
 - [ ] t12620-rev-parse-resolve-ref.sh
 - [ ] t12630-rev-parse-is-bare.sh
 - [ ] t12650-config-null-value.sh
-- [ ] t12660-init-shared-perm.sh
+- [x] t12660-init-shared-perm.sh
 - [ ] t12670-branch-force-delete.sh
 - [ ] t12700-add-edit-intent.sh
 - [ ] t12710-rm-staged-conflict.sh
