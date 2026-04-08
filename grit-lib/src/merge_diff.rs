@@ -64,16 +64,17 @@ pub fn is_binary_for_diff(git_dir: &Path, path: &str, blob: &[u8]) -> bool {
     crate::crlf::is_binary(blob)
 }
 
-/// Run `diff.<driver>.textconv` feeding `input` on stdin; returns UTF-8 lossy text on success.
-pub fn run_textconv(
+/// Run `diff.<driver>.textconv` feeding `input` on stdin; returns raw stdout on success.
+///
+/// Matches Git's `run_textconv` stdin-based drivers (config lines ending with ` <` are
+/// normalized the same way as [`run_textconv`]).
+pub fn run_textconv_raw(
     git_dir: &Path,
     config: &ConfigSet,
     driver: &str,
     input: &[u8],
-) -> Option<String> {
+) -> Option<Vec<u8>> {
     let mut cmd_line = config.get(&format!("diff.{driver}.textconv"))?;
-    // Git's config often ends with ` <` meaning "read from stdin"; our child already
-    // receives blob bytes on stdin, so drop a trailing shell redirect token.
     cmd_line = cmd_line.trim_end().to_string();
     if cmd_line.ends_with('<') {
         let t = cmd_line.trim_end_matches('<').trim_end();
@@ -96,7 +97,41 @@ pub fn run_textconv(
     if !out.status.success() {
         return None;
     }
-    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    Some(out.stdout)
+}
+
+/// Run `diff.<driver>.textconv` feeding `input` on stdin; returns UTF-8 lossy text on success.
+pub fn run_textconv(
+    git_dir: &Path,
+    config: &ConfigSet,
+    driver: &str,
+    input: &[u8],
+) -> Option<String> {
+    run_textconv_raw(git_dir, config, driver, input)
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+}
+
+/// Blob bytes after smudge/EOL conversion for `path`, using the same rules as checkout.
+///
+/// `index` is used to pick up `.gitattributes` from the index when the worktree file is
+/// missing; pass `None` to use only on-disk `.gitattributes` under `work_tree`.
+pub fn convert_blob_to_worktree_for_path(
+    git_dir: &Path,
+    work_tree: &Path,
+    index: Option<&crate::index::Index>,
+    odb: &Odb,
+    path: &str,
+    blob: &[u8],
+    oid_hex: Option<&str>,
+) -> std::io::Result<Vec<u8>> {
+    let config = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    let conv = crate::crlf::ConversionConfig::from_config(&config);
+    let rules = match index {
+        Some(idx) => crate::crlf::load_gitattributes_for_checkout(work_tree, path, idx, odb),
+        None => crate::crlf::load_gitattributes(work_tree),
+    };
+    let file_attrs = crate::crlf::get_file_attrs(&rules, path, &config);
+    crate::crlf::convert_to_worktree(blob, path, &conv, &file_attrs, oid_hex)
 }
 
 /// Prepare blob bytes for diff: optional textconv when `use_textconv` and `diff=<driver>`.

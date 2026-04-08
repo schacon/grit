@@ -3,7 +3,9 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
+use grit_lib::crlf::{self, DiffAttr};
 use grit_lib::error::Error as LibError;
+use grit_lib::merge_diff::{convert_blob_to_worktree_for_path, run_textconv_raw};
 use grit_lib::pack;
 use grit_lib::rev_list::{self, ObjectFilter};
 use std::io::{self, BufRead, Write};
@@ -234,6 +236,10 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
+    if args.textconv || args.filters {
+        return cat_file_emit_transformed(&repo, &args, &oid, &obj, obj_str);
+    }
+
     if let Some(kind) = expected_kind {
         // Dereference tags/commits to reach the requested object type.
         let mut _current_oid = oid;
@@ -364,12 +370,20 @@ fn validate_args(args: &Args) -> Result<()> {
     }
 
     // --batch-all-objects conflicts with mode flags as a cmdmode
-    if args.batch_all_objects && !cmdmodes.is_empty() {
-        let mode = cmdmodes[0];
-        usage_error(&format!(
-            "error: {} cannot be used together with --batch-all-objects",
-            mode
-        ));
+    if args.batch_all_objects {
+        if args.textconv {
+            usage_error("error: --textconv is incompatible with --batch-all-objects");
+        }
+        if args.filters {
+            usage_error("error: --filters is incompatible with --batch-all-objects");
+        }
+        if !cmdmodes.is_empty() {
+            let mode = cmdmodes[0];
+            usage_error(&format!(
+                "error: {} cannot be used together with --batch-all-objects",
+                mode
+            ));
+        }
     }
 
     // Check mutual exclusivity of cmdmode flags
@@ -385,12 +399,8 @@ fn validate_args(args: &Args) -> Result<()> {
     let has_mode = !cmdmodes.is_empty();
     let mode_name = cmdmodes.first().copied().unwrap_or("");
 
-    // --path requires --textconv or --filters (not batch)
+    // --path requires --textconv or --filters
     if args.path.is_some() && !args.textconv && !args.filters {
-        if is_batch {
-            usage_error("fatal: '--path=<path|tree-ish>' needs '--filters' or '--textconv'");
-        }
-        // --path without --textconv/--filters in non-batch mode
         usage_error("fatal: '--path=<path|tree-ish>' needs '--filters' or '--textconv'");
     }
 
@@ -411,16 +421,14 @@ fn validate_args(args: &Args) -> Result<()> {
         usage_error("fatal: '-Z' requires a batch mode");
     }
 
-    // Mode flags are incompatible with batch mode
-    if has_mode && is_batch {
+    // Mode flags are incompatible with batch mode, except --textconv/--filters (Git allows
+    // those together with --batch for per-line conversion).
+    if has_mode && is_batch && !args.textconv && !args.filters {
         usage_error(&format!(
             "fatal: '{}' is incompatible with batch mode",
             mode_name
         ));
     }
-
-    // Mode flags are incompatible with --follow-symlinks (a batch-only option)
-    // (already handled above since --follow-symlinks requires batch mode)
 
     // --textconv/--filters require an object argument (unless in batch mode)
     if (args.textconv || args.filters) && !is_batch && args.type_or_object.is_none() {
@@ -485,6 +493,12 @@ fn validate_args(args: &Args) -> Result<()> {
 
     if args.no_filter && !is_batch {
         usage_error("fatal: '--no-filter' requires a batch mode");
+    }
+
+    let batch_transform = args.textconv || args.filters;
+    if is_batch && batch_transform && args.path.is_some() {
+        eprintln!("fatal: missing path");
+        std::process::exit(128);
     }
 
     Ok(())
@@ -603,6 +617,8 @@ struct BatchWriteOpts<'a> {
     follow_symlinks: bool,
     apply_object_filter: bool,
     objects_filter: Option<&'a ObjectFilter>,
+    batch_textconv: bool,
+    batch_filters: bool,
 }
 
 fn loose_object_file(objects_dir: &Path, oid: &ObjectId) -> PathBuf {
@@ -665,15 +681,24 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
         Some(ObjectFilter::parse(spec).map_err(|e| anyhow::anyhow!("invalid object filter: {e}"))?)
     };
 
+    let batch_transform = args.textconv || args.filters;
+
     let write_opts = BatchWriteOpts {
         ignore_replace: args.batch_all_objects,
         follow_symlinks: args.follow_symlinks,
         apply_object_filter: !args.batch_all_objects && objects_filter.is_some(),
         objects_filter: objects_filter.as_ref(),
+        batch_textconv: args.textconv,
+        batch_filters: args.filters,
     };
 
     let mut handle_line = |line: &str| -> Result<()> {
         let trimmed = line.trim();
+        let (display_spec, object_spec, path_suffix) = if batch_transform {
+            split_batch_object_field_and_rest(trimmed)
+        } else {
+            (trimmed, trimmed, None)
+        };
 
         if args.batch_command.is_some() {
             if trimmed.is_empty() {
@@ -692,11 +717,17 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                         eprintln!("fatal: contents requires arguments");
                         std::process::exit(128);
                     }
+                    let (d, o, ps) = if batch_transform {
+                        split_batch_object_field_and_rest(obj_str)
+                    } else {
+                        (obj_str, obj_str, None)
+                    };
                     if use_app_buffer {
                         print_batch_entry(
                             repo,
-                            obj_str,
-                            obj_str,
+                            d,
+                            o,
+                            ps,
                             true,
                             format,
                             nul_output,
@@ -707,8 +738,9 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     } else {
                         print_batch_entry(
                             repo,
-                            obj_str,
-                            obj_str,
+                            d,
+                            o,
+                            ps,
                             true,
                             format,
                             nul_output,
@@ -727,11 +759,17 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                         eprintln!("fatal: info requires arguments");
                         std::process::exit(128);
                     }
+                    let (d, o, ps) = if batch_transform {
+                        split_batch_object_field_and_rest(obj_str)
+                    } else {
+                        (obj_str, obj_str, None)
+                    };
                     if use_app_buffer {
                         print_batch_entry(
                             repo,
-                            obj_str,
-                            obj_str,
+                            d,
+                            o,
+                            ps,
                             false,
                             format,
                             nul_output,
@@ -742,8 +780,9 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     } else {
                         print_batch_entry(
                             repo,
-                            obj_str,
-                            obj_str,
+                            d,
+                            o,
+                            ps,
                             false,
                             format,
                             nul_output,
@@ -780,8 +819,9 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
             let include_content = args.batch_includes_content();
             print_batch_entry(
                 repo,
-                trimmed,
-                trimmed,
+                display_spec,
+                object_spec,
+                path_suffix,
                 include_content,
                 format,
                 nul_output,
@@ -912,6 +952,7 @@ fn emit_batch_object_lines(
     nul_output: bool,
     packed_sizes: Option<&HashMap<ObjectId, u64>>,
     rest: &str,
+    content_override: Option<&[u8]>,
     out: &mut impl Write,
 ) -> Result<()> {
     let eol: &[u8] = if nul_output { b"\0" } else { b"\n" };
@@ -952,7 +993,8 @@ fn emit_batch_object_lines(
     }
     out.write_all(eol)?;
     if include_content {
-        out.write_all(&obj.data)?;
+        let payload = content_override.unwrap_or(obj.data.as_slice());
+        out.write_all(payload)?;
         out.write_all(eol)?;
     }
     Ok(())
@@ -996,6 +1038,7 @@ fn print_batch_follow_symlinks(
                             nul_output,
                             packed_sizes,
                             rest,
+                            None,
                             out,
                         )?;
                     }
@@ -1044,6 +1087,7 @@ fn print_batch_follow_symlinks(
                 nul_output,
                 packed_sizes,
                 rest,
+                None,
                 out,
             )?;
         }
@@ -1065,6 +1109,51 @@ fn print_batch_follow_symlinks(
         }
     }
     Ok(())
+}
+
+/// Smudge / textconv for `cat-file --batch` blob output (Git matches checkout + textconv order).
+fn cat_file_batch_blob_payload(
+    repo: &Repository,
+    path: &str,
+    blob: &[u8],
+    oid_hex: &str,
+    opts: BatchWriteOpts<'_>,
+) -> Result<Vec<u8>> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("no working tree"))?;
+    let index = repo.load_index().ok();
+    let smudged = convert_blob_to_worktree_for_path(
+        &repo.git_dir,
+        work_tree,
+        index.as_ref(),
+        &repo.odb,
+        path,
+        blob,
+        Some(oid_hex),
+    )
+    .map_err(|e| anyhow::anyhow!("could not convert '{oid_hex}' {path}: {e}"))?;
+    if opts.batch_filters {
+        return Ok(smudged);
+    }
+    let rules = match index.as_ref() {
+        Some(idx) => crlf::load_gitattributes_for_checkout(work_tree, path, idx, &repo.odb),
+        None => crlf::load_gitattributes(work_tree),
+    };
+    let fa = crlf::get_file_attrs(&rules, path, &config);
+    let driver = match &fa.diff_attr {
+        DiffAttr::Driver(d) => d.as_str(),
+        _ => return Ok(smudged),
+    };
+    match run_textconv_raw(&repo.git_dir, &config, driver, &smudged) {
+        Some(b) => Ok(b),
+        None => {
+            eprintln!("fatal: unable to read files to diff");
+            std::process::exit(128);
+        }
+    }
 }
 
 fn write_excluded_line(
@@ -1101,6 +1190,7 @@ fn print_batch_entry(
     repo: &Repository,
     display_spec: &str,
     object_spec: &str,
+    path_suffix: Option<&str>,
     include_content: bool,
     format: &str,
     nul_output: bool,
@@ -1110,6 +1200,7 @@ fn print_batch_entry(
 ) -> Result<()> {
     let (obj_str, rest) = parse_batch_input(object_spec, format);
     let eol: &[u8] = if nul_output { b"\0" } else { b"\n" };
+    let batch_transform = opts.batch_textconv || opts.batch_filters;
 
     if obj_str.is_empty() {
         out.write_all(b" missing")?;
@@ -1152,6 +1243,7 @@ fn print_batch_entry(
                     nul_output,
                     packed_sizes,
                     rest,
+                    None,
                     out,
                 )?;
             }
@@ -1188,6 +1280,77 @@ fn print_batch_entry(
                         }
                     }
                 }
+
+                if batch_transform && obj.kind == ObjectKind::Blob && include_content {
+                    let path_for_attrs = path_suffix.map(|s| s.replace('\\', "/")).or_else(|| {
+                        obj_str.find(':').map(|i| {
+                            let tail = &obj_str[i + 1..];
+                            tail.replace('\\', "/")
+                        })
+                    });
+
+                    let need_path = opts.batch_filters;
+                    if need_path && path_for_attrs.is_none() {
+                        emit_batch_object_lines(
+                            repo,
+                            oid,
+                            &obj,
+                            mode,
+                            false,
+                            format,
+                            nul_output,
+                            packed_sizes,
+                            rest,
+                            None,
+                            out,
+                        )?;
+                        eprintln!("fatal: missing path for '{}'", oid.to_hex());
+                        std::process::exit(128);
+                    }
+
+                    if let Some(ref p) = path_for_attrs {
+                        if repo.work_tree.is_none() {
+                            emit_batch_object_lines(
+                                repo,
+                                oid,
+                                &obj,
+                                mode,
+                                false,
+                                format,
+                                nul_output,
+                                packed_sizes,
+                                rest,
+                                None,
+                                out,
+                            )?;
+                            let flag = if opts.batch_textconv {
+                                "--textconv"
+                            } else {
+                                "--filters"
+                            };
+                            eprintln!("fatal: <rev> required with '{flag}'");
+                            std::process::exit(129);
+                        }
+                        let oid_hex = oid.to_string();
+                        let payload =
+                            cat_file_batch_blob_payload(repo, p, &obj.data, &oid_hex, opts)?;
+                        emit_batch_object_lines(
+                            repo,
+                            oid,
+                            &obj,
+                            mode,
+                            true,
+                            format,
+                            nul_output,
+                            packed_sizes,
+                            rest,
+                            Some(payload.as_slice()),
+                            out,
+                        )?;
+                        return Ok(());
+                    }
+                }
+
                 emit_batch_object_lines(
                     repo,
                     oid,
@@ -1198,6 +1361,7 @@ fn print_batch_entry(
                     nul_output,
                     packed_sizes,
                     rest,
+                    None,
                     out,
                 )?;
             }
@@ -1348,6 +1512,125 @@ fn pretty_print(kind: &ObjectKind, data: &[u8]) -> Result<()> {
 /// Uses the full rev-parse machinery for resolution.
 fn resolve_object(repo: &Repository, obj_str: &str) -> Result<ObjectId> {
     rev_parse::resolve_revision(repo, obj_str).map_err(|e| anyhow::anyhow!("{}", e))
+}
+
+/// Emit `--textconv` / `--filters` output for a single object (non-batch).
+fn cat_file_emit_transformed(
+    repo: &Repository,
+    args: &Args,
+    oid: &ObjectId,
+    obj: &grit_lib::objects::Object,
+    obj_spec: &str,
+) -> Result<()> {
+    let path = cat_file_transform_path(args, obj_spec)?;
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+
+    if obj.kind != ObjectKind::Blob {
+        eprintln!("fatal: <object>:<path> required, only <object> '{obj_spec}' given");
+        std::process::exit(128);
+    }
+
+    let work_tree = match repo.work_tree.as_deref() {
+        Some(wt) => wt,
+        None => {
+            eprintln!(
+                "fatal: <rev> required with '{}'",
+                mode_flag_for_transform(args)
+            );
+            std::process::exit(129);
+        }
+    };
+
+    let index = repo.load_index().ok();
+    let oid_hex = format!("{oid}");
+    let smudged = convert_blob_to_worktree_for_path(
+        &repo.git_dir,
+        work_tree,
+        index.as_ref(),
+        &repo.odb,
+        &path,
+        &obj.data,
+        Some(&oid_hex),
+    )
+    .map_err(|e| anyhow::anyhow!("could not convert '{oid_hex}' {path}: {e}"))?;
+
+    let data = if args.filters {
+        smudged
+    } else {
+        let rules = match index.as_ref() {
+            Some(idx) => crlf::load_gitattributes_for_checkout(work_tree, &path, idx, &repo.odb),
+            None => crlf::load_gitattributes(work_tree),
+        };
+        let fa = crlf::get_file_attrs(&rules, &path, &config);
+        let driver = match &fa.diff_attr {
+            DiffAttr::Driver(d) => d.as_str(),
+            _ => {
+                let stdout = io::stdout();
+                let mut out = stdout.lock();
+                out.write_all(&smudged)?;
+                return Ok(());
+            }
+        };
+        match run_textconv_raw(&repo.git_dir, &config, driver, &smudged) {
+            Some(b) => b,
+            None => {
+                eprintln!("fatal: unable to read files to diff");
+                std::process::exit(128);
+            }
+        }
+    };
+
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    out.write_all(&data)?;
+    Ok(())
+}
+
+fn mode_flag_for_transform(args: &Args) -> &'static str {
+    if args.textconv {
+        "--textconv"
+    } else {
+        "--filters"
+    }
+}
+
+/// Path string for attribute lookup: `--path` if set, else the path from `<rev>:path`.
+fn cat_file_transform_path(args: &Args, obj_spec: &str) -> Result<String> {
+    if let Some(p) = args.path.as_deref() {
+        return Ok(p.replace('\\', "/"));
+    }
+    let Some(colon) = obj_spec.find(':') else {
+        eprintln!("fatal: <object>:<path> required, only <object> '{obj_spec}' given");
+        std::process::exit(128);
+    };
+    let path_part = &obj_spec[colon + 1..];
+    if path_part.is_empty() {
+        eprintln!("fatal: <object>:<path> required, only <object> '{obj_spec}' given");
+        std::process::exit(128);
+    }
+    Ok(path_part.replace('\\', "/"))
+}
+
+/// Split batch input when `--textconv` / `--filters` is active: object id is the first token;
+/// optional path is the remainder of the line (Git nulls the first run of spaces).
+fn split_batch_object_field_and_rest(line: &str) -> (&str, &str, Option<&str>) {
+    let trimmed = line.trim();
+    let bytes = trimmed.as_bytes();
+    for i in 0..bytes.len() {
+        if bytes[i].is_ascii_whitespace() {
+            let obj = trimmed[..i].trim_end();
+            let mut j = i;
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            let path = trimmed[j..].trim_end();
+            if path.is_empty() {
+                return (obj, obj, None);
+            }
+            return (obj, obj, Some(path));
+        }
+    }
+    (trimmed, trimmed, None)
 }
 
 /// Resolve an object reference and also return the file mode if the reference
