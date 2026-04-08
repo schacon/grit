@@ -1,19 +1,13 @@
 #!/bin/sh
-<<<<<<< HEAD
-=======
 #
 # Upstream: t5555-http-smart-common.sh
 # Tests functionality common to smart fetch & push (advertise-refs).
 # These tests exercise real git's upload-pack/receive-pack protocol.
-#
->>>>>>> test/batch-GE
 
 test_description='test functionality common to smart fetch & push'
 
 . ./test-lib.sh
 
-<<<<<<< HEAD
-=======
 # These tests need real git's upload-pack / receive-pack (not grit).
 REAL_GIT="$(command -v git 2>/dev/null || echo /usr/bin/git)"
 for _p in $(echo "$PATH" | tr ':' ' '); do
@@ -23,14 +17,15 @@ for _p in $(echo "$PATH" | tr ':' ' '); do
 	fi
 done
 
-# Override the git wrapper to use real git for this test
+# Override PATH so `git` resolves to real git (test-lib prepends BIN_DIRECTORY/grit).
+mkdir -p "$TRASH_DIRECTORY/.bin"
 cat >"$TRASH_DIRECTORY/.bin/git" <<EOFWRAP
 #!/bin/sh
 exec "$REAL_GIT" "\$@"
 EOFWRAP
 chmod +x "$TRASH_DIRECTORY/.bin/git"
+export PATH="$TRASH_DIRECTORY/.bin:$PATH"
 
->>>>>>> test/batch-GE
 test_expect_success 'setup' '
 	test_commit --no-tag initial
 '
@@ -92,10 +87,7 @@ test_expect_success 'git upload-pack --advertise-refs: v0' '
 	test-tool pkt-line unpack <out >actual 2>err &&
 	test_must_be_empty err &&
 	test_cmp actual expect
-<<<<<<< HEAD
 
-=======
->>>>>>> test/batch-GE
 '
 
 test_expect_success 'git receive-pack --advertise-refs: v0' '
@@ -116,17 +108,11 @@ test_expect_success 'git receive-pack --advertise-refs: v0' '
 	test-tool pkt-line unpack <out >actual 2>err &&
 	test_must_be_empty err &&
 	test_cmp actual expect
-<<<<<<< HEAD
 
 '
 
 test_expect_success 'git upload-pack --advertise-refs: v1' '
 	# With no specified protocol
-=======
-'
-
-test_expect_success 'git upload-pack --advertise-refs: v1' '
->>>>>>> test/batch-GE
 	cat >expect <<-EOF &&
 	version 1
 	$(git rev-parse HEAD) HEAD
@@ -143,10 +129,7 @@ test_expect_success 'git upload-pack --advertise-refs: v1' '
 '
 
 test_expect_success 'git receive-pack --advertise-refs: v1' '
-<<<<<<< HEAD
 	# With no specified protocol
-=======
->>>>>>> test/batch-GE
 	cat >expect <<-EOF &&
 	version 1
 	$(git rev-parse HEAD) $(git symbolic-ref HEAD)
@@ -162,30 +145,14 @@ test_expect_success 'git receive-pack --advertise-refs: v1' '
 '
 
 test_expect_success 'git upload-pack --advertise-refs: v2' '
-<<<<<<< HEAD
-	cat >expect <<-EOF &&
-	version 2
-	agent=FAKE
-	ls-refs=unborn
-	fetch=shallow wait-for-done
-	server-option
-	object-format=$(test_oid algo)
-	0000
-	EOF
-
-=======
->>>>>>> test/batch-GE
 	GIT_PROTOCOL=version=2 \
 	GIT_USER_AGENT=FAKE \
 	git upload-pack --advertise-refs . >out 2>err &&
 
 	test-tool pkt-line unpack <out >actual &&
 	test_must_be_empty err &&
-<<<<<<< HEAD
-	test_cmp actual expect
-=======
 
-	# Check required lines are present (capabilities may vary by git version)
+	# Required capabilities; extra lines (e.g. object-info) vary by git version.
 	grep "^version 2$" actual &&
 	grep "^agent=FAKE$" actual &&
 	grep "^ls-refs=unborn$" actual &&
@@ -193,7 +160,6 @@ test_expect_success 'git upload-pack --advertise-refs: v2' '
 	grep "^server-option$" actual &&
 	grep "^object-format=$(test_oid algo)$" actual &&
 	grep "^0000$" actual
->>>>>>> test/batch-GE
 '
 
 test_expect_success 'git receive-pack --advertise-refs: v2' '
