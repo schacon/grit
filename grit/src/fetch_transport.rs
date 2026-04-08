@@ -304,6 +304,23 @@ fn read_sideband_pack_until_done(r: &mut impl Read, out: &mut Vec<u8>) -> Result
     Ok(())
 }
 
+/// Fetch via `upload-pack` using explicit object IDs (e.g. lazy promisor fetch).
+///
+/// Negotiates using the same skipping strategy as [`fetch_via_upload_pack_skipping`], but the
+/// client `want` lines are exactly `wants` (typically a single OID not advertised as a ref).
+/// Returns the raw `PACK` bytes (side-band demultiplexed).
+pub fn fetch_upload_pack_explicit_wants(
+    local_git_dir: &Path,
+    remote_repo_path: &Path,
+    upload_pack_cmd: Option<&str>,
+    wants: &[ObjectId],
+) -> Result<Vec<u8>> {
+    if wants.is_empty() {
+        bail!("nothing to fetch (empty want list)");
+    }
+    fetch_upload_pack_negotiate_pack_bytes(local_git_dir, remote_repo_path, upload_pack_cmd, wants)
+}
+
 /// Fetch via `upload-pack` using skipping negotiation; unpack pack into `local_git_dir`.
 ///
 /// Returns remote heads and tags from the ref advertisement.
@@ -313,9 +330,6 @@ pub fn fetch_via_upload_pack_skipping(
     upload_pack_cmd: Option<&str>,
     refspecs: &[String],
 ) -> Result<(Vec<(String, ObjectId)>, Vec<(String, ObjectId)>)> {
-    let local_repo = Repository::open(local_git_dir, None)
-        .with_context(|| format!("open local repository {}", local_git_dir.display()))?;
-
     let mut child = spawn_upload_pack(upload_pack_cmd, remote_repo_path)?;
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
@@ -325,7 +339,6 @@ pub fn fetch_via_upload_pack_skipping(
     if wants.is_empty() {
         bail!("nothing to fetch (advertised {} ref(s))", advertised.len());
     }
-    let want_set: HashSet<ObjectId> = wants.iter().copied().collect();
 
     let remote_heads: Vec<_> = advertised
         .iter()
@@ -337,6 +350,72 @@ pub fn fetch_via_upload_pack_skipping(
         .filter(|(n, _)| n.starts_with("refs/tags/"))
         .cloned()
         .collect();
+
+    let pack_buf = fetch_upload_pack_negotiate_pack_bytes_with_streams(
+        local_git_dir,
+        &advertised,
+        &mut stdin,
+        &mut stdout,
+        &wants,
+    )?;
+
+    let status = child.wait()?;
+    if !status.success() {
+        bail!("upload-pack exited with {}", status);
+    }
+
+    if pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK" {
+        bail!("did not receive a pack file from upload-pack");
+    }
+
+    let odb = Odb::new(&local_git_dir.join("objects"));
+    unpack_objects(&mut pack_buf.as_slice(), &odb, &UnpackOptions::default())?;
+
+    Ok((remote_heads, remote_tags))
+}
+
+fn fetch_upload_pack_negotiate_pack_bytes(
+    local_git_dir: &Path,
+    remote_repo_path: &Path,
+    upload_pack_cmd: Option<&str>,
+    wants: &[ObjectId],
+) -> Result<Vec<u8>> {
+    let mut child = spawn_upload_pack(upload_pack_cmd, remote_repo_path)?;
+    let mut stdin = child.stdin.take().context("upload-pack stdin")?;
+    let mut stdout = child.stdout.take().context("upload-pack stdout")?;
+
+    let advertised = read_advertisement(&mut stdout)?;
+    let pack_buf = fetch_upload_pack_negotiate_pack_bytes_with_streams(
+        local_git_dir,
+        &advertised,
+        &mut stdin,
+        &mut stdout,
+        wants,
+    )?;
+
+    let status = child.wait()?;
+    if !status.success() {
+        bail!("upload-pack exited with {}", status);
+    }
+
+    if pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK" {
+        bail!("did not receive a pack file from upload-pack");
+    }
+
+    Ok(pack_buf)
+}
+
+fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
+    local_git_dir: &Path,
+    advertised: &[(String, ObjectId)],
+    stdin: &mut impl Write,
+    stdout: &mut impl Read,
+    wants: &[ObjectId],
+) -> Result<Vec<u8>> {
+    let local_repo = Repository::open(local_git_dir, None)
+        .with_context(|| format!("open local repository {}", local_git_dir.display()))?;
+
+    let want_set: HashSet<ObjectId> = wants.iter().copied().collect();
 
     let first_want = wants[0];
     let caps = " multi_ack_detailed thin-pack ofs-delta side-band-64k no-progress";
@@ -354,7 +433,7 @@ pub fn fetch_via_upload_pack_skipping(
     stdin.flush()?;
 
     let mut negotiator = SkippingNegotiator::new(local_repo);
-    for (_, oid) in &advertised {
+    for (_, oid) in advertised {
         if want_set.contains(oid) {
             continue;
         }
@@ -419,7 +498,7 @@ pub fn fetch_via_upload_pack_skipping(
                 continue;
             }
 
-            read_ack_round_with_negotiator(&mut stdout, &mut negotiator)?;
+            read_ack_round_with_negotiator(stdout, &mut negotiator)?;
             flushes -= 1;
         }
     }
@@ -432,7 +511,7 @@ pub fn fetch_via_upload_pack_skipping(
     }
 
     while flushes > 0 {
-        read_ack_round_with_negotiator(&mut stdout, &mut negotiator)?;
+        read_ack_round_with_negotiator(stdout, &mut negotiator)?;
         flushes -= 1;
     }
 
@@ -444,19 +523,7 @@ pub fn fetch_via_upload_pack_skipping(
     stdin.flush()?;
 
     let mut pack_buf = Vec::new();
-    read_sideband_pack_until_done(&mut stdout, &mut pack_buf)?;
+    read_sideband_pack_until_done(stdout, &mut pack_buf)?;
 
-    let status = child.wait()?;
-    if !status.success() {
-        bail!("upload-pack exited with {}", status);
-    }
-
-    if pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK" {
-        bail!("did not receive a pack file from upload-pack");
-    }
-
-    let odb = Odb::new(&local_git_dir.join("objects"));
-    unpack_objects(&mut pack_buf.as_slice(), &odb, &UnpackOptions::default())?;
-
-    Ok((remote_heads, remote_tags))
+    Ok(pack_buf)
 }

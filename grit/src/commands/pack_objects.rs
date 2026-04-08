@@ -11,11 +11,11 @@ use grit_lib::config::ConfigSet;
 use sha1::{Digest, Sha1};
 use std::collections::BTreeSet;
 use std::io::{self, BufRead, Write};
-use std::process::{Command, Stdio};
 
 use grit_lib::delta_encode::encode_prefix_extension_delta;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
+use grit_lib::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
 use grit_lib::repo::Repository;
 use std::collections::HashMap;
 
@@ -374,6 +374,14 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<Vec<ObjectId>> {
         }
     }
 
+    if args.exclude_promisor_objects {
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        if repo_treats_promisor_packs(&repo.git_dir, &config) {
+            let skip = promisor_pack_object_ids(&repo.git_dir.join("objects"));
+            oids.retain(|o| !skip.contains(o));
+        }
+    }
+
     Ok(oids.into_iter().collect())
 }
 
@@ -512,7 +520,7 @@ fn read_object_from_repo(repo: &Repository, oid: &ObjectId) -> Result<grit_lib::
             return Ok(obj);
         }
     }
-    maybe_lazy_fetch_missing_object(repo)?;
+    maybe_lazy_fetch_missing_object(repo, oid)?;
     if let Ok(obj) = repo.odb.read(oid) {
         return Ok(obj);
     }
@@ -528,43 +536,14 @@ fn read_object_from_repo(repo: &Repository, oid: &ObjectId) -> Result<grit_lib::
     bail!("object not found: {}", oid.to_hex())
 }
 
-fn maybe_lazy_fetch_missing_object(repo: &Repository) -> Result<()> {
+fn maybe_lazy_fetch_missing_object(repo: &Repository, oid: &ObjectId) -> Result<()> {
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-    let is_promisor = config
-        .get("remote.origin.promisor")
-        .map(|v| v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-        || config.get("extensions.partialClone").is_some();
-    if !is_promisor {
+    if !repo_treats_promisor_packs(&repo.git_dir, &config) {
         bail!("missing object in non-promisor repository");
     }
-    if std::env::var("GIT_NO_LAZY_FETCH")
-        .ok()
-        .as_deref()
-        .is_some_and(|v| v != "0")
-    {
-        bail!("lazy fetching disabled");
-    }
-
-    let upload_pack = config
-        .get("remote.origin.uploadpack")
-        .unwrap_or_else(|| "git-upload-pack".to_owned());
-    let remote_url = config
-        .get("remote.origin.url")
-        .ok_or_else(|| anyhow::anyhow!("missing remote.origin.url"))?;
-    let status = Command::new("sh")
-        .arg("-c")
-        .arg(format!("{upload_pack} '{remote_url}'"))
-        .current_dir(repo.git_dir.parent().unwrap_or(&repo.git_dir))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .status()
-        .context("failed to execute upload-pack")?;
-    if !status.success() {
-        bail!("lazy fetch failed");
-    }
-    Ok(())
+    crate::commands::promisor_hydrate::try_lazy_fetch_promisor_object(repo, *oid)
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .map(|_| ())
 }
 
 /// Read and decompress a single object from pack bytes at the given offset.

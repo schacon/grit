@@ -140,6 +140,41 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
+/// Write `pack_bytes` under `repo`'s `objects/pack/`, build the `.idx`, and return the `.pack` path.
+///
+/// Used when ingesting a pack from the network (e.g. promisor lazy fetch) without unpacking loose objects.
+pub(crate) fn ingest_pack_bytes(
+    repo: &grit_lib::repo::Repository,
+    pack_bytes: &[u8],
+    fix_thin: bool,
+) -> Result<PathBuf> {
+    if pack_bytes.len() < 12 + 20 {
+        bail!("pack too small");
+    }
+    if &pack_bytes[0..4] != b"PACK" {
+        bail!("not a pack file: invalid signature");
+    }
+    let version = u32::from_be_bytes(pack_bytes[4..8].try_into()?);
+    if version != 2 && version != 3 {
+        bail!("unsupported pack version {version}");
+    }
+    let nr_objects = u32::from_be_bytes(pack_bytes[8..12].try_into()?) as usize;
+    let resolved = parse_and_resolve(pack_bytes, nr_objects, fix_thin)?;
+    let pack_dir = repo.odb.objects_dir().join("pack");
+    fs::create_dir_all(&pack_dir)?;
+    let pack_hash = {
+        let mut h = Sha1::new();
+        h.update(pack_bytes);
+        hex::encode(h.finalize())
+    };
+    let pack_out = pack_dir.join(format!("pack-{pack_hash}.pack"));
+    let idx_out = pack_dir.join(format!("pack-{pack_hash}.idx"));
+    fs::write(&pack_out, pack_bytes)?;
+    let idx_bytes = build_idx_v2(&resolved, pack_bytes)?;
+    fs::write(&idx_out, &idx_bytes)?;
+    Ok(pack_out)
+}
+
 /// Parse all pack objects and resolve deltas.
 fn parse_and_resolve(
     pack_bytes: &[u8],

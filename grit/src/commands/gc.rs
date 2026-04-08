@@ -7,17 +7,22 @@
 //! (including **`--aggressive`** and cruft / keep-largest-pack forwarding).
 
 use crate::commands::pack_refs;
+use crate::commands::repack;
+use crate::commands::update_server_info;
 use crate::grit_exe;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::hooks::{run_hook, HookResult};
+use grit_lib::objects::ObjectId;
 use grit_lib::prune_packed::{prune_packed_objects, PrunePackedOptions};
+use grit_lib::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
 use grit_lib::reflog::{expire_reflog, expire_reflog_unreachable, list_reflog_refs};
 use grit_lib::repo::Repository;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::SystemTime;
 
 /// Arguments for `grit gc`.
@@ -190,6 +195,19 @@ fn check_or_clear_stale_gc_pid(pid_path: &Path) -> Result<()> {
 /// Pack loose and packed objects into a new pack, then drop redundant packs (`-d`), same as
 /// `maintenance`’s loose-objects task (`-l`).
 fn run_repack_for_gc(repo: &Repository, quiet: bool, gc_args: &Args) -> Result<()> {
+    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let objects_dir = repo.git_dir.join("objects");
+    if repo_treats_promisor_packs(&repo.git_dir, &cfg) {
+        let mut promisor_ids: Vec<ObjectId> = promisor_pack_object_ids(&objects_dir)
+            .into_iter()
+            .collect();
+        promisor_ids.sort_by_key(|o| o.to_hex());
+        promisor_ids.dedup();
+        if !promisor_ids.is_empty() {
+            return run_promisor_merge_repack_gc(repo, quiet, gc_args, &promisor_ids);
+        }
+    }
+
     let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
     let mut cmd = Command::new(grit_exe::grit_executable());
     cmd.current_dir(work_dir).args(["repack", "-d", "-l"]);
@@ -212,6 +230,104 @@ fn run_repack_for_gc(repo: &Repository, quiet: bool, gc_args: &Args) -> Result<(
     if !status.success() {
         eprintln!("warning: repack returned non-zero status");
     }
+    Ok(())
+}
+
+fn parse_pack_objects_stdout_hash(stdout: &[u8]) -> Result<String> {
+    let line = std::str::from_utf8(stdout)
+        .context("pack-objects stdout not utf-8")?
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .trim();
+    if line.is_empty() {
+        bail!("pack-objects did not print a pack hash on stdout");
+    }
+    Ok(line.to_string())
+}
+
+fn apply_gc_pack_objects_args(cmd: &mut Command, quiet: bool, gc_args: &Args) {
+    if quiet {
+        cmd.arg("-q");
+    }
+    if gc_args.aggressive {
+        cmd.arg("-f");
+        cmd.arg("--window").arg("250");
+        cmd.arg("--depth").arg("250");
+    }
+    if gc_args.cruft {
+        cmd.arg("--cruft");
+    }
+    if gc_args.no_cruft {
+        cmd.arg("--no-cruft");
+    }
+    if gc_args.keep_largest_pack {
+        cmd.arg("--keep-largest-pack");
+    }
+}
+
+/// Merge all promisor-pack objects into one promisor pack, then repack non-promisor objects.
+fn run_promisor_merge_repack_gc(
+    repo: &Repository,
+    quiet: bool,
+    gc_args: &Args,
+    promisor_ids: &[ObjectId],
+) -> Result<()> {
+    let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
+    let grit_bin = grit_exe::grit_executable();
+    let pack_base = if repo.work_tree.is_some() {
+        ".git/objects/pack/pack"
+    } else {
+        "objects/pack/pack"
+    };
+
+    let mut cmd1 = Command::new(&grit_bin);
+    cmd1.current_dir(work_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .arg("pack-objects")
+        .arg(pack_base);
+    apply_gc_pack_objects_args(&mut cmd1, quiet, gc_args);
+
+    let mut child = cmd1.spawn().context("spawn pack-objects for promisor merge")?;
+    {
+        let mut stdin = child.stdin.take().context("pack-objects stdin")?;
+        for oid in promisor_ids {
+            writeln!(stdin, "{}", oid.to_hex())?;
+        }
+    }
+    let out1 = child.wait_with_output().context("wait pack-objects promisor merge")?;
+    if !out1.status.success() {
+        bail!("pack-objects (promisor merge) failed with status {}", out1.status);
+    }
+    let hash1 = parse_pack_objects_stdout_hash(&out1.stdout)?;
+    let promisor_pack_name = format!("pack-{hash1}.pack");
+    let pack_dir = repo.git_dir.join("objects/pack");
+    fs::write(pack_dir.join(format!("pack-{hash1}.promisor")), b"")?;
+
+    let mut cmd2 = Command::new(&grit_bin);
+    cmd2.current_dir(work_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .arg("pack-objects")
+        .arg("--all")
+        .arg("--exclude-promisor-objects")
+        .arg(pack_base);
+    apply_gc_pack_objects_args(&mut cmd2, quiet, gc_args);
+
+    let out2 = cmd2.output().context("run pack-objects for non-promisor gc")?;
+    if !out2.status.success() {
+        bail!(
+            "pack-objects (non-promisor) failed with status {}",
+            out2.status
+        );
+    }
+    let hash2 = parse_pack_objects_stdout_hash(&out2.stdout)?;
+    let main_pack_name = format!("pack-{hash2}.pack");
+
+    repack::remove_superseded_packs_multi(&pack_dir, &[promisor_pack_name, main_pack_name])?;
+    update_server_info::refresh_objects_info_packs(repo)?;
     Ok(())
 }
 

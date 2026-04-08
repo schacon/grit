@@ -462,8 +462,11 @@ def generate_testfiles(rows: list[dict[str, str]]) -> str:
         )
         pc = pct(pl, tt) if tt > 0 else 0.0
         row_cls = "row-skip" if is_skip else ""
+        full_pass_attr = (
+            ' data-full-pass="1"' if fp and tt > 0 and not is_skip else ""
+        )
         table_rows += f"""
-<tr class="{row_cls}" data-group="{html.escape(g)}" data-tests="{tt}" data-passed="{pl}">
+<tr class="{row_cls}" data-group="{html.escape(g)}" data-tests="{tt}" data-passed="{pl}"{full_pass_attr}>
   <td class="mono">{html.escape(base)}</td>
   <td>{html.escape(g)}</td>
   <td>{skip_badge}{fp_badge}</td>
@@ -501,6 +504,22 @@ h1 {{ font-size: 1.5rem; margin-bottom: 0.25rem; }}
 a {{ color: #58a6ff; text-decoration: none; }}
 a:hover {{ text-decoration: underline; }}
 .toolbar {{ display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin-bottom: 1rem; }}
+.toolbar label.work-only {{
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  color: #e6edf3;
+  cursor: pointer;
+  user-select: none;
+}}
+.toolbar label.work-only input {{
+  width: auto;
+  min-width: unset;
+  margin: 0;
+  cursor: pointer;
+  accent-color: #58a6ff;
+}}
 select, input {{
   background: #161b22;
   border: 1px solid #30363d;
@@ -567,7 +586,7 @@ tr.row-skip td {{ opacity: 0.65; }}
 <h1>Test files</h1>
 <p class="sub"><a href="index.html">Dashboard</a> · {time_el} · {sha_l}</p>
 
-<div class="summary-cards" id="summaryCards" aria-label="Aggregate counts for visible in-scope rows" aria-live="polite">
+<div class="summary-cards" id="summaryCards" aria-label="Aggregate counts for the current view (group, search, and Remaining work only)" aria-live="polite">
   <div class="card"><div class="n" id="sum-files">{file_count:,}</div><div class="lbl">Files in scope</div></div>
   <div class="card"><div class="n" id="sum-tests">{total_tests:,}</div><div class="lbl">Unskipped tests</div></div>
   <div class="card accent"><div class="n" id="sum-passed">{total_pass:,}</div><div class="lbl">Tests passed</div></div>
@@ -579,6 +598,10 @@ tr.row-skip td {{ opacity: 0.65; }}
   <label for="groupSel">Group</label>
   <select id="groupSel" aria-label="Filter by group">{options}</select>
   <input type="search" id="search" placeholder="Filter by file name…" aria-label="Search">
+  <label class="work-only" title="Hide manually skipped files and in-scope files that fully pass all tests">
+    <input type="checkbox" id="workOnly" aria-describedby="summaryNote">
+    Remaining work only
+  </label>
   <span id="count" class="sub"></span>
 </div>
 
@@ -599,7 +622,7 @@ tr.row-skip td {{ opacity: 0.65; }}
 {table_rows}
 </tbody>
 </table>
-<p class="hint">Manually skipped files are marked and excluded from the aggregate cards (totals follow visible rows when you filter). The same exclusions apply to dashboard totals on the main page. Rows with <code>expect_failure</code> count known-breakage stubs in the harness.</p>
+<p class="hint">Manually skipped files are marked and excluded from the aggregate cards (totals follow visible rows when you filter). Use <strong>Remaining work only</strong> to hide skipped and fully passing files and scope the cards to work left to do. The same exclusions apply to dashboard totals on the main page. Rows with <code>expect_failure</code> count known-breakage stubs in the harness.</p>
 
 <script>
 (function() {{
@@ -607,11 +630,14 @@ tr.row-skip td {{ opacity: 0.65; }}
   const initial = params.get('group') || '';
   const sel = document.getElementById('groupSel');
   const search = document.getElementById('search');
+  const workOnly = document.getElementById('workOnly');
   sel.value = initial;
+  workOnly.checked = params.get('remaining') === '1' || params.get('remaining') === 'true';
 
   function apply() {{
     const g = sel.value;
     const q = (search.value || '').toLowerCase();
+    const onlyWork = workOnly.checked;
     const rows = document.querySelectorAll('#tbody tr');
     let nShown = 0;
     let files = 0, tests = 0, passed = 0;
@@ -620,11 +646,18 @@ tr.row-skip td {{ opacity: 0.65; }}
       const file = row.cells[0].textContent.toLowerCase();
       const okG = !g || rg === g;
       const okQ = !q || file.includes(q);
-      const show = okG && okQ;
+      const isSkip = row.classList.contains('row-skip');
+      const isFullPass = row.dataset.fullPass === '1';
+      const isWorkRow = !isSkip && !isFullPass;
+      const show = okG && okQ && (!onlyWork || isWorkRow);
       row.style.display = show ? '' : 'none';
       if (show) {{
         nShown++;
-        if (!row.classList.contains('row-skip')) {{
+        if (onlyWork) {{
+          files++;
+          tests += parseInt(row.dataset.tests || '0', 10);
+          passed += parseInt(row.dataset.passed || '0', 10);
+        }} else if (!isSkip) {{
           files++;
           tests += parseInt(row.dataset.tests || '0', 10);
           passed += parseInt(row.dataset.passed || '0', 10);
@@ -632,23 +665,31 @@ tr.row-skip td {{ opacity: 0.65; }}
       }}
     }});
     const nf = (x) => x.toLocaleString('en-US');
-    const pct = tests > 0 ? Math.round(1000 * passed / tests) / 10 : 0;
+    const pctVal = tests > 0 ? Math.round(1000 * passed / tests) / 10 : 0;
     document.getElementById('sum-files').textContent = nf(files);
     document.getElementById('sum-tests').textContent = nf(tests);
     document.getElementById('sum-passed').textContent = nf(passed);
-    document.getElementById('sum-pct').textContent = pct + '%';
+    document.getElementById('sum-pct').textContent = pctVal + '%';
     const filtered = !!(g || q);
-    document.getElementById('summaryNote').textContent = filtered
-      ? 'Totals reflect visible rows (manually skipped files still excluded).'
-      : '';
+    let note = '';
+    if (onlyWork) {{
+      note = filtered
+        ? 'Totals reflect remaining work in this filter (skipped and fully passing files hidden).'
+        : 'Totals reflect remaining work (skipped and fully passing files hidden).';
+    }} else if (filtered) {{
+      note = 'Totals reflect visible rows (manually skipped files still excluded).';
+    }}
+    document.getElementById('summaryNote').textContent = note;
     document.getElementById('count').textContent = nShown + ' files shown';
     const u = new URL(window.location.href);
     if (g) u.searchParams.set('group', g); else u.searchParams.delete('group');
+    if (onlyWork) u.searchParams.set('remaining', '1'); else u.searchParams.delete('remaining');
     history.replaceState(null, '', u.pathname + u.search);
   }}
 
   sel.addEventListener('change', apply);
   search.addEventListener('input', apply);
+  workOnly.addEventListener('change', apply);
   apply();
 }})();
 </script>

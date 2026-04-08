@@ -12,7 +12,9 @@ use grit_lib::diff::zero_oid;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pack::read_local_pack_indexes;
-use grit_lib::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
+use grit_lib::promisor::{
+    promisor_expanded_object_ids, promisor_pack_object_ids, repo_treats_promisor_packs,
+};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -104,7 +106,16 @@ pub fn run(args: Args) -> Result<()> {
     //    Also track missing objects and (optionally) bad objects.
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let promisor_active = repo_treats_promisor_packs(&repo.git_dir, &config);
-    let promisor_oids = promisor_pack_object_ids(&objects_dir);
+    // Objects listed in promisor pack indexes — traversal stops here (Git does not recurse
+    // past promisor-pack objects).
+    let promisor_pack_oids = promisor_pack_object_ids(&objects_dir);
+    // Full promisor closure: pack objects plus referenced OIDs (parents, trees, tag targets,
+    // etc.). Used for reflog validation and for treating missing loose objects as promised.
+    let promisor_expanded: HashSet<ObjectId> = if promisor_active {
+        promisor_expanded_object_ids(&repo).context("failed to compute promisor object set")?
+    } else {
+        HashSet::new()
+    };
     let packed_ids = collect_packed_ids(&objects_dir)?;
 
     let (reachable, walked_kinds) = walk_reachable(
@@ -114,7 +125,8 @@ pub fn run(args: Args) -> Result<()> {
         &packed_ids,
         connectivity_only,
         promisor_active,
-        &promisor_oids,
+        &promisor_pack_oids,
+        &promisor_expanded,
         &mut issues,
     )?;
 
@@ -123,7 +135,7 @@ pub fn run(args: Args) -> Result<()> {
         &odb,
         &packed_ids,
         promisor_active,
-        &promisor_oids,
+        &promisor_expanded,
         &mut issues,
     )?;
 
@@ -299,7 +311,8 @@ fn walk_reachable(
     packed_ids: &HashSet<ObjectId>,
     connectivity_only: bool,
     promisor_active: bool,
-    promisor_oids: &HashSet<ObjectId>,
+    promisor_pack_oids: &HashSet<ObjectId>,
+    promisor_expanded: &HashSet<ObjectId>,
     issues: &mut Vec<Issue>,
 ) -> Result<(HashSet<ObjectId>, HashSet<ObjectId>)> {
     let _ = objects_dir;
@@ -335,6 +348,9 @@ fn walk_reachable(
                 if packed_ids.contains(&oid) {
                     continue;
                 }
+                if promisor_active && promisor_expanded.contains(&oid) {
+                    continue;
+                }
                 let ref_oid = referrer.unwrap_or(oid);
                 issues.push(Issue::Missing {
                     oid,
@@ -351,8 +367,8 @@ fn walk_reachable(
             validate_object_data(&oid, &obj.kind, &obj.data, issues);
         }
 
-        // Objects in promisor packs stop traversal (Git `fsck` / `is_promisor_object`).
-        if promisor_active && promisor_oids.contains(&oid) {
+        // Objects stored in promisor packs stop traversal (do not walk into parents/trees).
+        if promisor_active && promisor_pack_oids.contains(&oid) {
             continue;
         }
 
@@ -389,7 +405,7 @@ fn check_reflog_entries(
     odb: &Odb,
     packed_ids: &HashSet<ObjectId>,
     promisor_active: bool,
-    promisor_oids: &HashSet<ObjectId>,
+    promisor_expanded: &HashSet<ObjectId>,
     issues: &mut Vec<Issue>,
 ) -> Result<()> {
     if grit_lib::reftable::is_reftable_repo(git_dir) {
@@ -405,7 +421,7 @@ fn check_reflog_entries(
         odb,
         packed_ids,
         promisor_active,
-        promisor_oids,
+        promisor_expanded,
         issues,
     )?;
     Ok(())
@@ -417,7 +433,7 @@ fn check_reflog_dir(
     odb: &Odb,
     packed_ids: &HashSet<ObjectId>,
     promisor_active: bool,
-    promisor_oids: &HashSet<ObjectId>,
+    promisor_expanded: &HashSet<ObjectId>,
     issues: &mut Vec<Issue>,
 ) -> Result<()> {
     for entry in fs::read_dir(dir).map_err(|e| anyhow::anyhow!(e))? {
@@ -430,7 +446,7 @@ fn check_reflog_dir(
                 odb,
                 packed_ids,
                 promisor_active,
-                promisor_oids,
+                promisor_expanded,
                 issues,
             )?;
         } else if path.is_file() {
@@ -446,7 +462,7 @@ fn check_reflog_dir(
                         if odb.read(&oid).is_ok() || packed_ids.contains(&oid) {
                             continue;
                         }
-                        if promisor_active && promisor_oids.contains(&oid) {
+                        if promisor_active && promisor_expanded.contains(&oid) {
                             continue;
                         }
                         issues.push(Issue::InvalidReflog {

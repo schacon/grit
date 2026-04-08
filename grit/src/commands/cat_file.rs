@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse;
+
+use crate::commands::promisor_hydrate;
 use grit_lib::tree_path_follow::{
     get_tree_entry_follow_symlinks, FollowPathFailure, FollowPathResult,
 };
@@ -214,10 +216,14 @@ pub fn run(args: Args) -> Result<()> {
         if repo.odb.exists(&oid) {
             return Ok(());
         }
+        if promisor_hydrate::try_lazy_fetch_promisor_object(&repo, oid).is_ok() && repo.odb.exists(&oid)
+        {
+            return Ok(());
+        }
         std::process::exit(1);
     }
 
-    let obj = match repo.read_replaced(&oid) {
+    let obj = match read_object_with_promisor_lazy_fetch(&repo, &oid, false) {
         Ok(o) => o,
         Err(e) => exit_cat_file_read_error(&e, &args, obj_str),
     };
@@ -255,7 +261,11 @@ pub fn run(args: Args) -> Result<()> {
                         _current_oid = target_hex
                             .parse::<ObjectId>()
                             .map_err(|_| anyhow::anyhow!("bad tag target"))?;
-                        current_obj = match repo.read_replaced(&_current_oid) {
+                        current_obj = match read_object_with_promisor_lazy_fetch(
+                            &repo,
+                            &_current_oid,
+                            false,
+                        ) {
                             Ok(o) => o,
                             Err(e) => exit_cat_file_read_error(&e, &args, obj_str),
                         };
@@ -266,7 +276,11 @@ pub fn run(args: Args) -> Result<()> {
                 ObjectKind::Commit if kind == ObjectKind::Tree => {
                     let commit = parse_commit(&current_obj.data)?;
                     _current_oid = commit.tree;
-                    current_obj = match repo.read_replaced(&_current_oid) {
+                    current_obj = match read_object_with_promisor_lazy_fetch(
+                        &repo,
+                        &_current_oid,
+                        false,
+                    ) {
                         Ok(o) => o,
                         Err(e) => exit_cat_file_read_error(&e, &args, obj_str),
                     };
@@ -309,6 +323,32 @@ pub fn run(args: Args) -> Result<()> {
 fn usage_error(msg: &str) -> ! {
     eprintln!("{}", msg);
     std::process::exit(129);
+}
+
+/// Read an object, attempting a promisor lazy fetch when the ODB reports [`LibError::ObjectNotFound`].
+fn read_object_with_promisor_lazy_fetch(
+    repo: &Repository,
+    oid: &ObjectId,
+    ignore_replace: bool,
+) -> LibResult<grit_lib::objects::Object> {
+    let read = || {
+        if ignore_replace {
+            repo.odb.read(oid)
+        } else {
+            repo.read_replaced(oid)
+        }
+    };
+    match read() {
+        Ok(o) => Ok(o),
+        Err(e) if matches!(&e, LibError::ObjectNotFound(_)) => {
+            if promisor_hydrate::try_lazy_fetch_promisor_object(repo, *oid).is_ok() {
+                read()
+            } else {
+                Err(e)
+            }
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Map ODB read failures to `git cat-file` stderr (exit 128).
@@ -600,16 +640,78 @@ fn collect_all_object_ids(repo: &Repository) -> Result<Vec<ObjectId>> {
     Ok(oids.into_iter().collect())
 }
 
+fn collect_loose_disk_entries(objects_dir: &Path, out: &mut Vec<(ObjectId, u64)>) -> Result<()> {
+    for prefix in 0..=255u8 {
+        let hex_prefix = format!("{prefix:02x}");
+        let dir = objects_dir.join(&hex_prefix);
+        if !dir.exists() {
+            continue;
+        }
+        let rd = std::fs::read_dir(&dir)?;
+        for entry in rd {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.len() == 38 {
+                let full_hex = format!("{hex_prefix}{name_str}");
+                if let Ok(oid) = ObjectId::from_hex(&full_hex) {
+                    let path = entry.path();
+                    let len = std::fs::metadata(&path)?.len();
+                    out.push((oid, len));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn append_packed_disk_entries(objects_dir: &Path, out: &mut Vec<(ObjectId, u64)>) -> Result<()> {
+    let indexes = pack::read_local_pack_indexes(objects_dir)?;
+    for idx in indexes {
+        let pack_size = match std::fs::metadata(&idx.pack_path) {
+            Ok(meta) => meta.len(),
+            Err(_) => continue,
+        };
+        let trailer = idx
+            .entries
+            .first()
+            .map(|e| pack_checksum_trailer_len(&e.oid))
+            .unwrap_or(20);
+        let mut offsets: Vec<(u64, ObjectId)> = idx
+            .entries
+            .into_iter()
+            .map(|entry| (entry.offset, entry.oid))
+            .collect();
+        offsets.sort_by_key(|(offset, _)| *offset);
+        for (pos, (offset, oid)) in offsets.iter().enumerate() {
+            let next_offset = offsets
+                .get(pos + 1)
+                .map(|(next, _)| *next)
+                .unwrap_or_else(|| pack_size.saturating_sub(trailer));
+            if next_offset < *offset {
+                continue;
+            }
+            out.push((*oid, next_offset - *offset));
+        }
+    }
+    Ok(())
+}
+
+fn collect_all_disk_object_entries(repo: &Repository) -> Result<Vec<(ObjectId, u64)>> {
+    let mut out = Vec::new();
+    for dir in object_storage_dirs_for_repo(repo)? {
+        collect_loose_disk_entries(&dir, &mut out)?;
+        append_packed_disk_entries(&dir, &mut out)?;
+    }
+    Ok(out)
+}
+
 fn read_batch_object(
     repo: &Repository,
     oid: &ObjectId,
     ignore_replace: bool,
 ) -> std::result::Result<grit_lib::objects::Object, LibError> {
-    if ignore_replace {
-        repo.odb.read(oid)
-    } else {
-        repo.read_replaced(oid)
-    }
+    read_object_with_promisor_lazy_fetch(repo, oid, ignore_replace)
 }
 
 #[derive(Clone, Copy)]
@@ -693,7 +795,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
         batch_filters: args.filters,
     };
 
-    let mut handle_line = |line: &str| -> Result<()> {
+    let mut handle_line = |line: &str, disk_override: Option<u64>| -> Result<()> {
         let trimmed = line.trim();
         let (display_spec, object_spec, path_suffix) = if batch_transform {
             split_batch_object_field_and_rest(trimmed)
@@ -733,6 +835,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             format,
                             nul_output,
                             packed_sizes.as_ref(),
+                            None,
                             write_opts,
                             &mut app_buf,
                         )?;
@@ -746,6 +849,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             format,
                             nul_output,
                             packed_sizes.as_ref(),
+                            None,
                             write_opts,
                             &mut stdout_lock,
                         )?;
@@ -775,6 +879,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             format,
                             nul_output,
                             packed_sizes.as_ref(),
+                            None,
                             write_opts,
                             &mut app_buf,
                         )?;
@@ -788,6 +893,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             format,
                             nul_output,
                             packed_sizes.as_ref(),
+                            None,
                             write_opts,
                             &mut stdout_lock,
                         )?;
@@ -827,6 +933,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                 format,
                 nul_output,
                 packed_sizes.as_ref(),
+                disk_override,
                 write_opts,
                 &mut stdout_lock,
             )?;
@@ -838,24 +945,45 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
     };
 
     if args.batch_all_objects {
-        let mut oids: Vec<ObjectId> = if args.no_filter {
-            // Match `git rev-list --objects --all` (test t1006 "objects filter: disabled").
-            rev_list::reachable_object_ids_for_cat_file(repo, None, false)
-                .context("reachable objects for cat-file --batch-all-objects --no-filter")?
-        } else if let Some(ref f) = objects_filter {
-            let merged = merged_cat_file_object_filter(repo, f.clone())?;
-            rev_list::object_ids_for_cat_file_filtered(repo, &merged)?
+        let disk_list_all_copies =
+            format.contains("%(objectsize:disk)") && !args.no_filter && objects_filter.is_none();
+
+        if disk_list_all_copies {
+            let mut entries = collect_all_disk_object_entries(repo)?;
+            // Match `sort` on "oid size" lines (t1006 %(objectsize:disk)): tie-break
+            // duplicate OIDs lexicographically by the full line, not insertion order.
+            entries.sort_by(|(a_oid, a_sz), (b_oid, b_sz)| {
+                let a_line = format!("{} {}", a_oid.to_hex(), a_sz);
+                let b_line = format!("{} {}", b_oid.to_hex(), b_sz);
+                a_line.cmp(&b_line)
+            });
+            if args.unordered {
+                entries.reverse();
+            }
+            for (oid, disk_sz) in entries {
+                let hex = oid.to_hex();
+                handle_line(&hex, Some(disk_sz))?;
+            }
         } else {
-            collect_all_object_ids(repo)?
-        };
-        if args.unordered {
-            oids.reverse();
-        } else {
-            oids.sort();
-        }
-        for oid in &oids {
-            let hex = oid.to_hex();
-            handle_line(&hex)?;
+            let mut oids: Vec<ObjectId> = if args.no_filter {
+                // Match `git rev-list --objects --all` (test t1006 "objects filter: disabled").
+                rev_list::reachable_object_ids_for_cat_file(repo, None, false)
+                    .context("reachable objects for cat-file --batch-all-objects --no-filter")?
+            } else if let Some(ref f) = objects_filter {
+                let merged = merged_cat_file_object_filter(repo, f.clone())?;
+                rev_list::object_ids_for_cat_file_filtered(repo, &merged)?
+            } else {
+                collect_all_object_ids(repo)?
+            };
+            if args.unordered {
+                oids.reverse();
+            } else {
+                oids.sort();
+            }
+            for oid in &oids {
+                let hex = oid.to_hex();
+                handle_line(&hex, None)?;
+            }
         }
     } else if nul_input {
         let mut stdin_lock = stdin.lock();
@@ -870,11 +998,11 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                 buf.pop();
             }
             let s = String::from_utf8_lossy(&buf).into_owned();
-            handle_line(&s)?;
+            handle_line(&s, None)?;
         }
     } else {
         for line in stdin.lock().lines() {
-            handle_line(&line?)?;
+            handle_line(&line?, None)?;
         }
     }
 
@@ -953,6 +1081,7 @@ fn emit_batch_object_lines(
     format: &str,
     nul_output: bool,
     packed_sizes: Option<&HashMap<ObjectId, u64>>,
+    disk_size_override: Option<u64>,
     rest: &str,
     content_override: Option<&[u8]>,
     out: &mut impl Write,
@@ -965,7 +1094,10 @@ fn emit_batch_object_lines(
         Some(m) => format!("{:o}", m),
         None => String::new(),
     };
-    let disk_size = object_disk_size(repo, oid, packed_sizes)?;
+    let disk_size = match disk_size_override {
+        Some(d) => d,
+        None => object_disk_size(repo, oid, packed_sizes)?,
+    };
     let deltabase_hex = if format.contains("%(deltabase)") {
         match pack::packed_delta_base_oid(repo.odb.objects_dir(), &oid) {
             Ok(Some(base)) => base.to_hex(),
@@ -1039,6 +1171,7 @@ fn print_batch_follow_symlinks(
                             format,
                             nul_output,
                             packed_sizes,
+                            None,
                             rest,
                             None,
                             out,
@@ -1088,6 +1221,7 @@ fn print_batch_follow_symlinks(
                 format,
                 nul_output,
                 packed_sizes,
+                None,
                 rest,
                 None,
                 out,
@@ -1197,6 +1331,7 @@ fn print_batch_entry(
     format: &str,
     nul_output: bool,
     packed_sizes: Option<&HashMap<ObjectId, u64>>,
+    disk_size_override: Option<u64>,
     opts: BatchWriteOpts<'_>,
     out: &mut impl Write,
 ) -> Result<()> {
@@ -1257,6 +1392,7 @@ fn print_batch_entry(
                     format,
                     nul_output,
                     packed_sizes,
+                    disk_size_override,
                     rest,
                     None,
                     out,
@@ -1315,6 +1451,7 @@ fn print_batch_entry(
                             format,
                             nul_output,
                             packed_sizes,
+                            disk_size_override,
                             rest,
                             None,
                             out,
@@ -1334,6 +1471,7 @@ fn print_batch_entry(
                                 format,
                                 nul_output,
                                 packed_sizes,
+                                disk_size_override,
                                 rest,
                                 None,
                                 out,
@@ -1358,6 +1496,7 @@ fn print_batch_entry(
                             format,
                             nul_output,
                             packed_sizes,
+                            disk_size_override,
                             rest,
                             Some(payload.as_slice()),
                             out,
@@ -1375,6 +1514,7 @@ fn print_batch_entry(
                     format,
                     nul_output,
                     packed_sizes,
+                    disk_size_override,
                     rest,
                     None,
                     out,
@@ -1441,33 +1581,10 @@ fn append_packed_object_sizes(
     objects_dir: &Path,
     sizes: &mut HashMap<ObjectId, u64>,
 ) -> Result<()> {
-    let indexes = pack::read_local_pack_indexes(objects_dir)?;
-    for idx in indexes {
-        let pack_size = match std::fs::metadata(&idx.pack_path) {
-            Ok(meta) => meta.len(),
-            Err(_) => continue,
-        };
-        let trailer = idx
-            .entries
-            .first()
-            .map(|e| pack_checksum_trailer_len(&e.oid))
-            .unwrap_or(20);
-        let mut offsets: Vec<(u64, ObjectId)> = idx
-            .entries
-            .into_iter()
-            .map(|entry| (entry.offset, entry.oid))
-            .collect();
-        offsets.sort_by_key(|(offset, _)| *offset);
-        for (pos, (offset, oid)) in offsets.iter().enumerate() {
-            let next_offset = offsets
-                .get(pos + 1)
-                .map(|(next, _)| *next)
-                .unwrap_or_else(|| pack_size.saturating_sub(trailer));
-            if next_offset < *offset {
-                continue;
-            }
-            sizes.entry(*oid).or_insert(next_offset - *offset);
-        }
+    let mut tmp = Vec::new();
+    append_packed_disk_entries(objects_dir, &mut tmp)?;
+    for (oid, sz) in tmp {
+        sizes.entry(oid).or_insert(sz);
     }
     Ok(())
 }
@@ -1666,7 +1783,7 @@ fn resolve_object_with_mode_lib(
             // Resolve the treeish part
             if let Ok(treeish_oid) = resolve_object_lib(repo, treeish_part) {
                 // Get the tree oid
-                let object = repo.odb.read(&treeish_oid)?;
+                let object = read_object_with_promisor_lazy_fetch(repo, &treeish_oid, false)?;
                 let tree_oid = match object.kind {
                     ObjectKind::Commit => {
                         let commit = parse_commit(&object.data)?;
@@ -1684,7 +1801,7 @@ fn resolve_object_with_mode_lib(
                 let parts: Vec<&str> = path_part.split('/').filter(|p| !p.is_empty()).collect();
                 let mut current_tree = tree_oid;
                 for (i, part) in parts.iter().enumerate() {
-                    let tree_obj = repo.odb.read(&current_tree)?;
+                    let tree_obj = read_object_with_promisor_lazy_fetch(repo, &current_tree, false)?;
                     let entries = parse_tree(&tree_obj.data)?;
                     if let Some(entry) = entries.iter().find(|e| e.name == part.as_bytes()) {
                         if i == parts.len() - 1 {

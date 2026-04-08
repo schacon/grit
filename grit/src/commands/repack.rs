@@ -8,6 +8,8 @@ use crate::commands::update_server_info;
 use crate::grit_exe;
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
+use grit_lib::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
 use grit_lib::repo::Repository;
 use std::fs;
 use std::path::Path;
@@ -28,6 +30,11 @@ pub struct Args {
     /// Pack everything in all packs (accepted; pack-objects `--all` is always used).
     #[arg(short = 'a')]
     pub all: bool,
+
+    /// Write a bitmap index (same as `git repack -b`). Fails when promisor packs are present or
+    /// the object set is not closed (matches Git’s bitmap constraints).
+    #[arg(short = 'b', long = "write-bitmap")]
+    pub write_bitmap: bool,
 
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
@@ -64,6 +71,15 @@ pub struct Args {
 /// Run `grit repack`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    if args.write_bitmap {
+        let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let objects_dir = repo.git_dir.join("objects");
+        if repo_treats_promisor_packs(&repo.git_dir, &cfg)
+            && !promisor_pack_object_ids(&objects_dir).is_empty()
+        {
+            anyhow::bail!("fatal: failed to write bitmap index");
+        }
+    }
     let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
     let grit_bin = grit_exe::grit_executable();
 
@@ -109,6 +125,10 @@ pub fn run(args: Args) -> Result<()> {
     if args.keep_largest_pack {
         cmd.arg("--keep-largest-pack");
     }
+    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    if repo_treats_promisor_packs(&repo.git_dir, &cfg) {
+        cmd.arg("--exclude-promisor-objects");
+    }
     let output = cmd.output().context("failed to run grit pack-objects")?;
     if !output.status.success() {
         anyhow::bail!("pack-objects failed with status {}", output.status);
@@ -128,6 +148,42 @@ pub fn run(args: Args) -> Result<()> {
     if args.delete_old {
         remove_superseded_packs(&pack_dir_abs, &new_pack_name)?;
         update_server_info::refresh_objects_info_packs(&repo)?;
+    }
+
+    Ok(())
+}
+
+/// Deletes every `pack-*.pack` in `pack_dir` except the given basenames, unless a matching
+/// `pack-*.keep` file exists for that pack. Used by `gc` when writing both a merged promisor pack
+/// and a non-promisor pack in one pass.
+pub(crate) fn remove_superseded_packs_multi(pack_dir: &Path, keep_pack_names: &[String]) -> Result<()> {
+    let rd = match fs::read_dir(pack_dir) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+
+    for entry in rd {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".pack") {
+            continue;
+        }
+        if keep_pack_names.iter().any(|k| k == &name) {
+            continue;
+        }
+        let stem = name
+            .strip_suffix(".pack")
+            .unwrap_or(name.as_str())
+            .to_string();
+        if pack_dir.join(format!("{stem}.keep")).exists() {
+            continue;
+        }
+        let pack_path = pack_dir.join(&name);
+        let idx_path = pack_dir.join(format!("{stem}.idx"));
+        let _ = fs::remove_file(&pack_path);
+        let _ = fs::remove_file(&idx_path);
+        let _ = fs::remove_file(pack_dir.join(format!("{stem}.promisor")));
     }
 
     Ok(())
@@ -156,6 +212,9 @@ fn remove_superseded_packs(pack_dir: &Path, keep_pack_name: &str) -> Result<()> 
             .unwrap_or(name.as_str())
             .to_string();
         if pack_dir.join(format!("{stem}.keep")).exists() {
+            continue;
+        }
+        if pack_dir.join(format!("{stem}.promisor")).exists() {
             continue;
         }
         let pack_path = pack_dir.join(&name);

@@ -5,12 +5,15 @@
 use anyhow::{bail, Context, Result};
 use grit_lib::config::ConfigSet;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
-use grit_lib::promisor::{read_promisor_missing_oids, write_promisor_marker};
+use grit_lib::promisor::{read_promisor_missing_oids, repo_treats_promisor_packs, write_promisor_marker};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use crate::commands::index_pack;
+use crate::fetch_transport;
 
 /// Resolved promisor object source: local ODB path or HTTP remote (system `git fetch`).
 pub(crate) enum PromisorSource {
@@ -18,15 +21,58 @@ pub(crate) enum PromisorSource {
     Http { remote: String },
 }
 
-/// Locate the first `remote.*.promisor=true` remote and open its object store or HTTP name.
-pub(crate) fn find_promisor_source(
+/// Resolve `remote.<name>.url` into a [`PromisorSource`] (local ODB or HTTP).
+fn open_promisor_remote_named(
     config: &ConfigSet,
     git_dir: &Path,
+    name: &str,
 ) -> Result<Option<PromisorSource>> {
     let base = git_dir
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| git_dir.to_path_buf());
+    let url_key = format!("remote.{name}.url");
+    let Some(url) = config.get(&url_key) else {
+        return Ok(None);
+    };
+    if url.starts_with("http://") || url.starts_with("https://") {
+        return Ok(Some(PromisorSource::Http {
+            remote: name.to_string(),
+        }));
+    }
+    let path = resolve_remote_repo_path(&base, &url)?;
+    let objects_dir = if path.join("objects").is_dir() {
+        path.join("objects")
+    } else if path.file_name().is_some_and(|n| n == ".git") || path.ends_with(".git") {
+        path.join("objects")
+    } else {
+        path.join(".git").join("objects")
+    };
+    if objects_dir.is_dir() {
+        return Ok(Some(PromisorSource::Local(grit_lib::odb::Odb::new(
+            &objects_dir,
+        ))));
+    }
+    Ok(None)
+}
+
+/// Ordered list of `(remote_name, source)` for promisor fetches: `extensions.partialclone` remote
+/// first (when set), then each `remote.*.promisor=true` remote.
+pub(crate) fn list_promisor_remotes(
+    config: &ConfigSet,
+    git_dir: &Path,
+) -> Result<Vec<(String, PromisorSource)>> {
+    let mut out: Vec<(String, PromisorSource)> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    if let Some(pc) = config.get("extensions.partialclone") {
+        let name = pc.trim();
+        if !name.is_empty() && seen.insert(name.to_string()) {
+            if let Some(src) = open_promisor_remote_named(config, git_dir, name)? {
+                out.push((name.to_string(), src));
+            }
+        }
+    }
 
     for e in config.entries() {
         if !e.key.ends_with(".promisor") {
@@ -41,33 +87,91 @@ pub(crate) fn find_promisor_source(
         let Some((name, _)) = rest.split_once('.') else {
             continue;
         };
-        let url_key = format!("remote.{name}.url");
-        let Some(url) = config.get(&url_key) else {
+        if !seen.insert(name.to_string()) {
             continue;
-        };
-        if url.starts_with("http://") || url.starts_with("https://") {
-            return Ok(Some(PromisorSource::Http {
-                remote: name.to_string(),
-            }));
         }
-        let path = match resolve_remote_repo_path(&base, &url) {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-        let objects_dir = if path.join("objects").is_dir() {
-            path.join("objects")
-        } else if path.file_name().is_some_and(|n| n == ".git") || path.ends_with(".git") {
-            path.join("objects")
-        } else {
-            path.join(".git").join("objects")
-        };
-        if objects_dir.is_dir() {
-            return Ok(Some(PromisorSource::Local(grit_lib::odb::Odb::new(
-                &objects_dir,
-            ))));
+        if let Some(src) = open_promisor_remote_named(config, git_dir, name)? {
+            out.push((name.to_string(), src));
         }
     }
-    Ok(None)
+
+    Ok(out)
+}
+
+/// Locate the first promisor remote (same order as [`list_promisor_remotes`]) and open its object
+/// store or HTTP name.
+pub(crate) fn find_promisor_source(
+    config: &ConfigSet,
+    git_dir: &Path,
+) -> Result<Option<PromisorSource>> {
+    Ok(list_promisor_remotes(config, git_dir)?
+        .into_iter()
+        .next()
+        .map(|(_, s)| s))
+}
+
+/// Try to lazy-fetch `oid` from a configured promisor remote into a new promisor pack.
+///
+/// Returns `Ok(())` when the object is present locally after the attempt. Matches Git's partial
+/// clone behavior for `cat-file` / missing object reads.
+pub(crate) fn try_lazy_fetch_promisor_object(repo: &Repository, oid: ObjectId) -> Result<()> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    if !repo_treats_promisor_packs(&repo.git_dir, &config) {
+        bail!("not a promisor repository");
+    }
+    if std::env::var("GIT_NO_LAZY_FETCH")
+        .ok()
+        .as_deref()
+        .is_some_and(|v| v != "0")
+    {
+        bail!("lazy fetching disabled");
+    }
+    if repo.odb.exists_local(&oid) {
+        return Ok(());
+    }
+
+    for (remote_name, src) in list_promisor_remotes(&config, &repo.git_dir)? {
+        match &src {
+            PromisorSource::Local(odb) => {
+                let remote_git_dir = odb
+                    .objects_dir()
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .with_context(|| "promisor local objects_dir has no parent")?;
+                let upload_pack = config
+                    .get(&format!("remote.{remote_name}.uploadpack"))
+                    .filter(|s| !s.is_empty());
+                let pack = match fetch_transport::fetch_upload_pack_explicit_wants(
+                    &repo.git_dir,
+                    &remote_git_dir,
+                    upload_pack.as_deref(),
+                    &[oid],
+                ) {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
+                let pack_path = index_pack::ingest_pack_bytes(repo, &pack, true)
+                    .with_context(|| format!("indexing promisor pack from {remote_name}"))?;
+                let promisor_marker = pack_path.with_extension("promisor");
+                let _ = std::fs::File::create(&promisor_marker);
+                if repo.odb.read(&oid).is_ok() {
+                    return Ok(());
+                }
+            }
+            PromisorSource::Http { remote } => {
+                if run_system_git_fetch_objects(repo, remote, &[oid]).is_ok()
+                    && repo.odb.read(&oid).is_ok()
+                {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    bail!(
+        "could not fetch {} from promisor remote",
+        oid.to_hex()
+    );
 }
 
 fn resolve_remote_repo_path(base: &Path, url: &str) -> Result<PathBuf> {
@@ -303,13 +407,10 @@ pub(crate) fn flush_promisor_blob_batch(
             for oid in batch.drain(..) {
                 let obj = odb
                     .read(&oid)
-                    .with_context(|| format!("promisor remote missing blob {}", oid.to_hex()))?;
-                if obj.kind != ObjectKind::Blob {
-                    bail!("promisor object {} is not a blob", oid.to_hex());
-                }
+                    .with_context(|| format!("promisor remote missing object {}", oid.to_hex()))?;
                 repo.odb
-                    .write(ObjectKind::Blob, &obj.data)
-                    .with_context(|| format!("writing blob {}", oid.to_hex()))?;
+                    .write(obj.kind, &obj.data)
+                    .with_context(|| format!("writing {}", oid.to_hex()))?;
             }
         }
         PromisorSource::Http { remote } => {

@@ -952,7 +952,8 @@ fn create_branch(
     args: &Args,
 ) -> Result<()> {
     let refname = format!("refs/heads/{name}");
-    let exists = grit_lib::refs::resolve_ref(&repo.git_dir, &refname).is_ok();
+    let previous_oid = grit_lib::refs::resolve_ref(&repo.git_dir, &refname).ok();
+    let exists = previous_oid.is_some();
 
     if exists && !args.force {
         bail!("A branch named '{name}' already exists.");
@@ -1027,13 +1028,31 @@ fn create_branch(
         }
         let ident = get_reflog_identity();
         let zero = "0000000000000000000000000000000000000000";
-        // Use the branch name of start_point, or the current branch name
-        let from = match start_point {
-            Some(sp) => sp.to_string(),
-            None => head.branch_name().unwrap_or("HEAD").to_string(),
-        };
-        let entry = format!("{zero} {oid} {ident}\tbranch: Created from {from}\n");
-        let _ = fs::write(&reflog_path, entry);
+        if exists && args.force {
+            if let Some(old) = previous_oid {
+                if old != oid {
+                    let entry = format!(
+                        "{} {} {}\tbranch: forced update\n",
+                        old.to_hex(),
+                        oid.to_hex(),
+                        ident
+                    );
+                    let mut f = fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&reflog_path)?;
+                    f.write_all(entry.as_bytes())?;
+                }
+            }
+        } else {
+            // New branch: first reflog line (from zero OID).
+            let from = match start_point {
+                Some(sp) => sp.to_string(),
+                None => head.branch_name().unwrap_or("HEAD").to_string(),
+            };
+            let entry = format!("{zero} {oid} {ident}\tbranch: Created from {from}\n");
+            let _ = fs::write(&reflog_path, entry);
+        }
     }
 
     // Set up tracking for `--track`, or when the start point is a remote-tracking ref (Git default).
