@@ -11,6 +11,21 @@ use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::IndexEntry;
 use grit_lib::repo::Repository;
 
+fn resolved_env_index_path(repo: &Repository) -> PathBuf {
+    if let Ok(raw) = std::env::var("GIT_INDEX_FILE") {
+        let p = PathBuf::from(raw);
+        if p.is_absolute() {
+            p
+        } else if let Ok(cwd) = std::env::current_dir() {
+            cwd.join(p)
+        } else {
+            p
+        }
+    } else {
+        repo.index_path()
+    }
+}
+
 /// Arguments for `grit ls-files`.
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -145,7 +160,7 @@ pub fn run(args: Args) -> Result<()> {
         anyhow::bail!("cannot ls-files in bare repository");
     };
     let cwd_prefix = cwd_prefix_bytes(work_tree, &cwd)?;
-    let index_path = repo.index_path();
+    let index_path = resolved_env_index_path(&repo);
     let index = if args.sparse {
         grit_lib::index::Index::load(&index_path).context("loading index")?
     } else {

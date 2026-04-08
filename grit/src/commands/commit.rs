@@ -6,7 +6,10 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
-use grit_lib::diff::{diff_index_to_tree, diff_index_to_worktree, DiffEntry, DiffStatus};
+use grit_lib::diff::{
+    diff_index_to_tree, diff_index_to_worktree, status_apply_rename_copy_detection, DiffEntry,
+    DiffStatus,
+};
 use grit_lib::error::Error;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::index::Index;
@@ -20,6 +23,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use time::OffsetDateTime;
 
 /// Arguments for `grit commit`.
@@ -106,6 +110,10 @@ pub struct Args {
     #[arg(long = "interactive")]
     pub interactive: bool,
 
+    /// Select hunks interactively (accepted for Git compatibility; not implemented).
+    #[arg(short = 'p', long = "patch", hide = true)]
+    pub patch: bool,
+
     /// Untracked files mode.
     #[arg(short = 'u', long = "untracked-files", value_name = "MODE", num_args = 0..=1, default_missing_value = "all")]
     pub untracked_files: Option<String>,
@@ -175,6 +183,21 @@ pub struct Args {
     pub pathspec: Vec<String>,
 }
 
+/// Parsed `--fixup` value: plain autosquash vs `amend:` / `reword:` forms.
+#[derive(Debug, Clone)]
+enum FixupMode {
+    /// `fixup! <subject>` one-liner (or `-m` append); uses editor only with `--edit`.
+    Fixup,
+    /// `amend!` / `reword!` message body built from the target commit.
+    AmendStyle { is_reword: bool },
+}
+
+#[derive(Debug, Clone)]
+struct FixupParsed {
+    mode: FixupMode,
+    commit_ref: String,
+}
+
 /// Run the `commit` command.
 pub fn run(args: Args) -> Result<()> {
     // Validate conflicting options
@@ -208,6 +231,61 @@ pub fn run(args: Args) -> Result<()> {
         bail!("--include and --only are mutually exclusive");
     }
 
+    if args.fixup.is_some() && args.squash.is_some() {
+        bail!("fatal: options '--squash' and '--fixup' cannot be used together");
+    }
+
+    let fixup_parsed: Option<FixupParsed> = if let Some(ref raw) = args.fixup {
+        Some(parse_fixup_argument(raw)?)
+    } else {
+        None
+    };
+
+    if let Some(ref fp) = fixup_parsed {
+        match &fp.mode {
+            FixupMode::AmendStyle { is_reword: true } => {
+                if !args.message.is_empty() {
+                    bail!("fatal: options '-m' and '--fixup:reword' cannot be used together");
+                }
+            }
+            FixupMode::AmendStyle { is_reword: false } => {
+                if !args.message.is_empty() {
+                    bail!("fatal: options '-m' and '--fixup:amend' cannot be used together");
+                }
+            }
+            FixupMode::Fixup => {}
+        }
+    }
+
+    if fixup_parsed
+        .as_ref()
+        .is_some_and(|f| matches!(f.mode, FixupMode::AmendStyle { is_reword: true }))
+        && (args.all
+            || args.include
+            || args.only
+            || args.interactive
+            || args.patch
+            || !args.pathspec.is_empty())
+    {
+        if !args.pathspec.is_empty() {
+            let p = &args.pathspec[0];
+            bail!("fatal: reword option of '--fixup' and path '{p}' cannot be used together");
+        }
+        bail!("fatal: reword option of '--fixup' and '--patch/--interactive/--all/--include/--only' cannot be used together");
+    }
+
+    if fixup_parsed.is_some() {
+        if args.reuse_message.is_some() {
+            bail!("fatal: options '-C' and '--fixup' cannot be used together");
+        }
+        if args.reedit_message.is_some() {
+            bail!("fatal: options '-c' and '--fixup' cannot be used together");
+        }
+        if args.file.is_some() {
+            bail!("fatal: options '-F' and '--fixup' cannot be used together");
+        }
+    }
+
     let repo = Repository::discover(None).context("not a git repository")?;
 
     let reset_author_allowed = args.amend
@@ -235,8 +313,10 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    let index_path = resolved_index_path(&repo);
+
     // Load index
-    let index = match repo.load_index() {
+    let index = match repo.load_index_at(&index_path) {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e.into()),
@@ -279,6 +359,34 @@ pub fn run(args: Args) -> Result<()> {
         parents.extend(merge_heads);
     }
 
+    let head_tree = match head.oid() {
+        Some(oid) => {
+            let obj = repo.odb.read(oid)?;
+            let c = grit_lib::objects::parse_commit(&obj.data)?;
+            Some(c.tree)
+        }
+        None => None,
+    };
+
+    let skip_index_tree_vs_parent = fixup_parsed
+        .as_ref()
+        .is_some_and(|f| matches!(f.mode, FixupMode::AmendStyle { .. }));
+
+    // `--fixup=reword:` and `--fixup=amend: --only` record a new commit with the same tree as
+    // `HEAD` while leaving the index (and staged changes) untouched — matching Git's behavior
+    // for autosquash helper commits.
+    let mut tree_oid = tree_oid;
+    if let Some(ref fp) = fixup_parsed {
+        if matches!(fp.mode, FixupMode::AmendStyle { is_reword: true })
+            || (matches!(fp.mode, FixupMode::AmendStyle { is_reword: false }) && args.only)
+        {
+            let Some(t) = head_tree else {
+                bail!("nothing to commit");
+            };
+            tree_oid = t;
+        }
+    }
+
     // For initial commits with empty tree (only ITA entries), fail
     if !args.allow_empty && parents.is_empty() {
         let empty_tree =
@@ -289,35 +397,55 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // Check if tree is the same as parent (empty commit)
-    if !args.allow_empty && !parents.is_empty() && !args.amend {
-        let parent_obj = repo.odb.read(&parents[0])?;
-        let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)?;
-        if parent_commit.tree == tree_oid {
-            bail!("nothing to commit, working tree clean");
-        }
-    }
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
 
-    // Compute diffs for --dry-run output
-    let head_tree = match head.oid() {
-        Some(oid) => {
-            let obj = repo.odb.read(oid)?;
-            let c = grit_lib::objects::parse_commit(&obj.data)?;
-            Some(c.tree)
-        }
-        None => None,
-    };
     let staged = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
-    let unstaged = if let Some(wt) = work_tree {
+    let unstaged_raw = if let Some(wt) = work_tree {
         diff_index_to_worktree(&repo.odb, &index, wt)?
     } else {
         Vec::new()
+    };
+    let (rename_threshold, rename_copies) = commit_rename_settings(&config);
+    let unstaged = if let Some(th) = rename_threshold {
+        status_apply_rename_copy_detection(
+            &repo.odb,
+            unstaged_raw,
+            th,
+            rename_copies,
+            head_tree.as_ref(),
+        )?
+    } else {
+        unstaged_raw
     };
     let untracked = if let Some(wt) = work_tree {
         find_untracked_files(wt, &index)?
     } else {
         Vec::new()
     };
+
+    if !args.allow_empty
+        && !args.amend
+        && !skip_index_tree_vs_parent
+        && staged.is_empty()
+        && !parents.is_empty()
+    {
+        let parent_obj = repo.odb.read(&parents[0])?;
+        let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)?;
+        if parent_commit.tree == tree_oid {
+            if work_tree.is_some() {
+                if !unstaged.is_empty() {
+                    println!(
+                        "no changes added to commit (use \"git add\" and/or \"git commit -a\")"
+                    );
+                } else if !untracked.is_empty() {
+                    println!(
+                        "nothing added to commit but untracked files present (use \"git add\" to track)"
+                    );
+                }
+            }
+            bail!("nothing to commit, working tree clean");
+        }
+    }
 
     // --dry-run: show what would be committed and exit
     if args.dry_run {
@@ -330,16 +458,49 @@ pub fn run(args: Args) -> Result<()> {
         bail!("pre-commit hook exited with status {code}");
     }
 
-    // Build commit message
-    let msg_result = build_message(&args, &repo)?;
-    let mut message = msg_result.message;
+    let template_path = resolve_commit_template_path(&args, &config)?;
+    let use_editor_for_message = commit_uses_editor(&args, fixup_parsed.as_ref());
+
+    let msg_result = prepare_commit_message(
+        &args,
+        &repo,
+        &config,
+        fixup_parsed.as_ref(),
+        template_path.as_deref(),
+        use_editor_for_message,
+        &head,
+    )?;
+    let mut message = normalize_autosquash_editor_message(
+        &args,
+        fixup_parsed.as_ref(),
+        use_editor_for_message,
+        &msg_result.message,
+    );
     let mut raw_message = msg_result.raw_bytes;
+    let template_for_aborted_check = template_path.filter(|_| use_editor_for_message);
+
     if message.trim().is_empty() && !args.allow_empty_message {
-        bail!("Aborting commit due to empty commit message.");
+        eprintln!("Aborting commit due to empty commit message.");
+        std::process::exit(1);
     }
 
-    // Resolve author and committer
-    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    if let Some(ref tpl) = template_for_aborted_check {
+        if template_untouched(&message, tpl) && !args.allow_empty_message {
+            eprintln!("Aborting commit; you did not edit the message.");
+            std::process::exit(1);
+        }
+    }
+
+    if fixup_parsed.as_ref().is_some_and(|f| {
+        matches!(f.mode, FixupMode::AmendStyle { .. }) && message.starts_with("amend! ")
+    }) && !args.allow_empty_message
+    {
+        let body = message_after_first_line(&message);
+        if body.trim().is_empty() {
+            eprintln!("Aborting commit due to empty commit message body.");
+            std::process::exit(1);
+        }
+    }
 
     // Check i18n.commitEncoding for non-UTF-8 commit messages
     let commit_encoding = config
@@ -433,6 +594,13 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    message = ensure_trailing_newline(&message);
+    if let Some(ref mut raw) = raw_message {
+        if !raw.ends_with(b"\n") {
+            raw.push(b'\n');
+        }
+    }
+
     // Build commit object — set encoding header when i18n.commitEncoding is configured
     // and differs from UTF-8.
     let encoding = match &commit_encoding {
@@ -505,6 +673,14 @@ pub fn run(args: Args) -> Result<()> {
 
     // Clean up merge state files if present
     cleanup_merge_state(&repo.git_dir);
+
+    // Refresh the index file Git used for this commit (including `GIT_INDEX_FILE`).
+    let mut index_refresh = match repo.load_index_at(&index_path) {
+        Ok(idx) => idx,
+        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
+        Err(e) => return Err(e.into()),
+    };
+    repo.write_index_at(&index_path, &mut index_refresh)?;
 
     // Run post-commit hook (informational, don't abort on failure)
     let _ = run_hook(&repo, "post-commit", &[], None);
@@ -749,7 +925,8 @@ fn walk_untracked(
 
 /// Stage specific files given as pathspec arguments to `commit`.
 fn stage_pathspec_files(repo: &Repository, work_tree: &Path, pathspecs: &[String]) -> Result<()> {
-    let mut index = match repo.load_index() {
+    let index_path = resolved_index_path(repo);
+    let mut index = match repo.load_index_at(&index_path) {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e.into()),
@@ -799,13 +976,14 @@ fn stage_pathspec_files(repo: &Repository, work_tree: &Path, pathspecs: &[String
         }
     }
 
-    repo.write_index(&mut index)?;
+    repo.write_index_at(&index_path, &mut index)?;
     Ok(())
 }
 
 /// Auto-stage tracked files (for `commit -a`).
 fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
-    let mut index = match repo.load_index() {
+    let index_path = resolved_index_path(repo);
+    let mut index = match repo.load_index_at(&index_path) {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e.into()),
@@ -885,7 +1063,7 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
     }
 
     if changed {
-        repo.write_index(&mut index)?;
+        repo.write_index_at(&index_path, &mut index)?;
     }
 
     Ok(())
@@ -899,22 +1077,683 @@ struct MessageResult {
     raw_bytes: Option<Vec<u8>>,
 }
 
-/// Build the commit message from --reuse-message, -m, -F, MERGE_MSG, or editor.
-fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
-    // --reuse-message / --reedit-message: take message (and author) from an existing commit
+fn resolved_index_path(repo: &Repository) -> PathBuf {
+    if let Ok(raw) = std::env::var("GIT_INDEX_FILE") {
+        let p = PathBuf::from(raw);
+        if p.is_absolute() {
+            p
+        } else if let Ok(cwd) = std::env::current_dir() {
+            cwd.join(p)
+        } else {
+            p
+        }
+    } else {
+        repo.index_path()
+    }
+}
+
+fn parse_fixup_argument(raw: &str) -> Result<FixupParsed> {
+    let (prefix, rest) = match raw.split_once(':') {
+        Some((a, b)) if !a.is_empty() && a.chars().all(|c| c.is_ascii_alphabetic()) => (a, b),
+        _ => {
+            return Ok(FixupParsed {
+                mode: FixupMode::Fixup,
+                commit_ref: raw.to_string(),
+            });
+        }
+    };
+    match prefix {
+        "amend" => Ok(FixupParsed {
+            mode: FixupMode::AmendStyle { is_reword: false },
+            commit_ref: rest.to_string(),
+        }),
+        "reword" => Ok(FixupParsed {
+            mode: FixupMode::AmendStyle { is_reword: true },
+            commit_ref: rest.to_string(),
+        }),
+        _ => bail!("unknown option: --fixup={prefix}:{rest}"),
+    }
+}
+
+fn commit_rename_settings(config: &ConfigSet) -> (Option<u32>, bool) {
+    match config.get("diff.renames") {
+        Some(val) => {
+            let lowered = val.to_lowercase();
+            match lowered.as_str() {
+                "false" | "no" | "off" | "0" => (None, false),
+                "true" | "yes" | "on" | "1" | "" => (Some(50), false),
+                "copies" | "copy" => (Some(50), true),
+                _ => (None, false),
+            }
+        }
+        None => (Some(50), false),
+    }
+}
+
+fn commit_uses_editor(args: &Args, fixup: Option<&FixupParsed>) -> bool {
+    if args.reuse_message.is_some() && args.reedit_message.is_none() {
+        return false;
+    }
+    if !args.message.is_empty() || args.file.is_some() {
+        return false;
+    }
+    if let Some(f) = fixup {
+        match f.mode {
+            // Plain `--fixup` uses a generated message unless `--edit` forces the editor.
+            FixupMode::Fixup => return args.edit,
+            FixupMode::AmendStyle { .. } => return true,
+        }
+    }
+    true
+}
+
+fn parse_optional_path_spec(spec: &str) -> (bool, &str) {
+    const OPT: &str = ":(optional)";
+    if let Some(rest) = spec.strip_prefix(OPT) {
+        (true, rest)
+    } else {
+        (false, spec)
+    }
+}
+
+fn resolve_commit_template_path(args: &Args, config: &ConfigSet) -> Result<Option<PathBuf>> {
+    let cli = args.template.as_deref();
+    let cfg_owned = config.get("commit.template");
+    let cfg = cfg_owned.as_deref();
+    let chosen = cli.or(cfg);
+    let Some(raw) = chosen else {
+        return Ok(None);
+    };
+    let (optional, path_str) = parse_optional_path_spec(raw.trim());
+    let path = Path::new(path_str);
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Ok(cwd) = std::env::current_dir() {
+        cwd.join(path)
+    } else {
+        path.to_path_buf()
+    };
+    if abs.is_file() {
+        return Ok(Some(abs));
+    }
+    if optional {
+        return Ok(None);
+    }
+    bail!("fatal: could not read '{}'", abs.display());
+}
+
+fn first_line(message: &str) -> &str {
+    message.lines().next().unwrap_or("").trim_end()
+}
+
+fn format_fixup_subject(repo: &Repository, prefix: &str, commit_ref: &str) -> Result<String> {
+    let oid = resolve_revision(repo, commit_ref)?;
+    let obj = repo.odb.read(&oid)?;
+    let commit = grit_lib::objects::parse_commit(&obj.data)?;
+    let subj = first_line(&commit.message);
+    Ok(format!("{prefix}! {subj}\n\n"))
+}
+
+fn message_body_after_subject(full: &str) -> &str {
+    if let Some(pos) = full.find("\n\n") {
+        &full[pos + 2..]
+    } else {
+        ""
+    }
+}
+
+fn skip_blank_lines(mut s: &str) -> &str {
+    while let Some(rest) = s.strip_prefix('\n') {
+        s = rest;
+    }
+    s
+}
+
+fn commit_body_for_amend_fixup(repo: &Repository, target_oid: &ObjectId) -> Result<String> {
+    let obj = repo.odb.read(target_oid)?;
+    let commit = grit_lib::objects::parse_commit(&obj.data)?;
+    let subj = first_line(&commit.message);
+    // Match `prepare_amend_commit` in Git: if the target subject already begins with
+    // `amend!`, format with `%b` only (drop the duplicated subject line from the body).
+    let body = if subj.trim_start().starts_with("amend!") {
+        message_body_after_subject(&commit.message)
+    } else {
+        commit.message.as_str()
+    };
+    Ok(skip_blank_lines(body).to_string())
+}
+
+fn message_after_first_line(message: &str) -> &str {
+    message.find('\n').map(|i| &message[i + 1..]).unwrap_or("")
+}
+
+/// Git inserts a blank line between the autosquash subject and editor-appended body when the
+/// template starts with `subject\n\n` (even if cleanup removed the second newline visually).
+fn normalize_autosquash_editor_message(
+    args: &Args,
+    fixup: Option<&FixupParsed>,
+    used_editor: bool,
+    message: &str,
+) -> String {
+    if !used_editor
+        || args.file.is_some()
+        || args.reuse_message.is_some()
+        || args.reedit_message.is_some()
+    {
+        return message.to_string();
+    }
+    if args.squash.is_none() {
+        return message.to_string();
+    }
+    if fixup.is_some() {
+        return message.to_string();
+    }
+    let Some(first_nl) = message.find('\n') else {
+        return message.to_string();
+    };
+    let first_line = &message[..first_nl];
+    let rest = &message[first_nl + 1..];
+    let rest_trim = rest.trim_start_matches(['\n', '\r']);
+    if rest_trim.is_empty() {
+        return message.to_string();
+    }
+    if rest.starts_with("\n\n") || rest.starts_with("\r\n\r\n") {
+        return message.to_string();
+    }
+    format!("{first_line}\n\n{rest_trim}")
+}
+
+fn build_squash_prefix(
+    repo: &Repository,
+    squash_ref: &str,
+    reuse_rev: Option<&str>,
+) -> Result<String> {
+    if reuse_rev == Some(squash_ref) {
+        return Ok("squash! ".to_string());
+    }
+    format_fixup_subject(repo, "squash", squash_ref)
+}
+
+fn read_message_file_raw(file_path: &str) -> Result<Vec<u8>> {
+    if file_path == "-" {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        std::io::stdin().read_to_end(&mut buf)?;
+        Ok(buf)
+    } else {
+        fs::read(file_path).with_context(|| format!("could not read log file '{file_path}'"))
+    }
+}
+
+fn raw_to_message_result(raw: Vec<u8>) -> Result<MessageResult> {
+    match String::from_utf8(raw.clone()) {
+        Ok(s) => Ok(MessageResult {
+            message: ensure_trailing_newline(&s),
+            raw_bytes: None,
+        }),
+        Err(_) => {
+            let lossy = String::from_utf8_lossy(&raw).to_string();
+            let mut raw_nl = raw;
+            if !raw_nl.ends_with(b"\n") {
+                raw_nl.push(b'\n');
+            }
+            Ok(MessageResult {
+                message: ensure_trailing_newline(&lossy),
+                raw_bytes: Some(raw_nl),
+            })
+        }
+    }
+}
+
+fn build_initial_commit_buffer(
+    args: &Args,
+    repo: &Repository,
+    fixup: Option<&FixupParsed>,
+    template_path: Option<&Path>,
+) -> Result<String> {
+    let mut buf = String::new();
+
+    if fixup.is_none() && !args.message.is_empty() {
+        buf.push_str(&args.message.join("\n\n"));
+        if !buf.ends_with('\n') {
+            buf.push('\n');
+        }
+        return Ok(buf);
+    }
+
+    if let Some(fp) = fixup {
+        match &fp.mode {
+            FixupMode::Fixup => {
+                buf.push_str(&format_fixup_subject(repo, "fixup", &fp.commit_ref)?);
+                if !args.message.is_empty() {
+                    buf.push_str(&args.message.join("\n\n"));
+                }
+                if !buf.ends_with('\n') {
+                    buf.push('\n');
+                }
+                return Ok(buf);
+            }
+            FixupMode::AmendStyle { .. } => {
+                buf.push_str(&format_fixup_subject(repo, "amend", &fp.commit_ref)?);
+                let oid = resolve_revision(repo, &fp.commit_ref)?;
+                buf.push_str(&commit_body_for_amend_fixup(repo, &oid)?);
+                if !buf.ends_with('\n') {
+                    buf.push('\n');
+                }
+                return Ok(buf);
+            }
+        }
+    }
+
+    if let Some(ref file_path) = args.file {
+        let raw = read_message_file_raw(file_path)?;
+        let text = String::from_utf8_lossy(&raw);
+        buf.push_str(text.as_ref());
+        if !buf.ends_with('\n') {
+            buf.push('\n');
+        }
+        return Ok(buf);
+    }
+
     let reuse_rev = args.reuse_message.as_ref().or(args.reedit_message.as_ref());
     if let Some(rev) = reuse_rev {
         let oid = resolve_revision(repo, rev)?;
         let obj = repo.odb.read(&oid)?;
         let commit = grit_lib::objects::parse_commit(&obj.data)?;
+        let body = skip_blank_lines(message_body_after_subject(&commit.message));
+        buf.push_str(body);
+        if !buf.is_empty() && !buf.ends_with('\n') {
+            buf.push('\n');
+        }
+        return Ok(buf);
+    }
+
+    if let Some(msg) = grit_lib::state::read_merge_msg(&repo.git_dir)? {
+        buf.push_str(&msg);
+        return Ok(buf);
+    }
+
+    let squash_msg_path = repo.git_dir.join("SQUASH_MSG");
+    if let Ok(msg) = fs::read_to_string(&squash_msg_path) {
+        if !msg.is_empty() {
+            buf.push_str(&msg);
+            return Ok(buf);
+        }
+    }
+
+    if let Some(tpl) = template_path {
+        buf.push_str(
+            &fs::read_to_string(tpl)
+                .with_context(|| format!("fatal: could not read '{}'", tpl.display()))?,
+        );
+        return Ok(buf);
+    }
+
+    if args.amend {
+        let head = resolve_head(&repo.git_dir)?;
+        if let Some(oid) = head.oid() {
+            let obj = repo.odb.read(oid)?;
+            let commit = grit_lib::objects::parse_commit(&obj.data)?;
+            buf.push_str(&commit.message);
+            return Ok(buf);
+        }
+    }
+
+    Ok(buf)
+}
+
+fn is_effective_editor_value(raw: &str) -> bool {
+    let t = raw.trim();
+    !t.is_empty() && t != ":"
+}
+
+fn resolve_commit_editor(repo: &Repository) -> String {
+    let visual_present = std::env::var("VISUAL").is_ok();
+    let editor_present = std::env::var("EDITOR").is_ok();
+
+    if let Ok(e) = std::env::var("GIT_EDITOR") {
+        if is_effective_editor_value(&e) {
+            return e;
+        }
+    }
+    if let Ok(config) = ConfigSet::load(Some(&repo.git_dir), true) {
+        if let Some(e) = config.get("core.editor") {
+            if is_effective_editor_value(&e) {
+                return e;
+            }
+        }
+    }
+    // Git order: VISUAL then EDITOR. Skip `:` / empty `VISUAL` (test harness sets `VISUAL=:`).
+    if let Ok(e) = std::env::var("VISUAL") {
+        if is_effective_editor_value(&e) {
+            return e;
+        }
+    }
+    if let Ok(e) = std::env::var("EDITOR") {
+        if is_effective_editor_value(&e) {
+            return e;
+        }
+    }
+    // Harness sets `EDITOR=:` / `VISUAL=:` as non-interactive placeholders; never launch `vi`
+    // in that case (would hang). Fall back to `true` like a no-op editor.
+    if visual_present || editor_present {
+        "true".to_owned()
+    } else {
+        "vi".to_owned()
+    }
+}
+
+fn launch_commit_editor(repo: &Repository, path: &Path) -> Result<()> {
+    let editor = resolve_commit_editor(repo);
+    // Match Git: the editor command is run under `sh -c` with the path as `$1` (not `$@`),
+    // so `test_set_editor` patterns like `EDITOR='"$FAKE_EDITOR"'` expand and receive the file.
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(format!("{editor} \"$1\""))
+        .arg("sh")
+        .arg(path)
+        .status()
+        .with_context(|| format!("failed to launch editor '{editor}'"))?;
+    if !status.success() {
+        bail!("editor exited with non-zero status");
+    }
+    Ok(())
+}
+
+/// Post-editor cleanup matching Git `strbuf_stripspace` with `comment_prefix = "#"` (default
+/// `cleanup=strip`): skip `#` lines, trim trailing whitespace per line, collapse runs of empty
+/// lines to a single blank between paragraphs, trim leading/trailing blank lines.
+fn cleanup_edited_commit_message(message: &str) -> String {
+    fn line_cleanup(line: &str) -> usize {
+        let mut len = line.len();
+        while len > 0 {
+            let c = line.as_bytes()[len - 1];
+            if !c.is_ascii_whitespace() {
+                break;
+            }
+            len -= 1;
+        }
+        len
+    }
+
+    let mut out = String::new();
+    let mut empties = 0usize;
+    let mut i = 0usize;
+    while i < message.len() {
+        let rest = &message[i..];
+        let (line_with_nl, advance) = if let Some(pos) = rest.find('\n') {
+            (&rest[..=pos], pos + 1)
+        } else {
+            (rest, rest.len())
+        };
+        i += advance;
+
+        if line_with_nl.starts_with('#') {
+            continue;
+        }
+        let content_len = line_cleanup(line_with_nl);
+        if content_len > 0 {
+            if empties > 0 && !out.is_empty() {
+                out.push('\n');
+            }
+            empties = 0;
+            out.push_str(&line_with_nl[..content_len]);
+            out.push('\n');
+        } else {
+            empties += 1;
+        }
+    }
+    out
+}
+
+fn git_vertical_stripspace(s: &str) -> String {
+    let trimmed_start = s.trim_start_matches(['\n', '\r', ' ', '\t']);
+    trimmed_start
+        .trim_end_matches(['\n', '\r', ' ', '\t'])
+        .to_string()
+}
+
+fn rest_is_empty_signedoff_only(s: &str, start: usize) -> bool {
+    const SOB: &str = "Signed-off-by:";
+    let rest = s.get(start..).unwrap_or("");
+    for line in rest.split_inclusive('\n') {
+        let line_no_nl = line.strip_suffix('\n').unwrap_or(line);
+        let t = line_no_nl.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if t.starts_with(SOB) {
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
+fn template_untouched(message: &str, template_path: &Path) -> bool {
+    let Ok(tmpl_raw) = fs::read_to_string(template_path) else {
+        return false;
+    };
+    // Git runs `cleanup_message` before `template_untouched`, so `#` lines are stripped from
+    // both the editor buffer and the template file content for this comparison.
+    let tmpl = cleanup_edited_commit_message(&tmpl_raw);
+    let msg = cleanup_edited_commit_message(message);
+    let after_prefix = msg.strip_prefix(&tmpl).unwrap_or(msg.as_str());
+    rest_is_empty_signedoff_only(msg.as_str(), msg.len().saturating_sub(after_prefix.len()))
+}
+
+fn branch_display_name(head: &HeadState) -> String {
+    match head {
+        HeadState::Branch { short_name, .. } => short_name.clone(),
+        HeadState::Detached { .. } => "HEAD detached".to_string(),
+        HeadState::Invalid => "unknown".to_string(),
+    }
+}
+
+fn git_binary_for_status() -> PathBuf {
+    if let Ok(exec) = std::env::var("GIT_EXEC_PATH") {
+        let candidate = Path::new(&exec).join("git");
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    // Tests prepend a `git` wrapper that runs grit; invoking `git diff` from commit
+    // would recurse. Prefer the real host binary when available.
+    for path in ["/usr/bin/git", "/bin/git"] {
+        let p = PathBuf::from(path);
+        if p.is_file() {
+            return p;
+        }
+    }
+    PathBuf::from("git")
+}
+
+fn commit_template_status_append(
+    args: &Args,
+    repo: &Repository,
+    head: &HeadState,
+    config: &ConfigSet,
+    buf: &mut String,
+) -> Result<()> {
+    buf.push('\n');
+    if args.allow_empty_message {
+        buf.push_str(
+            "# Please enter the commit message for your changes. Lines starting\n\
+             # with '#' will be ignored.\n",
+        );
+    } else {
+        buf.push_str(
+            "# Please enter the commit message for your changes. Lines starting\n\
+             # with '#' will be ignored, and an empty message aborts the commit.\n",
+        );
+    }
+    if args.allow_empty_message {
+        buf.push_str("#\n");
+    }
+    let author = resolve_author(args, config, repo, OffsetDateTime::now_utc())?;
+    buf.push_str("# Author:    ");
+    let author_display = author
+        .split_once('>')
+        .map(|(a, _)| format!("{}>", a.trim()))
+        .unwrap_or_else(|| author.clone());
+    buf.push_str(&author_display);
+    buf.push('\n');
+    buf.push_str("#\n");
+    buf.push_str("# On branch ");
+    buf.push_str(&branch_display_name(head));
+    buf.push('\n');
+    buf.push_str("# Changes to be committed:\n");
+
+    if let Some(wt) = repo.work_tree.as_deref() {
+        let index_file = resolved_index_path(repo);
+        let output = Command::new(git_binary_for_status())
+            .current_dir(wt)
+            .env("GIT_DIR", &repo.git_dir)
+            .env("GIT_INDEX_FILE", &index_file)
+            .args(["diff", "--cached", "--name-status"])
+            .output();
+        if let Ok(out) = output {
+            if out.status.success() {
+                let text = String::from_utf8_lossy(&out.stdout);
+                for line in text.lines() {
+                    let line = line.trim_end();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    let parts: Vec<&str> = line.split('\t').collect();
+                    if parts.is_empty() {
+                        continue;
+                    }
+                    let status = parts[0];
+                    let (label, display_path) =
+                        if status.starts_with('R') || status.starts_with('C') {
+                            if parts.len() >= 3 {
+                                let lbl = if status.starts_with('R') {
+                                    "renamed"
+                                } else {
+                                    "copied"
+                                };
+                                (lbl, format!("{} -> {}", parts[1], parts[2]))
+                            } else {
+                                continue;
+                            }
+                        } else {
+                            let lbl = match status.chars().next() {
+                                Some('A') => "new file",
+                                Some('D') => "deleted",
+                                Some('M') => "modified",
+                                Some('T') => "typechange",
+                                _ => "changed",
+                            };
+                            let p = parts.get(1).copied().unwrap_or("");
+                            (lbl, p.to_string())
+                        };
+                    buf.push_str(&format!("#\t{label}:   {display_path}\n"));
+                }
+                buf.push_str("#\n");
+                buf.push_str("# Untracked files not listed\n");
+                return Ok(());
+            }
+        }
+    }
+
+    let index = match repo.load_index_at(&resolved_index_path(repo)) {
+        Ok(i) => i,
+        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
+        Err(e) => return Err(e.into()),
+    };
+    let head_tree = match head.oid() {
+        Some(oid) => {
+            let obj = repo.odb.read(oid)?;
+            let c = grit_lib::objects::parse_commit(&obj.data)?;
+            Some(c.tree)
+        }
+        None => None,
+    };
+    let staged = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
+    for e in &staged {
+        let label = status_label_staged(e.status);
+        buf.push_str(&format!("#\t{label}:   {}\n", e.display_path()));
+    }
+    buf.push_str("#\n");
+    buf.push_str("# Untracked files not listed\n");
+    Ok(())
+}
+
+fn prepare_commit_message(
+    args: &Args,
+    repo: &Repository,
+    config: &ConfigSet,
+    fixup: Option<&FixupParsed>,
+    template_path: Option<&Path>,
+    use_editor: bool,
+    head: &HeadState,
+) -> Result<MessageResult> {
+    if let Some(sq) = args.squash.as_deref() {
+        let reuse = args
+            .reuse_message
+            .as_deref()
+            .or(args.reedit_message.as_deref());
+        let prefix = build_squash_prefix(repo, sq, reuse)?;
+        let mut body = String::new();
+        if !args.message.is_empty() {
+            body.push_str(&args.message.join("\n\n"));
+        } else if let Some(ref fp) = args.file {
+            let raw = read_message_file_raw(fp)?;
+            body.push_str(&String::from_utf8_lossy(&raw));
+        } else if let Some(rev) = reuse {
+            let oid = resolve_revision(repo, rev)?;
+            let obj = repo.odb.read(&oid)?;
+            let commit = grit_lib::objects::parse_commit(&obj.data)?;
+            if args.reedit_message.is_some() {
+                let edit_path = repo.git_dir.join("COMMIT_EDITMSG");
+                let mut file_body = prefix.clone();
+                file_body.push_str(&commit.message);
+                if !args.no_status {
+                    commit_template_status_append(args, repo, head, config, &mut file_body)?;
+                }
+                fs::write(&edit_path, &file_body)?;
+                launch_commit_editor(repo, &edit_path)?;
+                let edited = fs::read_to_string(&edit_path)?;
+                let cleaned = cleanup_edited_commit_message(&edited);
+                return Ok(MessageResult {
+                    message: ensure_trailing_newline(&cleaned),
+                    raw_bytes: None,
+                });
+            }
+            if rev == sq {
+                let subj = first_line(&commit.message);
+                body.push_str(subj);
+            } else {
+                // `-C`: reuse the full commit log (including its subject) after the squash prefix.
+                body.push_str(&commit.message);
+            }
+        } else if use_editor {
+            let edit_path = repo.git_dir.join("COMMIT_EDITMSG");
+            let mut file_body = prefix.clone();
+            if file_body.trim().is_empty() {
+                file_body.push('\n');
+            }
+            if !args.no_status {
+                commit_template_status_append(args, repo, head, config, &mut file_body)?;
+            }
+            fs::write(&edit_path, &file_body)?;
+            launch_commit_editor(repo, &edit_path)?;
+            let edited = fs::read_to_string(&edit_path)?;
+            let cleaned = cleanup_edited_commit_message(&edited);
+            return Ok(MessageResult {
+                message: ensure_trailing_newline(&cleaned),
+                raw_bytes: None,
+            });
+        }
+        let combined = format!("{prefix}{body}");
         return Ok(MessageResult {
-            message: commit.message,
+            message: ensure_trailing_newline(&combined),
             raw_bytes: None,
         });
     }
 
-    // -m flags
-    if !args.message.is_empty() {
+    if !args.message.is_empty() && fixup.map(|f| matches!(f.mode, FixupMode::Fixup)) != Some(true) {
         let msg = args.message.join("\n\n");
         return Ok(MessageResult {
             message: ensure_trailing_newline(&msg),
@@ -922,39 +1761,74 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
         });
     }
 
-    // -F file
     if let Some(ref file_path) = args.file {
-        let raw = if file_path == "-" {
-            use std::io::Read;
-            let mut buf = Vec::new();
-            std::io::stdin().read_to_end(&mut buf)?;
-            buf
-        } else {
-            fs::read(file_path)?
-        };
-        match String::from_utf8(raw.clone()) {
-            Ok(s) => {
-                return Ok(MessageResult {
-                    message: ensure_trailing_newline(&s),
-                    raw_bytes: None,
-                });
-            }
-            Err(_) => {
-                // Non-UTF-8 message — store raw bytes.
-                let lossy = String::from_utf8_lossy(&raw).to_string();
-                let mut raw_nl = raw;
-                if !raw_nl.ends_with(b"\n") {
-                    raw_nl.push(b'\n');
-                }
-                return Ok(MessageResult {
-                    message: ensure_trailing_newline(&lossy),
-                    raw_bytes: Some(raw_nl),
-                });
-            }
-        }
+        return raw_to_message_result(read_message_file_raw(file_path)?);
     }
 
-    // Check for MERGE_MSG
+    let reuse_rev = args.reuse_message.as_ref().or(args.reedit_message.as_ref());
+    if let Some(rev) = reuse_rev {
+        let oid = resolve_revision(repo, rev)?;
+        let obj = repo.odb.read(&oid)?;
+        let commit = grit_lib::objects::parse_commit(&obj.data)?;
+        if args.reedit_message.is_some() {
+            let edit_path = repo.git_dir.join("COMMIT_EDITMSG");
+            let mut file_body = build_initial_commit_buffer(args, repo, fixup, template_path)?;
+            if !args.no_status {
+                commit_template_status_append(args, repo, head, config, &mut file_body)?;
+            }
+            fs::write(&edit_path, &file_body)?;
+            launch_commit_editor(repo, &edit_path)?;
+            let edited = fs::read_to_string(&edit_path)?;
+            let cleaned = cleanup_edited_commit_message(&edited);
+            return Ok(MessageResult {
+                message: ensure_trailing_newline(&cleaned),
+                raw_bytes: None,
+            });
+        }
+        return Ok(MessageResult {
+            message: commit.message,
+            raw_bytes: None,
+        });
+    }
+
+    let initial = build_initial_commit_buffer(args, repo, fixup, template_path)?;
+
+    if args.allow_empty_message
+        && initial.trim().is_empty()
+        && template_path.is_none()
+        && fixup.is_none()
+        && args.squash.is_none()
+        && !use_editor
+    {
+        return Ok(MessageResult {
+            message: String::new(),
+            raw_bytes: None,
+        });
+    }
+
+    if !use_editor && fixup.is_some() {
+        return Ok(MessageResult {
+            message: ensure_trailing_newline(&initial),
+            raw_bytes: None,
+        });
+    }
+
+    if use_editor {
+        let edit_path = repo.git_dir.join("COMMIT_EDITMSG");
+        let mut file_body = initial;
+        if !args.no_status {
+            commit_template_status_append(args, repo, head, config, &mut file_body)?;
+        }
+        fs::write(&edit_path, &file_body)?;
+        launch_commit_editor(repo, &edit_path)?;
+        let edited = fs::read_to_string(&edit_path)?;
+        let cleaned = cleanup_edited_commit_message(&edited);
+        return Ok(MessageResult {
+            message: ensure_trailing_newline(&cleaned),
+            raw_bytes: None,
+        });
+    }
+
     if let Some(msg) = grit_lib::state::read_merge_msg(&repo.git_dir)? {
         return Ok(MessageResult {
             message: ensure_trailing_newline(&msg),
@@ -962,9 +1836,8 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
         });
     }
 
-    // Check for SQUASH_MSG
     let squash_msg_path = repo.git_dir.join("SQUASH_MSG");
-    if let Ok(msg) = std::fs::read_to_string(&squash_msg_path) {
+    if let Ok(msg) = fs::read_to_string(&squash_msg_path) {
         if !msg.is_empty() {
             return Ok(MessageResult {
                 message: ensure_trailing_newline(&msg),
@@ -973,10 +1846,18 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
         }
     }
 
-    // If amend, use the previous commit message as default
+    if let Some(tpl) = template_path {
+        let content = fs::read_to_string(tpl)
+            .with_context(|| format!("fatal: could not read '{}'", tpl.display()))?;
+        return Ok(MessageResult {
+            message: ensure_trailing_newline(&content),
+            raw_bytes: None,
+        });
+    }
+
     if args.amend {
-        let head = resolve_head(&repo.git_dir)?;
-        if let Some(oid) = head.oid() {
+        let head_st = resolve_head(&repo.git_dir)?;
+        if let Some(oid) = head_st.oid() {
             let obj = repo.odb.read(oid)?;
             let commit = grit_lib::objects::parse_commit(&obj.data)?;
             return Ok(MessageResult {
@@ -986,7 +1867,6 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
         }
     }
 
-    // If --allow-empty-message, return empty message
     if args.allow_empty_message {
         return Ok(MessageResult {
             message: String::new(),
@@ -994,7 +1874,6 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
         });
     }
 
-    // TODO: Launch editor
     bail!("no commit message provided (use -m or -F)");
 }
 

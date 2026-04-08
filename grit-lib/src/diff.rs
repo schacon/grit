@@ -444,6 +444,11 @@ pub fn diff_index_to_tree(
     // Check index entries against tree
     for ie in &index.entries {
         let path = String::from_utf8_lossy(&ie.path).to_string();
+        if ie.stage() == 0 && ie.intent_to_add() {
+            // Intent-to-add entries are not "staged" for diff-index / status
+            // (matches Git: `git diff --cached` is empty for `-N` paths).
+            continue;
+        }
         if ie.stage() != 0 {
             let rank = match ie.stage() {
                 2 => 0u8,
@@ -1390,6 +1395,42 @@ pub fn detect_copies(
 
     result.sort_by(|a, b| a.path().cmp(b.path()));
     result
+}
+
+/// Apply Git-style rename and optional copy detection for index↔worktree diffs.
+///
+/// When `copies` is true (Git `diff.renames` / `status.renames` set to `copy`/`copies`),
+/// runs [`detect_copies`] after rename detection so added files can match unchanged
+/// paths from `HEAD` (e.g. intent-to-add copies).
+///
+/// # Errors
+///
+/// Propagates errors from reading the `head_tree` object from `odb`.
+pub fn status_apply_rename_copy_detection(
+    odb: &Odb,
+    unstaged_raw: Vec<DiffEntry>,
+    threshold: u32,
+    copies: bool,
+    head_tree: Option<&ObjectId>,
+) -> Result<Vec<DiffEntry>> {
+    let after_renames = detect_renames(odb, unstaged_raw, threshold);
+    if !copies {
+        return Ok(after_renames);
+    }
+    let source_tree_entries: Vec<(String, String, ObjectId)> = match head_tree {
+        Some(oid) => flatten_tree(odb, oid, "")?
+            .into_iter()
+            .map(|e| (e.path, format_mode(e.mode), e.oid))
+            .collect(),
+        None => Vec::new(),
+    };
+    Ok(detect_copies(
+        odb,
+        after_renames,
+        threshold,
+        false,
+        &source_tree_entries,
+    ))
 }
 
 /// Format a rename pair using Git's compact path format.

@@ -2614,7 +2614,14 @@ fn apply_reflog_format_string(
                 }
                 Some('B') => {
                     chars.next();
-                    result.push_str(commit.message.trim());
+                    // Entire commit message (matches Git `%B`). Parsed commits omit the final
+                    // newline in memory; Git's `%B` still ends with `\n` when non-empty.
+                    if !commit.message.is_empty() {
+                        result.push_str(&commit.message);
+                        if !commit.message.ends_with('\n') {
+                            result.push('\n');
+                        }
+                    }
                 }
                 Some('b') => {
                     chars.next();
@@ -3689,8 +3696,12 @@ fn apply_format_string(
                 }
                 Some('B') => {
                     chars.next();
-                    // Raw body: entire commit message
-                    result.push_str(&info.message);
+                    if !info.message.is_empty() {
+                        result.push_str(&info.message);
+                        if !info.message.ends_with('\n') {
+                            result.push('\n');
+                        }
+                    }
                 }
                 Some('d') => {
                     chars.next();
