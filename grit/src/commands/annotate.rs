@@ -85,11 +85,32 @@ pub struct Args {
     #[arg(long = "no-textconv")]
     pub no_textconv: bool,
 
+    #[arg(long = "contents", value_name = "file")]
+    pub contents: Option<String>,
+
     #[arg()]
     pub args: Vec<String>,
 }
 
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
+    // Upstream annotate-tests use `-h <rev>` as the starting revision (not `git blame --help`).
+    let mut rev_from_h: Option<String> = None;
+    let mut out_args: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < args.args.len() {
+        if args.args[i] == "-h" && i + 1 < args.args.len() && rev_from_h.is_none() {
+            rev_from_h = Some(args.args[i + 1].clone());
+            i += 2;
+        } else {
+            out_args.push(args.args[i].clone());
+            i += 1;
+        }
+    }
+    args.args = out_args;
+    if let Some(r) = rev_from_h {
+        args.args.insert(0, r);
+    }
+
     // Delegate to blame with the same arguments
     super::blame::run(super::blame::Args {
         line_range: args.line_range,
@@ -114,6 +135,9 @@ pub fn run(args: Args) -> Result<()> {
         minimal: args.minimal,
         textconv: args.textconv,
         no_textconv: args.no_textconv,
+        contents: args.contents,
+        progress: false,
+        annotate_output: true,
         args: args.args,
     })
 }

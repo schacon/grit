@@ -12,12 +12,14 @@ use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::resolve_head;
+use grit_lib::userdiff;
 use grit_lib::wildmatch::wildmatch;
+use regex::Regex;
 use similar::{Algorithm as SimilarAlgorithm, ChangeTag, TextDiff};
-use std::collections::{HashMap, HashSet};
-use std::fs::OpenOptions;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 use time::OffsetDateTime;
@@ -129,6 +131,18 @@ pub struct Args {
     #[arg(long = "no-textconv")]
     pub no_textconv: bool,
 
+    /// Use this file's contents as the final image to annotate (git `--contents`).
+    #[arg(long = "contents", value_name = "file")]
+    pub contents: Option<String>,
+
+    /// Report progress to stderr (honours `GIT_PROGRESS_DELAY`).
+    #[arg(long = "progress")]
+    pub progress: bool,
+
+    /// When true, emit git-annotate style output (tab-separated metadata).
+    #[arg(skip)]
+    pub annotate_output: bool,
+
     /// Revision to blame from (and optional file after `--`).
     #[arg()]
     pub args: Vec<String>,
@@ -149,6 +163,8 @@ struct BlameLine {
     ignored: bool,
     /// True when this line could not be blamed past an ignored revision.
     unblamable: bool,
+    /// Line comes from `--contents` and does not match the blamed revision (git: "External file").
+    external_contents: bool,
 }
 
 /// Parsed author/committer string.
@@ -233,14 +249,17 @@ fn resolve_path_in_tree_entry(
     Ok(None)
 }
 
-/// Split content into lines, handling trailing newline consistently.
+/// Split content into lines. A final line without a trailing newline is still a line
+/// (matches git blame / `wc -l` + 1 semantics in upstream tests).
 fn content_lines(s: &str) -> Vec<&str> {
-    let lines: Vec<&str> = s.split('\n').collect();
-    if lines.last() == Some(&"") && lines.len() > 1 {
-        lines[..lines.len() - 1].to_vec()
-    } else {
-        lines
+    if s.is_empty() {
+        return Vec::new();
     }
+    let mut out: Vec<&str> = s.split('\n').collect();
+    if out.last() == Some(&"") {
+        out.pop();
+    }
+    out
 }
 
 /// Each line being tracked through history.
@@ -511,7 +530,7 @@ fn read_blob_content_for_blame(
     Ok(String::from_utf8_lossy(&converted).into_owned())
 }
 
-/// Core blame: walk first-parent history, diff blobs, attribute lines.
+/// Core blame: walk history (all parents at merges unless `first_parent_only`), diff blobs, attribute lines.
 fn compute_blame(
     odb: &Odb,
     start_oid: ObjectId,
@@ -521,6 +540,8 @@ fn compute_blame(
     textconv_ctx: Option<&BlameTextconvContext>,
     use_textconv: bool,
     copy_depth: usize,
+    first_parent_only: bool,
+    grafts: &HashMap<ObjectId, Vec<ObjectId>>,
 ) -> Result<Vec<BlameLine>> {
     let start_commit = {
         let obj = odb.read(&start_oid)?;
@@ -564,19 +585,30 @@ fn compute_blame(
     let mut current_path = file_path.to_string();
     let mut commit_cache: HashMap<ObjectId, CommitData> = HashMap::new();
     commit_cache.insert(start_oid, start_commit);
+    let mut deferred: VecDeque<(ObjectId, ObjectId, u32, String, Vec<TrackedLine>)> =
+        VecDeque::new();
 
-    loop {
+    'blame_loop: loop {
         if pending.is_empty() {
+            if let Some((oid, blob, mode, path, lines)) = deferred.pop_front() {
+                current_oid = oid;
+                current_blob_oid = blob;
+                current_blob_mode = mode;
+                current_path = path;
+                pending = lines;
+                continue;
+            }
             break;
         }
 
         let commit = get_commit(odb, current_oid, &mut commit_cache)?;
+        let parents = commit_parents_for_blame(odb, current_oid, grafts, &mut commit_cache)?;
 
         let is_ignored = ignore_revs.contains(&current_oid);
 
         // If an ignored merge commit is encountered, try to continue blame
         // through the parent that actually contributed each line.
-        if is_ignored && commit.parents.len() > 1 {
+        if is_ignored && parents.len() > 1 {
             let cur_content = read_blob_content_for_blame(
                 odb,
                 &current_blob_oid,
@@ -589,7 +621,7 @@ fn compute_blame(
 
             let mut parent_lines: Vec<Option<Vec<String>>> = Vec::new();
             let mut parent_blames: Vec<Option<Vec<BlameLine>>> = Vec::new();
-            for parent_oid in &commit.parents {
+            for parent_oid in &parents {
                 let parent_commit = get_commit(odb, *parent_oid, &mut commit_cache)?;
                 if let Some((p_blob_oid, p_blob_mode)) =
                     resolve_path_in_tree_entry(odb, &parent_commit.tree, &current_path)?
@@ -615,6 +647,8 @@ fn compute_blame(
                         textconv_ctx,
                         use_textconv,
                         copy_depth,
+                        first_parent_only,
+                        grafts,
                     )?;
                     parent_lines.push(Some(p_lines));
                     parent_blames.push(Some(p_blame));
@@ -635,12 +669,13 @@ fn compute_blame(
                         source_file: None,
                         ignored: t.ignored,
                         unblamable: true,
+                        external_contents: false,
                     });
                     continue;
                 };
 
                 let mut picked: Option<BlameLine> = None;
-                for i in 0..commit.parents.len() {
+                for i in 0..parents.len() {
                     let Some(lines) = parent_lines.get(i).and_then(|v| v.as_ref()) else {
                         continue;
                     };
@@ -665,6 +700,7 @@ fn compute_blame(
                         source_file: pb.source_file,
                         ignored: true,
                         unblamable: pb.unblamable,
+                        external_contents: false,
                     });
                 } else {
                     result.push(BlameLine {
@@ -675,13 +711,17 @@ fn compute_blame(
                         source_file: None,
                         ignored: t.ignored,
                         unblamable: true,
+                        external_contents: false,
                     });
                 }
             }
-            break;
+            if !deferred.is_empty() {
+                continue 'blame_loop;
+            }
+            break 'blame_loop;
         }
 
-        if commit.parents.is_empty() {
+        if parents.is_empty() {
             // Root commit — attribute all remaining lines
             for t in pending.drain(..) {
                 result.push(BlameLine {
@@ -692,12 +732,148 @@ fn compute_blame(
                     source_file: None,
                     ignored: t.ignored,
                     unblamable: false,
+                    external_contents: false,
                 });
             }
-            break;
+            if !deferred.is_empty() {
+                continue 'blame_loop;
+            }
+            break 'blame_loop;
         }
 
-        let parent_oid = commit.parents[0];
+        // Merge commits: pass blame through each parent in order (matches git's
+        // sequential `pass_blame_to_parent` when not using --first-parent).
+        if !first_parent_only
+            && !is_ignored
+            && parents.len() == 2
+            && resolve_path_in_tree_entry(
+                odb,
+                &get_commit(odb, parents[0], &mut commit_cache)?.tree,
+                &current_path,
+            )?
+            .is_some()
+            && resolve_path_in_tree_entry(
+                odb,
+                &get_commit(odb, parents[1], &mut commit_cache)?.tree,
+                &current_path,
+            )?
+            .is_some()
+        {
+            let p0 = parents[0];
+            let p1 = parents[1];
+            let parent0_commit = get_commit(odb, p0, &mut commit_cache)?;
+            let parent1_commit = get_commit(odb, p1, &mut commit_cache)?;
+            let Some((p0_blob, p0_mode)) =
+                resolve_path_in_tree_entry(odb, &parent0_commit.tree, &current_path)?
+            else {
+                bail!("internal: missing blob in merge parent 0");
+            };
+            let Some((p1_blob, p1_mode)) =
+                resolve_path_in_tree_entry(odb, &parent1_commit.tree, &current_path)?
+            else {
+                bail!("internal: missing blob in merge parent 1");
+            };
+
+            let cur_content = read_blob_content_for_blame(
+                odb,
+                &current_blob_oid,
+                &current_path,
+                current_blob_mode,
+                textconv_ctx,
+                use_textconv,
+            )?;
+            let par0_content = read_blob_content_for_blame(
+                odb,
+                &p0_blob,
+                &current_path,
+                p0_mode,
+                textconv_ctx,
+                use_textconv,
+            )?;
+            let par1_content = read_blob_content_for_blame(
+                odb,
+                &p1_blob,
+                &current_path,
+                p1_mode,
+                textconv_ctx,
+                use_textconv,
+            )?;
+            let cur_lines = content_lines(&cur_content);
+            let par0_lines = content_lines(&par0_content);
+            let par1_lines = content_lines(&par1_content);
+
+            let map0 = build_line_map(&par0_lines, &cur_lines, diff_algorithm);
+            let map1 = build_line_map(&par1_lines, &cur_lines, diff_algorithm);
+
+            let mut to_p0: Vec<TrackedLine> = Vec::new();
+            let mut to_p1: Vec<TrackedLine> = Vec::new();
+            let mut attributed: Vec<BlameLine> = Vec::new();
+
+            // Git walks parents sequentially: lines that map to parent 1 are handed off first;
+            // only what parent 1 cannot explain stays for parent 2 (see `pass_blame` in git/blame.c).
+            for t in pending.drain(..) {
+                let idx = t.current_idx;
+                let m0 = map0.get(idx).copied().flatten();
+                let m1 = map1.get(idx).copied().flatten();
+                let cur_line = cur_lines.get(idx).copied();
+
+                if let Some(p0_idx) = m0 {
+                    let matches_p0 = par0_lines.get(p0_idx).copied() == cur_line;
+                    if matches_p0 {
+                        to_p0.push(TrackedLine {
+                            final_lineno: t.final_lineno,
+                            current_idx: p0_idx,
+                            ignored: t.ignored,
+                            source_path: t.source_path.clone(),
+                        });
+                        continue;
+                    }
+                }
+
+                if let Some(p1_idx) = m1 {
+                    let matches_p1 = par1_lines.get(p1_idx).copied() == cur_line;
+                    if matches_p1 {
+                        to_p1.push(TrackedLine {
+                            final_lineno: t.final_lineno,
+                            current_idx: p1_idx,
+                            ignored: t.ignored,
+                            source_path: t.source_path.clone(),
+                        });
+                        continue;
+                    }
+                }
+
+                attributed.push(BlameLine {
+                    oid: current_oid,
+                    final_lineno: t.final_lineno,
+                    orig_lineno: idx + 1,
+                    content: final_lines[t.final_lineno - 1].clone(),
+                    source_file: None,
+                    ignored: t.ignored,
+                    unblamable: false,
+                    external_contents: false,
+                });
+            }
+
+            for bl in attributed {
+                result.push(bl);
+            }
+
+            if !to_p1.is_empty() {
+                deferred.push_back((p1, p1_blob, p1_mode, current_path.clone(), to_p1));
+            }
+            if !to_p0.is_empty() {
+                current_oid = p0;
+                current_blob_oid = p0_blob;
+                current_blob_mode = p0_mode;
+                pending = to_p0;
+            } else if deferred.is_empty() {
+                break 'blame_loop;
+            }
+            continue;
+        }
+
+        let parent_oid = parents[0];
         let parent_commit = get_commit(odb, parent_oid, &mut commit_cache)?;
         let parent_blob_entry =
             resolve_path_in_tree_entry(odb, &parent_commit.tree, &current_path)?;
@@ -776,6 +952,8 @@ fn compute_blame(
                             textconv_ctx,
                             use_textconv,
                             copy_depth.saturating_sub(1),
+                            first_parent_only,
+                            grafts,
                         )?;
                         for line in source_blame {
                             by_content
@@ -807,6 +985,7 @@ fn compute_blame(
                                         .or_else(|| Some(source_path.clone())),
                                     ignored: pb.ignored || t.ignored,
                                     unblamable: pb.unblamable,
+                                    external_contents: false,
                                 });
                             } else {
                                 result.push(BlameLine {
@@ -817,10 +996,14 @@ fn compute_blame(
                                     source_file: None,
                                     ignored: t.ignored,
                                     unblamable: false,
+                                    external_contents: false,
                                 });
                             }
                         }
-                        break;
+                        if !deferred.is_empty() {
+                            continue 'blame_loop;
+                        }
+                        break 'blame_loop;
                     }
                 }
 
@@ -834,9 +1017,13 @@ fn compute_blame(
                         source_file: None,
                         ignored: t.ignored,
                         unblamable: false,
+                        external_contents: false,
                     });
                 }
-                break;
+                if !deferred.is_empty() {
+                    continue 'blame_loop;
+                }
+                break 'blame_loop;
             }
             None => {
                 // Ignored commit but file doesn't exist in parent.
@@ -850,9 +1037,13 @@ fn compute_blame(
                         source_file: None,
                         ignored: t.ignored,
                         unblamable: true,
+                        external_contents: false,
                     });
                 }
-                break;
+                if !deferred.is_empty() {
+                    continue 'blame_loop;
+                }
+                break 'blame_loop;
             }
             Some((p_blob_oid, p_blob_mode)) if p_blob_oid == current_blob_oid => {
                 // Identical blob — skip to parent
@@ -904,6 +1095,8 @@ fn compute_blame(
                         use_textconv,
                         copy_depth - 1,
                         false,
+                        first_parent_only,
+                        grafts,
                     )? {
                         let mut by_content: HashMap<String, Vec<BlameLine>> = HashMap::new();
                         for line in source_blame {
@@ -942,6 +1135,7 @@ fn compute_blame(
                                         source_file: None,
                                         ignored: t.ignored,
                                         unblamable: false,
+                                        external_contents: false,
                                     });
                                 }
                                 continue;
@@ -991,6 +1185,7 @@ fn compute_blame(
                                     source_file: None,
                                     ignored: t.ignored,
                                     unblamable: true,
+                                    external_contents: false,
                                 });
                             }
                         } else {
@@ -1016,6 +1211,7 @@ fn compute_blame(
                                             .or_else(|| Some(source_path.clone())),
                                         ignored: pb.ignored || t.ignored,
                                         unblamable: pb.unblamable,
+                                        external_contents: false,
                                     });
                                     continue;
                                 }
@@ -1029,6 +1225,7 @@ fn compute_blame(
                                 source_file: None,
                                 ignored: t.ignored,
                                 unblamable: false,
+                                external_contents: false,
                             });
                         }
                     } else if is_ignored {
@@ -1040,6 +1237,7 @@ fn compute_blame(
                             source_file: None,
                             ignored: t.ignored,
                             unblamable: true,
+                            external_contents: false,
                         });
                     } else {
                         // Out of range — attribute to current
@@ -1051,6 +1249,7 @@ fn compute_blame(
                             source_file: None,
                             ignored: t.ignored,
                             unblamable: false,
+                            external_contents: false,
                         });
                     }
                 }
@@ -1122,6 +1321,8 @@ fn find_copy_source_blame(
     use_textconv: bool,
     copy_depth: usize,
     include_current_path: bool,
+    first_parent_only: bool,
+    grafts: &HashMap<ObjectId, Vec<ObjectId>>,
 ) -> Result<Option<(String, Vec<BlameLine>)>> {
     let mut entries = Vec::new();
     collect_tree_file_entries(odb, parent_tree_oid, "", &mut entries)?;
@@ -1161,6 +1362,8 @@ fn find_copy_source_blame(
         textconv_ctx,
         use_textconv,
         copy_depth,
+        first_parent_only,
+        grafts,
     )?;
     Ok(Some((source_path, source_blame)))
 }
@@ -1204,6 +1407,55 @@ fn get_commit(
     let c = parse_commit(&obj.data)?;
     cache.insert(oid, c.clone());
     Ok(c)
+}
+
+/// Parent list for a commit, honoring `.git/info/grafts` (same rules as `git rev-list`).
+fn commit_parents_for_blame(
+    odb: &Odb,
+    oid: ObjectId,
+    grafts: &HashMap<ObjectId, Vec<ObjectId>>,
+    cache: &mut HashMap<ObjectId, CommitData>,
+) -> Result<Vec<ObjectId>> {
+    if let Some(p) = grafts.get(&oid) {
+        return Ok(p.clone());
+    }
+    Ok(get_commit(odb, oid, cache)?.parents)
+}
+
+fn load_graft_parents(git_dir: &Path) -> HashMap<ObjectId, Vec<ObjectId>> {
+    let graft_path = git_dir.join("info/grafts");
+    let Ok(contents) = fs::read_to_string(&graft_path) else {
+        return HashMap::new();
+    };
+    let mut grafts = HashMap::new();
+    for raw_line in contents.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut fields = line.split_whitespace();
+        let Some(commit_hex) = fields.next() else {
+            continue;
+        };
+        let Ok(commit_oid) = commit_hex.parse::<ObjectId>() else {
+            continue;
+        };
+        let mut parents = Vec::new();
+        let mut valid = true;
+        for parent_hex in fields {
+            match parent_hex.parse::<ObjectId>() {
+                Ok(parent_oid) => parents.push(parent_oid),
+                Err(_) => {
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        if valid {
+            grafts.insert(commit_oid, parents);
+        }
+    }
+    grafts
 }
 
 fn config_bool(config: &ConfigSet, key: &str) -> bool {
@@ -1589,12 +1841,11 @@ fn line_similarity_and_lcs(a: &str, b: &str) -> (f64, usize) {
     (sim, lcs)
 }
 
-// ── CLI entry point ──────────────────────────────────────────────────
-
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let odb = Odb::new(&repo.git_dir.join("objects"));
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let grafts = load_graft_parents(&repo.git_dir);
 
     let mut diff_algorithm = config
         .get("diff.algorithm")
@@ -1614,13 +1865,17 @@ pub fn run(args: Args) -> Result<()> {
     normalize_detection_args(&args.move_detection, &mut normalized_positional);
     normalized_positional.extend(args.args.iter().cloned());
 
-    let (rev, file_path) = parse_blame_args(&normalized_positional)?;
+    let (rev, file_path) = parse_blame_args(&repo, &normalized_positional)?;
     let use_textconv = !args.no_textconv;
     let copy_depth = args.copy_detection.len();
     let textconv_ctx = Some(BlameTextconvContext::new(&repo));
 
     let start_oid = match &rev {
-        Some(r) => resolve_blame_start_oid(&repo, r)?,
+        Some(r) => {
+            let oid = resolve_blame_start_oid(&repo, r)?;
+            peel_to_commit_oid(&odb, oid)?
+                .ok_or_else(|| anyhow::anyhow!("revision does not resolve to a commit"))?
+        }
         None => {
             let head = resolve_head(&repo.git_dir)?;
             match head.oid() {
@@ -1672,6 +1927,16 @@ pub fn run(args: Args) -> Result<()> {
     let mark_unblamable = config_bool(&config, "blame.markUnblamableLines");
     let mark_ignored = config_bool(&config, "blame.markIgnoredLines");
 
+    let contents_override = if let Some(ref p) = args.contents {
+        let path = PathBuf::from(p);
+        Some(
+            std::fs::read_to_string(&path)
+                .with_context(|| format!("could not read --contents file: {p}"))?,
+        )
+    } else {
+        None
+    };
+
     let mut blame_lines = if args.reverse {
         let rev_spec = rev
             .as_deref()
@@ -1697,6 +1962,8 @@ pub fn run(args: Args) -> Result<()> {
             textconv_ctx.as_ref(),
             use_textconv,
             copy_depth,
+            args.first_parent,
+            &grafts,
         ) {
             Ok(lines) => lines,
             Err(e) if rev.is_none() => {
@@ -1727,39 +1994,73 @@ pub fn run(args: Args) -> Result<()> {
                     textconv_ctx.as_ref(),
                     use_textconv,
                     copy_depth,
+                    args.first_parent,
+                    &grafts,
                 )?
             }
             Err(e) => return Err(e),
         }
     };
 
-    if !args.reverse && rev.is_none() {
-        if let Some(overlaid) = apply_worktree_overlay(
-            &repo,
-            &odb,
-            start_oid,
-            &file_path,
-            &blame_lines,
-            textconv_ctx.as_ref(),
-            use_textconv,
-        )? {
-            blame_lines = overlaid;
+    if !args.reverse {
+        if let Some(ref final_text) = contents_override {
+            if let Some(overlaid) = apply_final_content_overlay(
+                &odb,
+                start_oid,
+                &file_path,
+                &blame_lines,
+                final_text,
+                textconv_ctx.as_ref(),
+                use_textconv,
+            )? {
+                blame_lines = overlaid;
+            }
+        } else if rev.is_none() {
+            if let Some(overlaid) = apply_worktree_overlay(
+                &repo,
+                &odb,
+                start_oid,
+                &file_path,
+                &blame_lines,
+                textconv_ctx.as_ref(),
+                use_textconv,
+            )? {
+                blame_lines = overlaid;
+            }
         }
     }
 
     // Apply line range filters (`-L` can be repeated).
     if !args.line_range.is_empty() {
         let mut keep = HashSet::new();
+        let mut range_ctx = LineRangeParseCtx {
+            blame_lines: &blame_lines,
+            file_path: &file_path,
+            textconv: textconv_ctx.as_ref(),
+            prev_range_end: 0,
+        };
         for range in &args.line_range {
-            let (mut start, mut end) = parse_line_range(range, &blame_lines)?;
+            let (mut start, mut end) = parse_line_range(range, &mut range_ctx)?;
             if end < start {
                 std::mem::swap(&mut start, &mut end);
             }
+            range_ctx.prev_range_end = end;
             for lineno in start..=end {
                 keep.insert(lineno);
             }
         }
         blame_lines.retain(|b| keep.contains(&b.final_lineno));
+    }
+
+    if args.progress && !args.reverse && !blame_lines.is_empty() {
+        let delay_ms: u64 = std::env::var("GIT_PROGRESS_DELAY")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let total = blame_lines.len();
+        if delay_ms == 0 {
+            eprintln!("Blaming lines: 100% ({total}/{total}), done.");
+        }
     }
 
     let stdout = io::stdout();
@@ -1798,6 +2099,8 @@ pub fn run(args: Args) -> Result<()> {
             mark_unblamable,
             mark_ignored,
         )?;
+    } else if args.annotate_output {
+        write_annotate(&mut out, &blame_lines, &commits, &args, &file_path)?;
     } else {
         write_default(
             &mut out,
@@ -1842,6 +2145,8 @@ fn build_uncommitted_blame(
     textconv_ctx: Option<&BlameTextconvContext>,
     use_textconv: bool,
     copy_depth: usize,
+    first_parent_only: bool,
+    grafts: &HashMap<ObjectId, Vec<ObjectId>>,
 ) -> Result<Vec<BlameLine>> {
     let zero = grit_lib::diff::zero_oid();
     let final_lines = content_lines(content);
@@ -1866,6 +2171,8 @@ fn build_uncommitted_blame(
             use_textconv,
             copy_depth,
             true,
+            first_parent_only,
+            grafts,
         )? {
             let mut by_content: HashMap<String, Vec<BlameLine>> = HashMap::new();
             for line in source_blame {
@@ -1896,6 +2203,7 @@ fn build_uncommitted_blame(
                     source_file: pb.source_file.clone().or_else(|| Some(source_path.clone())),
                     ignored: pb.ignored,
                     unblamable: pb.unblamable,
+                    external_contents: false,
                 });
                 continue;
             }
@@ -1909,6 +2217,7 @@ fn build_uncommitted_blame(
             source_file: None,
             ignored: false,
             unblamable: false,
+            external_contents: false,
         });
     }
 
@@ -1927,12 +2236,28 @@ fn normalize_detection_args(values: &[String], positional: &mut Vec<String>) {
     }
 }
 
-fn parse_blame_args(args: &[String]) -> Result<(Option<String>, String)> {
+fn looks_like_object_id(s: &str) -> bool {
+    let b = s.as_bytes();
+    if !(4..=40).contains(&b.len()) {
+        return false;
+    }
+    b.iter().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn parse_blame_args(repo: &Repository, args: &[String]) -> Result<(Option<String>, String)> {
     match args.len() {
         0 => bail!("usage: grit blame [<rev>] [--] <file>"),
         1 => Ok((None, args[0].clone())),
         2 if args[0] == "--" => Ok((None, args[1].clone())),
-        2 => Ok((Some(args[0].clone()), args[1].clone())),
+        2 => {
+            let a0 = &args[0];
+            let a1 = &args[1];
+            if resolve_revision(repo, a1).is_ok() || a1 == "HEAD" || looks_like_object_id(a1) {
+                Ok((Some(a1.clone()), a0.clone()))
+            } else {
+                Ok((Some(a0.clone()), a1.clone()))
+            }
+        }
         3 if args[1] == "--" => Ok((Some(args[0].clone()), args[2].clone())),
         _ => bail!("usage: grit blame [<rev>] [--] <file>"),
     }
@@ -2069,6 +2394,7 @@ fn compute_reverse_blame(
                     source_file: None,
                     ignored: false,
                     unblamable: false,
+                    external_contents: false,
                 });
             }
         }
@@ -2089,11 +2415,87 @@ fn compute_reverse_blame(
             source_file: None,
             ignored: false,
             unblamable: false,
+            external_contents: false,
         });
     }
 
     result.sort_by_key(|line| line.final_lineno);
     Ok(result)
+}
+
+fn apply_final_content_overlay(
+    odb: &Odb,
+    start_oid: ObjectId,
+    file_path: &str,
+    base_blame: &[BlameLine],
+    final_text: &str,
+    textconv_ctx: Option<&BlameTextconvContext>,
+    use_textconv: bool,
+) -> Result<Option<Vec<BlameLine>>> {
+    let head_commit_obj = odb.read(&start_oid)?;
+    let head_commit = parse_commit(&head_commit_obj.data)?;
+    let Some((head_blob_oid, head_mode)) =
+        resolve_path_in_tree_entry(odb, &head_commit.tree, file_path)?
+    else {
+        return Ok(None);
+    };
+    if !is_regular_mode(head_mode) {
+        return Ok(None);
+    }
+
+    let head_content = read_blob_content_for_blame(
+        odb,
+        &head_blob_oid,
+        file_path,
+        head_mode,
+        textconv_ctx,
+        use_textconv,
+    )?;
+    let head_lines = content_lines(&head_content);
+    let final_lines = content_lines(final_text);
+    if head_lines == final_lines {
+        return Ok(None);
+    }
+
+    let map = build_line_map(&head_lines, &final_lines, BlameDiffAlgorithm::Myers);
+    let zero = grit_lib::diff::zero_oid();
+
+    let mut by_head_line: HashMap<usize, &BlameLine> = HashMap::new();
+    for line in base_blame {
+        by_head_line.insert(line.final_lineno, line);
+    }
+
+    let mut overlaid = Vec::with_capacity(final_lines.len());
+    for (new_idx, content) in final_lines.iter().enumerate() {
+        if let Some(old_idx) = map.get(new_idx).copied().flatten() {
+            if let Some(existing) = by_head_line.get(&(old_idx + 1)) {
+                overlaid.push(BlameLine {
+                    oid: existing.oid,
+                    final_lineno: new_idx + 1,
+                    orig_lineno: existing.orig_lineno,
+                    content: (*content).to_string(),
+                    source_file: existing.source_file.clone(),
+                    ignored: existing.ignored,
+                    unblamable: existing.unblamable,
+                    external_contents: false,
+                });
+                continue;
+            }
+        }
+
+        overlaid.push(BlameLine {
+            oid: zero,
+            final_lineno: new_idx + 1,
+            orig_lineno: new_idx + 1,
+            content: (*content).to_string(),
+            source_file: None,
+            ignored: false,
+            unblamable: false,
+            external_contents: true,
+        });
+    }
+
+    Ok(Some(overlaid))
 }
 
 fn apply_worktree_overlay(
@@ -2170,6 +2572,7 @@ fn apply_worktree_overlay(
                     source_file: existing.source_file.clone(),
                     ignored: existing.ignored,
                     unblamable: existing.unblamable,
+                    external_contents: false,
                 });
                 continue;
             }
@@ -2183,6 +2586,7 @@ fn apply_worktree_overlay(
             source_file: None,
             ignored: false,
             unblamable: false,
+            external_contents: false,
         });
     }
 
@@ -2222,57 +2626,90 @@ fn read_worktree_content_for_blame(
     Ok(String::from_utf8_lossy(&converted).into_owned())
 }
 
-fn parse_line_range(range: &str, blame_lines: &[BlameLine]) -> Result<(usize, usize)> {
-    let max_lineno = blame_lines
+struct LineRangeParseCtx<'a> {
+    blame_lines: &'a [BlameLine],
+    file_path: &'a str,
+    textconv: Option<&'a BlameTextconvContext>,
+    prev_range_end: usize,
+}
+
+fn max_line_no(blame_lines: &[BlameLine]) -> usize {
+    blame_lines
         .iter()
         .map(|b| b.final_lineno)
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
+
+fn parse_line_range(range: &str, ctx: &mut LineRangeParseCtx<'_>) -> Result<(usize, usize)> {
+    let max_lineno = max_line_no(ctx.blame_lines);
+
+    // `-L :funcname` (no comma): span from first matching funcname line through line before next boundary.
+    if !range.contains(',') && range.starts_with(':') {
+        let (start, end) = resolve_funcname_span(ctx, range)?;
+        ctx.prev_range_end = end;
+        return Ok((start, end.min(max_lineno.max(1))));
+    }
 
     let (start_spec, end_spec) = match range.split_once(',') {
         Some((start, end)) => (start, Some(end)),
         None => (range, None),
     };
 
-    let start = parse_line_spec(start_spec, blame_lines, None)?;
-    if start > max_lineno {
+    let start = if start_spec.is_empty() {
+        1
+    } else {
+        parse_line_spec(start_spec, ctx, None, LineAnchor::Default)?
+    };
+    if max_lineno > 0 && start > max_lineno {
         bail!("file has only {max_lineno} lines");
     }
 
+    // `-L N` without comma: from N through end of file (git line-range-format).
     let end = match end_spec {
-        Some(spec) => parse_line_spec(spec, blame_lines, Some(start))?,
-        None => start,
+        None => max_lineno.max(1),
+        Some(spec) if spec.is_empty() => max_lineno.max(1),
+        Some(spec) => parse_line_spec(spec, ctx, Some(start), LineAnchor::AfterStart)?,
     };
 
-    Ok((start, end.min(max_lineno.max(1))))
+    let end = if max_lineno == 0 {
+        end
+    } else {
+        end.min(max_lineno)
+    };
+    Ok((start, end))
 }
 
-/// Parse a single line-range endpoint.
-/// `relative_to` is `Some(start)` when parsing the end portion (to support `+N`).
+#[derive(Clone, Copy)]
+enum LineAnchor {
+    Default,
+    AfterStart,
+}
+
+/// Parse a single line-range endpoint (git `blame -L` / line-range-format).
 fn parse_line_spec(
     spec: &str,
-    blame_lines: &[BlameLine],
+    ctx: &mut LineRangeParseCtx<'_>,
     relative_to: Option<usize>,
+    anchor: LineAnchor,
 ) -> Result<usize> {
-    let max_lineno = blame_lines
-        .iter()
-        .map(|b| b.final_lineno)
-        .max()
-        .unwrap_or(0);
+    let max_lineno = max_line_no(ctx.blame_lines);
 
     if spec == "$" {
         return Ok(max_lineno);
     }
 
-    // +N means "relative offset from start"
+    // +N means "relative offset from start" (end only)
     if let Some(offset_str) = spec.strip_prefix('+') {
+        if offset_str.is_empty() {
+            bail!("invalid +N offset: cannot parse integer from empty string");
+        }
         let offset: usize = offset_str.parse().context("invalid +N offset")?;
         let base = relative_to.unwrap_or(1);
-        // git semantics: -L N,+M means lines N through N+M-1
         return Ok(base + offset - 1);
     }
 
-    // -N means "relative negative offset from start"
+    // -N means "relative negative offset from start" (end only), or negative regex anchor
     if let Some(offset_str) = spec.strip_prefix('-') {
         if let Ok(offset) = offset_str.parse::<usize>() {
             let base = relative_to.unwrap_or(1);
@@ -2280,28 +2717,152 @@ fn parse_line_spec(
         }
     }
 
-    // /regex/ — find first line matching the pattern
+    // :funcname — when paired with a numeric/other end (e.g. `-L3,:pat`)
+    if let Some(fname) = spec.strip_prefix(':') {
+        let pat = fname.strip_prefix('^').unwrap_or(fname);
+        let search_from = if fname.starts_with('^') {
+            1
+        } else {
+            match anchor {
+                LineAnchor::Default => {
+                    if ctx.prev_range_end > 0 {
+                        ctx.prev_range_end + 1
+                    } else {
+                        1
+                    }
+                }
+                LineAnchor::AfterStart => relative_to.unwrap_or(1),
+            }
+        };
+        return find_funcname_start_line(ctx, pat, search_from);
+    }
+
+    // ^/regex/ — absolute from file start
+    if let Some(rest) = spec.strip_prefix("^/") {
+        if let Some(pat) = rest.strip_suffix('/') {
+            return find_regex_line(ctx, pat, 1, true);
+        }
+    }
+
+    // /regex/
     if spec.starts_with('/') && spec.ends_with('/') && spec.len() > 2 {
         let pattern = &spec[1..spec.len() - 1];
-        let search_start = relative_to.unwrap_or(0);
-        for bl in blame_lines {
-            if bl.final_lineno > search_start && bl.content.contains(pattern) {
-                return Ok(bl.final_lineno);
-            }
-        }
-        // If nothing found searching forward, search from beginning
-        if search_start > 0 {
-            for bl in blame_lines {
-                if bl.content.contains(pattern) {
-                    return Ok(bl.final_lineno);
+        let search_start = match anchor {
+            LineAnchor::Default => {
+                if ctx.prev_range_end > 0 {
+                    ctx.prev_range_end
+                } else {
+                    0
                 }
             }
-        }
-        bail!("no line matching pattern: {pattern}");
+            LineAnchor::AfterStart => relative_to.unwrap_or(0),
+        };
+        return find_regex_line(ctx, pattern, search_start, false);
     }
 
     // Plain number
-    spec.parse().context("invalid line number")
+    let n: usize = spec.parse().context("invalid line number")?;
+    if n == 0 {
+        bail!("invalid line number: invalid digit found in string");
+    }
+    Ok(n)
+}
+
+fn compile_blame_line_regex(pattern: &str) -> Result<Regex> {
+    Regex::new(pattern).with_context(|| format!("invalid regex in -L: {pattern}"))
+}
+
+fn find_regex_line(
+    ctx: &LineRangeParseCtx<'_>,
+    pattern: &str,
+    search_start: usize,
+    absolute: bool,
+) -> Result<usize> {
+    let re = compile_blame_line_regex(pattern)?;
+    let try_scan = |start: usize| -> Option<usize> {
+        for bl in ctx.blame_lines {
+            if bl.final_lineno > start && re.is_match(bl.content.as_str()) {
+                return Some(bl.final_lineno);
+            }
+        }
+        None
+    };
+
+    if let Some(ln) = try_scan(search_start) {
+        return Ok(ln);
+    }
+    if !absolute && search_start > 0 {
+        if let Some(ln) = try_scan(0) {
+            return Ok(ln);
+        }
+    }
+    bail!("no line matching pattern: {pattern}");
+}
+
+fn funcname_matcher_for_blame(ctx: &LineRangeParseCtx<'_>) -> Option<userdiff::FuncnameMatcher> {
+    ctx.textconv
+        .and_then(|tc| userdiff::matcher_for_path(&tc.config, &tc.attrs, ctx.file_path).ok())
+        .flatten()
+}
+
+fn find_funcname_start_line(
+    ctx: &LineRangeParseCtx<'_>,
+    pattern: &str,
+    search_from: usize,
+) -> Result<usize> {
+    let re = compile_blame_line_regex(pattern)?;
+    let matcher = funcname_matcher_for_blame(ctx);
+
+    for bl in ctx.blame_lines {
+        if bl.final_lineno < search_from {
+            continue;
+        }
+        if !re.is_match(bl.content.as_str()) {
+            continue;
+        }
+        if matcher
+            .as_ref()
+            .is_some_and(|m| m.match_line(&bl.content).is_none())
+        {
+            continue;
+        }
+        return Ok(bl.final_lineno);
+    }
+
+    bail!("no line matching pattern: {pattern}");
+}
+
+fn funcname_hunk_end(ctx: &LineRangeParseCtx<'_>, start: usize) -> usize {
+    let max_ln = max_line_no(ctx.blame_lines);
+    let Some(matcher) = funcname_matcher_for_blame(ctx) else {
+        return max_ln;
+    };
+    for bl in ctx.blame_lines {
+        if bl.final_lineno <= start {
+            continue;
+        }
+        if matcher.match_line(&bl.content).is_some() {
+            return bl.final_lineno.saturating_sub(1).max(start);
+        }
+    }
+    max_ln
+}
+
+fn resolve_funcname_span(ctx: &mut LineRangeParseCtx<'_>, range: &str) -> Result<(usize, usize)> {
+    let body = range
+        .strip_prefix(':')
+        .ok_or_else(|| anyhow::anyhow!("internal: expected :funcname range"))?;
+    let absolute = body.strip_prefix('^').unwrap_or(body);
+    let search_from = if body.starts_with('^') {
+        1
+    } else if ctx.prev_range_end > 0 {
+        ctx.prev_range_end + 1
+    } else {
+        1
+    };
+    let start = find_funcname_start_line(ctx, absolute, search_from)?;
+    let end = funcname_hunk_end(ctx, start);
+    Ok((start, end))
 }
 
 fn write_porcelain(
@@ -2382,6 +2943,77 @@ fn write_porcelain(
     }
 
     Ok(())
+}
+
+/// `git annotate` output: tab-separated fields, 8-digit hash, parenthetical block padded like git.
+fn write_annotate(
+    out: &mut impl Write,
+    lines: &[BlameLine],
+    commits: &HashMap<ObjectId, CommitData>,
+    args: &Args,
+    _file_path: &str,
+) -> Result<()> {
+    let zero = grit_lib::diff::zero_oid();
+
+    let mut author_field_width: usize = 10;
+    for bl in lines {
+        let w = annotate_author_field_width(bl, commits, args);
+        author_field_width = author_field_width.max(w);
+    }
+
+    for bl in lines {
+        let hash = if bl.oid == zero || bl.external_contents {
+            "00000000".to_string()
+        } else {
+            bl.oid.to_hex()[..8].to_string()
+        };
+
+        let (author_display, ts) = annotate_author_and_time(bl, commits, args);
+        let author_padded = format!("{author_display:>author_field_width$}");
+
+        writeln!(
+            out,
+            "{hash}\t({author_padded}\t{ts}\t{lineno}){content}",
+            lineno = bl.final_lineno,
+            content = bl.content,
+        )?;
+    }
+    Ok(())
+}
+
+fn annotate_author_field_width(
+    bl: &BlameLine,
+    commits: &HashMap<ObjectId, CommitData>,
+    args: &Args,
+) -> usize {
+    let (name, _ts) = annotate_author_and_time(bl, commits, args);
+    name.chars().count().max(1)
+}
+
+fn annotate_author_and_time(
+    bl: &BlameLine,
+    commits: &HashMap<ObjectId, CommitData>,
+    args: &Args,
+) -> (String, String) {
+    let zero = grit_lib::diff::zero_oid();
+    if bl.external_contents {
+        return (
+            "External file (--contents)".to_string(),
+            format_time(0, "+0000"),
+        );
+    }
+    if bl.oid == zero {
+        return ("Not Committed Yet".to_string(), format_time(0, "+0000"));
+    }
+    let commit = &commits[&bl.oid];
+    let ai = parse_author_field(&commit.author);
+    let who = if args.email {
+        format!("<{}>", ai.email)
+    } else {
+        ai.name.clone()
+    };
+    let ts = format_time(ai.timestamp, &ai.tz);
+    (who, ts)
 }
 
 /// ANSI color codes.
