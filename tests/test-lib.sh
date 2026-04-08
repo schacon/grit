@@ -702,6 +702,7 @@ test_cmp_rev () {
 	fi
 }
 
+# test_unconfig [-C <dir>] [--worktree] KEY...
 test_unconfig () {
 	config_dir=
 	if test "$1" = -C
@@ -718,7 +719,7 @@ test_unconfig () {
 		shift
 	fi
 
-	git ${config_dir:+-C "$config_dir"} config ${is_worktree:+--worktree} --unset-all "$@"
+	git ${config_dir:+-C "$config_dir"} config ${is_worktree:+--worktree} --unset-all "$@" 2>/dev/null
 	config_status=$?
 	case "$config_status" in
 	5)

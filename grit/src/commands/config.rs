@@ -37,6 +37,10 @@ pub struct Args {
     #[arg(long, global = true)]
     pub global: bool,
 
+    /// Run as if started in the given path (affects repo discovery for local config).
+    #[arg(short = 'C', value_name = "PATH", global = true)]
+    pub git_dir_path: Option<PathBuf>,
+
     /// Use the repository-local config file.
     #[arg(long, global = true)]
     pub local: bool,
@@ -297,6 +301,15 @@ pub fn run(args: Args) -> Result<()> {
     for dir in &args.change_dir {
         std::env::set_current_dir(dir)
             .with_context(|| format!("cannot change to '{}'", dir.display()))?;
+    }
+    if let Some(ref p) = args.git_dir_path {
+        let abs = if p.is_absolute() {
+            p.clone()
+        } else {
+            std::env::current_dir()?.join(p)
+        };
+        std::env::set_current_dir(&abs)
+            .with_context(|| format!("cannot change to directory '{}'", abs.display()))?;
     }
 
     // If --blob is given, read config from the blob and handle read-only ops

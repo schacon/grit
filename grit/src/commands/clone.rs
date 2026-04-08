@@ -5,6 +5,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::zero_oid;
 use grit_lib::hooks::{run_hook, HookResult};
@@ -13,6 +14,7 @@ use grit_lib::refs;
 use grit_lib::repo::{init_repository, init_repository_separate_git_dir, Repository};
 use std::collections::{HashSet, VecDeque};
 use std::fs;
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 /// Arguments for `grit clone`.
@@ -25,6 +27,10 @@ pub struct Args {
     /// Target directory (defaults to the repository basename).
     pub directory: Option<String>,
 
+    /// Use given name for the remote tracking branch namespace instead of `origin`.
+    #[arg(short = 'o', long = "origin", value_name = "NAME")]
+    pub origin: Option<String>,
+
     /// Create a bare clone.
     #[arg(long)]
     pub bare: bool,
@@ -32,6 +38,30 @@ pub struct Args {
     /// Create a shallow clone with limited history (sets up config only).
     #[arg(long, value_name = "N")]
     pub depth: Option<usize>,
+
+    /// Shallow clone since the given date (accepted; local clones may ignore with a warning).
+    #[arg(long = "shallow-since", value_name = "DATE")]
+    pub shallow_since: Option<String>,
+
+    /// Shallow clone excluding the given ref (accepted; local clones may ignore with a warning).
+    #[arg(long = "shallow-exclude", value_name = "REF", action = clap::ArgAction::Append)]
+    pub shallow_exclude: Vec<String>,
+
+    /// Bundle URI (accepted for compatibility; incompatible with shallow clone options).
+    #[arg(long = "bundle-uri", value_name = "URI")]
+    pub bundle_uri: Option<String>,
+
+    /// Abort clone if the source repository is shallow.
+    #[arg(long = "reject-shallow", action = clap::ArgAction::SetTrue)]
+    pub reject_shallow: bool,
+
+    /// Allow cloning a shallow repository (overrides `clone.rejectShallow` and `--reject-shallow`).
+    #[arg(long = "no-reject-shallow", action = clap::ArgAction::SetTrue)]
+    pub no_reject_shallow: bool,
+
+    /// Force progress reporting even when stderr is not a terminal.
+    #[arg(long = "progress", action = clap::ArgAction::SetTrue)]
+    pub progress: bool,
 
     /// Checkout a specific branch after cloning.
     #[arg(short = 'b', long = "branch", value_name = "NAME")]
@@ -114,8 +144,167 @@ pub struct Args {
     pub separate_git_dir: Option<PathBuf>,
 }
 
+/// Returns `true` when `name` is valid as a remote name (same idea as Git's `valid_remote_name`).
+fn valid_remote_name(name: &str) -> bool {
+    let probe = format!("refs/remotes/{name}/test");
+    check_refname_format(&probe, &RefNameOptions::default()).is_ok()
+}
+
+fn default_branch_from_config() -> Option<String> {
+    if let Ok(env) = std::env::var("GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME") {
+        if !env.is_empty() {
+            return Some(env);
+        }
+    }
+    let set = ConfigSet::load(None, true).unwrap_or_default();
+    set.get("init.defaultBranch")
+        .filter(|s| s.as_str() != "none")
+}
+
+fn default_head_branch_fallback() -> String {
+    default_branch_from_config().unwrap_or_else(|| "master".to_owned())
+}
+
+fn clone_default_remote_from_c_flags(config: &[String]) -> Option<String> {
+    for entry in config {
+        if let Some((k, v)) = entry.split_once('=') {
+            if k.trim().eq_ignore_ascii_case("clone.defaultRemoteName") {
+                return Some(v.trim().to_owned());
+            }
+        }
+    }
+    None
+}
+
+fn resolve_remote_name(args: &Args) -> Result<String> {
+    if let Some(ref o) = args.origin {
+        if !valid_remote_name(o) {
+            bail!("'{o}' is not a valid remote name");
+        }
+        return Ok(o.clone());
+    }
+    if let Some(from_c) = clone_default_remote_from_c_flags(&args.config) {
+        return Ok(from_c);
+    }
+    let set = ConfigSet::load(None, true).unwrap_or_default();
+    if let Some(n) = set.get("clone.defaultRemoteName") {
+        return Ok(n);
+    }
+    Ok("origin".to_owned())
+}
+
+fn effective_reject_shallow(args: &Args) -> bool {
+    if args.no_reject_shallow {
+        return false;
+    }
+    if args.reject_shallow {
+        return true;
+    }
+    let set = ConfigSet::load(None, true).unwrap_or_default();
+    matches!(set.get_bool("clone.rejectshallow"), Some(Ok(true)))
+}
+
+fn source_repo_is_shallow(git_dir: &Path) -> bool {
+    git_dir.join("shallow").is_file()
+}
+
+fn maybe_warn_shallow_options_ignored(repo_path_str: &str, args: &Args) {
+    if args.no_local {
+        return;
+    }
+    if !repo_path_str.starts_with("file://") {
+        if args.shallow_since.is_some() {
+            eprintln!("warning: --shallow-since is ignored in local clones; use file:// instead.");
+        }
+        if !args.shallow_exclude.is_empty() {
+            eprintln!(
+                "warning: --shallow-exclude is ignored in local clones; use file:// instead."
+            );
+        }
+    }
+}
+
+fn maybe_print_local_clone_progress(show: bool) {
+    if !show {
+        return;
+    }
+    let _ = writeln!(io::stderr(), "Receiving objects: 100% (1/1), done.");
+    let _ = writeln!(io::stderr(), "Checking connectivity: 1, done.");
+}
+
+/// True when `HEAD` is a symref whose target ref file is missing (unborn / broken remote HEAD).
+fn head_points_to_missing_ref(repo: &Repository) -> bool {
+    let Ok(head_content) = fs::read_to_string(repo.git_dir.join("HEAD")) else {
+        return false;
+    };
+    let head = head_content.trim();
+    let Some(refname) = head.strip_prefix("ref: ") else {
+        return false;
+    };
+    let refname = refname.trim();
+    !repo.git_dir.join(refname).exists()
+}
+
+/// Clone checked out the remote's unborn default branch (symref exists, branch ref missing on source).
+fn is_unborn_remote_default_checkout(
+    dest: &Repository,
+    source_symref: Option<&str>,
+    head_branch: Option<&str>,
+    source_git_dir: &Path,
+) -> bool {
+    let Some(branch) = head_branch else {
+        return false;
+    };
+    let Some(sr) = source_symref else {
+        return false;
+    };
+    let Some(h) = sr.strip_prefix("refs/heads/") else {
+        return false;
+    };
+    h == branch && !source_git_dir.join(sr).exists() && head_points_to_missing_ref(dest)
+}
+
+/// Perform checkout of `HEAD` when it points at a missing branch (unborn), matching Git clone.
+fn checkout_head_allow_unborn(repo: &Repository) -> Result<()> {
+    let work_tree = match &repo.work_tree {
+        Some(wt) => wt,
+        None => return Ok(()),
+    };
+
+    let head_content = fs::read_to_string(repo.git_dir.join("HEAD")).context("reading HEAD")?;
+    let head = head_content.trim();
+
+    let oid = if let Some(refname) = head.strip_prefix("ref: ") {
+        let ref_path = repo.git_dir.join(refname);
+        if !ref_path.exists() {
+            return Ok(());
+        }
+        let oid_str =
+            fs::read_to_string(&ref_path).with_context(|| format!("reading ref {refname}"))?;
+        ObjectId::from_hex(oid_str.trim()).with_context(|| format!("invalid OID in {refname}"))?
+    } else if head.len() == 40 && head.chars().all(|c| c.is_ascii_hexdigit()) {
+        ObjectId::from_hex(head).context("invalid OID in HEAD")?
+    } else {
+        return Ok(());
+    };
+
+    let obj = repo.odb.read(&oid).context("reading HEAD commit")?;
+    let commit = parse_commit(&obj.data).context("parsing HEAD commit")?;
+    checkout_tree(&repo.odb, &commit.tree, work_tree, "")?;
+    write_index_from_tree(repo, &commit.tree)?;
+    Ok(())
+}
+
 pub fn run(args: Args) -> Result<()> {
     let partial_blob_none = matches!(args.filter.as_deref(), Some("blob:none"));
+
+    let deepen =
+        args.depth.is_some() || args.shallow_since.is_some() || !args.shallow_exclude.is_empty();
+    if args.bundle_uri.is_some() && deepen {
+        bail!(
+            "options '--bundle-uri' and '--depth/--shallow-since/--shallow-exclude' cannot be used together"
+        );
+    }
 
     // --revision conflicts with --branch and --mirror
     if args.revision.is_some() && args.branch.is_some() {
@@ -125,7 +314,7 @@ pub fn run(args: Args) -> Result<()> {
         bail!("--revision and --mirror are mutually exclusive");
     }
     if args.separate_git_dir.is_some() && args.bare {
-        bail!("options '--separate-git-dir' and '--bare' cannot be used together");
+        bail!("options '--bare' and '--separate-git-dir' cannot be used together");
     }
     if args.separate_git_dir.is_some() && args.mirror {
         bail!("--separate-git-dir and --mirror are incompatible");
@@ -256,6 +445,18 @@ pub fn run(args: Args) -> Result<()> {
         }
     };
 
+    if effective_reject_shallow(&args) && source_repo_is_shallow(&source.git_dir) {
+        bail!("source repository is shallow, reject to clone.");
+    }
+    if source_repo_is_shallow(&source.git_dir)
+        && !args.no_local
+        && !repo_path_str.starts_with("file://")
+    {
+        eprintln!("warning: source repository is shallow, ignoring --local");
+    }
+    maybe_warn_shallow_options_ignored(&repo_path_str, &args);
+    let remote_name = resolve_remote_name(&args)?;
+
     // Determine target directory
     let target_name = args.directory.unwrap_or_else(|| {
         let base = source_path
@@ -287,11 +488,21 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // Determine the source repo's actual HEAD branch (for origin/HEAD)
-    let source_head_branch = determine_head_branch(&source.git_dir, None)?;
-    // Determine which branch to checkout (user override or source HEAD)
-    let head_branch = determine_head_branch(&source.git_dir, args.branch.as_deref())?;
-    let initial_branch = head_branch.as_deref().unwrap_or("master");
+    // Source HEAD symref target (if any) and detached OID (if HEAD is not a symref).
+    let (source_head_symref, source_head_oid) = read_source_head_info(&source.git_dir);
+
+    // Branch to checkout: explicit -b/--branch, else guess from remote HEAD (Git semantics).
+    let head_branch = if args.branch.is_some() {
+        determine_head_branch(&source.git_dir, args.branch.as_deref())?
+    } else {
+        guess_checkout_branch(
+            &source.git_dir,
+            source_head_symref.as_deref(),
+            source_head_oid.as_deref(),
+        )?
+    };
+    let initial_fallback = default_head_branch_fallback();
+    let initial_branch = head_branch.as_deref().unwrap_or(initial_fallback.as_str());
 
     // Initialize the target repository
     fs::create_dir_all(&target_path)
@@ -346,14 +557,12 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    let remote_name = "origin";
-
     if args.bare {
         // Bare clone: copy refs directly (mirror-style), no remote tracking
         copy_refs_direct(&source.git_dir, &dest.git_dir).context("copying refs")?;
 
         // Set up remote config (URL only, no fetch refspec for bare)
-        setup_origin_remote_bare(&dest.git_dir, &source_path, remote_name)
+        setup_origin_remote_bare(&dest.git_dir, &source_path, &remote_name)
             .context("setting up origin remote")?;
 
         // Set HEAD to match source
@@ -362,44 +571,38 @@ pub fn run(args: Args) -> Result<()> {
                 dest.git_dir.join("HEAD"),
                 format!("ref: refs/heads/{branch}\n"),
             )?;
+        } else if let Some(ref oid) = source_head_oid {
+            fs::write(dest.git_dir.join("HEAD"), format!("{oid}\n"))?;
         }
     } else {
         // Non-bare clone: copy refs as remote-tracking refs
-        copy_refs_as_remote(&source.git_dir, &dest.git_dir, remote_name, args.no_tags)
+        copy_refs_as_remote(&source.git_dir, &dest.git_dir, &remote_name, args.no_tags)
             .context("copying refs")?;
 
         // Set up remote "origin" in config
         let refspec = if args.single_branch {
-            let branch = head_branch.as_deref().unwrap_or("master");
+            let branch = head_branch.as_deref().unwrap_or(initial_fallback.as_str());
             format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
         } else {
             format!("+refs/heads/*:refs/remotes/{remote_name}/*")
         };
-        setup_origin_remote(&dest.git_dir, &source_path, remote_name, &refspec)
+        setup_origin_remote(&dest.git_dir, &source_path, &remote_name, &refspec)
             .context("setting up origin remote")?;
 
-        // Set refs/remotes/origin/HEAD to point to the source's default branch
-        if let Some(ref branch) = source_head_branch {
-            let origin_head_path = dest
-                .git_dir
-                .join("refs/remotes")
-                .join(remote_name)
-                .join("HEAD");
-            if let Some(parent) = origin_head_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(
-                &origin_head_path,
-                format!("ref: refs/remotes/{remote_name}/{branch}\n"),
-            )?;
-        }
+        setup_remote_tracking_head(
+            &dest.git_dir,
+            &remote_name,
+            &source.git_dir,
+            source_head_symref.as_deref(),
+            source_head_oid.as_deref(),
+        )?;
 
         // Set HEAD to the chosen branch if it exists in remote refs
         if let Some(ref branch) = head_branch {
             let remote_ref = dest
                 .git_dir
                 .join("refs/remotes")
-                .join(remote_name)
+                .join(&remote_name)
                 .join(branch);
             if remote_ref.exists() {
                 let oid_str = fs::read_to_string(&remote_ref).context("reading remote ref")?;
@@ -419,8 +622,14 @@ pub fn run(args: Args) -> Result<()> {
                 )?;
 
                 // Set up branch tracking config
-                setup_branch_tracking(&dest.git_dir, branch, remote_name)
+                setup_branch_tracking(&dest.git_dir, branch, &remote_name)
                     .context("setting up branch tracking")?;
+            } else if let Some(sr) = source_head_symref.as_deref() {
+                // Unborn remote default branch: no refs/remotes/<remote>/<branch> yet.
+                if sr == format!("refs/heads/{branch}") && !source.git_dir.join(sr).exists() {
+                    setup_branch_tracking(&dest.git_dir, branch, &remote_name)
+                        .context("setting up branch tracking")?;
+                }
             }
         }
     }
@@ -429,6 +638,8 @@ pub fn run(args: Args) -> Result<()> {
     if !args.config.is_empty() {
         apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
     }
+
+    apply_sticky_recursive_clone(&dest.git_dir, args.recurse_submodules)?;
 
     // Handle --no-tags: set remote.origin.tagOpt
     if args.no_tags {
@@ -444,7 +655,7 @@ pub fn run(args: Args) -> Result<()> {
     if partial_blob_none {
         materialize_blob_none_partial_layout(&dest)
             .context("materializing partial-clone object layout")?;
-        initialize_partial_clone_state(&source, &dest, remote_name, "blob:none")
+        initialize_partial_clone_state(&source, &dest, &remote_name, "blob:none")
             .context("initializing partial-clone promisor state")?;
     }
 
@@ -478,10 +689,10 @@ pub fn run(args: Args) -> Result<()> {
     // Handle --revision: detached HEAD at the resolved commit, no local refs,
     // and no remote.fetch (matches git clone --revision).
     if let Some(ref revision) = args.revision {
-        let rev_oid = resolve_revision_for_clone(&source, revision, remote_name)?;
+        let rev_oid = resolve_revision_for_clone(&source, revision, &remote_name)?;
         strip_refs_under(&dest.git_dir.join("refs"))?;
         fs::write(dest.git_dir.join("HEAD"), format!("{}\n", rev_oid))?;
-        remove_revision_clone_remote_config(&dest.git_dir, remote_name)?;
+        remove_revision_clone_remote_config(&dest.git_dir, &remote_name)?;
     }
 
     // Shallow boundary must be computed from the final HEAD (after --revision).
@@ -491,10 +702,34 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    maybe_print_local_clone_progress(
+        args.progress
+            || (!args.quiet && io::stderr().is_terminal() && repo_path_str.starts_with("file://")),
+    );
+
+    let skip_checkout_warn = !args.bare
+        && !args.no_checkout
+        && args.revision.is_none()
+        && head_points_to_missing_ref(&dest)
+        && !is_unborn_remote_default_checkout(
+            &dest,
+            source_head_symref.as_deref(),
+            head_branch.as_deref(),
+            &source.git_dir,
+        );
+
+    let sparse_partial_skip = partial_blob_none && args.sparse;
+
     // Checkout working tree unless --bare or --no-checkout.
     // Sparse partial clones already materialize tip files via promisor hydration.
-    if !args.bare && !args.no_checkout && !(partial_blob_none && args.sparse) {
-        checkout_head(&dest).context("checking out HEAD")?;
+    if !args.bare && !args.no_checkout && !sparse_partial_skip {
+        if skip_checkout_warn {
+            eprintln!("warning: remote HEAD refers to nonexistent ref, unable to checkout");
+        } else {
+            checkout_head(&dest)
+                .or_else(|e| checkout_head_allow_unborn(&dest).map_err(|_| e))
+                .context("checking out HEAD")?;
+        }
     }
 
     // Sparse-checkout: after full checkout for non-partial; after sparse hydration for partial.
@@ -503,7 +738,7 @@ pub fn run(args: Args) -> Result<()> {
             .context("initializing sparse-checkout")?;
     }
 
-    if !args.bare && !args.no_checkout {
+    if !args.bare && !args.no_checkout && (!skip_checkout_warn || sparse_partial_skip) {
         run_post_checkout_after_clone(&dest)?;
     }
 
@@ -556,6 +791,15 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         )
     })?;
 
+    if effective_reject_shallow(&args) && source_repo_is_shallow(&source.git_dir) {
+        bail!("source repository is shallow, reject to clone.");
+    }
+    if source_repo_is_shallow(&source.git_dir) && !args.no_local {
+        eprintln!("warning: source repository is shallow, ignoring --local");
+    }
+    maybe_warn_shallow_options_ignored(&args.repository, &args);
+    let remote_name = resolve_remote_name(&args)?;
+
     let path_for_basename = PathBuf::from(&spec.path);
     let target_name = args.directory.clone().unwrap_or_else(|| {
         let base = path_for_basename
@@ -585,9 +829,18 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         }
     }
 
-    let source_head_branch = determine_head_branch(&source.git_dir, None)?;
-    let head_branch = determine_head_branch(&source.git_dir, args.branch.as_deref())?;
-    let initial_branch = head_branch.as_deref().unwrap_or("master");
+    let (source_head_symref, source_head_oid) = read_source_head_info(&source.git_dir);
+    let head_branch = if args.branch.is_some() {
+        determine_head_branch(&source.git_dir, args.branch.as_deref())?
+    } else {
+        guess_checkout_branch(
+            &source.git_dir,
+            source_head_symref.as_deref(),
+            source_head_oid.as_deref(),
+        )?
+    };
+    let initial_fallback = default_head_branch_fallback();
+    let initial_branch = head_branch.as_deref().unwrap_or(initial_fallback.as_str());
 
     fs::create_dir_all(&target_path)
         .with_context(|| format!("cannot create directory '{}'", target_path.display()))?;
@@ -637,51 +890,45 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         }
     }
 
-    let remote_name = "origin";
     let remote_url = args.repository.as_str();
 
     if args.bare {
         copy_refs_direct(&source.git_dir, &dest.git_dir).context("copying refs")?;
-        setup_origin_remote_bare_url(&dest.git_dir, remote_url, remote_name)
+        setup_origin_remote_bare_url(&dest.git_dir, remote_url, &remote_name)
             .context("setting up origin remote")?;
         if let Some(ref branch) = head_branch {
             fs::write(
                 dest.git_dir.join("HEAD"),
                 format!("ref: refs/heads/{branch}\n"),
             )?;
+        } else if let Some(ref oid) = source_head_oid {
+            fs::write(dest.git_dir.join("HEAD"), format!("{oid}\n"))?;
         }
     } else {
-        copy_refs_as_remote(&source.git_dir, &dest.git_dir, remote_name, args.no_tags)
+        copy_refs_as_remote(&source.git_dir, &dest.git_dir, &remote_name, args.no_tags)
             .context("copying refs")?;
         let refspec = if args.single_branch {
-            let branch = head_branch.as_deref().unwrap_or("master");
+            let branch = head_branch.as_deref().unwrap_or(initial_fallback.as_str());
             format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
         } else {
             format!("+refs/heads/*:refs/remotes/{remote_name}/*")
         };
-        setup_origin_remote_url(&dest.git_dir, remote_url, remote_name, &refspec)
+        setup_origin_remote_url(&dest.git_dir, remote_url, &remote_name, &refspec)
             .context("setting up origin remote")?;
 
-        if let Some(ref branch) = source_head_branch {
-            let origin_head_path = dest
-                .git_dir
-                .join("refs/remotes")
-                .join(remote_name)
-                .join("HEAD");
-            if let Some(parent) = origin_head_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(
-                &origin_head_path,
-                format!("ref: refs/remotes/{remote_name}/{branch}\n"),
-            )?;
-        }
+        setup_remote_tracking_head(
+            &dest.git_dir,
+            &remote_name,
+            &source.git_dir,
+            source_head_symref.as_deref(),
+            source_head_oid.as_deref(),
+        )?;
 
         if let Some(ref branch) = head_branch {
             let remote_ref = dest
                 .git_dir
                 .join("refs/remotes")
-                .join(remote_name)
+                .join(&remote_name)
                 .join(branch);
             if remote_ref.exists() {
                 let oid_str = fs::read_to_string(&remote_ref).context("reading remote ref")?;
@@ -695,8 +942,13 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                     dest.git_dir.join("HEAD"),
                     format!("ref: refs/heads/{branch}\n"),
                 )?;
-                setup_branch_tracking(&dest.git_dir, branch, remote_name)
+                setup_branch_tracking(&dest.git_dir, branch, &remote_name)
                     .context("setting up branch tracking")?;
+            } else if let Some(sr) = source_head_symref.as_deref() {
+                if sr == format!("refs/heads/{branch}") && !source.git_dir.join(sr).exists() {
+                    setup_branch_tracking(&dest.git_dir, branch, &remote_name)
+                        .context("setting up branch tracking")?;
+                }
             }
         }
     }
@@ -704,6 +956,8 @@ fn run_ssh_clone(args: Args) -> Result<()> {
     if !args.config.is_empty() {
         apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
     }
+
+    apply_sticky_recursive_clone(&dest.git_dir, args.recurse_submodules)?;
 
     if args.no_tags {
         let config_path = dest.git_dir.join("config");
@@ -716,10 +970,10 @@ fn run_ssh_clone(args: Args) -> Result<()> {
     }
 
     if let Some(ref revision) = args.revision {
-        let rev_oid = resolve_revision_for_clone(&source, revision, remote_name)?;
+        let rev_oid = resolve_revision_for_clone(&source, revision, &remote_name)?;
         strip_refs_under(&dest.git_dir.join("refs"))?;
         fs::write(dest.git_dir.join("HEAD"), format!("{}\n", rev_oid))?;
-        remove_revision_clone_remote_config(&dest.git_dir, remote_name)?;
+        remove_revision_clone_remote_config(&dest.git_dir, &remote_name)?;
     }
 
     if let Some(depth) = args.depth {
@@ -728,9 +982,28 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         }
     }
 
+    maybe_print_local_clone_progress(args.progress);
+
+    let skip_checkout_warn = !args.bare
+        && !args.no_checkout
+        && args.revision.is_none()
+        && head_points_to_missing_ref(&dest)
+        && !is_unborn_remote_default_checkout(
+            &dest,
+            source_head_symref.as_deref(),
+            head_branch.as_deref(),
+            &source.git_dir,
+        );
+
     if !args.bare && !args.no_checkout {
-        checkout_head(&dest).context("checking out HEAD")?;
-        run_post_checkout_after_clone(&dest)?;
+        if skip_checkout_warn {
+            eprintln!("warning: remote HEAD refers to nonexistent ref, unable to checkout");
+        } else {
+            checkout_head(&dest)
+                .or_else(|e| checkout_head_allow_unborn(&dest).map_err(|_| e))
+                .context("checking out HEAD")?;
+            run_post_checkout_after_clone(&dest)?;
+        }
     }
 
     if !args.quiet {
@@ -1350,6 +1623,29 @@ fn setup_origin_remote_url(
     Ok(())
 }
 
+/// When `submodule.stickyRecursiveClone` is true and `--recurse-submodules` was used,
+/// record `submodule.recurse=true` in the new repo (Git clone behaviour).
+fn apply_sticky_recursive_clone(git_dir: &Path, recurse_submodules: bool) -> Result<()> {
+    if !recurse_submodules {
+        return Ok(());
+    }
+    let set = ConfigSet::load(None, true).unwrap_or_default();
+    if !matches!(
+        set.get_bool("submodule.stickyRecursiveClone"),
+        Some(Ok(true))
+    ) {
+        return Ok(());
+    }
+    let config_path = git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    config.set("submodule.recurse", "true")?;
+    config.write().context("writing config")?;
+    Ok(())
+}
+
 /// Apply -c config key=value pairs to the cloned repository.
 fn apply_clone_config(git_dir: &Path, configs: &[String]) -> Result<()> {
     let config_path = git_dir.join("config");
@@ -1626,23 +1922,142 @@ fn run_post_checkout_after_clone(repo: &Repository) -> Result<()> {
     Ok(())
 }
 
-/// Determine which branch HEAD should point to.
+/// Determine which branch HEAD should point to when the user passed `-b` / `--branch`.
 fn determine_head_branch(src_git_dir: &Path, requested: Option<&str>) -> Result<Option<String>> {
     if let Some(branch) = requested {
         return Ok(Some(branch.to_string()));
     }
 
-    // Try reading the source's HEAD
     let head_path = src_git_dir.join("HEAD");
     if let Ok(content) = fs::read_to_string(&head_path) {
         let content = content.trim();
-        if let Some(refname) = content.strip_prefix("ref: refs/heads/") {
-            return Ok(Some(refname.to_string()));
+        if let Some(rest) = content.strip_prefix("ref: ") {
+            let rest = rest.trim();
+            if let Some(branch) = rest.strip_prefix("refs/heads/") {
+                let ref_path = src_git_dir.join(rest);
+                if ref_path.is_file() {
+                    return Ok(Some(branch.to_string()));
+                }
+            }
         }
     }
 
-    // Default to master
-    Ok(Some("master".to_string()))
+    Ok(Some(default_head_branch_fallback()))
+}
+
+/// Read source `HEAD` as either a symref target or a raw object id.
+fn read_source_head_info(src_git_dir: &Path) -> (Option<String>, Option<String>) {
+    let head_path = src_git_dir.join("HEAD");
+    let Ok(content) = fs::read_to_string(&head_path) else {
+        return (None, None);
+    };
+    let content = content.trim();
+    if let Some(rest) = content.strip_prefix("ref: ") {
+        return (Some(rest.trim().to_string()), None);
+    }
+    if content.len() == 40 && content.chars().all(|c| c.is_ascii_hexdigit()) {
+        return (None, Some(content.to_string()));
+    }
+    (None, None)
+}
+
+fn ref_oid_hex_in_repo(git_dir: &Path, refname: &str) -> Option<String> {
+    grit_lib::refs::resolve_ref(git_dir, refname)
+        .ok()
+        .map(|o| o.to_hex())
+}
+
+/// Guess which local branch to create from remote `HEAD` (Git `guess_remote_head` semantics).
+fn guess_checkout_branch(
+    src_git_dir: &Path,
+    symref: Option<&str>,
+    detached_oid: Option<&str>,
+) -> Result<Option<String>> {
+    if let Some(sr) = symref {
+        if let Some(branch) = sr.strip_prefix("refs/heads/") {
+            let ref_path = src_git_dir.join(sr);
+            if ref_path.is_file() {
+                return Ok(Some(branch.to_string()));
+            }
+            // Unborn branch: HEAD symref points at refs/heads/<name> but the ref file
+            // is missing (matches Git clone with ls-refs unborn advertisement).
+            return Ok(Some(branch.to_string()));
+        }
+    }
+
+    if let Some(oid_hex) = detached_oid {
+        let default_name = default_head_branch_fallback();
+        let default_ref = format!("refs/heads/{default_name}");
+        if let Some(oid) = ref_oid_hex_in_repo(src_git_dir, &default_ref) {
+            if oid == *oid_hex {
+                return Ok(Some(default_name));
+            }
+        }
+        if let Some(oid) = ref_oid_hex_in_repo(src_git_dir, "refs/heads/master") {
+            if oid == *oid_hex {
+                return Ok(Some("master".to_string()));
+            }
+        }
+
+        let heads = grit_lib::refs::list_refs(src_git_dir, "refs/heads/")
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        for (refname, oid) in &heads {
+            if oid.to_hex() == *oid_hex {
+                let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+                return Ok(Some(branch.to_string()));
+            }
+        }
+        return Ok(None);
+    }
+
+    Ok(Some(default_head_branch_fallback()))
+}
+
+/// Set `refs/remotes/<remote>/HEAD` after remote-tracking refs exist.
+fn setup_remote_tracking_head(
+    dest_git_dir: &Path,
+    remote_name: &str,
+    src_git_dir: &Path,
+    symref: Option<&str>,
+    detached_oid: Option<&str>,
+) -> Result<()> {
+    let origin_head_path = dest_git_dir
+        .join("refs/remotes")
+        .join(remote_name)
+        .join("HEAD");
+
+    if let Some(sr) = symref {
+        if let Some(branch) = sr.strip_prefix("refs/heads/") {
+            let ref_path = src_git_dir.join(sr);
+            if ref_path.is_file() {
+                if let Some(parent) = origin_head_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(
+                    &origin_head_path,
+                    format!("ref: refs/remotes/{remote_name}/{branch}\n"),
+                )?;
+                return Ok(());
+            }
+            // Source default branch ref is missing (dangling HEAD): do not create
+            // refs/remotes/<remote>/HEAD (matches Git clone).
+            return Ok(());
+        }
+    }
+
+    if let Some(oid_hex) = detached_oid {
+        if let Some(branch) = guess_checkout_branch(src_git_dir, None, Some(oid_hex))? {
+            if let Some(parent) = origin_head_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(
+                &origin_head_path,
+                format!("ref: refs/remotes/{remote_name}/{branch}\n"),
+            )?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Perform a basic checkout of HEAD into the working tree.

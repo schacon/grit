@@ -131,7 +131,14 @@ fn read_symbolic_ref_target(git_dir: &Path, name: &str, recurse: bool) -> Result
     let result = read_symbolic_ref_target_maybe_missing(git_dir, name, recurse)?;
     match result {
         Some(target) => Ok(Some(target)),
-        None => bail!("No such ref: {name}"),
+        None => {
+            // Missing ref file, or exists as symref whose target file is missing (dangling).
+            let path = git_dir.join(name);
+            match read_ref_file(&path) {
+                Ok(Ref::Symbolic(target)) => Ok(Some(target)),
+                _ => bail!("No such ref: {name}"),
+            }
+        }
     }
 }
 
