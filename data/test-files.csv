@@ -586,7 +586,7 @@ t3312-notes-copy	t3	yes	4	4	0	true	ok	0
 t3313-notes-getref	t3	yes	4	4	0	true	ok	0
 t3314-notes-prune	t3	yes	3	3	0	true	ok	0
 t3315-notes-merge	t3	yes	4	4	0	true	ok	0
-t3320-notes-merge-worktrees	t3	yes	9	8	1	false	ok	0
+t3320-notes-merge-worktrees	t3	yes	9	9	0	true	ok	0
 t3321-notes-stripspace	t3	yes	27	1	26	false	ok	0
 t3400-rebase	t3	yes	39	21	18	false	ok	0
 t3401-rebase-and-am-rename	t3	yes	8	5	3	false	ok	2

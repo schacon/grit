@@ -82,12 +82,18 @@ pub fn common_dir(git_dir: &Path) -> Option<PathBuf> {
     let commondir_file = git_dir.join("commondir");
     let raw = fs::read_to_string(commondir_file).ok()?;
     let rel = raw.trim();
+    // Match Git: `commondir` may be relative to this gitdir or an absolute path (see
+    // `git worktree add` and `refs/files-backend.c`).
     let path = if Path::new(rel).is_absolute() {
         PathBuf::from(rel)
     } else {
         git_dir.join(rel)
     };
     path.canonicalize().ok()
+}
+
+fn notes_merge_state_ref(refname: &str) -> bool {
+    matches!(refname, "NOTES_MERGE_REF" | "NOTES_MERGE_PARTIAL")
 }
 
 /// Internal recursive resolver with cycle detection.
@@ -120,7 +126,9 @@ fn resolve_ref_depth(
 
     // For worktrees, try the common dir for shared refs
     if let Some(cdir) = common {
-        if cdir != git_dir {
+        if notes_merge_state_ref(refname) {
+            // These live only under this worktree's gitdir (see Git `is_root_ref` / per-worktree stores).
+        } else if cdir != git_dir {
             let cpath = cdir.join(refname);
             match read_ref_file(&cpath) {
                 Ok(Ref::Direct(oid)) => return Ok(oid),
@@ -343,14 +351,16 @@ pub fn read_symbolic_ref(git_dir: &Path, refname: &str) -> Result<Option<String>
         Ok(Ref::Symbolic(target)) => Ok(Some(target)),
         Ok(Ref::Direct(_)) => Ok(None),
         Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {
-            if let Some(common) = common_dir(git_dir) {
-                if common != git_dir {
-                    let cpath = common.join(refname);
-                    match read_ref_file(&cpath) {
-                        Ok(Ref::Symbolic(target)) => return Ok(Some(target)),
-                        Ok(Ref::Direct(_)) => return Ok(None),
-                        Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {}
-                        Err(e) => return Err(e),
+            if !notes_merge_state_ref(refname) {
+                if let Some(common) = common_dir(git_dir) {
+                    if common != git_dir {
+                        let cpath = common.join(refname);
+                        match read_ref_file(&cpath) {
+                            Ok(Ref::Symbolic(target)) => return Ok(Some(target)),
+                            Ok(Ref::Direct(_)) => return Ok(None),
+                            Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {}
+                            Err(e) => return Err(e),
+                        }
                     }
                 }
             }

@@ -10,6 +10,7 @@ use merge3::{Merge3, StandardMarkers};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 
 use grit_lib::config::ConfigSet;
@@ -19,7 +20,11 @@ use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, serialize_tree, tree_entry_cmp, CommitData,
     ObjectId, ObjectKind, TreeEntry,
 };
-use grit_lib::refs::{delete_ref, read_symbolic_ref, resolve_ref, write_ref, write_symbolic_ref};
+use grit_lib::refs::{
+    common_dir, delete_ref, read_symbolic_ref, resolve_ref, write_ref, write_symbolic_ref,
+};
+
+use crate::commands::worktree_refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::resolve_head;
@@ -885,6 +890,64 @@ fn copy_note(repo: &Repository, notes_ref: &str, from: &str, to: &str, force: bo
 const NOTES_MERGE_PARTIAL: &str = "NOTES_MERGE_PARTIAL";
 const NOTES_MERGE_REF: &str = "NOTES_MERGE_REF";
 const NOTES_MERGE_WORKTREE: &str = "NOTES_MERGE_WORKTREE";
+
+/// Per-worktree git directory for `NOTES_MERGE_*` (main: `.git/`, linked: `.git/worktrees/<id>/`).
+fn notes_merge_git_dir(repo: &Repository) -> std::path::PathBuf {
+    repo.git_dir.clone()
+}
+
+/// If another worktree already has `NOTES_MERGE_REF` → `target_ref`, return its working-tree path.
+fn find_other_worktree_with_notes_merge_ref(
+    repo: &Repository,
+    target_ref: &str,
+) -> Option<std::path::PathBuf> {
+    let current_canon = repo.git_dir.canonicalize().ok()?;
+    let common = common_dir(&repo.git_dir).unwrap_or_else(|| repo.git_dir.clone());
+    let common_canon = common.canonicalize().unwrap_or(common.clone());
+
+    let mut admins: Vec<PathBuf> = vec![common_canon.clone()];
+    let worktrees_dir = common_canon.join("worktrees");
+    if let Ok(entries) = fs::read_dir(&worktrees_dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                admins.push(p);
+            }
+        }
+    }
+
+    for admin in admins {
+        let admin_canon = admin.canonicalize().unwrap_or(admin);
+        if admin_canon == current_canon {
+            continue;
+        }
+        let refpath = admin_canon.join(NOTES_MERGE_REF);
+        let Ok(content) = fs::read_to_string(&refpath) else {
+            continue;
+        };
+        let line = content.trim_end_matches('\n');
+        let Some(sym) = line.strip_prefix("ref: ") else {
+            continue;
+        };
+        if sym.trim() != target_ref {
+            continue;
+        }
+        let path = if admin_canon == common_canon {
+            common_canon
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| common_canon.clone())
+        } else {
+            PathBuf::from(worktree_path_from_admin(&admin_canon))
+        };
+        return Some(path);
+    }
+    None
+}
+
+fn worktree_path_from_admin(admin_dir: &std::path::Path) -> String {
+    worktree_refs::worktree_path_from_admin(admin_dir)
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NotesMergeStrategy {
     Manual,
@@ -917,8 +980,8 @@ fn expand_notes_ref(short_or_full: &str) -> String {
     }
 }
 
-fn notes_merge_worktree_path(git_dir: &std::path::Path) -> std::path::PathBuf {
-    git_dir.join(NOTES_MERGE_WORKTREE)
+fn notes_merge_worktree_path(repo: &Repository) -> std::path::PathBuf {
+    notes_merge_git_dir(repo).join(NOTES_MERGE_WORKTREE)
 }
 
 fn parse_notes_merge_strategy(s: &str) -> Result<NotesMergeStrategy> {
@@ -1318,7 +1381,7 @@ fn notes_merge_inner(
             let mut commit_msg = format!("Merged notes from {remote_ref} into {local_ref}\n\n");
             let pairs = build_merge_pairs(base_tree, local_tree, remote_tree, repo)?;
             let mut entries = read_notes_tree(repo, local_ref)?;
-            let worktree = notes_merge_worktree_path(&repo.git_dir);
+            let worktree = notes_merge_worktree_path(repo);
             let conflicts = merge_changes_into_entries(
                 repo,
                 &pairs,
@@ -1367,22 +1430,24 @@ fn clean_notes_merge_worktree(worktree: &std::path::Path) -> Result<()> {
 }
 
 fn merge_notes_abort(repo: &Repository) -> Result<()> {
-    let _ = delete_ref(&repo.git_dir, NOTES_MERGE_PARTIAL);
-    let _ = delete_ref(&repo.git_dir, NOTES_MERGE_REF);
-    clean_notes_merge_worktree(&notes_merge_worktree_path(&repo.git_dir))?;
+    let merge_git = notes_merge_git_dir(repo);
+    let _ = delete_ref(&merge_git, NOTES_MERGE_PARTIAL);
+    let _ = delete_ref(&merge_git, NOTES_MERGE_REF);
+    clean_notes_merge_worktree(&notes_merge_worktree_path(repo))?;
     Ok(())
 }
 
 fn merge_notes_commit_cmd(repo: &Repository) -> Result<()> {
-    let partial_oid = resolve_ref(&repo.git_dir, NOTES_MERGE_PARTIAL)?;
-    let target_ref = read_symbolic_ref(&repo.git_dir, NOTES_MERGE_REF)?
+    let merge_git = notes_merge_git_dir(repo);
+    let partial_oid = resolve_ref(&merge_git, NOTES_MERGE_PARTIAL)?;
+    let target_ref = read_symbolic_ref(&merge_git, NOTES_MERGE_REF)?
         .ok_or_else(|| anyhow::anyhow!("failed to resolve NOTES_MERGE_REF"))?;
     let partial_obj = repo.odb.read(&partial_oid)?;
     if partial_obj.kind != ObjectKind::Commit {
         bail!("could not parse commit from NOTES_MERGE_PARTIAL.");
     }
     let partial_commit = parse_commit(&partial_obj.data)?;
-    let worktree = notes_merge_worktree_path(&repo.git_dir);
+    let worktree = notes_merge_worktree_path(repo);
     let mut entries = read_notes_tree(repo, NOTES_MERGE_PARTIAL)?;
     if worktree.is_dir() {
         for e in fs::read_dir(&worktree)? {
@@ -1472,31 +1537,6 @@ fn merge_notes_dispatch(
             NotesMergeStrategy::Manual
         }
     };
-    if resolve_ref(&repo.git_dir, NOTES_MERGE_PARTIAL).is_ok() {
-        let blocks = match read_symbolic_ref(&repo.git_dir, NOTES_MERGE_REF) {
-            Ok(Some(target)) => target == notes_ref,
-            Ok(None) => true,
-            Err(_) => true,
-        };
-        if blocks {
-            let notes_merge_glob = if let Some(wt) = repo.work_tree.as_ref() {
-                match repo.git_dir.strip_prefix(wt) {
-                    Ok(rel) if !rel.as_os_str().is_empty() => {
-                        format!("{}/NOTES_MERGE_*", rel.display())
-                    }
-                    _ => format!("{}/NOTES_MERGE_*", repo.git_dir.display()),
-                }
-            } else {
-                format!("{}/NOTES_MERGE_*", repo.git_dir.display())
-            };
-            bail!(
-                "You have not concluded your previous notes merge ({} exists).\n\
-Please, use 'git notes merge --commit' or 'git notes merge --abort' to commit/abort the \
-previous merge before you start a new notes merge.",
-                notes_merge_glob
-            );
-        }
-    }
     let merge_result = notes_merge_inner(repo, notes_ref, &remote_ref, strategy)?;
     match merge_result {
         Ok(new_oid) => {
@@ -1504,17 +1544,25 @@ previous merge before you start a new notes merge.",
             Ok(())
         }
         Err(partial_oid) => {
-            write_ref(&repo.git_dir, NOTES_MERGE_PARTIAL, &partial_oid)?;
-            write_symbolic_ref(&repo.git_dir, NOTES_MERGE_REF, notes_ref)?;
+            let merge_git = notes_merge_git_dir(repo);
+            if let Some(other_path) = find_other_worktree_with_notes_merge_ref(repo, notes_ref) {
+                bail!(
+                    "a notes merge into {} is already in-progress at {}",
+                    notes_ref,
+                    other_path.display()
+                );
+            }
+            write_ref(&merge_git, NOTES_MERGE_PARTIAL, &partial_oid)?;
+            write_symbolic_ref(&merge_git, NOTES_MERGE_REF, notes_ref)?;
             let wt_display = if let Some(wt) = repo.work_tree.as_ref() {
-                match repo.git_dir.strip_prefix(wt) {
+                match merge_git.strip_prefix(wt) {
                     Ok(rel) if !rel.as_os_str().is_empty() => {
                         format!("{}/NOTES_MERGE_WORKTREE", rel.display())
                     }
-                    _ => format!("{}/NOTES_MERGE_WORKTREE", repo.git_dir.display()),
+                    _ => format!("{}/NOTES_MERGE_WORKTREE", merge_git.display()),
                 }
             } else {
-                format!("{}/NOTES_MERGE_WORKTREE", repo.git_dir.display())
+                format!("{}/NOTES_MERGE_WORKTREE", merge_git.display())
             };
             bail!(
                 "Automatic notes merge failed. Fix conflicts in {} \
