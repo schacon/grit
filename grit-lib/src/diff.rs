@@ -24,8 +24,8 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
-use crate::index::{Index, IndexEntry};
-use crate::objects::{parse_tree, ObjectId, ObjectKind, TreeEntry};
+use crate::index::{Index, IndexEntry, MODE_GITLINK};
+use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
 use crate::userdiff::FuncnameMatcher;
 
@@ -581,11 +581,16 @@ pub fn diff_index_to_worktree(
         let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");
         let is_intent_to_add = ie.intent_to_add();
 
-        // Gitlink entries (submodules) are directories — compare HEAD commit.
-        if ie.mode == 0o160000 {
+        // Gitlink entries (submodules): compare recorded commit to submodule HEAD and detect
+        // dirty worktrees / index inside the nested repository.
+        if ie.mode == MODE_GITLINK {
             let sub_dir = work_tree.join(path_str_ref);
             let sub_head_oid = read_submodule_head(&sub_dir);
-            if sub_head_oid.as_ref() != Some(&ie.oid) {
+            let mut dirty = sub_head_oid.as_ref() != Some(&ie.oid);
+            if !dirty {
+                dirty = submodule_has_local_changes(&sub_dir, &ie.oid)?;
+            }
+            if dirty {
                 let path_owned = path_str_ref.to_owned();
                 let new_oid = sub_head_oid.unwrap_or_else(zero_oid);
                 result.push(DiffEntry {
@@ -2188,11 +2193,9 @@ fn format_mode(mode: u32) -> String {
     format!("{mode:06o}")
 }
 
-/// Read the HEAD commit OID from a submodule directory.
-/// Returns `None` if the submodule dir doesn't exist or has no HEAD.
-fn read_submodule_head(sub_dir: &Path) -> Option<ObjectId> {
-    // Also handle gitfile: .git is a file containing "gitdir: <path>"
-    let git_dir = if sub_dir.join(".git").is_file() {
+/// Resolve the git directory for a submodule checkout (handles gitfile indirection).
+fn submodule_git_dir(sub_dir: &Path) -> Option<PathBuf> {
+    if sub_dir.join(".git").is_file() {
         let content = fs::read_to_string(sub_dir.join(".git")).ok()?;
         let gitdir = content
             .lines()
@@ -2200,15 +2203,63 @@ fn read_submodule_head(sub_dir: &Path) -> Option<ObjectId> {
             .trim()
             .to_owned();
         if Path::new(&gitdir).is_absolute() {
-            PathBuf::from(gitdir)
+            Some(PathBuf::from(gitdir))
         } else {
-            sub_dir.join(gitdir)
+            Some(sub_dir.join(gitdir))
         }
     } else if sub_dir.join(".git").is_dir() {
-        sub_dir.join(".git")
+        Some(sub_dir.join(".git"))
     } else {
-        return None;
+        None
+    }
+}
+
+/// True when the submodule has a different HEAD than `recorded_oid`, or its index/worktree
+/// differs from its HEAD (including nested submodule dirtiness).
+fn submodule_has_local_changes(sub_dir: &Path, recorded_oid: &ObjectId) -> Result<bool> {
+    let Some(git_dir) = submodule_git_dir(sub_dir) else {
+        return Ok(true);
     };
+    let head_oid = match read_submodule_head(sub_dir) {
+        Some(h) => h,
+        None => return Ok(true),
+    };
+    if &head_oid != recorded_oid {
+        return Ok(true);
+    }
+
+    let sub_odb = Odb::with_work_tree(&git_dir.join("objects"), sub_dir);
+    let head_obj = match sub_odb.read(&head_oid) {
+        Ok(o) => o,
+        Err(_) => return Ok(true),
+    };
+    if head_obj.kind != ObjectKind::Commit {
+        return Ok(true);
+    }
+    let head_commit = match parse_commit(&head_obj.data) {
+        Ok(c) => c,
+        Err(_) => return Ok(true),
+    };
+
+    let sub_index = match Index::load(&git_dir.join("index")) {
+        Ok(i) => i,
+        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
+        Err(e) => return Err(e),
+    };
+
+    let staged = diff_index_to_tree(&sub_odb, &sub_index, Some(&head_commit.tree))?;
+    if !staged.is_empty() {
+        return Ok(true);
+    }
+
+    let unstaged = diff_index_to_worktree(&sub_odb, &sub_index, sub_dir)?;
+    Ok(!unstaged.is_empty())
+}
+
+/// Read the HEAD commit OID from a submodule directory.
+/// Returns `None` if the submodule dir doesn't exist or has no HEAD.
+fn read_submodule_head(sub_dir: &Path) -> Option<ObjectId> {
+    let git_dir = submodule_git_dir(sub_dir)?;
     let head_content = fs::read_to_string(git_dir.join("HEAD")).ok()?;
     let head_content = head_content.trim();
     if let Some(refname) = head_content.strip_prefix("ref: ") {

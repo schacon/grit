@@ -211,6 +211,7 @@ fn do_merge_or_rebase(
             r#continue: false,
             abort: false,
             skip: false,
+            quit: false,
             exec: None,
             merge: false,
             apply: false,
@@ -224,6 +225,8 @@ fn do_merge_or_rebase(
             no_stat: false,
             context_lines: None,
             whitespace: None,
+            autostash: false,
+            no_autostash: false,
         };
         super::rebase::run(rebase_args)
     } else {

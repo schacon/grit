@@ -82,6 +82,8 @@ testrebase () {
 	dotest=$2
 
 	test_expect_success "rebase$type: restore autostash when pre-rebase hook fails" '
+		git branch -D rebased-feature-branch 2>/dev/null || true &&
+		rm -f .git/hooks/pre-rebase &&
 		git checkout -f feature-branch &&
 		test_hook pre-rebase <<-\EOF &&
 		exit 1
@@ -96,6 +98,7 @@ testrebase () {
 	'
 
 	test_expect_success "rebase$type: restore autostash when checkout onto fails" '
+		rm -f .git/hooks/pre-rebase &&
 		git checkout -f --detach feature-branch &&
 		echo uncommitted-content >file0 &&
 		echo untracked >file4 &&
@@ -124,6 +127,7 @@ testrebase () {
 	test_expect_success "rebase$type: dirty worktree, --no-autostash" '
 		test_config rebase.autostash true &&
 		git reset --hard &&
+		git branch -D rebased-feature-branch 2>/dev/null || true &&
 		git checkout -b rebased-feature-branch feature-branch &&
 		test_when_finished git branch -D rebased-feature-branch &&
 		test_when_finished git checkout feature-branch &&
@@ -134,7 +138,10 @@ testrebase () {
 	test_expect_success "rebase$type: dirty worktree, non-conflicting rebase" '
 		test_config rebase.autostash true &&
 		git reset --hard &&
+		git branch -D rebased-feature-branch 2>/dev/null || true &&
 		git checkout -b rebased-feature-branch feature-branch &&
+		test_when_finished git branch -D rebased-feature-branch &&
+		test_when_finished git checkout feature-branch &&
 		echo dirty >>file3 &&
 		git rebase$type unrelated-onto-branch >actual 2>&1 &&
 		grep unrelated file4 &&
@@ -156,6 +163,7 @@ testrebase () {
 	test_expect_success "rebase$type: dirty index, non-conflicting rebase" '
 		test_config rebase.autostash true &&
 		git reset --hard &&
+		git branch -D rebased-feature-branch 2>/dev/null || true &&
 		git checkout -b rebased-feature-branch feature-branch &&
 		test_when_finished git branch -D rebased-feature-branch &&
 		echo dirty >>file3 &&
@@ -169,6 +177,7 @@ testrebase () {
 	test_expect_success "rebase$type: conflicting rebase" '
 		test_config rebase.autostash true &&
 		git reset --hard &&
+		git branch -D rebased-feature-branch 2>/dev/null || true &&
 		git checkout -b rebased-feature-branch feature-branch &&
 		test_when_finished git branch -D rebased-feature-branch &&
 		echo dirty >>file3 &&
@@ -183,6 +192,7 @@ testrebase () {
 	test_expect_success "rebase$type: --continue" '
 		test_config rebase.autostash true &&
 		git reset --hard &&
+		git branch -D rebased-feature-branch 2>/dev/null || true &&
 		git checkout -b rebased-feature-branch feature-branch &&
 		test_when_finished git branch -D rebased-feature-branch &&
 		echo dirty >>file3 &&
@@ -200,6 +210,7 @@ testrebase () {
 	test_expect_success "rebase$type: --skip" '
 		test_config rebase.autostash true &&
 		git reset --hard &&
+		git branch -D rebased-feature-branch 2>/dev/null || true &&
 		git checkout -b rebased-feature-branch feature-branch &&
 		test_when_finished git branch -D rebased-feature-branch &&
 		echo dirty >>file3 &&
@@ -215,6 +226,7 @@ testrebase () {
 	test_expect_success "rebase$type: --abort" '
 		test_config rebase.autostash true &&
 		git reset --hard &&
+		git branch -D rebased-feature-branch 2>/dev/null || true &&
 		git checkout -b rebased-feature-branch feature-branch &&
 		test_when_finished git branch -D rebased-feature-branch &&
 		echo dirty >>file3 &&
@@ -230,6 +242,7 @@ testrebase () {
 	test_expect_success "rebase$type: --quit" '
 		test_config rebase.autostash true &&
 		git reset --hard &&
+		git branch -D rebased-feature-branch 2>/dev/null || true &&
 		git checkout -b rebased-feature-branch feature-branch &&
 		test_when_finished git branch -D rebased-feature-branch &&
 		echo dirty >>file3 &&
@@ -250,6 +263,7 @@ testrebase () {
 	test_expect_success "rebase$type: non-conflicting rebase, conflicting stash" '
 		test_config rebase.autostash true &&
 		git reset --hard &&
+		git branch -D rebased-feature-branch 2>/dev/null || true &&
 		git checkout -b rebased-feature-branch feature-branch &&
 		echo dirty >file4 &&
 		git add file4 &&
@@ -298,7 +312,19 @@ test_expect_success "rebase: noop rebase" '
 '
 
 testrebase " --apply" .git/rebase-apply
+
+test_expect_success 'cleanup rebased-feature-branch before merge backend tests' '
+	git checkout -f feature-branch &&
+	git branch -D rebased-feature-branch 2>/dev/null || true
+'
+
 testrebase " --merge" .git/rebase-merge
+
+test_expect_success 'cleanup rebased-feature-branch before interactive backend tests' '
+	git checkout -f feature-branch &&
+	git branch -D rebased-feature-branch 2>/dev/null || true
+'
+
 testrebase " --interactive" .git/rebase-merge
 
 test_expect_success 'abort rebase -i with --autostash' '
