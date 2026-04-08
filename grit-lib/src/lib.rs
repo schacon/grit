@@ -53,5 +53,6 @@ pub mod tree_path_follow;
 pub mod unix_process;
 pub mod unpack_objects;
 pub mod userdiff;
+pub mod whitespace_rule;
 pub mod wildmatch;
 pub mod write_tree;

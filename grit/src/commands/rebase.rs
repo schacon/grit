@@ -29,6 +29,7 @@ use grit_lib::refs::append_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
+use grit_lib::whitespace_rule::{fix_blob_bytes, parse_whitespace_rule, WS_DEFAULT_RULE};
 use grit_lib::write_tree::write_tree_from_index;
 
 #[derive(Clone, Copy)]
@@ -310,6 +311,23 @@ fn choose_rebase_backend(args: &Args) -> RebaseBackend {
     }
 }
 
+fn load_ws_fix_rule_from_rebase_state(git_dir: &Path) -> Option<u32> {
+    let rb_dir = rebase_dir(git_dir);
+    let action = fs::read_to_string(rb_dir.join("whitespace-action")).ok()?;
+    let a = action.trim();
+    if a.eq_ignore_ascii_case("fix") || a.eq_ignore_ascii_case("strip") {
+        let config = ConfigSet::load(Some(git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+        Some(
+            config
+                .get("core.whitespace")
+                .map(|s| parse_whitespace_rule(&s))
+                .unwrap_or(WS_DEFAULT_RULE),
+        )
+    } else {
+        None
+    }
+}
+
 fn load_rebase_backend(rb_dir: &Path) -> RebaseBackend {
     let marker = fs::read_to_string(rb_dir.join("backend")).unwrap_or_default();
     if marker.trim().eq_ignore_ascii_case("apply") {
@@ -408,7 +426,11 @@ fn do_rebase(args: Args) -> Result<()> {
         None
     };
 
-    let allow_preemptive_ff = !args.interactive && args.exec.is_none();
+    let whitespace_forces_replay = args
+        .whitespace
+        .as_deref()
+        .is_some_and(|w| w.eq_ignore_ascii_case("fix") || w.eq_ignore_ascii_case("strip"));
+    let allow_preemptive_ff = !args.interactive && args.exec.is_none() && !whitespace_forces_replay;
 
     if allow_preemptive_ff && rebase_can_preemptive_ff(&repo, onto_oid, upstream_oid, head_oid)? {
         if !args.no_ff {
@@ -515,6 +537,12 @@ fn do_rebase(args: Args) -> Result<()> {
     fs::write(rb_dir.join("msgnum"), "1")?;
     fs::write(rb_dir.join("last"), total.to_string())?;
     fs::write(rb_dir.join("next"), "1")?;
+
+    if let Some(ref ws) = args.whitespace {
+        if ws.eq_ignore_ascii_case("fix") || ws.eq_ignore_ascii_case("strip") {
+            fs::write(rb_dir.join("whitespace-action"), format!("{ws}\n"))?;
+        }
+    }
 
     if let Some(ref exec_cmd) = args.exec {
         fs::write(rb_dir.join("exec"), exec_cmd)?;
@@ -997,10 +1025,18 @@ fn cherry_pick_for_rebase(
     let head_tree_oid = head_commit.tree;
 
     // Three-way merge: base=parent_tree, ours=HEAD_tree, theirs=commit_tree
-    let base_entries = tree_to_map(tree_to_index_entries(repo, &parent_tree_oid, "")?);
+    let ws_fix_rule = load_ws_fix_rule_from_rebase_state(git_dir);
+    let base_tree_oid = if ws_fix_rule.is_some() {
+        // After an earlier replay, HEAD can differ from the picked commit's parent tree in the ODB
+        // (e.g. `rebase --whitespace=fix`). Use the current tip tree as the merge base so the
+        // merge sees ours==base and applies the commit's tree as the new result.
+        head_tree_oid
+    } else {
+        parent_tree_oid
+    };
+    let base_entries = tree_to_map(tree_to_index_entries(repo, &base_tree_oid, "")?);
     let ours_entries = tree_to_map(tree_to_index_entries(repo, &head_tree_oid, "")?);
     let theirs_entries = tree_to_map(tree_to_index_entries(repo, &commit_tree_oid, "")?);
-
     let conflict_ctx = RebaseConflictContext {
         backend,
         picked_subject: commit.message.lines().next().unwrap_or("replayed commit"),
@@ -1013,6 +1049,11 @@ fn cherry_pick_for_rebase(
         &conflict_ctx,
     )?;
     let mut merged_index = merge_result.index;
+
+    if let Some(rule) = ws_fix_rule {
+        apply_ws_fix_to_index(repo, &mut merged_index, rule)?;
+        merged_index.sort();
+    }
 
     let has_conflicts = merged_index.entries.iter().any(|e| e.stage() != 0);
 
@@ -1429,6 +1470,30 @@ fn tree_to_map(entries: Vec<IndexEntry>) -> HashMap<Vec<u8>, IndexEntry> {
 
 fn same_blob(a: &IndexEntry, b: &IndexEntry) -> bool {
     a.oid == b.oid && a.mode == b.mode
+}
+
+fn apply_ws_fix_to_index(repo: &Repository, index: &mut Index, rule: u32) -> Result<()> {
+    for entry in &mut index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        if entry.mode == MODE_SYMLINK || entry.mode == 0o160000 {
+            continue;
+        }
+        let obj = match repo.odb.read(&entry.oid) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        if grit_lib::merge_file::is_binary(&obj.data) {
+            continue;
+        }
+        let fixed = fix_blob_bytes(&obj.data, rule);
+        if fixed != obj.data {
+            let new_oid = repo.odb.write(ObjectKind::Blob, &fixed)?;
+            entry.oid = new_oid;
+        }
+    }
+    Ok(())
 }
 
 fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {

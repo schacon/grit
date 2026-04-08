@@ -603,7 +603,7 @@ t3412-rebase-root	t3	yes	25	13	12	false	ok	0
 t3413-rebase-hook	t3	yes	15	5	10	false	ok	0
 t3415-rebase-autosquash	t3	yes	28	2	26	false	ok	0
 t3416-rebase-onto-threedots	t3	yes	18	8	10	false	ok	0
-t3417-rebase-whitespace-fix	t3	yes	4	0	4	false	ok	0
+t3417-rebase-whitespace-fix	t3	yes	4	4	0	true	ok	0
 t3418-rebase-continue	t3	yes	30	6	24	false	ok	0
 t3419-rebase-patch-id	t3	yes	8	4	4	false	ok	0
 t3420-rebase-autostash	t3	yes	52	3	49	false	ok	0

@@ -1558,7 +1558,7 @@ fn resolve_index_path_at_stage(repo: &Repository, path: &str, stage: u8) -> Resu
 /// ignoring colons inside `^{...}` peel operators.
 ///
 /// Returns [`None`] for index-only forms like `:path` and `:N:path` (leading `:`).
-fn split_treeish_colon(spec: &str) -> Option<(&str, &str)> {
+pub fn split_treeish_colon(spec: &str) -> Option<(&str, &str)> {
     if spec.starts_with(':') {
         return None;
     }
