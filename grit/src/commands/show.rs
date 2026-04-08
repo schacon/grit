@@ -451,7 +451,10 @@ fn show_commit(
                 &fmt[8..]
             };
             let formatted = apply_format_string(template, oid, &commit);
-            writeln!(out, "{formatted}")?;
+            write!(out, "{formatted}")?;
+            if !formatted.ends_with('\n') {
+                writeln!(out)?;
+            }
         }
         Some("short") => {
             writeln!(out, "commit {hex}")?;
@@ -540,7 +543,10 @@ fn show_commit(
         }
         Some(other) => {
             let formatted = apply_format_string(other, oid, &commit);
-            writeln!(out, "{formatted}")?;
+            write!(out, "{formatted}")?;
+            if !formatted.ends_with('\n') {
+                writeln!(out)?;
+            }
         }
     }
 
@@ -1333,6 +1339,11 @@ fn apply_format_string(
                     chars.next();
                     let body: String = info.message.lines().skip(2).collect::<Vec<_>>().join("\n");
                     result.push_str(&body);
+                }
+                Some('B') => {
+                    chars.next();
+                    // Raw commit message (subject + body), matching Git's `%B`.
+                    result.push_str(info.message);
                 }
                 Some('n') => {
                     chars.next();

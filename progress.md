@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   231 |
-| In progress |     2 |
-| Remaining   |   535 |
+| Completed   |   245 |
+| In progress |     3 |
+| Remaining   |   520 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 231 completed (`[x]`), 2 in progress (`[~]`), 535 remaining (`[ ]`).
+Task lines in `PLAN.md`: 245 completed (`[x]`), 3 in progress (`[~]`), 520 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t3451-history-reword` — 14/14 tests pass (`history reword`: editor template + per-ref replay updates, dry-run `update` lines, merge-in-history error; `log --branches` tip ordering; `show` `%B` + newline handling; `status --porcelain` without spurious `##`; graph padding for two-parent merges; harness `test_commit_message` shim in test file; CSV/dashboards refreshed)
 - `t12820-diff-no-index-symlink` — 41/41 tests pass (symlink add/modify/delete, `diff`/`diff --cached`/`diff-tree`, stat/numstat/name output, multi-symlink and file↔symlink replacements; harness dashboards refreshed)
 - `t7817-grep-sparse-checkout` — 8/8 tests pass (non-cone sparse: `path_in_sparse_checkout` parent walk + last-match-wins; `sparse-checkout init` preserves cone mode and seeds `/*` + `!/*/` when recreating file; `disable` keeps pattern file so re-init reapplies `!b`; submodule `reset --hard` + sparse reapply; `grep` worktree: skip-worktree when absent, CE_VALID vs skip-worktree, unmerged paths grep worktree once; `grep_cached` per-stage for `--cached`)
 - `t7417-submodule-path-url` — 5/5 tests pass (`.gitmodules` dash paths: `mv` updates path + index blob; `escape_value` quotes leading `-`; receive-side `transfer.fsckObjects` via repo-local config only; clone `--recurse-submodules` resolves relative URLs from `origin` repo root + quoted path parsing + `GIT_QUIET` quiet mode)

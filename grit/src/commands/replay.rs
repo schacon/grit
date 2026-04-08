@@ -99,25 +99,41 @@ pub fn run(args: Args) -> Result<()> {
     let branch_tip = resolve_revision(&repo, branch_spec)
         .with_context(|| format!("bad revision '{branch_spec}'"))?;
     let commits = collect_linear_commits_to_replay(&repo, upstream_oid, branch_tip)?;
-    let merge_renormalize = read_merge_renormalize(&repo);
-    let directory_renames = read_directory_renames(&repo);
+    let replayed_tip = replay_commits_onto(&repo, &commits, onto_oid)?;
+
+    println!(
+        "update refs/heads/{} {} {}",
+        target_ref,
+        replayed_tip.to_hex(),
+        old_tip.to_hex()
+    );
+    Ok(())
+}
+
+/// Replay `commits` (oldest first) onto `onto`, returning the new tip OID.
+pub(crate) fn replay_commits_onto(
+    repo: &Repository,
+    commits: &[ObjectId],
+    mut replayed_tip: ObjectId,
+) -> Result<ObjectId> {
+    let merge_renormalize = read_merge_renormalize(repo);
+    let directory_renames = read_directory_renames(repo);
     let mut cached_upstream_renames: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
 
-    let mut replayed_tip = onto_oid;
     for commit_oid in commits {
-        let commit_obj = repo.odb.read(&commit_oid)?;
+        let commit_obj = repo.odb.read(commit_oid)?;
         let commit = parse_commit(&commit_obj.data)?;
         let parent_oid = *commit.parents.first().ok_or_else(|| {
             anyhow::anyhow!("replaying down from root commit is not supported yet!")
         })?;
 
-        let base_tree = commit_tree(&repo, parent_oid)?;
-        let ours_tree = commit_tree(&repo, replayed_tip)?;
+        let base_tree = commit_tree(repo, parent_oid)?;
+        let ours_tree = commit_tree(repo, replayed_tip)?;
         let theirs_tree = commit.tree;
 
-        let base_entries_raw = tree_to_map(tree_to_index_entries(&repo, &base_tree, "")?);
-        let mut ours_entries = tree_to_map(tree_to_index_entries(&repo, &ours_tree, "")?);
-        let theirs_entries_raw = tree_to_map(tree_to_index_entries(&repo, &theirs_tree, "")?);
+        let base_entries_raw = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
+        let mut ours_entries = tree_to_map(tree_to_index_entries(repo, &ours_tree, "")?);
+        let theirs_entries_raw = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
 
         let changed_paths = collect_changed_paths(&base_entries_raw, &theirs_entries_raw);
         let should_refresh_upstream = should_refresh_upstream_rename_cache(
@@ -126,14 +142,14 @@ pub fn run(args: Args) -> Result<()> {
             &cached_upstream_renames,
         );
         if should_refresh_upstream {
-            let detected = detect_side_renames(&repo, &base_entries_raw, &ours_entries, true)?;
+            let detected = detect_side_renames(repo, &base_entries_raw, &ours_entries, true)?;
             cached_upstream_renames = filter_renames_for_changed_paths(detected, &changed_paths);
         }
 
         let mut topic_renames = HashMap::new();
         if likely_has_rename_candidates(&base_entries_raw, &theirs_entries_raw) {
             topic_renames =
-                detect_side_renames(&repo, &base_entries_raw, &theirs_entries_raw, true)?;
+                detect_side_renames(repo, &base_entries_raw, &theirs_entries_raw, true)?;
             for (old, new) in &topic_renames {
                 if cached_upstream_renames.get(old) == Some(new) {
                     cached_upstream_renames.remove(old);
@@ -164,11 +180,11 @@ pub fn run(args: Args) -> Result<()> {
         );
 
         let merge_result = merge_trees_for_replay(
-            &repo,
+            repo,
             &base_entries,
             &ours_entries,
             &theirs_entries,
-            &short_oid(commit_oid),
+            &short_oid(*commit_oid),
             &short_oid(parent_oid),
             &replayed_tip.to_hex(),
             &commit_oid.to_hex(),
@@ -180,7 +196,7 @@ pub fn run(args: Args) -> Result<()> {
             false,
             false,
             MergeDirectoryRenamesMode::Disabled,
-            MergeRenameOptions::from_config(&repo),
+            MergeRenameOptions::from_config(repo),
         )?;
         if merge_result.has_conflicts {
             let reason = merge_result
@@ -198,16 +214,10 @@ pub fn run(args: Args) -> Result<()> {
             continue;
         }
 
-        replayed_tip = create_replayed_commit(&repo, replayed_tip, merged_tree, &commit)?;
+        replayed_tip = create_replayed_commit(repo, replayed_tip, merged_tree, &commit)?;
     }
 
-    println!(
-        "update refs/heads/{} {} {}",
-        target_ref,
-        replayed_tip.to_hex(),
-        old_tip.to_hex()
-    );
-    Ok(())
+    Ok(replayed_tip)
 }
 
 fn resolve_target_branch(repo: &Repository, spec: &str) -> Result<(String, ObjectId)> {

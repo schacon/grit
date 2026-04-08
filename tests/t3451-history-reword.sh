@@ -5,6 +5,35 @@ test_description='tests for git-history reword subcommand'
 . ./test-lib.sh
 . "$TEST_DIRECTORY/lib-log-graph.sh"
 
+# Minimal `test_commit_message` (upstream helper lives in test-lib-functions.sh, which is
+# not wired into this harness).
+test_commit_message () {
+	msg_file=expect.msg
+	case $# in
+	3)
+		if test "$2" = "-m"
+		then
+			printf "%s\n" "$3" >"$msg_file"
+		else
+			echo "BUG: test_commit_message usage" >&2
+			exit 1
+		fi
+		;;
+	2)
+		msg_file="$2"
+		;;
+	1)
+		cat >"$msg_file"
+		;;
+	*)
+		echo "BUG: test_commit_message usage" >&2
+		exit 1
+		;;
+	esac
+	git show --no-patch --pretty=format:%B "$1" -- >actual.msg &&
+	test_cmp "$msg_file" actual.msg
+}
+
 reword_with_message () {
 	cat >message &&
 	write_script fake-editor.sh <<-\EOF &&

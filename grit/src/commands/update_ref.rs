@@ -853,7 +853,7 @@ fn run_ref_transaction_state(repo: &Repository, state: &str, updates: &[HookUpda
     )
 }
 
-fn resolve_reflog_identity(repo: &Repository) -> String {
+pub(crate) fn resolve_reflog_identity(repo: &Repository) -> String {
     let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
     let name = std::env::var("GIT_COMMITTER_NAME")
         .ok()

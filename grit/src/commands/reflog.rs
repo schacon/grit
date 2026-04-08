@@ -224,6 +224,7 @@ fn run_show(args: ShowArgs) -> Result<()> {
         name_status: false,
         raw: false,
         all: false,
+        branches: false,
         follow: false,
         diff_filter: None,
         find_object: None,
