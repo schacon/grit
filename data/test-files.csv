@@ -791,7 +791,7 @@ t4118-apply-empty-context	t4	yes	3	3	0	true	ok	0
 t4119-apply-config	t4	yes	11	1	10	false	ok	0
 t4120-apply-popt	t4	yes	12	4	8	false	ok	0
 t4121-apply-diffs	t4	yes	2	2	0	true	ok	0
-t4122-apply-symlink-inside	t4	yes	7	7	0	true	ok	0
+t4122-apply-symlink-inside	t4	yes	7	6	1	false	ok	0
 t4123-apply-shrink	t4	yes	2	2	0	true	ok	0
 t4124-apply-ws-rule	t4	yes	85	12	73	false	ok	0
 t4125-apply-ws-fuzz	t4	yes	4	2	2	false	ok	0
