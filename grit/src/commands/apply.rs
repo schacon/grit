@@ -3338,7 +3338,7 @@ fn apply_intent_to_add_entries(patches: &[FilePatch], args: &Args) -> Result<()>
             uid: 0,
             gid: 0,
             size: 0,
-            oid: grit_lib::diff::empty_blob_oid(),
+            oid: grit_lib::objects::ObjectId::zero(),
             flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
             flags_extended: None,
             path: target_adjusted.into_bytes(),
