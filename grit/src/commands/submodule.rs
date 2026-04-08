@@ -448,6 +448,65 @@ fn parse_gitmodules(work_tree: &Path) -> Result<Vec<SubmoduleInfo>> {
     parse_gitmodules_with_repo(work_tree, None)
 }
 
+/// Paths listed in `.gitmodules` (or the index blob), used by `git clean` to avoid removing
+/// submodule work trees that are not recorded in the current index (e.g. after checkout).
+pub fn listed_submodule_paths(repo: &Repository) -> Result<Vec<String>> {
+    let Some(wt) = repo.work_tree.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let modules = parse_gitmodules_with_repo(wt, Some(repo))?;
+    Ok(modules.into_iter().map(|m| m.path).collect())
+}
+
+/// Ensure each configured submodule work tree has a `.git` gitfile pointing at
+/// `.git/modules/<path>/` when that module directory exists (needed after checkout removes
+/// paths not in the new index).
+pub fn refresh_submodule_gitfiles(repo: &Repository) -> Result<()> {
+    let Some(wt) = repo.work_tree.as_ref() else {
+        return Ok(());
+    };
+    for path in listed_submodule_paths(repo)? {
+        let sm_dir = wt.join(&path);
+        if !sm_dir.is_dir() {
+            continue;
+        }
+        let modules_git = repo.git_dir.join("modules").join(&path);
+        if !modules_git.exists() {
+            continue;
+        }
+        if let Ok(rel) = relativize_submodule_gitfile(&sm_dir, &modules_git) {
+            let gitfile = sm_dir.join(".git");
+            let line = format!("gitdir: {}\n", rel.to_string_lossy().replace('\\', "/"));
+            fs::write(&gitfile, line).with_context(|| {
+                format!("failed to write submodule gitfile at {}", gitfile.display())
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn relativize_submodule_gitfile(from_dir: &Path, to_path: &Path) -> Result<PathBuf> {
+    let from_abs = fs::canonicalize(from_dir).unwrap_or_else(|_| from_dir.to_path_buf());
+    let to_abs = fs::canonicalize(to_path).unwrap_or_else(|_| to_path.to_path_buf());
+    let from_c: Vec<_> = from_abs.components().collect();
+    let to_c: Vec<_> = to_abs.components().collect();
+    let mut i = 0usize;
+    while i < from_c.len() && i < to_c.len() && from_c[i] == to_c[i] {
+        i += 1;
+    }
+    let mut out = PathBuf::new();
+    for _ in i..from_c.len() {
+        out.push("..");
+    }
+    for c in &to_c[i..] {
+        out.push(c);
+    }
+    if out.as_os_str().is_empty() {
+        out.push(".");
+    }
+    Ok(out)
+}
+
 fn parse_gitmodules_with_repo(
     work_tree: &Path,
     repo: Option<&Repository>,
@@ -581,6 +640,72 @@ fn read_submodule_commit(repo: &Repository, submodule_path: &str) -> Result<Opti
         current_tree = entry.oid;
     }
     Ok(None)
+}
+
+/// Gitlink OID for `submodule_path` in the current index (stage 0), if present.
+///
+/// Used after `grit add <path>` when `HEAD`’s tree does not yet list the new submodule
+/// (e.g. `submodule add` before `commit`).
+fn read_gitlink_oid_from_index(repo: &Repository, submodule_path: &str) -> Result<Option<String>> {
+    let index = repo
+        .load_index()
+        .context("load index for submodule gitlink")?;
+    let needle = submodule_path.as_bytes();
+    for entry in &index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        if entry.path.as_slice() == needle && entry.mode == MODE_GITLINK {
+            return Ok(Some(entry.oid.to_hex()));
+        }
+    }
+    Ok(None)
+}
+
+/// Check out `oid` in the submodule at `path` (separate git dir under `.git/modules/` or in-tree `.git`).
+fn checkout_submodule_worktree(
+    grit_bin: &Path,
+    repo: &Repository,
+    work_tree: &Path,
+    submodule_path: &str,
+    oid: &str,
+) -> Result<()> {
+    let sub_path = work_tree.join(submodule_path);
+    let modules_dir = repo.git_dir.join("modules").join(submodule_path);
+
+    // CWD must lie inside `GIT_WORK_TREE`; the superproject root is outside the submodule tree.
+    // `--force`: after `clone --no-checkout`, HEAD may already equal `oid` while the index and
+    // work tree are empty; without force, `checkout` skips `switch_to_tree` and leaves no files.
+    let status = if modules_dir.join("HEAD").exists() {
+        Command::new(grit_bin)
+            .env("GIT_DIR", &modules_dir)
+            .env("GIT_WORK_TREE", &sub_path)
+            .current_dir(&sub_path)
+            .args(["checkout", "--force", "--quiet", oid])
+            .status()
+    } else {
+        // Run from inside the submodule so discovery follows `sub_path/.git`, not a parent repo.
+        Command::new(grit_bin)
+            .args(["checkout", "--force", "--quiet", oid])
+            .current_dir(&sub_path)
+            .status()
+    }
+    .context("failed to checkout submodule commit")?;
+
+    if !status.success() {
+        bail!(
+            "failed to checkout {} in submodule '{}'",
+            oid,
+            submodule_path
+        );
+    }
+
+    eprintln!(
+        "Submodule path '{}': checked out '{}'",
+        submodule_path,
+        &oid[..oid.len().min(12)]
+    );
+    Ok(())
 }
 
 // ── Subcommand implementations ───────────────────────────────────────
@@ -764,7 +889,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             }
         }
 
-        let modules_dir = repo.git_dir.join("modules").join(&m.name);
+        let modules_dir = repo.git_dir.join("modules").join(&m.path);
 
         // Submodule checkouts must use a gitfile at `<path>/.git` pointing at
         // `.git/modules/<name>/`. A nested `.git` directory breaks `git rev-parse --git-dir`
@@ -912,22 +1037,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             bail!("failed to checkout submodule commit: No such file or directory (os error 2)");
         }
 
-        // Checkout the target commit.
-        let status = grit_subprocess(&grit_bin)
-            .arg("checkout")
-            .arg("--quiet")
-            .arg(&checkout_oid)
-            .current_dir(&sub_path)
-            .status()
-            .context("failed to checkout submodule commit")?;
-
-        if !status.success() {
-            bail!(
-                "failed to checkout {} in submodule '{}'",
-                checkout_oid,
-                m.name
-            );
-        }
+        checkout_submodule_worktree(&grit_bin, &repo, work_tree, &m.path, &checkout_oid)?;
 
         // `checkout` must leave the submodule index matching `HEAD`; otherwise
         // `git status` inside the submodule shows spurious staged deletions
@@ -952,12 +1062,6 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             })?;
             attach_existing_submodule_worktree(&grit_bin, &modules_dir, &sub_path)?;
         }
-
-        eprintln!(
-            "Submodule path '{}': checked out '{}'",
-            m.path,
-            &checkout_oid[..checkout_oid.len().min(12)]
-        );
     }
 
     if args.recursive {
@@ -1137,6 +1241,12 @@ fn run_add(args: &AddArgs) -> Result<()> {
 
     if !status.success() {
         bail!("failed to stage submodule");
+    }
+
+    // `clone --no-checkout` leaves an empty work tree; populate it from the staged gitlink
+    // (HEAD’s tree may not include the new submodule until after commit — read the index).
+    if let Some(oid) = read_gitlink_oid_from_index(&repo, &path)? {
+        checkout_submodule_worktree(&grit_bin, &repo, work_tree, &path, &oid)?;
     }
 
     eprintln!("Cloning into '{}'...", path);

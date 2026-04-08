@@ -12,6 +12,15 @@ say() {
 	printf '%s\n' "$*" >&3
 }
 
+test_path_exists () {
+	test "$#" -ne 1 && BUG "1 param"
+	if ! test -e "$1"
+	then
+		echo "Path $1 doesn't exist" >&2
+		false
+	fi
+}
+
 last_verbose=t
 maybe_setup_verbose() {
 	test -z "$verbose_only" && return

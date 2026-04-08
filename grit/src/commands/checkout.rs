@@ -7,10 +7,12 @@
 //! - `checkout [<tree-ish>] -- <paths>` — restore specific files.
 //! - `-f` / `--force` — discard local changes when switching.
 
+use crate::grit_exe;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
 use grit_lib::config::ConfigSet;
@@ -1518,6 +1520,9 @@ fn check_dirty_worktree(
         if old_entry.stage() != 0 {
             continue;
         }
+        if old_entry.mode == MODE_GITLINK {
+            continue;
+        }
 
         let path_bytes = &old_entry.path;
         let rel_path = String::from_utf8_lossy(path_bytes);
@@ -1581,6 +1586,9 @@ fn check_dirty_worktree(
             let mut staged_conflicts = Vec::new();
             for old_entry in &old_index.entries {
                 if old_entry.stage() != 0 {
+                    continue;
+                }
+                if old_entry.mode == MODE_GITLINK {
                     continue;
                 }
                 let path_bytes = &old_entry.path;
@@ -2928,6 +2936,14 @@ fn checkout_index_to_worktree(
 
     // Remove paths that are no longer present in the new index.
     for old_path in old_stage0.difference(&new_stage0) {
+        if let Some(old_entry) = old_map.get(old_path.as_slice()) {
+            // Superproject: do not delete submodule work trees for gitlinks dropped from the index
+            // (Git keeps them on disk; t7300-clean). Nested submodule repos under `.git/modules/`
+            // still use normal removal so `git checkout` can refresh the nested worktree.
+            if old_entry.mode == MODE_GITLINK && !git_dir_is_nested_modules_repo(&repo.git_dir) {
+                continue;
+            }
+        }
         let rel = String::from_utf8_lossy(old_path).into_owned();
         let abs = work_tree.join(&rel);
         // Safety: don't follow symlinks when removing paths.
@@ -2972,10 +2988,9 @@ fn checkout_index_to_worktree(
 
         // Skip gitlink (submodule) entries — their OIDs reference commits
         // in the submodule's object store, not blobs in ours.
-        if entry.mode == 0o160000 {
-            // Ensure the submodule directory exists so that scripts can
-            // `cd` into it, but don't try to check out any content.
-            let sm_dir = work_tree.join(String::from_utf8_lossy(&entry.path).as_ref());
+        if entry.mode == MODE_GITLINK {
+            let rel = String::from_utf8_lossy(&entry.path);
+            let sm_dir = work_tree.join(rel.as_ref());
             let _ = std::fs::create_dir_all(&sm_dir);
             continue;
         }
@@ -3000,7 +3015,26 @@ fn checkout_index_to_worktree(
         )?;
     }
 
+    let _ = crate::commands::submodule::refresh_submodule_gitfiles(repo);
+
+    if !git_dir_is_nested_modules_repo(&repo.git_dir) {
+        let grit_bin = grit_exe::grit_executable();
+        let _ = Command::new(&grit_bin)
+            .args(["submodule", "update", "--init"])
+            .current_dir(work_tree)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .status();
+    }
+
     Ok(())
+}
+
+fn git_dir_is_nested_modules_repo(git_dir: &Path) -> bool {
+    git_dir
+        .parent()
+        .and_then(|p| p.file_name())
+        .is_some_and(|n| n == "modules")
 }
 
 /// Write a blob object to the working tree.

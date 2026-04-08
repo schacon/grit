@@ -195,12 +195,12 @@ pub fn resolve_magic_pathspec(spec: &str, cwd_prefix: &str) -> Option<String> {
 }
 
 #[derive(Debug, Default)]
-struct PathspecMagic {
-    icase: bool,
-    prefix: Option<String>,
+pub(crate) struct PathspecMagic {
+    pub(crate) icase: bool,
+    pub(crate) prefix: Option<String>,
 }
 
-fn parse_magic(spec: &str) -> (PathspecMagic, &str) {
+pub(crate) fn parse_magic(spec: &str) -> (PathspecMagic, &str) {
     let Some(rest) = spec.strip_prefix(":(") else {
         return (PathspecMagic::default(), spec);
     };

@@ -11,6 +11,7 @@ use std::path::{Component, Path, PathBuf};
 use crate::config::{parse_path, ConfigSet};
 use crate::error::{Error, Result};
 use crate::index::{Index, MODE_GITLINK};
+use crate::objects::ObjectKind;
 use crate::repo::Repository;
 use crate::wildmatch::{wildmatch, WM_PATHNAME};
 
@@ -136,7 +137,7 @@ impl IgnoreMatcher {
         let mut matched: Option<IgnoreMatch> = None;
         let mut ignored = false;
 
-        let per_dir_rules = self.rules_for_path(repo, repo_rel_path)?;
+        let per_dir_rules = self.rules_for_path(repo, index, repo_rel_path)?;
         // Approximate Git precedence with a single "last match wins" pass: command-line and
         // `ls-files -X` patterns sit next to the standard file group, then per-directory
         // `.gitignore` (highest priority), matching the historical behavior that passed t0008.
@@ -174,6 +175,7 @@ impl IgnoreMatcher {
     fn rules_for_path(
         &mut self,
         repo: &Repository,
+        index: Option<&Index>,
         repo_rel_path: &str,
     ) -> Result<Vec<IgnoreRule>> {
         let parent = parent_dir(repo_rel_path);
@@ -192,7 +194,7 @@ impl IgnoreMatcher {
 
         for dir in &dirs {
             if !self.gitignore_cache.contains_key(dir) {
-                let rules = load_gitignore_for_dir(repo, dir, &mut self.warnings)?;
+                let rules = load_gitignore_for_dir(repo, index, dir, &mut self.warnings)?;
                 self.gitignore_cache.insert(dir.clone(), rules);
             }
         }
@@ -255,6 +257,7 @@ fn load_info_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {
 
 fn load_gitignore_for_dir(
     repo: &Repository,
+    index: Option<&Index>,
     dir: &str,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<IgnoreRule>> {
@@ -271,7 +274,49 @@ fn load_gitignore_for_dir(
     } else {
         format!("{dir}/.gitignore")
     };
-    load_rules_from_file(&path, source_display, dir.to_owned(), true, warnings)
+    let rel_key = if dir.is_empty() {
+        ".gitignore".to_owned()
+    } else {
+        format!("{dir}/.gitignore")
+    };
+
+    if let Some(content) = read_optional_text(&path)? {
+        return parse_gitignore_content(&content, &source_display, dir, warnings);
+    }
+
+    if let Some(ix) = index {
+        if let Some(entry) = ix.entries.iter().find(|e| {
+            e.stage() == 0
+                && std::str::from_utf8(&e.path)
+                    .map(|p| p == rel_key.as_str())
+                    .unwrap_or(false)
+        }) {
+            if let Ok(obj) = repo.odb.read(&entry.oid) {
+                if obj.kind == ObjectKind::Blob {
+                    if let Ok(text) = std::str::from_utf8(&obj.data) {
+                        return parse_gitignore_content(text, &source_display, dir, warnings);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(Vec::new())
+}
+
+fn parse_gitignore_content(
+    content: &str,
+    source_display: &str,
+    base_dir: &str,
+    _warnings: &mut Vec<String>,
+) -> Result<Vec<IgnoreRule>> {
+    let mut rules = Vec::new();
+    for (idx, line) in content.lines().enumerate() {
+        if let Some(rule) = parse_rule_line(line, idx + 1, source_display, base_dir) {
+            rules.push(rule);
+        }
+    }
+    Ok(rules)
 }
 
 fn load_rules_from_file(
@@ -294,14 +339,7 @@ fn load_rules_from_file(
     let Some(content) = read_optional_text(path)? else {
         return Ok(Vec::new());
     };
-
-    let mut rules = Vec::new();
-    for (idx, line) in content.lines().enumerate() {
-        if let Some(rule) = parse_rule_line(line, idx + 1, &source_display, &base_dir) {
-            rules.push(rule);
-        }
-    }
-    Ok(rules)
+    parse_gitignore_content(&content, &source_display, &base_dir, warnings)
 }
 
 /// Trims only *unescaped* trailing spaces, matching Git's `trim_trailing_spaces` in `dir.c`.
@@ -458,10 +496,10 @@ fn refine_match_for_check_ignore_verbose(
 }
 
 fn rule_matches(rule: &IgnoreRule, repo_rel_path: &str, is_dir: bool) -> bool {
-    // Directory-only patterns containing `**` (e.g. `!data/**/`) only apply to directory paths,
-    // not to files inside those directories. Matching them against ancestor paths for files would
-    // incorrectly negate `data/**` for every file (see t0008 "directories and ** matches").
-    if rule.directory_only && rule.body.contains("**") && !is_dir {
+    // Negated directory-only patterns containing `**` (e.g. `!data/**/`) only apply to directory
+    // paths, not to files inside those directories. Matching them against ancestor paths for
+    // files would incorrectly negate `data/**` for every file (see t0008 "directories and ** matches").
+    if rule.directory_only && rule.negative && rule.body.contains("**") && !is_dir {
         return false;
     }
 
