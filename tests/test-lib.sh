@@ -1221,7 +1221,11 @@ test_atexit_handler () {
 }
 
 test_eval_inner_ () {
+	cd "$TRASH_DIRECTORY" || exit 1
 	eval "$1"
+	eval_ret=$?
+	cd "$TRASH_DIRECTORY" || exit 1
+	return $eval_ret
 }
 
 # Run test body with stdin / stdout / stderr wired like git's test-lib (fd 3/4).
