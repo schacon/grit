@@ -443,19 +443,50 @@ test_cmp_bin () {
 }
 
 test_decode_color () {
-	sed \
-		-e 's/\x1b\[1m/<BOLD>/g' \
-		-e 's/\x1b\[7m/<REVERSE>/g' \
-		-e 's/\x1b\[30m/<BLACK>/g' \
-		-e 's/\x1b\[31m/<RED>/g' \
-		-e 's/\x1b\[32m/<GREEN>/g' \
-		-e 's/\x1b\[33m/<YELLOW>/g' \
-		-e 's/\x1b\[34m/<BLUE>/g' \
-		-e 's/\x1b\[35m/<MAGENTA>/g' \
-		-e 's/\x1b\[36m/<CYAN>/g' \
-		-e 's/\x1b\[m/<RESET>/g' \
-		-e 's/\x1b\[0m/<RESET>/g' \
-		-e 's/\x1b\[[0-9;]*m//g'
+	awk '
+		function name(n) {
+			if (n == 0) return "RESET";
+			if (n == 1) return "BOLD";
+			if (n == 2) return "FAINT";
+			if (n == 3) return "ITALIC";
+			if (n == 7) return "REVERSE";
+			if (n == 30) return "BLACK";
+			if (n == 31) return "RED";
+			if (n == 32) return "GREEN";
+			if (n == 33) return "YELLOW";
+			if (n == 34) return "BLUE";
+			if (n == 35) return "MAGENTA";
+			if (n == 36) return "CYAN";
+			if (n == 37) return "WHITE";
+			if (n == 40) return "BLACK";
+			if (n == 41) return "BRED";
+			if (n == 42) return "BGREEN";
+			if (n == 43) return "BYELLOW";
+			if (n == 44) return "BBLUE";
+			if (n == 45) return "BMAGENTA";
+			if (n == 46) return "BCYAN";
+			if (n == 47) return "BWHITE";
+		}
+		{
+			while (match($0, /\033\[[0-9;]*m/) != 0) {
+				printf "%s<", substr($0, 1, RSTART-1);
+				codes = substr($0, RSTART+2, RLENGTH-3);
+				if (length(codes) == 0)
+					printf "%s", name(0)
+				else {
+					n = split(codes, ary, ";");
+					sep = "";
+					for (i = 1; i <= n; i++) {
+						printf "%s%s", sep, name(ary[i]);
+						sep = ";"
+					}
+				}
+				printf ">";
+				$0 = substr($0, RSTART + RLENGTH, length($0) - RSTART - RLENGTH + 1);
+			}
+			print
+		}
+	'
 }
 
 _x05='[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'
