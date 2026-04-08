@@ -2249,6 +2249,273 @@ pub fn count_changes(old_content: &str, new_content: &str) -> (usize, usize) {
     (ins, del)
 }
 
+/// Line count for diffstat/`--numstat`, matching Git's `count_lines()` in `diff.c`.
+///
+/// Counts newline-terminated lines; a final line without trailing newline still counts as one line.
+/// An empty buffer yields `0`.
+#[must_use]
+pub fn count_git_lines(data: &[u8]) -> usize {
+    if data.is_empty() {
+        return 0;
+    }
+    let mut count = 0usize;
+    let mut nl_just_seen = false;
+    for &ch in data {
+        if ch == b'\n' {
+            count += 1;
+            nl_just_seen = true;
+        } else {
+            nl_just_seen = false;
+        }
+    }
+    if !nl_just_seen {
+        count += 1;
+    }
+    count
+}
+
+const DIFF_MAX_SCORE: u64 = 60_000;
+const DIFF_MINIMUM_BREAK_SIZE: usize = 400;
+const DIFF_DEFAULT_BREAK_SCORE: u64 = 30_000;
+const DIFF_HASHBASE: u32 = 107_927;
+
+#[derive(Clone, Copy, Default)]
+struct SpanSlot {
+    hashval: u32,
+    cnt: u32,
+}
+
+struct SpanHashTop {
+    alloc_log2: u8,
+    free_slots: i32,
+    data: Vec<SpanSlot>,
+}
+
+impl SpanHashTop {
+    fn new(initial_log2: u8) -> Self {
+        let cap = 1usize << initial_log2;
+        Self {
+            alloc_log2: initial_log2,
+            free_slots: initial_free(initial_log2),
+            data: vec![SpanSlot::default(); cap],
+        }
+    }
+
+    fn len(&self) -> usize {
+        1usize << self.alloc_log2
+    }
+
+    fn add_span(&mut self, hashval: u32, cnt: u32) {
+        loop {
+            let lim = self.len();
+            let mut bucket = (hashval as usize) & (lim - 1);
+            loop {
+                let h = &mut self.data[bucket];
+                if h.cnt == 0 {
+                    h.hashval = hashval;
+                    h.cnt = cnt;
+                    self.free_slots -= 1;
+                    if self.free_slots < 0 {
+                        self.rehash();
+                        break;
+                    }
+                    return;
+                }
+                if h.hashval == hashval {
+                    h.cnt = h.cnt.saturating_add(cnt);
+                    return;
+                }
+                bucket += 1;
+                if bucket >= lim {
+                    bucket = 0;
+                }
+            }
+        }
+    }
+
+    fn rehash(&mut self) {
+        let old = std::mem::take(&mut self.data);
+        let old_log = self.alloc_log2;
+        self.alloc_log2 = old_log.saturating_add(1);
+        let new_len = 1usize << self.alloc_log2;
+        self.free_slots = initial_free(self.alloc_log2);
+        self.data = vec![SpanSlot::default(); new_len];
+        let old_sz = 1usize << old_log;
+        for o in old.iter().take(old_sz) {
+            let o = *o;
+            if o.cnt == 0 {
+                continue;
+            }
+            self.add_span_after_rehash(o.hashval, o.cnt);
+        }
+    }
+
+    fn add_span_after_rehash(&mut self, hashval: u32, cnt: u32) {
+        loop {
+            let lim = self.len();
+            let mut bucket = (hashval as usize) & (lim - 1);
+            loop {
+                let h = &mut self.data[bucket];
+                if h.cnt == 0 {
+                    h.hashval = hashval;
+                    h.cnt = cnt;
+                    self.free_slots -= 1;
+                    if self.free_slots < 0 {
+                        self.rehash();
+                        break;
+                    }
+                    return;
+                }
+                if h.hashval == hashval {
+                    h.cnt = h.cnt.saturating_add(cnt);
+                    return;
+                }
+                bucket += 1;
+                if bucket >= lim {
+                    bucket = 0;
+                }
+            }
+        }
+    }
+
+    fn sort_by_hashval(&mut self) {
+        let sz = self.len();
+        self.data[..sz].sort_by(|a, b| {
+            if a.cnt == 0 {
+                return std::cmp::Ordering::Greater;
+            }
+            if b.cnt == 0 {
+                return std::cmp::Ordering::Less;
+            }
+            a.hashval.cmp(&b.hashval)
+        });
+    }
+}
+
+fn initial_free(sz_log2: u8) -> i32 {
+    let sz = sz_log2 as i32;
+    ((1i32 << sz_log2) * (sz - 3) / sz).max(0)
+}
+
+fn hash_blob_spans(buf: &[u8], is_text: bool) -> SpanHashTop {
+    let mut hash = SpanHashTop::new(9);
+    let mut n = 0u32;
+    let mut accum1: u32 = 0;
+    let mut accum2: u32 = 0;
+    let mut i = 0usize;
+    while i < buf.len() {
+        let c = buf[i] as u32;
+        let old_1 = accum1;
+        i += 1;
+
+        if is_text && c == b'\r' as u32 && i < buf.len() && buf[i] == b'\n' {
+            continue;
+        }
+
+        accum1 = accum1.wrapping_shl(7) ^ accum2.wrapping_shr(25);
+        accum2 = accum2.wrapping_shl(7) ^ old_1.wrapping_shr(25);
+        accum1 = accum1.wrapping_add(c);
+        n += 1;
+        if n < 64 && c != b'\n' as u32 {
+            continue;
+        }
+        let hashval = (accum1.wrapping_add(accum2.wrapping_mul(0x61))) % DIFF_HASHBASE;
+        hash.add_span(hashval, n);
+        n = 0;
+        accum1 = 0;
+        accum2 = 0;
+    }
+    if n > 0 {
+        let hashval = (accum1.wrapping_add(accum2.wrapping_mul(0x61))) % DIFF_HASHBASE;
+        hash.add_span(hashval, n);
+    }
+    hash.sort_by_hashval();
+    hash
+}
+
+/// Approximate copied vs added material between two blobs (Git `diffcore_count_changes`).
+fn diffcore_count_changes(old: &[u8], new: &[u8]) -> (u64, u64) {
+    let src_is_text = !crate::merge_file::is_binary(old);
+    let dst_is_text = !crate::merge_file::is_binary(new);
+    let src_count = hash_blob_spans(old, src_is_text);
+    let dst_count = hash_blob_spans(new, dst_is_text);
+    let mut sc: u64 = 0;
+    let mut la: u64 = 0;
+    let mut si = 0usize;
+    let mut di = 0usize;
+    let src_len = src_count.len();
+    let dst_len = dst_count.len();
+    loop {
+        if si >= src_len || src_count.data[si].cnt == 0 {
+            break;
+        }
+        let s_hash = src_count.data[si].hashval;
+        let s_cnt = u64::from(src_count.data[si].cnt);
+        while di < dst_len && dst_count.data[di].cnt != 0 && dst_count.data[di].hashval < s_hash {
+            la += u64::from(dst_count.data[di].cnt);
+            di += 1;
+        }
+        let mut dst_cnt = 0u64;
+        if di < dst_len && dst_count.data[di].cnt != 0 && dst_count.data[di].hashval == s_hash {
+            dst_cnt = u64::from(dst_count.data[di].cnt);
+            di += 1;
+        }
+        if s_cnt < dst_cnt {
+            la += dst_cnt - s_cnt;
+            sc += s_cnt;
+        } else {
+            sc += dst_cnt;
+        }
+        si += 1;
+    }
+    while di < dst_len && dst_count.data[di].cnt != 0 {
+        la += u64::from(dst_count.data[di].cnt);
+        di += 1;
+    }
+    (sc, la)
+}
+
+/// Whether this modified blob pair should use Git's "complete rewrite" diffstat path when
+/// `--break-rewrites` is in effect (`should_break` in `diffcore-break.c`).
+#[must_use]
+pub fn should_break_rewrite_for_stat(old: &[u8], new: &[u8]) -> bool {
+    should_break_rewrite_inner(old, new, DIFF_DEFAULT_BREAK_SCORE)
+}
+
+fn should_break_rewrite_inner(src: &[u8], dst: &[u8], break_score: u64) -> bool {
+    if src.is_empty() {
+        return false;
+    }
+    let max_size = src.len().max(dst.len());
+    if max_size < DIFF_MINIMUM_BREAK_SIZE {
+        return false;
+    }
+    let (src_copied, literal_added) = diffcore_count_changes(src, dst);
+    let src_copied = src_copied.min(src.len() as u64);
+    let mut literal_added = literal_added;
+    let dst_len = dst.len() as u64;
+    if src_copied < dst_len && literal_added + src_copied > dst_len {
+        literal_added = dst_len.saturating_sub(src_copied);
+    }
+    let src_removed = (src.len() as u64).saturating_sub(src_copied);
+    let merge_score = src_removed * DIFF_MAX_SCORE / src.len() as u64;
+    if merge_score > break_score {
+        return true;
+    }
+    let delta_size = src_removed.saturating_add(literal_added);
+    if delta_size * DIFF_MAX_SCORE / (max_size as u64) < break_score {
+        return false;
+    }
+    let s = src.len() as u64;
+    if (s * break_score < src_removed * DIFF_MAX_SCORE)
+        && (literal_added * 20 < src_removed)
+        && (literal_added * 20 < src_copied)
+    {
+        return false;
+    }
+    true
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 /// Flatten a tree object recursively into a sorted list of (path, mode, oid).
