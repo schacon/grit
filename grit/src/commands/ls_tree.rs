@@ -6,7 +6,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind, TreeEntry};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
 
@@ -160,6 +160,71 @@ fn ensure_full_tree_pathspecs_in_repo(repo: &Repository, paths: &[String]) -> Re
 
 /// Match Git's `normalize_path_copy` / `prefix_path_gently` behavior for a relative pathspec when
 /// the pathspec prefix is empty: leading `..` components that would strip past the root fail.
+/// Repo-root-relative path of the current directory within the work tree, using `/` separators.
+/// `None` if the process cwd is outside the work tree (Git then lists from the repository root).
+fn cwd_relative_to_work_tree(repo: &Repository) -> Result<Option<String>> {
+    let Some(wt) = repo.work_tree.as_ref() else {
+        return Ok(None);
+    };
+    let cwd = std::env::current_dir().context("resolving cwd")?;
+    let Ok(rel) = cwd.strip_prefix(wt) else {
+        return Ok(None);
+    };
+    if rel.as_os_str().is_empty() {
+        return Ok(Some(String::new()));
+    }
+    let mut parts = Vec::new();
+    for comp in rel.components() {
+        match comp {
+            std::path::Component::Normal(s) => parts.push(s.to_string_lossy().into_owned()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if parts.pop().is_none() {
+                    return Ok(None);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(Some(parts.join("/")))
+}
+
+/// Walk from `tree_oid` following directory components in `cwd_rel`.
+///
+/// Returns `Ok(None)` when any path component is missing from the tree (Git prints nothing), or
+/// when a component exists but is not a tree.
+fn descend_tree_to_path(
+    repo: &Repository,
+    mut tree_oid: ObjectId,
+    mut path_prefix: String,
+    cwd_rel: &str,
+) -> Result<Option<(ObjectId, String)>> {
+    if cwd_rel.is_empty() {
+        return Ok(Some((tree_oid, path_prefix)));
+    }
+    for part in cwd_rel.split('/').filter(|p| !p.is_empty()) {
+        let obj = repo
+            .odb
+            .read(&tree_oid)
+            .context("reading tree while narrowing ls-tree")?;
+        let entries = parse_tree(&obj.data)?;
+        let found: Option<&TreeEntry> = entries.iter().find(|e| {
+            let name = String::from_utf8_lossy(&e.name);
+            name == part && file_type_mask(e.mode) == 0o040000
+        });
+        let Some(entry) = found else {
+            return Ok(None);
+        };
+        if path_prefix.is_empty() {
+            path_prefix = part.to_string();
+        } else {
+            path_prefix = format!("{path_prefix}/{part}");
+        }
+        tree_oid = entry.oid;
+    }
+    Ok(Some((tree_oid, path_prefix)))
+}
+
 fn git_normalize_pathspec_no_prefix(spec: &str) -> Result<String> {
     let mut stack: Vec<&str> = Vec::new();
     for part in spec.split('/') {
@@ -279,7 +344,8 @@ pub fn run(mut args: Args) -> Result<()> {
             _ => bail!("'{}' is not a tree object", args.tree_ish),
         }
     }
-    let _ = current_oid;
+    let mut tree_oid = current_oid;
+    let mut tree_data = obj.data;
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -297,23 +363,42 @@ pub fn run(mut args: Args) -> Result<()> {
     });
     let use_full_paths = args.full_name || args.full_tree || at_repo_root;
 
-    // Compute cwd prefix for display path adjustment
-    let cwd_prefix = if use_full_paths {
-        None
-    } else if let Some(ref wt) = repo.work_tree {
-        let cwd = std::env::current_dir().unwrap_or_default();
-        cwd.strip_prefix(wt)
-            .ok()
-            .filter(|p| !p.as_os_str().is_empty())
-            .map(|p| p.to_string_lossy().into_owned())
+    // Git narrows the listing to the tree object for the current directory (see `read_tree` +
+    // pathspec prefix). Without this, we would list the repository root and fake "relative" names
+    // with `../`, which breaks bash completion (`__gitcomp_directories`) and differs from Git.
+    let mut narrowed_prefix = String::new();
+    if !use_full_paths {
+        if let Some(cwd_rel) = cwd_relative_to_work_tree(&repo)? {
+            if !cwd_rel.is_empty() {
+                let Some((oid, pfx)) =
+                    descend_tree_to_path(&repo, tree_oid, String::new(), &cwd_rel)?
+                else {
+                    return Ok(());
+                };
+                tree_oid = oid;
+                tree_data = repo
+                    .odb
+                    .read(&tree_oid)
+                    .context("reading narrowed tree for ls-tree")?
+                    .data;
+                narrowed_prefix = pfx;
+            }
+        }
+    }
+
+    // Prefix for paths under `list_tree` (repo-root-relative), and cwd-relative display adjustment.
+    let (list_prefix, cwd_prefix) = if use_full_paths {
+        (String::new(), None)
+    } else if narrowed_prefix.is_empty() {
+        (String::new(), None)
     } else {
-        None
+        (narrowed_prefix.clone(), Some(narrowed_prefix))
     };
 
     list_tree(
         &repo,
-        &obj.data,
-        "",
+        &tree_data,
+        &list_prefix,
         0,
         max_tree_depth,
         &args,

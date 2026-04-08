@@ -67,6 +67,14 @@ then
 	GIT_SOURCE_DIR="$_repo_root/git"
 	export GIT_SOURCE_DIR
 fi
+# Upstream tests and completion scripts expect a "build dir" pointing at the Git
+# source tree (contrib/, Documentation/, t/helper/, etc.). In this workspace that
+# is the same path as GIT_SOURCE_DIR.
+if test -z "$GIT_BUILD_DIR"
+then
+	GIT_BUILD_DIR="$GIT_SOURCE_DIR"
+	export GIT_BUILD_DIR
+fi
 # Use a per-test trash directory to avoid interference between tests.
 # Derive from the test script name (e.g., t4050-diff.sh -> trash.t4050-diff)
 _test_basename="$(basename "$0" .sh)"

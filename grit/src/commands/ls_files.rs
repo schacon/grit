@@ -160,6 +160,11 @@ pub fn run(args: Args) -> Result<()> {
         anyhow::bail!("cannot ls-files in bare repository");
     };
     let cwd_prefix = cwd_prefix_bytes(work_tree, &cwd)?;
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let quote_path = match config.get_bool("core.quotePath") {
+        Some(Ok(v)) => v,
+        Some(Err(_)) | None => true,
+    };
     let index_path = resolved_env_index_path(&repo);
     let index = if args.sparse {
         grit_lib::index::Index::load(&index_path).context("loading index")?
@@ -340,8 +345,6 @@ pub fn run(args: Args) -> Result<()> {
             let attr_str = {
                 use grit_lib::crlf;
                 let attrs = crlf::load_gitattributes(work_tree);
-                let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
-                    .unwrap_or_default();
                 let file_attrs = crlf::get_file_attrs(&attrs, path_str, &config);
                 match file_attrs.text {
                     crlf::TextAttr::Set => match file_attrs.eol {
@@ -392,7 +395,7 @@ pub fn run(args: Args) -> Result<()> {
                 display_path_from_cwd(&entry.path, &cwd_prefix)
             };
             let name = String::from_utf8_lossy(display);
-            let qname = maybe_quote(&name, use_nul);
+            let qname = format_ls_path(&name, use_nul, quote_path);
             if let Some(t) = tag {
                 write!(out, "{} ", t)?;
             }
@@ -424,7 +427,7 @@ pub fn run(args: Args) -> Result<()> {
                 display_path_from_cwd(&entry.path, &cwd_prefix)
             };
             let name = String::from_utf8_lossy(display);
-            let qname = maybe_quote(&name, use_nul);
+            let qname = format_ls_path(&name, use_nul, quote_path);
             if let Some(t) = tag {
                 write!(out, "{} ", t)?;
             }
@@ -447,7 +450,7 @@ pub fn run(args: Args) -> Result<()> {
         let indexed_paths: BTreeSet<Vec<u8>> =
             index.entries.iter().map(|e| e.path.clone()).collect();
         let mut untracked = Vec::new();
-        walk_worktree(work_tree, work_tree, &indexed_paths, &mut untracked)?;
+        walk_worktree(work_tree, work_tree, &indexed_paths, &mut untracked, true)?;
         untracked.sort();
 
         let mut filtered_untracked: Vec<Vec<u8>> = Vec::new();
@@ -533,7 +536,7 @@ pub fn run(args: Args) -> Result<()> {
 
         for display in &output_paths {
             let name = String::from_utf8_lossy(display);
-            let qname = maybe_quote(&name, use_nul);
+            let qname = format_ls_path(&name, use_nul, quote_path);
             if args.show_tag {
                 write!(out, "? {qname}")?;
             } else {
@@ -564,16 +567,24 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 /// Walk the worktree and collect paths of untracked files.
+///
+/// Returns whether any path was recorded under `dir` (files, nested repo markers, or empty
+/// untracked directories). `is_root` skips emitting a synthetic `""/` entry for the repo root.
 fn walk_worktree(
     root: &std::path::Path,
     dir: &std::path::Path,
     indexed: &BTreeSet<Vec<u8>>,
     out: &mut Vec<Vec<u8>>,
-) -> Result<()> {
+    is_root: bool,
+) -> Result<bool> {
+    let rel_bytes = path_to_bytes(dir.strip_prefix(root).unwrap_or(dir));
+
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
-        Err(_) => return Ok(()),
+        Err(_) => return Ok(false),
     };
+
+    let mut added = false;
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
@@ -598,6 +609,7 @@ fn walk_worktree(
         if ft.is_file() || ft.is_symlink() {
             if !indexed.contains(&rel_bytes) {
                 out.push(rel_bytes);
+                added = true;
             }
         } else if ft.is_dir() {
             let dot_git = path.join(".git");
@@ -613,13 +625,32 @@ fn walk_worktree(
                     let mut dir_entry = rel_bytes;
                     dir_entry.push(b'/');
                     out.push(dir_entry);
+                    added = true;
                 }
                 continue;
             }
-            walk_worktree(root, &path, indexed, out)?;
+            if walk_worktree(root, &path, indexed, out, false)? {
+                added = true;
+            }
         }
     }
-    Ok(())
+
+    // Git lists empty untracked directories as `name/` when walking for `ls-files -o`
+    // (needed for `--directory` / bash completion).
+    let has_tracked_under = |prefix: &[u8]| {
+        let prefix_slash: Vec<u8> = [prefix, b"/"].concat();
+        indexed
+            .iter()
+            .any(|t| t == prefix || t.starts_with(&prefix_slash))
+    };
+    if !added && !is_root && !rel_bytes.is_empty() && !has_tracked_under(&rel_bytes) {
+        let mut dir_entry = rel_bytes;
+        dir_entry.push(b'/');
+        out.push(dir_entry);
+        added = true;
+    }
+
+    Ok(added)
 }
 
 /// A parsed pathspec — either a literal prefix or a glob pattern.
@@ -936,12 +967,16 @@ fn describe_eol(data: &[u8]) -> String {
     }
 }
 
-/// Quote a path name with C-style escaping if it contains special characters.
-/// When `use_nul` is true (i.e. -z mode), no quoting is done.
-fn maybe_quote(name: &str, use_nul: bool) -> String {
-    if use_nul {
+/// Format a path for `ls-files` output: optionally C-quote per `core.quotePath`.
+fn format_ls_path(name: &str, use_nul: bool, quote_path: bool) -> String {
+    if use_nul || !quote_path {
         return name.to_owned();
     }
+    maybe_quote(name)
+}
+
+/// Quote a path name with C-style escaping if it contains special characters.
+fn maybe_quote(name: &str) -> String {
     let mut out = String::with_capacity(name.len() + 2);
     let mut needs_quotes = false;
     for ch in name.chars() {

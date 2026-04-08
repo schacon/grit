@@ -2499,8 +2499,48 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
         _ => Vec::new(),
     };
 
+    let options = postprocess_completion_options(subcmd, options);
+
     println!("{}", options.join(" "));
     Ok(())
+}
+
+/// Adjust `--git-completion-helper` output where Git's completion script expects a shape that
+/// differs slightly from clap's derived option list.
+fn postprocess_completion_options(subcmd: &str, options: Vec<String>) -> Vec<String> {
+    if subcmd != "checkout" {
+        return options;
+    }
+
+    let (head, tail) = if let Some(i) = options.iter().position(|s| s == "--") {
+        let tail = options[i + 1..].to_vec();
+        (options[..i].to_vec(), tail)
+    } else {
+        (options, Vec::new())
+    };
+
+    let mut head: Vec<String> = head
+        .into_iter()
+        .filter(|s| s != "--overwrite-ignore")
+        .map(|s| {
+            if s == "--track=" {
+                "--track".to_string()
+            } else {
+                s
+            }
+        })
+        .collect();
+
+    let tail: Vec<String> = tail
+        .into_iter()
+        .filter(|s| s != "--no-overwrite-ignore")
+        .collect();
+
+    if !tail.is_empty() {
+        head.push("--".to_string());
+        head.extend(tail);
+    }
+    head
 }
 
 /// Handle --list-cmds=<categories> for bash completion.
