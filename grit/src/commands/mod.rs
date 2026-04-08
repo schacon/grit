@@ -153,6 +153,7 @@ pub mod verify_commit;
 pub mod verify_pack;
 pub mod verify_tag;
 pub mod version;
+pub mod web_browse;
 pub mod whatchanged;
 pub mod worktree;
 pub mod worktree_refs;
