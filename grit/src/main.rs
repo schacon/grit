@@ -2969,7 +2969,11 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "http-backend" => commands::http_backend::run(parse_cmd_args(subcmd, rest)),
         "http-fetch" => commands::http_fetch::run(parse_cmd_args(subcmd, rest)),
         "http-push" => commands::http_push::run(parse_cmd_args(subcmd, rest)),
-        "index-pack" => commands::index_pack::run(parse_cmd_args(subcmd, rest)),
+        "index-pack" => {
+            let mut argv = rest.to_vec();
+            commands::index_pack::preprocess_argv(&mut argv);
+            commands::index_pack::run(parse_cmd_args(subcmd, &argv))
+        }
         "init" => commands::init::run(parse_cmd_args(subcmd, rest), opts.bare),
         "interpret-trailers" => commands::interpret_trailers::run(parse_cmd_args(subcmd, rest)),
         "last-modified" => commands::last_modified::run(parse_cmd_args(subcmd, rest)),

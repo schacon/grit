@@ -264,6 +264,7 @@ fn run_unbundle(args: UnbundleArgs) -> Result<()> {
 
     // Use unpack-objects to extract into the ODB.
     let opts = grit_lib::unpack_objects::UnpackOptions {
+        strict: false,
         dry_run: false,
         quiet: false,
     };

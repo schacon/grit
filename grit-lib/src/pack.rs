@@ -5,8 +5,10 @@
 
 use crate::error::{Error, Result};
 use crate::objects::{Object, ObjectId, ObjectKind};
+use crate::odb::Odb;
 use crate::unpack_objects::apply_delta;
 use flate2::read::ZlibDecoder;
+use sha1::{Digest, Sha1};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io;
@@ -376,6 +378,25 @@ pub fn read_pack_index(idx_path: &Path) -> Result<PackIndex> {
 
     let mut pack_path = idx_path.to_path_buf();
     pack_path.set_extension("pack");
+
+    // Trailing 20 bytes are SHA-1 over all preceding index bytes (Git format).
+    if bytes.len() < 20 {
+        return Err(Error::CorruptObject(format!(
+            "index file {} missing checksum",
+            idx_path.display()
+        )));
+    }
+    let idx_body_end = bytes.len() - 20;
+    let mut h = Sha1::new();
+    h.update(&bytes[..idx_body_end]);
+    let digest = h.finalize();
+    if digest.as_slice() != &bytes[idx_body_end..] {
+        return Err(Error::CorruptObject(format!(
+            "index checksum mismatch for {}",
+            idx_path.display()
+        )));
+    }
+
     Ok(PackIndex {
         idx_path: idx_path.to_path_buf(),
         pack_path,
@@ -441,12 +462,34 @@ pub struct VerifyObjectRecord {
 /// Returns [`Error::CorruptObject`] when the index or pack are malformed.
 pub fn verify_pack_and_collect(idx_path: &Path) -> Result<Vec<VerifyObjectRecord>> {
     let idx = read_pack_index(idx_path)?;
+    let idx_file_bytes = fs::read(idx_path).map_err(Error::Io)?;
     let pack_bytes = fs::read(&idx.pack_path).map_err(Error::Io)?;
     if pack_bytes.len() < 12 + 20 {
         return Err(Error::CorruptObject(format!(
             "pack file {} is too small",
             idx.pack_path.display()
         )));
+    }
+    let pack_end = pack_bytes.len() - 20;
+    {
+        let mut h = Sha1::new();
+        h.update(&pack_bytes[..pack_end]);
+        let digest = h.finalize();
+        if digest.as_slice() != &pack_bytes[pack_end..] {
+            return Err(Error::CorruptObject(format!(
+                "pack trailing checksum mismatch for {}",
+                idx.pack_path.display()
+            )));
+        }
+    }
+    if idx_file_bytes.len() >= 40 {
+        let embedded = &idx_file_bytes[idx_file_bytes.len() - 40..idx_file_bytes.len() - 20];
+        if embedded != &pack_bytes[pack_end..] {
+            return Err(Error::CorruptObject(format!(
+                "pack checksum in index does not match {}",
+                idx.pack_path.display()
+            )));
+        }
     }
     if &pack_bytes[0..4] != b"PACK" {
         return Err(Error::CorruptObject(format!(
@@ -550,6 +593,18 @@ pub fn verify_pack_and_collect(idx_path: &Path) -> Result<Vec<VerifyObjectRecord
             .and_then(|r| r.depth)
             .unwrap_or(0);
         records[i].depth = Some(base_depth + 1);
+    }
+
+    // Confirm each index OID matches the resolved object bytes (catches swapped .idx/.pack pairs).
+    for entry in &idx.entries {
+        let obj = read_object_from_pack(&idx, &entry.oid)?;
+        let computed = Odb::hash_object_data(obj.kind, &obj.data);
+        if computed != entry.oid {
+            return Err(Error::CorruptObject(format!(
+                "pack object hash mismatch at offset {} (index says {})",
+                entry.offset, entry.oid
+            )));
+        }
     }
 
     Ok(records)

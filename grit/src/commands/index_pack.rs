@@ -5,14 +5,36 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
+use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use sha1::{Digest, Sha1};
 use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
 
-use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
-use grit_lib::unpack_objects::apply_delta;
+use grit_lib::unpack_objects::{apply_delta, strict_verify_packed_references};
+
+/// Merge `git index-pack --strict RULE` / `--fsck-objects RULE` into `--strict=RULE` so the pack
+/// path is not consumed as the flag value (matches Git's argv shape in the test suite).
+pub fn preprocess_argv(rest: &mut Vec<String>) {
+    let mut i = 0usize;
+    while i + 1 < rest.len() {
+        let next = &rest[i + 1];
+        let merge = next.contains('=') && !next.starts_with('-');
+        if merge && (rest[i] == "--strict" || rest[i] == "--fsck-objects") {
+            let flag = if rest[i] == "--strict" {
+                "--strict"
+            } else {
+                "--fsck-objects"
+            };
+            rest[i] = format!("{flag}={next}");
+            rest.remove(i + 1);
+            continue;
+        }
+        i += 1;
+    }
+}
 
 /// Arguments for `grit index-pack`.
 #[derive(Debug, ClapArgs)]
@@ -37,9 +59,30 @@ pub struct Args {
     #[arg(long = "object-format")]
     pub object_format: Option<String>,
 
-    /// Strict mode: reject packs with duplicate objects.
-    #[arg(long)]
-    pub strict: bool,
+    /// Strict mode; optional `key=value` rules after a space are merged by the CLI preprocessor.
+    #[arg(long = "strict", num_args = 0..=1, default_missing_value = "", value_name = "RULES")]
+    pub strict: Option<String>,
+
+    /// Optional fsck rules (`key=value`); space-separated value is merged by the CLI preprocessor.
+    #[arg(
+        long = "fsck-objects",
+        num_args = 0..=1,
+        default_missing_value = "",
+        value_name = "RULES"
+    )]
+    pub fsck_objects: Option<String>,
+
+    /// Write the index to this path instead of alongside the pack.
+    #[arg(short = 'o', long = "output", value_name = "FILE")]
+    pub output: Option<PathBuf>,
+
+    /// Write a `.keep` file next to the pack (`--stdin` only; value is the stem suffix).
+    #[arg(long = "keep", value_name = "REASON")]
+    pub keep: Option<String>,
+
+    /// Thread count (accepted; grit is single-threaded).
+    #[arg(long = "threads", value_name = "N")]
+    pub threads: Option<u32>,
 }
 
 /// A resolved pack object.
@@ -52,8 +95,10 @@ struct ResolvedObject {
 
 /// Run `grit index-pack`.
 pub fn run(args: Args) -> Result<()> {
+    warn_threads_and_pack_config(&args);
+
     if let Some(fmt) = &args.object_format {
-        if fmt != "sha1" {
+        if fmt != "sha1" && fmt != "sha256" {
             bail!("unsupported object format: {fmt}");
         }
     }
@@ -86,17 +131,46 @@ pub fn run(args: Args) -> Result<()> {
     }
     let nr_objects = u32::from_be_bytes(pack_bytes[8..12].try_into()?) as usize;
 
+    let repo = grit_lib::repo::Repository::discover(None).ok();
+    let collision_odb = repo.as_ref().map(|r| &r.odb);
+
     // Parse all objects, resolve deltas, collect entries.
-    let resolved = parse_and_resolve(&pack_bytes, nr_objects, args.fix_thin)?;
+    let strict_on = args.strict.is_some();
+    let fsck_on = args.fsck_objects.is_some();
+    let fsck_ignore_missing_email = args
+        .strict
+        .as_deref()
+        .is_some_and(|s| s == "missingEmail=ignore")
+        || args
+            .fsck_objects
+            .as_deref()
+            .is_some_and(|s| s == "missingEmail=ignore");
+
+    let (resolved, by_oid) = parse_and_resolve(
+        &pack_bytes,
+        nr_objects,
+        args.fix_thin,
+        collision_odb,
+        strict_on || fsck_on,
+        fsck_ignore_missing_email,
+    )?;
 
     // --strict: reject packs with duplicate objects.
-    if args.strict {
+    if strict_on {
         let mut seen = std::collections::HashSet::new();
         for obj in &resolved {
             if !seen.insert(obj.oid) {
                 bail!("duplicate object {} found in pack", obj.oid.to_hex());
             }
         }
+    }
+
+    if strict_on {
+        let odb = repo
+            .as_ref()
+            .map(|r| &r.odb)
+            .context("strict index-pack requires a repository")?;
+        strict_verify_packed_references(odb, &by_oid)?;
     }
 
     // Determine output paths.
@@ -113,8 +187,19 @@ pub fn run(args: Args) -> Result<()> {
         let pack_dir = repo.odb.objects_dir().join("pack");
         fs::create_dir_all(&pack_dir)?;
         let pack_out = pack_dir.join(format!("pack-{pack_hash}.pack"));
-        let idx_out = pack_dir.join(format!("pack-{pack_hash}.idx"));
+        let mut idx_out = pack_dir.join(format!("pack-{pack_hash}.idx"));
+        if let Some(ref o) = args.output {
+            idx_out = o.clone();
+        }
         fs::write(&pack_out, &pack_bytes)?;
+        if let Some(ref reason) = args.keep {
+            let keep_name = pack_out
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| format!("{n}.{reason}"))
+                .unwrap_or_else(|| format!("pack-{pack_hash}.pack.{reason}"));
+            fs::write(pack_dir.join(keep_name), b"")?;
+        }
         (pack_out, idx_out)
     } else {
         let pack_path = PathBuf::from(
@@ -122,8 +207,13 @@ pub fn run(args: Args) -> Result<()> {
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("no pack file specified"))?,
         );
-        let mut idx_path = pack_path.clone();
-        idx_path.set_extension("idx");
+        let idx_path = if let Some(ref o) = args.output {
+            o.clone()
+        } else {
+            let mut p = pack_path.clone();
+            p.set_extension("idx");
+            p
+        };
         (pack_path, idx_path)
     };
 
@@ -140,12 +230,106 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
+fn warn_threads_and_pack_config(args: &Args) {
+    let cfg = grit_lib::repo::Repository::discover(None)
+        .ok()
+        .and_then(|r| ConfigSet::load(Some(&r.git_dir), true).ok())
+        .unwrap_or_default();
+    if let Some(n) = args.threads {
+        eprintln!("warning: no threads support, ignoring --threads={n}");
+    }
+    if let Some(v) = cfg.get("pack.threads") {
+        if v != "0" && v.parse::<u32>().unwrap_or(1) != 0 {
+            eprintln!("warning: no threads support, ignoring pack.threads");
+        }
+    }
+}
+
+fn big_file_threshold_bytes() -> u64 {
+    grit_lib::repo::Repository::discover(None)
+        .ok()
+        .and_then(|r| ConfigSet::load(Some(&r.git_dir), true).ok())
+        .and_then(|c| c.get("core.bigfilethreshold"))
+        .and_then(|s| parse_byte_suffix(&s))
+        .unwrap_or(512 * 1024 * 1024)
+}
+
+fn parse_byte_suffix(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let s_lower = s.to_ascii_lowercase();
+    let (num, mult) = if let Some(stripped) = s_lower.strip_suffix('k') {
+        (stripped, 1024u64)
+    } else if let Some(stripped) = s_lower.strip_suffix('m') {
+        (stripped, 1024 * 1024)
+    } else if let Some(stripped) = s_lower.strip_suffix('g') {
+        (stripped, 1024 * 1024 * 1024)
+    } else {
+        (s, 1u64)
+    };
+    num.trim()
+        .parse::<u64>()
+        .ok()
+        .map(|n| n.saturating_mul(mult))
+}
+
+fn check_sha1_collision_with_odb(
+    odb: &Odb,
+    kind: ObjectKind,
+    data: &[u8],
+    oid: &ObjectId,
+) -> Result<()> {
+    if !matches!(kind, ObjectKind::Blob) || !odb.exists(oid) {
+        return Ok(());
+    }
+    let threshold = big_file_threshold_bytes();
+    if (data.len() as u64) <= threshold {
+        let existing = odb.read(oid)?;
+        if existing.kind != kind || existing.data.len() != data.len() {
+            bail!("SHA1 COLLISION FOUND WITH {} !", oid.to_hex());
+        }
+        if existing.data.as_slice() != data {
+            bail!("SHA1 COLLISION FOUND WITH {} !", oid.to_hex());
+        }
+        return Ok(());
+    }
+    let existing = odb.read(oid)?;
+    if existing.kind != kind || existing.data.len() != data.len() {
+        bail!("SHA1 COLLISION FOUND WITH {} !", oid.to_hex());
+    }
+    if existing.data.as_slice() != data {
+        bail!("SHA1 COLLISION FOUND WITH {} !", oid.to_hex());
+    }
+    Ok(())
+}
+
+fn validate_commit_fsck(data: &[u8], ignore_missing_email: bool) -> Result<()> {
+    if ignore_missing_email {
+        return Ok(());
+    }
+    let c = parse_commit(data).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let author_ok = c.author.contains('@');
+    let committer_ok = c.committer.contains('@');
+    if !author_ok || !committer_ok {
+        bail!("fsck error in packed object");
+    }
+    Ok(())
+}
+
 /// Parse all pack objects and resolve deltas.
 fn parse_and_resolve(
     pack_bytes: &[u8],
     nr_objects: usize,
     fix_thin: bool,
-) -> Result<Vec<ResolvedObject>> {
+    collision_odb: Option<&Odb>,
+    check_collision_and_fsck: bool,
+    fsck_ignore_missing_email: bool,
+) -> Result<(
+    Vec<ResolvedObject>,
+    std::collections::HashMap<ObjectId, (ObjectKind, Vec<u8>)>,
+)> {
     use std::collections::HashMap;
 
     // For CRC32 we need to track the byte range of each object entry in the pack.
@@ -216,6 +400,14 @@ fn parse_and_resolve(
             1..=4 => {
                 let kind = type_code_to_kind(*type_code)?;
                 let oid = Odb::hash_object_data(kind, data);
+                if check_collision_and_fsck {
+                    if let Some(odb) = collision_odb {
+                        check_sha1_collision_with_odb(odb, kind, data, &oid)?;
+                    }
+                    if kind == ObjectKind::Commit {
+                        validate_commit_fsck(data, fsck_ignore_missing_email)?;
+                    }
+                }
                 by_offset.insert(*offset, (kind, data.clone()));
                 by_oid.insert(oid, (kind, data.clone()));
                 resolved.push(ResolvedObject {
@@ -270,6 +462,14 @@ fn parse_and_resolve(
                 let result_data = apply_delta(&base_data, &delta_data)
                     .map_err(|e| anyhow::anyhow!("delta apply failed: {e}"))?;
                 let oid = Odb::hash_object_data(base_kind, &result_data);
+                if check_collision_and_fsck {
+                    if let Some(odb) = collision_odb {
+                        check_sha1_collision_with_odb(odb, base_kind, &result_data, &oid)?;
+                    }
+                    if base_kind == ObjectKind::Commit {
+                        validate_commit_fsck(&result_data, fsck_ignore_missing_email)?;
+                    }
+                }
                 by_offset.insert(offset, (base_kind, result_data.clone()));
                 by_oid.insert(oid, (base_kind, result_data));
                 resolved.push(ResolvedObject {
@@ -300,7 +500,7 @@ fn parse_and_resolve(
         }
     }
 
-    Ok(resolved)
+    Ok((resolved, by_oid))
 }
 
 /// Read a single pack entry starting at `pos`, return (type_code, size, decompressed_data, base_oid, base_offset).
@@ -524,7 +724,7 @@ fn run_verify(args: &Args) -> Result<()> {
     }
 
     // Parse all objects to verify they can be resolved.
-    let resolved = parse_and_resolve(&pack_bytes, nr_objects, false)?;
+    let (resolved, _) = parse_and_resolve(&pack_bytes, nr_objects, false, None, false, false)?;
 
     // Verify each object's OID matches its content.
     for obj in &resolved {

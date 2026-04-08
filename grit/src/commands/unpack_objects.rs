@@ -35,6 +35,7 @@ pub fn run(args: Args) -> Result<()> {
     let opts = UnpackOptions {
         dry_run: args.dry_run,
         quiet: args.quiet,
+        strict: args.strict,
     };
 
     let mut stdin = io::stdin().lock();
