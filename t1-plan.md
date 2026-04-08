@@ -139,7 +139,7 @@
 - [ ] t12790-update-ref-stderr-msg.sh
 - [ ] t12800-check-ignore-recursive.sh
 - [ ] t12810-merge-file-binary-text.sh
-- [ ] t12820-diff-no-index-symlink.sh
+- [x] t12820-diff-no-index-symlink.sh
 - [ ] t12830-diff-cached-mode-change.sh
 - [x] t12880-log-notes-display.sh
 - [ ] t12950-config-regexp-match.sh
