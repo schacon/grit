@@ -52,9 +52,14 @@ pub struct Args {
     #[arg(short = 'u', long = "untracked-files", value_name = "MODE", num_args = 0..=1, default_missing_value = "all")]
     pub untracked: Option<String>,
 
-    /// Show ignored files.
-    #[arg(long = "ignored")]
-    pub ignored: bool,
+    /// Show ignored files (`traditional`, `matching`, or `no`; bare `--ignored` means `traditional`).
+    #[arg(
+        long = "ignored",
+        value_name = "MODE",
+        num_args = 0..=1,
+        default_missing_value = "traditional"
+    )]
+    pub ignored: Option<String>,
 
     /// Terminate entries with NUL.
     #[arg(short = 'z')]
@@ -117,6 +122,50 @@ pub struct Args {
     pub pathspec: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IgnoredMode {
+    No,
+    Traditional,
+    Matching,
+}
+
+fn parse_ignored_mode(raw: Option<&str>) -> Result<IgnoredMode> {
+    match raw {
+        None => Ok(IgnoredMode::No),
+        Some("no") => Ok(IgnoredMode::No),
+        Some("traditional") => Ok(IgnoredMode::Traditional),
+        Some("matching") => Ok(IgnoredMode::Matching),
+        Some(other) => Err(anyhow::anyhow!("Invalid ignored mode '{other}'")),
+    }
+}
+
+fn has_tracked_under(
+    tracked: &BTreeSet<String>,
+    gitlinks: &BTreeSet<String>,
+    rel_dir: &str,
+) -> bool {
+    let prefix = if rel_dir.is_empty() {
+        String::new()
+    } else {
+        format!("{rel_dir}/")
+    };
+    tracked
+        .range::<String, _>(prefix.clone()..)
+        .next()
+        .is_some_and(|t| t.starts_with(&prefix))
+        || gitlinks.iter().any(|g| {
+            g.as_str() == rel_dir || (!rel_dir.is_empty() && g.starts_with(&format!("{rel_dir}/")))
+        })
+}
+
+fn relative_path(parent: &str, name: &str) -> String {
+    if parent.is_empty() {
+        name.to_string()
+    } else {
+        format!("{parent}/{name}")
+    }
+}
+
 /// Run the `status` command.
 pub fn run(mut args: Args) -> Result<()> {
     // Whether the user passed `--porcelain` (before `-z` may synthesize it).
@@ -124,10 +173,6 @@ pub fn run(mut args: Args) -> Result<()> {
     // -z implies porcelain
     if args.null_terminated && args.porcelain.is_none() {
         args.porcelain = Some("v1".to_string());
-    }
-    // In porcelain v2 mode, always show branch headers.
-    if args.porcelain.as_deref() == Some("v2") {
-        args.branch = true;
     }
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo
@@ -188,6 +233,13 @@ pub fn run(mut args: Args) -> Result<()> {
         _ => "normal",
     };
 
+    let ignored_mode = parse_ignored_mode(args.ignored.as_deref())?;
+    if ignored_mode == IgnoredMode::Matching && untracked_mode == "no" {
+        return Err(anyhow::anyhow!(
+            "unsupported combination of ignored and untracked-files arguments"
+        ));
+    }
+
     // Load index: remember sparse-index on disk, then expand placeholders for diffs.
     let index_path = repo.index_path();
     let mut index = match grit_lib::index::Index::load(&index_path) {
@@ -232,11 +284,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let show_all_untracked = untracked_mode == "all";
     let hide_untracked = untracked_mode == "no";
     let (untracked, ignored_files) = if !hide_untracked {
-        collect_untracked_and_ignored(&repo, &index, work_tree, args.ignored, show_all_untracked)?
-    } else if args.ignored {
-        // Even with -u no, --ignored should show ignored files
-        let (_, ignored) = collect_untracked_and_ignored(&repo, &index, work_tree, true, false)?;
-        (Vec::new(), ignored)
+        collect_untracked_and_ignored(&repo, &index, work_tree, ignored_mode, show_all_untracked)?
     } else {
         (Vec::new(), Vec::new())
     };
@@ -306,6 +354,7 @@ pub fn run(mut args: Args) -> Result<()> {
             &args,
             &head,
             &repo,
+            head.oid().copied(),
             &staged,
             &unstaged,
             &untracked,
@@ -359,13 +408,13 @@ pub fn run(mut args: Args) -> Result<()> {
     Ok(())
 }
 
-/// Collect untracked files, filtering out ignored ones.
-/// If `collect_ignored` is true, also return the ignored file list.
+/// Collect untracked and ignored paths, matching Git's `dir.c` + `wt-status.c` behavior
+/// for `--ignored` / `--untracked-files` combinations.
 fn collect_untracked_and_ignored(
     repo: &Repository,
     index: &Index,
     work_tree: &Path,
-    collect_ignored: bool,
+    ignored_mode: IgnoredMode,
     show_all: bool,
 ) -> Result<(Vec<String>, Vec<String>)> {
     let tracked: BTreeSet<String> = index
@@ -381,74 +430,263 @@ fn collect_untracked_and_ignored(
         .map(|e| String::from_utf8_lossy(&e.path).into_owned())
         .collect();
 
-    let mut all_untracked = Vec::new();
-    walk_for_untracked(
-        work_tree,
+    let mut matcher = IgnoreMatcher::from_repository(repo)?;
+    let mut untracked = Vec::new();
+    let mut ignored = Vec::new();
+
+    visit_untracked_node(
+        repo,
+        index,
         work_tree,
         &tracked,
         &gitlinks,
-        &mut all_untracked,
+        &mut matcher,
+        ignored_mode,
         show_all,
+        "",
+        work_tree,
+        &mut untracked,
+        &mut ignored,
     )?;
-    all_untracked.sort();
 
-    // Build ignore matcher
-    let mut matcher = IgnoreMatcher::from_repository(repo)?;
+    untracked.sort();
+    ignored.sort();
+    Ok((untracked, ignored))
+}
 
-    let mut untracked = Vec::new();
-    let mut ignored_files = Vec::new();
+fn visit_untracked_node(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &Path,
+    tracked: &BTreeSet<String>,
+    gitlinks: &BTreeSet<String>,
+    matcher: &mut IgnoreMatcher,
+    ignored_mode: IgnoredMode,
+    show_all: bool,
+    rel: &str,
+    abs: &Path,
+    untracked_out: &mut Vec<String>,
+    ignored_out: &mut Vec<String>,
+) -> Result<()> {
+    let entries = match fs::read_dir(abs) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    let mut sorted: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+    sorted.sort_by_key(|e| e.file_name());
 
-    for path in all_untracked {
-        let is_dir = path.ends_with('/');
-        let check_path = if is_dir {
-            &path[..path.len() - 1]
-        } else {
-            &path
-        };
-        let (is_ignored, _) = matcher.check_path(repo, Some(index), check_path, is_dir)?;
-        if is_ignored {
-            if collect_ignored {
-                ignored_files.push(path);
-            }
-        } else if is_dir {
-            // For untracked directories, check if all files inside are ignored.
-            // Git hides directories whose entire contents are ignored.
-            let dir_path = work_tree.join(check_path);
-            let mut sub_files = Vec::new();
-            walk_for_untracked(
-                &dir_path,
+    for entry in sorted {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == ".git" {
+            continue;
+        }
+        let path = entry.path();
+        let child_rel = relative_path(rel, &name);
+        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+
+        if is_dir && gitlinks.contains(&child_rel) {
+            continue;
+        }
+
+        if tracked.contains(&child_rel) {
+            continue;
+        }
+
+        if is_dir {
+            visit_untracked_directory(
+                repo,
+                index,
                 work_tree,
-                &tracked,
-                &gitlinks,
-                &mut sub_files,
-                true,
+                tracked,
+                gitlinks,
+                matcher,
+                ignored_mode,
+                show_all,
+                &child_rel,
+                &path,
+                untracked_out,
+                ignored_out,
             )?;
-            let all_ignored = !sub_files.is_empty()
-                && sub_files.iter().all(|f| {
-                    let f_is_dir = f.ends_with('/');
-                    let f_check = if f_is_dir {
-                        &f[..f.len() - 1]
-                    } else {
-                        f.as_str()
-                    };
-                    matcher
-                        .check_path(repo, Some(index), f_check, f_is_dir)
-                        .map(|(ig, _)| ig)
-                        .unwrap_or(false)
-                });
-            if all_ignored {
-                if collect_ignored {
-                    ignored_files.push(path);
+        } else {
+            let (is_ign, _) = matcher.check_path(repo, Some(index), &child_rel, false)?;
+            if is_ign {
+                if ignored_mode != IgnoredMode::No {
+                    ignored_out.push(child_rel);
                 }
             } else {
-                untracked.push(path);
+                untracked_out.push(child_rel);
             }
-        } else {
-            untracked.push(path);
         }
     }
 
-    Ok((untracked, ignored_files))
+    Ok(())
+}
+
+fn visit_untracked_directory(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &Path,
+    tracked: &BTreeSet<String>,
+    gitlinks: &BTreeSet<String>,
+    matcher: &mut IgnoreMatcher,
+    ignored_mode: IgnoredMode,
+    show_all: bool,
+    rel: &str,
+    abs: &Path,
+    untracked_out: &mut Vec<String>,
+    ignored_out: &mut Vec<String>,
+) -> Result<()> {
+    if has_tracked_under(tracked, gitlinks, rel) {
+        visit_untracked_node(
+            repo,
+            index,
+            work_tree,
+            tracked,
+            gitlinks,
+            matcher,
+            ignored_mode,
+            show_all,
+            rel,
+            abs,
+            untracked_out,
+            ignored_out,
+        )?;
+        return Ok(());
+    }
+
+    // Git `dir.c`: with `--ignored=matching` and full untracked listing, an excluded
+    // directory is reported as a single path without enumerating children (unless
+    // tracked files force a full walk — handled above).
+    if ignored_mode == IgnoredMode::Matching
+        && show_all
+        && matcher.check_path(repo, Some(index), rel, true)?.0
+    {
+        ignored_out.push(format!("{rel}/"));
+        return Ok(());
+    }
+
+    if ignored_mode == IgnoredMode::Traditional && !show_all {
+        if let Some(dir_line) = traditional_normal_directory_only(
+            repo, index, work_tree, tracked, gitlinks, matcher, rel, abs,
+        )? {
+            ignored_out.push(dir_line);
+            return Ok(());
+        }
+    }
+
+    let mut sub_untracked = Vec::new();
+    let mut sub_ignored = Vec::new();
+    visit_untracked_node(
+        repo,
+        index,
+        work_tree,
+        tracked,
+        gitlinks,
+        matcher,
+        ignored_mode,
+        true,
+        rel,
+        abs,
+        &mut sub_untracked,
+        &mut sub_ignored,
+    )?;
+
+    if show_all {
+        untracked_out.append(&mut sub_untracked);
+        ignored_out.append(&mut sub_ignored);
+        return Ok(());
+    }
+
+    // `--untracked-files=normal`: collapse subtrees like Git's `walk_for_untracked`.
+    if !sub_untracked.is_empty() && !sub_ignored.is_empty() {
+        untracked_out.append(&mut sub_untracked);
+        ignored_out.append(&mut sub_ignored);
+        return Ok(());
+    }
+
+    if sub_untracked.is_empty() && !sub_ignored.is_empty() {
+        let dir_excluded = matcher.check_path(repo, Some(index), rel, true)?.0;
+        let collapse_matching = ignored_mode == IgnoredMode::Matching && dir_excluded;
+        let collapse_traditional = ignored_mode == IgnoredMode::Traditional;
+        if collapse_matching || collapse_traditional {
+            ignored_out.push(format!("{rel}/"));
+        } else {
+            ignored_out.append(&mut sub_ignored);
+        }
+        return Ok(());
+    }
+
+    if !sub_untracked.is_empty() && sub_ignored.is_empty() {
+        if rel.is_empty() {
+            untracked_out.append(&mut sub_untracked);
+        } else {
+            untracked_out.push(format!("{rel}/"));
+        }
+        return Ok(());
+    }
+
+    Ok(())
+}
+
+/// Full tree scan: true when every file under `abs` is ignored and nothing untracked is present.
+fn traditional_normal_directory_only(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &Path,
+    tracked: &BTreeSet<String>,
+    gitlinks: &BTreeSet<String>,
+    matcher: &mut IgnoreMatcher,
+    rel: &str,
+    abs: &Path,
+) -> Result<Option<String>> {
+    let mut any_file = false;
+    let mut stack = vec![abs.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let mut sorted: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+        sorted.sort_by_key(|e| e.file_name());
+        for entry in sorted {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name == ".git" {
+                continue;
+            }
+            let path = entry.path();
+            let rel_child = path
+                .strip_prefix(work_tree)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| name.clone());
+            if tracked.contains(&rel_child) {
+                return Ok(None);
+            }
+            let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+            if is_dir && gitlinks.contains(&rel_child) {
+                continue;
+            }
+            if is_dir {
+                stack.push(path);
+            } else {
+                any_file = true;
+                let (ig, _) = matcher.check_path(repo, Some(index), &rel_child, false)?;
+                if !ig {
+                    return Ok(None);
+                }
+            }
+        }
+    }
+
+    let dir_ignored = matcher.check_path(repo, Some(index), rel, true)?.0;
+    if !any_file {
+        return Ok(if dir_ignored {
+            Some(format!("{rel}/"))
+        } else {
+            None
+        });
+    }
+
+    Ok(Some(format!("{rel}/")))
 }
 
 /// Short/porcelain format.
@@ -457,35 +695,71 @@ fn format_short(
     args: &Args,
     head: &HeadState,
     repo: &Repository,
+    head_oid: Option<ObjectId>,
     staged: &[grit_lib::diff::DiffEntry],
     unstaged: &[grit_lib::diff::DiffEntry],
     untracked: &[String],
     ignored_files: &[String],
 ) -> Result<()> {
     let terminator = if args.null_terminated { '\0' } else { '\n' };
+    let porcelain_v2 = args.porcelain.as_deref() == Some("v2");
 
     if args.branch {
-        let branch = head.branch_name().unwrap_or("HEAD (no branch)");
-        write!(out, "## {branch}")?;
-        if !args.no_ahead_behind {
-            if let Some(branch_name) = head.branch_name() {
-                if let Ok(Some((upstream, ahead, behind))) = compute_ahead_behind(repo, branch_name)
+        if porcelain_v2 {
+            let oid_line = head_oid
+                .as_ref()
+                .map(ObjectId::to_hex)
+                .unwrap_or_else(|| "(initial)".to_string());
+            write!(out, "# branch.oid {oid_line}{terminator}")?;
+            let head_line = match head {
+                HeadState::Branch { short_name, .. } => short_name.clone(),
+                HeadState::Detached { .. } => "(detached)".to_string(),
+                HeadState::Invalid => "(unknown)".to_string(),
+            };
+            write!(out, "# branch.head {head_line}{terminator}")?;
+            if !args.no_ahead_behind {
+                if let HeadState::Branch {
+                    short_name,
+                    oid: Some(_),
+                    ..
+                } = head
                 {
-                    write!(out, "...{upstream}")?;
-                    if ahead > 0 || behind > 0 {
-                        let mut parts = Vec::new();
-                        if ahead > 0 {
-                            parts.push(format!("ahead {ahead}"));
+                    if let Ok(Some((upstream, ahead, behind))) =
+                        compute_ahead_behind(repo, short_name)
+                    {
+                        write!(out, "# branch.upstream {upstream}{terminator}")?;
+                        if ahead > 0 || behind > 0 {
+                            write!(out, "# branch.ab +{ahead} -{behind}{terminator}")?;
+                        } else {
+                            write!(out, "# branch.ab +? -?{terminator}")?;
                         }
-                        if behind > 0 {
-                            parts.push(format!("behind {behind}"));
-                        }
-                        write!(out, " [{}]", parts.join(", "))?;
                     }
                 }
             }
+        } else {
+            let branch = head.branch_name().unwrap_or("HEAD (no branch)");
+            write!(out, "## {branch}")?;
+            if !args.no_ahead_behind {
+                if let Some(branch_name) = head.branch_name() {
+                    if let Ok(Some((upstream, ahead, behind))) =
+                        compute_ahead_behind(repo, branch_name)
+                    {
+                        write!(out, "...{upstream}")?;
+                        if ahead > 0 || behind > 0 {
+                            let mut parts = Vec::new();
+                            if ahead > 0 {
+                                parts.push(format!("ahead {ahead}"));
+                            }
+                            if behind > 0 {
+                                parts.push(format!("behind {behind}"));
+                            }
+                            write!(out, " [{}]", parts.join(", "))?;
+                        }
+                    }
+                }
+            }
+            write!(out, "{terminator}")?;
         }
-        write!(out, "{terminator}")?;
     }
 
     // Build a merged view: XY path
@@ -513,6 +787,9 @@ fn format_short(
     }
 
     for path in &paths {
+        if porcelain_v2 {
+            continue;
+        }
         let x = staged_map.get(path).copied().unwrap_or(' ');
         let y = unstaged_map.get(path).copied().unwrap_or(' ');
         write!(out, "{x}{y} ")?;
@@ -542,11 +819,19 @@ fn format_short(
     }
 
     for path in untracked {
-        write!(out, "?? {path}{terminator}")?;
+        if porcelain_v2 {
+            write!(out, "? {path}{terminator}")?;
+        } else {
+            write!(out, "?? {path}{terminator}")?;
+        }
     }
 
     for path in ignored_files {
-        write!(out, "!! {path}{terminator}")?;
+        if porcelain_v2 {
+            write!(out, "! {path}{terminator}")?;
+        } else {
+            write!(out, "!! {path}{terminator}")?;
+        }
     }
 
     Ok(())

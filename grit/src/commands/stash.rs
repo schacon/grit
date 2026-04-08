@@ -1716,7 +1716,7 @@ fn do_apply(stash_ref: Option<String>, _drop_after: bool, index: bool, quiet: bo
             branch: false,
             no_branch: false,
             untracked: None,
-            ignored: false,
+            ignored: None,
             null_terminated: false,
             ahead_behind: false,
             no_ahead_behind: false,
