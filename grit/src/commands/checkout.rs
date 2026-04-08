@@ -1079,12 +1079,10 @@ fn create_orphan_branch(repo: &Repository, name: &str, start_point: Option<&str>
         new_index.sort();
         checkout_index_to_worktree(repo, &old_index, &new_index, work_tree, true)?;
         repo.write_index(&mut new_index).context("writing index")?;
-    } else if let Some(work_tree) = repo.work_tree.as_ref() {
-        let old_index = repo.load_index().unwrap_or_else(|_| Index::new());
-        let new_index = Index::new();
-        checkout_index_to_worktree(repo, &old_index, &new_index, work_tree, true)?;
-        repo.write_index(&mut Index::new())
-            .context("writing index")?;
+    } else {
+        // No start point: match `git checkout --orphan` — HEAD becomes unborn but the index
+        // and working tree stay as-is so the next `commit -a` can amend content from the
+        // previous branch (upstream t8001 graft loop relies on this).
     }
 
     // Point HEAD at the new branch (which doesn't exist yet = unborn)

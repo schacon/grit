@@ -858,6 +858,14 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
                 fs::read(&abs_path)?
             };
             let oid = repo.odb.write(ObjectKind::Blob, &data)?;
+            if index
+                .entries
+                .iter()
+                .find(|e| e.path == *raw_path)
+                .is_some_and(|e| e.oid == oid)
+            {
+                continue;
+            }
             let mode = grit_lib::index::normalize_mode(meta.mode());
             let entry = grit_lib::index::entry_from_stat(&abs_path, raw_path, oid, mode)?;
             index.add_or_replace(entry);
