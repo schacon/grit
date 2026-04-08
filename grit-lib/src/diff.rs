@@ -1053,19 +1053,87 @@ pub fn diff_tree_to_worktree(
 
         match (tree_entry, wt_meta) {
             (Some(te), Some(ref meta)) => {
-                // Fast path: if the index entry matches the tree entry AND
-                // stat cache matches, the file is unchanged — skip hashing.
-                if let Some(ie) = index_entries.get(path.as_bytes()) {
-                    if ie.oid == te.oid && ie.mode == te.mode && stat_matches(ie, meta) {
-                        continue;
-                    }
+                let wt_mode = mode_from_metadata(meta);
+                let Some(ie) = index_entries.get(path.as_bytes()) else {
+                    continue;
+                };
+
+                let index_matches_tree = ie.oid == te.oid && ie.mode == te.mode;
+
+                // Fully clean: index matches `HEAD`, worktree matches index, stat cache fresh.
+                if index_matches_tree && wt_mode == te.mode && stat_matches(ie, meta) {
+                    continue;
                 }
 
-                // Stat or content differs — hash the file
                 let file_attrs = crlf::get_file_attrs(&attrs, path, &config);
+
+                // Staged mode (same blob as `HEAD`, different mode recorded in the index).
+                if ie.oid == te.oid && ie.mode != te.mode {
+                    result.push(DiffEntry {
+                        status: DiffStatus::Modified,
+                        old_path: Some(path.clone()),
+                        new_path: Some(path.clone()),
+                        old_mode: format_mode(te.mode),
+                        new_mode: format_mode(ie.mode),
+                        old_oid: te.oid,
+                        new_oid: te.oid,
+                        score: None,
+                    });
+                    continue;
+                }
+
+                // Index still matches `HEAD`: only unstaged worktree drift (content and/or
+                // worktree-only exec bit when `update-index` was not run — t4049 harness).
+                if index_matches_tree {
+                    let wt_oid =
+                        hash_worktree_file(odb, &file_path, meta, &conv, &file_attrs, path)?;
+                    let mut eff_oid = wt_oid;
+                    if eff_oid != te.oid {
+                        if let Ok(raw) = fs::read(&file_path) {
+                            let raw_oid = Odb::hash_object_data(ObjectKind::Blob, &raw);
+                            if raw_oid == te.oid {
+                                eff_oid = te.oid;
+                            }
+                        }
+                    }
+                    if eff_oid != te.oid {
+                        result.push(DiffEntry {
+                            status: DiffStatus::Modified,
+                            old_path: Some(path.clone()),
+                            new_path: Some(path.clone()),
+                            old_mode: format_mode(te.mode),
+                            new_mode: format_mode(wt_mode),
+                            old_oid: te.oid,
+                            new_oid: eff_oid,
+                            score: None,
+                        });
+                    } else if wt_mode != te.mode {
+                        result.push(DiffEntry {
+                            status: DiffStatus::Modified,
+                            old_path: Some(path.clone()),
+                            new_path: Some(path.clone()),
+                            old_mode: format_mode(te.mode),
+                            new_mode: format_mode(wt_mode),
+                            old_oid: te.oid,
+                            new_oid: te.oid,
+                            score: None,
+                        });
+                    }
+                    continue;
+                }
+
+                // Staged content (and possibly mode): `git diff <rev>` is tree vs working tree.
                 let wt_oid = hash_worktree_file(odb, &file_path, meta, &conv, &file_attrs, path)?;
-                let wt_mode = mode_from_metadata(meta);
-                if wt_oid != te.oid || wt_mode != te.mode {
+                let mut eff_oid = wt_oid;
+                if eff_oid != te.oid {
+                    if let Ok(raw) = fs::read(&file_path) {
+                        let raw_oid = Odb::hash_object_data(ObjectKind::Blob, &raw);
+                        if raw_oid == te.oid {
+                            eff_oid = te.oid;
+                        }
+                    }
+                }
+                if eff_oid != te.oid || wt_mode != te.mode {
                     result.push(DiffEntry {
                         status: DiffStatus::Modified,
                         old_path: Some(path.clone()),
@@ -1073,7 +1141,7 @@ pub fn diff_tree_to_worktree(
                         old_mode: format_mode(te.mode),
                         new_mode: format_mode(wt_mode),
                         old_oid: te.oid,
-                        new_oid: wt_oid,
+                        new_oid: eff_oid,
                         score: None,
                     });
                 }

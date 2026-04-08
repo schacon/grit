@@ -2589,6 +2589,22 @@ fn format_stat_line_git(
     }
 }
 
+/// One line of `git diff --stat` output (Git may emit multiple lines per path, e.g. unmerged).
+enum StatRowKind {
+    /// Text diff: insertions/deletions (mode-only changes use `0` / `0` like Git).
+    Text {
+        ins: usize,
+        del: usize,
+    },
+    Binary,
+    Unmerged,
+}
+
+struct StatRow {
+    path_display: String,
+    kind: StatRowKind,
+}
+
 /// Write a stat summary for each entry, followed by a totals line.
 fn write_stat(
     out: &mut impl Write,
@@ -2603,96 +2619,122 @@ fn write_stat(
         return Ok(());
     }
 
-    // Build display paths (compact rename format for renames, with C-style quoting).
-    let display_paths: Vec<String> = entries
-        .iter()
-        .map(|e| match e.status {
-            DiffStatus::Renamed | DiffStatus::Copied => {
-                let old = e.old_path.as_deref().unwrap_or("");
-                let new = e.new_path.as_deref().unwrap_or("");
-                format_rename_display(old, new)
-            }
-            _ => quote_c_style(e.path()),
-        })
-        .collect();
-    let max_path_len = display_paths
-        .iter()
-        .map(|p| UnicodeWidthStr::width(p.as_str()))
-        .max()
-        .unwrap_or(0);
-
-    // Collect per-file stats first so we can compute the count column width
-    let mut file_stats: Vec<(&str, usize, usize)> = Vec::new();
+    let mut rows: Vec<StatRow> = Vec::new();
+    let mut paths_changed: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut total_ins = 0usize;
     let mut total_del = 0usize;
-    let mut files_changed = 0usize;
 
-    let mut is_binary_file: Vec<bool> = Vec::new();
-    for (i, entry) in entries.iter().enumerate() {
+    for entry in entries {
+        paths_changed.insert(entry.path().to_owned());
+
+        let path_display = match entry.status {
+            DiffStatus::Renamed | DiffStatus::Copied => {
+                let old = entry.old_path.as_deref().unwrap_or("");
+                let new = entry.new_path.as_deref().unwrap_or("");
+                format_rename_display(old, new)
+            }
+            _ => quote_c_style(entry.path()),
+        };
+
+        if entry.status == DiffStatus::Unmerged {
+            rows.push(StatRow {
+                path_display,
+                kind: StatRowKind::Unmerged,
+            });
+            continue;
+        }
+
         let old_raw = read_content_raw(odb, &entry.old_oid);
         let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, entry.path());
         let binary = is_binary(&old_raw) || is_binary(&new_raw);
-        is_binary_file.push(binary);
+
+        // Mode-only change: Git reports `| 0` with no line deltas. Compare raw bytes, not just OIDs,
+        // so CRLF / clean-filter hashing quirks cannot inflate the stat (t4049).
+        let mode_only = entry.status == DiffStatus::Modified
+            && entry.old_mode != entry.new_mode
+            && old_raw == new_raw;
+        if mode_only {
+            rows.push(StatRow {
+                path_display,
+                kind: StatRowKind::Text { ins: 0, del: 0 },
+            });
+            continue;
+        }
+
         if binary {
-            file_stats.push((&display_paths[i], 0, 0));
-            // Binary files don't count towards insertions/deletions in summary
+            rows.push(StatRow {
+                path_display,
+                kind: StatRowKind::Binary,
+            });
         } else {
             let old_content = String::from_utf8_lossy(&old_raw).into_owned();
             let new_content = String::from_utf8_lossy(&new_raw).into_owned();
             let (ins, del) = count_changes(&old_content, &new_content);
-            file_stats.push((&display_paths[i], ins, del));
             total_ins += ins;
             total_del += del;
+            rows.push(StatRow {
+                path_display,
+                kind: StatRowKind::Text { ins, del },
+            });
         }
-        files_changed += 1;
     }
 
-    // Compute the width for the count column (like git does)
-    let max_count = file_stats.iter().map(|(_, i, d)| i + d).max().unwrap_or(0);
-    // If any binary files are present, count column must be at least 3 (len("Bin"))
-    let has_binary = is_binary_file.iter().any(|&b| b);
-    let count_width = format!("{}", max_count)
-        .len()
-        .max(if has_binary { 3 } else { 0 });
+    let max_path_len_all = rows
+        .iter()
+        .map(|r| UnicodeWidthStr::width(r.path_display.as_str()))
+        .max()
+        .unwrap_or(0);
 
-    // Compute layout widths from total width, like git.
-    // Line format: " {name:<N} | {count:>C} {bar}"
-    // Total chars = 1 + N + 3 + C + 1 + bar_len = N + C + 5 + bar_len
-    // Target total = total_width - 1
+    let display_rows: &[StatRow] = if let Some(limit) = stat_count {
+        if rows.len() > limit {
+            &rows[..limit]
+        } else {
+            &rows
+        }
+    } else {
+        &rows
+    };
+
+    // Git sizes the count column from the rows that are actually printed (stat-count truncates
+    // before wider labels like "Unmerged" would appear).
+    let max_change = display_rows
+        .iter()
+        .filter_map(|r| match &r.kind {
+            StatRowKind::Text { ins, del } => Some(ins + del),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
+
+    let count_width = display_rows
+        .iter()
+        .map(|r| match &r.kind {
+            StatRowKind::Text { ins, del } => format!("{}", ins + del).len(),
+            StatRowKind::Binary => 3,
+            StatRowKind::Unmerged => "Unmerged".len(),
+        })
+        .max()
+        .unwrap_or(0);
+
     let total_width = stat_width.unwrap_or_else(terminal_width);
-    let overhead = count_width + 5; // " " + " | " + " " before bar = 1+3+1 = 5
+    let overhead = count_width + 5;
     let line_budget = total_width.saturating_sub(1).saturating_sub(overhead);
-    // line_budget = name_len + bar_len
 
-    // Apply stat_name_width if set, or truncate to fit terminal width
     let max_path_len = if let Some(nw) = stat_name_width {
-        max_path_len.min(nw)
-    } else if max_path_len > line_budget.saturating_sub(1) {
-        // Name too long for the budget — truncate, leaving at least 1 char for bar
+        max_path_len_all.min(nw)
+    } else if max_path_len_all > line_budget.saturating_sub(1) {
         line_budget.saturating_sub(1)
     } else {
-        max_path_len
+        max_path_len_all
     };
 
     let max_bar = line_budget.saturating_sub(max_path_len).max(10);
 
-    let display_stats: &[(&str, usize, usize)] = if let Some(limit) = stat_count {
-        if file_stats.len() > limit {
-            &file_stats[..limit]
-        } else {
-            &file_stats
-        }
-    } else {
-        &file_stats
-    };
-    for (i, (path, ins, del)) in display_stats.iter().enumerate() {
-        let (path, ins, del) = (path, ins, del);
-        // Truncate path if its display width exceeds max_path_len
-        let path_width = UnicodeWidthStr::width(*path);
+    for row in display_rows {
+        let path = row.path_display.as_str();
+        let path_width = UnicodeWidthStr::width(path);
         let display_path: std::borrow::Cow<str> = if path_width > max_path_len {
-            // Git truncates with "..." prefix, keeping as much of the suffix as fits
             let target_suffix_width = max_path_len.saturating_sub(3);
-            // Walk from the end, accumulating display width
             let mut width_acc = 0usize;
             let mut cut_idx = path.len();
             for (idx, ch) in path.char_indices().rev() {
@@ -2706,32 +2748,36 @@ fn write_stat(
             let suffix = &path[cut_idx..];
             std::borrow::Cow::Owned(format!("...{}", suffix))
         } else {
-            std::borrow::Cow::Borrowed(*path)
+            std::borrow::Cow::Borrowed(path)
         };
-        let binary = is_binary_file.get(i).copied().unwrap_or(false);
-        let line = if binary {
-            // Binary files show "Bin" in stat
-            format!(" {:<width$} | Bin", display_path, width = max_path_len)
-        } else {
-            format_stat_line_git(
+
+        let line = match &row.kind {
+            StatRowKind::Unmerged => {
+                format!(" {:<width$} | Unmerged", display_path, width = max_path_len)
+            }
+            StatRowKind::Binary => {
+                format!(" {:<width$} | Bin", display_path, width = max_path_len)
+            }
+            StatRowKind::Text { ins, del } => format_stat_line_git(
                 &display_path,
                 *ins,
                 *del,
                 max_path_len,
                 count_width,
-                max_count,
+                max_change,
                 max_bar,
-            )
+            ),
         };
         writeln!(out, "{line}")?;
     }
+
     if let Some(limit) = stat_count {
-        if file_stats.len() > limit {
+        if rows.len() > limit {
             writeln!(out, " ...")?;
         }
     }
 
-    // Summary line
+    let files_changed = paths_changed.len();
     let mut summary = format!(
         " {} file{} changed",
         files_changed,
