@@ -22,6 +22,7 @@ pub mod crlf;
 pub mod delta_encode;
 pub mod diff;
 pub mod error;
+pub mod fast_export;
 pub mod fast_import;
 pub mod fetch_negotiator;
 pub mod filter_process;

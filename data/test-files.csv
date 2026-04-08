@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -1504,7 +1504,7 @@ t9310-tag-sort-version	t9	yes	27	27	0	true	ok	0
 t9320-commit-allow-empty	t9	yes	24	24	0	true	ok	0
 t9330-add-update-all	t9	yes	26	24	2	false	ok	0
 t9350-fast-export	t9	skip	73	0	0	false	ok	1
-t9351-fast-export-anonymize	t9	yes	17	9	8	false	ok	0
+t9351-fast-export-anonymize	t9	yes	17	17	0	true	ok	0
 t9400-for-each-ref-contains	t9	yes	25	25	0	true	ok	0
 t9400-git-cvsserver-server	t9	skip	45	0	0	false	ok	1
 t9401-git-cvsserver-crlf	t9	skip	18	0	0	false	ok	0

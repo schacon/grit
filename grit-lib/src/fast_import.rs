@@ -9,7 +9,9 @@ use std::io::BufRead;
 
 use crate::error::{Error, Result};
 use crate::index::{Index, IndexEntry, MODE_GITLINK, MODE_REGULAR, MODE_TREE};
-use crate::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
+use crate::objects::{
+    parse_commit, serialize_commit, serialize_tag, CommitData, ObjectId, ObjectKind, TagData,
+};
 use crate::refs::write_ref;
 use crate::repo::Repository;
 use crate::rev_parse::resolve_revision;
@@ -25,6 +27,7 @@ pub fn import_stream(repo: &Repository, mut reader: impl BufRead) -> Result<()> 
         repo,
         marks: HashMap::new(),
         branch_tips: HashMap::new(),
+        feature_done: false,
         stashed_line: None,
         pending_byte: None,
         reader: &mut reader,
@@ -36,6 +39,8 @@ struct Importer<'a, R: BufRead> {
     repo: &'a Repository,
     marks: HashMap<u32, ObjectId>,
     branch_tips: HashMap<String, ObjectId>,
+    /// When set, a terminating `done` command is required before EOF.
+    feature_done: bool,
     /// Line read too far while parsing a `commit` or `reset`; next top-level command.
     stashed_line: Option<String>,
     /// Byte read while handling optional `LF` after a `data` block; must precede next line.
@@ -60,6 +65,13 @@ impl<'a, R: BufRead> Importer<'a, R> {
             if trimmed.starts_with('#') {
                 continue;
             }
+            if let Some(rest) = trimmed.strip_prefix("feature ") {
+                let name = rest.trim();
+                if name == "done" {
+                    self.feature_done = true;
+                }
+                continue;
+            }
             if trimmed == "blob" {
                 self.read_blob()?;
                 continue;
@@ -74,9 +86,19 @@ impl<'a, R: BufRead> Importer<'a, R> {
                 self.read_reset(&refname)?;
                 continue;
             }
+            if trimmed.starts_with("tag ") {
+                let name = trimmed["tag ".len()..].trim().to_string();
+                self.read_tag(&name)?;
+                continue;
+            }
             return Err(Error::IndexError(format!(
                 "fast-import: unsupported command: {trimmed}"
             )));
+        }
+        if self.feature_done {
+            return Err(Error::IndexError(
+                "fast-import: stream ended before required \"done\" command".to_owned(),
+            ));
         }
         Ok(())
     }
@@ -385,6 +407,76 @@ impl<'a, R: BufRead> Importer<'a, R> {
         Err(Error::IndexError(format!(
             "fast-import: unsupported blob ref: {spec}"
         )))
+    }
+
+    fn read_tag(&mut self, short_name: &str) -> Result<()> {
+        let mut mark: Option<u32> = None;
+        let mut from_oid: Option<ObjectId> = None;
+        let mut tagger: Option<String> = None;
+
+        loop {
+            let line = self.read_line_nonempty()?.ok_or_else(|| {
+                Error::IndexError("fast-import: unexpected EOF in tag".to_owned())
+            })?;
+            let t = line.trim_end();
+            if let Some(id) = t.strip_prefix("mark :") {
+                mark = Some(
+                    id.parse()
+                        .map_err(|_| Error::IndexError(format!("fast-import: bad mark: {t}")))?,
+                );
+                continue;
+            }
+            if t.starts_with("original-oid ") {
+                continue;
+            }
+            if let Some(rest) = t.strip_prefix("from ") {
+                let spec = rest.trim();
+                from_oid = Some(self.resolve_commit_ish(spec)?);
+                continue;
+            }
+            if let Some(rest) = t.strip_prefix("tagger ") {
+                tagger = Some(rest.to_owned());
+                continue;
+            }
+            if t.starts_with("data ") {
+                let rest = t.strip_prefix("data ").unwrap();
+                let size: usize = rest.parse().map_err(|_| {
+                    Error::IndexError(format!("fast-import: invalid data size: {rest}"))
+                })?;
+                let mut message = vec![0u8; size];
+                self.reader.read_exact(&mut message).map_err(|_| {
+                    Error::IndexError("fast-import: truncated tag message".to_owned())
+                })?;
+                self.consume_optional_lf_after_data()?;
+
+                let target = from_oid
+                    .ok_or_else(|| Error::IndexError("fast-import: tag missing from".to_owned()))?;
+                let target_obj = self.repo.odb.read(&target)?;
+                let object_type = target_obj.kind.as_str().to_owned();
+                let msg_str = String::from_utf8_lossy(&message).into_owned();
+
+                let tag_data = TagData {
+                    object: target,
+                    object_type,
+                    tag: short_name.to_owned(),
+                    tagger,
+                    message: msg_str,
+                };
+                let bytes = serialize_tag(&tag_data);
+                let tag_oid = self.repo.odb.write(ObjectKind::Tag, &bytes)?;
+
+                if let Some(m) = mark {
+                    self.marks.insert(m, tag_oid);
+                }
+
+                let full_ref = format!("refs/tags/{short_name}");
+                write_ref(&self.repo.git_dir, &full_ref, &tag_oid)?;
+                return Ok(());
+            }
+            return Err(Error::IndexError(format!(
+                "fast-import: unexpected in tag: {t}"
+            )));
+        }
     }
 
     fn read_reset(&mut self, refname: &str) -> Result<()> {
