@@ -12,7 +12,7 @@ use flate2::read::ZlibDecoder;
 use sha1::{Digest, Sha1};
 
 use crate::error::{Error, Result};
-use crate::objects::{ObjectId, ObjectKind};
+use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;
 
 /// Options controlling `unpack-objects` behaviour.
@@ -22,6 +22,8 @@ pub struct UnpackOptions {
     pub dry_run: bool,
     /// Suppress informational output.
     pub quiet: bool,
+    /// Reject packs whose commits/trees/tags reference missing objects.
+    pub strict: bool,
 }
 
 /// A delta that could not yet be resolved because its base was not yet known.
@@ -188,7 +190,72 @@ pub fn unpack_objects(reader: &mut dyn Read, odb: &Odb, opts: &UnpackOptions) ->
         }
     }
 
+    if opts.strict {
+        strict_verify_packed_references(Some(odb), &by_oid)?;
+    }
+
     Ok(count)
+}
+
+fn strict_ref_resolves(
+    oid: &ObjectId,
+    pack: &std::collections::HashMap<ObjectId, (ObjectKind, Vec<u8>)>,
+    odb: Option<&Odb>,
+) -> bool {
+    pack.contains_key(oid) || odb.is_some_and(|o| o.exists(oid))
+}
+
+/// Verifies that references from commits, trees, and tags resolve to objects present in `pack`
+/// or, when `odb` is [`Some`], to loose objects in that database.
+///
+/// Use [`None`] for `odb` when indexing or unpacking in a context with no repository (Git allows
+/// `index-pack --strict` outside a work tree when the pack is self-contained).
+pub fn strict_verify_packed_references(
+    odb: Option<&Odb>,
+    pack: &HashMap<ObjectId, (ObjectKind, Vec<u8>)>,
+) -> Result<()> {
+    for (kind, data) in pack.values() {
+        match kind {
+            ObjectKind::Tree => {
+                for e in parse_tree(data)? {
+                    if !strict_ref_resolves(&e.oid, pack, odb) {
+                        return Err(Error::CorruptObject(format!(
+                            "strict: missing object {} referenced by tree",
+                            e.oid.to_hex()
+                        )));
+                    }
+                }
+            }
+            ObjectKind::Commit => {
+                let c = parse_commit(data)?;
+                if !strict_ref_resolves(&c.tree, pack, odb) {
+                    return Err(Error::CorruptObject(format!(
+                        "strict: missing tree {} referenced by commit",
+                        c.tree.to_hex()
+                    )));
+                }
+                for p in &c.parents {
+                    if !strict_ref_resolves(p, pack, odb) {
+                        return Err(Error::CorruptObject(format!(
+                            "strict: missing parent {} referenced by commit",
+                            p.to_hex()
+                        )));
+                    }
+                }
+            }
+            ObjectKind::Tag => {
+                let t = parse_tag(data)?;
+                if !strict_ref_resolves(&t.object, pack, odb) {
+                    return Err(Error::CorruptObject(format!(
+                        "strict: missing object {} referenced by tag",
+                        t.object.to_hex()
+                    )));
+                }
+            }
+            ObjectKind::Blob => {}
+        }
+    }
+    Ok(())
 }
 
 /// Either write `data` as a loose object (if `!dry_run`) or just compute its
@@ -598,6 +665,7 @@ mod tests {
         let opts = UnpackOptions {
             dry_run: true,
             quiet: true,
+            strict: false,
         };
         let count = unpack_objects(&mut pack.as_slice(), &odb, &opts).unwrap();
         assert_eq!(count, 1);

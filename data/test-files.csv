@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	291	288	2	false	ok	1
+t1006-cat-file	t1	yes	290	288	2	false	ok	1
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -862,7 +862,7 @@ t5100-count-objects	t5	yes	26	24	2	false	ok	0
 t5100-mailinfo	t5	yes	52	7	45	false	ok	0
 t5150-request-pull	t5	yes	10	1	9	false	ok	0
 t5200-update-server-info	t5	yes	8	6	2	false	ok	0
-t5300-pack-object	t5	yes	63	29	34	false	ok	0
+t5300-pack-object	t5	yes	63	38	25	false	ok	0
 t5300-unpack-objects	t5	yes	23	22	1	false	ok	0
 t5301-sliding-window	t5	yes	6	0	6	false	ok	0
 t5302-pack-index	t5	yes	36	14	22	false	ok	0

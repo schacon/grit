@@ -2433,6 +2433,7 @@ fn run_bundle_clone(args: Args) -> Result<()> {
     let pack_data = &data[pos..];
     if pack_data.len() >= 12 + 20 {
         let opts = grit_lib::unpack_objects::UnpackOptions {
+            strict: false,
             dry_run: false,
             quiet: true,
         };
