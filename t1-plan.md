@@ -135,7 +135,7 @@
 - [ ] t12740-restore-deleted-paths.sh
 - [ ] t12760-cherry-pick-multi-range.sh
 - [ ] t12770-for-each-ref-perl-format.sh
-- [ ] t12780-show-ref-head-detached.sh
+- [x] t12780-show-ref-head-detached.sh
 - [ ] t12790-update-ref-stderr-msg.sh
 - [ ] t12800-check-ignore-recursive.sh
 - [ ] t12810-merge-file-binary-text.sh

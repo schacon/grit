@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -330,7 +330,7 @@ t12740-restore-deleted-paths	t1	yes	35	35	0	true	ok	0
 t12750-reset-mixed-paths	t1	yes	34	34	0	true	ok	0
 t12760-cherry-pick-multi-range	t1	yes	34	33	1	false	ok	0
 t12770-for-each-ref-perl-format	t1	yes	36	32	4	false	ok	0
-t12780-show-ref-head-detached	t1	yes	36	35	1	false	ok	0
+t12780-show-ref-head-detached	t1	yes	36	36	0	true	ok	0
 t12790-update-ref-stderr-msg	t1	yes	33	33	0	true	ok	0
 t12800-check-ignore-recursive	t1	yes	38	38	0	true	ok	0
 t12810-merge-file-binary-text	t1	yes	38	38	0	true	ok	0
