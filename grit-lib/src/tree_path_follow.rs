@@ -91,7 +91,8 @@ pub fn get_tree_entry_follow_symlinks(
             }
             stack.pop();
             followed_symlink_blobs.clear();
-            symlink_just_followed = false;
+            // Do not clear `symlink_just_followed` here: Git keeps DANGLING_SYMLINK
+            // across `..` that came from symlink targets (tree-walk.c).
             path_buf = rest.unwrap_or_default();
             continue;
         }
@@ -125,7 +126,6 @@ pub fn get_tree_entry_follow_symlinks(
             }
             return Ok(Err(FollowPathFailure::Missing));
         };
-        symlink_just_followed = false;
 
         if git_mode_is_dir(mode) {
             if rest.is_none() {
@@ -157,6 +157,9 @@ pub fn get_tree_entry_follow_symlinks(
                 return Ok(Err(FollowPathFailure::SymlinkLoop));
             }
             follows += 1;
+            // Match Git: default outcome after following a symlink is dangling until
+            // a full object is found (tree-walk.c sets retval = DANGLING_SYMLINK).
+            symlink_just_followed = true;
 
             let obj = match odb.read(&entry_oid) {
                 Ok(o) => o,
@@ -180,7 +183,6 @@ pub fn get_tree_entry_follow_symlinks(
                 new_path.push_str(&r);
             }
             path_buf = new_path;
-            symlink_just_followed = true;
             continue;
         }
 

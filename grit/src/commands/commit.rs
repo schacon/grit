@@ -1107,7 +1107,9 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
     let mut changed = false;
     for (raw_path, path_str, idx_mode) in &tracked {
         let abs_path = work_tree.join(path_str);
-        if abs_path.exists() {
+        // Use `symlink_metadata`, not `exists()`: `Path::exists` follows symlinks, so
+        // dangling symlinks look "missing" and would be dropped from the index (t1006).
+        if fs::symlink_metadata(&abs_path).is_ok() {
             // Gitlink (submodule) entries: read the embedded repo's HEAD to
             // get the current commit OID instead of trying to read the
             // directory as a file.

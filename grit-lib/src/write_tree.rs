@@ -9,6 +9,17 @@ use crate::index::{
 use crate::objects::{parse_tree, serialize_tree, tree_entry_cmp, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
 
+fn ensure_empty_blob_for_intent_to_add(odb: &Odb, index: &Index) -> Result<()> {
+    if index
+        .entries
+        .iter()
+        .any(|e| e.stage() == 0 && e.intent_to_add())
+    {
+        let _ = odb.write(ObjectKind::Blob, b"")?;
+    }
+    Ok(())
+}
+
 /// Build and write tree object(s) from index entries and return the tree OID.
 ///
 /// The `prefix` argument optionally limits the write to a subtree path.
@@ -19,7 +30,7 @@ pub fn write_tree_from_index_subset(
     index: &Index,
     paths: &std::collections::HashSet<Vec<u8>>,
 ) -> Result<ObjectId> {
-    let _ = odb.write(ObjectKind::Blob, b"");
+    ensure_empty_blob_for_intent_to_add(odb, index)?;
 
     let mut entries: Vec<&IndexEntry> = index
         .entries
@@ -37,11 +48,7 @@ pub fn write_tree_from_index_subset(
 
 /// Build and write tree object(s) from index entries and return the tree OID.
 pub fn write_tree_from_index(odb: &Odb, index: &Index, prefix: &str) -> Result<ObjectId> {
-    // Ensure implicit empty blobs used by intent-to-add entries exist.
-    // These entries are skipped from tree construction below, but callers
-    // like commit/write-tree may still validate object presence and expect
-    // canonical empty-blob availability.
-    let _ = odb.write(ObjectKind::Blob, b"");
+    ensure_empty_blob_for_intent_to_add(odb, index)?;
 
     let prefix_bytes = prefix.as_bytes();
     let mut entries: Vec<&IndexEntry> = index

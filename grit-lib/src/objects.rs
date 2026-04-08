@@ -367,12 +367,8 @@ pub fn parse_commit(data: &[u8]) -> Result<CommitData> {
         if line.is_empty() {
             // Blank line: remainder is the message body (may be non-UTF-8).
             let body = data.get(after_nl..).unwrap_or_default();
-            let mut raw_body = body.to_vec();
-            if raw_body.ends_with(b"\n") {
-                raw_body.pop();
-            }
-            let message = String::from_utf8_lossy(&raw_body).into_owned();
-            let raw_message = std::str::from_utf8(&raw_body).is_err().then_some(raw_body);
+            let message = String::from_utf8_lossy(body).into_owned();
+            let raw_message = std::str::from_utf8(body).is_err().then(|| body.to_vec());
             return Ok(CommitData {
                 tree: tree
                     .ok_or_else(|| Error::CorruptObject("commit missing tree header".to_owned()))?,
@@ -505,6 +501,9 @@ pub fn serialize_tag(t: &TagData) -> Vec<u8> {
 ///
 /// The caller is responsible for supplying a correctly-formatted `author` and
 /// `committer` string (including timestamp and timezone).
+///
+/// The message body is written exactly as given: `git commit` and `git commit-tree -m`
+/// supply a trailing LF; `git commit-tree` reading from stdin or `-F` does not add one.
 #[must_use]
 pub fn serialize_commit(c: &CommitData) -> Vec<u8> {
     let mut out = Vec::new();
@@ -518,20 +517,10 @@ pub fn serialize_commit(c: &CommitData) -> Vec<u8> {
         out.extend_from_slice(format!("encoding {enc}\n").as_bytes());
     }
     out.push(b'\n');
-    // Use raw_message bytes if available (for non-UTF-8 commit messages),
-    // otherwise fall back to the UTF-8 message field.
-    // Git's commit object format ends the message body with a newline when the
-    // body is non-empty (matches `git commit` and upstream tests).
     if let Some(raw) = &c.raw_message {
         out.extend_from_slice(raw);
-        if !raw.is_empty() && !raw.ends_with(b"\n") {
-            out.push(b'\n');
-        }
     } else if !c.message.is_empty() {
         out.extend_from_slice(c.message.as_bytes());
-        if !c.message.ends_with('\n') {
-            out.push(b'\n');
-        }
     }
     out
 }

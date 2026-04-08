@@ -8,10 +8,12 @@
 //! <old-sha> <new-sha> <name> <<email>> <timestamp> <timezone>\t<message>
 //! ```
 
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::diff::zero_oid;
 use crate::error::{Error, Result};
 use crate::merge_base;
 use crate::objects::ObjectId;
@@ -101,6 +103,46 @@ fn parse_reflog_line(line: &str) -> Option<ReflogEntry> {
         identity,
         message,
     })
+}
+
+/// Collect every non-null object ID mentioned in any file under `logs/` (recursive).
+///
+/// Used by `fsck` to validate reflog entries. Skips reftable-backed repos (no file logs).
+pub fn all_reflog_oids(git_dir: &Path) -> Result<HashSet<ObjectId>> {
+    if crate::reftable::is_reftable_repo(git_dir) {
+        return Ok(HashSet::new());
+    }
+    let mut out = HashSet::new();
+    let logs = git_dir.join("logs");
+    if !logs.is_dir() {
+        return Ok(out);
+    }
+    let z = zero_oid();
+    walk_reflog_files(&logs, &mut out, &z)?;
+    Ok(out)
+}
+
+fn walk_reflog_files(dir: &Path, out: &mut HashSet<ObjectId>, zero: &ObjectId) -> Result<()> {
+    for entry in fs::read_dir(dir).map_err(Error::Io)? {
+        let entry = entry.map_err(Error::Io)?;
+        let path = entry.path();
+        if path.is_dir() {
+            walk_reflog_files(&path, out, zero)?;
+        } else if path.is_file() {
+            let content = fs::read_to_string(&path).map_err(Error::Io)?;
+            for line in content.lines() {
+                if let Some(e) = parse_reflog_line(line) {
+                    if e.old_oid != *zero {
+                        out.insert(e.old_oid);
+                    }
+                    if e.new_oid != *zero {
+                        out.insert(e.new_oid);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Delete specific reflog entries by index (0-based, newest-first order).

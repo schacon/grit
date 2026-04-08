@@ -60,7 +60,11 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Build commit message
-    let message = build_message(&args)?;
+    let mut message = build_message(&args)?;
+    // `git commit-tree` only appends a final LF for `-m` messages; stdin and `-F` are verbatim.
+    if !args.message.is_empty() && !message.ends_with('\n') {
+        message.push('\n');
+    }
 
     // Build identity strings
     let now_unix = current_unix_timestamp();

@@ -839,8 +839,9 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
 
     if args.batch_all_objects {
         let mut oids: Vec<ObjectId> = if args.no_filter {
-            let f = max_tree_depth_object_filter(repo)?;
-            rev_list::object_ids_for_cat_file_filtered(repo, &f)?
+            // Match `git rev-list --objects --all` (test t1006 "objects filter: disabled").
+            rev_list::reachable_object_ids_for_cat_file(repo, None, false)
+                .context("reachable objects for cat-file --batch-all-objects --no-filter")?
         } else if let Some(ref f) = objects_filter {
             let merged = merged_cat_file_object_filter(repo, f.clone())?;
             rev_list::object_ids_for_cat_file_filtered(repo, &merged)?

@@ -275,6 +275,7 @@ fn checkout_head_allow_unborn(repo: &Repository) -> Result<()> {
     let head = head_content.trim();
 
     let oid = if let Some(refname) = head.strip_prefix("ref: ") {
+        let refname = refname.trim();
         let ref_path = repo.git_dir.join(refname);
         if !ref_path.exists() {
             return Ok(());
@@ -597,35 +598,38 @@ pub fn run(args: Args) -> Result<()> {
             source_head_oid.as_deref(),
         )?;
 
-        // Set HEAD to the chosen branch if it exists in remote refs
-        if let Some(ref branch) = head_branch {
+        // Set HEAD to the chosen branch if it exists in remote refs.
+        // Prefer `initial_branch` (matches `init_repository`'s HEAD symref), not only
+        // `head_branch`, so `refs/heads/*` is created when `guess_checkout_branch` returns
+        // `None` but init used `initial_fallback`. If the preferred name has no
+        // remote-tracking ref but exactly one exists under `refs/remotes/<remote>/`, use
+        // that (sole-branch clone when names disagree).
+        if let Some(branch) =
+            resolve_remote_tracked_branch_name(&dest.git_dir, &remote_name, initial_branch)
+        {
             let remote_ref = dest
                 .git_dir
                 .join("refs/remotes")
                 .join(&remote_name)
-                .join(branch);
-            if remote_ref.exists() {
-                let oid_str = fs::read_to_string(&remote_ref).context("reading remote ref")?;
-                let oid = oid_str.trim().to_string();
+                .join(&branch);
+            let oid_str = fs::read_to_string(&remote_ref).context("reading remote ref")?;
+            let oid = oid_str.trim().to_string();
 
-                // Create the local branch ref
-                let local_ref_path = dest.git_dir.join("refs/heads").join(branch);
-                if let Some(parent) = local_ref_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(&local_ref_path, format!("{oid}\n"))?;
+            let local_ref_path = dest.git_dir.join("refs/heads").join(&branch);
+            if let Some(parent) = local_ref_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&local_ref_path, format!("{oid}\n"))?;
 
-                // Point HEAD at it
-                fs::write(
-                    dest.git_dir.join("HEAD"),
-                    format!("ref: refs/heads/{branch}\n"),
-                )?;
+            fs::write(
+                dest.git_dir.join("HEAD"),
+                format!("ref: refs/heads/{branch}\n"),
+            )?;
 
-                // Set up branch tracking config
-                setup_branch_tracking(&dest.git_dir, branch, &remote_name)
-                    .context("setting up branch tracking")?;
-            } else if let Some(sr) = source_head_symref.as_deref() {
-                // Unborn remote default branch: no refs/remotes/<remote>/<branch> yet.
+            setup_branch_tracking(&dest.git_dir, &branch, &remote_name)
+                .context("setting up branch tracking")?;
+        } else if let Some(ref branch) = head_branch {
+            if let Some(sr) = source_head_symref.as_deref() {
                 if sr == format!("refs/heads/{branch}") && !source.git_dir.join(sr).exists() {
                     setup_branch_tracking(&dest.git_dir, branch, &remote_name)
                         .context("setting up branch tracking")?;
@@ -662,28 +666,37 @@ pub fn run(args: Args) -> Result<()> {
     // `materialize_blob_none_partial_layout` removes `objects/info/alternates`, so blobs
     // needed for the initial checkout must be copied into the clone explicitly.
     if partial_blob_none && !args.bare && !args.no_checkout {
-        let dest_config = ConfigSet::load(Some(&dest.git_dir), true)?;
-        let promisor =
-            crate::commands::promisor_hydrate::find_promisor_source(&dest_config, &dest.git_dir)?;
-        if let Some(ref p) = promisor {
-            if args.sparse {
-                let patterns = vec!["/*".to_string(), "!/*/".to_string()];
-                crate::commands::promisor_hydrate::hydrate_sparse_tip_blobs_from_promisor(
-                    &dest, p, &patterns, true,
-                )
-                .context("hydrating sparse-checkout tip blobs")?;
-                let head_oid = grit_lib::refs::resolve_ref(&dest.git_dir, "HEAD")?;
-                let obj = dest.odb.read(&head_oid).context("reading HEAD for index")?;
-                let commit = parse_commit(&obj.data).context("parsing HEAD for index")?;
-                write_index_from_tree(&dest, &commit.tree)
-                    .context("writing index for sparse clone")?;
-            } else {
-                crate::commands::promisor_hydrate::hydrate_head_tree_blobs_from_promisor(&dest, p)
+        if grit_lib::refs::resolve_ref(&dest.git_dir, "HEAD").is_err() {
+            crate::commands::promisor_hydrate::trim_promisor_marker_to_missing_local(&dest)
+                .context("trimming promisor marker")?;
+        } else {
+            let dest_config = ConfigSet::load(Some(&dest.git_dir), true)?;
+            let promisor = crate::commands::promisor_hydrate::find_promisor_source(
+                &dest_config,
+                &dest.git_dir,
+            )?;
+            if let Some(ref p) = promisor {
+                if args.sparse {
+                    let patterns = vec!["/*".to_string(), "!/*/".to_string()];
+                    crate::commands::promisor_hydrate::hydrate_sparse_tip_blobs_from_promisor(
+                        &dest, p, &patterns, true,
+                    )
+                    .context("hydrating sparse-checkout tip blobs")?;
+                    let head_oid = grit_lib::refs::resolve_ref(&dest.git_dir, "HEAD")?;
+                    let obj = dest.odb.read(&head_oid).context("reading HEAD for index")?;
+                    let commit = parse_commit(&obj.data).context("parsing HEAD for index")?;
+                    write_index_from_tree(&dest, &commit.tree)
+                        .context("writing index for sparse clone")?;
+                } else {
+                    crate::commands::promisor_hydrate::hydrate_head_tree_blobs_from_promisor(
+                        &dest, p,
+                    )
                     .context("hydrating HEAD tree blobs")?;
+                }
             }
+            crate::commands::promisor_hydrate::trim_promisor_marker_to_missing_local(&dest)
+                .context("trimming promisor marker")?;
         }
-        crate::commands::promisor_hydrate::trim_promisor_marker_to_missing_local(&dest)
-            .context("trimming promisor marker")?;
     }
 
     // Handle --revision: detached HEAD at the resolved commit, no local refs,
@@ -725,10 +738,10 @@ pub fn run(args: Args) -> Result<()> {
     if !args.bare && !args.no_checkout && !sparse_partial_skip {
         if skip_checkout_warn {
             eprintln!("warning: remote HEAD refers to nonexistent ref, unable to checkout");
+        } else if head_points_to_missing_ref(&dest) {
+            checkout_head_allow_unborn(&dest).context("checking out HEAD")?;
         } else {
-            checkout_head(&dest)
-                .or_else(|e| checkout_head_allow_unborn(&dest).map_err(|_| e))
-                .context("checking out HEAD")?;
+            checkout_head(&dest).context("checking out HEAD")?;
         }
     }
 
@@ -998,10 +1011,11 @@ fn run_ssh_clone(args: Args) -> Result<()> {
     if !args.bare && !args.no_checkout {
         if skip_checkout_warn {
             eprintln!("warning: remote HEAD refers to nonexistent ref, unable to checkout");
+        } else if head_points_to_missing_ref(&dest) {
+            checkout_head_allow_unborn(&dest).context("checking out HEAD")?;
+            run_post_checkout_after_clone(&dest)?;
         } else {
-            checkout_head(&dest)
-                .or_else(|e| checkout_head_allow_unborn(&dest).map_err(|_| e))
-                .context("checking out HEAD")?;
+            checkout_head(&dest).context("checking out HEAD")?;
             run_post_checkout_after_clone(&dest)?;
         }
     }
@@ -1906,8 +1920,14 @@ fn run_post_checkout_after_clone(repo: &Repository) -> Result<()> {
     let head_content = fs::read_to_string(repo.git_dir.join("HEAD")).context("reading HEAD")?;
     let head = head_content.trim();
     let new_oid = if let Some(refname) = head.strip_prefix("ref: ") {
-        let oid_str = fs::read_to_string(repo.git_dir.join(refname))
-            .with_context(|| format!("reading ref {refname}"))?;
+        let refname = refname.trim();
+        let ref_path = repo.git_dir.join(refname);
+        if !ref_path.exists() {
+            // Unborn branch: nothing checked out; no commit for post-checkout.
+            return Ok(());
+        }
+        let oid_str =
+            fs::read_to_string(&ref_path).with_context(|| format!("reading ref {refname}"))?;
         ObjectId::from_hex(oid_str.trim()).with_context(|| format!("invalid OID in {refname}"))?
     } else {
         ObjectId::from_hex(head).context("invalid OID in HEAD")?
@@ -1959,6 +1979,35 @@ fn read_source_head_info(src_git_dir: &Path) -> (Option<String>, Option<String>)
         return (None, Some(content.to_string()));
     }
     (None, None)
+}
+
+/// Pick `refs/remotes/<remote>/<branch>` to check out: `preferred` if present, else the
+/// sole remote-tracking branch when unambiguous.
+fn resolve_remote_tracked_branch_name(
+    dest_git_dir: &Path,
+    remote_name: &str,
+    preferred: &str,
+) -> Option<String> {
+    let remote_dir = dest_git_dir.join("refs/remotes").join(remote_name);
+    let preferred_path = remote_dir.join(preferred);
+    if preferred_path.is_file() {
+        return Some(preferred.to_string());
+    }
+    let entries = fs::read_dir(&remote_dir).ok()?;
+    let mut names: Vec<String> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == "HEAD" || !entry.path().is_file() {
+            continue;
+        }
+        names.push(name);
+    }
+    names.sort();
+    if names.len() == 1 {
+        Some(names[0].clone())
+    } else {
+        None
+    }
 }
 
 fn ref_oid_hex_in_repo(git_dir: &Path, refname: &str) -> Option<String> {
@@ -2073,6 +2122,7 @@ fn checkout_head(repo: &Repository) -> Result<()> {
 
     // Resolve to an OID
     let oid = if let Some(refname) = head.strip_prefix("ref: ") {
+        let refname = refname.trim();
         let ref_path = repo.git_dir.join(refname);
         let oid_str =
             fs::read_to_string(&ref_path).with_context(|| format!("reading ref {refname}"))?;

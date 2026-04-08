@@ -116,6 +116,12 @@ pub fn run(args: Args) -> Result<()> {
                 "--end-of-options" => end_of_options = true,
                 "--objects" => options.objects = true,
                 "--objects-edge" => options.objects = true,
+                "--objects-edge-aggressive" => {
+                    options.objects = true;
+                    options.objects_edge_aggressive = true;
+                }
+                "--exclude-promisor-objects" => options.exclude_promisor_objects = true,
+                "--ignore-missing" => options.ignore_missing = true,
                 "--use-bitmap-index" => { /* accepted for compatibility */ }
                 "--unpacked" => { /* accepted for compatibility */ }
                 "--disk-usage" => disk_usage_format = Some(DiskUsageFormat::Bytes),
@@ -138,7 +144,8 @@ pub fn run(args: Args) -> Result<()> {
                     options.missing_action = match value {
                         "error" => MissingAction::Error,
                         "print" => MissingAction::Print,
-                        "allow-any" | "allow-promisor" => MissingAction::Allow,
+                        "allow-any" => MissingAction::AllowAny,
+                        "allow-promisor" => MissingAction::AllowPromisor,
                         _ => bail!("unsupported value for --missing: {value}"),
                     };
                 }
@@ -414,7 +421,11 @@ pub fn run(args: Args) -> Result<()> {
     // `git rev-list --objects` skips missing blobs (partial clones); only `--missing=error`
     // should hard-fail when an object is absent.
     if options.objects && !missing_explicit {
-        options.missing_action = MissingAction::Allow;
+        options.missing_action = MissingAction::AllowAny;
+    }
+
+    if options.exclude_promisor_objects && missing_explicit {
+        bail!("cannot combine --exclude-promisor-objects and --missing");
     }
 
     if options.objects {
@@ -553,7 +564,11 @@ pub fn run(args: Args) -> Result<()> {
 
     if options.objects {
         let max_tree_depth = object_depth_limit.unwrap_or(resolve_max_tree_depth(&config)?);
-        validate_rev_list_tree_depth(&repo, &result.commits, max_tree_depth)?;
+        // Full-tree depth validation reads every reachable tree; skip when missing objects are
+        // allowed (partial clone / promisor), or validation would fail on absent trees.
+        if matches!(options.missing_action, MissingAction::Error) {
+            validate_rev_list_tree_depth(&repo, &result.commits, max_tree_depth)?;
+        }
     }
 
     if options.count {

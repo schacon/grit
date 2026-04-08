@@ -7,9 +7,12 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
+use grit_lib::diff::zero_oid;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pack::read_local_pack_indexes;
+use grit_lib::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -76,6 +79,8 @@ enum Issue {
     Dangling { oid: ObjectId, kind: ObjectKind },
     /// Object is unreachable (exists but not reachable from any ref).
     Unreachable { oid: ObjectId, kind: ObjectKind },
+    /// Reflog references an object that is not present and not a promisor object.
+    InvalidReflog { refname: String, oid: ObjectId },
 }
 
 /// Run `grit fsck`.
@@ -97,8 +102,30 @@ pub fn run(args: Args) -> Result<()> {
 
     // 1. Collect all reachable OIDs by walking from refs, HEAD, reflogs.
     //    Also track missing objects and (optionally) bad objects.
-    let (reachable, walked_kinds) =
-        walk_reachable(&repo, &odb, &objects_dir, connectivity_only, &mut issues)?;
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let promisor_active = repo_treats_promisor_packs(&repo.git_dir, &config);
+    let promisor_oids = promisor_pack_object_ids(&objects_dir);
+    let packed_ids = collect_packed_ids(&objects_dir)?;
+
+    let (reachable, walked_kinds) = walk_reachable(
+        &repo,
+        &odb,
+        &objects_dir,
+        &packed_ids,
+        connectivity_only,
+        promisor_active,
+        &promisor_oids,
+        &mut issues,
+    )?;
+
+    check_reflog_entries(
+        &repo.git_dir,
+        &odb,
+        &packed_ids,
+        promisor_active,
+        &promisor_oids,
+        &mut issues,
+    )?;
 
     // 2. Enumerate all known objects (loose + packed).
     let all_objects = enumerate_all_objects(&odb, &objects_dir)?;
@@ -249,6 +276,10 @@ pub fn run(args: Args) -> Result<()> {
                     name_suffix
                 );
             }
+            Issue::InvalidReflog { refname, oid } => {
+                eprintln!("error: {}: invalid reflog entry {}", refname, oid.to_hex());
+                has_errors = true;
+            }
         }
     }
 
@@ -259,15 +290,19 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-/// Walk all reachable objects from refs, HEAD, and reflogs.
+/// Walk all reachable objects from refs and HEAD.
 /// Returns (reachable set, set of OIDs whose content was validated).
 fn walk_reachable(
     repo: &Repository,
     odb: &Odb,
     objects_dir: &Path,
+    packed_ids: &HashSet<ObjectId>,
     connectivity_only: bool,
+    promisor_active: bool,
+    promisor_oids: &HashSet<ObjectId>,
     issues: &mut Vec<Issue>,
 ) -> Result<(HashSet<ObjectId>, HashSet<ObjectId>)> {
+    let _ = objects_dir;
     let mut reachable = HashSet::new();
     let mut validated = HashSet::new();
     let mut queue: VecDeque<(ObjectId, Option<ObjectId>)> = VecDeque::new();
@@ -286,10 +321,7 @@ fn walk_reachable(
 
     // NOTE: We do NOT seed from reflogs for the main reachable walk.
     // Objects only reachable through reflogs are still considered dangling.
-    // We walk reflog entries separately below to check for missing objects.
-
-    // Collect packed IDs so we know which objects exist in pack files.
-    let packed_ids = collect_packed_ids(objects_dir)?;
+    // Reflog OIDs are checked separately.
 
     // BFS walk.
     while let Some((oid, referrer)) = queue.pop_front() {
@@ -300,14 +332,9 @@ fn walk_reachable(
         let obj = match odb.read(&oid) {
             Ok(o) => o,
             Err(_) => {
-                // Try reading from pack (odb.read should handle this, but
-                // if it didn't, check packed_ids to avoid false missing).
                 if packed_ids.contains(&oid) {
-                    // Object exists in pack — mark as reachable but can't
-                    // walk its children without reading it.
                     continue;
                 }
-                // Object is missing.
                 let ref_oid = referrer.unwrap_or(oid);
                 issues.push(Issue::Missing {
                     oid,
@@ -322,6 +349,11 @@ fn walk_reachable(
         if !connectivity_only {
             validated.insert(oid);
             validate_object_data(&oid, &obj.kind, &obj.data, issues);
+        }
+
+        // Objects in promisor packs stop traversal (Git `fsck` / `is_promisor_object`).
+        if promisor_active && promisor_oids.contains(&oid) {
+            continue;
         }
 
         match obj.kind {
@@ -350,6 +382,102 @@ fn walk_reachable(
     }
 
     Ok((reachable, validated))
+}
+
+fn check_reflog_entries(
+    git_dir: &Path,
+    odb: &Odb,
+    packed_ids: &HashSet<ObjectId>,
+    promisor_active: bool,
+    promisor_oids: &HashSet<ObjectId>,
+    issues: &mut Vec<Issue>,
+) -> Result<()> {
+    if grit_lib::reftable::is_reftable_repo(git_dir) {
+        return Ok(());
+    }
+    let logs_root = git_dir.join("logs");
+    if !logs_root.is_dir() {
+        return Ok(());
+    }
+    check_reflog_dir(
+        &logs_root,
+        &logs_root,
+        odb,
+        packed_ids,
+        promisor_active,
+        promisor_oids,
+        issues,
+    )?;
+    Ok(())
+}
+
+fn check_reflog_dir(
+    base: &Path,
+    dir: &Path,
+    odb: &Odb,
+    packed_ids: &HashSet<ObjectId>,
+    promisor_active: bool,
+    promisor_oids: &HashSet<ObjectId>,
+    issues: &mut Vec<Issue>,
+) -> Result<()> {
+    for entry in fs::read_dir(dir).map_err(|e| anyhow::anyhow!(e))? {
+        let entry = entry.map_err(|e| anyhow::anyhow!(e))?;
+        let path = entry.path();
+        if path.is_dir() {
+            check_reflog_dir(
+                base,
+                &path,
+                odb,
+                packed_ids,
+                promisor_active,
+                promisor_oids,
+                issues,
+            )?;
+        } else if path.is_file() {
+            let rel = path.strip_prefix(base).unwrap_or(&path);
+            let refname = reflog_relative_to_refname(rel);
+            let content = fs::read_to_string(&path).map_err(|e| anyhow::anyhow!(e))?;
+            for line in content.lines() {
+                if let Some((old_oid, new_oid)) = parse_reflog_line_oids(line) {
+                    for oid in [old_oid, new_oid] {
+                        if oid == zero_oid() {
+                            continue;
+                        }
+                        if odb.read(&oid).is_ok() || packed_ids.contains(&oid) {
+                            continue;
+                        }
+                        if promisor_active && promisor_oids.contains(&oid) {
+                            continue;
+                        }
+                        issues.push(Issue::InvalidReflog {
+                            refname: refname.clone(),
+                            oid,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn reflog_relative_to_refname(rel: &Path) -> String {
+    let s = rel.to_string_lossy().replace('\\', "/");
+    if s == "HEAD" {
+        "HEAD".to_string()
+    } else {
+        s
+    }
+}
+
+fn parse_reflog_line_oids(line: &str) -> Option<(ObjectId, ObjectId)> {
+    let before_tab = line.split('\t').next()?;
+    if before_tab.len() < 83 {
+        return None;
+    }
+    let old_hex = &before_tab[..40];
+    let new_hex = &before_tab[41..81];
+    Some((old_hex.parse().ok()?, new_hex.parse().ok()?))
 }
 
 /// Validate an object's content can be parsed correctly.

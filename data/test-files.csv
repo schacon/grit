@@ -71,7 +71,7 @@ t0300-credentials	t0	skip	56	0	0	false	ok	0
 t0301-credential-cache	t0	skip	52	6	46	false	ok	0
 t0302-credential-store	t0	skip	65	5	60	false	ok	0
 t0303-credential-external	t0	skip	23	23	0	true	ok	0
-t0410-partial-clone	t0	yes	38	10	28	false	ok	0
+t0410-partial-clone	t0	yes	38	18	20	false	ok	0
 t0411-clone-from-partial	t0	yes	7	5	2	false	ok	0
 t0450-txt-doc-vs-help	t0	yes	548	545	3	false	ok	0
 t0500-progress-display	t0	yes	16	0	16	false	ok	0
@@ -1274,8 +1274,8 @@ t7810-grep	t7	yes	0	0	0	false	timeout	0
 t7811-grep-open	t7	yes	10	3	7	false	ok	0
 t7812-grep-icase-non-ascii	t7	yes	18	18	0	true	ok	0
 t7813-grep-icase-iso	t7	yes	2	2	0	true	ok	0
-t7814-grep-recurse-submodules	t7	yes	34	18	9	false	ok	7
-t7815-grep-binary	t7	yes	22	19	2	false	ok	1
+t7814-grep-recurse-submodules	t7	yes	27	18	9	false	ok	7
+t7815-grep-binary	t7	yes	21	19	2	false	ok	1
 t7816-grep-binary-pattern	t7	yes	145	97	48	false	ok	0
 t7817-grep-sparse-checkout	t7	yes	8	3	5	false	ok	0
 t7818-grep-extended	t7	yes	11	11	0	true	ok	0
@@ -1599,7 +1599,7 @@ t9880-config-file-option	t9	yes	32	32	0	true	ok	0
 t9890-init-object-format	t9	yes	31	31	0	true	ok	0
 t9900-branch-verbose-all	t9	yes	33	33	0	true	ok	0
 t9901-git-web--browse	t9	yes	5	0	5	false	ok	0
-t9902-completion	t9	yes	263	15	245	false	ok	2
+t9902-completion	t9	yes	260	15	245	false	ok	2
 t9903-bash-prompt	t9	yes	67	1	66	false	ok	0
 t9910-tag-pattern-glob	t9	yes	32	32	0	true	ok	0
 t9920-commit-tree-author-env	t9	yes	26	26	0	true	ok	0
