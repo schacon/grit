@@ -2,6 +2,7 @@
 
 **Updated:** 2026-04-08
 
+- `./scripts/run-tests.sh t7517-per-repo-email.sh`: 16/16 passing (`user.useConfigOnly`, per-role ident config, rebase noop pick; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t5704-protocol-violations.sh`: 3/3 passing (`upload-pack` v2 via `GIT_PROTOCOL`, strict flush-after-args; `ls-remote --upload-pack` v0/v2 parsing; harness CSV/dashboards refreshed).
 - `cargo test -p grit-lib --lib`: 105/105 passing.
 
