@@ -975,7 +975,7 @@ t5551-http-fetch-smart	t5	skip	36	0	0	false	timeout	6
 t5552-skipping-fetch-negotiator	t5	yes	0	0	0	false	timeout	0
 t5553-set-upstream	t5	yes	21	4	17	false	ok	0
 t5554-noop-fetch-negotiator	t5	yes	1	0	1	false	ok	0
-t5555-http-smart-common	t5	yes	0	0	0	false	timeout	0
+t5555-http-smart-common	t5	yes	10	10	0	true	ok	0
 t5557-http-get	t5	yes	2	2	0	true	ok	0
 t5558-clone-bundle-uri	t5	yes	0	0	0	false	timeout	0
 t5559-http-fetch-smart-http2	t5	skip	0	0	0	false		0
