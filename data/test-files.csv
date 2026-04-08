@@ -1351,7 +1351,7 @@ t8570-rev-parse-branch	t8	yes	35	33	2	false	ok	0
 t8580-rev-list-limit	t8	yes	30	30	0	true	ok	0
 t8590-for-each-ref-filter	t8	yes	30	30	0	true	ok	0
 t8600-update-ref-symref	t8	yes	28	20	8	false	ok	0
-t8610-checkout-index-modes	t8	yes	27	25	2	false	ok	0
+t8610-checkout-index-modes	t8	yes	27	27	0	true	ok	0
 t8630-ls-tree-format	t8	yes	29	29	0	true	ok	0
 t8640-ls-files-stage-unmerged	t8	yes	31	18	13	false	ok	0
 t8650-cat-file-batch-extra	t8	yes	27	26	1	false	ok	0
@@ -1599,7 +1599,7 @@ t9880-config-file-option	t9	yes	32	25	7	false	ok	0
 t9890-init-object-format	t9	yes	31	31	0	true	ok	0
 t9900-branch-verbose-all	t9	yes	33	33	0	true	ok	0
 t9901-git-web--browse	t9	yes	5	0	5	false	ok	0
-t9902-completion	t9	yes	263	15	245	false	ok	2
+t9902-completion	t9	yes	260	15	245	false	ok	2
 t9903-bash-prompt	t9	yes	67	1	66	false	ok	0
 t9910-tag-pattern-glob	t9	yes	32	32	0	true	ok	0
 t9920-commit-tree-author-env	t9	yes	26	25	1	false	ok	0
