@@ -404,15 +404,13 @@ fn sanitize_file_patch_headers(fp: &mut FilePatch) {
     if let Some(ref mut s) = fp.new_oid {
         sanitize_patch_header_value(s);
     }
-    for p in [
+    for ref mut s in [
         &mut fp.diff_old_path,
         &mut fp.diff_new_path,
         &mut fp.old_path,
         &mut fp.new_path,
-    ] {
-        if let Some(ref mut s) = p {
-            sanitize_patch_header_value(s);
-        }
+    ].into_iter().flatten() {
+        sanitize_patch_header_value(s);
     }
 }
 
@@ -743,7 +741,7 @@ fn apply_gitlink_to_index(
 
     if fp.is_new {
         let new_oid = parse_subproject_commit_from_hunks(&fp.hunks)?;
-        remove_index_tree_prefix(index, &target_adjusted);
+        remove_index_tree_prefix(index, target_adjusted);
         let entry = grit_lib::index::IndexEntry {
             ctime_sec: 0,
             ctime_nsec: 0,
@@ -808,7 +806,7 @@ fn apply_gitlink_to_index(
             path: target_adjusted.to_owned().into_bytes(),
         };
         index.remove(source_bytes);
-        remove_index_tree_prefix(index, &target_adjusted);
+        remove_index_tree_prefix(index, target_adjusted);
         index.add_or_replace(entry);
         return Ok(());
     }

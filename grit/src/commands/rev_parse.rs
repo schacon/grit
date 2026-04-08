@@ -1012,14 +1012,12 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                     };
                     if left.is_empty() && right.is_empty() {
                         println!("..");
+                    } else if let Some(len) = short_len {
+                        println!("{}", abbreviate_object_id(current, left_oid, len)?);
+                        println!("^{}", abbreviate_object_id(current, right_oid, len)?);
                     } else {
-                        if let Some(len) = short_len {
-                            println!("{}", abbreviate_object_id(current, left_oid, len)?);
-                            println!("^{}", abbreviate_object_id(current, right_oid, len)?);
-                        } else {
-                            println!("{left_oid}");
-                            println!("^{right_oid}");
-                        }
+                        println!("{left_oid}");
+                        println!("^{right_oid}");
                     }
                     continue;
                 }

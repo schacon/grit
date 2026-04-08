@@ -184,9 +184,9 @@ fn config_error_path_display(path: &Path) -> String {
             .and_then(|p| p.file_name())
             .and_then(|s| s.to_str())
             == Some(".git")
-        {
-            return ".git/config".to_owned();
-        }
+    {
+        return ".git/config".to_owned();
+    }
     path.display().to_string()
 }
 

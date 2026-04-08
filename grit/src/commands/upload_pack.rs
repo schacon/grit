@@ -79,10 +79,9 @@ pub fn run(args: Args) -> Result<()> {
                 if let Some(rest) = line.strip_prefix("want ") {
                     let hex = rest.split_whitespace().next().unwrap_or(rest);
                     let features = rest.strip_prefix(hex).unwrap_or("").trim();
-                    if wants.is_empty()
-                        && features.contains("multi_ack_detailed") {
-                            multi_ack_detailed = true;
-                        }
+                    if wants.is_empty() && features.contains("multi_ack_detailed") {
+                        multi_ack_detailed = true;
+                    }
                     if let Ok(oid) = ObjectId::from_hex(hex) {
                         wants.push(oid);
                     }
