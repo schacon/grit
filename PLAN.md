@@ -786,7 +786,7 @@ commit → check it off → move on.
 
 - [ ] `t7510-signed-commit` ███████████████████░ 27/28 (1 left) — signed commit tests
 - [ ] `t7008-filter-branch-null-sha1` ████████████████░░░░ 5/6 (1 left) — filter-branch removal of trees with null sha1
-- [ ] `t7520-ignored-hook-warning` ████████████████░░░░ 4/5 (1 left) — ignored hook warning
+- [x] `t7520-ignored-hook-warning` — ignored hook warning (5/5 harness; `test_hook --disable`/`--remove` + hooks hint)
 - [x] `t7524-commit-summary` — git commit summary (2/2; `diff --stat --break-rewrites` vs plain `--stat` + commit summary line)
 - [ ] `t7607-merge-state` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — Test that merge state is as expected after failed merge
 - [ ] `t7423-submodule-symlinks` █████████████░░░░░░░ 4/6 (2 left) — check that submodule operations do not follow symlinks

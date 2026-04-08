@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   231 |
-| In progress |     2 |
-| Remaining   |   535 |
+| Completed   |   247 |
+| In progress |     4 |
+| Remaining   |   517 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 231 completed (`[x]`), 2 in progress (`[~]`), 535 remaining (`[ ]`).
+Task lines in `PLAN.md`: 247 completed (`[x]`), 4 in progress (`[~]`), 517 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t7520-ignored-hook-warning` — 5/5 tests pass (`tests/test-lib.sh` `test_hook`: `--disable`/`--remove`, resolve hook dir via `git rev-parse --absolute-git-dir`; second hint line uses `git config set advice.ignoredHook false`)
 - `t12820-diff-no-index-symlink` — 41/41 tests pass (symlink add/modify/delete, `diff`/`diff --cached`/`diff-tree`, stat/numstat/name output, multi-symlink and file↔symlink replacements; harness dashboards refreshed)
 - `t7817-grep-sparse-checkout` — 8/8 tests pass (non-cone sparse: `path_in_sparse_checkout` parent walk + last-match-wins; `sparse-checkout init` preserves cone mode and seeds `/*` + `!/*/` when recreating file; `disable` keeps pattern file so re-init reapplies `!b`; submodule `reset --hard` + sparse reapply; `grep` worktree: skip-worktree when absent, CE_VALID vs skip-worktree, unmerged paths grep worktree once; `grep_cached` per-stage for `--cached`)
 - `t7417-submodule-path-url` — 5/5 tests pass (`.gitmodules` dash paths: `mv` updates path + index blob; `escape_value` quotes leading `-`; receive-side `transfer.fsckObjects` via repo-local config only; clone `--recurse-submodules` resolves relative URLs from `origin` repo root + quoted path parsing + `GIT_QUIET` quiet mode)

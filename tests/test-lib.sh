@@ -995,13 +995,20 @@ write_script () {
 	chmod +x "$1"
 }
 
-# test_hook [--setup] [--clobber] HOOKNAME — write a hook script from stdin
-# --clobber replaces an existing hook (matches upstream test-lib; implies --setup).
+# test_hook [options] HOOKNAME — write or manipulate a hook (matches git/t/test-lib-functions.sh).
+#   -C <dir>  run git rev-parse from that directory (bare: no .git; non-bare: has .git)
+#   --setup / --clobber  as upstream
+#   --disable  chmod -x an existing hook (must exist)
+#   --remove   rm -f an existing hook (must exist)
 test_hook () {
-	local setup= clobber= indir=
+	local setup= clobber= disable= remove= indir=
 	while test $# != 0
 	do
 		case "$1" in
+		-C)
+			indir="$2"
+			shift 2
+			;;
 		--setup)
 			setup=t
 			shift
@@ -1011,34 +1018,49 @@ test_hook () {
 			setup=t
 			shift
 			;;
-		-C)
-			indir="$2"
-			shift 2
+		--disable)
+			disable=t
+			shift
+			;;
+		--remove)
+			remove=t
+			shift
+			;;
+		-*)
+			echo >&2 "BUG: test_hook: invalid argument: $1"
+			exit 99
 			;;
 		*)
 			break
 			;;
 		esac
 	done
-	local hook_dir
-	if test -n "$indir"
+	local git_dir hook_dir hook_file
+	git_dir=$(git -C "$indir" rev-parse --absolute-git-dir) &&
+	hook_dir="$git_dir/hooks" &&
+	hook_file="$hook_dir/$1" &&
+	if test -n "$disable$remove"
 	then
-		if test -d "$indir/.git"
+		test_path_is_file "$hook_file" &&
+		if test -n "$disable"
 		then
-			hook_dir="$indir/.git/hooks"
-		else
-			# bare repo
-			hook_dir="$indir/hooks"
-		fi
-	else
-		hook_dir=".git/hooks"
-	fi
+			chmod -x "$hook_file"
+		elif test -n "$remove"
+		then
+			rm -f "$hook_file"
+		fi &&
+		return 0
+	fi &&
 	if test -z "$clobber"
 	then
-		test_path_is_missing "$hook_dir/$1"
+		test_path_is_missing "$hook_file"
+	fi &&
+	if test -z "$setup$clobber"
+	then
+		test_when_finished "rm -f \"$hook_file\""
 	fi &&
 	mkdir -p "$hook_dir" &&
-	write_script "$hook_dir/$1"
+	write_script "$hook_file"
 }
 
 # Look for trace2 region enter/leave in a trace file (from GIT_TRACE2_EVENT).
