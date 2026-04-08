@@ -486,7 +486,30 @@ fn format_short(
     for path in &paths {
         let x = staged_map.get(path).copied().unwrap_or(' ');
         let y = unstaged_map.get(path).copied().unwrap_or(' ');
-        write!(out, "{x}{y} {path}{terminator}")?;
+        write!(out, "{x}{y} ")?;
+        let rename_or_copy = staged.iter().chain(unstaged.iter()).find(|e| {
+            e.path() == path.as_str()
+                && (e.status == DiffStatus::Renamed || e.status == DiffStatus::Copied)
+        });
+        if let Some(e) = rename_or_copy {
+            let old_p = e.old_path.as_deref().unwrap_or("");
+            let new_p = e.new_path.as_deref().unwrap_or("");
+            if args.null_terminated {
+                // Match git: current path (destination) first, then source, each NUL-terminated.
+                write!(out, "{new_p}\0")?;
+                if !old_p.is_empty() {
+                    write!(out, "{old_p}\0")?;
+                }
+            } else if !old_p.is_empty() && !new_p.is_empty() {
+                writeln!(out, "{old_p} -> {new_p}")?;
+            } else {
+                writeln!(out, "{}", e.path())?;
+            }
+        } else if args.null_terminated {
+            write!(out, "{path}\0")?;
+        } else {
+            writeln!(out, "{path}")?;
+        }
     }
 
     for path in untracked {
