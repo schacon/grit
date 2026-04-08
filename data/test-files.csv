@@ -779,7 +779,7 @@ t4106-apply-stdin	t4	yes	3	3	0	true	ok	0
 t4107-apply-ignore-whitespace	t4	yes	11	11	0	true	ok	0
 t4108-apply-threeway	t4	yes	18	3	15	false	ok	0
 t4109-apply-multifrag	t4	yes	3	0	3	false	ok	0
-t4110-apply-scan	t4	yes	1	0	1	false	ok	0
+t4110-apply-scan	t4	yes	1	1	0	true	ok	0
 t4111-apply-subdir	t4	yes	10	3	7	false	ok	0
 t4112-apply-renames	t4	yes	2	2	0	true	ok	0
 t4113-apply-ending	t4	yes	3	1	2	false	ok	0
