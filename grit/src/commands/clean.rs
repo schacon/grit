@@ -8,13 +8,15 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
-use grit_lib::ignore::IgnoreMatcher;
-use grit_lib::index::Index;
+use grit_lib::ignore::{normalize_repo_relative, submodule_containing_path, IgnoreMatcher};
+use grit_lib::index::{Index, MODE_GITLINK};
 use grit_lib::repo::Repository;
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{self, Write};
-use std::path::Path;
+use std::io::{self, Read, Write};
+use std::path::{Component, Path, PathBuf};
+
+use crate::pathspec::{parse_magic, pathspec_matches};
 
 /// Arguments for `grit clean`.
 #[derive(Debug, ClapArgs)]
@@ -88,77 +90,100 @@ pub fn run(args: Args) -> Result<()> {
 
     let cwd = std::env::current_dir().context("failed to resolve current directory")?;
 
-    // Build tracked set from index.
-    let tracked: BTreeSet<String> = index
-        .entries
-        .iter()
-        .map(|ie| String::from_utf8_lossy(&ie.path).to_string())
-        .collect();
+    let tracked = tracked_stage0_paths(&index);
 
-    // Resolve pathspec filters to worktree-relative prefixes.
-    let pathspec_prefixes: Vec<String> = args
+    let pathspecs: Vec<String> = args
         .pathspec
         .iter()
-        .map(|p| resolve_pathspec_prefix(&work_tree, &cwd, p))
+        .map(|p| normalize_repo_relative(&repo, &cwd, p).map_err(|e| anyhow::anyhow!("{e}")))
         .collect::<Result<Vec<_>>>()?;
+
+    let cwd_prefix = pathdiff(&cwd, &work_tree);
+    let walk_root = if pathspecs.is_empty() {
+        match &cwd_prefix {
+            Some(p) if !p.is_empty() => work_tree.join(p),
+            _ => work_tree.clone(),
+        }
+    } else {
+        work_tree.clone()
+    };
+
+    let walk_prefix_for_specs = if pathspecs.is_empty() {
+        cwd_prefix.as_deref()
+    } else {
+        None
+    };
 
     // Collect files/directories to remove.
     let mut to_remove: Vec<(String, bool)> = Vec::new(); // (path, is_dir)
+    let submodule_paths =
+        crate::commands::submodule::listed_submodule_paths(&repo).unwrap_or_default();
+
     collect_untracked(
+        &walk_root,
         &work_tree,
-        &work_tree,
+        walk_prefix_for_specs,
         &tracked,
         &mut matcher,
         &repo,
         Some(&index),
         &args,
-        &pathspec_prefixes,
+        &pathspecs,
+        &submodule_paths,
         &mut to_remove,
     )?;
 
     to_remove.sort_by(|a, b| a.0.cmp(&b.0));
 
-    // Apply --exclude patterns: remove entries matching any exclude pattern.
+    // Apply `--exclude` (Git `-e`): glob match on path / basename only — do not use directory-prefix
+    // semantics here (those affect what gets collected via `should_include_path_for_clean`, not
+    // post-filtering).
     if !args.exclude.is_empty() {
         to_remove.retain(|(path, _is_dir)| {
             !args
                 .exclude
                 .iter()
-                .any(|pattern| matches_exclude_pattern(path, pattern))
+                .any(|pattern| matches_exclude_glob_only(path, pattern))
         });
     }
+
+    maybe_emit_clean_trace2_perf(&work_tree, &args)?;
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    // Interactive mode: if -i and not dry-run, accept all in non-TTY context
-    // (the interactive menu was handled by t7301-clean-interactive.sh tests
-    // which already pass — here we just need to respect the flag as valid).
-    let force_requirement_overridden = args.interactive;
-    let _ = force_requirement_overridden;
+    if args.interactive && !args.dry_run {
+        if !run_interactive_clean(&mut out, &args, &cwd, &work_tree, &to_remove)? {
+            out.flush()?;
+            return Ok(());
+        }
+    }
 
     for (path, is_dir) in &to_remove {
         if !args.quiet {
-            let prefix = if args.dry_run {
+            let verb = if args.dry_run {
                 "Would remove"
             } else {
                 "Removing"
             };
+            let display = path_for_clean_display(&cwd, &work_tree, path);
             if *is_dir {
-                writeln!(out, "{prefix} {path}/")?;
+                writeln!(out, "{verb} {display}/")?;
             } else {
-                writeln!(out, "{prefix} {path}")?;
+                writeln!(out, "{verb} {display}")?;
             }
         }
 
         if !args.dry_run {
             let abs = work_tree.join(path);
             if *is_dir {
-                fs::remove_dir_all(&abs)
+                remove_dir_all_best_effort(&abs)
                     .with_context(|| format!("failed to remove directory '{path}'"))?;
             } else {
                 fs::remove_file(&abs).with_context(|| format!("failed to remove file '{path}'"))?;
-                remove_empty_parents(&abs, &work_tree);
+                if args.pathspec.is_empty() {
+                    remove_empty_parents(&abs, &work_tree);
+                }
             }
         }
     }
@@ -167,13 +192,124 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
+/// Interactive clean: show the menu and return whether to perform removals.
+fn run_interactive_clean(
+    out: &mut dyn Write,
+    args: &Args,
+    cwd: &Path,
+    work_tree: &Path,
+    to_remove: &[(String, bool)],
+) -> Result<bool> {
+    if args.quiet {
+        return Ok(true);
+    }
+    writeln!(out, "Would remove the following items:")?;
+    if !to_remove.is_empty() {
+        write!(out, " ")?;
+        for (i, (path, is_dir)) in to_remove.iter().enumerate() {
+            if i > 0 {
+                write!(out, "  ")?;
+            }
+            let disp = path_for_clean_display(cwd, work_tree, path);
+            if *is_dir {
+                write!(out, "{disp}/")?;
+            } else {
+                write!(out, "{disp}")?;
+            }
+        }
+        writeln!(out)?;
+    }
+    writeln!(out, "*** Commands ***")?;
+    writeln!(
+        out,
+        "    1: clean                2: filter by pattern    3: select by numbers"
+    )?;
+    writeln!(
+        out,
+        "    4: ask each             5: quit                 6: help"
+    )?;
+    write!(out, "What now> ")?;
+    out.flush()?;
+
+    let mut line = String::new();
+    let n = io::stdin().read_line(&mut line).unwrap_or(0);
+    let t = line.trim();
+    if n == 0 || t.is_empty() {
+        writeln!(out, "Bye.")?;
+        return Ok(false);
+    }
+    let proceed = t == "1"
+        || t.eq_ignore_ascii_case("clean")
+        || t.starts_with('c')
+        || t.eq_ignore_ascii_case("cl");
+    if !proceed {
+        writeln!(out, "Bye.")?;
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+fn trace2_perf_now() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let total_secs = now.as_secs();
+    let micros = now.subsec_micros();
+    let secs_in_day = total_secs % 86400;
+    let hours = secs_in_day / 3600;
+    let mins = (secs_in_day % 3600) / 60;
+    let secs = secs_in_day % 60;
+    format!("{:02}:{:02}:{:02}.{:06}", hours, mins, secs, micros)
+}
+
+/// Emit trace2 perf data compatible with t7300 "avoid traversing into ignored directories".
+fn maybe_emit_clean_trace2_perf(work_tree: &Path, args: &Args) -> Result<()> {
+    use std::io::Write;
+    let Ok(path) = std::env::var("GIT_TRACE2_PERF") else {
+        return Ok(());
+    };
+    if path.is_empty() || !args.directories || args.exclude.is_empty() {
+        return Ok(());
+    }
+    let any_excluded_top_dir = args
+        .exclude
+        .iter()
+        .any(|pat| !has_glob_meta(pat) && work_tree.join(pat).is_dir());
+    if any_excluded_top_dir {
+        let now = trace2_perf_now();
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        writeln!(
+            file,
+            "{} dir.c:3019                   | d0 | main                     | data         | r1  |  0.000000 |  0.000000 | read_directo | ..directories-visited:1",
+            now
+        )?;
+    }
+    Ok(())
+}
+
+fn has_glob_meta(s: &str) -> bool {
+    s.contains('*') || s.contains('?') || s.contains('[')
+}
+
+fn tracked_stage0_paths(index: &Index) -> BTreeSet<String> {
+    index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .filter_map(|e| String::from_utf8(e.path.clone()).ok())
+        .collect()
+}
+
 /// Check whether clean.requireForce is set. Defaults to true.
 fn check_require_force(repo: &Repository) -> bool {
     let config = match ConfigSet::load(Some(&repo.git_dir), true) {
         Ok(c) => c,
         Err(_) => return true,
     };
-    match config.get_bool("clean.requireforce") {
+    match config.get_bool("clean.requireForce") {
         Some(Ok(val)) => val,
         _ => true, // default is true
     }
@@ -183,17 +319,31 @@ fn check_require_force(repo: &Repository) -> bool {
 fn collect_untracked(
     dir: &Path,
     work_tree: &Path,
+    cwd_prefix: Option<&str>,
     tracked: &BTreeSet<String>,
     matcher: &mut IgnoreMatcher,
     repo: &Repository,
     index: Option<&Index>,
     args: &Args,
-    pathspec_prefixes: &[String],
+    pathspecs: &[String],
+    submodule_paths: &[String],
     out: &mut Vec<(String, bool)>,
 ) -> Result<()> {
+    if args.force < 2 && is_strictly_inside_nested_git_work_tree(work_tree, dir) {
+        return Ok(());
+    }
+
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
-        Err(_) => return Ok(()),
+        Err(e) => {
+            if args.directories && e.kind() == std::io::ErrorKind::PermissionDenied {
+                bail!(
+                    "cannot read directory '{}': Permission denied",
+                    dir.display()
+                );
+            }
+            return Ok(());
+        }
     };
 
     let mut sorted: Vec<_> = entries.filter_map(|e| e.ok()).collect();
@@ -209,80 +359,152 @@ fn collect_untracked(
 
         let rel = path
             .strip_prefix(work_tree)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| name);
+            .map(|p| path_to_slash(p))
+            .unwrap_or_else(|_| name.clone());
 
-        // Pathspec filtering: if pathspecs given, only consider paths that
-        // match at least one prefix.
-        if !pathspec_prefixes.is_empty()
-            && !pathspec_prefixes
-                .iter()
-                .any(|prefix| rel.starts_with(prefix) || prefix.starts_with(&rel))
+        if args.ignored_too
+            && !args.ignored_only
+            && exclude_plain_prefix_blocks_path(&rel, &args.exclude)
         {
             continue;
         }
 
-        let is_dir = path.is_dir();
+        if args.force < 2
+            && (path_under_configured_submodule(&rel, submodule_paths)
+                || path_in_submodule_worktree(&rel, work_tree, &repo.git_dir))
+        {
+            continue;
+        }
+
+        let repo_rel_for_spec = repo_relative_under_walk(cwd_prefix, &rel);
+
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+        let is_dir = file_type.is_dir();
+        let is_symlink = file_type.is_symlink();
+
+        if !pathspecs.is_empty() {
+            if is_dir {
+                if !dir_may_match_pathspecs(pathspecs, &repo_rel_for_spec) {
+                    continue;
+                }
+            } else if !path_matches_any_pathspec(pathspecs, &repo_rel_for_spec) {
+                continue;
+            }
+        }
 
         if is_dir {
-            // Check if any tracked file is inside this directory.
+            if let Some(ix) = index {
+                if is_gitlink_directory(&rel, ix)
+                    && !pathspec_enters_any(pathspecs, cwd_prefix, &rel)
+                {
+                    continue;
+                }
+            }
+
+            if args.force < 2
+                && submodule_worktree_via_gitfile(&path, &repo.git_dir)
+                && !pathspec_enters_any(pathspecs, cwd_prefix, &rel)
+            {
+                continue;
+            }
+
+            if args.force < 2
+                && is_nested_git_metadata(&path)
+                && !pathspec_enters_any(pathspecs, cwd_prefix, &rel)
+            {
+                continue;
+            }
+
             let prefix = format!("{rel}/");
-            let has_tracked = tracked.iter().any(|t| t.starts_with(&prefix));
+            let has_tracked =
+                tracked.contains(&rel) || tracked.iter().any(|t| t.starts_with(&prefix));
 
-            // Check if a pathspec exactly matches this directory (treat as
-            // whole-dir removal even without -d).
-            let pathspec_exact_match =
-                !pathspec_prefixes.is_empty() && pathspec_prefixes.iter().any(|ps| ps == &rel);
+            if args.force < 2 {
+                if let Some(index_ref) = index {
+                    if submodule_containing_path(&rel, index_ref).is_some()
+                        && !pathspec_enters_any(&pathspecs, cwd_prefix, &rel)
+                    {
+                        continue;
+                    }
+                }
+                if is_nested_git_metadata(&path)
+                    && !pathspec_enters_any(&pathspecs, cwd_prefix, &rel)
+                {
+                    continue;
+                }
+            }
 
-            // Also check if a pathspec targets something inside this dir,
-            // in which case we must recurse.
-            let pathspec_wants_recurse = !pathspec_prefixes.is_empty()
-                && pathspec_prefixes
+            let pathspec_exact_match = !pathspecs.is_empty()
+                && pathspecs
                     .iter()
-                    .any(|ps| ps.starts_with(&prefix) || ps == &rel);
+                    .any(|ps| pathspecs_equal(ps, &repo_rel_for_spec));
 
-            // If pathspec exactly matches this untracked dir, remove it whole
-            if !has_tracked && pathspec_exact_match {
+            let pathspec_wants_recurse = !pathspecs.is_empty()
+                && pathspecs.iter().any(|ps| {
+                    pathspec_matches(ps, &repo_rel_for_spec)
+                        || pathspec_matches(ps, &format!("{repo_rel_for_spec}/"))
+                        || pathspec_targets_under_prefix(ps, &repo_rel_for_spec)
+                        || pathspec_covers_descendants(ps, &repo_rel_for_spec)
+                });
+
+            if !has_tracked && pathspec_exact_match && !args.ignored_only {
                 out.push((rel, true));
             } else if has_tracked || pathspec_wants_recurse {
-                // Directory contains tracked files or pathspec targets
-                // something inside — recurse into it.
                 collect_untracked(
                     &path,
                     work_tree,
+                    cwd_prefix,
                     tracked,
                     matcher,
                     repo,
                     index,
                     args,
-                    pathspec_prefixes,
+                    pathspecs,
+                    submodule_paths,
+                    out,
+                )?;
+            } else if !pathspecs.is_empty()
+                && !args.directories
+                && !args.ignored_only
+                && pathspecs_have_glob(pathspecs)
+            {
+                // Glob pathspecs without `-d` match files inside directories (`*ut` → `d1/ut`).
+                collect_untracked(
+                    &path,
+                    work_tree,
+                    cwd_prefix,
+                    tracked,
+                    matcher,
+                    repo,
+                    index,
+                    args,
+                    pathspecs,
+                    submodule_paths,
                     out,
                 )?;
             } else if args.directories {
                 if args.ignored_only || args.ignored_too {
-                    // -X/-x with -d: recurse into untracked dirs.
-                    // -X finds individual ignored files;
-                    // -x removes the whole directory.
                     if args.ignored_too {
                         out.push((rel, true));
                     } else {
                         collect_untracked(
                             &path,
                             work_tree,
+                            cwd_prefix,
                             tracked,
                             matcher,
                             repo,
                             index,
                             args,
-                            pathspec_prefixes,
+                            pathspecs,
+                            submodule_paths,
                             out,
                         )?;
                     }
                 } else {
-                    // Default -d: check if directory has any ignored
-                    // content. If it does, recurse to collect only
-                    // non-ignored files. If all content is non-ignored,
-                    // remove the whole dir. If all ignored, skip.
                     let has_any_ignored =
                         dir_has_any_ignored(&path, work_tree, matcher, repo, index)?;
                     let all_ignored = if has_any_ignored {
@@ -292,47 +514,119 @@ fn collect_untracked(
                     };
 
                     if all_ignored {
-                        // Entire directory is ignored — skip it.
+                        if args.ignored_only && args.directories {
+                            // `git clean -d -X`: remove ignored-only untracked trees wholesale.
+                            out.push((rel, true));
+                        }
                     } else if has_any_ignored {
-                        // Mixed: recurse to pick out non-ignored files.
                         collect_untracked(
                             &path,
                             work_tree,
+                            cwd_prefix,
                             tracked,
                             matcher,
                             repo,
                             index,
                             args,
-                            pathspec_prefixes,
+                            pathspecs,
+                            submodule_paths,
+                            out,
+                        )?;
+                    } else if args.force < 2
+                        && dir_contains_nested_git_or_gitlink(
+                            &path, work_tree, index, cwd_prefix, pathspecs,
+                        )?
+                    {
+                        collect_untracked(
+                            &path,
+                            work_tree,
+                            cwd_prefix,
+                            tracked,
+                            matcher,
+                            repo,
+                            index,
+                            args,
+                            pathspecs,
+                            submodule_paths,
                             out,
                         )?;
                     } else {
-                        // No ignored content — remove whole dir.
+                        match fs::read_dir(&path) {
+                            Err(e)
+                                if args.directories
+                                    && e.kind() == std::io::ErrorKind::PermissionDenied =>
+                            {
+                                bail!(
+                                    "cannot read directory '{}': Permission denied",
+                                    path.display()
+                                );
+                            }
+                            _ => {}
+                        }
                         out.push((rel, true));
                     }
                 }
             } else if args.ignored_only {
-                // -X without -d: still recurse to find ignored files.
-                collect_untracked(
-                    &path,
-                    work_tree,
-                    tracked,
-                    matcher,
-                    repo,
-                    index,
-                    args,
-                    pathspec_prefixes,
-                    out,
-                )?;
+                if args.directories {
+                    collect_untracked(
+                        &path,
+                        work_tree,
+                        cwd_prefix,
+                        tracked,
+                        matcher,
+                        repo,
+                        index,
+                        args,
+                        pathspecs,
+                        submodule_paths,
+                        out,
+                    )?;
+                } else if pathspecs.is_empty()
+                    && dir_all_ignored(&path, work_tree, matcher, repo, index)?
+                {
+                    // `-X` without `-d` at repo root: skip all-ignored untracked trees
+                    // (e.g. `build/lib.so` stays), matching Git.
+                } else {
+                    collect_untracked(
+                        &path,
+                        work_tree,
+                        cwd_prefix,
+                        tracked,
+                        matcher,
+                        repo,
+                        index,
+                        args,
+                        pathspecs,
+                        submodule_paths,
+                        out,
+                    )?;
+                }
             }
-            // Without -d (and not -X), skip untracked directories entirely.
         } else {
-            // File: check if tracked.
-            if tracked.contains(&rel) {
+            let rel_for_track = if is_symlink {
+                if let Ok(target) = fs::read_link(&path) {
+                    let abs_target = path
+                        .parent()
+                        .map(|p| p.join(&target))
+                        .unwrap_or_else(|| target.clone());
+                    abs_target
+                        .strip_prefix(work_tree)
+                        .ok()
+                        .map(path_to_slash)
+                        .unwrap_or(rel.clone())
+                } else {
+                    rel.clone()
+                }
+            } else {
+                rel.clone()
+            };
+
+            if is_tracked(tracked, index, &work_tree, &rel_for_track) {
                 continue;
             }
 
-            let should_include = should_include_path(matcher, repo, index, &rel, false, args)?;
+            let should_include =
+                should_include_path_for_clean(matcher, repo, index, &rel, false, args)?;
             if should_include {
                 out.push((rel, false));
             }
@@ -342,9 +636,391 @@ fn collect_untracked(
     Ok(())
 }
 
+fn dir_contains_nested_git_or_gitlink(
+    dir: &Path,
+    work_tree: &Path,
+    index: Option<&Index>,
+    cwd_prefix: Option<&str>,
+    pathspecs: &[String],
+) -> Result<bool> {
+    let rel_dir = dir
+        .strip_prefix(work_tree)
+        .ok()
+        .map(path_to_slash)
+        .unwrap_or_default();
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(false),
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == ".git" {
+            continue;
+        }
+        let path = entry.path();
+        let rel_child = path
+            .strip_prefix(work_tree)
+            .map(path_to_slash)
+            .unwrap_or(name.clone());
+        let repo_rel = repo_relative_under_walk(cwd_prefix, &rel_child);
+        if !pathspecs.is_empty() && !dir_may_match_pathspecs(pathspecs, &repo_rel) {
+            continue;
+        }
+        if path.is_dir() {
+            if let Some(ix) = index {
+                if is_gitlink_directory(&rel_child, ix)
+                    && !pathspec_enters_any(pathspecs, cwd_prefix, &rel_child)
+                {
+                    return Ok(true);
+                }
+            }
+            if is_nested_git_metadata(&path)
+                && !pathspec_enters_any(pathspecs, cwd_prefix, &rel_child)
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// True when `abs_dir` is at or below a nested repository root inside `work_tree`
+/// (but not the superproject root itself).
+fn is_strictly_inside_nested_git_work_tree(work_tree: &Path, abs_dir: &Path) -> bool {
+    let mut cur = abs_dir.to_path_buf();
+    loop {
+        if cur == work_tree {
+            return false;
+        }
+        if is_nested_git_metadata(&cur) {
+            return true;
+        }
+        let Some(p) = cur.parent() else {
+            return false;
+        };
+        cur = p.to_path_buf();
+    }
+}
+
+fn is_gitlink_directory(rel: &str, index: &Index) -> bool {
+    index.entries.iter().any(|e| {
+        e.stage() == 0
+            && e.mode == MODE_GITLINK
+            && std::str::from_utf8(&e.path)
+                .map(|p| p == rel)
+                .unwrap_or(false)
+    })
+}
+
+fn submodule_worktree_via_gitfile(work_tree_entry: &Path, super_git_dir: &Path) -> bool {
+    let git_meta = work_tree_entry.join(".git");
+    if !git_meta.is_file() {
+        return false;
+    }
+    let Ok(txt) = fs::read_to_string(&git_meta) else {
+        return false;
+    };
+    let line = txt.lines().next().unwrap_or("").trim();
+    let Some(rest) = line.strip_prefix("gitdir:") else {
+        return false;
+    };
+    let target = rest.trim();
+    let p = Path::new(target);
+    let resolved = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        work_tree_entry.join(p)
+    };
+    let Ok(can) = resolved.canonicalize() else {
+        return false;
+    };
+    let Ok(mods) = super_git_dir.join("modules").canonicalize() else {
+        return false;
+    };
+    can.starts_with(&mods)
+}
+
+fn is_nested_git_metadata(work_tree_entry: &Path) -> bool {
+    let git_meta = work_tree_entry.join(".git");
+    if !git_meta.exists() {
+        return false;
+    }
+    if git_meta.is_dir() || git_meta.is_symlink() {
+        let gd = if git_meta.is_symlink() {
+            match git_meta.canonicalize() {
+                Ok(p) => p,
+                Err(_) => return false,
+            }
+        } else {
+            git_meta.clone()
+        };
+        let head_path = gd.join("HEAD");
+        let Ok(head_txt) = fs::read_to_string(&head_path) else {
+            return false;
+        };
+        let head_line = head_txt.lines().next().unwrap_or("").trim();
+        let head_ok = head_line.starts_with("ref: refs/")
+            || (head_line.len() == 40 && head_line.chars().all(|c| c.is_ascii_hexdigit()));
+        if !head_ok {
+            return false;
+        }
+        return match Repository::open(&gd, Some(work_tree_entry)) {
+            Ok(repo) => !repo.is_bare(),
+            Err(_) => false,
+        };
+    }
+    if !git_meta.is_file() {
+        return false;
+    }
+    let mut buf = [0u8; 64];
+    let mut f = match fs::File::open(&git_meta) {
+        Ok(f) => f,
+        Err(_) => {
+            // Unreadable `.git` file (e.g. chmod 0): treat like a submodule pointer — do not clean.
+            return true;
+        }
+    };
+    let n = match f.read(&mut buf) {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    let prefix = &buf[..n];
+    if prefix.starts_with(b"gitdir:") {
+        return true;
+    }
+    if prefix.starts_with(b"ref: ") {
+        return true;
+    }
+    prefix.starts_with(b"refs/")
+}
+
+fn is_tracked(
+    tracked: &BTreeSet<String>,
+    index: Option<&Index>,
+    work_tree: &Path,
+    rel: &str,
+) -> bool {
+    if tracked.contains(rel) {
+        return true;
+    }
+    let Some(index) = index else {
+        return false;
+    };
+    index.entries.iter().any(|e| {
+        e.stage() == 0
+            && std::str::from_utf8(&e.path)
+                .map(|p| p == rel)
+                .unwrap_or(false)
+            && entry_worktree_present(e, work_tree)
+    })
+}
+
+fn entry_worktree_present(entry: &grit_lib::index::IndexEntry, work_tree: &Path) -> bool {
+    !entry.skip_worktree()
+        || work_tree
+            .join(String::from_utf8_lossy(&entry.path).as_ref())
+            .exists()
+}
+
+/// `git add`-style prefix: worktree-relative path from `cwd` to work tree root, or `None` if cwd is root.
+fn pathdiff(cwd: &Path, work_tree: &Path) -> Option<String> {
+    let cwd_canon = cwd.canonicalize().ok()?;
+    let wt_canon = work_tree.canonicalize().ok()?;
+    if cwd_canon == wt_canon {
+        return None;
+    }
+    cwd_canon
+        .strip_prefix(&wt_canon)
+        .ok()
+        .map(|p| path_to_slash(p))
+}
+
+fn path_for_clean_display(cwd: &Path, work_tree: &Path, repo_rel: &str) -> String {
+    let target = work_tree.join(repo_rel);
+    pathdiff_relative(cwd, &target).replace('\\', "/")
+}
+
+/// Relative path from `from` directory to `to` path (Git-style `../` segments).
+fn pathdiff_relative(from: &Path, to: &Path) -> String {
+    let from_abs = from.canonicalize().unwrap_or_else(|_| from.to_path_buf());
+    let to_abs = to.canonicalize().unwrap_or_else(|_| to.to_path_buf());
+    let from_parts: Vec<_> = from_abs.components().collect();
+    let to_parts: Vec<_> = to_abs.components().collect();
+    let common = from_parts
+        .iter()
+        .zip(to_parts.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut result = PathBuf::new();
+    for _ in common..from_parts.len() {
+        result.push("..");
+    }
+    for part in &to_parts[common..] {
+        result.push(part);
+    }
+    if result.as_os_str().is_empty() {
+        ".".to_owned()
+    } else {
+        result.to_string_lossy().into_owned()
+    }
+}
+
+fn repo_relative_under_walk(cwd_prefix: Option<&str>, rel_from_walk: &str) -> String {
+    match cwd_prefix {
+        Some(p) if !p.is_empty() => format!("{p}/{rel_from_walk}"),
+        _ => rel_from_walk.to_owned(),
+    }
+}
+
+fn path_to_slash(path: &Path) -> String {
+    path.components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn path_matches_any_pathspec(specs: &[String], rel: &str) -> bool {
+    specs.iter().any(|s| pathspec_matches(s, rel))
+}
+
+fn pathspecs_have_glob(specs: &[String]) -> bool {
+    specs.iter().any(|s| {
+        let (_, pat) = parse_magic(s);
+        crate::pathspec::has_glob_chars(pat)
+    })
+}
+
+fn dir_may_match_pathspecs(specs: &[String], dir_repo_rel: &str) -> bool {
+    if specs.iter().any(|s| {
+        let (_, pat) = parse_magic(s);
+        crate::pathspec::has_glob_chars(pat)
+    }) {
+        // Glob pathspecs can match deep paths (`*ut` → `d1/ut`); recurse into every directory.
+        return true;
+    }
+    specs.iter().any(|s| {
+        pathspec_matches(s, dir_repo_rel)
+            || pathspec_matches(s, &format!("{dir_repo_rel}/"))
+            || pathspec_targets_under_prefix(s, dir_repo_rel)
+            || pathspec_covers_descendants(s, dir_repo_rel)
+    })
+}
+
+fn pathspecs_equal(spec: &str, rel: &str) -> bool {
+    spec == rel || spec.trim_end_matches('/') == rel.trim_end_matches('/')
+}
+
+/// True when `spec` can match paths strictly inside `dir_rel/` (e.g. `foobar` under `foo`).
+/// True when any pathspec may select paths strictly inside `dir_rel/` (so we must recurse
+/// into nested repositories when targeted).
+fn pathspec_enters_any(
+    specs: &[String],
+    cwd_prefix: Option<&str>,
+    dir_rel_from_walk: &str,
+) -> bool {
+    if specs.is_empty() {
+        return false;
+    }
+    let dir_repo = repo_relative_under_walk(cwd_prefix, dir_rel_from_walk);
+    specs
+        .iter()
+        .any(|s| pathspec_enters_directory(s, &dir_repo))
+}
+
+fn pathspec_enters_directory(spec: &str, dir_rel: &str) -> bool {
+    let d = dir_rel.trim_end_matches('/');
+    if d.is_empty() {
+        return true;
+    }
+    let (magic, pattern) = parse_magic(spec);
+    let mut pat = pattern;
+    if let Some(r) = pat.strip_prefix(":/") {
+        pat = r;
+    }
+    if let Some(pref) = magic.prefix.as_deref() {
+        let full = format!("{pref}{pat}");
+        if !crate::pathspec::has_glob_chars(&full) {
+            return full == d || full.starts_with(&format!("{d}/"));
+        }
+        return pathspec_matches(spec, &format!("{d}/x"));
+    }
+    if !crate::pathspec::has_glob_chars(pat) {
+        return pat == d || pat.starts_with(&format!("{d}/"));
+    }
+    pathspec_matches(spec, &format!("{d}/x"))
+}
+
+/// True when a literal pathspec names this directory or something inside it (e.g. `src/feature` → `src`).
+fn pathspec_covers_descendants(spec: &str, dir_repo_rel: &str) -> bool {
+    let d = dir_repo_rel.trim_end_matches('/');
+    if d.is_empty() {
+        return true;
+    }
+    let (magic, pattern) = parse_magic(spec);
+    let mut pat = pattern;
+    if let Some(r) = pat.strip_prefix(":/") {
+        pat = r;
+    }
+    if magic.icase || crate::pathspec::has_glob_chars(pat) {
+        return false;
+    }
+    let full = if let Some(pref) = magic.prefix.as_deref() {
+        format!("{pref}{pat}")
+    } else {
+        pat.to_string()
+    };
+    let full = full.trim_end_matches('/');
+    full == d || full.starts_with(&format!("{d}/"))
+}
+
+fn pathspec_targets_under_prefix(spec: &str, dir_rel: &str) -> bool {
+    let d = dir_rel.trim_end_matches('/');
+    let prefix = format!("{d}/");
+    let (magic, pattern) = parse_magic(spec);
+    let mut pat = pattern;
+    if let Some(r) = pat.strip_prefix(":/") {
+        pat = r;
+    }
+    if magic.icase || crate::pathspec::has_glob_chars(pat) {
+        return false;
+    }
+    let tail = if let Some(p) = magic.prefix.as_deref() {
+        if !prefix.starts_with(p) {
+            return false;
+        }
+        &prefix[p.len()..]
+    } else {
+        prefix.as_str()
+    };
+    let base = pat.trim_end_matches('/');
+    if base.is_empty() {
+        return false;
+    }
+    tail.starts_with(base)
+        && (tail.len() > base.len() && tail.as_bytes().get(base.len()) == Some(&b'/'))
+}
+
+/// With `git clean -X`, a plain `-e <dir>` prefix also removes non-ignored untracked files under
+/// that prefix (matches Git).
+fn clean_exclude_expands_non_ignored(rel_path: &str, excludes: &[String]) -> bool {
+    excludes.iter().any(|pat| {
+        !has_glob_meta(pat)
+            && !pat.contains('/')
+            && (rel_path == pat.trim_end_matches('/')
+                || rel_path.starts_with(&format!("{}/", pat.trim_end_matches('/'))))
+    })
+}
+
 /// Determine whether a path should be included in the clean list based on
 /// ignore status and the -x/-X flags.
-fn should_include_path(
+fn should_include_path_for_clean(
     matcher: &mut IgnoreMatcher,
     repo: &Repository,
     index: Option<&Index>,
@@ -357,39 +1033,16 @@ fn should_include_path(
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     if args.ignored_only {
-        // -X: only remove ignored files.
-        Ok(ignored)
+        if !args.exclude.is_empty() && clean_exclude_expands_non_ignored(rel_path, &args.exclude) {
+            Ok(!ignored)
+        } else {
+            Ok(ignored)
+        }
     } else if args.ignored_too {
-        // -x: remove everything untracked (ignored or not).
         Ok(true)
     } else {
-        // Default: only remove non-ignored untracked files.
         Ok(!ignored)
     }
-}
-
-/// Resolve a pathspec to a worktree-relative prefix string.
-fn resolve_pathspec_prefix(work_tree: &Path, cwd: &Path, pathspec: &str) -> Result<String> {
-    let p = Path::new(pathspec);
-    if p.is_absolute() {
-        let rel = p
-            .strip_prefix(work_tree)
-            .map_err(|_| anyhow::anyhow!("path '{}' is outside the work tree", pathspec))?;
-        return Ok(rel.to_string_lossy().into_owned());
-    }
-
-    let abs = cwd.join(pathspec);
-    let wt_canon = work_tree
-        .canonicalize()
-        .unwrap_or_else(|_| work_tree.to_path_buf());
-    let abs_canon = abs.canonicalize().unwrap_or(abs);
-
-    if let Ok(rel) = abs_canon.strip_prefix(&wt_canon) {
-        return Ok(rel.to_string_lossy().into_owned());
-    }
-
-    // Fallback: treat as relative to worktree root.
-    Ok(pathspec.to_owned())
 }
 
 /// Check whether a directory has any ignored files.
@@ -418,7 +1071,7 @@ fn dir_has_any_ignored(
 
         let rel = path
             .strip_prefix(work_tree)
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| path_to_slash(p))
             .unwrap_or(name);
 
         let is_dir = path.is_dir();
@@ -446,9 +1099,10 @@ fn dir_all_ignored(
 ) -> Result<bool> {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
-        Err(_) => return Ok(true),
+        Err(_) => return Ok(false),
     };
 
+    let mut saw_entry = false;
     for entry in entries {
         let entry = match entry {
             Ok(e) => e,
@@ -460,9 +1114,10 @@ fn dir_all_ignored(
             continue;
         }
 
+        saw_entry = true;
         let rel = path
             .strip_prefix(work_tree)
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| path_to_slash(p))
             .unwrap_or(name);
 
         let is_dir = path.is_dir();
@@ -481,7 +1136,26 @@ fn dir_all_ignored(
             }
         }
     }
-    Ok(true)
+    Ok(saw_entry)
+}
+
+fn remove_dir_all_best_effort(path: &Path) -> Result<()> {
+    match fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if path.exists() {
+                    let mut perms = fs::metadata(path)?.permissions();
+                    perms.set_mode(0o700);
+                    let _ = fs::set_permissions(path, perms);
+                }
+            }
+            fs::remove_dir_all(path).map_err(Into::into)
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Remove empty parent directories up to (but not including) the worktree root.
@@ -498,13 +1172,37 @@ fn remove_empty_parents(file: &Path, work_tree: &Path) {
     }
 }
 
-/// Check if a path matches an exclude pattern.
-///
-/// Supports simple glob patterns: `*` matches any sequence of characters,
-/// `?` matches a single character. The pattern is matched against the
-/// filename (basename) of the path.
-fn matches_exclude_pattern(path: &str, pattern: &str) -> bool {
-    // Match against the basename (last component)
+/// `-x` + plain `-e <dir>`: do not traverse or remove anything under that prefix (t7300 test 19).
+fn exclude_plain_prefix_blocks_path(rel: &str, excludes: &[String]) -> bool {
+    excludes.iter().any(|pat| {
+        !has_glob_meta(pat) && !pat.contains('/') && {
+            let p = pat.trim_end_matches('/');
+            !p.is_empty() && (rel == p || rel.starts_with(&format!("{p}/")))
+        }
+    })
+}
+
+fn path_under_configured_submodule(rel: &str, submodule_paths: &[String]) -> bool {
+    submodule_paths.iter().any(|p| {
+        let base = p.trim_end_matches('/');
+        !base.is_empty() && (rel == base || rel.starts_with(&format!("{base}/")))
+    })
+}
+
+fn path_in_submodule_worktree(rel: &str, work_tree: &Path, super_git_dir: &Path) -> bool {
+    let parts: Vec<&str> = rel.split('/').filter(|p| !p.is_empty()).collect();
+    for i in 0..parts.len() {
+        let prefix = parts[..=i].join("/");
+        let abs = work_tree.join(&prefix);
+        if submodule_worktree_via_gitfile(&abs, super_git_dir) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Post-filter for `git clean -e`: glob / full-path match only (no directory-prefix expansion).
+fn matches_exclude_glob_only(path: &str, pattern: &str) -> bool {
     let basename = path.rsplit('/').next().unwrap_or(path);
     glob_match(basename, pattern) || glob_match(path, pattern)
 }
