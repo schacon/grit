@@ -1,10 +1,12 @@
 //! `grit upload-pack` — send objects for fetch (server side).
 //!
 //! Invoked on the remote side of a fetch. Advertises refs in pkt-line format,
-//! negotiates want/have, then streams a packfile (side-band-64k) to the client.
+//! negotiates want/have (protocol v0, `multi_ack_detailed`), then streams a
+//! packfile (side-band-64k) to the client.
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::merge_base;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
@@ -47,28 +49,23 @@ pub fn run(args: Args) -> Result<()> {
     out.flush()?;
 
     let mut stdin = io::stdin();
-    let mut wants: HashSet<ObjectId> = HashSet::new();
-    let mut haves: HashSet<ObjectId> = HashSet::new();
-    let mut seen_done = false;
+    let mut wants: Vec<ObjectId> = Vec::new();
+    let mut multi_ack_detailed = false;
 
     loop {
         match pkt_line::read_packet(&mut stdin)? {
             None => break,
             Some(pkt_line::Packet::Flush) => break,
             Some(pkt_line::Packet::Data(line)) => {
-                if line == "done" {
-                    seen_done = true;
-                    break;
-                }
                 if let Some(rest) = line.strip_prefix("want ") {
                     let hex = rest.split_whitespace().next().unwrap_or(rest);
+                    let features = rest.strip_prefix(hex).unwrap_or("").trim();
+                    if wants.is_empty()
+                        && features.contains("multi_ack_detailed") {
+                            multi_ack_detailed = true;
+                        }
                     if let Ok(oid) = ObjectId::from_hex(hex) {
-                        wants.insert(oid);
-                    }
-                } else if let Some(rest) = line.strip_prefix("have ") {
-                    let hex = rest.trim();
-                    if let Ok(oid) = ObjectId::from_hex(hex) {
-                        haves.insert(oid);
+                        wants.push(oid);
                     }
                 }
             }
@@ -76,27 +73,75 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    if !seen_done {
-        while let Some(pkt) = pkt_line::read_packet(&mut stdin)? {
-            if let pkt_line::Packet::Data(line) = pkt {
-                if line == "done" {
-                    break;
-                }
-            }
-        }
-    }
-
     if wants.is_empty() {
         return Ok(());
     }
 
-    for have in &haves {
-        if repo.odb.read(have).is_ok() {
-            pkt_line::write_line(&mut out, &format!("ACK {}", have.to_hex()))?;
+    let want_set: HashSet<ObjectId> = wants.iter().copied().collect();
+
+    let mut got_common = false;
+    let mut got_other = false;
+    let mut last_hex = String::new();
+    let mut client_known: HashSet<ObjectId> = HashSet::new();
+
+    loop {
+        match pkt_line::read_packet(&mut stdin)? {
+            None => break,
+            Some(pkt_line::Packet::Flush) => {
+                if multi_ack_detailed
+                    && got_common
+                    && !got_other
+                    && ok_to_give_up(&repo, &want_set, &client_known)
+                {
+                    pkt_line::write_line(&mut out, &format!("ACK {last_hex} ready"))?;
+                }
+                if got_common || multi_ack_detailed {
+                    pkt_line::write_line(&mut out, "NAK")?;
+                }
+                got_common = false;
+                got_other = false;
+                out.flush()?;
+            }
+            Some(pkt_line::Packet::Data(line)) => {
+                if line == "done" {
+                    if !last_hex.is_empty() && multi_ack_detailed {
+                        pkt_line::write_line(&mut out, &format!("ACK {last_hex}"))?;
+                    } else if got_common {
+                        pkt_line::write_line(&mut out, &format!("ACK {last_hex}"))?;
+                    } else {
+                        pkt_line::write_line(&mut out, "NAK")?;
+                    }
+                    out.flush()?;
+                    break;
+                }
+                if let Some(hex) = line.strip_prefix("have ").map(str::trim) {
+                    if let Ok(oid) = ObjectId::from_hex(hex) {
+                        if repo.odb.read(&oid).is_err() {
+                            got_other = true;
+                            if multi_ack_detailed && ok_to_give_up(&repo, &want_set, &client_known)
+                            {
+                                pkt_line::write_line(
+                                    &mut out,
+                                    &format!("ACK {} continue", oid.to_hex()),
+                                )?;
+                            }
+                        } else {
+                            got_common = true;
+                            last_hex = oid.to_hex();
+                            merge_ancestors_into(&repo, oid, &mut client_known)?;
+                            if multi_ack_detailed {
+                                pkt_line::write_line(&mut out, &format!("ACK {last_hex} common"))?;
+                            } else {
+                                pkt_line::write_line(&mut out, &format!("ACK {last_hex}"))?;
+                            }
+                        }
+                    }
+                    out.flush()?;
+                }
+            }
+            _ => {}
         }
     }
-    pkt_line::write_line(&mut out, "NAK")?;
-    out.flush()?;
 
     let grit = grit_executable();
     let mut child = Command::new(&grit)
@@ -156,6 +201,31 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
+fn merge_ancestors_into(
+    repo: &Repository,
+    tip: ObjectId,
+    into: &mut HashSet<ObjectId>,
+) -> Result<()> {
+    let anc = merge_base::ancestor_closure(repo, tip)?;
+    into.extend(anc);
+    Ok(())
+}
+
+fn ok_to_give_up(
+    repo: &Repository,
+    wants: &HashSet<ObjectId>,
+    client_known: &HashSet<ObjectId>,
+) -> bool {
+    if client_known.is_empty() {
+        return false;
+    }
+    wants.iter().all(|w| {
+        client_known
+            .iter()
+            .any(|h| merge_base::is_ancestor(repo, *h, *w).unwrap_or(false))
+    })
+}
+
 fn write_sideband_64k(w: &mut impl Write, payload: &[u8]) -> io::Result<()> {
     const MAX_PAYLOAD: usize = 65515;
     for chunk in payload.chunks(MAX_PAYLOAD) {
@@ -206,7 +276,6 @@ fn write_ref_advertisement(w: &mut impl Write, git_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Advertise refs with capabilities in pkt-line format (for --advertise-refs).
 fn advertise_refs_with_caps(repo: &Repository) -> Result<()> {
     let mut out = io::stdout();
     write_ref_advertisement(&mut out, &repo.git_dir)?;
@@ -215,7 +284,6 @@ fn advertise_refs_with_caps(repo: &Repository) -> Result<()> {
     Ok(())
 }
 
-/// List all refs under refs/.
 fn list_all_refs(git_dir: &Path) -> Result<Vec<(String, ObjectId)>> {
     let mut result = Vec::new();
     for prefix in &["refs/heads/", "refs/tags/", "refs/remotes/"] {
@@ -226,7 +294,6 @@ fn list_all_refs(git_dir: &Path) -> Result<Vec<(String, ObjectId)>> {
     Ok(result)
 }
 
-/// Open a repository (bare or non-bare).
 fn open_repo(path: &Path) -> Result<Repository> {
     if let Ok(repo) = Repository::open(path, None) {
         return Ok(repo);

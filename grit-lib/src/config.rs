@@ -177,6 +177,19 @@ pub fn canonical_key(raw: &str) -> Result<String> {
 
 // ── Parser ──────────────────────────────────────────────────────────
 
+fn config_error_path_display(path: &Path) -> String {
+    if path.file_name().and_then(|s| s.to_str()) == Some("config")
+        && path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+            == Some(".git")
+        {
+            return ".git/config".to_owned();
+        }
+    path.display().to_string()
+}
+
 /// State tracked while parsing a config file line-by-line.
 struct Parser {
     section: String,
@@ -530,6 +543,14 @@ impl ConfigFile {
                 // Check if there's an inline key=value after the section header
                 if let Some(remainder) = inline_remainder {
                     if let Some((key, value)) = parser.try_parse_entry(remainder) {
+                        if key == "fetch.negotiationalgorithm" && value.is_none() {
+                            let file_disp = config_error_path_display(path);
+                            return Err(Error::Message(format!(
+                                "error: missing value for 'fetch.negotiationalgorithm'\n\
+fatal: bad config variable 'fetch.negotiationalgorithm' in file '{file_disp}' at line {}",
+                                start_idx + 1
+                            )));
+                        }
                         entries.push(ConfigEntry {
                             key,
                             value,
@@ -556,6 +577,14 @@ impl ConfigFile {
             }
 
             if let Some((key, value)) = parser.try_parse_entry(&logical_line) {
+                if key == "fetch.negotiationalgorithm" && value.is_none() {
+                    let file_disp = config_error_path_display(path);
+                    return Err(Error::Message(format!(
+                        "error: missing value for 'fetch.negotiationalgorithm'\n\
+fatal: bad config variable 'fetch.negotiationalgorithm' in file '{file_disp}' at line {}",
+                        start_idx + 1
+                    )));
+                }
                 entries.push(ConfigEntry {
                     key,
                     value,
@@ -1338,14 +1367,18 @@ impl ConfigSet {
         // Local config
         if let Some(gd) = git_dir {
             let local_path = gd.join("config");
-            if let Ok(Some(f)) = ConfigFile::from_path(&local_path, ConfigScope::Local) {
-                Self::merge_with_includes(&mut set, &f, true, 0)?;
+            if local_path.exists() {
+                if let Some(f) = ConfigFile::from_path(&local_path, ConfigScope::Local)? {
+                    Self::merge_with_includes(&mut set, &f, true, 0)?;
+                }
             }
 
             // Worktree config
             let wt_path = gd.join("config.worktree");
-            if let Ok(Some(f)) = ConfigFile::from_path(&wt_path, ConfigScope::Worktree) {
-                Self::merge_with_includes(&mut set, &f, true, 0)?;
+            if wt_path.exists() {
+                if let Some(f) = ConfigFile::from_path(&wt_path, ConfigScope::Worktree)? {
+                    Self::merge_with_includes(&mut set, &f, true, 0)?;
+                }
             }
         }
 

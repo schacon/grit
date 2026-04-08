@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 mod alias;
 mod commands;
 mod dotfile;
+mod fetch_transport;
 mod git_path;
 mod grit_exe;
 pub mod pathspec;

@@ -958,9 +958,11 @@ fn resolve_base(repo: &Repository, spec: &str, index_dwim: bool) -> Result<Objec
     if let Ok(oid) = refs::resolve_ref(&repo.git_dir, spec) {
         return Ok(oid);
     }
+    // Prefer tags over branches for short names: `test_commit` creates tags named like the
+    // commit message, and branch names like `main`/`master` can shadow unrelated heads.
     for candidate in &[
-        format!("refs/heads/{spec}"),
         format!("refs/tags/{spec}"),
+        format!("refs/heads/{spec}"),
         format!("refs/remotes/{spec}"),
     ] {
         if let Ok(oid) = refs::resolve_ref(&repo.git_dir, candidate) {

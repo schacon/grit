@@ -9,7 +9,8 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::merge_base;
-use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
+use grit_lib::odb::Odb;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use std::collections::HashSet;
@@ -106,6 +107,10 @@ pub struct Args {
     /// Update remote-tracking refs after fetch.
     #[arg(long = "update-refs")]
     pub update_refs: bool,
+
+    /// Command to run on the remote side for pack transfer (protocol v0).
+    #[arg(long = "upload-pack", value_name = "PATH")]
+    pub upload_pack: Option<String>,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -195,10 +200,12 @@ fn fetch_remote(
             PathBuf::from(&url)
         }
     };
-    if url_override.is_none() && remote_path.is_relative() {
+    // Resolve relative paths from the repository root (not process CWD), for both
+    // configured `remote.<name>.url` and path-based remotes (`git fetch ./server`).
+    if remote_path.is_relative() {
         let base = configured_remote_base(git_dir);
         remote_path = base.join(&remote_path);
-        if !remote_path.exists() {
+        if url_override.is_none() && !remote_path.exists() {
             let mut trimmed = url.as_str();
             let mut stripped_any_parent = false;
             while let Some(rest) = trimmed.strip_prefix("../") {
@@ -231,24 +238,47 @@ fn fetch_remote(
         Vec::new() // we'll handle CLI refspecs specially below
     };
 
-    // Enumerate remote refs
-    let remote_heads = refs::list_refs(&remote_repo.git_dir, "refs/heads/")?;
-    let remote_tags = refs::list_refs(&remote_repo.git_dir, "refs/tags/")?;
+    // Enumerate remote refs (or receive them from upload-pack transport)
+    let use_skipping = config
+        .get("fetch.negotiationalgorithm")
+        .map(|v| v.eq_ignore_ascii_case("skipping"))
+        .unwrap_or(false);
 
-    // Copy objects from remote → local
-    copy_objects(&remote_repo.git_dir, git_dir, args.refetch)
-        .context("copying objects from remote")?;
+    let upload_pack_cmd = args.upload_pack.clone().or_else(|| {
+        let key = format!("remote.{remote_name}.uploadpack");
+        config.get(&key)
+    });
 
-    // Verify that all objects reachable from remote refs exist locally.
-    // This catches incomplete remotes that are missing some objects.
-    {
-        let tip_oids: Vec<ObjectId> = remote_heads
-            .iter()
-            .chain(remote_tags.iter())
-            .map(|(_, oid)| *oid)
-            .collect();
-        check_connectivity(git_dir, &tip_oids)?;
-    }
+    // Local fetch with skipping negotiator uses the upload-pack protocol (matches Git's tests).
+    let use_upload_pack_negotiation =
+        use_skipping && !crate::ssh_transport::is_configured_ssh_url(&url);
+
+    let (remote_heads, remote_tags) = if use_upload_pack_negotiation {
+        crate::protocol::check_protocol_allowed("file", Some(git_dir))?;
+        crate::fetch_transport::fetch_via_upload_pack_skipping(
+            git_dir,
+            &remote_path,
+            upload_pack_cmd.as_deref(),
+            cli_refspecs,
+        )?
+    } else {
+        let heads = refs::list_refs(&remote_repo.git_dir, "refs/heads/")?;
+        let tags = refs::list_refs(&remote_repo.git_dir, "refs/tags/")?;
+        // Copy objects from remote → local. Match Git: only copy the closure of refs this
+        // fetch would update (CLI refspecs or configured/default refspecs), not every ref
+        // on the remote (which would mirror unrelated branches into the destination ODB).
+        let object_copy_roots =
+            fetch_object_copy_roots(&remote_repo.git_dir, cli_refspecs, &refspecs, &heads, &tags)?;
+        if args.refetch {
+            copy_objects(&remote_repo.git_dir, git_dir, true)
+                .context("copying objects from remote")?;
+        } else {
+            copy_reachable_objects(&remote_repo.git_dir, git_dir, &object_copy_roots)
+                .context("copying reachable objects from remote")?;
+        }
+        check_connectivity(git_dir, &object_copy_roots)?;
+        (heads, tags)
+    };
 
     // Handle --depth / --deepen: write shallow graft info
     let effective_depth = args.depth.or(args.deepen);
@@ -270,7 +300,9 @@ fn fetch_remote(
     // Collect FETCH_HEAD entries
     let mut fetch_head_entries: Vec<String> = Vec::new();
 
-    if !cli_refspecs.is_empty() {
+    // Upload-pack negotiation already honored CLI refspecs via `collect_wants`; the object-less
+    // `refs::resolve_ref` path below would fail for tag-only names like `to_fetch`.
+    if !cli_refspecs.is_empty() && !use_upload_pack_negotiation {
         // Collect negative refspecs first (^pattern)
         let negative_patterns: Vec<&str> = cli_refspecs
             .iter()
@@ -1076,11 +1108,162 @@ fn append_fetch_reflog(
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
+/// OIDs whose object closure should be copied for this fetch (non-refetch local transport).
+///
+/// When the user passes explicit refspecs, only those sources are roots; otherwise configured
+/// refspecs filter which remote refs participate; if there are no configured refspecs, all
+/// remote heads and tags are roots (Git's default refspec set).
+fn fetch_object_copy_roots(
+    remote_git_dir: &Path,
+    cli_refspecs: &[String],
+    refspecs: &[FetchRefspec],
+    heads: &[(String, ObjectId)],
+    tags: &[(String, ObjectId)],
+) -> Result<Vec<ObjectId>> {
+    let mut roots = Vec::new();
+
+    if !cli_refspecs.is_empty() {
+        let negative_patterns: Vec<&str> = cli_refspecs
+            .iter()
+            .filter_map(|s| s.strip_prefix('^'))
+            .collect();
+        let is_excluded = |refname: &str| -> bool {
+            for pat in &negative_patterns {
+                let full_pat = if pat.starts_with("refs/") {
+                    pat.to_string()
+                } else {
+                    format!("refs/heads/{pat}")
+                };
+                if match_glob_pattern(&full_pat, refname).is_some() || full_pat == refname {
+                    return true;
+                }
+            }
+            false
+        };
+
+        for spec in cli_refspecs {
+            if spec.starts_with('^') {
+                continue;
+            }
+            let spec_clean = spec.strip_prefix('+').unwrap_or(spec.as_str());
+            let src = spec_clean
+                .split_once(':')
+                .map(|(a, _)| a)
+                .unwrap_or(spec_clean);
+            if src.contains('*') {
+                let remote_all_refs = refs::list_refs(remote_git_dir, "refs/")?;
+                for (refname, oid) in &remote_all_refs {
+                    if is_excluded(refname) {
+                        continue;
+                    }
+                    if match_glob_pattern(src, refname).is_some() {
+                        roots.push(*oid);
+                    }
+                }
+                continue;
+            }
+            let remote_ref = resolve_remote_ref_for_fetch_src(remote_git_dir, src)?;
+            let oid = refs::resolve_ref(remote_git_dir, &remote_ref)
+                .with_context(|| format!("couldn't find remote ref '{src}'"))?;
+            roots.push(oid);
+        }
+    } else if refspecs.is_empty() {
+        roots.extend(heads.iter().map(|(_, o)| *o));
+        roots.extend(tags.iter().map(|(_, o)| *o));
+    } else {
+        for (refname, oid) in heads.iter().chain(tags.iter()) {
+            let mut excluded = false;
+            for rs in refspecs {
+                if !rs.negative {
+                    continue;
+                }
+                let pat = &rs.src;
+                if match_glob_pattern(pat, refname).is_some() || pat == refname {
+                    excluded = true;
+                    break;
+                }
+            }
+            if excluded {
+                continue;
+            }
+            if map_ref_through_refspecs(refname, refspecs).is_some() {
+                roots.push(*oid);
+            }
+        }
+    }
+
+    roots.sort_by_key(|o| o.to_hex());
+    roots.dedup();
+    Ok(roots)
+}
+
+/// Resolve a short or full remote ref name for fetch (CLI refspec source side).
+fn resolve_remote_ref_for_fetch_src(remote_git_dir: &Path, src: &str) -> Result<String> {
+    if src.starts_with("refs/") {
+        return Ok(src.to_owned());
+    }
+    let heads_ref = format!("refs/heads/{src}");
+    if refs::resolve_ref(remote_git_dir, &heads_ref).is_ok() {
+        return Ok(heads_ref);
+    }
+    let tags_ref = format!("refs/tags/{src}");
+    if refs::resolve_ref(remote_git_dir, &tags_ref).is_ok() {
+        return Ok(tags_ref);
+    }
+    Ok(heads_ref)
+}
+
 /// Copy all objects (loose + packs) from remote to local.
 /// If `refetch` is true, re-copy objects even if they already exist locally.
 /// Copy objects from a remote git dir to local git dir (public for pull).
 pub fn copy_objects_for_pull(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
     copy_objects(src_git_dir, dst_git_dir, false)
+}
+
+/// Copy objects reachable from `roots` from `src_git_dir` into `dst_git_dir` (loose only).
+///
+/// Used for local `fetch` so the destination does not receive unrelated objects from the
+/// source object database (matching Git's behavior and keeping negotiation tests faithful).
+fn copy_reachable_objects(
+    src_git_dir: &Path,
+    dst_git_dir: &Path,
+    roots: &[ObjectId],
+) -> Result<()> {
+    let src_odb = Odb::new(&src_git_dir.join("objects"));
+    let dst_odb = Odb::new(&dst_git_dir.join("objects"));
+    let mut stack: Vec<ObjectId> = roots.to_vec();
+    let mut seen = HashSet::new();
+
+    while let Some(oid) = stack.pop() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        let obj = src_odb.read(&oid).with_context(|| {
+            format!("missing object {} while copying from remote", oid.to_hex())
+        })?;
+        if !dst_odb.exists(&oid) {
+            dst_odb
+                .write(obj.kind, &obj.data)
+                .with_context(|| format!("write object {}", oid.to_hex()))?;
+        }
+        match obj.kind {
+            ObjectKind::Commit => {
+                let c = parse_commit(&obj.data)?;
+                stack.push(c.tree);
+                stack.extend_from_slice(&c.parents);
+            }
+            ObjectKind::Tree => {
+                for e in parse_tree(&obj.data)? {
+                    stack.push(e.oid);
+                }
+            }
+            ObjectKind::Tag => {
+                stack.push(parse_tag(&obj.data)?.object);
+            }
+            ObjectKind::Blob => {}
+        }
+    }
+    Ok(())
 }
 
 fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path, refetch: bool) -> Result<()> {

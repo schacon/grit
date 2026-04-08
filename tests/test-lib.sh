@@ -353,9 +353,23 @@ test_set_sequence_editor () {
 }
 
 test_config () {
-	local key="$1" val="$2"
-	git config "$key" "$val" &&
-	test_when_finished "git config --unset '$key'"
+	config_dir=
+	if test "$1" = -C
+	then
+		shift
+		config_dir=$1
+		shift
+	fi
+
+	is_worktree=
+	if test "$1" = --worktree
+	then
+		is_worktree=1
+		shift
+	fi
+
+	test_when_finished "test_unconfig ${config_dir:+-C '$config_dir'} ${is_worktree:+--worktree} '$1'" &&
+	git ${config_dir:+-C "$config_dir"} config ${is_worktree:+--worktree} "$@"
 }
 
 test_config_global () {
