@@ -123,7 +123,7 @@
 - [x] t12590-log-format-tformat.sh
 - [ ] t12600-rev-list-not-exclude.sh
 - [ ] t12610-rev-list-all-branches.sh
-- [ ] t12620-rev-parse-resolve-ref.sh
+- [x] t12620-rev-parse-resolve-ref.sh
 - [ ] t12630-rev-parse-is-bare.sh
 - [ ] t12650-config-null-value.sh
 - [ ] t12660-init-shared-perm.sh

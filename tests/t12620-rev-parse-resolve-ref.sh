@@ -6,7 +6,8 @@ cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success 'setup' '
-    grit init repo && cd repo &&
+    grit init repo && (
+    cd repo &&
     git config user.email "t@t.com" && git config user.name "T" &&
     echo one >file.txt && grit add file.txt && grit commit -m "first" &&
     echo two >file2.txt && grit add file2.txt && grit commit -m "second" &&
@@ -15,6 +16,7 @@ test_expect_success 'setup' '
     git tag v2.0 HEAD~1 &&
     git tag v3.0 &&
     git branch feature
+    )
 '
 
 test_expect_success 'rev-parse HEAD resolves to commit hash' '
