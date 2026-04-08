@@ -223,6 +223,9 @@ fn cmd_set(repo: &Repository, args: &SetArgs) -> Result<()> {
     fs::write(&sc_path, &content).context("writing sparse-checkout file")?;
 
     apply_sparse_patterns(repo, &patterns)?;
+    crate::commands::promisor_hydrate::hydrate_sparse_patterns_after_sparse_checkout_update(
+        repo, &patterns, cone,
+    )?;
     Ok(())
 }
 
@@ -258,6 +261,9 @@ fn cmd_add(repo: &Repository, args: &AddArgs) -> Result<()> {
     let content: String = patterns.iter().map(|p| format!("{p}\n")).collect();
     fs::write(&sc_path, &content)?;
     apply_sparse_patterns(repo, &patterns)?;
+    crate::commands::promisor_hydrate::hydrate_sparse_patterns_after_sparse_checkout_update(
+        repo, &patterns, cone,
+    )?;
     Ok(())
 }
 
@@ -400,14 +406,29 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
         }
     }
 
-    if let Some(tree_oid) = head_tree_oid(repo)? {
-        index.try_collapse_sparse_directories(
-            &repo.odb,
-            &tree_oid,
-            patterns,
-            cone_mode,
-            sparse_index_enabled,
-        )?;
+    // In partial clones (`grit-promisor-missing` lists blobs not yet local), sparse
+    // directory collapse would expand excluded subtrees into the index and pull blob
+    // OIDs into scope — breaking `rev-list --missing=print` expectations (t5620).
+    let promisor_marker = repo.git_dir.join("grit-promisor-missing");
+    let skip_collapse = fs::read_to_string(&promisor_marker)
+        .map(|s| {
+            s.lines()
+                .any(|l| l.len() == 40 && l.chars().all(|c| c.is_ascii_hexdigit()))
+        })
+        .unwrap_or(false);
+
+    if !skip_collapse {
+        if let Some(tree_oid) = head_tree_oid(repo)? {
+            index.try_collapse_sparse_directories(
+                &repo.odb,
+                &tree_oid,
+                patterns,
+                cone_mode,
+                sparse_index_enabled,
+            )?;
+        } else {
+            index.sparse_directories = false;
+        }
     } else {
         index.sparse_directories = false;
     }
@@ -417,7 +438,14 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn path_matches_sparse_patterns(path: &str, patterns: &[String], cone_mode: bool) -> bool {
+/// Whether `path` is included in the sparse checkout for the given patterns.
+///
+/// Used by `grit backfill --sparse` to mirror Git's path-walk sparse filtering.
+pub(crate) fn path_matches_sparse_patterns(
+    path: &str,
+    patterns: &[String],
+    cone_mode: bool,
+) -> bool {
     if cone_mode {
         if !path.contains('/') {
             return true;
@@ -454,6 +482,15 @@ fn path_matches_sparse_patterns(path: &str, patterns: &[String], cone_mode: bool
 
         let matches = if let Some(prefix) = normalized.strip_suffix('/') {
             path == prefix || path.starts_with(&format!("{prefix}/"))
+        } else if let Some(tail) = normalized.strip_prefix("**/") {
+            if tail.is_empty() {
+                true
+            } else if crate::pathspec::pathspec_matches(tail, path) {
+                true
+            } else {
+                path.match_indices('/')
+                    .any(|(i, _)| crate::pathspec::pathspec_matches(tail, &path[i + 1..]))
+            }
         } else {
             crate::pathspec::pathspec_matches(normalized, path)
         };
@@ -604,5 +641,27 @@ fn set_sparse_index_config(repo: &Repository, enable: bool) -> Result<()> {
     let value = if enable { "true" } else { "false" };
     config.set("index.sparse", value)?;
     config.write().context("writing repo config")?;
+    Ok(())
+}
+
+/// Initialize sparse-checkout after `clone --sparse` (matches `git clone --sparse`).
+///
+/// Writes `/*` and `!/*/` patterns, enables `core.sparseCheckout` and cone mode.
+/// When `apply_worktree` is true, updates the index and working tree (normal clone).
+pub(crate) fn init_clone_sparse_checkout(repo: &Repository, apply_worktree: bool) -> Result<()> {
+    set_sparse_config(repo, true)?;
+    set_cone_config(repo, true)?;
+
+    let sc_path = sparse_checkout_path(repo);
+    if let Some(parent) = sc_path.parent() {
+        fs::create_dir_all(parent).context("creating info directory")?;
+    }
+
+    let patterns = vec!["/*".to_string(), "!/*/".to_string()];
+    let content: String = patterns.iter().map(|p| format!("{p}\n")).collect();
+    fs::write(&sc_path, &content).context("writing sparse-checkout file")?;
+    if apply_worktree {
+        apply_sparse_patterns(repo, &patterns)?;
+    }
     Ok(())
 }

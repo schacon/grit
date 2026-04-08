@@ -5,7 +5,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::{ConfigFile, ConfigScope};
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::repo::{init_repository, init_repository_separate_git_dir, Repository};
 use std::collections::{HashSet, VecDeque};
@@ -294,7 +294,7 @@ pub fn run(args: Args) -> Result<()> {
     fs::create_dir_all(&target_path)
         .with_context(|| format!("cannot create directory '{}'", target_path.display()))?;
 
-    let template_dir = args.template.as_ref().map(|s| PathBuf::from(s));
+    let template_dir = args.template.as_ref().map(PathBuf::from);
 
     let dest = if let Some(ref sep_git) = args.separate_git_dir {
         if sep_git.exists() && sep_git.read_dir()?.next().is_some() {
@@ -446,8 +446,37 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if partial_blob_none {
+        materialize_blob_none_partial_layout(&dest)
+            .context("materializing partial-clone object layout")?;
         initialize_partial_clone_state(&source, &dest, remote_name, "blob:none")
             .context("initializing partial-clone promisor state")?;
+    }
+
+    // `materialize_blob_none_partial_layout` removes `objects/info/alternates`, so blobs
+    // needed for the initial checkout must be copied into the clone explicitly.
+    if partial_blob_none && !args.bare && !args.no_checkout {
+        let dest_config = ConfigSet::load(Some(&dest.git_dir), true)?;
+        let promisor =
+            crate::commands::promisor_hydrate::find_promisor_source(&dest_config, &dest.git_dir)?;
+        if let Some(ref p) = promisor {
+            if args.sparse {
+                let patterns = vec!["/*".to_string(), "!/*/".to_string()];
+                crate::commands::promisor_hydrate::hydrate_sparse_tip_blobs_from_promisor(
+                    &dest, p, &patterns, true,
+                )
+                .context("hydrating sparse-checkout tip blobs")?;
+                let head_oid = grit_lib::refs::resolve_ref(&dest.git_dir, "HEAD")?;
+                let obj = dest.odb.read(&head_oid).context("reading HEAD for index")?;
+                let commit = parse_commit(&obj.data).context("parsing HEAD for index")?;
+                write_index_from_tree(&dest, &commit.tree)
+                    .context("writing index for sparse clone")?;
+            } else {
+                crate::commands::promisor_hydrate::hydrate_head_tree_blobs_from_promisor(&dest, p)
+                    .context("hydrating HEAD tree blobs")?;
+            }
+        }
+        crate::commands::promisor_hydrate::trim_promisor_marker_to_missing_local(&dest)
+            .context("trimming promisor marker")?;
     }
 
     // Handle --revision: resolve the specified ref in the source repo and set
@@ -459,9 +488,16 @@ pub fn run(args: Args) -> Result<()> {
         fs::write(dest.git_dir.join("HEAD"), format!("{}\n", rev_oid))?;
     }
 
-    // Checkout working tree unless --bare or --no-checkout
-    if !args.bare && !args.no_checkout {
+    // Checkout working tree unless --bare or --no-checkout.
+    // Sparse partial clones already materialize tip files via promisor hydration.
+    if !args.bare && !args.no_checkout && !(partial_blob_none && args.sparse) {
         checkout_head(&dest).context("checking out HEAD")?;
+    }
+
+    // Sparse-checkout: after full checkout for non-partial; after sparse hydration for partial.
+    if args.sparse && !args.bare {
+        crate::commands::sparse_checkout::init_clone_sparse_checkout(&dest, !args.no_checkout)
+            .context("initializing sparse-checkout")?;
     }
 
     if !args.quiet {
@@ -1061,6 +1097,117 @@ fn setup_branch_tracking(git_dir: &Path, branch: &str, remote_name: &str) -> Res
     Ok(())
 }
 
+/// Turn a full local clone into a `blob:none`-style layout: commits and trees are
+/// stored loose, pack files and alternates are removed, and reachable blob loose
+/// files are deleted so `exists_local` matches a true partial clone.
+fn materialize_blob_none_partial_layout(dest: &Repository) -> Result<()> {
+    let alt = dest.git_dir.join("objects/info/alternates");
+    let _ = fs::remove_file(&alt);
+
+    let (skeleton, blobs) = collect_reachable_skeleton_and_blobs(dest)?;
+
+    for oid in &skeleton {
+        let obj = match dest.odb.read(oid) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        let _ = dest.odb.write(obj.kind, &obj.data)?;
+    }
+
+    let pack_dir = dest.git_dir.join("objects/pack");
+    if pack_dir.is_dir() {
+        for entry in fs::read_dir(&pack_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                let _ = fs::remove_file(&path);
+            }
+        }
+    }
+
+    for oid in &blobs {
+        let hex = oid.to_hex();
+        if hex.len() < 3 {
+            continue;
+        }
+        let loose = dest.git_dir.join("objects").join(&hex[..2]).join(&hex[2..]);
+        let _ = fs::remove_file(loose);
+    }
+
+    Ok(())
+}
+
+/// Walk all refs and partition reachable objects into commits+trees vs blobs.
+fn collect_reachable_skeleton_and_blobs(
+    repo: &Repository,
+) -> Result<(HashSet<ObjectId>, HashSet<ObjectId>)> {
+    let mut skeleton = HashSet::new();
+    let mut blobs = HashSet::new();
+    let mut seen_commits = HashSet::new();
+    let mut seen_trees = HashSet::new();
+    let mut seen_tags = HashSet::new();
+    let mut queue = VecDeque::new();
+
+    if let Ok(head) = grit_lib::refs::resolve_ref(&repo.git_dir, "HEAD") {
+        queue.push_back(head);
+    }
+    if let Ok(refs) = grit_lib::refs::list_refs(&repo.git_dir, "refs/") {
+        for (_, oid) in refs {
+            queue.push_back(oid);
+        }
+    }
+
+    while let Some(oid) = queue.pop_front() {
+        let obj = match repo.odb.read(&oid) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        match obj.kind {
+            ObjectKind::Commit => {
+                if !seen_commits.insert(oid) {
+                    continue;
+                }
+                skeleton.insert(oid);
+                let commit = parse_commit(&obj.data)?;
+                for p in &commit.parents {
+                    queue.push_back(*p);
+                }
+                queue.push_back(commit.tree);
+            }
+            ObjectKind::Tree => {
+                if !seen_trees.insert(oid) {
+                    continue;
+                }
+                skeleton.insert(oid);
+                for entry in parse_tree(&obj.data)? {
+                    if entry.mode == 0o160000 {
+                        continue;
+                    }
+                    if (entry.mode & 0o170000) == 0o040000 {
+                        queue.push_back(entry.oid);
+                    } else {
+                        blobs.insert(entry.oid);
+                    }
+                }
+            }
+            ObjectKind::Tag => {
+                if !seen_tags.insert(oid) {
+                    continue;
+                }
+                skeleton.insert(oid);
+                if let Ok(tag) = parse_tag(&obj.data) {
+                    queue.push_back(tag.object);
+                }
+            }
+            ObjectKind::Blob => {
+                blobs.insert(oid);
+            }
+        }
+    }
+
+    Ok((skeleton, blobs))
+}
+
 /// Initialize internal promisor metadata for `--filter=blob:none` clones.
 ///
 /// This records reachable blob OIDs in a marker file so commands can emulate
@@ -1071,10 +1218,8 @@ fn initialize_partial_clone_state(
     remote_name: &str,
     filter_spec: &str,
 ) -> Result<()> {
-    let mut missing: Vec<String> = collect_reachable_blob_oids(source)?
-        .into_iter()
-        .map(|oid| oid.to_hex())
-        .collect();
+    let blobs = collect_reachable_blob_oids_from_dest_refs(source, dest)?;
+    let mut missing: Vec<String> = blobs.into_iter().map(|oid| oid.to_hex()).collect();
     missing.sort();
     missing.dedup();
 
@@ -1101,40 +1246,59 @@ fn initialize_partial_clone_state(
     Ok(())
 }
 
-/// Collect all blob OIDs reachable from HEAD and `refs/*` in the source repo.
-fn collect_reachable_blob_oids(repo: &Repository) -> Result<HashSet<ObjectId>> {
+/// Collect blob OIDs reachable from the destination's refs, reading object contents
+/// from `source` (full object store). Matches Git's reachable blob set for partial
+/// clones where the destination may not yet have blob bytes locally.
+fn collect_reachable_blob_oids_from_dest_refs(
+    source: &Repository,
+    dest: &Repository,
+) -> Result<HashSet<ObjectId>> {
     let mut blobs = HashSet::new();
     let mut seen_commits = HashSet::new();
     let mut seen_trees = HashSet::new();
+    let mut seen_tags = HashSet::new();
     let mut queue = VecDeque::new();
 
-    if let Ok(head) = grit_lib::refs::resolve_ref(&repo.git_dir, "HEAD") {
+    // Seed only from `HEAD` (same default revision as `git rev-list` for this clone).
+    if let Ok(head) = grit_lib::refs::resolve_ref(&dest.git_dir, "HEAD") {
         queue.push_back(head);
-    }
-    if let Ok(refs) = grit_lib::refs::list_refs(&repo.git_dir, "refs/") {
-        for (_, oid) in refs {
-            queue.push_back(oid);
-        }
     }
 
     while let Some(oid) = queue.pop_front() {
-        if !seen_commits.insert(oid) {
-            continue;
-        }
-        let obj = match repo.odb.read(&oid) {
+        let obj = match source.odb.read(&oid) {
             Ok(obj) => obj,
             Err(_) => continue,
         };
         match obj.kind {
             ObjectKind::Commit => {
+                if !seen_commits.insert(oid) {
+                    continue;
+                }
                 let commit = parse_commit(&obj.data)?;
-                queue.extend(commit.parents);
-                collect_tree_blob_oids(repo, commit.tree, &mut seen_trees, &mut blobs)?;
+                for p in &commit.parents {
+                    queue.push_back(*p);
+                }
+                queue.push_back(commit.tree);
             }
             ObjectKind::Tree => {
-                collect_tree_blob_oids(repo, oid, &mut seen_trees, &mut blobs)?;
+                if !seen_trees.insert(oid) {
+                    continue;
+                }
+                for entry in parse_tree(&obj.data)? {
+                    if entry.mode == 0o160000 {
+                        continue;
+                    }
+                    if (entry.mode & 0o170000) == 0o040000 {
+                        queue.push_back(entry.oid);
+                    } else {
+                        blobs.insert(entry.oid);
+                    }
+                }
             }
             ObjectKind::Tag => {
+                if !seen_tags.insert(oid) {
+                    continue;
+                }
                 if let Ok(tag) = parse_tag(&obj.data) {
                     queue.push_back(tag.object);
                 }
@@ -1146,36 +1310,6 @@ fn collect_reachable_blob_oids(repo: &Repository) -> Result<HashSet<ObjectId>> {
     }
 
     Ok(blobs)
-}
-
-/// Recursively collect blob OIDs from a tree.
-fn collect_tree_blob_oids(
-    repo: &Repository,
-    tree_oid: ObjectId,
-    seen_trees: &mut HashSet<ObjectId>,
-    blobs: &mut HashSet<ObjectId>,
-) -> Result<()> {
-    if !seen_trees.insert(tree_oid) {
-        return Ok(());
-    }
-    let obj = match repo.odb.read(&tree_oid) {
-        Ok(obj) => obj,
-        Err(_) => return Ok(()),
-    };
-    if obj.kind != ObjectKind::Tree {
-        return Ok(());
-    }
-    for entry in parse_tree(&obj.data)? {
-        if entry.mode == 0o160000 {
-            continue;
-        }
-        if (entry.mode & 0o170000) == 0o040000 {
-            collect_tree_blob_oids(repo, entry.oid, seen_trees, blobs)?;
-        } else {
-            blobs.insert(entry.oid);
-        }
-    }
-    Ok(())
 }
 
 /// Determine which branch HEAD should point to.

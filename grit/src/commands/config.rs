@@ -42,6 +42,10 @@ pub struct Args {
     #[arg(short = 'f', long = "file", global = true)]
     pub file: Option<PathBuf>,
 
+    /// Run as if started in this directory (affects repository discovery).
+    #[arg(short = 'C', value_name = "PATH", global = true)]
+    pub change_dir: Option<PathBuf>,
+
     /// Read config from a blob object (e.g. HEAD:.gitmodules).
     #[arg(long = "blob", value_name = "BLOB_ISH")]
     pub blob: Option<String>,
@@ -1164,7 +1168,14 @@ pub fn resolve_git_dir_pub() -> Option<PathBuf> {
 /// Resolve the git directory (best-effort; returns None outside a repo).
 fn resolve_git_dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("GIT_DIR") {
-        return Some(PathBuf::from(dir));
+        let p = PathBuf::from(dir);
+        if p.is_absolute() {
+            return Some(p);
+        }
+        if let Ok(cwd) = std::env::current_dir() {
+            return Some(cwd.join(p));
+        }
+        return Some(p);
     }
     // Walk up from cwd looking for .git
     let cwd = std::env::current_dir().ok()?;

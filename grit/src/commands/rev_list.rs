@@ -5,6 +5,7 @@ use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId};
 use grit_lib::pack;
+use grit_lib::promisor::read_promisor_missing_oids;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
     collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, render_commit,
@@ -79,6 +80,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut disk_usage_format: Option<DiskUsageFormat> = None;
     let mut show_parents = false;
     let mut not_mode = false;
+    let mut missing_explicit = false;
 
     let mut i = 0usize;
     while i < args.args.len() {
@@ -131,6 +133,7 @@ pub fn run(args: Args) -> Result<()> {
                     });
                 }
                 _ if arg.starts_with("--missing=") => {
+                    missing_explicit = true;
                     let value = arg.trim_start_matches("--missing=");
                     options.missing_action = match value {
                         "error" => MissingAction::Error,
@@ -408,6 +411,12 @@ pub fn run(args: Args) -> Result<()> {
         i += 1;
     }
 
+    // `git rev-list --objects` skips missing blobs (partial clones); only `--missing=error`
+    // should hard-fail when an object is absent.
+    if options.objects && !missing_explicit {
+        options.missing_action = MissingAction::Allow;
+    }
+
     if options.objects {
         let depth = match object_depth_limit {
             Some(d) => d,
@@ -570,9 +579,6 @@ pub fn run(args: Args) -> Result<()> {
         }
         return Ok(());
     }
-    if options.quiet {
-        return Ok(());
-    }
 
     let print_object = |oid: &grit_lib::objects::ObjectId, path: &str| {
         if options.no_object_names {
@@ -589,7 +595,7 @@ pub fn run(args: Args) -> Result<()> {
     let object_type_commit_oid_only = options.objects
         && matches!(&options.output_mode, OutputMode::OidOnly)
         && object_type_filter_commit_only(options.filter.as_ref());
-    {
+    if !options.quiet {
         let mut obj_offset = 0usize;
         for (ci, oid) in result.commits.iter().enumerate() {
             let mut prefix = String::new();
@@ -716,9 +722,13 @@ pub fn run(args: Args) -> Result<()> {
                 println!("?{text}");
             }
         }
-        for oid in read_promisor_missing_marker(&repo.git_dir) {
-            if seen_missing.insert(oid.clone()) {
-                println!("?{oid}");
+        for oid in read_promisor_missing_oids(&repo.git_dir) {
+            if repo.odb.exists_local(&oid) {
+                continue;
+            }
+            let text = oid.to_hex();
+            if seen_missing.insert(text.clone()) {
+                println!("?{text}");
             }
         }
     }
@@ -1101,19 +1111,4 @@ fn visible_parents_for_output(
         )?;
     }
     Ok(visible)
-}
-
-/// Read pseudo-missing object IDs from the internal promisor marker.
-fn read_promisor_missing_marker(git_dir: &std::path::Path) -> Vec<String> {
-    let marker = git_dir.join("grit-promisor-missing");
-    let content = match std::fs::read_to_string(&marker) {
-        Ok(content) => content,
-        Err(_) => return Vec::new(),
-    };
-    content
-        .lines()
-        .map(str::trim)
-        .filter(|line| line.len() == 40 && line.chars().all(|ch| ch.is_ascii_hexdigit()))
-        .map(ToOwned::to_owned)
-        .collect()
 }
