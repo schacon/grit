@@ -559,7 +559,7 @@ t3103-ls-tree-misc	t3	yes	10	10	0	true	ok	0
 t3104-ls-tree-format	t3	yes	19	16	3	false	ok	0
 t3105-ls-tree-output	t3	yes	60	22	38	false	ok	0
 t3200-branch	t3	yes	167	84	83	false	ok	0
-t3201-branch-contains	t3	yes	24	15	9	false	ok	0
+t3201-branch-contains	t3	yes	24	24	0	true	ok	0
 t3202-show-branch	t3	yes	27	4	23	false	ok	0
 t3203-branch-output	t3	yes	41	15	26	false	ok	0
 t3204-branch-name-interpretation	t3	yes	16	9	7	false	ok	0
