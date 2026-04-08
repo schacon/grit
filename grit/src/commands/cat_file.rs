@@ -4,6 +4,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::error::Error as LibError;
+use grit_lib::error::Result as LibResult;
 use grit_lib::pack;
 use grit_lib::rev_list::{self, ObjectFilter};
 use std::io::{self, BufRead, Write};
@@ -1135,7 +1136,20 @@ fn print_batch_entry(
         }
     }
 
-    match resolve_object_with_mode(repo, obj_str) {
+    match resolve_object_with_mode_lib(repo, obj_str) {
+        Err(LibError::InvalidRef(ref msg)) if msg.contains("ambiguous") => {
+            write!(out, "{display_spec} ambiguous")?;
+            out.write_all(eol)?;
+            let treeish = obj_str.split(':').next().unwrap_or(obj_str).trim();
+            if treeish.chars().all(|c| c.is_ascii_hexdigit()) && (4..=40).contains(&treeish.len()) {
+                let (_, peel) = rev_parse::parse_peel_suffix(treeish);
+                if let Ok(lines) = rev_parse::ambiguous_object_hint_lines(repo, treeish, peel) {
+                    for line in lines {
+                        eprintln!("{line}");
+                    }
+                }
+            }
+        }
         Err(_) => {
             write!(out, "{display_spec} missing")?;
             out.write_all(eol)?;
@@ -1347,19 +1361,26 @@ fn pretty_print(kind: &ObjectKind, data: &[u8]) -> Result<()> {
 ///
 /// Uses the full rev-parse machinery for resolution.
 fn resolve_object(repo: &Repository, obj_str: &str) -> Result<ObjectId> {
-    rev_parse::resolve_revision(repo, obj_str).map_err(|e| anyhow::anyhow!("{}", e))
+    resolve_object_lib(repo, obj_str).map_err(|e| anyhow::anyhow!("{}", e))
+}
+
+fn resolve_object_lib(repo: &Repository, obj_str: &str) -> LibResult<ObjectId> {
+    rev_parse::resolve_revision(repo, obj_str)
 }
 
 /// Resolve an object reference and also return the file mode if the reference
 /// is a tree path (e.g., `HEAD:file` or `<tree_oid>:path`).
-fn resolve_object_with_mode(repo: &Repository, obj_str: &str) -> Result<(ObjectId, Option<u32>)> {
+fn resolve_object_with_mode_lib(
+    repo: &Repository,
+    obj_str: &str,
+) -> LibResult<(ObjectId, Option<u32>)> {
     // Check if this is a treeish:path reference
     if let Some(colon_pos) = obj_str.find(':') {
         let treeish_part = &obj_str[..colon_pos];
         let path_part = &obj_str[colon_pos + 1..];
         if !treeish_part.is_empty() && !path_part.is_empty() {
             // Resolve the treeish part
-            if let Ok(treeish_oid) = rev_parse::resolve_revision(repo, treeish_part) {
+            if let Ok(treeish_oid) = resolve_object_lib(repo, treeish_part) {
                 // Get the tree oid
                 let object = repo.odb.read(&treeish_oid)?;
                 let tree_oid = match object.kind {
@@ -1370,7 +1391,7 @@ fn resolve_object_with_mode(repo: &Repository, obj_str: &str) -> Result<(ObjectI
                     ObjectKind::Tree => treeish_oid,
                     _ => {
                         // Fall back to regular resolution
-                        let oid = resolve_object(repo, obj_str)?;
+                        let oid = resolve_object_lib(repo, obj_str)?;
                         return Ok((oid, None));
                     }
                 };
@@ -1396,6 +1417,10 @@ fn resolve_object_with_mode(repo: &Repository, obj_str: &str) -> Result<(ObjectI
     }
 
     // No tree path or couldn't resolve mode
-    let oid = resolve_object(repo, obj_str)?;
+    let oid = resolve_object_lib(repo, obj_str)?;
     Ok((oid, None))
+}
+
+fn resolve_object_with_mode(repo: &Repository, obj_str: &str) -> Result<(ObjectId, Option<u32>)> {
+    resolve_object_with_mode_lib(repo, obj_str).map_err(|e| anyhow::anyhow!("{}", e))
 }

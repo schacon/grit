@@ -4,6 +4,12 @@
 # and tests that configure extensions.objectformat work.
 test_hash_algo=${test_hash_algo:-sha1}
 export test_hash_algo
+# test-lib.sh does not set upstream-style hash prereqs; satisfy `test_have_prereq SHA1`
+# for scripts that source this helper (e.g. t1512) when using the default algorithm.
+if test "$test_hash_algo" = sha1
+then
+	test_set_prereq SHA1
+fi
 
 # Match git/t/oid-info entries used by t1006 et al. for $(test_oid deadbeef).
 if test -n "${TEST_OID_CACHE_FILE:-}" && test -d "$(dirname "$TEST_OID_CACHE_FILE")"

@@ -16,7 +16,7 @@ use time::{format_description, OffsetDateTime, PrimitiveDateTime, UtcOffset};
 
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rev_parse::{resolve_revision_for_commit_tree_tree, resolve_revision_for_range_end};
 
 /// Arguments for `grit commit-tree`.
 #[derive(Debug, ClapArgs)]
@@ -45,13 +45,15 @@ pub struct Args {
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
-    let tree_oid = resolve_tree_ish(&repo, &args.tree)?;
+    let tree_oid = resolve_revision_for_commit_tree_tree(&repo, &args.tree)
+        .with_context(|| format!("not a valid object name: '{}'", args.tree))?;
 
     // Git omits duplicate parents (e.g. `-p P -p P` records P once).
     let mut parent_oids: Vec<ObjectId> = Vec::new();
     let mut seen: HashSet<ObjectId> = HashSet::new();
     for p in &args.parents {
-        let oid = resolve_tree_ish(&repo, p)?;
+        let oid = resolve_revision_for_range_end(&repo, p)
+            .with_context(|| format!("not a valid object name: '{p}'"))?;
         if seen.insert(oid) {
             parent_oids.push(oid);
         }
@@ -246,9 +248,4 @@ fn current_unix_timestamp() -> String {
 fn local_tz_string() -> String {
     // Simple: always UTC for now; a full implementation would read localtime
     "+0000".to_owned()
-}
-
-fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
-    // Try full rev-parse first (handles HEAD^{tree}, tags, etc.)
-    resolve_revision(repo, s).with_context(|| format!("not a valid object name: '{s}'"))
 }
