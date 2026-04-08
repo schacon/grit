@@ -3,6 +3,9 @@
 
 . "$TEST_DIRECTORY"/lib-midx.sh
 
+# Upstream-style `test_commit_bulk` (fast-import); overrides test-lib.sh stub.
+. "$TEST_DIRECTORY"/test-lib-commit-bulk.sh
+
 objdir=.git/objects
 midx=$objdir/pack/multi-pack-index
 
