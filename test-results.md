@@ -2,6 +2,7 @@
 
 **Updated:** 2026-04-08
 
+- `./scripts/run-tests.sh t13180-log-patch-stat.sh`: 35/35 passing (`grit log` oneline/graph/decorate/skip/max-count/reverse/format; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t10560-switch-create-detach.sh`: 28/28 passing (`switch -- <branch>` disambiguation; invalid `-c`/`-C`/`--orphan` branch names rejected like Git; harness CSV/dashboards refreshed).
 - `cargo test -p grit-lib --lib`: 110/110 passing.
 - `./scripts/run-tests.sh t5403-post-checkout-hook.sh`: 14/14 passing (`post-checkout` hook on checkout/rebase/clone; clone default branch resolution with detached `HEAD` and `GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME`; harness CSV/dashboards refreshed).
