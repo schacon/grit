@@ -599,7 +599,7 @@ commit → check it off → move on.
 - [ ] `t5523-push-upstream` ███████████░░░░░░░░░ 10/17 (7 left) — push with --set-upstream
 - [ ] `t5312-prune-corruption` ███████░░░░░░░░░░░░░ 4/11 (7 left) — 
 
-- [ ] `t5409-colorize-remote-messages` ███████░░░░░░░░░░░░░ 4/11 (7 left) — remote messages are colorized on the client
+- [x] `t5409-colorize-remote-messages` — remote messages are colorized on the client (Git `sideband.c` semantics; harness `test_decode_color` matches upstream `awk` decoder for combined SGR)
 - [ ] `t5571-pre-push-hook` ███████░░░░░░░░░░░░░ 4/11 (7 left) — check pre-push hooks
 - [ ] `t5313-pack-bounds-checks` ████░░░░░░░░░░░░░░░░ 2/9 (7 left) — bounds-checking of access to mmapped on-disk file formats
 - [ ] `t5617-clone-submodules-remote` ████░░░░░░░░░░░░░░░░ 2/9 (7 left) — Test cloning repos with submodules using remote-tracking branches
