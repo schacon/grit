@@ -176,7 +176,7 @@ pub fn resolve_head(git_dir: &Path) -> Result<HeadState> {
             .unwrap_or(&refname)
             .to_owned();
 
-        // Try to resolve the ref to an OID
+        // Resolve the branch tip, or `None` when the branch is unborn (symref target missing).
         let oid = resolve_ref(git_dir, &refname)?;
 
         Ok(HeadState::Branch {

@@ -30,6 +30,23 @@ pub fn write_flush(w: &mut impl Write) -> io::Result<()> {
     write!(w, "0000")
 }
 
+/// Write one pkt-line with arbitrary bytes (no trailing newline added).
+pub fn write_packet_raw(w: &mut impl Write, payload: &[u8]) -> io::Result<()> {
+    let total = payload
+        .len()
+        .checked_add(4)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "pkt-line payload too large"))?;
+    if total > 65520 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "pkt-line exceeds maximum size",
+        ));
+    }
+    write!(w, "{:04x}", total)?;
+    w.write_all(payload)?;
+    Ok(())
+}
+
 /// Write a delimiter packet (`0001`).
 pub fn write_delim(w: &mut impl Write) -> io::Result<()> {
     write!(w, "0001")

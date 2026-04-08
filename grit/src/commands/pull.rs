@@ -3,6 +3,7 @@
 //! Equivalent to running `grit fetch` followed by `grit merge` (or
 //! `grit rebase` with `--rebase`).  Only local transports are supported.
 
+use crate::protocol_wire;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
@@ -127,35 +128,43 @@ pub fn run(args: Args) -> Result<()> {
         bail!("no tracking branch configured and no branch specified");
     };
 
+    let client_proto = protocol_wire::effective_client_protocol_version();
+    let use_fast_path_copy = local_remote_path.is_some() && client_proto == 0;
+
     if let Some(remote_path) = local_remote_path {
-        // Open remote repo (bare or non-bare)
-        let remote_repo = open_repository_at_path(&remote_path)?;
+        if use_fast_path_copy {
+            // Open remote repo (bare or non-bare)
+            let remote_repo = open_repository_at_path(&remote_path)?;
 
-        // Copy objects from remote to local
-        super::fetch::copy_objects_for_pull(&remote_repo.git_dir, &repo.git_dir)?;
+            // Copy objects from remote to local
+            super::fetch::copy_objects_for_pull(&remote_repo.git_dir, &repo.git_dir)?;
 
-        // Determine which branch to merge: try the specified merge_branch on the remote,
-        // falling back to the remote's HEAD
-        let remote_oid = if let Ok(oid) =
-            refs::resolve_ref(&remote_repo.git_dir, &format!("refs/heads/{merge_branch}"))
-        {
-            oid
-        } else if let Ok(oid) = refs::resolve_ref(&remote_repo.git_dir, "HEAD") {
-            oid
-        } else {
-            bail!("bad revision '{merge_branch}': could not resolve in remote");
-        };
+            // Determine which branch to merge: try the specified merge_branch on the remote,
+            // falling back to the remote's HEAD
+            let remote_oid = if let Ok(oid) =
+                refs::resolve_ref(&remote_repo.git_dir, &format!("refs/heads/{merge_branch}"))
+            {
+                oid
+            } else if let Ok(oid) = refs::resolve_ref(&remote_repo.git_dir, "HEAD") {
+                oid
+            } else {
+                bail!("bad revision '{merge_branch}': could not resolve in remote");
+            };
 
-        // Write FETCH_HEAD for compatibility
-        let fetch_head = format!("{}\t\t{}\n", remote_oid.to_hex(), merge_branch);
-        std::fs::write(repo.git_dir.join("FETCH_HEAD"), &fetch_head)?;
+            // Write FETCH_HEAD for compatibility
+            let fetch_head = format!("{}\t\t{}\n", remote_oid.to_hex(), merge_branch);
+            std::fs::write(repo.git_dir.join("FETCH_HEAD"), &fetch_head)?;
 
-        let res = do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &merge_branch);
-        if res.is_ok() {
-            maybe_update_submodules_after_pull(&args, &config)?;
+            let res = do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &merge_branch);
+            if res.is_ok() {
+                maybe_update_submodules_after_pull(&args, &config)?;
+            }
+            return res;
         }
-        return res;
-    } else if is_local_dot {
+        // protocol.version ≥ 1: fall through to `git fetch` so packet traces match upstream.
+    }
+
+    if is_local_dot {
         // "." remote — merge the configured upstream ref (e.g. `refs/heads/main`), not a
         // synthetic `refs/remotes/./main` remote-tracking ref (matches git pull).
         let remote_oid = grit_lib::rev_parse::resolve_revision(&repo, &merge_branch)
