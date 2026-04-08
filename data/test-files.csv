@@ -732,7 +732,7 @@ t4050-diff	t4	yes	219	211	8	false	ok	0
 t4050-diff-histogram	t4	yes	10	3	7	false	ok	0
 t4051-diff-function-context	t4	yes	42	12	30	false	ok	0
 t4051-diff-function-name	t4	yes	27	7	20	false	ok	0
-t4052-stat-output	t4	yes	89	17	72	false	ok	0
+t4052-stat-output	t4	yes	89	89	0	true	ok	0
 t4053-diff-no-index	t4	skip	41	0	0	false	ok	0
 t4054-diff-bogus-tree	t4	yes	14	8	6	false	ok	0
 t4055-diff-context	t4	yes	10	7	3	false	ok	0
