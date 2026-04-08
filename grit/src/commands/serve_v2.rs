@@ -387,7 +387,8 @@ fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()
             .ok_or_else(|| anyhow::anyhow!("pack-objects stdin"))?;
         crate::pack_objects_upload::write_pack_objects_revs_stdin(&mut pin, &wants, &have_commits)?;
     }
-    crate::pack_objects_upload::drain_pack_objects_child(child, out, false)?;
+    // Protocol v2 fetch streams the pack inside side-band-64k (matches `git upload-pack`).
+    crate::pack_objects_upload::drain_pack_objects_child(child, out, true)?;
     pkt_line::write_flush(out)?;
     Ok(())
 }

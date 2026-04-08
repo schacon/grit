@@ -17,6 +17,7 @@ mod commands;
 mod dotfile;
 mod explicit_exit;
 mod fetch_transport;
+mod file_upload_pack_v2;
 mod git_commit_encoding;
 mod git_path;
 mod grit_exe;
@@ -3531,8 +3532,12 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                             if url.is_empty() {
                                 bail!("usage: test-tool bundle-uri ls-remote <url>");
                             }
-                            let pairs = crate::http_bundle_uri::fetch_bundle_uri_lines_http(url)
-                                .with_context(|| "could not get the bundle-uri list")?;
+                            let pairs = if url.starts_with("file://") {
+                                crate::file_upload_pack_v2::fetch_bundle_uri_lines_file(url)
+                            } else {
+                                crate::http_bundle_uri::fetch_bundle_uri_lines_http(url)
+                            }
+                            .with_context(|| "could not get the bundle-uri list")?;
                             crate::http_bundle_uri::print_bundle_list_from_pairs(&pairs);
                             Ok(())
                         }
