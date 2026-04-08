@@ -2685,16 +2685,39 @@ fn preprocess_diff_args(rest: &[String]) -> Vec<String> {
     result
 }
 
-/// Preprocess log arguments: convert `-<N>` shorthand to `-n <N>`.
+/// Preprocess log arguments: convert `-<N>` shorthand to `-n <N>`, and make bare `-L` visible to clap.
 fn preprocess_log_args(rest: &[String]) -> Vec<String> {
     let mut result = Vec::new();
-    for arg in rest {
+    let mut i = 0usize;
+    while i < rest.len() {
+        let arg = &rest[i];
+        if let Some(spec) = arg.strip_prefix("-L:") {
+            result.push("-L".to_string());
+            result.push(spec.to_string());
+            i += 1;
+            continue;
+        }
+        if arg == "-L" {
+            result.push("-L".to_string());
+            let next = rest.get(i + 1);
+            let need_placeholder = match next {
+                None => true,
+                Some(n) if n.starts_with('-') => true,
+                Some(_) => false,
+            };
+            if need_placeholder {
+                result.push(String::new());
+            }
+            i += 1;
+            continue;
+        }
         if arg.starts_with('-') && arg.len() > 1 && arg[1..].chars().all(|c| c.is_ascii_digit()) {
             result.push("-n".to_string());
             result.push(arg[1..].to_string());
         } else {
             result.push(arg.clone());
         }
+        i += 1;
     }
     result
 }
