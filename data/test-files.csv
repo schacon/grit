@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -534,7 +534,7 @@ t3001-ls-files-others-exclude	t3	yes	27	10	17	false	ok	0
 t3002-ls-files-dashpath	t3	yes	6	6	0	true	ok	0
 t3003-ls-files-exclude	t3	yes	7	7	0	true	ok	0
 t3004-ls-files-basic	t3	yes	6	6	0	true	ok	0
-t3005-ls-files-relative	t3	yes	4	1	3	false	ok	0
+t3005-ls-files-relative	t3	yes	4	4	0	true	ok	0
 t3006-ls-files-long	t3	yes	3	3	0	true	ok	0
 t3007-ls-files-recurse-submodules	t3	yes	24	1	23	false	ok	0
 t3008-ls-files-lazy-init-name-hash	t3	yes	1	0	1	false	ok	0
