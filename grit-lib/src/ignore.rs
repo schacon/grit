@@ -675,8 +675,13 @@ impl SparsePattern {
     }
 }
 
-fn sparse_pattern_matches_path(p: &SparsePattern, pathname: &str) -> bool {
-    if p.directory_only {
+/// Whether `p` matches `pathname` for sparse-checkout evaluation.
+///
+/// `as_directory` mirrors Git's `dtype == DT_DIR` pass when walking parent paths:
+/// patterns with a trailing `/` in the sparse file (`PATTERN_FLAG_MUSTBEDIR`) only
+/// participate in those iterations.
+fn sparse_pattern_matches(p: &SparsePattern, pathname: &str, as_directory: bool) -> bool {
+    if p.directory_only && !as_directory {
         return false;
     }
     if !p.has_slash && !p.anchored {
@@ -685,6 +690,10 @@ fn sparse_pattern_matches_path(p: &SparsePattern, pathname: &str) -> bool {
     } else {
         wildmatch(p.body.as_bytes(), pathname.as_bytes(), WM_PATHNAME)
     }
+}
+
+fn sparse_pattern_matches_path(p: &SparsePattern, pathname: &str) -> bool {
+    sparse_pattern_matches(p, pathname, false)
 }
 
 /// Parse sparse-checkout lines from a blob (same syntax as `info/sparse-checkout`).
@@ -699,6 +708,61 @@ pub fn parse_sparse_patterns_from_blob(content: &str) -> Vec<String> {
         patterns.push(t.to_owned());
     }
     patterns
+}
+
+fn sparse_list_last_match(
+    pathname: &str,
+    as_directory: bool,
+    parsed: &[SparsePattern],
+) -> Option<bool> {
+    for p in parsed.iter().rev() {
+        if sparse_pattern_matches(p, pathname, as_directory) {
+            return Some(!p.negative);
+        }
+    }
+    None
+}
+
+/// Non-cone sparse-checkout inclusion, matching Git's `path_in_sparse_checkout`.
+///
+/// Walks from the full path toward parents (as in `dir.c:path_in_sparse_checkout_1`):
+/// each step uses last-match-wins over patterns; `UNDECIDED` falls back to the parent
+/// directory until the decision is made or the path is rejected at the top level.
+#[must_use]
+pub fn path_in_sparse_checkout(path: &str, lines: &[String]) -> bool {
+    if path.is_empty() {
+        return true;
+    }
+    let parsed: Vec<SparsePattern> = lines
+        .iter()
+        .filter_map(|l| SparsePattern::from_line(l))
+        .collect();
+    if parsed.is_empty() {
+        return true;
+    }
+
+    let mut end = path.len();
+    let mut as_directory = false;
+
+    loop {
+        let pathname = &path[..end];
+
+        match sparse_list_last_match(pathname, as_directory, &parsed) {
+            Some(true) => return true,
+            Some(false) => return false,
+            None => {
+                if end == 0 {
+                    return false;
+                }
+                if let Some(slash) = path[..end].rfind('/') {
+                    end = slash;
+                } else {
+                    end = 0;
+                }
+                as_directory = true;
+            }
+        }
+    }
 }
 
 /// Last-match-wins sparse semantics for `rev-list --filter=sparse:oid=…` (non-cone).

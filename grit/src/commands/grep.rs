@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::index::MODE_GITLINK;
+use grit_lib::index::{MODE_GITLINK, MODE_TREE};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
@@ -518,15 +518,11 @@ fn grep_cached(
     } else {
         load_diff_attrs_from_index(repo)
     };
-    let mut seen = std::collections::HashSet::new();
+    let mut seen_stage0_paths = std::collections::HashSet::new();
     let mut found_any = false;
 
     for entry in &index.entries {
         let path_str = String::from_utf8_lossy(&entry.path).to_string();
-        if !seen.insert(path_str.clone()) {
-            continue;
-        }
-
         let display_path = format!("{path_prefix}{path_str}");
 
         // Pathspec filtering is relative to the superproject
@@ -537,6 +533,12 @@ fn grep_cached(
 
         // Submodule entry (gitlink)
         if is_submodule {
+            if entry.stage() != 0 {
+                continue;
+            }
+            if !seen_stage0_paths.insert(path_str.clone()) {
+                continue;
+            }
             if args.recurse_submodules {
                 if let Some(work_tree) = &repo.work_tree {
                     let sub_path = work_tree.join(&path_str);
@@ -565,6 +567,70 @@ fn grep_cached(
                 continue;
             }
         }
+
+        if entry.stage() != 0 && entry.mode != MODE_GITLINK && entry.mode != MODE_TREE {
+            let obj = match repo.odb.read(&entry.oid) {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            let content_is_binary = obj.data.iter().take(8000).any(|&b| b == 0);
+            let binary_override = check_binary_override(&diff_attrs, &path_str);
+            let is_binary = match binary_override {
+                BinaryOverride::ForceBinary => true,
+                BinaryOverride::ForceText => false,
+                BinaryOverride::None => content_is_binary,
+            };
+            if is_binary && args.ignore_binary {
+                continue;
+            }
+            if is_binary && !args.text_mode {
+                if args.count || args.files_with_matches || args.files_without_match || args.quiet {
+                    let content = String::from_utf8_lossy(&obj.data);
+                    if grep_content(
+                        &display_path,
+                        &content,
+                        matchers,
+                        args,
+                        None,
+                        need_sep,
+                        out,
+                        all_match,
+                    )? {
+                        found_any = true;
+                    }
+                } else {
+                    let content = String::from_utf8_lossy(&obj.data);
+                    let has_match = matchers.iter().any(|re| re.is_match(&content));
+                    if has_match {
+                        writeln!(out, "Binary file {} matches", display_path)?;
+                        found_any = true;
+                    }
+                }
+            } else {
+                let content = String::from_utf8_lossy(&obj.data);
+                if grep_content(
+                    &display_path,
+                    &content,
+                    matchers,
+                    args,
+                    None,
+                    need_sep,
+                    out,
+                    all_match,
+                )? {
+                    found_any = true;
+                }
+            }
+            continue;
+        }
+
+        if entry.stage() != 0 {
+            continue;
+        }
+        if !seen_stage0_paths.insert(path_str.clone()) {
+            continue;
+        }
+
         let obj = match repo.odb.read(&entry.oid) {
             Ok(o) => o,
             Err(_) => continue,
@@ -640,15 +706,12 @@ fn grep_worktree(
 
     let index = repo.load_index().context("loading index")?;
     let diff_attrs = load_diff_attrs(work_tree);
-    let mut seen = std::collections::HashSet::new();
+    let mut seen_stage0 = std::collections::HashSet::new();
+    let mut unmerged_worktree_grepped = std::collections::HashSet::new();
     let mut found_any = false;
 
     for entry in &index.entries {
         let path_str = String::from_utf8_lossy(&entry.path).to_string();
-        if !seen.insert(path_str.clone()) {
-            continue;
-        }
-
         let display_path = format!("{path_prefix}{path_str}");
 
         // Pathspec filtering is relative to the superproject
@@ -659,8 +722,18 @@ fn grep_worktree(
 
         // Submodule entry (gitlink)
         if is_submodule {
+            if entry.stage() != 0 {
+                continue;
+            }
+            if !seen_stage0.insert(path_str.clone()) {
+                continue;
+            }
             if args.recurse_submodules {
                 let sub_path = work_tree.join(&path_str);
+                let sub_present = sub_path.join(".git").try_exists().unwrap_or(false);
+                if entry.skip_worktree() && !sub_present {
+                    continue;
+                }
                 if let Ok(sub_repo) = open_submodule_repo(&sub_path) {
                     if grep_worktree(
                         &sub_repo,
@@ -688,13 +761,147 @@ fn grep_worktree(
         }
 
         let full_path = work_tree.join(&path_str);
+
+        // Merge conflicts: grep the work tree file once (matches git grep).
+        if entry.stage() != 0 && entry.mode != MODE_GITLINK && entry.mode != MODE_TREE {
+            if !unmerged_worktree_grepped.insert(path_str.clone()) {
+                continue;
+            }
+            let content = match std::fs::read(&full_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let content_is_binary = content.iter().take(8000).any(|&b| b == 0);
+            let binary_override = check_binary_override(&diff_attrs, &path_str);
+            let is_binary = match binary_override {
+                BinaryOverride::ForceBinary => true,
+                BinaryOverride::ForceText => false,
+                BinaryOverride::None => content_is_binary,
+            };
+            if is_binary && args.ignore_binary {
+                continue;
+            }
+            if is_binary && !args.text_mode {
+                if args.count || args.files_with_matches || args.files_without_match || args.quiet {
+                    let content_str = String::from_utf8_lossy(&content);
+                    if grep_content(
+                        &display_path,
+                        &content_str,
+                        matchers,
+                        args,
+                        None,
+                        need_sep,
+                        out,
+                        all_match,
+                    )? {
+                        found_any = true;
+                    }
+                } else {
+                    let content_str = String::from_utf8_lossy(&content);
+                    let has_match = matchers.iter().any(|re| re.is_match(&content_str));
+                    if has_match {
+                        writeln!(out, "Binary file {} matches", display_path)?;
+                        found_any = true;
+                    }
+                }
+            } else {
+                let content_str = String::from_utf8_lossy(&content);
+                if grep_content(
+                    &display_path,
+                    &content_str,
+                    matchers,
+                    args,
+                    None,
+                    need_sep,
+                    out,
+                    all_match,
+                )? {
+                    found_any = true;
+                }
+            }
+            continue;
+        }
+
+        if entry.stage() != 0 {
+            continue;
+        }
+        if !seen_stage0.insert(path_str.clone()) {
+            continue;
+        }
+
+        // CE_VALID alone uses the index blob. With SKIP_WORKTREE, git never takes the
+        // cached-only path: absent paths are skipped; present paths are read from disk
+        // (t7817 sparse + manual file, and assume-unchanged + sparse without a file).
+        let in_index = entry.assume_unchanged() && !entry.skip_worktree();
+        if in_index {
+            if entry.intent_to_add() {
+                continue;
+            }
+            let obj = match repo.odb.read(&entry.oid) {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            let content_is_binary = obj.data.iter().take(8000).any(|&b| b == 0);
+            let binary_override = check_binary_override(&diff_attrs, &path_str);
+            let is_binary = match binary_override {
+                BinaryOverride::ForceBinary => true,
+                BinaryOverride::ForceText => false,
+                BinaryOverride::None => content_is_binary,
+            };
+            if is_binary && args.ignore_binary {
+                continue;
+            }
+            if is_binary && !args.text_mode {
+                if args.count || args.files_with_matches || args.files_without_match || args.quiet {
+                    let content_str = String::from_utf8_lossy(&obj.data);
+                    if grep_content(
+                        &display_path,
+                        &content_str,
+                        matchers,
+                        args,
+                        None,
+                        need_sep,
+                        out,
+                        all_match,
+                    )? {
+                        found_any = true;
+                    }
+                } else {
+                    let content_str = String::from_utf8_lossy(&obj.data);
+                    let has_match = matchers.iter().any(|re| re.is_match(&content_str));
+                    if has_match {
+                        writeln!(out, "Binary file {} matches", display_path)?;
+                        found_any = true;
+                    }
+                }
+            } else {
+                let content_str = String::from_utf8_lossy(&obj.data);
+                if grep_content(
+                    &display_path,
+                    &content_str,
+                    matchers,
+                    args,
+                    None,
+                    need_sep,
+                    out,
+                    all_match,
+                )? {
+                    found_any = true;
+                }
+            }
+            continue;
+        }
+
+        if entry.skip_worktree() && !full_path.exists() && !full_path.is_symlink() {
+            continue;
+        }
+
         let content = match std::fs::read(&full_path) {
             Ok(c) => c,
-            Err(_) => continue, // deleted but still in index
+            Err(_) => continue,
         };
 
         let content_is_binary = content.iter().take(8000).any(|&b| b == 0);
-        // Apply diff attribute override
         let binary_override = check_binary_override(&diff_attrs, &path_str);
         let is_binary = match binary_override {
             BinaryOverride::ForceBinary => true,

@@ -7,6 +7,7 @@
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::config::{ConfigFile, ConfigScope};
+use grit_lib::ignore::path_in_sparse_checkout as path_in_sparse_checkout_lines;
 use grit_lib::index::MODE_TREE;
 use grit_lib::objects::parse_commit;
 use grit_lib::repo::Repository;
@@ -146,6 +147,7 @@ pub(crate) fn finalize_sparse_clone(repo: &Repository, apply_to_index: bool) -> 
     Ok(())
 }
 
+/// Run `grit sparse-checkout`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
@@ -323,10 +325,13 @@ fn cmd_init(repo: &Repository, args: &InitArgs) -> Result<()> {
         .and_then(|v| v.parse::<bool>().ok())
         .unwrap_or(true);
 
+    // When sparse was off (e.g. after `sparse-checkout disable`), honor the saved
+    // `core.sparseCheckoutCone` value instead of defaulting to cone — matches Git and
+    // t7817 (non-cone superproject must stay non-cone across disable/init).
     let cone = match cone_opt {
         Some(c) => c,
         None if was_sparse => prev_cone,
-        None => true,
+        None => prev_cone,
     };
 
     set_sparse_config(repo, true)?;
@@ -346,6 +351,10 @@ fn cmd_init(repo: &Repository, args: &InitArgs) -> Result<()> {
         return Ok(());
     }
 
+    // When the sparse-checkout file was removed (e.g. `sparse-checkout disable`),
+    // Git recreates the default `/*` + `!/*/` pair before applying (see
+    // `sparse_checkout_init` in sparse-checkout.c). A lone `/*` would leave every
+    // top-level directory included, so `!b` in t7817 would never take effect.
     if head_tree_oid(repo)?.is_none() {
         write_sparse_file(repo, "/*\n!/*/\n")?;
         return Ok(());
@@ -1165,7 +1174,10 @@ pub(crate) fn path_matches_sparse_patterns(
     patterns: &[String],
     cone_mode: bool,
 ) -> bool {
-    grit_lib::sparse_checkout::path_matches_sparse_patterns(path, patterns, cone_mode)
+    if cone_mode {
+        return grit_lib::sparse_checkout::path_matches_sparse_patterns(path, patterns, cone_mode);
+    }
+    path_in_sparse_checkout_lines(path, patterns)
 }
 
 fn list_files_under_dir(dir: &Path, work_tree: &Path) -> Result<Vec<String>> {
