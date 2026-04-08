@@ -25,7 +25,9 @@ use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::{self, append_reflog};
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision, resolve_upstream_symbolic_name};
+use grit_lib::rev_parse::{
+    abbreviate_object_id, resolve_revision, resolve_upstream_symbolic_name, upstream_suffix_info,
+};
 use grit_lib::state::{resolve_head, HeadState};
 
 /// Count parallel checkout worker processes to spawn for trace2 tests (`t2080`).
@@ -362,6 +364,35 @@ pub fn run(mut args: Args) -> Result<()> {
         args.rest = new_rest;
     }
 
+    // Clap can populate `new_branch` / `force_branch` while still leaving the branch name as the
+    // first trailing arg, so `rest` is `[name, start]` instead of `[start]` (t1507).
+    if let Some(ref nb) = args.new_branch {
+        if args.rest.len() >= 2 && args.rest[0] == *nb {
+            args.rest.remove(0);
+        } else if args.rest.len() >= 3 {
+            let dup = matches!(
+                args.rest[0].as_str(),
+                "-b" | "--new-branch" | "-c" | "--create"
+            ) && args.rest[1] == *nb;
+            if dup {
+                args.rest.drain(0..2);
+            }
+        }
+    }
+    if let Some(ref nb) = args.force_branch {
+        if args.rest.len() >= 2 && args.rest[0] == *nb {
+            args.rest.remove(0);
+        } else if args.rest.len() >= 3 {
+            let dup = matches!(
+                args.rest[0].as_str(),
+                "-B" | "--force-new-branch" | "-C" | "--force-create"
+            ) && args.rest[1] == *nb;
+            if dup {
+                args.rest.drain(0..2);
+            }
+        }
+    }
+
     // `git switch` forwards `--orphan`, `--detach`, and `-d` via positional `rest`;
     // clap does not parse them there, so peel them off before treating `rest` as refs/paths.
     {
@@ -436,6 +467,49 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Resolve @{-N} in start point if present
     let target = target.map(|t| resolve_at_minus(&repo, &t).unwrap_or(t));
+
+    // `checkout -b new start` copies tracking from `start` when it is an upstream expression
+    // (e.g. `my-side@{u}`), even if `branch.autoSetupMerge` is not `always` (t1507).
+    if let (Some(raw_new_branch), Some(start)) = (args.new_branch.as_ref(), target.as_deref()) {
+        if resolve_upstream_symbolic_name(&repo, start).is_ok() {
+            let resolved_new_branch: String;
+            let new_branch_name: &str = if raw_new_branch.starts_with("@{") {
+                match refs::resolve_at_n_branch(&repo.git_dir, raw_new_branch) {
+                    Ok(name) => {
+                        resolved_new_branch = name;
+                        &resolved_new_branch
+                    }
+                    Err(_) => raw_new_branch.as_str(),
+                }
+            } else {
+                raw_new_branch.as_str()
+            };
+            if !paths.is_empty() || args.rest.len() > 1 {
+                if args.track.is_some() {
+                    bail!("'--track' cannot be used with updating paths");
+                }
+                bail!("Cannot update paths and switch to branch at the same time.");
+            }
+            let pre_head_branch = if args.track.is_some() {
+                match resolve_head(&repo.git_dir) {
+                    Ok(HeadState::Branch { short_name, .. }) => Some(short_name),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            let effective_target = Some(start).or(pre_head_branch.as_deref());
+            let result =
+                create_and_switch_branch(&repo, new_branch_name, Some(start), switch_force);
+            if result.is_ok() && !args.no_track {
+                // Upstream start points must copy tracking even when `branch.autoSetupMerge` is not
+                // `always` (Git behavior; t1507).
+                let track = args.track.as_deref().or(Some("direct"));
+                maybe_setup_tracking(&repo, new_branch_name, effective_target, track)?;
+            }
+            return result;
+        }
+    }
 
     // Case: checkout -p (interactive patch mode)
     // --patch and --overlay are incompatible
@@ -643,6 +717,23 @@ pub fn run(mut args: Args) -> Result<()> {
             Ok(oid) => return detach_head_explicit(&repo, &oid, switch_force),
             Err(e) => bail!("cannot detach HEAD at '{}': {}", target, e),
         }
+    }
+
+    // `checkout other@{u}` / `checkout @{u}` — switch to the configured upstream branch (local
+    // branch or detach at remote-tracking tip), matching Git.
+    if !args.detach && upstream_suffix_info(&target).is_some() {
+        let full = resolve_upstream_symbolic_name(&repo, &target)
+            .with_context(|| format!("unknown upstream revision '{target}'"))?;
+        if let Some(rest) = full.strip_prefix("refs/heads/") {
+            let branch_ref = format!("refs/heads/{rest}");
+            return switch_branch(&repo, rest, &branch_ref, switch_force);
+        }
+        if full.strip_prefix("refs/remotes/").is_some() {
+            let oid = refs::resolve_ref(&repo.git_dir, &full)
+                .with_context(|| format!("cannot resolve '{full}'"))?;
+            return detach_head(&repo, &oid, switch_force);
+        }
+        bail!("cannot checkout upstream: unsupported ref '{full}'");
     }
 
     // Try as a branch first

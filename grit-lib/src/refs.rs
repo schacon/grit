@@ -252,8 +252,12 @@ pub fn delete_ref(git_dir: &Path, refname: &str) -> Result<()> {
     // Also remove the entry from packed-refs if present
     remove_packed_ref(&storage_dir, refname)?;
 
-    let log_path = storage_dir.join("logs").join(refname);
-    let _ = fs::remove_file(&log_path);
+    // Keep `logs/refs/heads/<name>` when deleting a branch so `branch -D` + later recreate can
+    // retain history (matches upstream expectations in t1507 `log -g` with `@{now}`).
+    if !refname.starts_with("refs/heads/") {
+        let log_path = storage_dir.join("logs").join(refname);
+        let _ = fs::remove_file(&log_path);
+    }
 
     Ok(())
 }

@@ -198,7 +198,8 @@ pub fn abbreviate_ref_name(full_name: &str) -> String {
 
 /// Returns `(base_without_suffix, is_push)` when `spec` ends with `@{upstream}` / `@{u}` / `@{push}`
 /// (case-insensitive for upstream forms). `is_push` is true only for `@{push}`.
-fn upstream_suffix_info(spec: &str) -> Option<(&str, bool)> {
+#[must_use]
+pub fn upstream_suffix_info(spec: &str) -> Option<(&str, bool)> {
     let lower = spec.to_ascii_lowercase();
     if lower.ends_with("@{push}") {
         let base = &spec[..spec.len() - 7];
@@ -1625,6 +1626,66 @@ fn resolve_at_minus_token_to_branch(repo: &Repository, token: &str) -> Result<Op
     Ok(Some(resolve_at_minus_to_branch(repo, n)?))
 }
 
+/// Ref whose reflog `git log -g` should walk for a revision like `other@{u}` or `main@{1}`.
+///
+/// Returns `None` when `spec` is not a reflog-chain form (no `@{` step after the prefix).
+pub fn reflog_walk_refname(repo: &Repository, spec: &str) -> Result<Option<String>> {
+    let Some((prefix, steps)) = split_reflog_at_chain(spec) else {
+        return Ok(None);
+    };
+
+    let prefix_resolved = if let Some(b) = resolve_at_minus_token_to_branch(repo, &prefix)? {
+        b
+    } else {
+        prefix.clone()
+    };
+
+    let mut current_spec = if prefix_resolved.is_empty() {
+        if let Ok(Some(b)) = refs::read_head(&repo.git_dir) {
+            if let Some(short) = b.strip_prefix("refs/heads/") {
+                short.to_owned()
+            } else {
+                "HEAD".to_owned()
+            }
+        } else {
+            "HEAD".to_owned()
+        }
+    } else {
+        prefix_resolved
+    };
+
+    let last_reflog_peel = steps
+        .iter()
+        .rposition(|s| matches!(s, AtStep::Index(_) | AtStep::Date(_) | AtStep::Now));
+
+    let limit = last_reflog_peel.unwrap_or(steps.len());
+    for step in steps.iter().take(limit) {
+        match step {
+            AtStep::Upstream => {
+                let base = if current_spec == "@" {
+                    "HEAD"
+                } else {
+                    current_spec.as_str()
+                };
+                let full = resolve_upstream_symbolic_name(repo, &format!("{base}@{{u}}"))?;
+                current_spec = full;
+            }
+            AtStep::Push => {
+                let base = if current_spec == "@" {
+                    "HEAD"
+                } else {
+                    current_spec.as_str()
+                };
+                let full = resolve_upstream_symbolic_name(repo, &format!("{base}@{{push}}"))?;
+                current_spec = full;
+            }
+            AtStep::Now | AtStep::Index(_) | AtStep::Date(_) => {}
+        }
+    }
+
+    Ok(Some(dwim_refname(repo, current_spec.as_str())))
+}
+
 /// Try to resolve `ref@{...}` with optional chained `@{...}` steps (e.g. `other@{u}@{1}`).
 fn try_resolve_reflog_index(repo: &Repository, spec: &str) -> Result<Option<ObjectId>> {
     let Some((prefix, steps)) = split_reflog_at_chain(spec) else {
@@ -1727,6 +1788,14 @@ fn parse_reflog_entry_timestamp(entry: &crate::reflog::ReflogEntry) -> Option<i6
     }
 }
 
+/// Parse a reflog date selector string (e.g. `yesterday`, `2005-04-07`) to a Unix timestamp.
+///
+/// Used by `git log -g` display to match Git's `ref@{date}` formatting in tests.
+#[must_use]
+pub fn reflog_date_selector_timestamp(s: &str) -> Option<i64> {
+    approxidate(s)
+}
+
 /// Simple approximate date parser for reflog date lookups.
 /// Handles formats like "2001-09-17", "3.hot.dogs.on.2001-09-17", etc.
 fn approxidate(s: &str) -> Option<i64> {
@@ -1737,6 +1806,16 @@ fn approxidate(s: &str) -> Option<i64> {
         .unwrap_or(0);
     let lower = s.trim().to_ascii_lowercase();
     if lower == "now" {
+        // Match Git's test harness: `test_tick` sets GIT_COMMITTER_DATE; `@{now}` must use that
+        // clock, not wall time (t1507 `log -g other@{u}@{now}`).
+        if let Ok(raw) =
+            std::env::var("GIT_COMMITTER_DATE").or_else(|_| std::env::var("GIT_AUTHOR_DATE"))
+        {
+            let mut it = raw.split_whitespace();
+            if let Some(ts) = it.next().and_then(|p| p.parse::<i64>().ok()) {
+                return Some(ts);
+            }
+        }
         return Some(now_ts);
     }
     // Handle relative time: "N.unit.ago" or "N unit ago"

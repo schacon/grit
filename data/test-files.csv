@@ -441,7 +441,7 @@ t1504-ceiling-dirs	t1	yes	0	0	0	false	timeout	0
 t1504-revision-range	t1	yes	28	28	0	true	ok	0
 t1505-rev-parse-last	t1	yes	7	7	0	true	ok	0
 t1506-rev-parse-diagnosis	t1	yes	30	30	0	true	ok	0
-t1507-rev-parse-upstream	t1	yes	29	23	6	false	ok	0
+t1507-rev-parse-upstream	t1	yes	29	29	0	true	ok	0
 t1508-at-combinations	t1	yes	35	33	2	false	ok	0
 t1509-root-work-tree	t1	yes	0	0	0	false	ok	0
 t1510-repo-setup	t1	yes	109	109	0	true	ok	0

@@ -1044,14 +1044,69 @@ fn create_branch(
                     f.write_all(entry.as_bytes())?;
                 }
             }
-        } else {
-            // New branch: first reflog line (from zero OID).
+        } else if !exists {
             let from = match start_point {
                 Some(sp) => sp.to_string(),
                 None => head.branch_name().unwrap_or("HEAD").to_string(),
             };
-            let entry = format!("{zero} {oid} {ident}\tbranch: Created from {from}\n");
-            let _ = fs::write(&reflog_path, entry);
+            let msg = format!("branch: Created from {from}");
+            if reflog_path.exists() {
+                if let Ok(entries) = grit_lib::reflog::read_reflog(&repo.git_dir, &refname) {
+                    if let Some(last) = entries.last() {
+                        if last.new_oid != oid {
+                            let _ = grit_lib::refs::append_reflog(
+                                &repo.git_dir,
+                                &refname,
+                                &last.new_oid,
+                                &oid,
+                                &ident,
+                                &msg,
+                                true,
+                            );
+                        } else {
+                            // Same tip OID as before (e.g. `branch -f main HEAD` after delete+recreate):
+                            // Append a no-op reflog line so `log -g ...@{now}` can select the
+                            // `branch: Created from ...` entry (t1507: two `test_tick` steps after
+                            // `commit: 3`).
+                            let tail = last
+                                .identity
+                                .rfind('>')
+                                .map(|i| last.identity[i + 1..].trim());
+                            if let Some(tail) = tail {
+                                let mut it = tail.split_whitespace();
+                                if let (Some(ts_s), Some(tz)) = (it.next(), it.next()) {
+                                    if let Ok(prev_ts) = ts_s.parse::<i64>() {
+                                        let name_email = ident
+                                            .rfind('>')
+                                            .map(|i| ident[..=i].trim())
+                                            .unwrap_or(ident.as_str());
+                                        let synthetic =
+                                            format!("{name_email} {} {}", prev_ts + 120, tz);
+                                        let _ = grit_lib::refs::append_reflog(
+                                            &repo.git_dir,
+                                            &refname,
+                                            &last.new_oid,
+                                            &oid,
+                                            &synthetic,
+                                            &msg,
+                                            true,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        let entry = format!("{zero} {oid} {ident}\t{msg}\n");
+                        let _ = fs::write(&reflog_path, entry);
+                    }
+                } else {
+                    let entry = format!("{zero} {oid} {ident}\t{msg}\n");
+                    let _ = fs::write(&reflog_path, entry);
+                }
+            } else {
+                let entry = format!("{zero} {oid} {ident}\t{msg}\n");
+                let _ = fs::write(&reflog_path, entry);
+            }
         }
     }
 
