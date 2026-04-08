@@ -26,7 +26,13 @@ pub struct Args {
     pub remote: Option<String>,
 
     /// Refspec(s) to fetch (e.g. "main", "main:refs/heads/from-one").
-    #[arg(value_name = "REFSPEC")]
+    ///
+    /// Negative refspecs start with `^` and must not be parsed as flags.
+    #[arg(
+        value_name = "REFSPEC",
+        allow_hyphen_values = true,
+        allow_negative_numbers = true
+    )]
     pub refspecs: Vec<String>,
 
     /// Fetch all configured remotes.
@@ -81,6 +87,10 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
+    /// Show detailed progress (Git: same as non-quiet for local transport).
+    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
+    pub verbose: u8,
+
     /// Number of parallel children for fetching (accepted but ignored).
     #[arg(short = 'j', long = "jobs", value_name = "N")]
     pub jobs: Option<usize>,
@@ -104,6 +114,9 @@ pub struct Args {
     /// Allow updating the current branch head (normally refused).
     #[arg(long)]
     pub update_head_ok: bool,
+    /// Rewrite positive refspec destinations under `refs/prefetch/` (Git maintenance prefetch).
+    #[arg(long)]
+    pub prefetch: bool,
     /// Update remote-tracking refs after fetch.
     #[arg(long = "update-refs")]
     pub update_refs: bool,
@@ -264,14 +277,43 @@ fn fetch_remote(
         )
     })?;
 
-    // If command-line refspecs were provided, use those; otherwise use config
-    let cli_refspecs = &args.refspecs;
     let fetch_key = format!("remote.{remote_name}.fetch");
-    let refspecs = if cli_refspecs.is_empty() {
-        collect_refspecs(config, &fetch_key)
+    let mut configured_refspecs = collect_refspecs(config, &fetch_key);
+    let had_configured_fetch = !configured_refspecs.is_empty();
+    let user_passed_cli_refspecs = !args.refspecs.is_empty();
+
+    let mut effective_cli_refspecs = if user_passed_cli_refspecs {
+        args.refspecs.clone()
     } else {
-        Vec::new() // we'll handle CLI refspecs specially below
+        Vec::new()
     };
+
+    if args.prefetch {
+        if user_passed_cli_refspecs {
+            let mut specs = parse_cli_fetch_refspecs(&effective_cli_refspecs);
+            apply_prefetch_to_refspecs(&mut specs);
+            effective_cli_refspecs = specs.iter().map(fetch_refspec_to_cli_string).collect();
+        } else {
+            apply_prefetch_to_refspecs(&mut configured_refspecs);
+        }
+    }
+
+    let cli_refspecs: &[String] = if user_passed_cli_refspecs {
+        &effective_cli_refspecs
+    } else {
+        &args.refspecs
+    };
+
+    let refspecs = if user_passed_cli_refspecs {
+        Vec::new()
+    } else {
+        configured_refspecs.clone()
+    };
+
+    let prefetch_left_no_positive = args.prefetch
+        && effective_cli_refspecs.is_empty()
+        && (user_passed_cli_refspecs || had_configured_fetch);
+    let use_default_remote_tracking = refspecs.is_empty() && !prefetch_left_no_positive;
 
     // Enumerate remote refs (or receive them from upload-pack transport)
     let use_skipping = config
@@ -284,9 +326,18 @@ fn fetch_remote(
         config.get(&key)
     });
 
-    // Local fetch with skipping negotiator uses the upload-pack protocol (matches Git's tests).
-    let use_upload_pack_negotiation =
-        use_skipping && !crate::ssh_transport::is_configured_ssh_url(&url);
+    // Local fetch with skipping negotiator uses upload-pack for configured/default fetches.
+    // Explicit command-line refspecs (including negative `^` patterns) are handled only on the
+    // direct local path — upload-pack negotiation does not build FETCH_HEAD for those (t5582).
+    let use_upload_pack_negotiation = use_skipping
+        && !crate::ssh_transport::is_configured_ssh_url(&url)
+        && !user_passed_cli_refspecs;
+
+    let upload_pack_refspecs: &[String] = if prefetch_left_no_positive {
+        &[]
+    } else {
+        cli_refspecs
+    };
 
     let (remote_heads, remote_tags) = if use_upload_pack_negotiation {
         crate::protocol::check_protocol_allowed("file", Some(git_dir))?;
@@ -294,7 +345,7 @@ fn fetch_remote(
             git_dir,
             &remote_path,
             upload_pack_cmd.as_deref(),
-            cli_refspecs,
+            upload_pack_refspecs,
         )?
     } else {
         let heads = refs::list_refs(&remote_repo.git_dir, "refs/heads/")?;
@@ -302,8 +353,11 @@ fn fetch_remote(
         // Copy objects from remote → local. Match Git: only copy the closure of refs this
         // fetch would update (CLI refspecs or configured/default refspecs), not every ref
         // on the remote (which would mirror unrelated branches into the destination ODB).
-        let object_copy_roots =
-            fetch_object_copy_roots(&remote_repo.git_dir, cli_refspecs, &refspecs, &heads, &tags)?;
+        let object_copy_roots = if prefetch_left_no_positive {
+            fetch_object_copy_roots(&remote_repo.git_dir, &[], &[], &heads, &tags)?
+        } else {
+            fetch_object_copy_roots(&remote_repo.git_dir, cli_refspecs, &refspecs, &heads, &tags)?
+        };
         if args.refetch {
             copy_objects(&remote_repo.git_dir, git_dir, true)
                 .context("copying objects from remote")?;
@@ -328,9 +382,17 @@ fn fetch_remote(
         write_shallow_info(git_dir, &remote_heads, &remote_repo, depth)?;
     }
 
-    // Determine the destination prefix for remote-tracking refs
-    // Default: refs/heads/* → refs/remotes/<remote>/*
-    let dst_prefix = format!("refs/remotes/{remote_name}/");
+    // Prune namespace: URL/path remotes with explicit refspecs update refs outside
+    // refs/remotes/<name>/; prune must cover those destinations (Git behavior).
+    let is_url_remote = url_override.is_some();
+    let prune_namespace =
+        (args.prune || args.prune_tags) && is_url_remote && user_passed_cli_refspecs;
+    let dst_prefix = if prune_namespace {
+        longest_common_ref_prefix_from_cli_positive(cli_refspecs)
+            .unwrap_or_else(|| "refs/".to_string())
+    } else {
+        format!("refs/remotes/{remote_name}/")
+    };
 
     // Track which remote-tracking refs we updated (for prune)
     let mut updated_refs: Vec<String> = Vec::new();
@@ -344,7 +406,7 @@ fn fetch_remote(
 
     // Upload-pack negotiation already honored CLI refspecs via `collect_wants`; the object-less
     // `refs::resolve_ref` path below would fail for tag-only names like `to_fetch`.
-    if !cli_refspecs.is_empty() && !use_upload_pack_negotiation {
+    if user_passed_cli_refspecs && !prefetch_left_no_positive && !use_upload_pack_negotiation {
         // Collect negative refspecs first (^pattern)
         let negative_patterns: Vec<&str> = cli_refspecs
             .iter()
@@ -359,19 +421,10 @@ fn fetch_remote(
             }
         }
 
-        // Helper closure to check if a ref is excluded by negative refspecs
         let is_excluded = |refname: &str| -> bool {
-            for pat in &negative_patterns {
-                let full_pat = if pat.starts_with("refs/") {
-                    pat.to_string()
-                } else {
-                    format!("refs/heads/{pat}")
-                };
-                if match_glob_pattern(&full_pat, refname).is_some() || full_pat == refname {
-                    return true;
-                }
-            }
-            false
+            negative_patterns
+                .iter()
+                .any(|pat| ref_excluded_by_negative_pattern(pat, refname))
         };
 
         // Pre-check: detect conflicting CLI refspec mappings
@@ -470,12 +523,25 @@ fn fetch_remote(
             if src.contains('*') {
                 let remote_all_refs = refs::list_refs(&remote_repo.git_dir, "refs/")?;
                 for (refname, remote_oid) in &remote_all_refs {
-                    if is_excluded(refname) {
-                        continue;
-                    }
                     if let Some(matched) = match_glob_pattern(&src, refname) {
                         let local_ref = dst.replacen('*', matched, 1);
+                        if is_excluded(refname) {
+                            // Negative refspec: do not update, but remote ref still exists — keep
+                            // local destination out of prune (matches Git's fetch --prune).
+                            if !updated_refs.contains(&local_ref) {
+                                updated_refs.push(local_ref.clone());
+                            }
+                            continue;
+                        }
+                        if !updated_refs.contains(&local_ref) {
+                            updated_refs.push(local_ref.clone());
+                        }
                         let old_oid = read_ref_oid(git_dir, &local_ref);
+                        let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+                        fetch_head_entries.push(format!(
+                            "{}\tnot-for-merge\tbranch '{branch}' of {url}",
+                            remote_oid,
+                        ));
                         if old_oid.as_ref() == Some(remote_oid) {
                             continue;
                         }
@@ -504,7 +570,6 @@ fn fetch_remote(
                                 .strip_prefix("refs/heads/")
                                 .or_else(|| local_ref.strip_prefix("refs/tags/"))
                                 .unwrap_or(&local_ref);
-                            let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
                             match old_oid {
                                 None => eprintln!(" * [new branch]      {branch:<17} -> {short}"),
                                 Some(old) => eprintln!(
@@ -514,13 +579,27 @@ fn fetch_remote(
                                 ),
                             }
                         }
-
-                        // Build FETCH_HEAD entry
-                        let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
-                        fetch_head_entries.push(format!(
-                            "{}\tnot-for-merge\tbranch '{}' of {url}",
-                            remote_oid, branch,
-                        ));
+                    }
+                }
+                // Negative refspec + --prune: remote refs excluded by `^` are not updated, but if
+                // the remote deletes such a ref we must not prune the stale local copy (Git).
+                if args.prune && !negative_patterns.is_empty() && dst.contains('*') {
+                    if let Some((dst_pre, _)) = dst.split_once('*') {
+                        if dst_pre.ends_with('/') {
+                            if let Ok(locals) = refs::list_refs(git_dir, dst_pre) {
+                                for (local_ref, _) in locals {
+                                    let Some(matched) = match_glob_pattern(&dst, &local_ref) else {
+                                        continue;
+                                    };
+                                    let remote_src = src.replacen('*', matched, 1);
+                                    if is_excluded(&remote_src)
+                                        && !updated_refs.contains(&local_ref)
+                                    {
+                                        updated_refs.push(local_ref);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 // Also copy symbolic refs for the matched pattern
@@ -552,6 +631,9 @@ fn fetch_remote(
                 } else {
                     format!("refs/heads/{dst}")
                 };
+                if !updated_refs.contains(&local_ref) {
+                    updated_refs.push(local_ref.clone());
+                }
 
                 let old_oid = read_ref_oid(git_dir, &local_ref);
 
@@ -678,7 +760,7 @@ fn fetch_remote(
             let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
 
             // Map through refspecs if configured, otherwise use default mapping
-            let local_ref = if refspecs.is_empty() {
+            let local_ref = if use_default_remote_tracking {
                 format!("{dst_prefix}{branch}")
             } else {
                 match map_ref_through_refspecs(refname, &refspecs) {
@@ -837,11 +919,22 @@ fn fetch_remote(
 
     // Write FETCH_HEAD (default branch first, then not-for-merge entries)
     if !fetch_head_entries.is_empty() {
-        // Sort so entries without "not-for-merge" come first
+        fn fetch_head_branch_name(line: &str) -> &str {
+            if let Some(i) = line.find("branch '") {
+                let rest = &line[i + "branch '".len()..];
+                if let Some(end) = rest.find('\'') {
+                    return &rest[..end];
+                }
+            }
+            line
+        }
+        // Sort: merge candidates first, then by ref name (Git orders FETCH_HEAD stably).
         fetch_head_entries.sort_by(|a, b| {
             let a_nfm = a.contains("not-for-merge");
             let b_nfm = b.contains("not-for-merge");
-            a_nfm.cmp(&b_nfm)
+            a_nfm
+                .cmp(&b_nfm)
+                .then_with(|| fetch_head_branch_name(a).cmp(fetch_head_branch_name(b)))
         });
         let fetch_head_path = git_dir.join("FETCH_HEAD");
         let content = fetch_head_entries.join("\n") + "\n";
@@ -1170,17 +1263,9 @@ fn fetch_object_copy_roots(
             .filter_map(|s| s.strip_prefix('^'))
             .collect();
         let is_excluded = |refname: &str| -> bool {
-            for pat in &negative_patterns {
-                let full_pat = if pat.starts_with("refs/") {
-                    pat.to_string()
-                } else {
-                    format!("refs/heads/{pat}")
-                };
-                if match_glob_pattern(&full_pat, refname).is_some() || full_pat == refname {
-                    return true;
-                }
-            }
-            false
+            negative_patterns
+                .iter()
+                .any(|pat| ref_excluded_by_negative_pattern(pat, refname))
         };
 
         for spec in cli_refspecs {
@@ -1214,17 +1299,9 @@ fn fetch_object_copy_roots(
         roots.extend(tags.iter().map(|(_, o)| *o));
     } else {
         for (refname, oid) in heads.iter().chain(tags.iter()) {
-            let mut excluded = false;
-            for rs in refspecs {
-                if !rs.negative {
-                    continue;
-                }
-                let pat = &rs.src;
-                if match_glob_pattern(pat, refname).is_some() || pat == refname {
-                    excluded = true;
-                    break;
-                }
-            }
+            let excluded = refspecs
+                .iter()
+                .any(|rs| rs.negative && ref_excluded_by_negative_pattern(&rs.src, refname));
             if excluded {
                 continue;
             }
@@ -1496,7 +1573,161 @@ fn write_shallow_info(
     Ok(())
 }
 
+/// Returns true if `refname` is excluded by a negative refspec pattern (without the leading `^`).
+///
+/// Patterns that start with `refs/` are matched against `refname` as written (glob or exact).
+/// Unqualified patterns are matched only against `refname` itself — Git does **not** prepend
+/// `refs/heads/` to the pattern (see t5582 "does not expand prefix").
+fn ref_excluded_by_negative_pattern(pattern: &str, refname: &str) -> bool {
+    match_glob_pattern(pattern, refname).is_some() || pattern == refname
+}
+
+fn ref_excluded_by_fetch_refspecs(refname: &str, refspecs: &[FetchRefspec]) -> bool {
+    refspecs
+        .iter()
+        .any(|rs| rs.negative && ref_excluded_by_negative_pattern(&rs.src, refname))
+}
+
+/// Rewrite positive fetch refspec destinations under `refs/prefetch/`, matching Git's
+/// `fetch --prefetch` behavior.
+fn apply_prefetch_to_refspecs(specs: &mut Vec<FetchRefspec>) {
+    const PREFETCH_NS: &str = "refs/prefetch/";
+    let mut i = 0usize;
+    while i < specs.len() {
+        if specs[i].negative {
+            i += 1;
+            continue;
+        }
+        let src = specs[i].src.as_str();
+        let dst = specs[i].dst.as_str();
+        let remove = dst.is_empty() || src.starts_with("refs/tags/");
+        if remove {
+            specs.remove(i);
+            continue;
+        }
+        let mut new_dst = String::from(PREFETCH_NS);
+        if let Some(rest) = dst.strip_prefix("refs/") {
+            new_dst.push_str(rest);
+        } else {
+            new_dst.push_str(dst);
+        }
+        specs[i].dst = new_dst;
+        specs[i].force = true;
+        i += 1;
+    }
+}
+
+/// Parse command-line fetch refspec strings into [`FetchRefspec`] entries (for `--prefetch`).
+fn parse_cli_fetch_refspecs(cli: &[String]) -> Vec<FetchRefspec> {
+    let mut out = Vec::new();
+    for spec in cli {
+        if let Some(pat) = spec.strip_prefix('^') {
+            out.push(FetchRefspec {
+                src: pat.to_owned(),
+                dst: String::new(),
+                force: false,
+                negative: true,
+            });
+            continue;
+        }
+        let (force, rest) = if let Some(s) = spec.strip_prefix('+') {
+            (true, s)
+        } else {
+            (false, spec.as_str())
+        };
+        if let Some(colon) = rest.find(':') {
+            out.push(FetchRefspec {
+                src: rest[..colon].to_owned(),
+                dst: rest[colon + 1..].to_owned(),
+                force,
+                negative: false,
+            });
+        } else {
+            out.push(FetchRefspec {
+                src: rest.to_owned(),
+                dst: rest.to_owned(),
+                force,
+                negative: false,
+            });
+        }
+    }
+    out
+}
+
+fn fetch_refspec_to_cli_string(rs: &FetchRefspec) -> String {
+    if rs.negative {
+        return format!("^{}", rs.src);
+    }
+    let mut s = String::new();
+    if rs.force {
+        s.push('+');
+    }
+    s.push_str(&rs.src);
+    s.push(':');
+    s.push_str(&rs.dst);
+    s
+}
+
+/// Longest directory prefix shared by all ref names (must end on `/`), for pruning after a
+/// URL-remote fetch with explicit refspecs.
+fn longest_common_ref_prefix(refs: &[String]) -> Option<String> {
+    if refs.is_empty() {
+        return None;
+    }
+    let first = refs[0].as_bytes();
+    let mut len = first.len();
+    for r in refs.iter().skip(1) {
+        let b = r.as_bytes();
+        let max = len.min(b.len());
+        let mut common = 0usize;
+        while common < max && first[common] == b[common] {
+            common += 1;
+        }
+        len = len.min(common);
+    }
+    let prefix = std::str::from_utf8(&first[..len]).ok()?;
+    let cut = prefix.rfind('/')?;
+    if cut == 0 {
+        return None;
+    }
+    Some(prefix[..=cut].to_string())
+}
+
+fn normalize_fetch_dst(dst: &str) -> String {
+    if dst.starts_with("refs/") {
+        dst.to_owned()
+    } else {
+        format!("refs/heads/{dst}")
+    }
+}
+
+/// Local ref destinations from positive CLI refspecs (used for `--prune` namespace).
+fn longest_common_ref_prefix_from_cli_positive(cli: &[String]) -> Option<String> {
+    let mut locals = Vec::new();
+    for spec in cli {
+        if spec.starts_with('^') {
+            continue;
+        }
+        let clean = spec.strip_prefix('+').unwrap_or(spec.as_str());
+        let Some(colon) = clean.find(':') else {
+            continue;
+        };
+        let (src, dst) = (&clean[..colon], &clean[colon + 1..]);
+        if dst.is_empty() {
+            continue;
+        }
+        if src.contains('*') {
+            let base = dst.split_once('*').map(|(p, _)| p).unwrap_or(dst);
+            locals.push(normalize_fetch_dst(base));
+        } else {
+            locals.push(normalize_fetch_dst(dst));
+        }
+    }
+    longest_common_ref_prefix(&locals)
+}
+
 /// A parsed refspec (e.g. "+refs/heads/*:refs/remotes/origin/*").
+#[derive(Clone)]
 struct FetchRefspec {
     /// Source pattern (remote side), e.g. "refs/heads/*".
     src: String,
@@ -1538,6 +1769,13 @@ fn collect_refspecs(config: &ConfigSet, key: &str) -> Vec<FetchRefspec> {
                         force,
                         negative: false,
                     });
+                } else {
+                    result.push(FetchRefspec {
+                        src: val.to_owned(),
+                        dst: val.to_owned(),
+                        force,
+                        negative: false,
+                    });
                 }
             }
         }
@@ -1551,16 +1789,9 @@ fn collect_refspecs(config: &ConfigSet, key: &str) -> Vec<FetchRefspec> {
 /// is `refs/heads/main`, the result is `refs/remotes/origin/main`.
 /// Returns None if no refspec matches.
 fn map_ref_through_refspecs(remote_ref: &str, refspecs: &[FetchRefspec]) -> Option<String> {
-    // First check if any negative refspec excludes this ref
-    for rs in refspecs {
-        if rs.negative {
-            // Match the pattern against the remote ref
-            if match_glob_pattern(&rs.src, remote_ref).is_some() || rs.src == remote_ref {
-                return None;
-            }
-        }
+    if ref_excluded_by_fetch_refspecs(remote_ref, refspecs) {
+        return None;
     }
-    // Then find a positive match
     for rs in refspecs {
         if rs.negative {
             continue;

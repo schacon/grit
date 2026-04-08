@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -992,7 +992,7 @@ t5573-pull-verify-signatures	t5	skip	16	0	0	false	ok	0
 t5574-fetch-output	t5	yes	14	1	13	false	ok	0
 t5580-unc-paths	t5	skip	8	0	0	false	ok	0
 t5581-http-curl-verbose	t5	yes	2	1	1	false	ok	0
-t5582-fetch-negative-refspec	t5	yes	16	7	9	false	ok	0
+t5582-fetch-negative-refspec	t5	yes	16	16	0	true	ok	0
 t5583-push-branches	t5	yes	8	8	0	true	ok	0
 t5600-clone-fail-cleanup	t5	yes	14	12	2	false	ok	0
 t5601-clone	t5	yes	115	32	83	false	ok	0
