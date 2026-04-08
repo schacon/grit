@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -740,7 +740,7 @@ t4056-diff-order	t4	yes	23	10	13	false	ok	0
 t4057-diff-combined-paths	t4	yes	4	0	4	false	ok	0
 t4058-diff-duplicates	t4	yes	14	7	7	false	ok	2
 t4059-diff-submodule-not-initialized	t4	yes	8	1	7	false	ok	0
-t4060-diff-submodule-option-diff-format	t4	yes	50	5	45	false	ok	0
+t4060-diff-submodule-option-diff-format	t4	yes	51	29	22	false	ok	0
 t4061-diff-indent	t4	yes	33	5	28	false	ok	0
 t4062-diff-pickaxe	t4	yes	3	3	0	true	ok	0
 t4063-diff-blobs	t4	yes	18	3	15	false	ok	0

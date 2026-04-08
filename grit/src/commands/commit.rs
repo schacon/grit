@@ -12,7 +12,7 @@ use grit_lib::diff::{
 };
 use grit_lib::error::Error;
 use grit_lib::hooks::{run_hook, HookResult};
-use grit_lib::index::Index;
+use grit_lib::index::{Index, IndexEntry};
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::refs::append_reflog;
 use grit_lib::repo::Repository;
@@ -27,6 +27,7 @@ use crate::ident::{resolve_email, resolve_name, IdentRole};
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::io::{self, Write};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use time::OffsetDateTime;
@@ -203,8 +204,59 @@ struct FixupParsed {
     commit_ref: String,
 }
 
+/// Split `-m` / `-F` (and `=` forms) out of the trailing pathspec bucket.
+///
+/// Clap routes all trailing tokens into `pathspec`; Git allows `git commit <path> -m msg`.
+fn peel_message_flags_from_pathspec(args: &mut Args) {
+    let ps = std::mem::take(&mut args.pathspec);
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < ps.len() {
+        let a = ps[i].as_str();
+        if a == "-m" || a == "--message" {
+            if i + 1 < ps.len() {
+                args.message.push(ps[i + 1].clone());
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if let Some(rest) = a.strip_prefix("--message=") {
+            if !rest.is_empty() {
+                args.message.push(rest.to_owned());
+            }
+            i += 1;
+            continue;
+        }
+        if a == "-F" || a == "--file" {
+            if i + 1 < ps.len() {
+                if args.file.is_none() {
+                    args.file = Some(ps[i + 1].clone());
+                }
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if let Some(rest) = a.strip_prefix("--file=") {
+            if !rest.is_empty() && args.file.is_none() {
+                args.file = Some(rest.to_owned());
+            }
+            i += 1;
+            continue;
+        }
+        out.push(ps[i].clone());
+        i += 1;
+    }
+    args.pathspec = out;
+}
+
 /// Run the `commit` command.
 pub fn run(mut args: Args) -> Result<()> {
+    peel_message_flags_from_pathspec(&mut args);
+
     // Tests and some scripts pass `-q` after `-m MSG`; if it lands in the
     // trailing pathspec bucket, strip it so we match Git (quiet is already
     // handled by the top-level flag).
@@ -981,6 +1033,123 @@ fn walk_untracked(
     Ok(())
 }
 
+fn commit_embedded_repository_git_dir(worktree: &Path) -> Result<PathBuf> {
+    let dot_git = worktree.join(".git");
+    let meta = fs::symlink_metadata(&dot_git)
+        .with_context(|| format!("cannot stat .git in embedded repo {}", worktree.display()))?;
+    if meta.file_type().is_dir() {
+        return Ok(dot_git);
+    }
+    let content = fs::read_to_string(&dot_git)
+        .with_context(|| format!("cannot read .git file in {}", worktree.display()))?;
+    let line = content.lines().next().unwrap_or("").trim();
+    let rest = line.strip_prefix("gitdir:").map(str::trim).ok_or_else(|| {
+        anyhow::anyhow!(
+            "invalid .git file in {} (expected gitdir:)",
+            worktree.display()
+        )
+    })?;
+    let p = Path::new(rest);
+    Ok(if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        worktree.join(p)
+    })
+}
+
+fn commit_remove_obstructing_parent_file_entries(index: &mut Index, rel_path: &str) {
+    for (i, ch) in rel_path.char_indices() {
+        if ch != '/' {
+            continue;
+        }
+        let prefix = &rel_path[..i];
+        let prefix_bytes = prefix.as_bytes();
+        if let Some(e) = index.get(prefix_bytes, 0) {
+            let is_tree = e.mode & 0o170000 == 0o040000;
+            if !is_tree {
+                index.remove(prefix_bytes);
+            }
+        }
+    }
+}
+
+/// Stage an embedded repository path as a gitlink (matches `git add` for submodules).
+fn commit_stage_gitlink(index: &mut Index, rel_path: &str, abs_path: &Path) -> Result<()> {
+    let git_dir = commit_embedded_repository_git_dir(abs_path)?;
+    let embedded_head_path = git_dir.join("HEAD");
+    let head_content = fs::read_to_string(&embedded_head_path)
+        .with_context(|| format!("cannot read HEAD of embedded repo '{rel_path}'"))?;
+    let head_trimmed = head_content.trim();
+    let oid_hex = if let Some(refname) = head_trimmed.strip_prefix("ref: ") {
+        let ref_path = git_dir.join(refname);
+        fs::read_to_string(&ref_path)
+            .with_context(|| {
+                format!("cannot resolve ref '{refname}' in embedded repo '{rel_path}'")
+            })?
+            .trim()
+            .to_string()
+    } else {
+        head_trimmed.to_string()
+    };
+    let oid = ObjectId::from_hex(&oid_hex)
+        .with_context(|| format!("invalid HEAD OID in embedded repo '{rel_path}'"))?;
+    commit_remove_obstructing_parent_file_entries(index, rel_path);
+    index.remove_descendants_under_path(rel_path);
+    let meta = fs::metadata(abs_path)?;
+    let entry = IndexEntry {
+        ctime_sec: meta.ctime() as u32,
+        ctime_nsec: meta.ctime_nsec() as u32,
+        mtime_sec: meta.mtime() as u32,
+        mtime_nsec: meta.mtime_nsec() as u32,
+        dev: meta.dev() as u32,
+        ino: meta.ino() as u32,
+        mode: 0o160000,
+        uid: meta.uid(),
+        gid: meta.gid(),
+        size: 0,
+        oid,
+        flags: rel_path.len().min(0xFFF) as u16,
+        flags_extended: None,
+        path: rel_path.as_bytes().to_vec(),
+    };
+    index.add_or_replace(entry);
+    Ok(())
+}
+
+fn stage_pathspec_worktree_path(
+    repo: &Repository,
+    index: &mut Index,
+    work_tree: &Path,
+    resolved: &str,
+) -> Result<()> {
+    let abs_path = work_tree.join(resolved);
+    let meta = fs::symlink_metadata(&abs_path)
+        .with_context(|| format!("pathspec '{resolved}' did not match any file(s) known to git"))?;
+    if meta.file_type().is_symlink() {
+        let target = fs::read_link(&abs_path)?;
+        let data = target.to_string_lossy().into_owned().into_bytes();
+        let oid = repo.odb.write(ObjectKind::Blob, &data)?;
+        let mode = grit_lib::index::normalize_mode(meta.mode());
+        let raw_path = resolved.as_bytes().to_vec();
+        let entry = grit_lib::index::entry_from_stat(&abs_path, &raw_path, oid, mode)?;
+        index.add_or_replace(entry);
+        return Ok(());
+    }
+    if meta.file_type().is_dir() {
+        if commit_embedded_repository_git_dir(&abs_path).is_ok() {
+            return commit_stage_gitlink(index, resolved, &abs_path);
+        }
+        bail!("fatal: '{resolved}' is a directory");
+    }
+    let data = fs::read(&abs_path)?;
+    let oid = repo.odb.write(ObjectKind::Blob, &data)?;
+    let mode = grit_lib::index::normalize_mode(meta.mode());
+    let raw_path = resolved.as_bytes().to_vec();
+    let entry = grit_lib::index::entry_from_stat(&abs_path, &raw_path, oid, mode)?;
+    index.add_or_replace(entry);
+    Ok(())
+}
+
 /// Stage specific files given as pathspec arguments to `commit`.
 ///
 /// Returns the set of repository-relative paths that were staged (or removed) for this commit.
@@ -989,8 +1158,6 @@ fn stage_pathspec_files(
     work_tree: &Path,
     pathspecs: &[String],
 ) -> Result<HashSet<Vec<u8>>> {
-    use std::os::unix::fs::MetadataExt;
-
     let index_path = resolved_index_path(repo);
     let mut index = match repo.load_index_at(&index_path) {
         Ok(idx) => idx,
@@ -1007,19 +1174,9 @@ fn stage_pathspec_files(
         let resolved = crate::pathspec::resolve_pathspec(spec, work_tree, prefix.as_deref());
         if !crate::pathspec::has_glob_chars(&resolved) {
             let abs_path = work_tree.join(&resolved);
-            if let Ok(meta) = fs::symlink_metadata(&abs_path) {
-                let data = if meta.file_type().is_symlink() {
-                    let target = fs::read_link(&abs_path)?;
-                    target.to_string_lossy().into_owned().into_bytes()
-                } else {
-                    fs::read(&abs_path)?
-                };
-                let oid = repo.odb.write(ObjectKind::Blob, &data)?;
-                let mode = grit_lib::index::normalize_mode(meta.mode());
-                let raw_path = resolved.as_bytes().to_vec();
-                let entry = grit_lib::index::entry_from_stat(&abs_path, &raw_path, oid, mode)?;
-                index.add_or_replace(entry);
-                matched_paths.insert(raw_path);
+            if fs::symlink_metadata(&abs_path).is_ok() {
+                stage_pathspec_worktree_path(repo, &mut index, work_tree, &resolved)?;
+                matched_paths.insert(resolved.as_bytes().to_vec());
             } else {
                 index.remove(resolved.as_bytes());
                 matched_paths.insert(resolved.as_bytes().to_vec());
@@ -1071,20 +1228,10 @@ fn stage_pathspec_files(
 
         for rel in matched_rels {
             let abs_path = work_tree.join(&rel);
-            if let Ok(meta) = fs::symlink_metadata(&abs_path) {
-                let data = if meta.file_type().is_symlink() {
-                    let target = fs::read_link(&abs_path)?;
-                    target.to_string_lossy().into_owned().into_bytes()
-                } else {
-                    fs::read(&abs_path)?
-                };
-                let oid = repo.odb.write(ObjectKind::Blob, &data)?;
-                let mode = grit_lib::index::normalize_mode(meta.mode());
-                let raw_path = rel.as_bytes().to_vec();
-                let entry = grit_lib::index::entry_from_stat(&abs_path, &raw_path, oid, mode)?;
-                index.add_or_replace(entry);
+            if fs::symlink_metadata(&abs_path).is_ok() {
+                stage_pathspec_worktree_path(repo, &mut index, work_tree, &rel)?;
                 spec_matched = true;
-                matched_paths.insert(raw_path);
+                matched_paths.insert(rel.as_bytes().to_vec());
             }
         }
 

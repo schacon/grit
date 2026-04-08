@@ -3,16 +3,17 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
-    detect_copies, detect_renames, read_submodule_head_oid, stat_matches, zero_oid, DiffEntry,
-    DiffStatus,
+    detect_copies, detect_renames, diff_trees, read_submodule_head_oid, stat_matches, zero_oid,
+    DiffEntry, DiffStatus,
 };
 use grit_lib::index::{
-    Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
+    Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK, MODE_TREE,
 };
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pathspec::{context_from_mode_bits, matches_pathspec_with_context};
 use grit_lib::repo::Repository;
+use grit_lib::rev_list::merge_bases;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -65,12 +66,78 @@ pub fn run(args: Args) -> Result<()> {
             &index_map,
             &index,
             options.match_missing,
-            options.ignore_submodules,
+            SubmoduleIgnoreFlags {
+                ignore_all: options.ignore_submodules_all,
+                ignore_untracked: options.ignore_untracked_in_submodules,
+                ignore_dirty: options.ignore_dirty_submodules,
+            },
         )?
     };
 
     // Convert to DiffEntry for rename detection and output.
-    let diff_entries: Vec<DiffEntry> = changes.iter().map(raw_change_to_diff_entry).collect();
+    let mut diff_entries: Vec<DiffEntry> = changes.iter().map(raw_change_to_diff_entry).collect();
+
+    if options.ignore_submodules_all {
+        diff_entries.retain(|e| e.old_mode != "160000" && e.new_mode != "160000");
+    }
+
+    if options.patch
+        && options.submodule_diff
+        && !options.cached
+        && !options.ignore_submodules_all
+        && !options.ignore_dirty_submodules
+    {
+        if let Some(wt) = repo.work_tree.as_deref() {
+            let sm_ignore = SubmoduleIgnoreFlags {
+                ignore_all: options.ignore_submodules_all,
+                ignore_untracked: options.ignore_untracked_in_submodules,
+                ignore_dirty: options.ignore_dirty_submodules,
+            };
+            for (path, snap) in &index_map {
+                if snap.mode != MODE_GITLINK {
+                    continue;
+                }
+                if !entry_matches_pathspecs(
+                    path,
+                    &options.pathspecs,
+                    context_from_mode_bits(snap.mode),
+                ) {
+                    continue;
+                }
+                let tree_snap = tree_map.get(path);
+                let same_recorded =
+                    tree_snap.is_some_and(|t| t.mode == MODE_GITLINK && t.oid == snap.oid);
+                if !same_recorded {
+                    continue;
+                }
+                let dirty = submodule_dirty_flags(
+                    wt,
+                    path,
+                    &snap.oid,
+                    sm_ignore.ignore_untracked,
+                    sm_ignore.ignore_dirty,
+                );
+                if !dirty.untracked && !dirty.modified {
+                    continue;
+                }
+                if diff_entries.iter().any(|e| {
+                    e.path() == path.as_str() && (e.old_mode == "160000" || e.new_mode == "160000")
+                }) {
+                    continue;
+                }
+                diff_entries.push(DiffEntry {
+                    status: DiffStatus::Modified,
+                    old_path: Some(path.clone()),
+                    new_path: Some(path.clone()),
+                    old_mode: "160000".to_owned(),
+                    new_mode: "160000".to_owned(),
+                    old_oid: snap.oid,
+                    new_oid: snap.oid,
+                    score: None,
+                });
+            }
+        }
+    }
 
     let diff_entries = if options.find_copies {
         let threshold = options.find_renames.unwrap_or(50);
@@ -157,8 +224,24 @@ pub fn run(args: Args) -> Result<()> {
             let stdout = std::io::stdout();
             let mut out = stdout.lock();
             let wt = repo.work_tree.as_deref();
+            let sm_ignore = SubmoduleIgnoreFlags {
+                ignore_all: options.ignore_submodules_all,
+                ignore_untracked: options.ignore_untracked_in_submodules,
+                ignore_dirty: options.ignore_dirty_submodules,
+            };
             for entry in &diff_entries {
-                write_patch_entry(&mut out, &repo, &repo.odb, entry, options.context_lines, wt)?;
+                let p = entry.path();
+                write_patch_entry(
+                    &mut out,
+                    &repo,
+                    &repo.odb,
+                    entry,
+                    options.context_lines,
+                    wt,
+                    options.submodule_diff,
+                    sm_ignore,
+                    p,
+                )?;
             }
         } else if options.name_status {
             for entry in &diff_entries {
@@ -337,8 +420,14 @@ struct Options {
     pathspecs: Vec<String>,
     cached: bool,
     match_missing: bool,
-    /// When true, submodule (gitlink) paths are not compared against the work tree.
-    ignore_submodules: bool,
+    /// When true, omit gitlink paths entirely (like Git `ignore_submodules`).
+    ignore_submodules_all: bool,
+    /// When true, do not report untracked-only dirtiness inside submodules.
+    ignore_untracked_in_submodules: bool,
+    /// When true, skip submodule dirty detection (no "contains …" lines; no worktree diff inside submodule).
+    ignore_dirty_submodules: bool,
+    /// Emit recursive unified diff for submodule commits (`--submodule=diff`).
+    submodule_diff: bool,
     quiet: bool,
     exit_code: bool,
     abbrev: Option<usize>,
@@ -380,10 +469,23 @@ struct RawChange {
     new: Option<Snapshot>,
 }
 
+/// Submodule ignore flags mirroring Git's `handle_ignore_submodules_arg`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SubmoduleIgnoreFlags {
+    pub(crate) ignore_all: bool,
+    pub(crate) ignore_untracked: bool,
+    pub(crate) ignore_dirty: bool,
+}
+
 fn parse_options(argv: &[String]) -> Result<Options> {
     let mut cached = false;
     let mut match_missing = false;
-    let mut ignore_submodules = false;
+    let mut ignore_submodules_all = false;
+    // Match Git: `diff-index` defaults to ignoring untracked files inside submodules
+    // unless `--ignore-submodules=none` is passed (see t4060).
+    let mut ignore_untracked_in_submodules = true;
+    let mut ignore_dirty_submodules = false;
+    let mut submodule_diff = false;
     let mut quiet = false;
     let mut exit_code = false;
     let mut abbrev: Option<usize> = None;
@@ -523,13 +625,40 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 }
                 "--check" => { /* accepted for compatibility */ }
                 "--ignore-submodules" => {
-                    ignore_submodules = true;
+                    ignore_submodules_all = true;
                 }
                 _ if arg.starts_with("--ignore-submodules=") => {
                     let val = arg.trim_start_matches("--ignore-submodules=");
-                    ignore_submodules = match val {
-                        "none" => false,
-                        "all" | "dirty" | "untracked" => true,
+                    match val {
+                        "all" => {
+                            ignore_submodules_all = true;
+                            ignore_untracked_in_submodules = false;
+                            ignore_dirty_submodules = false;
+                        }
+                        "untracked" => {
+                            ignore_untracked_in_submodules = true;
+                            ignore_submodules_all = false;
+                        }
+                        "dirty" => {
+                            ignore_dirty_submodules = true;
+                            ignore_submodules_all = false;
+                        }
+                        "none" => {
+                            ignore_submodules_all = false;
+                            ignore_untracked_in_submodules = false;
+                            ignore_dirty_submodules = false;
+                        }
+                        _ => bail!("unsupported option: {arg}"),
+                    };
+                }
+                "--submodule" => {
+                    submodule_diff = true;
+                }
+                _ if arg.starts_with("--submodule=") => {
+                    let val = arg.trim_start_matches("--submodule=");
+                    submodule_diff = match val {
+                        "diff" => true,
+                        "short" | "log" => false,
                         _ => bail!("unsupported option: {arg}"),
                     };
                 }
@@ -556,7 +685,10 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         pathspecs,
         cached,
         match_missing,
-        ignore_submodules,
+        ignore_submodules_all,
+        ignore_untracked_in_submodules,
+        ignore_dirty_submodules,
+        submodule_diff,
         quiet,
         exit_code,
         abbrev,
@@ -701,7 +833,7 @@ fn diff_tree_vs_worktree(
     index_map: &BTreeMap<String, Snapshot>,
     index: &Index,
     match_missing: bool,
-    ignore_submodules: bool,
+    submodule_ignore: SubmoduleIgnoreFlags,
 ) -> Result<Vec<RawChange>> {
     let Some(work_tree) = &repo.work_tree else {
         bail!("this operation must be run in a work tree");
@@ -724,7 +856,7 @@ fn diff_tree_vs_worktree(
         let abs = work_tree.join(path);
 
         if index_snapshot.mode == MODE_GITLINK {
-            if ignore_submodules {
+            if submodule_ignore.ignore_all {
                 continue;
             }
             let sub_head = read_submodule_head_oid(&abs);
@@ -958,14 +1090,460 @@ fn render_raw_diff_entry(
     ))
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct SubmoduleDirtyFlags {
+    untracked: bool,
+    modified: bool,
+}
+
+pub(crate) fn submodule_worktree_has_untracked(super_wt: &Path, path: &str) -> bool {
+    let sub = super_wt.join(path);
+    let Ok(sub_repo) = Repository::discover(Some(&sub)) else {
+        return false;
+    };
+    let Ok(index) = sub_repo.load_index() else {
+        return false;
+    };
+    let tracked: BTreeSet<String> = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0 && e.mode != MODE_TREE)
+        .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+        .collect();
+    submodule_dir_has_untracked_files(&sub, &sub, &tracked)
+}
+
+fn submodule_dir_has_untracked_files(dir: &Path, root: &Path, tracked: &BTreeSet<String>) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if name == ".git" {
+            continue;
+        }
+        let path = e.path();
+        let rel = path
+            .strip_prefix(root)
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|_| name.clone());
+        let is_dir = e.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+        if is_dir {
+            if submodule_dir_has_untracked_files(&path, root, tracked) {
+                return true;
+            }
+        } else if !tracked.contains(&rel) {
+            return true;
+        }
+    }
+    false
+}
+
+fn submodule_has_unstaged_changes(super_wt: &Path, path: &str) -> bool {
+    let sub = super_wt.join(path);
+    let Ok(sub_repo) = Repository::discover(Some(&sub)) else {
+        return false;
+    };
+    let Ok(idx) = sub_repo.load_index() else {
+        return false;
+    };
+    grit_lib::diff::diff_index_to_worktree(&sub_repo.odb, &idx, &sub)
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+}
+
+pub(crate) fn submodule_dirty_flags(
+    super_wt: &Path,
+    path: &str,
+    _index_gitlink_oid: &ObjectId,
+    ignore_untracked: bool,
+    ignore_dirty: bool,
+) -> SubmoduleDirtyFlags {
+    let sub = super_wt.join(path);
+    if read_submodule_head_oid(&sub).is_none() {
+        return SubmoduleDirtyFlags::default();
+    }
+    let untracked = !ignore_untracked && submodule_worktree_has_untracked(super_wt, path);
+    let modified = !ignore_dirty && submodule_has_unstaged_changes(super_wt, path);
+    SubmoduleDirtyFlags {
+        untracked,
+        modified,
+    }
+}
+
+fn read_commit_tree(odb: &Odb, commit_oid: &ObjectId) -> Option<ObjectId> {
+    let obj = odb.read(commit_oid).ok()?;
+    if obj.kind != ObjectKind::Commit {
+        return None;
+    }
+    parse_commit(&obj.data).ok().map(|c| c.tree)
+}
+
+fn submodule_display_name(full_path: &str) -> &str {
+    full_path.rsplit('/').next().unwrap_or(full_path)
+}
+
+pub(crate) fn write_submodule_diff_recursive(
+    out: &mut impl Write,
+    super_repo: &Repository,
+    full_path_from_root: &str,
+    old_commit: ObjectId,
+    new_commit: ObjectId,
+    dirty: SubmoduleDirtyFlags,
+    ignore_dirty_for_inner: bool,
+    submodule_ignore: SubmoduleIgnoreFlags,
+    context_lines: usize,
+) -> Result<()> {
+    let z = zero_oid();
+    let super_wt = super_repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+    let sub_path = super_wt.join(full_path_from_root);
+    let sub_name = submodule_display_name(full_path_from_root);
+
+    if dirty.untracked {
+        writeln!(out, "Submodule {sub_name} contains untracked content")?;
+    }
+    if dirty.modified {
+        writeln!(out, "Submodule {sub_name} contains modified content")?;
+    }
+
+    let sub_repo = Repository::discover(Some(&sub_path)).ok();
+    let odb_for = sub_repo.as_ref().map(|r| &r.odb).unwrap_or(&super_repo.odb);
+
+    let old_tree = if old_commit == z {
+        None
+    } else {
+        read_commit_tree(odb_for, &old_commit)
+    };
+    let new_tree = if new_commit == z {
+        None
+    } else {
+        read_commit_tree(odb_for, &new_commit)
+    };
+
+    let mut message: Option<&'static str> = None;
+    if old_commit == z {
+        message = Some("(new submodule)");
+    } else if new_commit == z {
+        message = Some("(submodule deleted)");
+    }
+
+    if (old_commit != z && old_tree.is_none()) || (new_commit != z && new_tree.is_none()) {
+        message = Some("(commits not present)");
+    }
+
+    let mut fast_forward = false;
+    let mut fast_backward = false;
+    if message.is_none()
+        && old_commit != z
+        && new_commit != z
+        && old_tree.is_some()
+        && new_tree.is_some()
+    {
+        if let Some(ref sr) = sub_repo {
+            let bases = merge_bases(sr, old_commit, new_commit, true).unwrap_or_default();
+            if let Some(b) = bases.first() {
+                if *b == old_commit {
+                    fast_forward = true;
+                } else if *b == new_commit {
+                    fast_backward = true;
+                }
+            }
+        }
+    }
+
+    if old_commit == new_commit && message.is_none() {
+        if !dirty.untracked && !dirty.modified {
+            return Ok(());
+        }
+        if !dirty.modified {
+            // Untracked only: `Submodule … contains untracked content` — no commit-range header or patches.
+            return Ok(());
+        }
+        // Modified working tree vs same recorded commit: show inner diff only (no `Submodule a..b:` line).
+        let use_worktree_for_right =
+            !ignore_dirty_for_inner && new_commit != z && sub_repo.is_some();
+        if use_worktree_for_right {
+            let sr = sub_repo.as_ref().unwrap();
+            let idx = sr.load_index().unwrap_or_else(|_| Index::new());
+            let inner =
+                grit_lib::diff::diff_tree_to_worktree(&sr.odb, old_tree.as_ref(), &sub_path, &idx)?;
+            for e in &inner {
+                let inner_full = format!("{full_path_from_root}/{}", e.path());
+                if e.old_mode == "160000" || e.new_mode == "160000" {
+                    write_patch_entry(
+                        out,
+                        super_repo,
+                        &sr.odb,
+                        e,
+                        context_lines,
+                        Some(&sub_path),
+                        true,
+                        submodule_ignore,
+                        &inner_full,
+                    )?;
+                } else {
+                    write_patch_entry_inner(
+                        out,
+                        super_repo,
+                        &sr.odb,
+                        e,
+                        context_lines,
+                        Some(&sub_path),
+                        full_path_from_root,
+                    )?;
+                }
+            }
+        } else {
+            let odb_inner = sub_repo.as_ref().map(|r| &r.odb).unwrap_or(&super_repo.odb);
+            let inner = diff_trees(odb_inner, old_tree.as_ref(), new_tree.as_ref(), "")?;
+            for e in &inner {
+                let inner_full = format!("{full_path_from_root}/{}", e.path());
+                if e.old_mode == "160000" || e.new_mode == "160000" {
+                    write_patch_entry(
+                        out,
+                        super_repo,
+                        odb_inner,
+                        e,
+                        context_lines,
+                        None,
+                        true,
+                        submodule_ignore,
+                        &inner_full,
+                    )?;
+                } else {
+                    write_patch_entry_inner(
+                        out,
+                        super_repo,
+                        odb_inner,
+                        e,
+                        context_lines,
+                        None,
+                        full_path_from_root,
+                    )?;
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    let old_abbr = abbreviate_object_id(super_repo, old_commit, 7)?;
+    let new_abbr = abbreviate_object_id(super_repo, new_commit, 7)?;
+    let sep = if fast_forward || fast_backward {
+        ".."
+    } else {
+        "..."
+    };
+    write!(out, "Submodule {sub_name} {old_abbr}{sep}{new_abbr}")?;
+    if let Some(m) = message {
+        writeln!(out, " {m}")?;
+    } else if fast_backward {
+        writeln!(out, " (rewind):")?;
+    } else {
+        writeln!(out, ":")?;
+    }
+
+    if message == Some("(commits not present)") || old_tree.is_none() && new_tree.is_none() {
+        return Ok(());
+    }
+
+    let use_worktree_for_right =
+        dirty.modified && !ignore_dirty_for_inner && new_commit != z && sub_repo.is_some();
+
+    if use_worktree_for_right {
+        let sr = sub_repo.as_ref().unwrap();
+        let idx = sr.load_index().unwrap_or_else(|_| Index::new());
+        let inner =
+            grit_lib::diff::diff_tree_to_worktree(&sr.odb, old_tree.as_ref(), &sub_path, &idx)?;
+        for e in &inner {
+            let inner_full = format!("{full_path_from_root}/{}", e.path());
+            if e.old_mode == "160000" || e.new_mode == "160000" {
+                write_patch_entry(
+                    out,
+                    super_repo,
+                    &sr.odb,
+                    e,
+                    context_lines,
+                    Some(&sub_path),
+                    true,
+                    submodule_ignore,
+                    &inner_full,
+                )?;
+            } else {
+                write_patch_entry_inner(
+                    out,
+                    super_repo,
+                    &sr.odb,
+                    e,
+                    context_lines,
+                    Some(&sub_path),
+                    full_path_from_root,
+                )?;
+            }
+        }
+    } else {
+        let odb_inner = sub_repo.as_ref().map(|r| &r.odb).unwrap_or(&super_repo.odb);
+        let inner = diff_trees(odb_inner, old_tree.as_ref(), new_tree.as_ref(), "")?;
+        for e in &inner {
+            let inner_full = format!("{full_path_from_root}/{}", e.path());
+            if e.old_mode == "160000" || e.new_mode == "160000" {
+                write_patch_entry(
+                    out,
+                    super_repo,
+                    odb_inner,
+                    e,
+                    context_lines,
+                    None,
+                    true,
+                    submodule_ignore,
+                    &inner_full,
+                )?;
+            } else {
+                write_patch_entry_inner(
+                    out,
+                    super_repo,
+                    odb_inner,
+                    e,
+                    context_lines,
+                    None,
+                    full_path_from_root,
+                )?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Write a unified-diff block for one entry (diff-index -p).
-fn write_patch_entry(
+pub(crate) fn write_patch_entry(
     out: &mut impl std::io::Write,
     repo: &Repository,
     odb: &Odb,
     entry: &DiffEntry,
     context_lines: usize,
     work_tree: Option<&Path>,
+    submodule_diff: bool,
+    submodule_ignore: SubmoduleIgnoreFlags,
+    full_path_from_root: &str,
+) -> Result<()> {
+    let z = zero_oid();
+
+    if submodule_diff {
+        // Typechange blob→gitlink: tree had a blob, index records a gitlink.
+        let is_blob_to_gitlink = entry.old_mode != "000000"
+            && entry.old_mode != "160000"
+            && entry.new_mode == "160000"
+            && entry.new_oid != z;
+        // Typechange gitlink→blob: tree had gitlink, index/worktree has a regular file.
+        let is_gitlink_to_blob = entry.old_mode == "160000"
+            && entry.old_oid != z
+            && entry.new_mode != "160000"
+            && entry.new_mode != "000000";
+
+        if is_gitlink_to_blob {
+            // Index gitlink, worktree blob: blob delete first, then submodule as new.
+            let mut blob_del = entry.clone();
+            blob_del.status = DiffStatus::Deleted;
+            blob_del.old_mode = entry.new_mode.clone();
+            blob_del.old_oid = entry.new_oid;
+            blob_del.new_path = None;
+            blob_del.new_mode = "000000".to_owned();
+            blob_del.new_oid = z;
+            write_patch_entry_inner(out, repo, odb, &blob_del, context_lines, work_tree, "")?;
+            write_submodule_diff_recursive(
+                out,
+                repo,
+                full_path_from_root,
+                z,
+                entry.old_oid,
+                SubmoduleDirtyFlags::default(),
+                submodule_ignore.ignore_dirty,
+                submodule_ignore,
+                context_lines,
+            )?;
+            return Ok(());
+        }
+
+        if is_blob_to_gitlink {
+            // Tree blob, index gitlink: submodule deleted first, then blob as new.
+            write_submodule_diff_recursive(
+                out,
+                repo,
+                full_path_from_root,
+                entry.old_oid,
+                z,
+                SubmoduleDirtyFlags::default(),
+                submodule_ignore.ignore_dirty,
+                submodule_ignore,
+                context_lines,
+            )?;
+            let mut blob_add = entry.clone();
+            blob_add.status = DiffStatus::Added;
+            blob_add.old_path = None;
+            blob_add.old_mode = "000000".to_owned();
+            blob_add.old_oid = z;
+            blob_add.new_mode = entry.new_mode.clone();
+            blob_add.new_oid = entry.new_oid;
+            return write_patch_entry_inner(
+                out,
+                repo,
+                odb,
+                &blob_add,
+                context_lines,
+                work_tree,
+                "",
+            );
+        }
+
+        if entry.old_mode == "160000" || entry.new_mode == "160000" {
+            let super_wt = repo.work_tree.as_deref().unwrap_or(Path::new(""));
+            let index_oid = if entry.new_mode == "160000" && entry.new_oid != z {
+                entry.new_oid
+            } else if entry.old_mode == "160000" && entry.old_oid != z {
+                entry.old_oid
+            } else {
+                z
+            };
+            let dirty = if !super_wt.as_os_str().is_empty() && index_oid != z {
+                submodule_dirty_flags(
+                    super_wt,
+                    full_path_from_root,
+                    &index_oid,
+                    submodule_ignore.ignore_untracked,
+                    submodule_ignore.ignore_dirty,
+                )
+            } else {
+                SubmoduleDirtyFlags::default()
+            };
+            write_submodule_diff_recursive(
+                out,
+                repo,
+                full_path_from_root,
+                entry.old_oid,
+                entry.new_oid,
+                dirty,
+                submodule_ignore.ignore_dirty,
+                submodule_ignore,
+                context_lines,
+            )?;
+            return Ok(());
+        }
+    }
+
+    write_patch_entry_inner(out, repo, odb, entry, context_lines, work_tree, "")
+}
+
+pub(crate) fn write_patch_entry_inner(
+    out: &mut impl std::io::Write,
+    repo: &Repository,
+    odb: &Odb,
+    entry: &DiffEntry,
+    context_lines: usize,
+    work_tree: Option<&Path>,
+    path_prefix: &str,
 ) -> Result<()> {
     use grit_lib::diff::unified_diff;
 
@@ -980,7 +1558,117 @@ fn write_patch_entry(
         .as_deref()
         .unwrap_or(entry.old_path.as_deref().unwrap_or(""));
 
-    writeln!(out, "diff --git a/{old_path} b/{new_path}")?;
+    let (disp_old, disp_new) = if path_prefix.is_empty() {
+        (old_path.to_string(), new_path.to_string())
+    } else {
+        (
+            format!("{path_prefix}/{old_path}"),
+            format!("{path_prefix}/{new_path}"),
+        )
+    };
+
+    if entry.old_mode == "160000" || entry.new_mode == "160000" {
+        writeln!(out, "diff --git a/{disp_old} b/{disp_new}")?;
+        match entry.status {
+            DiffStatus::Added => {
+                writeln!(out, "new file mode {}", entry.new_mode)?;
+                writeln!(
+                    out,
+                    "index {}..{}",
+                    &entry.old_oid.to_hex()[..7],
+                    &entry.new_oid.to_hex()[..7]
+                )?;
+                writeln!(out, "--- /dev/null")?;
+                writeln!(out, "+++ b/{disp_new}")?;
+                writeln!(out, "@@ -0,0 +1 @@")?;
+                writeln!(out, "+Subproject commit {}", entry.new_oid.to_hex())?;
+            }
+            DiffStatus::Deleted => {
+                writeln!(out, "deleted file mode {}", entry.old_mode)?;
+                writeln!(
+                    out,
+                    "index {}..{}",
+                    &entry.old_oid.to_hex()[..7],
+                    &entry.new_oid.to_hex()[..7]
+                )?;
+                writeln!(out, "--- a/{disp_old}")?;
+                writeln!(out, "+++ /dev/null")?;
+                writeln!(out, "@@ -1 +0,0 @@")?;
+                writeln!(out, "-Subproject commit {}", entry.old_oid.to_hex())?;
+            }
+            DiffStatus::Modified | DiffStatus::Renamed | DiffStatus::Copied => {
+                if entry.old_mode == "160000" && entry.new_mode == "160000" {
+                    writeln!(
+                        out,
+                        "index {}..{} {}",
+                        &entry.old_oid.to_hex()[..7],
+                        &entry.new_oid.to_hex()[..7],
+                        entry.old_mode
+                    )?;
+                    writeln!(out, "--- a/{disp_old}")?;
+                    writeln!(out, "+++ b/{disp_new}")?;
+                    writeln!(out, "@@ -1 +1 @@")?;
+                    writeln!(out, "-Subproject commit {}", entry.old_oid.to_hex())?;
+                    writeln!(out, "+Subproject commit {}", entry.new_oid.to_hex())?;
+                } else if entry.old_mode == "160000" {
+                    writeln!(
+                        out,
+                        "index {}..{} {}",
+                        &entry.old_oid.to_hex()[..7],
+                        &entry.new_oid.to_hex()[..7],
+                        entry.old_mode
+                    )?;
+                    writeln!(out, "--- a/{disp_old}")?;
+                    writeln!(out, "+++ b/{disp_new}")?;
+                    writeln!(out, "@@ -1 +0,0 @@")?;
+                    writeln!(out, "-Subproject commit {}", entry.old_oid.to_hex())?;
+                } else {
+                    writeln!(
+                        out,
+                        "index {}..{} {}",
+                        &entry.old_oid.to_hex()[..7],
+                        &entry.new_oid.to_hex()[..7],
+                        entry.new_mode
+                    )?;
+                    writeln!(out, "--- a/{disp_old}")?;
+                    writeln!(out, "+++ b/{disp_new}")?;
+                    writeln!(out, "@@ -0,0 +1 @@")?;
+                    writeln!(out, "+Subproject commit {}", entry.new_oid.to_hex())?;
+                }
+            }
+            DiffStatus::TypeChanged => {
+                if entry.old_mode == "160000" {
+                    writeln!(
+                        out,
+                        "index {}..{} {}",
+                        &entry.old_oid.to_hex()[..7],
+                        &entry.new_oid.to_hex()[..7],
+                        entry.old_mode
+                    )?;
+                    writeln!(out, "--- a/{disp_old}")?;
+                    writeln!(out, "+++ b/{disp_new}")?;
+                    writeln!(out, "@@ -1 +0,0 @@")?;
+                    writeln!(out, "-Subproject commit {}", entry.old_oid.to_hex())?;
+                } else if entry.new_mode == "160000" {
+                    writeln!(
+                        out,
+                        "index {}..{} {}",
+                        &entry.old_oid.to_hex()[..7],
+                        &entry.new_oid.to_hex()[..7],
+                        entry.new_mode
+                    )?;
+                    writeln!(out, "--- a/{disp_old}")?;
+                    writeln!(out, "+++ b/{disp_new}")?;
+                    writeln!(out, "@@ -0,0 +1 @@")?;
+                    writeln!(out, "+Subproject commit {}", entry.new_oid.to_hex())?;
+                }
+            }
+            DiffStatus::Unmerged => {}
+        }
+        return Ok(());
+    }
+
+    writeln!(out, "diff --git a/{disp_old} b/{disp_new}")?;
 
     match entry.status {
         DiffStatus::Added => {
@@ -1103,21 +1791,21 @@ fn write_patch_entry(
     let new_content = String::from_utf8_lossy(&new_raw).into_owned();
 
     let display_old = if entry.status == DiffStatus::Added {
-        "/dev/null"
+        "/dev/null".to_owned()
     } else {
-        old_path
+        disp_old.clone()
     };
     let display_new = if entry.status == DiffStatus::Deleted {
-        "/dev/null"
+        "/dev/null".to_owned()
     } else {
-        new_path
+        disp_new.clone()
     };
 
     let patch = unified_diff(
         &old_content,
         &new_content,
-        display_old,
-        display_new,
+        &display_old,
+        &display_new,
         context_lines,
     );
     write!(out, "{patch}")?;
