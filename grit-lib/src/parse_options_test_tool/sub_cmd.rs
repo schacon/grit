@@ -77,7 +77,7 @@ fn fatal_need_subcommand() -> ParseOptionsToolError {
 
 fn parse_int(s: &str) -> Result<i32, ParseOptionsToolError> {
     s.parse().map_err(|_| {
-        ParseOptionsToolError::Fatal(format!("error: option `opt' expects a numerical value\n"))
+        ParseOptionsToolError::Fatal("error: option `opt' expects a numerical value\n".to_string())
     })
 }
 
@@ -141,7 +141,9 @@ fn parse_subcommand_inner(argv: &[String], flags: u32) -> Result<i32, ParseOptio
             if name == "opt" {
                 i += 1;
                 let v = argv.get(i).ok_or_else(|| {
-                    ParseOptionsToolError::Fatal(format!("error: option `opt' requires a value\n"))
+                    ParseOptionsToolError::Fatal(
+                        "error: option `opt' requires a value\n".to_string(),
+                    )
                 })?;
                 opt = parse_int(v)?;
                 i += 1;
@@ -160,7 +162,7 @@ fn parse_subcommand_inner(argv: &[String], flags: u32) -> Result<i32, ParseOptio
             if rest.is_empty() {
                 i += 1;
                 let v = argv.get(i).ok_or_else(|| {
-                    ParseOptionsToolError::Fatal(format!("error: switch `o' requires a value\n"))
+                    ParseOptionsToolError::Fatal("error: switch `o' requires a value\n".to_string())
                 })?;
                 opt = parse_int(v)?;
                 i += 1;

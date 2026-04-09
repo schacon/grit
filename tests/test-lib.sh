@@ -7,13 +7,17 @@
 #   test_expect_success 'description' 'commands'
 #   test_done
 
-# Locate grit binary: prefer a local build, else fall back to PATH.
+# Locate grit binary: env GUST_BIN wins; else repo layout under tests/ (run-tests.sh sets GUST_BIN).
+# Note: `$(dirname "$(dirname "$0")")` breaks when $0 is a bare filename (dirname is `.`), so we
+# derive the repo root from the directory containing the test script, not from double-dirname.
 if test -z "$GUST_BIN"
 then
-	# Look in common cargo output locations
+	_tests_home="$(cd "$(dirname "$0")" && pwd)"
+	_repo_root="$(cd "$_tests_home/.." && pwd)"
 	for candidate in \
-		"$(dirname "$(dirname "$0")")/target/debug/grit" \
-		"$(dirname "$(dirname "$0")")/target/release/grit"
+		"$_repo_root/target/debug/grit" \
+		"$_repo_root/target/release/grit" \
+		"$_tests_home/grit"
 	do
 		if test -x "$candidate"
 		then
@@ -21,7 +25,6 @@ then
 			break
 		fi
 	done
-	# Also check the sandbox cache location
 	if test -z "$GUST_BIN"
 	then
 		for f in /var/folders/*/T/cursor-sandbox-cache/*/cargo-target/debug/grit \
@@ -145,13 +148,13 @@ setup_trash () {
 	mkdir -p "$TRASH_DIRECTORY"
 	# BIN_DIRECTORY is outside the working tree so git clean -x cannot remove it
 	mkdir -p "$BIN_DIRECTORY"
-	# Write a 'git' wrapper script that calls grit (GUST_BIN)
+	# Write a 'git' wrapper script that calls grit (GUST_BIN is absolute path)
 	cat >"$BIN_DIRECTORY/git" <<EOF
 #!/bin/sh
 exec "$GUST_BIN" "\$@"
 EOF
 	chmod +x "$BIN_DIRECTORY/git"
-	# Also write a 'grit' wrapper
+	# Also write a 'grit' wrapper (same binary; some tests invoke `grit` by name)
 	cat >"$BIN_DIRECTORY/grit" <<EOF
 #!/bin/sh
 exec "$GUST_BIN" "\$@"
@@ -166,7 +169,7 @@ EOF
 	# Write a 'scalar' wrapper
 	cat >"$BIN_DIRECTORY/scalar" <<EOF
 #!/bin/sh
-exec /usr/bin/git scalar "\$@"
+exec "$GUST_BIN" scalar "\$@"
 EOF
 	chmod +x "$BIN_DIRECTORY/scalar"
 	# Save PATH before grit/git wrappers so test_done can restore the caller's environment.
@@ -175,6 +178,8 @@ EOF
 	# Prepend BIN_DIRECTORY to PATH so every subshell sees 'git' → grit
 PATH="$TEST_DIRECTORY:$PATH"
 	export PATH="$BIN_DIRECTORY:$PATH"
+	# Avoid a stale bash(1) command hash for `git` from before PATH was rewritten.
+	hash -r 2>/dev/null || true
 	# cd into trash so each test starts with a clean cwd
 	cd "$TRASH_DIRECTORY" || exit 1
 
@@ -187,7 +192,7 @@ PATH="$TEST_DIRECTORY:$PATH"
 	fi
 }
 
-# Restore PATH to the value before `setup_trash` added grit/git wrappers (real `git` again).
+# Restore PATH to the value before `setup_trash` added grit/git wrappers.
 test_lib_restore_path () {
 	if test -n "${TEST_LIB_ORIG_PATH-}"
 	then
@@ -953,9 +958,6 @@ test_set_prereq () {
 # Grit implements the traditional loose-ref + packed-refs layout (not reftable).
 test_set_prereq REFFILES
 
-# git-p4 and other Python-assisted tests (matches git/t/test-lib.sh: NO_PYTHON).
-test -z "$NO_PYTHON" && command -v python3 >/dev/null 2>&1 && test_set_prereq PYTHON
-
 # Lazy prerequisites (git/t0000 nested-lazy): script runs in a temp dir under trash.
 lazily_testable_prereq=
 lazily_tested_prereq=
@@ -985,9 +987,6 @@ export TAR
 
 PERL_PATH=${PERL_PATH:-$(command -v perl 2>/dev/null || echo /usr/bin/perl)}
 export PERL_PATH
-
-PYTHON_PATH=${PYTHON_PATH:-$(command -v python3 2>/dev/null || echo python3)}
-export PYTHON_PATH
 
 # test_set_port VAR — assign a random port (or use existing value)
 test_set_port () {
@@ -1021,6 +1020,7 @@ error () {
 # Works with both binaries and shell functions
 test_env () {
 	local _te_vars=""
+	local _te_ret
 	while test $# -gt 0; do
 		case "$1" in
 		*=*)
@@ -1034,7 +1034,7 @@ test_env () {
 		esac
 	done
 	"$@"
-	local _te_ret=$?
+	_te_ret=$?
 	# Unset the exported variables
 	for _te_v in $_te_vars; do
 		unset "${_te_v%%=*}"
@@ -1335,11 +1335,12 @@ test_atexit_handler () {
 }
 
 test_eval_inner_ () {
+	local _eval_inner_ret
 	cd "$TRASH_DIRECTORY" || exit 1
 	eval "$1"
-	eval_ret=$?
+	_eval_inner_ret=$?
 	cd "$TRASH_DIRECTORY" || exit 1
-	return $eval_ret
+	return "$_eval_inner_ret"
 }
 
 # Run test body with stdin / stdout / stderr wired like git's test-lib (fd 3/4).
@@ -1438,9 +1439,10 @@ test_path_is_dir_not_symlink () {
 
 test_expect_code () {
 	local expected_code="$1"
+	local actual_code
 	shift
 	"$@"
-	local actual_code=$?
+	actual_code=$?
 	if test "$actual_code" = "$expected_code"
 	then
 		return 0
@@ -1490,9 +1492,10 @@ test_stdout_line_count () {
 	local count="$2"
 	shift 2
 	local tmp="${TRASH_DIRECTORY}/.stdout.$$"
+	local rc
 	"$@" >"$tmp" &&
 	test_line_count "$op" "$count" "$tmp"
-	local rc=$?
+	rc=$?
 	rm -f "$tmp"
 	return $rc
 }

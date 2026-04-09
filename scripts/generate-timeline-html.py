@@ -1,26 +1,34 @@
 #!/usr/bin/env python3
-"""Generate docs/timeline.html: hourly commit chart and full ``git log --all`` listing."""
+"""Generate docs/timeline.html: hourly stacked bars (grit vs grit-lib) and commits by day.
+
+Runs full ``git log HEAD`` with ``--format='%H %ct %s' --stat --no-merges`` (no ``--since``),
+then keeps commits whose committer epoch ``%ct`` is on or after the configured UTC start.
+``git log --since`` can omit reachable commits when history contains merges, so the date
+cutoff is applied in Python. Only commits that touch at least one path under ``grit/``,
+``grit-lib/``, or the pre-rename ``gust/``, ``gust-lib/`` trees are included; per-file
+``--stat`` lines attribute counts to the main crate vs library buckets.
+"""
 
 from __future__ import annotations
 
 import html
-import os
+import json
+import re
 import subprocess
-from collections import Counter
-from datetime import date, datetime, timedelta, timezone
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / "docs" / "timeline.html"
 
-# Field separator (unlikely in subjects); record ends with RS.
-FS = "\x1f"
-RS = "\x1e"
-
+# Inclusive start of the timeline window (UTC). Data shown from this instant through “now”.
+TIMELINE_START_UTC = datetime(2026, 4, 1, 0, 0, 0, tzinfo=timezone.utc)
 
 def github_commit_url(sha: str) -> str | None:
     """Return an https://github.com/.../commit/SHA URL if ``origin`` is GitHub."""
-    if not sha or sha == "unknown":
+    if not sha:
         return None
     try:
         raw = subprocess.check_output(
@@ -52,263 +60,241 @@ def github_commit_url(sha: str) -> str | None:
     return f"https://github.com/{owner}/{repo}/commit/{sha}"
 
 
-def git_head_sha() -> str:
-    try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=REPO, text=True
-        ).strip()
-    except Exception:
-        return ""
+@dataclass
+class Commit:
+    sha: str
+    ts: int
+    subject: str
+    grit_lines: int
+    grit_lib_lines: int
 
 
-def generated_time_element(now: datetime) -> str:
-    gen_time = now.strftime("%Y-%m-%d %H:%M UTC")
-    iso = now.replace(microsecond=0).isoformat()
-    return (
-        f'<time datetime="{html.escape(iso)}" class="gen-time" title="{html.escape(gen_time)}">'
-        f"{html.escape(gen_time)}</time>"
-    )
-
-
-def parse_git_iso_date(iso: str) -> datetime | None:
-    """Parse ``%aI`` timestamps from git log."""
-    try:
-        s = iso.replace("Z", "+00:00")
-        return datetime.fromisoformat(s)
-    except ValueError:
+def _parse_file_stat_line(line: str) -> tuple[str, int] | None:
+    """Parse one ``--stat`` file line; skip binary and non-stat lines."""
+    if "|" not in line:
         return None
+    left, right = line.rsplit("|", 1)
+    path = left.strip()
+    right = right.strip()
+    if right.startswith("Bin"):
+        return None
+    m = re.match(r"^(\d+)\s+", right)
+    if not m:
+        return None
+    return (path, int(m.group(1)))
 
 
-def to_utc(dt: datetime) -> datetime:
-    """Normalize to UTC (naive datetimes are treated as UTC)."""
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+def _lines_for_path(path: str, n: int) -> tuple[int, int]:
+    """Split per-file stat counts into main-crate vs lib buckets (grit and legacy gust names)."""
+    if path.startswith("grit-lib/") or path.startswith("gust-lib/"):
+        return (0, n)
+    if path.startswith("grit/") or path.startswith("gust/"):
+        return (n, 0)
+    return (0, 0)
 
 
-def floor_hour_utc(dt: datetime) -> datetime:
-    """Start of the UTC hour containing ``dt``."""
-    u = to_utc(dt)
-    return u.replace(minute=0, second=0, microsecond=0)
+def commit_touches_grit_roots(commit: Commit) -> bool:
+    """True if any ``--stat`` path is under grit/gust main or lib trees (including pre-rename)."""
+    return commit.grit_lines > 0 or commit.grit_lib_lines > 0
 
 
-def history_start_date(commits: list[tuple[str, str, str, str, str]]) -> date:
-    """Calendar day of the earliest author timestamp in ``commits`` (for captions)."""
-    parsed = [parse_git_iso_date(c[3]) for c in commits]
-    valid = [d for d in parsed if d is not None]
-    if not valid:
-        return date.today()
-    return min(d.date() for d in valid)
+def parse_git_log_stat(text: str) -> list[Commit]:
+    """Parse output of ``git log --format='%H %ct %s' --stat``."""
+    commits: list[Commit] = []
+    lines = text.splitlines()
+    i = 0
+    header = re.compile(r"^([0-9a-f]{40}) (\d+) (.*)$")
 
-
-def short_hour_axis_label(cur: datetime, prev: datetime | None) -> str:
-    """Compact UTC label: include date when the calendar day changes."""
-    cur_f = floor_hour_utc(cur)
-    if prev is None:
-        return cur_f.strftime("%b %d %H:%M")
-    prev_f = floor_hour_utc(prev)
-    if cur_f.date() != prev_f.date():
-        return cur_f.strftime("%b %d %H:%M")
-    return cur_f.strftime("%H:%M")
-
-
-def hourly_commit_histogram(
-    commits: list[tuple[str, str, str, str, str]],
-) -> tuple[list[tuple[str, int, str]], int]:
-    """
-    One bar per UTC hour from the first commit hour through the last.
-
-    Empty hours between the first and last commit are filled with zero.
-    """
-    dates: list[datetime] = []
-    for *_, iso_date, _ in commits:
-        parsed = parse_git_iso_date(iso_date)
-        if parsed is not None:
-            dates.append(parsed)
-    if not dates:
-        return [], 0
-    lo = floor_hour_utc(min(dates))
-    hi = floor_hour_utc(max(dates))
-    counts: Counter[str] = Counter()
-    for dt in dates:
-        key = floor_hour_utc(dt).isoformat()
-        counts[key] += 1
-    rows: list[tuple[str, int, str]] = []
-    cur = lo
-    prev: datetime | None = None
-    while cur <= hi:
-        key = cur.isoformat()
-        c = counts.get(key, 0)
-        lbl = short_hour_axis_label(cur, prev)
-        rows.append((key, c, lbl))
-        prev = cur
-        cur += timedelta(hours=1)
-    peak = max((r[1] for r in rows), default=0)
-    return rows, peak
-
-
-def dt_from_iso_key(key: str) -> datetime:
-    """Parse an ISO key produced by ``floor_hour_utc(...).isoformat()``."""
-    return datetime.fromisoformat(key.replace("Z", "+00:00"))
-
-
-def count_axis_ticks(peak: int) -> list[int]:
-    """
-    Descending tick values for the Y axis (top = highest, bottom = 0).
-
-    Uses up to five evenly spaced integer ticks, deduplicated.
-    """
-    if peak <= 0:
-        return [0]
-    raw = [round(peak * i / 4) for i in range(5)]
-    uniq = sorted(set(raw), reverse=True)
-    return uniq
-
-
-def chart_label_stride(num_bars: int) -> int:
-    """Show every Nth x-axis label so dense charts stay legible."""
-    if num_bars <= 24:
-        return 1
-    if num_bars <= 72:
-        return 2
-    if num_bars <= 168:
-        return 4
-    return max(1, (num_bars + 23) // 24)
-
-
-def render_chart_html(
-    hist_rows: list[tuple[str, int, str]], peak: int, first_commit_day: date
-) -> str:
-    """HTML for the hourly commit histogram (CSS column chart)."""
-    if not hist_rows:
-        return ""
-    stride = chart_label_stride(len(hist_rows))
-    y_ticks = count_axis_ticks(peak)
-    y_tick_html = "".join(
-        f'<span class="chart-y-tick">{html.escape(str(t))}</span>' for t in y_ticks
-    )
-    grid_lines: list[str] = []
-    for i in range(5):
-        pct = i * 25
-        grid_lines.append(
-            f'<span class="chart-grid-line" style="top:{pct}%"></span>'
+    while i < len(lines):
+        line = lines[i]
+        m = header.match(line)
+        if not m:
+            i += 1
+            continue
+        sha, ts_s, subject = m.group(1), int(m.group(2)), m.group(3)
+        i += 1
+        grit_lines = 0
+        grit_lib_lines = 0
+        while i < len(lines):
+            nline = lines[i]
+            if header.match(nline):
+                break
+            if nline.strip():
+                parsed = _parse_file_stat_line(nline)
+                if parsed:
+                    p, n = parsed
+                    dg, dgl = _lines_for_path(p, n)
+                    grit_lines += dg
+                    grit_lib_lines += dgl
+            i += 1
+        commits.append(
+            Commit(
+                sha=sha,
+                ts=ts_s,
+                subject=subject,
+                grit_lines=grit_lines,
+                grit_lib_lines=grit_lib_lines,
+            )
         )
-    grid_html = "".join(grid_lines)
-
-    parts: list[str] = []
-    prev_day: date | None = None
-    for i, (key, count, label) in enumerate(hist_rows):
-        cur_dt = dt_from_iso_key(key)
-        cur_day = to_utc(cur_dt).date()
-        is_new_day = prev_day is not None and cur_day != prev_day
-        prev_day = cur_day
-        day_cls = " chart-col-day-sep" if is_new_day else ""
-        pct = (100.0 * count / peak) if peak else 0.0
-        show_lbl = i % stride == 0 or i == len(hist_rows) - 1
-        title = f"{key} UTC — {count} commit" + ("" if count == 1 else "s")
-        lbl = (
-            f'<span class="chart-x">{html.escape(label)}</span>'
-            if show_lbl
-            else '<span class="chart-x chart-x-skip" aria-hidden="true">·</span>'
-        )
-        parts.append(
-            f'<div class="chart-col{day_cls}">'
-            '<div class="chart-bar-wrap">'
-            f'<div class="chart-bar" style="height:{pct:.3f}%" title="{html.escape(title)}"></div>'
-            "</div>"
-            f"{lbl}"
-            "</div>"
-        )
-    peak_s = f"{peak:,}" if peak else "0"
-    ncols = len(hist_rows)
-    start_s = first_commit_day.isoformat()
-    return (
-        '<section class="chart-section" aria-label="Commits over time">'
-        "<h2>Commits over time</h2>"
-        f'<p class="chart-caption">One bar per hour (UTC) · full <code>git log --all</code> · '
-        f'earliest commit day <strong>{html.escape(start_s)}</strong> · peak '
-        f'<strong>{html.escape(peak_s)}</strong> commits/hour</p>'
-        '<div class="chart-chart-wrap">'
-        '<div class="chart-y-axis" role="presentation" aria-label="Commit count">'
-        f'<div class="chart-y-axis-inner">{y_tick_html}</div>'
-        '<div class="chart-y-axis-title">Commits</div>'
-        "</div>"
-        '<div class="chart-scroll chart-scroll-plot">'
-        '<div class="chart-surface">'
-        f'<div class="chart-grid-lines">{grid_html}</div>'
-        f'<div class="chart-bars chart-bars-hourly" style="--chart-cols:{ncols}">'
-        f'{"".join(parts)}'
-        "</div></div></div></div></section>"
-    )
+    return commits
 
 
-def load_commits() -> list[tuple[str, str, str, str, str]]:
-    """Return (full_sha, short_sha, author, iso_date, subject) newest first from ``git log --all``."""
-    fmt = f"%H{FS}%h{FS}%an{FS}%aI{FS}%s{RS}"
-    raw = subprocess.check_output(
+def run_git_log() -> str:
+    """Run ``git log HEAD`` with stat and no merges (full history; no ``--since``).
+
+    Callers filter by ``%ct`` in Python. Git's ``--since`` can skip reachable commits
+    across merge topology, so we do not use it for the timeline window.
+    """
+    return subprocess.check_output(
         [
             "git",
-            "-c",
-            "log.showSignature=false",
             "log",
-            "--all",
-            f"--pretty=format:{fmt}",
+            "HEAD",
+            "--format=%H %ct %s",
+            "--stat",
+            "--no-merges",
         ],
         cwd=REPO,
-    )
-    text = raw.decode("utf-8", errors="replace")
-    rows: list[tuple[str, str, str, str, str]] = []
-    for rec in text.split(RS):
-        rec = rec.strip()
-        if not rec:
-            continue
-        parts = rec.split(FS, 4)
-        if len(parts) != 5:
-            continue
-        rows.append((parts[0], parts[1], parts[2], parts[3], parts[4]))
-    return rows
-
-
-def main() -> None:
-    os.chdir(REPO)
-    commits = load_commits()
-    first_day = history_start_date(commits)
-    now = datetime.now(timezone.utc)
-    head = git_head_sha()
-    short = head[:7] if len(head) >= 7 else (head or "unknown")
-    gh = github_commit_url(head) if head else None
-    commit_link = (
-        f'<a href="{html.escape(gh)}" style="color:#58a6ff">{html.escape(short)}</a>'
-        if gh
-        else html.escape(short)
+        text=True,
     )
 
-    hist_rows, hist_peak = hourly_commit_histogram(commits)
-    chart_html = render_chart_html(hist_rows, hist_peak, first_day)
 
-    rows_html: list[str] = []
-    for full, short_sha, author, iso_date, subject in commits:
-        url = github_commit_url(full)
-        sha_cell = (
-            f'<a href="{html.escape(url)}">{html.escape(short_sha)}</a>'
-            if url
-            else html.escape(short_sha)
-        )
-        rows_html.append(
-            "<tr>"
-            f'<td class="sha">{sha_cell}</td>'
-            f'<td class="date" title="{html.escape(iso_date)}">{html.escape(iso_date[:10])}</td>'
-            f'<td class="author">{html.escape(author)}</td>'
-            f'<td class="subj">{html.escape(subject)}</td>'
-            "</tr>"
+def hour_start_ts(ts: int) -> int:
+    """Floor ``ts`` to UTC hour boundary."""
+    return (ts // 3600) * 3600
+
+
+def build_hourly_series(
+    commits: list[Commit],
+    now: datetime,
+    range_start: datetime,
+) -> tuple[list[str], list[int], list[int], list[int], list[int], list[int]]:
+    """Build labels, lines per crate per hour, commit counts, UTC day stripe, midnight indices."""
+    end = now.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    end_ts = int(end.timestamp())
+    start_ts = hour_start_ts(int(range_start.astimezone(timezone.utc).timestamp()))
+    hour_count = max(0, (end_ts - start_ts) // 3600)
+    labels: list[str] = []
+    day_stripe: list[int] = []
+    midnight_at: list[int] = []
+    grit: list[int] = [0] * hour_count
+    grit_lib: list[int] = [0] * hour_count
+    commits_per_hour: list[int] = [0] * hour_count
+
+    prev_date = None
+    day_index = -1
+    for h in range(hour_count):
+        t = start_ts + h * 3600
+        dt = datetime.fromtimestamp(t, tz=timezone.utc)
+        labels.append(dt.strftime("%m/%d %H:00"))
+        d = dt.date()
+        if d != prev_date:
+            day_index += 1
+            prev_date = d
+        day_stripe.append(day_index % 2)
+        if dt.hour == 0:
+            midnight_at.append(h)
+
+    for c in commits:
+        hs = hour_start_ts(c.ts)
+        idx = (hs - start_ts) // 3600
+        if 0 <= idx < hour_count:
+            grit[idx] += c.grit_lines
+            grit_lib[idx] += c.grit_lib_lines
+            commits_per_hour[idx] += 1
+
+    return labels, grit, grit_lib, commits_per_hour, day_stripe, midnight_at
+
+
+def format_range_caption_utc(dt: datetime) -> str:
+    """Human-readable UTC timestamp for the timeline start (e.g. ``2026-04-02 12:00 UTC``)."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def format_commit_time_utc(ts: int) -> str:
+    """Commit time as ``YYYY-MM-DD HH:MM UTC`` for list rows."""
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def commits_by_day(commits: list[Commit]) -> dict[str, list[Commit]]:
+    """Group commits by UTC date string YYYY-MM-DD (newest day first)."""
+    by_day: dict[str, list[Commit]] = defaultdict(list)
+    for c in commits:
+        day = datetime.fromtimestamp(c.ts, tz=timezone.utc).strftime("%Y-%m-%d")
+        by_day[day].append(c)
+    for day in by_day:
+        by_day[day].sort(key=lambda x: -x.ts)
+    return dict(sorted(by_day.items(), key=lambda kv: kv[0], reverse=True))
+
+
+def write_timeline_html(
+    path: Path,
+    commits: list[Commit],
+    labels: list[str],
+    grit: list[int],
+    grit_lib: list[int],
+    commits_per_hour: list[int],
+    day_stripe: list[int],
+    midnight_at: list[int],
+    generated: datetime,
+    range_start_caption: str,
+    chart_min_width_px: int,
+) -> None:
+    by_day = commits_by_day(commits)
+    chart_payload = {
+        "labels": labels,
+        "grit": grit,
+        "gritLib": grit_lib,
+        "commitsPerHour": commits_per_hour,
+        "dayStripe": day_stripe,
+        "midnightAt": midnight_at,
+    }
+    chart_json = json.dumps(chart_payload)
+
+    gen_iso = generated.replace(microsecond=0).isoformat()
+    gen_human = generated.strftime("%Y-%m-%d %H:%M UTC")
+
+    day_sections: list[str] = []
+    for i, (day, day_commits) in enumerate(by_day.items()):
+        stripe = "day-stripe-a" if i % 2 == 0 else "day-stripe-b"
+        items: list[str] = []
+        for c in day_commits:
+            short = c.sha[:7]
+            url = github_commit_url(c.sha)
+            if url:
+                sha_cell = (
+                    f'<a href="{html.escape(url)}" class="sha" target="_blank" '
+                    f'rel="noopener noreferrer">{html.escape(short)}</a>'
+                )
+            else:
+                sha_cell = f'<span class="sha">{html.escape(short)}</span>'
+            when = html.escape(format_commit_time_utc(c.ts))
+            subj = html.escape(c.subject)
+            gl = c.grit_lines + c.grit_lib_lines
+            items.append(
+                f"<li>{sha_cell} <span class=\"when\">{when}</span> "
+                f"<span class=\"subj\">{subj}</span> "
+                f"<span class=\"meta\">grit {c.grit_lines} · grit-lib {c.grit_lib_lines} · Σ {gl}</span></li>"
+            )
+        day_sections.append(
+            f'<section class="day-block {stripe}">'
+            f'<details class="day-details" id="{html.escape(day)}">'
+            f'<summary class="day-summary">'
+            f'<span class="day-date">{html.escape(day)}</span> '
+            f'<span class="count">({len(day_commits)} commits)</span>'
+            f"</summary>"
+            f'<ul class="day-commit-list">{"".join(items)}</ul>'
+            f"</details></section>"
         )
 
-    body = f"""<!DOCTYPE html>
+    body_days = "\n".join(day_sections)
+
+    html_doc = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Grit — commit timeline</title>
+<title>Grit — activity timeline</title>
 <style>
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{
@@ -316,206 +302,339 @@ body {{
   background: #0d1117;
   color: #e6edf3;
   padding: 2rem;
-  max-width: 1200px;
+  max-width: 1100px;
   margin: 0 auto;
 }}
 h1 {{ font-size: 1.75rem; margin-bottom: 0.25rem; color: #f0f6fc; }}
-.sub {{ color: #7d8590; font-size: 0.9rem; margin-bottom: 1.25rem; }}
-.sub time.gen-time {{ color: inherit; }}
-.sub a {{ color: #58a6ff; }}
-.count {{ color: #8b949e; font-size: 0.85rem; margin-bottom: 1rem; }}
-table {{ width: 100%; border-collapse: collapse; font-size: 0.85rem; }}
-th, td {{ text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid #21262d; vertical-align: top; }}
-th {{ color: #7d8590; font-weight: 600; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; position: sticky; top: 0; background: #0d1117; z-index: 1; }}
-.sha {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; width: 1%; }}
-.sha a {{ color: #58a6ff; text-decoration: none; }}
-.sha a:hover {{ text-decoration: underline; }}
-.date {{ color: #8b949e; white-space: nowrap; width: 1%; }}
-.author {{ color: #c9d1d9; max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-.subj {{ color: #e6edf3; word-break: break-word; }}
-.chart-section {{ margin-bottom: 2.5rem; }}
-.chart-section h2 {{ font-size: 1.15rem; color: #f0f6fc; margin-bottom: 0.35rem; font-weight: 600; }}
-.chart-caption {{ color: #8b949e; font-size: 0.8rem; margin-bottom: 1rem; line-height: 1.45; }}
-.chart-caption strong {{ color: #c9d1d9; font-weight: 600; }}
-.chart-chart-wrap {{
-  display: flex;
-  align-items: flex-start;
-  gap: 0;
-  margin-top: 0.35rem;
+.sub {{ color: #7d8590; font-size: 0.9rem; margin-bottom: 1.5rem; }}
+.chart-wrap {{
+  overflow-x: auto;
+  width: 100%;
+  margin-bottom: 2rem;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  background: #161b22;
+  padding: 1rem;
 }}
-.chart-y-axis {{
-  flex-shrink: 0;
-  width: 3rem;
-  padding-right: 0.45rem;
+.chart-inner {{
+  min-width: min(100%, {chart_min_width_px}px);
+  height: 360px;
+}}
+h2 {{ font-size: 1.15rem; margin: 1.5rem 0 0.75rem; color: #f0f6fc; }}
+.day-block {{
+  margin-bottom: 1.5rem;
+  padding: 0.65rem 1rem 0.85rem;
+  margin-left: -1rem;
+  margin-right: -1rem;
+  border-radius: 8px;
+}}
+.day-block.day-stripe-a {{ background: rgba(22, 27, 34, 0.65); border: 1px solid #21262d; }}
+.day-block.day-stripe-b {{ background: rgba(13, 17, 23, 0.5); border: 1px solid #21262d; }}
+.day-details {{ margin: 0; }}
+.day-summary {{
+  cursor: pointer;
+  font-size: 1rem;
+  color: #58a6ff;
+  padding: 0.2rem 0;
+  list-style-position: outside;
+}}
+.day-summary:focus {{ outline: none; }}
+.day-summary:focus-visible {{ outline: 2px solid #58a6ff; outline-offset: 2px; border-radius: 4px; }}
+.day-block .count {{ color: #7d8590; font-weight: 400; font-size: 0.9rem; }}
+.day-details[open] .day-summary {{ margin-bottom: 0.45rem; }}
+.day-commit-list {{ list-style: none; padding-left: 0; }}
+.day-block li {{
+  font-size: 0.88rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid #21262d;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  align-items: baseline;
+}}
+.day-block a {{ color: #58a6ff; text-decoration: none; }}
+.day-block a:hover {{ text-decoration: underline; }}
+.sha, .day-block a.sha {{
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.86em;
+  letter-spacing: -0.02em;
+}}
+.when {{ color: #7d8590; font-size: 0.8rem; white-space: nowrap; }}
+.subj {{ color: #e6edf3; flex: 1 1 200px; }}
+.meta {{ color: #6e7681; font-size: 0.8rem; white-space: nowrap; }}
+.chart-toolbar {{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.75rem;
+}}
+.chart-toolbar span.lbl {{ color: #7d8590; font-size: 0.85rem; }}
+.toggle {{
+  display: inline-flex;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  overflow: hidden;
+}}
+.toggle label {{
+  display: block;
+  margin: 0;
+  cursor: pointer;
+}}
+.toggle input {{ position: absolute; opacity: 0; width: 0; height: 0; }}
+.toggle .opt {{
+  display: block;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.82rem;
+  color: #8b949e;
+  background: #0d1117;
   border-right: 1px solid #30363d;
 }}
-.chart-y-axis-inner {{
-  height: 200px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  align-items: flex-end;
-  font-size: 0.68rem;
-  color: #7d8590;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}}
-.chart-y-tick {{
-  display: block;
-}}
-.chart-y-axis-title {{
-  margin-top: 0.5rem;
-  font-size: 0.62rem;
-  color: #484f58;
-  text-align: right;
-  line-height: 1.2;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}}
-.chart-scroll {{
-  overflow-x: auto;
-  padding: 0.5rem 0 2.75rem;
-  margin: 0 -0.25rem;
-  scrollbar-color: #30363d #161b22;
-}}
-.chart-scroll-plot {{
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  padding-top: 0;
-}}
-.chart-surface {{
-  position: relative;
-  min-height: 200px;
-}}
-.chart-grid-lines {{
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 200px;
-  pointer-events: none;
-  z-index: 0;
-}}
-.chart-grid-line {{
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 1px;
+.toggle label:last-child .opt {{ border-right: none; }}
+.toggle input:focus + .opt {{ outline: 2px solid #58a6ff; outline-offset: -2px; }}
+.toggle input:checked + .opt {{
   background: #21262d;
-  margin-top: -0.5px;
+  color: #f0f6fc;
 }}
-.chart-bars {{
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  min-height: 200px;
-  height: auto;
-  min-width: max(100%, calc(var(--chart-cols, 1) * 7px));
-  padding: 0 6px;
-  position: relative;
-  z-index: 1;
-}}
-.chart-col {{
-  flex: 1 0 6px;
-  min-width: 5px;
-  max-width: 28px;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  align-items: center;
-}}
-.chart-bars-hourly {{
-  min-width: max(100%, calc(var(--chart-cols, 1) * 3px));
-  gap: 1px;
-}}
-.chart-bars-hourly .chart-col {{
-  max-width: 12px;
-  min-width: 2px;
-}}
-.chart-col-day-sep {{
-  border-left: 2px solid #484f58;
-  margin-left: 1px;
-  padding-left: 1px;
-}}
-.chart-bar-wrap {{
-  flex: none;
-  height: 200px;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  min-height: 0;
-}}
-.chart-bar {{
-  width: 100%;
-  min-height: 2px;
-  border-radius: 3px 3px 1px 1px;
-  background: linear-gradient(180deg, #58a6ff 0%, #388bfd 45%, #1f6feb 100%);
-  box-shadow: 0 0 14px rgba(88, 166, 255, 0.12);
-  transition: filter 0.12s ease, box-shadow 0.12s ease;
-}}
-.chart-col:hover .chart-bar {{
-  filter: brightness(1.12);
-  box-shadow: 0 0 18px rgba(88, 166, 255, 0.22);
-}}
-.chart-x {{
-  flex-shrink: 0;
-  font-size: 0.58rem;
-  color: #7d8590;
-  margin-top: 0.35rem;
-  line-height: 1.05;
-  text-align: center;
-  max-width: 140%;
-  white-space: nowrap;
-  transform: rotate(-42deg);
-  transform-origin: top center;
-  height: 2.4rem;
-}}
-.chart-x-skip {{ visibility: hidden; }}
 </style>
 </head>
 <body>
-<h1>Commit timeline</h1>
-<p class="sub">Generated {generated_time_element(now)} · {commit_link} · <a href="index.html">Dashboard</a> · <a href="testfiles.html">All test files</a></p>
-<p class="count">{len(commits):,} commits from <code>git log --all</code> (earliest day {html.escape(first_day.isoformat())})</p>
-{chart_html}
-<table>
-<thead>
-<tr><th>Commit</th><th>Date</th><th>Author</th><th>Subject</th></tr>
-</thead>
-<tbody>
-{"\n".join(rows_html)}
-</tbody>
-</table>
+<h1>Activity timeline</h1>
+<p class="sub">Non-merge commits from <strong>{html.escape(range_start_caption)}</strong> through now that touch <code>grit/</code>, <code>grit-lib/</code>, or the pre-rename <code>gust/</code> / <code>gust-lib/</code> trees. Toggle the chart: total <strong>commits per hour</strong>, or stacked <strong>lines per crate per hour</strong> (<code>git log --stat</code>). Generated <time datetime="{html.escape(gen_iso)}">{html.escape(gen_human)}</time>.</p>
+
+<div class="chart-wrap">
+  <div class="chart-toolbar">
+    <span class="lbl">Chart</span>
+    <div class="toggle" role="group" aria-label="Chart metric">
+      <label><input type="radio" name="chartMode" value="lines"><span class="opt">Lines / crate / hour</span></label>
+      <label><input type="radio" name="chartMode" value="commits" checked><span class="opt">Commits / hour</span></label>
+    </div>
+  </div>
+  <div class="chart-inner"><canvas id="hourly" aria-label="Hourly activity"></canvas></div>
+</div>
+
+<h2>Commits by day</h2>
+{body_days}
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js" crossorigin="anonymous"></script>
 <script>
 (function() {{
-  document.querySelectorAll('time.gen-time').forEach(function(el) {{
-    var dt = el.getAttribute('datetime');
-    if (!dt) return;
-    var d = new Date(dt);
-    if (isNaN(d.getTime())) return;
-    var rtf = new Intl.RelativeTimeFormat('en', {{ numeric: 'auto' }});
-    var now = new Date();
-    var diffSec = (d - now) / 1000;
-    var abs = Math.abs(diffSec);
-    var v;
-    var unit;
-    if (abs < 60) {{ v = Math.round(diffSec); unit = 'second'; }}
-    else if (abs < 3600) {{ v = Math.round(diffSec / 60); unit = 'minute'; }}
-    else if (abs < 86400) {{ v = Math.round(diffSec / 3600); unit = 'hour'; }}
-    else if (abs < 604800) {{ v = Math.round(diffSec / 86400); unit = 'day'; }}
-    else if (abs < 2629800) {{ v = Math.round(diffSec / 604800); unit = 'week'; }}
-    else if (abs < 31536000) {{ v = Math.round(diffSec / 2629800); unit = 'month'; }}
-    else {{ v = Math.round(diffSec / 31536000); unit = 'year'; }}
-    el.textContent = rtf.format(v, unit);
+  var data = {chart_json};
+  var dayStripe = data.dayStripe || [];
+  var el = document.getElementById('hourly');
+  if (!el || typeof Chart === 'undefined') return;
+  if (!data.labels || !data.labels.length) {{
+    el.parentElement.innerHTML = '<p class="chart-empty" style="color:#7d8590;font-size:0.9rem;padding:2rem;text-align:center">No hourly range (start is at or after the current hour).</p>';
+    return;
+  }}
+
+  var dayBandPlugin = {{
+    id: 'dayBands',
+    beforeDatasetsDraw: function(chart) {{
+      var stripes = dayStripe;
+      if (!stripes.length) return;
+      var chartArea = chart.chartArea;
+      if (!chartArea || chartArea.width <= 0) return;
+      var meta = chart.getDatasetMeta(0);
+      if (!meta || !meta.data || !meta.data.length) return;
+      var labels = chart.data.labels || [];
+      var n = Math.min(stripes.length, labels.length, meta.data.length);
+      var ctx = chart.ctx;
+      ctx.save();
+      for (var i = 0; i < n; i++) {{
+        var left = i === 0 ? chartArea.left : (meta.data[i - 1].x + meta.data[i].x) / 2;
+        var right = i === n - 1 ? chartArea.right : (meta.data[i].x + meta.data[i + 1].x) / 2;
+        ctx.fillStyle = stripes[i] % 2 === 0
+          ? 'rgba(22, 27, 34, 0.65)'
+          : 'rgba(13, 17, 23, 0.5)';
+        ctx.fillRect(left, chartArea.top, right - left, chartArea.bottom - chartArea.top);
+      }}
+      ctx.restore();
+    }},
+  }};
+  Chart.register(dayBandPlugin);
+
+  var midnightAt = data.midnightAt || [];
+  var midnightLinesPlugin = {{
+    id: 'midnightLines',
+    afterDatasetsDraw: function(chart) {{
+      if (!midnightAt.length) return;
+      var chartArea = chart.chartArea;
+      if (!chartArea || chartArea.width <= 0) return;
+      var meta = chart.getDatasetMeta(0);
+      if (!meta || !meta.data || !meta.data.length) return;
+      var ctx = chart.ctx;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(88, 166, 255, 0.45)';
+      ctx.lineWidth = 1;
+      midnightAt.forEach(function(i) {{
+        var idx = Number(i);
+        if (idx !== idx || idx < 0 || idx >= meta.data.length) return;
+        var x;
+        if (idx === 0) {{
+          var b0 = meta.data[0];
+          if (!b0) return;
+          x = (chartArea.left + b0.x) / 2;
+        }} else {{
+          var a = meta.data[idx - 1];
+          var b = meta.data[idx];
+          if (!a || !b) return;
+          x = (a.x + b.x) / 2;
+        }}
+        ctx.beginPath();
+        ctx.moveTo(x, chartArea.top);
+        ctx.lineTo(x, chartArea.bottom);
+        ctx.stroke();
+      }});
+      ctx.restore();
+    }},
+  }};
+  Chart.register(midnightLinesPlugin);
+
+  var currentMode = 'commits';
+
+  function footerTotal(items, mode) {{
+    if (mode === 'commits') {{
+      var v = items[0] && items[0].parsed.y;
+      return v != null ? 'Commits: ' + v : '';
+    }}
+    var t = 0;
+    items.forEach(function(i) {{ t += i.parsed.y || 0; }});
+    return 'Total lines: ' + t;
+  }}
+
+  function baseOptions() {{
+    return {{
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {{ mode: 'index', intersect: false }},
+      plugins: {{
+        legend: {{ labels: {{ color: '#e6edf3' }} }},
+        tooltip: {{
+          callbacks: {{
+            footer: function(items) {{ return footerTotal(items, currentMode); }},
+          }},
+        }},
+      }},
+      scales: {{
+        x: {{
+          stacked: true,
+          ticks: {{
+            color: '#8b949e',
+            maxRotation: 60,
+            minRotation: 60,
+            autoSkip: true,
+            maxTicksLimit: 48,
+          }},
+          grid: {{ color: '#21262d' }},
+        }},
+        y: {{
+          stacked: true,
+          ticks: {{ color: '#8b949e' }},
+          grid: {{ color: '#21262d' }},
+          beginAtZero: true,
+          title: {{
+            display: true,
+            text: 'Lines touched (stat)',
+            color: '#7d8590',
+          }},
+        }},
+      }},
+    }};
+  }}
+
+  function applyMode(chart, mode) {{
+    currentMode = mode;
+    var stacked = mode === 'lines';
+    chart.data.datasets = datasetsFor(mode);
+    chart.options.plugins.legend.display = stacked;
+    chart.options.scales.x.stacked = stacked;
+    chart.options.scales.y.stacked = stacked;
+    chart.options.scales.y.title.text =
+      mode === 'commits' ? 'Commits' : 'Lines touched (stat)';
+    chart.update();
+  }}
+
+  function datasetsFor(mode) {{
+    if (mode === 'commits') {{
+      return [
+        {{
+          label: 'Commits',
+          data: data.commitsPerHour,
+          backgroundColor: 'rgba(210, 153, 34, 0.9)',
+          borderColor: 'rgba(227, 179, 65, 1)',
+          borderWidth: 1,
+        }},
+      ];
+    }}
+    return [
+      {{
+        label: 'grit',
+        data: data.grit,
+        backgroundColor: 'rgba(63, 185, 80, 0.85)',
+        borderColor: 'rgba(46, 160, 67, 1)',
+        borderWidth: 1,
+      }},
+      {{
+        label: 'grit-lib',
+        data: data.gritLib,
+        backgroundColor: 'rgba(121, 192, 255, 0.85)',
+        borderColor: 'rgba(88, 166, 255, 1)',
+        borderWidth: 1,
+      }},
+    ];
+  }}
+
+  var chart = new Chart(el, {{
+    type: 'bar',
+    data: {{ labels: data.labels, datasets: datasetsFor('commits') }},
+    options: baseOptions(),
+  }});
+  applyMode(chart, 'commits');
+  document.querySelectorAll('input[name="chartMode"]').forEach(function(radio) {{
+    radio.addEventListener('change', function() {{
+      if (!this.checked) return;
+      var mode = this.value === 'commits' ? 'commits' : 'lines';
+      applyMode(chart, mode);
+    }});
   }});
 }})();
 </script>
 </body>
 </html>
 """
-    OUT.write_text(body, encoding="utf-8")
+    path.write_text(html_doc, encoding="utf-8")
+
+
+def main() -> None:
+    raw = run_git_log()
+    commits = parse_git_log_stat(raw)
+    start_ts = hour_start_ts(int(TIMELINE_START_UTC.timestamp()))
+    commits = [
+        c
+        for c in commits
+        if c.ts >= start_ts and commit_touches_grit_roots(c)
+    ]
+    now = datetime.now(timezone.utc)
+    labels, grit, grit_lib, commits_per_hour, day_stripe, midnight_at = (
+        build_hourly_series(commits, now=now, range_start=TIMELINE_START_UTC)
+    )
+    hour_count = len(labels)
+    chart_min_width_px = min(2400, max(400, hour_count * 10))
+    range_caption = format_range_caption_utc(TIMELINE_START_UTC)
+    write_timeline_html(
+        OUT,
+        commits,
+        labels,
+        grit,
+        grit_lib,
+        commits_per_hour,
+        day_stripe,
+        midnight_at,
+        generated=now,
+        range_start_caption=range_caption,
+        chart_min_width_px=chart_min_width_px,
+    )
     print(f"Wrote {OUT} ({len(commits)} commits)")
 
 

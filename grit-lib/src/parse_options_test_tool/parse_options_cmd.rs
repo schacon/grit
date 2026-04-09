@@ -509,9 +509,9 @@ fn long_exact(
         "length" => {
             let v = take_val(eq_val, argv, i, "length")?;
             if u {
-                return Err(ParseOptionsToolError::Fatal(format!(
-                    "error: option `no-length' isn't available\n"
-                )));
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: option `no-length' isn't available\n".to_string(),
+                ));
             }
             st.length_cb_called = true;
             st.length_cb_arg = Some(v.clone());
@@ -764,14 +764,14 @@ fn take_val(
 
 fn parse_abbrev(s: &str, out: &mut i32) -> Result<(), ParseOptionsToolError> {
     if s.is_empty() {
-        return Err(ParseOptionsToolError::Fatal(format!(
-            "error: option `abbrev' expects a numerical value\n"
-        )));
+        return Err(ParseOptionsToolError::Fatal(
+            "error: option `abbrev' expects a numerical value\n".to_string(),
+        ));
     }
     let v: i32 = s.parse().map_err(|_| {
-        ParseOptionsToolError::Fatal(format!(
-            "error: option `abbrev' expects a numerical value\n"
-        ))
+        ParseOptionsToolError::Fatal(
+            "error: option `abbrev' expects a numerical value\n".to_string(),
+        )
     })?;
     *out = if v != 0 && v < 4 { 4 } else { v };
     Ok(())
@@ -899,9 +899,9 @@ fn parse_short(
                 local_i += 1;
                 argv[local_i].clone()
             } else {
-                return Err(ParseOptionsToolError::Fatal(format!(
-                    "error: switch `s' requires a value\n"
-                )));
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `s' requires a value\n".to_string(),
+                ));
             };
             o = full_suffix.len();
             st.string = Some(v);
@@ -918,9 +918,9 @@ fn parse_short(
                 local_i += 1;
                 argv[local_i].clone()
             } else {
-                return Err(ParseOptionsToolError::Fatal(format!(
-                    "error: switch `i' requires a value\n"
-                )));
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `i' requires a value\n".to_string(),
+                ));
             };
             set_int(st, &v, "integer")?;
             o = full_suffix.len();
@@ -933,9 +933,9 @@ fn parse_short(
                 local_i += 1;
                 argv[local_i].clone()
             } else {
-                return Err(ParseOptionsToolError::Fatal(format!(
-                    "error: switch `j' requires a value\n"
-                )));
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `j' requires a value\n".to_string(),
+                ));
             };
             set_int(st, &v, "j")?;
             o = full_suffix.len();
@@ -948,9 +948,9 @@ fn parse_short(
                 local_i += 1;
                 argv[local_i].clone()
             } else {
-                return Err(ParseOptionsToolError::Fatal(format!(
-                    "error: switch `u' requires a value\n"
-                )));
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `u' requires a value\n".to_string(),
+                ));
             };
             set_unsigned(st, &v)?;
             o = full_suffix.len();
@@ -990,9 +990,9 @@ fn parse_short(
                 local_i += 1;
                 argv[local_i].clone()
             } else {
-                return Err(ParseOptionsToolError::Fatal(format!(
-                    "error: switch `L' requires a value\n"
-                )));
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `L' requires a value\n".to_string(),
+                ));
             };
             o = full_suffix.len();
             st.length_cb_called = true;
@@ -1007,9 +1007,9 @@ fn parse_short(
                 local_i += 1;
                 argv[local_i].clone()
             } else {
-                return Err(ParseOptionsToolError::Fatal(format!(
-                    "error: switch `F' requires a value\n"
-                )));
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `F' requires a value\n".to_string(),
+                ));
             };
             o = full_suffix.len();
             st.file = Some(format!("{prefix}{v}"));
@@ -1021,9 +1021,9 @@ fn parse_short(
                 local_i += 1;
                 argv[local_i].clone()
             } else {
-                return Err(ParseOptionsToolError::Fatal(format!(
-                    "error: switch `A' requires a value\n"
-                )));
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `A' requires a value\n".to_string(),
+                ));
             };
             o = full_suffix.len();
             st.string = Some(v);
@@ -1035,9 +1035,9 @@ fn parse_short(
                 local_i += 1;
                 argv[local_i].clone()
             } else {
-                return Err(ParseOptionsToolError::Fatal(format!(
-                    "error: switch `Z' requires a value\n"
-                )));
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `Z' requires a value\n".to_string(),
+                ));
             };
             o = full_suffix.len();
             st.string = Some(v);
@@ -1049,9 +1049,9 @@ fn parse_short(
                 local_i += 1;
                 argv[local_i].clone()
             } else {
-                return Err(ParseOptionsToolError::Fatal(format!(
-                    "error: switch `o' requires a value\n"
-                )));
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `o' requires a value\n".to_string(),
+                ));
             };
             o = full_suffix.len();
             st.string = Some(v);

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Generate docs/index.html and docs/testfiles.html from data/test-files.csv."""
+"""Generate docs/index.html, docs/testfiles.html, and docs/test-progress.svg from data/test-files.csv."""
 
 from __future__ import annotations
 
 import csv
 import html
-import os
 import subprocess
 import urllib.parse
 from datetime import datetime, timezone
@@ -15,6 +14,10 @@ REPO = Path(__file__).resolve().parent.parent
 DATA = REPO / "data" / "test-files.csv"
 OUT_INDEX = REPO / "docs" / "index.html"
 OUT_FILES = REPO / "docs" / "testfiles.html"
+OUT_SVG = REPO / "docs" / "test-progress.svg"
+
+# Published site root (GitHub Pages) for absolute og/twitter image URLs on index.html.
+GITHUB_PAGES_SITE = "https://schacon.github.io/grit"
 
 # Labels from git/t/README "Naming Tests" (first digit = family).
 GROUP_DESC: dict[str, str] = {
@@ -142,21 +145,10 @@ def pct(n: int, d: int) -> float:
     return round(100.0 * n / d, 1) if d > 0 else 0.0
 
 
-def pass_rate_band(pc: float) -> str:
-    """CSS class suffix for pass-rate coloring: red / orange / blue / green."""
-    if pc < 40.0:
-        return "pct-red"
-    if pc < 60.0:
-        return "pct-orange"
-    if pc < 80.0:
-        return "pct-blue"
-    return "pct-green"
-
-
-def generate_index(rows: list[dict[str, str]]) -> str:
+def harness_summary(rows: list[dict[str, str]]) -> dict[str, int | float]:
+    """Aggregate counts for in-scope harness files (same rules as the dashboard hero)."""
     in_scope = [r for r in rows if r.get("in_scope", "yes").strip().lower() != "skip"]
     skipped = [r for r in rows if r.get("in_scope", "yes").strip().lower() == "skip"]
-
     total_tests = 0
     total_pass = 0
     full_files = 0
@@ -171,9 +163,88 @@ def generate_index(rows: list[dict[str, str]]) -> str:
         fp = (r.get("fully_passing") or "").strip().lower() == "true"
         if fp and tt > 0:
             full_files += 1
+    return {
+        "file_count": len(in_scope),
+        "total_tests": total_tests,
+        "total_pass": total_pass,
+        "full_files": full_files,
+        "skipped_files": len(skipped),
+        "pass_rate": pct(total_pass, total_tests),
+    }
 
-    file_count = len(in_scope)
-    pass_rate = pct(total_pass, total_tests)
+
+def pass_rate_band(pc: float) -> str:
+    """CSS class suffix for pass-rate coloring: red / orange / blue / green."""
+    if pc < 40.0:
+        return "pct-red"
+    if pc < 60.0:
+        return "pct-orange"
+    if pc < 80.0:
+        return "pct-blue"
+    return "pct-green"
+
+
+SVG_BAR_FILL: dict[str, str] = {
+    "pct-red": "#da3633",
+    "pct-orange": "#d29922",
+    "pct-blue": "#58a6ff",
+    "pct-green": "#3fb950",
+}
+
+
+def xml_escape(text: str) -> str:
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def generate_progress_svg(rows: list[dict[str, str]]) -> str:
+    """Static SVG summary of overall harness pass rate (for README and embedding)."""
+    stats = harness_summary(rows)
+    total_tests = int(stats["total_tests"])
+    total_pass = int(stats["total_pass"])
+    file_count = int(stats["file_count"])
+    full_files = int(stats["full_files"])
+    skipped_n = int(stats["skipped_files"])
+    pr = float(stats["pass_rate"])
+    band = pass_rate_band(pr)
+    fill = SVG_BAR_FILL[band]
+    bar_w = 700
+    fg_w = max(0, min(bar_w, int(round(bar_w * pr / 100.0))))
+    sub = (
+        f"{pr:g}% pass rate · {total_pass:,} / {total_tests:,} tests · "
+        f"{file_count:,} files in scope · {full_files:,} fully passing · "
+        f"{skipped_n:,} skipped"
+    )
+    desc = (
+        f"{total_pass} of {total_tests} tests passing across {file_count} harness files "
+        f"({pr:g}% pass rate)."
+    )
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 132" width="780" height="132" role="img" aria-labelledby="svg-title svg-desc">
+  <title id="svg-title">{xml_escape("Grit harness: upstream test progress")}</title>
+  <desc id="svg-desc">{xml_escape(desc)}</desc>
+  <rect x="0" y="0" width="780" height="132" rx="6" fill="#0d1117" stroke="#30363d"/>
+  <text x="40" y="38" fill="#f0f6fc" font-family="ui-sans-serif,system-ui,sans-serif" font-size="20" font-weight="600">{xml_escape("Grit harness test progress")}</text>
+  <text x="40" y="64" fill="#8b949e" font-family="ui-sans-serif,system-ui,sans-serif" font-size="13">{xml_escape(sub)}</text>
+  <rect x="40" y="80" width="{bar_w}" height="18" rx="9" fill="#21262d" stroke="#30363d"/>
+  <rect x="40" y="80" width="{fg_w}" height="18" rx="9" fill="{fill}"/>
+  <text x="40" y="118" fill="#6e7681" font-family="ui-monospace,monospace" font-size="11">{xml_escape("Generated from data/test-files.csv")}</text>
+</svg>
+"""
+
+
+def generate_index(rows: list[dict[str, str]]) -> str:
+    in_scope = [r for r in rows if r.get("in_scope", "yes").strip().lower() != "skip"]
+    stats = harness_summary(rows)
+    total_tests = int(stats["total_tests"])
+    total_pass = int(stats["total_pass"])
+    full_files = int(stats["full_files"])
+    file_count = int(stats["file_count"])
+    pass_rate = float(stats["pass_rate"])
+    skipped_n = int(stats["skipped_files"])
 
     now = datetime.now(timezone.utc)
     sha_full = git_full_sha()
@@ -208,6 +279,12 @@ def generate_index(rows: list[dict[str, str]]) -> str:
 
     overall_band = pass_rate_band(pass_rate)
 
+    og_desc = (
+        f"{pass_rate:g}% of harness tests passing "
+        f"({total_pass:,} / {total_tests:,})."
+    )
+    card_image_url = f"{GITHUB_PAGES_SITE}/test-progress.svg"
+
     group_html = ""
     for g in order:
         st = groups[g]
@@ -237,6 +314,13 @@ def generate_index(rows: list[dict[str, str]]) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Grit Project Progress</title>
+<meta property="og:title" content="Grit Project Progress">
+<meta property="og:description" content="{html.escape(og_desc)}">
+<meta property="og:image" content="{html.escape(card_image_url)}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Grit Project Progress">
+<meta name="twitter:description" content="{html.escape(og_desc)}">
+<meta name="twitter:image" content="{html.escape(card_image_url)}">
 <style>
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{
@@ -399,7 +483,7 @@ h1 {{ font-size: 1.75rem; margin-bottom: 0.25rem; color: #f0f6fc; }}
     <span class="summary-meta-sep" aria-hidden="true">·</span>
     <span>{full_files:,} files fully passing</span>
     <span class="summary-meta-sep" aria-hidden="true">·</span>
-    <span>{len(skipped):,} skipped files</span>
+    <span>{skipped_n:,} skipped files</span>
   </p>
 </section>
 
@@ -424,16 +508,11 @@ def generate_testfiles(rows: list[dict[str, str]]) -> str:
     in_scope = [r for r in rows if r.get("in_scope", "yes").strip().lower() != "skip"]
     skipped_rows = [r for r in rows if r.get("in_scope", "yes").strip().lower() == "skip"]
 
-    total_tests = 0
-    total_pass = 0
-    for r in in_scope:
-        try:
-            total_tests += int(r.get("tests_total") or 0)
-            total_pass += int(r.get("passed_last") or 0)
-        except ValueError:
-            continue
-    file_count = len(in_scope)
-    pass_rate = pct(total_pass, total_tests)
+    stats = harness_summary(rows)
+    total_tests = int(stats["total_tests"])
+    total_pass = int(stats["total_pass"])
+    file_count = int(stats["file_count"])
+    pass_rate = float(stats["pass_rate"])
 
     groups_order = sorted({r.get("group") or "t?" for r in rows}, key=lambda x: (len(x), x))
 
@@ -704,8 +783,10 @@ def main() -> None:
     OUT_INDEX.parent.mkdir(parents=True, exist_ok=True)
     OUT_INDEX.write_text(generate_index(rows), encoding="utf-8")
     OUT_FILES.write_text(generate_testfiles(rows), encoding="utf-8")
+    OUT_SVG.write_text(generate_progress_svg(rows), encoding="utf-8")
     print(f"Wrote {OUT_INDEX}")
     print(f"Wrote {OUT_FILES}")
+    print(f"Wrote {OUT_SVG}")
 
 
 if __name__ == "__main__":

@@ -30,12 +30,12 @@ cargo build --release -p grit-rs
 
 ## Testing pipeline (harness)
 
-Upstream-style tests live in `tests/` and are driven by **`scripts/run-tests.sh`**. Per-file status and last-run counts live in **`data/test-files.csv`** (tab-separated). Dashboards **`docs/index.html`** and **`docs/testfiles.html`** are generated from that CSV.
+Upstream-style tests live in `tests/` and are driven by **`scripts/run-tests.sh`**. Per-file status and last-run counts live in **`data/test-files.csv`** (tab-separated). Dashboards **`docs/index.html`**, **`docs/testfiles.html`**, and **`docs/test-progress.svg`** (README progress badge) are generated from that CSV.
 
 **Flow:**
 
 1. **`scripts/run-tests.sh`** — Runs the requested files (single `.sh`, group prefix like `t1`, or all rows with `in_scope=yes`). Rows with **`in_scope=skip`** are never run.
-2. **`scripts/generate-dashboard-from-test-files.py`** — Regenerates **`docs/index.html`** and **`docs/testfiles.html`**.
+2. **`scripts/generate-dashboard-from-test-files.py`** — Regenerates **`docs/index.html`**, **`docs/testfiles.html`**, and **`docs/test-progress.svg`**.
 
 To skip a file manually, set **`in_scope`** to **`skip`** on its row in `data/test-files.csv`. Skipped files are omitted from runs and from aggregate counts on the main dashboard.
 

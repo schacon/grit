@@ -6,6 +6,11 @@ while true; do
   PR_COUNT=$(gh search prs --repo schacon/grit --state=open --draft=false --limit 1000 --json number --jq 'length')
   echo "${PR_COUNT} Pull Requests Left"
 
+  if [ "${PR_COUNT}" -eq 0 ]; then
+    echo "No open PRs; exiting."
+    exit 0
+  fi
+
   COMMIT=$(git rev-parse --short=6 HEAD)
   LOGFILE="logs/agent_${COMMIT}.log"
 

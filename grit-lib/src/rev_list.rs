@@ -524,23 +524,21 @@ pub fn rev_list(
     }
 
     let mut index_blob_roots: Vec<RootObject> = Vec::new();
-    if options.objects && options.include_indexed_objects {
-        if repo.work_tree.is_some() {
-            let index_path = repo.git_dir.join("index");
-            if index_path.is_file() {
-                let idx = Index::load(&index_path)?;
-                for e in &idx.entries {
-                    if e.stage() != 0 {
-                        continue;
-                    }
-                    let path_str = String::from_utf8_lossy(&e.path).into_owned();
-                    index_blob_roots.push(RootObject {
-                        oid: e.oid,
-                        input: format!(":{path_str}"),
-                        expected_kind: Some(ExpectedObjectKind::Blob),
-                        root_path: Some(path_str),
-                    });
+    if options.objects && options.include_indexed_objects && repo.work_tree.is_some() {
+        let index_path = repo.git_dir.join("index");
+        if index_path.is_file() {
+            let idx = Index::load(&index_path)?;
+            for e in &idx.entries {
+                if e.stage() != 0 {
+                    continue;
                 }
+                let path_str = String::from_utf8_lossy(&e.path).into_owned();
+                index_blob_roots.push(RootObject {
+                    oid: e.oid,
+                    input: format!(":{path_str}"),
+                    expected_kind: Some(ExpectedObjectKind::Blob),
+                    root_path: Some(path_str),
+                });
             }
         }
     }

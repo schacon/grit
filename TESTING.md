@@ -4,7 +4,7 @@
 
 Grit uses the upstream Git test suite as ground truth. Harness files live under `tests/` (ported from `git/t/`) and run through `scripts/run-tests.sh` with the grit binary copied into `tests/grit` and exposed as `git` via the harness.
 
-The **single source of truth** for per-file harness status is **`data/test-files.csv`**. There are no intermediate TSVs (no `file-results.tsv`, no per-command aggregates). After each run, **`docs/index.html`** (summary + progress by group) and **`docs/testfiles.html`** (per-file table, filterable by group) are regenerated from that CSV.
+The **single source of truth** for per-file harness status is **`data/test-files.csv`**. There are no intermediate TSVs (no `file-results.tsv`, no per-command aggregates). After each run, **`docs/index.html`** (summary + progress by group), **`docs/testfiles.html`** (per-file table, filterable by group), and **`docs/test-progress.svg`** (overall pass-rate badge for the README) are regenerated from that CSV.
 
 ## Running tests
 
@@ -33,26 +33,14 @@ Edit **`data/test-files.csv`**: set **`in_scope`** to **`skip`** on the row for 
 
 Re-run **`python3 scripts/generate-test-files-catalog.py`** if you add or rename `.sh` files and want the CSV updated without running tests (otherwise the next `run-tests.sh` also refreshes the catalog).
 
-## Pipeline diagram
-
-```
-generate-test-files-catalog.py     (start of run-tests.sh: discover files, groups, marker counts)
-            │
-            ▼
-    data/test-files.csv  ◄────  apply-test-run-results.py  ◄────  run-tests.sh (bash harness per file)
-            │
-            └──►  generate-dashboard-from-test-files.py  ──►  docs/index.html
-                                                           ──►  docs/testfiles.html
-```
-
 ## Scripts reference
 
-| Script | Role |
-|--------|------|
-| `scripts/generate-test-files-catalog.py` | Scan `tests/t*.sh`, merge **`data/test-files.csv`** (preserves `in_scope` and prior run columns where possible). |
-| `scripts/run-tests.sh` | Select files to run, execute harness, invoke apply + dashboard. |
-| `scripts/apply-test-run-results.py` | Merge one batch of run lines into **`data/test-files.csv`**, then call the dashboard generator. |
-| `scripts/generate-dashboard-from-test-files.py` | Read CSV only; write **`docs/index.html`** and **`docs/testfiles.html`**. |
+| Script                                          | Role                                                                                                             |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `scripts/generate-test-files-catalog.py`        | Scan `tests/t*.sh`, merge **`data/test-files.csv`** (preserves `in_scope` and prior run columns where possible). |
+| `scripts/run-tests.sh`                          | Select files to run, execute harness, invoke apply + dashboard.                                                  |
+| `scripts/apply-test-run-results.py`             | Merge one batch of run lines into **`data/test-files.csv`**, then call the dashboard generator.                  |
+| `scripts/generate-dashboard-from-test-files.py` | Read CSV only; write **`docs/index.html`**, **`docs/testfiles.html`**, and **`docs/test-progress.svg`**.        |
 
 ## Data pipeline (step by step)
 
@@ -64,17 +52,17 @@ generate-test-files-catalog.py     (start of run-tests.sh: discover files, group
 
 4. **`data/test-files.csv`** columns:
 
-| Column | Meaning |
-|--------|---------|
-| `file` | Base name (no `.sh`) |
-| `group` | `t0`–`t9` (first digit of `tNNNN…`; see `git/t/README` and catalog script) |
-| `in_scope` | `yes` or `skip` (manual) |
-| `tests_total` | Count of test markers in the file |
-| `passed_last` | Pass count from the last run |
-| `failing` | Fail count from the last run |
-| `fully_passing` | `true` if `tests_total > 0` and `failing == 0` |
-| `status` | `ok`, `timeout`, or `error` from the harness |
-| `expect_failure` | Count of `test_expect_failure` lines |
+| Column           | Meaning                                                                    |
+| ---------------- | -------------------------------------------------------------------------- |
+| `file`           | Base name (no `.sh`)                                                       |
+| `group`          | `t0`–`t9` (first digit of `tNNNN…`; see `git/t/README` and catalog script) |
+| `in_scope`       | `yes` or `skip` (manual)                                                   |
+| `tests_total`    | Count of test markers in the file                                          |
+| `passed_last`    | Pass count from the last run                                               |
+| `failing`        | Fail count from the last run                                               |
+| `fully_passing`  | `true` if `tests_total > 0` and `failing == 0`                             |
+| `status`         | `ok`, `timeout`, or `error` from the harness                               |
+| `expect_failure` | Count of `test_expect_failure` lines                                       |
 
 ## Work strategy: one file at a time
 

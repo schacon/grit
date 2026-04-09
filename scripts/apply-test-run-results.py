@@ -70,7 +70,7 @@ def main() -> None:
     parser.add_argument(
         "--skip-dashboard",
         action="store_true",
-        help="Update CSV only; skip docs/index.html and docs/testfiles.html (caller may run generate-dashboard-from-test-files.py once at the end).",
+        help="Update CSV only; skip docs dashboards (index.html, testfiles.html, test-progress.svg; caller may run generate-dashboard-from-test-files.py once at the end).",
     )
     args = parser.parse_args()
     run_path = args.run_path
@@ -109,7 +109,9 @@ def main() -> None:
             cwd=str(REPO),
             check=True,
         )
-        print(f"Updated {CSV_PATH} and regenerated docs/index.html, docs/testfiles.html")
+        print(
+            f"Updated {CSV_PATH} and regenerated docs/index.html, docs/testfiles.html, docs/test-progress.svg"
+        )
 
 
 if __name__ == "__main__":

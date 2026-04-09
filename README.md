@@ -11,8 +11,12 @@ This implementation is being written entirely by AI coding agents. The AGENT.md 
 | [`grit-rs`](https://crates.io/crates/grit-rs) | The `grit` binary — a drop-in CLI reimplementation of `git` with 140+ commands |
 | [`grit-lib`](https://crates.io/crates/grit-lib) | Core library: object model, diff engine, index, refs, revision walking, merge, config, and more |
 
+Runnable **library examples** (repos, object database, index, `rev-list`, cherry-pick, and more) are documented in [`grit-lib/examples/README.md`](grit-lib/examples/README.md).
+
 ## Progress
 
-See the **[project dashboard](https://schacon.github.io/grit)** (generated from `data/test-files.csv` via `scripts/run-tests.sh`).
+![Harness test progress](docs/test-progress.svg)
+
+See the **[project dashboard](https://schacon.github.io/grit)** (generated from `data/test-files.csv` via `scripts/run-tests.sh`). The same numbers drive the static SVG above: run `python3 scripts/generate-dashboard-from-test-files.py` (or any full harness run that regenerates the dashboards) to refresh [`docs/test-progress.svg`](docs/test-progress.svg).
 
 
