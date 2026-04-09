@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   246 |
+| Completed   |   247 |
 | In progress |     4 |
-| Remaining   |   518 |
+| Remaining   |   517 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 246 completed (`[x]`), 4 in progress (`[~]`), 518 remaining (`[ ]`).
+Task lines in `PLAN.md`: 247 completed (`[x]`), 4 in progress (`[~]`), 517 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t3305-notes-fanout` — 7/7 tests pass (notes tree automatic fanout 0↔1 restructuring on add/remove; harness + upstream `run-upstream-tests.sh` verified; `PLAN.md` entry marked complete; dashboards refreshed)
 - `t12780-show-ref-head-detached` — 36/36 tests pass (`show-ref`: `--head` with detached HEAD, `--verify`, `--exists`, `--hash`, `--abbrev`, `-d`/`--dereference`, `--branches`/`--tags`, patterns; harness CSV/dashboards refreshed)
 - `t12820-diff-no-index-symlink` — 41/41 tests pass (symlink add/modify/delete, `diff`/`diff --cached`/`diff-tree`, stat/numstat/name output, multi-symlink and file↔symlink replacements; harness CSV/dashboards refreshed)
 - `t7817-grep-sparse-checkout` — 8/8 tests pass (non-cone sparse: `path_in_sparse_checkout` parent walk + last-match-wins; `sparse-checkout init` preserves cone mode and seeds `/*` + `!/*/` when recreating file; `disable` keeps pattern file so re-init reapplies `!b`; submodule `reset --hard` + sparse reapply; `grep` worktree: skip-worktree when absent, CE_VALID vs skip-worktree, unmerged paths grep worktree once; `grep_cached` per-stage for `--cached`)
@@ -116,4 +117,4 @@ Task lines in `PLAN.md`: 246 completed (`[x]`), 4 in progress (`[~]`), 518 remai
 
 ## What Remains
 
-518 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+517 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
