@@ -536,6 +536,11 @@ fn create_git_dir(git_dir: &Path, opts: CreateGitDirOptions<'_>) -> Result<()> {
             }
         }
 
+        if !is_reinit && !initial_branch.is_empty() {
+            config_content.push_str("[init]\n");
+            config_content.push_str(&format!("\tdefaultBranch = {initial_branch}\n"));
+        }
+
         // Write shared repository config when `--shared` or `core.sharedRepository` applies.
         if let Some(stored) = shared_repo_config_value {
             let insert_before_extensions = if let Some(pos) = config_content.find("[extensions]") {
