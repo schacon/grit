@@ -231,6 +231,10 @@ pub struct Args {
     /// Keep commits that do not change any file (empty patch).
     #[arg(short = 'k', long = "keep-empty")]
     pub keep_empty: bool,
+
+    /// Do not run the pre-rebase hook.
+    #[arg(long = "no-verify")]
+    pub no_verify: bool,
 }
 
 /// Expand combined short flags (`-ki`, `-ik`) before clap parsing.
@@ -304,6 +308,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let pre_rebase_hook_second = args.branch.clone();
+    let mut pre_rebase_upstream_label: Option<String> = None;
 
     // If a branch argument is given, checkout that branch first.
     // Resolve `upstream` before checkout: `git rebase <upstream> <branch>` uses the pre-checkout
@@ -311,6 +316,7 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.branch.is_some() {
         let repo = Repository::discover(None).context("not a git repository")?;
         let uspec = args.upstream.as_deref().unwrap_or("HEAD");
+        pre_rebase_upstream_label = Some(uspec.to_owned());
         let uoid = resolve_revision(&repo, uspec)
             .with_context(|| format!("bad revision '{uspec}'"))?
             .to_hex();
@@ -378,7 +384,7 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    do_rebase(args, pre_rebase_hook_second)
+    do_rebase(args, pre_rebase_hook_second, pre_rebase_upstream_label)
 }
 
 // ── Rebase state directory layout ───────────────────────────────────
@@ -1879,7 +1885,11 @@ fn apply_autostash_after_ff(repo: &Repository, autostash_oid: &ObjectId) -> Resu
 
 // ── Main rebase flow ────────────────────────────────────────────────
 
-fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
+fn do_rebase(
+    args: Args,
+    pre_rebase_hook_second: Option<String>,
+    pre_rebase_upstream_label: Option<String>,
+) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
@@ -2052,18 +2062,19 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         commits.retain(|oid| !is_commit_tree_unchanged(&repo, oid).unwrap_or(false));
     }
 
-    let hook_arg1: &str = if args.root {
-        "--root"
-    } else {
-        upstream_spec.as_str()
-    };
+    let hook_upstream = pre_rebase_upstream_label
+        .as_deref()
+        .unwrap_or_else(|| upstream_spec.as_str());
+    let hook_arg1: &str = if args.root { "--root" } else { hook_upstream };
     let hook_arg2: Option<&str> = pre_rebase_hook_second.as_deref();
     let hook_args: Vec<&str> = match hook_arg2 {
         Some(s) => vec![hook_arg1, s],
         None => vec![hook_arg1],
     };
-    if let HookResult::Failed(_) = run_hook(&repo, "pre-rebase", &hook_args, None) {
-        bail!("The pre-rebase hook refused to rebase.");
+    if !args.no_verify {
+        if let HookResult::Failed(_) = run_hook(&repo, "pre-rebase", &hook_args, None) {
+            bail!("The pre-rebase hook refused to rebase.");
+        }
     }
 
     let (rebase_todo_lines, rebase_interactive) = if args.interactive {

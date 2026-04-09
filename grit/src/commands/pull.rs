@@ -590,6 +590,7 @@ fn do_merge_or_rebase_after_fetch(
             autosquash: false,
             no_autosquash: false,
             keep_empty: false,
+            no_verify: false,
         };
         return super::rebase::run(rebase_args);
     }
