@@ -6,16 +6,17 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   288 |
+| Completed   |   292 |
 | In progress |     4 |
-| Remaining   |   477 |
+| Remaining   |   473 |
 | **Total**   |   769 |
 
-Task lines in `PLAN.md`: 288 completed (`[x]`), 4 in progress (`[~]`), 477 remaining (`[ ]`).
+Task lines in `PLAN.md`: 292 completed (`[x]`), 4 in progress (`[~]`), 473 remaining (`[ ]`).
 
 ## Recently completed
 
 - `t0027-auto-crlf` — 2600/2600 tests pass (Git `convert.c` parity: safer `has_crlf_in_index` clean path, default `core.safecrlf=warn` + round-trip simulation, `text_eol_is_crlf` with `autocrlf=input`; `ls-files --eol` attr ASCII + `gather_convert_stats_ascii`; glob pathspec expansion when index has no `*` match; checkout skip-smudge compares smudged bytes; `commit` pathspec staging matches `git add` for dirs/CRLF; embedded `.git` at worktree root no longer stages as gitlink; diff hashing uses prior index blob + no safecrlf spam)
+- `t7526-commit-pathspec-file` — 11/11 tests pass (`commit --pathspec-from-file` / `--pathspec-file-nul`: shared `parse_pathspecs_from_source`, Git-compatible option conflicts and empty `--include`/`--only` pathspec check; harness CSV/dashboards refreshed)
 - `t5618-alternate-refs` — 6/6 tests pass (`rev-list` / `log`: `--alternate-refs`, `--not --alternate-refs`, `core.alternateRefsPrefixes`, `log --source` `.alternate` marker; harness CSV/dashboards refreshed)
 - `t3650-replay-basics` — 31/31 tests pass (`replay`: `--onto` / `--advance` / `--contained`, `--ref-action` + `replay.refAction`, `--branches` with branch refnames, `--ancestry-path`, detached `HEAD` updates, reflog messages, `merge.directoryRenames=false`; `rev_parse::expand_rev_token_circ_bang` for `topic1^!`; `log` `%d` uses short decorations like Git unless `--decorate=full`)
 - `t0040-parse-options` — 94/94 tests pass (`parse-options` / `parse-options-flags` / `parse-subcommand` test-tool: Git-style argv scanning with intermingled args and `+` NODASH; selective usage append; negated-option error names; stdout/stderr flush before `process::exit`; skip global `--git-completion-helper` when nested after `test-tool`; harness `test_run_` no longer wraps bodies in `$(...)` so backticks in heredocs are not executed)
@@ -171,4 +172,4 @@ Task lines in `PLAN.md`: 288 completed (`[x]`), 4 in progress (`[~]`), 477 remai
 
 ## What Remains
 
-477 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+473 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.

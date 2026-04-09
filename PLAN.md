@@ -841,7 +841,7 @@ commit → check it off → move on.
 - [ ] `t7611-merge-abort` ██████████░░░░░░░░░░ 10/19 (9 left) — test aborting in-progress merges
 
 - [x] `t7105-reset-patch` ████████████████████ 13/13 (0 left) — git reset --patch
-- [ ] `t7526-commit-pathspec-file` ███░░░░░░░░░░░░░░░░░ 2/11 (9 left) — commit --pathspec-from-file
+- [x] `t7526-commit-pathspec-file` ████████████████████ 11/11 (0 left) — commit --pathspec-from-file
 - [ ] `t7007-show` ████████░░░░░░░░░░░░ 8/18 (10 left) — git show
 - [ ] `t7703-repack-geometric` ████████░░░░░░░░░░░░ 8/18 (10 left) — git repack --geometric works correctly
 - [ ] `t7031-verify-tag-signed-ssh` █████░░░░░░░░░░░░░░░ 4/14 (10 left) — signed tag tests
