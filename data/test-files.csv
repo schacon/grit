@@ -957,7 +957,7 @@ t5536-fetch-conflicts	t5	yes	7	7	0	true	ok	0
 t5537-fetch-shallow	t5	yes	16	3	13	false	ok	0
 t5538-push-shallow	t5	yes	8	2	6	false	ok	0
 t5539-fetch-http-shallow	t5	yes	8	1	7	false	ok	0
-t5540-fetch-push-edge-cases	t5	yes	12	11	1	false	ok	0
+t5540-fetch-push-edge-cases	t5	yes	12	12	0	true	ok	0
 t5540-http-push-webdav	t5	skip	0	0	0	false	ok	2
 t5541-http-push-smart	t5	skip	20	0	0	false	timeout	0
 t5541-remote-subcommands	t5	yes	5	5	0	true	ok	0
