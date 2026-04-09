@@ -2,6 +2,7 @@
 
 **Updated:** 2026-04-09
 
+- `./scripts/run-tests.sh t2002-checkout-cache-u.sh`: 3/3 passing (`checkout-index -u` stat refresh; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t3303-notes-subtrees.sh`: 23/23 passing (`fast-import` heredoc `data`, `M … inline`, `deleteall`; `log` notes map merges duplicate paths like Git).
 - `./scripts/run-tests.sh t0040-parse-options.sh`: 94/94 passing (`test-tool parse-options*` / `parse-subcommand`: intermingled argv + NODASH `+`, selective usage append, negated-option error names, I/O flush before exit, nested `--git-completion-helper`; harness `test_run_` no longer uses `$(printf ...)` around bodies with backticks).
 - `./scripts/run-tests.sh t9003-help-autocorrect.sh`: 10/10 passing (`help.autocorrect` + unknown-command flow aligned with Git; harness CSV/dashboards refreshed).

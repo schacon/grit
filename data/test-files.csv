@@ -460,7 +460,7 @@ t1800-ls-remote	t1	yes	24	22	2	false	ok	0
 t1900-repo-info	t1	yes	37	37	0	true	ok	0
 t1901-repo-structure	t1	yes	4	4	0	true	ok	0
 t2000-conflict-when-checking-files-out	t2	yes	14	13	1	false	ok	0
-t2002-checkout-cache-u	t2	yes	3	2	1	false	ok	0
+t2002-checkout-cache-u	t2	yes	3	3	0	true	ok	0
 t2003-checkout-cache-mkdir	t2	yes	10	10	0	true	ok	0
 t2004-checkout-cache-temp	t2	yes	23	23	0	true	ok	0
 t2005-checkout-index-symlinks	t2	yes	3	3	0	true	ok	0
