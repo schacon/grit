@@ -619,7 +619,7 @@ commit → check it off → move on.
 - [x] `t5621-clone-revision` — tests for git clone --revision (12/12)
 - [ ] `t5530-upload-pack-error` ███░░░░░░░░░░░░░░░░░ 2/11 (9 left) — errors in upload-pack
 - [ ] `t5150-request-pull` ██░░░░░░░░░░░░░░░░░░ 1/10 (9 left) — Test workflows involving pull request.
-- [ ] `t5320-delta-islands` ██████░░░░░░░░░░░░░░ 5/15 (10 left) — exercise delta islands
+- [x] `t5320-delta-islands` ████████████████████ 15/15 (0 left) — exercise delta islands
 - [ ] `t5611-clone-config` ████░░░░░░░░░░░░░░░░ 3/13 (10 left) — tests for git clone -c key=value
 - [ ] `t5335-compact-multi-pack-index` ░░░░░░░░░░░░░░░░░░░░ 0/10 (10 left) — multi-pack-index compaction
 - [ ] `t5003-archive-zip` █████████████████░░░ 71/82 (11 left) — git archive --format=zip test
