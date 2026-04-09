@@ -312,7 +312,7 @@ t12540-diff-tree-cherry	t1	yes	33	33	0	true	ok	0
 t12550-diff-stat-summary-line	t1	yes	39	39	0	true	ok	0
 t12560-diff-index-worktree	t1	yes	36	36	0	true	ok	0
 t12570-status-rename-copy	t1	yes	38	38	0	true	ok	0
-t12580-log-oneline-all	t1	yes	31	28	3	false	ok	0
+t12580-log-oneline-all	t1	yes	31	31	0	true	ok	0
 t12590-log-format-tformat	t1	yes	33	32	1	false	ok	0
 t12600-rev-list-not-exclude	t1	yes	32	31	1	false	ok	0
 t12610-rev-list-all-branches	t1	yes	32	30	2	false	ok	0
@@ -375,7 +375,7 @@ t13130-diff-cached-delete-add	t1	yes	44	44	0	true	ok	0
 t13140-diff-tree-stat-numstat	t1	yes	32	32	0	true	ok	0
 t13150-diff-stat-insertions-deletions	t1	yes	42	40	2	false	ok	0
 t13180-log-patch-stat	t1	yes	35	35	0	true	ok	0
-t13190-log-format-body	t1	yes	36	36	0	true	ok	0
+t13190-log-format-body	t1	yes	36	1	35	false	ok	0
 t13200-rev-list-walk-options	t1	yes	35	35	0	true	ok	0
 t13210-rev-list-count-all	t1	yes	33	33	0	true	ok	0
 t13220-rev-parse-worktree	t1	yes	36	34	2	false	ok	0

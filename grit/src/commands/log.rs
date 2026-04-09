@@ -759,8 +759,9 @@ fn parse_date_to_epoch(s: &str) -> Option<i64> {
 
 /// Whether to load ref decorations and whether to use full ref names (`refs/heads/...`).
 ///
-/// Mirrors Git's handling of `--decorate`, `--no-decorate`, and `log.showDecoration`
-/// for the common case: `--oneline` defaults to short decorations when not disabled.
+/// Mirrors Git's handling of `--decorate`, `--no-decorate`, and raw argv scanning for
+/// those flags. `--oneline` does not imply `--decorate`; use `--decorate` or a format
+/// with `%d` / `%D` when decorations are required.
 fn resolve_decoration_display(args: &Args, format_requires_decorations: bool) -> (bool, bool) {
     let mut show = format_requires_decorations;
     let mut full = format_requires_decorations;
@@ -783,11 +784,6 @@ fn resolve_decoration_display(args: &Args, format_requires_decorations: bool) ->
     }
     if args.no_decorate {
         show = false;
-        full = false;
-    }
-    let oneline_like = args.oneline || args.format.as_deref() == Some("oneline");
-    if oneline_like && !args.no_decorate && !show {
-        show = true;
         full = false;
     }
     (show, full)
