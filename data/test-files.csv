@@ -1106,7 +1106,7 @@ t6404-recursive-merge	t6	yes	6	4	2	false	ok	0
 t6405-merge-symlinks	t6	yes	7	7	0	true	ok	0
 t6406-merge-attr	t6	yes	13	12	1	false	ok	0
 t6407-merge-binary	t6	yes	3	3	0	true	ok	0
-t6408-merge-up-to-date	t6	yes	7	6	1	false	ok	0
+t6408-merge-up-to-date	t6	yes	7	7	0	true	ok	0
 t6409-merge-subtree	t6	yes	12	7	5	false	ok	0
 t6411-merge-filemode	t6	yes	19	17	2	false	ok	0
 t6412-merge-large-rename	t6	yes	10	10	0	true	ok	0
