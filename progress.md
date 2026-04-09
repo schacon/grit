@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   272 |
+| Completed   |   273 |
 | In progress |     4 |
-| Remaining   |   492 |
+| Remaining   |   491 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 272 completed (`[x]`), 4 in progress (`[~]`), 492 remaining (`[ ]`).
+Task lines in `PLAN.md`: 273 completed (`[x]`), 4 in progress (`[~]`), 491 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5900-repo-selection` — 8/8 tests pass (local `fetch`/`clone` remote path resolution: `.git` dir in worktree, bare `foo` vs `foo.git` disambiguation, non-git `foo` directory ignored, inner worktree preferred when outer is bare; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t4047-diff-dirstat` — 41/41 tests pass (Git-compatible `--dirstat` / `-X`: changes/lines/files, cumulative, thresholds, `diff.dirstat` warnings, `--shortstat` + dirstat; harness CSV/dashboards refreshed)
 - `t2030-checkout-index-basic` — 27/27 tests pass (`checkout-index` flags and edge cases; `PLAN.md` entry added; harness dashboards refreshed)
 - `t1900-repo-info` — 37/37 tests pass (`git repo info`: layout/references/object keys, `--format`/`--all`/`--keys`, partial success stderr + exit 1; `SilentNonZeroExit` avoids duplicate errors; harness CSV refreshed)
@@ -147,4 +148,4 @@ Task lines in `PLAN.md`: 272 completed (`[x]`), 4 in progress (`[~]`), 492 remai
 
 ## What Remains
 
-492 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+491 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.

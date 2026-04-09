@@ -1035,7 +1035,7 @@ t5812-proto-disable-http	t5	yes	29	11	18	false	ok	0
 t5813-proto-disable-ssh	t5	yes	81	57	24	false	ok	0
 t5814-proto-disable-ext	t5	yes	27	11	16	false	ok	0
 t5815-submodule-protos	t5	yes	8	5	3	false	ok	0
-t5900-repo-selection	t5	yes	8	0	8	false	ok	0
+t5900-repo-selection	t5	yes	8	8	0	true	ok	0
 t6000-rev-list-misc	t6	yes	23	9	14	false	ok	0
 t6001-rev-list-graft	t6	yes	14	14	0	true	ok	0
 t6002-rev-list-bisect	t6	yes	53	4	49	false	ok	0
