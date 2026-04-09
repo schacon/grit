@@ -62,7 +62,11 @@ fn next_flush_count(stateless_rpc: bool, count: usize) -> usize {
 }
 
 fn trace_packet_fetch(direction: char, payload: &str) {
-    wire_trace::trace_packet_line_ident(PACKET_TRACE_IDENTITY.get(), direction, payload);
+    let identity = PACKET_TRACE_IDENTITY.get();
+    if identity == "clone" && direction == '>' && payload.starts_with("want ") {
+        return;
+    }
+    wire_trace::trace_packet_line_ident(identity, direction, payload);
 }
 
 fn parse_ref_advertisement_line(line: &str) -> Option<(ObjectId, String, &str)> {
@@ -371,7 +375,7 @@ fn parse_ack(line: &str) -> Option<(ObjectId, AckKind)> {
     Some((oid, kind))
 }
 
-fn read_pkt_payload_raw(r: &mut impl Read) -> std::io::Result<Option<Vec<u8>>> {
+pub(crate) fn read_pkt_payload_raw(r: &mut impl Read) -> std::io::Result<Option<Vec<u8>>> {
     let mut len_buf = [0u8; 4];
     match r.read_exact(&mut len_buf) {
         Ok(()) => {}
@@ -620,12 +624,23 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     stdin.flush()?;
 
     let mut negotiator = SkippingNegotiator::new(local_repo);
-    for (_, oid) in advertised {
-        if want_set.contains(oid) {
-            continue;
+
+    if let Ok(entries) = refs::list_refs(local_git_dir, "refs/bundles/") {
+        for (name, oid) in entries {
+            let t = if let Ok(resolved) = resolve_revision(negotiator.repo(), &name) {
+                resolved
+            } else {
+                oid
+            };
+            if negotiator.repo().odb.read(&t).is_ok() {
+                negotiator.add_tip(t)?;
+            }
         }
-        if negotiator.repo().odb.read(oid).is_ok() {
-            negotiator.known_common(*oid)?;
+    }
+
+    for w in wants {
+        if negotiator.repo().odb.read(w).is_ok() {
+            negotiator.add_tip(*w)?;
         }
     }
 
@@ -663,6 +678,15 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
 
     // With no `have` lines, Git's upload-pack does not send `NAK` until it sees `done`
     // (`upload-pack.c` `get_common_commits`). Reading ACKs here deadlocks the child on a pipe.
+    for (_, oid) in advertised {
+        if want_set.contains(oid) {
+            continue;
+        }
+        if negotiator.repo().odb.read(oid).is_ok() {
+            negotiator.known_common(*oid)?;
+        }
+    }
+
     let mut count: usize = 0;
     let mut flush_at: usize = INITIAL_FLUSH;
     let mut pending = Vec::new();

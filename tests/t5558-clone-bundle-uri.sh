@@ -1,46 +1,9 @@
 #!/bin/sh
 
-#
-# Upstream: t5558-clone-bundle-uri.sh
-# Tests fetching bundles with --bundle-uri (file and HTTP).
-# Requires git >= 2.45 for refs/bundles/ support.
-#
-
 test_description='test fetching bundles with --bundle-uri'
 
 . ./test-lib.sh
 . "$TEST_DIRECTORY"/lib-bundle.sh
-
-# These tests need real git (grit doesn't support --bundle-uri yet)
-REAL_GIT="$(command -v git 2>/dev/null || echo /usr/bin/git)"
-for _p in $(echo "$PATH" | tr ':' ' '); do
-	if test -x "$_p/git" && ! grep -q 'grit' "$_p/git" 2>/dev/null; then
-		REAL_GIT="$_p/git"
-		break
-	fi
-done
-cat >"$TRASH_DIRECTORY/.bin/git" <<EOFWRAP
-#!/bin/sh
-exec "$REAL_GIT" "\$@"
-EOFWRAP
-chmod +x "$TRASH_DIRECTORY/.bin/git"
-
-# Check if bundle-uri creates refs/bundles/ — requires git >= 2.45
-test_expect_success 'check bundle-uri refs/bundles support' '
-	git init check-bundle &&
-	(cd check-bundle &&
-	 echo content >file &&
-	 git add file &&
-	 git commit -m initial &&
-	 git bundle create ../check.bundle HEAD
-	) &&
-	git clone --bundle-uri="$(pwd)/check.bundle" check-bundle check-clone 2>err &&
-	if ! git -C check-clone for-each-ref --format="%(refname)" | grep -q "refs/bundles/"
-	then
-		skip_all="git $(git --version) does not store refs/bundles/ from bundle-uri (need >= 2.45)"
-		test_done
-	fi
-'
 
 test_expect_success 'fail to clone from non-existent file' '
 	test_when_finished rm -rf test &&
@@ -619,7 +582,7 @@ test_expect_success 'clone bundle list (HTTP, any mode)' '
 	git -C clone-from for-each-ref --format="%(objectname)" >oids &&
 	git -C clone-any-http cat-file --batch-check <oids &&
 
-	git -C clone-list-file for-each-ref --format="%(refname)" >refs &&
+	git -C clone-any-http for-each-ref --format="%(refname)" >refs &&
 	grep "refs/bundles/heads/" refs >actual &&
 	cat >expect <<-\EOF &&
 	refs/bundles/heads/base

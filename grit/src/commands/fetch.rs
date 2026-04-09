@@ -155,6 +155,9 @@ pub fn run(mut args: Args) -> Result<()> {
         args.remote = None;
     }
 
+    crate::bundle_uri::clear_http_bundle_cache();
+    crate::http_smart::clear_trace2_https_url_dedup();
+
     let git_dir = resolve_git_dir()?;
     let config = ConfigSet::load(Some(&git_dir), true)?;
 
@@ -387,7 +390,17 @@ fn fetch_remote(
         crate::protocol::check_protocol_allowed("ext", Some(git_dir))?;
     }
 
+    let is_http_url = !is_ext_url && (url.starts_with("http://") || url.starts_with("https://"));
+
     let mut remote_path = if is_ext_url {
+        PathBuf::new()
+    } else if is_http_url {
+        let proto = if url.starts_with("https://") {
+            "https"
+        } else {
+            "http"
+        };
+        crate::protocol::check_protocol_allowed(proto, Some(git_dir))?;
         PathBuf::new()
     } else if url.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", Some(git_dir))?;
@@ -418,7 +431,7 @@ fn fetch_remote(
     };
     // Resolve relative paths from the repository root (not process CWD), for both
     // configured `remote.<name>.url` and path-based remotes (`git fetch ./server`).
-    if !is_ext_url && remote_path.is_relative() {
+    if !is_ext_url && !is_http_url && remote_path.is_relative() {
         let base = configured_remote_base(git_dir);
         remote_path = base.join(&remote_path);
         if url_override.is_none() && !remote_path.exists() {
@@ -437,7 +450,7 @@ fn fetch_remote(
         }
     }
 
-    let remote_repo = if is_ext_url {
+    let remote_repo = if is_ext_url || is_http_url {
         None
     } else {
         Some(open_repo(&remote_path).with_context(|| {
@@ -577,7 +590,7 @@ fn fetch_remote(
     // `GIT_TRACE_PACKET` lines (`upload-pack< want …`) and tag-following wants aligned with
     // tests such as t5503-tagfollow. CLI refspecs are applied after the pack is received.
     let use_upload_pack_negotiation =
-        !is_ext_url && !crate::ssh_transport::is_configured_ssh_url(&url);
+        !is_ext_url && !is_http_url && !crate::ssh_transport::is_configured_ssh_url(&url);
 
     let upload_pack_refspecs: &[String] = if prefetch_left_no_positive {
         &[]
@@ -602,6 +615,13 @@ fn fetch_remote(
             crate::fetch_transport::with_packet_trace_identity("fetch", || {
                 crate::fetch_transport::fetch_via_git_protocol_skipping(git_dir, &url, cli_refspecs)
             })?;
+        (heads, tags)
+    } else if is_http_url {
+        let (heads, tags, _adv) =
+            crate::http_smart::http_fetch_pack(git_dir, &url, upload_pack_refspecs)?;
+        crate::bundle_uri::maybe_apply_bundle_uri_after_http_fetch(git_dir, &url, None)?;
+        let heads: Vec<(String, ObjectId)> = heads.into_iter().map(|e| (e.name, e.oid)).collect();
+        let tags: Vec<(String, ObjectId)> = tags.into_iter().map(|e| (e.name, e.oid)).collect();
         (heads, tags)
     } else if use_upload_pack_negotiation {
         crate::protocol::check_protocol_allowed("file", Some(git_dir))?;
@@ -696,6 +716,10 @@ fn fetch_remote(
     if let Some(depth) = effective_depth {
         if let Some(ref remote_repo) = remote_repo {
             write_shallow_info(git_dir, &remote_heads, remote_repo, depth)?;
+        } else if is_http_url {
+            let local_repo = Repository::open(git_dir, None)
+                .context("open repository for shallow metadata after HTTP fetch")?;
+            write_shallow_info(git_dir, &remote_heads, &local_repo, depth)?;
         }
     }
 
@@ -728,7 +752,7 @@ fn fetch_remote(
     // Command-line refspecs (including OID sources like `git fetch origin $B:refs/heads/main`)
     // must update local refs after upload-pack negotiation as well as after the SSH/copy-object
     // path. `collect_wants_cli` only drives the pack request; ref writes happen here.
-    if user_passed_cli_refspecs && !prefetch_left_no_positive && !is_ext_url {
+    if user_passed_cli_refspecs && !prefetch_left_no_positive && !is_ext_url && !is_http_url {
         let remote_repo = remote_repo
             .as_ref()
             .expect("CLI refspec fetch requires a local remote repository");
