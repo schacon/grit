@@ -19,7 +19,9 @@ use grit_lib::commit_trailers::{
 use grit_lib::config::ConfigSet;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_file::{merge, MergeFavor, MergeInput};
-use grit_lib::merge_trees::{merge_trees_three_way, WhitespaceMergeOptions};
+use grit_lib::merge_trees::{
+    merge_trees_three_way, TreeMergeConflictPresentation, WhitespaceMergeOptions,
+};
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
 };
@@ -775,7 +777,10 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
         commit_tree_oid,
         favor,
         ws_merge,
-        "parent of picked commit",
+        TreeMergeConflictPresentation {
+            label_base: "parent of picked commit",
+            ..TreeMergeConflictPresentation::default()
+        },
     )?;
     let mut merge_result = MergeResult {
         index: merged.index,

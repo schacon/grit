@@ -807,7 +807,10 @@ fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
         parent_tree_oid,
         favor,
         ws_opts,
-        "parent of reverted commit",
+        grit_lib::merge_trees::TreeMergeConflictPresentation {
+            label_base: "parent of reverted commit",
+            ..grit_lib::merge_trees::TreeMergeConflictPresentation::default()
+        },
     )?;
     let mut merged_index = merged.index;
     let conflict_map = merged.conflict_content;

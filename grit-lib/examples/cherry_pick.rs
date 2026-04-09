@@ -137,7 +137,10 @@ fn main() -> grit_lib::error::Result<()> {
         theirs_tree,
         MergeFavor::default(),
         WhitespaceMergeOptions::default(),
-        "HEAD",
+        grit_lib::merge_trees::TreeMergeConflictPresentation {
+            label_base: "HEAD",
+            ..grit_lib::merge_trees::TreeMergeConflictPresentation::default()
+        },
     )?;
 
     if !merged.conflict_content.is_empty() {

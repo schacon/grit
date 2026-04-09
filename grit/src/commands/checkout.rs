@@ -16,13 +16,17 @@ use std::process::Command;
 
 use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
 use grit_lib::config::ConfigSet;
-use grit_lib::crlf;
+use grit_lib::crlf::{self, MergeAttr};
 use grit_lib::diff::read_submodule_head_oid;
-use grit_lib::diff::zero_oid;
+use grit_lib::diff::{diff_index_to_worktree, zero_oid};
 use grit_lib::filter_process;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
+use grit_lib::merge_trees::{
+    merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation,
+    WhitespaceMergeOptions,
+};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::refs::{self, append_reflog};
@@ -33,8 +37,10 @@ use grit_lib::rev_parse::{
 use grit_lib::sparse_checkout::apply_sparse_checkout_skip_worktree;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::submodule_gitdir::submodule_modules_git_dir;
+use grit_lib::write_tree::write_tree_from_index;
 
 use crate::branch_tracking::{format_tracking_info, AheadBehindMode};
+use crate::commands::merge::execute_custom_merge_driver;
 
 /// Count parallel checkout worker processes to spawn for trace2 tests (`t2080`).
 ///
@@ -245,6 +251,106 @@ pub struct Args {
 /// Run `grit checkout`.
 use std::cell::Cell;
 
+/// Parsed `-m` / `--merge` / `--no-merge` / `--conflict` / `--no-conflict` (matches Git tri-state `merge`).
+#[derive(Clone, Debug, Default)]
+struct CheckoutMergeCli {
+    /// `-1` = unset, `0` = explicit `--no-merge`, `1` = explicit `-m`/`--merge`.
+    merge_tri: i8,
+    conflict_style: Option<ConflictStyle>,
+    /// With explicit `--merge`, `--no-conflict` forces two-way markers (t7201).
+    force_two_way_markers: bool,
+}
+
+fn parse_conflict_style_name(raw: &str) -> Result<ConflictStyle> {
+    match raw.to_ascii_lowercase().as_str() {
+        "merge" => Ok(ConflictStyle::Merge),
+        "diff3" | "zdiff3" => Ok(ConflictStyle::Diff3),
+        _ => bail!("error: unknown conflict style '{}'", raw),
+    }
+}
+
+fn parse_checkout_merge_flags_from_raw(raw: &[String]) -> CheckoutMergeCli {
+    let mut out = CheckoutMergeCli::default();
+    let mut i = 0usize;
+    while i < raw.len() {
+        let a = raw[i].as_str();
+        if a == "-m" || a == "--merge" {
+            out.merge_tri = 1;
+            out.force_two_way_markers = false;
+        } else if a == "--no-merge" {
+            out.merge_tri = 0;
+        } else if a == "--no-conflict" {
+            out.conflict_style = None;
+            if out.merge_tri == 1 {
+                out.force_two_way_markers = true;
+            }
+        } else if let Some(rest) = a.strip_prefix("--conflict=") {
+            match parse_conflict_style_name(rest) {
+                Ok(style) => {
+                    out.conflict_style = Some(style);
+                    if out.merge_tri != 1 {
+                        out.merge_tri = -1;
+                    }
+                }
+                Err(_) => {
+                    // Defer to main path for exact error message shape
+                }
+            }
+        } else if a == "--conflict" && i + 1 < raw.len() {
+            match parse_conflict_style_name(&raw[i + 1]) {
+                Ok(style) => {
+                    out.conflict_style = Some(style);
+                    if out.merge_tri != 1 {
+                        out.merge_tri = -1;
+                    }
+                    i += 1;
+                }
+                Err(_) => {}
+            }
+        }
+        i += 1;
+    }
+    if out.merge_tri < 0 && out.conflict_style.is_some() {
+        out.merge_tri = 1;
+    }
+    out
+}
+
+fn validate_checkout_conflict_arg(raw: &[String]) -> Result<()> {
+    let mut i = 0usize;
+    while i < raw.len() {
+        let a = raw[i].as_str();
+        if let Some(rest) = a.strip_prefix("--conflict=") {
+            parse_conflict_style_name(rest)?;
+        } else if a == "--conflict" && i + 1 < raw.len() {
+            parse_conflict_style_name(&raw[i + 1])?;
+            i += 1;
+        }
+        i += 1;
+    }
+    Ok(())
+}
+
+fn effective_branch_merge_wants_real_merge(cli: &CheckoutMergeCli, args_merge_flag: bool) -> bool {
+    if cli.merge_tri == 1 {
+        return true;
+    }
+    if cli.merge_tri == 0 {
+        return false;
+    }
+    args_merge_flag
+}
+
+fn effective_path_checkout_merge(cli: &CheckoutMergeCli, args_merge_flag: bool) -> bool {
+    if cli.merge_tri == 0 {
+        return false;
+    }
+    if cli.merge_tri == 1 || args_merge_flag {
+        return true;
+    }
+    cli.conflict_style.is_some()
+}
+
 thread_local! {
     static QUIET: Cell<bool> = const { Cell::new(false) };
     static RECURSE_SUBMODULES: Cell<bool> = const { Cell::new(false) };
@@ -271,6 +377,9 @@ pub fn run(mut args: Args) -> Result<()> {
     QUIET.with(|q| q.set(args.quiet));
     RECURSE_SUBMODULES.with(|r| r.set(args.recurse_submodules));
     let repo = Repository::discover(None).context("not a git repository")?;
+    let raw_args: Vec<String> = std::env::args().collect();
+    let merge_cli = parse_checkout_merge_flags_from_raw(&raw_args);
+    validate_checkout_conflict_arg(&raw_args)?;
 
     // Validate --pathspec-file-nul requires --pathspec-from-file
     if args.pathspec_file_nul && args.pathspec_from_file.is_none() {
@@ -289,14 +398,13 @@ pub fn run(mut args: Args) -> Result<()> {
         // Check for explicit pathspec arguments (after -- separator or if has_separator already)
         // We detect this by checking the raw args for an explicit -- followed by paths
         {
-            let raw_check: Vec<String> = std::env::args().collect();
-            let has_sep = raw_check.iter().any(|a| a == "--");
+            let has_sep = raw_args.iter().any(|a| a == "--");
             if has_sep {
-                let sep_idx = raw_check
+                let sep_idx = raw_args
                     .iter()
                     .position(|a| a == "--")
-                    .unwrap_or(raw_check.len());
-                if sep_idx + 1 < raw_check.len() {
+                    .unwrap_or(raw_args.len());
+                if sep_idx + 1 < raw_args.len() {
                     bail!("'--pathspec-from-file' and pathspec arguments cannot be used together");
                 }
             }
@@ -427,7 +535,9 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // After peeling `-f` / `--force` from `rest` (e.g. `switch --discard-changes` → `-f`).
-    let switch_force = args.force || args.merge;
+    let branch_merge_wanted = effective_branch_merge_wants_real_merge(&merge_cli, args.merge);
+    let path_merge_wanted = effective_path_checkout_merge(&merge_cli, args.merge);
+    let switch_force = args.force || branch_merge_wanted;
 
     // `git checkout <branch> -q` places `-q` in trailing positionals; peel it so it is not
     // mistaken for a pathspec.
@@ -442,7 +552,6 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Detect if `--` was used in the original command line. Clap strips a
     // leading `--` from trailing_var_arg, so we check the raw args.
-    let raw_args: Vec<String> = std::env::args().collect();
     let has_separator = raw_args.iter().any(|a| a == "--");
     // Determine if `--` is at the end of raw_args (after all positional args).
     let separator_at_end = has_separator && raw_args.last().map(|s| s.as_str()) == Some("--");
@@ -466,15 +575,75 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // Parse rest into (target, paths) handling `--` separator
-    let (target, paths) = split_target_and_paths(
+    let (mut target, mut paths) = split_target_and_paths(
         &args.rest,
         has_separator,
         separator_at_end,
         args.switch_mode,
     );
 
+    if args.track.is_some() && args.new_branch.is_none() && paths.is_empty() {
+        let argv0 = target.as_deref().unwrap_or("");
+        if argv0.is_empty() || argv0 == "--" {
+            bail!("fatal: --track needs a branch name");
+        }
+        let mut a = argv0;
+        if let Some(r) = a.strip_prefix("refs/") {
+            a = r;
+        }
+        if let Some(r) = a.strip_prefix("remotes/") {
+            a = r;
+        }
+        let has_slash = a.contains('/');
+        if !has_slash {
+            bail!("fatal: missing branch name; try -b");
+        }
+    }
+
+    if args.ours || args.theirs {
+        if paths.is_empty() {
+            if let Some(ref t) = target {
+                let is_branch_switch = t == "HEAD"
+                    || t == "@"
+                    || refs::resolve_ref(&repo.git_dir, &format!("refs/heads/{t}")).is_ok();
+                if is_branch_switch {
+                    bail!("fatal: '--ours/--theirs' cannot be used with switching branches");
+                }
+                paths.push(t.clone());
+                target = None;
+            } else {
+                bail!("fatal: option '--ours/--theirs' needs the paths to check out");
+            }
+        }
+    }
+
     // Resolve @{-N} in start point if present
-    let target = target.map(|t| resolve_at_minus(&repo, &t).unwrap_or(t));
+    let mut target = target.map(|t| resolve_at_minus(&repo, &t).unwrap_or(t));
+    let mut paths = paths;
+
+    // `checkout -f a b c` without `--`: when every token exists in the work tree, treat them all
+    // as pathspecs (t7201 `checkout -f` on unmerged paths), not `tree-ish` + paths.
+    if args.force && !has_separator && !args.detach {
+        if let Some(wt) = repo.work_tree.as_deref() {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let mut combined: Vec<String> = Vec::new();
+            if let Some(t) = target.clone() {
+                combined.push(t);
+            }
+            combined.extend(paths.clone());
+            if combined.len() >= 2 {
+                let all_exist = combined.iter().all(|p| {
+                    let rel = resolve_pathspec(p, wt, &cwd);
+                    let abs = wt.join(&rel);
+                    abs.exists() || abs.is_symlink()
+                });
+                if all_exist {
+                    paths = combined;
+                    target = None;
+                }
+            }
+        }
+    }
 
     // `checkout -b new start` copies tracking from `start` when it is an upstream expression
     // (e.g. `my-side@{u}`), even if `branch.autoSetupMerge` is not `always` (t1507).
@@ -513,6 +682,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 Some(start),
                 switch_force,
                 args.create_reflog,
+                args.track.as_deref().or(Some("direct")),
             );
             if result.is_ok() && !args.no_track {
                 // Upstream start points must copy tracking even when `branch.autoSetupMerge` is not
@@ -611,13 +781,25 @@ pub fn run(mut args: Args) -> Result<()> {
         } else {
             None
         };
-        let effective_target = target.as_deref().or(pre_head_branch.as_deref());
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let auto = config
+            .get("branch.autoSetupMerge")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let mut effective_target = target.as_deref().or(pre_head_branch.as_deref());
+        if effective_target.is_none()
+            && (auto == "always" || auto == "inherit")
+            && args.track.is_none()
+        {
+            effective_target = Some("HEAD");
+        }
         let result = create_and_switch_branch(
             &repo,
             new_branch_name,
             target.as_deref(),
             switch_force,
             args.create_reflog,
+            args.track.as_deref(),
         );
         if result.is_ok() && !args.no_track {
             maybe_setup_tracking(
@@ -633,7 +815,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // Case 2: checkout [<tree-ish>] -- <paths>  (path restore)
     // Not applicable when --detach is set (paths incompatible with --detach)
     if !paths.is_empty() && !args.detach {
-        if !has_separator {
+        if !has_separator && !args.force {
             if let Some(ref t) = target {
                 let is_rev = resolve_revision(&repo, t).is_ok()
                     || refs::resolve_ref(&repo.git_dir, &format!("refs/heads/{t}")).is_ok();
@@ -652,9 +834,11 @@ pub fn run(mut args: Args) -> Result<()> {
             target.as_deref(),
             &paths,
             args.no_overlay,
-            args.merge,
+            path_merge_wanted,
+            args.force,
             args.ours,
             args.theirs,
+            &merge_cli,
         );
     }
 
@@ -668,9 +852,11 @@ pub fn run(mut args: Args) -> Result<()> {
                     None,
                     &[".".to_string()],
                     args.no_overlay,
-                    args.merge,
+                    path_merge_wanted,
+                    args.force,
                     args.ours,
                     args.theirs,
+                    &merge_cli,
                 );
             }
         }
@@ -714,6 +900,8 @@ pub fn run(mut args: Args) -> Result<()> {
                     &branch_ref,
                     switch_force,
                     args.ignore_other_worktrees,
+                    branch_merge_wanted,
+                    &merge_cli,
                 );
             }
             if let Ok(oid) = resolve_to_commit(&repo, &prev) {
@@ -734,6 +922,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 &branch_ref,
                 switch_force,
                 args.ignore_other_worktrees,
+                branch_merge_wanted,
+                &merge_cli,
             );
         }
         // Not a branch — try as a commit (detached HEAD)
@@ -777,6 +967,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 &branch_ref,
                 switch_force,
                 args.ignore_other_worktrees,
+                branch_merge_wanted,
+                &merge_cli,
             );
         }
         if full.strip_prefix("refs/remotes/").is_some() {
@@ -785,6 +977,53 @@ pub fn run(mut args: Args) -> Result<()> {
             return detach_head(&repo, &oid, switch_force);
         }
         bail!("cannot checkout upstream: unsupported ref '{full}'");
+    }
+
+    // `checkout --track origin/topic` (without `-b`): create local branch named `topic` (path
+    // after the first `/` in the remote refspec) tracking the remote-tracking ref (t7201).
+    if !args.detach && args.track.is_some() && args.new_branch.is_none() && paths.is_empty() {
+        let mut spec = target.as_str();
+        if let Some(s) = spec.strip_prefix("refs/remotes/") {
+            spec = s;
+        } else if let Some(s) = spec.strip_prefix("remotes/") {
+            spec = s;
+        }
+        if let Some(slash) = spec.find('/') {
+            let remote = &spec[..slash];
+            let branch_on_remote = &spec[slash + 1..];
+            if !remote.is_empty() && !branch_on_remote.is_empty() {
+                let tracking = format!("refs/remotes/{remote}/{branch_on_remote}");
+                if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &tracking) {
+                    let local_branch = branch_on_remote.to_string();
+                    let local_ref = format!("refs/heads/{local_branch}");
+                    if refs::resolve_ref(&repo.git_dir, &local_ref).is_ok() {
+                        bail!("fatal: a branch named '{local_branch}' already exists");
+                    }
+                    refs::write_ref(&repo.git_dir, &local_ref, &oid)?;
+                    let cfg_path = repo.git_dir.join("config");
+                    let mut cfg_content = std::fs::read_to_string(&cfg_path).unwrap_or_default();
+                    let section = format!(
+                        "\n[branch \"{local_branch}\"]\
+\n\tremote = {remote}\
+\n\tmerge = refs/heads/{branch_on_remote}\n"
+                    );
+                    cfg_content.push_str(&section);
+                    let _ = std::fs::write(&cfg_path, cfg_content);
+                    checkout_eprintln!(
+                        "branch '{local_branch}' set up to track '{remote}/{branch_on_remote}'."
+                    );
+                    return switch_branch(
+                        &repo,
+                        &local_branch,
+                        &local_ref,
+                        switch_force,
+                        args.ignore_other_worktrees,
+                        branch_merge_wanted,
+                        &merge_cli,
+                    );
+                }
+            }
+        }
     }
 
     // Try as a branch first
@@ -801,7 +1040,20 @@ pub fn run(mut args: Args) -> Result<()> {
             &branch_ref,
             switch_force,
             args.ignore_other_worktrees,
+            branch_merge_wanted,
+            &merge_cli,
         );
+    }
+
+    // `checkout tags/<name>` — explicit tag ref (t7201 ambiguous tag vs branch).
+    if !args.detach && (target.starts_with("tags/") || target.starts_with("refs/tags/")) {
+        let tag_name = target
+            .strip_prefix("refs/tags/")
+            .unwrap_or_else(|| target.strip_prefix("tags/").unwrap_or(&target));
+        let tag_ref = format!("refs/tags/{tag_name}");
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &tag_ref) {
+            return detach_head(&repo, &oid, switch_force);
+        }
     }
 
     // DWIM: if branch doesn't exist locally, check if exactly one remote has it
@@ -851,6 +1103,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 &new_branch_ref,
                 switch_force,
                 args.ignore_other_worktrees,
+                branch_merge_wanted,
+                &merge_cli,
             );
         } else if matching.len() > 1 {
             eprintln!(
@@ -885,9 +1139,11 @@ pub fn run(mut args: Args) -> Result<()> {
                 None,
                 &paths,
                 false,
-                args.merge,
+                path_merge_wanted,
+                args.force,
                 args.ours,
                 args.theirs,
+                &merge_cli,
             ) {
                 Ok(()) => Ok(()),
                 Err(_) => bail!(
@@ -1031,12 +1287,292 @@ fn run_post_checkout_hook(
     Ok(())
 }
 
+fn collect_checkout_local_change_lines(repo: &Repository) -> Result<Vec<String>> {
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("no work tree"))?;
+    let index_path = repo.index_path();
+    let index = repo
+        .load_index_at(&index_path)
+        .context("loading index for checkout local changes")?;
+    let entries =
+        diff_index_to_worktree(&repo.odb, &index, work_tree).map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(entries
+        .into_iter()
+        .map(|e| format!("{}\t{}", e.status.letter(), e.path()))
+        .collect())
+}
+
 fn sparse_checkout_config_enabled(git_dir: &std::path::Path) -> bool {
     ConfigSet::load(Some(git_dir), true)
         .unwrap_or_default()
         .get("core.sparsecheckout")
         .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
+}
+
+fn refresh_index_blobs_from_worktree(
+    repo: &Repository,
+    index: &mut Index,
+    work_tree: &Path,
+) -> Result<()> {
+    for entry in &mut index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        if entry.mode == MODE_GITLINK {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&entry.path);
+        let abs = work_tree.join(path_str.as_ref());
+        if entry.mode == MODE_SYMLINK {
+            let target = std::fs::read_link(&abs)
+                .with_context(|| format!("readlink for merge refresh '{path_str}'"))?;
+            let data = target.to_string_lossy().as_bytes().to_vec();
+            entry.oid = repo
+                .odb
+                .write(ObjectKind::Blob, &data)
+                .with_context(|| format!("writing symlink blob for '{path_str}'"))?;
+            continue;
+        }
+        let data = std::fs::read(&abs)
+            .with_context(|| format!("reading '{path_str}' for merge refresh"))?;
+        entry.oid = repo
+            .odb
+            .write(ObjectKind::Blob, &data)
+            .with_context(|| format!("writing blob for '{path_str}'"))?;
+    }
+    Ok(())
+}
+
+fn index_has_staged_changes_vs_tree(
+    repo: &Repository,
+    index: &Index,
+    head_tree_oid: &ObjectId,
+) -> Result<bool> {
+    let head_entries = tree_to_flat_entries(repo, head_tree_oid, "")?;
+    let head_map: HashMap<Vec<u8>, ObjectId> =
+        head_entries.into_iter().map(|e| (e.path, e.oid)).collect();
+    for e in &index.entries {
+        if e.stage() != 0 {
+            continue;
+        }
+        let is_staged = match head_map.get(&e.path) {
+            Some(h) => h != &e.oid,
+            None => true,
+        };
+        if is_staged {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn checkout_merged_worktree_from_index(
+    repo: &Repository,
+    work_tree: &Path,
+    old_index: &Index,
+    index: &Index,
+    conflict_content: &std::collections::BTreeMap<Vec<u8>, ObjectId>,
+) -> Result<()> {
+    fn same_blob(a: &IndexEntry, b: &IndexEntry) -> bool {
+        a.oid == b.oid && a.mode == b.mode
+    }
+    let old_stage0: HashMap<Vec<u8>, &IndexEntry> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| (e.path.clone(), e))
+        .collect();
+    let new_paths: HashSet<Vec<u8>> = index.entries.iter().map(|e| e.path.clone()).collect();
+    for entry in &old_index.entries {
+        if entry.stage() == 0 && !new_paths.contains(&entry.path) {
+            let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+            let abs_path = work_tree.join(&path_str);
+            if abs_path.exists() || abs_path.is_symlink() {
+                let _ = std::fs::remove_file(&abs_path);
+                remove_empty_parent_dirs(work_tree, &abs_path);
+            }
+        }
+    }
+    let mut written = HashSet::new();
+    for entry in &index.entries {
+        let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+        if entry.stage() == 0 {
+            if let Some(prev) = old_stage0.get(&entry.path) {
+                if same_blob(prev, entry) {
+                    written.insert(entry.path.clone());
+                    continue;
+                }
+            }
+            write_blob_to_worktree(
+                repo, work_tree, &path_str, &entry.oid, entry.mode, index, false,
+            )?;
+            written.insert(entry.path.clone());
+        } else if entry.stage() == 2 && !written.contains(&entry.path) {
+            if let Some(marker_oid) = conflict_content.get(&entry.path) {
+                let mut marker_entry = entry.clone();
+                marker_entry.oid = *marker_oid;
+                write_blob_to_worktree(
+                    repo,
+                    work_tree,
+                    &path_str,
+                    &marker_entry.oid,
+                    marker_entry.mode,
+                    index,
+                    false,
+                )?;
+            } else {
+                write_blob_to_worktree(
+                    repo, work_tree, &path_str, &entry.oid, entry.mode, index, false,
+                )?;
+            }
+            written.insert(entry.path.clone());
+        }
+    }
+    Ok(())
+}
+
+fn merge_branch_working_tree(
+    repo: &Repository,
+    head: &HeadState,
+    new_commit_oid: &ObjectId,
+    force: bool,
+    presentation: TreeMergeConflictPresentation<'_>,
+    recurse_submodules: bool,
+) -> Result<()> {
+    if force {
+        let target_tree = commit_to_tree(repo, new_commit_oid)?;
+        return switch_to_tree(repo, head, &target_tree, true, recurse_submodules);
+    }
+
+    let index_path = repo.index_path();
+    let index_before = repo.load_index_at(&index_path).context("loading index")?;
+    for e in &index_before.entries {
+        if e.stage() != 0 {
+            bail!("you need to resolve your current index first");
+        }
+    }
+
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+
+    let Some(old_oid) = head.oid().copied() else {
+        let target_tree = commit_to_tree(repo, new_commit_oid)?;
+        return switch_to_tree(repo, head, &target_tree, false, recurse_submodules);
+    };
+
+    let new_tree_oid = commit_to_tree(repo, new_commit_oid)?;
+    match switch_to_tree(repo, head, &new_tree_oid, false, recurse_submodules) {
+        Ok(()) => return Ok(()),
+        Err(_) => {}
+    }
+
+    let old_tree_oid = commit_to_tree(repo, &old_oid)?;
+    if index_has_staged_changes_vs_tree(repo, &index_before, &old_tree_oid)? {
+        let mut sb = String::new();
+        for e in &index_before.entries {
+            if e.stage() != 0 {
+                continue;
+            }
+            let path_str = String::from_utf8_lossy(&e.path);
+            let rel = path_str.as_ref();
+            let _abs = work_tree.join(rel);
+            let in_head = tree_to_flat_entries(repo, &old_tree_oid, "")?
+                .into_iter()
+                .find(|x| x.path == e.path);
+            let head_oid = in_head.as_ref().map(|x| x.oid);
+            let is_staged = match head_oid {
+                Some(h) => h != e.oid,
+                None => true,
+            };
+            if !is_staged {
+                continue;
+            }
+            let new_in_target = tree_to_flat_entries(repo, &new_tree_oid, "")?
+                .into_iter()
+                .find(|x| x.path == e.path);
+            let target_changes = match (head_oid, new_in_target.as_ref()) {
+                (Some(h), Some(ne)) => ne.oid != h,
+                (Some(_), None) => true,
+                (None, Some(_)) => true,
+                (None, None) => false,
+            };
+            if !target_changes {
+                continue;
+            }
+            if !sb.is_empty() {
+                sb.push('\n');
+            }
+            sb.push_str(rel);
+        }
+        if !sb.is_empty() {
+            bail!(
+                "cannot continue with staged changes in the following files:\n{}",
+                sb
+            );
+        }
+    }
+
+    let mut index_for_work_tree = index_before.clone();
+    refresh_index_blobs_from_worktree(repo, &mut index_for_work_tree, work_tree)?;
+    let work_tree_oid = write_tree_from_index(&repo.odb, &index_for_work_tree, "")
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    // Match Git `merge_ort_nonrecursive`: base = old branch, head = destination (`new`), merge =
+    // local work tree. In `merge_trees_three_way` that is `(base, ours, theirs) = (old, new, work)`.
+    let merged = merge_trees_three_way(
+        repo,
+        old_tree_oid,
+        new_tree_oid,
+        work_tree_oid,
+        MergeFavor::None,
+        WhitespaceMergeOptions::default(),
+        presentation,
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    switch_to_tree(repo, head, &new_tree_oid, true, recurse_submodules)?;
+
+    let mut merged_index = merged.index;
+    // Compare against the pre-merge index (still reflects the branch we came from), not the
+    // post-`switch_to_tree` index (which matches the destination and would skip writes when the
+    // merge result OID equals the tip).
+    checkout_merged_worktree_from_index(
+        repo,
+        work_tree,
+        &Index::new(),
+        &merged_index,
+        &merged.conflict_content,
+    )?;
+
+    for entry in &mut merged_index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&entry.path);
+        let abs = work_tree.join(path_str.as_ref());
+        if let Ok(meta) = std::fs::symlink_metadata(&abs) {
+            use std::os::unix::fs::MetadataExt as _;
+            entry.ctime_sec = meta.ctime() as u32;
+            entry.ctime_nsec = meta.ctime_nsec() as u32;
+            entry.mtime_sec = meta.mtime() as u32;
+            entry.mtime_nsec = meta.mtime_nsec() as u32;
+            entry.dev = meta.dev() as u32;
+            entry.ino = meta.ino() as u32;
+            entry.size = meta.size() as u32;
+        }
+    }
+    repo.write_index_at(&index_path, &mut merged_index)
+        .context("writing index after merge checkout")?;
+
+    if recurse_submodules {
+        recurse_submodules_after_checkout(repo)?;
+    }
+    Ok(())
 }
 
 /// Switch HEAD to an existing branch, updating the working tree and index.
@@ -1046,6 +1582,8 @@ fn switch_branch(
     branch_ref: &str,
     force: bool,
     ignore_other_worktrees: bool,
+    branch_merge: bool,
+    merge_cli: &CheckoutMergeCli,
 ) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
 
@@ -1092,7 +1630,7 @@ fn switch_branch(
                         format_tracking_info(repo, branch_name, AheadBehindMode::Full, true)
                     {
                         if !s.is_empty() {
-                            print!("{s}");
+                            eprintln!("{}", s.trim_end_matches('\n'));
                         }
                     }
                 }
@@ -1162,17 +1700,43 @@ fn switch_branch(
     // `info/sparse-checkout` take effect (t1090).
     let already_at_target = head.oid() == Some(&target_oid);
     let sparse_on = sparse_checkout_config_enabled(&repo.git_dir);
+    let recurse = RECURSE_SUBMODULES.with(|r| r.get());
     if !already_at_target || force || sparse_on {
-        let target_tree = commit_to_tree(repo, &target_oid)?;
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let mut style = match config
+            .get("merge.conflictstyle")
+            .as_deref()
+            .map(|s| s.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("diff3" | "zdiff3") => ConflictStyle::Diff3,
+            _ => ConflictStyle::Merge,
+        };
+        if let Some(s) = merge_cli.conflict_style {
+            style = s;
+        }
+        if merge_cli.force_two_way_markers {
+            style = ConflictStyle::Merge;
+        }
+        let old_label = match &head {
+            HeadState::Branch { short_name, .. } => short_name.clone(),
+            HeadState::Detached { oid } => abbreviate_object_id(repo, *oid, 7)
+                .unwrap_or_else(|_| oid.to_hex()[..7].to_string()),
+            _ => "ancestor".to_string(),
+        };
+        let presentation = TreeMergeConflictPresentation {
+            label_ours: branch_name,
+            label_theirs: TheirsConflictLabel::Fixed("local"),
+            label_base: old_label.as_str(),
+            style,
+        };
 
-        // Update working tree and index
-        switch_to_tree(
-            repo,
-            &head,
-            &target_tree,
-            force,
-            RECURSE_SUBMODULES.with(|r| r.get()),
-        )?;
+        if branch_merge && !already_at_target {
+            merge_branch_working_tree(repo, &head, &target_oid, force, presentation, recurse)?;
+        } else {
+            let target_tree = commit_to_tree(repo, &target_oid)?;
+            switch_to_tree(repo, &head, &target_tree, force, recurse)?;
+        }
     }
 
     // Write reflog entries before updating HEAD
@@ -1191,11 +1755,18 @@ fn switch_branch(
     run_post_checkout_hook(repo, old_head_commit.as_ref(), &target_oid, true)?;
 
     checkout_eprintln!("Switched to branch '{}'", branch_name);
+    if !QUIET.with(|q| q.get()) {
+        if let Ok(lines) = collect_checkout_local_change_lines(repo) {
+            for line in lines {
+                println!("{line}");
+            }
+        }
+    }
     QUIET.with(|q| {
         if !q.get() {
             if let Ok(s) = format_tracking_info(repo, branch_name, AheadBehindMode::Full, true) {
                 if !s.is_empty() {
-                    print!("{s}");
+                    eprintln!("{}", s.trim_end_matches('\n'));
                 }
             }
         }
@@ -1204,6 +1775,44 @@ fn switch_branch(
 }
 
 /// Reject branch names that cannot exist as `refs/heads/<name>` (matches `git switch -c`).
+fn validate_track_start_for_new_branch(repo: &Repository, start: Option<&str>) -> Result<()> {
+    let spec = start.unwrap_or("HEAD");
+    if spec == "HEAD" {
+        if !matches!(resolve_head(&repo.git_dir)?, HeadState::Branch { .. }) {
+            bail!(
+                "fatal: cannot set up tracking information; starting point 'HEAD' is not a branch"
+            );
+        }
+        return Ok(());
+    }
+    if spec.contains("@{") || spec.contains("...") {
+        return Ok(());
+    }
+    let head_ref = format!("refs/heads/{spec}");
+    if refs::resolve_ref(&repo.git_dir, &head_ref).is_ok() {
+        return Ok(());
+    }
+    let remote_prefix = "refs/remotes/";
+    let has_remote = refs::list_refs(&repo.git_dir, remote_prefix)
+        .unwrap_or_default()
+        .into_iter()
+        .any(|(r, _)| {
+            r.strip_prefix(remote_prefix)
+                .is_some_and(|rest| rest == spec || rest.ends_with(&format!("/{spec}")))
+        });
+    if has_remote {
+        return Ok(());
+    }
+    if spec.contains('/') || spec.starts_with("refs/") {
+        return Ok(());
+    }
+    let tag_ref = format!("refs/tags/{spec}");
+    if refs::resolve_ref(&repo.git_dir, &tag_ref).is_ok() {
+        bail!("fatal: cannot set up tracking information; starting point '{spec}' is not a branch");
+    }
+    Ok(())
+}
+
 fn validate_new_branch_name(name: &str) -> Result<()> {
     let full = format!("refs/heads/{name}");
     let opts = RefNameOptions {
@@ -1223,8 +1832,12 @@ fn create_and_switch_branch(
     start: Option<&str>,
     force: bool,
     force_branch_reflog: bool,
+    track_mode: Option<&str>,
 ) -> Result<()> {
     validate_new_branch_name(name)?;
+    if track_mode.is_some() {
+        validate_track_start_for_new_branch(repo, start)?;
+    }
     // Check for HEAD.lock (another process is writing)
     let head_lock = repo.git_dir.join("HEAD.lock");
     if head_lock.exists() {
@@ -1245,7 +1858,16 @@ fn create_and_switch_branch(
     let head = resolve_head(&repo.git_dir)?;
     let old_head_commit = head.oid().copied();
     let start_oid = match start {
-        Some(s) => resolve_to_commit(repo, s)?,
+        Some(s) => {
+            if s != "HEAD"
+                && !s.contains('/')
+                && !s.starts_with("refs/")
+                && !s.starts_with("remotes/")
+            {
+                reject_ambiguous_short_ref(repo, s)?;
+            }
+            resolve_to_commit(repo, s)?
+        }
         None => {
             match head.oid() {
                 Some(oid) => *oid,
@@ -2496,6 +3118,76 @@ fn checkout_gitlink_worktree_entry(
     Ok(())
 }
 
+fn resolve_path_merge_driver_command(repo: &Repository, path: &str) -> Option<(String, bool)> {
+    let Ok(config) = ConfigSet::load(Some(&repo.git_dir), true) else {
+        return None;
+    };
+    let attrs = repo
+        .work_tree
+        .as_deref()
+        .map(crlf::load_gitattributes)
+        .unwrap_or_default();
+    let file_attrs = crlf::get_file_attrs(&attrs, path, false, &config);
+    match &file_attrs.merge {
+        MergeAttr::Unset => None,
+        MergeAttr::Driver(name) => {
+            if name == "union" {
+                None
+            } else {
+                let key = format!("merge.{name}.driver");
+                let cmd = config.get(&key)?;
+                let recursive_binary = config
+                    .get(&format!("merge.{name}.recursive"))
+                    .is_some_and(|v| v.eq_ignore_ascii_case("binary"));
+                Some((cmd, recursive_binary))
+            }
+        }
+        MergeAttr::Unspecified => config.get("merge.default.driver").map(|cmd| (cmd, false)),
+    }
+}
+
+fn index_path_matches_spec(rel: &str, entry_path: &[u8]) -> bool {
+    let p = String::from_utf8_lossy(entry_path);
+    if rel.is_empty() || rel == "." || rel == "./" {
+        return true;
+    }
+    p == rel || p.starts_with(&format!("{rel}/"))
+}
+
+fn index_has_unmerged_matching(index: &Index, rel: &str) -> bool {
+    index
+        .entries
+        .iter()
+        .any(|e| e.stage() != 0 && index_path_matches_spec(rel, &e.path))
+}
+
+fn reject_ambiguous_short_ref(repo: &Repository, name: &str) -> Result<()> {
+    let head_ref = format!("refs/heads/{name}");
+    let tag_ref = format!("refs/tags/{name}");
+    let head_oid = refs::resolve_ref(&repo.git_dir, &head_ref).ok();
+    let tag_oid = refs::resolve_ref(&repo.git_dir, &tag_ref).ok();
+    if let (Some(h), Some(t)) = (head_oid, tag_oid) {
+        if h != t {
+            eprintln!("warning: refname '{name}' is ambiguous.");
+            eprintln!("warning: refname '{name}' is ambiguous.");
+            bail!("fatal: ambiguous object name: '{name}'");
+        }
+    }
+    Ok(())
+}
+
+fn unmerge_paths_in_index(index: &mut Index, rel: &str) {
+    let paths: HashSet<Vec<u8>> = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() != 0 && index_path_matches_spec(rel, &e.path))
+        .map(|e| e.path.clone())
+        .collect();
+    for p in paths {
+        index.entries.retain(|e| e.path != p);
+    }
+}
+
 /// Checkout specific paths from the index or a tree-ish.
 fn checkout_paths(
     repo: &Repository,
@@ -2503,9 +3195,23 @@ fn checkout_paths(
     paths: &[String],
     no_overlay: bool,
     merge_mode: bool,
+    force_paths: bool,
     ours: bool,
     theirs: bool,
+    merge_cli: &CheckoutMergeCli,
 ) -> Result<()> {
+    if source.is_some() && merge_mode {
+        bail!(
+            "options '--merge', '--ours', or '--theirs' cannot be used when checking out of a tree"
+        );
+    }
+    if merge_mode && (ours || theirs) {
+        bail!(
+            "git checkout: --ours/--theirs, --force and --merge are incompatible when\n\
+checking out of the index."
+        );
+    }
+
     let work_tree = repo
         .work_tree
         .as_deref()
@@ -2525,9 +3231,52 @@ fn checkout_paths(
             let mut index = repo.load_index_at(&index_path).context("loading index")?;
             let mut index_modified = false;
 
+            if merge_mode {
+                for path_str in paths {
+                    let rel = resolve_pathspec(path_str, work_tree, &cwd);
+                    if !is_glob_pattern(&rel) {
+                        unmerge_paths_in_index(&mut index, &rel);
+                        index_modified = true;
+                    }
+                }
+            }
+
             for path_str in paths {
                 let rel = resolve_pathspec(path_str, work_tree, &cwd);
                 let path_bytes = rel.as_bytes();
+
+                if index_has_unmerged_matching(&index, &rel) {
+                    if merge_mode {
+                        let s2 = index.get(path_bytes, 2);
+                        let s3 = index.get(path_bytes, 3);
+                        if s2.is_none() || s3.is_none() {
+                            bail!("error: path '{}' does not have all necessary versions", rel);
+                        }
+                    } else if ours || theirs {
+                        // Resolved below via stage 2/3 checkout.
+                    } else if !force_paths {
+                        bail!("error: path '{}' is unmerged", rel);
+                    } else {
+                        // `checkout -f`: only paths with stage 0 are refreshed; unmerged-only paths
+                        // are left as-is on disk (t7201).
+                        if let Some(entry) = index.get(path_bytes, 0) {
+                            checkout_record_path_result(
+                                write_blob_to_worktree(
+                                    repo,
+                                    work_tree,
+                                    &rel,
+                                    &entry.oid,
+                                    entry.mode,
+                                    &index,
+                                    false,
+                                ),
+                                &mut updated_paths,
+                                &mut path_errors,
+                            );
+                        }
+                        continue;
+                    }
+                }
 
                 // Handle glob pathspecs
                 if is_glob_pattern(&rel) {
@@ -2559,23 +3308,127 @@ fn checkout_paths(
                 // Handle directory pathspecs (including "." for repo root)
                 let is_root = rel.is_empty() || rel == "." || rel == "./";
                 if is_root {
-                    // Include gitlinks: each path is work for checkout (submodule population counts
-                    // toward parallel checkout tests even though nested grit runs strip GIT_TRACE2).
-                    let n = index.entries.iter().filter(|e| e.stage() == 0).count();
-                    trace_parallel_units_from_index = trace_parallel_units_from_index.max(n);
-                    // Restore ALL index entries
-                    for ie in &index.entries {
-                        if ie.stage() != 0 {
-                            continue;
+                    if ours || theirs || merge_mode {
+                        let paths: HashSet<Vec<u8>> =
+                            index.entries.iter().map(|e| e.path.clone()).collect();
+                        for pb in paths {
+                            let p = String::from_utf8_lossy(&pb).into_owned();
+                            if index_has_unmerged_matching(&index, &p) {
+                                if merge_mode {
+                                    let s2 = index.get(pb.as_slice(), 2);
+                                    let s3 = index.get(pb.as_slice(), 3);
+                                    if s2.is_none() || s3.is_none() {
+                                        bail!(
+                                            "error: path '{}' does not have all necessary versions",
+                                            p
+                                        );
+                                    }
+                                } else if force_paths && !ours && !theirs {
+                                    // `checkout -f`: only refresh paths that have stage 0; leave
+                                    // purely unmerged paths untouched (t7201).
+                                    if let Some(entry) = index.get(pb.as_slice(), 0) {
+                                        checkout_record_path_result(
+                                            write_blob_to_worktree(
+                                                repo,
+                                                work_tree,
+                                                &p,
+                                                &entry.oid,
+                                                entry.mode,
+                                                &index,
+                                                false,
+                                            ),
+                                            &mut updated_paths,
+                                            &mut path_errors,
+                                        );
+                                    }
+                                    continue;
+                                } else if !ours && !theirs && !merge_mode {
+                                    bail!("error: path '{}' is unmerged", p);
+                                }
+                            }
+                            if ours || theirs {
+                                let stage2 = index.get(pb.as_slice(), 2).cloned();
+                                let stage3 = index.get(pb.as_slice(), 3).cloned();
+                                let chosen = if theirs {
+                                    stage3.or(stage2)
+                                } else {
+                                    stage2.or(stage3)
+                                };
+                                if let Some(entry_src) = chosen {
+                                    checkout_record_path_result(
+                                        write_blob_to_worktree(
+                                            repo,
+                                            work_tree,
+                                            &p,
+                                            &entry_src.oid,
+                                            entry_src.mode,
+                                            &index,
+                                            false,
+                                        ),
+                                        &mut updated_paths,
+                                        &mut path_errors,
+                                    );
+                                } else if let Some(entry) = index.get(pb.as_slice(), 0) {
+                                    checkout_record_path_result(
+                                        write_blob_to_worktree(
+                                            repo, work_tree, &p, &entry.oid, entry.mode, &index,
+                                            false,
+                                        ),
+                                        &mut updated_paths,
+                                        &mut path_errors,
+                                    );
+                                }
+                            } else if merge_mode {
+                                let stage1 = index.get(pb.as_slice(), 1).cloned();
+                                let stage2 = index.get(pb.as_slice(), 2).cloned();
+                                let stage3 = index.get(pb.as_slice(), 3).cloned();
+                                if stage2.is_some() || stage3.is_some() {
+                                    match checkout_conflicted_path_with_merge(
+                                        repo,
+                                        work_tree,
+                                        &p,
+                                        stage1.as_ref(),
+                                        stage2.as_ref(),
+                                        stage3.as_ref(),
+                                        merge_cli,
+                                    ) {
+                                        Ok(()) => {
+                                            println!("M\t{p}");
+                                            updated_paths += 1;
+                                        }
+                                        Err(e) => path_errors.push(e),
+                                    }
+                                } else if let Some(entry) = index.get(pb.as_slice(), 0) {
+                                    checkout_record_path_result(
+                                        write_blob_to_worktree(
+                                            repo, work_tree, &p, &entry.oid, entry.mode, &index,
+                                            false,
+                                        ),
+                                        &mut updated_paths,
+                                        &mut path_errors,
+                                    );
+                                }
+                            }
                         }
-                        let p = String::from_utf8_lossy(&ie.path).to_string();
-                        checkout_record_path_result(
-                            write_blob_to_worktree(
-                                repo, work_tree, &p, &ie.oid, ie.mode, &index, false,
-                            ),
-                            &mut updated_paths,
-                            &mut path_errors,
-                        );
+                    } else {
+                        // Include gitlinks: each path is work for checkout (submodule population counts
+                        // toward parallel checkout tests even though nested grit runs strip GIT_TRACE2).
+                        let n = index.entries.iter().filter(|e| e.stage() == 0).count();
+                        trace_parallel_units_from_index = trace_parallel_units_from_index.max(n);
+                        // Restore ALL index entries
+                        for ie in &index.entries {
+                            if ie.stage() != 0 {
+                                continue;
+                            }
+                            let p = String::from_utf8_lossy(&ie.path).to_string();
+                            checkout_record_path_result(
+                                write_blob_to_worktree(
+                                    repo, work_tree, &p, &ie.oid, ie.mode, &index, false,
+                                ),
+                                &mut updated_paths,
+                                &mut path_errors,
+                            );
+                        }
                     }
                 } else if let Some(entry) = index.get(path_bytes, 0) {
                     // Exact file match
@@ -2600,23 +3453,19 @@ fn checkout_paths(
                             path_str
                         );
                     };
-                    let mut new_entry = entry_src.clone();
-                    new_entry.flags &= 0x0FFF;
-                    index.stage_file(new_entry.clone());
                     checkout_record_path_result(
                         write_blob_to_worktree(
                             repo,
                             work_tree,
                             &rel,
-                            &new_entry.oid,
-                            new_entry.mode,
+                            &entry_src.oid,
+                            entry_src.mode,
                             &index,
                             false,
                         ),
                         &mut updated_paths,
                         &mut path_errors,
                     );
-                    index_modified = true;
                 } else if merge_mode {
                     let stage1 = index.get(path_bytes, 1).cloned();
                     let stage2 = index.get(path_bytes, 2).cloned();
@@ -2629,8 +3478,12 @@ fn checkout_paths(
                             stage1.as_ref(),
                             stage2.as_ref(),
                             stage3.as_ref(),
+                            merge_cli,
                         ) {
-                            Ok(()) => updated_paths += 1,
+                            Ok(()) => {
+                                println!("M\t{rel}");
+                                updated_paths += 1;
+                            }
                             Err(e) => path_errors.push(e),
                         }
                         continue;
@@ -3475,10 +4328,22 @@ fn maybe_setup_tracking(
     start_point: Option<&str>,
     track_mode: Option<&str>,
 ) -> Result<()> {
-    let start = match start_point {
+    let start_raw = match start_point {
         Some(s) => s,
         None => return Ok(()),
     };
+
+    let start_name: String = if start_raw == "HEAD" {
+        match resolve_head(&repo.git_dir)? {
+            HeadState::Branch { short_name, .. } => short_name,
+            _ => {
+                bail!("fatal: cannot set up tracking information; starting point 'HEAD' is not a branch");
+            }
+        }
+    } else {
+        start_raw.to_string()
+    };
+    let start = start_name.as_str();
 
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let effective_mode = if let Some(mode) = track_mode {
@@ -4107,6 +4972,7 @@ fn checkout_conflicted_path_with_merge(
     base: Option<&IndexEntry>,
     ours: Option<&IndexEntry>,
     theirs: Option<&IndexEntry>,
+    merge_cli: &CheckoutMergeCli,
 ) -> Result<()> {
     let ours_entry = ours
         .or(theirs)
@@ -4150,6 +5016,43 @@ fn checkout_conflicted_path_with_merge(
         7
     };
 
+    let mut style = match config
+        .get("merge.conflictstyle")
+        .as_deref()
+        .map(|s| s.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("diff3" | "zdiff3") => ConflictStyle::Diff3,
+        _ => ConflictStyle::Merge,
+    };
+    if let Some(s) = merge_cli.conflict_style {
+        style = s;
+    }
+    if merge_cli.force_two_way_markers {
+        style = ConflictStyle::Merge;
+    }
+
+    if let Some((driver_cmd, recursive_binary)) = resolve_path_merge_driver_command(repo, rel_path)
+    {
+        if recursive_binary
+            || merge_file::is_binary(&ours_obj.data)
+            || merge_file::is_binary(&theirs_obj.data)
+        {
+            return write_to_worktree(work_tree, rel_path, &ours_obj.data, ours_entry.mode);
+        }
+        let (merged, _code) = execute_custom_merge_driver(
+            &driver_cmd,
+            rel_path,
+            &base_data,
+            &ours_obj.data,
+            &theirs_obj.data,
+            "base",
+            "ours",
+            "theirs",
+        )?;
+        return write_to_worktree(work_tree, rel_path, &merged, ours_entry.mode);
+    }
+
     let merge_out = merge_file::merge(&MergeInput {
         base: &base_data,
         ours: &ours_obj.data,
@@ -4158,7 +5061,7 @@ fn checkout_conflicted_path_with_merge(
         label_base: "base",
         label_theirs: "theirs",
         favor: MergeFavor::None,
-        style: ConflictStyle::Merge,
+        style,
         marker_size,
         diff_algorithm: None,
         ignore_all_space: false,

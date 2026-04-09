@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::diff::{detect_renames, diff_trees, DiffStatus};
 use crate::index::{Index, IndexEntry};
-use crate::merge_file::{merge, MergeFavor, MergeInput};
+use crate::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
 use crate::objects::{parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::repo::Repository;
@@ -31,6 +31,39 @@ pub struct WhitespaceMergeOptions {
     pub ignore_cr_at_eol: bool,
 }
 
+/// How to label the "theirs" side in textual conflict markers.
+#[derive(Clone, Copy, Debug)]
+pub enum TheirsConflictLabel<'a> {
+    /// Use the UTF-8 file path (matches cherry-pick / revert).
+    PathUtf8,
+    /// Fixed label (e.g. `local` for `git checkout -m`).
+    Fixed(&'a str),
+}
+
+/// Labels and marker style for conflict output during tree merges.
+#[derive(Clone, Copy, Debug)]
+pub struct TreeMergeConflictPresentation<'a> {
+    /// Label after `<<<<<<<` (Git: ours side name).
+    pub label_ours: &'a str,
+    /// Label after `>>>>>>>` (path-based or fixed).
+    pub label_theirs: TheirsConflictLabel<'a>,
+    /// Label after `|||||||` in diff3 output.
+    pub label_base: &'a str,
+    /// Two-way vs diff3 markers.
+    pub style: ConflictStyle,
+}
+
+impl Default for TreeMergeConflictPresentation<'_> {
+    fn default() -> Self {
+        Self {
+            label_ours: "HEAD",
+            label_theirs: TheirsConflictLabel::PathUtf8,
+            label_base: "merged common ancestors",
+            style: ConflictStyle::Merge,
+        }
+    }
+}
+
 /// Merge `base` + `ours` + `their` trees (by OID) into an index using rename detection.
 ///
 /// Paths in the result follow the **ours** tree naming. Rename detection uses a 50%
@@ -42,7 +75,7 @@ pub struct WhitespaceMergeOptions {
 /// - `ours_tree` — current branch tree (HEAD during pick/revert).
 /// - `theirs_tree` — tree being applied (picked commit for cherry-pick, parent of reverted commit for revert).
 /// - `favor` / `ws` — merge strategy favour and whitespace options for textual merges.
-/// - `label_base` — label for the merge conflict "base" side in markers.
+/// - `presentation` — conflict marker labels and style (`label_base` is the diff3 "base" name).
 ///
 /// # Errors
 ///
@@ -54,7 +87,7 @@ pub fn merge_trees_three_way(
     theirs_tree: ObjectId,
     favor: MergeFavor,
     ws: WhitespaceMergeOptions,
-    label_base: &str,
+    presentation: TreeMergeConflictPresentation<'_>,
 ) -> crate::error::Result<TreeMergeOutput> {
     let odb = &repo.odb;
     let base = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
@@ -104,7 +137,7 @@ pub fn merge_trees_three_way(
         &theirs_old_to_new,
         favor,
         ws,
-        label_base,
+        presentation,
     )
 }
 
@@ -141,7 +174,7 @@ fn three_way_on_aligned_paths(
     theirs_old_to_new: &HashMap<Vec<u8>, Vec<u8>>,
     favor: MergeFavor,
     ws: WhitespaceMergeOptions,
-    label_base: &str,
+    presentation: TreeMergeConflictPresentation<'_>,
 ) -> crate::error::Result<TreeMergeOutput> {
     let mut out = Index::new();
     let mut conflict_content = BTreeMap::new();
@@ -187,7 +220,7 @@ fn three_way_on_aligned_paths(
             t,
             favor,
             ws,
-            label_base,
+            presentation,
         )?;
     }
 
@@ -215,7 +248,7 @@ fn three_way_on_aligned_paths(
             t,
             favor,
             ws,
-            label_base,
+            presentation,
         )?;
     }
 
@@ -236,7 +269,7 @@ fn three_way_on_aligned_paths(
             t,
             favor,
             ws,
-            label_base,
+            presentation,
         )?;
     }
 
@@ -263,7 +296,7 @@ fn merge_one_path(
     t: Option<&IndexEntry>,
     favor: MergeFavor,
     ws: WhitespaceMergeOptions,
-    label_base: &str,
+    presentation: TreeMergeConflictPresentation<'_>,
 ) -> crate::error::Result<()> {
     match (b, o, t) {
         (_, Some(oe), Some(te)) if same_blob(oe, te) => {
@@ -319,7 +352,7 @@ fn merge_one_path(
                 te,
                 favor,
                 ws,
-                label_base,
+                presentation,
             )?;
         }
         (None, Some(oe), None) => {
@@ -385,7 +418,7 @@ fn content_merge_or_conflict(
     theirs: &IndexEntry,
     favor: MergeFavor,
     ws: WhitespaceMergeOptions,
-    label_base: &str,
+    presentation: TreeMergeConflictPresentation<'_>,
 ) -> crate::error::Result<()> {
     if base.mode == 0o160000 || ours.mode == 0o160000 || theirs.mode == 0o160000 {
         stage_entry(index, path, base, 1);
@@ -427,15 +460,19 @@ fn content_merge_or_conflict(
     }
 
     let path_label = String::from_utf8_lossy(path);
+    let label_theirs: std::borrow::Cow<'_, str> = match presentation.label_theirs {
+        TheirsConflictLabel::PathUtf8 => path_label,
+        TheirsConflictLabel::Fixed(s) => std::borrow::Cow::Borrowed(s),
+    };
     let input = MergeInput {
         base: &base_obj.data,
         ours: &ours_obj.data,
         theirs: &theirs_obj.data,
-        label_ours: "HEAD",
-        label_base,
-        label_theirs: path_label.as_ref(),
+        label_ours: presentation.label_ours,
+        label_base: presentation.label_base,
+        label_theirs: label_theirs.as_ref(),
         favor,
-        style: Default::default(),
+        style: presentation.style,
         marker_size: 7,
         diff_algorithm: None,
         ignore_all_space: ws.ignore_all_space,
