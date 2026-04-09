@@ -132,8 +132,60 @@ pub fn filter_args(raw_args: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// Pull mode / misc flags out of `rest` when they appear after the commit (Git-compatible argv).
+fn normalize_reset_trailing_args(args: &mut Args) {
+    let mut i = 0usize;
+    while i < args.rest.len() {
+        match args.rest[i].as_str() {
+            "--soft" => {
+                args.soft = true;
+                args.rest.remove(i);
+            }
+            "--mixed" => {
+                args.mixed = true;
+                args.rest.remove(i);
+            }
+            "--hard" => {
+                args.hard = true;
+                args.rest.remove(i);
+            }
+            "--keep" => {
+                args.keep = true;
+                args.rest.remove(i);
+            }
+            "--merge" => {
+                args.merge = true;
+                args.rest.remove(i);
+            }
+            "-q" | "--quiet" => {
+                args.quiet = true;
+                args.rest.remove(i);
+            }
+            "-N" | "--intent-to-add" => {
+                args.intent_to_add = true;
+                args.rest.remove(i);
+            }
+            "--no-refresh" => {
+                args.no_refresh = true;
+                args.rest.remove(i);
+            }
+            "--refresh" => {
+                args.refresh = true;
+                args.rest.remove(i);
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+}
+
 /// Run `grit reset`.
 pub fn run(mut args: Args) -> Result<()> {
+    // Git accepts `reset <commit> --hard`; clap's `trailing_var_arg` collects `--hard` into
+    // `rest` so it is never parsed as a flag. Strip known options from `rest` first.
+    normalize_reset_trailing_args(&mut args);
+
     let mode = parse_mode(&args)?;
 
     let repo = Repository::discover(None).context("not a git repository")?;
@@ -229,7 +281,14 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
     let first = &rest[0];
     // Attempt to resolve first arg as a commit-ish.
     // Must actually resolve to a commit (not just any object like a blob).
-    let first_is_commit = resolve_revision_as_commit(repo, first).is_ok();
+    //
+    // When resolution fails but the token still uses Git ancestry syntax (`HEAD~1`,
+    // `main^2`, …), treat it as a commit spec anyway so `reset --hard HEAD~1` runs
+    // the commit reset path (updating the working tree). Otherwise grit would fall
+    // back to pathspec reset against `HEAD`, silently skip checkout, and leave
+    // removed index paths on disk — breaking tests that `reset` after `clean`.
+    let first_is_commit = resolve_revision_as_commit(repo, first).is_ok()
+        || grit_lib::rev_parse::revision_spec_contains_ancestry_navigation(first);
 
     if first_is_commit {
         // First arg is the commit; remaining args are paths (may be empty).
@@ -1264,14 +1323,14 @@ fn checkout_index_to_worktree(
     let new_paths: HashSet<Vec<u8>> = new_index.entries.iter().map(|e| e.path.clone()).collect();
 
     // Remove paths that are no longer present in the new index.
-    for old_path in old_paths.difference(&new_paths) {
-        let rel = String::from_utf8_lossy(old_path).into_owned();
+    // Sort by descending path length so nested files are removed before parent directories
+    // (HashSet iteration order is unspecified; wrong order can leave stale files on disk).
+    let mut to_drop: Vec<Vec<u8>> = old_paths.difference(&new_paths).cloned().collect();
+    to_drop.sort_by(|a, b| b.len().cmp(&a.len()));
+    for old_path in to_drop {
+        let rel = String::from_utf8_lossy(&old_path).into_owned();
         let abs = work_tree.join(&rel);
-        if abs.is_file() || abs.is_symlink() {
-            let _ = std::fs::remove_file(&abs);
-        } else if abs.is_dir() {
-            let _ = std::fs::remove_dir_all(&abs);
-        }
+        remove_worktree_path_best_effort(&abs);
         remove_empty_parent_dirs(&work_tree, &abs);
     }
 
@@ -1287,10 +1346,8 @@ fn checkout_index_to_worktree(
         if !new_paths.contains(path) {
             let rel = String::from_utf8_lossy(path).into_owned();
             let abs = work_tree.join(&rel);
-            if abs.is_file() || abs.is_symlink() {
-                let _ = std::fs::remove_file(&abs);
-                remove_empty_parent_dirs(&work_tree, &abs);
-            }
+            remove_worktree_path_best_effort(&abs);
+            remove_empty_parent_dirs(&work_tree, &abs);
         }
     }
 
@@ -1421,6 +1478,22 @@ fn checkout_index_to_worktree(
     }
 
     Ok(())
+}
+
+/// Best-effort removal of a path that is no longer in the index.
+///
+/// Uses [`std::fs::symlink_metadata`] so we do not follow symlinks (matches Git checkout).
+/// Tries `remove_dir_all` when the path is a directory, otherwise `remove_file`.
+fn remove_worktree_path_best_effort(abs: &Path) {
+    let Ok(meta) = std::fs::symlink_metadata(abs) else {
+        return;
+    };
+    let ft = meta.file_type();
+    if ft.is_dir() {
+        let _ = std::fs::remove_dir_all(abs);
+    } else {
+        let _ = std::fs::remove_file(abs);
+    }
 }
 
 /// Remove empty parent directories up to (but not including) `work_tree`.

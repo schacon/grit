@@ -549,6 +549,16 @@ pub fn try_parse_double_dot_log_range(
 /// Handles `A..B` / `..B` / `A..` (tip is the right side, defaulting to `HEAD`) and
 /// `A...B` symmetric diff (returns the merge base). Other specs are resolved and peeled
 /// to a commit (tags peeled, abbreviated hex disambiguated as commit-ish on range ends).
+/// Returns true when `spec` ends with Git parent/ancestor navigation (`~N`, `^N`, bare `~`/`^`).
+///
+/// Used by porcelain (`reset`) to distinguish commit-ish arguments from pathspecs when
+/// full resolution is deferred or fails for other reasons.
+#[must_use]
+pub fn revision_spec_contains_ancestry_navigation(spec: &str) -> bool {
+    let (_, steps) = parse_nav_steps(spec);
+    !steps.is_empty()
+}
+
 pub fn resolve_revision_as_commit(repo: &Repository, spec: &str) -> Result<ObjectId> {
     if let Some((left, right)) = split_triple_dot_range(spec) {
         let left_tip = if left.is_empty() {
