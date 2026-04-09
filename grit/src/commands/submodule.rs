@@ -7,7 +7,8 @@ use crate::commands::sparse_checkout::reapply_sparse_checkout_if_configured;
 use crate::grit_exe;
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
-use grit_lib::config::{ConfigFile, ConfigScope};
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::pack;
 use grit_lib::error::Error as LibError;
 use grit_lib::index::MODE_GITLINK;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
@@ -119,6 +120,14 @@ pub struct UpdateArgs {
     /// Recurse into nested submodules.
     #[arg(long)]
     pub recursive: bool,
+
+    /// Borrow objects from alternate repositories while cloning (can repeat).
+    #[arg(long = "reference", value_name = "REPO", action = clap::ArgAction::Append)]
+    pub reference: Vec<String>,
+
+    /// Repack after clone and drop alternates (matches `git clone --dissociate`).
+    #[arg(long)]
+    pub dissociate: bool,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -136,6 +145,14 @@ pub struct AddArgs {
 
     /// Path where the submodule should be placed.
     pub path: Option<String>,
+
+    /// Borrow objects from alternate repositories while cloning (can repeat).
+    #[arg(long = "reference", value_name = "REPO", action = clap::ArgAction::Append)]
+    pub reference: Vec<String>,
+
+    /// Repack after clone and drop alternates.
+    #[arg(long)]
+    pub dissociate: bool,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -230,6 +247,8 @@ pub(crate) fn update_after_superproject_merge(init: bool, recursive: bool) -> Re
         checkout: false,
         remote: false,
         recursive,
+        reference: vec![],
+        dissociate: false,
     })
 }
 
@@ -420,6 +439,104 @@ fn config_last_value(config: &ConfigFile, key: &str) -> Option<String> {
         .rev()
         .find(|e| e.key == key)
         .and_then(|e| e.value.clone())
+}
+
+fn submodule_url_base(work_tree: &Path, super_git_dir: &Path) -> PathBuf {
+    if super_git_dir
+        .parent()
+        .and_then(|p| p.file_name())
+        .is_some_and(|n| n == "modules")
+    {
+        work_tree
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| work_tree.to_path_buf())
+    } else {
+        work_tree.to_path_buf()
+    }
+}
+
+fn resolve_cli_reference_path(anchor: &Path, reference: &str) -> Result<PathBuf> {
+    let p = if Path::new(reference).is_absolute() {
+        PathBuf::from(reference)
+    } else {
+        anchor.join(reference)
+    };
+    p.canonicalize()
+        .with_context(|| format!("cannot open reference repository '{reference}'"))
+}
+
+/// Derive `--reference` git dirs for a submodule from the superproject's alternates (Git
+/// `prepare_possible_alternates` when `submodule.alternateLocation` is `superproject`).
+fn superproject_derived_submodule_references(
+    super_git_dir: &Path,
+    submodule_name: &str,
+) -> Result<Vec<PathBuf>> {
+    let cfg = ConfigSet::load(Some(super_git_dir), true).unwrap_or_default();
+    if cfg.get("submodule.alternateLocation").as_deref() != Some("superproject") {
+        return Ok(Vec::new());
+    }
+    let strategy = cfg
+        .get("submodule.alternateErrorStrategy")
+        .unwrap_or_else(|| "die".to_string());
+
+    let objects_dir = super_git_dir.join("objects");
+    let alternates = pack::read_alternates_recursive(&objects_dir).unwrap_or_default();
+    let mut out = Vec::new();
+    for alt_objects in alternates {
+        let Some(parent) = alt_objects.parent() else {
+            continue;
+        };
+        if parent.file_name().and_then(|s| s.to_str()) != Some("objects") {
+            continue;
+        }
+        let alt_git_dir = parent.parent().unwrap_or(parent);
+        let candidate = alt_git_dir.join("modules").join(submodule_name);
+        let candidate = candidate.canonicalize().unwrap_or(candidate);
+        if candidate.join("HEAD").is_file() {
+            out.push(candidate);
+            continue;
+        }
+        let msg = format!("path '{}' does not exist", candidate.display());
+        match strategy.as_str() {
+            "die" => {
+                bail!("fatal: submodule '{submodule_name}' cannot add alternate: {msg}");
+            }
+            "info" => {
+                eprintln!("submodule '{submodule_name}' cannot add alternate: {msg}");
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
+fn submodule_clone_separate_git_dir(
+    grit_bin: &Path,
+    work_tree: &Path,
+    modules_dir: &Path,
+    sub_path: &Path,
+    clone_src_str: &str,
+    reference_git_dirs: &[PathBuf],
+    dissociate: bool,
+) -> Result<std::process::ExitStatus> {
+    let mut cmd = grit_subprocess(grit_bin);
+    cmd.arg("clone").arg("--no-checkout");
+    for rd in reference_git_dirs {
+        cmd.arg("--reference").arg(rd);
+    }
+    if dissociate {
+        cmd.arg("--dissociate");
+    }
+    cmd.arg("--separate-git-dir")
+        .arg(modules_dir)
+        .arg(clone_src_str)
+        .arg(sub_path)
+        .current_dir(work_tree)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .status()
+        .context("failed to clone submodule")
 }
 
 fn remote_from_resolved_url(config: &ConfigFile, resolved_url: &str) -> Option<String> {
@@ -1055,18 +1172,46 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
                 let clone_src_str =
                     resolve_submodule_super_url(work_tree, &repo.git_dir, &clone_url)?;
 
-                let status = grit_subprocess(&grit_bin)
-                    .arg("clone")
-                    .arg("--no-checkout")
-                    .arg("--separate-git-dir")
-                    .arg(&modules_dir)
-                    .arg(&clone_src_str)
-                    .arg(&sub_path)
-                    .current_dir(work_tree)
-                    .env_remove("GIT_DIR")
-                    .env_remove("GIT_WORK_TREE")
-                    .status()
-                    .context("failed to clone submodule")?;
+                let anchor = submodule_url_base(work_tree, &repo.git_dir);
+                let mut cli_ref_dirs: Vec<PathBuf> = Vec::new();
+                for r in &args.reference {
+                    cli_ref_dirs.push(resolve_cli_reference_path(&anchor, r)?);
+                }
+                let derived =
+                    superproject_derived_submodule_references(&repo.git_dir, &m.name)?;
+                let mut ref_dirs = cli_ref_dirs.clone();
+                for d in &derived {
+                    if !ref_dirs.iter().any(|x| x == d) {
+                        ref_dirs.push(d.clone());
+                    }
+                }
+
+                let mut status = submodule_clone_separate_git_dir(
+                    &grit_bin,
+                    work_tree,
+                    &modules_dir,
+                    &sub_path,
+                    &clone_src_str,
+                    &ref_dirs,
+                    args.dissociate,
+                )?;
+                if !status.success() && !derived.is_empty() {
+                    if sub_path.exists() {
+                        let _ = fs::remove_dir_all(&sub_path);
+                    }
+                    if modules_dir.exists() {
+                        let _ = fs::remove_dir_all(&modules_dir);
+                    }
+                    status = submodule_clone_separate_git_dir(
+                        &grit_bin,
+                        work_tree,
+                        &modules_dir,
+                        &sub_path,
+                        &clone_src_str,
+                        &cli_ref_dirs,
+                        args.dissociate,
+                    )?;
+                }
 
                 if !status.success() {
                     eprintln!("error: failed to clone submodule from '{}'", clone_src_str);
@@ -1220,6 +1365,15 @@ fn set_submodule_core_worktree(grit_bin: &Path, modules_dir: &Path, sub_path: &P
         .status();
 }
 
+/// Set `core.worktree` after `clone --separate-git-dir` into `.git/modules/<path>/`.
+pub(crate) fn set_submodule_core_worktree_after_separate_clone(
+    grit_bin: &Path,
+    modules_dir: &Path,
+    sub_path: &Path,
+) {
+    set_submodule_core_worktree(grit_bin, modules_dir, sub_path);
+}
+
 fn attach_existing_submodule_worktree(
     grit_bin: &Path,
     modules_dir: &Path,
@@ -1302,9 +1456,27 @@ fn run_add(args: &AddArgs) -> Result<()> {
         };
         let clone_source_str = clone_source.to_string_lossy().into_owned();
 
-        let status = grit_subprocess(&grit_bin)
-            .arg("clone")
-            .arg("--no-checkout")
+        let name_for_refs = args.name.as_deref().unwrap_or(&path);
+        let anchor = submodule_url_base(work_tree, &repo.git_dir);
+        let mut ref_dirs: Vec<PathBuf> = Vec::new();
+        for r in &args.reference {
+            ref_dirs.push(resolve_cli_reference_path(&anchor, r)?);
+        }
+        for d in superproject_derived_submodule_references(&repo.git_dir, name_for_refs)? {
+            if !ref_dirs.iter().any(|x| x == &d) {
+                ref_dirs.push(d);
+            }
+        }
+
+        let mut clone_cmd = grit_subprocess(&grit_bin);
+        clone_cmd.arg("clone").arg("--no-checkout");
+        for rd in &ref_dirs {
+            clone_cmd.arg("--reference").arg(rd);
+        }
+        if args.dissociate {
+            clone_cmd.arg("--dissociate");
+        }
+        let status = clone_cmd
             .arg("--separate-git-dir")
             .arg(&modules_dir)
             .arg(&clone_source_str)
