@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -664,7 +664,7 @@ t3901-i18n-patch	t3	yes	20	0	20	false	ok	0
 t3902-quoted	t3	yes	13	5	8	false	ok	0
 t3902-quoted-ls-tree	t3	yes	8	8	0	true	ok	0
 t3903-stash	t3	yes	0	0	0	false	timeout	0
-t3904-stash-patch	t3	yes	10	4	6	false	ok	0
+t3904-stash-patch	t3	yes	10	10	0	true	ok	0
 t3905-stash-include-untracked	t3	yes	34	13	21	false	ok	0
 t3906-stash-submodule	t3	yes	8	0	8	false	ok	0
 t3907-stash-show-config	t3	yes	10	1	9	false	ok	0
