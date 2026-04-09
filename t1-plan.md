@@ -60,7 +60,7 @@
 - [ ] t10960-hash-object-empty-binary.sh
 - [ ] t10970-cat-file-blob-tree-tag.sh
 - [ ] t10990-write-tree-clean-dirty.sh
-- [ ] t1100-commit-tree-options.sh
+- [x] t1100-commit-tree-options.sh
 - [ ] t11020-diff-no-index-subdir.sh
 - [ ] t11030-diff-cached-rename.sh
 - [ ] t11140-config-get-regexp.sh
