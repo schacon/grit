@@ -549,6 +549,34 @@ pub fn format_combined_textconv_patch(
     Some(out)
 }
 
+/// Combined `diff --cc` for an unmerged **gitlink** path when stage blobs are absent from the ODB
+/// (e.g. `t4027` synthetic `1ff…` / `2ff…` OIDs). Uses full hex in `Subproject commit` lines like Git.
+#[must_use]
+pub fn format_gitlink_unmerged_conflict_combined(
+    path: &str,
+    stage2_oid: &ObjectId,
+    stage3_oid: &ObjectId,
+    result_subproject_line: &str,
+    abbrev: usize,
+) -> String {
+    let p1a = abbrev_hex(stage2_oid, abbrev);
+    let p2a = abbrev_hex(stage3_oid, abbrev);
+    let z = crate::diff::zero_oid();
+    let za = abbrev_hex(&z, abbrev);
+
+    let t_ours = format!("Subproject commit {}", stage2_oid.to_hex());
+    let t_theirs = format!("Subproject commit {}", stage3_oid.to_hex());
+    let tr = result_subproject_line.trim_end_matches('\n').to_owned();
+
+    let mut out = String::new();
+    out.push_str(&format!("diff --cc {path}\n"));
+    out.push_str(&format!("index {p1a},{p2a}..{za}\n"));
+    out.push_str(&format!("--- a/{path}\n"));
+    out.push_str(&format!("+++ b/{path}\n"));
+    out.push_str(&combined_hunk_two_parents(&t_ours, &t_theirs, &tr));
+    out
+}
+
 /// `git diff` / `git diff --cc` during a conflict: worktree file with markers.
 #[allow(clippy::too_many_arguments)]
 pub fn format_worktree_conflict_combined(

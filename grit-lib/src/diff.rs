@@ -965,6 +965,10 @@ pub fn hash_worktree_file(
         // For symlinks, hash the target path
         let target = fs::read_link(path)?;
         target.to_string_lossy().into_owned().into_bytes()
+    } else if meta.is_dir() {
+        // `read()` on a directory fails with EISDIR; unmerged paths may leave an empty
+        // placeholder directory (e.g. t4027 combined submodule conflict).
+        Vec::new()
     } else {
         let raw = fs::read(path)?;
         // Apply clean conversion (CRLF→LF) so hash matches index blob.
@@ -1070,8 +1074,20 @@ pub fn diff_tree_to_worktree(
             if let Some(te) = tree_entry {
                 let sub_dir = work_tree.join(path);
                 let sub_head = read_submodule_head_oid(&sub_dir);
-                if sub_head.as_ref() != Some(&te.oid) {
-                    let new_oid = sub_head.unwrap_or_else(zero_oid);
+                let index_oid = index_entries
+                    .get(path.as_bytes())
+                    .filter(|ie| ie.mode == 0o160000)
+                    .map(|ie| ie.oid);
+                let index_matches_tree = index_oid.is_some_and(|oid| oid == te.oid);
+                let head_differs = sub_head.as_ref() != Some(&te.oid);
+                let dirty_while_aligned = index_matches_tree
+                    && !head_differs
+                    && submodule_has_dirty_worktree_for_super_diff(work_tree, path, &te.oid);
+                if head_differs || dirty_while_aligned {
+                    // Raw `git diff <tree>` lines use a null OID on the worktree side when the
+                    // checked-out submodule HEAD differs from the tree's gitlink; patch output still
+                    // resolves the real commit from the submodule directory.
+                    let new_oid = if head_differs { zero_oid() } else { te.oid };
                     result.push(DiffEntry {
                         status: DiffStatus::Modified,
                         old_path: Some(path.clone()),
@@ -2898,6 +2914,17 @@ pub fn read_submodule_head_oid(sub_dir: &Path) -> Option<ObjectId> {
         // Detached HEAD — direct OID
         ObjectId::from_hex(head_content).ok()
     }
+}
+
+/// True when a checked-out submodule at `rel_path` has modified or untracked content relative to
+/// the gitlink `recorded_oid` stored in the superproject (used for `git diff <tree>` parity).
+fn submodule_has_dirty_worktree_for_super_diff(
+    super_worktree: &Path,
+    rel_path: &str,
+    recorded_oid: &ObjectId,
+) -> bool {
+    let flags = submodule_porcelain_flags(super_worktree, rel_path, *recorded_oid);
+    flags.modified || flags.untracked
 }
 
 /// Submodule dirty bits aligned with Git's `DIRTY_SUBMODULE_*` / porcelain v2 `S???` token.

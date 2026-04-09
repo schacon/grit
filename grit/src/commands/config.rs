@@ -87,7 +87,14 @@ pub struct Args {
     pub list: bool,
 
     /// Add a new line for a multi-valued key (legacy).
-    #[arg(long = "add", value_name = "KEY")]
+    ///
+    /// Supports `git config --add -f path key value` (key may follow `-f` and the file path).
+    #[arg(
+        long = "add",
+        value_name = "KEY",
+        num_args = 0..=1,
+        default_missing_value = ""
+    )]
     pub add_key: Option<String>,
 
     /// Replace all matching values (legacy).
@@ -509,11 +516,19 @@ pub fn run(args: Args) -> Result<()> {
         return cmd_unset(&args, &unset_args, scope, &file_path, value_pattern, false);
     }
 
-    if let Some(ref key) = args.add_key {
-        if args.positional.is_empty() {
-            bail!("missing value for --add");
-        }
-        return cmd_add(&args, key, &args.positional[0], scope, &file_path);
+    if let Some(ref key_raw) = args.add_key {
+        let (key, value) = if key_raw.is_empty() {
+            if args.positional.len() < 2 {
+                bail!("usage: git config --add <key> <value>");
+            }
+            (args.positional[0].clone(), args.positional[1].as_str())
+        } else {
+            if args.positional.is_empty() {
+                bail!("missing value for --add");
+            }
+            (key_raw.clone(), args.positional[0].as_str())
+        };
+        return cmd_add(&args, &key, value, scope, &file_path);
     }
 
     if args.remove_section {
