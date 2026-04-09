@@ -654,7 +654,7 @@ commit → check it off → move on.
 - [ ] `t5100-mailinfo` ████████████░░░░░░░░ 33/52 (19 left) — git mailinfo and git mailsplit test
 - [ ] `t5541-http-push-smart` █░░░░░░░░░░░░░░░░░░░ 2/21 (19 left) — test smart pushing over http via http-backend
 - [ ] `t5001-archive-attr` ██████████░░░░░░░░░░ 24/44 (20 left) — git archive attribute tests
-- [ ] `t5514-fetch-multiple` ███░░░░░░░░░░░░░░░░░ 4/25 (21 left) — fetch --all works correctly
+- [x] `t5514-fetch-multiple` — fetch --all works correctly (25/25)
 - [ ] `t5710-promisor-remote-capability` ░░░░░░░░░░░░░░░░░░░░ 1/22 (21 left) — handling of promisor remote advertisement
 - [ ] `t5703-upload-pack-ref-in-want` ███░░░░░░░░░░░░░░░░░ 4/26 (22 left) — upload-pack ref-in-want
 - [ ] `t5329-pack-objects-cruft` ██░░░░░░░░░░░░░░░░░░ 3/25 (22 left) — cruft pack related pack-objects tests
