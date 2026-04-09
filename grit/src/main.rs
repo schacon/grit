@@ -2857,6 +2857,13 @@ fn preprocess_fetch_argv(rest: &[String]) -> Vec<String> {
 }
 
 fn preprocess_diff_args(rest: &[String]) -> Vec<String> {
+    // Git rejects `--no-rename` as an invalid abbreviation (ambiguous with `--no-renames` /
+    // `--no-rename-empty`). Clap would otherwise treat it as a revision and fail later.
+    if rest.iter().any(|a| a == "--no-rename") {
+        eprintln!("error: invalid option: --no-rename");
+        std::process::exit(129);
+    }
+
     let mut result = Vec::new();
     let mut i = 0usize;
     let word_diff_modes = ["plain", "color", "porcelain", "none"];

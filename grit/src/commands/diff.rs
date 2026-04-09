@@ -28,6 +28,7 @@ use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, RevListOptions};
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision, split_treeish_colon};
+use regex::Regex;
 
 use crate::commands::diff_index::{write_patch_entry, SubmoduleIgnoreFlags};
 
@@ -475,6 +476,10 @@ pub struct Args {
     #[arg(skip)]
     pub pickaxe_grep: Option<String>,
 
+    /// Ignore lines matching regex (`-I` / `--ignore-matching-lines`). Parsed from trailing args.
+    #[arg(skip)]
+    pub ignore_matching_lines: Vec<String>,
+
     /// Filter diff output by change type (e.g. `R` for renames only). Parsed from trailing args.
     #[arg(skip)]
     pub diff_filter: Option<String>,
@@ -718,6 +723,22 @@ pub fn run(mut args: Args) -> Result<()> {
                         args.pickaxe_grep = Some(revs[rev_idx].clone());
                     }
                 }
+                "-I" | "--ignore-matching-lines" => {
+                    if rev_idx + 1 < revs.len() {
+                        rev_idx += 1;
+                        args.ignore_matching_lines.push(revs[rev_idx].clone());
+                    }
+                }
+                s if s.starts_with("-I") && s.len() > 2 => {
+                    args.ignore_matching_lines.push(s[2..].to_owned());
+                }
+                s if s.starts_with("--ignore-matching-lines=") => {
+                    args.ignore_matching_lines.push(
+                        s.strip_prefix("--ignore-matching-lines=")
+                            .unwrap_or("")
+                            .to_owned(),
+                    );
+                }
                 "--pickaxe-regex" => {
                     args.pickaxe_regex = true;
                 }
@@ -831,6 +852,23 @@ pub fn run(mut args: Args) -> Result<()> {
         ignore_cr_at_eol: args.ignore_cr_at_eol,
     };
 
+    let line_ignore_res: Option<Vec<Regex>> = if args.ignore_matching_lines.is_empty() {
+        None
+    } else {
+        let mut compiled = Vec::with_capacity(args.ignore_matching_lines.len());
+        for p in &args.ignore_matching_lines {
+            match Regex::new(p) {
+                Ok(re) => compiled.push(re),
+                Err(_) => {
+                    eprintln!("error: invalid regex given to -I: {p}");
+                    std::process::exit(129);
+                }
+            }
+        }
+        Some(compiled)
+    };
+    let line_ignore = line_ignore_res.as_deref();
+
     // When a whitespace-ignore mode is active, filter out entries whose
     // normalised content is identical. Deletions, additions, and mode
     // changes are always reported regardless of whitespace.
@@ -849,6 +887,15 @@ pub fn run(mut args: Args) -> Result<()> {
                 let new = read_content(&repo.odb, &e.new_oid, wt_for_content, e.path());
                 ws_mode.normalize(&old) != ws_mode.normalize(&new)
             })
+            .collect()
+    } else {
+        entries
+    };
+
+    let entries = if let Some(ign) = line_ignore {
+        entries
+            .into_iter()
+            .filter(|e| !entry_hidden_by_line_ignore(e, &repo.odb, wt_for_content, &ws_mode, ign))
             .collect()
     } else {
         entries
@@ -1220,6 +1267,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 &repo.odb,
                 wt_for_content,
                 args.break_rewrites,
+                line_ignore,
+                &ws_mode,
             )?;
         } else if stat_enabled
             || args.stat_count.is_some()
@@ -1239,6 +1288,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 args.stat_graph_width,
                 args.line_prefix.as_deref().unwrap_or(""),
                 &repo.git_dir,
+                line_ignore,
+                &ws_mode,
             )?;
             if args.summary {
                 write_diff_summary(&mut out, &entries)?;
@@ -1259,6 +1310,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 &repo.odb,
                 wt_for_content,
                 args.break_rewrites,
+                line_ignore,
+                &ws_mode,
             )?;
         } else if args.name_only {
             write_name_only(&mut out, &entries)?;
@@ -1301,6 +1354,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     &dst_prefix,
                     args.submodule.as_deref(),
                     submodule_ignore_flags_from_diff_arg(ignore_sm),
+                    line_ignore,
                 )?;
             }
         }
@@ -2057,6 +2111,68 @@ fn read_content(odb: &Odb, oid: &ObjectId, work_tree: Option<&Path>, path: &str)
     String::from_utf8_lossy(&raw).into_owned()
 }
 
+/// Drop lines matching any of the `-I` / `--ignore-matching-lines` regexes (Git: ignore whole lines).
+fn apply_ignore_matching_lines_to_text(text: &str, ignore: &[Regex]) -> String {
+    if ignore.is_empty() {
+        return text.to_owned();
+    }
+    let ends_with_nl = text.ends_with('\n');
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|line| !ignore.iter().any(|re| re.is_match(line)))
+        .collect();
+    let mut out = kept.join("\n");
+    if ends_with_nl && !out.is_empty() {
+        out.push('\n');
+    }
+    out
+}
+
+/// True when `-I` / `--ignore-matching-lines` removes all substantive differences (entry hidden like Git).
+fn entry_hidden_by_line_ignore(
+    entry: &DiffEntry,
+    odb: &Odb,
+    work_tree: Option<&Path>,
+    ws_mode: &WhitespaceMode,
+    ignore: &[Regex],
+) -> bool {
+    if ignore.is_empty() {
+        return false;
+    }
+    if matches!(
+        entry.status,
+        DiffStatus::Renamed | DiffStatus::Copied | DiffStatus::TypeChanged | DiffStatus::Unmerged
+    ) {
+        return false;
+    }
+    if entry.old_mode != entry.new_mode {
+        return false;
+    }
+    let old_path = entry.old_path.as_deref().unwrap_or(entry.path());
+    let new_path = entry.new_path.as_deref().unwrap_or(entry.path());
+    let (old, new) = match entry.status {
+        DiffStatus::Added => (
+            String::new(),
+            read_content(odb, &entry.new_oid, work_tree, new_path),
+        ),
+        DiffStatus::Deleted => (
+            read_content(odb, &entry.old_oid, work_tree, old_path),
+            String::new(),
+        ),
+        _ => (
+            read_content(odb, &entry.old_oid, work_tree, old_path),
+            read_content(odb, &entry.new_oid, work_tree, new_path),
+        ),
+    };
+    let mut old_f = apply_ignore_matching_lines_to_text(&old, ignore);
+    let mut new_f = apply_ignore_matching_lines_to_text(&new, ignore);
+    if ws_mode.any() {
+        old_f = ws_mode.normalize(&old_f);
+        new_f = ws_mode.normalize(&new_f);
+    }
+    old_f == new_f
+}
+
 /// Read raw bytes for a diff entry side from the ODB.
 fn read_content_raw(odb: &Odb, oid: &ObjectId) -> Vec<u8> {
     if *oid == zero_oid() {
@@ -2108,6 +2224,8 @@ fn stat_ins_del_for_entry(
     entry: &DiffEntry,
     work_tree: Option<&Path>,
     break_rewrites: bool,
+    line_ignore: Option<&[Regex]>,
+    ws_mode: &WhitespaceMode,
 ) -> (usize, usize) {
     let old_raw = read_content_raw(odb, &entry.old_oid);
     let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, entry.path());
@@ -2119,8 +2237,18 @@ fn stat_ins_del_for_entry(
     {
         return (count_git_lines(&new_raw), count_git_lines(&old_raw));
     }
-    let old_content = String::from_utf8_lossy(&old_raw).into_owned();
-    let new_content = String::from_utf8_lossy(&new_raw).into_owned();
+    let mut old_content = String::from_utf8_lossy(&old_raw).into_owned();
+    let mut new_content = String::from_utf8_lossy(&new_raw).into_owned();
+    if let Some(ign) = line_ignore {
+        if !ign.is_empty() {
+            old_content = apply_ignore_matching_lines_to_text(&old_content, ign);
+            new_content = apply_ignore_matching_lines_to_text(&new_content, ign);
+        }
+    }
+    if ws_mode.any() {
+        old_content = ws_mode.normalize(&old_content);
+        new_content = ws_mode.normalize(&new_content);
+    }
     count_changes(&old_content, &new_content)
 }
 
@@ -2384,6 +2512,7 @@ fn write_patch_with_prefix(
     dst_prefix: &str,
     submodule_fmt: Option<&str>,
     submodule_ignore: SubmoduleIgnoreFlags,
+    line_ignore: Option<&[Regex]>,
 ) -> Result<()> {
     for entry in entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
@@ -2503,8 +2632,14 @@ fn write_patch_with_prefix(
             continue;
         }
 
-        let old_content = String::from_utf8_lossy(&old_content_raw).into_owned();
-        let new_content = String::from_utf8_lossy(&new_content_raw).into_owned();
+        let mut old_content = String::from_utf8_lossy(&old_content_raw).into_owned();
+        let mut new_content = String::from_utf8_lossy(&new_content_raw).into_owned();
+        if let Some(ign) = line_ignore {
+            if !ign.is_empty() {
+                old_content = apply_ignore_matching_lines_to_text(&old_content, ign);
+                new_content = apply_ignore_matching_lines_to_text(&new_content, ign);
+            }
+        }
 
         // For Added files, show --- /dev/null; for Deleted files, show +++ /dev/null
         let display_old = if entry.status == DiffStatus::Added {
@@ -2761,6 +2896,8 @@ fn write_shortstat(
     odb: &Odb,
     work_tree: Option<&Path>,
     break_rewrites: bool,
+    line_ignore: Option<&[Regex]>,
+    ws_mode: &WhitespaceMode,
 ) -> Result<()> {
     if entries.is_empty() {
         return Ok(());
@@ -2771,10 +2908,15 @@ fn write_shortstat(
     let mut files_changed = 0usize;
 
     for entry in entries {
-        let (ins, del) = stat_ins_del_for_entry(odb, entry, work_tree, break_rewrites);
+        let (ins, del) =
+            stat_ins_del_for_entry(odb, entry, work_tree, break_rewrites, line_ignore, ws_mode);
         total_ins += ins;
         total_del += del;
         files_changed += 1;
+    }
+
+    if files_changed == 0 {
+        return Ok(());
     }
 
     let mut summary = format!(
@@ -2824,6 +2966,8 @@ fn write_stat(
     stat_graph_width: Option<usize>,
     line_prefix: &str,
     git_dir: &Path,
+    line_ignore: Option<&[Regex]>,
+    ws_mode: &WhitespaceMode,
 ) -> Result<()> {
     if entries.is_empty() {
         return Ok(());
@@ -2864,7 +3008,8 @@ fn write_stat(
                 is_binary: true,
             });
         } else {
-            let (ins, del) = stat_ins_del_for_entry(odb, entry, work_tree, break_rewrites);
+            let (ins, del) =
+                stat_ins_del_for_entry(odb, entry, work_tree, break_rewrites, line_ignore, ws_mode);
             files.push(FileStatInput {
                 path_display: display_paths[i].clone(),
                 insertions: ins,
@@ -2960,9 +3105,12 @@ fn write_numstat(
     odb: &Odb,
     work_tree: Option<&Path>,
     break_rewrites: bool,
+    line_ignore: Option<&[Regex]>,
+    ws_mode: &WhitespaceMode,
 ) -> Result<()> {
     for entry in entries {
-        let (ins, del) = stat_ins_del_for_entry(odb, entry, work_tree, break_rewrites);
+        let (ins, del) =
+            stat_ins_del_for_entry(odb, entry, work_tree, break_rewrites, line_ignore, ws_mode);
         match entry.status {
             DiffStatus::Renamed | DiffStatus::Copied => {
                 let old = entry.old_path.as_deref().unwrap_or("");
