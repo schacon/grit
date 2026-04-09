@@ -108,6 +108,26 @@ pub fn ancestor_closure(repo: &Repository, tip: ObjectId) -> Result<HashSet<Obje
     cache.ancestor_closure(tip)
 }
 
+/// Count symmetric-diff commits between two tips, matching `git rev-list --left-right A...B`.
+///
+/// Returns `(ahead, behind)` where `ahead` counts commits reachable from `local` but not from
+/// `other`, and `behind` the converse. Shared history is excluded from both counts.
+///
+/// # Errors
+///
+/// Propagates errors from commit graph walks.
+pub fn count_symmetric_ahead_behind(
+    repo: &Repository,
+    local: ObjectId,
+    other: ObjectId,
+) -> Result<(usize, usize)> {
+    let left = ancestor_closure(repo, local)?;
+    let right = ancestor_closure(repo, other)?;
+    let ahead = left.difference(&right).count();
+    let behind = right.difference(&left).count();
+    Ok((ahead, behind))
+}
+
 /// Return commits that are not reachable from any other input commit.
 ///
 /// The output order follows input order, dropping any commit reachable from

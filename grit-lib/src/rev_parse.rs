@@ -250,45 +250,161 @@ fn resolve_upstream_full_ref_name(repo: &Repository, base: &str, is_push: bool) 
     Ok(tracking)
 }
 
-fn resolve_push_ref_name(repo: &Repository, base: &str) -> Result<String> {
-    let (branch_key, _display) = resolve_upstream_branch_context(repo, base)?;
+/// Resolve the remote-tracking ref used as `@{push}` for `branch_short` (`refs/heads/...` name).
+///
+/// Honors `remote.pushRemote`, `branch.<name>.pushRemote`, `push.default`, and per-remote
+/// `push` refspecs (exact `refs/heads/<branch>:refs/heads/<dest>` mappings).
+pub fn resolve_push_full_ref_for_branch(repo: &Repository, branch_short: &str) -> Result<String> {
     let config_path = crate::refs::common_dir(&repo.git_dir)
         .unwrap_or_else(|| repo.git_dir.clone())
         .join("config");
-    let config_content = fs::read_to_string(&config_path).unwrap_or_default();
+    let config_content = fs::read_to_string(&config_path).map_err(Error::Io)?;
+
+    let upstream_tracking =
+        parse_branch_tracking(&config_content, branch_short).and_then(|(remote, merge)| {
+            if remote == "." {
+                return None;
+            }
+            let mb = merge.strip_prefix("refs/heads/").unwrap_or(&merge);
+            let tr = format!("refs/remotes/{remote}/{mb}");
+            if refs::resolve_ref(&repo.git_dir, &tr).is_ok() {
+                Some(tr)
+            } else {
+                None
+            }
+        });
+
+    let push_remote = parse_config_value(&config_content, "remote", "pushRemote")
+        .or_else(|| parse_config_value(&config_content, "remote", "pushDefault"))
+        .or_else(|| {
+            let section = format!("[branch \"{}\"]", branch_short);
+            let mut in_section = false;
+            for line in config_content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with('[') {
+                    in_section = trimmed == section;
+                    continue;
+                }
+                if in_section {
+                    if let Some(v) = trimmed
+                        .strip_prefix("pushremote = ")
+                        .or_else(|| trimmed.strip_prefix("pushRemote = "))
+                    {
+                        return Some(v.trim().to_owned());
+                    }
+                }
+            }
+            None
+        })
+        .or_else(|| {
+            parse_branch_tracking(&config_content, branch_short)
+                .map(|(r, _)| r)
+                .filter(|r| r != ".")
+        });
+
+    let Some(push_remote_name) = push_remote else {
+        return upstream_tracking.ok_or_else(|| {
+            Error::Message("fatal: branch has no configured push remote".to_owned())
+        });
+    };
+
     let push_default = parse_config_value(&config_content, "push", "default");
-    if push_default.as_deref().unwrap_or("simple") == "nothing" {
+    let push_default = push_default.as_deref().unwrap_or("simple");
+
+    if push_default == "nothing" {
         return Err(Error::Message(
             "fatal: push.default is nothing; no push destination".to_owned(),
         ));
     }
-    let push_remote = parse_config_value(&config_content, "remote", "pushRemote").or_else(|| {
-        let section = format!("[branch \"{}\"]", branch_key);
-        let mut in_section = false;
-        for line in config_content.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('[') {
-                in_section = trimmed == section;
-                continue;
-            }
-            if in_section {
-                if let Some(v) = trimmed
-                    .strip_prefix("pushremote = ")
-                    .or_else(|| trimmed.strip_prefix("pushRemote = "))
-                {
-                    return Some(v.trim().to_owned());
-                }
-            }
-        }
-        None
-    });
-    if let Some(remote) = push_remote {
-        let tracking_ref = format!("refs/remotes/{remote}/{branch_key}");
-        if refs::resolve_ref(&repo.git_dir, &tracking_ref).is_ok() {
-            return Ok(tracking_ref);
+
+    if let Some(mapped) =
+        push_refspec_mapped_tracking(&config_content, &push_remote_name, branch_short)
+    {
+        if refs::resolve_ref(&repo.git_dir, &mapped).is_ok() {
+            return Ok(mapped);
         }
     }
-    resolve_upstream_full_ref_name(repo, base, false)
+
+    let current_tracking = format!("refs/remotes/{push_remote_name}/{branch_short}");
+
+    match push_default {
+        "upstream" => upstream_tracking.ok_or_else(|| {
+            Error::Message(format!(
+                "fatal: branch '{branch_short}' has no upstream for push.default upstream"
+            ))
+        }),
+        "simple" => {
+            if let Some(ref up) = upstream_tracking {
+                if up == &current_tracking
+                    && refs::resolve_ref(&repo.git_dir, &current_tracking).is_ok()
+                {
+                    return Ok(current_tracking);
+                }
+            }
+            Err(Error::Message(
+                "fatal: push.default simple: upstream and push ref differ".to_owned(),
+            ))
+        }
+        "current" | "matching" | _ => {
+            if refs::resolve_ref(&repo.git_dir, &current_tracking).is_ok() {
+                Ok(current_tracking)
+            } else if let Some(up) = upstream_tracking {
+                Ok(up)
+            } else {
+                Err(Error::Message(format!(
+                    "fatal: no push tracking ref for branch '{branch_short}'"
+                )))
+            }
+        }
+    }
+}
+
+fn push_refspec_mapped_tracking(
+    config_content: &str,
+    remote_name: &str,
+    branch_short: &str,
+) -> Option<String> {
+    let section = format!("[remote \"{remote_name}\"]");
+    let mut in_section = false;
+    let src_want = format!("refs/heads/{branch_short}");
+    for line in config_content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_section = trimmed == section;
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        let Some(val) = trimmed
+            .strip_prefix("push = ")
+            .or_else(|| trimmed.strip_prefix("push="))
+        else {
+            continue;
+        };
+        let Some(spec) = val.split_whitespace().next() else {
+            continue;
+        };
+        let spec = spec.trim().strip_prefix('+').unwrap_or(spec);
+        let Some((left, right)) = spec.split_once(':') else {
+            continue;
+        };
+        let left = left.trim();
+        let right = right.trim();
+        if left != src_want {
+            continue;
+        }
+        let Some(dest_branch) = right.strip_prefix("refs/heads/") else {
+            continue;
+        };
+        return Some(format!("refs/remotes/{remote_name}/{dest_branch}"));
+    }
+    None
+}
+
+fn resolve_push_ref_name(repo: &Repository, base: &str) -> Result<String> {
+    let (branch_key, _display) = resolve_upstream_branch_context(repo, base)?;
+    resolve_push_full_ref_for_branch(repo, &branch_key)
 }
 
 /// Returns `(config_branch_key, display_name_for_errors)` for upstream resolution.
@@ -1358,20 +1474,51 @@ fn resolve_base(
     if let Ok(oid) = refs::resolve_ref(&repo.git_dir, spec) {
         return Ok(oid);
     }
+    // Remote name alone (`origin`, `upstream`): resolve like Git via
+    // `refs/remotes/<name>/HEAD` (symref to the default remote-tracking branch).
+    // Skip when a local branch with the same short name exists.
+    if !spec.contains('/')
+        && !spec.starts_with('.')
+        && spec != "HEAD"
+        && spec != "FETCH_HEAD"
+        && spec != "MERGE_HEAD"
+        && spec != "CHERRY_PICK_HEAD"
+        && spec != "REVERT_HEAD"
+        && spec != "REBASE_HEAD"
+        && spec != "AUTO_MERGE"
+        && spec != "stash"
+    {
+        let local_branch = format!("refs/heads/{spec}");
+        if refs::resolve_ref(&repo.git_dir, &local_branch).is_err() {
+            let remote_head = format!("refs/remotes/{spec}/HEAD");
+            if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &remote_head) {
+                return Ok(oid);
+            }
+        }
+    }
     // DWIM: bare `stash` refers to `refs/stash` (like upstream Git), not `.git/stash`.
     if spec == "stash" {
         if let Ok(oid) = refs::resolve_ref(&repo.git_dir, "refs/stash") {
             return Ok(oid);
         }
     }
-    // Prefer tags over branches for short names: `test_commit` creates tags named like the
-    // commit message, and branch names like `main`/`master` can shadow unrelated heads.
-    for candidate in &[
-        format!("refs/tags/{spec}"),
-        format!("refs/heads/{spec}"),
-        format!("refs/remotes/{spec}"),
-        format!("refs/notes/{spec}"),
-    ] {
+    // Short names: resolve `refs/heads/<spec>` and `refs/tags/<spec>`. When both exist and
+    // disagree, prefer the branch (matches `git checkout` / `git reset` for names like `b1`)
+    // and warn, matching upstream ambiguous-refname behavior.
+    let head_ref = format!("refs/heads/{spec}");
+    let tag_ref = format!("refs/tags/{spec}");
+    let head_oid = refs::resolve_ref(&repo.git_dir, &head_ref).ok();
+    let tag_oid = refs::resolve_ref(&repo.git_dir, &tag_ref).ok();
+    match (head_oid, tag_oid) {
+        (Some(h), Some(t)) if h != t => {
+            eprintln!("warning: refname '{spec}' is ambiguous.");
+            return Ok(h);
+        }
+        (Some(h), _) => return Ok(h),
+        (None, Some(t)) => return Ok(t),
+        (None, None) => {}
+    }
+    for candidate in &[format!("refs/remotes/{spec}"), format!("refs/notes/{spec}")] {
         if let Ok(oid) = refs::resolve_ref(&repo.git_dir, candidate) {
             return Ok(oid);
         }

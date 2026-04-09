@@ -1686,8 +1686,13 @@ fn open_repo(path: &Path) -> Result<Repository> {
     if let Ok(repo) = Repository::open(path, None) {
         return Ok(repo);
     }
-    let git_dir = path.join(".git");
-    Repository::open(&git_dir, Some(path)).map_err(Into::into)
+    let dot_git = path.join(".git");
+    if dot_git.is_file() {
+        let git_dir = grit_lib::repo::resolve_dot_git(&dot_git)
+            .with_context(|| format!("resolving gitfile at {}", dot_git.display()))?;
+        return Repository::open(&git_dir, Some(path)).map_err(Into::into);
+    }
+    Repository::open(&dot_git, Some(path)).map_err(Into::into)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
