@@ -658,14 +658,19 @@ fn collect_refs(
 
     for entry in read {
         let entry = entry?;
-        let file_type = entry.file_type()?;
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
         let refname = format!("{prefix}{name_str}");
+        let path = entry.path();
+        // Follow symlinks: loose refs may be symlinks; `DirEntry::file_type` does not.
+        let meta = match fs::metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
 
-        if file_type.is_dir() {
-            collect_refs(&entry.path(), &format!("{refname}/"), git_dir, out)?;
-        } else if file_type.is_file() {
+        if meta.is_dir() {
+            collect_refs(&path, &format!("{refname}/"), git_dir, out)?;
+        } else if meta.is_file() {
             if let Ok(oid) = resolve_ref(git_dir, &refname) {
                 out.push((refname, oid))
             }
