@@ -298,9 +298,21 @@ pub(crate) fn write_remerge_diff(
         .filter_map(|d| d.rename_rr_ours_dest.clone())
         .collect();
 
+    // `merge` records both `file/directory` and a synthetic `modify/delete` for the relocated
+    // `path~HEAD` blob. Git's `show --remerge-diff` omits the redundant modify/delete block
+    // (t4069 non-content conflicts).
+    let file_directory_relocated: std::collections::HashSet<String> = conflict_descs
+        .iter()
+        .filter(|d| d.kind == "file/directory")
+        .map(|d| d.subject_path.clone())
+        .collect();
+
     let mut ordered_descs: Vec<&ConflictDescription> = conflict_descs
         .iter()
         .filter(|d| {
+            if d.kind == "modify/delete" && file_directory_relocated.contains(&d.subject_path) {
+                return false;
+            }
             if d.kind == "rename/delete" {
                 if let Some(a) = d.remerge_anchor_path.as_deref() {
                     return !has_rename_rename.contains(a);

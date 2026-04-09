@@ -488,7 +488,7 @@ commit → check it off → move on.
 - [ ] `t4108-apply-threeway` ████░░░░░░░░░░░░░░░░ 4/18 (14 left) — git apply --3way
 - [ ] `t4100-apply-stat` ████████░░░░░░░░░░░░ 10/25 (15 left) — git apply --stat --summary test, with --recount
 
-- [ ] `t4069-remerge-diff` █░░░░░░░░░░░░░░░░░░░ 1/16 (15 left) — remerge-diff handling
+- [x] `t4069-remerge-diff` — remerge-diff handling (16/16)
 - [ ] `t4019-diff-wserror` ████░░░░░░░░░░░░░░░░ 5/21 (16 left) — diff whitespace error detection
 - [x] `t4063-diff-blobs` ████████████████████ 18/18 (0 left) — test direct comparison of blobs via git-diff
 - [x] `t4214-log-graph-octopus` ████████████████████ 17/17 (0 left) — git log --graph of skewed left octopus merge.
