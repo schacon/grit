@@ -5,7 +5,7 @@ use clap::Args as ClapArgs;
 use grit_lib::error::Error as GustError;
 use grit_lib::git_date::show::{date_mode_release, parse_date_format, show_date};
 use grit_lib::git_date::tm::atoi_bytes;
-use grit_lib::mailmap::{load_mailmap, map_contact, parse_contact, MailmapEntry};
+use grit_lib::mailmap::{load_mailmap_table, map_contact_table, parse_contact, MailmapTable};
 use grit_lib::merge_base::{ancestor_closure, is_ancestor};
 use grit_lib::objects::{
     parse_commit, parse_tag, tag_header_field, tag_object_line_oid, ObjectId, ObjectKind,
@@ -62,7 +62,7 @@ fn run_with_invocation(args: Args, inv: ForEachRefInvocation) -> Result<()> {
         }
     };
 
-    let mailmap = load_mailmap(&repo).unwrap_or_else(|_| Vec::new());
+    let mailmap = load_mailmap_table(&repo).unwrap_or_default();
 
     let mut patterns = opts.patterns.clone();
     if opts.stdin {
@@ -839,7 +839,7 @@ fn expand_format(
     entry: &RefEntry,
     format: &str,
     head_branch: &Option<String>,
-    mailmap: &[MailmapEntry],
+    mailmap: &MailmapTable,
     quote_style: Option<QuoteStyle>,
 ) -> Result<String, FormatError> {
     let mut out = String::new();
@@ -873,7 +873,7 @@ fn atom_value(
     entry: &RefEntry,
     atom: &str,
     head_branch: &Option<String>,
-    mailmap: &[MailmapEntry],
+    mailmap: &MailmapTable,
 ) -> Result<String, FormatError> {
     // Handle deref atoms: %(* objectname), %(*objecttype), etc.
     // These dereference the pointed-to object (peel tags).
@@ -1099,7 +1099,7 @@ fn atom_value(
             match modifier {
                 Some("mailmap") => commit_field_for_oid(repo, entry, oid, |c| {
                     let (n, e) = parse_contact(&c.author);
-                    Ok(map_contact(n.as_deref(), e.as_deref(), mailmap).0)
+                    Ok(map_contact_table(n.as_deref(), e.as_deref(), mailmap).0)
                 }),
                 None => {
                     commit_field_for_oid(repo, entry, oid, |c| Ok(parse_identity_name(&c.author)))
@@ -1151,7 +1151,7 @@ fn atom_value(
             match modifier {
                 Some("mailmap") => commit_field_for_oid(repo, entry, oid, |c| {
                     let (n, e) = parse_contact(&c.committer);
-                    Ok(map_contact(n.as_deref(), e.as_deref(), mailmap).0)
+                    Ok(map_contact_table(n.as_deref(), e.as_deref(), mailmap).0)
                 }),
                 None => commit_field_for_oid(repo, entry, oid, |c| {
                     Ok(parse_identity_name(&c.committer))
@@ -1219,7 +1219,7 @@ fn atom_value(
             match modifier {
                 Some("mailmap") => {
                     let (n, e) = parse_contact(raw);
-                    Ok(map_contact(n.as_deref(), e.as_deref(), mailmap).0)
+                    Ok(map_contact_table(n.as_deref(), e.as_deref(), mailmap).0)
                 }
                 None => Ok(parse_identity_name(raw)),
                 Some(other) => Err(FormatError::Fatal(format!(
@@ -1383,7 +1383,7 @@ fn deref_atom_value(
     entry: &RefEntry,
     atom: &str,
     head_branch: &Option<String>,
-    mailmap: &[MailmapEntry],
+    mailmap: &MailmapTable,
 ) -> Result<String, FormatError> {
     use grit_lib::objects::ObjectKind;
     // Read the object to check if it's a tag
@@ -1628,10 +1628,10 @@ fn copy_email_git(raw: &str, trim: bool, localpart: bool) -> String {
     inner[..end].to_owned()
 }
 
-fn format_email_with_opts(raw: &str, opts: &EmailFormatOpts, mailmap: &[MailmapEntry]) -> String {
+fn format_email_with_opts(raw: &str, opts: &EmailFormatOpts, mailmap: &MailmapTable) -> String {
     let line = if opts.mailmap {
         let (name, email) = parse_contact(raw);
-        let (cn, ce) = map_contact(name.as_deref(), email.as_deref(), mailmap);
+        let (cn, ce) = map_contact_table(name.as_deref(), email.as_deref(), mailmap);
         grit_lib::mailmap::render_contact(&cn, &ce)
     } else {
         raw.to_owned()

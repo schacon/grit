@@ -899,10 +899,24 @@ fn normalize_path_components(path: PathBuf) -> PathBuf {
     out
 }
 
+fn normalize_colon_path_for_bare_tree_path(raw_path: &str) -> String {
+    let mut stack: Vec<&str> = Vec::new();
+    for part in raw_path.split('/').filter(|p| !p.is_empty() && *p != ".") {
+        if part == ".." {
+            let _ = stack.pop();
+        } else {
+            stack.push(part);
+        }
+    }
+    stack.join("/")
+}
+
 fn normalize_colon_path_for_tree(repo: &Repository, raw_path: &str) -> Result<String> {
-    let work_tree = repo.work_tree.as_ref().ok_or_else(|| {
-        Error::InvalidRef("relative path syntax can't be used outside working tree".to_owned())
-    })?;
+    let Some(work_tree) = repo.work_tree.as_ref() else {
+        return Ok(normalize_colon_path_for_bare_tree_path(
+            raw_path.trim_start_matches('/'),
+        ));
+    };
 
     let cwd = std::env::current_dir().map_err(Error::Io)?;
     let wt_canon = work_tree.canonicalize().map_err(Error::Io)?;

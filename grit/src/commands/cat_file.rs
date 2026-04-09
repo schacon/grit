@@ -6,6 +6,7 @@ use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{self, DiffAttr};
 use grit_lib::error::Error as LibError;
 use grit_lib::error::Result as LibResult;
+use grit_lib::mailmap::{apply_mailmap_to_commit_or_tag_bytes, load_mailmap_table, MailmapTable};
 use grit_lib::merge_diff::{convert_blob_to_worktree_for_path, run_textconv_raw};
 use grit_lib::pack;
 use grit_lib::rev_list::{self, ObjectFilter};
@@ -129,6 +130,16 @@ pub struct Args {
     #[arg(long)]
     pub unordered: bool,
 
+    /// Apply `.mailmap` when printing commit/tag objects (`-p`, `-s`, batch).
+    #[arg(long = "use-mailmap", visible_alias = "mailmap")]
+    pub use_mailmap: bool,
+
+    #[arg(long = "no-use-mailmap", hide = true)]
+    pub no_use_mailmap: bool,
+
+    #[arg(long = "no-mailmap", hide = true)]
+    pub no_mailmap: bool,
+
     /// Either `<type>` (when followed by `<object>`) or `<object>`.
     pub type_or_object: Option<String>,
 
@@ -235,18 +246,39 @@ pub fn run(args: Args) -> Result<()> {
         Err(e) => exit_cat_file_read_error(&e, &args, obj_str, &repo, &oid),
     };
 
+    let use_mailmap = args.use_mailmap && !args.no_use_mailmap && !args.no_mailmap;
+    let mailmap = if use_mailmap {
+        match load_mailmap_table(&repo) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(128);
+            }
+        }
+    } else {
+        MailmapTable::default()
+    };
+
     if args.show_type {
         println!("{}", obj.kind);
         return Ok(());
     }
 
     if args.size {
-        println!("{}", obj.data.len());
+        let sz = if use_mailmap
+            && !mailmap.is_empty()
+            && matches!(obj.kind, ObjectKind::Commit | ObjectKind::Tag)
+        {
+            apply_mailmap_to_commit_or_tag_bytes(&obj.data, &mailmap).len()
+        } else {
+            obj.data.len()
+        };
+        println!("{sz}");
         return Ok(());
     }
 
     if args.pretty {
-        pretty_print(&obj.kind, &obj.data)?;
+        pretty_print(&obj.kind, &obj.data, use_mailmap.then_some(&mailmap))?;
         return Ok(());
     }
 
@@ -311,20 +343,30 @@ pub fn run(args: Args) -> Result<()> {
 
         // Pretty-print or output the dereferenced object
         if args.pretty {
-            pretty_print(&current_obj.kind, &current_obj.data)?;
+            pretty_print(
+                &current_obj.kind,
+                &current_obj.data,
+                use_mailmap.then_some(&mailmap),
+            )?;
             return Ok(());
         }
 
         let stdout = io::stdout();
         let mut out = stdout.lock();
-        out.write_all(&current_obj.data)?;
+        write_commit_tag_maybe_mailmapped(
+            &mut out,
+            &current_obj.kind,
+            &current_obj.data,
+            use_mailmap,
+            &mailmap,
+        )?;
         return Ok(());
     }
 
     // Default: print raw content
     let stdout = io::stdout();
     let mut out = stdout.lock();
-    out.write_all(&obj.data)?;
+    write_commit_tag_maybe_mailmapped(&mut out, &obj.kind, &obj.data, use_mailmap, &mailmap)?;
 
     Ok(())
 }
@@ -740,6 +782,8 @@ struct BatchWriteOpts<'a> {
     objects_filter: Option<&'a ObjectFilter>,
     batch_textconv: bool,
     batch_filters: bool,
+    use_mailmap: bool,
+    mailmap: &'a MailmapTable,
 }
 
 fn loose_object_file(objects_dir: &Path, oid: &ObjectId) -> PathBuf {
@@ -804,6 +848,13 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
 
     let batch_transform = args.textconv || args.filters;
 
+    let use_mailmap = args.use_mailmap && !args.no_use_mailmap && !args.no_mailmap;
+    let mailmap = if use_mailmap {
+        load_mailmap_table(repo)?
+    } else {
+        MailmapTable::default()
+    };
+
     let write_opts = BatchWriteOpts {
         ignore_replace: args.batch_all_objects,
         follow_symlinks: args.follow_symlinks,
@@ -811,6 +862,8 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
         objects_filter: objects_filter.as_ref(),
         batch_textconv: args.textconv,
         batch_filters: args.filters,
+        use_mailmap,
+        mailmap: &mailmap,
     };
 
     let mut handle_line = |line: &str, disk_override: Option<u64>| -> Result<()> {
@@ -1101,12 +1154,25 @@ fn emit_batch_object_lines(
     disk_size_override: Option<u64>,
     rest: &str,
     content_override: Option<&[u8]>,
+    write_opts: BatchWriteOpts<'_>,
     out: &mut impl Write,
 ) -> Result<()> {
     let eol: &[u8] = if nul_output { b"\0" } else { b"\n" };
     let oid_str = oid.to_string();
     let kind_str = obj.kind.to_string();
-    let size = obj.data.len();
+    let raw_size = obj.data.len();
+    let mapped_data = if write_opts.use_mailmap
+        && !write_opts.mailmap.is_empty()
+        && matches!(obj.kind, ObjectKind::Commit | ObjectKind::Tag)
+    {
+        Some(apply_mailmap_to_commit_or_tag_bytes(
+            &obj.data,
+            write_opts.mailmap,
+        ))
+    } else {
+        None
+    };
+    let size = mapped_data.as_ref().map(|b| b.len()).unwrap_or(raw_size);
     let mode_str = match mode {
         Some(m) => format!("{:o}", m),
         None => String::new(),
@@ -1144,7 +1210,13 @@ fn emit_batch_object_lines(
     }
     out.write_all(eol)?;
     if include_content {
-        let payload = content_override.unwrap_or(obj.data.as_slice());
+        let payload = if let Some(co) = content_override {
+            co
+        } else if let Some(ref m) = mapped_data {
+            m.as_slice()
+        } else {
+            obj.data.as_slice()
+        };
         out.write_all(payload)?;
         out.write_all(eol)?;
     }
@@ -1191,6 +1263,7 @@ fn print_batch_follow_symlinks(
                             None,
                             rest,
                             None,
+                            opts,
                             out,
                         )?;
                     }
@@ -1241,6 +1314,7 @@ fn print_batch_follow_symlinks(
                 None,
                 rest,
                 None,
+                opts,
                 out,
             )?;
         }
@@ -1412,6 +1486,7 @@ fn print_batch_entry(
                     disk_size_override,
                     rest,
                     None,
+                    opts,
                     out,
                 )?;
             }
@@ -1471,6 +1546,7 @@ fn print_batch_entry(
                             disk_size_override,
                             rest,
                             None,
+                            opts,
                             out,
                         )?;
                         eprintln!("fatal: missing path for '{}'", oid.to_hex());
@@ -1491,6 +1567,7 @@ fn print_batch_entry(
                                 disk_size_override,
                                 rest,
                                 None,
+                                opts,
                                 out,
                             )?;
                             let flag = if opts.batch_textconv {
@@ -1516,6 +1593,7 @@ fn print_batch_entry(
                             disk_size_override,
                             rest,
                             Some(payload.as_slice()),
+                            opts,
                             out,
                         )?;
                         return Ok(());
@@ -1534,6 +1612,7 @@ fn print_batch_entry(
                     disk_size_override,
                     rest,
                     None,
+                    opts,
                     out,
                 )?;
             }
@@ -1630,7 +1709,24 @@ fn object_disk_size(
         .unwrap_or(0))
 }
 
-fn pretty_print(kind: &ObjectKind, data: &[u8]) -> Result<()> {
+/// Write object bytes to `out`, applying mailmap to commit/tag payloads when requested.
+fn write_commit_tag_maybe_mailmapped(
+    out: &mut impl io::Write,
+    kind: &ObjectKind,
+    data: &[u8],
+    use_mailmap: bool,
+    mailmap: &MailmapTable,
+) -> Result<()> {
+    if use_mailmap && !mailmap.is_empty() && matches!(kind, ObjectKind::Commit | ObjectKind::Tag) {
+        let mapped = apply_mailmap_to_commit_or_tag_bytes(data, mailmap);
+        out.write_all(&mapped)?;
+    } else {
+        out.write_all(data)?;
+    }
+    Ok(())
+}
+
+fn pretty_print(kind: &ObjectKind, data: &[u8], mailmap: Option<&MailmapTable>) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
@@ -1646,10 +1742,14 @@ fn pretty_print(kind: &ObjectKind, data: &[u8]) -> Result<()> {
                 writeln!(out, "{:06o} {kind_str} {}\t{name}", e.mode, e.oid)?;
             }
         }
-        ObjectKind::Commit => {
-            out.write_all(data)?;
-        }
-        ObjectKind::Tag => {
+        ObjectKind::Commit | ObjectKind::Tag => {
+            if let Some(mm) = mailmap {
+                if !mm.is_empty() {
+                    let mapped = apply_mailmap_to_commit_or_tag_bytes(data, mm);
+                    out.write_all(&mapped)?;
+                    return Ok(());
+                }
+            }
             out.write_all(data)?;
         }
     }
