@@ -673,7 +673,7 @@ t3909-stash-pathspec-file	t3	yes	5	5	0	true	ok	0
 t3910-mac-os-precompose	t3	yes	0	0	0	false	ok	1
 t3920-crlf-messages	t3	yes	18	6	12	false	ok	0
 t4000-diff-format	t4	yes	41	17	24	false	ok	0
-t4001-diff-rename	t4	yes	23	13	10	false	ok	0
+t4001-diff-rename	t4	yes	23	23	0	true	ok	0
 t4002-diff-basic	t4	yes	63	53	10	false	ok	0
 t4003-diff-rename-1	t4	yes	7	3	4	false	ok	0
 t4004-diff-rename-symlink	t4	yes	4	2	2	false	ok	0
