@@ -643,7 +643,7 @@ t3508-cherry-pick-many-commits	t3	yes	14	5	9	false	ok	0
 t3509-cherry-pick-merge-df	t3	yes	9	9	0	true	ok	0
 t3510-cherry-pick	t3	yes	65	65	0	true	ok	0
 t3510-cherry-pick-sequence	t3	yes	0	0	0	false	timeout	0
-t3511-cherry-pick-x	t3	yes	22	10	12	false	ok	0
+t3511-cherry-pick-x	t3	yes	22	22	0	true	ok	0
 t3512-cherry-pick-submodule	t3	yes	15	4	11	false	ok	0
 t3513-revert-submodule	t3	yes	14	1	13	false	ok	0
 t3514-cherry-pick-revert-gpg	t3	skip	2	0	0	false	ok	0
