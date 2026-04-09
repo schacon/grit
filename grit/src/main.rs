@@ -28,6 +28,7 @@ mod git_commit_encoding;
 mod git_path;
 mod grit_exe;
 mod http_bundle_uri;
+mod http_client;
 mod http_smart;
 mod ident;
 mod pack_objects_upload;
@@ -117,6 +118,11 @@ fn main() {
                 let display = format!("{e:#}");
                 if display.starts_with("fatal:") {
                     eprintln!("{display}");
+                    exit_code = 128;
+                } else if display.starts_with("Invalid proxy URL")
+                    || display.contains("Invalid proxy URL '")
+                {
+                    eprintln!("fatal: {display}");
                     exit_code = 128;
                 } else {
                     eprintln!("error: {display}");
@@ -2808,6 +2814,12 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
     } else {
         rest.to_vec()
     };
+    if subcmd == "clone" {
+        if let Err(e) = crate::http_client::validate_clone_proxy_from_argv(&rest_for_parse) {
+            eprintln!("fatal: {e:#}");
+            std::process::exit(128);
+        }
+    }
     argv.extend(rest_for_parse);
     match ArgsWrapper::<T>::try_parse_from(&argv) {
         Ok(wrapper) => wrapper.inner,

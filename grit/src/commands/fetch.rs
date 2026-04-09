@@ -817,8 +817,9 @@ fn fetch_remote(
             })?;
         (heads, tags)
     } else if is_http_url {
+        let http_ctx = crate::http_client::HttpClientContext::from_config_set(config)?;
         let (heads, tags, _adv) =
-            crate::http_smart::http_fetch_pack(git_dir, &url, upload_pack_refspecs)?;
+            crate::http_smart::http_fetch_pack(git_dir, &url, upload_pack_refspecs, &http_ctx)?;
         crate::bundle_uri::maybe_apply_bundle_uri_after_http_fetch(git_dir, &url, None)?;
         let heads: Vec<(String, ObjectId)> = heads.into_iter().map(|e| (e.name, e.oid)).collect();
         let tags: Vec<(String, ObjectId)> = tags.into_iter().map(|e| (e.name, e.oid)).collect();

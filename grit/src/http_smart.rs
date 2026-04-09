@@ -59,52 +59,24 @@ pub fn trace2_child_start_git_remote_https(url: &str) {
         .and_then(|mut f| writeln!(f, "{line}"));
 }
 
-fn agent_header() -> String {
+pub(crate) fn agent_header() -> String {
     format!("grit/{}", crate::version_string())
 }
 
-fn http_get(url: &str) -> Result<Vec<u8>> {
+fn http_get(client: &crate::http_client::HttpClientContext, url: &str) -> Result<Vec<u8>> {
     trace2_child_start_git_remote_https(url);
-    let resp = ureq::get(url)
-        .set("Git-Protocol", "version=2")
-        .set("User-Agent", &agent_header())
-        .call()
-        .with_context(|| format!("GET {url}"))?;
-    if resp.status() >= 400 {
-        bail!(
-            "GET request failed: HTTP {} {}",
-            resp.status(),
-            resp.status_text()
-        );
-    }
-    let mut body = Vec::new();
-    resp.into_reader()
-        .read_to_end(&mut body)
-        .context("read GET body")?;
-    Ok(body)
+    client.get(url)
 }
 
-fn http_post(url: &str, content_type: &str, accept: &str, body: &[u8]) -> Result<Vec<u8>> {
+fn http_post(
+    client: &crate::http_client::HttpClientContext,
+    url: &str,
+    content_type: &str,
+    accept: &str,
+    body: &[u8],
+) -> Result<Vec<u8>> {
     trace2_child_start_git_remote_https(url);
-    let resp = ureq::post(url)
-        .set("Content-Type", content_type)
-        .set("Accept", accept)
-        .set("Git-Protocol", "version=2")
-        .set("User-Agent", &agent_header())
-        .send_bytes(body)
-        .with_context(|| format!("POST {url}"))?;
-    if resp.status() >= 400 {
-        bail!(
-            "POST request failed: HTTP {} {}",
-            resp.status(),
-            resp.status_text()
-        );
-    }
-    let mut out = Vec::new();
-    resp.into_reader()
-        .read_to_end(&mut out)
-        .context("read POST body")?;
-    Ok(out)
+    client.post(url, content_type, accept, body)
 }
 
 fn read_v2_caps(body: &[u8]) -> Result<Vec<String>> {
@@ -160,13 +132,16 @@ pub struct LsRefEntry {
 }
 
 /// Run `ls-refs` over smart HTTP and return advertised refs.
-pub fn http_ls_refs(repo_url: &str) -> Result<Vec<LsRefEntry>> {
+pub fn http_ls_refs(
+    repo_url: &str,
+    client: &crate::http_client::HttpClientContext,
+) -> Result<Vec<LsRefEntry>> {
     let base = repo_url.trim_end_matches('/');
     let mut refs_url = format!("{base}/info/refs");
     refs_url.push_str(if refs_url.contains('?') { "&" } else { "?" });
     refs_url.push_str(&format!("service={SERVICE}"));
 
-    let body = http_get(&refs_url)?;
+    let body = http_get(client, &refs_url)?;
     let pkt_body = strip_v0_service_advertisement_if_present(&body)?;
     let caps = read_v2_caps(pkt_body)?;
 
@@ -188,6 +163,7 @@ pub fn http_ls_refs(repo_url: &str) -> Result<Vec<LsRefEntry>> {
 
     let post_url = format!("{base}/{SERVICE}");
     let resp = http_post(
+        client,
         &post_url,
         &format!("application/x-{SERVICE}-request"),
         &format!("application/x-{SERVICE}-result"),
@@ -307,13 +283,14 @@ pub fn http_fetch_pack(
     local_git_dir: &Path,
     repo_url: &str,
     refspecs: &[String],
+    client: &crate::http_client::HttpClientContext,
 ) -> Result<(Vec<LsRefEntry>, Vec<LsRefEntry>, Vec<LsRefEntry>)> {
     let base = repo_url.trim_end_matches('/');
     let mut refs_url = format!("{base}/info/refs");
     refs_url.push_str(if refs_url.contains('?') { "&" } else { "?" });
     refs_url.push_str(&format!("service={SERVICE}"));
 
-    let body = http_get(&refs_url)?;
+    let body = http_get(client, &refs_url)?;
     let pkt_body = strip_v0_service_advertisement_if_present(&body)?;
     let caps = read_v2_caps(pkt_body)?;
 
@@ -336,6 +313,7 @@ pub fn http_fetch_pack(
 
         let post_url = format!("{base}/{SERVICE}");
         let resp = http_post(
+            client,
             &post_url,
             &format!("application/x-{SERVICE}-request"),
             &format!("application/x-{SERVICE}-result"),
@@ -472,6 +450,7 @@ pub fn http_fetch_pack(
     if !pending_haves.is_empty() {
         let req = write_fetch_request(false)?;
         let resp = http_post(
+            client,
             &post_url,
             &format!("application/x-{SERVICE}-request"),
             &format!("application/x-{SERVICE}-result"),
@@ -496,6 +475,7 @@ pub fn http_fetch_pack(
 
     let req = write_fetch_request(true)?;
     let resp = http_post(
+        client,
         &post_url,
         &format!("application/x-{SERVICE}-request"),
         &format!("application/x-{SERVICE}-result"),

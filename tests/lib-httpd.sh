@@ -63,7 +63,8 @@ write_hybrid_git_wrapper () {
 	if test -z "$_grit"; then
 		_grit="$REAL_GIT"
 	fi
-	cat >"$_target" <<EOFWRAP
+	_tmp=$(mktemp "${_target}.wrXXXXXX") || return 1
+	if ! cat >"$_tmp" <<EOFWRAP
 #!/bin/sh
 REAL_GIT='$REAL_GIT'
 GUST_BIN='$_grit'
@@ -84,12 +85,35 @@ fi
 case "\$*" in
 *"test-tool"*"bundle-uri"*) _http=0 ;;
 esac
+# t5564-http-proxy: grit implements http.proxy / GIT_TRACE_CURL / SOCKS path validation.
+if test -n "\${LIB_HTTPD_PROXY-}"; then
+	case "\$*" in
+	*clone*http://*|*clone*https://*) _http=0 ;;
+	esac
+fi
+# Path-only proxy validation uses `git clone -c http.proxy=...` (no URL on cmd line for hybrid).
+case "\$*" in
+*clone*)
+	case "\$*" in *http.proxy*) _http=0 ;; esac
+	;;
+esac
 if test "\$_http" = 1; then
 	exec "\$REAL_GIT" "\$@"
 fi
 exec "\$GUST_BIN" "\$@"
 EOFWRAP
-	chmod +x "$_target"
+	then
+		rm -f "$_tmp"
+		return 1
+	fi
+	chmod +x "$_tmp" || {
+		rm -f "$_tmp"
+		return 1
+	}
+	mv -f "$_tmp" "$_target" || {
+		rm -f "$_tmp"
+		return 1
+	}
 }
 
 if test -n "$BIN_DIRECTORY" && test -d "$BIN_DIRECTORY"; then
@@ -131,6 +155,9 @@ HTTPD_DOCUMENT_ROOT_PATH="$HTTPD_ROOT_PATH/www"
 HTTPD_AUTH_USER="user@host"
 HTTPD_AUTH_PASS="pass@host"
 
+# Proxy auth: pass the upstream `proxy-passwd` entry so we stay aligned with git/t (Apache hash).
+HTTPD_PROXY_AUTH_LINE="proxuser:\$apr1\$RxS6MLkD\$DYsqQdflheq4GPNxzJpx5."
+
 HTTPD_PROTO=http
 
 prepare_httpd() {
@@ -147,10 +174,18 @@ start_httpd() {
 		port_arg="--port $LIB_HTTPD_PORT"
 	fi
 
+	local proxy_arg=""
+	if test -n "$LIB_HTTPD_PROXY"
+	then
+		export LIB_HTTPD_PROXY
+		proxy_arg="--proxy --proxy-auth ${HTTPD_PROXY_AUTH_LINE}"
+	fi
+
 	# Start server in background, capture the READY line for the port
 	"$TEST_HTTPD_BIN" \
 		--root "$HTTPD_DOCUMENT_ROOT_PATH" \
 		--auth "${HTTPD_AUTH_USER}:${HTTPD_AUTH_PASS}" \
+		$proxy_arg \
 		--pid-file "$HTTPD_ROOT_PATH/httpd.pid" \
 		$port_arg \
 		>"$HTTPD_ROOT_PATH/httpd.out" \
