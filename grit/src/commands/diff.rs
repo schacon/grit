@@ -1848,9 +1848,6 @@ pub fn run(mut args: Args) -> Result<()> {
                 wt_for_content,
                 entry.path(),
             );
-            if is_binary(&old_raw) || is_binary(&new_raw) {
-                continue;
-            }
             if should_break_rewrite_for_stat(&old_raw, &new_raw) {
                 if let Some(pct) = rewrite_dissimilarity_index_percent(&old_raw, &new_raw) {
                     entry.score = Some(pct);
@@ -2108,6 +2105,9 @@ pub fn run(mut args: Args) -> Result<()> {
                 &diff_algo_ctx,
                 diff_algo_cli,
             )?;
+            if args.summary {
+                write_diff_summary(&mut out, &entries, args.break_rewrites, quote_path_fully)?;
+            }
         } else if args.name_only {
             write_name_only(&mut out, &entries, quote_path_fully)?;
         } else if args.name_status {
@@ -3455,10 +3455,11 @@ fn dirstat_damage_for_entry(
         DirstatMode::Lines => {
             if break_rewrites
                 && entry.status == DiffStatus::Modified
-                && !is_binary(&old_raw)
-                && !is_binary(&new_raw)
                 && should_break_rewrite_for_stat(&old_raw, &new_raw)
             {
+                if is_binary(&old_raw) || is_binary(&new_raw) {
+                    return 0;
+                }
                 let ins = count_git_lines(&new_raw) as u64;
                 let del = count_git_lines(&old_raw) as u64;
                 return ins.saturating_add(del);
@@ -4084,10 +4085,11 @@ fn stat_ins_del_for_entry(
     let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, entry.path());
     if break_rewrites
         && entry.status == DiffStatus::Modified
-        && !is_binary(&old_raw)
-        && !is_binary(&new_raw)
         && should_break_rewrite_for_stat(&old_raw, &new_raw)
     {
+        if is_binary(&old_raw) || is_binary(&new_raw) {
+            return (0, 0);
+        }
         return (count_git_lines(&new_raw), count_git_lines(&old_raw));
     }
     let mut old_content = String::from_utf8_lossy(&old_raw).into_owned();
@@ -5168,24 +5170,43 @@ fn write_numstat(
     algo_cli: Option<similar::Algorithm>,
 ) -> Result<()> {
     for entry in entries {
-        let (ins, del) = stat_ins_del_for_entry(
-            odb,
-            entry,
-            work_tree,
-            break_rewrites,
-            line_ignore,
-            ws_mode,
-            algo_ctx,
-            algo_cli,
-        );
+        let old_raw = read_content_raw(odb, &entry.old_oid);
+        let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, entry.path());
+        let binary_rewrite_numstat = break_rewrites
+            && entry.status == DiffStatus::Modified
+            && entry.score.is_some()
+            && (is_binary(&old_raw) || is_binary(&new_raw));
         match entry.status {
             DiffStatus::Renamed | DiffStatus::Copied => {
+                let (ins, del) = stat_ins_del_for_entry(
+                    odb,
+                    entry,
+                    work_tree,
+                    break_rewrites,
+                    line_ignore,
+                    ws_mode,
+                    algo_ctx,
+                    algo_cli,
+                );
                 let old = entry.old_path.as_deref().unwrap_or("");
                 let new = entry.new_path.as_deref().unwrap_or("");
                 let display = format_rename_display(old, new, false);
                 writeln!(out, "{ins}\t{del}\t{display}")?;
             }
+            _ if binary_rewrite_numstat => {
+                writeln!(out, "-\t-\t{}", entry.path())?;
+            }
             _ => {
+                let (ins, del) = stat_ins_del_for_entry(
+                    odb,
+                    entry,
+                    work_tree,
+                    break_rewrites,
+                    line_ignore,
+                    ws_mode,
+                    algo_ctx,
+                    algo_cli,
+                );
                 writeln!(out, "{ins}\t{del}\t{}", entry.path())?;
             }
         }

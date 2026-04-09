@@ -709,7 +709,7 @@ t4027-diff-submodule	t4	yes	20	6	14	false	ok	0
 t4028-format-patch-mime-headers	t4	yes	3	3	0	true	ok	0
 t4029-diff-trailing-space	t4	yes	1	1	0	true	ok	0
 t4030-diff-textconv	t4	yes	19	10	9	false	ok	0
-t4031-diff-rewrite-binary	t4	yes	8	3	5	false	ok	0
+t4031-diff-rewrite-binary	t4	yes	8	8	0	true	ok	0
 t4032-diff-inter-hunk-context	t4	yes	37	29	8	false	ok	0
 t4033-diff-patience	t4	yes	11	9	2	false	ok	0
 t4034-diff-words	t4	yes	66	7	59	false	ok	0

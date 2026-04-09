@@ -78,11 +78,6 @@ pub fn run(mut args: Args) -> Result<()> {
                     Err(_) => continue,
                 }
             };
-            if grit_lib::merge_file::is_binary(&old_raw)
-                || grit_lib::merge_file::is_binary(&new_raw)
-            {
-                continue;
-            }
             if should_break_rewrite_for_stat(&old_raw, &new_raw) {
                 if let Some(pct) = rewrite_dissimilarity_index_percent(&old_raw, &new_raw) {
                     entry.score = Some(pct);
