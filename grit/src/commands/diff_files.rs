@@ -409,7 +409,7 @@ fn collect_changes(
     // "unmerged"; we report them as 'U' when stage==0.
     let mut stage0: BTreeMap<String, (u32, ObjectId, &IndexEntry)> = BTreeMap::new();
     let mut unmerged_paths: BTreeSet<String> = BTreeSet::new();
-    let mut staged: BTreeMap<String, (u32, ObjectId)> = BTreeMap::new();
+    let mut staged: BTreeMap<String, (u32, ObjectId, bool)> = BTreeMap::new();
 
     for entry in &index.entries {
         let Ok(path) = String::from_utf8(entry.path.clone()) else {
@@ -427,7 +427,8 @@ fn collect_changes(
         } else {
             unmerged_paths.insert(path.clone());
             if s == options.stage {
-                staged.insert(path, (entry.mode, entry.oid));
+                let skip_wt_examine = entry.assume_unchanged() || entry.skip_worktree();
+                staged.insert(path, (entry.mode, entry.oid, skip_wt_examine));
             }
         }
     }
@@ -505,7 +506,10 @@ fn collect_changes(
         }
     } else {
         // Stage-specific mode: compare requested stage entries against worktree.
-        for (path, (idx_mode, idx_oid)) in &staged {
+        for (path, (idx_mode, idx_oid, skip_wt_examine)) in &staged {
+            if *skip_wt_examine {
+                continue;
+            }
             let abs = work_tree.join(path);
             match read_worktree_info(repo, &abs)? {
                 Some((wt_mode, wt_oid)) => {
@@ -902,6 +906,10 @@ fn read_worktree_info_fast(
     abs_path: &Path,
     index_entry: &IndexEntry,
 ) -> Result<WorktreeStatus> {
+    if index_entry.assume_unchanged() || index_entry.skip_worktree() {
+        return Ok(WorktreeStatus::Unchanged);
+    }
+
     let meta = match fs::symlink_metadata(abs_path) {
         Ok(m) => m,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
