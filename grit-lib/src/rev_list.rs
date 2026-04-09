@@ -2038,6 +2038,18 @@ fn resolve_specs(repo: &Repository, specs: &[String]) -> Result<Vec<ObjectId>> {
     Ok(out)
 }
 
+/// Resolve revision argument strings to commit OIDs for history walks (`log`, `rev-list`).
+///
+/// Each spec is interpreted like Git's `handle_revision_arg` for a plain commit tip: ranges
+/// (`A..B`), exclusions (`^rev`), and revision expressions are supported via
+/// [`split_revision_token`] and [`resolve_revision_for_range_end`].
+pub fn resolve_revision_specs_to_commits(
+    repo: &Repository,
+    specs: &[String],
+) -> Result<Vec<ObjectId>> {
+    resolve_specs(repo, specs)
+}
+
 fn resolve_specs_for_objects(
     repo: &Repository,
     specs: &[String],
@@ -2484,80 +2496,312 @@ fn load_commit(repo: &Repository, oid: ObjectId) -> Result<crate::objects::Commi
     parse_commit(&object.data)
 }
 
-/// Merge command-line arguments and `--stdin` input lines for this subset.
+fn extend_split_token(
+    token: &str,
+    not_mode: bool,
+    positive: &mut Vec<String>,
+    negative: &mut Vec<String>,
+) {
+    let (pos, neg) = split_revision_token(token);
+    if not_mode {
+        positive.extend(neg);
+        negative.extend(pos);
+    } else {
+        positive.extend(pos);
+        negative.extend(neg);
+    }
+}
+
+/// Git `parse_long_opt`-style parsing for a single argv vector (used for `--stdin` lines).
 ///
-/// Returns `(positive_specs, negative_specs)`.
+/// Returns `Some((consumed_arg_count, value))` when `line` is `--<opt>` or `--<opt>=...`.
+/// Consumed count is 1 for stuck form, 2 for detached form (caller must supply next line as value).
+fn parse_long_opt_value(opt: &str, argv0: &str, argv1: Option<&str>) -> Option<(usize, String)> {
+    let rest = argv0.strip_prefix("--")?;
+    let rest = rest.strip_prefix(opt)?;
+    if let Some(stripped) = rest.strip_prefix('=') {
+        return Some((1, stripped.to_owned()));
+    }
+    if !rest.is_empty() {
+        return None;
+    }
+    let Some(next) = argv1 else {
+        return None;
+    };
+    Some((2, next.to_owned()))
+}
+
+fn stdin_die_requires_value(opt: &str) -> Error {
+    Error::Message(format!("fatal: Option '{opt}' requires a value"))
+}
+
+fn apply_stdin_pseudo_opt(
+    git_dir: &Path,
+    line: &str,
+    next_line: Option<&str>,
+    not_mode: bool,
+    positive: &mut Vec<String>,
+    negative: &mut Vec<String>,
+    stdin_all_refs: &mut bool,
+) -> Result<Option<usize>> {
+    if line == "--end-of-options" {
+        return Ok(Some(1));
+    }
+    if line == "--all" {
+        if not_mode {
+            for (_, oid) in refs::list_refs(git_dir, "refs/")? {
+                let s = oid.to_hex();
+                negative.push(s);
+            }
+            if let Ok(head_oid) = refs::resolve_ref(git_dir, "HEAD") {
+                negative.push(head_oid.to_hex());
+            }
+        } else {
+            *stdin_all_refs = true;
+        }
+        return Ok(Some(1));
+    }
+    if line == "--not" {
+        return Ok(Some(1));
+    }
+    if line == "--branches" {
+        for (_, oid) in refs::list_refs(git_dir, "refs/heads/")? {
+            let s = oid.to_hex();
+            if not_mode {
+                negative.push(s);
+            } else {
+                positive.push(s);
+            }
+        }
+        return Ok(Some(1));
+    }
+    if line == "--tags" {
+        for (_, oid) in refs::list_refs(git_dir, "refs/tags/")? {
+            let s = oid.to_hex();
+            if not_mode {
+                negative.push(s);
+            } else {
+                positive.push(s);
+            }
+        }
+        return Ok(Some(1));
+    }
+    if line == "--remotes" {
+        for (_, oid) in refs::list_refs(git_dir, "refs/remotes/")? {
+            let s = oid.to_hex();
+            if not_mode {
+                negative.push(s);
+            } else {
+                positive.push(s);
+            }
+        }
+        return Ok(Some(1));
+    }
+    if let Some((consumed, pattern)) = parse_long_opt_value("branches", line, next_line) {
+        let full_pattern = format!("refs/heads/{pattern}");
+        for (_, oid) in refs::list_refs_glob(git_dir, &full_pattern)? {
+            let s = oid.to_hex();
+            if not_mode {
+                negative.push(s);
+            } else {
+                positive.push(s);
+            }
+        }
+        return Ok(Some(consumed));
+    }
+    if let Some((1, pattern)) = parse_long_opt_value("tags", line, None) {
+        let full_pattern = format!("refs/tags/{pattern}");
+        for (_, oid) in refs::list_refs_glob(git_dir, &full_pattern)? {
+            let s = oid.to_hex();
+            if not_mode {
+                negative.push(s);
+            } else {
+                positive.push(s);
+            }
+        }
+        return Ok(Some(1));
+    }
+    if let Some((consumed, pattern)) = parse_long_opt_value("tags", line, next_line) {
+        let full_pattern = format!("refs/tags/{pattern}");
+        for (_, oid) in refs::list_refs_glob(git_dir, &full_pattern)? {
+            let s = oid.to_hex();
+            if not_mode {
+                negative.push(s);
+            } else {
+                positive.push(s);
+            }
+        }
+        return Ok(Some(consumed));
+    }
+    if let Some((1, pattern)) = parse_long_opt_value("remotes", line, None) {
+        let full_pattern = format!("refs/remotes/{pattern}");
+        for (_, oid) in refs::list_refs_glob(git_dir, &full_pattern)? {
+            let s = oid.to_hex();
+            if not_mode {
+                negative.push(s);
+            } else {
+                positive.push(s);
+            }
+        }
+        return Ok(Some(1));
+    }
+    if let Some((consumed, pattern)) = parse_long_opt_value("remotes", line, next_line) {
+        let full_pattern = format!("refs/remotes/{pattern}");
+        for (_, oid) in refs::list_refs_glob(git_dir, &full_pattern)? {
+            let s = oid.to_hex();
+            if not_mode {
+                negative.push(s);
+            } else {
+                positive.push(s);
+            }
+        }
+        return Ok(Some(consumed));
+    }
+    if line == "--glob" {
+        return Err(stdin_die_requires_value("--glob"));
+    }
+    if let Some((1, pattern)) = parse_long_opt_value("glob", line, None) {
+        for (_, oid) in refs::list_refs_glob(git_dir, &pattern)? {
+            let s = oid.to_hex();
+            if not_mode {
+                negative.push(s);
+            } else {
+                positive.push(s);
+            }
+        }
+        return Ok(Some(1));
+    }
+    if let Some((consumed, pattern)) = parse_long_opt_value("glob", line, next_line) {
+        for (_, oid) in refs::list_refs_glob(git_dir, &pattern)? {
+            let s = oid.to_hex();
+            if not_mode {
+                negative.push(s);
+            } else {
+                positive.push(s);
+            }
+        }
+        return Ok(Some(consumed));
+    }
+    if line == "--no-walk" || line.starts_with("--no-walk=") {
+        if let Some(rest) = line.strip_prefix("--no-walk=") {
+            if rest == "sorted" || rest == "unsorted" {
+                return Ok(Some(1));
+            }
+            eprintln!("error: invalid argument to --no-walk");
+            return Err(Error::Message(format!(
+                "fatal: invalid option '{line}' in --stdin mode"
+            )));
+        }
+        return Ok(Some(1));
+    }
+    if line.starts_with("--") {
+        return Err(Error::Message(format!(
+            "fatal: invalid option '{line}' in --stdin mode"
+        )));
+    }
+    if line.starts_with('-') {
+        return Err(Error::Message(format!(
+            "fatal: invalid option '{line}' in --stdin mode"
+        )));
+    }
+    Ok(None)
+}
+
+/// Read `--stdin` revision lines and pathspec tail (after `--`), matching Git `read_revisions_from_stdin`.
+fn read_revisions_from_stdin_lines(
+    git_dir: &Path,
+) -> Result<(Vec<String>, Vec<String>, bool, Vec<String>)> {
+    let stdin = std::io::read_to_string(std::io::stdin()).map_err(Error::Io)?;
+    let lines: Vec<String> = stdin.lines().map(std::borrow::ToOwned::to_owned).collect();
+
+    let mut positive = Vec::new();
+    let mut negative = Vec::new();
+    let mut stdin_all_refs = false;
+    let mut stdin_not_mode = false;
+    let mut seen_end_of_options = false;
+    let mut i = 0usize;
+
+    while i < lines.len() {
+        let line = lines[i].as_str();
+        if line.is_empty() {
+            break;
+        }
+        if line == "--" {
+            i += 1;
+            let paths: Vec<String> = lines[i..].to_vec();
+            return Ok((positive, negative, stdin_all_refs, paths));
+        }
+
+        if !seen_end_of_options && line.starts_with('-') {
+            if line == "--end-of-options" {
+                seen_end_of_options = true;
+                i += 1;
+                continue;
+            }
+            let next = lines.get(i + 1).map(|s| s.as_str());
+            match apply_stdin_pseudo_opt(
+                git_dir,
+                line,
+                next,
+                stdin_not_mode,
+                &mut positive,
+                &mut negative,
+                &mut stdin_all_refs,
+            )? {
+                Some(consumed) => {
+                    if line == "--not" && consumed == 1 {
+                        stdin_not_mode = !stdin_not_mode;
+                    }
+                    i += consumed;
+                }
+                None => {
+                    extend_split_token(line, stdin_not_mode, &mut positive, &mut negative);
+                    i += 1;
+                }
+            }
+            continue;
+        }
+
+        extend_split_token(line, stdin_not_mode, &mut positive, &mut negative);
+        i += 1;
+    }
+
+    Ok((positive, negative, stdin_all_refs, Vec::new()))
+}
+
+/// Merge command-line revision strings with `--stdin` lines (and optional stdin pathspecs).
+///
+/// Returns `(positive_specs, negative_specs, stdin_saw_all, stdin_pathspecs)`.
+///
+/// Command-line `--not` is applied while building `args_specs` (see `rev-list`); stdin uses an
+/// independent `--not` toggle, matching Git.
 ///
 /// # Errors
 ///
-/// Returns [`Error::InvalidRef`] when stdin provides invalid pseudo-options.
+/// Returns [`Error::Message`] for Git-compatible `fatal:` stderr lines from stdin mode.
 pub fn collect_revision_specs_with_stdin(
+    git_dir: &Path,
     args_specs: &[String],
     read_stdin: bool,
-) -> Result<(Vec<String>, Vec<String>, bool)> {
+) -> Result<(Vec<String>, Vec<String>, bool, Vec<String>)> {
     let mut positive = Vec::new();
     let mut negative = Vec::new();
-    let mut not_mode = false;
 
     for spec in args_specs {
         let (pos, neg) = split_revision_token(spec);
-        if not_mode {
-            positive.extend(neg);
-            negative.extend(pos);
-        } else {
-            positive.extend(pos);
-            negative.extend(neg);
-        }
+        positive.extend(pos);
+        negative.extend(neg);
     }
 
     if !read_stdin {
-        return Ok((positive, negative, false));
+        return Ok((positive, negative, false, Vec::new()));
     }
 
-    let mut in_paths = false;
-    let mut stdin_all_refs = false;
-    let stdin = std::io::read_to_string(std::io::stdin()).map_err(Error::Io)?;
-    for raw_line in stdin.lines() {
-        let line = raw_line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if in_paths {
-            continue;
-        }
-        if line == "--" {
-            in_paths = true;
-            continue;
-        }
-        if line == "--not" {
-            not_mode = !not_mode;
-            continue;
-        }
-        if line == "--all" {
-            stdin_all_refs = true;
-            continue;
-        }
-        if line.starts_with("--") {
-            return Err(Error::InvalidRef(format!(
-                "invalid option '{line}' in --stdin mode"
-            )));
-        }
-        if line.starts_with('-') {
-            return Err(Error::InvalidRef(format!(
-                "invalid option '{line}' in --stdin mode"
-            )));
-        }
-        let (pos, neg) = split_revision_token(line);
-        if not_mode {
-            positive.extend(neg);
-            negative.extend(pos);
-        } else {
-            positive.extend(pos);
-            negative.extend(neg);
-        }
-    }
+    let (s_pos, s_neg, stdin_all_refs, stdin_paths) = read_revisions_from_stdin_lines(git_dir)?;
+    positive.extend(s_pos);
+    negative.extend(s_neg);
 
-    Ok((positive, negative, stdin_all_refs))
+    Ok((positive, negative, stdin_all_refs, stdin_paths))
 }
 
 /// Resolve every local tag object ID.

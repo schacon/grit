@@ -745,17 +745,24 @@ pub fn list_refs(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>
 /// List refs matching a glob pattern (e.g. `refs/heads/topic/*`).
 pub fn list_refs_glob(git_dir: &Path, pattern: &str) -> Result<Vec<(String, ObjectId)>> {
     let glob_pos = pattern.find(['*', '?', '[']);
-    let prefix = match glob_pos {
+    let prefix_owned: String = match glob_pos {
         Some(pos) => match pattern[..pos].rfind('/') {
-            Some(slash) => &pattern[..=slash],
-            None => "",
+            Some(slash) => pattern[..=slash].to_owned(),
+            None => String::new(),
         },
-        None => pattern,
+        None => {
+            let mut p = pattern.trim_end_matches('/').to_owned();
+            if !p.is_empty() {
+                p.push('/');
+            }
+            p
+        }
     };
+    let prefix = prefix_owned.as_str();
     let all = list_refs(git_dir, prefix)?;
     let mut results = Vec::new();
     for (refname, oid) in all {
-        if glob_match(pattern, &refname) {
+        if ref_matches_glob(&refname, pattern) {
             results.push((refname, oid));
         }
     }

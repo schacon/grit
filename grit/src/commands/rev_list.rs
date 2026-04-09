@@ -78,6 +78,21 @@ enum DiskUsageFormat {
     Human,
 }
 
+fn push_ref_oids_as_specs(
+    specs: &mut Vec<String>,
+    not_mode: bool,
+    oids: impl Iterator<Item = ObjectId>,
+) {
+    for oid in oids {
+        let s = oid.to_hex();
+        if not_mode {
+            specs.push(format!("^{s}"));
+        } else {
+            specs.push(s);
+        }
+    }
+}
+
 /// Run `grit rev-list`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("failed to discover repository")?;
@@ -117,7 +132,26 @@ pub fn run(args: Args) -> Result<()> {
         }
         if !end_of_options && arg.starts_with('-') {
             match arg.as_str() {
-                "--all" => options.all_refs = true,
+                "--all" => {
+                    if not_mode {
+                        let matching = grit_lib::refs::list_refs(&repo.git_dir, "refs/")
+                            .context("failed to list refs")?;
+                        push_ref_oids_as_specs(
+                            &mut revision_specs,
+                            true,
+                            matching.into_iter().map(|(_, oid)| oid),
+                        );
+                        if let Ok(head_oid) = grit_lib::refs::resolve_ref(&repo.git_dir, "HEAD") {
+                            push_ref_oids_as_specs(
+                                &mut revision_specs,
+                                true,
+                                std::iter::once(head_oid),
+                            );
+                        }
+                    } else {
+                        options.all_refs = true;
+                    }
+                }
                 "--first-parent" => options.first_parent = true,
                 "--ancestry-path" => options.ancestry_path = true,
                 "--simplify-by-decoration" => options.simplify_by_decoration = true,
@@ -247,9 +281,11 @@ pub fn run(args: Args) -> Result<()> {
                     let pattern = arg.trim_start_matches("--glob=");
                     let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, pattern)
                         .context("failed to list glob refs")?;
-                    for (_, oid) in matching {
-                        revision_specs.push(oid.to_hex());
-                    }
+                    push_ref_oids_as_specs(
+                        &mut revision_specs,
+                        not_mode,
+                        matching.into_iter().map(|(_, oid)| oid),
+                    );
                 }
                 "--glob" => {
                     // Detached option: next arg is the pattern.
@@ -257,58 +293,72 @@ pub fn run(args: Args) -> Result<()> {
                     if let Some(next) = args.args.get(i) {
                         let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, next)
                             .context("failed to list glob refs")?;
-                        for (_, oid) in matching {
-                            revision_specs.push(oid.to_hex());
-                        }
+                        push_ref_oids_as_specs(
+                            &mut revision_specs,
+                            not_mode,
+                            matching.into_iter().map(|(_, oid)| oid),
+                        );
                     }
                 }
                 "--branches" => {
                     let matching = grit_lib::refs::list_refs(&repo.git_dir, "refs/heads/")
                         .context("failed to list branch refs")?;
-                    for (_, oid) in matching {
-                        revision_specs.push(oid.to_hex());
-                    }
+                    push_ref_oids_as_specs(
+                        &mut revision_specs,
+                        not_mode,
+                        matching.into_iter().map(|(_, oid)| oid),
+                    );
                 }
                 _ if arg.starts_with("--branches=") => {
                     let pattern = arg.trim_start_matches("--branches=");
                     let full_pattern = format!("refs/heads/{pattern}");
                     let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full_pattern)
                         .context("failed to list branch refs")?;
-                    for (_, oid) in matching {
-                        revision_specs.push(oid.to_hex());
-                    }
+                    push_ref_oids_as_specs(
+                        &mut revision_specs,
+                        not_mode,
+                        matching.into_iter().map(|(_, oid)| oid),
+                    );
                 }
                 "--tags" => {
                     let matching = grit_lib::refs::list_refs(&repo.git_dir, "refs/tags/")
                         .context("failed to list tag refs")?;
-                    for (_, oid) in matching {
-                        revision_specs.push(oid.to_hex());
-                    }
+                    push_ref_oids_as_specs(
+                        &mut revision_specs,
+                        not_mode,
+                        matching.into_iter().map(|(_, oid)| oid),
+                    );
                 }
                 _ if arg.starts_with("--tags=") => {
                     let pattern = arg.trim_start_matches("--tags=");
                     let full_pattern = format!("refs/tags/{pattern}");
                     let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full_pattern)
                         .context("failed to list tag refs")?;
-                    for (_, oid) in matching {
-                        revision_specs.push(oid.to_hex());
-                    }
+                    push_ref_oids_as_specs(
+                        &mut revision_specs,
+                        not_mode,
+                        matching.into_iter().map(|(_, oid)| oid),
+                    );
                 }
                 "--remotes" => {
                     let matching = grit_lib::refs::list_refs(&repo.git_dir, "refs/remotes/")
                         .context("failed to list remote refs")?;
-                    for (_, oid) in matching {
-                        revision_specs.push(oid.to_hex());
-                    }
+                    push_ref_oids_as_specs(
+                        &mut revision_specs,
+                        not_mode,
+                        matching.into_iter().map(|(_, oid)| oid),
+                    );
                 }
                 _ if arg.starts_with("--remotes=") => {
                     let pattern = arg.trim_start_matches("--remotes=");
                     let full_pattern = format!("refs/remotes/{pattern}");
                     let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full_pattern)
                         .context("failed to list remote refs")?;
-                    for (_, oid) in matching {
-                        revision_specs.push(oid.to_hex());
-                    }
+                    push_ref_oids_as_specs(
+                        &mut revision_specs,
+                        not_mode,
+                        matching.into_iter().map(|(_, oid)| oid),
+                    );
                 }
                 "--alternate-refs" => {
                     // List refs from alternate object directories
@@ -317,10 +367,14 @@ pub fn run(args: Args) -> Result<()> {
                         for alt_dir in alts {
                             // alt_dir is an objects dir; the git_dir is its parent
                             if let Some(alt_git_dir) = alt_dir.parent() {
-                                if let Ok(refs) = grit_lib::refs::list_refs(alt_git_dir, "refs/") {
-                                    for (_, oid) in refs {
-                                        revision_specs.push(oid.to_hex());
-                                    }
+                                if let Ok(alt_refs) =
+                                    grit_lib::refs::list_refs(alt_git_dir, "refs/")
+                                {
+                                    push_ref_oids_as_specs(
+                                        &mut revision_specs,
+                                        not_mode,
+                                        alt_refs.into_iter().map(|(_, oid)| oid),
+                                    );
                                 }
                                 // Also include HEAD
                                 let head_path = alt_git_dir.join("HEAD");
@@ -329,10 +383,19 @@ pub fn run(args: Args) -> Result<()> {
                                     if let Some(ref_target) = content.strip_prefix("ref: ") {
                                         let ref_path = alt_git_dir.join(ref_target);
                                         if let Ok(oid_hex) = std::fs::read_to_string(&ref_path) {
-                                            revision_specs.push(oid_hex.trim().to_string());
+                                            let hex = oid_hex.trim().to_string();
+                                            if not_mode {
+                                                revision_specs.push(format!("^{hex}"));
+                                            } else {
+                                                revision_specs.push(hex);
+                                            }
                                         }
                                     } else if content.len() == 40 {
-                                        revision_specs.push(content.to_string());
+                                        if not_mode {
+                                            revision_specs.push(format!("^{content}"));
+                                        } else {
+                                            revision_specs.push(content.to_string());
+                                        }
                                     }
                                 }
                             }
@@ -551,11 +614,14 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    let (mut positive_specs, mut negative_specs, stdin_all_refs) =
-        collect_revision_specs_with_stdin(&processed_specs, read_stdin)
+    let (mut positive_specs, mut negative_specs, stdin_all_refs, stdin_paths) =
+        collect_revision_specs_with_stdin(&repo.git_dir, &processed_specs, read_stdin)
             .context("failed to parse revision arguments")?;
     if stdin_all_refs {
         options.all_refs = true;
+    }
+    if !stdin_paths.is_empty() {
+        options.paths.extend(stdin_paths);
     }
 
     // If symmetric diff, resolve merge bases and set up positive/negative

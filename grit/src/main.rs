@@ -3550,6 +3550,38 @@ fn preprocess_log_pickaxe_args(rest: Vec<String>) -> Vec<String> {
     out
 }
 
+/// Remove revision pseudo-options that must not reach clap (unknown flags) but are still needed
+/// for `merge_log_revision_argv` via [`commands::log::Args::raw_argv_tail`].
+fn strip_log_revision_pseudo_for_clap(rest: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(rest.len());
+    let mut i = 0usize;
+    while i < rest.len() {
+        let a = rest[i].as_str();
+        if a == "--not" {
+            i += 1;
+            continue;
+        }
+        if a == "--glob" {
+            i += 1;
+            if i < rest.len() {
+                i += 1;
+            }
+            continue;
+        }
+        if let Some(pat) = a.strip_prefix("--glob=") {
+            if pat.is_empty() {
+                // Keep bare `--glob=` so clap can report missing value if needed; do not strip.
+                out.push(rest[i].clone());
+            }
+            i += 1;
+            continue;
+        }
+        out.push(rest[i].clone());
+        i += 1;
+    }
+    out
+}
+
 fn preprocess_log_args(rest: &[String]) -> Vec<String> {
     let mut result = Vec::new();
     let mut saw_graph = false;
@@ -4230,8 +4262,12 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "interpret-trailers" => commands::interpret_trailers::run_from_argv(rest),
         "last-modified" => commands::last_modified::run(parse_cmd_args(subcmd, rest)),
         "log" => {
-            let rest = preprocess_log_pickaxe_args(preprocess_log_args(rest));
-            commands::log::run(parse_cmd_args(subcmd, &rest))
+            let raw_tail = rest.to_vec();
+            let for_clap = strip_log_revision_pseudo_for_clap(rest);
+            let rest = preprocess_log_pickaxe_args(preprocess_log_args(&for_clap));
+            let mut parsed: commands::log::Args = parse_cmd_args(subcmd, &rest);
+            parsed.raw_argv_tail = raw_tail;
+            commands::log::run(parsed)
         }
         "ls-files" => commands::ls_files::run(parse_cmd_args(subcmd, rest)),
         "ls-remote" => commands::ls_remote::run(parse_cmd_args(subcmd, rest)),

@@ -51,7 +51,12 @@ use std::sync::{Arc, Mutex};
 #[command(about = "Show commit logs")]
 pub struct Args {
     /// Revisions and pathspecs (separated by --).
+    #[arg(allow_hyphen_values = true)]
     pub revisions: Vec<String>,
+
+    /// Raw argv after the `log` subcommand (includes revision pseudo-options that clap strips before parsing).
+    #[arg(skip)]
+    pub raw_argv_tail: Vec<String>,
 
     /// Limit the number of commits to show.
     #[arg(short = 'n', long = "max-count")]
@@ -416,6 +421,10 @@ pub struct Args {
     /// End of options marker (everything after is a revision/path).
     #[arg(long = "end-of-options")]
     pub end_of_options: bool,
+
+    /// Read extra revisions and optional pathspecs (after a stdin `--`) from stdin.
+    #[arg(long = "stdin")]
+    pub read_stdin: bool,
 
     /// Date ordering.
     #[arg(long = "date-order")]
@@ -1221,14 +1230,200 @@ fn resolve_decoration_display(args: &Args, format_requires_decorations: bool) ->
     (show, full)
 }
 
-fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result<()> {
+/// Strip `git log`-only flags from the revision list and expand revision pseudo-options
+/// (`--all`, `--glob`, `--branches`, …) into concrete revision strings, matching `git log` /
+/// `setup_revisions` behavior.
+fn merge_log_revision_argv(repo: &Repository, args: &Args) -> Result<Vec<String>> {
+    let src: &[String] = if args.raw_argv_tail.is_empty() {
+        &args.revisions
+    } else {
+        &args.raw_argv_tail
+    };
+    let mut out = Vec::new();
+    let mut not_mode = false;
+    let mut end_opts = false;
+    let mut i = 0usize;
+    while i < src.len() {
+        let arg = &src[i];
+        if !end_opts && arg == "--" {
+            out.push(arg.clone());
+            out.extend(src[i + 1..].iter().cloned());
+            break;
+        }
+        if !end_opts && arg == "--end-of-options" {
+            end_opts = true;
+            out.push("--end-of-options".to_owned());
+            i += 1;
+            continue;
+        }
+        if !end_opts && arg.starts_with('-') && arg != "--" {
+            match arg.as_str() {
+                "--not" => {
+                    not_mode = !not_mode;
+                }
+                "--all" => {
+                    if not_mode {
+                        for (_, oid) in grit_lib::refs::list_refs(&repo.git_dir, "refs/")? {
+                            let s = oid.to_hex();
+                            out.push(format!("^{s}"));
+                        }
+                        if let Ok(head_oid) = grit_lib::refs::resolve_ref(&repo.git_dir, "HEAD") {
+                            out.push(format!("^{}", head_oid.to_hex()));
+                        }
+                    } else {
+                        out.push("--all".to_owned());
+                    }
+                }
+                "--branches" => {
+                    let matching = grit_lib::refs::list_refs(&repo.git_dir, "refs/heads/")?;
+                    for (_, oid) in matching {
+                        let s = oid.to_hex();
+                        if not_mode {
+                            out.push(format!("^{s}"));
+                        } else {
+                            out.push(s);
+                        }
+                    }
+                }
+                "--tags" => {
+                    let matching = grit_lib::refs::list_refs(&repo.git_dir, "refs/tags/")?;
+                    for (_, oid) in matching {
+                        let s = oid.to_hex();
+                        if not_mode {
+                            out.push(format!("^{s}"));
+                        } else {
+                            out.push(s);
+                        }
+                    }
+                }
+                "--remotes" => {
+                    let matching = grit_lib::refs::list_refs(&repo.git_dir, "refs/remotes/")?;
+                    for (_, oid) in matching {
+                        let s = oid.to_hex();
+                        if not_mode {
+                            out.push(format!("^{s}"));
+                        } else {
+                            out.push(s);
+                        }
+                    }
+                }
+                _ if arg.starts_with("--branches=") => {
+                    let pattern = arg.trim_start_matches("--branches=");
+                    let full_pattern = format!("refs/heads/{pattern}");
+                    let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full_pattern)?;
+                    for (_, oid) in matching {
+                        let s = oid.to_hex();
+                        if not_mode {
+                            out.push(format!("^{s}"));
+                        } else {
+                            out.push(s);
+                        }
+                    }
+                }
+                _ if arg.starts_with("--tags=") => {
+                    let pattern = arg.trim_start_matches("--tags=");
+                    let full_pattern = format!("refs/tags/{pattern}");
+                    let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full_pattern)?;
+                    for (_, oid) in matching {
+                        let s = oid.to_hex();
+                        if not_mode {
+                            out.push(format!("^{s}"));
+                        } else {
+                            out.push(s);
+                        }
+                    }
+                }
+                _ if arg.starts_with("--remotes=") => {
+                    let pattern = arg.trim_start_matches("--remotes=");
+                    let full_pattern = format!("refs/remotes/{pattern}");
+                    let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full_pattern)?;
+                    for (_, oid) in matching {
+                        let s = oid.to_hex();
+                        if not_mode {
+                            out.push(format!("^{s}"));
+                        } else {
+                            out.push(s);
+                        }
+                    }
+                }
+                _ if arg.starts_with("--glob=") => {
+                    let pattern = arg.trim_start_matches("--glob=");
+                    let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, pattern)?;
+                    for (_, oid) in matching {
+                        let s = oid.to_hex();
+                        if not_mode {
+                            out.push(format!("^{s}"));
+                        } else {
+                            out.push(s);
+                        }
+                    }
+                }
+                "--glob" => {
+                    i += 1;
+                    let Some(next) = src.get(i) else {
+                        anyhow::bail!("--glob requires a value");
+                    };
+                    let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, next)?;
+                    for (_, oid) in matching {
+                        let s = oid.to_hex();
+                        if not_mode {
+                            out.push(format!("^{s}"));
+                        } else {
+                            out.push(s);
+                        }
+                    }
+                }
+                _ => {
+                    // Log-only or already-handled flags: skip.
+                }
+            }
+            i += 1;
+            continue;
+        }
+        if not_mode {
+            if let Some(stripped) = arg.strip_prefix('^') {
+                out.push(stripped.to_owned());
+            } else {
+                out.push(format!("^{arg}"));
+            }
+        } else {
+            out.push(arg.clone());
+        }
+        i += 1;
+    }
+    Ok(out)
+}
+
+fn pathspecs_after_dashdash(merged_argv: &[String], clap_pathspecs: &[String]) -> Vec<String> {
+    if let Some(pos) = merged_argv.iter().position(|s| s == "--") {
+        merged_argv[pos + 1..].to_vec()
+    } else {
+        clap_pathspecs.to_vec()
+    }
+}
+
+/// Collect revision argument strings from `git log` argv (before `--stdin`), matching the
+/// revision vs pathspec disambiguation used for graph output.
+fn extract_log_cli_revision_specs(
+    repo: &Repository,
+    _args: &Args,
+    merged_revisions: &[String],
+) -> Result<(Vec<String>, Vec<String>)> {
     let mut implied_pathspecs: Vec<String> = Vec::new();
     let mut revision_specs = Vec::new();
-    for rev in &args.revisions {
+    let mut after_end_of_options = false;
+    for rev in merged_revisions {
+        if rev == "--end-of-options" {
+            after_end_of_options = true;
+            continue;
+        }
         if rev == "--" {
             break;
         }
-        if rev.starts_with('-') && !rev.starts_with('^') {
+        if rev == "--all" {
+            continue;
+        }
+        if !after_end_of_options && rev.starts_with('-') && !rev.starts_with('^') {
             continue;
         }
         if let Some(stripped) = rev.strip_prefix('^') {
@@ -1270,26 +1465,29 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
         }
     }
 
-    if args.branches {
-        let mut seen: std::collections::HashSet<String> = revision_specs.iter().cloned().collect();
-        for (_, oid) in grit_lib::refs::list_refs(&repo.git_dir, "refs/heads/")? {
-            let s = oid.to_hex();
-            if seen.insert(s.clone()) {
-                revision_specs.push(s);
-            }
-        }
-    }
-
     if !implied_pathspecs.is_empty() {
         validate_pathspec_scope(repo, &implied_pathspecs)?;
     }
 
-    let mut combined_pathspecs = args.pathspecs.clone();
+    Ok((revision_specs, implied_pathspecs))
+}
+
+fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result<()> {
+    let merged_argv = merge_log_revision_argv(repo, args)?;
+    let (revision_specs, implied_pathspecs) =
+        extract_log_cli_revision_specs(repo, args, &merged_argv)?;
+
+    let (mut positive_specs, negative_specs, stdin_all_refs, stdin_paths) =
+        collect_revision_specs_with_stdin(&repo.git_dir, &revision_specs, args.read_stdin)
+            .map_err(|e| anyhow::anyhow!("failed to parse revision arguments: {e}"))?;
+
+    let mut combined_pathspecs = pathspecs_after_dashdash(&merged_argv, &args.pathspecs);
     combined_pathspecs.extend(implied_pathspecs);
+    combined_pathspecs.extend(stdin_paths);
     combined_pathspecs = resolve_effective_pathspecs(repo, &combined_pathspecs)?;
 
     let mut options = RevListOptions {
-        all_refs: args.all,
+        all_refs: args.all || stdin_all_refs,
         first_parent: args.first_parent,
         simplify_by_decoration: false,
         skip: args.skip.unwrap_or(0),
@@ -1315,13 +1513,6 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
     }
     if args.merges {
         options.min_parents = Some(2);
-    }
-
-    let (mut positive_specs, negative_specs, stdin_all_refs) =
-        collect_revision_specs_with_stdin(&revision_specs, false)
-            .map_err(|e| anyhow::anyhow!("failed to parse revision arguments: {e}"))?;
-    if stdin_all_refs {
-        options.all_refs = true;
     }
 
     if positive_specs.is_empty() && !options.all_refs {
@@ -2605,6 +2796,9 @@ pub fn run(mut args: Args) -> Result<()> {
             .unwrap_or(3)
     };
     if !args.line_range.is_empty() {
+        if args.read_stdin {
+            anyhow::bail!("--stdin cannot be used with -L");
+        }
         return run_line_log(&repo, args, patch_context);
     }
     if args
@@ -2616,6 +2810,12 @@ pub fn run(mut args: Args) -> Result<()> {
     }
     validate_pathspec_scope(&repo, &args.pathspecs)?;
     let mut implied_pathspecs: Vec<String> = Vec::new();
+    let mut stdin_merged_all_refs = false;
+
+    fn dedupe_oid_order(v: Vec<ObjectId>) -> Vec<ObjectId> {
+        let mut seen = HashSet::new();
+        v.into_iter().filter(|o| seen.insert(*o)).collect()
+    }
 
     let use_color = log_resolve_stdout_color(&args, &repo.git_dir);
 
@@ -2732,81 +2932,37 @@ pub fn run(mut args: Args) -> Result<()> {
         return run_graph_log(&repo, &args, patch_context);
     }
 
-    // Determine starting points and excluded commits.
-    // Revisions prefixed with `^` (e.g. `^HEAD`) mean "exclude this and its
-    // ancestors" — standard git revision range syntax.
-    let (start_oids, exclude_oids) = if args.all {
-        (collect_all_ref_oids(&repo.git_dir)?, Vec::new())
-    } else if args.revisions.is_empty() {
-        if args.branches {
-            let mut pairs: Vec<(ObjectId, i64)> = Vec::new();
-            let mut seen: std::collections::HashSet<ObjectId> = std::collections::HashSet::new();
-            for (_, oid) in grit_lib::refs::list_refs(&repo.git_dir, "refs/heads/")? {
-                if seen.insert(oid) {
-                    let obj = repo.odb.read(&oid)?;
-                    let c = parse_commit(&obj.data)?;
-                    let e = extract_epoch_from_ident(&c.committer);
-                    pairs.push((oid, e));
-                }
-            }
-            pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-            let oids: Vec<ObjectId> = pairs.into_iter().map(|(o, _)| o).collect();
-            if oids.is_empty() {
-                let head = resolve_head(&repo.git_dir)?;
-                match head.oid() {
-                    Some(oid) => (vec![*oid], Vec::new()),
-                    // No commits yet: succeed with empty output (t8290; friendlier than Git's fatal).
-                    None => (Vec::new(), Vec::new()),
-                }
-            } else {
-                (oids, Vec::new())
-            }
-        } else {
-            let head = resolve_head(&repo.git_dir)?;
-            match head.oid() {
-                Some(oid) => (vec![*oid], Vec::new()),
-                None => (Vec::new(), Vec::new()),
-            }
+    // Determine starting points and excluded commits from merged argv + stdin (matches Git
+    // `setup_revisions` ordering for pseudo-options stripped before clap).
+    let merged_argv = merge_log_revision_argv(&repo, &args)?;
+    let (argv_specs, implied_cli) = extract_log_cli_revision_specs(&repo, &args, &merged_argv)?;
+    implied_pathspecs.extend(implied_cli);
+    let (pos_s, neg_s, stdin_all_refs, stdin_paths) =
+        collect_revision_specs_with_stdin(&repo.git_dir, &argv_specs, args.read_stdin)
+            .map_err(|e| anyhow::anyhow!("failed to parse revision arguments: {e}"))?;
+    implied_pathspecs.extend(stdin_paths);
+
+    let mut start_oids = grit_lib::rev_list::resolve_revision_specs_to_commits(&repo, &pos_s)?;
+    let mut exclude_oids = grit_lib::rev_list::resolve_revision_specs_to_commits(&repo, &neg_s)?;
+
+    if args.all {
+        start_oids.extend(collect_all_ref_oids(&repo.git_dir)?);
+    }
+    if stdin_all_refs {
+        stdin_merged_all_refs = true;
+        start_oids.extend(collect_all_ref_oids(&repo.git_dir)?);
+    }
+
+    start_oids = dedupe_oid_order(start_oids);
+    exclude_oids = dedupe_oid_order(exclude_oids);
+
+    if start_oids.is_empty() && !args.all {
+        let head = resolve_head(&repo.git_dir)?;
+        if let Some(oid) = head.oid() {
+            start_oids.push(*oid);
         }
-    } else {
-        let mut oids = Vec::new();
-        let mut excludes = Vec::new();
-        for rev in &args.revisions {
-            if let Some(stripped) = rev.strip_prefix('^') {
-                let oid = resolve_revision_as_commit(&repo, stripped)?;
-                excludes.push(oid);
-            } else if let Some((excl, tip)) = try_parse_double_dot_log_range(&repo, rev)? {
-                excludes.push(excl);
-                oids.push(tip);
-            } else {
-                match resolve_revision_as_commit(&repo, rev) {
-                    Ok(oid) => oids.push(oid),
-                    Err(_err) if is_likely_pathspec_during_rev_parse(rev) => {
-                        implied_pathspecs.push(rev.clone());
-                    }
-                    Err(_err) => match resolve_revision_as_commit_after_precompose(&repo, rev) {
-                        Ok(oid) => oids.push(oid),
-                        Err(_err)
-                            if grit_lib::precompose_config::effective_core_precomposeunicode(
-                                Some(&repo.git_dir),
-                            ) && grit_lib::unicode_normalization::has_non_ascii_utf8(rev) =>
-                        {
-                            implied_pathspecs.push(rev.clone());
-                        }
-                        Err(err) => return Err(err.into()),
-                    },
-                }
-            }
-        }
-        // If only excludes are given with no positive refs, use HEAD
-        if oids.is_empty() {
-            let head = resolve_head(&repo.git_dir)?;
-            if let Some(oid) = head.oid() {
-                oids.push(*oid);
-            }
-        }
-        (oids, excludes)
-    };
+    }
+    start_oids = dedupe_oid_order(start_oids);
 
     if !implied_pathspecs.is_empty() {
         validate_pathspec_scope(&repo, &implied_pathspecs)?;
@@ -2820,11 +2976,12 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     // Build source map for --source
-    let source_map: std::collections::HashMap<ObjectId, String> = if args.source && args.all {
-        build_source_map(&repo.odb, &repo.git_dir, args.first_parent)?
-    } else {
-        std::collections::HashMap::new()
-    };
+    let source_map: std::collections::HashMap<ObjectId, String> =
+        if args.source && (args.all || stdin_merged_all_refs) {
+            build_source_map(&repo.odb, &repo.git_dir, args.first_parent)?
+        } else {
+            std::collections::HashMap::new()
+        };
 
     let format_requires_decorations = args
         .format
@@ -2858,7 +3015,7 @@ pub fn run(mut args: Args) -> Result<()> {
         .or(decoration_map_for_display.as_ref());
 
     // Walk commits
-    let mut combined_pathspecs = args.pathspecs.clone();
+    let mut combined_pathspecs = pathspecs_after_dashdash(&merged_argv, &args.pathspecs);
     combined_pathspecs.extend(implied_pathspecs.iter().cloned());
     combined_pathspecs = resolve_effective_pathspecs(&repo, &combined_pathspecs)?;
 
@@ -6716,6 +6873,7 @@ fn write_commit_diff(
                 &entries,
                 &entries,
                 args,
+                pathspecs,
                 graph_stat_prefix,
                 show_patch,
                 false,
@@ -6767,6 +6925,7 @@ fn write_commit_diff(
         &entries,
         &combined_entries,
         args,
+        pathspecs,
         graph_stat_prefix,
         show_patch,
         is_merge,
@@ -6776,6 +6935,35 @@ fn write_commit_diff(
     Ok(())
 }
 
+fn diff_entry_matches_any_pathspec(entry: &DiffEntry, specs: &[String]) -> bool {
+    if specs.is_empty() {
+        return true;
+    }
+    let paths = [
+        entry.path(),
+        entry.old_path.as_deref().unwrap_or(""),
+        entry.new_path.as_deref().unwrap_or(""),
+    ];
+    for spec in specs {
+        for p in paths {
+            if !p.is_empty() && grit_lib::pathspec::matches_pathspec(spec, p) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn filter_diff_entries_by_pathspecs(entries: Vec<DiffEntry>, specs: &[String]) -> Vec<DiffEntry> {
+    if specs.is_empty() {
+        return entries;
+    }
+    entries
+        .into_iter()
+        .filter(|e| diff_entry_matches_any_pathspec(e, specs))
+        .collect()
+}
+
 fn write_commit_diff_body(
     out: &mut impl Write,
     odb: &Odb,
@@ -6783,22 +6971,30 @@ fn write_commit_diff_body(
     entries: &[DiffEntry],
     combined_entries: &[DiffEntry],
     args: &Args,
+    pathspecs: &[String],
     graph_stat_prefix: Option<&str>,
     show_patch: bool,
     treat_as_merge_for_format: bool,
     patch_context: usize,
 ) -> Result<()> {
     let combined_style = merge_diff_is_combined_style(args, treat_as_merge_for_format, git_dir)?;
-    let list_raw_name = if combined_style {
-        combined_entries
+    let entries_owned: Vec<DiffEntry> = entries.to_vec();
+    let combined_owned: Vec<DiffEntry> = combined_entries.to_vec();
+    let entries_f = filter_diff_entries_by_pathspecs(entries_owned, pathspecs);
+    let combined_f = filter_diff_entries_by_pathspecs(combined_owned, pathspecs);
+    let list_raw_name: &[DiffEntry] = if combined_style {
+        &combined_f
     } else {
-        entries
+        &entries_f
     };
-    let list_patch = if combined_style {
-        combined_entries
+    let list_patch: &[DiffEntry] = if combined_style {
+        &combined_f
     } else {
-        entries
+        &entries_f
     };
+    if list_raw_name.is_empty() && list_patch.is_empty() {
+        return Ok(());
+    }
     let has_patch = show_patch && !list_patch.is_empty();
 
     if args.raw {
@@ -6826,10 +7022,12 @@ fn write_commit_diff_body(
     }
 
     if args.name_only {
+        if !list_raw_name.is_empty() {
+            writeln!(out)?;
+        }
         for entry in list_raw_name {
             writeln!(out, "{}", entry.path())?;
         }
-        writeln!(out)?;
     }
 
     if args.name_status {

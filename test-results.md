@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-09 (t6017 / rev-list --stdin)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t6017-rev-list-stdin.sh`: 37/37 passed
+
 **2026-04-09 (t4063 / diff blobs)**
 
 - `cargo test -p grit-lib --lib`: 155 passed

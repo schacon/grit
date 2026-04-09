@@ -430,8 +430,8 @@ pub fn run(mut args: Args) -> Result<()> {
         });
 
     if wants_walk {
-        let (positive_specs, negative_specs, _) =
-            collect_revision_specs_with_stdin(&rev_strings_owned, false)
+        let (positive_specs, negative_specs, _, _) =
+            collect_revision_specs_with_stdin(&repo.git_dir, &rev_strings_owned, false)
                 .map_err(|e| anyhow::anyhow!("failed to parse revision arguments: {e}"))?;
 
         let mut negative_specs = negative_specs;

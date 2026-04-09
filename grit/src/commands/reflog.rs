@@ -253,6 +253,7 @@ fn run_show(args: ShowArgs) -> Result<()> {
 
     crate::commands::log::run(crate::commands::log::Args {
         revisions: vec![args.refname],
+        raw_argv_tail: Vec::new(),
         max_count: args.max_count,
         oneline,
         format,
@@ -338,6 +339,7 @@ fn run_show(args: ShowArgs) -> Result<()> {
         fixed_strings: false,
         perl_regexp: false,
         end_of_options: false,
+        read_stdin: false,
         date_order: false,
         author_date_order: false,
         topo_order: false,
