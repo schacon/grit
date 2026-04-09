@@ -6,12 +6,12 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   287 |
+| Completed   |   288 |
 | In progress |     4 |
-| Remaining   |   478 |
+| Remaining   |   477 |
 | **Total**   |   769 |
 
-Task lines in `PLAN.md`: 287 completed (`[x]`), 4 in progress (`[~]`), 478 remaining (`[ ]`).
+Task lines in `PLAN.md`: 288 completed (`[x]`), 4 in progress (`[~]`), 477 remaining (`[ ]`).
 
 ## Recently completed
 
@@ -53,6 +53,7 @@ Task lines in `PLAN.md`: 287 completed (`[x]`), 4 in progress (`[~]`), 478 remai
 - `t6436-merge-overwrite` — 18/18 tests pass (merge refuses to overwrite untracked/staged/removed paths, leading-path collisions, unborn-branch merge safety; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5519-push-alternates` — 8/8 tests pass (push to repo with `objects/info/alternates`; objects already available via alternate not re-packed; harness CSV/dashboards refreshed)
 - `t7507-commit-verbose` — 45/45 tests pass (`commit -v` / `--no-verbose`, `commit.verbose` levels, stripping verbose template from edited message, `core.commentChar` including multi-byte; harness CSV/dashboards refreshed)
+- `t3403-rebase-skip` — 20/20 tests pass (`rebase --skip` with merge and am backends, empty-commit advice, MERGE_MSG cleanup; harness CSV/dashboards refreshed; no Rust changes this session)
 - `t4214-log-graph-octopus` — 17/17 tests pass (`git log --graph` skewed-left octopus, crossover, and colored graph lines; harness CSV/dashboards refreshed)
 - `t3060-ls-files-with-tree` — 8/8 tests pass (`ls-files --with-tree`: `Index::overlay_tree_on_index`, `-s/-u`/`--recurse-submodules` incompatibilities with `fatal:` + exit 128, cwd pathspec `sub/` matches `sub/file`; harness CSV refreshed)
 - `t12660-init-shared-perm` — 37/37 tests pass (default `grit init` applies Git-style group-shared chmod on `.git` tree: 775 dirs / 664 HEAD under umask 022; explicit `--shared` / `core.sharedRepository` writes config + `receive.denyNonFastforwards`; reinit without shared config leaves modes unchanged)
@@ -165,4 +166,4 @@ Task lines in `PLAN.md`: 287 completed (`[x]`), 4 in progress (`[~]`), 478 remai
 
 ## What Remains
 
-478 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+477 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
