@@ -12,6 +12,12 @@ say() {
 	printf '%s\n' "$*" >&3
 }
 
+# Each test body may `cd` into a subdirectory; reset to the trash root before the
+# next test so relative paths like `cd repo` remain valid (matches upstream git test-lib).
+test_reset_cwd_to_trash () {
+	test -n "${TRASH_DIRECTORY-}" && cd "$TRASH_DIRECTORY" || return 0
+}
+
 test_path_exists () {
 	test "$#" -ne 1 && BUG "1 param"
 	if ! test -e "$1"
@@ -114,6 +120,7 @@ test_expect_success() {
 	fi
 	test_cleanup=:
 	test -z "$verbose" || say "expecting success of $TEST_NUMBER.$test_count '$description': $commands"
+	test_reset_cwd_to_trash
 	test -f "$TRASH_DIRECTORY/.test-exports" && . "$TRASH_DIRECTORY/.test-exports"
 	# Each test case starts at the trash root; bodies may `cd` elsewhere (e.g. setup
 	# leaves the shell inside a subdirectory).
@@ -204,6 +211,7 @@ test_expect_failure() {
 	fi
 	test_cleanup=:
 	test -z "$verbose" || say "checking known breakage of $TEST_NUMBER.$test_count '$description': $commands"
+	test_reset_cwd_to_trash
 	_exports_file="$TRASH_DIRECTORY/.test-exports"
 	test -f "$_exports_file" && . "$_exports_file"
 	cd "$TRASH_DIRECTORY" || exit 1

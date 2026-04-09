@@ -20,7 +20,7 @@
 - [ ] t10370-cat-file-type-errors.sh
 - [ ] t10380-mktree-batch-missing.sh
 - [ ] t10440-diff-index-exit-code.sh
-- [ ] t10450-status-porcelain-staged.sh                                                                 - [ ] t10480-config-list-file.sh
+- [x] t10450-status-porcelain-staged.sh                                                                 - [ ] t10480-config-list-file.sh
 - [ ] t1050-large.sh
 - [ ] t10500-branch-force-create.sh
 - [ ] t1051-large-conversion.sh
