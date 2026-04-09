@@ -339,6 +339,7 @@ fn run_show(args: ShowArgs) -> Result<()> {
         perl_regexp: false,
         end_of_options: false,
         date_order: false,
+        author_date_order: false,
         topo_order: false,
         ignore_missing: false,
         clear_decorations: false,

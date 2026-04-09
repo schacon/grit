@@ -14,13 +14,20 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufWriter, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
+use grit_lib::bloom::BloomFilterSettings;
+use grit_lib::commit_graph_file::CommitGraphChain;
+use grit_lib::commit_graph_write::{
+    build_commit_graph_bytes, collect_reachable_commit_oids, load_commit_graph_commit_info,
+    BloomWriteStats,
+};
+use grit_lib::config::ConfigSet;
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -56,12 +63,12 @@ pub enum CommitGraphCommand {
         /// Use changed paths Bloom filters.
         #[arg(long)]
         changed_paths: bool,
-        /// Enable split commit-graph.
-        #[arg(long)]
-        split: bool,
-        /// Set split strategy (no-merge, replace).
-        #[arg(long)]
-        split_strategy: Option<String>,
+        /// Do not compute changed-path Bloom filters.
+        #[arg(long = "no-changed-paths", conflicts_with = "changed_paths")]
+        no_changed_paths: bool,
+        /// Enable split commit-graph (`--split`, `--split=replace`, `--split=no-merge`).
+        #[arg(long = "split", num_args = 0..=1, default_missing_value = "yes", value_name = "STRATEGY")]
+        split: Option<String>,
         /// Set size multiple for split.
         #[arg(long)]
         size_multiple: Option<f64>,
@@ -77,6 +84,9 @@ pub enum CommitGraphCommand {
         /// Don't show progress.
         #[arg(long)]
         no_progress: bool,
+        /// Limit Bloom filters computed in this write (Git `commitGraph.maxNewFilters`).
+        #[arg(long = "max-new-filters")]
+        max_new_filters: Option<u32>,
     },
     /// Verify an existing commit-graph file.
     Verify {
@@ -98,29 +108,39 @@ const VERSION: u8 = 1;
 const HASH_VERSION_SHA1: u8 = 1;
 const HASH_LEN: usize = 20;
 
-// Chunk IDs
+// Chunk IDs (verify)
 const CHUNK_OID_FANOUT: u32 = 0x4f494446; // "OIDF"
 const CHUNK_OID_LOOKUP: u32 = 0x4f49444c; // "OIDL"
 const CHUNK_COMMIT_DATA: u32 = 0x43444154; // "CDAT"
-
-const PARENT_NONE: u32 = 0x7000_0000;
 
 /// Run `grit commit-graph`.
 pub fn run(args: Args) -> Result<()> {
     match args.command {
         CommitGraphCommand::Write {
-            reachable: _,
-            stdin_commits: _,
-            stdin_packs: _,
-            changed_paths: _,
-            split: _,
-            split_strategy: _,
+            reachable,
+            stdin_commits,
+            stdin_packs,
+            changed_paths,
+            no_changed_paths,
+            split,
             size_multiple: _,
             max_commits: _,
             expire_time: _,
             progress,
             no_progress,
-        } => cmd_write(args.object_dir, progress, no_progress),
+            max_new_filters,
+        } => cmd_write(
+            args.object_dir,
+            reachable,
+            stdin_commits,
+            stdin_packs,
+            changed_paths,
+            no_changed_paths,
+            split.as_deref(),
+            progress,
+            no_progress,
+            max_new_filters,
+        ),
         CommitGraphCommand::Verify { .. } => cmd_verify(args.object_dir),
     }
 }
@@ -144,173 +164,33 @@ fn should_show_commit_graph_progress(progress: bool, no_progress: bool) -> bool 
 
 // ── Write ──────────────────────────────────────────────────────────────
 
-fn cmd_write(object_dir: Option<PathBuf>, progress: bool, no_progress: bool) -> Result<()> {
-    let repo = Repository::discover(None)?;
-    let objects_dir = object_dir.unwrap_or_else(|| repo.git_dir.join("objects"));
-    let odb = Odb::new(&objects_dir);
-
-    // Collect all reachable commits by walking refs
-    let commits = collect_all_commits(&repo, &odb)?;
-    if commits.is_empty() {
-        // Nothing to do
-        return Ok(());
-    }
-
-    // Sort commits by OID
-    let mut sorted_oids: Vec<ObjectId> = commits.keys().copied().collect();
-    sorted_oids.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
-
-    // Build OID → index mapping
-    let oid_to_idx: HashMap<ObjectId, u32> = sorted_oids
-        .iter()
-        .enumerate()
-        .map(|(i, oid)| (*oid, i as u32))
-        .collect();
-
-    let num_commits = sorted_oids.len() as u32;
-
-    let show_progress = should_show_commit_graph_progress(progress, no_progress);
-    if show_progress {
-        let delay = progress_delay_secs();
-        if delay > 0 {
-            thread::sleep(Duration::from_secs(delay));
-        }
-    }
-
-    // Compute generation numbers (topological)
-    let generations = compute_generations(&sorted_oids, &commits, &oid_to_idx);
-
-    if show_progress {
-        // Match Git’s `progress` title and percentage; count is the number of reachable commits.
-        eprintln!(
-            "Computing commit graph generation numbers: 100% ({n}/{n}), done.",
-            n = num_commits
-        );
-    }
-
-    // Build chunks in memory
-    let fanout = build_fanout(&sorted_oids);
-    let oid_lookup = build_oid_lookup(&sorted_oids);
-    let commit_data = build_commit_data(&sorted_oids, &commits, &oid_to_idx, &generations);
-
-    // Chunk table: 3 chunks + terminator
-    let num_chunks: u8 = 3;
-    let header_size: u64 = 8;
-    let chunk_toc_size: u64 = (num_chunks as u64 + 1) * 12; // each entry: 4-byte id + 8-byte offset
-    let fanout_size: u64 = 256 * 4;
-    let oid_lookup_size: u64 = num_commits as u64 * HASH_LEN as u64;
-    let commit_data_size: u64 = num_commits as u64 * 36;
-
-    let offset_fanout = header_size + chunk_toc_size;
-    let offset_oid_lookup = offset_fanout + fanout_size;
-    let offset_commit_data = offset_oid_lookup + oid_lookup_size;
-    let offset_end = offset_commit_data + commit_data_size;
-
-    // Write to file
-    let info_dir = objects_dir.join("info");
-    fs::create_dir_all(&info_dir)?;
-    let graph_path = info_dir.join("commit-graph");
-    let file =
-        fs::File::create(&graph_path).with_context(|| format!("creating {:?}", graph_path))?;
-    let mut w = BufWriter::new(file);
-
-    // Header
-    w.write_all(SIGNATURE)?;
-    w.write_all(&[VERSION, HASH_VERSION_SHA1, num_chunks, 0])?;
-
-    // Chunk TOC
-    write_chunk_entry(&mut w, CHUNK_OID_FANOUT, offset_fanout)?;
-    write_chunk_entry(&mut w, CHUNK_OID_LOOKUP, offset_oid_lookup)?;
-    write_chunk_entry(&mut w, CHUNK_COMMIT_DATA, offset_commit_data)?;
-    // Terminator
-    w.write_all(&[0u8; 4])?;
-    w.write_all(&offset_end.to_be_bytes())?;
-
-    // Fanout
-    w.write_all(&fanout)?;
-    // OID Lookup
-    w.write_all(&oid_lookup)?;
-    // Commit Data
-    w.write_all(&commit_data)?;
-
-    w.flush()?;
-
-    // Write trailing checksum (SHA-1 of everything written)
-    drop(w);
-    let content = fs::read(&graph_path)?;
-    let checksum = sha1_hash(&content);
-    let mut f = fs::OpenOptions::new().append(true).open(&graph_path)?;
-    f.write_all(&checksum)?;
-
-    Ok(())
-}
-
-fn write_chunk_entry(w: &mut impl Write, chunk_id: u32, offset: u64) -> Result<()> {
-    w.write_all(&chunk_id.to_be_bytes())?;
-    w.write_all(&offset.to_be_bytes())?;
-    Ok(())
-}
-
-/// Collect all commits reachable from refs.
-fn collect_all_commits(repo: &Repository, odb: &Odb) -> Result<HashMap<ObjectId, CommitInfo>> {
-    let mut commits: HashMap<ObjectId, CommitInfo> = HashMap::new();
-    let mut stack: Vec<ObjectId> = Vec::new();
-
-    // Walk all refs to find tip commits
-    let refs_dir = repo.git_dir.join("refs");
-    collect_ref_tips(&repo.git_dir, &refs_dir, &mut stack)?;
-
-    // Also read packed-refs
-    let packed_refs = repo.git_dir.join("packed-refs");
-    if packed_refs.exists() {
-        if let Ok(content) = fs::read_to_string(&packed_refs) {
-            for line in content.lines() {
-                if line.starts_with('#') || line.starts_with('^') {
-                    continue;
-                }
-                if let Some(hex) = line.split_whitespace().next() {
-                    if let Ok(oid) = ObjectId::from_hex(hex) {
-                        stack.push(oid);
-                    }
-                }
-            }
-        }
-    }
-
-    // Also read HEAD
-    let head_path = repo.git_dir.join("HEAD");
-    if head_path.exists() {
-        let head = fs::read_to_string(&head_path)?;
-        let head = head.trim();
-        if let Some(refpath) = head.strip_prefix("ref: ") {
-            let full = repo.git_dir.join(refpath);
-            if full.exists() {
-                if let Ok(content) = fs::read_to_string(&full) {
-                    if let Ok(oid) = ObjectId::from_hex(content.trim()) {
-                        stack.push(oid);
-                    }
-                }
-            }
-        } else if let Ok(oid) = ObjectId::from_hex(head) {
-            stack.push(oid);
-        }
-    }
-
-    // BFS/DFS walk
-    while let Some(oid) = stack.pop() {
-        if commits.contains_key(&oid) {
+fn read_stdin_commit_seeds() -> Result<HashSet<ObjectId>> {
+    let text = std::io::read_to_string(std::io::stdin()).context("reading --stdin-commits")?;
+    let mut out = HashSet::new();
+    for line in text.lines() {
+        let t = line.trim();
+        if t.is_empty() {
             continue;
         }
+        let oid = ObjectId::from_hex(t).with_context(|| format!("invalid commit id '{t}'"))?;
+        out.insert(oid);
+    }
+    Ok(out)
+}
 
+fn walk_commit_closure(odb: &Odb, seeds: HashSet<ObjectId>) -> Result<HashSet<ObjectId>> {
+    let mut commits = HashSet::new();
+    let mut stack: Vec<ObjectId> = seeds.into_iter().collect();
+    while let Some(oid) = stack.pop() {
+        if !commits.insert(oid) {
+            continue;
+        }
         let obj = match odb.read(&oid) {
             Ok(o) => o,
-            Err(_) => continue, // might be a tag or missing
+            Err(_) => continue,
         };
-
         if obj.kind != ObjectKind::Commit {
-            // Might be an annotated tag — try to peel
             if obj.kind == ObjectKind::Tag {
-                // Simple peel: look for "object " line
                 if let Ok(text) = std::str::from_utf8(&obj.data) {
                     for line in text.lines() {
                         if let Some(rest) = line.strip_prefix("object ") {
@@ -323,196 +203,444 @@ fn collect_all_commits(repo: &Repository, odb: &Odb) -> Result<HashMap<ObjectId,
             }
             continue;
         }
-
         let commit = parse_commit(&obj.data)?;
-        let info = CommitInfo {
-            tree: commit.tree,
-            parents: commit.parents.clone(),
-            commit_time: parse_commit_time(&commit.committer),
-        };
-
-        for parent in &commit.parents {
-            stack.push(*parent);
+        for p in &commit.parents {
+            stack.push(*p);
         }
-
-        commits.insert(oid, info);
     }
-
     Ok(commits)
 }
 
-fn collect_ref_tips(_git_dir: &Path, dir: &Path, stack: &mut Vec<ObjectId>) -> Result<()> {
-    if !dir.exists() {
+fn trace2_json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c < ' ' => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn trace2_json_data(path: &str, category: &str, key: &str, value: &str) {
+    let now = {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default();
+        let total_secs = now.as_secs();
+        let micros = now.subsec_micros();
+        let secs_in_day = total_secs % 86400;
+        let hours = secs_in_day / 3600;
+        let mins = (secs_in_day % 3600) / 60;
+        let secs = secs_in_day % 60;
+        format!("{:02}:{:02}:{:02}.{:06}", hours, mins, secs, micros)
+    };
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(std::path::Path::new(path))
+    {
+        let value_esc = trace2_json_escape(value);
+        let _ = writeln!(
+            f,
+            r#"{{"event":"data","sid":"grit-0","time":"{}","category":"{}","key":"{}","value":"{}"}}"#,
+            now, category, key, value_esc
+        );
+    }
+}
+
+fn emit_commit_graph_trace2(settings: &BloomFilterSettings, stats: &BloomWriteStats) {
+    let Ok(path) = std::env::var("GIT_TRACE2_EVENT") else {
+        return;
+    };
+    if path.is_empty() {
+        return;
+    }
+    let now = {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default();
+        let total_secs = now.as_secs();
+        let micros = now.subsec_micros();
+        let secs_in_day = total_secs % 86400;
+        let hours = secs_in_day / 3600;
+        let mins = (secs_in_day % 3600) / 60;
+        let secs = secs_in_day % 60;
+        format!("{:02}:{:02}:{:02}.{:06}", hours, mins, secs, micros)
+    };
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(std::path::Path::new(&path))
+    {
+        let settings_json = format!(
+            "{{\"hash_version\":{},\"num_hashes\":{},\"bits_per_entry\":{},\"max_changed_paths\":{}}}",
+            settings.hash_version,
+            settings.num_hashes,
+            settings.bits_per_entry,
+            settings.max_changed_paths
+        );
+        let _ = writeln!(
+            f,
+            r#"{{"event":"data_json","sid":"grit-0","time":"{}","category":"bloom","key":"settings","value":{}}}"#,
+            now, settings_json
+        );
+        let _ = writeln!(
+            f,
+            r#"{{"event":"data_json","sid":"grit-0","time":"{}","category":"commit-graph","key":"filter-computed","value":"{}"}}"#,
+            now, stats.filter_computed
+        );
+        let _ = writeln!(
+            f,
+            r#"{{"event":"data_json","sid":"grit-0","time":"{}","category":"commit-graph","key":"filter-not-computed","value":"{}"}}"#,
+            now, stats.filter_not_computed
+        );
+        let _ = writeln!(
+            f,
+            r#"{{"event":"data_json","sid":"grit-0","time":"{}","category":"commit-graph","key":"filter-trunc-empty","value":"{}"}}"#,
+            now, stats.filter_trunc_empty
+        );
+        let _ = writeln!(
+            f,
+            r#"{{"event":"data_json","sid":"grit-0","time":"{}","category":"commit-graph","key":"filter-trunc-large","value":"{}"}}"#,
+            now, stats.filter_trunc_large
+        );
+        let _ = writeln!(
+            f,
+            r#"{{"event":"data_json","sid":"grit-0","time":"{}","category":"commit-graph","key":"filter-upgraded","value":"{}"}}"#,
+            now, stats.filter_upgraded
+        );
+    }
+}
+
+fn commit_graph_layer_id_hash(path: &Path) -> Option<[u8; 20]> {
+    let raw = fs::read(path).ok()?;
+    if raw.len() < 40 {
+        return None;
+    }
+    let body = &raw[..raw.len() - 20];
+    use sha1::{Digest, Sha1};
+    let mut h = Sha1::new();
+    h.update(body);
+    Some(h.finalize().into())
+}
+
+fn cmd_write(
+    object_dir: Option<PathBuf>,
+    _reachable: bool,
+    stdin_commits: bool,
+    stdin_packs: bool,
+    changed_paths: bool,
+    no_changed_paths: bool,
+    split: Option<&str>,
+    progress: bool,
+    no_progress: bool,
+    max_new_filters_cli: Option<u32>,
+) -> Result<()> {
+    if stdin_packs {
+        bail!("commit-graph write --stdin-packs is not implemented yet");
+    }
+    let repo = Repository::discover(None)?;
+    let objects_dir = object_dir.unwrap_or_else(|| repo.git_dir.join("objects"));
+    let odb = Odb::new(&objects_dir);
+    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+
+    let core_on = cfg
+        .get_bool("core.commitgraph")
+        .and_then(|r| r.ok())
+        .unwrap_or(true);
+    if !core_on {
+        eprintln!(
+            "warning: attempting to write a commit-graph, but 'core.commitGraph' is disabled"
+        );
         return Ok(());
     }
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_ref_tips(_git_dir, &path, stack)?;
-        } else if let Ok(content) = fs::read_to_string(&path) {
-            if let Ok(oid) = ObjectId::from_hex(content.trim()) {
-                stack.push(oid);
+
+    let ver = cfg
+        .get("commitgraph.changedpathsversion")
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(-1);
+    if ver < -1 || ver > 2 {
+        eprintln!(
+            "warning: attempting to write a commit-graph, but 'commitGraph.changedPathsVersion' ({ver}) is not supported"
+        );
+        return Ok(());
+    }
+
+    let mut bloom = BloomFilterSettings {
+        hash_version: if ver == 2 { 2 } else { 1 },
+        num_hashes: 7,
+        bits_per_entry: 10,
+        max_changed_paths: 512,
+    };
+    if let Some(ref chain) = CommitGraphChain::load(&objects_dir) {
+        if let Some(bs) = chain.top_layer_bloom_settings() {
+            if ver == -1 {
+                bloom.hash_version = bs.hash_version;
             }
+            bloom.num_hashes = bs.num_hashes;
+            bloom.bits_per_entry = bs.bits_per_entry;
+            bloom.max_changed_paths = bs.max_changed_paths;
         }
     }
-    Ok(())
-}
+    if let Ok(s) = std::env::var("GIT_TEST_BLOOM_SETTINGS_NUM_HASHES") {
+        if let Ok(n) = s.parse::<u32>() {
+            bloom.num_hashes = n;
+        }
+    }
+    if let Ok(s) = std::env::var("GIT_TEST_BLOOM_SETTINGS_BITS_PER_ENTRY") {
+        if let Ok(n) = s.parse::<u32>() {
+            bloom.bits_per_entry = n;
+        }
+    }
+    if let Ok(s) = std::env::var("GIT_TEST_BLOOM_SETTINGS_MAX_CHANGED_PATHS") {
+        if let Ok(n) = s.parse::<u32>() {
+            bloom.max_changed_paths = n;
+        }
+    }
+    bloom.hash_version = if bloom.hash_version == 2 { 2 } else { 1 };
 
-struct CommitInfo {
-    tree: ObjectId,
-    parents: Vec<ObjectId>,
-    commit_time: u32,
-}
+    let max_new = max_new_filters_cli
+        .or_else(|| {
+            std::env::var("GIT_TEST_MAX_NEW_FILTERS")
+                .ok()
+                .and_then(|s| s.parse::<u32>().ok())
+        })
+        .or_else(|| {
+            cfg.get("commitgraph.maxnewfilters")
+                .and_then(|s| s.parse::<u32>().ok())
+        });
 
-fn parse_commit_time(committer: &str) -> u32 {
-    // Format: "Name <email> <timestamp> <tz>"
-    let parts: Vec<&str> = committer.rsplitn(3, ' ').collect();
-    if parts.len() >= 2 {
-        parts[1].parse::<u32>().unwrap_or(0)
+    let mut commit_set = if stdin_commits {
+        let seeds = read_stdin_commit_seeds()?;
+        if seeds.is_empty() {
+            return Ok(());
+        }
+        walk_commit_closure(&odb, seeds)?
     } else {
-        0
+        collect_reachable_commit_oids(&repo.git_dir, &odb)?
+    };
+
+    if commit_set.is_empty() {
+        return Ok(());
     }
-}
 
-fn compute_generations(
-    sorted_oids: &[ObjectId],
-    commits: &HashMap<ObjectId, CommitInfo>,
-    oid_to_idx: &HashMap<ObjectId, u32>,
-) -> Vec<u32> {
-    let n = sorted_oids.len();
-    let mut gen = vec![0u32; n];
-    let mut computed = vec![false; n];
+    let split_enabled = split.is_some();
+    let replace = split
+        .map(|s| s.eq_ignore_ascii_case("replace"))
+        .unwrap_or(false);
 
-    // Iterative topological generation computation
-    for i in 0..n {
-        if computed[i] {
-            continue;
-        }
-        let mut work_stack: Vec<(usize, bool)> = vec![(i, false)];
-        while let Some((idx, parents_done)) = work_stack.pop() {
-            if computed[idx] {
-                continue;
+    let info_dir = objects_dir.join("info");
+    let graph_path = info_dir.join("commit-graph");
+    let graphs_dir = info_dir.join("commit-graphs");
+    let chain_path = graphs_dir.join("commit-graph-chain");
+
+    if split_enabled && !replace {
+        fs::create_dir_all(&graphs_dir)?;
+        let chain_empty = !chain_path.is_file()
+            || fs::read_to_string(&chain_path)
+                .map(|s| {
+                    s.lines()
+                        .map(str::trim)
+                        .filter(|l| !l.is_empty())
+                        .next()
+                        .is_none()
+                })
+                .unwrap_or(true);
+        if chain_empty && graph_path.is_file() {
+            let Some(hash) = commit_graph_layer_id_hash(&graph_path) else {
+                bail!(
+                    "existing commit-graph at {:?} is too small to migrate",
+                    graph_path
+                );
+            };
+            let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+            let dest = graphs_dir.join(format!("graph-{hex}.graph"));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&graph_path, fs::Permissions::from_mode(0o644));
             }
-            let oid = &sorted_oids[idx];
-            let info = &commits[oid];
-
-            if parents_done {
-                let mut max_parent_gen = 0u32;
-                for p in &info.parents {
-                    if let Some(&pidx) = oid_to_idx.get(p) {
-                        max_parent_gen = max_parent_gen.max(gen[pidx as usize]);
-                    }
-                }
-                gen[idx] = max_parent_gen + 1;
-                computed[idx] = true;
-            } else {
-                // Check if all parents are computed
-                let mut all_done = true;
-                for p in &info.parents {
-                    if let Some(&pidx) = oid_to_idx.get(p) {
-                        if !computed[pidx as usize] {
-                            all_done = false;
-                        }
-                    }
-                }
-                if all_done {
-                    let mut max_parent_gen = 0u32;
-                    for p in &info.parents {
-                        if let Some(&pidx) = oid_to_idx.get(p) {
-                            max_parent_gen = max_parent_gen.max(gen[pidx as usize]);
-                        }
-                    }
-                    gen[idx] = max_parent_gen + 1;
-                    computed[idx] = true;
-                } else {
-                    work_stack.push((idx, true));
-                    for p in &info.parents {
-                        if let Some(&pidx) = oid_to_idx.get(p) {
-                            if !computed[pidx as usize] {
-                                work_stack.push((pidx as usize, false));
-                            }
-                        }
-                    }
-                }
+            fs::rename(&graph_path, &dest)
+                .with_context(|| format!("migrating {:?} to {:?}", graph_path, dest))?;
+            fs::write(&chain_path, format!("{hex}\n"))
+                .with_context(|| format!("writing {:?}", chain_path))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&dest, fs::Permissions::from_mode(0o444));
             }
         }
     }
 
-    gen
-}
+    let existing_chain = if split_enabled && !replace {
+        CommitGraphChain::load(&objects_dir)
+    } else {
+        None
+    };
 
-fn build_fanout(sorted_oids: &[ObjectId]) -> Vec<u8> {
-    let mut fanout = vec![0u8; 256 * 4];
-    let mut counts = [0u32; 256];
-    for oid in sorted_oids {
-        let bucket = oid.as_bytes()[0] as usize;
-        counts[bucket] += 1;
+    if !split_enabled || (split_enabled && replace) {
+        if let Some(chain) = CommitGraphChain::load(&objects_dir) {
+            for oid in chain.all_oids_in_order() {
+                commit_set.insert(oid);
+            }
+        }
     }
-    // Fanout is cumulative
-    let mut cumulative = 0u32;
-    for i in 0..256 {
-        cumulative += counts[i];
-        let offset = i * 4;
-        fanout[offset..offset + 4].copy_from_slice(&cumulative.to_be_bytes());
+
+    let base_hashes: Vec<[u8; 20]> = if split_enabled && !replace {
+        let mut hashes = Vec::new();
+        if let Some(ref chain) = existing_chain {
+            for path in chain.layer_paths_oldest_first() {
+                if let Some(h) = commit_graph_layer_id_hash(&path) {
+                    hashes.push(h);
+                }
+            }
+        } else if graph_path.is_file() {
+            if let Some(h) = commit_graph_layer_id_hash(&graph_path) {
+                hashes.push(h);
+            }
+        }
+        hashes
+    } else {
+        Vec::new()
+    };
+
+    let base_oids: HashSet<ObjectId> = existing_chain
+        .as_ref()
+        .map(|c| c.all_oids_in_order().into_iter().collect())
+        .unwrap_or_default();
+
+    let mut layer_oids: Vec<ObjectId> = commit_set.into_iter().collect();
+    if split_enabled && !replace && !base_oids.is_empty() {
+        layer_oids.retain(|o| !base_oids.contains(o));
     }
-    fanout
-}
+    layer_oids.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
 
-fn build_oid_lookup(sorted_oids: &[ObjectId]) -> Vec<u8> {
-    let mut data = Vec::with_capacity(sorted_oids.len() * HASH_LEN);
-    for oid in sorted_oids {
-        data.extend_from_slice(oid.as_bytes());
+    if layer_oids.is_empty() && !(split_enabled && replace) {
+        return Ok(());
     }
-    data
-}
 
-fn build_commit_data(
-    sorted_oids: &[ObjectId],
-    commits: &HashMap<ObjectId, CommitInfo>,
-    oid_to_idx: &HashMap<ObjectId, u32>,
-    generations: &[u32],
-) -> Vec<u8> {
-    let mut data = Vec::with_capacity(sorted_oids.len() * 36);
-    for (i, oid) in sorted_oids.iter().enumerate() {
-        let info = &commits[oid];
+    let mut infos = HashMap::new();
+    for oid in &layer_oids {
+        infos.insert(*oid, load_commit_graph_commit_info(&odb, *oid)?);
+    }
 
-        // Tree OID (20 bytes)
-        data.extend_from_slice(info.tree.as_bytes());
+    let show_progress = should_show_commit_graph_progress(progress, no_progress);
+    if show_progress {
+        let delay = progress_delay_secs();
+        if delay > 0 {
+            thread::sleep(Duration::from_secs(delay));
+        }
+        eprintln!(
+            "Computing commit graph generation numbers: 100% ({n}/{n}), done.",
+            n = layer_oids.len()
+        );
+    }
 
-        // Parent 1 (4 bytes) — index or PARENT_NONE
-        let parent1 = if !info.parents.is_empty() {
-            oid_to_idx
-                .get(&info.parents[0])
-                .copied()
-                .unwrap_or(PARENT_NONE)
+    let write_bloom = changed_paths && !no_changed_paths;
+    let (base_for_build, hashes_for_build): (Option<&CommitGraphChain>, &[[u8; 20]]) =
+        if split_enabled && !replace {
+            (existing_chain.as_ref(), &base_hashes)
         } else {
-            PARENT_NONE
+            (None, &[])
         };
-        data.extend_from_slice(&parent1.to_be_bytes());
 
-        // Parent 2 (4 bytes) — for octopus merges this would need extra chunks
-        let parent2 = if info.parents.len() > 1 {
-            oid_to_idx
-                .get(&info.parents[1])
-                .copied()
-                .unwrap_or(PARENT_NONE)
-        } else {
-            PARENT_NONE
-        };
-        data.extend_from_slice(&parent2.to_be_bytes());
+    let (bytes, bstats) = build_commit_graph_bytes(
+        &layer_oids,
+        &infos,
+        &odb,
+        write_bloom,
+        &bloom,
+        base_for_build,
+        hashes_for_build,
+        max_new,
+    )?;
 
-        // Generation number (top 30 bits) + commit time offset (bottom 2 bits)
-        // Simplified: store generation in top 30 bits, low 2 bits of commit time
-        let gen = generations[i];
-        let time_low2 = info.commit_time & 0x3;
-        let gen_and_time = (gen << 2) | time_low2;
-        data.extend_from_slice(&gen_and_time.to_be_bytes());
-
-        // Commit timestamp (4 bytes)
-        data.extend_from_slice(&info.commit_time.to_be_bytes());
+    if write_bloom {
+        emit_commit_graph_trace2(&bloom, &bstats);
     }
-    data
+
+    let file_hash: [u8; 20] = {
+        let body = &bytes[..bytes.len().saturating_sub(20)];
+        use sha1::{Digest, Sha1};
+        let mut h = Sha1::new();
+        h.update(body);
+        h.finalize().into()
+    };
+    let hex_hash: String = file_hash.iter().map(|b| format!("{b:02x}")).collect();
+
+    fs::create_dir_all(&info_dir)?;
+    if split_enabled {
+        fs::create_dir_all(&graphs_dir)?;
+        if replace {
+            let _ = fs::remove_file(&chain_path);
+            if graphs_dir.is_dir() {
+                for entry in fs::read_dir(&graphs_dir)? {
+                    let entry = entry?;
+                    let p = entry.path();
+                    if p.extension().is_some_and(|e| e == "graph") {
+                        let _ = fs::remove_file(&p);
+                    }
+                }
+            }
+            fs::create_dir_all(&graphs_dir)?;
+        }
+        let layer_path = graphs_dir.join(format!("graph-{hex_hash}.graph"));
+        fs::write(&layer_path, &bytes).with_context(|| format!("writing {:?}", layer_path))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&layer_path, fs::Permissions::from_mode(0o444));
+        }
+        let mut chain_lines: Vec<String> = if replace {
+            Vec::new()
+        } else {
+            fs::read_to_string(&chain_path)
+                .unwrap_or_default()
+                .lines()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        };
+        chain_lines.insert(0, hex_hash);
+        fs::write(&chain_path, format!("{}\n", chain_lines.join("\n")))
+            .with_context(|| format!("writing {:?}", chain_path))?;
+        let _ = fs::remove_file(&graph_path);
+    } else {
+        if graphs_dir.is_dir() {
+            for entry in fs::read_dir(&graphs_dir)? {
+                let entry = entry?;
+                let p = entry.path();
+                if p.is_file() {
+                    let _ = fs::remove_file(&p);
+                }
+            }
+            let _ = fs::remove_dir(&graphs_dir);
+        }
+        let _ = fs::remove_file(&chain_path);
+        #[cfg(unix)]
+        if graph_path.is_file() {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&graph_path, fs::Permissions::from_mode(0o644));
+        }
+        let file =
+            fs::File::create(&graph_path).with_context(|| format!("creating {:?}", graph_path))?;
+        let mut w = BufWriter::new(file);
+        w.write_all(&bytes)?;
+        w.flush()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&graph_path, fs::Permissions::from_mode(0o444));
+        }
+    }
+
+    Ok(())
 }
 
 fn sha1_hash(data: &[u8]) -> [u8; 20] {

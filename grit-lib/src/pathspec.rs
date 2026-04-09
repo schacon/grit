@@ -30,6 +30,8 @@ struct PathspecMagic {
     glob: bool,
     icase: bool,
     exclude: bool,
+    /// `:(top)` / short `:/` — paths are relative to repo root.
+    top: bool,
     prefix: Option<String>,
     /// `:(attr:NAME)` — match paths that have gitattribute `NAME` set.
     attr_name: Option<String>,
@@ -123,6 +125,8 @@ fn parse_long_magic(rest_after_paren: &str) -> Option<(PathspecMagic, &str)> {
             magic.icase = true;
         } else if token.eq_ignore_ascii_case("exclude") {
             magic.exclude = true;
+        } else if token.eq_ignore_ascii_case("top") {
+            magic.top = true;
         }
     }
     Some((magic, tail))
@@ -145,7 +149,10 @@ fn parse_short_magic(elem: &str) -> (PathspecMagic, &str) {
                 magic.exclude = true;
                 true
             }
-            b'/' => true, // :(top) — strip `:/` from pattern later
+            b'/' => {
+                magic.top = true;
+                true
+            } // short `:/` = top
             _ => false,
         };
         if is_magic {
@@ -193,6 +200,63 @@ fn strip_top_magic(mut pattern: &str) -> &str {
         pattern = r;
     }
     pattern
+}
+
+/// Path prefix used for Bloom-filter lookups (`revision.c` `convert_pathspec_to_bloom_keyvec`).
+///
+/// `cwd_from_repo_root` is the path from the repository work tree to the process cwd, using `/`
+/// separators and no leading slash (empty string at repo root). Used for `:(top)` / `:/`.
+#[must_use]
+pub fn bloom_lookup_prefix_with_cwd(
+    spec: &str,
+    cwd_from_repo_root: Option<&str>,
+) -> Option<String> {
+    let (elem_magic, raw_pattern) = parse_element_magic(spec);
+    let magic = combine_magic(elem_magic);
+    if magic.exclude || magic.icase {
+        return None;
+    }
+    let pattern = strip_top_magic(raw_pattern);
+    if pattern.is_empty() {
+        return None;
+    }
+    let combined = if magic.top {
+        let cwd = cwd_from_repo_root.unwrap_or("").trim_end_matches('/');
+        if cwd.is_empty() {
+            pattern.to_string()
+        } else {
+            format!("{cwd}/{pattern}")
+        }
+    } else {
+        pattern.to_string()
+    };
+    let pattern = combined.as_str();
+    let mut len = simple_length(pattern);
+    if len != pattern.len() {
+        while len > 0 && pattern.as_bytes()[len - 1] != b'/' {
+            len -= 1;
+        }
+    }
+    while len > 0 && pattern.as_bytes()[len - 1] == b'/' {
+        len -= 1;
+    }
+    if len == 0 {
+        return None;
+    }
+    Some(combined[..len].to_string())
+}
+
+#[must_use]
+pub fn bloom_lookup_prefix(spec: &str) -> Option<String> {
+    bloom_lookup_prefix_with_cwd(spec, None)
+}
+
+/// Whether every pathspec can participate in Bloom precomputation (Git `forbid_bloom_filters`).
+#[must_use]
+pub fn pathspecs_allow_bloom(specs: &[String]) -> bool {
+    specs
+        .iter()
+        .all(|s| !s.is_empty() && bloom_lookup_prefix_with_cwd(s, None).is_some())
 }
 
 /// True if `path` is matched by `spec` (Git pathspec syntax, including magic and globals).
