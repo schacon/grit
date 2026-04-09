@@ -89,7 +89,9 @@ fn main() {
                 // Match shell signal convention for SIGPIPE.
                 exit_code = 128 + 13;
             } else if let Some(ex) = e.downcast_ref::<crate::explicit_exit::ExplicitExit>() {
-                eprintln!("{ex}");
+                if !ex.message.is_empty() {
+                    eprintln!("{ex}");
+                }
                 exit_code = ex.code;
             } else if let Some(msg) = verbatim_lib_error_message(&e) {
                 eprintln!("{msg}");
@@ -269,6 +271,53 @@ fn trace2_write_json_event(path: &str, event: &str, data: &str) -> std::io::Resu
         file,
         r#"{{"event":"{}","sid":"grit-0","time":"{}","data":"{}"}}"#,
         event, now, data
+    )?;
+    Ok(())
+}
+
+/// Append a trace2 JSON `child_start` line with an `argv` array (upstream test_subcommand format).
+pub(crate) fn trace2_emit_child_start_json(path: &str, argv: &[String]) -> std::io::Result<()> {
+    use std::io::Write;
+    let now = chrono_now();
+    let mut parts = String::new();
+    for (i, a) in argv.iter().enumerate() {
+        if i > 0 {
+            parts.push(',');
+        }
+        let esc = a.replace('\\', "\\\\").replace('"', "\\\"");
+        parts.push('"');
+        parts.push_str(&esc);
+        parts.push('"');
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(
+        file,
+        r#"{{"event":"child_start","sid":"grit-0","time":"{}","argv":[{}]}}"#,
+        now, parts
+    )?;
+    Ok(())
+}
+
+/// Emit a trace2 JSON `region_enter` / `region_leave` pair for `GIT_TRACE2_EVENT` tests.
+pub(crate) fn trace2_region_json(path: &str, category: &str, label: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let now = chrono_now();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(
+        file,
+        r#"{{"event":"region_enter","sid":"grit-0","time":"{}","category":"{}","label":"{}"}}"#,
+        now, category, label
+    )?;
+    writeln!(
+        file,
+        r#"{{"event":"region_leave","sid":"grit-0","time":"{}","category":"{}","label":"{}"}}"#,
+        now, category, label
     )?;
     Ok(())
 }
@@ -3233,7 +3282,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "ls-tree" => commands::ls_tree::run(parse_cmd_args(subcmd, rest)),
         "mailinfo" => commands::mailinfo::run(parse_cmd_args(subcmd, rest)),
         "mailsplit" => commands::mailsplit::run(parse_cmd_args(subcmd, rest)),
-        "maintenance" => commands::maintenance::run(parse_cmd_args(subcmd, rest)),
+        "maintenance" => commands::maintenance::run_from_argv(rest),
         "merge" => match commands::merge::run(parse_cmd_args(subcmd, rest)) {
             Ok(()) => Ok(()),
             Err(err) => {

@@ -61,6 +61,10 @@ pub struct Args {
     #[arg(long = "no-detach")]
     pub no_detach: bool,
 
+    /// Skip pack-refs / reflog expire (used by `git maintenance run` background gc child).
+    #[arg(long = "skip-foreground-tasks", hide = true)]
+    pub skip_foreground_tasks: bool,
+
     /// Cruft pack options (forwarded to `grit repack` / pack-objects).
     #[arg(long)]
     pub cruft: bool,
@@ -104,16 +108,20 @@ pub fn run(args: Args) -> Result<()> {
         prune_packed_objects(&objects_dir, opts).map_err(|e| anyhow::anyhow!("{e}"))?;
     }
 
-    pack_refs::run(pack_refs::Args {
-        all: true,
-        prune: true,
-        no_prune: false,
-    })?;
+    if !args.skip_foreground_tasks {
+        pack_refs::run(pack_refs::Args {
+            all: true,
+            prune: true,
+            no_prune: false,
+        })?;
+    }
 
     run_repack_for_gc(&repo, quiet, &args)?;
 
-    run_reflog_expire_for_gc(&repo, &cfg)?;
-    run_reflog_expire_unreachable_for_gc(&repo, &cfg)?;
+    if !args.skip_foreground_tasks {
+        run_reflog_expire_for_gc(&repo, &cfg)?;
+        run_reflog_expire_unreachable_for_gc(&repo, &cfg)?;
+    }
     run_commit_graph_for_gc(&repo, &cfg, quiet)?;
 
     Ok(())
@@ -460,7 +468,8 @@ fn count_local_pack_files(pack_dir: &Path) -> usize {
 }
 
 /// Returns whether automatic gc should do work (loose object count or pack count over limits).
-fn need_to_gc(repo: &Repository, cfg: &ConfigSet) -> bool {
+/// Exposed for `git maintenance` auto conditions (`t7900`).
+pub(crate) fn need_to_gc(repo: &Repository, cfg: &ConfigSet) -> bool {
     let gc_auto = cfg
         .get("gc.auto")
         .and_then(|s| s.parse::<i32>().ok())

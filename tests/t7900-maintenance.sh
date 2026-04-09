@@ -4,6 +4,24 @@ test_description='git maintenance builtin'
 
 . ./test-lib.sh
 
+# test-lib's test_expect_code runs `set -e` after the command; with bash that
+# leaves errexit enabled for the rest of the script so the next statement can
+# exit before test_done (FATAL from the EXIT trap). Do not re-enable errexit.
+test_expect_code () {
+	local expected_code="$1"
+	shift
+	set +e
+	"$@"
+	local actual_code=$?
+	if test "$actual_code" = "$expected_code"
+	then
+		return 0
+	else
+		echo >&2 "test_expect_code: expected exit code $expected_code, got $actual_code from: $*"
+		return 1
+	fi
+}
+
 GIT_TEST_COMMIT_GRAPH=0
 GIT_TEST_MULTI_PACK_INDEX=0
 

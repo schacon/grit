@@ -281,3 +281,44 @@ test_file_size () {
 
 # Path exists (file, dir, or symlink); upstream test-lib-functions.sh name.
 test_path_exists () { test -e "$1"; }
+
+# Trace2 JSON event stream: assert a child_start argv sequence appears (t6500, t7900, …).
+#	test_subcommand [!] <command> <args>... < <trace>
+test_subcommand () {
+	local negate=
+	if test "$1" = "!"
+	then
+		negate=t
+		shift
+	fi
+
+	local expr="$(printf '"%s",' "$@")"
+	expr="${expr%,}"
+
+	if test -n "$negate"
+	then
+		! grep "\[$expr\]"
+	else
+		grep "\[$expr\]"
+	fi
+}
+
+# Like test_subcommand but allows extra argv after the given prefix.
+#	test_subcommand_flex [!] <command> <args>... < <trace>
+test_subcommand_flex () {
+	local negate=
+	if test "$1" = "!"
+	then
+		negate=t
+		shift
+	fi
+
+	local expr="$(printf '"%s".*' "$@")"
+
+	if test -n "$negate"
+	then
+		! grep "\[$expr\]"
+	else
+		grep "\[$expr\]"
+	fi
+}

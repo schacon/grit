@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -1279,7 +1279,7 @@ t7815-grep-binary	t7	yes	21	19	2	false	ok	1
 t7816-grep-binary-pattern	t7	yes	145	97	48	false	ok	0
 t7817-grep-sparse-checkout	t7	yes	8	4	4	false	ok	0
 t7818-grep-extended	t7	yes	11	11	0	true	ok	0
-t7900-maintenance	t7	yes	0	0	0	false	timeout	0
+t7900-maintenance	t7	yes	72	39	33	false	ok	0
 t7901-stash-resolve-merge	t7	yes	7	7	0	true	ok	0
 t8001-annotate	t8	yes	117	97	20	false	ok	0
 t8002-blame	t8	yes	135	53	82	false	ok	0
