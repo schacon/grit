@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 253 completed (`[x]`), 4 in progress (`[~]`), 511 remai
 
 ## Recently completed
 
+- `t11560-cherry-pick-signoff-edit` — 32/32 tests pass (`cherry-pick` with `--signoff`/`-s`, `-n`/`--no-commit`, `-x`, message/body preservation, signoff identity from config, sequential picks; verified clean harness run; `t1-plan.md` marked done)
 - `t4214-log-graph-octopus` — 17/17 tests pass (`git log --graph` skewed-left octopus, crossover, and colored graph lines; harness CSV/dashboards refreshed)
 - `t3060-ls-files-with-tree` — 8/8 tests pass (`ls-files --with-tree`: `Index::overlay_tree_on_index`, `-s/-u`/`--recurse-submodules` incompatibilities with `fatal:` + exit 128, cwd pathspec `sub/` matches `sub/file`; harness CSV refreshed)
 - `t12660-init-shared-perm` — 37/37 tests pass (default `grit init` applies Git-style group-shared chmod on `.git` tree: 775 dirs / 664 HEAD under umask 022; explicit `--shared` / `core.sharedRepository` writes config + `receive.denyNonFastforwards`; reinit without shared config leaves modes unchanged)

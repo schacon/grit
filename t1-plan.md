@@ -78,7 +78,7 @@
 - [ ] t11520-mv-directory-structure.sh
 - [ ] t11530-switch-orphan-track.sh
 - [ ] t11540-restore-staged-worktree.sh
-- [ ] t11560-cherry-pick-signoff-edit.sh
+- [x] t11560-cherry-pick-signoff-edit.sh
 - [ ] t11580-show-ref-heads-tags.sh
 - [ ] t11590-update-ref-reflog.sh
 - [ ] t11600-symbolic-ref-bare-worktree.sh
