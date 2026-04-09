@@ -11,10 +11,12 @@ use grit_lib::diff::{count_changes, diff_trees, unified_diff, zero_oid};
 use grit_lib::diffstat::{
     write_diffstat_block, DiffstatOptions, FileStatInput, FORMAT_PATCH_STAT_WIDTH,
 };
+use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::objects::{parse_commit, CommitData, ObjectId};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rev_list::{rev_list, split_symmetric_diff, OrderingMode, RevListOptions};
+use grit_lib::rev_parse::{resolve_revision, resolve_revision_for_range_end};
 use std::io::{self, Write};
 use std::path::PathBuf;
 
@@ -22,15 +24,46 @@ use std::path::PathBuf;
 #[derive(Debug, ClapArgs)]
 #[command(about = "Prepare patches for e-mail submission")]
 pub struct Args {
-    /// Revision or count. Use a commit ref (e.g. `HEAD~3`) to generate patches
-    /// for all commits since that ref, or a negative number (`-3`) for last N commits.
-    /// Supports `A..B` range syntax.
-    #[arg(allow_hyphen_values = true)]
-    pub revision: Option<String>,
+    /// Revision(s), range, or count. Empty means last commit (`-1`).
+    /// With `--cherry-pick --right-only`, supports symmetric `A...B` like `git rebase --apply`.
+    #[arg(value_name = "REV", num_args = 0.., allow_hyphen_values = true)]
+    pub revisions: Vec<String>,
 
     /// Write output to stdout instead of individual files.
     #[arg(long)]
     pub stdout: bool,
+
+    /// Omit patch-id equivalents on the left side of a symmetric range (used by `rebase --apply`).
+    #[arg(long = "cherry-pick")]
+    pub cherry_pick: bool,
+
+    /// With `--cherry-pick`, list only commits on the right side of `A...B`.
+    #[arg(long = "right-only")]
+    pub right_only: bool,
+
+    /// Use default a/b path prefixes (accepted for `rebase --apply` compatibility).
+    #[arg(long = "default-prefix", hide = true)]
+    pub default_prefix: bool,
+
+    /// Do not detect renames in diffs (accepted for `rebase --apply` compatibility).
+    #[arg(long = "no-renames", hide = true)]
+    pub no_renames: bool,
+
+    /// Do not emit a cover letter (accepted for `rebase --apply` compatibility).
+    #[arg(long = "no-cover-letter", hide = true)]
+    pub no_cover_letter: bool,
+
+    /// Pretty-print / mbox encoding (accepted; `mboxrd` is the default output shape).
+    #[arg(long = "pretty", value_name = "FORMAT", hide = true)]
+    pub pretty: Option<String>,
+
+    /// Order commits topologically (used by `rebase --apply`).
+    #[arg(long = "topo-order")]
+    pub topo_order: bool,
+
+    /// Omit base-commit trailer (accepted for `rebase --apply` compatibility).
+    #[arg(long = "no-base", hide = true)]
+    pub no_base: bool,
 
     /// Add `[PATCH n/m]` numbering to subjects.
     #[arg(short = 'n', long = "numbered")]
@@ -275,20 +308,47 @@ pub fn run(mut args: Args) -> Result<()> {
     let stat_name_width = args.stat_name_width;
     let stat_graph_width = args.stat_graph_width;
 
+    let (positive_specs, exclude_specs): (Vec<&String>, Vec<&String>) =
+        args.revisions.iter().partition(|s| !s.starts_with('^'));
+    let exclude_rest: Vec<String> = exclude_specs
+        .iter()
+        .map(|s| s.strip_prefix('^').unwrap_or(s.as_str()).to_string())
+        .collect();
+
     // Determine the list of commits to format.
     // `-1 <rev>` should format exactly `<rev>`.
     let commits = if args.last_one {
-        if let Some(revision) = args.revision.as_deref() {
+        if let Some(revision) = positive_specs.first() {
             collect_single_commit(&repo, revision)?
         } else {
             collect_last_n_commits(&repo, 1)?
         }
+    } else if args.cherry_pick && args.right_only {
+        let range_spec = positive_specs
+            .first()
+            .map(|s| s.as_str())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--cherry-pick --right-only requires a symmetric revision range A...B"
+                )
+            })?;
+        collect_cherry_pick_right_only_commits(&repo, range_spec, &exclude_rest, args.topo_order)?
     } else {
-        let revision = args.revision.as_deref().unwrap_or("-1");
-        if args.root {
-            collect_root_commits(&repo, revision)?
+        if !exclude_rest.is_empty() {
+            anyhow::bail!(
+                "revision exclusions (^rev) are only supported with --cherry-pick --right-only"
+            );
+        }
+        let revision = if let Some(s) = positive_specs.first() {
+            (*s).clone()
         } else {
-            collect_commits(&repo, revision)?
+            "-1".to_owned()
+        };
+        if args.root {
+            collect_root_commits(&repo, &revision)?
+        } else {
+            collect_commits(&repo, &revision)?
         }
     };
 
@@ -317,8 +377,10 @@ pub fn run(mut args: Args) -> Result<()> {
     let start = args.start_number;
     let display_total = if start != 1 { start + total - 1 } else { total };
 
-    // Resolve --base commit
-    let base_commit = if let Some(ref base_rev) = args.base {
+    // Resolve --base commit (`rebase --apply` passes `--no-base`).
+    let base_commit = if args.no_base {
+        None
+    } else if let Some(ref base_rev) = args.base {
         let base_oid = resolve_revision(&repo, base_rev)
             .with_context(|| format!("unknown base revision '{base_rev}'"))?;
         Some(base_oid.to_hex())
@@ -455,6 +517,66 @@ pub fn run(mut args: Args) -> Result<()> {
     Ok(())
 }
 
+/// Commits for `git format-patch --cherry-pick --right-only A...B` (`rebase --apply` path).
+fn collect_cherry_pick_right_only_commits(
+    repo: &Repository,
+    range_spec: &str,
+    extra_excludes: &[String],
+    topo_order: bool,
+) -> Result<Vec<(ObjectId, CommitData)>> {
+    let Some((lhs, rhs)) = split_symmetric_diff(range_spec) else {
+        anyhow::bail!("expected symmetric revision range A...B, got '{range_spec}'");
+    };
+    let left_tip = if lhs.is_empty() {
+        resolve_revision_for_range_end(repo, "HEAD")?
+    } else {
+        resolve_revision_for_range_end(repo, &lhs)?
+    };
+    let right_tip = if rhs.is_empty() {
+        resolve_revision_for_range_end(repo, "HEAD")?
+    } else {
+        resolve_revision_for_range_end(repo, &rhs)?
+    };
+    let bases = merge_bases_first_vs_rest(repo, left_tip, &[right_tip])?;
+    let mut negative: Vec<String> = bases.iter().map(|b| b.to_hex()).collect();
+    for e in extra_excludes {
+        let oid = resolve_revision_for_range_end(repo, e)?;
+        negative.push(oid.to_hex());
+    }
+    let ordering = if topo_order {
+        OrderingMode::Topo
+    } else {
+        OrderingMode::Default
+    };
+    let result = rev_list(
+        repo,
+        &[left_tip.to_hex(), right_tip.to_hex()],
+        &negative,
+        &RevListOptions {
+            cherry_pick: true,
+            right_only: true,
+            left_right: true,
+            symmetric_left: Some(left_tip),
+            symmetric_right: Some(right_tip),
+            ordering,
+            ..Default::default()
+        },
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut oids = result.commits;
+    oids.reverse();
+    let mut commits = Vec::new();
+    for oid in oids {
+        let obj = repo.odb.read(&oid)?;
+        let c = parse_commit(&obj.data)?;
+        if c.parents.len() > 1 {
+            continue;
+        }
+        commits.push((oid, c));
+    }
+    Ok(commits)
+}
+
 /// Collect commits to format, in patch order (oldest first).
 fn collect_commits(repo: &Repository, revision: &str) -> Result<Vec<(ObjectId, CommitData)>> {
     // Check if it's a `-<n>` count form
@@ -464,10 +586,8 @@ fn collect_commits(repo: &Repository, revision: &str) -> Result<Vec<(ObjectId, C
         }
     }
 
-    // Check for A..B range syntax
-    if let Some(dotdot) = revision.find("..") {
-        let left = &revision[..dotdot];
-        let right = &revision[dotdot + 2..];
+    // Two-dot range only (avoid matching `...` in symmetric diff).
+    if let Some((left, right)) = grit_lib::rev_parse::split_double_dot_range(revision) {
         return collect_range_commits(repo, left, right);
     }
 

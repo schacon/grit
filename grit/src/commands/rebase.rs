@@ -773,7 +773,13 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
     let mut commits = if args.root {
         collect_commits_for_root_rebase(&repo, head_oid, onto_oid)?
     } else {
-        collect_rebase_todo_commits(&repo, head_oid, upstream_oid, !reapply_cherry_picks)?
+        collect_rebase_todo_commits(
+            &repo,
+            head_oid,
+            upstream_oid,
+            !reapply_cherry_picks,
+            !args.rebase_merges,
+        )?
     };
 
     let hook_arg1: &str = if args.root {
@@ -1067,6 +1073,7 @@ fn collect_rebase_todo_commits(
     head: ObjectId,
     upstream: ObjectId,
     filter_cherry_equivalents: bool,
+    omit_merge_commits: bool,
 ) -> Result<Vec<ObjectId>> {
     if !filter_cherry_equivalents {
         return collect_commits_to_replay(repo, head, upstream);
@@ -1091,6 +1098,17 @@ fn collect_rebase_todo_commits(
 
     let mut commits = result.commits;
     commits.reverse();
+    // Merge commits are omitted from `git format-patch` output used by `rebase --apply`, and
+    // the default merge backend todo matches that set (t3425: `c...w` is d,n,o,e — not tip w).
+    if omit_merge_commits {
+        commits.retain(|oid| {
+            repo.odb
+                .read(oid)
+                .ok()
+                .and_then(|obj| parse_commit(&obj.data).ok())
+                .is_some_and(|c| c.parents.len() <= 1)
+        });
+    }
     Ok(commits)
 }
 
@@ -1534,6 +1552,90 @@ fn cherry_pick_for_rebase(
     let head_commit = parse_commit(&head_obj.data)?;
     let head_tree_oid = head_commit.tree;
 
+    let rb_dir = rebase_dir(git_dir);
+    let root_rebase = rb_dir.join("root").exists();
+
+    // Two-parent merge during a non-root rebase: Git flattens the merge onto the replayed first
+    // parent. If replaying `n` then `o` already produced the merge result tree, the merge commit
+    // is redundant (t3425-rebase-topology-merges). Otherwise replay the merge with a three-way
+    // using the merge-base of the original parents as the base tree.
+    if !root_rebase && commit.parents.len() == 2 {
+        if head_tree_oid == commit_tree_oid {
+            return Ok(());
+        }
+        let p1 = commit.parents[0];
+        let p2 = commit.parents[1];
+        let bases = merge_bases_first_vs_rest(repo, p1, &[p2])?;
+        let Some(base_oid) = bases.first().copied() else {
+            bail!(
+                "cannot replay merge {}: no merge base for parents",
+                commit_oid.to_hex()
+            );
+        };
+        let base_obj = repo.odb.read(&base_oid)?;
+        let base_commit = parse_commit(&base_obj.data)?;
+        let base_tree_oid = base_commit.tree;
+
+        let ws_fix_rule = load_ws_fix_rule_from_rebase_state(git_dir);
+        let base_tree_oid = if ws_fix_rule.is_some() {
+            head_tree_oid
+        } else {
+            base_tree_oid
+        };
+
+        let base_entries = tree_to_map(tree_to_index_entries(repo, &base_tree_oid, "")?);
+        let ours_entries = tree_to_map(tree_to_index_entries(repo, &head_tree_oid, "")?);
+        let theirs_entries = tree_to_map(tree_to_index_entries(repo, &commit_tree_oid, "")?);
+        let conflict_ctx = RebaseConflictContext {
+            backend,
+            picked_subject: commit.message.lines().next().unwrap_or("replayed commit"),
+        };
+        let merge_result = three_way_merge_with_content(
+            repo,
+            &base_entries,
+            &ours_entries,
+            &theirs_entries,
+            &conflict_ctx,
+        )?;
+        let mut merged_index = merge_result.index;
+        let has_conflicts = merged_index.entries.iter().any(|e| e.stage() != 0)
+            || !merge_result.conflict_files.is_empty();
+
+        let old_index = load_index(repo)?;
+        repo.write_index(&mut merged_index)?;
+        if let Some(wt) = &repo.work_tree {
+            checkout_merged_index(repo, wt, &old_index, &merged_index)?;
+            if has_conflicts {
+                write_rebase_conflict_files(wt, &merge_result.conflict_files)?;
+            }
+        }
+
+        if has_conflicts {
+            let _ =
+                grit_lib::rerere::repo_rerere(repo, grit_lib::rerere::RerereAutoupdate::FromConfig);
+            fs::write(git_dir.join("MERGE_MSG"), &commit.message)?;
+            bail!("conflicts during cherry-pick of {}", commit_oid.to_hex());
+        }
+
+        let tree_oid = write_tree_from_index(&repo.odb, &merged_index, "")?;
+        let now = time::OffsetDateTime::now_utc();
+        let committer = resolve_identity(&config, "COMMITTER")?;
+        let (message, encoding, raw_message) = transcoded_replayed_message(&commit, &config);
+        let commit_data = CommitData {
+            tree: tree_oid,
+            parents: vec![head_oid],
+            author: commit.author.clone(),
+            committer: format_ident(&committer, now),
+            encoding,
+            message,
+            raw_message,
+        };
+        let commit_bytes = serialize_commit(&commit_data);
+        let new_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
+        fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
+        return Ok(());
+    }
+
     // Already at the picked commit's parent tip — nothing to replay (matches Git's noop pick).
     if let Some(p) = commit.parents.first() {
         if head_oid == *p {
@@ -1590,9 +1692,6 @@ fn cherry_pick_for_rebase(
             write_rebase_conflict_files(wt, &merge_result.conflict_files)?;
         }
     }
-
-    let rb_dir = rebase_dir(git_dir);
-    let root_rebase = rb_dir.join("root").exists();
 
     if has_conflicts {
         let _ = grit_lib::rerere::repo_rerere(repo, grit_lib::rerere::RerereAutoupdate::FromConfig);

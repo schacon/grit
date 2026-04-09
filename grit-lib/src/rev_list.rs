@@ -5,7 +5,7 @@
 //! limits, ordering (`--topo-order`, `--date-order`, `--reverse`), and basic
 //! output shaping (`--count`, `--parents`, `--format`).
 
-use std::cmp::Ordering;
+use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
@@ -2156,18 +2156,21 @@ fn topo_sort(graph: &mut CommitGraph<'_>, selected: &HashSet<ObjectId>) -> Resul
         }
     }
 
-    let mut ready = BinaryHeap::new();
+    // Git's `--topo-order`: among commits whose children have all been emitted, take the one
+    // with the smallest committer date first (Kahn + min-heap). A max-heap on `CommitDateKey`
+    // inverts this and breaks `rev-list --reverse --topo-order` vs upstream (t3425).
+    let mut ready: BinaryHeap<Reverse<CommitDateKey>> = BinaryHeap::new();
     for (&oid, &count) in &child_count {
         if count == 0 {
-            ready.push(CommitDateKey {
+            ready.push(Reverse(CommitDateKey {
                 oid,
                 date: graph.committer_time(oid),
-            });
+            }));
         }
     }
 
     let mut out = Vec::with_capacity(selected.len());
-    while let Some(item) = ready.pop() {
+    while let Some(Reverse(item)) = ready.pop() {
         let oid = item.oid;
         out.push(oid);
         for parent in graph.parents_of(oid)? {
@@ -2177,10 +2180,10 @@ fn topo_sort(graph: &mut CommitGraph<'_>, selected: &HashSet<ObjectId>) -> Resul
             if let Some(count) = child_count.get_mut(&parent) {
                 *count = count.saturating_sub(1);
                 if *count == 0 {
-                    ready.push(CommitDateKey {
+                    ready.push(Reverse(CommitDateKey {
                         oid: parent,
                         date: graph.committer_time(parent),
-                    });
+                    }));
                 }
             }
         }

@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   248 |
+| Completed   |   249 |
 | In progress |     4 |
-| Remaining   |   516 |
+| Remaining   |   515 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 248 completed (`[x]`), 4 in progress (`[~]`), 516 remaining (`[ ]`).
+Task lines in `PLAN.md`: 249 completed (`[x]`), 4 in progress (`[~]`), 515 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t3425-rebase-topology-merges` — 13/13 tests pass (`rev_list` topo-order uses min-heap tie-break like Git; `log` honors `A..B` exclusions; `format-patch` accepts `rebase --apply` flags and cherry symmetric ranges; rebase todo drops merge commits unless `--rebase-merges`; two-parent merge replay uses merge-base three-way or skips when tree already matches)
 - `t8003-blame-corner-cases` — 30/30 tests pass (`blame` rev/file disambiguation: commit-ish peel vs index DWIM/abbrev blob; `HEAD^` range parsing; harness CSV refreshed)
 - `t3305-notes-fanout` — 7/7 tests pass (notes tree automatic fanout 0↔1 restructuring on add/remove; harness + upstream `run-upstream-tests.sh` verified; `PLAN.md` entry marked complete; dashboards refreshed)
 - `t12780-show-ref-head-detached` — 36/36 tests pass (`show-ref`: `--head` with detached HEAD, `--verify`, `--exists`, `--hash`, `--abbrev`, `-d`/`--dereference`, `--branches`/`--tags`, patterns; harness CSV/dashboards refreshed)
@@ -118,4 +119,4 @@ Task lines in `PLAN.md`: 248 completed (`[x]`), 4 in progress (`[~]`), 516 remai
 
 ## What Remains
 
-516 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+515 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.

@@ -18,7 +18,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
     collect_revision_specs_with_stdin, rev_list, OrderingMode, RevListOptions,
 };
-use grit_lib::rev_parse::resolve_revision_as_commit;
+use grit_lib::rev_parse::{resolve_revision_as_commit, try_parse_double_dot_log_range};
 use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
 use std::collections::{HashMap, HashSet};
@@ -526,6 +526,9 @@ fn run_line_log(repo: &Repository, args: Args) -> Result<()> {
         for rev in &args.revisions {
             if let Some(stripped) = rev.strip_prefix('^') {
                 excludes.push(resolve_revision_as_commit(repo, stripped)?);
+            } else if let Some((excl, tip)) = try_parse_double_dot_log_range(repo, rev)? {
+                excludes.push(excl);
+                oids.push(tip);
             } else {
                 oids.push(resolve_revision_as_commit(repo, rev)?);
             }
@@ -2164,6 +2167,9 @@ pub fn run(mut args: Args) -> Result<()> {
             if let Some(stripped) = rev.strip_prefix('^') {
                 let oid = resolve_revision_as_commit(&repo, stripped)?;
                 excludes.push(oid);
+            } else if let Some((excl, tip)) = try_parse_double_dot_log_range(&repo, rev)? {
+                excludes.push(excl);
+                oids.push(tip);
             } else {
                 match resolve_revision_as_commit(&repo, rev) {
                     Ok(oid) => oids.push(oid),

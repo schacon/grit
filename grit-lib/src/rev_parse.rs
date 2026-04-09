@@ -491,6 +491,37 @@ pub fn resolve_revision_for_patch_old_blob(repo: &Repository, spec: &str) -> Res
     resolve_revision_impl(repo, spec, true, false, true, false, false, true)
 }
 
+/// When `spec` uses two-dot range syntax (`A..B`, `..B`, `A..`), returns the commits to
+/// **exclude** (left tip) and **include** (right tip) for `git log`-style walks.
+///
+/// Returns `Ok(None)` when `spec` is not a two-dot range. Symmetric `A...B` is handled by
+/// [`resolve_revision_as_commit`] instead.
+///
+/// # Errors
+///
+/// Propagates resolution errors from either range endpoint.
+pub fn try_parse_double_dot_log_range(
+    repo: &Repository,
+    spec: &str,
+) -> Result<Option<(ObjectId, ObjectId)>> {
+    let Some((left, right)) = split_double_dot_range(spec) else {
+        return Ok(None);
+    };
+    let left_tip = if left.is_empty() {
+        resolve_revision_for_range_end(repo, "HEAD")?
+    } else {
+        resolve_revision_for_range_end(repo, left)?
+    };
+    let right_tip = if right.is_empty() {
+        resolve_revision_for_range_end(repo, "HEAD")?
+    } else {
+        resolve_revision_for_range_end(repo, right)?
+    };
+    let left_c = peel_to_commit_for_merge_base(repo, left_tip)?;
+    let right_c = peel_to_commit_for_merge_base(repo, right_tip)?;
+    Ok(Some((left_c, right_c)))
+}
+
 /// Resolve `spec` to a commit OID for porcelain history commands (`log`, `reset`, etc.).
 ///
 /// Handles `A..B` / `..B` / `A..` (tip is the right side, defaulting to `HEAD`) and
@@ -516,18 +547,8 @@ pub fn resolve_revision_as_commit(repo: &Repository, spec: &str) -> Result<Objec
             .next()
             .ok_or_else(|| Error::ObjectNotFound(format!("no merge base for '{spec}'")));
     }
-    if let Some((left, right)) = split_double_dot_range(spec) {
-        if left.is_empty() {
-            peel_to_commit_for_merge_base(repo, resolve_revision_for_range_end(repo, "HEAD")?)?;
-        } else {
-            peel_to_commit_for_merge_base(repo, resolve_revision_for_range_end(repo, left)?)?;
-        }
-        let tip = if right.is_empty() {
-            resolve_revision_for_range_end(repo, "HEAD")?
-        } else {
-            resolve_revision_for_range_end(repo, right)?
-        };
-        return peel_to_commit_for_merge_base(repo, tip);
+    if let Some((_excl, tip)) = try_parse_double_dot_log_range(repo, spec)? {
+        return Ok(tip);
     }
     let oid = resolve_revision_for_range_end(repo, spec)?;
     peel_to_commit_for_merge_base(repo, oid)
