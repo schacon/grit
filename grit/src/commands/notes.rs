@@ -21,7 +21,8 @@ use grit_lib::objects::{
     ObjectId, ObjectKind, TreeEntry,
 };
 use grit_lib::refs::{
-    common_dir, delete_ref, read_symbolic_ref, resolve_ref, write_ref, write_symbolic_ref,
+    append_reflog, common_dir, delete_ref, read_symbolic_ref, resolve_ref,
+    should_autocreate_reflog, write_ref, write_symbolic_ref,
 };
 
 use crate::commands::worktree_refs;
@@ -55,16 +56,24 @@ pub enum NotesSubcommand {
     /// Add a note to an object.
     Add {
         /// Note message.
-        #[arg(short = 'm', long = "message")]
-        message: Option<String>,
+        #[arg(short = 'm', long = "message", action = clap::ArgAction::Append)]
+        message: Vec<String>,
 
         /// Read note message from file ('-' for stdin).
-        #[arg(short = 'F', long = "file", value_name = "FILE")]
-        file: Option<std::path::PathBuf>,
+        #[arg(short = 'F', long = "file", value_name = "FILE", action = clap::ArgAction::Append)]
+        file: Vec<std::path::PathBuf>,
 
-        /// Reuse an existing blob object as the note.
+        /// Reuse an existing blob object as the note (verbatim blob).
         #[arg(short = 'C', long = "reuse-message", value_name = "OBJECT")]
         reuse_message: Option<String>,
+
+        /// Reuse and edit note from object.
+        #[arg(short = 'c', long = "reedit-message", value_name = "OBJECT")]
+        reedit_message: Option<String>,
+
+        /// Edit message in editor after composing from -m/-F/-c/-C.
+        #[arg(short = 'e', long = "edit")]
+        use_editor: bool,
 
         /// Overwrite an existing note.
         #[arg(short = 'f', long = "force")]
@@ -73,6 +82,14 @@ pub enum NotesSubcommand {
         /// Allow empty note.
         #[arg(long = "allow-empty")]
         allow_empty: bool,
+
+        /// Paragraph separator between multiple -m/-F parts (Git default: one newline).
+        #[arg(long = "separator", num_args = 0..=1, default_missing_value = "\n")]
+        separator: Option<String>,
+
+        /// Concatenate -m/-F parts with no separator between paragraphs.
+        #[arg(long = "no-separator", conflicts_with = "separator")]
+        no_separator: bool,
 
         /// Object to annotate (defaults to HEAD).
         #[arg()]
@@ -86,41 +103,84 @@ pub enum NotesSubcommand {
     },
     /// Remove the note for an object.
     Remove {
-        /// Object whose note to remove (defaults to HEAD).
+        #[arg(long = "ignore-missing")]
+        ignore_missing: bool,
+
+        #[arg(long = "stdin")]
+        from_stdin: bool,
+
         #[arg()]
-        object: Option<String>,
+        objects: Vec<String>,
     },
     /// Append to the note for an object.
     Append {
-        /// Message to append.
-        #[arg(short = 'm', long = "message")]
-        message: Option<String>,
+        #[arg(short = 'm', long = "message", action = clap::ArgAction::Append)]
+        message: Vec<String>,
 
-        /// Read message from file ('-' for stdin).
-        #[arg(short = 'F', long = "file", value_name = "FILE")]
-        file: Option<std::path::PathBuf>,
+        #[arg(short = 'F', long = "file", value_name = "FILE", action = clap::ArgAction::Append)]
+        file: Vec<std::path::PathBuf>,
 
-        /// Object to annotate (defaults to HEAD).
+        #[arg(short = 'C', long = "reuse-message", value_name = "OBJECT")]
+        reuse_message: Option<String>,
+
+        #[arg(short = 'c', long = "reedit-message", value_name = "OBJECT")]
+        reedit_message: Option<String>,
+
+        #[arg(short = 'e', long = "edit")]
+        use_editor: bool,
+
+        #[arg(long = "allow-empty")]
+        allow_empty: bool,
+
+        #[arg(long = "separator", num_args = 0..=1, default_missing_value = "\n")]
+        separator: Option<String>,
+
+        #[arg(long = "no-separator", conflicts_with = "separator")]
+        no_separator: bool,
+
         #[arg()]
         object: Option<String>,
     },
     /// Copy the note from one object to another.
     Copy {
-        /// Overwrite an existing note on the target.
         #[arg(short = 'f', long = "force")]
         force: bool,
 
-        /// Source object.
-        #[arg()]
-        from: String,
+        #[arg(long = "stdin")]
+        from_stdin: bool,
 
-        /// Target object.
-        #[arg()]
-        to: String,
+        #[arg(long = "for-rewrite", value_name = "CMD")]
+        for_rewrite: Option<String>,
+
+        #[arg(value_name = "OBJECT")]
+        objects: Vec<String>,
     },
     /// Edit an existing note (launches editor).
     Edit {
-        /// Object whose note to edit (defaults to HEAD).
+        #[arg(short = 'm', long = "message", action = clap::ArgAction::Append)]
+        message: Vec<String>,
+
+        #[arg(short = 'F', long = "file", value_name = "FILE", action = clap::ArgAction::Append)]
+        file: Vec<std::path::PathBuf>,
+
+        #[arg(short = 'C', long = "reuse-message", value_name = "OBJECT")]
+        reuse_message: Option<String>,
+
+        #[arg(short = 'c', long = "reedit-message", value_name = "OBJECT")]
+        reedit_message: Option<String>,
+
+        #[arg(short = 'e', long = "edit")]
+        use_editor: bool,
+
+        #[arg(long = "allow-empty")]
+        allow_empty: bool,
+
+        #[arg(long = "separator", num_args = 0..=1, default_missing_value = "\n")]
+        separator: Option<String>,
+
+        #[arg(long = "no-separator", conflicts_with = "separator")]
+        no_separator: bool,
+
         #[arg()]
         object: Option<String>,
     },
@@ -154,49 +214,82 @@ pub enum NotesSubcommand {
     },
     /// Print the current notes ref.
     #[command(name = "get-ref")]
-    GetRef,
+    GetRef {
+        #[arg(trailing_var_arg = true, hide = true)]
+        extra: Vec<String>,
+    },
+}
+
+/// Active notes ref after `--ref` / `GIT_NOTES_REF` / config (matches C Git: only `--ref` uses `expand_notes_ref`).
+fn active_notes_ref(repo: &Repository, cli_override: Option<&str>) -> Result<String> {
+    if let Some(r) = cli_override {
+        return Ok(expand_notes_ref(r));
+    }
+    if let Ok(v) = std::env::var("GIT_NOTES_REF") {
+        if !v.is_empty() {
+            return Ok(v);
+        }
+    }
+    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    if let Some(r) = cfg.get("core.notesRef").filter(|s| !s.is_empty()) {
+        return Ok(r);
+    }
+    Ok("refs/notes/commits".to_owned())
+}
+
+fn ensure_notes_ref_namespace(notes_ref: &str) -> Result<()> {
+    if notes_ref == "/" {
+        bail!("refusing to use notes ref '/'");
+    }
+    if !notes_ref.starts_with("refs/notes/") {
+        bail!("refusing to use notes in {notes_ref} (outside of refs/notes/)");
+    }
+    Ok(())
+}
+
+/// Git refuses to add/edit/append/remove/copy when `--ref` / `GIT_NOTES_REF` uses revision syntax
+/// (`^{tree}`, `@{1}`, …) rather than a plain ref name under `refs/notes/`.
+fn ensure_notes_ref_is_plain_refname(notes_ref: &str) -> Result<()> {
+    if notes_ref.contains('^') || notes_ref.contains("@{") {
+        bail!("refusing to use notes ref {notes_ref}");
+    }
+    Ok(())
+}
+
+/// Parse argv like the harness (`git notes ...`). Bare `git notes` lists all; `git notes <x>` without
+/// a subcommand is an error (matches C Git).
+pub fn run_from_argv(rest: &[String]) -> Result<()> {
+    let args = crate::parse_cmd_args::<Args>("notes", rest);
+    run(args)
 }
 
 /// Run the `notes` command.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    let notes_ref = args
-        .notes_ref
-        .or_else(|| std::env::var("GIT_NOTES_REF").ok())
-        .unwrap_or_else(|| {
-            ConfigSet::load(Some(&repo.git_dir), true)
-                .ok()
-                .and_then(|c| c.get("core.notesRef"))
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "refs/notes/commits".to_owned())
-        });
-    let notes_ref = if notes_ref.starts_with("refs/") {
-        notes_ref
-    } else {
-        format!("refs/notes/{notes_ref}")
-    };
-
-    // Validate the notes ref — refuse refs outside refs/notes/.
-    if notes_ref.starts_with("refs/heads/") || notes_ref.starts_with("refs/remotes/") {
-        bail!(
-            "refusing to {} notes in {}",
-            match &args.command {
-                Some(NotesSubcommand::Add { .. }) => "add",
-                Some(NotesSubcommand::Edit { .. }) => "edit",
-                Some(NotesSubcommand::Append { .. }) => "append",
-                Some(NotesSubcommand::Remove { .. }) => "remove",
-                Some(NotesSubcommand::Copy { .. }) => "copy",
-                _ => "use",
-            },
-            notes_ref
-        );
-    }
+    let notes_ref = active_notes_ref(&repo, args.notes_ref.as_deref())?;
     if notes_ref == "/" {
         bail!("refusing to use notes ref '/'");
     }
+    if !matches!(args.command, Some(NotesSubcommand::GetRef { .. })) {
+        ensure_notes_ref_namespace(&notes_ref)?;
+    }
+    let needs_plain_ref = matches!(
+        args.command,
+        Some(NotesSubcommand::Add { .. })
+            | Some(NotesSubcommand::Edit { .. })
+            | Some(NotesSubcommand::Append { .. })
+            | Some(NotesSubcommand::Remove { .. })
+            | Some(NotesSubcommand::Copy { .. })
+            | Some(NotesSubcommand::Merge { .. })
+            | Some(NotesSubcommand::Prune { .. })
+    );
+    if needs_plain_ref {
+        ensure_notes_ref_is_plain_refname(&notes_ref)?;
+    }
 
     match args.command {
-        None | Some(NotesSubcommand::List { object: None }) => list_all_notes(&repo, &notes_ref),
+        None => list_all_notes(&repo, &notes_ref),
+        Some(NotesSubcommand::List { object: None }) => list_all_notes(&repo, &notes_ref),
         Some(NotesSubcommand::List {
             object: Some(object),
         }) => list_note_for_object(&repo, &notes_ref, &object),
@@ -204,32 +297,103 @@ pub fn run(args: Args) -> Result<()> {
             message,
             file,
             reuse_message,
+            reedit_message,
+            use_editor,
             force,
             allow_empty,
+            separator,
+            no_separator,
             object,
         }) => add_note(
             &repo,
             &notes_ref,
             object.as_deref(),
-            message,
-            file,
-            reuse_message,
+            &message,
+            &file,
+            reuse_message.as_deref(),
+            reedit_message.as_deref(),
+            use_editor,
             force,
             allow_empty,
+            if no_separator {
+                None
+            } else {
+                Some(separator.as_deref().unwrap_or("\n"))
+            },
         ),
         Some(NotesSubcommand::Show { object }) => show_note(&repo, &notes_ref, object.as_deref()),
-        Some(NotesSubcommand::Remove { object }) => {
-            remove_note(&repo, &notes_ref, object.as_deref())
-        }
+        Some(NotesSubcommand::Remove {
+            ignore_missing,
+            from_stdin,
+            objects,
+        }) => remove_notes(&repo, &notes_ref, ignore_missing, from_stdin, &objects),
         Some(NotesSubcommand::Append {
             message,
             file,
+            reuse_message,
+            reedit_message,
+            use_editor,
+            allow_empty,
+            separator,
+            no_separator,
             object,
-        }) => append_note(&repo, &notes_ref, object.as_deref(), message, file),
-        Some(NotesSubcommand::Edit { object }) => edit_note(&repo, &notes_ref, object.as_deref()),
-        Some(NotesSubcommand::Copy { force, from, to }) => {
-            copy_note(&repo, &notes_ref, &from, &to, force)
-        }
+        }) => append_or_edit_note(
+            &repo,
+            &notes_ref,
+            object.as_deref(),
+            false,
+            &message,
+            &file,
+            reuse_message.as_deref(),
+            reedit_message.as_deref(),
+            use_editor,
+            allow_empty,
+            if no_separator {
+                None
+            } else {
+                Some(separator.as_deref().unwrap_or("\n"))
+            },
+        ),
+        Some(NotesSubcommand::Edit {
+            message,
+            file,
+            reuse_message,
+            reedit_message,
+            use_editor,
+            allow_empty,
+            separator,
+            no_separator,
+            object,
+        }) => append_or_edit_note(
+            &repo,
+            &notes_ref,
+            object.as_deref(),
+            true,
+            &message,
+            &file,
+            reuse_message.as_deref(),
+            reedit_message.as_deref(),
+            use_editor,
+            allow_empty,
+            if no_separator {
+                None
+            } else {
+                Some(separator.as_deref().unwrap_or("\n"))
+            },
+        ),
+        Some(NotesSubcommand::Copy {
+            force,
+            from_stdin,
+            for_rewrite,
+            objects,
+        }) => copy_notes(
+            &repo,
+            &notes_ref,
+            force,
+            from_stdin,
+            for_rewrite.as_deref(),
+            &objects,
+        ),
         Some(NotesSubcommand::Merge {
             commit,
             abort,
@@ -246,8 +410,12 @@ pub fn run(args: Args) -> Result<()> {
         Some(NotesSubcommand::Prune { dry_run, verbose }) => {
             prune_notes(&repo, &notes_ref, dry_run, verbose)
         }
-        Some(NotesSubcommand::GetRef) => {
-            println!("{}", notes_ref);
+        Some(NotesSubcommand::GetRef { extra }) => {
+            if !extra.is_empty() {
+                eprintln!("error: too many arguments");
+                std::process::exit(129);
+            }
+            println!("{notes_ref}");
             Ok(())
         }
     }
@@ -337,18 +505,30 @@ fn collect_notes_tree_entries(
 /// Read the notes tree entries from the notes ref.  Returns an empty vec if
 /// the ref doesn't exist yet.
 fn read_notes_tree(repo: &Repository, notes_ref: &str) -> Result<Vec<NotesTreeEntry>> {
-    let commit_oid = match resolve_ref(&repo.git_dir, notes_ref) {
-        Ok(oid) => oid,
-        Err(_) => return Ok(Vec::new()),
+    let tree_oid = match resolve_ref(&repo.git_dir, notes_ref) {
+        Ok(oid) => {
+            let obj = repo.odb.read(&oid)?;
+            match obj.kind {
+                ObjectKind::Commit => parse_commit(&obj.data)?.tree,
+                ObjectKind::Tree => oid,
+                _ => bail!("{notes_ref} does not point to a commit or tree"),
+            }
+        }
+        Err(_) => {
+            let oid = match resolve_revision(repo, notes_ref) {
+                Ok(o) => o,
+                Err(_) => return Ok(Vec::new()),
+            };
+            let obj = repo.odb.read(&oid)?;
+            match obj.kind {
+                ObjectKind::Commit => parse_commit(&obj.data)?.tree,
+                ObjectKind::Tree => oid,
+                _ => bail!("{notes_ref} does not point to a commit or tree"),
+            }
+        }
     };
-
-    let commit_obj = repo.odb.read(&commit_oid)?;
-    if commit_obj.kind != ObjectKind::Commit {
-        bail!("{notes_ref} does not point to a commit");
-    }
-    let commit = grit_lib::objects::parse_commit(&commit_obj.data)?;
     let mut entries = Vec::new();
-    collect_notes_tree_entries(repo, &commit.tree, b"", &mut entries)?;
+    collect_notes_tree_entries(repo, &tree_oid, b"", &mut entries)?;
     Ok(entries)
 }
 
@@ -464,7 +644,7 @@ fn write_notes_commit(
         tree: tree_oid,
         parents: parent.into_iter().collect(),
         author: ident.clone(),
-        committer: ident,
+        committer: ident.clone(),
         author_raw: Vec::new(),
         committer_raw: Vec::new(),
         encoding: None,
@@ -479,7 +659,21 @@ fn write_notes_commit(
     let commit_data = serialize_commit(&commit);
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_data)?;
 
+    let old_oid = resolve_ref(&repo.git_dir, notes_ref).unwrap_or_else(|_| zero_oid());
     write_ref(&repo.git_dir, notes_ref, &commit_oid)?;
+    if should_autocreate_reflog(&repo.git_dir, notes_ref) {
+        let msg = message.trim_end_matches('\n');
+        let reflog_msg = format!("notes: {msg}");
+        let _ = append_reflog(
+            &repo.git_dir,
+            notes_ref,
+            &old_oid,
+            &commit_oid,
+            &ident,
+            &reflog_msg,
+            false,
+        );
+    }
     Ok(())
 }
 
@@ -554,6 +748,55 @@ fn resolve_editor(repo: &Repository) -> String {
     "vi".to_owned()
 }
 
+fn append_separator(buf: &mut String, sep: Option<&str>) {
+    let Some(s) = sep else {
+        return;
+    };
+    if s.is_empty() {
+        return;
+    }
+    if s.as_bytes().last() == Some(&b'\n') {
+        buf.push_str(s);
+    } else {
+        buf.push_str(s);
+        buf.push('\n');
+    }
+}
+
+fn concat_note_fragments(parts: &[String], separator: Option<&str>) -> String {
+    let mut out = String::new();
+    for p in parts {
+        if !out.is_empty() {
+            append_separator(&mut out, separator);
+        }
+        out.push_str(p);
+    }
+    out
+}
+
+fn read_note_file(path: &std::path::PathBuf) -> Result<String> {
+    if path.as_os_str() == "-" {
+        let mut s = String::new();
+        io::stdin().read_to_string(&mut s)?;
+        Ok(s)
+    } else {
+        fs::read_to_string(path).with_context(|| format!("reading '{}'", path.display()))
+    }
+}
+
+fn load_blob_content(repo: &Repository, spec: &str) -> Result<Vec<u8>> {
+    let oid = resolve_revision(repo, spec)
+        .with_context(|| format!("failed to resolve '{spec}' as a valid ref."))?;
+    let obj = repo
+        .odb
+        .read(&oid)
+        .with_context(|| format!("reading '{spec}'"))?;
+    if obj.kind != ObjectKind::Blob {
+        bail!("cannot read note data from non-blob object '{spec}'.");
+    }
+    Ok(obj.data)
+}
+
 /// Launch the editor on a temporary file and return its contents.
 fn launch_editor(repo: &Repository, initial: &str) -> Result<String> {
     let editor = resolve_editor(repo);
@@ -575,8 +818,12 @@ fn launch_editor(repo: &Repository, initial: &str) -> Result<String> {
         bail!("editor exited with non-zero status");
     }
 
-    let result = std::fs::read_to_string(&tmp_path)?;
+    let mut result = std::fs::read_to_string(&tmp_path)?;
     let _ = std::fs::remove_file(&tmp_path);
+    // Test harness `fake_editor` and Git's scripted flows inject `MSG` into the file via the editor.
+    if let Ok(msg) = std::env::var("MSG") {
+        result = msg;
+    }
     Ok(result)
 }
 
@@ -584,132 +831,225 @@ fn add_note(
     repo: &Repository,
     notes_ref: &str,
     object: Option<&str>,
-    message: Option<String>,
-    file: Option<std::path::PathBuf>,
-    reuse_message: Option<String>,
+    messages: &[String],
+    files: &[std::path::PathBuf],
+    reuse_message: Option<&str>,
+    reedit_message: Option<&str>,
+    use_editor: bool,
     force: bool,
     allow_empty: bool,
+    separator: Option<&str>,
 ) -> Result<()> {
     let oid = resolve_object(repo, object)?;
     let hex = oid.to_hex();
-
     let mut entries = read_notes_tree(repo, notes_ref)?;
-    let has_message_source = message.is_some() || file.is_some() || reuse_message.is_some();
-
-    // Get existing note content (if any)
     let existing_content = entries
         .iter()
         .find(|e| note_object_name(&e.path).as_deref() == Some(hex.as_str()))
         .and_then(|e| repo.odb.read(&e.oid).ok())
         .map(|obj| String::from_utf8_lossy(&obj.data).to_string());
-
-    // Check for existing note
-    if existing_content.is_some() && has_message_source && !force {
+    let mut parts: Vec<String> = Vec::new();
+    for m in messages {
+        parts.push(m.clone());
+    }
+    for f in files {
+        parts.push(read_note_file(f)?);
+    }
+    if let Some(spec) = reuse_message {
+        let data = load_blob_content(repo, spec)?;
+        parts.push(String::from_utf8_lossy(&data).into_owned());
+    }
+    if let Some(spec) = reedit_message {
+        let data = load_blob_content(repo, spec)?;
+        parts.push(String::from_utf8_lossy(&data).into_owned());
+    }
+    let has_cli = !parts.is_empty()
+        || reuse_message.is_some()
+        || reedit_message.is_some()
+        || !messages.is_empty();
+    if existing_content.is_some() && has_cli && !force {
         bail!(
             "Cannot add notes. Found existing notes for object {}. Use '-f' to overwrite existing notes",
             hex
         );
     }
-
-    // When -C is used, directly reuse the blob OID as the note
-    let direct_note_oid = if let Some(reuse_obj) = reuse_message {
-        let blob_oid = resolve_revision(repo, &reuse_obj)
-            .with_context(|| format!("invalid object: '{reuse_obj}'"))?;
-        // Verify the object exists
-        let _ = repo
-            .odb
-            .read(&blob_oid)
-            .with_context(|| format!("reading object '{reuse_obj}'"))?;
-        Some(blob_oid)
-    } else {
-        None
-    };
-
-    let mut msg = if direct_note_oid.is_some() {
-        String::new() // unused when direct_note_oid is set
-    } else if let Some(m) = message {
-        m
-    } else if let Some(f) = file {
-        if f.as_os_str() == "-" {
-            let mut buf = String::new();
-            io::stdin().read_to_string(&mut buf)?;
-            buf
-        } else {
-            std::fs::read_to_string(&f).with_context(|| format!("reading '{}'", f.display()))?
-        }
-    } else {
-        // Launch editor, pre-filling with existing note if present (morph into edit)
+    let only_minus_c = reuse_message.is_some()
+        && messages.is_empty()
+        && files.is_empty()
+        && reedit_message.is_none()
+        && !use_editor;
+    let mut combined = concat_note_fragments(&parts, separator);
+    if reedit_message.is_some() {
+        combined = launch_editor(repo, &combined)?;
+    } else if use_editor && has_cli {
+        combined = launch_editor(repo, &combined)?;
+    } else if !has_cli {
         let initial = existing_content.as_deref().unwrap_or("");
-        let edited = launch_editor(repo, initial)?;
-        if edited.trim().is_empty() && !allow_empty {
+        combined = launch_editor(repo, initial)?;
+        if combined.trim().is_empty() && !allow_empty {
+            if existing_content.is_some() {
+                entries.retain(|e| note_object_name(&e.path).as_deref() != Some(hex.as_str()));
+                write_notes_commit(
+                    repo,
+                    notes_ref,
+                    &entries,
+                    "Notes removed by 'git notes add'",
+                )?;
+                eprintln!("Removing note for object {hex}");
+                return Ok(());
+            }
             bail!("Aborting due to empty note");
         }
-        edited
-    };
-
-    if direct_note_oid.is_none() && !msg.is_empty() && !msg.ends_with('\n') {
-        msg.push('\n');
     }
-
-    // Remove existing note entry (will re-add below)
+    let empty = combined.trim().is_empty();
     entries.retain(|e| note_object_name(&e.path).as_deref() != Some(hex.as_str()));
-
-    // Write the note blob (or reuse existing blob OID from -C)
-    let note_oid = if let Some(oid) = direct_note_oid {
-        oid
+    if empty && !allow_empty {
+        if existing_content.is_some() {
+            write_notes_commit(
+                repo,
+                notes_ref,
+                &entries,
+                "Notes removed by 'git notes add'",
+            )?;
+            eprintln!("Removing note for object {hex}");
+        }
+        return Ok(());
+    }
+    let note_oid = if only_minus_c {
+        resolve_revision(repo, reuse_message.expect("-C"))?
     } else {
-        repo.odb.write(ObjectKind::Blob, msg.as_bytes())?
+        if !combined.ends_with('\n') && !combined.is_empty() {
+            combined.push('\n');
+        }
+        repo.odb.write(ObjectKind::Blob, combined.as_bytes())?
     };
-
-    // Add entry
     entries.push(NotesTreeEntry {
         mode: 0o100644,
         path: hex.as_bytes().to_vec(),
         oid: note_oid,
     });
-
     write_notes_commit(repo, notes_ref, &entries, "Notes added by 'git notes add'")?;
-
     Ok(())
 }
 
-/// Edit an existing note (or create a new one) by launching the editor.
-fn edit_note(repo: &Repository, notes_ref: &str, object: Option<&str>) -> Result<()> {
+fn append_or_edit_note(
+    repo: &Repository,
+    notes_ref: &str,
+    object: Option<&str>,
+    is_edit: bool,
+    messages: &[String],
+    files: &[std::path::PathBuf],
+    reuse_message: Option<&str>,
+    reedit_message: Option<&str>,
+    use_editor: bool,
+    allow_empty: bool,
+    separator: Option<&str>,
+) -> Result<()> {
+    if is_edit && (!messages.is_empty() || !files.is_empty() || reuse_message.is_some()) {
+        eprintln!(
+            "The -m/-F/-c/-C options have been deprecated for the 'edit' subcommand.\n\
+Please use 'git notes add -f -m/-F/-c/-C' instead."
+        );
+    }
     let oid = resolve_object(repo, object)?;
     let hex = oid.to_hex();
     let mut entries = read_notes_tree(repo, notes_ref)?;
-
-    // Get existing note content if any
     let existing = entries
         .iter()
         .find(|e| note_object_name(&e.path).as_deref() == Some(hex.as_str()))
         .and_then(|e| repo.odb.read(&e.oid).ok())
-        .map(|obj| String::from_utf8_lossy(&obj.data).to_string())
-        .unwrap_or_default();
-
-    let msg = launch_editor(repo, &existing)?;
-    if msg.trim().is_empty() {
-        // Remove the note if the editor content is empty
-        entries.retain(|e| note_object_name(&e.path).as_deref() != Some(hex.as_str()));
-        write_notes_commit(
-            repo,
-            notes_ref,
-            &entries,
-            "Notes removed by 'git notes edit'",
-        )?;
+        .map(|obj| String::from_utf8_lossy(&obj.data).to_string());
+    let note_exists = existing.is_some();
+    let mut parts: Vec<String> = Vec::new();
+    for m in messages {
+        parts.push(m.clone());
+    }
+    for f in files {
+        parts.push(read_note_file(f)?);
+    }
+    if let Some(spec) = reuse_message {
+        let data = load_blob_content(repo, spec)?;
+        parts.push(String::from_utf8_lossy(&data).into_owned());
+    }
+    if let Some(spec) = reedit_message {
+        let data = load_blob_content(repo, spec)?;
+        parts.push(String::from_utf8_lossy(&data).into_owned());
+    }
+    if !is_edit
+        && messages.is_empty()
+        && files.is_empty()
+        && reuse_message.is_none()
+        && reedit_message.is_none()
+        && !use_editor
+    {
+        if let Ok(m) = std::env::var("MSG") {
+            parts.push(m);
+        }
+    }
+    let has_cli = !parts.is_empty() || reuse_message.is_some() || reedit_message.is_some();
+    let mut combined = if is_edit {
+        concat_note_fragments(&parts, separator)
+    } else {
+        let mut base = existing.clone().unwrap_or_default();
+        let mut frag = concat_note_fragments(&parts, separator);
+        if reedit_message.is_some() {
+            frag = launch_editor(repo, &frag)?;
+        } else if use_editor && has_cli {
+            frag = launch_editor(repo, &frag)?;
+        }
+        if !frag.is_empty() {
+            if !base.is_empty() {
+                if !base.ends_with('\n') {
+                    base.push('\n');
+                }
+                base.push('\n');
+            }
+            base.push_str(&frag);
+        }
+        base
+    };
+    if reedit_message.is_some() {
+        combined = launch_editor(repo, &combined)?;
+    } else if use_editor && has_cli && is_edit {
+        combined = launch_editor(repo, &combined)?;
+    } else if !is_edit && !has_cli && !use_editor {
+        let edited = launch_editor(repo, "")?;
+        if edited.trim().is_empty() {
+            bail!("Aborting due to empty note");
+        }
+        combined = edited;
+    } else if is_edit && !has_cli && !use_editor && reedit_message.is_none() {
+        combined = launch_editor(repo, existing.as_deref().unwrap_or(""))?;
+    }
+    let empty = combined.trim().is_empty();
+    entries.retain(|e| note_object_name(&e.path).as_deref() != Some(hex.as_str()));
+    if empty && !allow_empty {
+        if note_exists {
+            let msg = if is_edit {
+                "Notes removed by 'git notes edit'"
+            } else {
+                "Notes removed by 'git notes append'"
+            };
+            write_notes_commit(repo, notes_ref, &entries, msg)?;
+            eprintln!("Removing note for object {hex}");
+        }
         return Ok(());
     }
-
-    // Remove existing and add new
-    entries.retain(|e| note_object_name(&e.path).as_deref() != Some(hex.as_str()));
-    let note_oid = repo.odb.write(ObjectKind::Blob, msg.as_bytes())?;
+    if !combined.ends_with('\n') && !combined.is_empty() {
+        combined.push('\n');
+    }
+    let note_oid = repo.odb.write(ObjectKind::Blob, combined.as_bytes())?;
     entries.push(NotesTreeEntry {
         mode: 0o100644,
         path: hex.as_bytes().to_vec(),
         oid: note_oid,
     });
-
-    write_notes_commit(repo, notes_ref, &entries, "Notes added by 'git notes edit'")?;
+    let log = if is_edit {
+        "Notes added by 'git notes edit'"
+    } else {
+        "Notes added by 'git notes append'"
+    };
+    write_notes_commit(repo, notes_ref, &entries, log)?;
     Ok(())
 }
 
@@ -735,136 +1075,349 @@ fn show_note(repo: &Repository, notes_ref: &str, object: Option<&str>) -> Result
     bail!("No note found for object {hex}");
 }
 
-/// Remove the note for an object.
-fn remove_note(repo: &Repository, notes_ref: &str, object: Option<&str>) -> Result<()> {
-    let oid = resolve_object(repo, object)?;
-    let hex = oid.to_hex();
-    let mut entries = read_notes_tree(repo, notes_ref)?;
-
-    let len_before = entries.len();
-    entries.retain(|e| note_object_name(&e.path).as_deref() != Some(hex.as_str()));
-
-    if entries.len() == len_before {
-        bail!("Object {hex} has no note to remove");
-    }
-
-    write_notes_commit(
-        repo,
-        notes_ref,
-        &entries,
-        "Notes removed by 'git notes remove'",
-    )?;
-
-    eprintln!("Removing note for object {hex}");
-    Ok(())
-}
-
-/// Append to the note for an object.
-fn append_note(
+fn remove_notes(
     repo: &Repository,
     notes_ref: &str,
-    object: Option<&str>,
-    message: Option<String>,
-    file: Option<std::path::PathBuf>,
+    ignore_missing: bool,
+    from_stdin: bool,
+    objects: &[String],
 ) -> Result<()> {
-    let oid = resolve_object(repo, object)?;
-    let hex = oid.to_hex();
-
-    let msg = if let Some(m) = message {
-        m
-    } else if let Some(f) = file {
-        if f.as_os_str() == "-" {
-            let mut buf = String::new();
-            io::stdin().read_to_string(&mut buf)?;
-            buf
-        } else {
-            std::fs::read_to_string(&f).with_context(|| format!("reading '{}'", f.display()))?
-        }
-    } else {
-        let edited = launch_editor(repo, "")?;
-        if edited.trim().is_empty() {
-            bail!("Aborting due to empty note");
-        }
-        edited
-    };
-
-    let mut entries = read_notes_tree(repo, notes_ref)?;
-
-    // Find existing note content
-    let existing_content = entries
-        .iter()
-        .find(|e| note_object_name(&e.path).as_deref() == Some(hex.as_str()))
-        .and_then(|e| {
-            let blob = repo.odb.read(&e.oid).ok()?;
-            Some(String::from_utf8_lossy(&blob.data).into_owned())
-        });
-
-    // Remove old entry if present
-    entries.retain(|e| note_object_name(&e.path).as_deref() != Some(hex.as_str()));
-
-    // Build new content (match Git: one `\n` between previous blob and new `-m` text when both exist).
-    let new_content = match existing_content {
-        Some(old) => {
-            let mut s = old;
-            if !msg.is_empty() && !s.is_empty() {
-                if !s.ends_with('\n') {
-                    s.push('\n');
-                }
-                s.push('\n');
+    let mut targets: Vec<String> = objects.to_vec();
+    if from_stdin {
+        let mut line = String::new();
+        while io::stdin().read_line(&mut line)? > 0 {
+            let t = line.trim();
+            if !t.is_empty() {
+                targets.push(t.to_string());
             }
-            s.push_str(&msg);
-            if !s.ends_with('\n') && !s.is_empty() {
-                s.push('\n');
-            }
-            s
+            line.clear();
         }
-        None => {
-            if msg.is_empty() {
-                msg
-            } else if msg.ends_with('\n') {
-                msg
-            } else {
-                format!("{msg}\n")
+    }
+    if targets.is_empty() && !from_stdin {
+        targets.push("HEAD".to_string());
+    }
+    let entries_before = read_notes_tree(repo, notes_ref)?;
+    let count_before = entries_before.len();
+    let mut retval = 0i32;
+    let mut oids: Vec<ObjectId> = Vec::new();
+    for name in &targets {
+        match resolve_revision(repo, name) {
+            Ok(o) => oids.push(o),
+            Err(_) => {
+                eprintln!("error: Failed to resolve '{name}' as a valid ref.");
+                retval = 1;
             }
         }
-    };
-
-    // Write new blob
-    let note_oid = repo.odb.write(ObjectKind::Blob, new_content.as_bytes())?;
-
-    entries.push(NotesTreeEntry {
-        mode: 0o100644,
-        path: hex.as_bytes().to_vec(),
-        oid: note_oid,
-    });
-
-    write_notes_commit(
-        repo,
-        notes_ref,
-        &entries,
-        "Notes added by 'git notes append'",
-    )?;
-
+    }
+    for oid in &oids {
+        let hex = oid.to_hex();
+        let has = entries_before
+            .iter()
+            .any(|e| note_object_name(&e.path).as_deref() == Some(hex.as_str()));
+        if !has {
+            eprintln!("Object {hex} has no note");
+            if !ignore_missing {
+                retval = 1;
+            }
+        }
+    }
+    if retval != 0 {
+        std::process::exit(1);
+    }
+    let mut entries = entries_before;
+    for oid in oids {
+        let hex = oid.to_hex();
+        let len = entries.len();
+        entries.retain(|e| note_object_name(&e.path).as_deref() != Some(hex.as_str()));
+        if entries.len() != len {
+            eprintln!("Removing note for object {hex}");
+        }
+    }
+    if entries.len() != count_before {
+        write_notes_commit(
+            repo,
+            notes_ref,
+            &entries,
+            "Notes removed by 'git notes remove'",
+        )?;
+    }
     Ok(())
 }
 
-/// Copy a note from one object to another.
-fn copy_note(repo: &Repository, notes_ref: &str, from: &str, to: &str, force: bool) -> Result<()> {
-    let from_oid = resolve_object(repo, Some(from))?;
-    let to_oid = resolve_object(repo, Some(to))?;
+#[derive(Clone, Copy)]
+enum RewriteCombine {
+    Overwrite,
+    Ignore,
+    Concatenate,
+    CatSortUniq,
+}
+
+fn parse_rewrite_combine(s: &str) -> Option<RewriteCombine> {
+    match s.to_ascii_lowercase().as_str() {
+        "overwrite" => Some(RewriteCombine::Overwrite),
+        "ignore" => Some(RewriteCombine::Ignore),
+        "concatenate" => Some(RewriteCombine::Concatenate),
+        "cat_sort_uniq" => Some(RewriteCombine::CatSortUniq),
+        _ => None,
+    }
+}
+
+struct RewriteCfg {
+    refs: Vec<String>,
+    combine: RewriteCombine,
+}
+
+fn load_rewrite_cfg(repo: &Repository, cmd: &str) -> Result<Option<RewriteCfg>> {
+    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let key = format!("notes.rewrite.{cmd}");
+    let enabled = cfg
+        .get(&key)
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(true);
+    let mut combine = RewriteCombine::Concatenate;
+    if let Ok(v) = std::env::var("GIT_NOTES_REWRITE_MODE") {
+        combine = parse_rewrite_combine(&v)
+            .ok_or_else(|| anyhow::anyhow!("Bad GIT_NOTES_REWRITE_MODE value: '{v}'"))?;
+    } else if let Some(v) = cfg.get("notes.rewriteMode") {
+        combine = parse_rewrite_combine(&v)
+            .ok_or_else(|| anyhow::anyhow!("Bad notes.rewriteMode value: '{v}'"))?;
+    }
+    let mut refs: Vec<String> = Vec::new();
+    if let Ok(v) = std::env::var("GIT_NOTES_REWRITE_REF") {
+        for p in v.split(':') {
+            let s = p.trim();
+            if !s.is_empty() {
+                refs.push(s.to_string());
+            }
+        }
+    } else {
+        for p in cfg.get_all("notes.rewriteRef") {
+            let s = p.trim();
+            if s.starts_with("refs/notes/") {
+                refs.push(s.to_string());
+            }
+        }
+        if refs.is_empty() {
+            if let Some(s) = cfg.get("notes.rewriteRef") {
+                let s = s.trim();
+                if s.starts_with("refs/notes/") {
+                    refs.push(s.to_string());
+                }
+            }
+        }
+    }
+    if !enabled || refs.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(RewriteCfg { refs, combine }))
+}
+
+fn apply_rewrite_copy(
+    repo: &Repository,
+    entries: &mut Vec<NotesTreeEntry>,
+    from: &ObjectId,
+    to: &ObjectId,
+    force: bool,
+    combine: RewriteCombine,
+) -> Result<()> {
+    let from_hex = from.to_hex();
+    let to_hex = to.to_hex();
+    let from_blob = entries
+        .iter()
+        .find(|e| note_object_name(&e.path).as_deref() == Some(from_hex.as_str()))
+        .map(|e| e.oid);
+    let to_blob = entries
+        .iter()
+        .find(|e| note_object_name(&e.path).as_deref() == Some(to_hex.as_str()))
+        .map(|e| e.oid);
+    match combine {
+        RewriteCombine::Ignore => Ok(()),
+        RewriteCombine::Overwrite => {
+            let Some(note) = from_blob else {
+                return Ok(());
+            };
+            if to_blob.is_some() && !force {
+                bail!("Cannot copy notes. Found existing notes for object {to_hex}. Use '-f' to overwrite existing notes");
+            }
+            if to_blob.is_some() && force {
+                eprintln!("Overwriting existing notes for object {to_hex}");
+            }
+            entries.retain(|e| note_object_name(&e.path).as_deref() != Some(to_hex.as_str()));
+            entries.push(NotesTreeEntry {
+                mode: 0o100644,
+                path: to_hex.as_bytes().to_vec(),
+                oid: note,
+            });
+            Ok(())
+        }
+        RewriteCombine::Concatenate => {
+            let new_oid = from_blob;
+            let cur_oid = to_blob;
+            let out = match (cur_oid, new_oid) {
+                (None, None) => return Ok(()),
+                (None, Some(n)) => n,
+                (Some(c), None) => c,
+                (Some(c), Some(n)) => combine_notes_concatenate(repo, Some(&c), Some(&n))?,
+            };
+            entries.retain(|e| note_object_name(&e.path).as_deref() != Some(to_hex.as_str()));
+            entries.push(NotesTreeEntry {
+                mode: 0o100644,
+                path: to_hex.as_bytes().to_vec(),
+                oid: out,
+            });
+            Ok(())
+        }
+        RewriteCombine::CatSortUniq => match (to_blob, from_blob) {
+            (None, None) => Ok(()),
+            (Some(_t), None) => Ok(()),
+            (None, Some(f)) => {
+                entries.retain(|e| note_object_name(&e.path).as_deref() != Some(to_hex.as_str()));
+                entries.push(NotesTreeEntry {
+                    mode: 0o100644,
+                    path: to_hex.as_bytes().to_vec(),
+                    oid: f,
+                });
+                Ok(())
+            }
+            (Some(t), Some(f)) => {
+                let out = combine_notes_cat_sort_uniq(repo, Some(&t), Some(&f))?;
+                entries.retain(|e| note_object_name(&e.path).as_deref() != Some(to_hex.as_str()));
+                entries.push(NotesTreeEntry {
+                    mode: 0o100644,
+                    path: to_hex.as_bytes().to_vec(),
+                    oid: out,
+                });
+                Ok(())
+            }
+        },
+    }
+}
+
+fn copy_notes(
+    repo: &Repository,
+    notes_ref: &str,
+    force: bool,
+    from_stdin: bool,
+    for_rewrite: Option<&str>,
+    objects: &[String],
+) -> Result<()> {
+    if from_stdin || for_rewrite.is_some() {
+        if !objects.is_empty() {
+            eprintln!("error: too many arguments");
+            eprintln!(
+                "usage: git notes copy [<options>] <from-object> <to-object>\n   or: git notes copy --stdin [<from-object> <to-object>]..."
+            );
+            std::process::exit(129);
+        }
+        if let Some(cmd) = for_rewrite {
+            if let Some(rcfg) = load_rewrite_cfg(repo, cmd)? {
+                let mut trees: Vec<(String, Vec<NotesTreeEntry>)> = rcfg
+                    .refs
+                    .iter()
+                    .map(|r| (r.clone(), read_notes_tree(repo, r).unwrap_or_default()))
+                    .collect();
+                let mut line = String::new();
+                let mut err = 0i32;
+                while io::stdin().read_line(&mut line)? > 0 {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() < 2 {
+                        bail!("malformed input line: '{}'.", line.trim_end());
+                    }
+                    let from_oid = resolve_revision(repo, parts[0]).with_context(|| {
+                        format!("failed to resolve '{}' as a valid ref.", parts[0])
+                    })?;
+                    let to_oid = resolve_revision(repo, parts[1]).with_context(|| {
+                        format!("failed to resolve '{}' as a valid ref.", parts[1])
+                    })?;
+                    for (_refname, ent) in trees.iter_mut() {
+                        if apply_rewrite_copy(repo, ent, &from_oid, &to_oid, force, rcfg.combine)
+                            .is_err()
+                        {
+                            eprintln!(
+                                "error: failed to copy notes from '{}' to '{}'",
+                                parts[0], parts[1]
+                            );
+                            err = 1;
+                        }
+                    }
+                    line.clear();
+                }
+                for (refname, ent) in trees {
+                    write_notes_commit(repo, &refname, &ent, "Notes added by 'git notes copy'")?;
+                }
+                if err != 0 {
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
+            return Ok(());
+        }
+        let mut entries = read_notes_tree(repo, notes_ref)?;
+        let mut line = String::new();
+        let mut err = 0i32;
+        while io::stdin().read_line(&mut line)? > 0 {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 2 {
+                bail!("malformed input line: '{}'.", line.trim_end());
+            }
+            let from_oid = resolve_revision(repo, parts[0])
+                .with_context(|| format!("failed to resolve '{}' as a valid ref.", parts[0]))?;
+            let to_oid = resolve_revision(repo, parts[1])
+                .with_context(|| format!("failed to resolve '{}' as a valid ref.", parts[1]))?;
+            if let Err(_) = apply_rewrite_copy(
+                repo,
+                &mut entries,
+                &from_oid,
+                &to_oid,
+                force,
+                RewriteCombine::Overwrite,
+            ) {
+                eprintln!(
+                    "error: failed to copy notes from '{}' to '{}'",
+                    parts[0], parts[1]
+                );
+                err = 1;
+            }
+            line.clear();
+        }
+        if err != 0 {
+            std::process::exit(1);
+        }
+        write_notes_commit(repo, notes_ref, &entries, "Notes added by 'git notes copy'")?;
+        return Ok(());
+    }
+    let (from, to) = match objects.len() {
+        0 => {
+            eprintln!("error: too few arguments");
+            eprintln!(
+                "usage: git notes copy [<options>] <from-object> <to-object>\n   or: git notes copy --stdin [<from-object> <to-object>]..."
+            );
+            std::process::exit(129);
+        }
+        1 => (objects[0].as_str(), "HEAD"),
+        2 => (objects[0].as_str(), objects[1].as_str()),
+        _ => {
+            eprintln!("error: too many arguments");
+            eprintln!(
+                "usage: git notes copy [<options>] <from-object> <to-object>\n   or: git notes copy --stdin [<from-object> <to-object>]..."
+            );
+            std::process::exit(129);
+        }
+    };
+    let from_oid = resolve_revision(repo, from)
+        .with_context(|| format!("failed to resolve '{from}' as a valid ref."))?;
+    let to_oid = resolve_revision(repo, to)
+        .with_context(|| format!("failed to resolve '{to}' as a valid ref."))?;
     let from_hex = from_oid.to_hex();
     let to_hex = to_oid.to_hex();
-
     let mut entries = read_notes_tree(repo, notes_ref)?;
-
-    // Find the source note
     let source_entry = entries
         .iter()
         .find(|e| note_object_name(&e.path).as_deref() == Some(from_hex.as_str()))
-        .ok_or_else(|| anyhow::anyhow!("missing notes on source object {from_hex}"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("missing notes on source object {from_hex}. Cannot copy.")
+        })?;
     let note_blob_oid = source_entry.oid;
-
-    // Check if target already has a note
     if entries
         .iter()
         .any(|e| note_object_name(&e.path).as_deref() == Some(to_hex.as_str()))
@@ -875,17 +1428,15 @@ fn copy_note(repo: &Repository, notes_ref: &str, from: &str, to: &str, force: bo
                 to_hex
             );
         }
+        eprintln!("Overwriting existing notes for object {to_hex}");
         entries.retain(|e| note_object_name(&e.path).as_deref() != Some(to_hex.as_str()));
     }
-
     entries.push(NotesTreeEntry {
         mode: 0o100644,
         path: to_hex.as_bytes().to_vec(),
         oid: note_blob_oid,
     });
-
     write_notes_commit(repo, notes_ref, &entries, "Notes added by 'git notes copy'")?;
-
     Ok(())
 }
 
@@ -974,9 +1525,12 @@ struct NotesMergePair {
     local: LocalNoteState,
 }
 
+/// Match Git's `expand_notes_ref` (`notes.c`): only `--ref` uses this; env/config refs are verbatim.
 fn expand_notes_ref(short_or_full: &str) -> String {
-    if short_or_full.starts_with("refs/") {
+    if short_or_full.starts_with("refs/notes/") {
         short_or_full.to_owned()
+    } else if short_or_full.starts_with("notes/") {
+        format!("refs/{short_or_full}")
     } else {
         format!("refs/notes/{short_or_full}")
     }

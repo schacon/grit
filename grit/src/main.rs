@@ -2782,7 +2782,7 @@ fn strip_subcommand_leading_change_dir(subcmd: &str, rest: &mut Vec<String>) -> 
     Ok(())
 }
 
-fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T {
+pub(crate) fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T {
     if subcmd == "stash"
         && rest.len() >= 2
         && rest[0] == "push"
@@ -3550,7 +3550,116 @@ fn preprocess_log_pickaxe_args(rest: Vec<String>) -> Vec<String> {
     out
 }
 
+fn expand_git_notes_ref_token(token: &str) -> String {
+    if token.starts_with("refs/notes/") {
+        token.to_string()
+    } else if token.starts_with("notes/") {
+        format!("refs/{token}")
+    } else {
+        format!("refs/notes/{token}")
+    }
+}
+
+#[derive(Clone, Copy)]
+enum NotesDisplayDefault {
+    /// `git log`: notes appear in medium/full unless `--no-notes`.
+    OnIfUnset,
+    /// `git show` / `git format-patch`: notes only with explicit `--notes` / `--show-notes`.
+    OffIfUnset,
+}
+
+/// Strip Git note-display options and record state in env for log/show/format-patch.
+fn preprocess_git_notes_display_argv(
+    rest: &[String],
+    default_notes: NotesDisplayDefault,
+) -> Vec<String> {
+    let mut cli_on: Option<bool> = None;
+    let mut use_default: i8 = -1;
+    let mut out: Vec<String> = Vec::with_capacity(rest.len());
+    let mut notes_tail: Vec<String> = Vec::new();
+    let mut i = 0usize;
+    while i < rest.len() {
+        let arg = rest[i].as_str();
+        if arg == "--show-notes" {
+            cli_on = Some(true);
+            if use_default < 0 {
+                use_default = 1;
+            }
+            notes_tail.push("--notes".to_string());
+            i += 1;
+            continue;
+        }
+        if let Some(v) = arg.strip_prefix("--show-notes=") {
+            cli_on = Some(true);
+            if use_default < 0 {
+                use_default = 1;
+            }
+            notes_tail.push(format!("--notes={}", expand_git_notes_ref_token(v)));
+            i += 1;
+            continue;
+        }
+        if arg == "--notes" {
+            cli_on = Some(true);
+            if use_default < 0 {
+                use_default = 1;
+            }
+            notes_tail.push("--notes".to_string());
+            i += 1;
+            continue;
+        }
+        if let Some(v) = arg.strip_prefix("--notes=") {
+            cli_on = Some(true);
+            notes_tail.push(format!("--notes={}", expand_git_notes_ref_token(v)));
+            i += 1;
+            continue;
+        }
+        if arg == "--no-notes" {
+            cli_on = Some(false);
+            use_default = -1;
+            notes_tail.clear();
+            i += 1;
+            continue;
+        }
+        if arg == "--standard-notes" {
+            use_default = 1;
+            i += 1;
+            continue;
+        }
+        if arg == "--no-standard-notes" {
+            use_default = 0;
+            i += 1;
+            continue;
+        }
+        out.push(rest[i].clone());
+        i += 1;
+    }
+    out.extend(notes_tail);
+    match cli_on {
+        Some(true) => std::env::set_var("GIT_GRIT_LOG_NOTES_CLI", "on"),
+        Some(false) => std::env::set_var("GIT_GRIT_LOG_NOTES_CLI", "off"),
+        None => std::env::remove_var("GIT_GRIT_LOG_NOTES_CLI"),
+    }
+    std::env::set_var(
+        "GIT_GRIT_LOG_NOTES_DEFAULT",
+        match default_notes {
+            NotesDisplayDefault::OnIfUnset => "1",
+            NotesDisplayDefault::OffIfUnset => "0",
+        },
+    );
+    std::env::set_var(
+        "GIT_GRIT_LOG_NOTES_USE_DEFAULT",
+        match use_default {
+            -1 => "",
+            0 => "0",
+            _ => "1",
+        },
+    );
+    std::env::remove_var("GIT_GRIT_LOG_NOTES_EXTRA");
+    out
+}
+
 fn preprocess_log_args(rest: &[String]) -> Vec<String> {
+    let rest = preprocess_git_notes_display_argv(rest, NotesDisplayDefault::OnIfUnset);
     let mut result = Vec::new();
     let mut saw_graph = false;
     let mut i = 0usize;
@@ -4146,7 +4255,10 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "fmt-merge-msg" => commands::fmt_merge_msg::run(parse_cmd_args(subcmd, rest)),
         "for-each-ref" => commands::for_each_ref::run(parse_cmd_args(subcmd, rest)),
         "for-each-repo" => commands::for_each_repo::run(parse_cmd_args(subcmd, rest)),
-        "format-patch" => commands::format_patch::run(parse_cmd_args(subcmd, rest)),
+        "format-patch" => {
+            let rest = preprocess_git_notes_display_argv(rest, NotesDisplayDefault::OffIfUnset);
+            commands::format_patch::run(parse_cmd_args(subcmd, &rest))
+        }
         "fsck" => commands::fsck::run(parse_cmd_args(subcmd, rest)),
         "gc" => commands::gc::run(parse_cmd_args(subcmd, rest)),
         "get-tar-commit-id" => commands::get_tar_commit_id::run(parse_cmd_args(subcmd, rest)),
@@ -4271,7 +4383,35 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         }
         "mv" => commands::mv::run(parse_cmd_args(subcmd, rest)),
         "name-rev" => commands::name_rev::run(parse_cmd_args(subcmd, rest)),
-        "notes" => commands::notes::run(parse_cmd_args(subcmd, rest)),
+        "notes" => {
+            let mut i = 0usize;
+            while i < rest.len() {
+                let a = rest[i].as_str();
+                if a == "--ref" || a == "--no-ref" {
+                    i = i.saturating_add(2);
+                    continue;
+                }
+                if a.starts_with("--ref=") || a.starts_with("--no-ref=") {
+                    i += 1;
+                    continue;
+                }
+                break;
+            }
+            if i < rest.len() {
+                let first = rest[i].as_str();
+                if !first.starts_with('-') {
+                    const NOTES_SUBS: &[&str] = &[
+                        "list", "add", "show", "remove", "append", "edit", "copy", "merge",
+                        "prune", "get-ref",
+                    ];
+                    if !NOTES_SUBS.iter().any(|s| *s == first) {
+                        eprintln!("error: unknown subcommand: `{first}`");
+                        std::process::exit(129);
+                    }
+                }
+            }
+            commands::notes::run_from_argv(rest)
+        }
         "pack-objects" => commands::pack_objects::run(parse_cmd_args(subcmd, rest)),
         "pkt-line" => {
             let sub = rest.first().map(|s| s.as_str()).unwrap_or("");
@@ -4323,7 +4463,50 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "sh-setup" => commands::sh_setup::run(parse_cmd_args(subcmd, rest)),
         "shell" => commands::shell::run(parse_cmd_args(subcmd, rest)),
         "shortlog" => commands::shortlog::run(parse_cmd_args(subcmd, rest)),
-        "show" => commands::show::run(parse_cmd_args(subcmd, rest)),
+        "show" => {
+            let mut saw_bare_pretty = false;
+            let mut explicit_pretty = false;
+            let mut i = 0usize;
+            while i < rest.len() {
+                let a = rest[i].as_str();
+                if a == "--pretty" {
+                    let next_is_value = rest
+                        .get(i + 1)
+                        .map(|n| !n.starts_with('-'))
+                        .unwrap_or(false);
+                    if !next_is_value {
+                        saw_bare_pretty = true;
+                    } else {
+                        explicit_pretty = true;
+                    }
+                } else if a.starts_with("--pretty=") && a.len() > "--pretty=".len() {
+                    explicit_pretty = true;
+                } else if a == "--format" {
+                    if rest
+                        .get(i + 1)
+                        .map(|n| !n.starts_with('-'))
+                        .unwrap_or(false)
+                    {
+                        explicit_pretty = true;
+                    }
+                } else if a.starts_with("--format=") && a.len() > "--format=".len() {
+                    explicit_pretty = true;
+                }
+                i += 1;
+            }
+            if saw_bare_pretty {
+                std::env::set_var("GIT_GRIT_SHOW_BARE_PRETTY", "1");
+            } else {
+                std::env::remove_var("GIT_GRIT_SHOW_BARE_PRETTY");
+            }
+            if explicit_pretty {
+                std::env::set_var("GIT_GRIT_SHOW_EXPLICIT_PRETTY", "1");
+            } else {
+                std::env::remove_var("GIT_GRIT_SHOW_EXPLICIT_PRETTY");
+            }
+            let rest = preprocess_git_notes_display_argv(rest, NotesDisplayDefault::OnIfUnset);
+            commands::show::run(parse_cmd_args(subcmd, &rest))
+        }
         "show-branch" => commands::show_branch::run(parse_cmd_args(subcmd, rest)),
         "show-index" => commands::show_index::run(parse_cmd_args(subcmd, rest)),
         "show-ref" => commands::show_ref::run(parse_cmd_args(subcmd, rest)),

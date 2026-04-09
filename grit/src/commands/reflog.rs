@@ -256,6 +256,7 @@ fn run_show(args: ShowArgs) -> Result<()> {
         max_count: args.max_count,
         oneline,
         format,
+        pretty: None,
         reverse: false,
         first_parent: false,
         root: false,

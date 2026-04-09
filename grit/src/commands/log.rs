@@ -30,6 +30,7 @@ use grit_lib::merge_diff::{blob_text_for_diff, is_binary_for_diff};
 use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::reflog::read_reflog;
+use grit_lib::refs::list_refs_glob;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
     collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, rev_list,
@@ -41,6 +42,7 @@ use grit_lib::rev_parse::{
 use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as FmtWrite;
 use std::fs::OpenOptions;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -61,9 +63,18 @@ pub struct Args {
     #[arg(long = "oneline")]
     pub oneline: bool,
 
-    /// Pretty-print format.
-    #[arg(long = "format", alias = "pretty")]
+    /// Pretty-print format (`git log --format=...`).
+    #[arg(long = "format", value_name = "FORMAT")]
     pub format: Option<String>,
+
+    /// Pretty-print format (`git log --pretty` with optional format; bare `--pretty` → `medium`).
+    #[arg(
+        long = "pretty",
+        value_name = "FORMAT",
+        num_args = 0..=1,
+        default_missing_value = "medium"
+    )]
+    pub pretty: Option<String>,
 
     /// Show in reverse order.
     #[arg(long = "reverse")]
@@ -2589,6 +2600,9 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;
+    if args.format.is_none() {
+        args.format = args.pretty.clone();
+    }
     if grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir)) {
         for p in &mut args.pathspecs {
             *p = grit_lib::unicode_normalization::precompose_utf8_path(p).into_owned();
@@ -4638,8 +4652,7 @@ fn format_relative_from_diff(diff: i64) -> String {
     }
 }
 
-/// Lazily loads the git-notes map on first use so `grit log` does not read every
-/// note before printing the first commit (e.g. oneline output never touches notes).
+/// Lazily loads the default git-notes map (`GIT_NOTES_REF` / `core.notesRef`) for `%N` in custom formats.
 struct NotesMapCache<'a> {
     repo: &'a Repository,
     map: Option<std::collections::HashMap<ObjectId, Vec<u8>>>,
@@ -4660,6 +4673,129 @@ impl<'a> NotesMapCache<'a> {
         }
         self.map.as_ref().unwrap()
     }
+}
+
+fn log_notes_enabled() -> bool {
+    match std::env::var("GIT_GRIT_LOG_NOTES_CLI").ok().as_deref() {
+        Some("off") => false,
+        Some("on") => true,
+        _ => std::env::var("GIT_GRIT_LOG_NOTES_DEFAULT").ok().as_deref() == Some("1"),
+    }
+}
+
+/// Whether `git show` should print the default `Notes:` block for medium-style headers.
+///
+/// `git show --pretty` (no format) matches C Git: no notes. Plain `git show` and `--pretty=<fmt>` can show notes.
+pub fn show_notes_display_enabled() -> bool {
+    if std::env::var("GIT_GRIT_SHOW_BARE_PRETTY").ok().as_deref() == Some("1") {
+        return false;
+    }
+    if std::env::var("GIT_GRIT_SHOW_EXPLICIT_PRETTY")
+        .ok()
+        .as_deref()
+        == Some("1")
+    {
+        return false;
+    }
+    log_notes_enabled()
+}
+
+/// Append Git-style `Notes:` blocks to a format-patch body when note display is enabled.
+pub fn append_format_patch_notes(repo: &Repository, oid: &ObjectId, body: &str) -> String {
+    if !log_notes_enabled() {
+        return body.to_string();
+    }
+    let mut extra = String::new();
+    for (header, refname) in collect_log_display_note_refs(repo) {
+        let map = load_notes_map_for_ref(repo, &refname);
+        if let Some(note_data) = map.get(oid) {
+            let note_text = String::from_utf8_lossy(note_data);
+            let _ = extra.write_char('\n');
+            let _ = writeln!(extra, "{header}:");
+            for line in note_text.lines() {
+                let _ = writeln!(extra, "    {line}");
+            }
+        }
+    }
+    if extra.is_empty() {
+        return body.to_string();
+    }
+    format!("{}{}", body.trim_end_matches('\n'), extra)
+}
+
+fn collect_log_display_note_refs(repo: &Repository) -> Vec<(String, String)> {
+    if !log_notes_enabled() {
+        return Vec::new();
+    }
+    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let default_ref = std::env::var("GIT_NOTES_REF")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| cfg.get("core.notesRef").filter(|s| !s.is_empty()))
+        .unwrap_or_else(|| "refs/notes/commits".to_string());
+
+    let ud = std::env::var("GIT_GRIT_LOG_NOTES_USE_DEFAULT").unwrap_or_default();
+    let use_default_notes: i8 = if ud.is_empty() {
+        -1
+    } else if ud == "0" {
+        0
+    } else {
+        1
+    };
+
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    let mut push_ref = |refname: &str| {
+        if !seen.insert(refname.to_string()) {
+            return;
+        }
+        let short = refname.strip_prefix("refs/notes/").unwrap_or(refname);
+        let header = if refname == default_ref {
+            "Notes".to_string()
+        } else {
+            format!("Notes ({short})")
+        };
+        out.push((header, refname.to_string()));
+    };
+
+    // Default ref + `notes.displayRef` / `GIT_NOTES_DISPLAY_REF` (matches `load_display_notes` default block).
+    let load_default_block = use_default_notes > 0
+        || (use_default_notes == -1 && std::env::var("GIT_GRIT_LOG_NOTES_CLI").is_err());
+    if load_default_block {
+        push_ref(&default_ref);
+        match std::env::var("GIT_NOTES_DISPLAY_REF") {
+            Ok(s) if !s.is_empty() => {
+                for pat in s.split(':') {
+                    let pat = pat.trim();
+                    if pat.is_empty() {
+                        continue;
+                    }
+                    if let Ok(refs) = list_refs_glob(&repo.git_dir, pat) {
+                        for (name, _) in refs {
+                            push_ref(&name);
+                        }
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(_) => {
+                for pat in cfg.get_all("notes.displayRef") {
+                    let pat = pat.trim();
+                    if pat.is_empty() {
+                        continue;
+                    }
+                    if let Ok(refs) = list_refs_glob(&repo.git_dir, pat) {
+                        for (name, _) in refs {
+                            push_ref(&name);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    out
 }
 
 /// Load notes from the configured notes ref (or `refs/notes/commits` default).
@@ -4787,31 +4923,28 @@ fn write_notes(
     if args.no_notes {
         return Ok(());
     }
-    if args.notes_refs.is_empty() {
-        let notes_map = notes_cache.map();
-        if let Some(note_data) = notes_map.get(oid) {
-            let note_text = String::from_utf8_lossy(note_data);
-            writeln!(out)?;
-            writeln!(out, "Notes:")?;
-            for line in note_text.lines() {
-                writeln!(out, "    {line}")?;
-            }
-        }
-        return Ok(());
-    }
+    let mut display = if args.format.as_deref() == Some("raw")
+        && std::env::var("GIT_GRIT_LOG_NOTES_CLI").ok().as_deref() != Some("on")
+    {
+        Vec::new()
+    } else {
+        collect_log_display_note_refs(notes_cache.repo())
+    };
+    let mut seen: HashSet<String> = display.iter().map(|(_, r)| r.clone()).collect();
     for spec in &args.notes_refs {
-        let (header, refname) = if spec.is_empty() {
-            ("Notes".to_owned(), "refs/notes/commits".to_owned())
+        let refname = if spec.is_empty() {
+            "refs/notes/commits".to_string()
+        } else if spec.starts_with("refs/") {
+            spec.clone()
         } else {
-            let s = spec.as_str();
-            let refname = if s.starts_with("refs/") {
-                s.to_owned()
-            } else {
-                format!("refs/notes/{s}")
-            };
-            let short = s.strip_prefix("refs/notes/").unwrap_or(s);
-            (format!("Notes ({short})"), refname)
+            format!("refs/notes/{spec}")
         };
+        if seen.insert(refname.clone()) {
+            let short = refname.strip_prefix("refs/notes/").unwrap_or(&refname);
+            display.push((format!("Notes ({short})"), refname));
+        }
+    }
+    for (header, refname) in display {
         let map = load_notes_map_for_ref(notes_cache.repo(), &refname);
         if let Some(note_data) = map.get(oid) {
             let note_text = String::from_utf8_lossy(note_data);
@@ -5353,6 +5486,27 @@ fn format_commit(
                 }
             } else {
                 write!(out, "{formatted}")?;
+            }
+        }
+        Some("raw") => {
+            writeln!(out, "commit {hex}")?;
+            writeln!(out, "tree {}", info.tree.to_hex())?;
+            for parent in display_parents {
+                writeln!(out, "parent {}", parent.to_hex())?;
+            }
+            writeln!(out, "author {}", info.author)?;
+            writeln!(out, "committer {}", info.committer)?;
+            writeln!(out)?;
+            for line in info.message.lines() {
+                writeln!(out, "    {line}")?;
+            }
+            writeln!(out)?;
+            // `git log --pretty=raw` omits notes unless `--notes` / `--show-notes` is given.
+            if matches!(
+                std::env::var("GIT_GRIT_LOG_NOTES_CLI").ok().as_deref(),
+                Some("on")
+            ) {
+                write_notes(out, oid, notes_cache, args, odb)?;
             }
         }
         Some("short") => {
