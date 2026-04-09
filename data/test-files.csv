@@ -1238,7 +1238,7 @@ t7512-status-help	t7	yes	47	8	39	false	ok	0
 t7513-interpret-trailers	t7	yes	99	99	0	true	ok	0
 t7514-commit-patch	t7	yes	3	1	2	false	ok	0
 t7514-interpret-trailers-options	t7	yes	10	1	9	false	ok	0
-t7515-status-symlinks	t7	yes	3	1	2	false	ok	0
+t7515-status-symlinks	t7	yes	3	3	0	true	ok	0
 t7516-commit-races	t7	yes	2	0	2	false	ok	0
 t7517-per-repo-email	t7	yes	16	16	0	true	ok	0
 t7518-ident-corner-cases	t7	yes	5	3	2	false	ok	0
