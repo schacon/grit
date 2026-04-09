@@ -15,7 +15,7 @@ use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rev_parse::{peel_to_commit_for_merge_base, resolve_revision};
 use grit_lib::unpack_objects::{unpack_objects, UnpackOptions};
 
 use crate::grit_exe::grit_executable;
@@ -25,6 +25,13 @@ use crate::wire_trace;
 
 thread_local! {
     static PACKET_TRACE_IDENTITY: Cell<&'static str> = const { Cell::new("fetch") };
+}
+
+fn peel_commit_oid_for_negotiation(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
+    peel_to_commit_for_merge_base(repo, oid).map_err(|e| match e {
+        grit_lib::error::Error::InvalidRef(msg) => anyhow::anyhow!(msg),
+        other => other.into(),
+    })
 }
 
 /// Run `f` with `GIT_TRACE_PACKET` lines labeled as `identity` (`fetch`, `clone`, …).
@@ -326,7 +333,10 @@ fn read_ack_round_with_negotiator(
             pkt_line::Packet::Data(ln) => {
                 trace_packet_fetch('<', ln.trim_end());
                 if ln.trim_end() == "NAK" {
-                    continue;
+                    // `upload-pack` sends `NAK` as the last pkt-line of a negotiation round but does
+                    // not follow it with a flush; waiting for another packet would block forever while
+                    // the server waits for our next `have` batch or `done`.
+                    break;
                 }
                 let Some((ack_oid, kind)) = parse_ack(&ln) else {
                     break;
@@ -636,14 +646,16 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
                 oid
             };
             if negotiator.repo().odb.read(&t).is_ok() {
-                negotiator.add_tip(t)?;
+                let c = peel_commit_oid_for_negotiation(negotiator.repo(), t)?;
+                negotiator.add_tip(c)?;
             }
         }
     }
 
     for w in wants {
         if negotiator.repo().odb.read(w).is_ok() {
-            negotiator.add_tip(*w)?;
+            let c = peel_commit_oid_for_negotiation(negotiator.repo(), *w)?;
+            negotiator.add_tip(c)?;
         }
     }
 
@@ -651,20 +663,28 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     for prefix in ["refs/heads/", "refs/tags/"] {
         if let Ok(entries) = refs::list_refs(local_git_dir, prefix) {
             for (name, oid) in entries {
-                if let Ok(resolved) = resolve_revision(negotiator.repo(), &name) {
-                    tips.push(resolved);
+                let tip = if let Ok(resolved) = resolve_revision(negotiator.repo(), &name) {
+                    resolved
                 } else {
-                    tips.push(oid);
+                    oid
+                };
+                if negotiator.repo().odb.read(&tip).is_err() {
+                    continue;
                 }
+                tips.push(peel_commit_oid_for_negotiation(negotiator.repo(), tip)?);
             }
         }
     }
     if let Ok(h) = refs::resolve_ref(local_git_dir, "HEAD") {
-        tips.push(h);
+        if negotiator.repo().odb.read(&h).is_ok() {
+            tips.push(peel_commit_oid_for_negotiation(negotiator.repo(), h)?);
+        }
     }
     for sym in ["HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] {
         if let Ok(oid) = resolve_revision(negotiator.repo(), sym) {
-            tips.push(oid);
+            if negotiator.repo().odb.read(&oid).is_ok() {
+                tips.push(peel_commit_oid_for_negotiation(negotiator.repo(), oid)?);
+            }
         }
     }
     tips.sort_by_key(|o| o.to_hex());
@@ -686,7 +706,8 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
             continue;
         }
         if negotiator.repo().odb.read(oid).is_ok() {
-            negotiator.known_common(*oid)?;
+            let c = peel_commit_oid_for_negotiation(negotiator.repo(), *oid)?;
+            negotiator.known_common(c)?;
         }
     }
 

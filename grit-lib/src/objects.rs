@@ -363,11 +363,13 @@ pub struct CommitData {
 /// Returns [`Error::CorruptObject`] if required headers are missing.
 pub fn parse_commit(data: &[u8]) -> Result<CommitData> {
     // Header lines are mostly ASCII; author/committer payloads may match the `encoding` header.
-    // Continuation lines (leading SP) append to the previous header; we only retain author/committer.
+    // Continuation lines (leading SP) append to the previous header for author/committer, or are
+    // skipped for multiline headers Git allows (`gpgsig`, `mergetag`, …).
     #[derive(Clone, Copy)]
     enum Continuation {
         Author,
         Committer,
+        Multiline,
         Ignore,
     }
 
@@ -436,7 +438,7 @@ pub fn parse_commit(data: &[u8]) -> Result<CommitData> {
                     })?;
                     c.extend_from_slice(rest);
                 }
-                Continuation::Ignore => {}
+                Continuation::Multiline | Continuation::Ignore => {}
             }
             pos = after_nl;
             continue;
@@ -480,7 +482,7 @@ pub fn parse_commit(data: &[u8]) -> Result<CommitData> {
                 cont = Continuation::Ignore;
             }
             _ => {
-                cont = Continuation::Ignore;
+                cont = Continuation::Multiline;
             }
         }
         pos = after_nl;
@@ -620,4 +622,26 @@ pub fn serialize_commit(c: &CommitData) -> Vec<u8> {
         out.extend_from_slice(c.message.as_bytes());
     }
     out
+}
+
+#[cfg(test)]
+mod commit_parse_tests {
+    use super::*;
+
+    #[test]
+    fn parse_commit_skips_multiline_gpgsig_continuation() {
+        let raw = concat!(
+            "tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n",
+            "author A U Thor <author@example.com> 1 +0000\n",
+            "committer C O Mitter <committer@example.com> 1 +0000\n",
+            "gpgsig -----BEGIN PGP SIGNATURE-----\n",
+            " abcdef\n",
+            " -----END PGP SIGNATURE-----\n",
+            "\n",
+            "msg\n",
+        );
+        let c = parse_commit(raw.as_bytes()).expect("parse signed commit");
+        assert_eq!(c.tree.to_hex(), "4b825dc642cb6eb9a060e54bf8d69288fbee4904");
+        assert_eq!(c.message, "msg\n");
+    }
 }

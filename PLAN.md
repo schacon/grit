@@ -594,7 +594,7 @@ commit → check it off → move on.
 - [ ] `t5503-tagfollow` ██████████░░░░░░░░░░ 6/12 (6 left) — test automatic tag following
 - [x] `t5408-send-pack-stdin` ████████████████████ 10/10 — send-pack --stdin tests
 - [x] `t5519-push-alternates` ████████████████████ 8/8 (0 left) — push to a repository that borrows from elsewhere
-- [ ] `t5802-connect-helper` █████░░░░░░░░░░░░░░░ 2/8 (6 left) — ext::cmd remote 
+- [x] `t5802-connect-helper` — ext::cmd remote (8/8) 
 - [ ] `t5552-skipping-fetch-negotiator` ░░░░░░░░░░░░░░░░░░░░ 0/6 (6 left) — test skipping fetch negotiator
 - [ ] `t5400-send-pack` ███████████░░░░░░░░░ 10/17 (7 left) — See why rewinding head breaks send-pack
 

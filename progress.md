@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 313 completed (`[x]`), 5 in progress (`[~]`), 452 remai
 
 ## Recently completed
 
+- `t5802-connect-helper` — 8/8 tests pass (`ext::` sh -c upload-pack argv extraction; `git daemon --inetd` minimal path; streaming unpack zero-byte trees + duplicate `want` dedup; fetch NAK round + tag-following for ext/HTTP; rev-parse `tag^1` peels tags; harness CSV/dashboards refreshed)
 - `t7421-submodule-summary-add` — 5/5 tests pass (`submodule summary`: index↔commit gitlink diff, pathspecs + renamed paths, `rev-parse` first line for abbrev; `submodule update --remote`: local URL fast path updates `refs/remotes/origin/*` + copies objects, stages gitlink in super index)
 - `t5620-backfill` — 10/10 tests pass (expanded-cone path matching: top-level dirs excluded unless in cone; `sparse-checkout` hydrates before apply + empty-index rebuild from HEAD; promisor lazy-fetch reads local ODB first; checkout skips `skip_worktree` paths)
 - `t4128-apply-root` — 12/12 tests pass (`apply --directory`: Git `normalize_path_copy` + trailing `/`; paths already stripped at parse time — do not strip again in `adjust_path`)

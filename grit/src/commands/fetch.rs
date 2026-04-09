@@ -428,12 +428,33 @@ fn collect_wants_for_upload_pack(
                     if tag.object == old_tip {
                         continue;
                     }
-                    if merge_base::is_ancestor(&remote_repo, tag.object, old_tip).unwrap_or(false) {
+                    // Skip only when we already track this tag ref locally: new tag names that
+                    // point into pre-existing history still need their tag objects (t5802).
+                    if refs::resolve_ref(local_git_dir, &_tag_refname).is_ok()
+                        && merge_base::is_ancestor(&remote_repo, tag.object, old_tip)
+                            .unwrap_or(false)
+                    {
                         continue;
                     }
                 }
                 crate::fetch_transport::push_want_unique(&mut wants, tag_ref_oid);
             }
+        }
+    }
+
+    if should_fetch_tags {
+        for (refname, oid) in advertised {
+            if !refname.starts_with("refs/tags/") {
+                continue;
+            }
+            let have_ref = refs::resolve_ref(local_git_dir, refname).ok();
+            if have_ref == Some(*oid) && local_odb.exists(oid) {
+                continue;
+            }
+            if local_odb.exists(oid) {
+                continue;
+            }
+            crate::fetch_transport::push_want_unique(&mut wants, *oid);
         }
     }
 
@@ -691,16 +712,61 @@ fn fetch_remote(
         cli_refspecs
     };
 
+    let ext_upload_pack_git_dir = if is_ext_url {
+        crate::ext_transport::try_resolve_ext_upload_pack_git_dir(&url)
+    } else {
+        None
+    };
+    let ext_resolved_remote = if let Some(ref gd) = ext_upload_pack_git_dir {
+        Some(open_repo(gd)?)
+    } else {
+        None
+    };
+
     let (remote_heads, remote_tags) = if is_ext_url {
-        let (heads, tags, _, _) =
-            crate::fetch_transport::with_packet_trace_identity("fetch", || {
+        let local_git_for_ext = git_dir.to_path_buf();
+        let refspec_owned_ext = refspecs.clone();
+        let remote_nm_ext = remote_name.to_owned();
+        let should_tags_ext = should_fetch_tags;
+        let has_cli_ext = !upload_pack_refspecs.is_empty();
+        let cli_owned_ext = if prefetch_left_no_positive {
+            Vec::new()
+        } else {
+            cli_refspecs_owned.clone()
+        };
+        let remote_gd_ext = ext_upload_pack_git_dir.clone();
+        let (heads, tags, _, _) = crate::fetch_transport::with_packet_trace_identity(
+            "fetch",
+            || {
                 crate::ext_transport::fetch_via_ext_skipping(
                     git_dir,
                     &url,
                     "git-upload-pack",
                     upload_pack_refspecs,
+                    move |adv| {
+                        if has_cli_ext {
+                            let Some(ref gd) = remote_gd_ext else {
+                                bail!(
+                                    "ext:: fetch with refspecs requires a resolvable local upload-pack path"
+                                );
+                            };
+                            crate::fetch_transport::collect_wants_cli(gd, adv, &cli_owned_ext)
+                        } else if let Some(ref gd) = remote_gd_ext {
+                            collect_wants_for_upload_pack(
+                                &local_git_for_ext,
+                                gd,
+                                adv,
+                                &refspec_owned_ext,
+                                should_tags_ext,
+                                &remote_nm_ext,
+                            )
+                        } else {
+                            crate::fetch_transport::collect_wants(adv, &[])
+                        }
+                    },
                 )
-            })?;
+            },
+        )?;
         (heads, tags)
     } else if url.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", Some(git_dir))?;
@@ -845,10 +911,16 @@ fn fetch_remote(
     // Command-line refspecs (including OID sources like `git fetch origin $B:refs/heads/main`)
     // must update local refs after upload-pack negotiation as well as after the SSH/copy-object
     // path. `collect_wants_cli` only drives the pack request; ref writes happen here.
-    if user_passed_cli_refspecs && !prefetch_left_no_positive && !is_ext_url && !is_http_url {
-        let remote_repo = remote_repo
-            .as_ref()
-            .expect("CLI refspec fetch requires a local remote repository");
+    if user_passed_cli_refspecs
+        && !prefetch_left_no_positive
+        && !is_http_url
+        && (!is_ext_url || ext_resolved_remote.is_some())
+    {
+        let remote_repo = ext_resolved_remote.as_ref().unwrap_or_else(|| {
+            remote_repo
+                .as_ref()
+                .expect("CLI refspec fetch requires a local remote repository")
+        });
         // Collect negative refspecs first (^pattern)
         let negative_patterns: Vec<&str> = cli_refspecs
             .iter()
@@ -1188,18 +1260,19 @@ fn fetch_remote(
         // Standard path: update remote-tracking refs from remote heads
         let has_merge_cfg = branch_has_merge_config_for_remote(git_dir, config, remote_name);
 
-        let remote_for_refs = remote_repo
-            .as_ref()
-            .expect("configured fetch requires local remote repository");
-
         for (idx, (refname, advertised_oid)) in remote_heads.iter().enumerate() {
             let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
             let Some(local_ref) = map_ref_through_refspecs(refname, &union_refspecs) else {
                 continue;
             };
-            let remote_oid = refs::resolve_ref(&remote_for_refs.git_dir, refname)
-                .ok()
-                .unwrap_or(*advertised_oid);
+            let remote_oid = if let Some(rr) = ext_resolved_remote.as_ref().or(remote_repo.as_ref())
+            {
+                refs::resolve_ref(&rr.git_dir, refname)
+                    .ok()
+                    .unwrap_or(*advertised_oid)
+            } else {
+                *advertised_oid
+            };
             updated_refs.push(local_ref.clone());
 
             let for_merge = if has_merge_cfg {
@@ -1299,13 +1372,18 @@ fn fetch_remote(
         }
     }
 
-    if user_passed_cli_refspecs && !prefetch_left_no_positive && !is_ext_url {
+    if user_passed_cli_refspecs
+        && !prefetch_left_no_positive
+        && (!is_ext_url || ext_resolved_remote.is_some())
+    {
         // Tag refs updated via explicit CLI refspecs already emitted branch-style FETCH_HEAD lines;
         // replace those with Git-shaped `tag 'name'` lines.
         fetch_head_entries.retain(|line| !line.contains("refs/tags/"));
-        let remote_repo = remote_repo
-            .as_ref()
-            .expect("CLI refspec fetch requires a local remote repository");
+        let remote_repo = ext_resolved_remote.as_ref().unwrap_or_else(|| {
+            remote_repo
+                .as_ref()
+                .expect("CLI refspec fetch requires a local remote repository")
+        });
         for spec in cli_refspecs {
             if spec.starts_with('^') {
                 continue;

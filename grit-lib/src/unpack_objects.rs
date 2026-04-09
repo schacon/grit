@@ -762,9 +762,70 @@ impl<'a> StreamingPackReader<'a> {
     /// Bytes read from `inner` into `pending` are not hashed until we know how many belong to the
     /// zlib stream (`total_in()`). Lookahead past the zlib end (including the 20-byte pack
     /// trailer) must never be fed to the pack checksum.
+    ///
+    /// When the pack arrives in small chunks (e.g. side-band-64k from `upload-pack`), `flate2` may
+    /// return an error before the full deflate stream is in `pending`. Retry after reading more
+    /// from `inner` (same idea as [`PackReader::decompress`], which sees the whole zlib at once).
     fn decompress(&mut self, expected_size: usize) -> Result<Vec<u8>> {
         const CHUNK: usize = 64 * 1024;
         let mut scratch = [0u8; CHUNK];
+
+        // `Read::read_exact` with a zero-length buffer returns `Ok` immediately without touching
+        // the zlib stream. Empty trees/tags still have a short zlib wrapper (~8 bytes) that must be
+        // consumed so the next object header aligns (Git pack format).
+        if expected_size == 0 {
+            loop {
+                let mut cursor = std::io::Cursor::new(self.pending.as_slice());
+                let mut z = ZlibDecoder::new(&mut cursor);
+                let mut trial = Vec::new();
+                match z.read_to_end(&mut trial) {
+                    Ok(_) if trial.is_empty() => {
+                        let consumed = z.total_in() as usize;
+                        if consumed == 0 {
+                            let n = self.inner.read(&mut scratch).map_err(Error::Io)?;
+                            if n == 0 {
+                                return Err(Error::CorruptObject(format!(
+                                    "pack stream truncated (zlib) at offset {}",
+                                    self.stream_pos
+                                )));
+                            }
+                            self.pending.extend_from_slice(&scratch[..n]);
+                            continue;
+                        }
+                        if consumed > self.pending.len() {
+                            return Err(Error::CorruptObject(
+                                "zlib total_in exceeds pending buffer".to_owned(),
+                            ));
+                        }
+                        self.pack_hasher.update(&self.pending[..consumed]);
+                        self.stream_pos += consumed;
+                        self.pending.drain(..consumed);
+                        return Ok(Vec::new());
+                    }
+                    Ok(_) => {
+                        return Err(Error::CorruptObject(format!(
+                            "decompressed {} bytes but expected 0",
+                            trial.len()
+                        )));
+                    }
+                    Err(e) => {
+                        let n = self.inner.read(&mut scratch).map_err(Error::Io)?;
+                        if n == 0 {
+                            return Err(if e.kind() == io::ErrorKind::UnexpectedEof {
+                                Error::CorruptObject(format!(
+                                    "pack stream truncated (zlib) at offset {}",
+                                    self.stream_pos
+                                ))
+                            } else {
+                                Error::Zlib(e.to_string())
+                            });
+                        }
+                        self.pending.extend_from_slice(&scratch[..n]);
+                    }
+                }
+            }
+        }
+
         let mut out = vec![0u8; expected_size];
         loop {
             let mut cursor = std::io::Cursor::new(self.pending.as_slice());
@@ -782,17 +843,20 @@ impl<'a> StreamingPackReader<'a> {
                     self.pending.drain(..consumed);
                     return Ok(out);
                 }
-                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                Err(e) => {
                     let n = self.inner.read(&mut scratch).map_err(Error::Io)?;
                     if n == 0 {
-                        return Err(Error::CorruptObject(format!(
-                            "pack stream truncated (zlib) at offset {}",
-                            self.stream_pos
-                        )));
+                        return Err(if e.kind() == io::ErrorKind::UnexpectedEof {
+                            Error::CorruptObject(format!(
+                                "pack stream truncated (zlib) at offset {}",
+                                self.stream_pos
+                            ))
+                        } else {
+                            Error::Zlib(e.to_string())
+                        });
                     }
                     self.pending.extend_from_slice(&scratch[..n]);
                 }
-                Err(e) => return Err(Error::Zlib(e.to_string())),
             }
         }
     }
@@ -1095,6 +1159,75 @@ mod tests {
         let obj2 = odb.read(&oid2).unwrap();
         assert_eq!(obj1.data, b"hello\n");
         assert_eq!(obj2.data, b"world\n");
+    }
+
+    #[test]
+    fn test_unpack_objects_empty_tree() {
+        use tempfile::TempDir;
+        let tmp = TempDir::new().unwrap();
+        let objects_dir = tmp.path().join("objects");
+        std::fs::create_dir_all(&objects_dir).unwrap();
+        let odb = Odb::new(&objects_dir);
+
+        let pack = make_pack(&[(ObjectKind::Tree, b"")]);
+        let opts = UnpackOptions::default();
+        assert_eq!(
+            unpack_objects(&mut pack.as_slice(), &odb, &opts).unwrap(),
+            1
+        );
+        let oid = Odb::hash_object_data(ObjectKind::Tree, b"");
+        assert!(odb.exists(&oid));
+    }
+
+    /// `Read` that returns at most `max_len` bytes per call (simulates side-band chunking).
+    struct ChunkedReader<'a> {
+        data: &'a [u8],
+        pos: usize,
+        max_len: usize,
+    }
+
+    impl io::Read for ChunkedReader<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.pos >= self.data.len() {
+                return Ok(0);
+            }
+            let take = (self.data.len() - self.pos)
+                .min(self.max_len)
+                .min(buf.len());
+            buf[..take].copy_from_slice(&self.data[self.pos..self.pos + take]);
+            self.pos += take;
+            Ok(take)
+        }
+    }
+
+    #[test]
+    fn test_unpack_objects_chunked_read_matches_full_buffer() {
+        use tempfile::TempDir;
+        let pack = make_pack(&[(ObjectKind::Blob, b"chunked-stream")]);
+        let opts = UnpackOptions::default();
+        let oid = Odb::hash_object_data(ObjectKind::Blob, b"chunked-stream");
+
+        let tmp = TempDir::new().unwrap();
+        let objects_dir = tmp.path().join("objects");
+        std::fs::create_dir_all(&objects_dir).unwrap();
+        let odb = Odb::new(&objects_dir);
+        assert_eq!(
+            unpack_objects(&mut pack.as_slice(), &odb, &opts).unwrap(),
+            1
+        );
+        assert!(odb.exists(&oid));
+
+        let tmp2 = TempDir::new().unwrap();
+        let objects_dir2 = tmp2.path().join("objects");
+        std::fs::create_dir_all(&objects_dir2).unwrap();
+        let odb2 = Odb::new(&objects_dir2);
+        let mut chunked = ChunkedReader {
+            data: pack.as_slice(),
+            pos: 0,
+            max_len: 8,
+        };
+        assert_eq!(unpack_objects(&mut chunked, &odb2, &opts).unwrap(), 1);
+        assert!(odb2.exists(&oid));
     }
 
     #[test]
