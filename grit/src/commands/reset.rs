@@ -408,6 +408,9 @@ fn reset_paths(
     _quiet: bool,
     intent_to_add: bool,
 ) -> Result<()> {
+    if repo.work_tree.is_none() {
+        bail!("fatal: mixed reset is not allowed in a bare repository");
+    }
     // On an unborn branch, the tree is empty (no commit exists yet).
     let tree_entries = match resolve_to_commit(repo, commit_spec) {
         Ok(commit_oid) => {
@@ -526,6 +529,9 @@ fn reset_commit(
                     return Ok(());
                 }
                 ResetMode::Mixed => {
+                    if repo.work_tree.is_none() {
+                        bail!("fatal: mixed reset is not allowed in a bare repository");
+                    }
                     // Mixed on unborn: clear the index
                     let index_path = repo.index_path();
                     let mut new_index = Index::new();
@@ -555,6 +561,10 @@ fn reset_commit(
         }
         Err(e) => return Err(e),
     };
+
+    if mode == ResetMode::Mixed && repo.work_tree.is_none() {
+        bail!("fatal: mixed reset is not allowed in a bare repository");
+    }
 
     // For --keep, we need to check safety before making any changes.
     if mode == ResetMode::Keep {
