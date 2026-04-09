@@ -949,7 +949,7 @@ t5528-push-default	t5	yes	31	13	18	false	ok	1
 t5529-push-errors	t5	yes	8	8	0	true	ok	0
 t5530-upload-pack-error	t5	yes	11	3	8	false	ok	0
 t5531-deep-nested-push	t5	yes	4	4	0	true	ok	0
-t5531-deep-submodule-push	t5	yes	29	6	23	false	ok	0
+t5531-deep-submodule-push	t5	yes	29	21	8	false	ok	0
 t5532-fetch-proxy	t5	yes	5	4	1	false	ok	0
 t5533-push-cas	t5	yes	23	11	12	false	ok	0
 t5534-push-signed	t5	skip	13	0	0	false	ok	0

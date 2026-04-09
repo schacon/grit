@@ -12,6 +12,12 @@ use grit_lib::gitmodules::{oids_from_copied_object_paths, verify_gitmodules_for_
 use grit_lib::hooks::{run_hook, run_hook_capture, HookResult};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::ObjectId;
+use grit_lib::push_submodules::{
+    collect_changed_gitlinks_for_push, find_unpushed_submodule_paths,
+    format_unpushed_submodules_error, head_ref_short_name, parse_push_recurse_submodules_arg,
+    submodule_worktree_path, validate_submodule_push_refspecs, verify_push_gitlinks_are_commits,
+    PushRecurseSubmodules,
+};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
@@ -19,7 +25,7 @@ use grit_lib::state::resolve_head;
 use std::fs;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Arguments for `grit push`.
 #[derive(Debug, ClapArgs)]
@@ -91,9 +97,17 @@ pub struct Args {
     #[arg(long = "no-verify")]
     pub no_verify: bool,
 
-    /// Check, on-demand, or no recursion into submodules.
-    #[arg(long = "recurse-submodules")]
-    pub recurse_submodules: Option<String>,
+    /// Submodule recursion mode (`check`, `on-demand`, `only`, `no`). Repeatable; last wins.
+    #[arg(
+        long = "recurse-submodules",
+        value_name = "MODE",
+        action = clap::ArgAction::Append
+    )]
+    pub recurse_submodules: Vec<String>,
+
+    /// Disable submodule recursion (overrides config and prior `--recurse-submodules`).
+    #[arg(long = "no-recurse-submodules")]
+    pub no_recurse_submodules: bool,
 
     /// Sign the push (accepted but not implemented; value: true, false, if-asked).
     #[arg(long = "signed", num_args = 0..=1, default_missing_value = "true", require_equals = true)]
@@ -237,6 +251,93 @@ fn sort_applied_indices(
     idx
 }
 
+fn grit_bin_for_nested_push() -> PathBuf {
+    std::env::current_exe().unwrap_or_else(|_| PathBuf::from("grit"))
+}
+
+fn effective_push_recurse_submodules(
+    args: &Args,
+    config: &ConfigSet,
+) -> Result<PushRecurseSubmodules> {
+    if args.no_recurse_submodules {
+        return Ok(PushRecurseSubmodules::Off);
+    }
+    let mut mode = PushRecurseSubmodules::Off;
+    if let Some(v) = config
+        .get("push.recurseSubmodules")
+        .or_else(|| config.get("push.recursesubmodules"))
+    {
+        mode = parse_push_recurse_submodules_arg("push.recurseSubmodules", &v)
+            .map_err(|e| anyhow::anyhow!(e))?;
+    } else if let Some(v) = config.get("submodule.recurse") {
+        if parse_bool(&v).unwrap_or(false) {
+            mode = PushRecurseSubmodules::OnDemand;
+        }
+    }
+    if std::env::var("GRIT_PUSH_RECURSE_ONLY_IS_ON_DEMAND")
+        .ok()
+        .as_deref()
+        == Some("1")
+    {
+        if mode == PushRecurseSubmodules::Only {
+            eprintln!(
+                "warning: recursing into submodule with push.recurseSubmodules=only; using on-demand instead"
+            );
+        }
+        mode = PushRecurseSubmodules::OnDemand;
+    }
+    for token in &args.recurse_submodules {
+        mode = parse_push_recurse_submodules_arg("--recurse-submodules", token)
+            .map_err(|e| anyhow::anyhow!(e))?;
+    }
+    Ok(mode)
+}
+
+fn run_nested_submodule_push(
+    submodule_workdir: &Path,
+    remote_and_refspecs: Option<(&str, &[String])>,
+    dry_run: bool,
+    quiet: bool,
+    push_options: &[String],
+    recurse_only_is_on_demand: bool,
+) -> Result<()> {
+    let mut cmd = Command::new(grit_bin_for_nested_push());
+    cmd.current_dir(submodule_workdir);
+    cmd.arg("push");
+    if recurse_only_is_on_demand {
+        cmd.arg("--recurse-submodules=only-is-on-demand");
+    }
+    if dry_run {
+        cmd.arg("--dry-run");
+    }
+    if quiet {
+        cmd.arg("--quiet");
+    }
+    for o in push_options {
+        cmd.arg(format!("--push-option={o}"));
+    }
+    if let Some((remote_name, refspecs)) = remote_and_refspecs {
+        cmd.arg(remote_name);
+        for s in refspecs {
+            cmd.arg(s);
+        }
+    }
+    cmd.stdin(Stdio::null());
+    if recurse_only_is_on_demand {
+        cmd.env("GRIT_PUSH_RECURSE_ONLY_IS_ON_DEMAND", "1");
+    }
+    let status = cmd.status().with_context(|| {
+        format!(
+            "failed to spawn grit push in {}",
+            submodule_workdir.display()
+        )
+    })?;
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+    Ok(())
+}
+
 fn sort_collateral_indices(
     updates: &[RefUpdate],
     pre_reject: &[Option<String>],
@@ -328,8 +429,11 @@ fn run_push_via_system_git(repo: &Repository, args: &Args) -> Result<()> {
     if args.no_verify {
         cmd.arg("--no-verify");
     }
-    if let Some(v) = &args.recurse_submodules {
+    for v in &args.recurse_submodules {
         cmd.arg(format!("--recurse-submodules={v}"));
+    }
+    if args.no_recurse_submodules {
+        cmd.arg("--no-recurse-submodules");
     }
     if let Some(v) = &args.signed {
         if v == "true" || v.is_empty() {
@@ -460,6 +564,11 @@ pub fn run(args: Args) -> Result<()> {
         };
 
     // Push to each URL
+    let path_style_remote = args
+        .remote
+        .as_ref()
+        .is_some_and(|r| r.contains('/') || r.starts_with('.') || std::path::Path::new(r).exists());
+
     for url in &urls {
         push_to_url(
             &repo,
@@ -470,10 +579,32 @@ pub fn run(args: Args) -> Result<()> {
             current_branch.as_deref(),
             push_all,
             &push_refspecs_from_config,
+            path_style_remote,
         )?;
     }
 
     Ok(())
+}
+
+fn submodule_push_refspecs(
+    args: &Args,
+    current_branch: Option<&str>,
+    push_all: bool,
+    push_refspecs_from_config: &[String],
+) -> Vec<String> {
+    if push_all {
+        return Vec::new();
+    }
+    if !args.refspecs.is_empty() {
+        return args.refspecs.clone();
+    }
+    if !push_refspecs_from_config.is_empty() {
+        return push_refspecs_from_config.to_vec();
+    }
+    if let Some(b) = current_branch {
+        return vec![b.to_owned()];
+    }
+    Vec::new()
 }
 
 fn push_to_url(
@@ -485,6 +616,7 @@ fn push_to_url(
     current_branch: Option<&str>,
     push_all: bool,
     push_refspecs_from_config: &[String],
+    path_style_remote: bool,
 ) -> Result<()> {
     if protocol_wire::effective_client_protocol_version() == 1 {
         wire_trace::trace_packet_push('<', "version 1");
@@ -570,6 +702,9 @@ fn push_to_url(
 
     // Build list of ref updates
     let mut updates = Vec::new();
+    // Local commit OIDs that would be advertised as push tips (including refs already up to date
+    // on the remote). Submodule recursion runs on this set, matching Git transport behavior.
+    let mut submodule_tips: Vec<ObjectId> = Vec::new();
 
     if args.mirror {
         // Mirror: push all local refs to remote, and delete remote refs
@@ -582,6 +717,7 @@ fn push_to_url(
             }
             let old_oid = refs::resolve_ref(&remote_repo.git_dir, refname).ok();
             if old_oid.as_ref() == Some(local_oid) {
+                submodule_tips.push(*local_oid);
                 continue;
             }
             updates.push(RefUpdate {
@@ -619,6 +755,7 @@ fn push_to_url(
             remote_name,
             args,
             &mut updates,
+            &mut submodule_tips,
             &negs,
             refspec_force,
         )?;
@@ -629,6 +766,7 @@ fn push_to_url(
         for (refname, local_oid) in &local_branches {
             let old_oid = refs::resolve_ref(&remote_repo.git_dir, refname).ok();
             if old_oid.as_ref() == Some(local_oid) {
+                submodule_tips.push(*local_oid);
                 continue;
             }
             updates.push(RefUpdate {
@@ -737,6 +875,7 @@ fn push_to_url(
                         let remote_ref = dst.replacen('*', matched, 1);
                         let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
                         if old_oid.as_ref() == Some(local_oid) {
+                            submodule_tips.push(*local_oid);
                             continue;
                         }
                         updates.push(RefUpdate {
@@ -837,6 +976,7 @@ fn push_to_url(
                     remote_name,
                     args,
                     &mut updates,
+                    &mut submodule_tips,
                     &negs,
                     refspec_force,
                 )?;
@@ -864,6 +1004,7 @@ fn push_to_url(
                         let remote_ref = dst_pat.replacen('*', matched, 1);
                         let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
                         if old_oid.as_ref() == Some(local_oid) {
+                            submodule_tips.push(*local_oid);
                             continue;
                         }
                         updates.push(RefUpdate {
@@ -904,6 +1045,8 @@ fn push_to_url(
                         expected_oid: None,
                         refspec_force: force_flag,
                     });
+                } else {
+                    submodule_tips.push(local_oid);
                 }
             }
             i += 1;
@@ -1014,6 +1157,110 @@ fn push_to_url(
                 .unwrap_or(usize::MAX);
             ia.cmp(&ib).then_with(|| a.remote_ref.cmp(&b.remote_ref))
         });
+    }
+
+    let recurse_mode = effective_push_recurse_submodules(args, config)?;
+
+    let mut combined_tips: Vec<ObjectId> = updates.iter().filter_map(|u| u.new_oid).collect();
+    combined_tips.extend(submodule_tips.iter().copied());
+    combined_tips.sort();
+    combined_tips.dedup();
+
+    if !repo.is_bare()
+        && !matches!(recurse_mode, PushRecurseSubmodules::Off)
+        && !(args.mirror || push_all || args.delete)
+        && !combined_tips.is_empty()
+    {
+        let tips = combined_tips;
+        let sub_refspecs =
+            submodule_push_refspecs(args, current_branch, push_all, push_refspecs_from_config);
+        let changed = collect_changed_gitlinks_for_push(
+            repo,
+            &tips,
+            remote_name,
+            Some(remote_repo.git_dir.as_path()),
+        )?;
+        verify_push_gitlinks_are_commits(repo, &changed)?;
+
+        if matches!(
+            recurse_mode,
+            PushRecurseSubmodules::OnDemand | PushRecurseSubmodules::Only
+        ) {
+            let super_head_branch = head_ref_short_name(&repo.git_dir)?;
+            let nested_only = std::env::var("GRIT_PUSH_RECURSE_ONLY_IS_ON_DEMAND")
+                .ok()
+                .as_deref()
+                == Some("1");
+            let to_push = find_unpushed_submodule_paths(
+                repo,
+                &tips,
+                remote_name,
+                Some(remote_repo.git_dir.as_path()),
+            )?;
+            for sub_path in &to_push {
+                let wd = submodule_worktree_path(repo, sub_path);
+                if !wd.join(".git").exists() {
+                    continue;
+                }
+                let sub_repo = match Repository::discover(Some(&wd)) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
+                if refs::list_refs(&sub_repo.git_dir, "refs/remotes/")
+                    .map(|r| r.is_empty())
+                    .unwrap_or(true)
+                {
+                    continue;
+                }
+                if !path_style_remote {
+                    validate_submodule_push_refspecs(
+                        &sub_repo.git_dir,
+                        &super_head_branch,
+                        &sub_refspecs,
+                    )
+                    .map_err(|e| anyhow::Error::msg(e.to_string()))?;
+                }
+                if !args.quiet {
+                    eprintln!("Pushing submodule '{sub_path}'");
+                }
+                let remote_specs = if path_style_remote {
+                    None
+                } else {
+                    Some((remote_name, sub_refspecs.as_slice()))
+                };
+                run_nested_submodule_push(
+                    &wd,
+                    remote_specs,
+                    args.dry_run,
+                    args.quiet,
+                    &args.push_option,
+                    nested_only,
+                )?;
+            }
+        }
+
+        let check_after = recurse_mode == PushRecurseSubmodules::Check
+            || (matches!(
+                recurse_mode,
+                PushRecurseSubmodules::OnDemand | PushRecurseSubmodules::Only
+            ) && !args.dry_run);
+        if check_after {
+            let needs = find_unpushed_submodule_paths(
+                repo,
+                &tips,
+                remote_name,
+                Some(remote_repo.git_dir.as_path()),
+            )?;
+            if !needs.is_empty() {
+                let msg = format_unpushed_submodules_error(&needs);
+                eprintln!("{}", msg.trim_end());
+                bail!("failed to push all needed submodules");
+            }
+        }
+    }
+
+    if recurse_mode == PushRecurseSubmodules::Only {
+        return Ok(());
     }
 
     if updates.is_empty() {
@@ -1812,6 +2059,7 @@ fn collect_matching_push_updates(
     remote_name: &str,
     args: &Args,
     updates: &mut Vec<RefUpdate>,
+    submodule_tips: &mut Vec<ObjectId>,
     negative_patterns: &[String],
     refspec_force: bool,
 ) -> Result<()> {
@@ -1825,6 +2073,7 @@ fn collect_matching_push_updates(
         }
         let old_oid = refs::resolve_ref(&remote_repo.git_dir, refname).ok();
         if old_oid.as_ref() == Some(local_oid) {
+            submodule_tips.push(*local_oid);
             continue;
         }
         let dst = refname
