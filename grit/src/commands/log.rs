@@ -543,10 +543,9 @@ fn validate_log_diff_merges_config(git_dir: &Path) -> Result<()> {
 fn normalize_log_merge_diff_args(args: &mut Args, git_dir: &Path) -> Result<()> {
     validate_log_diff_merges_config(git_dir)?;
 
-    if (args.merge_diff_c || args.cc || args.merge_diff_dd || args.remerge_diff)
-        && !args.no_patch {
-            args.patch = true;
-        }
+    if (args.merge_diff_c || args.cc || args.merge_diff_dd || args.remerge_diff) && !args.no_patch {
+        args.patch = true;
+    }
 
     if args.merge_diff_c && args.cc {
         anyhow::bail!("options '-c' and '--cc' cannot be used together");
@@ -709,7 +708,7 @@ fn log_resolve_stdout_color(args: &Args, git_dir: &Path) -> bool {
     c
 }
 
-fn run_line_log(repo: &Repository, args: Args) -> Result<()> {
+fn run_line_log(repo: &Repository, args: Args, _patch_context: usize) -> Result<()> {
     if !args.pathspecs.is_empty() {
         anyhow::bail!("-L<range>:<file> cannot be used with pathspec");
     }
@@ -1086,7 +1085,7 @@ fn resolve_decoration_display(args: &Args, format_requires_decorations: bool) ->
     (show, full)
 }
 
-fn run_graph_log(repo: &Repository, args: &Args) -> Result<()> {
+fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result<()> {
     let mut implied_pathspecs: Vec<String> = Vec::new();
     let mut revision_specs = Vec::new();
     for rev in &args.revisions {
@@ -1345,6 +1344,7 @@ fn run_graph_log(repo: &Repository, args: &Args) -> Result<()> {
                 decorations.as_ref(),
                 use_color,
                 &mut notes_cache,
+                patch_context,
             )?;
         }
     }
@@ -2342,15 +2342,23 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let repo = Repository::discover(None).context("not a git repository")?;
     normalize_log_merge_diff_args(&mut args, &repo.git_dir)?;
+    let patch_context = if let Some(u) = args.unified {
+        u
+    } else {
+        let cfg = ConfigSet::load(Some(&repo.git_dir), true).context("loading git config")?;
+        grit_lib::config::resolve_diff_context_lines(&cfg)
+            .map_err(|m| anyhow::anyhow!(m))?
+            .unwrap_or(3)
+    };
     if !args.line_range.is_empty() {
-        return run_line_log(&repo, args);
+        return run_line_log(&repo, args, patch_context);
     }
     if args
         .revisions
         .iter()
         .any(|r| r != "--" && is_symmetric_diff(r))
     {
-        return run_symmetric_log(&repo, &args);
+        return run_symmetric_log(&repo, &args, patch_context);
     }
     validate_pathspec_scope(&repo, &args.pathspecs)?;
     let mut implied_pathspecs: Vec<String> = Vec::new();
@@ -2388,16 +2396,16 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Handle -g / --walk-reflogs mode
     if args.walk_reflogs {
-        return run_reflog_walk(&repo, &args);
+        return run_reflog_walk(&repo, &args, patch_context);
     }
 
     // Handle --no-walk: show given commits without walking parents
     if args.no_walk.is_some() {
-        return run_no_walk(&repo, &args);
+        return run_no_walk(&repo, &args, patch_context);
     }
 
     if args.graph {
-        return run_graph_log(&repo, &args);
+        return run_graph_log(&repo, &args, patch_context);
     }
 
     // Determine starting points and excluded commits.
@@ -2640,6 +2648,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     decoration_map_for_display.as_ref(),
                     use_color,
                     &mut notes_cache,
+                    patch_context,
                 )?;
             }
             if flush_each {
@@ -2808,6 +2817,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     decoration_map_for_display.as_ref(),
                     use_color,
                     &mut notes_cache,
+                    patch_context,
                 )?;
             }
         }
@@ -2966,7 +2976,7 @@ fn normalize_path(path: &Path) -> PathBuf {
 }
 
 /// Run `--no-walk` mode: show the given commits without walking their parents.
-pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
+pub fn run_no_walk(repo: &Repository, args: &Args, patch_context: usize) -> Result<()> {
     let mut oids = Vec::new();
     if args.revisions.is_empty() {
         let head = resolve_head(&repo.git_dir)?;
@@ -3071,6 +3081,7 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
                 decorations.as_ref(),
                 false,
                 &mut notes_cache,
+                patch_context,
             )?;
         }
     }
@@ -3079,7 +3090,7 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
 }
 
 /// Run the reflog walk mode (`log -g` / `log --walk-reflogs`).
-fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
+fn run_reflog_walk(repo: &Repository, args: &Args, _patch_context: usize) -> Result<()> {
     // Determine which ref to walk
     let refname = if args.revisions.is_empty() {
         "HEAD".to_string()
@@ -4034,7 +4045,7 @@ fn commit_passes_post_walk_filters(
     Ok(true)
 }
 
-fn run_symmetric_log(repo: &Repository, args: &Args) -> Result<()> {
+fn run_symmetric_log(repo: &Repository, args: &Args, _patch_context: usize) -> Result<()> {
     let mut lhs: Option<String> = None;
     let mut rhs: Option<String> = None;
     for rev in &args.revisions {
@@ -5476,6 +5487,7 @@ fn write_commit_diff(
     decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
     use_color: bool,
     notes_cache: &mut NotesMapCache<'_>,
+    patch_context: usize,
 ) -> Result<()> {
     let odb = &repo.odb;
     let git_dir = &repo.git_dir;
@@ -5499,7 +5511,7 @@ fn write_commit_diff(
             pickaxe: None,
             find_object: find_oid,
             submodule_mode: None,
-            context_lines: args.unified.unwrap_or(3),
+            context_lines: patch_context,
         };
         return write_remerge_diff(out, repo, &info.tree, &info.parents, &opts);
     }
@@ -5544,6 +5556,7 @@ fn write_commit_diff(
                 graph_stat_prefix,
                 show_patch,
                 false,
+                patch_context,
             )?;
         }
         return Ok(());
@@ -5574,6 +5587,7 @@ fn write_commit_diff(
         graph_stat_prefix,
         show_patch,
         is_merge,
+        patch_context,
     )?;
 
     Ok(())
@@ -5589,6 +5603,7 @@ fn write_commit_diff_body(
     graph_stat_prefix: Option<&str>,
     show_patch: bool,
     treat_as_merge_for_format: bool,
+    patch_context: usize,
 ) -> Result<()> {
     let combined_style = merge_diff_is_combined_style(args, treat_as_merge_for_format, git_dir)?;
     let list_raw_name = if combined_style {
@@ -5643,7 +5658,7 @@ fn write_commit_diff_body(
 
     if show_patch {
         for entry in list_patch {
-            log_write_patch_entry(out, odb, entry, args)?;
+            log_write_patch_entry(out, odb, entry, args, patch_context)?;
         }
     }
 
@@ -5656,8 +5671,8 @@ fn log_write_patch_entry(
     odb: &Odb,
     entry: &DiffEntry,
     args: &Args,
+    context_lines: usize,
 ) -> Result<()> {
-    let context_lines = args.unified.unwrap_or(3);
     let old_path = entry
         .old_path
         .as_deref()
