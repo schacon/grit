@@ -29,6 +29,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
 /// Arguments for `grit commit`.
@@ -2508,6 +2509,16 @@ fn resolve_committer(config: &ConfigSet, now: OffsetDateTime) -> Result<String> 
 /// `<epoch> <offset>` format. Returns None if already in epoch format.
 pub fn parse_date_to_git_timestamp(date_str: &str) -> Option<String> {
     let trimmed = date_str.trim();
+
+    // ISO 8601 / RFC 3339, including forms Git accepts without an explicit offset
+    // (e.g. `2020-01-01T00:00:00` — treated as UTC when no zone is present).
+    if let Ok(dt) = OffsetDateTime::parse(trimmed, &Rfc3339) {
+        return Some(format_git_timestamp(dt));
+    }
+    let with_utc_z = format!("{trimmed}Z");
+    if let Ok(dt) = OffsetDateTime::parse(&with_utc_z, &Rfc3339) {
+        return Some(format_git_timestamp(dt));
+    }
 
     // Already in `<epoch> <offset>` format? (epoch is all digits)
     let parts: Vec<&str> = trimmed.rsplitn(2, ' ').collect();
