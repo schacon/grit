@@ -46,6 +46,39 @@ fn mirror_index_executable_to_worktree(abs_path: &Path, executable: bool) {
     let _ = (abs_path, executable);
 }
 
+/// Returns `(mtime_sec, mtime_nsec)` of the index file, or `(0, 0)` if unavailable.
+///
+/// Git records this at index read time and uses it with [`has_racy_timestamp`] to decide
+/// whether a `--refresh` must rewrite the index even when no entry stat fields changed.
+fn index_file_mtime_pair(index_path: &Path) -> (u32, u32) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(meta) = std::fs::metadata(index_path) {
+            return (meta.mtime() as u32, meta.mtime_nsec() as u32);
+        }
+    }
+    (0, 0)
+}
+
+/// Whether any non-submodule index entry is "racy" relative to the on-disk index mtime.
+///
+/// Matches Git's `is_racy_timestamp` / `is_racy_stat` in `read-cache.c`: if the index was
+/// read at time `T` and an entry's recorded mtime is at or after `T` (same second and
+/// nsec tie-break), the entry needs a careful refresh and the index may need rewriting.
+fn has_racy_timestamp(index: &Index, index_mtime_sec: u32, index_mtime_nsec: u32) -> bool {
+    if index_mtime_sec == 0 {
+        return false;
+    }
+    index.entries.iter().any(|entry| {
+        if entry.stage() != 0 || entry.mode == 0o160000 {
+            return false;
+        }
+        index_mtime_sec < entry.mtime_sec
+            || (index_mtime_sec == entry.mtime_sec && index_mtime_nsec <= entry.mtime_nsec)
+    })
+}
+
 /// Arguments for `grit update-index`.
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -789,8 +822,9 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
     }
 
     if args.refresh || args.really_refresh {
+        let (index_mtime_sec, index_mtime_nsec) = index_file_mtime_pair(&index_path);
         // Re-stat all entries; exit 1 if any files need updating.
-        let (uptodate, _) = refresh_index(
+        let (uptodate, index_modified) = refresh_index(
             &mut index,
             work_tree,
             &repo.odb,
@@ -798,8 +832,16 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
             args.ignore_missing,
             args.ignore_submodules,
         )?;
-        repo.write_index_at(&index_path, &mut index)
-            .context("writing index")?;
+        // Match Git: skip rewriting the index when nothing changed and no entry is racy
+        // relative to the index file's mtime at read time (see `has_racy_timestamp` in
+        // `read-cache.c` / `repo_update_index_if_able`). This preserves intentional index
+        // mtimes (e.g. t2108 `--refresh has no racy timestamps to fix`).
+        let need_write =
+            index_modified || has_racy_timestamp(&index, index_mtime_sec, index_mtime_nsec);
+        if need_write {
+            repo.write_index_at(&index_path, &mut index)
+                .context("writing index")?;
+        }
         // -q (quiet) suppresses the error exit; otherwise exit 1 if files need updating
         if !uptodate && !args.quiet {
             std::process::exit(1);
@@ -1463,8 +1505,12 @@ pub fn run_refresh_quiet(repo: &Repository) -> Result<()> {
         .work_tree
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot update-index in bare repository"))?;
-    let (_uptodate, _) = refresh_index(&mut index, work_tree, &repo.odb, false, false, false)?;
-    repo.write_index_at(&index_path, &mut index)
-        .context("writing index")?;
+    let (index_mtime_sec, index_mtime_nsec) = index_file_mtime_pair(&index_path);
+    let (_uptodate, index_modified) =
+        refresh_index(&mut index, work_tree, &repo.odb, false, false, false)?;
+    if index_modified || has_racy_timestamp(&index, index_mtime_sec, index_mtime_nsec) {
+        repo.write_index_at(&index_path, &mut index)
+            .context("writing index")?;
+    }
     Ok(())
 }
