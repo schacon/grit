@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   255 |
+| Completed   |   256 |
 | In progress |     4 |
-| Remaining   |   509 |
+| Remaining   |   508 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 255 completed (`[x]`), 4 in progress (`[~]`), 509 remaining (`[ ]`).
+Task lines in `PLAN.md`: 256 completed (`[x]`), 4 in progress (`[~]`), 508 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5334-incremental-multi-pack-index` — 16/16 tests pass (incremental MIDX chain, bitmap/rev sidecars in `multi-pack-index.d`, `midx verify`, clone with `pack.allowPackReuse`; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t4120-apply-popt` — 12/12 tests pass (`git apply -p`: strip path components, malformed `-p` errors, traditional quoted paths, `--stat` with oversized strip, mode-only and rename patches with `--index`; harness CSV/dashboards refreshed)
 - `t5320-delta-islands` — 15/15 tests pass (`repack` delta islands: `pack.island` / `pack.islandcore`, superset-island delta rules, verify-pack ordering; harness CSV/dashboards refreshed)
 - `t4214-log-graph-octopus` — 17/17 tests pass (`git log --graph` skewed-left octopus, crossover, and colored graph lines; harness CSV/dashboards refreshed)
@@ -129,4 +130,4 @@ Task lines in `PLAN.md`: 255 completed (`[x]`), 4 in progress (`[~]`), 509 remai
 
 ## What Remains
 
-512 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+511 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.

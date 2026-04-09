@@ -901,7 +901,7 @@ t5330-no-lazy-fetch-with-commit-graph	t5	yes	4	4	0	true	ok	0
 t5331-pack-objects-stdin	t5	yes	16	1	15	false	ok	0
 t5332-multi-pack-reuse	t5	yes	14	1	13	false	ok	0
 t5333-pseudo-merge-bitmaps	t5	skip	18	3	15	false	ok	0
-t5334-incremental-multi-pack-index	t5	yes	16	6	10	false	ok	0
+t5334-incremental-multi-pack-index	t5	yes	16	16	0	true	ok	0
 t5335-compact-multi-pack-index	t5	yes	10	0	10	false	ok	0
 t5351-unpack-large-objects	t5	yes	7	4	3	false	ok	0
 t5400-send-pack	t5	yes	17	10	7	false	ok	0
