@@ -3403,7 +3403,9 @@ fn format_reflog_selector_date(
 ) -> String {
     if let Some(ts) = reflog_entry_unix_ts(entry) {
         let tz = reflog_entry_tz(entry);
-        let pseudo = format!("x {ts} {tz}");
+        // `format_date_with_mode` parses Git signature tails via `parse_signature_tail`, which
+        // requires the `Name <email>` prefix before `<unix> <tz>` (see grit-lib `ident.rs`).
+        let pseudo = format!("x <x@x> {ts} {tz}");
         let date = format_date_with_mode(&pseudo, None);
         format!("{display_name}@{{{date}}}")
     } else {
