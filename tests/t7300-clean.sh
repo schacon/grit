@@ -544,7 +544,7 @@ test_expect_success 'nested bare repositories should be cleaned' '
 	test_path_is_missing subdir
 '
 
-test_expect_failure 'nested (empty) bare repositories should be cleaned even when in .git' '
+test_expect_success 'nested (empty) bare repositories should be cleaned even when in .git' '
 	rm -fr strange_bare &&
 	mkdir strange_bare &&
 	git init --bare strange_bare/.git &&
@@ -552,7 +552,7 @@ test_expect_failure 'nested (empty) bare repositories should be cleaned even whe
 	test_path_is_missing strange_bare
 '
 
-test_expect_failure 'nested (non-empty) bare repositories should be cleaned even when in .git' '
+test_expect_success 'nested (non-empty) bare repositories should be cleaned even when in .git' '
 	rm -fr strange_bare &&
 	mkdir strange_bare &&
 	git clone --local --bare . strange_bare/.git &&
