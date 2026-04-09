@@ -389,8 +389,12 @@ fn collect_wants_for_upload_pack(
         let tip_oid = refs::resolve_ref(remote_git_dir, refname)
             .ok()
             .unwrap_or(*oid);
-        let local_tracking_oid = read_loose_ref_chain(local_git_dir, &local_ref)
-            .or_else(|| refs::resolve_ref(local_git_dir, &local_ref).ok());
+        // Use full ref resolution (loose + packed-refs + worktree commondir). `read_loose_ref_chain`
+        // alone misses packed remote-tracking branches, so we would skip `want` lines and never
+        // fast-forward `refs/remotes/...` after fetch (t1507 `my-side@{u}` after `git fetch`).
+        let local_tracking_oid = refs::resolve_ref(local_git_dir, &local_ref)
+            .ok()
+            .or_else(|| read_loose_ref_chain(local_git_dir, &local_ref));
         if local_tracking_oid.as_ref() == Some(&tip_oid) {
             continue;
         }
