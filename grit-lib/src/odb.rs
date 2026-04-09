@@ -37,7 +37,7 @@ use crate::pack;
 /// (`t1006-cat-file` zlib-dictionary test).
 fn read_zlib_loose_payload(mut file: fs::File) -> Result<Vec<u8>> {
     let mut hdr = [0u8; 2];
-    file.read_exact(&mut hdr).map_err(|e| Error::Io(e.into()))?;
+    file.read_exact(&mut hdr).map_err(|e| Error::Io(e))?;
     let cmf_flg = u16::from(hdr[0]) << 8 | u16::from(hdr[1]);
     let looks_like_zlib_header = cmf_flg != 0 && cmf_flg % 31 == 0;
     let preset_dictionary = looks_like_zlib_header && (hdr[1] & 0x20) != 0;
@@ -176,7 +176,7 @@ impl Odb {
     /// - [`Error::CorruptObject`] — header is malformed.
     /// - [`Error::LooseHashMismatch`] — payload OID does not match `expected_oid`.
     pub fn read_loose_verify_oid(path: &Path, expected_oid: &ObjectId) -> Result<Object> {
-        let file = fs::File::open(path).map_err(|e| Error::Io(e))?;
+        let file = fs::File::open(path).map_err(Error::Io)?;
         let raw = read_zlib_loose_payload(file)?;
         let obj = parse_object_bytes(&raw)?;
         let computed = hash_object_from_parsed(&obj);
@@ -541,8 +541,6 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
-    use flate2::read::ZlibDecoder;
-    use std::io::Read;
     use tempfile::TempDir;
 
     #[test]
