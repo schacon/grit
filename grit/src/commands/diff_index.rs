@@ -309,16 +309,20 @@ pub fn run(mut args: Args) -> Result<()> {
                 }
             }
         } else {
-            let terminator = if options.nul_terminated { "\0" } else { "\n" };
             let stdout = std::io::stdout();
             let mut out = stdout.lock();
             for entry in &diff_entries {
-                let line = render_raw_diff_entry(entry, &repo, options.abbrev, !options.cached)?;
                 if options.nul_terminated {
-                    // In -z mode, the colon-prefixed status line ends with NUL,
-                    // then path(s) follow separated/terminated by NUL
-                    write!(out, "{}{}", line, terminator)?;
+                    write_raw_diff_entry_z(
+                        &mut out,
+                        entry,
+                        &repo,
+                        options.abbrev,
+                        !options.cached,
+                    )?;
                 } else {
+                    let line =
+                        render_raw_diff_entry(entry, &repo, options.abbrev, !options.cached)?;
                     writeln!(out, "{}", line)?;
                 }
             }
@@ -1183,6 +1187,70 @@ fn raw_change_to_diff_entry(change: &RawChange) -> DiffEntry {
         new_oid: change.new.map_or_else(zero_oid, |s| s.oid),
         score: None,
     }
+}
+
+/// Write one `diff-index` raw record in Git's `-z` format.
+///
+/// The colon-prefixed status line ends with a NUL byte (no tab before paths).
+/// For renames/copies, old and new paths are each NUL-terminated. For other
+/// statuses, a single path is NUL-terminated.
+fn write_raw_diff_entry_z(
+    out: &mut impl Write,
+    entry: &DiffEntry,
+    repo: &Repository,
+    abbrev: Option<usize>,
+    diff_index_uncached: bool,
+) -> Result<()> {
+    let width = abbrev.unwrap_or(40).clamp(4, 40);
+
+    let (old_oid_disp, new_oid_disp) = if diff_index_uncached && entry.status == DiffStatus::Added {
+        ("0".repeat(width), "0".repeat(width))
+    } else {
+        let old_oid = if entry.old_oid == zero_oid() {
+            "0".repeat(width)
+        } else {
+            match abbrev {
+                Some(min_len) => abbreviate_object_id(repo, entry.old_oid, min_len)?,
+                None => entry.old_oid.to_hex(),
+            }
+        };
+        let new_oid = if entry.new_oid == zero_oid() {
+            "0".repeat(width)
+        } else {
+            match abbrev {
+                Some(min_len) => abbreviate_object_id(repo, entry.new_oid, min_len)?,
+                None => entry.new_oid.to_hex(),
+            }
+        };
+        (old_oid, new_oid)
+    };
+
+    let status_str = match (entry.status, entry.score) {
+        (DiffStatus::Renamed, Some(s)) => format!("R{s:03}"),
+        (DiffStatus::Copied, Some(s)) => format!("C{s:03}"),
+        _ => entry.status.letter().to_string(),
+    };
+
+    write!(
+        out,
+        ":{} {} {} {} {}",
+        entry.old_mode, entry.new_mode, old_oid_disp, new_oid_disp, status_str
+    )?;
+    out.write_all(b"\0")?;
+
+    match entry.status {
+        DiffStatus::Renamed | DiffStatus::Copied => {
+            out.write_all(entry.old_path.as_deref().unwrap_or("").as_bytes())?;
+            out.write_all(b"\0")?;
+            out.write_all(entry.new_path.as_deref().unwrap_or("").as_bytes())?;
+            out.write_all(b"\0")?;
+        }
+        _ => {
+            out.write_all(entry.path().as_bytes())?;
+            out.write_all(b"\0")?;
+        }
+    }
+    Ok(())
 }
 
 /// Render a DiffEntry in raw format.
