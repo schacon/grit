@@ -38,7 +38,9 @@ use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, RevListOptions};
-use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision, show_prefix, split_treeish_colon};
+use grit_lib::rev_parse::{
+    abbreviate_object_id, resolve_revision, show_prefix, split_treeish_colon,
+};
 use grit_lib::userdiff::matcher_for_path_parsed;
 use regex::Regex;
 use std::fmt::Write as FmtWrite;

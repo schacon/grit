@@ -152,6 +152,10 @@ pub struct Args {
     /// How to handle quoted CRLF in patch payloads.
     #[arg(long = "quoted-cr", value_name = "ACTION")]
     pub quoted_cr: Option<String>,
+
+    /// Do not transcode the message to UTF-8 (matches `git am --no-utf8`; `t3901`).
+    #[arg(long = "no-utf8")]
+    pub no_utf8: bool,
 }
 
 /// A parsed patch from an mbox message.
@@ -163,6 +167,8 @@ struct MboxPatch {
     date: String,
     /// Commit message (subject + body).
     message: String,
+    /// `charset=` from `Content-Type` when present (mbox body encoding).
+    content_charset: Option<String>,
     /// The unified diff portion.
     diff: String,
     /// Message-ID from the email headers.
@@ -184,6 +190,8 @@ struct AmOptions {
     message_id: bool,
     empty: String,
     allow_empty: bool,
+    /// When false, keep non-UTF-8 message bytes from the patch (`git am --no-utf8`).
+    mail_utf8: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -405,6 +413,7 @@ fn build_am_options(args: &Args, config: &ConfigSet) -> AmOptions {
         message_id,
         empty: args.empty.clone().unwrap_or_else(|| "stop".to_string()),
         allow_empty: args.allow_empty,
+        mail_utf8: !args.no_utf8,
     }
 }
 
@@ -1673,6 +1682,40 @@ fn create_am_commit(
         message = add_signoff(&message, &sob_line);
     }
 
+    let commit_enc = config
+        .get("i18n.commitEncoding")
+        .or_else(|| config.get("i18n.commitencoding"));
+    let commit_enc_is_utf8 = match commit_enc.as_deref() {
+        None => true,
+        Some(e) => e.eq_ignore_ascii_case("utf-8") || e.eq_ignore_ascii_case("utf8"),
+    };
+    let patch_charset_is_non_utf8 = patch.content_charset.as_deref().is_some_and(|c| {
+        let t = c.trim();
+        !t.eq_ignore_ascii_case("utf-8") && !t.eq_ignore_ascii_case("utf8")
+    });
+
+    let (stored_msg, encoding, raw_message) = if !opts.mail_utf8
+        && commit_enc_is_utf8
+        && patch_charset_is_non_utf8
+    {
+        let enc = patch.content_charset.as_deref().unwrap_or("ISO8859-1");
+        eprintln!(
+            "Warning: commit message did not conform to UTF-8.\n\
+You may want to amend it after fixing the message, or set the config\n\
+variable i18n.commitEncoding to the encoding your project uses.\n"
+        );
+        if let Some(raw) = crate::git_commit_encoding::encode_unicode(enc, &message) {
+            (message.clone(), None, Some(raw))
+        } else {
+            crate::git_commit_encoding::finalize_stored_commit_message(
+                message,
+                commit_enc.as_deref(),
+            )
+        }
+    } else {
+        crate::git_commit_encoding::finalize_stored_commit_message(message, commit_enc.as_deref())
+    };
+
     let commit_data = CommitData {
         tree: tree_oid,
         parents,
@@ -1680,9 +1723,9 @@ fn create_am_commit(
         committer: committer_ident,
         author_raw: Vec::new(),
         committer_raw: Vec::new(),
-        encoding: None,
-        message,
-        raw_message: None,
+        encoding,
+        message: stored_msg,
+        raw_message,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -1994,6 +2037,9 @@ fn save_am_options(state_dir: &Path, opts: &AmOptions) -> Result<()> {
     if opts.ignore_date {
         out.push_str("ignore-date\n");
     }
+    if !opts.mail_utf8 {
+        out.push_str("no-mail-utf8\n");
+    }
     out.push_str(&format!("empty={}\n", opts.empty));
     fs::write(state_dir.join("options"), out)?;
     Ok(())
@@ -2013,6 +2059,7 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
         message_id: false,
         empty: "stop".to_string(),
         allow_empty: false,
+        mail_utf8: true,
     };
     for line in content.lines() {
         match line.trim() {
@@ -2025,6 +2072,7 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
             "message-id" => opts.message_id = true,
             "allow-empty" => opts.allow_empty = true,
             "ignore-date" => opts.ignore_date = true,
+            "no-mail-utf8" => opts.mail_utf8 = false,
             l if l.starts_with("empty=") => opts.empty = l[6..].to_string(),
             _ => {}
         }
@@ -2222,6 +2270,7 @@ fn parse_stgit_patch(input: &str) -> Result<Vec<MboxPatch>> {
         author: author_ident.0,
         date: author_ident.1,
         message,
+        content_charset: None,
         diff,
         message_id: String::new(),
     }])
@@ -2339,6 +2388,7 @@ fn parse_hg_patch(input: &str) -> Result<Vec<MboxPatch>> {
         author: author_ident.0,
         date: author_ident.1,
         message,
+        content_charset: None,
         diff,
         message_id: String::new(),
     }])
@@ -2626,6 +2676,7 @@ fn parse_mbox_with_opts(
         let mut last_header = String::new();
         let mut is_format_flowed = false;
         let mut content_transfer_encoding = String::new();
+        let mut content_charset: Option<String> = None;
 
         while let Some(&line) = lines.peek() {
             let line_no_cr = line.strip_suffix('\r').unwrap_or(line);
@@ -2647,7 +2698,7 @@ fn parse_mbox_with_opts(
             }
 
             if let Some(value) = line_no_cr.strip_prefix("From: ") {
-                author = value.trim().to_string();
+                author = crate::git_commit_encoding::decode_rfc2047_mailbox_from_line(value.trim());
                 last_header = "from".to_string();
             } else if let Some(value) = line_no_cr.strip_prefix("Date: ") {
                 date = value.trim().to_string();
@@ -2674,6 +2725,19 @@ fn parse_mbox_with_opts(
                 .strip_prefix("Content-Type: ")
                 .or_else(|| line_no_cr.strip_prefix("Content-type: "))
             {
+                for part in value.split(';').skip(1) {
+                    let p = part.trim();
+                    let lower = p.to_ascii_lowercase();
+                    if let Some(rest) = lower.strip_prefix("charset=") {
+                        let mut cs = rest.trim().trim_matches('"').trim_matches('\'');
+                        if let Some((a, _)) = cs.split_once(';') {
+                            cs = a.trim();
+                        }
+                        if !cs.is_empty() {
+                            content_charset = Some(cs.to_owned());
+                        }
+                    }
+                }
                 if value.to_lowercase().contains("format=flowed") {
                     is_format_flowed = true;
                 }
@@ -2794,6 +2858,7 @@ fn parse_mbox_with_opts(
                 author: author_ident.0,
                 date: author_ident.1,
                 message,
+                content_charset,
                 diff: diff_section,
                 message_id: message_id.clone(),
             });
@@ -3044,6 +3109,9 @@ fn serialize_mbox_patch(patch: &MboxPatch) -> String {
     let mut out = String::new();
     out.push_str(&format!("Author: {}\n", patch.author));
     out.push_str(&format!("Date: {}\n", patch.date));
+    if let Some(ref cs) = patch.content_charset {
+        out.push_str(&format!("Content-Charset: {cs}\n"));
+    }
     if !patch.message_id.is_empty() {
         out.push_str(&format!("Message-ID: {}\n", patch.message_id));
     }
@@ -3060,6 +3128,7 @@ fn deserialize_mbox_patch(data: &str) -> Result<MboxPatch> {
     let mut author = String::new();
     let mut date = String::new();
     let mut message_id = String::new();
+    let mut content_charset: Option<String> = None;
     let mut msg_len = 0usize;
     let mut diff_len = 0usize;
 
@@ -3079,6 +3148,8 @@ fn deserialize_mbox_patch(data: &str) -> Result<MboxPatch> {
             date = v.to_string();
         } else if let Some(v) = line.strip_prefix("Message-ID: ") {
             message_id = v.to_string();
+        } else if let Some(v) = line.strip_prefix("Content-Charset: ") {
+            content_charset = Some(v.to_string());
         } else if let Some(v) = line.strip_prefix("Message-Length: ") {
             msg_len = v.parse().unwrap_or(0);
         } else if let Some(v) = line.strip_prefix("Diff-Length: ") {
@@ -3104,6 +3175,7 @@ fn deserialize_mbox_patch(data: &str) -> Result<MboxPatch> {
         author,
         date,
         message,
+        content_charset,
         diff,
         message_id,
     })
@@ -3502,8 +3574,7 @@ fn resolve_identity(config: &ConfigSet, kind: &str) -> Result<(String, String)> 
     let name_var = format!("GIT_{kind}_NAME");
     let email_var = format!("GIT_{kind}_EMAIL");
 
-    let name = std::env::var(&name_var)
-        .ok()
+    let name = crate::ident::read_git_identity_name_from_env(&name_var)
         .or_else(|| config.get("user.name"))
         .unwrap_or_else(|| "Unknown".to_owned());
     let email = std::env::var(&email_var)

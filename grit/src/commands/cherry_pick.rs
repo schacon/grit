@@ -1446,6 +1446,15 @@ fn create_cherry_pick_commit(
     let author = original_commit.author.clone();
     let committer = resolve_committer_ident(&config, now)?;
 
+    let commit_enc = config
+        .get("i18n.commitEncoding")
+        .or_else(|| config.get("i18n.commitencoding"));
+    let (stored_msg, encoding, raw_message) =
+        crate::git_commit_encoding::finalize_stored_commit_message(
+            message.to_owned(),
+            commit_enc.as_deref(),
+        );
+
     let commit_data = CommitData {
         tree: tree_oid,
         parents,
@@ -1453,9 +1462,9 @@ fn create_cherry_pick_commit(
         committer,
         author_raw: Vec::new(),
         committer_raw: Vec::new(),
-        encoding: None,
-        message: message.to_owned(),
-        raw_message: None,
+        encoding,
+        message: stored_msg,
+        raw_message,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -1497,8 +1506,7 @@ fn create_cherry_pick_commit(
 }
 
 fn committer_name_email(config: &ConfigSet) -> (String, String) {
-    let name = std::env::var("GIT_COMMITTER_NAME")
-        .ok()
+    let name = crate::ident::read_git_identity_name_from_env("GIT_COMMITTER_NAME")
         .or_else(|| config.get("user.name"))
         .unwrap_or_else(|| "Unknown".to_owned());
     let email = std::env::var("GIT_COMMITTER_EMAIL")
@@ -1521,6 +1529,26 @@ fn resolve_committer_ident(config: &ConfigSet, now: time::OffsetDateTime) -> Res
         .unwrap_or_else(|_| format!("{epoch} {hours:+03}{minutes:02}"));
 
     Ok(format!("{name} <{email}> {timestamp}"))
+}
+
+fn append_signoff(msg: &str, git_dir: &Path) -> Result<String> {
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    let name = crate::ident::read_git_identity_name_from_env("GIT_COMMITTER_NAME")
+        .or_else(|| config.get("user.name"))
+        .unwrap_or_else(|| "Unknown".to_owned());
+    let email = std::env::var("GIT_COMMITTER_EMAIL")
+        .ok()
+        .or_else(|| config.get("user.email"))
+        .unwrap_or_default();
+
+    let signoff_line = format!("Signed-off-by: {name} <{email}>");
+
+    if msg.contains(&signoff_line) {
+        return Ok(msg.to_owned());
+    }
+
+    let trimmed = msg.trim_end();
+    Ok(format!("{trimmed}\n\n{signoff_line}\n"))
 }
 
 fn update_head(git_dir: &Path, head: &HeadState, commit_oid: &ObjectId) -> Result<()> {

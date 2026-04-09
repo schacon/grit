@@ -17,8 +17,12 @@ use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, split_symmetric_diff, OrderingMode, RevListOptions};
 use grit_lib::rev_parse::{resolve_revision, resolve_revision_for_range_end};
+use std::collections::HashSet;
 use std::io::{self, Write};
 use std::path::PathBuf;
+
+use crate::git_commit_encoding::commit_message_unicode_for_display;
+use crate::ident::read_git_identity_name_from_env;
 
 /// Arguments for `grit format-patch`.
 #[derive(Debug, ClapArgs)]
@@ -28,6 +32,10 @@ pub struct Args {
     /// With `--cherry-pick --right-only`, supports symmetric `A...B` like `git rebase --apply`.
     #[arg(value_name = "REV", num_args = 0.., allow_hyphen_values = true)]
     pub revisions: Vec<String>,
+
+    /// Commit message encoding for the patch (Git compatibility; `t3901` passes this).
+    #[arg(long = "encoding", value_name = "ENCODING")]
+    pub encoding: Option<String>,
 
     /// Write output to stdout instead of individual files.
     #[arg(long)]
@@ -443,6 +451,17 @@ pub fn run(mut args: Args) -> Result<()> {
         format_patch_graph: args.graph,
     };
 
+    let mut log_output_encoding = config
+        .get("i18n.logOutputEncoding")
+        .or_else(|| config.get("i18n.logoutputencoding"))
+        .unwrap_or_else(|| "UTF-8".to_owned());
+    if let Some(enc) = args.encoding.as_deref() {
+        let t = enc.trim();
+        if !t.is_empty() {
+            log_output_encoding = t.to_owned();
+        }
+    }
+
     // Ensure output directory exists
     let out_dir = if let Some(ref dir) = args.output_directory {
         std::fs::create_dir_all(dir)
@@ -461,7 +480,8 @@ pub fn run(mut args: Args) -> Result<()> {
         } else {
             format!("[{prefix}] *** SUBJECT HERE ***")
         };
-        let cover = format_cover_letter(&repo, &commits, &cover_subject, &opts)?;
+        let cover =
+            format_cover_letter(&repo, &commits, &cover_subject, &opts, &log_output_encoding)?;
         if args.stdout {
             let mut out = stdout_handle.lock();
             write!(out, "{cover}")?;
@@ -478,7 +498,12 @@ pub fn run(mut args: Args) -> Result<()> {
 
     for (idx, (oid, commit)) in commits.iter().enumerate() {
         let patch_num = start + idx;
-        let subject_line = commit.message.lines().next().unwrap_or("");
+        let display_msg = commit_message_unicode_for_display(
+            commit.encoding.as_deref(),
+            &commit.message,
+            commit.raw_message.as_deref(),
+        );
+        let subject_line = display_msg.lines().next().unwrap_or("");
 
         // Build the subject with optional numbering
         let subject = if opts.keep_subject {
@@ -491,7 +516,15 @@ pub fn run(mut args: Args) -> Result<()> {
 
         // Format the patch — append base-commit info to last patch
         let include_base = is_last_patch(idx);
-        let patch = format_single_patch(&repo.odb, oid, commit, &subject, &opts, include_base)?;
+        let patch = format_single_patch(
+            &repo.odb,
+            oid,
+            commit,
+            &subject,
+            &opts,
+            include_base,
+            &log_output_encoding,
+        )?;
 
         if args.stdout {
             let mut out = stdout_handle.lock();
@@ -630,21 +663,32 @@ fn collect_range_commits(
     let until_oid =
         resolve_revision(repo, right).with_context(|| format!("unknown revision '{right}'"))?;
 
-    let mut commits = Vec::new();
-    let mut current = until_oid;
-
-    loop {
-        if current == since_oid {
-            break;
+    let mut from_a = HashSet::new();
+    let mut stack = vec![since_oid];
+    while let Some(oid) = stack.pop() {
+        if !from_a.insert(oid) {
+            continue;
         }
-        let obj = repo.odb.read(&current).context("reading commit")?;
+        let obj = repo.odb.read(&oid).context("reading commit")?;
         let commit = parse_commit(&obj.data).context("parsing commit")?;
-        let parent = commit.parents.first().copied();
-        commits.push((current, commit));
-        match parent {
-            Some(p) => current = p,
-            None => break,
+        for p in &commit.parents {
+            stack.push(*p);
         }
+    }
+
+    let mut commits = Vec::new();
+    let mut frontier = vec![until_oid];
+    let mut seen = HashSet::new();
+    while let Some(oid) = frontier.pop() {
+        if !seen.insert(oid) || from_a.contains(&oid) {
+            continue;
+        }
+        let obj = repo.odb.read(&oid).context("reading commit")?;
+        let commit = parse_commit(&obj.data).context("parsing commit")?;
+        for p in &commit.parents {
+            frontier.push(*p);
+        }
+        commits.push((oid, commit));
     }
 
     commits.reverse();
@@ -793,6 +837,7 @@ fn format_cover_letter(
     commits: &[(ObjectId, CommitData)],
     subject: &str,
     patch_opts: &PatchOptions,
+    log_output_encoding: &str,
 ) -> Result<String> {
     let mut out = String::new();
 
@@ -804,24 +849,47 @@ fn format_cover_letter(
         last_oid.to_hex()
     ));
 
-    let author_display = format_ident(&last_commit.author);
-    out.push_str(&format!("From: {author_display}\n"));
+    let charset_label = rfc2047_charset_label(log_output_encoding);
+    let use_utf8_log = charset_label.eq_ignore_ascii_case("UTF-8");
+    let author_display = format_ident(
+        &crate::git_commit_encoding::decode_rfc2047_mailbox_from_line(&last_commit.author),
+    );
+    let from_header = if use_utf8_log {
+        encode_email_address(&author_display)
+    } else {
+        encode_email_address_for_charset(&author_display, &charset_label)
+    };
+    out.push_str(&format!("From: {from_header}\n"));
 
     let date = format_date_rfc2822(&last_commit.author);
     out.push_str(&format!("Date: {date}\n"));
 
     out.push_str(&format!("Subject: {subject}\n"));
+    if !use_utf8_log {
+        out.push_str("MIME-Version: 1.0\n");
+        out.push_str(&format!(
+            "Content-Type: text/plain; charset={charset_label}\n"
+        ));
+        out.push_str("Content-Transfer-Encoding: 8bit\n");
+    }
     out.push('\n');
     out.push_str("*** BLURB HERE ***\n");
     out.push('\n');
 
     // Shortlog
     for (_oid, commit) in commits {
-        let first_line = commit.message.lines().next().unwrap_or("");
-        let author_name = if let Some(bracket) = commit.author.find('<') {
-            commit.author[..bracket].trim()
+        let display_msg = commit_message_unicode_for_display(
+            commit.encoding.as_deref(),
+            &commit.message,
+            commit.raw_message.as_deref(),
+        );
+        let first_line = display_msg.lines().next().unwrap_or("");
+        let decoded_author =
+            crate::git_commit_encoding::decode_rfc2047_mailbox_from_line(&commit.author);
+        let author_name = if let Some(bracket) = decoded_author.find('<') {
+            decoded_author[..bracket].trim()
         } else {
-            &commit.author
+            decoded_author.as_str()
         };
         out.push_str(&format!("  {author_name} ({}):\n", 1));
         out.push_str(&format!("    {first_line}\n"));
@@ -859,7 +927,7 @@ fn format_cover_letter(
 
 /// Get the signoff identity, preferring GIT_COMMITTER_NAME/EMAIL env vars.
 fn get_signoff_identity(committer_ident: &str) -> (String, String) {
-    let env_name = std::env::var("GIT_COMMITTER_NAME").ok();
+    let env_name = read_git_identity_name_from_env("GIT_COMMITTER_NAME");
     let env_email = std::env::var("GIT_COMMITTER_EMAIL").ok();
 
     let name = env_name.unwrap_or_else(|| {
@@ -893,8 +961,16 @@ fn format_single_patch(
     subject: &str,
     opts: &PatchOptions,
     include_base: bool,
+    log_output_encoding: &str,
 ) -> Result<String> {
     let mut out = String::new();
+    let charset_label = rfc2047_charset_label(log_output_encoding);
+    let use_utf8_log = charset_label.eq_ignore_ascii_case("UTF-8");
+    let commit_msg_unicode = commit_message_unicode_for_display(
+        commit.encoding.as_deref(),
+        &commit.message,
+        commit.raw_message.as_deref(),
+    );
 
     // Generate the diff first (needed for MIME attachment)
     let parent_tree = commit.parents.first().map(|parent_oid| {
@@ -938,9 +1014,15 @@ fn format_single_patch(
     // From line
     out.push_str(&format!("From {} Mon Sep 17 00:00:00 2001\n", oid.to_hex()));
 
-    // From: author
-    let author_display = format_ident(&commit.author);
-    out.push_str(&format!("From: {author_display}\n"));
+    // From: author (RFC 2047 per `i18n.logOutputEncoding`, matching git)
+    let author_display =
+        format_ident(&crate::git_commit_encoding::decode_rfc2047_mailbox_from_line(&commit.author));
+    let from_header = if use_utf8_log {
+        encode_email_address(&author_display)
+    } else {
+        encode_email_address_for_charset(&author_display, &charset_label)
+    };
+    out.push_str(&format!("From: {from_header}\n"));
 
     // Date: from author timestamp
     let date = format_date_rfc2822(&commit.author);
@@ -983,7 +1065,7 @@ fn format_single_patch(
     } else {
         false
     };
-    let body_has_non_ascii = commit.message.bytes().any(|b| b > 127) || signoff_has_non_ascii;
+    let body_has_non_ascii = commit_msg_unicode.bytes().any(|b| b > 127) || signoff_has_non_ascii;
     let needs_mime = use_mime || body_has_non_ascii;
 
     // MIME headers for --attach / --inline or non-ASCII body
@@ -995,7 +1077,9 @@ fn format_single_patch(
                 boundary
             ));
         } else {
-            out.push_str("Content-Type: text/plain; charset=UTF-8\n");
+            out.push_str(&format!(
+                "Content-Type: text/plain; charset={charset_label}\n"
+            ));
             out.push_str("Content-Transfer-Encoding: 8bit\n");
         }
     }
@@ -1003,8 +1087,7 @@ fn format_single_patch(
     out.push('\n');
 
     // Commit message body (skip first line which is in Subject)
-    let body: String = commit
-        .message
+    let body: String = commit_msg_unicode
         .lines()
         .skip(1)
         .collect::<Vec<_>>()
@@ -1014,7 +1097,9 @@ fn format_single_patch(
     if use_mime {
         // MIME multipart: description part, then patch as attachment
         out.push_str(&format!("--{boundary}\n"));
-        out.push_str("Content-Type: text/plain; charset=UTF-8\n");
+        out.push_str(&format!(
+            "Content-Type: text/plain; charset={charset_label}\n"
+        ));
         out.push_str("Content-Transfer-Encoding: 8bit\n");
         out.push('\n');
         if !body.is_empty() {
@@ -1025,7 +1110,12 @@ fn format_single_patch(
         // Signoff in body part
         if opts.signoff {
             let (name, email) = get_signoff_identity(&commit.committer);
-            out.push_str(&format!("\nSigned-off-by: {name} <{email}>\n"));
+            let sob = if use_utf8_log {
+                format!("{name} <{email}>")
+            } else {
+                encode_email_address_for_charset(&format!("{name} <{email}>"), &charset_label)
+            };
+            out.push_str(&format!("\nSigned-off-by: {sob}\n"));
         }
 
         out.push_str("---\n");
@@ -1035,9 +1125,11 @@ fn format_single_patch(
         // Patch attachment part
         out.push_str(&format!("--{boundary}\n"));
         let disposition = if opts.inline { "inline" } else { "attachment" };
-        let subject_line = commit.message.lines().next().unwrap_or("patch");
+        let subject_line = commit_msg_unicode.lines().next().unwrap_or("patch");
         let filename = format!("{}.patch", sanitize_subject(subject_line));
-        out.push_str("Content-Type: text/x-patch; charset=UTF-8\n");
+        out.push_str(&format!(
+            "Content-Type: text/x-patch; charset={charset_label}\n"
+        ));
         out.push_str("Content-Transfer-Encoding: 8bit\n");
         out.push_str(&format!(
             "Content-Disposition: {disposition}; filename=\"{filename}\"\n"
@@ -1055,7 +1147,12 @@ fn format_single_patch(
         // Signoff trailer
         if opts.signoff {
             let (name, email) = get_signoff_identity(&commit.committer);
-            out.push_str(&format!("\nSigned-off-by: {name} <{email}>\n"));
+            let sob = if use_utf8_log {
+                format!("{name} <{email}>")
+            } else {
+                encode_email_address_for_charset(&format!("{name} <{email}>"), &charset_label)
+            };
+            out.push_str(&format!("\nSigned-off-by: {sob}\n"));
         }
 
         out.push_str("---\n");
@@ -1180,6 +1277,88 @@ fn encode_email_address(addr: &str) -> String {
     }
     // No angle brackets — return as-is
     addr.to_string()
+}
+
+/// Charset token for RFC 2047 `=?charset?q?...?=` (matches Git test expectations).
+fn rfc2047_charset_label(log_output_encoding: &str) -> String {
+    let t = log_output_encoding.trim();
+    let lower = t.to_ascii_lowercase();
+    if lower == "utf-8" || lower == "utf8" {
+        return "UTF-8".to_owned();
+    }
+    if matches!(
+        lower.as_str(),
+        "iso-8859-1" | "iso8859-1" | "latin1" | "latin-1"
+    ) {
+        return "ISO8859-1".to_owned();
+    }
+    t.to_owned()
+}
+
+/// Like [`encode_email_address`] but uses `charset_label` for RFC 2047 when non-ASCII.
+fn encode_email_address_for_charset(addr: &str, charset_label: &str) -> String {
+    if charset_label.eq_ignore_ascii_case("UTF-8") {
+        return encode_email_address(addr);
+    }
+    if let (Some(lt), Some(gt)) = (addr.rfind('<'), addr.rfind('>')) {
+        if lt < gt {
+            let name = addr[..lt].trim();
+            let email_part = &addr[lt..=gt];
+            if name.is_empty() {
+                return addr.to_string();
+            }
+            let encoded_name = encode_display_name_for_charset(name, charset_label);
+            return format!("{encoded_name} {email_part}");
+        }
+    }
+    addr.to_string()
+}
+
+fn encode_display_name_for_charset(name: &str, charset_label: &str) -> String {
+    if charset_label.eq_ignore_ascii_case("UTF-8") {
+        return encode_display_name(name);
+    }
+    if name.bytes().any(|b| b > 0x7f) {
+        return rfc2047_encode_with_charset(name, charset_label);
+    }
+    let specials = |c: char| {
+        matches!(
+            c,
+            '(' | ')' | '<' | '>' | '[' | ']' | ':' | ';' | '@' | '\\' | ',' | '.' | '"'
+        )
+    };
+    if name.chars().any(specials) {
+        let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
+        return format!("\"{escaped}\"");
+    }
+    name.to_string()
+}
+
+fn rfc2047_encode_with_charset(name: &str, charset_label: &str) -> String {
+    let bytes = if charset_label.eq_ignore_ascii_case("UTF-8") {
+        name.as_bytes().to_vec()
+    } else {
+        match crate::git_commit_encoding::encode_unicode(charset_label, name) {
+            Some(mut raw) => {
+                while raw.last() == Some(&b'\n') {
+                    raw.pop();
+                }
+                raw
+            }
+            None => return rfc2047_encode(name),
+        }
+    };
+    let mut encoded = String::new();
+    for &byte in &bytes {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' => {
+                encoded.push(byte as char);
+            }
+            b' ' => encoded.push_str("=20"),
+            _ => encoded.push_str(&format!("={byte:02X}")),
+        }
+    }
+    format!("=?{charset_label}?q?{encoded}?=")
 }
 
 /// Encode a display name portion of an email address.

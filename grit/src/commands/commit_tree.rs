@@ -18,6 +18,8 @@ use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{resolve_revision_for_commit_tree_tree, resolve_revision_for_range_end};
 
+use crate::ident::read_git_identity_name_from_env;
+
 /// Arguments for `grit commit-tree`.
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -122,9 +124,9 @@ fn build_identity(prefix: &str, now_unix: &str, tz_str: &str) -> Result<String> 
     let email_key = format!("GIT_{prefix}_EMAIL");
     let date_key = format!("GIT_{prefix}_DATE");
 
-    let name = env::var(&name_key)
-        .or_else(|_| env::var("GIT_AUTHOR_NAME"))
-        .unwrap_or_else(|_| "Unknown".to_owned());
+    let name = read_git_identity_name_from_env(&name_key)
+        .or_else(|| read_git_identity_name_from_env("GIT_AUTHOR_NAME"))
+        .unwrap_or_else(|| "Unknown".to_owned());
     let email = env::var(&email_key)
         .or_else(|_| env::var("GIT_AUTHOR_EMAIL"))
         .unwrap_or_else(|_| "unknown@unknown".to_owned());
