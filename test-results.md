@@ -1,5 +1,10 @@
 # Test Results
 
+**Updated:** 2026-04-09
+
+- `./scripts/run-tests.sh t3303-notes-subtrees.sh`: 23/23 passing (`fast-import` heredoc `data`, `M … inline`, `deleteall`; `log` notes map merges duplicate paths like Git).
+- `cargo test -p grit-lib --lib`: 121/121 passing.
+
 **Updated:** 2026-04-08
 
 - `./scripts/run-tests.sh t13180-log-patch-stat.sh`: 35/35 passing (`grit log` oneline/graph/decorate/skip/max-count/reverse/format; harness CSV/dashboards refreshed).

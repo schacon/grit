@@ -142,17 +142,12 @@ impl<'a, R: BufRead> Importer<'a, R> {
             if t.starts_with("original-oid ") {
                 continue;
             }
-            let rest = t.strip_prefix("data ").ok_or_else(|| {
-                Error::IndexError(format!("fast-import: expected data line in blob, got: {t}"))
-            })?;
-            let size: usize = rest.parse().map_err(|_| {
-                Error::IndexError(format!("fast-import: invalid data size: {rest}"))
-            })?;
-            let mut payload = vec![0u8; size];
-            self.reader
-                .read_exact(&mut payload)
-                .map_err(|_| Error::IndexError("fast-import: truncated blob data".to_owned()))?;
-            self.consume_optional_lf_after_data()?;
+            if !t.starts_with("data ") {
+                return Err(Error::IndexError(format!(
+                    "fast-import: expected data line in blob, got: {t}"
+                )));
+            }
+            let payload = self.read_data_payload(&line)?;
             let oid = self.repo.odb.write(ObjectKind::Blob, &payload)?;
             if let Some(m) = mark {
                 self.marks.insert(m, oid);
@@ -211,16 +206,7 @@ impl<'a, R: BufRead> Importer<'a, R> {
                 )));
             }
             if t.starts_with("data ") {
-                // Re-parse: we already have full line with "data N".
-                let rest = t.strip_prefix("data ").unwrap();
-                let size: usize = rest.parse().map_err(|_| {
-                    Error::IndexError(format!("fast-import: invalid data size: {rest}"))
-                })?;
-                let mut message = vec![0u8; size];
-                self.reader.read_exact(&mut message).map_err(|_| {
-                    Error::IndexError("fast-import: truncated commit message".to_owned())
-                })?;
-                self.consume_optional_lf_after_data()?;
+                let message = self.read_data_payload(&line)?;
                 let committer = committer.ok_or_else(|| {
                     Error::IndexError("fast-import: commit missing committer".to_owned())
                 })?;
@@ -245,6 +231,7 @@ impl<'a, R: BufRead> Importer<'a, R> {
         let mut from_oid: Option<ObjectId> = None;
         let mut modifications: Vec<(u32, ObjectId, Vec<u8>)> = Vec::new();
         let mut deletions: Vec<Vec<u8>> = Vec::new();
+        let mut saw_deleteall = false;
 
         loop {
             let Some(line) = self.read_line_any()? else {
@@ -252,6 +239,12 @@ impl<'a, R: BufRead> Importer<'a, R> {
             };
             let t = line.trim_end();
             if t.is_empty() {
+                continue;
+            }
+            if t == "deleteall" {
+                saw_deleteall = true;
+                modifications.clear();
+                deletions.clear();
                 continue;
             }
             if t.starts_with("from ") {
@@ -274,7 +267,12 @@ impl<'a, R: BufRead> Importer<'a, R> {
                 })?;
                 let blob_ref = parts[1];
                 let path = parts[2].as_bytes().to_vec();
-                let blob_oid = self.resolve_blob_ref(blob_ref)?;
+                let blob_oid = if blob_ref == "inline" {
+                    let payload = self.read_inline_blob_data()?;
+                    self.repo.odb.write(ObjectKind::Blob, &payload)?
+                } else {
+                    self.resolve_blob_ref(blob_ref)?
+                };
                 modifications.push((mode, blob_oid, path));
                 continue;
             }
@@ -317,7 +315,11 @@ impl<'a, R: BufRead> Importer<'a, R> {
             }
         };
 
-        let mut index = tree_to_index(&self.repo.odb, &parent_tree)?;
+        let mut index = if saw_deleteall {
+            Index::new()
+        } else {
+            tree_to_index(&self.repo.odb, &parent_tree)?
+        };
         for path in deletions {
             index.entries.retain(|e| e.path != path);
         }
@@ -366,6 +368,71 @@ impl<'a, R: BufRead> Importer<'a, R> {
             return spec.parse();
         }
         resolve_revision(self.repo, spec)
+    }
+
+    /// Read blob bytes for an `M … inline <path>` file change: the next non-empty command must be
+    /// `data …` (size or `<<delimiter` heredoc), matching git-fast-import.
+    fn read_inline_blob_data(&mut self) -> Result<Vec<u8>> {
+        let data_header = loop {
+            let line = self.read_line_any()?.ok_or_else(|| {
+                Error::IndexError("fast-import: unexpected EOF after inline filechange".to_owned())
+            })?;
+            let h = line.trim_end();
+            if h.is_empty() {
+                continue;
+            }
+            if h.starts_with("cat-blob ") {
+                return Err(Error::IndexError(format!(
+                    "fast-import: cat-blob before inline data not supported: {h}"
+                )));
+            }
+            break line;
+        };
+        self.read_data_payload(&data_header)
+    }
+
+    /// Parse a `data …` line and read the payload from `reader` (binary count or `<<term` heredoc).
+    fn read_data_payload(&mut self, data_line: &str) -> Result<Vec<u8>> {
+        let t = data_line.trim_end();
+        let rest = t.strip_prefix("data ").ok_or_else(|| {
+            Error::IndexError(format!("fast-import: expected 'data' command, got: {t}"))
+        })?;
+        let rest = rest.trim_start();
+        if let Some(term) = rest.strip_prefix("<<") {
+            let term = term.trim_end();
+            if term.is_empty() {
+                return Err(Error::IndexError(
+                    "fast-import: empty heredoc delimiter in data command".to_owned(),
+                ));
+            }
+            let mut out = Vec::new();
+            loop {
+                let mut line = String::new();
+                let n = self.read_line_into(&mut line)?;
+                if n == 0 {
+                    return Err(Error::IndexError(format!(
+                        "fast-import: EOF in data (terminator '{term}' not found)"
+                    )));
+                }
+                let line_no_nl = line.trim_end_matches(['\r', '\n']);
+                if line_no_nl == term {
+                    break;
+                }
+                out.extend_from_slice(line_no_nl.as_bytes());
+                out.push(b'\n');
+            }
+            Ok(out)
+        } else {
+            let size: usize = rest.parse().map_err(|_| {
+                Error::IndexError(format!("fast-import: invalid data size: {rest}"))
+            })?;
+            let mut payload = vec![0u8; size];
+            self.reader.read_exact(&mut payload).map_err(|_| {
+                Error::IndexError("fast-import: truncated inline blob data".to_owned())
+            })?;
+            self.consume_optional_lf_after_data()?;
+            Ok(payload)
+        }
     }
 
     fn resolve_blob_ref(&self, spec: &str) -> Result<ObjectId> {
