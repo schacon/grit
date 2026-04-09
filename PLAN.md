@@ -588,7 +588,7 @@ commit → check it off → move on.
 - [ ] `t5502-quickfetch` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — test quickfetch from local
 - [x] `t5544-pack-objects-hook` ████████████████████ 7/7 (0 left) — test custom script in place of pack-objects
 - [ ] `t5316-pack-delta-depth` ░░░░░░░░░░░░░░░░░░░░ 0/5 (5 left) — pack-objects breaks long cross-pack delta chains
-- [ ] `t5546-receive-limits` ████████████░░░░░░░░ 11/17 (6 left) — check receive input limits
+- [x] `t5546-receive-limits` — check receive input limits (17/17)
 - [ ] `t5534-push-signed` ██████████░░░░░░░░░░ 7/13 (6 left) — signed push
 - [ ] `t5543-atomic-push` ███████████████░░░░░ 10/13 (3 left) — pushing to a repository using the atomic push option
 - [ ] `t5503-tagfollow` ██████████░░░░░░░░░░ 6/12 (6 left) — test automatic tag following

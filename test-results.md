@@ -1,5 +1,11 @@
 # Test results
 
+**2026-04-09 (t5546 / receive limits)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `cargo clippy -p grit-rs -p grit-lib --fix --allow-dirty`: no warnings
+- `./scripts/run-tests.sh t5546-receive-limits.sh`: 17/17 passed
+
 **2026-04-09 (t4063 / diff blobs)**
 
 - `cargo test -p grit-lib --lib`: 155 passed
