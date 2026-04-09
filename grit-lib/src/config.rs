@@ -1416,6 +1416,19 @@ impl ConfigSet {
         self.get(key).map(|v| parse_bool(&v))
     }
 
+    /// Whether pathnames in human-readable output should fully C-quote non-ASCII bytes as octal.
+    ///
+    /// Maps to Git's `quote_path_fully` (`core.quotepath`, default true). When false, UTF-8 and
+    /// other high bytes are emitted literally; only ASCII specials are escaped. Also honors
+    /// `core.quotePath` as an alternate spelling.
+    #[must_use]
+    pub fn quote_path_fully(&self) -> bool {
+        let from_key = |key: &str| self.get_bool(key).and_then(|r| r.ok());
+        from_key("core.quotepath")
+            .or_else(|| from_key("core.quotePath"))
+            .unwrap_or(true)
+    }
+
     /// Get an integer value, supporting Git's `k`/`m`/`g` suffixes.
     pub fn get_i64(&self, key: &str) -> Option<std::result::Result<i64, String>> {
         self.get(key).map(|v| parse_i64(&v))

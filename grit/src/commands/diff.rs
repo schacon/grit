@@ -432,6 +432,9 @@ pub fn run(mut args: Args) -> Result<()> {
     let (mut revs, paths) = parse_rev_and_paths(&args.args, has_separator);
 
     let repo = Repository::discover(None).context("not a git repository")?;
+    let quote_path_fully = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+        .unwrap_or_default()
+        .quote_path_fully();
 
     let emit_unified_patch = diff_emit_unified_patch_from_argv(&raw_args);
 
@@ -1121,9 +1124,10 @@ pub fn run(mut args: Args) -> Result<()> {
                 args.stat_width,
                 args.stat_name_width,
                 args.break_rewrites,
+                quote_path_fully,
             )?;
             if args.summary {
-                write_diff_summary(&mut out, &entries)?;
+                write_diff_summary(&mut out, &entries, quote_path_fully)?;
             }
         } else if args.raw {
             let oid_len = if args.full_index || args.no_abbrev {
@@ -1143,11 +1147,11 @@ pub fn run(mut args: Args) -> Result<()> {
                 args.break_rewrites,
             )?;
         } else if args.name_only {
-            write_name_only(&mut out, &entries)?;
+            write_name_only(&mut out, &entries, quote_path_fully)?;
         } else if args.name_status {
-            write_name_status(&mut out, &entries)?;
+            write_name_status(&mut out, &entries, quote_path_fully)?;
         } else if args.summary && !stat_enabled {
-            write_diff_summary(&mut out, &entries)?;
+            write_diff_summary(&mut out, &entries, quote_path_fully)?;
         } else {
             let patch_abbrev = if args.full_index {
                 40
@@ -2764,6 +2768,7 @@ fn write_stat(
     stat_width: Option<usize>,
     stat_name_width: Option<usize>,
     break_rewrites: bool,
+    quote_path_fully: bool,
 ) -> Result<()> {
     if entries.is_empty() {
         return Ok(());
@@ -2776,9 +2781,9 @@ fn write_stat(
             DiffStatus::Renamed | DiffStatus::Copied => {
                 let old = e.old_path.as_deref().unwrap_or("");
                 let new = e.new_path.as_deref().unwrap_or("");
-                format_rename_display(old, new)
+                format_rename_display(old, new, quote_path_fully)
             }
-            _ => quote_c_style(e.path()),
+            _ => grit_lib::quote_path::quote_c_style(e.path(), quote_path_fully),
         })
         .collect();
     let max_path_len = display_paths
@@ -2907,54 +2912,12 @@ fn write_stat(
     Ok(())
 }
 
-/// C-style quote a path if it contains special characters (tab, newline, etc.).
-/// Returns the quoted string (with surrounding double-quotes) if quoting is needed,
-/// otherwise returns the original string.
-fn quote_c_style(name: &str) -> String {
-    let mut out = String::with_capacity(name.len() + 2);
-    let mut needs_quotes = false;
-    for ch in name.chars() {
-        match ch {
-            '"' => {
-                out.push_str("\\\"");
-                needs_quotes = true;
-            }
-            '\\' => {
-                out.push_str("\\\\");
-                needs_quotes = true;
-            }
-            '\t' => {
-                out.push_str("\\t");
-                needs_quotes = true;
-            }
-            '\n' => {
-                out.push_str("\\n");
-                needs_quotes = true;
-            }
-            '\r' => {
-                out.push_str("\\r");
-                needs_quotes = true;
-            }
-            c if c.is_control() => {
-                out.push_str(&format!("\\{:03o}", u32::from(c)));
-                needs_quotes = true;
-            }
-            c => out.push(c),
-        }
-    }
-    if needs_quotes {
-        format!("\"{out}\"")
-    } else {
-        out
-    }
-}
-
 /// Format a rename/copy path for numstat: `{old_quoted}\t{new_quoted}` or
 /// `{old_quoted} => {new_quoted}` depending on format.
-fn format_rename_display(old: &str, new: &str) -> String {
+fn format_rename_display(old: &str, new: &str, quote_path_fully: bool) -> String {
     // Use the pretty-print format with common prefix/suffix like c/{b/a => d/e}
     let pretty = grit_lib::diff::format_rename_path(old, new);
-    quote_c_style(&pretty)
+    grit_lib::quote_path::quote_c_style(&pretty, quote_path_fully)
 }
 
 /// Write machine-readable numstat output: `{insertions}\t{deletions}\t{path}`.
@@ -2971,7 +2934,7 @@ fn write_numstat(
             DiffStatus::Renamed | DiffStatus::Copied => {
                 let old = entry.old_path.as_deref().unwrap_or("");
                 let new = entry.new_path.as_deref().unwrap_or("");
-                let display = format_rename_display(old, new);
+                let display = format_rename_display(old, new, false);
                 writeln!(out, "{ins}\t{del}\t{display}")?;
             }
             _ => {
@@ -2984,20 +2947,24 @@ fn write_numstat(
 
 /// Write only the names of changed files.
 /// Write `--summary` output for rename/copy/mode-change entries.
-fn write_diff_summary(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> {
+fn write_diff_summary(
+    out: &mut impl Write,
+    entries: &[DiffEntry],
+    quote_path_fully: bool,
+) -> Result<()> {
     for entry in entries {
         match entry.status {
             DiffStatus::Renamed => {
                 let old = entry.old_path.as_deref().unwrap_or("");
                 let new = entry.new_path.as_deref().unwrap_or("");
-                let display = format_rename_display(old, new);
+                let display = format_rename_display(old, new, quote_path_fully);
                 let sim = entry.score.unwrap_or(100);
                 writeln!(out, " rename {display} ({sim}%)")?;
             }
             DiffStatus::Copied => {
                 let old = entry.old_path.as_deref().unwrap_or("");
                 let new = entry.new_path.as_deref().unwrap_or("");
-                let display = format_rename_display(old, new);
+                let display = format_rename_display(old, new, quote_path_fully);
                 let sim = entry.score.unwrap_or(100);
                 writeln!(out, " copy {display} ({sim}%)")?;
             }
@@ -3006,7 +2973,7 @@ fn write_diff_summary(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()>
                     out,
                     " create mode {} {}",
                     entry.new_mode,
-                    quote_c_style(entry.path())
+                    grit_lib::quote_path::quote_c_style(entry.path(), quote_path_fully)
                 )?;
             }
             DiffStatus::Deleted => {
@@ -3014,7 +2981,7 @@ fn write_diff_summary(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()>
                     out,
                     " delete mode {} {}",
                     entry.old_mode,
-                    quote_c_style(entry.path())
+                    grit_lib::quote_path::quote_c_style(entry.path(), quote_path_fully)
                 )?;
             }
             _ => {}
@@ -3023,9 +2990,17 @@ fn write_diff_summary(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()>
     Ok(())
 }
 
-fn write_name_only(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> {
+fn write_name_only(
+    out: &mut impl Write,
+    entries: &[DiffEntry],
+    quote_path_fully: bool,
+) -> Result<()> {
     for entry in entries {
-        writeln!(out, "{}", entry.path())?;
+        writeln!(
+            out,
+            "{}",
+            grit_lib::quote_path::quote_c_style(entry.path(), quote_path_fully)
+        )?;
     }
     Ok(())
 }
@@ -3063,7 +3038,11 @@ fn write_raw(out: &mut impl Write, entries: &[DiffEntry], abbrev_len: usize) -> 
     Ok(())
 }
 
-fn write_name_status(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> {
+fn write_name_status(
+    out: &mut impl Write,
+    entries: &[DiffEntry],
+    quote_path_fully: bool,
+) -> Result<()> {
     for entry in entries {
         match entry.status {
             DiffStatus::Renamed => {
@@ -3072,8 +3051,14 @@ fn write_name_status(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> 
                     out,
                     "R{:03}\t{}\t{}",
                     s,
-                    entry.old_path.as_deref().unwrap_or(""),
-                    entry.new_path.as_deref().unwrap_or("")
+                    grit_lib::quote_path::quote_c_style(
+                        entry.old_path.as_deref().unwrap_or(""),
+                        quote_path_fully,
+                    ),
+                    grit_lib::quote_path::quote_c_style(
+                        entry.new_path.as_deref().unwrap_or(""),
+                        quote_path_fully,
+                    ),
                 )?;
             }
             DiffStatus::Copied => {
@@ -3082,12 +3067,23 @@ fn write_name_status(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> 
                     out,
                     "C{:03}\t{}\t{}",
                     s,
-                    entry.old_path.as_deref().unwrap_or(""),
-                    entry.new_path.as_deref().unwrap_or("")
+                    grit_lib::quote_path::quote_c_style(
+                        entry.old_path.as_deref().unwrap_or(""),
+                        quote_path_fully,
+                    ),
+                    grit_lib::quote_path::quote_c_style(
+                        entry.new_path.as_deref().unwrap_or(""),
+                        quote_path_fully,
+                    ),
                 )?;
             }
             _ => {
-                writeln!(out, "{}\t{}", entry.status.letter(), entry.path())?;
+                writeln!(
+                    out,
+                    "{}\t{}",
+                    entry.status.letter(),
+                    grit_lib::quote_path::quote_c_style(entry.path(), quote_path_fully)
+                )?;
             }
         }
     }

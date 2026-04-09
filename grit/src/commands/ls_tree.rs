@@ -283,6 +283,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let max_tree_depth = resolve_max_tree_depth(&config)?;
+    let quote_fully = config.quote_path_fully();
 
     apply_ls_tree_implications(&mut args);
 
@@ -405,6 +406,7 @@ pub fn run(mut args: Args) -> Result<()> {
         &mut out,
         term,
         cwd_prefix.as_deref(),
+        quote_fully,
     )?;
 
     Ok(())
@@ -443,6 +445,7 @@ fn list_tree(
     out: &mut impl Write,
     term: u8,
     cwd_prefix: Option<&str>,
+    quote_fully: bool,
 ) -> Result<()> {
     if depth > max_tree_depth {
         bail!(
@@ -502,6 +505,7 @@ fn list_tree(
                     out,
                     term,
                     cwd_prefix,
+                    quote_fully,
                 )?;
                 continue;
             }
@@ -510,7 +514,7 @@ fn list_tree(
         if args.recursive && is_tree && !is_submodule {
             if args.show_trees || args.only_trees {
                 let display_name = make_cwd_relative(&full_name, cwd_prefix);
-                print_entry(repo, entry, &display_name, args, out, term)?;
+                print_entry(repo, entry, &display_name, args, out, term, quote_fully)?;
             }
             let sub_obj = repo.odb.read(&entry.oid)?;
             list_tree(
@@ -523,6 +527,7 @@ fn list_tree(
                 out,
                 term,
                 cwd_prefix,
+                quote_fully,
             )?;
             continue;
         }
@@ -532,7 +537,7 @@ fn list_tree(
         }
 
         let display_name = make_cwd_relative(&full_name, cwd_prefix);
-        print_entry(repo, entry, &display_name, args, out, term)?;
+        print_entry(repo, entry, &display_name, args, out, term, quote_fully)?;
     }
     Ok(())
 }
@@ -544,6 +549,7 @@ fn print_entry(
     args: &Args,
     out: &mut impl Write,
     term: u8,
+    quote_fully: bool,
 ) -> Result<()> {
     let kind_str = match file_type_mask(entry.mode) {
         0o160000 => "commit",
@@ -564,7 +570,11 @@ fn print_entry(
         if args.null_terminated {
             write!(out, "{name}")?;
         } else {
-            write!(out, "{}", quote_path_name(name))?;
+            write!(
+                out,
+                "{}",
+                grit_lib::quote_path::quote_c_style(name, quote_fully)
+            )?;
         }
     } else if args.object_only {
         let hex = entry.oid.to_hex();
@@ -632,47 +642,6 @@ fn expand_hex_escapes(s: &str) -> String {
         }
     }
     result
-}
-
-fn quote_path_name(name: &str) -> String {
-    let mut out = String::with_capacity(name.len() + 2);
-    let mut needs_quotes = false;
-
-    for ch in name.chars() {
-        match ch {
-            '"' => {
-                out.push_str("\\\"");
-                needs_quotes = true;
-            }
-            '\\' => {
-                out.push_str("\\\\");
-                needs_quotes = true;
-            }
-            '\t' => {
-                out.push_str("\\t");
-                needs_quotes = true;
-            }
-            '\n' => {
-                out.push_str("\\n");
-                needs_quotes = true;
-            }
-            '\r' => {
-                out.push_str("\\r");
-                needs_quotes = true;
-            }
-            c if c.is_control() => {
-                out.push_str(&format!("\\{:03o}", u32::from(c)));
-                needs_quotes = true;
-            }
-            c => out.push(c),
-        }
-    }
-
-    if needs_quotes {
-        format!("\"{out}\"")
-    } else {
-        out
-    }
 }
 
 fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
