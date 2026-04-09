@@ -2397,6 +2397,25 @@ fn cherry_pick_for_rebase(
     let head_commit = parse_commit(&head_obj.data)?;
     let head_tree_oid = head_commit.tree;
 
+    // Already at the picked commit's parent tip — nothing to replay (matches Git's noop pick).
+    // Fixup/squash must still run merge + message folding even when parent == HEAD.
+    if todo_cmd == RebaseTodoCmd::Pick {
+        if let Some(p) = commit.parents.first() {
+            if head_oid == *p {
+                let old_index = load_index(repo)?;
+                let mut idx = Index::new();
+                idx.entries = tree_to_index_entries(repo, &commit_tree_oid, "")?;
+                idx.sort();
+                repo.write_index(&mut idx)?;
+                if let Some(wt) = &repo.work_tree {
+                    checkout_merged_index(repo, wt, &old_index, &idx)?;
+                }
+                fs::write(git_dir.join("HEAD"), format!("{}\n", commit_oid.to_hex()))?;
+                return Ok(());
+            }
+        }
+    }
+
     if matches!(todo_cmd, RebaseTodoCmd::Fixup | RebaseTodoCmd::Squash) {
         let mut ctx = read_squash_ctx(rb_dir);
         update_squash_message_file(repo, rb_dir, git_dir, todo_cmd, &commit, &mut ctx)?;
