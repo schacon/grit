@@ -26,7 +26,101 @@ use grit_lib::merge_diff::format_worktree_conflict_combined;
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{resolve_revision, split_treeish_colon};
+use grit_lib::rev_list::{rev_list, RevListOptions};
+use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision, split_treeish_colon};
+
+use crate::commands::diff_index::{write_patch_entry, SubmoduleIgnoreFlags};
+
+fn submodule_ignore_flags_from_diff_arg(ignore_sm: &str) -> SubmoduleIgnoreFlags {
+    match ignore_sm {
+        "all" => SubmoduleIgnoreFlags {
+            ignore_all: true,
+            ignore_untracked: false,
+            ignore_dirty: false,
+        },
+        "untracked" => SubmoduleIgnoreFlags {
+            ignore_all: false,
+            ignore_untracked: true,
+            ignore_dirty: false,
+        },
+        "dirty" => SubmoduleIgnoreFlags {
+            ignore_all: false,
+            ignore_untracked: false,
+            ignore_dirty: true,
+        },
+        _ => SubmoduleIgnoreFlags {
+            ignore_all: false,
+            ignore_untracked: false,
+            ignore_dirty: false,
+        },
+    }
+}
+
+fn write_submodule_log_lines(
+    out: &mut impl Write,
+    repo: &Repository,
+    entry: &DiffEntry,
+) -> Result<()> {
+    let z = zero_oid();
+    if entry.old_oid == z || entry.new_oid == z {
+        return Ok(());
+    }
+    let old_a = abbreviate_object_id(repo, entry.old_oid, 7)?;
+    let new_a = abbreviate_object_id(repo, entry.new_oid, 7)?;
+    writeln!(out, "Submodule {} {}..{}:", entry.path(), old_a, new_a)?;
+    let Some(wt) = repo.work_tree.as_deref() else {
+        return Ok(());
+    };
+    let sub_path = wt.join(entry.path());
+    let Ok(sub_repo) = Repository::discover(Some(&sub_path)) else {
+        return Ok(());
+    };
+    let mut opts = RevListOptions::default();
+    opts.first_parent = true;
+    let Ok(res) = rev_list(
+        &sub_repo,
+        &[entry.new_oid.to_hex()],
+        &[entry.old_oid.to_hex()],
+        &opts,
+    ) else {
+        return Ok(());
+    };
+    for oid in res.commits.iter().rev() {
+        let Ok(obj) = sub_repo.odb.read(oid) else {
+            continue;
+        };
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let Ok(c) = parse_commit(&obj.data) else {
+            continue;
+        };
+        let subject = submodule_commit_subject_line(&c);
+        writeln!(out, "  > {subject}")?;
+    }
+    Ok(())
+}
+
+fn submodule_commit_subject_line(c: &grit_lib::objects::CommitData) -> String {
+    let enc = c.encoding.as_deref().unwrap_or("UTF-8");
+    let is_latin1 = enc.eq_ignore_ascii_case("ISO8859-1")
+        || enc.eq_ignore_ascii_case("ISO-8859-1")
+        || enc.eq_ignore_ascii_case("LATIN1")
+        || enc.eq_ignore_ascii_case("ISO-8859-15");
+    if let Some(raw) = c.raw_message.as_deref() {
+        let line = raw.split(|b| *b == b'\n').next().unwrap_or(raw);
+        if is_latin1 {
+            return line
+                .iter()
+                .map(|&b| b as char)
+                .collect::<String>()
+                .trim()
+                .to_owned();
+        }
+        return String::from_utf8_lossy(line).trim().to_string();
+    }
+    c.message.lines().next().unwrap_or("").trim().to_owned()
+}
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
@@ -317,8 +411,8 @@ pub struct Args {
     #[arg(short = 'M', long = "find-renames", value_name = "N", default_missing_value = "50", num_args = 0..=1, require_equals = true)]
     pub find_renames: Option<String>,
 
-    /// Suppress diff output for submodules.
-    #[arg(long = "submodule", value_name = "FORMAT", default_missing_value = "short", num_args = 0..=1, require_equals = true)]
+    /// Submodule diff output (`log` is the default for bare `--submodule`, matching Git).
+    #[arg(long = "submodule", value_name = "FORMAT", default_missing_value = "log", num_args = 0..=1)]
     pub submodule: Option<String>,
 
     /// Disable external diff drivers (no-op, for compatibility).
@@ -1192,6 +1286,7 @@ pub fn run(mut args: Args) -> Result<()> {
             if show_unified {
                 write_patch_with_prefix(
                     &mut out,
+                    &repo,
                     &entries,
                     &repo.odb,
                     context_lines,
@@ -1204,6 +1299,8 @@ pub fn run(mut args: Args) -> Result<()> {
                     args.binary,
                     &src_prefix,
                     &dst_prefix,
+                    args.submodule.as_deref(),
+                    submodule_ignore_flags_from_diff_arg(ignore_sm),
                 )?;
             }
         }
@@ -1767,6 +1864,10 @@ fn diff_emit_unified_patch_from_argv(argv: &[String]) -> bool {
             emit = true;
             continue;
         }
+        if arg == "--submodule" || arg.starts_with("--submodule=") {
+            emit = true;
+            continue;
+        }
         if arg.starts_with("-U") || arg.starts_with("--unified") {
             emit = true;
             continue;
@@ -2268,6 +2369,7 @@ fn write_diff_header_with_prefix(
 
 fn write_patch_with_prefix(
     out: &mut impl Write,
+    repo: &Repository,
     entries: &[DiffEntry],
     odb: &Odb,
     context_lines: usize,
@@ -2280,10 +2382,43 @@ fn write_patch_with_prefix(
     show_binary: bool,
     src_prefix: &str,
     dst_prefix: &str,
+    submodule_fmt: Option<&str>,
+    submodule_ignore: SubmoduleIgnoreFlags,
 ) -> Result<()> {
     for entry in entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
         let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
+
+        if let Some(fmt) = submodule_fmt {
+            if entry.old_mode == "160000" || entry.new_mode == "160000" {
+                if fmt == "log"
+                    && entry.old_mode == "160000"
+                    && entry.new_mode == "160000"
+                    && matches!(
+                        entry.status,
+                        DiffStatus::Modified | DiffStatus::Renamed | DiffStatus::Copied
+                    )
+                    && entry.old_oid != entry.new_oid
+                {
+                    write_submodule_log_lines(out, repo, entry)?;
+                    continue;
+                }
+                if fmt == "diff" {
+                    write_patch_entry(
+                        out,
+                        repo,
+                        odb,
+                        entry,
+                        context_lines,
+                        work_tree,
+                        true,
+                        submodule_ignore,
+                        entry.path(),
+                    )?;
+                    continue;
+                }
+            }
+        }
 
         write_diff_header_with_prefix(out, entry, use_color, abbrev_len, src_prefix, dst_prefix)?;
 
