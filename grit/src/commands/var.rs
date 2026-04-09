@@ -190,13 +190,9 @@ fn format_git_timestamp(dt: OffsetDateTime) -> String {
 
 // ── Editor / pager ───────────────────────────────────────────────────────────
 
-/// Resolve the editor: GIT_EDITOR env → core.editor config → VISUAL → EDITOR.
+/// Resolve the editor like Git's `git_editor()` (see [`crate::editor::resolve_git_editor`]).
 fn git_editor(config: &ConfigSet) -> Option<String> {
-    std::env::var("GIT_EDITOR")
-        .ok()
-        .or_else(|| config.get("core.editor"))
-        .or_else(|| std::env::var("VISUAL").ok())
-        .or_else(|| std::env::var("EDITOR").ok())
+    crate::editor::resolve_git_editor(config, false)
 }
 
 /// Resolve the sequence editor: GIT_SEQUENCE_EDITOR env → sequence.editor config → GIT_EDITOR.

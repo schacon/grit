@@ -29,7 +29,7 @@ use crate::ident::{resolve_email, resolve_name, IdentRole};
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use time::format_description::well_known::Rfc3339;
@@ -2008,53 +2008,15 @@ fn build_initial_commit_buffer(
     Ok(buf)
 }
 
-fn is_effective_editor_value(raw: &str) -> bool {
-    let t = raw.trim();
-    !t.is_empty() && t != ":"
-}
-
-fn resolve_commit_editor(repo: &Repository) -> String {
-    let visual_present = std::env::var("VISUAL").is_ok();
-    let editor_present = std::env::var("EDITOR").is_ok();
-
-    if let Ok(e) = std::env::var("GIT_EDITOR") {
-        if is_effective_editor_value(&e) {
-            return e;
-        }
-    }
-    if let Ok(config) = ConfigSet::load(Some(&repo.git_dir), true) {
-        if let Some(e) = config.get("core.editor") {
-            if is_effective_editor_value(&e) {
-                return e;
-            }
-        }
-    }
-    // Git order: VISUAL then EDITOR. Skip `:` / empty `VISUAL` (test harness sets `VISUAL=:`).
-    if let Ok(e) = std::env::var("VISUAL") {
-        if is_effective_editor_value(&e) {
-            return e;
-        }
-    }
-    if let Ok(e) = std::env::var("EDITOR") {
-        if is_effective_editor_value(&e) {
-            return e;
-        }
-    }
-    // Harness sets `EDITOR=:` / `VISUAL=:` as non-interactive placeholders; never launch `vi`
-    // in that case (would hang). Fall back to `true` like a no-op editor.
-    if visual_present || editor_present {
-        "true".to_owned()
-    } else if !std::io::stdin().is_terminal() {
-        // Non-interactive runs (CI / agents) may inherit `GIT_EDITOR=vim` from the parent
-        // environment; launching vi would hang when stdin is not a tty.
-        "true".to_owned()
-    } else {
-        "vi".to_owned()
-    }
-}
-
 pub(crate) fn launch_commit_editor(repo: &Repository, path: &Path) -> Result<()> {
-    let editor = resolve_commit_editor(repo);
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let editor = crate::editor::resolve_git_editor(&config, true)
+        .ok_or_else(|| anyhow::anyhow!("Terminal is dumb, but EDITOR unset"))?;
+
+    // Git treats `:` as a no-op editor (`launch_specified_editor`).
+    if editor.trim() == ":" {
+        return Ok(());
+    }
     // Match Git: the editor command is run under `sh -c` with the path as `$1` (not `$@`),
     // so `test_set_editor` patterns like `EDITOR='"$FAKE_EDITOR"'` expand and receive the file.
     let status = Command::new("sh")
@@ -2410,6 +2372,20 @@ fn prepare_commit_message(
 
     let initial = build_initial_commit_buffer(args, repo, fixup, template_path)?;
 
+    // `git commit --amend --no-edit` (or implied no-edit): reuse HEAD without the editor.
+    if args.amend && !use_editor {
+        let head_st = resolve_head(&repo.git_dir)?;
+        if let Some(oid) = head_st.oid() {
+            let obj = repo.odb.read(oid)?;
+            let commit = grit_lib::objects::parse_commit(&obj.data)?;
+            return Ok(MessageResult {
+                message: commit.message,
+                raw_bytes: None,
+                from_merge_msg: false,
+            });
+        }
+    }
+
     if args.allow_empty_message
         && initial.trim().is_empty()
         && template_path.is_none()
@@ -2485,19 +2461,6 @@ fn prepare_commit_message(
             raw_bytes: None,
             from_merge_msg: false,
         });
-    }
-
-    if args.amend {
-        let head_st = resolve_head(&repo.git_dir)?;
-        if let Some(oid) = head_st.oid() {
-            let obj = repo.odb.read(oid)?;
-            let commit = grit_lib::objects::parse_commit(&obj.data)?;
-            return Ok(MessageResult {
-                message: commit.message,
-                raw_bytes: None,
-                from_merge_msg: false,
-            });
-        }
     }
 
     if args.allow_empty_message {
