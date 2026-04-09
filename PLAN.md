@@ -348,7 +348,7 @@ commit → check it off → move on.
 - [ ] `t3426-rebase-submodule` ██░░░░░░░░░░░░░░░░░░ 4/29 (25 left) — rebase can handle submodules
 - [ ] `t3452-history-split` ░░░░░░░░░░░░░░░░░░░░ 0/25 (25 left) — tests for git-history split subcommand
 - [ ] `t3203-branch-output` ███████░░░░░░░░░░░░░ 15/41 (26 left) — git branch display tests
-- [ ] `t3415-rebase-autosquash` █░░░░░░░░░░░░░░░░░░░ 2/28 (26 left) — auto squash
+- [~] `t3415-rebase-autosquash` █████████████████░░░ 25/28 (3 left) — auto squash (remaining: abort-last-squash, fixup-chain message order)
 - [ ] `t3321-notes-stripspace` ░░░░░░░░░░░░░░░░░░░░ 1/27 (26 left) — Test commit notes with stripspace behavior
 - [x] `t3406-rebase-message` — messages from rebase operation (32/32)
 - [ ] `t3309-notes-merge-auto-resolve` █░░░░░░░░░░░░░░░░░░░ 2/31 (29 left) — Test notes merging with auto-resolving strategies

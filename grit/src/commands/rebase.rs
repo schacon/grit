@@ -552,16 +552,18 @@ fn commit_subject_single_line(message: &str) -> String {
     out
 }
 
+/// Strips one `fixup! ` / `amend! ` / `squash! ` prefix (bang + space), matching Git's
+/// `skip_fixupish` in `sequencer.c` (`todo_list_rearrange_squash`).
 fn skip_fixupish_prefix(subject: &str) -> Option<&str> {
     let s = subject.trim_start();
-    if let Some(rest) = s.strip_prefix("fixup!") {
-        return Some(rest.trim_start());
+    if let Some(rest) = s.strip_prefix("fixup! ") {
+        return Some(rest);
     }
-    if let Some(rest) = s.strip_prefix("amend!") {
-        return Some(rest.trim_start());
+    if let Some(rest) = s.strip_prefix("amend! ") {
+        return Some(rest);
     }
-    if let Some(rest) = s.strip_prefix("squash!") {
-        return Some(rest.trim_start());
+    if let Some(rest) = s.strip_prefix("squash! ") {
+        return Some(rest);
     }
     None
 }
@@ -732,6 +734,8 @@ fn rearrange_autosquash(
         }
         if let Some(i2) = target_idx {
             rearranged = true;
+            // Git uses `starts_with(subject, "fixup!")` / `"amend!"` vs else → squash, so
+            // `squash! squash! …` becomes squash commands (not fixup).
             let t = subj.trim_start();
             cmds[i] = if t.starts_with("fixup!") || t.starts_with("amend!") {
                 RebaseTodoCmd::Fixup
@@ -1081,8 +1085,27 @@ fn next_non_fixup_index(
     None
 }
 
+fn rebase_todo_first_word(line: &str) -> Option<&str> {
+    let t = line.trim();
+    if t.is_empty() || t.starts_with('#') {
+        return None;
+    }
+    t.split_whitespace().next()
+}
+
+fn rebase_todo_word_is_fixup_or_squash(word: &str) -> bool {
+    matches!(
+        word.to_ascii_lowercase().as_str(),
+        "fixup" | "f" | "squash" | "s"
+    )
+}
+
+/// `is_final_fixup`: Git `sequencer.c` when `rebase -k` / `keep-empty` is in effect (`-ki` cases in
+/// t3415). Otherwise a hybrid: Git's trailing fixup/squash scan plus grit's rule that a later
+/// non-fixup pick blocks finalization (non-`-k` `--autosquash` / `-i` autosquash).
 fn is_final_fixup_in_todo(
     repo: &Repository,
+    rb_dir: &Path,
     todo_lines: &[&str],
     idx: usize,
     interactive: bool,
@@ -1096,6 +1119,32 @@ fn is_final_fixup_in_todo(
     if !matches!(cmd, RebaseTodoCmd::Fixup | RebaseTodoCmd::Squash) {
         return false;
     }
+
+    let mut j = idx + 1;
+    while j < todo_lines.len() {
+        let t = todo_lines[j].trim();
+        if t.is_empty() || t.starts_with('#') {
+            j += 1;
+            continue;
+        }
+        let Some(w) = rebase_todo_first_word(todo_lines[j]) else {
+            j += 1;
+            continue;
+        };
+        if w.eq_ignore_ascii_case("noop") {
+            j += 1;
+            continue;
+        }
+        if rebase_todo_word_is_fixup_or_squash(w) {
+            return false;
+        }
+        break;
+    }
+
+    if rebase_keep_empty(rb_dir) {
+        return true;
+    }
+
     next_non_fixup_index(repo, todo_lines, idx, interactive).is_none()
 }
 
@@ -1744,24 +1793,28 @@ fn run_shell_editor(editor: &str, path: &Path) -> Result<std::process::ExitStatu
             .arg(format!("{} \"$@\"", editor))
             .arg(editor)
             .arg(path)
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
             .status()
     }
     .context("failed to run editor")?;
     Ok(status)
 }
 
-/// Opens `GIT_EDITOR` on `COMMIT_EDITMSG` for an interactive reword during `rebase -i`.
+/// Opens `GIT_EDITOR` on `COMMIT_EDITMSG` after seeding it and running `prepare-commit-msg`.
 ///
-/// Matches Git's sequencer path: seed the file, run `prepare-commit-msg` with source `reword`,
-/// then invoke the commit editor. Returns the edited message text (before final cleanup).
-fn run_commit_editor_for_reword(
+/// `prepare_source` is the hook's second argument (`reword`, `squash`, `message`, …), matching
+/// Git's `git commit -e` path during interactive rebase.
+fn run_commit_editor_for_template(
     repo: &Repository,
     git_dir: &Path,
     template: &str,
+    prepare_source: &str,
 ) -> Result<String> {
     let editmsg = git_dir.join("COMMIT_EDITMSG");
     fs::write(&editmsg, template)?;
-    run_prepare_commit_msg_hook(repo, &editmsg, "reword")?;
+    run_prepare_commit_msg_hook(repo, &editmsg, prepare_source)?;
     let config = ConfigSet::load(Some(git_dir), true)?;
     let editor = git_editor_cmd(&config)?;
     let status = run_shell_editor(&editor, &editmsg)?;
@@ -1769,6 +1822,15 @@ fn run_commit_editor_for_reword(
         bail!("there was a problem with the editor");
     }
     fs::read_to_string(&editmsg).context("read COMMIT_EDITMSG after editor")
+}
+
+/// Opens `GIT_EDITOR` on `COMMIT_EDITMSG` for an interactive reword during `rebase -i`.
+fn run_commit_editor_for_reword(
+    repo: &Repository,
+    git_dir: &Path,
+    template: &str,
+) -> Result<String> {
+    run_commit_editor_for_template(repo, git_dir, template, "reword")
 }
 
 fn worktree_matches_head(repo: &Repository, git_dir: &Path) -> Result<bool> {
@@ -1903,6 +1965,10 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         .unwrap_or(false);
     let want_autosquash =
         (args.autosquash || (config_autosquash && args.interactive)) && !args.no_autosquash;
+
+    if want_autosquash {
+        validate_rebase_instruction_format(&config)?;
+    }
 
     validate_apply_merge_backend_combo(&args, &config, want_autosquash)?;
 
@@ -2100,7 +2166,6 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         }
         (edited_lines, true)
     } else if want_autosquash {
-        validate_rebase_instruction_format(&config)?;
         let entries = rearrange_autosquash(&repo, commits)?;
         (rebase_state_todo_lines(&repo, &config, &entries)?, false)
     } else {
@@ -2734,9 +2799,10 @@ fn replay_remaining(
                         exec_cmd
                     );
                     let remaining: Vec<&str> = todo[i + 1..].to_vec();
+                    let n = remaining.iter().filter(|l| !l.trim().is_empty()).count();
                     fs::write(rb_dir.join("todo"), remaining.join("\n") + "\n")?;
                     fs::write(rb_dir.join("msgnum"), "1")?;
-                    fs::write(rb_dir.join("end"), remaining.len().to_string())?;
+                    fs::write(rb_dir.join("end"), n.to_string())?;
                     std::process::exit(code);
                 }
             }
@@ -2844,7 +2910,8 @@ fn replay_remaining(
                     .unwrap_or_else(diff::zero_oid);
 
                 let pick_backend = load_rebase_backend(rb_dir);
-                let final_fixup = is_final_fixup_in_todo(repo, &todo, i, rebase_interactive);
+                let final_fixup =
+                    is_final_fixup_in_todo(repo, rb_dir, &todo, i, rebase_interactive);
                 let next_after_this =
                     peek_next_rebase_flush_hint(repo, &todo, i + 1, rebase_interactive);
                 match cherry_pick_for_rebase(
@@ -2875,9 +2942,10 @@ fn replay_remaining(
                         );
 
                         let remaining: Vec<&str> = todo[i + 1..].to_vec();
+                        let n = remaining.iter().filter(|l| !l.trim().is_empty()).count();
                         fs::write(rb_dir.join("todo"), remaining.join("\n") + "\n")?;
                         fs::write(rb_dir.join("msgnum"), "1")?;
-                        fs::write(rb_dir.join("end"), remaining.len().to_string())?;
+                        fs::write(rb_dir.join("end"), n.to_string())?;
                         let _ = fs::write(
                             rb_dir.join("stopped-sha"),
                             format!("{}\n", commit_oid.to_hex()),
@@ -2886,11 +2954,12 @@ fn replay_remaining(
                         std::process::exit(0);
                     }
                     Err(_e) => {
-                        let remaining: Vec<&str> = todo[i + 1..].to_vec();
+                        let remaining: Vec<&str> = todo[i..].to_vec();
+                        let n = remaining.iter().filter(|l| !l.trim().is_empty()).count();
                         fs::write(rb_dir.join("todo"), remaining.join("\n") + "\n")?;
                         fs::write(rb_dir.join("msgnum"), "1")?;
-                        fs::write(rb_dir.join("end"), remaining.len().to_string())?;
-                        let ff = is_final_fixup_in_todo(repo, &todo, i, rebase_interactive);
+                        fs::write(rb_dir.join("end"), n.to_string())?;
+                        let ff = is_final_fixup_in_todo(repo, rb_dir, &todo, i, rebase_interactive);
                         fs::write(
                             rb_dir.join("current-final-fixup"),
                             if ff { "1\n" } else { "0\n" },
@@ -2938,7 +3007,8 @@ fn replay_remaining(
                     .unwrap_or_else(diff::zero_oid);
 
                 let pick_backend = load_rebase_backend(rb_dir);
-                let final_fixup = is_final_fixup_in_todo(repo, &todo, i, rebase_interactive);
+                let final_fixup =
+                    is_final_fixup_in_todo(repo, rb_dir, &todo, i, rebase_interactive);
                 let next_after_this =
                     peek_next_rebase_flush_hint(repo, &todo, i + 1, rebase_interactive);
                 match cherry_pick_for_rebase(
@@ -2991,20 +3061,23 @@ fn replay_remaining(
                                         global_exec
                                     );
                                     let remaining: Vec<&str> = todo[i + 1..].to_vec();
+                                    let n =
+                                        remaining.iter().filter(|l| !l.trim().is_empty()).count();
                                     fs::write(rb_dir.join("todo"), remaining.join("\n") + "\n")?;
                                     fs::write(rb_dir.join("msgnum"), "1")?;
-                                    fs::write(rb_dir.join("end"), remaining.len().to_string())?;
+                                    fs::write(rb_dir.join("end"), n.to_string())?;
                                     std::process::exit(code);
                                 }
                             }
                         }
                     }
                     Err(_e) => {
-                        let remaining: Vec<&str> = todo[i + 1..].to_vec();
+                        let remaining: Vec<&str> = todo[i..].to_vec();
+                        let n = remaining.iter().filter(|l| !l.trim().is_empty()).count();
                         fs::write(rb_dir.join("todo"), remaining.join("\n") + "\n")?;
                         fs::write(rb_dir.join("msgnum"), "1")?;
-                        fs::write(rb_dir.join("end"), remaining.len().to_string())?;
-                        let ff = is_final_fixup_in_todo(repo, &todo, i, rebase_interactive);
+                        fs::write(rb_dir.join("end"), n.to_string())?;
+                        let ff = is_final_fixup_in_todo(repo, rb_dir, &todo, i, rebase_interactive);
                         fs::write(
                             rb_dir.join("current-final-fixup"),
                             if ff { "1\n" } else { "0\n" },
@@ -3285,12 +3358,17 @@ fn cherry_pick_for_rebase(
         let amend_parent = hc.parents.first().copied().unwrap_or(head_oid);
 
         if todo_cmd == RebaseTodoCmd::Fixup && !final_fixup {
+            // `message-fixup` holds the non-comment message Git would pass for intermediate
+            // fixups; run the hook and use `rebase_commit_msg_cleanup` so `prepare-commit-msg`
+            // can append lines that must survive when `commit.cleanup` is unset (t3415).
             let fixup_path = rb_dir.join("message-fixup");
-            let msg = if fixup_path.exists() {
+            let tmpl = if fixup_path.exists() {
                 fs::read_to_string(&fixup_path)?
             } else {
                 hc.message.clone()
             };
+            let raw = commit_message_after_prepare_hook(repo, git_dir, &tmpl, "message")?;
+            let cleaned = apply_commit_msg_cleanup(&raw, rebase_commit_msg_cleanup(&config));
             let new_oid = commit_from_merged_index(
                 repo,
                 git_dir,
@@ -3298,7 +3376,7 @@ fn cherry_pick_for_rebase(
                 &config,
                 vec![amend_parent],
                 &hc.author,
-                msg,
+                cleaned,
             )?;
             fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
             record_rebase_in_rewritten_pending(git_dir, rb_dir, commit_oid, next_after_line)?;
@@ -3326,15 +3404,15 @@ fn cherry_pick_for_rebase(
 
         if todo_cmd == RebaseTodoCmd::Fixup {
             let fixup_path = rb_dir.join("message-fixup");
-            let template = if fixup_path.exists() {
-                fs::read_to_string(&fixup_path)?
+            let cleaned = if fixup_path.exists() {
+                let tmpl = fs::read_to_string(&fixup_path)?;
+                let after_editor = run_commit_editor_for_template(repo, git_dir, &tmpl, "squash")?;
+                apply_commit_msg_cleanup(&after_editor, rebase_commit_msg_cleanup(&config))
             } else {
-                let subj = hc.message.lines().next().unwrap_or("");
-                let body = message_body_after_subject(&hc.message);
-                format!("{subj}\n{body}")
+                let tmpl = fs::read_to_string(rb_dir.join("message-squash"))?;
+                let after_editor = run_commit_editor_for_template(repo, git_dir, &tmpl, "squash")?;
+                apply_commit_msg_cleanup(&after_editor, rebase_commit_msg_cleanup(&config))
             };
-            let raw = commit_message_after_prepare_hook(repo, git_dir, &template, "squash")?;
-            let cleaned = apply_commit_msg_cleanup(&raw, rebase_commit_msg_cleanup(&config));
             let new_oid = commit_from_merged_index(
                 repo,
                 git_dir,
@@ -3354,14 +3432,16 @@ fn cherry_pick_for_rebase(
 
         let squash_path = rb_dir.join("message-squash");
         let fixup_path = rb_dir.join("message-fixup");
-        let tmpl = if fixup_path.exists() {
-            fs::read_to_string(&fixup_path)?
+        let cleaned = if fixup_path.exists() {
+            let tmpl = fs::read_to_string(&fixup_path)?;
+            let after_editor = run_commit_editor_for_template(repo, git_dir, &tmpl, "squash")?;
+            apply_commit_msg_cleanup(&after_editor, rebase_commit_msg_cleanup(&config))
         } else {
-            fs::read_to_string(&squash_path)?
+            let tmpl = fs::read_to_string(&squash_path)?;
+            let after_editor = run_commit_editor_for_template(repo, git_dir, &tmpl, "squash")?;
+            apply_commit_msg_cleanup(&after_editor, rebase_commit_msg_cleanup(&config))
         };
         let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
-        let raw = commit_message_after_prepare_hook(repo, git_dir, &tmpl, "squash")?;
-        let cleaned = apply_commit_msg_cleanup(&raw, rebase_commit_msg_cleanup(&config));
         let new_oid = commit_from_merged_index(
             repo,
             git_dir,
@@ -3833,13 +3913,13 @@ fn do_continue() -> Result<()> {
 
         if todo_cmd == RebaseTodoCmd::Fixup && !final_fixup {
             let fixup_path = rb_dir.join("message-fixup");
-            let msg = if git_dir.join("MERGE_MSG").exists() {
-                fs::read_to_string(git_dir.join("MERGE_MSG"))?
-            } else if fixup_path.exists() {
+            let tmpl = if fixup_path.exists() {
                 fs::read_to_string(&fixup_path)?
             } else {
                 hc.message.clone()
             };
+            let raw = commit_message_after_prepare_hook(&repo, git_dir, &tmpl, "message")?;
+            let cleaned = apply_commit_msg_cleanup(&raw, rebase_commit_msg_cleanup(&config));
             commit_from_merged_index(
                 &repo,
                 git_dir,
@@ -3847,7 +3927,7 @@ fn do_continue() -> Result<()> {
                 &config,
                 vec![amend_parent],
                 &hc.author,
-                msg,
+                cleaned,
             )?
         } else if todo_cmd == RebaseTodoCmd::Squash && !final_fixup {
             let tmpl = fs::read_to_string(rb_dir.join("message-squash"))?;
@@ -3864,15 +3944,15 @@ fn do_continue() -> Result<()> {
             )?
         } else if todo_cmd == RebaseTodoCmd::Fixup {
             let fixup_path = rb_dir.join("message-fixup");
-            let template = if fixup_path.exists() {
-                fs::read_to_string(&fixup_path)?
+            let cleaned = if fixup_path.exists() {
+                let tmpl = fs::read_to_string(&fixup_path)?;
+                let after_editor = run_commit_editor_for_template(&repo, git_dir, &tmpl, "squash")?;
+                apply_commit_msg_cleanup(&after_editor, rebase_commit_msg_cleanup(&config))
             } else {
-                let subj = hc.message.lines().next().unwrap_or("");
-                let body = message_body_after_subject(&hc.message);
-                format!("{subj}\n{body}")
+                let tmpl = fs::read_to_string(rb_dir.join("message-squash"))?;
+                let after_editor = run_commit_editor_for_template(&repo, git_dir, &tmpl, "squash")?;
+                apply_commit_msg_cleanup(&after_editor, rebase_commit_msg_cleanup(&config))
             };
-            let raw = commit_message_after_prepare_hook(&repo, git_dir, &template, "squash")?;
-            let cleaned = apply_commit_msg_cleanup(&raw, rebase_commit_msg_cleanup(&config));
             let oid = commit_from_merged_index(
                 &repo,
                 git_dir,
@@ -3887,13 +3967,15 @@ fn do_continue() -> Result<()> {
         } else {
             let squash_path = rb_dir.join("message-squash");
             let fixup_path = rb_dir.join("message-fixup");
-            let tmpl = if fixup_path.exists() {
-                fs::read_to_string(&fixup_path)?
+            let cleaned = if fixup_path.exists() {
+                let tmpl = fs::read_to_string(&fixup_path)?;
+                let after_editor = run_commit_editor_for_template(&repo, git_dir, &tmpl, "squash")?;
+                apply_commit_msg_cleanup(&after_editor, rebase_commit_msg_cleanup(&config))
             } else {
-                fs::read_to_string(&squash_path)?
+                let tmpl = fs::read_to_string(&squash_path)?;
+                let after_editor = run_commit_editor_for_template(&repo, git_dir, &tmpl, "squash")?;
+                apply_commit_msg_cleanup(&after_editor, rebase_commit_msg_cleanup(&config))
             };
-            let raw = commit_message_after_prepare_hook(&repo, git_dir, &tmpl, "squash")?;
-            let cleaned = apply_commit_msg_cleanup(&raw, rebase_commit_msg_cleanup(&config));
             let oid = commit_from_merged_index(
                 &repo,
                 git_dir,
@@ -4055,9 +4137,26 @@ fn do_skip() -> Result<()> {
         }
     }
 
-    // Advance past the current commit in the todo list
-    // (replay_remaining reads todo and msgnum, so just advance msgnum or trim todo)
-    // The todo was already trimmed when conflicts happened, so just continue
+    if interactive_skip {
+        let todo_raw = fs::read_to_string(rb_dir.join("todo"))?;
+        let mut lines: Vec<&str> = todo_raw.lines().collect();
+        if let Some(pos) = lines.iter().position(|l| {
+            let t = l.trim();
+            !t.is_empty() && !t.starts_with('#')
+        }) {
+            lines.remove(pos);
+            let new_todo = if lines.is_empty() {
+                String::new()
+            } else {
+                lines.join("\n") + "\n"
+            };
+            let n = lines.iter().filter(|l| !l.trim().is_empty()).count();
+            fs::write(rb_dir.join("todo"), new_todo)?;
+            fs::write(rb_dir.join("end"), n.to_string())?;
+        }
+        fs::write(rb_dir.join("msgnum"), "1")?;
+    }
+
     replay_remaining(
         &repo,
         &rb_dir,
