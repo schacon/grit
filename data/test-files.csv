@@ -428,7 +428,7 @@ t1423-ref-backend	t1	skip	9	0	0	false	ok	0
 t1430-bad-ref-name	t1	yes	40	4	36	false	ok	2
 t1450-fsck	t1	skip	74	0	0	false	ok	0
 t1450-fsck-basic	t1	yes	31	30	1	false	ok	0
-t1450-fsck-flags	t1	yes	10	8	2	false	ok	0
+t1450-fsck-flags	t1	yes	10	10	0	true	ok	0
 t1451-fsck-buffer	t1	yes	72	72	0	true	ok	0
 t1460-refs-migrate	t1	skip	22	0	0	false	ok	0
 t1461-refs-list	t1	yes	428	342	86	false	ok	0
