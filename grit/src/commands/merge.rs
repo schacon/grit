@@ -715,6 +715,12 @@ pub fn run(mut args: Args) -> Result<()> {
                 true,
             );
         }
+        // `-s ours` must not fast-forward to the other tip: Git records a merge commit whose
+        // tree matches ours (HEAD), even when a fast-forward to `merge_oid` exists (t6408).
+        if args.strategy.len() == 1 && args.strategy[0] == "ours" {
+            bail_if_index_tree_differs_from_head(&repo, head_oid, args.autostash)?;
+            return do_strategy_ours(&repo, &head, head_oid, merge_oid, &args);
+        }
         return do_fast_forward(&repo, &head, head_oid, merge_oid, &args);
     }
 
