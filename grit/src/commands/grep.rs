@@ -306,6 +306,23 @@ pub fn preprocess_open_in_pager_argv(argv: Vec<String>) -> (Vec<String>, bool, O
     (out, open_in_pager, open_pager_cmd)
 }
 
+/// Append one pattern per line from raw `-f` file bytes.
+///
+/// Lines are split on `\n` only. Each line may contain embedded NUL bytes (preserved
+/// when the line is valid UTF-8), matching `git grep`. Empty lines are skipped. A
+/// trailing `\r` before `\n` is stripped.
+fn append_patterns_from_file_bytes(bytes: &[u8], patterns: &mut Vec<String>) {
+    for line in bytes.split(|&b| b == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        let s = String::from_utf8(line.to_vec())
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+        patterns.push(s);
+    }
+}
+
 /// Run `grit grep`.
 pub fn run(mut args: Args) -> Result<()> {
     let has_attr_src = std::env::var("GIT_ATTR_SOURCE")
@@ -416,13 +433,9 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Read patterns from file if -f is given
     if let Some(ref pattern_file) = args.pattern_file {
-        let content = std::fs::read_to_string(pattern_file)
+        let bytes = std::fs::read(pattern_file)
             .with_context(|| format!("cannot read pattern file: '{pattern_file}'"))?;
-        for line in content.lines() {
-            if !line.is_empty() {
-                patterns.push(line.to_string());
-            }
-        }
+        append_patterns_from_file_bytes(&bytes, &mut patterns);
     }
 
     if patterns.is_empty() {
@@ -434,6 +447,15 @@ pub fn run(mut args: Args) -> Result<()> {
     }
     if args.open_in_pager && tree_ish.is_some() {
         bail!("--open-files-in-pager only works on the worktree");
+    }
+
+    // Match git grep.c: NUL in a pattern is only supported with PCRE v2 (`-P`).
+    for pat in &patterns {
+        if !args.perl_regexp && pat.as_bytes().contains(&0) {
+            bail!(
+                "fatal: given pattern contains NULL byte (via -f <file>). This is only supported with -P under PCRE v2"
+            );
+        }
     }
 
     // Determine matching mode: --all-match or --and means all patterns must match a line
@@ -763,8 +785,7 @@ fn grep_cached(
                         found_any = true;
                     }
                 } else {
-                    let content = String::from_utf8_lossy(&obj.data);
-                    let has_match = matchers.iter().any(|re| re.is_match(&content));
+                    let has_match = matchers.iter().any(|re| regex_matches_bytes(re, &obj.data));
                     if has_match {
                         writeln!(out, "Binary file {} matches", display_path)?;
                         found_any = true;
@@ -827,8 +848,7 @@ fn grep_cached(
                     found_any = true;
                 }
             } else {
-                let content = String::from_utf8_lossy(&obj.data);
-                let has_match = matchers.iter().any(|re| re.is_match(&content));
+                let has_match = matchers.iter().any(|re| regex_matches_bytes(re, &obj.data));
                 if has_match {
                     writeln!(out, "Binary file {} matches", display_path)?;
                     found_any = true;
@@ -967,8 +987,7 @@ fn grep_worktree(
                         found_any = true;
                     }
                 } else {
-                    let content_str = String::from_utf8_lossy(&content);
-                    let has_match = matchers.iter().any(|re| re.is_match(&content_str));
+                    let has_match = matchers.iter().any(|re| regex_matches_bytes(re, &content));
                     if has_match {
                         writeln!(out, "Binary file {} matches", display_path)?;
                         found_any = true;
@@ -1039,8 +1058,7 @@ fn grep_worktree(
                         found_any = true;
                     }
                 } else {
-                    let content_str = String::from_utf8_lossy(&obj.data);
-                    let has_match = matchers.iter().any(|re| re.is_match(&content_str));
+                    let has_match = matchers.iter().any(|re| regex_matches_bytes(re, &obj.data));
                     if has_match {
                         writeln!(out, "Binary file {} matches", display_path)?;
                         found_any = true;
@@ -1103,8 +1121,7 @@ fn grep_worktree(
                     found_any = true;
                 }
             } else {
-                let content_str = String::from_utf8_lossy(&content);
-                let has_match = matchers.iter().any(|re| re.is_match(&content_str));
+                let has_match = matchers.iter().any(|re| regex_matches_bytes(re, &content));
                 if has_match {
                     writeln!(out, "Binary file {} matches", display_path)?;
                     found_any = true;
@@ -1383,8 +1400,7 @@ fn grep_filesystem(
                 continue;
             }
             if is_binary && !args.text_mode {
-                let content_str = String::from_utf8_lossy(&content);
-                let has_match = matchers.iter().any(|re| re.is_match(&content_str));
+                let has_match = matchers.iter().any(|re| regex_matches_bytes(re, &content));
                 if has_match {
                     writeln!(out, "Binary file {} matches", display_path)?;
                     found_any = true;
@@ -1667,6 +1683,17 @@ fn build_matchers(patterns: &[String], args: &Args) -> Result<Vec<Regex>> {
         matchers.push(re);
     }
     Ok(matchers)
+}
+
+/// Match `re` against blob or file bytes without stripping embedded NUL (lossy UTF-8 would).
+fn regex_matches_bytes(re: &Regex, haystack: &[u8]) -> bool {
+    match std::str::from_utf8(haystack) {
+        Ok(s) => re.is_match(s),
+        Err(_) => {
+            let lossy = String::from_utf8_lossy(haystack);
+            re.is_match(lossy.as_ref())
+        }
+    }
 }
 
 // Color constants
@@ -2179,8 +2206,7 @@ fn grep_tree(
             }
 
             if is_binary && !args.text_mode {
-                let content = String::from_utf8_lossy(&obj.data);
-                let has_match = matchers.iter().any(|re| re.is_match(&content));
+                let has_match = matchers.iter().any(|re| regex_matches_bytes(re, &obj.data));
                 if has_match {
                     if !args.quiet {
                         let display = match tree_name {
