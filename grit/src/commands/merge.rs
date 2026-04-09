@@ -26,6 +26,7 @@ use grit_lib::objects::{
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{resolve_upstream_symbolic_name, upstream_suffix_info};
+use grit_lib::sparse_checkout::apply_sparse_checkout_skip_worktree;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
 use time::OffsetDateTime;
@@ -416,7 +417,7 @@ fn restore_index_and_worktree(repo: &Repository, index_snapshot: &Index) -> Resu
     index.entries = index_snapshot.entries.clone();
     index.sort();
     if let Some(ref wt) = repo.work_tree {
-        checkout_entries(repo, wt, &index, None)?;
+        checkout_entries(repo, wt, &index, None, false)?;
     }
     repo.write_index(&mut index)?;
     Ok(())
@@ -929,9 +930,16 @@ fn merge_unborn(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> 
     let mut index = Index::new();
     index.entries = entries;
     index.sort();
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut index);
 
     if let Some(ref wt) = repo.work_tree {
-        checkout_entries(repo, wt, &index, None)?;
+        checkout_entries(
+            repo,
+            wt,
+            &index,
+            None,
+            sparse_checkout_enabled(&repo.git_dir),
+        )?;
     }
     refresh_index_stat_cache_from_worktree(repo, &mut index)?;
     repo.write_index(&mut index)?;
@@ -966,6 +974,7 @@ fn do_fast_forward(
     let current_index = repo.load_index()?;
     let old_tree = commit_tree(repo, head_oid)?;
     let mut new_index = compose_fast_forward_index(repo, commit.tree, old_tree, &current_index)?;
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut new_index);
     let old_entries = tree_to_map(tree_to_index_entries(repo, &old_tree, "")?);
     let index_dirty_vs_head = diff_index::index_cached_differs_from_head(repo)?;
     let index_already_at_target = index_matches_commit_tree(repo, merge_oid)?;
@@ -986,8 +995,19 @@ Aborting"
 
     if let Some(ref wt) = repo.work_tree {
         // Remove files that existed in old HEAD but not in new
-        remove_deleted_files(wt, &old_entries, &new_index)?;
-        checkout_entries(repo, wt, &new_index, None)?;
+        remove_deleted_files(
+            wt,
+            &old_entries,
+            &new_index,
+            sparse_checkout_enabled(&repo.git_dir),
+        )?;
+        checkout_entries(
+            repo,
+            wt,
+            &new_index,
+            None,
+            sparse_checkout_enabled(&repo.git_dir),
+        )?;
     }
     refresh_index_stat_cache_from_worktree(repo, &mut new_index)?;
     repo.write_index(&mut new_index)?;
@@ -1463,6 +1483,7 @@ Aborting"
         None,
         None,
     )?;
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut merge_result.index);
 
     let append_strategy_failed = std::env::var("GIT_MERGE_VERBOSITY")
         .ok()
@@ -1491,10 +1512,17 @@ Aborting"
     }
 
     // Update working tree
+    let sparse_on = sparse_checkout_enabled(&repo.git_dir);
     if let Some(ref wt) = repo.work_tree {
         // Remove files that were in ours but are no longer in the merged index
-        remove_deleted_files(wt, &ours_entries, &merge_result.index)?;
-        checkout_entries(repo, wt, &merge_result.index, Some(&ours_entries))?;
+        remove_deleted_files(wt, &ours_entries, &merge_result.index, sparse_on)?;
+        checkout_entries(
+            repo,
+            wt,
+            &merge_result.index,
+            Some(&ours_entries),
+            sparse_on,
+        )?;
         // Write conflict files to working tree (with CRLF conversion if needed)
         let attr_rules = grit_lib::crlf::load_gitattributes(wt);
         let crlf_config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
@@ -2358,7 +2386,7 @@ fn do_octopus_merge(
                 orig_index.sort();
                 repo.write_index(&mut orig_index)?;
                 if let Some(ref wt) = repo.work_tree {
-                    checkout_entries(repo, wt, &orig_index, None)?;
+                    checkout_entries(repo, wt, &orig_index, None, false)?;
                 }
                 let _ = fs::remove_file(repo.git_dir.join("MERGE_HEAD"));
                 let _ = fs::remove_file(repo.git_dir.join("MERGE_MSG"));
@@ -2449,7 +2477,7 @@ fn do_octopus_merge(
             orig_index.sort();
             repo.write_index(&mut orig_index)?;
             if let Some(ref wt) = repo.work_tree {
-                checkout_entries(repo, wt, &orig_index, None)?;
+                checkout_entries(repo, wt, &orig_index, None, false)?;
             }
             let _ = fs::remove_file(repo.git_dir.join("MERGE_HEAD"));
             let _ = fs::remove_file(repo.git_dir.join("MERGE_MSG"));
@@ -2474,10 +2502,12 @@ fn do_octopus_merge(
     final_index.entries = current_tree_entries;
     final_index.sort();
     compose_octopus_final_index(&pre_merge_index, &mut final_index);
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut final_index);
     repo.write_index(&mut final_index)?;
 
+    let sparse_on = sparse_checkout_enabled(&repo.git_dir);
     if let Some(ref wt) = repo.work_tree {
-        checkout_entries(repo, wt, &final_index, None)?;
+        checkout_entries(repo, wt, &final_index, None, sparse_on)?;
     }
     refresh_index_stat_cache_from_worktree(repo, &mut final_index)?;
     repo.write_index(&mut final_index)?;
@@ -2779,12 +2809,14 @@ fn do_strategy_theirs(
     let mut new_index = Index::new();
     new_index.entries = entries;
     new_index.sort();
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut new_index);
 
     if let Some(ref wt) = repo.work_tree {
         let old_tree = commit_tree(repo, head_oid)?;
         let old_entries = tree_to_map(tree_to_index_entries(repo, &old_tree, "")?);
-        remove_deleted_files(wt, &old_entries, &new_index)?;
-        checkout_entries(repo, wt, &new_index, None)?;
+        let sparse_on = sparse_checkout_enabled(&repo.git_dir);
+        remove_deleted_files(wt, &old_entries, &new_index, sparse_on)?;
+        checkout_entries(repo, wt, &new_index, None, sparse_on)?;
     }
     refresh_index_stat_cache_from_worktree(repo, &mut new_index)?;
     repo.write_index(&mut new_index)?;
@@ -2992,9 +3024,16 @@ fn do_squash(
     let mut new_index = Index::new();
     new_index.entries = entries;
     new_index.sort();
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut new_index);
 
     if let Some(ref wt) = repo.work_tree {
-        checkout_entries(repo, wt, &new_index, None)?;
+        checkout_entries(
+            repo,
+            wt,
+            &new_index,
+            None,
+            sparse_checkout_enabled(&repo.git_dir),
+        )?;
     }
     refresh_index_stat_cache_from_worktree(repo, &mut new_index)?;
     repo.write_index(&mut new_index)?;
@@ -3063,9 +3102,16 @@ fn merge_abort() -> Result<()> {
     let mut index = Index::new();
     index.entries = entries;
     index.sort();
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut index);
 
     if let Some(ref wt) = repo.work_tree {
-        checkout_entries(&repo, wt, &index, None)?;
+        checkout_entries(
+            &repo,
+            wt,
+            &index,
+            None,
+            sparse_checkout_enabled(&repo.git_dir),
+        )?;
     }
     refresh_index_stat_cache_from_worktree(&repo, &mut index)?;
     repo.write_index(&mut index)?;
@@ -6751,11 +6797,19 @@ fn update_head(git_dir: &Path, head: &HeadState, commit_oid: &ObjectId) -> Resul
     Ok(())
 }
 
+fn sparse_checkout_enabled(git_dir: &Path) -> bool {
+    let cfg = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    cfg.get("core.sparsecheckout")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 /// Remove files from working tree that existed before but are no longer in the merged index.
 fn remove_deleted_files(
     work_tree: &Path,
     old_entries: &HashMap<Vec<u8>, IndexEntry>,
     new_index: &Index,
+    sparse_checkout: bool,
 ) -> Result<()> {
     let new_paths: std::collections::HashSet<&[u8]> = new_index
         .entries
@@ -6765,6 +6819,17 @@ fn remove_deleted_files(
     for (path, old_entry) in old_entries {
         if new_paths.contains(path.as_slice()) {
             continue;
+        }
+        if sparse_checkout {
+            if let Some(ne) = new_index
+                .entries
+                .iter()
+                .find(|e| e.stage() == 0 && e.path == *path)
+            {
+                if ne.skip_worktree() {
+                    continue;
+                }
+            }
         }
         let has_nested_under = new_index.entries.iter().any(|e| {
             e.path.starts_with(path)
@@ -6808,6 +6873,7 @@ fn checkout_entries(
     work_tree: &Path,
     index: &Index,
     old_entries: Option<&HashMap<Vec<u8>, IndexEntry>>,
+    sparse_checkout: bool,
 ) -> Result<()> {
     // Load gitattributes and config for CRLF conversion
     let mut attr_rules = grit_lib::crlf::load_gitattributes(work_tree);
@@ -6824,6 +6890,9 @@ fn checkout_entries(
 
     for entry in &index.entries {
         if entry.stage() != 0 {
+            continue;
+        }
+        if sparse_checkout && entry.skip_worktree() {
             continue;
         }
         if old_entries.is_some_and(|old| {
