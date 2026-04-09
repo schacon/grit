@@ -6,16 +6,17 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   307 |
+| Completed   |   308 |
 | In progress |     5 |
-| Remaining   |   457 |
+| Remaining   |   456 |
 | **Total**   |   769 |
 
-Task lines in `PLAN.md`: 307 completed (`[x]`), 5 in progress (`[~]`), 457 remaining (`[ ]`).
+Task lines in `PLAN.md`: 308 completed (`[x]`), 5 in progress (`[~]`), 456 remaining (`[ ]`).
 
 ## Recently completed
 
 - `t3423-rebase-reword` — 3/3 tests pass (`rebase -i`: parse `reword`/`r` in todo; run commit editor with `prepare-commit-msg` source `reword`; `rebase --continue` after conflict uses `rebase-merge/message` template; noop-fast-forward path restricted to `pick` only so `reword` still opens editor)
+- `t3417-rebase-whitespace-fix` — 4/4 tests pass (`rebase --whitespace=fix`: apply `fix_blob_bytes` to merged index after three-way merge; noop pick path rebuilds tree + commit when whitespace fix is active; harness CSV refreshed)
 - `t7011-skip-worktree-reading` — 15/15 tests pass (`update-index` skip-worktree no-op / `--remove` clears entry; `--remove` on missing untracked path is silent; `reset` preserves skip-worktree; `diff-index` skips worktree for skip-worktree; `commit` pathspec rejects skip-worktree)
 - `t3303-notes-subtrees` — 23/23 tests pass (`fast-import`: `data <<TERM` heredoc, `M … inline` blobs, `deleteall`; `log` notes map: concatenate duplicate commit paths like Git’s `combine_notes_concatenate`, skip identical blob payloads)
 - `t5323-pack-redundant` — 18/18 tests pass (`pack-redundant`: Git `minimize` algorithm, `--i-still-use-this` / stdin ignore / verbose + alt-odb; `clone --mirror` implies bare layout; `fsck` resolves relative `objects/info/alternates` against `objects/`)
@@ -192,4 +193,4 @@ Task lines in `PLAN.md`: 307 completed (`[x]`), 5 in progress (`[~]`), 457 remai
 
 ## What Remains
 
-471 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+456 task lines still open in `PLAN.md` (plus 5 in progress). See `PLAN.md` for the full prioritized list.
