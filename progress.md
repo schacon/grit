@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   260 |
+| Completed   |   261 |
 | In progress |     4 |
-| Remaining   |   504 |
+| Remaining   |   503 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 260 completed (`[x]`), 4 in progress (`[~]`), 504 remaining (`[ ]`).
+Task lines in `PLAN.md`: 261 completed (`[x]`), 4 in progress (`[~]`), 503 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t7402-submodule-rebase` — 6/6 tests pass (rebase with dirty submodule, interactive rebase, dirty file+submodule failure, stash dirty submodule, submodule gitlink conflict message; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5317-pack-objects-filter-objects` — 33/33 tests pass (`pack-objects --filter` object filtering; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5603-clone-dirname` — 47/47 tests pass (clone default directory from `host:path`, `ssh://` URLs: strip trailing slashes and `.git`, redact userinfo for dirname, preserve path segments like `foo@bar` and `test:1234`; harness CSV/dashboards refreshed)
 - `t3507-cherry-pick-conflict` — 44/44 tests pass (cherry-pick/revert conflicts: `CHERRY_PICK_HEAD`/`REVERT_HEAD`, advice text, `MERGE_MSG` scissors, diff3 markers, sequencer cleanup, sparse-checkout, `--continue` flags; harness CSV/dashboards refreshed; `PLAN.md` marked complete)

@@ -809,7 +809,7 @@ commit → check it off → move on.
 - [ ] `t7106-reset-unborn-branch` ████████░░░░░░░░░░░░ 3/7 (4 left) — git reset should work on unborn branch
 - [ ] `t7615-diff-algo-with-mergy-operations` ████████░░░░░░░░░░░░ 3/7 (4 left) — git merge and other operations that rely on merge
 
-- [ ] `t7402-submodule-rebase` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — Test rebasing, stashing, etc. with submodules
+- [x] `t7402-submodule-rebase` — Test rebasing, stashing, etc. with submodules
 - [ ] `t7421-submodule-summary-add` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — Summary support for submodules, adding them using git submodule add
 
 - [ ] `t7518-ident-corner-cases` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — corner cases in ident strings
