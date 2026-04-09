@@ -1023,7 +1023,7 @@ t5703-upload-pack-ref-in-want	t5	yes	26	4	22	false	ok	0
 t5704-protocol-violations	t5	yes	3	3	0	true	ok	0
 t5705-session-id-in-capabilities	t5	yes	17	5	12	false	ok	0
 t5710-promisor-remote-capability	t5	yes	22	1	21	false	ok	0
-t5730-protocol-v2-bundle-uri-file	t5	yes	8	2	6	false	ok	0
+t5730-protocol-v2-bundle-uri-file	t5	yes	8	8	0	true	ok	0
 t5731-protocol-v2-bundle-uri-git	t5	yes	8	1	7	false	ok	0
 t5732-protocol-v2-bundle-uri-http	t5	yes	9	9	0	true	ok	0
 t5750-bundle-uri-parse	t5	yes	13	0	13	false	ok	0

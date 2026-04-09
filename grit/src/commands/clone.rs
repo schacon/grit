@@ -429,6 +429,23 @@ pub fn run(mut args: Args) -> Result<()> {
         eprintln!("warning: source repository is shallow, ignoring --local");
     }
     maybe_warn_shallow_options_ignored(&repo_path_str, &args);
+
+    // `repo_path_str` strips `file://`; use the original URL for transport detection.
+    if args.repository.starts_with("file://")
+        && crate::file_upload_pack_v2::client_wants_protocol_v2()
+    {
+        let upload_cmd = args.upload_pack.as_deref().filter(|s| !s.trim().is_empty());
+        let bundle_cli = args.bundle_uri.is_some();
+        let request_bundle = crate::file_upload_pack_v2::transfer_bundle_uri_enabled();
+        crate::file_upload_pack_v2::clone_preflight_file_v2_if_needed(
+            &source.git_dir,
+            upload_cmd,
+            request_bundle,
+            bundle_cli,
+        )
+        .context("file:// protocol v2 clone preflight")?;
+    }
+
     let remote_name = resolve_remote_name(&args)?;
 
     // Determine target directory

@@ -37,6 +37,21 @@ pub fn trace_packet_line(line: &[u8]) {
     }
 }
 
+/// Emit a `GIT_TRACE_PACKET` line matching Git's `pkt-line.c` format (`packet: git< …` / `git> …`).
+///
+/// `direction` is `'<'` for bytes read from the server (upload-pack) or `'>'` for bytes sent to it.
+/// Newlines in `payload` are stripped like Git's tracer.
+pub fn trace_packet_git(direction: char, payload: &str) {
+    let Some(dest) = trace_packet_dest() else {
+        return;
+    };
+    let sanitized: String = payload.chars().filter(|&c| c != '\n').collect();
+    let line = format!("packet: {:>12}{} {}\n", "git", direction, sanitized);
+    if let Ok(mut out) = OpenOptions::new().create(true).append(true).open(&dest) {
+        let _ = out.write_all(line.as_bytes());
+    }
+}
+
 /// Emit fetch negotiation trace lines compatible with tests that grep `GIT_TRACE_PACKET`.
 ///
 /// Lines deliberately avoid the substring `" want "` (space-want-space) so harnesses can

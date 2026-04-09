@@ -67,6 +67,18 @@ pub fn run(args: Args) -> Result<()> {
         return run_bundle_ls_remote(&effective_path, &args);
     }
 
+    let repo_path_str = effective_path.to_string_lossy();
+    let is_file_url = repo_path_str.starts_with("file://");
+    if is_file_url && crate::file_upload_pack_v2::client_wants_protocol_v2() {
+        let path = PathBuf::from(
+            repo_path_str
+                .strip_prefix("file://")
+                .unwrap_or(repo_path_str.as_ref()),
+        );
+        let upload = args.upload_pack.as_deref().filter(|s| !s.is_empty());
+        return crate::file_upload_pack_v2::ls_remote_file_v2(&path, upload, &args);
+    }
+
     if let Some(upload_pack) = args.upload_pack.as_deref() {
         if !upload_pack.is_empty() {
             return run_ls_remote_via_upload_pack(&effective_path, upload_pack, &args);
@@ -288,7 +300,7 @@ fn write_v2_ls_refs_request(w: &mut impl Write, object_format: &str, args: &Args
     Ok(())
 }
 
-fn parse_v2_ls_refs_output(data: &[u8], args: &Args) -> Result<Vec<RefEntry>> {
+pub(crate) fn parse_v2_ls_refs_output(data: &[u8], args: &Args) -> Result<Vec<RefEntry>> {
     let mut cursor = Cursor::new(data);
     let mut entries: Vec<RefEntry> = Vec::new();
 
