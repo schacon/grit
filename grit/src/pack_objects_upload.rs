@@ -19,7 +19,10 @@ fn resolve_hook_path(git_dir: &Path, hook: &str) -> PathBuf {
 }
 
 /// Build and spawn `git pack-objects` (via hook or `grit pack-objects`).
-pub fn spawn_pack_objects_upload(git_dir: &Path) -> Result<Child> {
+///
+/// When `thin` is true, omit objects the client already has (requires matching `have` lines).
+/// For a fetch/clone with no common objects, pass `false` so the pack is self-contained.
+pub fn spawn_pack_objects_upload(git_dir: &Path, thin: bool) -> Result<Child> {
     let protected = ConfigSet::load_protected(true).unwrap_or_default();
     let hook_raw = protected.get("uploadpack.packobjectshook");
     let grit = grit_executable();
@@ -32,18 +35,21 @@ pub fn spawn_pack_objects_upload(git_dir: &Path) -> Result<Child> {
             .arg(&hook_resolved)
             .arg("git")
             .arg("pack-objects")
-            .arg("--revs")
-            .arg("--thin")
-            .arg("--stdout")
+            .arg("--revs");
+        if thin {
+            c.arg("--thin");
+        }
+        c.arg("--stdout")
             .arg("--progress")
             .arg("--delta-base-offset");
         c
     } else {
         let mut c = Command::new(&grit);
-        c.arg("pack-objects")
-            .arg("--revs")
-            .arg("--thin")
-            .arg("--stdout")
+        c.arg("pack-objects").arg("--revs");
+        if thin {
+            c.arg("--thin");
+        }
+        c.arg("--stdout")
             .arg("--progress")
             .arg("--delta-base-offset");
         c

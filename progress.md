@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 308 completed (`[x]`), 5 in progress (`[~]`), 456 remai
 
 ## Recently completed
 
+- `t5405-send-pack-rewind` — 3/3 tests pass (local `upload-pack` negotiation: force protocol v0 for ref ads; side-band reader stops on flush pkt-lines; skip progress until `PACK`; thin pack only with `have` lines; `unpack_objects` zlib input consumption matches Git for pack checksum)
 - `t3423-rebase-reword` — 3/3 tests pass (`rebase -i`: parse `reword`/`r` in todo; run commit editor with `prepare-commit-msg` source `reword`; `rebase --continue` after conflict uses `rebase-merge/message` template; noop-fast-forward path restricted to `pick` only so `reword` still opens editor)
 - `t3417-rebase-whitespace-fix` — 4/4 tests pass (`rebase --whitespace=fix`: apply `fix_blob_bytes` to merged index after three-way merge; noop pick path rebuilds tree + commit when whitespace fix is active; harness CSV refreshed)
 - `t7011-skip-worktree-reading` — 15/15 tests pass (`update-index` skip-worktree no-op / `--remove` clears entry; `--remove` on missing untracked path is silent; `reset` preserves skip-worktree; `diff-index` skips worktree for skip-worktree; `commit` pathspec rejects skip-worktree)

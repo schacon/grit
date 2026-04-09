@@ -171,7 +171,8 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(&repo.git_dir)?;
+    let thin = !client_have_commits.is_empty();
+    let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(&repo.git_dir, thin)?;
     {
         let mut pin = child.stdin.take().context("pack-objects stdin")?;
         crate::pack_objects_upload::write_pack_objects_revs_stdin(

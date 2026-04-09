@@ -278,9 +278,6 @@ fn read_sideband_pack_until_done(r: &mut impl Read, out: &mut Vec<u8>) -> Result
             break;
         };
         if payload.is_empty() {
-            if seen_pack {
-                break;
-            }
             continue;
         }
         match payload[0] {

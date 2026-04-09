@@ -294,11 +294,11 @@ pub(crate) fn spawn_upload_pack(
     cmd_template: Option<&str>,
     repo_path: &Path,
 ) -> Result<std::process::Child> {
-    spawn_upload_pack_with_proto(
-        cmd_template,
-        repo_path,
-        protocol_wire::effective_client_protocol_version(),
-    )
+    // Always negotiate protocol v0 here: [`read_advertisement`] and
+    // [`fetch_upload_pack_negotiate_pack_bytes_with_streams`] implement the v0 ref advertisement
+    // and want/have/done exchange only. Using the user's `protocol.version` (often 2) would leave
+    // the advertisement list empty and break refspec resolution (e.g. t5405 local fetch).
+    spawn_upload_pack_with_proto(cmd_template, repo_path, 0)
 }
 
 pub(crate) fn drain_child_stdout_to_eof(r: &mut impl Read) -> std::io::Result<()> {
@@ -387,8 +387,8 @@ pub(crate) fn read_pkt_payload_raw(r: &mut impl Read) -> std::io::Result<Option<
     let len = usize::from_str_radix(len_str, 16)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     match len {
-        0 => Ok(Some(Vec::new())),
-        1 | 2 => Ok(Some(Vec::new())),
+        // Flush / delim / response-end — not a data payload; side-band readers stop at flush.
+        0 | 1 | 2 => Ok(None),
         n if n <= 4 => Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("invalid pkt-line length: {n}"),
@@ -404,20 +404,33 @@ pub(crate) fn read_pkt_payload_raw(r: &mut impl Read) -> std::io::Result<Option<
 
 fn read_sideband_pack_until_done(r: &mut impl Read, out: &mut Vec<u8>) -> Result<()> {
     let mut seen_pack = false;
+    // Progress and pack data share side-band channel 1; the `PACK` magic may start mid-chunk or
+    // span chunk boundaries (65515-byte framing), so scan a small carry buffer until we find it.
+    let mut pending: Vec<u8> = Vec::new();
     loop {
         let Some(payload) = read_pkt_payload_raw(r)? else {
             break;
         };
+        // `read_pkt_payload_raw` returns `None` on flush/EOF; empty payloads should not occur.
         if payload.is_empty() {
-            if seen_pack {
-                break;
-            }
             continue;
         }
         match payload[0] {
             1 => {
-                seen_pack = true;
-                out.extend_from_slice(&payload[1..]);
+                let data = &payload[1..];
+                if !seen_pack {
+                    pending.extend_from_slice(data);
+                    if let Some(pos) = pending.windows(4).position(|w| w == b"PACK") {
+                        seen_pack = true;
+                        out.extend_from_slice(&pending[pos..]);
+                        pending.clear();
+                    } else if pending.len() > 3 {
+                        let keep_from = pending.len() - 3;
+                        pending.drain(..keep_from);
+                    }
+                } else {
+                    out.extend_from_slice(data);
+                }
             }
             2 | 3 => {}
             _ => {
