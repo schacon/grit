@@ -588,7 +588,7 @@ commit → check it off → move on.
 - [ ] `t5316-pack-delta-depth` ░░░░░░░░░░░░░░░░░░░░ 0/5 (5 left) — pack-objects breaks long cross-pack delta chains
 - [ ] `t5546-receive-limits` ████████████░░░░░░░░ 11/17 (6 left) — check receive input limits
 - [ ] `t5534-push-signed` ██████████░░░░░░░░░░ 7/13 (6 left) — signed push
-- [ ] `t5543-atomic-push` ██████████░░░░░░░░░░ 7/13 (6 left) — pushing to a repository using the atomic push option
+- [ ] `t5543-atomic-push` ███████████████░░░░░ 10/13 (3 left) — pushing to a repository using the atomic push option
 - [ ] `t5503-tagfollow` ██████████░░░░░░░░░░ 6/12 (6 left) — test automatic tag following
 - [ ] `t5408-send-pack-stdin` ████████░░░░░░░░░░░░ 4/10 (6 left) — send-pack --stdin tests
 - [ ] `t5519-push-alternates` █████░░░░░░░░░░░░░░░ 2/8 (6 left) — push to a repository that borrows from elsewhere

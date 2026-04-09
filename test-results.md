@@ -1,5 +1,10 @@
 # Test Results
 
+**Updated:** 2026-04-09
+
+- `./scripts/run-tests.sh t5543-atomic-push.sh`: 10/13 passing (atomic push + `receive-pack` report-status; `--receive-pack` delegates to system `git`; 3 failures remain — mirror+atomic stderr ordering, porcelain wrapper exit).
+- `cargo test -p grit-lib --lib`: 121/121 passing.
+
 **Updated:** 2026-04-08
 
 - `./scripts/run-tests.sh t13180-log-patch-stat.sh`: 35/35 passing (`grit log` oneline/graph/decorate/skip/max-count/reverse/format; harness CSV/dashboards refreshed).

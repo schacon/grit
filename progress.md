@@ -1,6 +1,6 @@
 # Progress — Grit Test Coverage
 
-**Updated:** 2026-04-08
+**Updated:** 2026-04-09
 
 ## Counts (derived from plan.md)
 
@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 231 completed (`[x]`), 2 in progress (`[~]`), 535 remai
 
 ## Recently completed
 
+- `t5543-atomic-push` — 10/13 harness tests pass (atomic pre-reject short-circuit, tag / collateral reporting, `receive-pack` report-status + caps, `--receive-pack` → system `git push`; 3 cases remain: mirror+atomic stderr ordering, porcelain/wrapper exit quirks — see `logs/2026-04-09_t5543-atomic-push.md`)
 - `t12820-diff-no-index-symlink` — 41/41 tests pass (symlink add/modify/delete, `diff`/`diff --cached`/`diff-tree`, stat/numstat/name output, multi-symlink and file↔symlink replacements; harness dashboards refreshed)
 - `t7817-grep-sparse-checkout` — 8/8 tests pass (non-cone sparse: `path_in_sparse_checkout` parent walk + last-match-wins; `sparse-checkout init` preserves cone mode and seeds `/*` + `!/*/` when recreating file; `disable` keeps pattern file so re-init reapplies `!b`; submodule `reset --hard` + sparse reapply; `grep` worktree: skip-worktree when absent, CE_VALID vs skip-worktree, unmerged paths grep worktree once; `grep_cached` per-stage for `--cached`)
 - `t7417-submodule-path-url` — 5/5 tests pass (`.gitmodules` dash paths: `mv` updates path + index blob; `escape_value` quotes leading `-`; receive-side `transfer.fsckObjects` via repo-local config only; clone `--recurse-submodules` resolves relative URLs from `origin` repo root + quoted path parsing + `GIT_QUIET` quiet mode)
