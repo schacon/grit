@@ -1037,9 +1037,9 @@ fn parse_upstream(repo: &Repository, upstream: &str) -> Result<(String, String)>
         }
     }
 
-    // Check if upstream is a local branch — use "." as the remote.
-    let local_ref = repo.git_dir.join("refs/heads").join(upstream);
-    if local_ref.exists() {
+    // Local branch (loose or packed): `git branch -u main` tracks `refs/heads/main`.
+    let heads_ref = format!("refs/heads/{upstream}");
+    if refs::resolve_ref(&repo.git_dir, &heads_ref).is_ok() {
         return Ok((".".to_string(), upstream.to_string()));
     }
 

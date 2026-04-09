@@ -961,7 +961,15 @@ pub fn run(mut args: Args) -> Result<()> {
                     &msg,
                     false,
                 );
-                let _ = grit_lib::reflog::mirror_branch_reflog_to_head(&repo.git_dir, refname);
+                let _ = append_reflog(
+                    &repo.git_dir,
+                    "HEAD",
+                    &old_oid,
+                    &commit_oid,
+                    &commit_data.committer,
+                    &msg,
+                    false,
+                );
             }
             _ => {
                 let _ = append_reflog(
