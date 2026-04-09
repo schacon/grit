@@ -1023,12 +1023,15 @@ fn fetch_remote(
                 let head_source = format!("refs/heads/{default_branch}");
                 let mapped_default_ref = map_ref_through_refspecs(&head_source, &rs)
                     .unwrap_or_else(|| format!("refs/remotes/{rn}/{default_branch}"));
-                if let Ok(default_oid) = refs::resolve_ref(git_dir, &mapped_default_ref) {
+                if refs::resolve_ref(git_dir, &mapped_default_ref).is_ok() {
                     let remote_head_ref = format!("refs/remotes/{rn}/HEAD");
                     updated_refs.push(remote_head_ref.clone());
-                    if read_ref_oid(git_dir, &remote_head_ref).as_ref() != Some(&default_oid) {
-                        refs::write_ref(git_dir, &remote_head_ref, &default_oid)
-                            .with_context(|| format!("updating ref {remote_head_ref}"))?;
+                    let want_sym = format!("ref: {mapped_default_ref}\n");
+                    let path = git_dir.join(&remote_head_ref);
+                    let cur = fs::read_to_string(&path).unwrap_or_default();
+                    if cur != want_sym {
+                        refs::write_symbolic_ref(git_dir, &remote_head_ref, &mapped_default_ref)
+                            .with_context(|| format!("updating symbolic ref {remote_head_ref}"))?;
                     }
                 }
             }

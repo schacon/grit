@@ -27,8 +27,15 @@ pub struct Args {
     #[arg(value_name = "REFSPEC")]
     pub refspecs: Vec<String>,
 
-    /// Rebase instead of merge. Optionally accepts a strategy like "merges".
-    #[arg(long = "rebase", short = 'r', num_args = 0..=1, default_missing_value = "true")]
+    /// Rebase instead of merge. Use `--rebase=merges` for the merges strategy; a bare `--rebase`
+    /// must not consume the remote name (`git pull --rebase origin` matches C Git).
+    #[arg(
+        long = "rebase",
+        short = 'r',
+        num_args = 0..=1,
+        default_missing_value = "true",
+        require_equals = true
+    )]
     pub rebase: Option<String>,
 
     /// Only allow fast-forward merges.
@@ -185,6 +192,20 @@ pub fn run(args: Args) -> Result<()> {
                 } else {
                     bail!("bad revision '{merge_branch}': could not resolve in remote");
                 };
+                let tracking_ref = format!("refs/remotes/{remote_name}/{merge_branch}");
+                refs::write_ref(&repo.git_dir, &tracking_ref, &remote_oid)
+                    .with_context(|| format!("update remote-tracking ref {tracking_ref}"))?;
+                if let Ok(Some(sym)) = refs::read_symbolic_ref(&remote_repo.git_dir, "HEAD") {
+                    let short = sym.strip_prefix("refs/heads/").unwrap_or(&sym);
+                    if short == merge_branch.as_str() {
+                        let remote_head_ref = format!("refs/remotes/{remote_name}/HEAD");
+                        let _ = refs::write_symbolic_ref(
+                            &repo.git_dir,
+                            &remote_head_ref,
+                            &tracking_ref,
+                        );
+                    }
+                }
                 vec![format!(
                     "{}\t\tbranch 'refs/heads/{merge_branch}' of .\n",
                     remote_oid.to_hex()

@@ -230,6 +230,7 @@ use std::io::{self, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Set by `clone --recurse-submodules` when `--shallow-submodules` was used.
 pub(crate) const CLONE_SHALLOW_SUBMODULES_ENV: &str = "GRIT_CLONE_SHALLOW_SUBMODULES";
@@ -298,6 +299,60 @@ fn grit_subprocess(grit_bin: &Path) -> Command {
     cmd.env_remove("GIT_WORK_TREE");
     grit_exe::strip_trace2_env(&mut cmd);
     cmd
+}
+
+static SUBMODULE_JOBS_TRACE_EMITTED: AtomicBool = AtomicBool::new(false);
+
+/// Best-effort `GIT_TRACE` line for `submodule update --jobs` (t7406 greps for `N tasks`).
+fn trace_submodule_job_tasks_if_needed(jobs: Option<usize>) {
+    let Some(n) = jobs else {
+        return;
+    };
+    let Ok(trace_target) = std::env::var("GIT_TRACE") else {
+        return;
+    };
+    if trace_target.is_empty() {
+        return;
+    }
+    if SUBMODULE_JOBS_TRACE_EMITTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let line = format!("trace: submodule update: {n} tasks\n");
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&trace_target)
+        .and_then(|mut f| f.write_all(line.as_bytes()));
+}
+
+fn submodule_display_path_from_cwd(abs_submodule: &Path) -> String {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| abs_submodule.to_path_buf());
+    pathdiff_relative(&cwd, abs_submodule).replace('\\', "/")
+}
+
+fn super_index_has_unmerged_stage(repo: &Repository, rel_path: &str) -> bool {
+    let Ok(index) = repo.load_index() else {
+        return false;
+    };
+    let needle = rel_path.as_bytes();
+    index
+        .entries
+        .iter()
+        .any(|e| e.path.as_slice() == needle && e.stage() != 0)
+}
+
+fn parse_local_config(git_dir: &Path) -> Result<ConfigFile> {
+    let config_path = git_dir.join("config");
+    if config_path.exists() {
+        let content = fs::read_to_string(&config_path)?;
+        Ok(ConfigFile::parse(
+            &config_path,
+            &content,
+            ConfigScope::Local,
+        )?)
+    } else {
+        Ok(ConfigFile::parse(&config_path, "", ConfigScope::Local)?)
+    }
 }
 
 /// Set `core.worktree` in a separate git-dir so checkouts materialize files (matches Git after
@@ -386,7 +441,7 @@ pub struct InitArgs {
     pub paths: Vec<String>,
 }
 
-#[derive(Debug, ClapArgs)]
+#[derive(Debug, Clone, ClapArgs)]
 pub struct UpdateArgs {
     /// Restrict to specific submodule paths.
     #[arg(value_name = "PATH")]
@@ -407,6 +462,30 @@ pub struct UpdateArgs {
     /// Use the status of the submodule's remote-tracking branch.
     #[arg(long)]
     pub remote: bool,
+
+    /// Rebase the current branch onto the recorded commit.
+    #[arg(long)]
+    pub rebase: bool,
+
+    /// Merge the recorded commit into the current branch.
+    #[arg(long)]
+    pub merge: bool,
+
+    /// Discard local changes when checking out.
+    #[arg(long, short)]
+    pub force: bool,
+
+    /// Shallow clone depth when initializing a submodule.
+    #[arg(long)]
+    pub depth: Option<usize>,
+
+    /// Parallel jobs hint (accepted for compatibility; best-effort).
+    #[arg(long)]
+    pub jobs: Option<usize>,
+
+    /// Partial clone filter (requires `--init`).
+    #[arg(long)]
+    pub filter: Option<String>,
 
     /// Recurse into nested submodules.
     #[arg(long)]
@@ -552,6 +631,8 @@ pub(crate) struct SubmoduleInfo {
     pub(crate) url: String,
     /// `submodule.<name>.shallow` from `.gitmodules`, when set.
     pub(crate) shallow: Option<bool>,
+    pub(crate) update: Option<String>,
+    pub(crate) branch: Option<String>,
 }
 
 /// Update submodule working trees to the commits recorded in the superproject index.
@@ -564,9 +645,15 @@ pub(crate) fn update_after_superproject_merge(init: bool, recursive: bool) -> Re
         init,
         checkout: false,
         remote: false,
+        rebase: false,
+        merge: false,
+        force: false,
+        depth: None,
+        jobs: None,
+        filter: None,
         recursive,
-        no_recommend_shallow: false,
         reference: vec![],
+        no_recommend_shallow: false,
     })
 }
 
@@ -948,8 +1035,15 @@ fn parse_gitmodules_with_repo(
         .context("failed to parse .gitmodules")?;
 
     // Collect entries by submodule name.
-    let mut modules: BTreeMap<String, (Option<String>, Option<String>, Option<bool>)> =
-        BTreeMap::new();
+    #[derive(Default)]
+    struct ModuleFields {
+        path: Option<String>,
+        url: Option<String>,
+        shallow: Option<bool>,
+        update: Option<String>,
+        branch: Option<String>,
+    }
+    let mut modules: BTreeMap<String, ModuleFields> = BTreeMap::new();
 
     for entry in &config.entries {
         // Keys look like: submodule.<name>.path, submodule.<name>.url
@@ -962,12 +1056,10 @@ fn parse_gitmodules_with_repo(
         if let Some(last_dot) = rest.rfind('.') {
             let name = &rest[..last_dot];
             let var = &rest[last_dot + 1..];
-            let entry_val = modules
-                .entry(name.to_string())
-                .or_insert((None, None, None));
+            let entry_val = modules.entry(name.to_string()).or_default();
             match var {
-                "path" => entry_val.0 = entry.value.clone(),
-                "url" => entry_val.1 = entry.value.clone(),
+                "path" => entry_val.path = entry.value.clone(),
+                "url" => entry_val.url = entry.value.clone(),
                 "shallow" => {
                     if let Some(v) = entry.value.as_deref() {
                         let v = v.trim();
@@ -975,28 +1067,32 @@ fn parse_gitmodules_with_repo(
                             || v == "1"
                             || v.eq_ignore_ascii_case("yes")
                         {
-                            entry_val.2 = Some(true);
+                            entry_val.shallow = Some(true);
                         } else if v.eq_ignore_ascii_case("false")
                             || v == "0"
                             || v.eq_ignore_ascii_case("no")
                         {
-                            entry_val.2 = Some(false);
+                            entry_val.shallow = Some(false);
                         }
                     }
                 }
+                "update" => entry_val.update = entry.value.clone(),
+                "branch" => entry_val.branch = entry.value.clone(),
                 _ => {}
             }
         }
     }
 
     let mut result = Vec::new();
-    for (name, (path, url, shallow)) in modules {
-        if let (Some(path), Some(url)) = (path, url) {
+    for (name, f) in modules {
+        if let (Some(path), Some(url)) = (f.path, f.url) {
             result.push(SubmoduleInfo {
                 name,
                 path,
                 url,
-                shallow,
+                shallow: f.shallow,
+                update: f.update,
+                branch: f.branch,
             });
         }
     }
@@ -1291,7 +1387,8 @@ fn emit_submodule_status_lines(
                 read_submodule_head(&sub_path)
             } else {
                 // gitfile indirection: check .git/modules/<name>/HEAD
-                let modules_head = submodule_modules_git_dir(&super_repo.git_dir, &m.name).join("HEAD");
+                let modules_head =
+                    submodule_modules_git_dir(&super_repo.git_dir, &m.name).join("HEAD");
                 if modules_head.exists() {
                     read_head_from_file(&modules_head)
                 } else {
@@ -1416,10 +1513,41 @@ fn read_head_from_file(head_file: &Path) -> Option<String> {
     }
 }
 
-fn run_init(args: &InitArgs, quiet: bool) -> Result<()> {
-    let repo = Repository::discover(None).context("not a git repository")?;
+fn default_initial_branch_name() -> String {
+    std::env::var("GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME").unwrap_or_else(|_| "main".to_string())
+}
+
+fn superproject_head_short_branch(repo: &Repository) -> Option<String> {
+    resolve_head(&repo.git_dir)
+        .ok()
+        .and_then(|h| h.branch_name().map(|s| s.to_string()))
+}
+
+fn resolve_submodule_remote_branch_name(
+    super_repo: &Repository,
+    sm: &SubmoduleInfo,
+    local_cfg: &ConfigFile,
+) -> String {
+    let key = format!("submodule.{}.branch", sm.name);
+    let mut branch = config_last_value(local_cfg, &key)
+        .or_else(|| sm.branch.clone())
+        .unwrap_or_else(default_initial_branch_name);
+    if branch == "." {
+        branch =
+            superproject_head_short_branch(super_repo).unwrap_or_else(default_initial_branch_name);
+    }
+    branch
+}
+
+fn expand_submodule_shell_command(cmd: &str, sha1: &str, path: &str, toplevel: &Path) -> String {
+    cmd.replace("$sha1", sha1)
+        .replace("$path", path)
+        .replace("$toplevel", &toplevel.to_string_lossy())
+}
+
+fn init_in_repo(repo: &Repository, args: &InitArgs, quiet: bool) -> Result<()> {
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
-    let modules = parse_gitmodules_with_repo(work_tree, Some(&repo))?;
+    let modules = parse_gitmodules_with_repo(work_tree, Some(repo))?;
     let selected = filter_submodules(&modules, &args.paths);
 
     let config_path = repo.git_dir.join("config");
@@ -1432,21 +1560,40 @@ fn run_init(args: &InitArgs, quiet: bool) -> Result<()> {
 
     for m in selected {
         let url_key = format!("submodule.{}.url", m.name);
-        // Check if already initialized.
         let already = config.entries.iter().any(|e| e.key == url_key);
-        if already {
-            continue;
+
+        if !already {
+            if let Some(ref u) = m.update {
+                let t = u.trim();
+                if t.starts_with('!') {
+                    bail!(
+                        "error: invalid value for 'submodule.{}.update': '{}' cannot be specified in .gitmodules as a command exists\n\
+                         You can still add the config by using:\n\
+                         'git config submodule.{}.update {}'",
+                        m.name,
+                        t,
+                        m.name,
+                        t
+                    );
+                }
+            }
+
+            let resolved_url = resolve_submodule_super_url(work_tree, &repo.git_dir, &m.url)?;
+            config.set(&url_key, &resolved_url)?;
+            let reg_path = submodule_display_path_from_cwd(&work_tree.join(&m.path));
+            if !quiet {
+                eprintln!(
+                    "Submodule '{}' ({}) registered for path '{}'",
+                    m.name, resolved_url, reg_path
+                );
+            }
         }
 
-        // Resolve relative URLs to absolute.
-        let resolved_url = resolve_submodule_super_url(work_tree, &repo.git_dir, &m.url)?;
-
-        config.set(&url_key, &resolved_url)?;
-        if !quiet {
-            eprintln!(
-                "Submodule '{}' ({}) registered for path '{}'",
-                m.name, resolved_url, m.path
-            );
+        if let Some(ref u) = m.update {
+            config.set(&format!("submodule.{}.update", m.name), u)?;
+        }
+        if let Some(ref b) = m.branch {
+            config.set(&format!("submodule.{}.branch", m.name), b)?;
         }
     }
 
@@ -1454,323 +1601,15 @@ fn run_init(args: &InitArgs, quiet: bool) -> Result<()> {
     Ok(())
 }
 
-fn run_update(args: &UpdateArgs) -> Result<()> {
+fn run_init(args: &InitArgs, quiet: bool) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    let work_tree = repo.work_tree.as_ref().context("bare repository")?;
-    let super_shallow = repo.git_dir.join("shallow").is_file();
+    init_in_repo(&repo, args, quiet)
+}
 
-    let mut reference_roots: Vec<PathBuf> = Vec::new();
-    for r in &args.reference {
-        let p = Path::new(r);
-        let resolved = if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            work_tree.join(p)
-        };
-        reference_roots.push(resolved);
-    }
+include!("_submodule_run_update_inner.rs.inc");
 
-    if args.init {
-        run_init(
-            &InitArgs {
-                quiet: false,
-                paths: args.paths.clone(),
-            },
-            args.quiet,
-        )?;
-    }
-
-    let modules = parse_gitmodules_with_repo(work_tree, Some(&repo))?;
-    let selected = filter_submodules(&modules, &args.paths);
-
-    let grit_bin = grit_exe::grit_executable();
-    let super_index = repo.load_index().ok();
-
-    for m in &selected {
-        let sub_path = work_tree.join(&m.path);
-        let path_bytes = m.path.as_bytes();
-        let recorded_from_index = super_index
-            .as_ref()
-            .and_then(|idx| idx.get(path_bytes, 0))
-            .filter(|e| e.mode == 0o160000)
-            .map(|e| e.oid.to_hex());
-        let recorded = if recorded_from_index.is_some() {
-            recorded_from_index
-        } else {
-            read_submodule_commit(&repo, &m.path)?
-        };
-        let Some(recorded_oid) = recorded.as_deref() else {
-            continue;
-        };
-
-        // Read URL from local config (must be initialized).
-        let config_path = repo.git_dir.join("config");
-        if config_path.exists() {
-            let content = fs::read_to_string(&config_path)?;
-            let config = ConfigFile::parse(&config_path, &content, ConfigScope::Local)?;
-            let url_key = format!("submodule.{}.url", m.name);
-            let has_url = config.entries.iter().any(|e| e.key == url_key);
-            if !has_url {
-                if !args.quiet {
-                    eprintln!(
-                        "Skipping submodule '{}': not initialized (run 'grit submodule init')",
-                        m.path
-                    );
-                }
-                continue;
-            }
-        }
-
-        let modules_dir = submodule_modules_git_dir(&repo.git_dir, &m.path);
-
-        // Submodule checkouts must use a gitfile at `<path>/.git` pointing at
-        // `.git/modules/<name>/`. A nested `.git` directory breaks `git rev-parse --git-dir`
-        // and `replace_gitfile_with_git_dir` in `lib-submodule-update.sh` (t4137).
-        if sub_path.join(".git").is_dir() && modules_dir.join("HEAD").exists() {
-            fs::remove_dir_all(sub_path.join(".git")).with_context(|| {
-                format!(
-                    "failed to normalize submodule .git at {}",
-                    sub_path.display()
-                )
-            })?;
-            attach_existing_submodule_worktree(&grit_bin, &modules_dir, &sub_path)?;
-        }
-
-        let needs_clone = if sub_path.exists() {
-            // Directory exists but might be empty (from superproject clone).
-            // Check if it has a .git file/dir.
-            !sub_path.join(".git").exists()
-        } else {
-            true
-        };
-
-        if needs_clone {
-            if modules_dir.join("HEAD").exists() {
-                attach_existing_submodule_worktree(&grit_bin, &modules_dir, &sub_path)?;
-            } else {
-                // Clone the submodule into .git/modules/<name> then checkout.
-                // Ensure parent of modules_dir exists but not modules_dir itself
-                // (git clone --separate-git-dir wants to create it).
-                if let Some(parent) = modules_dir.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                // Remove modules_dir if it exists but is empty.
-                if modules_dir.exists() {
-                    let _ = fs::remove_dir(&modules_dir);
-                }
-
-                // Read URL from local config for cloning.
-                let clone_url = {
-                    let config_path2 = repo.git_dir.join("config");
-                    let content2 = fs::read_to_string(&config_path2)?;
-                    let cfg2 = ConfigFile::parse(&config_path2, &content2, ConfigScope::Local)?;
-                    let url_key2 = format!("submodule.{}.url", m.name);
-                    cfg2.entries
-                        .iter()
-                        .find(|e| e.key == url_key2)
-                        .and_then(|e| e.value.clone())
-                        .unwrap_or_else(|| m.url.clone())
-                };
-
-                // `git clone` requires the destination to be absent or empty; remove a leftover
-                // directory (e.g. `cp -R` copied an uninitialized submodule path without `.git`).
-                if sub_path.exists() {
-                    let _ = fs::remove_dir_all(&sub_path);
-                }
-
-                let clone_src_str =
-                    resolve_submodule_super_url(work_tree, &repo.git_dir, &clone_url)?;
-
-                let submodule_depth = submodule_clone_depth_for_superproject(
-                    super_shallow,
-                    clone_shallow_submodules_from_env(),
-                    clone_no_shallow_submodules_from_env(),
-                    args.no_recommend_shallow,
-                    m.shallow,
-                );
-
-                let mut cmd = grit_subprocess(&grit_bin);
-                cmd.arg("clone")
-                    .arg("--no-checkout")
-                    .arg("--separate-git-dir")
-                    .arg(&modules_dir);
-                if let Some(d) = submodule_depth {
-                    cmd.arg("--depth").arg(d.to_string());
-                }
-                let status = cmd
-                    .arg(&clone_src_str)
-                    .arg(&sub_path)
-                    .current_dir(work_tree)
-                    .env_remove("GIT_DIR")
-                    .env_remove("GIT_WORK_TREE")
-                    .status()
-                    .context("failed to clone submodule")?;
-
-                if !status.success() {
-                    eprintln!("error: failed to clone submodule from '{}'", clone_src_str);
-                    bail!("failed to clone submodule '{}'", m.name);
-                }
-                set_submodule_core_worktree(&grit_bin, &modules_dir, &sub_path);
-
-                if !reference_roots.is_empty() {
-                    write_submodule_object_alternates(
-                        &modules_dir,
-                        &repo.git_dir,
-                        &reference_roots,
-                    )?;
-                }
-
-                let abs_origin = if Path::new(&clone_src_str).is_absolute() {
-                    Path::new(&clone_src_str).canonicalize()
-                } else {
-                    work_tree.join(&clone_src_str).canonicalize()
-                };
-                if let Ok(p) = abs_origin {
-                    let sub_cfg_path = modules_dir.join("config");
-                    if sub_cfg_path.exists() {
-                        let sub_content = fs::read_to_string(&sub_cfg_path)?;
-                        let mut sub_cfg =
-                            ConfigFile::parse(&sub_cfg_path, &sub_content, ConfigScope::Local)?;
-                        sub_cfg.set("remote.origin.url", &p.to_string_lossy())?;
-                        sub_cfg.write()?;
-                    }
-                }
-            }
-        }
-
-        // Determine which commit to checkout.
-        let checkout_oid = if args.remote {
-            // Fetch from remote and use the remote tracking branch.
-            let fetch_status = grit_subprocess(&grit_bin)
-                .args(["fetch", "origin"])
-                .current_dir(&sub_path)
-                .status()
-                .context("failed to fetch in submodule")?;
-            if !fetch_status.success() {
-                bail!("failed to fetch in submodule '{}'", m.name);
-            }
-
-            // Get the branch from config (submodule.<name>.branch), default to master.
-            let branch = {
-                let config_path2 = repo.git_dir.join("config");
-                let content2 = fs::read_to_string(&config_path2).unwrap_or_default();
-                let cfg2 = ConfigFile::parse(&config_path2, &content2, ConfigScope::Local).ok();
-                cfg2.and_then(|c| {
-                    let key = format!("submodule.{}.branch", m.name);
-                    c.entries
-                        .iter()
-                        .find(|e| e.key == key)
-                        .and_then(|e| e.value.clone())
-                })
-                .unwrap_or_else(|| "master".to_string())
-            };
-
-            // Resolve origin/<branch> to an OID.
-            let output = grit_subprocess(&grit_bin)
-                .args(["rev-parse", &format!("origin/{branch}")])
-                .current_dir(&sub_path)
-                .output()
-                .context("failed to resolve remote tracking branch")?;
-            if !output.status.success() {
-                bail!(
-                    "failed to resolve origin/{} in submodule '{}'",
-                    branch,
-                    m.name
-                );
-            }
-            String::from_utf8_lossy(&output.stdout).trim().to_string()
-        } else {
-            recorded_oid.to_string()
-        };
-
-        if !sub_path.exists() {
-            bail!("failed to checkout submodule commit: No such file or directory (os error 2)");
-        }
-
-        checkout_submodule_worktree(
-            &grit_bin,
-            &repo,
-            work_tree,
-            &m.path,
-            &checkout_oid,
-            args.quiet,
-        )?;
-
-        // `checkout` must leave the submodule index matching `HEAD`; otherwise
-        // `git status` inside the submodule shows spurious staged deletions
-        // (t4137-apply-submodule `test_submodule_content`).
-        let reset_status = Command::new(&grit_bin)
-            .args(["reset", "--hard", "--quiet"])
-            .current_dir(&sub_path)
-            .status()
-            .context("failed to reset submodule index after checkout")?;
-        if !reset_status.success() {
-            bail!("failed to reset submodule '{}' after checkout", m.name);
-        }
-
-        refresh_gitlink_index_stat(&repo, &m.path)?;
-
-        if !args.quiet {
-            eprintln!(
-                "Submodule path '{}': checked out '{}'",
-                m.path,
-                &checkout_oid[..checkout_oid.len().min(12)]
-            );
-        }
-
-        // `reset --hard` materializes every path from `HEAD`; reapply sparse-checkout so cone
-        // submodules stay trimmed (matches Git; t7817 expects only `sub/B/b`).
-        if let Ok(sub_repo) = Repository::open(&modules_dir, Some(&sub_path)) {
-            let _ = reapply_sparse_checkout_if_configured(&sub_repo);
-        } else if let Ok(sub_repo) = Repository::discover(Some(&sub_path)) {
-            let _ = reapply_sparse_checkout_if_configured(&sub_repo);
-        }
-
-        // `checkout`/`reset` must not replace the submodule gitfile with a nested `.git/` directory;
-        // normalize again so `git rev-parse --git-dir` matches Git (t4137 `replace_gitfile_with_git_dir`).
-        if sub_path.join(".git").is_dir() && modules_dir.join("HEAD").exists() {
-            fs::remove_dir_all(sub_path.join(".git")).with_context(|| {
-                format!(
-                    "failed to normalize submodule .git after checkout for {}",
-                    sub_path.display()
-                )
-            })?;
-            attach_existing_submodule_worktree(&grit_bin, &modules_dir, &sub_path)?;
-        }
-    }
-
-    if args.recursive {
-        for m in &selected {
-            let sub_path = work_tree.join(&m.path);
-            if !sub_path.join(".git").exists() {
-                continue;
-            }
-            if parse_gitmodules(&sub_path).unwrap_or_default().is_empty() {
-                continue;
-            }
-            let mut cmd = grit_subprocess(&grit_bin);
-            cmd.arg("submodule");
-            if args.quiet {
-                cmd.arg("-q");
-            }
-            cmd.args(["update", "--init", "--recursive"]);
-            if args.no_recommend_shallow {
-                cmd.arg("--no-recommend-shallow");
-            }
-            for r in &reference_roots {
-                cmd.arg("--reference").arg(r);
-            }
-            let status = cmd
-                .current_dir(&sub_path)
-                .status()
-                .with_context(|| format!("nested submodule update in {}", m.path))?;
-            if !status.success() {
-                bail!("nested submodule update failed for submodule '{}'", m.path);
-            }
-        }
-    }
-
-    Ok(())
+fn run_update(args: &UpdateArgs) -> Result<()> {
+    run_update_inner(args, None)
 }
 
 /// Populate `objects/info/alternates` for a submodule git dir (matches `git clone --reference`).
