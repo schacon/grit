@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-09 (t5517 / push mirror)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t5517-push-mirror.sh`: 13/13 passed
+
 **2026-04-09 (t4063 / diff blobs)**
 
 - `cargo test -p grit-lib --lib`: 155 passed

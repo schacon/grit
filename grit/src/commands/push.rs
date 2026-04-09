@@ -384,7 +384,7 @@ fn sort_collateral_indices(
 
 /// Delegate `git push` to the system binary when `--receive-pack` is set (matches Git's
 /// `git-receive-pack` / `send-pack` protocol for wrapper tests).
-fn run_push_via_system_git(repo: &Repository, args: &Args) -> Result<()> {
+fn run_push_via_system_git(repo: &Repository, args: &Args, mirror_for_push: bool) -> Result<()> {
     let system_git = std::env::var("GIT_REAL_GIT")
         .ok()
         .filter(|p| Path::new(p).is_file())
@@ -438,7 +438,7 @@ fn run_push_via_system_git(repo: &Repository, args: &Args) -> Result<()> {
     if args.branches {
         cmd.arg("--branches");
     }
-    if args.mirror {
+    if mirror_for_push {
         cmd.arg("--mirror");
     }
     if args.quiet {
@@ -502,18 +502,11 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
 
-    if args.receive_pack.is_some() {
-        return run_push_via_system_git(&repo, &args);
-    }
-
     let push_all = args.all || args.branches;
 
     // Validate flag combinations
     if push_all && !args.refspecs.is_empty() {
         bail!("--all/--branches can not be combined with refspecs");
-    }
-    if push_all && args.mirror {
-        bail!("--all and --mirror cannot be used together");
     }
     if push_all && args.tags {
         bail!("--all and --tags cannot be used together");
@@ -584,19 +577,40 @@ pub fn run(args: Args) -> Result<()> {
     };
     let remote_name = remote_name_owned.as_str();
 
-    // Collect push refspecs from config if no CLI refspecs
-    let push_refspecs_from_config: Vec<String> =
-        if args.refspecs.is_empty() && !args.mirror && !push_all && !args.delete {
-            config.get_all(&format!("remote.{remote_name}.push"))
-        } else {
-            Vec::new()
-        };
-
-    // Push to each URL
     let path_style_remote = args
         .remote
         .as_ref()
         .is_some_and(|r| r.contains('/') || r.starts_with('.') || std::path::Path::new(r).exists());
+
+    let push_mirror_remote = if !path_style_remote && !_is_path_remote {
+        config
+            .get(&format!("remote.{remote_name}.mirror"))
+            .map(|s| parse_bool(s.trim()).unwrap_or(false))
+            .unwrap_or(false)
+    } else {
+        false
+    };
+    let mirror_for_push = args.mirror || push_mirror_remote;
+
+    if push_all && mirror_for_push {
+        bail!("--all and --mirror cannot be used together");
+    }
+
+    if mirror_for_push && !args.refspecs.is_empty() && !args.delete {
+        bail!("fatal: --mirror can't be combined with refspecs");
+    }
+
+    if args.receive_pack.is_some() {
+        return run_push_via_system_git(&repo, &args, mirror_for_push);
+    }
+
+    // Collect push refspecs from config if no CLI refspecs
+    let push_refspecs_from_config: Vec<String> =
+        if args.refspecs.is_empty() && !mirror_for_push && !push_all && !args.delete {
+            config.get_all(&format!("remote.{remote_name}.push"))
+        } else {
+            Vec::new()
+        };
 
     for url in &urls {
         push_to_url(
@@ -609,6 +623,7 @@ pub fn run(args: Args) -> Result<()> {
             push_all,
             &push_refspecs_from_config,
             path_style_remote,
+            mirror_for_push,
         )?;
     }
 
@@ -646,6 +661,7 @@ fn push_to_url(
     push_all: bool,
     push_refspecs_from_config: &[String],
     path_style_remote: bool,
+    mirror_for_push: bool,
 ) -> Result<()> {
     if protocol_wire::effective_client_protocol_version() == 1 {
         wire_trace::trace_packet_push('<', "version 1");
@@ -696,7 +712,7 @@ fn push_to_url(
             Vec::new()
         } else if !args.refspecs.is_empty() {
             args.refspecs.clone()
-        } else if args.mirror || args.delete || args.tags {
+        } else if mirror_for_push || args.delete || args.tags {
             bail!(
                 "--receive-pack is not supported with --mirror, --delete, or --tags in this mode"
             );
@@ -735,7 +751,7 @@ fn push_to_url(
     // on the remote). Submodule recursion runs on this set, matching Git transport behavior.
     let mut submodule_tips: Vec<ObjectId> = Vec::new();
 
-    if args.mirror {
+    if mirror_for_push {
         // Mirror: push all local refs to remote, and delete remote refs
         // that don't exist locally.
         let local_all = refs::list_refs(&repo.git_dir, "refs/")?;
@@ -1170,7 +1186,7 @@ fn push_to_url(
         }
     }
 
-    let mirror_atomic_order = if args.mirror && args.atomic {
+    let mirror_atomic_order = if mirror_for_push && args.atomic {
         Some(mirror_atomic_ref_order(&updates))
     } else {
         None
@@ -1198,7 +1214,7 @@ fn push_to_url(
 
     if !repo.is_bare()
         && !matches!(recurse_mode, PushRecurseSubmodules::Off)
-        && !(args.mirror || push_all || args.delete)
+        && !(mirror_for_push || push_all || args.delete)
         && !combined_tips.is_empty()
     {
         let tips = combined_tips;
@@ -1360,7 +1376,8 @@ fn push_to_url(
             if old == new {
                 continue;
             }
-            if !args.force
+            if !mirror_for_push
+                && !args.force
                 && !update.refspec_force
                 && args.force_with_lease.is_none()
                 && !update.remote_ref.starts_with("refs/tags/")
@@ -1373,7 +1390,8 @@ fn push_to_url(
                     update.remote_ref
                 ));
             }
-            if !args.force
+            if !mirror_for_push
+                && !args.force
                 && !update.refspec_force
                 && args.force_with_lease.is_none()
                 && update.remote_ref.starts_with("refs/tags/")
