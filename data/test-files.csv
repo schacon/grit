@@ -1301,7 +1301,7 @@ t8016-blame-line-range-extended	t8	yes	5	5	0	true	ok	0
 t8017-blame-ignore-rev-extended	t8	yes	4	4	0	true	ok	0
 t8018-blame-porcelain-format	t8	yes	6	5	1	false	ok	0
 t8020-hash-object-extra	t8	yes	27	27	0	true	ok	0
-t8020-last-modified	t8	yes	28	27	1	false	ok	0
+t8020-last-modified	t8	yes	28	28	0	true	ok	0
 t8030-write-tree-extra	t8	yes	25	25	0	true	ok	0
 t8040-mktag-extra	t8	yes	34	34	0	true	ok	0
 t8050-update-index-modes	t8	yes	31	28	3	false	ok	0
