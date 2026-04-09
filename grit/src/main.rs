@@ -4300,7 +4300,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
             commands::reflog::run(parse_cmd_args(subcmd, &rest))
         }
         "refs" => commands::refs::run(parse_cmd_args(subcmd, rest)),
-        "remote" => commands::remote::run(parse_cmd_args(subcmd, rest)),
+        "remote" => commands::remote::run_from_argv(rest),
         "repack" => commands::repack::run(parse_cmd_args(subcmd, rest)),
         "replace" => commands::replace::run(parse_cmd_args(subcmd, rest)),
         "replay" => commands::replay::run(parse_cmd_args(subcmd, rest)),
