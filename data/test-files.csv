@@ -636,7 +636,7 @@ t3501-revert-cherry-pick	t3	yes	21	5	16	false	ok	0
 t3502-cherry-pick-merge	t3	yes	12	12	0	true	ok	0
 t3503-cherry-pick-root	t3	yes	6	3	3	false	ok	0
 t3504-cherry-pick-rerere	t3	yes	9	3	6	false	ok	0
-t3505-cherry-pick-empty	t3	yes	0	0	0	false	timeout	0
+t3505-cherry-pick-empty	t3	yes	17	17	0	true	ok	0
 t3506-cherry-pick-ff	t3	yes	11	11	0	true	ok	0
 t3507-cherry-pick-conflict	t3	yes	44	13	31	false	ok	0
 t3508-cherry-pick-many-commits	t3	yes	14	5	9	false	ok	0

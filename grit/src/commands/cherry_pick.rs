@@ -75,6 +75,74 @@ fn cherry_pick_rev_author() -> Option<String> {
     CHERRY_PICK_REV_OPTS.get().and_then(|(_, a)| a.clone())
 }
 
+/// Whether the picked commit's tree matches its first parent's tree (or the empty tree for roots).
+fn is_original_commit_empty(repo: &Repository, commit: &CommitData) -> Result<bool> {
+    let parent_tree_oid = if commit.parents.is_empty() {
+        repo.odb.write(ObjectKind::Tree, &[])?
+    } else {
+        let parent_obj = repo.odb.read(&commit.parents[0])?;
+        parse_commit(&parent_obj.data)?.tree
+    };
+    Ok(parent_tree_oid == commit.tree)
+}
+
+/// Resolves how to handle a cherry-pick whose merged tree equals `HEAD` (index unchanged vs HEAD).
+fn resolve_empty_pick_resolution(
+    originally_empty: bool,
+    args: &Args,
+) -> Result<EmptyPickResolution> {
+    let drop_redundant = matches!(args.empty.as_deref(), Some("drop"));
+    let keep_redundant =
+        args.keep_redundant_commits || matches!(args.empty.as_deref(), Some("keep"));
+    let allow_initial_empty = args.allow_empty || args.keep_redundant_commits;
+
+    if originally_empty {
+        return Ok(if allow_initial_empty {
+            EmptyPickResolution::Proceed
+        } else {
+            EmptyPickResolution::Stop
+        });
+    }
+    if keep_redundant {
+        return Ok(EmptyPickResolution::Proceed);
+    }
+    if drop_redundant {
+        return Ok(EmptyPickResolution::Drop);
+    }
+    Ok(EmptyPickResolution::Stop)
+}
+
+fn verify_pick_flags_not_with_operation(args: &Args, operation: &str) {
+    let mut incompatible: Option<&'static str> = None;
+    if args.no_commit {
+        incompatible = Some("--no-commit");
+    } else if args.signoff {
+        incompatible = Some("--signoff");
+    } else if args.mainline.is_some() {
+        incompatible = Some("-m");
+    } else if args.strategy.is_some() {
+        incompatible = Some("--strategy");
+    } else if !args.strategy_option.is_empty() {
+        incompatible = Some("--strategy-option");
+    } else if args.append_source {
+        incompatible = Some("-x");
+    } else if args.ff {
+        incompatible = Some("--ff");
+    } else if args.keep_redundant_commits {
+        incompatible = Some("--keep-redundant-commits");
+    } else if args.empty.is_some() {
+        incompatible = Some("--empty");
+    } else if args.allow_empty {
+        incompatible = Some("--allow-empty");
+    } else if args.edit {
+        incompatible = Some("--edit");
+    }
+    if let Some(flag) = incompatible {
+        eprintln!("fatal: cherry-pick: {flag} cannot be used with {operation}");
+        std::process::exit(128);
+    }
+}
+
 use super::sequencer::{
     rollback_is_safe, sequencer_is_pick_sequence, sequencer_is_revert_sequence,
     strip_first_sequencer_todo_line, write_abort_safety_file,
@@ -93,6 +161,17 @@ struct WhitespaceStrategyOptions {
     ignore_space_change: bool,
     ignore_space_at_eol: bool,
     ignore_cr_at_eol: bool,
+}
+
+/// How to handle a cherry-pick whose resulting tree matches `HEAD`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EmptyPickResolution {
+    /// Create the commit (empty or redundant).
+    Proceed,
+    /// Skip without error (patch already upstream).
+    Drop,
+    /// Stop with `CHERRY_PICK_HEAD` set (user may `--skip` or `--allow-empty`).
+    Stop,
 }
 
 /// Arguments for `grit cherry-pick`.
@@ -143,6 +222,14 @@ pub struct Args {
     #[arg(long = "allow-empty")]
     pub allow_empty: bool,
 
+    /// Allow recording commits whose message is empty (matches `git cherry-pick`).
+    #[arg(long = "allow-empty-message")]
+    pub allow_empty_message: bool,
+
+    /// Keep commits that become empty after replaying onto the current branch (deprecated alias for `--empty=keep`).
+    #[arg(long = "keep-redundant-commits")]
+    pub keep_redundant_commits: bool,
+
     /// Merge strategy to use (e.g. recursive, ort, resolve).
     #[arg(long = "strategy")]
     pub strategy: Option<String>,
@@ -169,20 +256,28 @@ pub fn run(args: Args) -> Result<()> {
             std::process::exit(129);
         }
     }
+
     if args.abort {
+        verify_pick_flags_not_with_operation(&args, "--abort");
         return abort_cherry_pick_or_revert();
+    }
+    if args.quit {
+        verify_pick_flags_not_with_operation(&args, "--quit");
+        return do_quit();
     }
     if args.skip {
         return do_skip(args);
-    }
-    if args.quit {
-        return do_quit();
     }
     if args.r#continue {
         return do_continue(args);
     }
     if args.commits.is_empty() {
         bail!("nothing to cherry-pick; specify at least one commit");
+    }
+
+    let mut args = args;
+    if args.keep_redundant_commits || matches!(args.empty.as_deref(), Some("keep")) {
+        args.allow_empty = true;
     }
     do_cherry_pick(args)
 }
@@ -625,15 +720,23 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
 
     let has_conflicts = merge_result.index.entries.iter().any(|e| e.stage() != 0);
 
-    // Check for empty cherry-pick (tree unchanged from HEAD)
-    if !has_conflicts && !args.allow_empty {
+    // Index matches HEAD: either drop, record an empty commit, or stop (Git's `allow_empty()`).
+    if !has_conflicts {
         let new_tree_oid = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
         if new_tree_oid == head_tree_oid {
-            let empty_action = args.empty.as_deref().unwrap_or("stop");
-            match empty_action {
-                "drop" => return Ok(()),
-                "keep" => { /* fall through to commit */ }
-                _ /* "stop" */ => {
+            let originally_empty = is_original_commit_empty(repo, &commit)?;
+            match resolve_empty_pick_resolution(originally_empty, args)? {
+                EmptyPickResolution::Drop => {
+                    let subject = commit.message.lines().next().unwrap_or("");
+                    eprintln!(
+                        "dropping {} {} -- patch contents already upstream",
+                        commit_oid.to_hex(),
+                        subject
+                    );
+                    return Ok(());
+                }
+                EmptyPickResolution::Proceed => { /* commit below */ }
+                EmptyPickResolution::Stop => {
                     let mut msg = commit.message.clone();
                     if args.append_source {
                         let trailer =
@@ -753,6 +856,7 @@ fn do_continue(mut args: Args) -> Result<()> {
 
     merge_sequencer_opts(git_dir, &mut args);
     let args = &args;
+    verify_pick_flags_not_with_operation(args, "--continue");
 
     let has_cherry_pick_head = git_dir.join("CHERRY_PICK_HEAD").exists();
     let sequencer_todo = git_dir.join("sequencer").join("todo");
@@ -952,6 +1056,7 @@ fn do_skip(mut args: Args) -> Result<()> {
 
     merge_sequencer_opts(git_dir, &mut args);
     let args = &args;
+    verify_pick_flags_not_with_operation(args, "--skip");
 
     if git_dir.join("REVERT_HEAD").exists() {
         eprintln!("error: no cherry-pick in progress");
@@ -1050,6 +1155,15 @@ fn write_sequencer_opts(git_dir: &Path, args: &Args) -> Result<()> {
     if args.edit {
         opts.push_str("\tedit = true\n");
     }
+    if args.allow_empty {
+        opts.push_str("\tallow-empty = true\n");
+    }
+    if args.allow_empty_message {
+        opts.push_str("\tallow-empty-message = true\n");
+    }
+    if args.keep_redundant_commits {
+        opts.push_str("\tkeep-redundant-commits = true\n");
+    }
     if let Some(ref empty) = args.empty {
         opts.push_str(&format!("\tempty = {empty}\n"));
     }
@@ -1105,6 +1219,12 @@ fn merge_sequencer_opts(git_dir: &Path, args: &mut Args) {
                 "record-origin" if val == "true" => args.append_source = true,
                 "no_commit" if val == "true" => args.no_commit = true,
                 "edit" if val == "true" => args.edit = true,
+                "allow-empty" if val == "true" => args.allow_empty = true,
+                "allow-empty-message" if val == "true" => args.allow_empty_message = true,
+                "keep-redundant-commits" if val == "true" => {
+                    args.keep_redundant_commits = true;
+                    args.allow_empty = true;
+                }
                 "mainline" => {
                     if let Ok(m) = val.parse::<usize>() {
                         args.mainline = Some(m);
