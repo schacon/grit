@@ -4510,6 +4510,53 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                     }
                     Ok(())
                 }
+                "read-graph" => {
+                    use grit_lib::commit_graph_file::{dump_bloom_filters, parse_graph_file};
+                    use grit_lib::repo::Repository;
+                    let repo = Repository::discover(None)
+                        .map_err(|e| anyhow::anyhow!("read-graph: {e}"))?;
+                    let objects = repo.git_dir.join("objects");
+                    let info = objects.join("info");
+                    let chain_path = info.join("commit-graphs").join("commit-graph-chain");
+                    let graph_path = if chain_path.is_file() {
+                        let content = std::fs::read_to_string(&chain_path)
+                            .map_err(|e| anyhow::anyhow!("read-graph: {e}"))?;
+                        let first = content.lines().next().unwrap_or("").trim();
+                        if first.len() != 40 {
+                            bail!("read-graph: invalid commit-graph chain");
+                        }
+                        info.join("commit-graphs")
+                            .join(format!("graph-{first}.graph"))
+                    } else {
+                        info.join("commit-graph")
+                    };
+                    if rest.get(1).map(|s| s.as_str()) == Some("bloom-filters") {
+                        let lines = dump_bloom_filters(&graph_path).ok_or_else(|| {
+                            anyhow::anyhow!("read-graph: missing or corrupt graph")
+                        })?;
+                        for line in lines {
+                            if !line.is_empty() {
+                                println!("{line}");
+                            }
+                        }
+                    } else {
+                        let dump = parse_graph_file(&graph_path).ok_or_else(|| {
+                            anyhow::anyhow!("read-graph: missing or corrupt graph")
+                        })?;
+                        println!(
+                            "header: {:08x} {} {} {} {}",
+                            dump.header_word,
+                            dump.version,
+                            dump.hash_ver,
+                            dump.num_chunks,
+                            dump.reserved
+                        );
+                        println!("num_commits: {}", dump.num_commits);
+                        println!("chunks: {}", dump.chunks);
+                        println!("options:{}", dump.options);
+                    }
+                    Ok(())
+                }
                 "genrandom" => {
                     // Match `git/t/helper/test-genrandom.c`: `test-tool genrandom <seed> [<size>]`.
                     // With two args only, emit until the pipe breaks (size omitted → unbounded).

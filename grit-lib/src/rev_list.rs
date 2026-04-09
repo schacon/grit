@@ -10,6 +10,8 @@ use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
 
+use crate::commit_graph_file::{BloomPrecheck, BloomWalkStatsHandle, CommitGraphChain};
+use crate::config::ConfigSet;
 use crate::diff::zero_oid;
 use crate::error::{Error, Result};
 use crate::ident::{committer_unix_seconds_for_ordering, parse_signature_times};
@@ -404,6 +406,14 @@ pub struct RevListOptions {
     pub include_reflog_entries: bool,
     /// Include blob OIDs from the index as object roots (`git pack-objects --indexed-objects`).
     pub include_indexed_objects: bool,
+    /// When true with pathspecs, consult commit-graph Bloom filters (matches `core.commitGraph`).
+    pub use_commit_graph_bloom: bool,
+    /// `commitGraph.readChangedPaths` (default true).
+    pub commit_graph_read_changed_paths: bool,
+    /// `commitGraph.changedPathsVersion` (-1 = autodetect from graph).
+    pub commit_graph_changed_paths_version: i32,
+    /// Optional trace counters for `GIT_TRACE2_PERF` Bloom statistics.
+    pub bloom_stats: Option<BloomWalkStatsHandle>,
 }
 
 impl Default for RevListOptions {
@@ -449,6 +459,10 @@ impl Default for RevListOptions {
             since_cutoff: None,
             include_reflog_entries: false,
             include_indexed_objects: false,
+            use_commit_graph_bloom: false,
+            commit_graph_read_changed_paths: true,
+            commit_graph_changed_paths_version: -1,
+            bloom_stats: None,
         }
     }
 }
@@ -616,6 +630,39 @@ pub fn rev_list(
     // Path filtering: keep only commits that modify given paths
     if !options.paths.is_empty() {
         let paths = &options.paths;
+        let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let mut core_cg = match cfg.get_bool("core.commitgraph") {
+            Some(Ok(b)) => b,
+            _ => true,
+        };
+        if std::env::var("GIT_TEST_COMMIT_GRAPH").ok().as_deref() == Some("0") {
+            core_cg = false;
+        }
+        let read_paths = cfg
+            .get("commitgraph.readchangedpaths")
+            .and_then(|v| crate::config::parse_bool(&v).ok())
+            .unwrap_or(true);
+        let version = cfg
+            .get("commitgraph.changedpathsversion")
+            .and_then(|s| s.parse::<i32>().ok())
+            .unwrap_or(-1);
+
+        let use_bloom = core_cg
+            && options.use_commit_graph_bloom
+            && crate::pathspec::pathspecs_allow_bloom(paths);
+        let read_changed = read_paths && options.commit_graph_read_changed_paths;
+        let bloom_chain = if use_bloom {
+            CommitGraphChain::load(&repo.git_dir.join("objects"))
+        } else {
+            None
+        };
+        let bloom_version = if options.commit_graph_changed_paths_version != -1 {
+            options.commit_graph_changed_paths_version
+        } else {
+            version
+        };
+        let bloom_cwd = repo.bloom_pathspec_cwd();
+
         ordered.retain(|oid| {
             commit_touches_paths(
                 repo,
@@ -624,6 +671,11 @@ pub fn rev_list(
                 paths,
                 options.full_history,
                 options.sparse,
+                bloom_chain.as_ref(),
+                read_changed,
+                bloom_version,
+                options.bloom_stats.as_ref(),
+                bloom_cwd.as_deref(),
             )
             .unwrap_or(false)
         });
@@ -2299,6 +2351,11 @@ fn commit_touches_paths(
     paths: &[String],
     full_history: bool,
     sparse: bool,
+    bloom_chain: Option<&CommitGraphChain>,
+    read_changed_paths: bool,
+    changed_paths_version: i32,
+    bloom_stats: Option<&BloomWalkStatsHandle>,
+    bloom_cwd: Option<&str>,
 ) -> Result<bool> {
     let commit = load_commit(repo, oid)?;
     let parents = graph.parents_of(oid)?;
@@ -2326,10 +2383,37 @@ fn commit_touches_paths(
 
     // Single-parent commit: include only when requested paths changed.
     if parents.len() == 1 {
+        let mut bloom_ret = BloomPrecheck::Inapplicable;
+        if let Some(chain) = bloom_chain {
+            bloom_ret = chain.bloom_precheck_for_paths(
+                &repo.odb,
+                oid,
+                paths,
+                bloom_cwd,
+                changed_paths_version,
+                read_changed_paths,
+            )?;
+            if let Some(stats) = bloom_stats {
+                if let Ok(mut g) = stats.lock() {
+                    g.record_precheck(bloom_ret);
+                }
+            }
+            if bloom_ret == BloomPrecheck::DefinitelyNot {
+                return Ok(false);
+            }
+        }
+
         let parent = load_commit(repo, parents[0])?;
         let parent_map: HashMap<String, ObjectId> =
             flatten_tree(repo, parent.tree, "")?.into_iter().collect();
         let differs = path_differs_for_specs(&commit_map, &parent_map, paths);
+        if bloom_ret == BloomPrecheck::Maybe && !differs {
+            if let Some(stats) = bloom_stats {
+                if let Ok(mut g) = stats.lock() {
+                    g.record_false_positive();
+                }
+            }
+        }
         if differs {
             return Ok(true);
         }

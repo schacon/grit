@@ -452,6 +452,22 @@ impl Repository {
         self.git_dir.join("HEAD")
     }
 
+    /// Relative path from the work tree root to the process current directory, `/`-separated.
+    ///
+    /// Used for `:(top)` / `:/` pathspec Bloom lookups. Returns `None` for bare repositories or
+    /// when paths cannot be resolved; callers should treat `None` like an empty prefix.
+    #[must_use]
+    pub fn bloom_pathspec_cwd(&self) -> Option<String> {
+        let wt = self.work_tree.as_ref()?;
+        let cwd = env::current_dir().ok()?;
+        let wt = wt.canonicalize().ok()?;
+        let cwd = cwd.canonicalize().ok()?;
+        let rel = cwd.strip_prefix(&wt).ok()?;
+        let s = rel.to_string_lossy().replace('\\', "/");
+        let s = s.trim_start_matches('/').to_string();
+        Some(s)
+    }
+
     /// Whether this is a bare repository (no working tree).
     #[must_use]
     pub fn is_bare(&self) -> bool {

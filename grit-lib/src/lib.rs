@@ -16,9 +16,12 @@
 //! - [`refs`] — reference storage (files backend)
 
 pub mod attributes;
+pub mod bloom;
 pub mod check_ref_format;
 pub mod combined_tree_diff;
 pub mod commit_encoding;
+pub mod commit_graph_file;
+pub mod commit_graph_write;
 pub mod commit_pretty;
 pub mod commit_trailers;
 pub mod config;

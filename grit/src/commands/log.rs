@@ -7,6 +7,9 @@ use crate::explicit_exit::ExplicitExit;
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::combined_tree_diff::{combined_diff_paths_filtered, CombinedTreeDiffOptions};
+use grit_lib::commit_graph_file::{
+    BloomPrecheck, BloomWalkStats, BloomWalkStatsHandle, CommitGraphChain,
+};
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{get_file_attrs, load_gitattributes, DiffAttr};
 use grit_lib::diff::{
@@ -41,6 +44,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 /// Arguments for `grit log`.
 #[derive(Debug, ClapArgs)]
@@ -416,6 +420,10 @@ pub struct Args {
     /// Date ordering.
     #[arg(long = "date-order")]
     pub date_order: bool,
+
+    /// Order by author date instead of committer date.
+    #[arg(long = "author-date-order")]
+    pub author_date_order: bool,
 
     /// Topo ordering.
     #[arg(long = "topo-order")]
@@ -867,6 +875,13 @@ fn run_line_log(repo: &Repository, args: Args, _patch_context: usize) -> Result<
         &[][..],
         &excluded_set,
         None,
+        None,
+        true,
+        -1,
+        None,
+        &[][..],
+        None,
+        false,
     )?;
     let order: Vec<ObjectId> = walk.iter().map(|(o, _)| *o).collect();
 
@@ -2456,6 +2471,73 @@ impl AsciiGraph {
     }
 }
 
+fn load_bloom_walk_config(git_dir: &Path) -> (bool, bool, i32) {
+    let cfg = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    let mut core_cg = cfg
+        .get_bool("core.commitgraph")
+        .and_then(|r| r.ok())
+        .unwrap_or(true);
+    if std::env::var("GIT_TEST_COMMIT_GRAPH").ok().as_deref() == Some("0") {
+        core_cg = false;
+    }
+    let read_paths = cfg
+        .get("commitgraph.readchangedpaths")
+        .and_then(|v| grit_lib::config::parse_bool(&v).ok())
+        .unwrap_or(true);
+    let version = cfg
+        .get("commitgraph.changedpathsversion")
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(-1);
+    (core_cg, read_paths, version)
+}
+
+struct BloomPerfGuard(BloomWalkStatsHandle);
+
+impl Drop for BloomPerfGuard {
+    fn drop(&mut self) {
+        let Ok(path) = std::env::var("GIT_TRACE2_PERF") else {
+            return;
+        };
+        if path.is_empty() {
+            return;
+        }
+        let Ok(stats) = self.0.lock() else {
+            return;
+        };
+        emit_bloom_perf_line(&stats, &path);
+    }
+}
+
+fn emit_bloom_perf_line(stats: &BloomWalkStats, path: &str) {
+    let now = {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default();
+        let total_secs = now.as_secs();
+        let micros = now.subsec_micros();
+        let secs_in_day = total_secs % 86400;
+        let hours = secs_in_day / 3600;
+        let mins = (secs_in_day % 3600) / 60;
+        let secs = secs_in_day % 60;
+        format!("{:02}:{:02}:{:02}.{:06}", hours, mins, secs, micros)
+    };
+    let data = format!(
+        "statistics:{{\"filter_not_present\":{},\"maybe\":{},\"definitely_not\":{},\"false_positive\":{}}}",
+        stats.filter_not_present, stats.maybe, stats.definitely_not, stats.false_positive
+    );
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(std::path::Path::new(path))
+    {
+        let _ = writeln!(
+            file,
+            "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | {}",
+            now, "data_json", data
+        );
+    }
+}
+
 /// Run the `log` command.
 pub fn run(mut args: Args) -> Result<()> {
     let saw_bare_l = args.line_range.iter().any(|s| s.is_empty());
@@ -2751,6 +2833,39 @@ pub fn run(mut args: Args) -> Result<()> {
         &combined_pathspecs[..]
     };
 
+    let (core_commit_graph, cg_read_paths, cg_changed_ver) = load_bloom_walk_config(&repo.git_dir);
+    let trace2_perf = std::env::var("GIT_TRACE2_PERF")
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    let use_bloom = core_commit_graph
+        && !combined_pathspecs.is_empty()
+        && grit_lib::pathspec::pathspecs_allow_bloom(&combined_pathspecs)
+        && !args.walk_reflogs;
+    let bloom_read_changed_paths = cg_read_paths;
+    let bloom_changed_paths_version = cg_changed_ver;
+    let bloom_chain = if use_bloom {
+        CommitGraphChain::load(&repo.git_dir.join("objects"))
+    } else {
+        None
+    };
+    let bloom_stats: Option<BloomWalkStatsHandle> = if trace2_perf && use_bloom {
+        Some(Arc::new(Mutex::new(BloomWalkStats::default())))
+    } else {
+        None
+    };
+    let _bloom_perf_guard = bloom_stats.as_ref().map(|h| BloomPerfGuard(Arc::clone(h)));
+
+    let bloom_pathspecs_for_walk: &[String] = if args.follow && use_bloom {
+        &combined_pathspecs[..]
+    } else {
+        effective_pathspecs
+    };
+    let bloom_cwd_for_walk = if use_bloom {
+        repo.bloom_pathspec_cwd()
+    } else {
+        None
+    };
+
     let find_oid = if let Some(ref find_obj_rev) = args.find_object {
         Some(resolve_revision(&repo, find_obj_rev)?)
     } else {
@@ -2813,6 +2928,13 @@ pub fn run(mut args: Args) -> Result<()> {
             effective_pathspecs,
             &excluded_set,
             pickaxe_filter,
+            bloom_chain.clone(),
+            bloom_read_changed_paths,
+            bloom_changed_paths_version,
+            bloom_stats.clone(),
+            bloom_pathspecs_for_walk,
+            bloom_cwd_for_walk.clone(),
+            args.author_date_order,
         );
         let mut shown = 0usize;
         while let Some((oid, commit_data)) = iter.next_commit()? {
@@ -2901,6 +3023,13 @@ pub fn run(mut args: Args) -> Result<()> {
             effective_pathspecs,
             &excluded_set,
             pickaxe_filter,
+            bloom_chain,
+            bloom_read_changed_paths,
+            bloom_changed_paths_version,
+            bloom_stats,
+            bloom_pathspecs_for_walk,
+            bloom_cwd_for_walk,
+            args.author_date_order,
         )?;
 
         // Apply --follow: filter commits and track renames
@@ -3959,6 +4088,13 @@ struct WalkCommitsIter<'a> {
     odb: &'a Odb,
     git_dir: &'a Path,
     pickaxe_args: Option<&'a Args>,
+    bloom_chain: Option<CommitGraphChain>,
+    bloom_read_changed_paths: bool,
+    bloom_changed_paths_version: i32,
+    bloom_stats: Option<BloomWalkStatsHandle>,
+    bloom_pathspecs: &'a [String],
+    bloom_cwd: Option<String>,
+    author_date_order: bool,
     shallow_boundaries: HashSet<ObjectId>,
     visited: HashSet<ObjectId>,
     queue: std::collections::BinaryHeap<(i64, ObjectId)>,
@@ -3995,19 +4131,37 @@ impl<'a> WalkCommitsIter<'a> {
         pathspecs: &'a [String],
         excluded: &HashSet<ObjectId>,
         pickaxe_args: Option<&'a Args>,
+        bloom_chain: Option<CommitGraphChain>,
+        bloom_read_changed_paths: bool,
+        bloom_changed_paths_version: i32,
+        bloom_stats: Option<BloomWalkStatsHandle>,
+        bloom_pathspecs: &'a [String],
+        bloom_cwd: Option<String>,
+        author_date_order: bool,
     ) -> Self {
         let shallow_boundaries = load_shallow_boundaries(git_dir);
         let visited: HashSet<ObjectId> = excluded.clone();
         let mut queue: std::collections::BinaryHeap<(i64, ObjectId)> =
             std::collections::BinaryHeap::new();
         for oid in start {
-            let ts = read_commit_timestamp(odb, oid);
+            let ts = if author_date_order {
+                read_author_timestamp(odb, oid)
+            } else {
+                read_commit_timestamp(odb, oid)
+            };
             queue.push((ts, *oid));
         }
         Self {
             odb,
             git_dir,
             pickaxe_args,
+            bloom_chain,
+            bloom_read_changed_paths,
+            bloom_changed_paths_version,
+            bloom_stats,
+            bloom_pathspecs,
+            bloom_cwd,
+            author_date_order,
             shallow_boundaries,
             visited,
             queue,
@@ -4049,7 +4203,11 @@ impl<'a> WalkCommitsIter<'a> {
                     let t_obj = self.odb.read(&target)?;
                     match t_obj.kind {
                         ObjectKind::Commit => {
-                            let ts = read_commit_timestamp(self.odb, &target);
+                            let ts = if self.author_date_order {
+                                read_author_timestamp(self.odb, &target)
+                            } else {
+                                read_commit_timestamp(self.odb, &target)
+                            };
                             self.queue.push((ts, target));
                             break;
                         }
@@ -4075,13 +4233,21 @@ impl<'a> WalkCommitsIter<'a> {
             if !self.shallow_boundaries.contains(&oid) {
                 if self.first_parent {
                     if let Some(parent) = commit.parents.first() {
-                        let ts = read_commit_timestamp(self.odb, parent);
+                        let ts = if self.author_date_order {
+                            read_author_timestamp(self.odb, parent)
+                        } else {
+                            read_commit_timestamp(self.odb, parent)
+                        };
                         self.queue.push((ts, *parent));
                     }
                 } else {
                     for parent in &commit.parents {
                         if !self.visited.contains(parent) {
-                            let ts = read_commit_timestamp(self.odb, parent);
+                            let ts = if self.author_date_order {
+                                read_author_timestamp(self.odb, parent)
+                            } else {
+                                read_commit_timestamp(self.odb, parent)
+                            };
                             self.queue.push((ts, *parent));
                         }
                     }
@@ -4125,9 +4291,22 @@ impl<'a> WalkCommitsIter<'a> {
             if !msg_ok {
                 continue;
             }
-            if !self.pathspecs.is_empty() && !commit_touches_paths(self.odb, &info, self.pathspecs)?
-            {
-                continue;
+            if !self.pathspecs.is_empty() {
+                let touches = commit_touches_paths(
+                    self.odb,
+                    oid,
+                    &info,
+                    self.pathspecs,
+                    self.bloom_chain.as_ref(),
+                    self.bloom_read_changed_paths,
+                    self.bloom_changed_paths_version,
+                    self.bloom_stats.as_ref(),
+                    self.bloom_pathspecs,
+                    self.bloom_cwd.as_deref(),
+                )?;
+                if !touches {
+                    continue;
+                }
             }
 
             if let Some(pa) = self.pickaxe_args {
@@ -4186,6 +4365,13 @@ fn walk_commits(
     pathspecs: &[String],
     excluded: &HashSet<ObjectId>,
     pickaxe_args: Option<&Args>,
+    bloom_chain: Option<CommitGraphChain>,
+    bloom_read_changed_paths: bool,
+    bloom_changed_paths_version: i32,
+    bloom_stats: Option<BloomWalkStatsHandle>,
+    bloom_pathspecs: &[String],
+    bloom_cwd: Option<String>,
+    author_date_order: bool,
 ) -> Result<Vec<(ObjectId, CommitInfo)>> {
     if max_count == Some(0) {
         return Ok(Vec::new());
@@ -4207,6 +4393,13 @@ fn walk_commits(
         pathspecs,
         excluded,
         pickaxe_args,
+        bloom_chain,
+        bloom_read_changed_paths,
+        bloom_changed_paths_version,
+        bloom_stats,
+        bloom_pathspecs,
+        bloom_cwd,
+        author_date_order,
     );
     let mut result = Vec::new();
     while let Some(c) = iter.next_commit()? {
@@ -4216,14 +4409,104 @@ fn walk_commits(
 }
 
 /// Check if a commit touches any of the given pathspecs by diffing against parents.
-fn commit_touches_paths(odb: &Odb, info: &CommitInfo, pathspecs: &[String]) -> Result<bool> {
+fn commit_touches_paths(
+    odb: &Odb,
+    commit_oid: ObjectId,
+    info: &CommitInfo,
+    pathspecs: &[String],
+    bloom_chain: Option<&CommitGraphChain>,
+    read_changed_paths: bool,
+    changed_paths_version: i32,
+    bloom_stats: Option<&BloomWalkStatsHandle>,
+    bloom_specs: &[String],
+    bloom_cwd: Option<&str>,
+) -> Result<bool> {
+    let bloom_keys = if bloom_specs.is_empty() {
+        pathspecs
+    } else {
+        bloom_specs
+    };
+
     if info.parents.is_empty() {
-        // Root commit: diff against empty tree
+        let mut bloom_ret = BloomPrecheck::Inapplicable;
+        if let Some(chain) = bloom_chain {
+            if !bloom_keys.is_empty() {
+                bloom_ret = chain.bloom_precheck_for_paths(
+                    odb,
+                    commit_oid,
+                    bloom_keys,
+                    bloom_cwd,
+                    changed_paths_version,
+                    read_changed_paths,
+                )?;
+                if let Some(stats) = bloom_stats {
+                    if let Ok(mut g) = stats.lock() {
+                        g.record_precheck(bloom_ret);
+                    }
+                }
+                if bloom_ret == BloomPrecheck::DefinitelyNot {
+                    return Ok(false);
+                }
+            }
+        }
+        if pathspecs.is_empty() {
+            return Ok(true);
+        }
         let entries = diff_trees(odb, None, Some(&info.tree), "")?;
-        return Ok(entries.iter().any(|e| {
+        let touches = entries.iter().any(|e| {
             let path = e.path();
             pathspecs.iter().any(|ps| path_matches(path, ps))
-        }));
+        });
+        if bloom_ret == BloomPrecheck::Maybe && !touches {
+            if let Some(stats) = bloom_stats {
+                if let Ok(mut g) = stats.lock() {
+                    g.record_false_positive();
+                }
+            }
+        }
+        return Ok(touches);
+    }
+
+    if info.parents.len() == 1 {
+        let mut bloom_ret = BloomPrecheck::Inapplicable;
+        if let Some(chain) = bloom_chain {
+            if !bloom_keys.is_empty() {
+                bloom_ret = chain.bloom_precheck_for_paths(
+                    odb,
+                    commit_oid,
+                    bloom_keys,
+                    bloom_cwd,
+                    changed_paths_version,
+                    read_changed_paths,
+                )?;
+                if let Some(stats) = bloom_stats {
+                    if let Ok(mut g) = stats.lock() {
+                        g.record_precheck(bloom_ret);
+                    }
+                }
+                if bloom_ret == BloomPrecheck::DefinitelyNot {
+                    return Ok(false);
+                }
+            }
+        }
+        if pathspecs.is_empty() {
+            return Ok(true);
+        }
+        let parent_obj = odb.read(&info.parents[0])?;
+        let parent_commit = parse_commit(&parent_obj.data)?;
+        let entries = diff_trees(odb, Some(&parent_commit.tree), Some(&info.tree), "")?;
+        let touches = entries.iter().any(|e| {
+            let path = e.path();
+            pathspecs.iter().any(|ps| path_matches(path, ps))
+        });
+        if bloom_ret == BloomPrecheck::Maybe && !touches {
+            if let Some(stats) = bloom_stats {
+                if let Ok(mut g) = stats.lock() {
+                    g.record_false_positive();
+                }
+            }
+        }
+        return Ok(touches);
     }
 
     for parent_oid in &info.parents {
@@ -4252,6 +4535,16 @@ fn read_commit_timestamp(odb: &Odb, oid: &ObjectId) -> i64 {
     match odb.read(oid) {
         Ok(obj) => match parse_commit(&obj.data) {
             Ok(commit) => committer_unix_seconds_for_ordering(&commit.committer),
+            Err(_) => 0,
+        },
+        Err(_) => 0,
+    }
+}
+
+fn read_author_timestamp(odb: &Odb, oid: &ObjectId) -> i64 {
+    match odb.read(oid) {
+        Ok(obj) => match parse_commit(&obj.data) {
+            Ok(commit) => committer_unix_seconds_for_ordering(&commit.author),
             Err(_) => 0,
         },
         Err(_) => 0,
