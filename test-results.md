@@ -1,5 +1,10 @@
 # Test Results
 
+**Updated:** 2026-04-09
+
+- `./scripts/run-tests.sh t0040-parse-options.sh`: 94/94 passing (`test-tool parse-options*` / `parse-subcommand`: intermingled argv + NODASH `+`, selective usage append, negated-option error names, I/O flush before exit, nested `--git-completion-helper`; harness `test_run_` no longer uses `$(printf ...)` around bodies with backticks).
+- `cargo test -p grit-lib --lib`: 121/121 passing.
+
 **Updated:** 2026-04-08
 
 - `./scripts/run-tests.sh t3060-ls-files-with-tree.sh`: 8/8 passing (`ls-files --with-tree`: tree overlay on index, usage incompatibilities, conflict + missing-index cases; harness CSV/dashboards refreshed).

@@ -36,7 +36,7 @@ pub fn run_parse_subcommand(args: &[String]) -> Result<i32, ParseOptionsToolErro
             "--subcommand-optional" => test_flags |= SUBCOMMAND_OPTIONAL,
             _ => {
                 return Err(ParseOptionsToolError::Fatal(format!(
-                    "error: unknown option `{a}`\n"
+                    "error: unknown option `{a}'\n"
                 )));
             }
         }
@@ -77,7 +77,7 @@ fn fatal_need_subcommand() -> ParseOptionsToolError {
 
 fn parse_int(s: &str) -> Result<i32, ParseOptionsToolError> {
     s.parse().map_err(|_| {
-        ParseOptionsToolError::Fatal("error: option `opt' expects a numerical value\n".to_string())
+        ParseOptionsToolError::Fatal(format!("error: option `opt' expects a numerical value\n"))
     })
 }
 
@@ -141,9 +141,7 @@ fn parse_subcommand_inner(argv: &[String], flags: u32) -> Result<i32, ParseOptio
             if name == "opt" {
                 i += 1;
                 let v = argv.get(i).ok_or_else(|| {
-                    ParseOptionsToolError::Fatal(
-                        "error: option `opt' requires a value\n".to_string(),
-                    )
+                    ParseOptionsToolError::Fatal(format!("error: option `opt' requires a value\n"))
                 })?;
                 opt = parse_int(v)?;
                 i += 1;
@@ -153,7 +151,7 @@ fn parse_subcommand_inner(argv: &[String], flags: u32) -> Result<i32, ParseOptio
                 return dispatch_subcmd_one(opt, &argv[i..], keep_argv0);
             }
             return Err(ParseOptionsToolError::Fatal(format!(
-                "error: unknown option `{name}`\nusage: test-tool parse-subcommand [flag-options] cmd <subcommand>\n"
+                "error: unknown option `{name}'\nusage: test-tool parse-subcommand [flag-options] cmd <subcommand>\n"
             )));
         }
 
@@ -162,7 +160,7 @@ fn parse_subcommand_inner(argv: &[String], flags: u32) -> Result<i32, ParseOptio
             if rest.is_empty() {
                 i += 1;
                 let v = argv.get(i).ok_or_else(|| {
-                    ParseOptionsToolError::Fatal("error: switch `o' requires a value\n".to_string())
+                    ParseOptionsToolError::Fatal(format!("error: switch `o' requires a value\n"))
                 })?;
                 opt = parse_int(v)?;
                 i += 1;
@@ -180,7 +178,7 @@ fn parse_subcommand_inner(argv: &[String], flags: u32) -> Result<i32, ParseOptio
         }
         let c = body.chars().next().unwrap_or('?');
         return Err(ParseOptionsToolError::Fatal(format!(
-            "error: unknown switch `{c}`\nusage: test-tool parse-subcommand [flag-options] cmd <subcommand>\n"
+            "error: unknown switch `{c}'\nusage: test-tool parse-subcommand [flag-options] cmd <subcommand>\n"
         )));
     }
 
@@ -218,7 +216,7 @@ fn match_dashless(
                 dispatch_subcmd_one(opt, rest, keep_argv0)
             } else {
                 Err(ParseOptionsToolError::Fatal(format!(
-                    "error: unknown subcommand: `{arg}`\nusage: test-tool parse-subcommand [flag-options] cmd <subcommand>\n"
+                    "error: unknown subcommand: `{arg}'\nusage: test-tool parse-subcommand [flag-options] cmd <subcommand>\n"
                 )))
             }
         }
