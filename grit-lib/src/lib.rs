@@ -21,6 +21,7 @@ pub mod commit_encoding;
 pub mod commit_pretty;
 pub mod commit_trailers;
 pub mod config;
+pub mod connectivity;
 pub mod crlf;
 pub mod delta_encode;
 pub mod diff;

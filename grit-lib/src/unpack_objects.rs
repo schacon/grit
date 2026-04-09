@@ -17,7 +17,7 @@ use flate2::read::ZlibDecoder;
 use sha1::{Digest, Sha1};
 
 use crate::error::{Error, Result};
-use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
+use crate::objects::{parse_commit, parse_tag, parse_tree, Object, ObjectId, ObjectKind};
 use crate::odb::Odb;
 
 /// Options controlling `unpack-objects` behaviour.
@@ -371,6 +371,146 @@ pub fn strict_verify_packed_references(
     Ok(())
 }
 
+/// Parse a pack byte stream and return every resolved object (after delta resolution) keyed by OID.
+///
+/// Does not write to any object database. Used for receive-pack connectivity checks before
+/// applying a push to the permanent ODB.
+///
+/// Thin-pack bases may be resolved from `odb` when they are not present in the pack.
+pub fn pack_bytes_to_object_map(data: &[u8], odb: &Odb) -> Result<HashMap<ObjectId, Object>> {
+    let rd = PackReader::new(data.to_vec());
+    build_pack_object_map(rd, odb)
+}
+
+fn build_pack_object_map(mut rd: PackReader, odb: &Odb) -> Result<HashMap<ObjectId, Object>> {
+    let sig = rd.read_exact(4)?;
+    if sig != b"PACK" {
+        return Err(Error::CorruptObject(
+            "not a pack stream: invalid signature".to_owned(),
+        ));
+    }
+    let version = rd.read_u32_be()?;
+    if version != 2 && version != 3 {
+        return Err(Error::CorruptObject(format!(
+            "unsupported pack version {version}"
+        )));
+    }
+    let nr_objects = rd.read_u32_be()? as usize;
+
+    let mut by_offset: HashMap<usize, (ObjectKind, Vec<u8>)> = HashMap::new();
+    let mut by_oid: HashMap<ObjectId, (ObjectKind, Vec<u8>)> = HashMap::new();
+    let mut pending: Vec<PendingDelta> = Vec::new();
+
+    fn base_from_pack_or_odb(
+        by_oid: &HashMap<ObjectId, (ObjectKind, Vec<u8>)>,
+        odb: &Odb,
+        id: &ObjectId,
+    ) -> Option<(ObjectKind, Vec<u8>)> {
+        if let Some(e) = by_oid.get(id) {
+            return Some(e.clone());
+        }
+        odb.read(id).ok().map(|o| (o.kind, o.data))
+    }
+
+    for _ in 0..nr_objects {
+        let obj_offset = rd.pos;
+        let (type_code, size) = rd.read_type_size()?;
+
+        match type_code {
+            1..=4 => {
+                let kind = type_code_to_kind(type_code)?;
+                let data = rd.decompress(size)?;
+                let oid = Odb::hash_object_data(kind, &data);
+                by_offset.insert(obj_offset, (kind, data.clone()));
+                by_oid.insert(oid, (kind, data));
+            }
+            6 => {
+                let neg = rd.read_ofs_neg_offset()?;
+                let base_offset = obj_offset.checked_sub(neg).ok_or_else(|| {
+                    Error::CorruptObject("ofs-delta base offset underflow".to_owned())
+                })?;
+                let delta_data = rd.decompress(size)?;
+                pending.push(PendingDelta {
+                    offset: obj_offset,
+                    base_oid: None,
+                    base_offset: Some(base_offset),
+                    delta_data,
+                });
+            }
+            7 => {
+                let base_bytes = rd.read_exact(20)?;
+                let base_oid = ObjectId::from_bytes(base_bytes)?;
+                let delta_data = rd.decompress(size)?;
+                pending.push(PendingDelta {
+                    offset: obj_offset,
+                    base_oid: Some(base_oid),
+                    base_offset: None,
+                    delta_data,
+                });
+            }
+            other => {
+                return Err(Error::CorruptObject(format!(
+                    "unknown packed-object type {other}"
+                )))
+            }
+        }
+    }
+
+    let consumed = rd.pos;
+    {
+        let mut hasher = Sha1::new();
+        hasher.update(&rd.data[..consumed]);
+        let digest = hasher.finalize();
+        let trailing = rd.read_exact(20)?;
+        if digest.as_slice() != trailing {
+            return Err(Error::CorruptObject(
+                "pack trailing checksum mismatch".to_owned(),
+            ));
+        }
+    }
+
+    let mut remaining = pending;
+    loop {
+        if remaining.is_empty() {
+            break;
+        }
+        let before = remaining.len();
+        let mut still_pending: Vec<PendingDelta> = Vec::new();
+
+        for delta in remaining {
+            let base = if let Some(base_off) = delta.base_offset {
+                by_offset.get(&base_off).cloned()
+            } else if let Some(ref base_id) = delta.base_oid {
+                base_from_pack_or_odb(&by_oid, odb, base_id)
+            } else {
+                None
+            };
+
+            if let Some((base_kind, base_data)) = base {
+                let result = apply_delta(&base_data, &delta.delta_data)?;
+                let oid = Odb::hash_object_data(base_kind, &result);
+                by_offset.insert(delta.offset, (base_kind, result.clone()));
+                by_oid.insert(oid, (base_kind, result));
+            } else {
+                still_pending.push(delta);
+            }
+        }
+
+        remaining = still_pending;
+        if remaining.len() == before {
+            return Err(Error::CorruptObject(format!(
+                "{} delta(s) could not be resolved",
+                remaining.len()
+            )));
+        }
+    }
+
+    Ok(by_oid
+        .into_iter()
+        .map(|(oid, (kind, data))| (oid, Object::new(kind, data)))
+        .collect())
+}
+
 /// Either write `data` as a loose object (if `!dry_run`) or just compute its
 /// [`ObjectId`] without touching the filesystem.
 fn write_or_hash(kind: ObjectKind, data: &[u8], odb: &Odb, dry_run: bool) -> Result<ObjectId> {
@@ -391,6 +531,106 @@ fn type_code_to_kind(code: u8) -> Result<ObjectKind> {
         _ => Err(Error::CorruptObject(format!(
             "type code {code} is not a regular object type"
         ))),
+    }
+}
+
+/// Low-level cursor over a buffered pack byte stream (in-memory pack parsing).
+struct PackReader {
+    data: Vec<u8>,
+    pos: usize,
+}
+
+impl PackReader {
+    fn new(data: Vec<u8>) -> Self {
+        Self { data, pos: 0 }
+    }
+
+    /// Read exactly `n` bytes and advance the cursor, returning a slice into
+    /// the internal buffer.
+    fn read_exact(&mut self, n: usize) -> Result<&[u8]> {
+        if self.pos + n > self.data.len() {
+            return Err(Error::CorruptObject(format!(
+                "pack stream truncated: need {n} bytes at offset {}",
+                self.pos
+            )));
+        }
+        let slice = &self.data[self.pos..self.pos + n];
+        self.pos += n;
+        Ok(slice)
+    }
+
+    /// Read a single byte and advance the cursor.
+    fn read_byte(&mut self) -> Result<u8> {
+        if self.pos >= self.data.len() {
+            return Err(Error::CorruptObject(
+                "unexpected end of pack stream".to_owned(),
+            ));
+        }
+        let b = self.data[self.pos];
+        self.pos += 1;
+        Ok(b)
+    }
+
+    /// Read a big-endian `u32`.
+    fn read_u32_be(&mut self) -> Result<u32> {
+        let bytes = self.read_exact(4)?;
+        Ok(u32::from_be_bytes(bytes.try_into().map_err(|_| {
+            Error::CorruptObject("u32 read failed".to_owned())
+        })?))
+    }
+
+    /// Read the packed-object type + size header (variable-length big-endian
+    /// encoding with the type in bits 4-6 of the first byte).
+    ///
+    /// Returns `(type_code, uncompressed_size)`.
+    fn read_type_size(&mut self) -> Result<(u8, usize)> {
+        let c = self.read_byte()?;
+        let type_code = (c >> 4) & 0x7;
+        let mut size = (c & 0x0f) as usize;
+        let mut shift = 4u32;
+        let mut cur = c;
+        while cur & 0x80 != 0 {
+            cur = self.read_byte()?;
+            size |= ((cur & 0x7f) as usize) << shift;
+            shift += 7;
+        }
+        Ok((type_code, size))
+    }
+
+    /// Read an `OFS_DELTA` negative-offset value.
+    ///
+    /// The encoding uses a big-endian variable-length integer with a +1 bias
+    /// on each continuation byte, yielding values ≥ 1.
+    fn read_ofs_neg_offset(&mut self) -> Result<usize> {
+        let mut c = self.read_byte()?;
+        let mut value = (c & 0x7f) as usize;
+        while c & 0x80 != 0 {
+            c = self.read_byte()?;
+            value = (value + 1) << 7 | (c & 0x7f) as usize;
+        }
+        Ok(value)
+    }
+
+    /// Decompress zlib-compressed data starting at the current cursor position.
+    ///
+    /// Advances the cursor by exactly the number of compressed bytes consumed.
+    /// Returns an error if the decompressed length differs from `expected_size`.
+    fn decompress(&mut self, expected_size: usize) -> Result<Vec<u8>> {
+        let slice = &self.data[self.pos..];
+        let mut decoder = ZlibDecoder::new(slice);
+        let mut out = Vec::with_capacity(expected_size);
+        decoder
+            .read_to_end(&mut out)
+            .map_err(|e| Error::Zlib(e.to_string()))?;
+        if out.len() != expected_size {
+            return Err(Error::CorruptObject(format!(
+                "decompressed {} bytes but expected {}",
+                out.len(),
+                expected_size
+            )));
+        }
+        self.pos += decoder.total_in() as usize;
+        Ok(out)
     }
 }
 

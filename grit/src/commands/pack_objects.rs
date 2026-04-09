@@ -34,7 +34,7 @@ pub struct Args {
     #[arg(long)]
     pub revs: bool,
 
-    /// Omit objects the client already has (after `--not` in rev-list input).
+    /// Omit objects the client already has (thin pack); `^` exclusion lines mark bases.
     #[arg(long)]
     pub thin: bool,
 

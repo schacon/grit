@@ -372,6 +372,14 @@ fn parse_args(args: Vec<String>, inv: ForEachRefInvocation) -> Result<Options> {
             }
             continue;
         }
+        if arg == "--" {
+            i += 1;
+            while i < args.len() {
+                opts.patterns.push(args[i].clone());
+                i += 1;
+            }
+            break;
+        }
         if arg.starts_with('-') {
             bail!("unsupported option: {arg}\n{}", full_usage_line(inv));
         }

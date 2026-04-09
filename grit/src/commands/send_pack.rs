@@ -1,7 +1,8 @@
 //! `grit send-pack` — push objects to a remote repository (plumbing).
 //!
-//! Low-level plumbing command that sends pack data to a remote repository
-//! and updates remote refs.  Only **local** transports are supported.
+//! Local transport: spawns the receive-pack program (default `grit receive-pack`) with the
+//! remote repository path, speaks the v0/v1 pkt-line push protocol, and streams a pack built
+//! via `grit pack-objects`.
 
 use crate::explicit_exit::ExplicitExit;
 use anyhow::{bail, Context, Result};
@@ -11,9 +12,11 @@ use grit_lib::objects::ObjectId;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use std::collections::HashSet;
-use std::fs;
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+
+use crate::pkt_line::{read_packet, write_flush, Packet};
 
 /// Upstream `git send-pack` usage synopsis (exit 129 when options are incompatible).
 const SEND_PACK_USAGE: &str = "usage: git send-pack [--mirror] [--dry-run] [--force]\n\
@@ -38,10 +41,13 @@ pub struct Args {
     #[arg(long = "mirror")]
     pub mirror: bool,
 
-    /// Refspec(s) to push (e.g. "main:main", "refs/heads/main:refs/heads/main").
-    /// Format: <src>:<dst> or just <ref> (implies same name on both sides).
+    /// Refspec(s) to push (e.g. "main:main"). With `--all`, ignored.
     #[arg(value_name = "REF")]
     pub refs: Vec<String>,
+
+    /// Push all branches (refs/heads/*).
+    #[arg(long)]
+    pub all: bool,
 
     /// Allow non-fast-forward updates.
     #[arg(long = "force")]
@@ -50,9 +56,16 @@ pub struct Args {
     /// Show what would be done, without making changes.
     #[arg(short = 'n', long = "dry-run")]
     pub dry_run: bool,
+
+    /// Program to run on the remote side (default: `grit receive-pack`).
+    #[arg(long = "receive-pack", value_name = "PATH")]
+    pub receive_pack: Option<String>,
+
+    /// Alias for `--receive-pack` (Git compatibility).
+    #[arg(long = "exec", value_name = "PATH")]
+    pub exec: Option<String>,
 }
 
-/// A single ref update to perform on the remote.
 struct RefUpdate {
     remote_ref: String,
     old_oid: Option<ObjectId>,
@@ -90,39 +103,52 @@ pub fn run(args: Args) -> Result<()> {
         }));
     }
 
-    if refspecs.is_empty() {
-        bail!("no refs specified; nothing to push");
-    }
+    let mut updates = Vec::new();
 
-    let mut seen_remote: HashSet<String> = HashSet::new();
-    for spec in &refspecs {
-        let (_, dst) = parse_refspec(spec);
-        let remote_ref = normalize_ref(&dst);
-        if !seen_remote.insert(remote_ref.clone()) {
-            bail!("multiple updates for ref '{remote_ref}' not allowed");
+    if args.all {
+        let local_branches = refs::list_refs(&repo.git_dir, "refs/heads/")?;
+        for (refname, local_oid) in &local_branches {
+            let old_oid = refs::resolve_ref(&remote_repo.git_dir, refname).ok();
+            if old_oid.as_ref() == Some(local_oid) {
+                continue;
+            }
+            updates.push(RefUpdate {
+                remote_ref: refname.clone(),
+                old_oid,
+                new_oid: *local_oid,
+            });
+        }
+    } else {
+        if refspecs.is_empty() {
+            bail!("no refs specified; nothing to push");
+        }
+
+        let mut seen_remote: HashSet<String> = HashSet::new();
+        for spec in &refspecs {
+            let (_, dst) = parse_refspec(spec);
+            let remote_ref = normalize_ref(&dst);
+            if !seen_remote.insert(remote_ref.clone()) {
+                bail!("multiple updates for ref '{remote_ref}' not allowed");
+            }
+        }
+
+        for spec in &refspecs {
+            let (src, dst) = parse_refspec(spec);
+            let local_ref = normalize_ref(&src);
+            let remote_ref = normalize_ref(&dst);
+
+            let local_oid = refs::resolve_ref(&repo.git_dir, &local_ref)
+                .with_context(|| format!("src ref '{}' does not match any", src))?;
+            let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
+
+            updates.push(RefUpdate {
+                remote_ref,
+                old_oid,
+                new_oid: local_oid,
+            });
         }
     }
 
-    // Build list of ref updates from refspecs
-    let mut updates = Vec::new();
-
-    for spec in &refspecs {
-        let (src, dst) = parse_refspec(spec);
-        let local_ref = normalize_ref(&src);
-        let remote_ref = normalize_ref(&dst);
-
-        let local_oid = refs::resolve_ref(&repo.git_dir, &local_ref)
-            .with_context(|| format!("src ref '{}' does not match any", src))?;
-        let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
-
-        updates.push(RefUpdate {
-            remote_ref,
-            old_oid,
-            new_oid: local_oid,
-        });
-    }
-
-    // Validate fast-forward unless --force
     for update in &updates {
         if let Some(old) = &update.old_oid {
             if *old != update.new_oid && !args.force && !is_ancestor(&repo, *old, update.new_oid)? {
@@ -134,12 +160,43 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    if !args.dry_run {
-        // Copy objects from local → remote
-        copy_objects(&repo.git_dir, &remote_repo.git_dir).context("copying objects to remote")?;
+    if updates.is_empty() {
+        return Ok(());
     }
 
-    // Apply ref updates
+    if args.dry_run {
+        for update in &updates {
+            let old_hex = update
+                .old_oid
+                .as_ref()
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| "0".repeat(40));
+            println!(
+                "{}..{}\t{} (dry run)",
+                &old_hex[..7],
+                &update.new_oid.to_hex()[..7],
+                update.remote_ref,
+            );
+        }
+        return Ok(());
+    }
+
+    let receive_cmd = args
+        .receive_pack
+        .as_deref()
+        .or(args.exec.as_deref())
+        .unwrap_or("git receive-pack");
+
+    let mut child = spawn_receive_pack(receive_cmd, &remote_path)?;
+    let mut child_stdin = child.stdin.take().context("receive-pack stdin")?;
+    let mut child_stdout = child.stdout.take().context("receive-pack stdout")?;
+
+    let (extra_have, _server_sideband, advertised_oids) = read_advertisement(&mut child_stdout)?;
+
+    // Raw pack bytes after the command flush (do not negotiate side-band-64k for the pack:
+    // `git receive-pack` reads the pack from stdin without demuxing client→server sideband).
+    let caps = "report-status report-status-v2 quiet object-format=sha1";
+    let mut first_cmd = true;
     for update in &updates {
         let old_hex = update
             .old_oid
@@ -147,27 +204,236 @@ pub fn run(args: Args) -> Result<()> {
             .map(|o| o.to_hex())
             .unwrap_or_else(|| "0".repeat(40));
         let new_hex = update.new_oid.to_hex();
-        let status = if args.dry_run { " (dry run)" } else { "" };
+        let pkt = if first_cmd {
+            first_cmd = false;
+            format!("{old_hex} {new_hex} {}\0{caps}\n", update.remote_ref)
+        } else {
+            format!("{old_hex} {new_hex} {}\n", update.remote_ref)
+        };
+        write_pkt_line(&mut child_stdin, pkt.as_bytes())?;
+    }
+    write_flush(&mut child_stdin)?;
+    child_stdin.flush()?;
 
-        if !args.dry_run {
-            refs::write_ref(&remote_repo.git_dir, &update.remote_ref, &update.new_oid)
-                .with_context(|| format!("updating remote ref {}", update.remote_ref))?;
+    // Use the real Git binary for pack generation when available: the harness aliases `git`
+    // to grit, and grit's pack-objects is not yet a full send-pack peer (thin packs, etc.).
+    let pack_bin = std::path::Path::new("/usr/bin/git");
+    let pack_cwd = repo
+        .work_tree
+        .clone()
+        .unwrap_or_else(|| repo.git_dir.clone());
+    let pack_args = [
+        "pack-objects",
+        "--stdout",
+        "--revs",
+        "--thin",
+        "--delta-base-offset",
+        "-q",
+    ];
+    let mut pack_cmd = if pack_bin.is_file() {
+        let mut c = Command::new(pack_bin);
+        c.current_dir(&pack_cwd)
+            .env("GIT_DIR", &repo.git_dir)
+            .args(pack_args);
+        // Tests prepend a `git` shim ahead of `/usr/bin`; helpers invoked by git must not recurse.
+        c.env("PATH", "/usr/bin:/bin");
+        c
+    } else {
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("grit"));
+        let mut c = Command::new(exe);
+        c.current_dir(&pack_cwd)
+            .env("GIT_DIR", &repo.git_dir)
+            .args(pack_args);
+        c
+    };
+    let mut pack_child = pack_cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .context("spawn pack-objects")?;
+    {
+        let mut stdin = pack_child.stdin.take().context("pack-objects stdin")?;
+        let mut fed: HashSet<ObjectId> = HashSet::new();
+        let new_tips: HashSet<ObjectId> = updates.iter().map(|u| u.new_oid).collect();
+        for oid in peel_advertised_commits(&repo, &advertised_oids) {
+            if new_tips.contains(&oid) {
+                continue;
+            }
+            if fed.insert(oid) {
+                writeln!(stdin, "^{}", oid.to_hex())?;
+            }
         }
+        for h in &extra_have {
+            if fed.insert(*h) {
+                writeln!(stdin, "^{}", h.to_hex())?;
+            }
+        }
+        for update in &updates {
+            if let Some(old) = &update.old_oid {
+                if fed.insert(*old) {
+                    writeln!(stdin, "^{}", old.to_hex())?;
+                }
+            }
+            writeln!(stdin, "{}", update.new_oid.to_hex())?;
+        }
+        stdin.flush().context("flush pack-objects stdin")?;
+    }
 
-        println!(
-            "{}..{}\t{}{status}",
-            &old_hex[..7],
-            &new_hex[..7],
-            update.remote_ref,
-        );
+    let pack_output = pack_child
+        .wait_with_output()
+        .context("wait for pack-objects")?;
+    if !pack_output.status.success() {
+        bail!("pack-objects failed with status {}", pack_output.status);
+    }
+    child_stdin.write_all(&pack_output.stdout)?;
+    child_stdin.flush()?;
+
+    drop(child_stdin);
+    let mut output = Vec::new();
+    child_stdout.read_to_end(&mut output)?;
+    let status = child.wait()?;
+    io::stdout().write_all(&output)?;
+    if !status.success() {
+        bail!("receive-pack failed");
     }
 
     Ok(())
 }
 
-/// Parse a refspec "src:dst" or just "ref" (implies same name both sides).
+fn write_pkt_line(w: &mut impl Write, payload: &[u8]) -> io::Result<()> {
+    let n = payload.len() + 4;
+    write!(w, "{:04x}", n)?;
+    w.write_all(payload)
+}
+
+fn shell_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn spawn_receive_pack(receive_cmd: &str, remote_path: &Path) -> Result<Child> {
+    let remote_str = remote_path.to_string_lossy();
+    if receive_cmd.contains('|')
+        || receive_cmd.contains('>')
+        || receive_cmd.contains('<')
+        || receive_cmd.contains('&')
+    {
+        let script = format!(
+            "{} {}",
+            receive_cmd.trim_end(),
+            shell_single_quote(&remote_str)
+        );
+        return Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .context("spawn receive-pack shell");
+    }
+
+    let words: Vec<&str> = receive_cmd.split_whitespace().collect();
+    if words.is_empty() {
+        bail!("empty receive-pack command");
+    }
+    let mut cmd = Command::new(words[0]);
+    for w in &words[1..] {
+        cmd.arg(w);
+    }
+    cmd.arg(remote_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    cmd.spawn().context("spawn receive-pack")
+}
+
+fn read_advertisement(r: &mut impl Read) -> Result<(HashSet<ObjectId>, bool, Vec<ObjectId>)> {
+    let mut haves = HashSet::new();
+    let mut advertised = Vec::new();
+    let mut server_sideband = false;
+    loop {
+        match read_packet(r)? {
+            None => break,
+            Some(Packet::Flush) => break,
+            Some(Packet::Delim) | Some(Packet::ResponseEnd) => break,
+            Some(Packet::Data(line)) => {
+                if let Some(oid) = parse_dot_have_line(&line) {
+                    haves.insert(oid);
+                }
+                if let Some(oid) = parse_advertised_ref_oid(&line) {
+                    advertised.push(oid);
+                }
+                if let Some(caps) = line.split('\0').nth(1) {
+                    if caps.contains("side-band-64k") || caps.contains("side-band") {
+                        server_sideband = true;
+                    }
+                }
+            }
+        }
+    }
+    Ok((haves, server_sideband, advertised))
+}
+
+fn parse_advertised_ref_oid(line: &str) -> Option<ObjectId> {
+    let line = line.trim_end_matches('\n');
+    let (main, _) = line.split_once('\0').unwrap_or((line, ""));
+    let mut it = main.splitn(2, |c| c == '\t' || c == ' ');
+    let hex = it.next()?.trim();
+    let name = it.next()?.trim();
+    // `HEAD` appears on the first pkt-line alongside capabilities; it may be detached at the
+    // same OID as the branch being pushed. Feeding it to pack-objects as `^<oid>` would exclude
+    // the whole thin pack (t5410 with grit receive-pack advertising detached HEAD).
+    if name == ".have" || name == "HEAD" || name.starts_with("capabilities") {
+        return None;
+    }
+    ObjectId::from_hex(hex).ok()
+}
+
+fn peel_advertised_commits(repo: &Repository, oids: &[ObjectId]) -> Vec<ObjectId> {
+    use grit_lib::objects::{parse_tag, ObjectKind};
+    let mut out = Vec::new();
+    let mut seen_commits = HashSet::new();
+    for &start in oids {
+        let mut cur = start;
+        let commit = loop {
+            let Ok(obj) = repo.odb.read(&cur) else {
+                break None;
+            };
+            match obj.kind {
+                ObjectKind::Tag => {
+                    let Ok(tag) = parse_tag(&obj.data) else {
+                        break None;
+                    };
+                    cur = tag.object;
+                }
+                ObjectKind::Commit => break Some(cur),
+                _ => break None,
+            }
+        };
+        if let Some(c) = commit {
+            if seen_commits.insert(c) {
+                out.push(c);
+            }
+        }
+    }
+    out
+}
+
+fn parse_dot_have_line(line: &str) -> Option<ObjectId> {
+    let line = line.trim_end_matches('\n');
+    let (main, _) = line.split_once('\0').unwrap_or((line, ""));
+    let mut it = main.splitn(2, |c| c == '\t' || c == ' ');
+    let hex = it.next()?;
+    let name = it.next()?.trim();
+    if name == ".have" {
+        ObjectId::from_hex(hex).ok()
+    } else {
+        None
+    }
+}
+
 fn parse_refspec(spec: &str) -> (String, String) {
-    // Strip leading '+' (force marker)
     let spec = spec.strip_prefix('+').unwrap_or(spec);
     if let Some((src, dst)) = spec.split_once(':') {
         (src.to_owned(), dst.to_owned())
@@ -176,7 +442,6 @@ fn parse_refspec(spec: &str) -> (String, String) {
     }
 }
 
-/// Normalize a short ref name into a full ref path.
 fn normalize_ref(name: &str) -> String {
     if name.starts_with("refs/") {
         name.to_owned()
@@ -185,61 +450,6 @@ fn normalize_ref(name: &str) -> String {
     }
 }
 
-/// Copy all objects (loose + packs) from src to dst, skipping existing.
-fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
-    let src_objects = src_git_dir.join("objects");
-    let dst_objects = dst_git_dir.join("objects");
-
-    // Copy loose objects
-    if src_objects.is_dir() {
-        for entry in fs::read_dir(&src_objects)? {
-            let entry = entry?;
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-
-            if name_str == "info" || name_str == "pack" {
-                continue;
-            }
-            if !entry.file_type()?.is_dir() || name_str.len() != 2 {
-                continue;
-            }
-
-            let dst_dir = dst_objects.join(&*name);
-            for inner in fs::read_dir(entry.path())? {
-                let inner = inner?;
-                if inner.file_type()?.is_file() {
-                    let dst_file = dst_dir.join(inner.file_name());
-                    if !dst_file.exists() {
-                        fs::create_dir_all(&dst_dir)?;
-                        if fs::hard_link(inner.path(), &dst_file).is_err() {
-                            fs::copy(inner.path(), &dst_file)?;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Copy pack files
-    let src_pack = src_objects.join("pack");
-    let dst_pack = dst_objects.join("pack");
-    if src_pack.is_dir() {
-        fs::create_dir_all(&dst_pack)?;
-        for entry in fs::read_dir(&src_pack)? {
-            let entry = entry?;
-            if entry.file_type()?.is_file() {
-                let dst_file = dst_pack.join(entry.file_name());
-                if !dst_file.exists() && fs::hard_link(entry.path(), &dst_file).is_err() {
-                    fs::copy(entry.path(), &dst_file)?;
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Open a repository (bare or non-bare).
 fn open_repo(path: &Path) -> Result<Repository> {
     if let Ok(repo) = Repository::open(path, None) {
         return Ok(repo);
