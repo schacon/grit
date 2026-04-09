@@ -3202,6 +3202,8 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                     print_upstream_synopsis_and_exit(subcmd, syn, 129);
                 }
             }
+            let (rest, open_in_pager, open_pager_cmd) =
+                commands::grep::preprocess_open_in_pager_argv(rest.to_vec());
             // Also implement last-flag-wins for -G/-E/-F/-P pattern type flags.
             // Rewrite -h to --no-filename. Handle both standalone "-h" and
             // combined flags like "-ah" (split into "-a" + "--no-filename").
@@ -3249,7 +3251,10 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 // Insert the winning flag back (at beginning, before positionals)
                 rest.insert(0, keep);
             }
-            commands::grep::run(parse_cmd_args(subcmd, &rest))
+            let mut args: commands::grep::Args = parse_cmd_args(subcmd, &rest);
+            args.open_in_pager = open_in_pager;
+            args.open_pager_cmd = open_pager_cmd;
+            commands::grep::run(args)
         }
         "hash-object" => commands::hash_object::run(parse_cmd_args(subcmd, rest)),
         "help" => commands::help::run(parse_cmd_args(subcmd, rest)),

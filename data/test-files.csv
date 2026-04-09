@@ -1271,7 +1271,7 @@ t7703-repack-geometric	t7	yes	18	2	16	false	ok	0
 t7704-repack-cruft	t7	skip	25	5	20	false	ok	0
 t7800-difftool	t7	yes	0	0	0	false	timeout	0
 t7810-grep	t7	yes	0	0	0	false	timeout	0
-t7811-grep-open	t7	yes	10	3	7	false	ok	0
+t7811-grep-open	t7	yes	10	10	0	true	ok	0
 t7812-grep-icase-non-ascii	t7	yes	18	18	0	true	ok	0
 t7813-grep-icase-iso	t7	yes	2	2	0	true	ok	0
 t7814-grep-recurse-submodules	t7	yes	27	20	7	false	ok	7
