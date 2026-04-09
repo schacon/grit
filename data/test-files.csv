@@ -1275,7 +1275,7 @@ t7811-grep-open	t7	yes	10	3	7	false	ok	0
 t7812-grep-icase-non-ascii	t7	yes	18	18	0	true	ok	0
 t7813-grep-icase-iso	t7	yes	2	2	0	true	ok	0
 t7814-grep-recurse-submodules	t7	yes	27	20	7	false	ok	7
-t7815-grep-binary	t7	yes	21	19	2	false	ok	1
+t7815-grep-binary	t7	yes	22	22	0	true	ok	0
 t7816-grep-binary-pattern	t7	yes	145	97	48	false	ok	0
 t7817-grep-sparse-checkout	t7	yes	8	4	4	false	ok	0
 t7818-grep-extended	t7	yes	11	11	0	true	ok	0
