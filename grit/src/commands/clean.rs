@@ -659,10 +659,24 @@ fn dir_contains_nested_git_or_gitlink(
             Err(_) => continue,
         };
         let name = entry.file_name().to_string_lossy().to_string();
+        let path = entry.path();
         if name == ".git" {
+            // A nested repository's metadata lives at `<nested-root>/.git`. The main walk skips
+            // `.git` names entirely, so without this check `dir_contains_nested_git_or_gitlink`
+            // would miss nested repos and `git clean -d` could delete them (t7300 submodules test).
+            if let Some(nested_root) = path.parent() {
+                let rel_nested = nested_root
+                    .strip_prefix(work_tree)
+                    .map(path_to_slash)
+                    .unwrap_or_default();
+                if is_nested_git_metadata(nested_root)
+                    && !pathspec_enters_any(pathspecs, cwd_prefix, &rel_nested)
+                {
+                    return Ok(true);
+                }
+            }
             continue;
         }
-        let path = entry.path();
         let rel_child = path
             .strip_prefix(work_tree)
             .map(path_to_slash)
@@ -769,10 +783,13 @@ fn is_nested_git_metadata(work_tree_entry: &Path) -> bool {
         if !head_ok {
             return false;
         }
-        return match Repository::open(&gd, Some(work_tree_entry)) {
-            Ok(repo) => !repo.is_bare(),
-            Err(_) => false,
-        };
+        // HEAD is already validated; prefer opening the repo to apply `core.bare` / worktree
+        // rules. If opening fails (unexpected layout), still treat as a nested repo when the
+        // git dir has an `objects` store — matches Git's "real repository" heuristic for clean.
+        if let Ok(repo) = Repository::open_skipping_format_validation(&gd, Some(work_tree_entry)) {
+            return !repo.is_bare();
+        }
+        head_ok && gd.join("objects").is_dir()
     }
     if !git_meta.is_file() {
         return false;
