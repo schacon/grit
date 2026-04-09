@@ -1,6 +1,6 @@
 file	group	in_scope	tests_total	passed_last	failing	fully_passing	status	expect_failure
 t0-version	t0	yes	1	1	0	true	ok	0
-t0000-basic	t0	yes	92	91	1	false	ok	8
+t0000-basic	t0	yes	92	90	2	false	ok	8
 t0001-init	t0	yes	102	71	31	false	ok	0
 t0002-gitfile	t0	yes	14	12	2	false	ok	0
 t0003-attributes	t0	yes	55	55	0	true	ok	0
@@ -911,7 +911,7 @@ t5402-post-merge-hook	t5	yes	7	3	4	false	ok	0
 t5403-post-checkout-hook	t5	yes	14	11	3	false	ok	0
 t5404-tracking-branches	t5	yes	7	3	4	false	ok	0
 t5405-send-pack-rewind	t5	yes	3	1	2	false	ok	0
-t5406-remote-rejects	t5	yes	3	2	1	false	ok	0
+t5406-remote-rejects	t5	yes	3	3	0	true	ok	0
 t5407-post-rewrite-hook	t5	yes	17	11	6	false	ok	0
 t5408-send-pack-stdin	t5	yes	10	6	4	false	ok	0
 t5409-colorize-remote-messages	t5	yes	11	11	0	true	ok	0

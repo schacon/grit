@@ -241,6 +241,7 @@ run_one() {
       # harness `git` wrapper and breaks once a test `cd`s into trash (./grit missing).
       unset -f git grit 2>/dev/null || true &&
       env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_SEQUENCE_EDITOR \
+        -u TRASH_DIRECTORY -u BIN_DIRECTORY -u TEST_OUTPUT_DIRECTORY_OVERRIDE \
         EDITOR=: VISUAL=: LC_ALL=C LANG=C _prereq_DEFAULT_REPO_FORMAT=set \
         GRIT_TEST_LIB_SUMMARY=1 \
         ${utf8_nfd_to_nfc:+GIT_TEST_UTF8_NFD_TO_NFC=$utf8_nfd_to_nfc} \

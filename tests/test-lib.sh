@@ -1349,13 +1349,19 @@ test_atexit_handler () {
 
 test_eval_inner_ () {
 	local _eval_inner_ret
-	if test -z "${TEST_LIB_INHERIT_CWD-}"
+	# Nested scripts from lib-subtest.sh set TEST_OUTPUT_DIRECTORY_OVERRIDE; for those we
+	# reset cwd around each test body (subtests have no trash-root setup_trash cd).
+	# Top-level tests do not set it; cwd must persist across test_expect_success blocks
+	# (matches upstream git/t; e.g. t5406-remote-rejects).
+	if test -n "${TEST_OUTPUT_DIRECTORY_OVERRIDE:-}" &&
+		test -z "${TEST_LIB_INHERIT_CWD-}"
 	then
 		cd "$TRASH_DIRECTORY" || exit 1
 	fi
 	eval "$1"
 	_eval_inner_ret=$?
-	if test -z "${TEST_LIB_INHERIT_CWD-}"
+	if test -n "${TEST_OUTPUT_DIRECTORY_OVERRIDE:-}" &&
+		test -z "${TEST_LIB_INHERIT_CWD-}"
 	then
 		cd "$TRASH_DIRECTORY" || exit 1
 	fi
