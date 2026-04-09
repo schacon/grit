@@ -31,6 +31,7 @@ use grit_lib::rev_parse::{
     abbreviate_object_id, resolve_revision, resolve_upstream_symbolic_name, upstream_suffix_info,
 };
 use grit_lib::state::{resolve_head, HeadState};
+use grit_lib::submodule_gitdir::submodule_modules_git_dir;
 
 /// Count parallel checkout worker processes to spawn for trace2 tests (`t2080`).
 ///
@@ -2147,6 +2148,16 @@ pub(crate) fn check_dirty_worktree(
             }
             let abs_path = work_tree.join(rel_path.as_ref());
             if abs_path.exists() || abs_path.is_symlink() {
+                // Empty directory at a path that becomes a submodule: Git removes the directory
+                // during checkout (t3426 `mkdir sub1` before `rebase` onto `add_sub1`).
+                if new_entry.mode == MODE_GITLINK && abs_path.is_dir() {
+                    let empty = std::fs::read_dir(&abs_path)
+                        .map(|mut rd| rd.next().is_none())
+                        .unwrap_or(false);
+                    if empty {
+                        continue;
+                    }
+                }
                 // Before flagging as untracked, check if the path only exists
                 // because of a tracked symlink or tracked directory in the old
                 // index. E.g. switching from a branch with symlink `frotz` to
@@ -2382,7 +2393,7 @@ fn checkout_gitlink_worktree_entry(
     force_populate: bool,
 ) -> Result<()> {
     let sm_dir = work_tree.join(rel);
-    let modules_git = repo.git_dir.join("modules").join(rel);
+    let modules_git = submodule_modules_git_dir(&repo.git_dir, rel);
     let has_local_module = modules_git.join("HEAD").exists();
 
     if let Ok(meta) = std::fs::symlink_metadata(&sm_dir) {
@@ -2429,6 +2440,11 @@ fn checkout_gitlink_worktree_entry(
     let oid_hex = oid.to_hex();
     let mut co_cmd = Command::new(&grit_bin);
     grit_exe::strip_trace2_env(&mut co_cmd);
+    // Submodule gitdirs live under the superproject; without `GIT_DIR`, discovery would walk
+    // upward from `sm_dir` and open the superproject (then a 40-hex OID is mis-parsed as a pathspec).
+    co_cmd
+        .env("GIT_DIR", &modules_abs)
+        .env("GIT_WORK_TREE", &wt_abs);
     if force_populate {
         co_cmd.args(["checkout", "--force", "--quiet", oid_hex.as_str()]);
     } else {

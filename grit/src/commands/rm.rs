@@ -15,6 +15,7 @@ use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
+use grit_lib::submodule_gitdir::submodule_modules_git_dir;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -334,7 +335,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 // Submodule gitdirs live under `.git/modules/<path>`; remove them so a path
                 // can be reused as a regular directory (matches Git's `git rm` behaviour).
                 if removed_was_gitlink {
-                    let modules_gitdir = repo.git_dir.join("modules").join(path_str);
+                    let modules_gitdir = submodule_modules_git_dir(&repo.git_dir, path_str);
                     if modules_gitdir.exists() {
                         let _ = fs::remove_dir_all(&modules_gitdir);
                     }

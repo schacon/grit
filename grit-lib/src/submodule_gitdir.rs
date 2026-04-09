@@ -15,6 +15,21 @@ use crate::index::Index;
 use crate::objects::{ObjectId, ObjectKind};
 use crate::odb::Odb;
 
+/// Filesystem path to the separate git directory for a submodule at `submodule_worktree_rel`
+/// (path relative to the superproject work tree), under `super_git_dir`.
+///
+/// Git nests additional `modules/` segments for each path component (e.g. path `a/b` →
+/// `<super>/modules/a/modules/b`), not a single `modules/a/b` directory.
+#[must_use]
+pub fn submodule_modules_git_dir(super_git_dir: &Path, submodule_worktree_rel: &str) -> PathBuf {
+    let mut out = super_git_dir.to_path_buf();
+    for seg in submodule_worktree_rel.split('/').filter(|s| !s.is_empty()) {
+        out.push("modules");
+        out.push(seg);
+    }
+    out
+}
+
 /// Returns whether `extensions.submodulePathConfig` is enabled in `git_dir/config`.
 pub fn submodule_path_config_enabled(git_dir: &Path) -> bool {
     let config_path = git_dir.join("config");
@@ -607,4 +622,28 @@ pub fn init_submodule_head_from_gitlink(modules_dir: &Path, oid_hex: &str) -> Re
     }
     fs::write(&head, format!("{oid_hex}\n")).map_err(Error::Io)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod submodule_modules_git_dir_tests {
+    use super::submodule_modules_git_dir;
+    use std::path::Path;
+
+    #[test]
+    fn nested_path_inserts_modules_per_segment() {
+        let super_git = Path::new("/repo/.git");
+        assert_eq!(
+            submodule_modules_git_dir(super_git, "sub1/sub2"),
+            Path::new("/repo/.git/modules/sub1/modules/sub2")
+        );
+    }
+
+    #[test]
+    fn single_segment_one_modules_join() {
+        let super_git = Path::new("/repo/.git");
+        assert_eq!(
+            submodule_modules_git_dir(super_git, "sub1"),
+            Path::new("/repo/.git/modules/sub1")
+        );
+    }
 }

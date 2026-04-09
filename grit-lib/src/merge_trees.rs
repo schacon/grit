@@ -284,6 +284,30 @@ fn merge_one_path(
             e.flags = path_len_flags(out_path);
             index.entries.push(e);
         }
+        (Some(be), Some(oe), Some(te))
+            if be.mode == 0o160000 && oe.mode == 0o160000 && te.mode == 0o160000 =>
+        {
+            if same_blob(oe, te) {
+                let mut e = oe.clone();
+                e.path = out_path.to_vec();
+                e.flags = path_len_flags(out_path);
+                index.entries.push(e);
+            } else if same_blob(be, oe) {
+                let mut e = te.clone();
+                e.path = out_path.to_vec();
+                e.flags = path_len_flags(out_path);
+                index.entries.push(e);
+            } else if same_blob(be, te) {
+                let mut e = oe.clone();
+                e.path = out_path.to_vec();
+                e.flags = path_len_flags(out_path);
+                index.entries.push(e);
+            } else {
+                stage_entry(index, out_path, be, 1);
+                stage_entry(index, out_path, oe, 2);
+                stage_entry(index, out_path, te, 3);
+            }
+        }
         (Some(be), Some(oe), Some(te)) => {
             content_merge_or_conflict(
                 repo,
@@ -363,6 +387,13 @@ fn content_merge_or_conflict(
     ws: WhitespaceMergeOptions,
     label_base: &str,
 ) -> crate::error::Result<()> {
+    if base.mode == 0o160000 || ours.mode == 0o160000 || theirs.mode == 0o160000 {
+        stage_entry(index, path, base, 1);
+        stage_entry(index, path, ours, 2);
+        stage_entry(index, path, theirs, 3);
+        return Ok(());
+    }
+
     let base_obj = repo.odb.read(&base.oid)?;
     let ours_obj = repo.odb.read(&ours.oid)?;
     let theirs_obj = repo.odb.read(&theirs.oid)?;
