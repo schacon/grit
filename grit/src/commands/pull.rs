@@ -390,21 +390,8 @@ fn merge_heads_from_fetch_head(repo: &Repository) -> Result<Vec<grit_lib::object
     let path = repo.git_dir.join("FETCH_HEAD");
     let content = fs::read_to_string(&path).with_context(|| "could not read FETCH_HEAD")?;
     let mut out = Vec::new();
-    for line in content.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let mut parts = line.split('\t');
-        let Some(hex) = parts.next() else {
-            continue;
-        };
-        let not_for_merge = parts.next().is_some_and(|v| v == "not-for-merge");
-        if not_for_merge {
-            continue;
-        }
-        if hex.len() == 40 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-            out.push(ObjectId::from_hex(hex)?);
-        }
+    for hex in grit_lib::fetch_head::merge_object_ids_hex(&content) {
+        out.push(ObjectId::from_hex(&hex)?);
     }
     if out.is_empty() {
         bail!("FETCH_HEAD: no merge candidates");

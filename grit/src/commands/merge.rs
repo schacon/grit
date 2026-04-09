@@ -6539,23 +6539,7 @@ pub(crate) fn read_fetch_head_merge_oids(repo: &Repository) -> Result<Vec<String
     let content = fs::read_to_string(&fetch_head_path)
         .with_context(|| "FETCH_HEAD: object not found: FETCH_HEAD".to_string())?;
 
-    let mut oids = Vec::new();
-    for line in content.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let mut parts = line.split('\t');
-        let Some(oid) = parts.next() else {
-            continue;
-        };
-        let not_for_merge = parts.next().is_some_and(|value| value == "not-for-merge");
-        if not_for_merge {
-            continue;
-        }
-        if oid.len() == 40 && oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            oids.push(oid.to_owned());
-        }
-    }
+    let oids = grit_lib::fetch_head::merge_object_ids_hex(&content);
 
     if oids.is_empty() {
         bail!("FETCH_HEAD: object not found: FETCH_HEAD");
