@@ -918,7 +918,7 @@ t5410-receive-pack	t5	yes	5	1	4	false	ok	0
 t5411-proc-receive-hook	t5	skip	2	0	0	false	ok	0
 t5500-fetch-pack	t5	skip	92	0	0	false	ok	0
 t5501-fetch-push-alternates	t5	yes	3	2	1	false	ok	0
-t5502-quickfetch	t5	yes	7	2	5	false	ok	0
+t5502-quickfetch	t5	yes	7	7	0	true	ok	0
 t5503-tagfollow	t5	yes	12	6	6	false	ok	0
 t5504-fetch-receive-strict	t5	skip	29	0	0	false	ok	0
 t5505-remote	t5	yes	0	0	0	false	timeout	1
