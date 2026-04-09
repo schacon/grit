@@ -24,6 +24,8 @@ use crate::pkt_line;
 
 const DEFAULT_MAX_TREE_DEPTH: usize = 2048;
 const USTAR_MAX: u64 = 0o777_7777_7777;
+const TAR_RECORD_SIZE: usize = 512;
+const TAR_BLOCK_SIZE: usize = TAR_RECORD_SIZE * 20;
 
 /// Legacy clap-based entry (unused by the main dispatcher; kept for `--git-completion-helper`).
 #[derive(Debug, ClapArgs)]
@@ -1069,13 +1071,93 @@ fn expand_format_spec(spec: &str, commit_hex: &str) -> String {
     out
 }
 
-fn write_tar(
-    out: &mut impl Write,
+/// Buffers tar output into 10 240-byte blocks like Git (`archive-tar.c` `BLOCKSIZE`), so the
+/// end-of-archive trailer matches upstream tests (e.g. `t5004` empty tree == 10240 NUL bytes).
+struct TarBlockWriter<W: Write> {
+    inner: W,
+    block: [u8; TAR_BLOCK_SIZE],
+    offset: usize,
+}
+
+impl<W: Write> TarBlockWriter<W> {
+    fn new(inner: W) -> Self {
+        Self {
+            inner,
+            block: [0u8; TAR_BLOCK_SIZE],
+            offset: 0,
+        }
+    }
+
+    fn flush_full_block(&mut self) -> Result<()> {
+        self.inner.write_all(&self.block)?;
+        self.offset = 0;
+        Ok(())
+    }
+
+    fn write_if_needed(&mut self) -> Result<()> {
+        if self.offset == TAR_BLOCK_SIZE {
+            self.flush_full_block()?;
+        }
+        Ok(())
+    }
+
+    fn do_write_blocked(&mut self, mut data: &[u8]) -> Result<()> {
+        if self.offset > 0 {
+            let chunk = (TAR_BLOCK_SIZE - self.offset).min(data.len());
+            self.block[self.offset..self.offset + chunk].copy_from_slice(&data[..chunk]);
+            self.offset += chunk;
+            data = &data[chunk..];
+            self.write_if_needed()?;
+        }
+        while data.len() >= TAR_BLOCK_SIZE {
+            self.inner.write_all(&data[..TAR_BLOCK_SIZE])?;
+            data = &data[TAR_BLOCK_SIZE..];
+        }
+        if !data.is_empty() {
+            self.block[..data.len()].copy_from_slice(data);
+            self.offset = data.len();
+        }
+        Ok(())
+    }
+
+    fn finish_record(&mut self) -> Result<()> {
+        let tail = self.offset % TAR_RECORD_SIZE;
+        if tail != 0 {
+            let pad = TAR_RECORD_SIZE - tail;
+            self.block[self.offset..self.offset + pad].fill(0);
+            self.offset += pad;
+        }
+        self.write_if_needed()?;
+        Ok(())
+    }
+
+    fn write_blocked(&mut self, data: &[u8]) -> Result<()> {
+        self.do_write_blocked(data)?;
+        self.finish_record()
+    }
+
+    /// Git `write_trailer`: two zero records plus remainder of the current block, then a second
+    /// full block if the first trailer did not contain two full 512-byte records.
+    fn write_trailer(mut self) -> Result<()> {
+        let tail = TAR_BLOCK_SIZE - self.offset;
+        self.block[self.offset..].fill(0);
+        self.inner.write_all(&self.block)?;
+        if tail < 2 * TAR_RECORD_SIZE {
+            self.block.fill(0);
+            self.inner.write_all(&self.block)?;
+        }
+        Ok(())
+    }
+}
+
+fn write_tar<W: Write>(
+    out: &mut W,
     entries: &[ArchiveEntry],
     mtime: u64,
     commit: Option<&ObjectId>,
     mtime_overflow: bool,
 ) -> Result<()> {
+    let mut tw = TarBlockWriter::new(out);
     let mut pax = String::new();
     if let Some(c) = commit {
         let comment = format!("comment={}\n", c.to_hex());
@@ -1088,13 +1170,13 @@ fn write_tar(
         mtime_ustar = USTAR_MAX;
     }
     if !pax.is_empty() {
-        write_pax_global_header(out, &pax, mtime_ustar)?;
+        write_pax_global_header(&mut tw, &pax, mtime_ustar)?;
     }
 
     for e in entries {
-        write_tar_entry(out, e, mtime_ustar)?;
+        write_tar_entry(&mut tw, e, mtime_ustar)?;
     }
-    out.write_all(&[0u8; 1024])?;
+    tw.write_trailer()?;
     Ok(())
 }
 
@@ -1110,11 +1192,15 @@ fn pax_record(payload: &str) -> String {
     }
 }
 
-fn write_pax_global_header(out: &mut impl Write, pax: &str, mtime: u64) -> Result<()> {
+fn write_pax_global_header<W: Write>(
+    tw: &mut TarBlockWriter<W>,
+    pax: &str,
+    mtime: u64,
+) -> Result<()> {
     let data = pax.as_bytes();
     let size = data.len();
     write_ustar_header(
-        out,
+        tw,
         "pax_global_header",
         "",
         size,
@@ -1124,12 +1210,15 @@ fn write_pax_global_header(out: &mut impl Write, pax: &str, mtime: u64) -> Resul
         b"",
         false,
     )?;
-    out.write_all(data)?;
-    pad_tar_block(out, size)?;
+    tw.write_blocked(data)?;
     Ok(())
 }
 
-fn write_tar_entry(out: &mut impl Write, e: &ArchiveEntry, mtime: u64) -> Result<()> {
+fn write_tar_entry<W: Write>(
+    tw: &mut TarBlockWriter<W>,
+    e: &ArchiveEntry,
+    mtime: u64,
+) -> Result<()> {
     let is_dir = e.path.ends_with('/');
     let (name, prefix, linkname, typeflag, size, write_payload) = if e.symlink {
         let target = std::str::from_utf8(&e.data).unwrap_or("");
@@ -1140,7 +1229,7 @@ fn write_tar_entry(out: &mut impl Write, e: &ArchiveEntry, mtime: u64) -> Result
                 pax.push_str(&pax_record(&format!("linkpath={target}")));
             }
             let short = "see-link.pax";
-            write_pax_extended_header(out, short, &pax, mtime)?;
+            write_pax_extended_header(tw, short, &pax, mtime)?;
             (
                 short.to_string(),
                 String::new(),
@@ -1175,7 +1264,7 @@ fn write_tar_entry(out: &mut impl Write, e: &ArchiveEntry, mtime: u64) -> Result
             } else {
                 short
             };
-            write_pax_extended_header(out, &short, &pax, mtime)?;
+            write_pax_extended_header(tw, &short, &pax, mtime)?;
             let size_in_header = if sz as u64 > USTAR_MAX { 0 } else { sz };
             (short, String::new(), Vec::new(), b'0', size_in_header, true)
         } else {
@@ -1189,7 +1278,7 @@ fn write_tar_entry(out: &mut impl Write, e: &ArchiveEntry, mtime: u64) -> Result
         e.mode & 0o7777
     };
     write_ustar_header(
-        out,
+        tw,
         &name,
         &prefix,
         size,
@@ -1200,21 +1289,20 @@ fn write_tar_entry(out: &mut impl Write, e: &ArchiveEntry, mtime: u64) -> Result
         e.symlink,
     )?;
     if write_payload && size > 0 {
-        out.write_all(&e.data)?;
-        pad_tar_block(out, size)?;
+        tw.write_blocked(&e.data)?;
     }
     Ok(())
 }
 
-fn write_pax_extended_header(
-    out: &mut impl Write,
+fn write_pax_extended_header<W: Write>(
+    tw: &mut TarBlockWriter<W>,
     short_name: &str,
     pax: &str,
     mtime: u64,
 ) -> Result<()> {
     let data = pax.as_bytes();
     write_ustar_header(
-        out,
+        tw,
         short_name,
         "",
         data.len(),
@@ -1224,8 +1312,7 @@ fn write_pax_extended_header(
         b"",
         false,
     )?;
-    out.write_all(data)?;
-    pad_tar_block(out, data.len())?;
+    tw.write_blocked(data)?;
     Ok(())
 }
 
@@ -1248,8 +1335,8 @@ fn split_ustar_path(path: &str, file_size: Option<usize>) -> (String, String, bo
     (String::new(), String::new(), true)
 }
 
-fn write_ustar_header(
-    out: &mut impl Write,
+fn write_ustar_header<W: Write>(
+    tw: &mut TarBlockWriter<W>,
     name: &str,
     prefix: &str,
     size: usize,
@@ -1293,21 +1380,13 @@ fn write_ustar_header(
     header[148..148 + cksum_str.len()].copy_from_slice(cksum_str.as_bytes());
 
     let _ = is_symlink;
-    out.write_all(&header)?;
-    Ok(())
-}
-
-fn pad_tar_block(out: &mut impl Write, size: usize) -> Result<()> {
-    let rem = size % 512;
-    if rem != 0 {
-        out.write_all(&vec![0u8; 512 - rem])?;
-    }
+    tw.write_blocked(&header)?;
     Ok(())
 }
 
 fn write_zip(out: &mut impl Write, entries: &[ArchiveEntry]) -> Result<()> {
     let mut central_entries: Vec<ZipCentralEntry> = Vec::new();
-    let mut offset: u32 = 0;
+    let mut offset: u64 = 0;
 
     for entry in entries {
         let is_dir = entry.path.ends_with('/');
@@ -1343,7 +1422,7 @@ fn write_zip(out: &mut impl Write, entries: &[ArchiveEntry]) -> Result<()> {
             mode << 16
         };
 
-        let local_header_size = 30 + path_bytes.len();
+        let local_header_size = 30u64 + path_bytes.len() as u64;
         out.write_all(&0x04034b50u32.to_le_bytes())?;
         out.write_all(&20u16.to_le_bytes())?;
         out.write_all(&0u16.to_le_bytes())?;
@@ -1369,45 +1448,102 @@ fn write_zip(out: &mut impl Write, entries: &[ArchiveEntry]) -> Result<()> {
             local_header_offset: offset,
         });
 
-        offset += local_header_size as u32 + compressed_size;
+        offset += local_header_size + u64::from(compressed_size);
     }
 
     let cd_offset = offset;
-    let mut cd_size: u32 = 0;
+    let n = central_entries.len() as u64;
+    let cd_size_estimate: u64 = central_entries
+        .iter()
+        .map(|ce| {
+            let path_len = ce.path.len() as u64;
+            let zip64_extra = if ce.local_header_offset > u64::from(u32::MAX) {
+                14u64
+            } else {
+                0
+            };
+            46 + path_len + zip64_extra
+        })
+        .sum();
+    let need_zip64_eocd = n > u64::from(u16::MAX)
+        || cd_offset > u64::from(u32::MAX)
+        || cd_offset.saturating_add(cd_size_estimate) > u64::from(u32::MAX);
 
+    let mut central_dir = Vec::new();
     for ce in &central_entries {
         let path_bytes = ce.path.as_bytes();
-        let entry_size = 46 + path_bytes.len();
+        let off32 = u32::try_from(ce.local_header_offset).unwrap_or(u32::MAX);
+        let mut zip64_dir_extra: Vec<u8> = Vec::new();
+        if ce.local_header_offset > u64::from(u32::MAX) {
+            zip64_dir_extra.extend_from_slice(&0x0001u16.to_le_bytes());
+            zip64_dir_extra.extend_from_slice(&8u16.to_le_bytes());
+            zip64_dir_extra.extend_from_slice(&ce.local_header_offset.to_le_bytes());
+        }
+        let extra_len = zip64_dir_extra.len() as u16;
+        let ver_need = if extra_len > 0 || need_zip64_eocd {
+            45u16
+        } else {
+            20u16
+        };
 
-        out.write_all(&0x02014b50u32.to_le_bytes())?;
-        out.write_all(&20u16.to_le_bytes())?;
-        out.write_all(&20u16.to_le_bytes())?;
-        out.write_all(&0u16.to_le_bytes())?;
-        out.write_all(&ce.method.to_le_bytes())?;
-        out.write_all(&0u16.to_le_bytes())?;
-        out.write_all(&0u16.to_le_bytes())?;
-        out.write_all(&ce.crc.to_le_bytes())?;
-        out.write_all(&ce.compressed_size.to_le_bytes())?;
-        out.write_all(&ce.uncompressed_size.to_le_bytes())?;
-        out.write_all(&(path_bytes.len() as u16).to_le_bytes())?;
-        out.write_all(&0u16.to_le_bytes())?;
-        out.write_all(&0u16.to_le_bytes())?;
-        out.write_all(&0u16.to_le_bytes())?;
-        out.write_all(&0u16.to_le_bytes())?;
-        out.write_all(&ce.external_attr.to_le_bytes())?;
-        out.write_all(&ce.local_header_offset.to_le_bytes())?;
-        out.write_all(path_bytes)?;
+        central_dir.extend_from_slice(&0x02014b50u32.to_le_bytes());
+        central_dir.extend_from_slice(&20u16.to_le_bytes());
+        central_dir.extend_from_slice(&ver_need.to_le_bytes());
+        central_dir.extend_from_slice(&0u16.to_le_bytes());
+        central_dir.extend_from_slice(&ce.method.to_le_bytes());
+        central_dir.extend_from_slice(&0u16.to_le_bytes());
+        central_dir.extend_from_slice(&0u16.to_le_bytes());
+        central_dir.extend_from_slice(&ce.crc.to_le_bytes());
+        central_dir.extend_from_slice(&ce.compressed_size.to_le_bytes());
+        central_dir.extend_from_slice(&ce.uncompressed_size.to_le_bytes());
+        central_dir.extend_from_slice(&(path_bytes.len() as u16).to_le_bytes());
+        central_dir.extend_from_slice(&extra_len.to_le_bytes());
+        // File comment length, disk number start, internal file attributes.
+        central_dir.extend_from_slice(&0u16.to_le_bytes());
+        central_dir.extend_from_slice(&0u16.to_le_bytes());
+        central_dir.extend_from_slice(&0u16.to_le_bytes());
+        central_dir.extend_from_slice(&ce.external_attr.to_le_bytes());
+        central_dir.extend_from_slice(&off32.to_le_bytes());
+        central_dir.extend_from_slice(path_bytes);
+        central_dir.extend_from_slice(&zip64_dir_extra);
+    }
 
-        cd_size += entry_size as u32;
+    let cd_size = central_dir.len() as u64;
+    out.write_all(&central_dir)?;
+
+    let cd_size_32 = u32::try_from(cd_size).unwrap_or(u32::MAX);
+    let cd_offset_32 = u32::try_from(cd_offset).unwrap_or(u32::MAX);
+    let n_entries_16 = u16::try_from(n).unwrap_or(u16::MAX);
+    let clamped =
+        need_zip64_eocd || cd_size > u64::from(u32::MAX) || cd_offset > u64::from(u32::MAX);
+
+    if clamped {
+        const ZIP64_EOCD_RECORD_PAYLOAD: u64 = 44;
+        out.write_all(&0x06064b50u32.to_le_bytes())?;
+        out.write_all(&ZIP64_EOCD_RECORD_PAYLOAD.to_le_bytes())?;
+        out.write_all(&0u16.to_le_bytes())?;
+        out.write_all(&45u16.to_le_bytes())?;
+        out.write_all(&0u32.to_le_bytes())?;
+        out.write_all(&0u32.to_le_bytes())?;
+        out.write_all(&n.to_le_bytes())?;
+        out.write_all(&n.to_le_bytes())?;
+        out.write_all(&cd_size.to_le_bytes())?;
+        out.write_all(&cd_offset.to_le_bytes())?;
+
+        let zip64_eocd_offset = cd_offset + cd_size;
+        out.write_all(&0x07064b50u32.to_le_bytes())?;
+        out.write_all(&0u32.to_le_bytes())?;
+        out.write_all(&zip64_eocd_offset.to_le_bytes())?;
+        out.write_all(&1u32.to_le_bytes())?;
     }
 
     out.write_all(&0x06054b50u32.to_le_bytes())?;
     out.write_all(&0u16.to_le_bytes())?;
     out.write_all(&0u16.to_le_bytes())?;
-    out.write_all(&(central_entries.len() as u16).to_le_bytes())?;
-    out.write_all(&(central_entries.len() as u16).to_le_bytes())?;
-    out.write_all(&cd_size.to_le_bytes())?;
-    out.write_all(&cd_offset.to_le_bytes())?;
+    out.write_all(&n_entries_16.to_le_bytes())?;
+    out.write_all(&n_entries_16.to_le_bytes())?;
+    out.write_all(&cd_size_32.to_le_bytes())?;
+    out.write_all(&cd_offset_32.to_le_bytes())?;
     out.write_all(&0u16.to_le_bytes())?;
 
     Ok(())
@@ -1420,7 +1556,7 @@ struct ZipCentralEntry {
     compressed_size: u32,
     uncompressed_size: u32,
     external_attr: u32,
-    local_header_offset: u32,
+    local_header_offset: u64,
 }
 
 fn crc32(data: &[u8]) -> u32 {
@@ -1459,24 +1595,35 @@ fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
     bail!("not a valid tree-ish: '{s}'")
 }
 
+/// Infer `--format` from the output filename, matching Git `match_extension` / `archive_format_from_filename`.
 fn archive_format_from_filename(filename: &str) -> Option<&'static str> {
-    if filename.len() < 3 {
-        return None;
-    }
-    let exts = [
-        ("tar.gz", "tar.gz"),
-        (".tgz", "tgz"),
-        (".tar.gz", "tar.gz"),
-        (".zip", "zip"),
-        (".tar", "tar"),
-    ];
-    for (ext, fmt) in exts {
-        if filename.ends_with(ext) {
-            let cut = filename.len() - ext.len();
-            if cut >= 2 && filename.as_bytes().get(cut - 1) == Some(&b'.') {
-                return Some(fmt);
-            }
+    fn match_extension(filename: &str, ext: &str) -> bool {
+        let Some(prefix_len) = filename.len().checked_sub(ext.len()) else {
+            return false;
+        };
+        // Git requires a non-empty basename: at least one char before '.', and '.' before ext.
+        if prefix_len < 2 {
+            return false;
         }
+        let b = filename.as_bytes();
+        if b.get(prefix_len - 1) != Some(&b'.') {
+            return false;
+        }
+        filename.ends_with(ext)
+    }
+
+    // Longer extensions first (tar.gz before tar).
+    if match_extension(filename, "tar.gz") {
+        return Some("tar.gz");
+    }
+    if match_extension(filename, "tgz") {
+        return Some("tgz");
+    }
+    if match_extension(filename, "zip") {
+        return Some("zip");
+    }
+    if match_extension(filename, "tar") {
+        return Some("tar");
     }
     None
 }
