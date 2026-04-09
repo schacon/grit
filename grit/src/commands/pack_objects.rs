@@ -10,7 +10,7 @@ use flate2::Compression;
 use grit_lib::config::ConfigSet;
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeSet, HashSet};
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
 
 use grit_lib::delta_encode::{encode_lcp_delta, encode_prefix_extension_delta};
 use grit_lib::objects::{parse_tree, ObjectId, ObjectKind};
@@ -230,7 +230,7 @@ pub fn run(args: Args) -> Result<()> {
     let pack_list = collect_oids(&repo, &args)?;
 
     if pack_list.oids.is_empty() {
-        if !args.stdout {
+        if !args.stdout && !args.quiet && io::stderr().is_terminal() {
             eprintln!("Total 0 (delta 0), reused 0 (delta 0)");
         }
         return Ok(());
@@ -331,12 +331,14 @@ pub fn run(args: Args) -> Result<()> {
         std::fs::write(&idx_path, &idx_bytes)?;
 
         println!("{pack_hash}");
-        eprintln!(
-            "Total {} (delta {}), reused 0 (delta {})",
-            write_entries.len(),
-            new_deltas + reused_deltas,
-            reused_deltas
-        );
+        if !args.quiet && io::stderr().is_terminal() {
+            eprintln!(
+                "Total {} (delta {}), reused 0 (delta {})",
+                write_entries.len(),
+                new_deltas + reused_deltas,
+                reused_deltas
+            );
+        }
     }
 
     Ok(())
@@ -931,6 +933,8 @@ fn optimize_blob_deltas(
         }
     }
 
+    break_reused_delta_cycles(&mut delta_target_to_base);
+
     if let Some(limit) = max_delta_depth.filter(|&d| d > 0) {
         apply_delta_depth_limit(&mut delta_target_to_base, limit);
     }
@@ -1008,6 +1012,54 @@ fn optimize_blob_deltas(
     }
 
     Ok((out, new_deltas, reused_deltas))
+}
+
+/// Drop reused delta edges that form cycles (Git `break_delta_chains` first pass).
+///
+/// Inter-pack reuse can yield `A → B` from one pack and `B → A` from another (`t5314-pack-cycle-detection`).
+/// Without breaking one edge, the new pack would contain an unresolvable delta cycle.
+fn break_reused_delta_cycles(map: &mut HashMap<ObjectId, ObjectId>) {
+    // White / gray / black DFS on a functional graph (at most one outgoing edge per OID).
+    let mut color: HashMap<ObjectId, u8> = HashMap::new();
+
+    let mut nodes: Vec<ObjectId> = map
+        .keys()
+        .chain(map.values())
+        .copied()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    nodes.sort_unstable();
+
+    fn dfs_break(
+        u: ObjectId,
+        map: &mut HashMap<ObjectId, ObjectId>,
+        color: &mut HashMap<ObjectId, u8>,
+    ) {
+        match color.get(&u).copied().unwrap_or(0) {
+            2 => return, // black
+            1 => return, // gray: not expected on entry
+            _ => {}
+        }
+        color.insert(u, 1); // gray
+        if let Some(&v) = map.get(&u) {
+            match color.get(&v).copied().unwrap_or(0) {
+                0 => dfs_break(v, map, color),
+                1 => {
+                    map.remove(&u);
+                }
+                2 => {}
+                _ => {}
+            }
+        }
+        color.insert(u, 2);
+    }
+
+    for start in nodes {
+        if color.get(&start).copied().unwrap_or(0) == 0 {
+            dfs_break(start, map, &mut color);
+        }
+    }
 }
 
 /// Break delta chains that exceed `max_depth` (Git `break_delta_chains` modulo rule).

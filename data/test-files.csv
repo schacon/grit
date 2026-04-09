@@ -880,7 +880,7 @@ t5310-pack-bitmaps	t5	yes	236	23	213	false	ok	0
 t5311-pack-bitmaps-shallow	t5	yes	6	6	0	true	ok	0
 t5312-prune-corruption	t5	yes	11	5	6	false	ok	0
 t5313-pack-bounds-checks	t5	yes	9	2	7	false	ok	0
-t5314-pack-cycle-detection	t5	yes	2	1	1	false	ok	0
+t5314-pack-cycle-detection	t5	yes	2	2	0	true	ok	0
 t5315-pack-objects-compression	t5	yes	9	5	4	false	ok	0
 t5316-pack-delta-depth	t5	yes	5	3	2	false	ok	0
 t5317-pack-objects-filter-objects	t5	yes	33	33	0	true	ok	0
