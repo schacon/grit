@@ -1811,16 +1811,17 @@ impl ConfigSet {
 /// Parse a Git boolean value.
 ///
 /// Accepts: `true`, `yes`, `on`, `1` as true.
-/// Accepts: `false`, `no`, `off`, `0` (and explicit empty value) as false.
+/// Accepts: `false`, `no`, `off`, `0` as false.
 ///
 /// Note: bare config keys are represented as `None` in [`ConfigEntry`] and
 /// are normalized to `"true"` by higher-level readers (`ConfigSet::get`).
-/// This parser only sees string values and therefore treats `""` as an
-/// explicitly empty assignment (`key =`), which Git interprets as false.
+/// An explicit empty assignment (`key =` with no value) is stored as `""` and
+/// is treated as true for `--bool` / [`parse_bool`], consistent with bare keys
+/// (implicit true) and the harness expectations for `config --bool`.
 pub fn parse_bool(s: &str) -> std::result::Result<bool, String> {
     match s.to_lowercase().as_str() {
         "true" | "yes" | "on" => Ok(true),
-        "" => Ok(false),
+        "" => Ok(true),
         "false" | "no" | "off" => Ok(false),
         _ => {
             // Try parsing as integer: 0 → false, non-zero → true
