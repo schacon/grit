@@ -198,8 +198,8 @@ fn ll_diff_tree_paths(
             let e_i = tp_entries[i].get(tp_idx[i]);
             parent_neq[i] = tree_entry_pathcmp(e_i, e_imin) != std::cmp::Ordering::Equal;
         }
-        for i in 0..imin {
-            parent_neq[i] = true;
+        for ne in parent_neq.iter_mut().take(imin) {
+            *ne = true;
         }
 
         let p_min = tp_entries[imin].get(tp_idx[imin]);

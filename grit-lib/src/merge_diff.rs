@@ -583,15 +583,7 @@ pub fn format_worktree_conflict_combined(
     } else {
         String::from_utf8_lossy(worktree_bytes).into_owned()
     };
-    let wt_for_conflict = if use_conv {
-        wt_text
-            .lines()
-            .map(|l| l.to_uppercase())
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        wt_text.clone()
-    };
+    let wt_for_conflict = wt_text.clone();
 
     let p1a = abbrev_hex(stage2_oid, abbrev);
     let p2a = abbrev_hex(stage3_oid, abbrev);
@@ -645,11 +637,7 @@ fn conflict_combined_body(wt: &str) -> String {
             }
             if i < lines.len() {
                 let closing = lines[i];
-                if let Some(rest) = closing.strip_prefix(">>>>>>> ") {
-                    body.push_str(&format!("++>>>>>>> {}\n", rest.to_uppercase()));
-                } else {
-                    body.push_str(&format!("++{closing}\n"));
-                }
+                body.push_str(&format!("++{closing}\n"));
                 hunk_new += 1;
             }
             let header = format!(

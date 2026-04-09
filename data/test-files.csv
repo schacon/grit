@@ -723,7 +723,7 @@ t4041-diff-submodule-option	t4	yes	47	17	30	false	ok	0
 t4042-diff-textconv-caching	t4	yes	8	7	1	false	ok	0
 t4043-diff-rename-binary	t4	yes	3	2	1	false	ok	0
 t4044-diff-index-unique-abbrev	t4	yes	2	1	1	false	ok	0
-t4045-diff-relative	t4	yes	38	32	6	false	ok	1
+t4045-diff-relative	t4	yes	39	39	0	true	ok	0
 t4046-diff-unmerged	t4	yes	8	3	5	false	ok	0
 t4047-diff-dirstat	t4	yes	41	4	37	false	ok	0
 t4047-diff-numstat	t4	yes	26	26	0	true	ok	0
