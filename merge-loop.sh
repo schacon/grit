@@ -5,6 +5,6 @@ while true; do
   LOGFILE="logs/agent_${COMMIT}.log"
 
   claude --dangerously-skip-permissions \
-    -p "$(cat AGENT_PROMPT.md)" \
+    -p "$(cat MERGE_PROMPT.md)" \
     --model claude-opus-X-Y &>"$LOGFILE"
 done
