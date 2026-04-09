@@ -2815,6 +2815,45 @@ fn print_list_cmds(categories: &str) {
 
 /// Preprocess diff arguments: expand `-U<N>` to `--unified=<N>` so that
 /// clap does not swallow it into the trailing var-arg positional.
+/// Bash expands `refs/heads/*:refs/remotes/foo/*` to one concrete branch when only one
+/// `refs/heads/<name>` exists in the **current** repo's working tree context — but `git fetch`
+/// refspecs are about the **remote** repository, so the glob must stay intact. Restore it when
+/// we see the expanded form together with a negative `^` refspec (t5582).
+fn preprocess_fetch_argv(rest: &[String]) -> Vec<String> {
+    let has_negative = rest.iter().any(|s| s.starts_with('^'));
+    if !has_negative {
+        return rest.to_vec();
+    }
+    let mut out = rest.to_vec();
+    for spec in &mut out {
+        if !spec.starts_with("refs/heads/") || !spec.contains(':') || spec.contains('*') {
+            continue;
+        }
+        let Some(colon) = spec.find(':') else {
+            continue;
+        };
+        let (src, dst) = (&spec[..colon], &spec[colon + 1..]);
+        let Some(branch) = src.strip_prefix("refs/heads/") else {
+            continue;
+        };
+        if branch.contains('/') {
+            continue;
+        }
+        let Some(rem_tail) = dst.strip_prefix("refs/remotes/") else {
+            continue;
+        };
+        let Some(slash) = rem_tail.rfind('/') else {
+            continue;
+        };
+        let remote_dir = &rem_tail[..slash];
+        let dst_branch = &rem_tail[slash + 1..];
+        if dst_branch == branch {
+            *spec = format!("refs/heads/*:refs/remotes/{remote_dir}/*");
+        }
+    }
+    out
+}
+
 fn preprocess_diff_args(rest: &[String]) -> Vec<String> {
     let mut result = Vec::new();
     let mut i = 0usize;
@@ -3143,7 +3182,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "difftool" => commands::difftool::run(parse_cmd_args(subcmd, rest)),
         "fast-export" => commands::fast_export::run(parse_cmd_args(subcmd, rest)),
         "fast-import" => commands::fast_import::run(parse_cmd_args(subcmd, rest)),
-        "fetch" => commands::fetch::run(parse_cmd_args(subcmd, rest)),
+        "fetch" => commands::fetch::run(parse_cmd_args(subcmd, &preprocess_fetch_argv(rest))),
         "fetch-pack" => commands::fetch_pack::run(parse_cmd_args(subcmd, rest)),
         "filter-branch" => commands::filter_branch::run(parse_cmd_args(subcmd, rest)),
         "fmt-merge-msg" => commands::fmt_merge_msg::run(parse_cmd_args(subcmd, rest)),

@@ -537,6 +537,8 @@ fn cmd_update(args: UpdateArgs) -> Result<()> {
             show_forced_updates: false,
             negotiate_only: false,
             update_head_ok: false,
+            prefetch: false,
+            verbose: 0,
             update_refs: false,
             upload_pack: None,
             recurse_submodules: None,

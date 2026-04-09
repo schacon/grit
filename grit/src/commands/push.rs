@@ -106,6 +106,14 @@ pub struct Args {
     /// Disable --follow-tags.
     #[arg(long = "no-follow-tags")]
     pub no_follow_tags: bool,
+
+    /// Delete remote refs that no longer have a local counterpart (respects negative refspecs).
+    #[arg(long)]
+    pub prune: bool,
+
+    /// Show detailed progress.
+    #[arg(short = 'v', long = "verbose")]
+    pub verbose: bool,
 }
 
 /// A single ref update to perform on the remote.
@@ -309,8 +317,17 @@ fn push_to_url(
                 });
             }
         }
-    } else if args.refspecs.len() == 1 && args.refspecs[0] == ":" {
-        collect_matching_push_updates(repo, &remote_repo, remote_name, args, &mut updates)?;
+    } else if let Some((refspec_force, negs)) = parse_matching_push_with_negatives(args) {
+        validate_negative_push_patterns(&negs.iter().map(|s| s.as_str()).collect::<Vec<_>>())?;
+        collect_matching_push_updates(
+            repo,
+            &remote_repo,
+            remote_name,
+            args,
+            &mut updates,
+            &negs,
+            refspec_force,
+        )?;
     } else if push_all {
         // Push all branches (refs/heads/*)
         let local_branches = refs::list_refs(&repo.git_dir, "refs/heads/")?;
@@ -357,8 +374,23 @@ fn push_to_url(
             });
         }
     } else if !args.refspecs.is_empty() {
+        let negative_owned: Vec<String> = args
+            .refspecs
+            .iter()
+            .filter_map(|s| s.strip_prefix('^').map(|p| p.to_owned()))
+            .collect();
+        validate_negative_push_patterns(
+            &negative_owned
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+        )?;
+
         // Explicit refspecs
         for spec in &args.refspecs {
+            if spec.starts_with('^') {
+                continue;
+            }
             // Strip leading '+' force prefix
             let (per_refspec_force, spec_clean) = if let Some(s) = spec.strip_prefix('+') {
                 (true, s)
@@ -395,6 +427,12 @@ fn push_to_url(
             if src.contains('*') {
                 let local_refs = refs::list_refs(&repo.git_dir, "refs/")?;
                 for (refname, local_oid) in &local_refs {
+                    if negative_owned
+                        .iter()
+                        .any(|p| ref_excluded_by_negative_push_pattern(p, refname))
+                    {
+                        continue;
+                    }
                     if let Some(matched) = match_glob(&src, refname) {
                         // Check if this is a symbolic ref
                         if let Ok(Some(_target)) = refs::read_symbolic_ref(&repo.git_dir, refname) {
@@ -415,6 +453,19 @@ fn push_to_url(
                             refspec_force: per_refspec_force,
                         });
                     }
+                }
+                if args.prune {
+                    push_prune_glob_refspec(
+                        repo,
+                        &remote_repo,
+                        args,
+                        remote_name,
+                        per_refspec_force,
+                        &src,
+                        &dst,
+                        &negative_owned,
+                        &mut updates,
+                    )?;
                 }
                 // Copy symbolic refs matching the glob pattern
                 copy_symrefs_push(&repo.git_dir, &remote_repo.git_dir, spec_clean, &dst)?;
@@ -470,8 +521,37 @@ fn push_to_url(
             });
         }
     } else if !push_refspecs_from_config.is_empty() {
-        // Use push refspecs from remote.<name>.push config
-        for spec in push_refspecs_from_config {
+        let lines = push_refspecs_from_config;
+        let mut i = 0usize;
+        while i < lines.len() {
+            let spec = &lines[i];
+            if spec == ":" || spec == "+:" {
+                let refspec_force = spec.starts_with('+');
+                let mut negs = Vec::new();
+                let mut j = i + 1;
+                while j < lines.len() && lines[j].starts_with('^') {
+                    negs.push(lines[j][1..].to_owned());
+                    j += 1;
+                }
+                validate_negative_push_patterns(
+                    &negs.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                )?;
+                collect_matching_push_updates(
+                    repo,
+                    &remote_repo,
+                    remote_name,
+                    args,
+                    &mut updates,
+                    &negs,
+                    refspec_force,
+                )?;
+                i = j;
+                continue;
+            }
+            if spec.starts_with('^') {
+                i += 1;
+                continue;
+            }
             let (force_flag, spec_clean) = if let Some(s) = spec.strip_prefix('+') {
                 (true, s)
             } else {
@@ -482,7 +562,6 @@ fn push_to_url(
             } else {
                 (spec_clean, spec_clean)
             };
-            // Expand glob refspecs
             if src_pat.contains('*') {
                 let local_refs = refs::list_refs(&repo.git_dir, "refs/")?;
                 for (refname, local_oid) in &local_refs {
@@ -502,6 +581,19 @@ fn push_to_url(
                         });
                     }
                 }
+                if args.prune {
+                    push_prune_glob_refspec(
+                        repo,
+                        &remote_repo,
+                        args,
+                        remote_name,
+                        force_flag,
+                        src_pat,
+                        dst_pat,
+                        &[],
+                        &mut updates,
+                    )?;
+                }
             } else {
                 let local_ref = normalize_ref(src_pat);
                 let remote_ref = normalize_ref(dst_pat);
@@ -519,8 +611,7 @@ fn push_to_url(
                     });
                 }
             }
-            // If force prefix is set and not already forcing
-            let _ = force_flag; // handled by the refspec's +
+            i += 1;
         }
     } else {
         // Default: push current branch
@@ -1126,14 +1217,20 @@ fn read_receive_deny_current(cfg: &ConfigSet) -> ReceiveDenyAction {
     let v = cfg
         .get("receive.denyCurrentBranch")
         .or_else(|| cfg.get("receive.denycurrentbranch"));
-    parse_receive_deny_action(v.as_deref())
+    match v {
+        None => ReceiveDenyAction::Unconfigured,
+        Some(s) => parse_receive_deny_action(Some(&s)),
+    }
 }
 
 fn read_receive_deny_delete_current(cfg: &ConfigSet) -> ReceiveDenyAction {
     let v = cfg
         .get("receive.denyDeleteCurrent")
         .or_else(|| cfg.get("receive.denydeletecurrent"));
-    parse_receive_deny_action(v.as_deref())
+    match v {
+        None => ReceiveDenyAction::Unconfigured,
+        Some(s) => parse_receive_deny_action(Some(&s)),
+    }
 }
 
 /// Enforce receive-pack rules for the non-bare remote (checked-out branch updates/deletes).
@@ -1254,9 +1351,17 @@ fn collect_matching_push_updates(
     remote_name: &str,
     args: &Args,
     updates: &mut Vec<RefUpdate>,
+    negative_patterns: &[String],
+    refspec_force: bool,
 ) -> Result<()> {
     let local_branches = refs::list_refs(&repo.git_dir, "refs/heads/")?;
     for (refname, local_oid) in &local_branches {
+        if negative_patterns
+            .iter()
+            .any(|p| ref_excluded_by_negative_push_pattern(p, refname))
+        {
+            continue;
+        }
         let old_oid = refs::resolve_ref(&remote_repo.git_dir, refname).ok();
         if old_oid.as_ref() == Some(local_oid) {
             continue;
@@ -1276,10 +1381,28 @@ fn collect_matching_push_updates(
             old_oid,
             new_oid: Some(*local_oid),
             expected_oid,
-            refspec_force: false,
+            refspec_force,
         });
     }
     Ok(())
+}
+
+/// Leading `:` / `+:` matching refspec, optionally followed only by negative `^` patterns.
+fn parse_matching_push_with_negatives(args: &Args) -> Option<(bool, Vec<String>)> {
+    let first = args.refspecs.first()?.as_str();
+    let (refspec_force, tail) = match first {
+        ":" => (false, &args.refspecs[1..]),
+        "+:" => (true, &args.refspecs[1..]),
+        _ => return None,
+    };
+    if tail.is_empty() {
+        return Some((refspec_force, Vec::new()));
+    }
+    if !tail.iter().all(|s| s.starts_with('^')) {
+        return None;
+    }
+    let neg: Vec<String> = tail.iter().map(|s| s[1..].to_owned()).collect();
+    Some((refspec_force, neg))
 }
 
 /// Apply a single ref update on the remote, printing output as appropriate.
@@ -1536,6 +1659,70 @@ fn walk_refs_for_symrefs(
             walk_refs_for_symrefs(&entry.path(), &refname, cb)?;
         } else {
             cb(refname, &entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+/// Negative refspec matching for push (same rules as fetch).
+fn ref_excluded_by_negative_push_pattern(pattern: &str, refname: &str) -> bool {
+    match_glob(pattern, refname).is_some() || pattern == refname
+}
+
+fn validate_negative_push_patterns(patterns: &[&str]) -> Result<()> {
+    for pat in patterns {
+        let clean = pat.strip_prefix("refs/").unwrap_or(pat);
+        if clean.chars().all(|c| c.is_ascii_hexdigit()) && clean.len() >= 7 {
+            bail!("negative refspecs do not support object ids: ^{pat}");
+        }
+    }
+    Ok(())
+}
+
+fn push_prune_glob_refspec(
+    repo: &Repository,
+    remote_repo: &Repository,
+    args: &Args,
+    remote_name: &str,
+    force: bool,
+    src_pat: &str,
+    dst_pat: &str,
+    negative_patterns: &[String],
+    updates: &mut Vec<RefUpdate>,
+) -> Result<()> {
+    if !src_pat.contains('*') || dst_pat.is_empty() {
+        return Ok(());
+    }
+    let remote_refs = refs::list_refs(&remote_repo.git_dir, "refs/")?;
+    for (remote_ref, old_oid) in &remote_refs {
+        if let Some(matched) = match_glob(dst_pat, remote_ref) {
+            if negative_patterns
+                .iter()
+                .any(|p| ref_excluded_by_negative_push_pattern(p, remote_ref))
+            {
+                continue;
+            }
+            let local_ref = src_pat.replacen('*', matched, 1);
+            if refs::resolve_ref(&repo.git_dir, &local_ref).is_ok() {
+                continue;
+            }
+            if updates.iter().any(|u| u.remote_ref == *remote_ref) {
+                continue;
+            }
+            let expected_oid = resolve_force_with_lease_expect(
+                &args.force_with_lease,
+                &repo.git_dir,
+                remote_name,
+                remote_ref.strip_prefix("refs/heads/").unwrap_or(remote_ref),
+            );
+            updates.push(RefUpdate {
+                local_ref: None,
+                remote_ref: remote_ref.clone(),
+                old_oid: Some(*old_oid),
+                new_oid: None,
+                expected_oid,
+                refspec_force: force,
+            });
         }
     }
     Ok(())
