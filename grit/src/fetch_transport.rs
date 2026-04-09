@@ -1,10 +1,11 @@
-//! Local fetch over `git-upload-pack` (protocol v0) with skipping negotiation.
+//! Local fetch over `grit upload-pack` with skipping negotiation (protocol v0/v1 ref ads, or v2
+//! capability preamble with ref names merged from the remote repository when needed).
 
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -127,6 +128,40 @@ pub(crate) fn read_advertisement(
         }
     }
     Ok((out, head_symref))
+}
+
+/// When the child speaks protocol v2, [`read_advertisement`] only skips capability lines and never
+/// records ref advertisements. Merge `refs/heads/*` and `refs/tags/*` from the on-disk remote so
+/// [`collect_wants_for_upload_pack`] can request missing objects and the fetch command can update
+/// remote-tracking refs (t5506-remote-groups).
+fn merge_remote_refs_into_upload_pack_advertisement(
+    remote_repo_path: &Path,
+    advertised: &mut Vec<(String, ObjectId)>,
+) -> Result<()> {
+    // `remote_repo_path` is the repository root (bare) or work tree (non-bare); `list_refs` needs
+    // the git directory. `Repository::open` expects `.git` for normal repos.
+    let remote_git: PathBuf = {
+        let dot_git = remote_repo_path.join(".git");
+        if dot_git.is_dir() {
+            dot_git
+        } else {
+            remote_repo_path.to_path_buf()
+        }
+    };
+    if advertised.iter().any(|(n, _)| n.starts_with("refs/heads/")) {
+        return Ok(());
+    }
+    let mut by_name: HashMap<String, ObjectId> =
+        advertised.iter().map(|(n, o)| (n.clone(), *o)).collect();
+    for (n, o) in refs::list_refs(&remote_git, "refs/heads/")? {
+        by_name.insert(n, o);
+    }
+    for (n, o) in refs::list_refs(&remote_git, "refs/tags/")? {
+        by_name.insert(n, o);
+    }
+    *advertised = by_name.into_iter().collect();
+    advertised.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(())
 }
 
 pub(crate) fn collect_wants(
@@ -294,11 +329,10 @@ pub(crate) fn spawn_upload_pack(
     cmd_template: Option<&str>,
     repo_path: &Path,
 ) -> Result<std::process::Child> {
-    spawn_upload_pack_with_proto(
-        cmd_template,
-        repo_path,
-        protocol_wire::effective_client_protocol_version(),
-    )
+    // [`fetch_upload_pack_negotiate_pack_bytes_with_streams`] speaks protocol v0/v1 (want/have/done).
+    // If the server negotiates v2 from `GIT_PROTOCOL`, it treats our `want` lines as v2 capability
+    // extensions (`unknown capability 'want …'`). Force v0 on the child by clearing `GIT_PROTOCOL`.
+    spawn_upload_pack_with_proto(cmd_template, repo_path, 0)
 }
 
 pub(crate) fn drain_child_stdout_to_eof(r: &mut impl Read) -> std::io::Result<()> {
@@ -326,7 +360,9 @@ fn read_ack_round_with_negotiator(
             pkt_line::Packet::Data(ln) => {
                 trace_packet_fetch('<', ln.trim_end());
                 if ln.trim_end() == "NAK" {
-                    continue;
+                    // Upstream `upload-pack` often ends a have-window with `NAK` and no trailing
+                    // flush; waiting for `0000` would deadlock once the pipe fills.
+                    break;
                 }
                 let Some((ack_oid, kind)) = parse_ack(&ln) else {
                     break;
@@ -474,7 +510,10 @@ pub fn fetch_via_upload_pack_skipping(
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 
-    let (advertised, head_symref) = read_advertisement(&mut stdout)?;
+    let (mut advertised, head_symref) = read_advertisement(&mut stdout)?;
+    if !has_cli_refspecs {
+        merge_remote_refs_into_upload_pack_advertisement(remote_repo_path, &mut advertised)?;
+    }
     let wants = compute_wants(&advertised)?;
     if wants.is_empty() {
         if !has_cli_refspecs && advertised.is_empty() {
@@ -542,7 +581,9 @@ pub fn fetch_via_upload_pack_skipping(
         bail!("upload-pack exited with {}", status);
     }
 
-    if pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK" {
+    // When the client already has every wanted object, `pack-objects --thin` can stream an empty
+    // body (or only the 12-byte PACK header). That is still a successful fetch (ref updates only).
+    if !pack_buf.is_empty() && (pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK") {
         bail!("did not receive a pack file from upload-pack");
     }
 
@@ -578,7 +619,7 @@ fn fetch_upload_pack_negotiate_pack_bytes(
         bail!("upload-pack exited with {}", status);
     }
 
-    if pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK" {
+    if !pack_buf.is_empty() && (pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK") {
         bail!("did not receive a pack file from upload-pack");
     }
 
@@ -914,7 +955,7 @@ pub fn fetch_via_git_protocol_skipping(
         &wants,
     )?;
 
-    if pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK" {
+    if !pack_buf.is_empty() && (pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK") {
         bail!("did not receive a pack file from upload-pack");
     }
 
