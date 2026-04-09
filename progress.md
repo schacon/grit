@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 255 completed (`[x]`), 4 in progress (`[~]`), 509 remai
 
 ## Recently completed
 
+- `t13390-update-ref-namespace` — 30/30 tests pass (`update-ref`: arbitrary `refs/*` namespaces, `-d`, old-value CAS, `--no-deref`, `--stdin` create/update/delete/verify, `-m` reflog, zero-OID delete; verified release build + harness; `t1-plan.md` marked done)
 - `t4120-apply-popt` — 12/12 tests pass (`git apply -p`: strip path components, malformed `-p` errors, traditional quoted paths, `--stat` with oversized strip, mode-only and rename patches with `--index`; harness CSV/dashboards refreshed)
 - `t5320-delta-islands` — 15/15 tests pass (`repack` delta islands: `pack.island` / `pack.islandcore`, superset-island delta rules, verify-pack ordering; harness CSV/dashboards refreshed)
 - `t4214-log-graph-octopus` — 17/17 tests pass (`git log --graph` skewed-left octopus, crossover, and colored graph lines; harness CSV/dashboards refreshed)

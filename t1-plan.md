@@ -176,7 +176,7 @@
 - [ ] t13340-restore-merge-conflict.sh
 - [ ] t13360-cherry-pick-allow-empty.sh
 - [ ] t13380-show-ref-symref.sh
-- [ ] t13390-update-ref-namespace.sh
+- [x] t13390-update-ref-namespace.sh
 - [ ] t13400-check-ignore-case.sh
 - [ ] t13410-merge-file-crlf-eol.sh
 - [ ] t1403-show-ref.sh
