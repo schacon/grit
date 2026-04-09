@@ -656,7 +656,7 @@ t3700-add-pathspec-file	t3	yes	24	24	0	true	ok	0
 t3701-add-interactive	t3	yes	130	27	103	false	ok	0
 t3702-add-edit	t3	yes	3	1	2	false	ok	0
 t3703-add-magic-pathspec	t3	yes	6	6	0	true	ok	0
-t3704-add-pathspec-file	t3	yes	11	3	8	false	ok	0
+t3704-add-pathspec-file	t3	yes	11	11	0	true	ok	0
 t3705-add-sparse-checkout	t3	yes	20	3	17	false	ok	0
 t3800-mktag	t3	yes	151	62	89	false	ok	0
 t3900-i18n-commit	t3	yes	38	11	27	false	ok	0
