@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 274 completed (`[x]`), 4 in progress (`[~]`), 490 remai
 
 ## Recently completed
 
+- `t12130-switch-create-force` — 33/33 tests pass (`switch -c`, start point `HEAD~1`, existing-branch error, detach/orphan, dirty tracked conflict, untracked preservation; harness CSV/dashboards refreshed; `t1-plan.md` marked complete)
 - `t10860-switch-force-create` — 30/30 tests pass (`switch`: `-c`/`--create`, start points, `switch -`, detach/orphan, `--discard-changes`, untracked preservation; harness CSV/dashboards refreshed; `t1-plan.md` marked complete)
 - `t5900-repo-selection` — 8/8 tests pass (local `fetch`/`clone` remote path resolution: `.git` dir in worktree, bare `foo` vs `foo.git` disambiguation, non-git `foo` directory ignored, inner worktree preferred when outer is bare; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t4047-diff-dirstat` — 41/41 tests pass (Git-compatible `--dirstat` / `-X`: changes/lines/files, cumulative, thresholds, `diff.dirstat` warnings, `--shortstat` + dirstat; harness CSV/dashboards refreshed)

@@ -93,7 +93,7 @@
 - [ ] t12070-branch-describe-sort.sh
 - [ ] t12100-add-update-all.sh
 - [ ] t12110-rm-force-recursive.sh                                                                      - [ ] t12120-mv-verbose-dryrun.sh
-- [ ] t12130-switch-create-force.sh
+- [x] t12130-switch-create-force.sh
 - [ ] t12160-cherry-pick-conflict-resolve.sh
 - [ ] t12180-show-ref-hash-abbrev.sh
 - [ ] t12190-update-ref-deref-symref.sh

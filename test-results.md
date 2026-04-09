@@ -2,9 +2,10 @@
 
 **Updated:** 2026-04-09
 
+- `./scripts/run-tests.sh t12130-switch-create-force.sh`: 33/33 passing (`switch -c`, detach/orphan, dirty tracked conflict, untracked preservation; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t4047-diff-dirstat.sh`: 41/41 passing (`diff --dirstat` / `-X` aligned with Git: changes/lines/files, cumulative, thresholds, `diff.dirstat` warnings, `--shortstat --dirstat`; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t5514-fetch-multiple.sh`: 25/25 passing (`fetch --all` / `--multiple`, `fetch.all` / `--no-all`, `remote.*.skipFetchAll`, `--jobs` parallel fetch, tag options; harness CSV/dashboards refreshed).
-- `cargo test -p grit-lib --lib`: 121/121 passing.
+- `cargo test -p grit-lib --lib`: 126/126 passing.
 - `./scripts/run-tests.sh t5308-pack-detect-duplicates.sh`: 6/6 passing (duplicate objects in pack: default `index-pack` accepts; `--strict` rejects and leaves ODB unchanged; `cat-file --batch-check` over duplicated pack; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t4120-apply-popt.sh`: 12/12 passing (`git apply -p` strip count, invalid `-p` diagnostics, quoted traditional diff paths, `--stat` oversized strip, mode-only and rename with `--index`; harness CSV/dashboards refreshed).
 
@@ -14,7 +15,7 @@
 - `./scripts/run-tests.sh t7520-ignored-hook-warning.sh`: 5/5 passing (`test_hook --disable`/`--remove` + `rev-parse --absolute-git-dir`; ignored-hook hint second line matches `git config set advice.ignoredHook false`; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t7064-wtstatus-pv2.sh`: 28/28 passing (`status --porcelain=v2`; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t3425-rebase-topology-merges.sh`: 13/13 passing (topo-order tie-break, `log A..B` exclusions, `format-patch` for `rebase --apply`, merge todo omission, merge replay; harness CSV/dashboards refreshed).
-- `cargo test -p grit-lib --lib`: 121/121 passing.
+- `cargo test -p grit-lib --lib`: 126/126 passing.
 - `./scripts/run-tests.sh t13180-log-patch-stat.sh`: 35/35 passing (`grit log` oneline/graph/decorate/skip/max-count/reverse/format; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t10560-switch-create-detach.sh`: 28/28 passing (`switch -- <branch>` disambiguation; invalid `-c`/`-C`/`--orphan` branch names rejected like Git; harness CSV/dashboards refreshed).
 - `cargo test -p grit-lib --lib`: 110/110 passing.
