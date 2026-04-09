@@ -201,7 +201,7 @@
 - [ ] t1463-refs-optimize.sh
 - [ ] t1500-rev-parse.sh
 - [ ] t1501-work-tree.sh
-- [ ] t1502-rev-parse-parseopt.sh
+- [x] t1502-rev-parse-parseopt.sh
 - [ ] t1504-ceiling-dirs.sh
 
 (-- cursor 3 --)

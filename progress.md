@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   277 |
+| Completed   |   278 |
 | In progress |     4 |
-| Remaining   |   487 |
+| Remaining   |   486 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 277 completed (`[x]`), 4 in progress (`[~]`), 487 remaining (`[ ]`).
+Task lines in `PLAN.md`: 278 completed (`[x]`), 4 in progress (`[~]`), 486 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t1502-rev-parse-parseopt` — 37/37 tests pass (`rev-parse --parseopt`: stdin option spec parsing, `cat <<\\EOF` help output, `--keep-dashdash` / `--stop-at-non-option` / `--stuck-long`, negated long names + synthetic `no-<name>` parse entries for ambiguity; harness CSV/dashboards refreshed)
 - `t3427-rebase-subtree` — 3/3 tests pass (`rebase -Xsubtree=…`, `--empty=ask` stops for empty pick then `--skip`, with and without `--rebase-merges --onto`; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t1508-at-combinations` — 35/35 tests pass (`@{X}` combinations: reflog, upstream, `@`/`@@{u}`, branches with `@`, `@:path`, reflog expire edge cases; harness CSV/dashboards refreshed; `PLAN.md` / `t1-plan.md` marked complete)
 - `t5309-pack-delta-cycles` — 7/7 tests pass (`index-pack` / `--fix-thin`: REF_DELTA cycles fail when bases are missing, succeed when bases exist in ODB or as duplicate undeltified objects in-pack; thin A→B→C chain with B on disk; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
@@ -152,4 +153,4 @@ Task lines in `PLAN.md`: 277 completed (`[x]`), 4 in progress (`[~]`), 487 remai
 
 ## What Remains
 
-487 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+486 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
