@@ -712,7 +712,7 @@ t4031-diff-rewrite-binary	t4	yes	8	3	5	false	ok	0
 t4032-diff-inter-hunk-context	t4	yes	37	37	0	true	ok	0
 t4033-diff-patience	t4	yes	11	4	7	false	ok	0
 t4034-diff-words	t4	yes	66	7	59	false	ok	0
-t4035-diff-quiet	t4	yes	0	0	0	false	timeout	0
+t4035-diff-quiet	t4	yes	23	23	0	true	ok	0
 t4036-format-patch-signer-mime	t4	yes	5	5	0	true	ok	0
 t4037-diff-r-t-dirs	t4	yes	2	2	0	true	ok	0
 t4038-diff-combined	t4	yes	25	6	19	false	ok	1

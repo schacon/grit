@@ -645,6 +645,11 @@ pub fn run(mut args: Args) -> Result<()> {
     let has_separator = raw_args.iter().any(|a| a == "--");
     let (mut revs, paths) = parse_rev_and_paths(&args.args, has_separator);
 
+    // Outside any repository, `git diff <path> <path>` behaves like `diff --no-index` (t4035).
+    if Repository::discover(None).is_err() && revs.is_empty() && paths.len() == 2 && !args.cached {
+        return run_no_index(&args);
+    }
+
     let repo = Repository::discover(None).context("not a git repository")?;
 
     let patch_context = if let Some(u) = args.unified {
@@ -691,6 +696,12 @@ pub fn run(mut args: Args) -> Result<()> {
             &dst_prefix,
             patch_context,
         );
+    }
+
+    // `git diff <path> <path>` — compare a worktree file to another path (e.g. outside the repo).
+    // Triggered when parse_rev_and_paths found two paths and no revisions (first token exists on disk).
+    if revs.is_empty() && paths.len() == 2 && !args.cached {
+        return run_diff_two_paths(&repo, &args, &paths[0], &paths[1], &src_prefix, &dst_prefix);
     }
 
     // Expand A...B (symmetric diff) → merge-base(A,B)..B
@@ -1645,6 +1656,128 @@ fn run_diff_blob_vs_file(
     Ok(())
 }
 
+/// Compare a path relative to the repository work tree to a second path (often outside the repo).
+///
+/// This matches `git diff <in-repo-path> <other-path>` when both arguments exist on disk and are
+/// not revision specs.
+fn run_diff_two_paths(
+    repo: &Repository,
+    args: &Args,
+    path_in_repo: &str,
+    path_other: &str,
+    src_prefix: &str,
+    dst_prefix: &str,
+) -> Result<()> {
+    let wt = repo
+        .work_tree
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+
+    let read_path_or_symlink = |p: &Path, name: &str| -> Result<Vec<u8>> {
+        if let Ok(meta) = std::fs::symlink_metadata(p) {
+            if meta.file_type().is_symlink() {
+                return std::fs::read_link(p)
+                    .map(|target| target.to_string_lossy().into_owned().into_bytes())
+                    .with_context(|| format!("could not read symlink '{name}'"));
+            }
+        }
+        std::fs::read(p).with_context(|| format!("could not read '{name}'"))
+    };
+
+    let abs_in_repo = wt.join(path_in_repo);
+    let other = Path::new(path_other);
+    let abs_other = if other.is_absolute() {
+        other.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| wt.to_path_buf())
+            .join(other)
+    };
+
+    let data_a = read_path_or_symlink(&abs_in_repo, path_in_repo)?;
+    let data_b = read_path_or_symlink(&abs_other, path_other)?;
+
+    let text_a = String::from_utf8_lossy(&data_a);
+    let text_b = String::from_utf8_lossy(&data_b);
+
+    let ws_mode = WhitespaceMode {
+        ignore_all_space: args.ignore_all_space,
+        ignore_space_change: args.ignore_space_change,
+        ignore_space_at_eol: args.ignore_space_at_eol,
+        ignore_blank_lines: args.ignore_blank_lines,
+        ignore_cr_at_eol: args.ignore_cr_at_eol,
+    };
+
+    let mut has_diff = text_a != text_b;
+    if has_diff && ws_mode.any() && ws_mode.normalize(&text_a) == ws_mode.normalize(&text_b) {
+        has_diff = false;
+    }
+
+    if !has_diff {
+        return Ok(());
+    }
+
+    if args.quiet {
+        std::process::exit(1);
+    }
+
+    let context_lines = if let Some(u) = args.unified {
+        u
+    } else {
+        grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+            .ok()
+            .and_then(|cfg| cfg.get("diff.context"))
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(3)
+    };
+
+    let old_label = format!("{src_prefix}{path_in_repo}");
+    let new_label = format!("{dst_prefix}{path_other}");
+    let patch = unified_diff(
+        text_a.as_ref(),
+        text_b.as_ref(),
+        &old_label,
+        &new_label,
+        context_lines,
+    );
+
+    let mut out = io::stdout().lock();
+    let show_patch = !args.no_patch;
+    if show_patch {
+        let use_color = match args.color.as_deref() {
+            Some("always") => true,
+            Some("never") => false,
+            Some("auto") | None => io::stdout().is_terminal(),
+            Some(_) => false,
+        };
+        if use_color {
+            for line in patch.lines() {
+                if line.starts_with("@@") {
+                    writeln!(out, "{CYAN}{line}{RESET}")?;
+                } else if line.starts_with('+') && !line.starts_with("+++") {
+                    writeln!(out, "{GREEN}{line}{RESET}")?;
+                } else if line.starts_with('-') && !line.starts_with("---") {
+                    writeln!(out, "{RED}{line}{RESET}")?;
+                } else if line.starts_with("diff ")
+                    || line.starts_with("---")
+                    || line.starts_with("+++")
+                {
+                    writeln!(out, "{BOLD}{line}{RESET}")?;
+                } else {
+                    writeln!(out, "{line}")?;
+                }
+            }
+        } else {
+            write!(out, "{patch}")?;
+        }
+    }
+
+    if (args.exit_code || args.quiet) && has_diff {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
 /// Split args on `--` to separate revisions from paths.
 ///
 /// Run `diff --no-index <path_a> <path_b>` — compare two files outside a repo.
@@ -1693,15 +1826,14 @@ fn run_no_index(args: &Args) -> Result<()> {
         ignore_cr_at_eol: args.ignore_cr_at_eol,
     };
 
-    // --quiet / --exit-code: just exit 1 for differences, no output
-    if args.quiet {
-        std::process::exit(1);
-    }
-
     let text_a = String::from_utf8_lossy(&data_a);
     let text_b = String::from_utf8_lossy(&data_b);
     if ws_mode.any() && ws_mode.normalize(&text_a) == ws_mode.normalize(&text_b) {
         return Ok(());
+    }
+
+    if args.quiet {
+        std::process::exit(1);
     }
     let context_lines = args.unified.unwrap_or(3);
 

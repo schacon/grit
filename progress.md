@@ -6,12 +6,12 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   280 |
+| Completed   |   281 |
 | In progress |     4 |
-| Remaining   |   485 |
+| Remaining   |   484 |
 | **Total**   |   769 |
 
-Task lines in `PLAN.md`: 280 completed (`[x]`), 4 in progress (`[~]`), 485 remaining (`[ ]`).
+Task lines in `PLAN.md`: 281 completed (`[x]`), 4 in progress (`[~]`), 484 remaining (`[ ]`).
 
 ## Recently completed
 
@@ -42,6 +42,7 @@ Task lines in `PLAN.md`: 280 completed (`[x]`), 4 in progress (`[~]`), 485 remai
 - `t5603-clone-dirname` — 47/47 tests pass (clone default directory from `host:path`, `ssh://` URLs: strip trailing slashes and `.git`, redact userinfo for dirname, preserve path segments like `foo@bar` and `test:1234`; harness CSV/dashboards refreshed)
 - `t3507-cherry-pick-conflict` — 44/44 tests pass (cherry-pick/revert conflicts: `CHERRY_PICK_HEAD`/`REVERT_HEAD`, advice text, `MERGE_MSG` scissors, diff3 markers, sequencer cleanup, sparse-checkout, `--continue` flags; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t4216-log-bloom` — 167/167 tests pass (commit-graph changed-path Bloom filters: `read-graph` bloom chunks, `GIT_TRACE2_PERF` statistics for path-limited `log`, incompatible settings/version warnings, split chains, trace2 filter counters; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
+- `t4035-diff-quiet` — 23/23 tests pass (`diff-tree --stdin --quiet` suppresses raw diff while keeping commit id; `-S`/`-G` pickaxe filtering for `diff-tree`; `diff` two-path mode in/out of repo + `run_no_index` `--quiet` after whitespace normalization; harness CSV refreshed)
 - `t5334-incremental-multi-pack-index` — 16/16 tests pass (incremental MIDX chain, bitmap/rev sidecars in `multi-pack-index.d`, `midx verify`, clone with `pack.allowPackReuse`; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t4120-apply-popt` — 12/12 tests pass (`git apply -p`: strip path components, malformed `-p` errors, traditional quoted paths, `--stat` with oversized strip, mode-only and rename patches with `--index`; harness CSV/dashboards refreshed)
 - `t5320-delta-islands` — 15/15 tests pass (`repack` delta islands: `pack.island` / `pack.islandcore`, superset-island delta rules, verify-pack ordering; harness CSV/dashboards refreshed)
@@ -157,4 +158,4 @@ Task lines in `PLAN.md`: 280 completed (`[x]`), 4 in progress (`[~]`), 485 remai
 
 ## What Remains
 
-485 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+484 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
