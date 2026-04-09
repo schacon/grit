@@ -768,6 +768,10 @@ pub struct Args {
     )]
     pub unified: Option<usize>,
 
+    /// Show whole surrounding functions as context (same as Git `-W`).
+    #[arg(short = 'W', long = "function-context")]
+    pub function_context: bool,
+
     /// Detect renames.
     #[arg(short = 'M', long = "find-renames", value_name = "N", default_missing_value = "50", num_args = 0..=1, require_equals = true)]
     pub find_renames: Option<String>,
@@ -1387,6 +1391,9 @@ pub fn run(mut args: Args) -> Result<()> {
                 }
                 "--cumulative" => {
                     args.dirstat_cumulative_flag = true;
+                }
+                "-W" | "--function-context" => {
+                    args.function_context = true;
                 }
                 _ => {
                     extra_revs.push(r.clone());
@@ -2148,6 +2155,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     &diff_algo_ctx,
                     diff_algo_cli,
                     args.cached,
+                    args.function_context,
                 )?;
             }
         }
@@ -2881,6 +2889,7 @@ fn run_no_index_dirs(args: Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
             "b/",
             func_matcher.as_ref(),
             algo,
+            args.function_context,
         );
         write!(out, "{patch}")?;
     }
@@ -4039,6 +4048,7 @@ fn write_patch_with_prefix(
     algo_ctx: &DiffAlgoContext,
     algo_cli: Option<similar::Algorithm>,
     cached: bool,
+    function_context: bool,
 ) -> Result<()> {
     for entry in entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
@@ -4297,6 +4307,7 @@ fn write_patch_with_prefix(
                 dst_prefix,
                 func_matcher.as_ref(),
                 algo,
+                function_context,
             );
             let patch = if suppress_blank_empty {
                 strip_blank_context_trailing_space(&patch)

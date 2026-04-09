@@ -1921,11 +1921,15 @@ pub fn unified_diff_with_prefix_and_funcname(
         dst_prefix,
         funcname_matcher,
         similar::Algorithm::Myers,
+        false,
     )
 }
 
 /// Same as [`unified_diff_with_prefix_and_funcname`] but allows callers to
 /// choose the line diff algorithm used for hunk generation.
+///
+/// When `function_context` is true (`git diff -W`), hunks are expanded to
+/// whole logical functions using the same rules as Git's `XDL_EMIT_FUNCCONTEXT`.
 pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
     old_content: &str,
     new_content: &str,
@@ -1937,7 +1941,23 @@ pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
     dst_prefix: &str,
     funcname_matcher: Option<&FuncnameMatcher>,
     algorithm: similar::Algorithm,
+    function_context: bool,
 ) -> String {
+    if function_context {
+        return unified_diff_with_function_context(
+            old_content,
+            new_content,
+            old_path,
+            new_path,
+            context_lines,
+            inter_hunk_context,
+            src_prefix,
+            dst_prefix,
+            funcname_matcher,
+            algorithm,
+        );
+    }
+
     use similar::{group_diff_ops, udiff::UnifiedDiffHunk, TextDiff};
 
     let diff = TextDiff::configure()
@@ -1993,6 +2013,622 @@ pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
     }
 
     output
+}
+
+/// `git diff -W`: expand each hunk to include full function bodies (see Git `xemit.c`).
+fn unified_diff_with_function_context(
+    old_content: &str,
+    new_content: &str,
+    old_path: &str,
+    new_path: &str,
+    context_lines: usize,
+    inter_hunk_context: usize,
+    src_prefix: &str,
+    dst_prefix: &str,
+    funcname_matcher: Option<&FuncnameMatcher>,
+    algorithm: similar::Algorithm,
+) -> String {
+    use similar::{group_diff_ops, udiff::UnifiedDiffHunk, TextDiff};
+
+    let diff = TextDiff::configure()
+        .algorithm(algorithm)
+        .diff_lines(old_content, new_content);
+
+    let old_lines: Vec<&str> = old_content.lines().collect();
+    let new_lines: Vec<&str> = new_content.lines().collect();
+    let n_old = old_lines.len();
+    let n_new = new_lines.len();
+
+    let group_radius = context_lines
+        .saturating_mul(2)
+        .saturating_add(inter_hunk_context);
+    let all_ops = diff.ops().to_vec();
+    let op_groups = group_diff_ops(all_ops.clone(), group_radius);
+
+    let mut ranges: Vec<(usize, usize, usize, usize)> = Vec::new();
+
+    for ops in op_groups {
+        if ops.is_empty() {
+            continue;
+        }
+        let i1_anchor = func_context_old_anchor(&ops, n_old);
+        let i1_end = hunk_old_change_end_exclusive(&ops);
+        let skip_preimage_pull =
+            append_with_whole_function_added(&ops, n_old, n_new, &new_lines, funcname_matcher);
+        let hunk = UnifiedDiffHunk::new(ops, &diff, true);
+        let hunk_str = format!("{hunk}");
+        let header_line = hunk_str
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim_end_matches(['\r', '\n']);
+        let Some((base_s1, base_e1, _base_s2, _base_e2)) =
+            parse_unified_hunk_header_ranges(header_line)
+        else {
+            continue;
+        };
+
+        let ctx = context_lines;
+        let (s1, e1, s2, e2) = if skip_preimage_pull {
+            let s = n_old.saturating_sub(ctx);
+            let s2 = map_old_line_to_new(&all_ops, s, n_new).min(n_new);
+            (s, n_old, s2, n_new)
+        } else {
+            let mut s1 = base_s1.saturating_sub(ctx);
+            let mut s2 = map_old_line_to_new(&all_ops, s1, n_new).min(n_new);
+
+            let base_pre_s1 = i1_anchor.saturating_sub(ctx);
+            if base_pre_s1 < s1 {
+                s1 = base_pre_s1;
+                s2 = map_old_line_to_new(&all_ops, s1, n_new).min(n_new);
+            }
+
+            let fs1 = expand_func_pre_start(s1, i1_anchor, n_old, &old_lines, funcname_matcher);
+            if fs1 < s1 {
+                s1 = fs1;
+                s2 = map_old_line_to_new(&all_ops, s1, n_new).min(n_new);
+            }
+
+            let mut e1 = (base_e1 + ctx).min(n_old);
+            let mut e2 = map_old_line_to_new(&all_ops, e1, n_new).min(n_new);
+            let fe1 = expand_func_post_end(e1, i1_end, n_old, &old_lines, funcname_matcher);
+            if fe1 > e1 {
+                e1 = fe1;
+                e2 = map_old_line_to_new(&all_ops, e1, n_new).min(n_new);
+            }
+            (s1, e1, s2, e2)
+        };
+
+        ranges.push((s1, e1, s2, e2));
+    }
+
+    let mut output = String::new();
+    if old_path == "/dev/null" {
+        output.push_str("--- /dev/null\n");
+    } else {
+        output.push_str(&format!("--- {src_prefix}{old_path}\n"));
+    }
+    if new_path == "/dev/null" {
+        output.push_str("+++ /dev/null\n");
+    } else {
+        output.push_str(&format!("+++ {dst_prefix}{new_path}\n"));
+    }
+
+    for (s1, e1, s2, e2) in ranges {
+        if s1 >= e1 && s2 >= e2 {
+            continue;
+        }
+        let old_seg =
+            line_slice_for_diff_with_eof_nl(&old_lines, s1, e1, old_content.ends_with('\n'));
+        let new_seg =
+            line_slice_for_diff_with_eof_nl(&new_lines, s2, e2, new_content.ends_with('\n'));
+        let inner_ctx = old_seg.lines().count().max(new_seg.lines().count()).max(1);
+        let piece = unified_diff_with_prefix_and_funcname_and_algorithm(
+            &old_seg,
+            &new_seg,
+            old_path,
+            new_path,
+            inner_ctx,
+            0,
+            src_prefix,
+            dst_prefix,
+            funcname_matcher,
+            algorithm,
+            false,
+        );
+        let shifted = shift_unified_hunk_headers_to_full_file(&piece, s1, s2);
+        let with_func =
+            enrich_unified_hunk_headers_funcname(&shifted, &old_lines, funcname_matcher);
+        for line in with_func.lines() {
+            if line.starts_with("--- ") || line.starts_with("+++ ") {
+                continue;
+            }
+            output.push_str(line);
+            output.push('\n');
+        }
+    }
+
+    output
+}
+
+/// `piece` is a unified diff for a slice of the file; hunk headers use 1-based
+/// coordinates relative to that slice. Shift them by `delta_old` / `delta_new`
+/// (0-based offsets of the slice in the full file) so the combined patch applies
+/// to the whole file.
+fn shift_unified_hunk_headers_to_full_file(
+    patch: &str,
+    delta_old: usize,
+    delta_new: usize,
+) -> String {
+    if delta_old == 0 && delta_new == 0 {
+        return patch.to_owned();
+    }
+    let mut out = String::with_capacity(patch.len());
+    for line in patch.lines() {
+        if let Some(shifted) = shift_one_unified_hunk_header(line, delta_old, delta_new) {
+            out.push_str(&shifted);
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn shift_one_unified_hunk_header(line: &str, delta_old: usize, delta_new: usize) -> Option<String> {
+    let rest = line.strip_prefix("@@ ")?;
+    let (old_chunk, after_plus) = rest.split_once(" +")?;
+    let old_spec = old_chunk.strip_prefix('-')?;
+    let (new_spec, suffix) = after_plus.split_once(" @@")?;
+    let shifted_old = shift_unified_range_spec(old_spec, delta_old)?;
+    let shifted_new = shift_unified_range_spec(new_spec, delta_new)?;
+    Some(format!("@@ -{shifted_old} +{shifted_new} @@{suffix}"))
+}
+
+fn shift_unified_range_spec(spec: &str, delta: usize) -> Option<String> {
+    let spec = spec.trim();
+    if let Some((start_s, count_s)) = spec.split_once(',') {
+        let start: usize = start_s.parse().ok()?;
+        let count: usize = count_s.parse().ok()?;
+        Some(format!("{},{}", start.saturating_add(delta), count))
+    } else {
+        let start: usize = spec.parse().ok()?;
+        Some(format!("{}", start.saturating_add(delta)))
+    }
+}
+
+/// Re-attach `@@ ... @@ <funcname>` using full-file line indices (inner diffs use slices).
+fn enrich_unified_hunk_headers_funcname(
+    patch: &str,
+    full_old_lines: &[&str],
+    funcname_matcher: Option<&FuncnameMatcher>,
+) -> String {
+    let mut out = String::with_capacity(patch.len());
+    for line in patch.lines() {
+        if let Some(fixed) = enrich_one_hunk_header_funcname(line, full_old_lines, funcname_matcher)
+        {
+            out.push_str(&fixed);
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn enrich_one_hunk_header_funcname(
+    line: &str,
+    full_old_lines: &[&str],
+    funcname_matcher: Option<&FuncnameMatcher>,
+) -> Option<String> {
+    let after_at = line.strip_prefix("@@ ")?;
+    let idx = after_at.find(" @@")?;
+    let mid = after_at[..idx].trim();
+    let tail = after_at[idx + 3..].trim_start();
+    let header_for_parse = format!("@@ {mid} @@");
+    let func = extract_function_context(&header_for_parse, full_old_lines, funcname_matcher);
+    Some(if let Some(f) = func {
+        format!("@@ {mid} @@ {f}")
+    } else if !tail.is_empty() {
+        format!("@@ {mid} @@ {tail}")
+    } else {
+        format!("@@ {mid} @@")
+    })
+}
+
+fn line_slice_for_diff_with_eof_nl(
+    lines: &[&str],
+    start: usize,
+    end: usize,
+    full_file_ends_with_newline: bool,
+) -> String {
+    if start >= end {
+        return String::new();
+    }
+    let mut s = lines[start..end].join("\n");
+    let slice_is_suffix_of_file = end == lines.len();
+    let need_trailing_nl = if slice_is_suffix_of_file {
+        full_file_ends_with_newline
+    } else {
+        true
+    };
+    if need_trailing_nl && !s.ends_with('\n') {
+        s.push('\n');
+    }
+    s
+}
+
+/// Map a 0-based old line index to the corresponding 0-based new line index using the full-file
+/// diff ops (Git aligns context across deletions/insertions).
+fn map_old_line_to_new(ops: &[similar::DiffOp], old_line: usize, n_new: usize) -> usize {
+    use similar::DiffOp;
+    let mut n = 0usize;
+    for op in ops {
+        match *op {
+            DiffOp::Equal {
+                old_index,
+                new_index,
+                len,
+            } => {
+                if old_index + len <= old_line {
+                    n = new_index + len;
+                    continue;
+                }
+                if old_index < old_line {
+                    let take = old_line - old_index;
+                    return (new_index + take).min(n_new);
+                }
+                return new_index.min(n_new);
+            }
+            DiffOp::Delete {
+                old_index,
+                old_len,
+                new_index,
+            } => {
+                if old_index + old_len <= old_line {
+                    n = new_index;
+                    continue;
+                }
+                if old_index < old_line {
+                    return new_index.min(n_new);
+                }
+            }
+            DiffOp::Insert {
+                old_index,
+                new_index,
+                new_len,
+            } => {
+                if old_index < old_line {
+                    n = new_index + new_len;
+                    continue;
+                }
+                if old_index == old_line {
+                    // `old_line` is an exclusive end or insertion point aligned with this insert
+                    // (e.g. EOF append maps to after the inserted block).
+                    return (new_index + new_len).min(n_new);
+                }
+                return new_index.min(n_new);
+            }
+            DiffOp::Replace {
+                old_index,
+                old_len,
+                new_index,
+                new_len,
+            } => {
+                if old_index + old_len <= old_line {
+                    n = new_index + new_len;
+                    continue;
+                }
+                if old_index < old_line {
+                    let into_old = old_line - old_index;
+                    let mapped = new_index + into_old.min(new_len);
+                    return mapped.min(n_new);
+                }
+                return new_index.min(n_new);
+            }
+        }
+    }
+    n.min(n_new)
+}
+
+/// Parse `@@ -old +new @@` into 0-based half-open ranges in each file.
+fn parse_unified_hunk_header_ranges(header: &str) -> Option<(usize, usize, usize, usize)> {
+    let rest = header.strip_prefix("@@ ")?;
+    let (old_tok, rest2) = rest.split_once(" +")?;
+    let old_tok = old_tok.strip_prefix('-')?;
+    let new_tok = rest2.split_once(" @@").map(|(a, _)| a)?;
+
+    fn parse_side(spec: &str) -> Option<(usize, usize)> {
+        let spec = spec.trim();
+        let (start_one_based, count) = if let Some((a, b)) = spec.split_once(',') {
+            (a.parse::<usize>().ok()?, b.parse::<usize>().ok()?)
+        } else {
+            let s = spec.parse::<usize>().ok()?;
+            (s, 1usize)
+        };
+        let s0 = start_one_based.saturating_sub(1);
+        let e0 = s0.saturating_add(count);
+        Some((s0, e0))
+    }
+
+    let (os, oe) = parse_side(old_tok)?;
+    let (ns, ne) = parse_side(new_tok)?;
+    Some((os, oe, ns, ne))
+}
+
+/// Git `xemit.c`: when a hunk only inserts at EOF (first inserted line is `new_index == n_old`)
+/// and the added text already contains a funcname line, do not pull extra context from the preimage.
+fn append_with_whole_function_added(
+    ops: &[similar::DiffOp],
+    n_old: usize,
+    n_new: usize,
+    new_lines: &[&str],
+    matcher: Option<&FuncnameMatcher>,
+) -> bool {
+    use similar::DiffOp;
+    if n_old == 0 {
+        return false;
+    }
+    let mut only_ins_or_eq = true;
+    let mut min_new_ins = usize::MAX;
+    for op in ops {
+        match *op {
+            DiffOp::Equal { .. } => {}
+            DiffOp::Insert {
+                new_index, new_len, ..
+            } => {
+                min_new_ins = min_new_ins.min(new_index);
+                if new_len == 0 {
+                    only_ins_or_eq = false;
+                }
+            }
+            DiffOp::Delete { .. } | DiffOp::Replace { .. } => {
+                only_ins_or_eq = false;
+            }
+        }
+    }
+    let mut insert_at_eof = false;
+    for op in ops {
+        if let DiffOp::Insert { old_index, .. } = *op {
+            if old_index == n_old {
+                insert_at_eof = true;
+                break;
+            }
+        }
+    }
+    let append_at_eof = min_new_ins == n_old || insert_at_eof;
+    if !only_ins_or_eq || !append_at_eof || min_new_ins == usize::MAX {
+        return false;
+    }
+    // Git only skips preimage pull when the inserted block is clearly a new logical
+    // function (see `xemit.c` walking `xdf2` for `is_func_rec`). A loose "any line
+    // looks like a function" check would match `return` / `printf` and break `-W`
+    // hunks that still need preimage context (t4051 `extended`).
+    let mut j = min_new_ins;
+    while j < n_new {
+        let line = new_lines[j];
+        if line.trim().is_empty() {
+            j += 1;
+            continue;
+        }
+        if let Some(m) = matcher {
+            if m.match_line(line).is_some() {
+                return true;
+            }
+        } else if inserted_block_starts_with_c_like_function_definition(line) {
+            return true;
+        }
+        j += 1;
+    }
+    false
+}
+
+fn inserted_block_starts_with_c_like_function_definition(line: &str) -> bool {
+    let t = line.trim_start();
+    let Some(open_paren) = t.find('(') else {
+        return false;
+    };
+    let head = &t[..open_paren];
+    let tokens: Vec<&str> = head.split_whitespace().collect();
+    if tokens.len() < 2 {
+        // `printf(...)`, `return (`, etc. — not `return_type name(`.
+        return false;
+    }
+    let nameish = tokens.last().copied().unwrap_or("");
+    let name = nameish.trim_end_matches(['*', '&']);
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return false;
+    }
+    let type_or_modifier = |tok: &str| {
+        matches!(
+            tok,
+            "static"
+                | "extern"
+                | "inline"
+                | "void"
+                | "int"
+                | "char"
+                | "short"
+                | "long"
+                | "float"
+                | "double"
+                | "unsigned"
+                | "signed"
+                | "struct"
+                | "enum"
+                | "union"
+                | "const"
+                | "volatile"
+                | "typedef"
+        )
+    };
+    tokens[..tokens.len() - 1]
+        .iter()
+        .any(|tok| type_or_modifier(tok))
+}
+
+fn hunk_old_change_end_exclusive(ops: &[similar::DiffOp]) -> usize {
+    use similar::DiffOp;
+    let mut max_o = 0usize;
+    for op in ops {
+        match *op {
+            DiffOp::Delete {
+                old_index, old_len, ..
+            } => {
+                max_o = max_o.max(old_index + old_len);
+            }
+            DiffOp::Replace {
+                old_index, old_len, ..
+            } => {
+                max_o = max_o.max(old_index + old_len);
+            }
+            DiffOp::Insert { old_index, .. } => {
+                // Pure insertions do not consume old lines; Git's post-context anchor is the
+                // insertion point (`old_index`), not 0 (t4051 `extended`).
+                max_o = max_o.max(old_index);
+            }
+            DiffOp::Equal { .. } => {}
+        }
+    }
+    max_o
+}
+
+fn func_context_old_anchor(ops: &[similar::DiffOp], n_old: usize) -> usize {
+    use similar::DiffOp;
+    let mut has_delete_or_replace = false;
+    let mut min_del = usize::MAX;
+    let mut min_ins_old = usize::MAX;
+
+    for op in ops {
+        match *op {
+            DiffOp::Delete {
+                old_index, old_len, ..
+            } => {
+                has_delete_or_replace = true;
+                min_del = min_del.min(old_index);
+                min_del = min_del.min(old_index + old_len.saturating_sub(1));
+            }
+            DiffOp::Replace {
+                old_index, old_len, ..
+            } => {
+                has_delete_or_replace = true;
+                min_del = min_del.min(old_index);
+                min_del = min_del.min(old_index + old_len.saturating_sub(1));
+            }
+            DiffOp::Insert { old_index, .. } => {
+                min_ins_old = min_ins_old.min(old_index);
+            }
+            DiffOp::Equal { .. } => {}
+        }
+    }
+
+    let mut i1 = if has_delete_or_replace {
+        min_del
+    } else if min_ins_old != usize::MAX {
+        min_ins_old
+    } else {
+        0
+    };
+
+    let pure_insert = ops
+        .iter()
+        .all(|op| matches!(op, DiffOp::Insert { .. } | DiffOp::Equal { .. }))
+        && ops.iter().any(|op| matches!(op, DiffOp::Insert { .. }));
+
+    if pure_insert && i1 >= n_old && n_old > 0 {
+        i1 = n_old - 1;
+    }
+
+    i1.min(n_old.saturating_sub(1))
+}
+
+fn expand_func_pre_start(
+    s1: usize,
+    i1: usize,
+    n_old: usize,
+    old_lines: &[&str],
+    matcher: Option<&FuncnameMatcher>,
+) -> usize {
+    if n_old == 0 {
+        return s1;
+    }
+    let i1 = i1.min(n_old.saturating_sub(1));
+    let mut fs1 = get_func_line_backward(old_lines, i1, matcher).unwrap_or(i1);
+    while fs1 > 0
+        && !is_line_empty_for_func_context(old_lines[fs1 - 1])
+        && !is_func_line(old_lines[fs1 - 1], matcher)
+    {
+        fs1 -= 1;
+    }
+    s1.min(fs1)
+}
+
+fn expand_func_post_end(
+    e1: usize,
+    i1_end: usize,
+    n_old: usize,
+    old_lines: &[&str],
+    matcher: Option<&FuncnameMatcher>,
+) -> usize {
+    let from = i1_end.min(n_old);
+    let fe1 = get_func_line_forward(old_lines, from, matcher).unwrap_or(n_old);
+    let mut fe1_adj = fe1;
+    while fe1_adj > 0 && is_line_empty_for_func_context(old_lines[fe1_adj - 1]) {
+        fe1_adj -= 1;
+    }
+    e1.max(fe1_adj).min(n_old)
+}
+
+fn is_line_empty_for_func_context(line: &str) -> bool {
+    line.chars().all(|c| c.is_whitespace())
+}
+
+fn is_func_line(line: &str, matcher: Option<&FuncnameMatcher>) -> bool {
+    if let Some(m) = matcher {
+        return m.match_line(line).is_some();
+    }
+    let t = line.trim_end_matches(['\n', '\r']);
+    if t.is_empty() {
+        return false;
+    }
+    let b = t.as_bytes()[0];
+    b.is_ascii_alphabetic() || b == b'_' || b == b'$'
+}
+
+fn get_func_line_backward(
+    old_lines: &[&str],
+    start: usize,
+    matcher: Option<&FuncnameMatcher>,
+) -> Option<usize> {
+    let mut l = start.min(old_lines.len().saturating_sub(1));
+    if old_lines.is_empty() {
+        return None;
+    }
+    loop {
+        if is_func_line(old_lines[l], matcher) {
+            return Some(l);
+        }
+        if l == 0 {
+            break;
+        }
+        l -= 1;
+    }
+    None
+}
+
+fn get_func_line_forward(
+    old_lines: &[&str],
+    start: usize,
+    matcher: Option<&FuncnameMatcher>,
+) -> Option<usize> {
+    let mut l = start;
+    while l < old_lines.len() {
+        if is_func_line(old_lines[l], matcher) {
+            return Some(l);
+        }
+        l += 1;
+    }
+    None
 }
 
 /// Compute a unified diff with anchored lines.
@@ -2058,6 +2694,7 @@ pub fn anchored_unified_diff(
             "b/",
             None,
             algorithm,
+            false,
         );
     }
 
