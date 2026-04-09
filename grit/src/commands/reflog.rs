@@ -354,6 +354,7 @@ fn run_show(args: ShowArgs) -> Result<()> {
         pathspecs: args.pathspecs,
         break_rewrites: None,
         show_trees: false,
+        recurse_trees: false,
         unified: None,
         line_range: Vec::new(),
         show_parents: false,
