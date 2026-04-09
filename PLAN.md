@@ -490,7 +490,7 @@ commit → check it off → move on.
 
 - [ ] `t4069-remerge-diff` █░░░░░░░░░░░░░░░░░░░ 1/16 (15 left) — remerge-diff handling
 - [ ] `t4019-diff-wserror` ████░░░░░░░░░░░░░░░░ 5/21 (16 left) — diff whitespace error detection
-- [ ] `t4063-diff-blobs` ██░░░░░░░░░░░░░░░░░░ 2/18 (16 left) — test direct comparison of blobs via git-diff
+- [x] `t4063-diff-blobs` ████████████████████ 18/18 (0 left) — test direct comparison of blobs via git-diff
 - [x] `t4214-log-graph-octopus` ████████████████████ 17/17 (0 left) — git log --graph of skewed left octopus merge.
 - [ ] `t4103-apply-binary` █████░░░░░░░░░░░░░░░ 7/24 (17 left) — git apply handling binary patches
 

@@ -40,7 +40,8 @@ use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, RevListOptions};
 use grit_lib::rev_parse::{
-    abbreviate_object_id, resolve_revision, show_prefix, split_treeish_colon,
+    abbreviate_object_id, resolve_revision, resolve_treeish_blob_at_path, show_prefix,
+    split_treeish_colon, TreeishBlobAtPath,
 };
 use grit_lib::userdiff::matcher_for_path_parsed;
 use regex::Regex;
@@ -219,6 +220,8 @@ fn submodule_commit_subject_line(c: &grit_lib::objects::CommitData) -> String {
 use std::env;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 /// ANSI color codes for diff output.
@@ -1096,14 +1099,15 @@ pub fn run(mut args: Args) -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     };
+    let merged_attrs = Arc::new(merged_attrs);
     let diff_config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
         .unwrap_or_else(|_| grit_lib::config::ConfigSet::new());
     let ignore_case_attrs = diff_config
         .get("core.ignorecase")
         .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "1"));
     let diff_algo_ctx = DiffAlgoContext {
-        attrs: Arc::new(merged_attrs),
-        config: Arc::new(diff_config),
+        attrs: Arc::clone(&merged_attrs),
+        config: Arc::new(diff_config.clone()),
         ignore_case_attrs,
     };
     let diff_algo_cli = parse_cli_diff_algorithm_from_argv();
@@ -1144,10 +1148,52 @@ pub fn run(mut args: Args) -> Result<()> {
             &args,
             &revs[0],
             &paths[0],
+            None::<&str>,
             &src_prefix,
             &dst_prefix,
             patch_context,
+            Arc::clone(&merged_attrs),
+            diff_config.clone(),
+            ignore_case_attrs,
+            diff_algo_cli,
+            &cwd,
+            quote_path_fully,
         );
+    }
+
+    // `git diff <blob-oid> <file>` — raw object id vs path (t4063: prefers filename in headers).
+    if revs.len() == 1 && paths.len() == 1 && !args.cached {
+        if split_treeish_colon(&revs[0]).is_none() {
+            if let Some(wt) = repo.work_tree.as_ref() {
+                if fs::symlink_metadata(wt.join(&paths[0])).is_ok() {
+                    let oid = resolve_revision(&repo, &revs[0]).ok();
+                    let is_blob = oid.is_some_and(|o| {
+                        repo.odb
+                            .read(&o)
+                            .map(|obj| obj.kind == ObjectKind::Blob)
+                            .unwrap_or(false)
+                    });
+                    if is_blob {
+                        return run_diff_blob_vs_file(
+                            &repo,
+                            &args,
+                            &revs[0],
+                            &paths[0],
+                            Some(paths[0].as_str()),
+                            &src_prefix,
+                            &dst_prefix,
+                            patch_context,
+                            Arc::clone(&merged_attrs),
+                            diff_config.clone(),
+                            ignore_case_attrs,
+                            diff_algo_cli,
+                            &cwd,
+                            quote_path_fully,
+                        );
+                    }
+                }
+            }
+        }
     }
 
     // `git diff <path> <path>` — compare a worktree file to another path (e.g. outside the repo).
@@ -1407,7 +1453,9 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let mut _symmetric = false;
     if revs.len() == 1 {
-        if let Some((left, right)) = revs[0].split_once("...") {
+        if let Some((left_spec, right_spec)) = try_treeish_blob_range(&revs[0]) {
+            revs = vec![left_spec, right_spec];
+        } else if let Some((left, right)) = revs[0].split_once("...") {
             let left = if left.is_empty() { "HEAD" } else { left };
             let right = if right.is_empty() { "HEAD" } else { right };
             let left_oid = resolve_revision(&repo, left)
@@ -1514,10 +1562,28 @@ pub fn run(mut args: Args) -> Result<()> {
                 diff_tree_to_worktree(&repo.odb, Some(&tree_oid), wt, &index)?
             }
             (_, 2) => {
-                // Two revisions: tree-to-tree diff
-                let tree1 = commit_or_tree_oid(&repo, &revs[0])?;
-                let tree2 = commit_or_tree_oid(&repo, &revs[1])?;
-                diff_trees(&repo.odb, Some(&tree1), Some(&tree2), "")?
+                match (
+                    blob_side_for_blob_diff_spec(&repo, &revs[0])?,
+                    blob_side_for_blob_diff_spec(&repo, &revs[1])?,
+                ) {
+                    (Some(a), Some(b)) => {
+                        vec![DiffEntry {
+                            status: DiffStatus::Modified,
+                            old_path: Some(a.path),
+                            new_path: Some(b.path),
+                            old_mode: a.mode,
+                            new_mode: b.mode,
+                            old_oid: a.oid,
+                            new_oid: b.oid,
+                            score: None,
+                        }]
+                    }
+                    _ => {
+                        let tree1 = commit_or_tree_oid(&repo, &revs[0])?;
+                        let tree2 = commit_or_tree_oid(&repo, &revs[1])?;
+                        diff_trees(&repo.odb, Some(&tree1), Some(&tree2), "")?
+                    }
+                }
             }
             _ => {
                 bail!("too many revisions");
@@ -2124,93 +2190,206 @@ pub fn run(mut args: Args) -> Result<()> {
     Ok(())
 }
 
-/// `git diff <rev>:<path> <file>` — blob at revision vs worktree file (used by tests).
+/// `git diff <rev>:<path> <file>` — blob at revision vs worktree file (t4063-diff-blobs).
 fn run_diff_blob_vs_file(
     repo: &Repository,
     args: &Args,
     rev_path: &str,
     file_path: &str,
+    display_old_blob_as: Option<&str>,
     src_prefix: &str,
     dst_prefix: &str,
     patch_context: usize,
+    merged_attrs: Arc<grit_lib::attributes::ParsedGitAttributes>,
+    diff_config: grit_lib::config::ConfigSet,
+    ignore_case_attrs: bool,
+    diff_algo_cli: Option<similar::Algorithm>,
+    cwd: &Path,
+    quote_path_fully: bool,
 ) -> Result<()> {
     let wt = repo
         .work_tree
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
     let abs = wt.join(file_path);
-    let blob_oid = resolve_revision(repo, rev_path)
-        .with_context(|| format!("unknown revision: '{rev_path}'"))?;
-    let obj = repo
-        .odb
-        .read(&blob_oid)
-        .with_context(|| format!("reading object {blob_oid}"))?;
-    if obj.kind != ObjectKind::Blob {
-        bail!("object '{blob_oid}' does not name a blob");
-    }
-    let blob_text = String::from_utf8_lossy(&obj.data);
-    let disk_bytes = fs::read(&abs).unwrap_or_default();
-    let disk_text = String::from_utf8_lossy(&disk_bytes);
 
-    let context_lines = patch_context;
-
-    let has_diff = blob_text != disk_text;
-    if !has_diff {
-        if args.exit_code || args.quiet {
-            return Ok(());
+    let (old_path, old_mode, old_oid) = if split_treeish_colon(rev_path).is_some() {
+        let tree_side = resolve_treeish_blob_at_path(repo, rev_path)
+            .with_context(|| format!("unknown revision: '{rev_path}'"))?;
+        (tree_side.path, tree_side.mode, tree_side.oid)
+    } else {
+        let oid = resolve_revision(repo, rev_path)
+            .with_context(|| format!("unknown revision: '{rev_path}'"))?;
+        let obj = repo
+            .odb
+            .read(&oid)
+            .with_context(|| format!("reading object {oid}"))?;
+        if obj.kind != ObjectKind::Blob {
+            bail!("object '{oid}' does not name a blob");
         }
+        let label = display_old_blob_as
+            .map(str::to_owned)
+            .unwrap_or_else(|| oid.to_hex());
+        (label, "100644".to_owned(), oid)
+    };
+
+    let wt_mode = worktree_file_mode_octal(&abs);
+    let disk_oid = Odb::hash_object_data(ObjectKind::Blob, &fs::read(&abs).unwrap_or_default());
+
+    let entries = vec![DiffEntry {
+        status: DiffStatus::Modified,
+        old_path: Some(old_path),
+        new_path: Some(file_path.to_owned()),
+        old_mode,
+        new_mode: wt_mode,
+        old_oid,
+        new_oid: disk_oid,
+        score: None,
+    }];
+    let entry = &entries[0];
+
+    let has_diff = entry.old_oid != entry.new_oid || entry.old_mode != entry.new_mode;
+    if !has_diff {
         return Ok(());
     }
 
     if args.check {
-        bail!("--check is not supported with <rev>:<path> <file>");
+        let mut out: Box<dyn Write> = if let Some(ref p) = args.output_path {
+            let resolved = if p.is_absolute() {
+                p.clone()
+            } else {
+                cwd.join(p)
+            };
+            Box::new(
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(true)
+                    .write(true)
+                    .open(&resolved)
+                    .with_context(|| {
+                        format!("failed to open output file {}", resolved.display())
+                    })?,
+            )
+        } else {
+            Box::new(io::stdout())
+        };
+        let attr_rules: Option<Vec<AttrRule>> = Some(load_gitattributes(&repo.git_dir));
+        let config_for_attrs = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let has_ws_errors = check_whitespace_errors(
+            &mut out,
+            &entries,
+            &repo.odb,
+            Some(wt.as_ref()),
+            attr_rules.as_deref(),
+            &config_for_attrs,
+        )?;
+        if has_ws_errors {
+            if args.exit_code {
+                std::process::exit(3);
+            }
+            std::process::exit(2);
+        }
+        if args.exit_code || args.quiet {
+            std::process::exit(1);
+        }
+        return Ok(());
     }
 
-    let mut out = io::stdout().lock();
-    let show_blob_patch = !args.quiet && !args.no_patch;
-    if show_blob_patch {
-        let old_label = format!("{src_prefix}{rev_path}");
-        let new_label = format!("{dst_prefix}{file_path}");
-        let patch = unified_diff(
-            blob_text.as_ref(),
-            disk_text.as_ref(),
-            &old_label,
-            &new_label,
-            context_lines,
-        );
-        let use_color = match args.color.as_deref() {
-            Some("always") => true,
-            Some("never") => false,
-            Some("auto") | None => io::stdout().is_terminal(),
-            Some(_) => false,
-        };
-        if use_color {
-            for line in patch.lines() {
-                if line.starts_with("@@") {
-                    writeln!(out, "{CYAN}{line}{RESET}")?;
-                } else if line.starts_with('+') && !line.starts_with("+++") {
-                    writeln!(out, "{GREEN}{line}{RESET}")?;
-                } else if line.starts_with('-') && !line.starts_with("---") {
-                    writeln!(out, "{RED}{line}{RESET}")?;
-                } else if line.starts_with("diff ")
-                    || line.starts_with("---")
-                    || line.starts_with("+++")
-                {
-                    writeln!(out, "{BOLD}{line}{RESET}")?;
-                } else {
-                    writeln!(out, "{line}")?;
-                }
+    let diff_algo_ctx = DiffAlgoContext {
+        attrs: merged_attrs,
+        config: Arc::new(diff_config.clone()),
+        ignore_case_attrs,
+    };
+    let inter_hunk_context = args
+        .inter_hunk_context
+        .or_else(|| {
+            diff_config
+                .get("diff.interhunkcontext")
+                .and_then(|s| s.parse().ok())
+        })
+        .unwrap_or(0);
+    let patch_abbrev = if args.full_index {
+        40usize
+    } else if let Some(n) = args.abbrev {
+        n.max(4).min(40)
+    } else {
+        7
+    };
+    let use_color = match args.color.as_deref() {
+        Some("always") => true,
+        Some("never") => false,
+        Some("auto") | None => {
+            if args.output_path.is_some() {
+                false
+            } else {
+                io::stdout().is_terminal()
             }
-        } else {
-            write!(out, "{patch}")?;
         }
+        Some(_) => false,
+    };
+    let suppress_blank_empty = diff_config
+        .get("diff.suppressBlankEmpty")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+
+    let mut out: Box<dyn Write> = if let Some(ref p) = args.output_path {
+        let resolved = if p.is_absolute() {
+            p.clone()
+        } else {
+            cwd.join(p)
+        };
+        Box::new(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&resolved)
+                .with_context(|| format!("failed to open output file {}", resolved.display()))?,
+        )
+    } else {
+        Box::new(io::stdout())
+    };
+
+    let word_diff = args.word_diff.is_some() || args.color_words;
+    let show_patch = !args.quiet && !args.no_patch;
+    if show_patch {
+        write_patch_with_prefix(
+            &mut out,
+            repo,
+            &entries,
+            &repo.odb,
+            &repo.git_dir,
+            &diff_config,
+            patch_context,
+            use_color,
+            word_diff,
+            Some(wt.as_ref()),
+            suppress_blank_empty,
+            patch_abbrev,
+            inter_hunk_context,
+            args.binary,
+            args.break_rewrites,
+            args.irreversible_delete,
+            !args.no_textconv,
+            src_prefix,
+            dst_prefix,
+            args.submodule.as_deref(),
+            submodule_ignore_flags_from_diff_arg(
+                args.ignore_submodules.as_deref().unwrap_or("none"),
+            ),
+            None,
+            &diff_algo_ctx,
+            diff_algo_cli,
+            false,
+        )?;
+    }
+
+    if args.summary {
+        write_diff_summary(&mut out, &entries, args.break_rewrites, quote_path_fully)?;
     }
 
     if (args.exit_code || args.quiet) && has_diff {
         std::process::exit(1);
-    }
-    if has_diff && !args.exit_code && show_blob_patch {
-        // differences were printed; match `git diff` non-exit-code behavior (exit 0)
     }
     Ok(())
 }
@@ -3605,6 +3784,92 @@ fn resolve_packed_ref(git_dir: &std::path::Path, refname: &str) -> Option<String
         if name == refname {
             return Some(oid.to_owned());
         }
+    }
+    None
+}
+
+/// When `spec` is `treeish:path`, resolve the blob and path; otherwise `None`.
+fn blob_side_for_treeish_path_spec(
+    repo: &Repository,
+    spec: &str,
+) -> Result<Option<TreeishBlobAtPath>> {
+    match split_treeish_colon(spec) {
+        Some((_, path)) if !path.is_empty() => Ok(Some(resolve_treeish_blob_at_path(repo, spec)?)),
+        _ => Ok(None),
+    }
+}
+
+/// Resolve `spec` to a blob side for `git diff` when comparing two blobs (raw OID or `rev:path`).
+fn blob_side_for_blob_diff_spec(
+    repo: &Repository,
+    spec: &str,
+) -> Result<Option<TreeishBlobAtPath>> {
+    if let Some(side) = blob_side_for_treeish_path_spec(repo, spec)? {
+        return Ok(Some(side));
+    }
+    let oid = match resolve_revision(repo, spec) {
+        Ok(o) => o,
+        Err(_) => return Ok(None),
+    };
+    let obj = match repo.odb.read(&oid) {
+        Ok(o) => o,
+        Err(_) => return Ok(None),
+    };
+    if obj.kind != ObjectKind::Blob {
+        return Ok(None);
+    }
+    Ok(Some(TreeishBlobAtPath {
+        path: oid.to_hex(),
+        oid,
+        mode: "100644".to_owned(),
+    }))
+}
+
+/// Octal mode string for a worktree file (`120000` symlink, `100755` executable, else `100644`).
+fn worktree_file_mode_octal(path: &Path) -> String {
+    if let Ok(meta) = fs::symlink_metadata(path) {
+        if meta.file_type().is_symlink() {
+            return "120000".to_owned();
+        }
+        #[cfg(unix)]
+        {
+            let mode = meta.permissions().mode();
+            if mode & 0o111 != 0 {
+                return "100755".to_owned();
+            }
+        }
+    }
+    "100644".to_owned()
+}
+
+/// If both sides are `rev:path` with `..` between path segments, return the two specs (Git: t4063).
+fn try_treeish_blob_range(spec: &str) -> Option<(String, String)> {
+    let bytes = spec.as_bytes();
+    let mut i = 0usize;
+    let mut peel_depth = 0usize;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'^' && bytes[i + 1] == b'{' {
+            peel_depth += 1;
+            i += 2;
+            continue;
+        }
+        if peel_depth > 0 {
+            if bytes[i] == b'}' {
+                peel_depth -= 1;
+            }
+            i += 1;
+            continue;
+        }
+        if bytes[i] == b'.' && bytes.get(i + 1) == Some(&b'.') {
+            let left = &spec[..i];
+            let right = &spec[i + 2..];
+            if split_treeish_colon(left).is_some_and(|(_, p)| !p.is_empty())
+                && split_treeish_colon(right).is_some_and(|(_, p)| !p.is_empty())
+            {
+                return Some((left.to_owned(), right.to_owned()));
+            }
+        }
+        i += 1;
     }
     None
 }

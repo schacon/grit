@@ -744,7 +744,7 @@ t4059-diff-submodule-not-initialized	t4	yes	8	8	0	true	ok	0
 t4060-diff-submodule-option-diff-format	t4	yes	51	29	22	false	ok	0
 t4061-diff-indent	t4	yes	33	2	31	false	ok	0
 t4062-diff-pickaxe	t4	yes	3	3	0	true	ok	0
-t4063-diff-blobs	t4	yes	18	3	15	false	ok	0
+t4063-diff-blobs	t4	yes	18	18	0	true	ok	0
 t4064-diff-oidfind	t4	yes	10	10	0	true	ok	0
 t4065-diff-anchored	t4	yes	7	7	0	true	ok	0
 t4066-diff-emit-delay	t4	yes	2	2	0	true	ok	0

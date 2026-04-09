@@ -972,27 +972,111 @@ fn peel_to_tree(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
 
 /// Navigate a tree to find an object at a given path.
 fn resolve_tree_path(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Result<ObjectId> {
+    let (oid, _) = walk_tree_to_blob_entry(repo, tree_oid, path)?;
+    Ok(oid)
+}
+
+/// Resolved blob (non-tree) at `treeish:path` for diff plumbing.
+///
+/// Returns the repository-relative path, blob OID, and Git mode string (e.g. `"100644"`).
+#[derive(Debug, Clone)]
+pub struct TreeishBlobAtPath {
+    /// Path used in `diff --git` / `---` / `+++` headers (tree path, `/`-separated).
+    pub path: String,
+    /// Object id of the blob.
+    pub oid: ObjectId,
+    /// File mode as in tree objects (`100644`, `100755`, `120000`, …).
+    pub mode: String,
+}
+
+/// Resolve `rev:path` to the blob at that path in the tree reached from `rev`.
+///
+/// Fails when `spec` is not `treeish:path`, when the path is missing, or when the
+/// target is a tree or gitlink rather than a blob/symlink blob.
+pub fn resolve_treeish_blob_at_path(repo: &Repository, spec: &str) -> Result<TreeishBlobAtPath> {
+    let (before, after) = split_treeish_colon(spec)
+        .filter(|(_, path)| !path.is_empty())
+        .ok_or_else(|| Error::InvalidRef(format!("'{spec}' is not a treeish:path revision")))?;
+
+    let rev_oid = match resolve_revision_impl(repo, before, true, false, true, true, false, false) {
+        Ok(o) => o,
+        Err(Error::ObjectNotFound(s)) if s == before => {
+            return Err(Error::Message(format!(
+                "fatal: invalid object name '{before}'."
+            )));
+        }
+        Err(Error::Message(msg)) if msg.contains("ambiguous argument") => {
+            return Err(Error::Message(format!(
+                "fatal: invalid object name '{before}'."
+            )));
+        }
+        Err(e) => return Err(e),
+    };
+
+    let tree_oid = peel_to_tree(repo, rev_oid)?;
+    let clean_path = match normalize_colon_path_for_tree(repo, after) {
+        Ok(p) => p,
+        Err(Error::InvalidRef(msg)) if msg == "outside repository" => {
+            let wt = repo
+                .work_tree
+                .as_ref()
+                .and_then(|p| p.canonicalize().ok())
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+            return Err(Error::Message(format!(
+                "fatal: '{after}' is outside repository at '{wt}'"
+            )));
+        }
+        Err(e) => return Err(e),
+    };
+
+    let (oid, mode_str) = walk_tree_to_blob_entry(repo, &tree_oid, &clean_path)?;
+    Ok(TreeishBlobAtPath {
+        path: clean_path,
+        oid,
+        mode: mode_str,
+    })
+}
+
+/// Walk from `tree_oid` to the leaf named by `path` and return blob OID + mode string.
+fn walk_tree_to_blob_entry(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+    path: &str,
+) -> Result<(ObjectId, String)> {
     let obj = repo.odb.read(tree_oid)?;
     let entries = crate::objects::parse_tree(&obj.data)?;
     let components: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
     if components.is_empty() {
-        return Ok(*tree_oid);
+        return Err(Error::InvalidRef(format!(
+            "path '{path}' does not name a blob in tree {tree_oid}"
+        )));
     }
+
     let first = components[0];
     let rest: Vec<&str> = components[1..].to_vec();
     for entry in entries {
         let name = String::from_utf8_lossy(&entry.name);
         if name == first {
             if rest.is_empty() {
-                return Ok(entry.oid);
-            } else {
-                return resolve_tree_path(repo, &entry.oid, &rest.join("/"));
+                if entry.mode == crate::index::MODE_TREE {
+                    return Err(Error::InvalidRef(format!("'{path}' is a tree, not a blob")));
+                }
+                if entry.mode == crate::index::MODE_GITLINK {
+                    return Err(Error::InvalidRef(format!(
+                        "'{path}' is a gitlink, not a blob"
+                    )));
+                }
+                return Ok((entry.oid, entry.mode_str()));
             }
+            if entry.mode != crate::index::MODE_TREE {
+                return Err(Error::ObjectNotFound(path.to_owned()));
+            }
+            return walk_tree_to_blob_entry(repo, &entry.oid, &rest.join("/"));
         }
     }
     Err(Error::ObjectNotFound(format!(
-        "path '{}' not found in tree {}",
-        path, tree_oid
+        "path '{path}' not found in tree {tree_oid}"
     )))
 }
 

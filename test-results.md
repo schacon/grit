@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-09 (t4063 / diff blobs)**
+
+- `cargo test -p grit-lib --lib`: 155 passed
+- `./scripts/run-tests.sh t4063-diff-blobs.sh`: 18/18 passed
+
 **2026-04-09 (t5609 / clone --branch)**
 
 - `cargo test -p grit-lib --lib`: 152 passed
