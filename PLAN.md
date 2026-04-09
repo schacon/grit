@@ -342,7 +342,7 @@ commit → check it off → move on.
 - [ ] `t3431-rebase-fork-point` ██░░░░░░░░░░░░░░░░░░ 3/26 (23 left) — git rebase --fork-point test
 - [ ] `t3007-ls-files-recurse-submodules` ░░░░░░░░░░░░░░░░░░░░ 1/24 (23 left) — Test ls-files recurse-submodules feature
 
-- [ ] `t3311-notes-merge-fanout` ░░░░░░░░░░░░░░░░░░░░ 1/24 (23 left) — Test notes merging at various fanout levels
+- [x] `t3311-notes-merge-fanout` ████████████████████ 24/24 (0 left) — Test notes merging at various fanout levels
 - [ ] `t3418-rebase-continue` ████░░░░░░░░░░░░░░░░ 6/30 (24 left) — git rebase --continue tests
 - [x] `t3650-replay-basics` — basic git replay tests (31/31)
 - [ ] `t3426-rebase-submodule` ██░░░░░░░░░░░░░░░░░░ 4/29 (25 left) — rebase can handle submodules
