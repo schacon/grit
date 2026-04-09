@@ -1194,14 +1194,10 @@ test_commit_bulk () {
 	)
 }
 
+# Match git/t/test-lib-functions.sh: chmod on disk and record in index for every path argument.
 test_chmod () {
-	local mode="$1" file="$2"
-	if test "$mode" = "+x"
-	then
-		git update-index --chmod=+x "$file"
-	else
-		git update-index --chmod=-x "$file"
-	fi
+	chmod "$@" &&
+	git update-index --add "--chmod=$@"
 }
 
 debug () {

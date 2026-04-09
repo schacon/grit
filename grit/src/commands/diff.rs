@@ -3919,6 +3919,9 @@ fn write_stat(
 
     let mut files: Vec<FileStatInput> = Vec::with_capacity(entries.len());
     for (i, entry) in entries.iter().enumerate() {
+        if entry.status == DiffStatus::Unmerged {
+            continue;
+        }
         let old_raw = read_content_raw(odb, &entry.old_oid);
         let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, entry.path());
         let binary = is_binary(&old_raw) || is_binary(&new_raw);
@@ -3940,16 +3943,23 @@ fn write_stat(
                 is_binary: true,
             });
         } else {
-            let (ins, del) = stat_ins_del_for_entry(
-                odb,
-                entry,
-                work_tree,
-                break_rewrites,
-                line_ignore,
-                ws_mode,
-                algo_ctx,
-                algo_cli,
-            );
+            let mode_only = entry.status == DiffStatus::Modified
+                && entry.old_mode != entry.new_mode
+                && old_raw == new_raw;
+            let (ins, del) = if mode_only {
+                (0, 0)
+            } else {
+                stat_ins_del_for_entry(
+                    odb,
+                    entry,
+                    work_tree,
+                    break_rewrites,
+                    line_ignore,
+                    ws_mode,
+                    algo_ctx,
+                    algo_cli,
+                )
+            };
             files.push(FileStatInput {
                 path_display: display_paths[i].clone(),
                 insertions: ins,

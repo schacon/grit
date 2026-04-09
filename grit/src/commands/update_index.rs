@@ -287,6 +287,35 @@ fn paths_equal(expected: Option<&PathBuf>, actual: &str) -> bool {
     exp.as_path() == Path::new(actual)
 }
 
+/// Map path → `+x` / `-x` from argv order (`--chmod=+x path`, `--chmod +x path`, repeated paths).
+fn per_file_chmod_from_raw_argv(raw: &[String]) -> std::collections::HashMap<PathBuf, String> {
+    let mut map = std::collections::HashMap::new();
+    let mut pending: Option<String> = None;
+    let mut i = 0usize;
+    while i < raw.len() {
+        let tok = &raw[i];
+        if let Some(val) = tok.strip_prefix("--chmod=") {
+            pending = Some(val.to_owned());
+            i += 1;
+        } else if tok == "--chmod" {
+            if i + 1 < raw.len() && !raw[i + 1].starts_with('-') {
+                pending = Some(raw[i + 1].clone());
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else if !tok.starts_with('-') {
+            if let Some(ref c) = pending {
+                map.insert(PathBuf::from(tok), c.clone());
+            }
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+    map
+}
+
 /// Run `grit update-index`.
 pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
@@ -436,38 +465,9 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         }
     }
 
-    // Build per-file chmod override map by scanning raw args.
-    // Handles: --chmod=+x A --chmod=-x B (chmod applies to following file)
-    let mut per_file_chmod: std::collections::HashMap<PathBuf, String> =
-        std::collections::HashMap::new();
-    {
-        let raw: Vec<String> = std::env::args().collect();
-        let mut pending_chmod: Option<String> = None;
-        let mut i = 0usize;
-        while i < raw.len() {
-            let tok = &raw[i];
-            if let Some(val) = tok.strip_prefix("--chmod=") {
-                pending_chmod = Some(val.to_owned());
-                i += 1;
-            } else if tok == "--chmod" {
-                if let Some(next) = raw.get(i + 1) {
-                    if !next.starts_with('-') || next == "-" {
-                        pending_chmod = Some(next.clone());
-                        i += 2;
-                        continue;
-                    }
-                }
-                i += 1;
-            } else if !tok.starts_with('-') {
-                if let Some(ref c) = pending_chmod {
-                    per_file_chmod.insert(PathBuf::from(tok), c.clone());
-                }
-                i += 1;
-            } else {
-                i += 1;
-            }
-        }
-    }
+    // Build per-file chmod map from the same argv slice clap parsed (not `std::env::args()`, which
+    // misses the harness `git` wrapper and breaks `git update-index --chmod=+x b`).
+    let per_file_chmod = per_file_chmod_from_raw_argv(raw_rest);
 
     // Collect file paths (from args or stdin)
     let paths: Vec<PathBuf> = if args.null_terminated {
