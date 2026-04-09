@@ -16,6 +16,7 @@ mod alias;
 mod commands;
 mod dotfile;
 mod explicit_exit;
+mod ext_transport;
 mod fetch_transport;
 mod file_upload_pack_v2;
 mod git_commit_encoding;

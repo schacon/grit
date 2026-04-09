@@ -1,0 +1,345 @@
+//! `ext::` remote URLs (Git's `git-remote-ext` / connect helper).
+//!
+//! See `git/Documentation/git-remote-ext.adoc` and `git/builtin/remote-ext.c`.
+
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+use anyhow::{bail, Context, Result};
+use grit_lib::objects::ObjectId;
+use grit_lib::odb::Odb;
+use grit_lib::unpack_objects::{unpack_objects, UnpackOptions};
+
+use crate::fetch_transport;
+use crate::grit_exe::grit_executable;
+use crate::pkt_line;
+
+/// Parsed `ext::<command> <args>...` URL (without the `ext::` prefix).
+pub struct RemoteExtSpec {
+    pub argv: Vec<String>,
+    pub git_repo_path: Option<String>,
+    pub git_vhost: Option<String>,
+}
+
+fn service_noprefix(service: &str) -> &str {
+    service.strip_prefix("git-").unwrap_or(service)
+}
+
+/// Length of one `remote-ext` argument starting at `input` (matches `strip_escapes` scan in
+/// `git/builtin/remote-ext.c`).
+fn remote_ext_arg_byte_len(input: &str) -> Result<usize> {
+    let bytes = input.as_bytes();
+    let mut rpos = 0usize;
+    let mut escape = false;
+    while rpos < bytes.len() && (escape || bytes[rpos] != b' ') {
+        if escape {
+            let c = bytes[rpos] as char;
+            match c {
+                ' ' | '%' | 's' | 'S' => {}
+                'G' | 'V' => {
+                    if rpos != 1 {
+                        bail!("remote-ext: '%{c}' must be first character of an argument");
+                    }
+                }
+                _ => bail!("remote-ext: bad placeholder '%{c}'"),
+            }
+            escape = false;
+        } else {
+            escape = bytes[rpos] == b'%';
+        }
+        rpos += 1;
+    }
+    if escape {
+        bail!("remote-ext: incomplete placeholder");
+    }
+    Ok(rpos)
+}
+
+/// Split `input` into the first argument and the remainder (skips one inter-arg space).
+fn next_remote_ext_arg<'a>(input: &'a str) -> Result<(&'a str, &'a str)> {
+    if input.is_empty() {
+        return Ok(("", ""));
+    }
+    let len = remote_ext_arg_byte_len(input)?;
+    let tok = &input[..len];
+    let rest = input[len..].trim_start_matches(' ');
+    Ok((tok, rest))
+}
+
+/// Expand placeholders in one remote-ext argument for `service`.
+/// `%G` / `%V` arguments are returned as `Err` with the special kind and payload (Git does not pass
+/// these argv entries to the child).
+fn expand_one_remote_ext_arg(token: &str, service: &str) -> Result<Result<String, (char, String)>> {
+    let service_np = service_noprefix(service);
+    let arg_len = remote_ext_arg_byte_len(token)?;
+    if arg_len != token.len() {
+        bail!("remote-ext: trailing junk after argument");
+    }
+    let bytes = token.as_bytes();
+    let special = if bytes.len() >= 2 && bytes[0] == b'%' {
+        let c = bytes[1] as char;
+        if c == 'G' || c == 'V' {
+            Some(c)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let skip = if special.is_some() { 2 } else { 0 };
+    let mut out = String::new();
+    let mut i = skip;
+    let mut escape = false;
+    while i < bytes.len() {
+        if escape {
+            let c = bytes[i] as char;
+            match c {
+                ' ' | '%' => out.push(c),
+                's' => out.push_str(service_np),
+                'S' => out.push_str(service),
+                _ => bail!("remote-ext: bad placeholder '%{c}' in expansion"),
+            }
+            escape = false;
+        } else if bytes[i] == b'%' {
+            escape = true;
+        } else {
+            out.push(bytes[i] as char);
+        }
+        i += 1;
+    }
+    if escape {
+        bail!("remote-ext: incomplete placeholder");
+    }
+
+    if let Some(sp) = special {
+        return Ok(Err((sp, out)));
+    }
+    Ok(Ok(out))
+}
+
+/// Parse `ext::...` into argv and optional git:// request fields (`%G` / `%V`).
+pub fn parse_remote_ext_url(url: &str) -> Result<RemoteExtSpec> {
+    let rest = url
+        .strip_prefix("ext::")
+        .with_context(|| format!("not an ext:: URL: {url}"))?;
+    if rest.is_empty() {
+        bail!("ext:: URL is empty");
+    }
+
+    let mut argv: Vec<String> = Vec::new();
+    let mut git_repo: Option<String> = None;
+    let mut git_vhost: Option<String> = None;
+    let parse_service = "git-upload-pack";
+
+    let mut cursor = rest;
+    while !cursor.is_empty() {
+        let (tok, next) = next_remote_ext_arg(cursor)?;
+        cursor = next;
+        if tok.is_empty() {
+            break;
+        }
+        match expand_one_remote_ext_arg(tok, parse_service)? {
+            Ok(arg) => argv.push(arg),
+            Err(('G', payload)) => git_repo = Some(payload),
+            Err(('V', payload)) => git_vhost = Some(payload),
+            Err((c, _)) => bail!("remote-ext: unknown special argument '%{c}'"),
+        }
+    }
+
+    if argv.is_empty() {
+        bail!("ext:: URL: no command");
+    }
+    Ok(RemoteExtSpec {
+        argv,
+        git_repo_path: git_repo,
+        git_vhost,
+    })
+}
+
+fn argv0_basename(argv0: &str) -> Option<&str> {
+    Path::new(argv0).file_name()?.to_str()
+}
+
+/// When the URL is `sh -c 'git-upload-pack <args…>'` (t5802), run `grit upload-pack <args…>` as the
+/// child process instead of nesting shells. This matches a direct `upload-pack` spawn and avoids
+/// pipe/pack corruption seen with `sh -c` wrapping.
+fn resolve_ext_child_argv(parsed: &RemoteExtSpec) -> (PathBuf, Vec<String>) {
+    if parsed.argv.len() == 3
+        && argv0_basename(&parsed.argv[0]).is_some_and(|b| b == "sh" || b == "dash")
+        && parsed.argv[1] == "-c"
+    {
+        let inner = parsed.argv[2].trim();
+        if let Some(rest) = inner.strip_prefix("git-upload-pack") {
+            let rest = rest.trim();
+            if !rest.is_empty() {
+                let grit = grit_executable();
+                let mut args = vec!["upload-pack".to_owned()];
+                args.extend(rest.split_whitespace().map(|s| s.to_owned()));
+                return (grit, args);
+            }
+        }
+    }
+    (PathBuf::from(&parsed.argv[0]), parsed.argv[1..].to_vec())
+}
+
+fn write_git_daemon_request(
+    w: &mut impl Write,
+    service: &str,
+    repo_path: &str,
+    vhost: Option<&str>,
+) -> Result<()> {
+    let mut inner: Vec<u8> = Vec::new();
+    inner.extend_from_slice(service.as_bytes());
+    inner.push(b' ');
+    inner.extend_from_slice(repo_path.as_bytes());
+    inner.push(0);
+    if let Some(h) = vhost {
+        inner.extend_from_slice(b"host=");
+        inner.extend_from_slice(h.as_bytes());
+        inner.push(0);
+    }
+    pkt_line::write_packet_raw(w, &inner).context("write ext:: git:// request")?;
+    w.flush().ok();
+    Ok(())
+}
+
+/// Fetch via `ext::` helper: spawn the user's command with stdin/stdout as the git wire, then run
+/// the same upload-pack negotiation as local fetch.
+///
+/// `service` is typically `git-upload-pack` for fetch/clone.
+pub fn fetch_via_ext_skipping(
+    local_git_dir: &Path,
+    ext_url: &str,
+    service: &str,
+    refspecs: &[String],
+) -> Result<(
+    Vec<(String, ObjectId)>,
+    Vec<(String, ObjectId)>,
+    Option<String>,
+    Option<ObjectId>,
+)> {
+    let spec = parse_remote_ext_url(ext_url)?;
+    let (prog, child_args) = resolve_ext_child_argv(&spec);
+    let grit = grit_executable();
+    let mut child = if prog == grit && child_args.len() == 2 && child_args[0] == "upload-pack" {
+        let mut repo = PathBuf::from(&child_args[1]);
+        if repo.as_os_str() == "." {
+            repo = std::env::current_dir()
+                .and_then(|p| p.canonicalize())
+                .unwrap_or(repo);
+        } else if repo.is_relative() {
+            if let Ok(cwd) = std::env::current_dir() {
+                repo = cwd.join(&repo);
+            }
+        }
+        fetch_transport::spawn_upload_pack_with_proto(None, &repo, 0).with_context(|| {
+            format!(
+                "failed to spawn upload-pack for ext:: (repo {})",
+                repo.display()
+            )
+        })?
+    } else {
+        let mut cmd = Command::new(&prog);
+        cmd.args(&child_args)
+            .env("GIT_EXT_SERVICE", service)
+            .env("GIT_EXT_SERVICE_NOPREFIX", service_noprefix(service))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        cmd.env_remove("GIT_TRACE_PACKET");
+        cmd.env_remove("GIT_PROTOCOL");
+        cmd.spawn().with_context(|| {
+            format!(
+                "failed to spawn ext:: command {} {:?}",
+                prog.display(),
+                child_args
+            )
+        })?
+    };
+
+    let mut stdin = child.stdin.take().context("ext:: stdin")?;
+    let mut stdout = child.stdout.take().context("ext:: stdout")?;
+
+    if let Some(ref repo_path) = spec.git_repo_path {
+        write_git_daemon_request(&mut stdin, service, repo_path, spec.git_vhost.as_deref())?;
+    }
+
+    let (advertised, head_symref) = fetch_transport::read_advertisement(&mut stdout)?;
+    let wants = fetch_transport::collect_wants(&advertised, refspecs)?;
+    if wants.is_empty() {
+        if refspecs.is_empty() && advertised.is_empty() {
+            drop(stdin);
+            let _ = fetch_transport::drain_child_stdout_to_eof(&mut stdout);
+            let status = child.wait()?;
+            if !status.success() {
+                bail!("ext:: helper exited with {}", status);
+            }
+            return Ok((Vec::new(), Vec::new(), head_symref, None));
+        }
+        if refspecs.is_empty() {
+            drop(stdin);
+            let _ = fetch_transport::drain_child_stdout_to_eof(&mut stdout);
+            let status = child.wait()?;
+            if !status.success() {
+                bail!("ext:: helper exited with {}", status);
+            }
+            let remote_heads: Vec<_> = advertised
+                .iter()
+                .filter(|(n, _)| n.starts_with("refs/heads/"))
+                .cloned()
+                .collect();
+            let remote_tags: Vec<_> = advertised
+                .iter()
+                .filter(|(n, _)| n.starts_with("refs/tags/"))
+                .cloned()
+                .collect();
+            let head_advertised_oid = advertised
+                .iter()
+                .find(|(n, _)| n == "HEAD")
+                .map(|(_, o)| *o);
+            return Ok((remote_heads, remote_tags, head_symref, head_advertised_oid));
+        }
+        bail!("nothing to fetch (advertised {} ref(s))", advertised.len());
+    }
+
+    let remote_heads: Vec<_> = advertised
+        .iter()
+        .filter(|(n, _)| n.starts_with("refs/heads/"))
+        .cloned()
+        .collect();
+    let remote_tags: Vec<_> = advertised
+        .iter()
+        .filter(|(n, _)| n.starts_with("refs/tags/"))
+        .cloned()
+        .collect();
+    let head_advertised_oid = advertised
+        .iter()
+        .find(|(n, _)| n == "HEAD")
+        .map(|(_, o)| *o);
+
+    let pack_buf = fetch_transport::fetch_upload_pack_negotiate_pack_bytes_with_streams(
+        local_git_dir,
+        &advertised,
+        &mut stdin,
+        &mut stdout,
+        &wants,
+    )?;
+
+    let status = child.wait()?;
+    if !status.success() {
+        bail!("ext:: helper exited with {}", status);
+    }
+
+    if pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK" {
+        bail!("did not receive a pack file from ext:: transport");
+    }
+
+    let odb = Odb::new(&local_git_dir.join("objects"));
+    if pack_buf.len() > 12 {
+        unpack_objects(&mut pack_buf.as_slice(), &odb, &UnpackOptions::default())?;
+    }
+
+    Ok((remote_heads, remote_tags, head_symref, head_advertised_oid))
+}
