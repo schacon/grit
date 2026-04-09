@@ -3,8 +3,9 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::objects::{ObjectId, ObjectKind};
+use grit_lib::refs::RawRefLookup;
 use grit_lib::repo::Repository;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -113,9 +114,9 @@ fn run_exists_mode(repo: &Repository, args: &Args) -> Result<()> {
     }
     let reference = &args.refs_or_patterns[0];
 
-    match raw_ref_exists(&repo.git_dir, reference) {
-        Ok(true) => Ok(()),
-        Ok(false) => {
+    match grit_lib::refs::read_raw_ref(&repo.git_dir, reference) {
+        Ok(RawRefLookup::Exists) => Ok(()),
+        Ok(RawRefLookup::NotFound) | Ok(RawRefLookup::IsDirectory) => {
             eprintln!("error: reference does not exist");
             std::process::exit(2);
         }
@@ -392,34 +393,6 @@ fn parse_packed_refs(git_dir: &Path) -> Result<Vec<(String, ObjectId)>> {
         }
     }
     Ok(entries)
-}
-
-fn raw_ref_exists(git_dir: &Path, reference: &str) -> io::Result<bool> {
-    let path = git_dir.join(reference);
-    match fs::metadata(&path) {
-        Ok(meta) => return Ok(meta.is_file()),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-        Err(err) => return Err(err),
-    }
-
-    let packed = git_dir.join("packed-refs");
-    let text = match fs::read_to_string(packed) {
-        Ok(text) => text,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(err) => return Err(err),
-    };
-    let mut names = BTreeSet::new();
-    for line in text.lines() {
-        if line.is_empty() || line.starts_with('#') || line.starts_with('^') {
-            continue;
-        }
-        let mut parts = line.split_whitespace();
-        let _ = parts.next();
-        if let Some(name) = parts.next() {
-            names.insert(name.to_owned());
-        }
-    }
-    Ok(names.contains(reference))
 }
 
 fn is_safe_refname(reference: &str) -> bool {

@@ -3,6 +3,7 @@
 //! Provides subcommands for ref database operations:
 //! - `verify`  — verify the ref database integrity
 //! - `migrate` — migrate ref storage format (stub)
+//! - `exists`  — check whether a ref name exists in storage (no DWIM)
 
 use anyhow::{Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
@@ -10,6 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
+use grit_lib::refs::RawRefLookup;
 use grit_lib::repo::Repository;
 
 /// Arguments for `grit refs`.
@@ -33,6 +35,12 @@ pub enum RefsAction {
     Optimize,
     /// List all refs.
     List,
+    /// Check whether a single reference exists (storage-level; no DWIM).
+    Exists {
+        /// Reference to test (exact name, e.g. `HEAD`, `refs/heads/main`).
+        #[arg(value_name = "REF")]
+        reference: String,
+    },
 }
 
 /// Run `grit refs`.
@@ -44,6 +52,18 @@ pub fn run(args: Args) -> Result<()> {
         RefsAction::Migrate { ref_format } => migrate_refs(&repo, &ref_format),
         RefsAction::Optimize => optimize_refs(&repo),
         RefsAction::List => list_refs(&repo),
+        RefsAction::Exists { reference } => run_refs_exists(&repo, &reference),
+    }
+}
+
+fn run_refs_exists(repo: &Repository, reference: &str) -> Result<()> {
+    match grit_lib::refs::read_raw_ref(&repo.git_dir, reference) {
+        Ok(RawRefLookup::Exists) => Ok(()),
+        Ok(RawRefLookup::NotFound) | Ok(RawRefLookup::IsDirectory) => {
+            eprintln!("error: reference does not exist");
+            std::process::exit(2);
+        }
+        Err(err) => Err(err.into()),
     }
 }
 
