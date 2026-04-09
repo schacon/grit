@@ -986,15 +986,28 @@ fn notes_merge_worktree_path(repo: &Repository) -> std::path::PathBuf {
     notes_merge_git_dir(repo).join(NOTES_MERGE_WORKTREE)
 }
 
-fn parse_notes_merge_strategy(s: &str) -> Result<NotesMergeStrategy> {
+fn parse_notes_merge_strategy_value(s: &str) -> Option<NotesMergeStrategy> {
     match s {
-        "manual" => Ok(NotesMergeStrategy::Manual),
-        "ours" => Ok(NotesMergeStrategy::Ours),
-        "theirs" => Ok(NotesMergeStrategy::Theirs),
-        "union" => Ok(NotesMergeStrategy::Union),
-        "cat_sort_uniq" => Ok(NotesMergeStrategy::CatSortUniq),
-        _ => bail!("unknown -s/--strategy: {s}"),
+        "manual" => Some(NotesMergeStrategy::Manual),
+        "ours" => Some(NotesMergeStrategy::Ours),
+        "theirs" => Some(NotesMergeStrategy::Theirs),
+        "union" => Some(NotesMergeStrategy::Union),
+        "cat_sort_uniq" => Some(NotesMergeStrategy::CatSortUniq),
+        _ => None,
     }
+}
+
+fn parse_notes_merge_strategy_cli(s: &str) -> Result<NotesMergeStrategy> {
+    parse_notes_merge_strategy_value(s).ok_or_else(|| anyhow::anyhow!("unknown -s/--strategy: {s}"))
+}
+
+fn parse_notes_merge_strategy_config(s: &str) -> Result<NotesMergeStrategy> {
+    parse_notes_merge_strategy_value(s).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unknown notes merge strategy {s}\n\
+fatal: unable to parse 'notes.mergeStrategy' from command-line config"
+        )
+    })
 }
 
 fn note_path_to_object_id(path: &str) -> Option<ObjectId> {
@@ -1101,6 +1114,97 @@ fn read_blob_bytes(repo: &Repository, oid: &ObjectId) -> Result<Vec<u8>> {
     Ok(obj.data)
 }
 
+/// Matches Git's `combine_notes_concatenate`: join two note blobs with a blank line between them.
+fn combine_notes_concatenate(
+    repo: &Repository,
+    cur: Option<&ObjectId>,
+    new_oid: Option<&ObjectId>,
+) -> Result<ObjectId> {
+    let new_data = match new_oid {
+        Some(n) => {
+            let obj = repo.odb.read(n)?;
+            if obj.kind != ObjectKind::Blob || obj.data.is_empty() {
+                Vec::new()
+            } else {
+                obj.data
+            }
+        }
+        None => Vec::new(),
+    };
+    if new_data.is_empty() {
+        let Some(c) = cur else {
+            bail!("combine_notes_concatenate: empty new and no current");
+        };
+        return Ok(*c);
+    }
+
+    let cur_data = match cur {
+        Some(c) => {
+            let obj = repo.odb.read(c)?;
+            if obj.kind != ObjectKind::Blob || obj.data.is_empty() {
+                Vec::new()
+            } else {
+                obj.data
+            }
+        }
+        None => Vec::new(),
+    };
+
+    if cur_data.is_empty() {
+        return repo
+            .odb
+            .write(ObjectKind::Blob, &new_data)
+            .map_err(|e| anyhow::anyhow!(e));
+    }
+
+    let mut cur_len = cur_data.len();
+    if cur_len > 0 && cur_data[cur_len - 1] == b'\n' {
+        cur_len -= 1;
+    }
+    let mut buf = Vec::with_capacity(cur_len + 2 + new_data.len());
+    buf.extend_from_slice(&cur_data[..cur_len]);
+    buf.push(b'\n');
+    buf.push(b'\n');
+    buf.extend_from_slice(&new_data);
+    repo.odb
+        .write(ObjectKind::Blob, &buf)
+        .map_err(|e| anyhow::anyhow!(e))
+}
+
+fn note_blob_lines(data: &[u8]) -> Vec<String> {
+    if data.is_empty() {
+        return Vec::new();
+    }
+    let s = String::from_utf8_lossy(data);
+    s.split('\n').map(|l| l.to_owned()).collect()
+}
+
+/// Matches Git's `combine_notes_cat_sort_uniq`: all lines from both blobs, de-duplicated and sorted.
+fn combine_notes_cat_sort_uniq(
+    repo: &Repository,
+    cur: Option<&ObjectId>,
+    new_oid: Option<&ObjectId>,
+) -> Result<ObjectId> {
+    let mut lines: Vec<String> = Vec::new();
+    for oid in [cur, new_oid].into_iter().flatten() {
+        let obj = repo.odb.read(oid)?;
+        if obj.kind == ObjectKind::Blob && !obj.data.is_empty() {
+            lines.extend(note_blob_lines(&obj.data));
+        }
+    }
+    lines.retain(|l| !l.is_empty());
+    lines.sort();
+    lines.dedup();
+    let mut buf = String::new();
+    for l in &lines {
+        buf.push_str(l);
+        buf.push('\n');
+    }
+    repo.odb
+        .write(ObjectKind::Blob, buf.as_bytes())
+        .map_err(|e| anyhow::anyhow!(e))
+}
+
 fn blob_to_lines(data: &[u8]) -> Vec<String> {
     if data.is_empty() {
         return vec![String::new()];
@@ -1200,8 +1304,47 @@ fn merge_one_note_change(
             }
             Ok(false)
         }
-        NotesMergeStrategy::Union | NotesMergeStrategy::CatSortUniq => {
-            bail!("notes merge strategy {:?} is not implemented yet", strategy);
+        NotesMergeStrategy::Union => {
+            match (&pair.local, &pair.remote_blob) {
+                (LocalNoteState::Deleted, None) => {
+                    entries
+                        .retain(|e| note_object_name(&e.path).as_deref() != Some(obj_hex.as_str()));
+                }
+                (LocalNoteState::Deleted, Some(r)) => {
+                    let out = combine_notes_concatenate(repo, None, Some(r))?;
+                    upsert_note_entry(entries, &obj_hex, out);
+                }
+                (LocalNoteState::Present(_), None) => {}
+                (LocalNoteState::Present(l), Some(r)) => {
+                    let out = combine_notes_concatenate(repo, Some(l), Some(r))?;
+                    upsert_note_entry(entries, &obj_hex, out);
+                }
+                (LocalNoteState::Unset, _) => {
+                    bail!("unexpected notes merge pair: local unset in union strategy");
+                }
+            }
+            Ok(false)
+        }
+        NotesMergeStrategy::CatSortUniq => {
+            match (&pair.local, &pair.remote_blob) {
+                (LocalNoteState::Deleted, None) => {
+                    entries
+                        .retain(|e| note_object_name(&e.path).as_deref() != Some(obj_hex.as_str()));
+                }
+                (LocalNoteState::Deleted, Some(r)) => {
+                    let out = combine_notes_cat_sort_uniq(repo, None, Some(r))?;
+                    upsert_note_entry(entries, &obj_hex, out);
+                }
+                (LocalNoteState::Present(_), None) => {}
+                (LocalNoteState::Present(l), Some(r)) => {
+                    let out = combine_notes_cat_sort_uniq(repo, Some(l), Some(r))?;
+                    upsert_note_entry(entries, &obj_hex, out);
+                }
+                (LocalNoteState::Unset, _) => {
+                    bail!("unexpected notes merge pair: local unset in cat_sort_uniq strategy");
+                }
+            }
+            Ok(false)
         }
     }
 }
@@ -1412,7 +1555,7 @@ fn notes_merge_inner(
                 local_ref,
                 &entries,
                 &commit_msg,
-                &[local_oid],
+                &merge_parents,
             )?;
             Ok(Ok(new_oid))
         }
@@ -1528,15 +1671,15 @@ fn merge_notes_dispatch(
     let src_raw = source_ref.expect("checked");
     let remote_ref = expand_notes_ref(src_raw);
     let strategy = if let Some(s) = strategy {
-        parse_notes_merge_strategy(s)?
+        parse_notes_merge_strategy_cli(s)?
     } else {
         let config = ConfigSet::load(Some(&repo.git_dir), true)?;
         let short = notes_ref.strip_prefix("refs/notes/").unwrap_or(notes_ref);
         let key = format!("notes.{short}.mergeStrategy");
         if let Some(v) = config.get(&key) {
-            parse_notes_merge_strategy(&v)?
+            parse_notes_merge_strategy_config(&v)?
         } else if let Some(v) = config.get("notes.mergeStrategy") {
-            parse_notes_merge_strategy(&v)?
+            parse_notes_merge_strategy_config(&v)?
         } else {
             NotesMergeStrategy::Manual
         }
