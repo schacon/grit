@@ -15,6 +15,7 @@
 - `./scripts/run-tests.sh t6436-merge-overwrite.sh`: 18/18 passing (merge overwrite safety; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t5519-push-alternates.sh`: 8/8 passing (push with alternate ODB; no code changes; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t7507-commit-verbose.sh`: 45/45 passing (verbose commit template, `commit.verbose`, comment char stripping; harness CSV/dashboards refreshed; no code changes in this pass).
+- `./scripts/run-tests.sh t5543-atomic-push.sh`: 10/13 passing (atomic push + `receive-pack` report-status; `--receive-pack` delegates to system `git`; 3 failures remain — mirror+atomic stderr ordering, porcelain wrapper exit).
 
 **Updated:** 2026-04-08
 
