@@ -1,0 +1,6 @@
+# Test results
+
+**2026-04-09 (t3417 / rebase whitespace fix)**
+
+- `cargo test -p grit-lib --lib`: 147 passed
+- `./scripts/run-tests.sh t3417-rebase-whitespace-fix.sh`: 4/4 passed
