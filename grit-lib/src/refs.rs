@@ -13,6 +13,7 @@
 //! When `extensions.refStorage = reftable`, the reftable backend is used
 //! instead.  The public API is the same; dispatch is handled internally.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -719,23 +720,24 @@ pub fn list_refs(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>
     if crate::reftable::is_reftable_repo(git_dir) {
         return crate::reftable::reftable_list_refs(git_dir, prefix);
     }
-    let mut results = Vec::new();
-    let base = git_dir.join(prefix);
-    collect_refs(&base, prefix, git_dir, &mut results)?;
-    collect_packed_refs(git_dir, prefix, &mut results)?;
+    // Merge packed + loose so **loose always wins** for the same ref name (matches Git and
+    // `resolve_ref`). Previously we concatenated packed then loose and never deduplicated the
+    // main git dir case, so `pack-refs` could leave stale packed lines that shadowed updates.
+    let mut by_name: HashMap<String, ObjectId> = HashMap::new();
 
-    // For worktrees, also collect refs from the common dir
     if let Some(cdir) = common_dir(git_dir) {
         if cdir != git_dir {
+            collect_packed_refs_into_map(&cdir, prefix, &mut by_name)?;
             let cbase = cdir.join(prefix);
-            collect_refs(&cbase, prefix, &cdir, &mut results)?;
-            collect_packed_refs(&cdir, prefix, &mut results)?;
-            // Deduplicate: worktree-local refs take priority
-            results.sort_by(|a, b| a.0.cmp(&b.0));
-            results.dedup_by(|b, a| a.0 == b.0);
+            collect_loose_refs_into_map(&cbase, prefix, &cdir, &mut by_name)?;
         }
     }
 
+    collect_packed_refs_into_map(git_dir, prefix, &mut by_name)?;
+    let base = git_dir.join(prefix);
+    collect_loose_refs_into_map(&base, prefix, git_dir, &mut by_name)?;
+
+    let mut results: Vec<(String, ObjectId)> = by_name.into_iter().collect();
     results.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(results)
 }
@@ -800,11 +802,11 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     pi == pat.len()
 }
 
-fn collect_refs(
+fn collect_loose_refs_into_map(
     dir: &Path,
     prefix: &str,
-    git_dir: &Path,
-    out: &mut Vec<(String, ObjectId)>,
+    resolve_git_dir: &Path,
+    out: &mut HashMap<String, ObjectId>,
 ) -> Result<()> {
     let read = match fs::read_dir(dir) {
         Ok(r) => r,
@@ -818,17 +820,16 @@ fn collect_refs(
         let name_str = name.to_string_lossy();
         let refname = format!("{prefix}{name_str}");
         let path = entry.path();
-        // Follow symlinks: loose refs may be symlinks; `DirEntry::file_type` does not.
         let meta = match fs::metadata(&path) {
             Ok(m) => m,
             Err(_) => continue,
         };
 
         if meta.is_dir() {
-            collect_refs(&path, &format!("{refname}/"), git_dir, out)?;
+            collect_loose_refs_into_map(&path, &format!("{refname}/"), resolve_git_dir, out)?;
         } else if meta.is_file() {
-            if let Ok(oid) = resolve_ref(git_dir, &refname) {
-                out.push((refname, oid))
+            if let Ok(oid) = resolve_ref(resolve_git_dir, &refname) {
+                out.insert(refname, oid);
             }
         }
     }
@@ -867,10 +868,10 @@ pub fn resolve_at_n_branch(git_dir: &Path, spec: &str) -> Result<String> {
     )))
 }
 
-fn collect_packed_refs(
+fn collect_packed_refs_into_map(
     git_dir: &Path,
     prefix: &str,
-    out: &mut Vec<(String, ObjectId)>,
+    out: &mut HashMap<String, ObjectId>,
 ) -> Result<()> {
     let packed_path = git_dir.join("packed-refs");
     let content = match fs::read_to_string(&packed_path) {
@@ -890,7 +891,7 @@ fn collect_packed_refs(
             continue;
         }
         let oid: ObjectId = hash.parse()?;
-        out.push((refname.to_string(), oid));
+        out.insert(refname.to_string(), oid);
     }
     Ok(())
 }

@@ -140,6 +140,7 @@ pub fn run(args: Args) -> Result<()> {
             all: true,
             prune: true,
             no_prune: false,
+            auto: false,
         })?;
     }
 
