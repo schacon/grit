@@ -463,10 +463,10 @@ pub fn run(mut args: Args) -> Result<()> {
         return run_ssh_clone(args);
     }
 
-    // Detect git:// protocol
+    // Detect git:// protocol (delegate to system git until native transport exists)
     if args.repository.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", None)?;
-        return run_git_clone(args);
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
     }
 
     // Detect http(s):// protocol

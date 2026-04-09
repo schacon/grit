@@ -502,10 +502,7 @@ fn push_to_url(
     }
     let remote_path = if url.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", Some(&repo.git_dir))?;
-        let Some(p) = crate::fetch_transport::try_local_path_for_git_daemon_url(url) else {
-            bail!("git: could not resolve '{}' to a local repository", url);
-        };
-        p
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
     } else if crate::ssh_transport::is_configured_ssh_url(url) {
         crate::protocol::check_protocol_allowed("ssh", Some(&repo.git_dir))?;
         let spec = crate::ssh_transport::parse_ssh_url(url)?;

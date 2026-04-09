@@ -36,6 +36,7 @@ pub mod protocol;
 mod protocol_wire;
 mod ssh_transport;
 mod trace_packet;
+mod transport_passthrough;
 mod wire_trace;
 
 mod upstream_help_builtin_synopsis {
@@ -2216,7 +2217,9 @@ pub(crate) struct GlobalOpts {
 ///
 /// We scan argv[1..] for global flags that appear before the subcommand.
 /// The first non-flag argument is the subcommand name.
-fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<String>)> {
+pub(crate) fn extract_globals(
+    args: &[String],
+) -> Result<(GlobalOpts, Option<String>, Vec<String>)> {
     let mut opts = GlobalOpts::default();
     let mut subcmd = None;
     let mut rest = Vec::new();
