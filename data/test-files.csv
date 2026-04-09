@@ -515,7 +515,7 @@ t2108-update-index-refresh-racy	t2	yes	6	0	6	false	ok	0
 t2200-add-update	t2	yes	19	19	0	true	ok	0
 t2201-add-update-typechange	t2	yes	6	2	4	false	ok	0
 t2202-add-addremove	t2	yes	3	3	0	true	ok	0
-t2203-add-intent	t2	yes	19	14	5	false	ok	0
+t2203-add-intent	t2	yes	19	19	0	true	ok	0
 t2204-add-ignored	t2	yes	47	47	0	true	ok	0
 t2205-add-worktree-config	t2	skip	13	5	8	false	ok	0
 t2206-add-submodule-ignored	t2	yes	8	3	5	false	ok	0

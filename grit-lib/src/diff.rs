@@ -642,6 +642,8 @@ pub fn diff_index_to_worktree(
                         new_path: Some(path_str_ref.to_owned()),
                         old_mode: "000000".to_owned(),
                         new_mode: format_mode(worktree_mode),
+                        // `ita_invisible_in_index`: null OID on the index side for patch output
+                        // (`index 0000000..`, t2203); index entry still stores the empty blob.
                         old_oid: zero_oid(),
                         new_oid: worktree_oid,
                         score: None,
@@ -657,7 +659,7 @@ pub fn diff_index_to_worktree(
                         new_path: None,
                         old_mode: format_mode(ie.mode),
                         new_mode: "000000".to_owned(),
-                        old_oid: empty_blob_oid(),
+                        old_oid: ie.oid,
                         new_oid: zero_oid(),
                         score: None,
                     });
@@ -1680,8 +1682,8 @@ pub fn format_rename_path(old: &str, new: &str) -> String {
         let suffix_bytes = &ob[sfx_at_old..];
         let mut new_sfx = 0;
         // Find the next '/' after sfx_at_old (i.e., reduce suffix).
-        for i in 1..suffix_bytes.len() {
-            if suffix_bytes[i] == b'/' {
+        for (i, &b) in suffix_bytes.iter().enumerate().skip(1) {
+            if b == b'/' {
                 new_sfx = sfx - i;
                 break;
             }
@@ -1874,6 +1876,7 @@ pub fn unified_diff(
 ///
 /// `inter_hunk_context` is Git's `--inter-hunk-context`: adjacent hunks merge when
 /// the unchanged gap between them is at most `2 * context_lines + inter_hunk_context` lines.
+#[allow(clippy::too_many_arguments)] // Mirrors Git-style unified diff parameters.
 pub fn unified_diff_with_prefix(
     old_content: &str,
     new_content: &str,
@@ -1899,6 +1902,7 @@ pub fn unified_diff_with_prefix(
 
 /// Same as [`unified_diff_with_prefix`] with optional custom hunk-header
 /// function-name matching.
+#[allow(clippy::too_many_arguments)]
 pub fn unified_diff_with_prefix_and_funcname(
     old_content: &str,
     new_content: &str,
@@ -1926,6 +1930,7 @@ pub fn unified_diff_with_prefix_and_funcname(
 
 /// Same as [`unified_diff_with_prefix_and_funcname`] but allows callers to
 /// choose the line diff algorithm used for hunk generation.
+#[allow(clippy::too_many_arguments)]
 pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
     old_content: &str,
     new_content: &str,
@@ -2068,7 +2073,7 @@ pub fn anchored_unified_diff(
     // (longest increasing subsequence of new positions)
     let mut filtered: Vec<(usize, usize)> = Vec::new();
     for &pair in &anchor_pairs {
-        if filtered.is_empty() || pair.1 > filtered.last().unwrap().1 {
+        if filtered.is_empty() || filtered.last().is_some_and(|last| pair.1 > last.1) {
             filtered.push(pair);
         }
     }

@@ -1182,11 +1182,16 @@ fn format_porcelain_v2(
 
         if let Some(ie) = index_e {
             if ie.intent_to_add() {
-                mode_index = 0;
-                oid_index = ObjectId::zero();
-                if head_map.get(path).is_none() {
-                    mode_head = 0;
-                    oid_head = ObjectId::zero();
+                let ita_rename = unstaged_e.is_some_and(|ue| {
+                    matches!(ue.status, DiffStatus::Renamed | DiffStatus::Copied)
+                });
+                if !ita_rename {
+                    mode_index = 0;
+                    oid_index = ObjectId::zero();
+                    if head_map.get(path).is_none() {
+                        mode_head = 0;
+                        oid_head = ObjectId::zero();
+                    }
                 }
             }
         }
@@ -1251,22 +1256,49 @@ fn format_porcelain_v2(
 
         let qpath = quote_status_path(path, config, nul);
 
+        let v2_rename_line = |e: &grit_lib::diff::DiffEntry| -> String {
+            let old_p = e.old_path.as_deref().unwrap_or("");
+            let qold = quote_status_path(old_p, config, nul);
+            let score = e.score.unwrap_or(100);
+            let rch = if e.status == DiffStatus::Renamed {
+                'R'
+            } else {
+                'C'
+            };
+            let rename_token = format!("{rch}{score}");
+            let sep = if nul { '\0' } else { '\t' };
+            let sp = " ";
+            let (oh, oi) = if index_e.is_some_and(|ie| ie.intent_to_add())
+                && matches!(e.status, DiffStatus::Renamed | DiffStatus::Copied)
+            {
+                // t2203: expect `$(git hash-object <path>)` for both OIDs on i-t-a renames.
+                (e.new_oid, e.new_oid)
+            } else {
+                (oid_head, oid_index)
+            };
+            format!(
+                "2 {} {} {:06o} {:06o} {:06o} {} {} {}{}{}{}{}",
+                key,
+                sub,
+                mode_head,
+                mode_index,
+                mode_wt,
+                oh.to_hex(),
+                oi.to_hex(),
+                rename_token,
+                sp,
+                qpath,
+                sep,
+                qold,
+            )
+        };
+
         let line = if let Some(se) = staged_e {
             if se.status == DiffStatus::Renamed || se.status == DiffStatus::Copied {
-                let old_p = se.old_path.as_deref().unwrap_or("");
-                let qold = quote_status_path(old_p, config, nul);
-                let score = se.score.unwrap_or(100);
-                let rch = if se.status == DiffStatus::Renamed {
-                    'R'
-                } else {
-                    'C'
-                };
-                let rename_token = format!("{rch}{score}");
-                let sep = if nul { '\0' } else { '\t' };
-                // Git always prints a space after `R100` / `Cnn` before the first path, including in `-z` mode.
-                let sp = " ";
+                v2_rename_line(se)
+            } else {
                 format!(
-                    "2 {} {} {:06o} {:06o} {:06o} {} {} {}{}{}{}{}",
+                    "1 {} {} {:06o} {:06o} {:06o} {} {} {}",
                     key,
                     sub,
                     mode_head,
@@ -1274,12 +1306,12 @@ fn format_porcelain_v2(
                     mode_wt,
                     oid_head.to_hex(),
                     oid_index.to_hex(),
-                    rename_token,
-                    sp,
                     qpath,
-                    sep,
-                    qold,
                 )
+            }
+        } else if let Some(ue) = unstaged_e {
+            if ue.status == DiffStatus::Renamed || ue.status == DiffStatus::Copied {
+                v2_rename_line(ue)
             } else {
                 format!(
                     "1 {} {} {:06o} {:06o} {:06o} {} {} {}",
@@ -2358,12 +2390,15 @@ fn format_long(
         }
         for entry in &unstaged_normal {
             let label = match entry.status {
+                DiffStatus::Added => "new file",
                 DiffStatus::Deleted => "deleted",
                 DiffStatus::Modified => "modified",
+                DiffStatus::Renamed => "renamed",
+                DiffStatus::Copied => "copied",
                 DiffStatus::TypeChanged => "typechange",
                 _ => "changed",
             };
-            cpw(out, cp, &format!("\t{label}:   {}", entry.path()))?;
+            cpw(out, cp, &format!("\t{label}:   {}", entry.display_path()))?;
         }
         cpw(out, cp, "")?;
     }

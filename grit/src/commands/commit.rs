@@ -1526,7 +1526,7 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
                 .entries
                 .iter()
                 .find(|e| e.path == *raw_path)
-                .is_some_and(|e| e.oid == oid)
+                .is_some_and(|e| !e.intent_to_add() && e.oid == oid)
             {
                 continue;
             }

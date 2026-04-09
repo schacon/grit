@@ -6,8 +6,9 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
-    count_changes, detect_copies, format_stat_line, rewrite_dissimilarity_index_percent,
-    should_break_rewrite_for_stat, stat_matches, unified_diff, zero_oid, DiffEntry, DiffStatus,
+    count_changes, detect_copies, empty_blob_oid, format_stat_line,
+    rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat, stat_matches, unified_diff,
+    zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
@@ -180,7 +181,7 @@ pub fn run(mut args: Args) -> Result<()> {
             }
             OutputFormat::Patch => {
                 for entry in &diff_entries {
-                    print_patch_from_diff_entry(entry, &repo, &work_tree)?;
+                    print_patch_from_diff_entry(entry, &repo, &work_tree, options.abbrev)?;
                 }
             }
             OutputFormat::Stat => {
@@ -372,6 +373,8 @@ struct Change {
     old_oid: ObjectId,
     /// Working-tree blob OID (hashed content); zero when unknown or deleted from worktree.
     new_oid: ObjectId,
+    /// `git add -N`: emit [`DiffStatus::Added`] with null index OID (t2203).
+    intent_to_add: bool,
 }
 
 // ── Option parsing ───────────────────────────────────────────────────
@@ -631,7 +634,7 @@ fn collect_changes(
                     // Content and mode match the index: treat as clean even if the index entry
                     // was created without racily-clean stat data (e.g. `git apply --index`,
                     // `git am`). Smudged stat metadata alone must not imply a diff-files hit.
-                    if wt_oid != *idx_oid || wt_mode != idx_canonical {
+                    if wt_oid != *idx_oid || wt_mode != idx_canonical || idx_entry.intent_to_add() {
                         // Detect type changes (e.g., symlink ↔ regular, regular ↔ submodule)
                         let status = if mode_type(idx_canonical) != mode_type(wt_mode) {
                             'T'
@@ -647,6 +650,7 @@ fn collect_changes(
                                 new_mode: wt_mode,
                                 old_oid: *idx_oid,
                                 new_oid: wt_oid,
+                                intent_to_add: idx_entry.intent_to_add(),
                             },
                         );
                     }
@@ -662,6 +666,7 @@ fn collect_changes(
                             new_mode: 0,
                             old_oid: *idx_oid,
                             new_oid: zero_oid(),
+                            intent_to_add: idx_entry.intent_to_add(),
                         },
                     );
                 }
@@ -685,6 +690,7 @@ fn collect_changes(
                     new_mode: 0,
                     old_oid: zero_oid(),
                     new_oid: zero_oid(),
+                    intent_to_add: false,
                 },
             );
         }
@@ -706,6 +712,7 @@ fn collect_changes(
                             new_mode: wt_mode,
                             old_oid: *idx_oid,
                             new_oid: wt_oid,
+                            intent_to_add: false,
                         },
                     );
                 }
@@ -719,6 +726,7 @@ fn collect_changes(
                             new_mode: 0,
                             old_oid: *idx_oid,
                             new_oid: zero_oid(),
+                            intent_to_add: false,
                         },
                     );
                 }
@@ -734,6 +742,19 @@ fn collect_changes(
 }
 
 fn change_to_diff_entry(c: &Change) -> DiffEntry {
+    if c.intent_to_add && c.status == 'M' {
+        let new_mode_str = format!("{:06o}", c.new_mode);
+        return DiffEntry {
+            status: DiffStatus::Added,
+            old_path: None,
+            new_path: Some(c.path.clone()),
+            old_mode: "000000".to_owned(),
+            new_mode: new_mode_str,
+            old_oid: zero_oid(),
+            new_oid: c.new_oid,
+            score: None,
+        };
+    }
     let old_mode_str = format!("{:06o}", c.old_mode);
     let new_mode_str = format!("{:06o}", c.new_mode);
     match c.status {
@@ -861,10 +882,17 @@ fn format_oid_for_raw(
     }
 }
 
+fn abbrev_oid_for_patch(oid: &ObjectId, abbrev: Option<usize>) -> String {
+    let hex = oid.to_hex();
+    let len = abbrev.unwrap_or(7).clamp(4, hex.len());
+    hex[..len].to_owned()
+}
+
 fn print_patch_from_diff_entry(
     entry: &DiffEntry,
     repo: &Repository,
     work_tree: &Path,
+    abbrev: Option<usize>,
 ) -> Result<()> {
     let (old_content, new_content) = load_patch_contents_for_diff_entry(entry, repo, work_tree)?;
     let old_path = entry
@@ -893,6 +921,17 @@ fn print_patch_from_diff_entry(
         }
         DiffStatus::Added => {
             header.push_str(&format!("\nnew file mode {}", entry.new_mode));
+            let new_for_index = if entry.old_oid == zero_oid() && entry.new_oid == empty_blob_oid()
+            {
+                empty_blob_oid()
+            } else {
+                entry.new_oid
+            };
+            header.push_str(&format!(
+                "\nindex {}..{}",
+                abbrev_oid_for_patch(&entry.old_oid, abbrev),
+                abbrev_oid_for_patch(&new_for_index, abbrev),
+            ));
         }
         DiffStatus::Renamed => {
             let sim = entry.score.unwrap_or(100);
@@ -1102,6 +1141,34 @@ fn read_worktree_info_fast(
     };
 
     let _ = repo;
+
+    // Intent-to-add: `ie_match_stat` in Git always reports dirty until fully staged.
+    // Never treat as unchanged from stat alone (t2203 `git diff-files` vs `git diff`).
+    if index_entry.intent_to_add() {
+        if meta.file_type().is_symlink() {
+            let target = fs::read_link(abs_path)?;
+            let oid = Odb::hash_object_data(ObjectKind::Blob, target.as_os_str().as_bytes());
+            return Ok(WorktreeStatus::Modified(MODE_SYMLINK, oid));
+        }
+        if meta.file_type().is_file() {
+            let mode = if meta.permissions().mode() & 0o111 != 0 {
+                MODE_EXECUTABLE
+            } else {
+                MODE_REGULAR
+            };
+            let data = fs::read(abs_path)?;
+            let oid = Odb::hash_object_data(ObjectKind::Blob, &data);
+            return Ok(WorktreeStatus::Modified(mode, oid));
+        }
+        if meta.file_type().is_dir() {
+            let dot_git = abs_path.join(".git");
+            if dot_git.exists() {
+                let sub_oid = read_submodule_head(abs_path).unwrap_or(index_entry.oid);
+                return Ok(WorktreeStatus::Modified(0o160000, sub_oid));
+            }
+        }
+        return Ok(WorktreeStatus::Missing);
+    }
 
     // Fast path: if stat info matches the index, file is unchanged.
     // But also check if the index mode differs from the worktree mode

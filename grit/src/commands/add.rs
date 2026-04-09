@@ -1392,6 +1392,9 @@ pub(crate) fn stage_file(
         } else {
             0o100644 // When core.filemode=false, default to regular
         };
+        let empty_oid = odb
+            .write(ObjectKind::Blob, b"")
+            .with_context(|| format!("writing empty blob for intent-to-add '{rel_path}'"))?;
         let mut entry = IndexEntry {
             ctime_sec: meta.ctime() as u32,
             ctime_nsec: meta.ctime_nsec() as u32,
@@ -1403,7 +1406,7 @@ pub(crate) fn stage_file(
             uid: meta.uid(),
             gid: meta.gid(),
             size: 0,
-            oid: ObjectId::zero(),
+            oid: empty_oid,
             flags: rel_path.len().min(0xFFF) as u16,
             flags_extended: None,
             path: rel_path.as_bytes().to_vec(),
