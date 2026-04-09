@@ -10,6 +10,7 @@ use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::zero_oid;
 use grit_lib::error::Error as LibError;
+use grit_lib::ident::fsck_commit_idents;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pack::read_local_pack_indexes;
@@ -187,6 +188,11 @@ pub fn run(args: Args) -> Result<()> {
     if !connectivity_only {
         let git_dir = repo.git_dir.as_path();
         for (oid, path) in &loose_pairs {
+            // Objects reached in the walk were already content-checked; skip to avoid duplicate
+            // diagnostics (e.g. t4212 expects one `git fsck` line per bad commit).
+            if walked_kinds.contains(oid) {
+                continue;
+            }
             validate_loose_object_file(git_dir, path, oid, &mut issues);
         }
         for oid in &all_objects {
@@ -584,11 +590,11 @@ fn validate_object(odb: &Odb, oid: &ObjectId, issues: &mut Vec<Issue>) {
 fn validate_object_data(oid: &ObjectId, kind: &ObjectKind, data: &[u8], issues: &mut Vec<Issue>) {
     match kind {
         ObjectKind::Commit => {
-            if let Err(e) = parse_commit(data) {
+            if let Err(msg) = fsck_commit_idents(data) {
                 issues.push(Issue::BadObject {
                     oid: *oid,
                     kind: *kind,
-                    reason: format!("invalid commit: {e}"),
+                    reason: msg,
                 });
             }
         }

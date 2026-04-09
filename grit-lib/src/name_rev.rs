@@ -12,6 +12,7 @@
 //! - Second or later parent of a merge: `<refname>^2`, `<refname>~3^2`, etc.
 
 use crate::error::{Error, Result};
+use crate::ident::committer_unix_seconds_for_ordering;
 use crate::objects::{parse_commit, parse_tag, CommitData, ObjectId, ObjectKind};
 use crate::refs;
 use crate::repo::Repository;
@@ -545,13 +546,7 @@ fn glob_match_inner(pat: &[char], txt: &[char]) -> bool {
 /// the second-to-last whitespace-delimited token parsed as an `i64`, or `0`
 /// on parse failure.
 pub(crate) fn parse_signature_time(sig: &str) -> i64 {
-    let parts: Vec<&str> = sig.split_whitespace().collect();
-    if parts.len() < 2 {
-        return 0;
-    }
-    parts[parts.len().saturating_sub(2)]
-        .parse::<i64>()
-        .unwrap_or(0)
+    committer_unix_seconds_for_ordering(sig)
 }
 
 /// Load and parse a commit object, using a cache to avoid re-reading.
