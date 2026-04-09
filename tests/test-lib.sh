@@ -1233,12 +1233,17 @@ test_eval_ () {
 test_run_ () {
 	test_cleanup=:
 	expecting_failure=$2
-	test_eval_ "$1"
+	# Each test body starts from the trash root. A prior test may have left the
+	# shell cwd inside a subdirectory (e.g. after `cd repo`), so relative paths
+	# like `cd repo` in the next test would otherwise resolve incorrectly.
+	_body=$(printf '%s\n%s\n' "cd \"$TRASH_DIRECTORY\" || exit 1" "$1")
+	test_eval_ "$_body"
 	eval_ret=$?
 	if test -z "$immediate" || test "$eval_ret" -eq 0 ||
 		{ test -n "$expecting_failure" && test "$test_cleanup" != ":"; }
 	then
-		test_eval_ "$test_cleanup"
+		_cleanup=$(printf '%s\n%s\n' "cd \"$TRASH_DIRECTORY\" || exit 1" "$test_cleanup")
+		test_eval_ "$_cleanup"
 	fi
 	return "$eval_ret"
 }
