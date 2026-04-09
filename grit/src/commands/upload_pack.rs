@@ -181,17 +181,23 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    let thin = !client_have_commits.is_empty();
-    let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(&repo.git_dir, thin)?;
-    {
-        let mut pin = child.stdin.take().context("pack-objects stdin")?;
-        crate::pack_objects_upload::write_pack_objects_revs_stdin(
-            &mut pin,
-            &want_unique,
-            &client_have_commits,
-        )?;
+    let already_have_all = want_unique.iter().all(|w| client_known.contains(w));
+    if already_have_all {
+        let pack = crate::pack_objects_upload::empty_packfile_v2_bytes();
+        crate::pack_objects_upload::write_sideband_64k(&mut out, &pack)?;
+    } else {
+        let thin = !client_have_commits.is_empty();
+        let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(&repo.git_dir, thin)?;
+        {
+            let mut pin = child.stdin.take().context("pack-objects stdin")?;
+            crate::pack_objects_upload::write_pack_objects_revs_stdin(
+                &mut pin,
+                &want_unique,
+                &client_have_commits,
+            )?;
+        }
+        crate::pack_objects_upload::drain_pack_objects_child(child, &mut out, true)?;
     }
-    crate::pack_objects_upload::drain_pack_objects_child(child, &mut out, true)?;
 
     pkt_line::write_flush(&mut out)?;
     out.flush()?;
@@ -209,18 +215,13 @@ fn merge_ancestors_into(
 }
 
 fn ok_to_give_up(
-    repo: &Repository,
+    _repo: &Repository,
     wants: &HashSet<ObjectId>,
     client_known: &HashSet<ObjectId>,
 ) -> bool {
-    if client_known.is_empty() {
-        return false;
-    }
-    wants.iter().all(|w| {
-        client_known
-            .iter()
-            .any(|h| merge_base::is_ancestor(repo, *h, *w).unwrap_or(false))
-    })
+    // Match `upload-pack.c` `ok_to_give_up`: we can stop when the client already has every wanted
+    // commit (not merely an ancestor of each want).
+    !client_known.is_empty() && wants.iter().all(|w| client_known.contains(w))
 }
 
 fn write_ref_advertisement(w: &mut impl Write, git_dir: &Path) -> Result<()> {
@@ -329,9 +330,18 @@ fn list_all_refs(git_dir: &Path) -> Result<Vec<(String, ObjectId)>> {
 
 /// Open a repository (bare or non-bare).
 fn open_repo(path: &Path) -> Result<Repository> {
+    if path.is_file() {
+        let work_tree = path.parent().map(std::path::Path::to_path_buf);
+        let git_dir = grit_lib::repo::resolve_dot_git(path)?;
+        return Repository::open(&git_dir, work_tree.as_deref()).map_err(Into::into);
+    }
     if let Ok(repo) = Repository::open(path, None) {
         return Ok(repo);
     }
-    let git_dir = path.join(".git");
-    Repository::open(&git_dir, Some(path)).map_err(Into::into)
+    let dot_git = path.join(".git");
+    if dot_git.is_file() {
+        let resolved = grit_lib::repo::resolve_dot_git(&dot_git)?;
+        return Repository::open(&resolved, Some(path)).map_err(Into::into);
+    }
+    Repository::open(&dot_git, Some(path)).map_err(Into::into)
 }

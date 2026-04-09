@@ -573,12 +573,10 @@ fn fetch_remote(
     };
 
     if crate::ssh_transport::is_configured_ssh_url(&url) {
-        if let Some(ref remote_repo) = remote_repo {
+        if remote_repo.is_some() {
             if let Ok(spec) = crate::ssh_transport::parse_ssh_url(&url) {
-                let _ = crate::ssh_transport::record_fake_ssh_line(
-                    &spec.host,
-                    "git-upload-pack",
-                    &crate::ssh_transport::ssh_remote_repo_path_for_display(&remote_repo.git_dir),
+                let _ = crate::ssh_transport::record_resolved_git_ssh_upload_pack_for_tests(
+                    &spec, None, false, false,
                 );
             }
         }
@@ -2803,11 +2801,20 @@ fn collect_remote_names(config: &ConfigSet) -> Vec<String> {
 
 /// Open a repository (bare or non-bare).
 fn open_repo(path: &Path) -> Result<Repository> {
+    if path.is_file() {
+        let work_tree = path.parent().map(Path::to_path_buf);
+        let git_dir = grit_lib::repo::resolve_dot_git(path)?;
+        return Repository::open(&git_dir, work_tree.as_deref()).map_err(Into::into);
+    }
     if let Ok(repo) = Repository::open(path, None) {
         return Ok(repo);
     }
-    let git_dir = path.join(".git");
-    Repository::open(&git_dir, Some(path)).map_err(Into::into)
+    let dot_git = path.join(".git");
+    if dot_git.is_file() {
+        let resolved = grit_lib::repo::resolve_dot_git(&dot_git)?;
+        return Repository::open(&resolved, Some(path)).map_err(Into::into);
+    }
+    Repository::open(&dot_git, Some(path)).map_err(Into::into)
 }
 
 /// Pre-`remote.*` layout: `.git/remotes/<name>` with `URL:` and `Pull:` lines.

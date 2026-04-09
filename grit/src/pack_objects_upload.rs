@@ -87,7 +87,7 @@ pub fn write_pack_objects_revs_stdin(
     Ok(())
 }
 
-fn write_sideband_64k(w: &mut impl Write, payload: &[u8]) -> io::Result<()> {
+pub(crate) fn write_sideband_64k(w: &mut impl Write, payload: &[u8]) -> io::Result<()> {
     const MAX_PAYLOAD: usize = 65515;
     for chunk in payload.chunks(MAX_PAYLOAD) {
         let len = 4 + 1 + chunk.len();
@@ -96,6 +96,19 @@ fn write_sideband_64k(w: &mut impl Write, payload: &[u8]) -> io::Result<()> {
         w.write_all(chunk)?;
     }
     Ok(())
+}
+
+/// A valid empty PACK v2 (header + SHA1 trailer) for upload-pack when there is nothing to send.
+pub fn empty_packfile_v2_bytes() -> Vec<u8> {
+    use sha1::{Digest, Sha1};
+    let mut buf = Vec::new();
+    buf.extend_from_slice(b"PACK");
+    buf.extend_from_slice(&2u32.to_be_bytes());
+    buf.extend_from_slice(&0u32.to_be_bytes());
+    let mut hasher = Sha1::new();
+    hasher.update(&buf);
+    buf.extend_from_slice(hasher.finalize().as_slice());
+    buf
 }
 
 /// Read pack bytes from `child` and write to `out`, optionally wrapping in side-band-64k (v0).

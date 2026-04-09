@@ -24,6 +24,7 @@ libc = "0.2"
 hungarian = "1.1.1"
 ureq = "2.12"
 icu_normalizer = "2.0.0"
+shell-words = "1.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

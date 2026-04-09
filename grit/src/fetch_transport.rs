@@ -574,10 +574,29 @@ pub fn fetch_via_upload_pack_skipping(
 
     let odb = Odb::new(&local_git_dir.join("objects"));
     if pack_buf.len() > 12 {
+        append_pack_to_git_trace_packfile(&pack_buf)?;
         unpack_objects(&mut pack_buf.as_slice(), &odb, &UnpackOptions::default())?;
     }
 
     Ok((remote_heads, remote_tags, head_symref, head_advertised_oid))
+}
+
+fn append_pack_to_git_trace_packfile(pack: &[u8]) -> anyhow::Result<()> {
+    let Ok(path) = std::env::var("GIT_TRACE_PACKFILE") else {
+        return Ok(());
+    };
+    if path.is_empty() {
+        return Ok(());
+    }
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .with_context(|| format!("GIT_TRACE_PACKFILE: open {}", path))?;
+    f.write_all(pack)
+        .with_context(|| format!("GIT_TRACE_PACKFILE: write {}", path))?;
+    Ok(())
 }
 
 fn fetch_upload_pack_negotiate_pack_bytes(
@@ -607,6 +626,8 @@ fn fetch_upload_pack_negotiate_pack_bytes(
     if pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK" {
         bail!("did not receive a pack file from upload-pack");
     }
+
+    append_pack_to_git_trace_packfile(&pack_buf)?;
 
     Ok(pack_buf)
 }
@@ -957,6 +978,7 @@ pub fn fetch_via_git_protocol_skipping(
 
     let odb = Odb::new(&local_git_dir.join("objects"));
     if pack_buf.len() > 12 {
+        append_pack_to_git_trace_packfile(&pack_buf)?;
         unpack_objects(&mut pack_buf.as_slice(), &odb, &UnpackOptions::default())?;
     }
 

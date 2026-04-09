@@ -690,10 +690,8 @@ fn push_to_url(
 
     if crate::ssh_transport::is_configured_ssh_url(url) {
         if let Ok(spec) = crate::ssh_transport::parse_ssh_url(url) {
-            let _ = crate::ssh_transport::record_fake_ssh_line(
-                &spec.host,
-                "git-receive-pack",
-                &crate::ssh_transport::ssh_remote_repo_path_for_display(&remote_repo.git_dir),
+            let _ = crate::ssh_transport::record_resolved_git_ssh_receive_pack_for_tests(
+                &spec, false, false,
             );
         }
     }
