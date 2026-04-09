@@ -52,7 +52,7 @@ test_expect_success 'rebase --interactive: directory rename detected' '
 	)
 '
 
-test_expect_failure 'rebase --apply: directory rename detected' '
+test_expect_success 'rebase --apply: directory rename detected' '
 	(
 		cd dir-rename &&
 
@@ -84,7 +84,7 @@ test_expect_success 'rebase --merge: directory rename detected' '
 	)
 '
 
-test_expect_failure 'am: directory rename detected' '
+test_expect_success 'am: directory rename detected' '
 	(
 		cd dir-rename &&
 
