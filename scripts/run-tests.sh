@@ -181,7 +181,8 @@ run_one() {
     output=$(
         cd "$TESTS_DIR" &&
             env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE \
-            EDITOR=: VISUAL=: LC_ALL=C LANG=C _prereq_DEFAULT_REPO_FORMAT=set GRIT_TEST_LIB_SUMMARY=1 GUST_BIN="$(pwd)/grit" \
+            EDITOR=: VISUAL=: LC_ALL=C LANG=C _prereq_DEFAULT_REPO_FORMAT=set \
+            GRIT_TEST_LIB_SUMMARY=1 GUST_BIN="$(pwd)/grit" \
             GIT_TEST_BUILTIN_HASH=sha1 \
             GIT_SOURCE_DIR="$REPO/git" \
             GIT_CONFIG_NOSYSTEM=1 \

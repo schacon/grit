@@ -478,8 +478,13 @@ pub fn run(mut args: Args) -> Result<()> {
         if !paths.is_empty() || args.rest.len() > 1 {
             bail!("too many arguments for -B");
         }
-        let result =
-            force_create_and_switch_branch(&repo, force_branch_name, target.as_deref(), args.force);
+        let result = force_create_and_switch_branch(
+            &repo,
+            force_branch_name,
+            target.as_deref(),
+            args.force,
+            args.create_reflog,
+        );
         if result.is_ok() && !args.no_track {
             maybe_setup_tracking(
                 &repo,
@@ -523,8 +528,13 @@ pub fn run(mut args: Args) -> Result<()> {
             None
         };
         let effective_target = target.as_deref().or(pre_head_branch.as_deref());
-        let result =
-            create_and_switch_branch(&repo, new_branch_name, target.as_deref(), switch_force);
+        let result = create_and_switch_branch(
+            &repo,
+            new_branch_name,
+            target.as_deref(),
+            switch_force,
+            args.create_reflog,
+        );
         if result.is_ok() && !args.no_track {
             maybe_setup_tracking(
                 &repo,
@@ -1049,6 +1059,7 @@ fn create_and_switch_branch(
     name: &str,
     start: Option<&str>,
     force: bool,
+    force_branch_reflog: bool,
 ) -> Result<()> {
     validate_new_branch_name(name)?;
     // Check for HEAD.lock (another process is writing)
@@ -1110,6 +1121,17 @@ fn create_and_switch_branch(
     // Create the branch ref
     refs::write_ref(&repo.git_dir, &branch_ref, &start_oid)?;
 
+    if refs::should_autocreate_reflog(&repo.git_dir, &branch_ref) || force_branch_reflog {
+        let start_desc = start.map_or_else(|| "HEAD".to_owned(), str::to_owned);
+        append_branch_created_reflog(
+            repo,
+            &branch_ref,
+            &start_desc,
+            &start_oid,
+            force_branch_reflog,
+        );
+    }
+
     // Write reflog entries
     let old_oid = head
         .oid()
@@ -1140,6 +1162,7 @@ fn force_create_and_switch_branch(
     name: &str,
     start: Option<&str>,
     force: bool,
+    force_branch_reflog: bool,
 ) -> Result<()> {
     validate_new_branch_name(name)?;
     let branch_ref = format!("refs/heads/{name}");
@@ -1257,6 +1280,19 @@ fn force_create_and_switch_branch(
 
     // Create or overwrite the branch ref
     refs::write_ref(&repo.git_dir, &branch_ref, &start_oid)?;
+
+    if !branch_existed
+        && (refs::should_autocreate_reflog(&repo.git_dir, &branch_ref) || force_branch_reflog)
+    {
+        let start_desc = start.map_or_else(|| "HEAD".to_owned(), str::to_owned);
+        append_branch_created_reflog(
+            repo,
+            &branch_ref,
+            &start_desc,
+            &start_oid,
+            force_branch_reflog,
+        );
+    }
 
     // Update HEAD to point to the new branch
     std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
@@ -3946,6 +3982,30 @@ fn resolve_nth_previous_branch(repo: &Repository, n: usize) -> Result<String> {
         }
     }
     bail!("no previous branch found in reflog")
+}
+
+/// Append the first `branch: Created from …` line for a newly created branch ref (`checkout -b`).
+fn append_branch_created_reflog(
+    repo: &Repository,
+    branch_ref: &str,
+    start_desc: &str,
+    tip_oid: &ObjectId,
+    user_requested_reflog: bool,
+) {
+    let identity = resolve_checkout_identity(repo);
+    let msg = format!("branch: Created from {start_desc}");
+    let force_create =
+        user_requested_reflog && !refs::should_autocreate_reflog(&repo.git_dir, branch_ref);
+    let old_zero = zero_oid();
+    let _ = append_reflog(
+        &repo.git_dir,
+        branch_ref,
+        &old_zero,
+        tip_oid,
+        &identity,
+        &msg,
+        force_create,
+    );
 }
 
 fn write_checkout_reflog(
