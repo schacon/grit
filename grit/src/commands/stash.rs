@@ -12,12 +12,13 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::{self, BufRead, Write as IoWrite};
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::diff::{diff_index_to_tree, diff_index_to_worktree};
+use grit_lib::diff::{diff_index_to_tree, diff_index_to_worktree, unified_diff};
 use grit_lib::error::Error;
 use grit_lib::index::{
     entry_from_stat, Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
@@ -123,6 +124,9 @@ pub enum StashCommand {
         /// Keep staged changes in the index.
         #[arg(short = 'k', long = "keep-index")]
         keep_index: bool,
+        /// Revert keep-index (default behavior for patch is keep-index).
+        #[arg(long = "no-keep-index")]
+        no_keep_index: bool,
         /// Also stash untracked files.
         #[arg(short = 'u', long = "include-untracked")]
         include_untracked: bool,
@@ -314,6 +318,7 @@ pub fn run(args: Args) -> Result<()> {
         Some(StashCommand::Save {
             message,
             keep_index,
+            no_keep_index,
             include_untracked,
             patch,
             quiet,
@@ -328,13 +333,14 @@ pub fn run(args: Args) -> Result<()> {
                 }
             });
             let ki = keep_index || args.keep_index;
+            let nki = no_keep_index || args.no_keep_index;
             let iu = include_untracked || args.include_untracked;
             let q = quiet || args.quiet;
             let p = patch || args.patch;
             do_push(PushOpts {
                 message: msg,
                 keep_index: ki,
-                no_keep_index: false,
+                no_keep_index: nki,
                 include_untracked: iu,
                 staged: false,
                 patch: p,
@@ -690,10 +696,15 @@ fn do_push(opts: PushOpts) -> Result<()> {
     };
 
     if opts.patch {
-        if has_pathspec {
-            return super::checkout::checkout_patch(&repo, None, &opts.pathspec);
-        }
-        return super::checkout::checkout_patch(&repo, None, &[]);
+        return do_stash_patch_push(
+            &repo,
+            &work_tree,
+            &head,
+            *head_oid,
+            &index,
+            opts,
+            has_pathspec,
+        );
     }
 
     if has_pathspec {
@@ -764,6 +775,518 @@ fn do_push(opts: PushOpts) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// `git stash push -p` / `stash save -p`: interactive selection against **HEAD** (like Git's
+/// `diff-index HEAD`), then build the stash commit and reverse-apply the stashed patch to the
+/// worktree (and optionally reset the index).
+fn do_stash_patch_push(
+    repo: &Repository,
+    work_tree: &Path,
+    head: &HeadState,
+    head_oid: ObjectId,
+    index: &Index,
+    opts: PushOpts,
+    has_pathspec: bool,
+) -> Result<()> {
+    use similar::{Algorithm, TextDiff};
+
+    let head_obj = repo.odb.read(&head_oid)?;
+    let head_commit = parse_commit(&head_obj.data)?;
+    let head_tree_entries = flatten_tree_full(&repo.odb, &head_commit.tree, "")?;
+    let head_flat_map: BTreeMap<String, &FlatTreeEntry> = head_tree_entries
+        .iter()
+        .map(|e| (e.path.clone(), e))
+        .collect();
+
+    let staged = diff_index_to_tree(&repo.odb, index, Some(&head_commit.tree))?;
+    let unstaged = diff_index_to_worktree(&repo.odb, index, work_tree)?;
+
+    let mut candidate_paths: BTreeSet<String> = BTreeSet::new();
+    for e in &staged {
+        if let Some(p) = e.new_path.as_ref().or(e.old_path.as_ref()) {
+            if has_pathspec && !matches_pathspec(p, &opts.pathspec) {
+                continue;
+            }
+            candidate_paths.insert(p.clone());
+        }
+    }
+    for e in &unstaged {
+        if let Some(p) = e.new_path.as_ref().or(e.old_path.as_ref()) {
+            if has_pathspec && !matches_pathspec(p, &opts.pathspec) {
+                continue;
+            }
+            candidate_paths.insert(p.clone());
+        }
+    }
+
+    let mut shadow_by_path: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut work_by_path: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+
+    for path in &candidate_paths {
+        let head_content: Vec<u8> = if let Some(te) = head_flat_map.get(path) {
+            if te.mode == MODE_SYMLINK {
+                continue;
+            }
+            let b = repo.odb.read(&te.oid)?;
+            if b.kind != ObjectKind::Blob {
+                continue;
+            }
+            b.data.clone()
+        } else {
+            Vec::new()
+        };
+        let abs = work_tree.join(path);
+        let work_content = if abs.exists() {
+            fs::read(&abs).with_context(|| format!("reading {path}"))?
+        } else {
+            Vec::new()
+        };
+        if work_content == head_content {
+            continue;
+        }
+        shadow_by_path.insert(path.clone(), head_content);
+        work_by_path.insert(path.clone(), work_content);
+    }
+
+    if shadow_by_path.is_empty() {
+        if !opts.quiet {
+            eprintln!("No local changes to save");
+        }
+        return Ok(());
+    }
+
+    let stdin = io::stdin();
+    let mut reader = stdin.lock();
+    let mut out = io::stdout();
+
+    let paths: Vec<String> = shadow_by_path.keys().cloned().collect();
+    // Per-path worktree content after stashing (what remains on disk).
+    let mut post_wt: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    // Per-path blob stored in the stash commit's tree for that path.
+    let mut stash_tree_blob: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut any_hunk_marked_stash = false;
+
+    for path in paths {
+        let Some(head_content) = shadow_by_path.get(&path).cloned() else {
+            continue;
+        };
+        let Some(mut cur_work) = work_by_path.get(&path).cloned() else {
+            continue;
+        };
+
+        'file_pass: loop {
+            let head_str = String::from_utf8_lossy(&head_content);
+            let work_str = String::from_utf8_lossy(&cur_work);
+            let text_diff = TextDiff::configure()
+                .algorithm(Algorithm::Myers)
+                .diff_lines(head_str.as_ref(), work_str.as_ref());
+            let ops: Vec<_> = text_diff.ops().to_vec();
+
+            let has_change = ops
+                .iter()
+                .any(|o| !matches!(o, similar::DiffOp::Equal { .. }));
+            if !has_change {
+                post_wt.insert(path.clone(), cur_work.clone());
+                stash_tree_blob.insert(path.clone(), head_content.clone());
+                break 'file_pass;
+            }
+
+            let n_ops = ops.len();
+            let mut hunk_ranges: Vec<(usize, usize)> = vec![(0, n_ops)];
+
+            let mut accepted = vec![false; hunk_ranges.len()];
+            let mut hunk_cursor = 0usize;
+
+            'hunk_loop: loop {
+                let n_hunks = hunk_ranges.len();
+                if hunk_cursor >= n_hunks {
+                    break;
+                }
+
+                let display_idx = hunk_cursor + 1;
+                let (s, e) = hunk_ranges[hunk_cursor];
+                let hunk_only = partial_unified_for_op_range(
+                    path.as_str(),
+                    &head_content,
+                    &cur_work,
+                    &ops[s..e],
+                    3,
+                );
+
+                writeln!(out, "diff --git a/{path} b/{path}").ok();
+                write!(out, "--- a/{path}\n+++ b/{path}\n").ok();
+                write!(out, "{hunk_only}").ok();
+                write!(
+                    out,
+                    "({display_idx}/{n_hunks}) Stash this hunk [y,n,q,a,d,s,e,?]? "
+                )
+                .ok();
+                out.flush().ok();
+
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    // Match Git: EOF while prompting aborts the stash (tests pipe exact answers).
+                    std::process::exit(1);
+                }
+                let answer = line.trim();
+                match answer {
+                    "y" | "Y" => {
+                        accepted[hunk_cursor] = true;
+                        any_hunk_marked_stash = true;
+                        hunk_cursor += 1;
+                    }
+                    "n" | "N" => {
+                        hunk_cursor += 1;
+                    }
+                    "a" | "A" => {
+                        any_hunk_marked_stash = true;
+                        for j in hunk_cursor..n_hunks {
+                            accepted[j] = true;
+                        }
+                        break 'hunk_loop;
+                    }
+                    "d" | "D" => {
+                        break 'hunk_loop;
+                    }
+                    "q" | "Q" => {
+                        std::process::exit(1);
+                    }
+                    "s" | "S" => {
+                        if !split_hunk_at_first_gap(&mut hunk_ranges, hunk_cursor, &ops) {
+                            continue 'hunk_loop;
+                        }
+                        let n = hunk_ranges.len();
+                        accepted.resize(n, false);
+                        if hunk_cursor >= n {
+                            hunk_cursor = n.saturating_sub(1);
+                        }
+                    }
+                    "e" | "E" => {
+                        if let Ok(edited) = edit_bytes_tempfile(&cur_work) {
+                            cur_work = edited;
+                            continue 'file_pass;
+                        }
+                    }
+                    "?" => {
+                        writeln!(
+                            out,
+                            "y - stash this hunk\n\
+                             n - do not stash this hunk\n\
+                             q - quit; do not stash this hunk or any of the remaining ones\n\
+                             a - stash this hunk and all later hunks in the file\n\
+                             d - do not stash this hunk or any of the later hunks in the file\n\
+                             s - split the current hunk into smaller hunks\n\
+                             e - manually edit the current file and re-diff\n"
+                        )
+                        .ok();
+                        out.flush().ok();
+                    }
+                    _ => {}
+                }
+            }
+
+            let post = super::checkout::blend_line_diff_by_hunk_ranges(
+                &head_content,
+                &cur_work,
+                &hunk_ranges,
+                &accepted,
+            );
+            let stash_accepted: Vec<bool> = accepted.iter().map(|a| !*a).collect();
+            let stash_content = super::checkout::blend_line_diff_by_hunk_ranges(
+                &head_content,
+                &cur_work,
+                &hunk_ranges,
+                &stash_accepted,
+            );
+            post_wt.insert(path.clone(), post.into_bytes());
+            stash_tree_blob.insert(path, stash_content.into_bytes());
+            break 'file_pass;
+        }
+    }
+
+    if !any_hunk_marked_stash {
+        if !opts.quiet {
+            eprintln!("No changes selected");
+        }
+        std::process::exit(1);
+    }
+
+    let mut wt_index = build_index_from_tree(&repo.odb, &head_tree_entries)?;
+    for (path, content) in &stash_tree_blob {
+        let path_bytes = path.as_bytes();
+        if content.is_empty() {
+            wt_index.remove(path_bytes);
+            continue;
+        }
+        let blob_oid = repo.odb.write(ObjectKind::Blob, content)?;
+        let abs = work_tree.join(path);
+        let mode = if abs.exists() {
+            let meta = fs::metadata(&abs)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if meta.permissions().mode() & 0o111 != 0 {
+                    MODE_EXECUTABLE
+                } else {
+                    MODE_REGULAR
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = meta;
+                MODE_REGULAR
+            }
+        } else {
+            MODE_REGULAR
+        };
+        wt_index.add_or_replace(IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode,
+            uid: 0,
+            gid: 0,
+            size: content.len() as u32,
+            oid: blob_oid,
+            flags: 0,
+            flags_extended: None,
+            path: path_bytes.to_vec(),
+        });
+    }
+
+    let now = OffsetDateTime::now_utc();
+    let identity = resolve_identity(repo, now)?;
+    let index_tree_oid = write_tree_from_index(&repo.odb, index, "")?;
+    let index_commit_data = CommitData {
+        tree: index_tree_oid,
+        parents: vec![head_oid],
+        author: identity.clone(),
+        committer: identity.clone(),
+        encoding: None,
+        message: format!("index on {}\n", branch_description(head)),
+        raw_message: None,
+    };
+    let index_commit_oid = repo
+        .odb
+        .write(ObjectKind::Commit, &serialize_commit(&index_commit_data))?;
+    let wt_tree_oid = write_tree_from_index(&repo.odb, &wt_index, "")?;
+    let stash_msg = stash_save_msg(head, opts.message.as_deref());
+    let stash_commit = CommitData {
+        tree: wt_tree_oid,
+        parents: vec![head_oid, index_commit_oid],
+        author: identity.clone(),
+        committer: identity.clone(),
+        encoding: None,
+        message: stash_msg.clone(),
+        raw_message: None,
+    };
+    let stash_oid = repo
+        .odb
+        .write(ObjectKind::Commit, &serialize_commit(&stash_commit))?;
+
+    for (path, bytes) in &post_wt {
+        let abs = work_tree.join(path);
+        if bytes.is_empty() {
+            let _ = fs::remove_file(&abs);
+            if let Some(parent) = abs.parent() {
+                remove_empty_dirs(parent, work_tree);
+            }
+        } else {
+            if let Some(parent) = abs.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&abs, bytes)?;
+        }
+    }
+
+    let effective_keep_index = !opts.no_keep_index;
+    if effective_keep_index {
+        // With `--keep-index`, Git only reverses the stashed patch on the worktree (`apply -R`);
+        // it does **not** run `checkout` from the index (that would overwrite unstaged results).
+    } else {
+        let mut new_index = index.clone();
+        for path in post_wt.keys() {
+            let path_bytes = path.as_bytes();
+            if let Some(te) = head_flat_map.get(path) {
+                let blob = repo.odb.read(&te.oid)?;
+                if let Some(ie) = new_index.get_mut(path_bytes, 0) {
+                    ie.oid = te.oid;
+                    ie.mode = te.mode;
+                } else {
+                    new_index.add_or_replace(IndexEntry {
+                        ctime_sec: 0,
+                        ctime_nsec: 0,
+                        mtime_sec: 0,
+                        mtime_nsec: 0,
+                        dev: 0,
+                        ino: 0,
+                        mode: te.mode,
+                        uid: 0,
+                        gid: 0,
+                        size: blob.data.len() as u32,
+                        oid: te.oid,
+                        flags: 0,
+                        flags_extended: None,
+                        path: path_bytes.to_vec(),
+                    });
+                }
+            } else {
+                new_index.remove(path_bytes);
+            }
+        }
+        repo.write_index(&mut new_index)?;
+    }
+
+    update_stash_ref(
+        repo,
+        &stash_oid,
+        &stash_reflog_msg(head, opts.message.as_deref()),
+    )?;
+
+    if !opts.quiet {
+        // Match Git: this line goes to stdout so `git stash -p 2>error` stays stderr-clean
+        // (t3904).
+        println!(
+            "Saved working directory and index state {}",
+            stash_msg.trim_end_matches('\n')
+        );
+    }
+
+    Ok(())
+}
+
+/// Build unified hunk text (`@@` …) for a slice of Myers line-diff ops (HEAD vs current worktree).
+fn partial_unified_for_op_range(
+    path: &str,
+    head_bytes: &[u8],
+    work_bytes: &[u8],
+    op_slice: &[similar::DiffOp],
+    context: usize,
+) -> String {
+    let head_str = String::from_utf8_lossy(head_bytes);
+    let work_str = String::from_utf8_lossy(work_bytes);
+    let head_lines: Vec<&str> = head_str.lines().collect();
+    let work_lines: Vec<&str> = work_str.lines().collect();
+
+    let mut old_partial = String::new();
+    let mut new_partial = String::new();
+    for op in op_slice {
+        match *op {
+            similar::DiffOp::Equal { old_index, len, .. } => {
+                for j in 0..len {
+                    let line = head_lines[old_index + j];
+                    old_partial.push_str(line);
+                    old_partial.push('\n');
+                    new_partial.push_str(line);
+                    new_partial.push('\n');
+                }
+            }
+            similar::DiffOp::Delete {
+                old_index, old_len, ..
+            } => {
+                for j in 0..old_len {
+                    old_partial.push_str(head_lines[old_index + j]);
+                    old_partial.push('\n');
+                }
+            }
+            similar::DiffOp::Insert {
+                new_index, new_len, ..
+            } => {
+                for j in 0..new_len {
+                    new_partial.push_str(work_lines[new_index + j]);
+                    new_partial.push('\n');
+                }
+            }
+            similar::DiffOp::Replace {
+                old_index,
+                old_len,
+                new_index,
+                new_len,
+            } => {
+                for j in 0..old_len {
+                    old_partial.push_str(head_lines[old_index + j]);
+                    old_partial.push('\n');
+                }
+                for j in 0..new_len {
+                    new_partial.push_str(work_lines[new_index + j]);
+                    new_partial.push('\n');
+                }
+            }
+        }
+    }
+
+    let full = unified_diff(&old_partial, &new_partial, path, path, context);
+    let mut tail: String = full
+        .lines()
+        .skip_while(|l| !l.starts_with("@@ "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    tail.push('\n');
+    tail
+}
+
+/// Split after the first change block, at the following line-equality (`Equal`) ops, when more
+/// changes exist after that context (same idea as Git `add -p` / stash `s`).
+fn split_hunk_at_first_gap(
+    ranges: &mut Vec<(usize, usize)>,
+    hunk_cursor: usize,
+    ops: &[similar::DiffOp],
+) -> bool {
+    if hunk_cursor >= ranges.len() {
+        return false;
+    }
+    let (start, end) = ranges[hunk_cursor];
+    let is_eq = |i: usize| matches!(ops.get(i), Some(similar::DiffOp::Equal { .. }));
+
+    let mut i = start;
+    while i < end && is_eq(i) {
+        i += 1;
+    }
+    if i >= end {
+        return false;
+    }
+    while i < end && !is_eq(i) {
+        i += 1;
+    }
+    if i >= end {
+        return false;
+    }
+    let eq_start = i;
+    while i < end && is_eq(i) {
+        i += 1;
+    }
+    if i >= end {
+        return false;
+    }
+
+    ranges[hunk_cursor] = (start, eq_start);
+    ranges.insert(hunk_cursor + 1, (eq_start, end));
+    true
+}
+
+fn edit_bytes_tempfile(content: &[u8]) -> Result<Vec<u8>> {
+    let mut f = tempfile::NamedTempFile::new().context("temp file for stash -p edit")?;
+    f.as_file_mut().write_all(content)?;
+    f.flush()?;
+    let path = f.path().to_owned();
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "vi".to_string());
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("{} \"$1\"", editor))
+        .arg("sh")
+        .arg(&path)
+        .status()
+        .context("running editor")?;
+    if !status.success() {
+        bail!("editor failed");
+    }
+    fs::read(&path).context("reading edited file")
 }
 
 /// Push with pathspec: only stash specific files.

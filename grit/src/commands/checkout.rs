@@ -2929,40 +2929,14 @@ pub(crate) fn checkout_patch(
     Ok(())
 }
 
-/// Apply accepted hunks by reconstructing the file content.
-///
-/// For each accepted hunk, we revert the worktree lines back to the source
-/// version. Unaccepted hunks keep the worktree version.
-fn apply_accepted_hunks(
-    _repo: &Repository,
-    work_tree: &std::path::Path,
-    path: &str,
+/// Blend `source` and `worktree` line-by-line using a Myers line diff: each contiguous group of
+/// non-equal ops is one hunk; accepted hunks take the source side, rejected hunks the worktree
+/// side. Matches Git add--interactive / stash patch semantics.
+pub(crate) fn blend_line_diff_by_hunks(
     source_data: &[u8],
     worktree_data: &[u8],
     accepted: &[bool],
-) -> Result<()> {
-    if !accepted.iter().any(|&a| a) {
-        return Ok(()); // Nothing accepted
-    }
-
-    let abs_path = work_tree.join(path);
-
-    // If all hunks are accepted, just write the source content
-    if accepted.iter().all(|&a| a) {
-        if source_data.is_empty() {
-            let _ = std::fs::remove_file(&abs_path);
-        } else {
-            if let Some(parent) = abs_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(&abs_path, source_data)?;
-        }
-        return Ok(());
-    }
-
-    // Partial acceptance: reconstruct file using diff ops.
-    // Each non-Equal op is a "hunk". We map each contiguous group of
-    // non-Equal ops to the same hunk index.
+) -> String {
     let source_str = String::from_utf8_lossy(source_data);
     let worktree_str = String::from_utf8_lossy(worktree_data);
     let source_lines: Vec<&str> = source_str.lines().collect();
@@ -2970,7 +2944,6 @@ fn apply_accepted_hunks(
 
     let text_diff = similar::TextDiff::from_lines(source_str.as_ref(), worktree_str.as_ref());
 
-    // Map ops to hunk indices: consecutive non-Equal ops share a hunk index.
     let ops: Vec<_> = text_diff.ops().to_vec();
     let mut hunk_indices: Vec<usize> = Vec::new();
     let mut current_hunk: usize = 0;
@@ -2978,7 +2951,7 @@ fn apply_accepted_hunks(
     for op in &ops {
         match op {
             similar::DiffOp::Equal { .. } => {
-                hunk_indices.push(usize::MAX); // sentinel for equal
+                hunk_indices.push(usize::MAX);
                 if prev_was_change {
                     current_hunk += 1;
                     prev_was_change = false;
@@ -3007,25 +2980,21 @@ fn apply_accepted_hunks(
                 old_index, old_len, ..
             } => {
                 if is_accepted {
-                    // Restore source lines
                     for j in 0..*old_len {
                         output.push_str(source_lines[old_index + j]);
                         output.push('\n');
                     }
                 }
-                // Rejected: lines stay deleted
             }
             similar::DiffOp::Insert {
                 new_index, new_len, ..
             } => {
                 if !is_accepted {
-                    // Keep worktree additions
                     for j in 0..*new_len {
                         output.push_str(worktree_lines[new_index + j]);
                         output.push('\n');
                     }
                 }
-                // Accepted: revert additions (don't include them)
             }
             similar::DiffOp::Replace {
                 old_index,
@@ -3034,13 +3003,11 @@ fn apply_accepted_hunks(
                 new_len,
             } => {
                 if is_accepted {
-                    // Restore source lines
                     for j in 0..*old_len {
                         output.push_str(source_lines[old_index + j]);
                         output.push('\n');
                     }
                 } else {
-                    // Keep worktree lines
                     for j in 0..*new_len {
                         output.push_str(worktree_lines[new_index + j]);
                         output.push('\n');
@@ -3050,6 +3017,122 @@ fn apply_accepted_hunks(
         }
     }
 
+    output
+}
+
+/// Like [`blend_line_diff_by_hunks`], but each entry of `ranges` is an inclusive-exclusive span of
+/// op indices for one interactive sub-hunk; `accepted[d]` applies to all change ops in `ranges[d]`.
+pub(crate) fn blend_line_diff_by_hunk_ranges(
+    source_data: &[u8],
+    worktree_data: &[u8],
+    ranges: &[(usize, usize)],
+    accepted: &[bool],
+) -> String {
+    let source_str = String::from_utf8_lossy(source_data);
+    let worktree_str = String::from_utf8_lossy(worktree_data);
+    let source_lines: Vec<&str> = source_str.lines().collect();
+    let worktree_lines: Vec<&str> = worktree_str.lines().collect();
+
+    let text_diff = similar::TextDiff::from_lines(source_str.as_ref(), worktree_str.as_ref());
+    let ops: Vec<_> = text_diff.ops().to_vec();
+
+    fn op_display_hunk(op_i: usize, ranges: &[(usize, usize)]) -> Option<usize> {
+        for (d, &(s, e)) in ranges.iter().enumerate() {
+            if op_i >= s && op_i < e {
+                return Some(d);
+            }
+        }
+        None
+    }
+
+    let mut output = String::new();
+    for (i, op) in ops.iter().enumerate() {
+        match op {
+            similar::DiffOp::Equal { old_index, len, .. } => {
+                for j in 0..*len {
+                    output.push_str(source_lines[old_index + j]);
+                    output.push('\n');
+                }
+            }
+            similar::DiffOp::Delete {
+                old_index, old_len, ..
+            } => {
+                let disp = op_display_hunk(i, ranges).unwrap_or(0);
+                let is_accepted = disp < accepted.len() && accepted[disp];
+                if is_accepted {
+                    for j in 0..*old_len {
+                        output.push_str(source_lines[old_index + j]);
+                        output.push('\n');
+                    }
+                }
+            }
+            similar::DiffOp::Insert {
+                new_index, new_len, ..
+            } => {
+                let disp = op_display_hunk(i, ranges).unwrap_or(0);
+                let is_accepted = disp < accepted.len() && accepted[disp];
+                if !is_accepted {
+                    for j in 0..*new_len {
+                        output.push_str(worktree_lines[new_index + j]);
+                        output.push('\n');
+                    }
+                }
+            }
+            similar::DiffOp::Replace {
+                old_index,
+                old_len,
+                new_index,
+                new_len,
+            } => {
+                let disp = op_display_hunk(i, ranges).unwrap_or(0);
+                let is_accepted = disp < accepted.len() && accepted[disp];
+                if is_accepted {
+                    for j in 0..*old_len {
+                        output.push_str(source_lines[old_index + j]);
+                        output.push('\n');
+                    }
+                } else {
+                    for j in 0..*new_len {
+                        output.push_str(worktree_lines[new_index + j]);
+                        output.push('\n');
+                    }
+                }
+            }
+        }
+    }
+
+    output
+}
+
+/// Apply per-hunk revert decisions: for each accepted hunk, use `source_data`; otherwise keep
+/// `worktree_data`. Used by `checkout -p` and `stash -p` (same semantics as Git's add--interactive).
+pub(crate) fn apply_accepted_hunks(
+    _repo: &Repository,
+    work_tree: &std::path::Path,
+    path: &str,
+    source_data: &[u8],
+    worktree_data: &[u8],
+    accepted: &[bool],
+) -> Result<()> {
+    if !accepted.iter().any(|&a| a) {
+        return Ok(());
+    }
+
+    let abs_path = work_tree.join(path);
+
+    if accepted.iter().all(|&a| a) {
+        if source_data.is_empty() {
+            let _ = std::fs::remove_file(&abs_path);
+        } else {
+            if let Some(parent) = abs_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&abs_path, source_data)?;
+        }
+        return Ok(());
+    }
+
+    let output = blend_line_diff_by_hunks(source_data, worktree_data, accepted);
     if let Some(parent) = abs_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
