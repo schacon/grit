@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   264 |
+| Completed   |   265 |
 | In progress |     4 |
-| Remaining   |   500 |
+| Remaining   |   499 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 264 completed (`[x]`), 4 in progress (`[~]`), 500 remaining (`[ ]`).
+Task lines in `PLAN.md`: 265 completed (`[x]`), 4 in progress (`[~]`), 499 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t1508-at-combinations` — 35/35 tests pass (`@{X}` combinations: reflog, upstream, `@`/`@@{u}`, branches with `@`, `@:path`, reflog expire edge cases; harness CSV/dashboards refreshed; `PLAN.md` / `t1-plan.md` marked complete)
 - `t12650-config-null-value` — 34/34 tests pass (null/implicit-true keys, empty `=`, `--bool`/`--int` including k/m/g suffixes, `config -l`, `--get-regexp` / `--name-only`; harness CSV/dashboards refreshed; `t1-plan.md` marked complete)
 - `t7450-bad-git-dotfiles` — 50/50 tests pass (submodule name/url validation, fsck symlink and `.gitmodules` checks, nested submodule git dirs, harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5351-unpack-large-objects` — 7/7 tests pass (`GIT_ALLOC_LIMIT` + `core.bigFileThreshold` streaming unpack, dry-run, trace2 fsync batch path, skip already-packed objects; harness CSV/dashboards refreshed; `PLAN.md` marked complete)

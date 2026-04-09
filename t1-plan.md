@@ -207,7 +207,7 @@
 (-- cursor 3 --)
 - [ ] t1506-rev-parse-diagnosis.sh
 - [ ] t1507-rev-parse-upstream.sh
-- [ ] t1508-at-combinations.sh                                                                          - [ ] t1509-root-work-tree.sh
+- [x] t1508-at-combinations.sh                                                                          - [ ] t1509-root-work-tree.sh
 
 (-- cursor 2 --)
 - [ ] t1510-repo-setup.sh                                                                               - [ ] t1511-rev-parse-caret.sh
