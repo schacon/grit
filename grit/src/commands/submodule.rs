@@ -4,13 +4,10 @@
 //! Reads `.gitmodules` and manages `.git/modules/` directory.
 
 use crate::commands::sparse_checkout::reapply_sparse_checkout_if_configured;
+use crate::commands::upstream_help;
 use crate::grit_exe;
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Parser, Subcommand};
-
-mod upstream_help_builtin_synopsis {
-    include!(concat!(env!("OUT_DIR"), "/upstream_help_synopsis.rs"));
-}
 
 #[derive(Parser)]
 #[command(
@@ -23,44 +20,11 @@ struct SubmoduleCliWrapper {
     inner: Args,
 }
 
-fn submodule_synopsis_variants_from_adoc(syn: &str) -> Vec<Vec<String>> {
-    let mut variants: Vec<Vec<String>> = Vec::new();
-    let mut current: Vec<String> = Vec::new();
-    for line in syn.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if trimmed.starts_with("git ") && !current.is_empty() {
-            variants.push(core::mem::take(&mut current));
-        }
-        current.push(trimmed.to_owned());
-    }
-    if !current.is_empty() {
-        variants.push(current);
-    }
-    variants
-}
-
 fn print_submodule_usage_stderr() {
-    let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin("submodule") else {
+    let Some(syn) = upstream_help::synopsis_for_builtin("submodule") else {
         return;
     };
-    let pad = " ".repeat("git submodule ".len());
-    let variants = submodule_synopsis_variants_from_adoc(syn);
-    for (i, var) in variants.iter().enumerate() {
-        let Some(first) = var.first() else {
-            continue;
-        };
-        if i == 0 {
-            eprintln!("usage: {first}");
-        } else {
-            eprintln!("   or: {first}");
-        }
-        for cont in var.iter().skip(1) {
-            eprintln!("{pad}{cont}");
-        }
-    }
+    let _ = upstream_help::write_upstream_synopsis("submodule", syn, std::io::stderr());
 }
 
 fn submodule_usage_exit(code: i32) -> ! {
@@ -94,24 +58,8 @@ fn split_submodule_leading_flags(rest: &[String]) -> (SubmoduleTopOpts, Vec<Stri
 
 fn parse_submodule_args(inner: &[String]) -> Args {
     if inner.len() == 1 && (inner[0] == "-h" || inner[0] == "--help") {
-        if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin("submodule") {
-            let pad = " ".repeat("git submodule ".len());
-            let variants = submodule_synopsis_variants_from_adoc(syn);
-            for (i, var) in variants.iter().enumerate() {
-                let Some(first) = var.first() else {
-                    continue;
-                };
-                if i == 0 {
-                    println!("usage: {first}");
-                } else {
-                    println!("   or: {first}");
-                }
-                for cont in var.iter().skip(1) {
-                    println!("{pad}{cont}");
-                }
-            }
-            println!();
-            std::process::exit(0);
+        if let Some(syn) = upstream_help::synopsis_for_builtin("submodule") {
+            upstream_help::print_upstream_synopsis_and_exit("submodule", syn, 0);
         }
     }
 

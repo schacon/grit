@@ -35,6 +35,16 @@ pub fn run_with_raw_args(rest: &[String]) -> Result<()> {
 
 /// Run `grit rev-parse`.
 pub fn run(args: Args) -> Result<()> {
+    if args.args.len() == 1 && (args.args[0] == "-h" || args.args[0] == "--help") {
+        if let Some(syn) = crate::commands::upstream_help::synopsis_for_builtin("rev-parse") {
+            let code = if args.args[0] == "--help" { 0 } else { 129 };
+            crate::commands::upstream_help::print_upstream_synopsis_and_exit(
+                "rev-parse",
+                syn,
+                code,
+            );
+        }
+    }
     // Handle --parseopt mode: parse option spec from stdin, emit parsed args
     if args.args.first().map(|s| s.as_str()) == Some("--parseopt") {
         return run_parseopt(&args.args[1..]);

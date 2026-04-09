@@ -5,7 +5,9 @@
 //! inner diffs.
 
 use anyhow::{bail, Context, Result};
-use clap::{CommandFactory, Parser};
+use clap::Parser;
+
+use crate::commands::upstream_help;
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{
@@ -86,9 +88,10 @@ struct Patch {
 /// Parse argv after `range-diff` and run (used from `main` so `--` / pathspecs work).
 pub fn run_with_rest(rest: &[String]) -> Result<()> {
     if rest.len() == 1 && (rest[0] == "-h" || rest[0] == "--help") {
-        let mut cmd = Args::command();
-        cmd.print_help().ok();
-        return Ok(());
+        if let Some(syn) = upstream_help::synopsis_for_builtin("range-diff") {
+            let code = if rest[0] == "--help" { 0 } else { 129 };
+            upstream_help::print_upstream_synopsis_and_exit("range-diff", syn, code);
+        }
     }
     let mut argv = vec!["grit range-diff".to_string()];
     argv.extend(rest.iter().cloned());

@@ -152,6 +152,7 @@ pub mod update_ref;
 pub mod update_server_info;
 pub mod upload_archive;
 pub mod upload_pack;
+pub(crate) mod upstream_help;
 pub mod var;
 pub mod verify_commit;
 pub mod verify_pack;

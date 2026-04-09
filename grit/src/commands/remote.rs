@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use crate::commands::fetch::{
     map_ref_through_refspecs, ref_excluded_by_fetch_refspecs, remote_fetch_refspecs, FetchRefspec,
 };
+use crate::commands::upstream_help;
 use crate::explicit_exit::ExplicitExit;
 
 /// Clap surface for `--git-completion-helper` (full argv parsing is manual, like Git).
@@ -31,6 +32,12 @@ pub struct Args {
 
 /// Entry point from `main` after global options and `remote` subcommand name are stripped.
 pub fn run_from_argv(rest: &[String]) -> Result<()> {
+    if rest.len() == 1 && (rest[0] == "-h" || rest[0] == "--help") {
+        if let Some(syn) = upstream_help::synopsis_for_builtin("remote") {
+            let code = if rest[0] == "--help" { 0 } else { 129 };
+            upstream_help::print_upstream_synopsis_and_exit("remote", syn, code);
+        }
+    }
     let (verbose, rest) = consume_verbose_prefix(rest);
     if rest.is_empty() {
         return cmd_list(verbose);

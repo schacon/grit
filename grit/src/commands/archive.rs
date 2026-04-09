@@ -20,6 +20,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::commands::upstream_help;
 use crate::pkt_line;
 
 const DEFAULT_MAX_TREE_DEPTH: usize = 2048;
@@ -34,6 +35,12 @@ pub struct Args {}
 
 /// Run from raw argv after `archive` (Git-compatible option ordering).
 pub fn run_from_argv(rest: &[String]) -> Result<()> {
+    if rest.len() == 1 && (rest[0] == "-h" || rest[0] == "--help") {
+        if let Some(syn) = upstream_help::synopsis_for_builtin("archive") {
+            let code = if rest[0] == "--help" { 0 } else { 129 };
+            upstream_help::print_upstream_synopsis_and_exit("archive", syn, code);
+        }
+    }
     execute(parse_archive_argv(rest)?)
 }
 
