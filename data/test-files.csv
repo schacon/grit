@@ -1013,7 +1013,7 @@ t5615-alternate-env	t5	yes	9	9	0	true	ok	0
 t5616-partial-clone	t5	yes	47	9	38	false	ok	0
 t5617-clone-submodules-remote	t5	yes	9	3	6	false	ok	0
 t5618-alternate-refs	t5	yes	6	2	4	false	ok	0
-t5619-clone-local-ambiguous-transport	t5	yes	2	0	2	false	ok	0
+t5619-clone-local-ambiguous-transport	t5	yes	2	2	0	true	ok	0
 t5620-backfill	t5	yes	10	5	5	false	ok	0
 t5621-clone-revision	t5	yes	12	12	0	true	ok	0
 t5700-protocol-v1	t5	yes	24	24	0	true	ok	0

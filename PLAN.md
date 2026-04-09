@@ -563,7 +563,7 @@ commit → check it off → move on.
 - [ ] `t5321-pack-large-objects` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — git pack-object with 
 - [ ] `t5557-http-get` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — test downloading a file by URL
 - [ ] `t5565-push-multiple` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — push to group
-- [ ] `t5619-clone-local-ambiguous-transport` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — test local clone with ambiguous transport
+- [x] `t5619-clone-local-ambiguous-transport` ████████████████████ 2/2 (0 left) — test local clone with ambiguous transport
 - [ ] `t5701-git-serve` █████████████████░░░ 22/25 (3 left) — test protocol v2 server commands
 - [ ] `t5529-push-errors` ████████████░░░░░░░░ 5/8 (3 left) — detect some push errors early (before contacting remote)
 - [ ] `t5583-push-branches` ████████████░░░░░░░░ 5/8 (3 left) — check the consisitency of behavior of --all and --branches
