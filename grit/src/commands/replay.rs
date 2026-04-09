@@ -428,7 +428,12 @@ pub(crate) fn replay_commits_onto(
 ) -> Result<(ObjectId, HashMap<ObjectId, ObjectId>)> {
     let merge_renormalize = read_merge_renormalize(repo);
     let directory_renames = read_directory_renames(repo);
-    let merge_dir_mode = MergeDirectoryRenamesMode::FromConfig;
+    // `replay` already applies upstream/topic rename detection and cached renames before
+    // calling `merge_trees`. Running merge-ort directory rename handling again inside
+    // `merge_trees` can incorrectly relocate recreated paths (e.g. `olddir/unrelated` →
+    // `newdir/unrelated` in t6429 part 2). Match sequencer-style replay by disabling the
+    // inner directory-rename pass.
+    let merge_dir_mode = MergeDirectoryRenamesMode::Disabled;
     let rename_opts = MergeRenameOptions::from_config(repo);
 
     let mut replayed: HashMap<ObjectId, ObjectId> = HashMap::new();
