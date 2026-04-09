@@ -31,6 +31,30 @@ use time::OffsetDateTime;
 use crate::commands::diff_index;
 use crate::explicit_exit::ExplicitExit;
 
+/// Count distinct paths that have any unmerged index stage (matches `git merge` conflict scoring).
+fn unmerged_path_count(index: &Index) -> usize {
+    let mut paths = BTreeSet::new();
+    for e in &index.entries {
+        if e.stage() != 0 {
+            paths.insert(e.path.clone());
+        }
+    }
+    paths.len()
+}
+
+/// Returned from [`do_real_merge`] when probing strategies: carries unmerged path count for
+/// `try_merge_strategies` (matches git's `evaluate_result` scoring).
+#[derive(Debug)]
+struct StrategyTrialConflict(usize);
+
+impl std::fmt::Display for StrategyTrialConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "merge strategy trial left {} conflicted paths", self.0)
+    }
+}
+
+impl std::error::Error for StrategyTrialConflict {}
+
 /// Arguments for `grit merge`.
 #[derive(Debug, Clone, ClapArgs)]
 #[command(about = "Join two or more development histories together")]
@@ -469,6 +493,18 @@ pub fn run(mut args: Args) -> Result<()> {
                 }
             }
         }
+        if args.strategy.is_empty() {
+            let key = if args.commits.len() > 1 {
+                "pull.octopus"
+            } else {
+                "pull.twohead"
+            };
+            if let Some(s) = config.get(key) {
+                for part in s.split_whitespace() {
+                    args.strategy.push(part.to_owned());
+                }
+            }
+        }
         if let Some(value) = config.get_bool("merge.renormalize") {
             merge_renormalize = value.unwrap_or(false);
         }
@@ -512,7 +548,8 @@ pub fn run(mut args: Args) -> Result<()> {
         bail!("fatal: You cannot combine --squash with --commit.");
     }
 
-    // Validate --strategy: accept known names for every `-s` occurrence.
+    // Validate --strategy: each `-s` is one strategy name (space-separated lists come from
+    // `pull.twohead` / `pull.octopus`, expanded before `merge` runs).
     for strat in &args.strategy {
         match strat.as_str() {
             "recursive" | "ort" | "resolve" | "octopus" | "ours" | "theirs" | "subtree" => {}
@@ -638,6 +675,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 diff_algorithm.as_deref(),
                 &eff_shift,
                 merge_renormalize,
+                false,
                 true,
             );
         }
@@ -706,6 +744,7 @@ pub fn run(mut args: Args) -> Result<()> {
         diff_algorithm.as_deref(),
         &eff_shift,
         merge_renormalize,
+        false,
         true,
     )
 }
@@ -724,6 +763,8 @@ fn try_merge_strategies(
 ) -> Result<()> {
     let pre_index = repo.load_index()?;
     let mut last_err: Option<anyhow::Error> = None;
+    let mut best_strategy: Option<&str> = None;
+    let mut best_cnt: isize = -1;
 
     for strat_name in &args.strategy {
         if strat_name == "resolve" {
@@ -778,6 +819,7 @@ fn try_merge_strategies(
                 diff_algorithm,
                 &eff_shift,
                 merge_renormalize,
+                true,
                 false,
             ),
             other => bail!("Could not find merge strategy '{other}'"),
@@ -786,12 +828,48 @@ fn try_merge_strategies(
         match attempt {
             Ok(()) => return Ok(()),
             Err(e) => {
-                if !args.quiet {
-                    eprintln!("{e}");
+                if let Some(tc) = e.downcast_ref::<StrategyTrialConflict>() {
+                    let cnt = tc.0 as isize;
+                    if best_cnt < 0 || cnt <= best_cnt {
+                        best_cnt = cnt;
+                        best_strategy = Some(strat_name.as_str());
+                    }
+                    if !args.quiet {
+                        eprintln!(
+                            "Automatic merge failed; fix conflicts and then commit the result."
+                        );
+                    }
+                } else {
+                    if !args.quiet {
+                        eprintln!("{e}");
+                    }
                 }
                 last_err = Some(e);
             }
         }
+    }
+
+    if let Some(best) = best_strategy {
+        restore_index_and_worktree(repo, &pre_index)?;
+        if !args.quiet {
+            println!("Using the {best} strategy to prepare resolving by hand.");
+        }
+        let mut sub = args.clone();
+        sub.strategy = vec![best.to_owned()];
+        let eff_shift = effective_subtree_shift(Some(best), subtree_shift_config);
+        return do_real_merge(
+            repo,
+            head,
+            head_oid,
+            merge_oid,
+            &sub,
+            favor,
+            diff_algorithm,
+            &eff_shift,
+            merge_renormalize,
+            false,
+            true,
+        );
     }
 
     restore_index_and_worktree(repo, &pre_index)?;
@@ -1212,6 +1290,7 @@ fn do_real_merge(
     diff_algorithm: Option<&str>,
     subtree_shift: &SubtreeShift,
     merge_renormalize: bool,
+    trial_for_multi_strategy: bool,
     exit_on_merge_conflict: bool,
 ) -> Result<()> {
     if primary_merge_strategy(args) == Some("resolve") {
@@ -1298,6 +1377,17 @@ Aborting"
 
     maybe_simulate_partial_clone_fetch(repo, &args.commits[0])?;
 
+    // Git's `resolve` strategy does not use rename detection; `recursive`/`ort` do. Without this,
+    // resolve can incorrectly auto-merge renames that recursive reports as conflicts (t7601).
+    let rename_opts = if primary_merge_strategy(args) == Some("resolve") {
+        MergeRenameOptions {
+            detect: false,
+            threshold: 50,
+        }
+    } else {
+        MergeRenameOptions::from_config(repo)
+    };
+
     // Merge trees
     let mut merge_result = merge_trees(
         repo,
@@ -1317,7 +1407,7 @@ Aborting"
         false,
         false,
         MergeDirectoryRenamesMode::FromConfig,
-        MergeRenameOptions::from_config(repo),
+        rename_opts,
         None,
     )?;
 
@@ -1326,9 +1416,16 @@ Aborting"
         .as_deref()
         .is_some_and(|v| v.trim() == "0");
 
-    if merge_result.has_conflicts && !exit_on_merge_conflict {
-        restore_index_and_worktree(repo, &pre_merge_index_snapshot)?;
-        bail!("Automatic merge failed; fix conflicts and then commit the result.");
+    if merge_result.has_conflicts {
+        if trial_for_multi_strategy {
+            let n = unmerged_path_count(&merge_result.index);
+            restore_index_and_worktree(repo, &pre_merge_index_snapshot)?;
+            return Err(anyhow::Error::new(StrategyTrialConflict(n)));
+        }
+        if !exit_on_merge_conflict {
+            restore_index_and_worktree(repo, &pre_merge_index_snapshot)?;
+            bail!("Automatic merge failed; fix conflicts and then commit the result.");
+        }
     }
 
     if !args.autostash {
@@ -1407,6 +1504,10 @@ Aborting"
             grit_lib::rerere::RerereAutoupdate::FromConfig
         };
         let _ = grit_lib::rerere::repo_rerere(repo, rr);
+        if trial_for_multi_strategy {
+            let n = unmerged_path_count(&merge_result.index);
+            return Err(anyhow::Error::new(StrategyTrialConflict(n)));
+        }
         std::process::exit(1);
     }
 
@@ -2058,6 +2159,15 @@ fn do_octopus_merge(
         return Ok(());
     }
 
+    // `recursive` / `ort` only handle two-way merges; Git rejects true octopus with these alone
+    // (see `try_merge_strategy` in git's merge.c: "Not handling anything other than two heads").
+    if merge_oids.len() > 1
+        && args.strategy.len() == 1
+        && matches!(args.strategy[0].as_str(), "recursive" | "ort")
+    {
+        bail!("Not handling anything other than two heads merge.");
+    }
+
     let head_is_ancestor_of_all = merge_oids
         .iter()
         .all(|oid| is_ancestor(repo, head_oid, *oid).unwrap_or(false));
@@ -2076,6 +2186,7 @@ fn do_octopus_merge(
                 diff_algorithm,
                 subtree_shift,
                 merge_renormalize,
+                false,
                 true,
             );
         }
@@ -2092,6 +2203,7 @@ fn do_octopus_merge(
             diff_algorithm,
             subtree_shift,
             merge_renormalize,
+            false,
             true,
         );
     }
@@ -5623,7 +5735,7 @@ fn resolve_merge_target(repo: &Repository, spec: &str) -> Result<ObjectId> {
     }
 }
 
-fn read_fetch_head_merge_oids(repo: &Repository) -> Result<Vec<String>> {
+pub(crate) fn read_fetch_head_merge_oids(repo: &Repository) -> Result<Vec<String>> {
     let fetch_head_path = repo.git_dir.join("FETCH_HEAD");
     let content = fs::read_to_string(&fetch_head_path)
         .with_context(|| "FETCH_HEAD: object not found: FETCH_HEAD".to_string())?;
