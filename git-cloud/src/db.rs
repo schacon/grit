@@ -21,8 +21,12 @@ pub struct TaskRow {
 pub enum TaskStatus {
     Pending,
     Running,
+    /// Cloud agent finished successfully; awaiting `git-cloud integrate`.
+    Finished,
     Completed,
-    /// Merge or post-merge pipeline failed after the cloud agent finished; use `git-cloud update` to re-run harness.
+    /// Merged to main, harness run, and pushed via `git-cloud integrate`.
+    Integrated,
+    /// Merge or post-merge pipeline failed (e.g. after `git-cloud integrate`); use `git-cloud update` to re-run harness.
     Failed,
     Cancelled,
 }
@@ -32,7 +36,9 @@ impl TaskStatus {
         match self {
             TaskStatus::Pending => "pending",
             TaskStatus::Running => "running",
+            TaskStatus::Finished => "finished",
             TaskStatus::Completed => "completed",
+            TaskStatus::Integrated => "integrated",
             TaskStatus::Failed => "failed",
             TaskStatus::Cancelled => "cancelled",
         }
@@ -42,7 +48,9 @@ impl TaskStatus {
         match s {
             "pending" => Some(TaskStatus::Pending),
             "running" => Some(TaskStatus::Running),
+            "finished" => Some(TaskStatus::Finished),
             "completed" => Some(TaskStatus::Completed),
+            "integrated" => Some(TaskStatus::Integrated),
             "failed" => Some(TaskStatus::Failed),
             "cancelled" => Some(TaskStatus::Cancelled),
             _ => None,
@@ -110,7 +118,7 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             tests_passing INTEGER NOT NULL,
             cloud_id TEXT,
             status TEXT NOT NULL CHECK (status IN (
-                'pending', 'running', 'completed', 'failed', 'cancelled'
+                'pending', 'running', 'finished', 'completed', 'integrated', 'failed', 'cancelled'
             ))
         );
         CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
@@ -121,18 +129,48 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Upgrades legacy DBs (only `pending`/`running`/`completed`) to allow `failed` / `cancelled`.
+/// Upgrades legacy DBs (only `pending`/`running`/`completed`) to allow `failed` / `cancelled`,
+/// then `finished` / `integrated` (v3).
 pub fn migrate_schema(conn: &Connection) -> Result<()> {
     let v: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap_or(0);
-    if v >= 2 {
+    if v < 2 {
+        conn.execute_batch(
+            r"
+            BEGIN;
+            CREATE TABLE tasks__m (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filename TEXT NOT NULL UNIQUE,
+                family TEXT NOT NULL,
+                tests_total INTEGER NOT NULL,
+                tests_passing INTEGER NOT NULL,
+                cloud_id TEXT,
+                status TEXT NOT NULL CHECK (status IN (
+                    'pending', 'running', 'completed', 'failed', 'cancelled'
+                ))
+            );
+            INSERT INTO tasks__m SELECT * FROM tasks;
+            DROP TABLE tasks;
+            ALTER TABLE tasks__m RENAME TO tasks;
+            CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+            CREATE INDEX IF NOT EXISTS idx_tasks_cloud ON tasks(cloud_id);
+            PRAGMA user_version = 2;
+            COMMIT;
+            ",
+        )
+        .context("migrate tasks schema to v2")?;
+    }
+    let v: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap_or(0);
+    if v >= 3 {
         return Ok(());
     }
     conn.execute_batch(
         r"
         BEGIN;
-        CREATE TABLE tasks__m (
+        CREATE TABLE tasks__m3 (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             filename TEXT NOT NULL UNIQUE,
             family TEXT NOT NULL,
@@ -140,19 +178,19 @@ pub fn migrate_schema(conn: &Connection) -> Result<()> {
             tests_passing INTEGER NOT NULL,
             cloud_id TEXT,
             status TEXT NOT NULL CHECK (status IN (
-                'pending', 'running', 'completed', 'failed', 'cancelled'
+                'pending', 'running', 'finished', 'completed', 'integrated', 'failed', 'cancelled'
             ))
         );
-        INSERT INTO tasks__m SELECT * FROM tasks;
+        INSERT INTO tasks__m3 SELECT * FROM tasks;
         DROP TABLE tasks;
-        ALTER TABLE tasks__m RENAME TO tasks;
+        ALTER TABLE tasks__m3 RENAME TO tasks;
         CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
         CREATE INDEX IF NOT EXISTS idx_tasks_cloud ON tasks(cloud_id);
-        PRAGMA user_version = 2;
+        PRAGMA user_version = 3;
         COMMIT;
         ",
     )
-    .context("migrate tasks schema to v2")?;
+    .context("migrate tasks schema to v3")?;
     Ok(())
 }
 
@@ -297,6 +335,16 @@ pub fn set_cancelled(conn: &Connection, id: i64) -> Result<()> {
     Ok(())
 }
 
+/// Marks a cloud agent run as successful; keeps `cloud_id` for [`list_finished_tasks`] / integrate.
+pub fn set_finished(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE tasks SET status = 'finished' WHERE id = ?1",
+        params![id],
+    )
+    .context("set finished")?;
+    Ok(())
+}
+
 pub fn set_completed(conn: &Connection, id: i64) -> Result<()> {
     conn.execute(
         "UPDATE tasks SET status = 'completed', cloud_id = NULL WHERE id = ?1",
@@ -304,6 +352,45 @@ pub fn set_completed(conn: &Connection, id: i64) -> Result<()> {
     )
     .context("set completed")?;
     Ok(())
+}
+
+pub fn set_integrated(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE tasks SET status = 'integrated', cloud_id = NULL WHERE id = ?1",
+        params![id],
+    )
+    .context("set integrated")?;
+    Ok(())
+}
+
+/// Tasks with successful cloud runs awaiting merge (`git-cloud integrate`).
+pub fn list_finished_tasks(conn: &Connection) -> Result<Vec<TaskRow>> {
+    let mut stmt = conn
+        .prepare(
+            r"SELECT id, filename, family, tests_total, tests_passing, cloud_id, status
+              FROM tasks WHERE status = 'finished' AND cloud_id IS NOT NULL ORDER BY id",
+        )
+        .context("prepare list finished (awaiting integrate)")?;
+    let rows = stmt
+        .query_map([], |row| {
+            let status_s: String = row.get(6)?;
+            let status = TaskStatus::parse(&status_s).unwrap_or(TaskStatus::Pending);
+            Ok(TaskRow {
+                id: row.get(0)?,
+                filename: row.get(1)?,
+                family: row.get(2)?,
+                tests_total: row.get(3)?,
+                tests_passing: row.get(4)?,
+                cloud_id: row.get(5)?,
+                status,
+            })
+        })
+        .context("query finished tasks")?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
 }
 
 pub fn update_tests_for_file(
@@ -320,7 +407,8 @@ pub fn update_tests_for_file(
     Ok(())
 }
 
-pub fn summary_counts(conn: &Connection) -> Result<(i64, i64, i64, i64, i64)> {
+/// Returns `(pending, running, finished, completed, integrated, failed, cancelled)`.
+pub fn summary_counts(conn: &Connection) -> Result<(i64, i64, i64, i64, i64, i64, i64)> {
     let pending: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM tasks WHERE status = 'pending'",
@@ -335,9 +423,23 @@ pub fn summary_counts(conn: &Connection) -> Result<(i64, i64, i64, i64, i64)> {
             |row| row.get(0),
         )
         .unwrap_or(0);
+    let finished: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tasks WHERE status = 'finished'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
     let completed: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM tasks WHERE status = 'completed'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    let integrated: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tasks WHERE status = 'integrated'",
             [],
             |row| row.get(0),
         )
@@ -356,7 +458,9 @@ pub fn summary_counts(conn: &Connection) -> Result<(i64, i64, i64, i64, i64)> {
             |row| row.get(0),
         )
         .unwrap_or(0);
-    Ok((pending, running, completed, failed, cancelled))
+    Ok((
+        pending, running, finished, completed, integrated, failed, cancelled,
+    ))
 }
 
 /// Pending + running tasks only (`failed` / `cancelled` / `completed` are excluded).

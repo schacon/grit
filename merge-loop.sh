@@ -8,4 +8,6 @@ while true; do
   agent --yolo \
     -p "$(cat MERGE_PROMPT.md)" \
     --model composer-2-fast &>"$LOGFILE"
+
+  cat $LOGFILE
 done

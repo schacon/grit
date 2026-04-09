@@ -1,4 +1,4 @@
-//! Initialize the task database, sync from CSV, and run the cloud agent supervisor loop.
+//! Initialize the task database, sync from CSV, run the cloud agent supervisor loop, and integrate finished work.
 
 use std::path::Path;
 use std::thread;
@@ -138,10 +138,10 @@ pub fn update_harness(repo: &Path) -> Result<()> {
         RESET
     );
     reverify_tasks_for_harness(&mut conn, repo, failed)?;
-    let (p, r, c, f, canc) = db::summary_counts(&conn)?;
+    let (p, r, fin, c, integ, f, canc) = db::summary_counts(&conn)?;
     println!(
-        "{}{}Done.{} pending={} running={} completed={} failed={} cancelled={}{}",
-        BOLD, GREEN, RESET, p, r, c, f, canc, RESET
+        "{}{}Done.{} pending={} running={} finished={} completed={} integrated={} failed={} cancelled={}{}",
+        BOLD, GREEN, RESET, p, r, fin, c, integ, f, canc, RESET
     );
     Ok(())
 }
@@ -160,7 +160,8 @@ pub fn summary(repo: &Path) -> Result<()> {
         );
     }
     let conn = db::open_db(&gd)?;
-    let (pending, running, completed, failed, cancelled) = db::summary_counts(&conn)?;
+    let (pending, running, finished, completed, integrated, failed, cancelled) =
+        db::summary_counts(&conn)?;
     println!(
         "{}{}git-cloud summary{} {}{}",
         BOLD,
@@ -169,12 +170,82 @@ pub fn summary(repo: &Path) -> Result<()> {
         db_path.display(),
         RESET
     );
-    println!("  pending:   {}", pending);
-    println!("  running:   {}", running);
-    println!("  completed: {}", completed);
-    println!("  failed:    {}", failed);
-    println!("  cancelled: {}", cancelled);
+    println!("  pending:    {}", pending);
+    println!("  running:    {}", running);
+    println!("  finished:   {} (awaiting integrate)", finished);
+    println!("  completed:  {}", completed);
+    println!("  integrated: {}", integrated);
+    println!("  failed:     {}", failed);
+    println!("  cancelled:  {}", cancelled);
     Ok(())
+}
+
+/// For each task in `finished` status, fetch the cloud agent branch, merge into `main` (retrying the
+/// merge agent until the merge completes), run the harness file, commit/push, then mark `integrated`.
+pub fn integrate_loop(repo: &Path) -> Result<()> {
+    let gd = git_dir(repo);
+    if !gd.is_dir() {
+        anyhow::bail!("not a git repository: {}", repo.display());
+    }
+    let db_path = gd.join("cloud.sqlite");
+    if !db_path.is_file() {
+        anyhow::bail!(
+            "missing {} — run `git-cloud --init` first",
+            db_path.display()
+        );
+    }
+
+    let mut conn = db::open_db(&gd)?;
+    db::init_schema(&conn)?;
+    db::migrate_schema(&conn)?;
+    cursor::verify_auth()?;
+
+    println!(
+        "{}{}git-cloud integrate{} — merge finished tasks, run harness, push{}\n",
+        BOLD, CYAN, RESET, RESET
+    );
+
+    loop {
+        let tasks = db::list_finished_tasks(&conn)?;
+        if tasks.is_empty() {
+            println!(
+                "{}{}No tasks in `finished` status — nothing to integrate.{}",
+                DIM, RESET, RESET
+            );
+            return Ok(());
+        }
+        let t = &tasks[0];
+        println!(
+            "{}Integrating {} (cloud id {}){}",
+            GREEN,
+            t.filename,
+            t.cloud_id.as_deref().unwrap_or("?"),
+            RESET
+        );
+        let info = match cursor::get_agent(t.cloud_id.as_deref().unwrap_or("")) {
+            Ok(i) => i,
+            Err(e) => {
+                println!(
+                    "{}Could not load agent metadata for {}: {}{}",
+                    RED, t.filename, e, RESET
+                );
+                db::set_failed(&conn, t.id)?;
+                continue;
+            }
+        };
+        match integrate_task(&mut conn, repo, t, &info) {
+            Ok(()) => {
+                println!("{}Integrated {}{}", GREEN, t.filename, RESET);
+            }
+            Err(e) => {
+                println!(
+                    "{}integrate pipeline failed for {}: {}{}",
+                    RED, t.filename, e, RESET
+                );
+                db::set_failed(&conn, t.id)?;
+            }
+        }
+    }
 }
 
 pub fn run_loop(repo: &Path) -> Result<()> {
@@ -226,7 +297,7 @@ pub fn run_loop(repo: &Path) -> Result<()> {
     }
 }
 
-fn process_running(conn: &mut Connection, repo: &Path) -> Result<()> {
+fn process_running(conn: &mut Connection, _repo: &Path) -> Result<()> {
     let tasks = db::list_running_with_cloud_id(conn)?;
     for t in tasks {
         let info = match cursor::get_agent(t.cloud_id.as_deref().unwrap_or("")) {
@@ -254,14 +325,14 @@ fn process_running(conn: &mut Connection, repo: &Path) -> Result<()> {
 
         if cursor::is_finished_success(&info.status) {
             println!(
-                "{}Agent finished {} — merging {}{}",
-                GREEN, t.filename, info.id, RESET
+                "{}Agent finished {} — marking sqlite `finished` (use `git-cloud integrate` to merge){}",
+                GREEN, t.filename, RESET
             );
-            match finish_success(conn, repo, &t, &info) {
+            match db::set_finished(conn, t.id) {
                 Ok(()) => {}
                 Err(e) => {
                     println!(
-                        "{}merge/test pipeline failed for {}: {}{}",
+                        "{}failed to mark finished for {}: {}{}",
                         RED, t.filename, e, RESET
                     );
                     db::set_failed(conn, t.id)?;
@@ -308,43 +379,46 @@ fn merge_via_origin_branch(repo: &Path, branch: &str) -> Result<bool> {
     git_ops::merge_origin_branch(repo, branch)
 }
 
-fn finish_success(
-    conn: &mut Connection,
-    repo: &Path,
-    task: &TaskRow,
-    info: &cursor::AgentInfo,
-) -> Result<()> {
-    git_ops::fetch_origin(repo)?;
-    git_ops::checkout_and_pull_main(repo)?;
-
+/// Merges cloud work into `main`, calling the merge agent in a loop until the merge completes or aborts cleanly.
+fn merge_cloud_work_into_main(repo: &Path, info: &cursor::AgentInfo) -> Result<()> {
     let pr_num = info
         .target
         .pr_url
         .as_deref()
         .and_then(git_ops::parse_github_pr_number);
 
-    let merged = if let Some(pr) = pr_num {
-        println!("{}Integrating GitHub PR #{} (auto-PR){}", BLUE, pr, RESET);
-        match git_ops::merge_github_pr_head(repo, pr) {
-            Ok(m) => m,
-            Err(e) => {
-                git_ops::try_delete_pr_branch(repo, pr);
-                println!(
-                    "{}Could not fetch/merge PR #{}: {}{}\n{}Falling back to origin branch…{}",
-                    YELLOW, pr, e, RESET, DIM, RESET
-                );
-                let branch = branch_name_for_merge(info)?;
-                merge_via_origin_branch(repo, &branch)?
-            }
-        }
-    } else {
-        let branch = branch_name_for_merge(info)?;
-        merge_via_origin_branch(repo, &branch)?
-    };
+    loop {
+        git_ops::fetch_origin(repo)?;
+        git_ops::checkout_and_pull_main(repo)?;
 
-    if !merged {
+        let merged = if let Some(pr) = pr_num {
+            println!("{}Integrating GitHub PR #{} (auto-PR){}", BLUE, pr, RESET);
+            match git_ops::merge_github_pr_head(repo, pr) {
+                Ok(m) => m,
+                Err(e) => {
+                    git_ops::try_delete_pr_branch(repo, pr);
+                    println!(
+                        "{}Could not fetch/merge PR #{}: {}{}\n{}Falling back to origin branch…{}",
+                        YELLOW, pr, e, RESET, DIM, RESET
+                    );
+                    let branch = branch_name_for_merge(info)?;
+                    merge_via_origin_branch(repo, &branch)?
+                }
+            }
+        } else {
+            let branch = branch_name_for_merge(info)?;
+            merge_via_origin_branch(repo, &branch)?
+        };
+
+        if merged && !git_ops::has_unmerged_paths(repo)? {
+            if let Some(pr) = pr_num {
+                git_ops::try_delete_pr_branch(repo, pr);
+            }
+            return Ok(());
+        }
+
         println!(
-            "{}merge conflict — running merge agent ({}){}\n",
+            "{}merge conflict or incomplete — running merge agent ({}){}\n",
             YELLOW,
             std::env::var("GIT_CLOUD_MERGE_CMD").unwrap_or_else(|_| "default".into()),
             RESET
@@ -352,14 +426,23 @@ fn finish_success(
         run_merge_agent(repo)?;
         if git_ops::has_unmerged_paths(repo)? {
             git_ops::abort_merge(repo);
-            anyhow::bail!("merge conflicts remain after merge agent; aborted merge");
+            continue;
         }
         git_ops::conclude_merge_if_needed(repo)?;
+        if let Some(pr) = pr_num {
+            git_ops::try_delete_pr_branch(repo, pr);
+        }
+        return Ok(());
     }
+}
 
-    if let Some(pr) = pr_num {
-        git_ops::try_delete_pr_branch(repo, pr);
-    }
+fn integrate_task(
+    conn: &mut Connection,
+    repo: &Path,
+    task: &TaskRow,
+    info: &cursor::AgentInfo,
+) -> Result<()> {
+    merge_cloud_work_into_main(repo, info)?;
 
     let test_sh = format!("{}.sh", task.filename);
     let script = repo.join("scripts/run-tests.sh");
@@ -382,9 +465,9 @@ fn finish_success(
 
     commit_and_push(repo, task)?;
 
-    db::set_completed(conn, task.id)?;
+    db::set_integrated(conn, task.id)?;
     println!(
-        "{}Completed task {}{} (passed={}/{})",
+        "{}Integrated task {}{} (passed={}/{})",
         GREEN, task.filename, RESET, passed, total
     );
     Ok(())
@@ -535,10 +618,20 @@ fn spawn_pending(conn: &mut Connection, repo: &Path, git_ref: &str, mut slots: i
 }
 
 fn print_summary(conn: &Connection) -> Result<()> {
-    let (pending, running, completed, failed, cancelled) = db::summary_counts(conn)?;
+    let (pending, running, finished, completed, integrated, failed, cancelled) =
+        db::summary_counts(conn)?;
     println!(
-        "{}Status:{} pending={} running={} completed={} failed={} cancelled={}{}",
-        BOLD, CYAN, pending, running, completed, failed, cancelled, RESET
+        "{}Status:{} pending={} running={} finished={} completed={} integrated={} failed={} cancelled={}{}",
+        BOLD,
+        CYAN,
+        pending,
+        running,
+        finished,
+        completed,
+        integrated,
+        failed,
+        cancelled,
+        RESET
     );
     let active = db::list_running_with_cloud_id(conn)?;
     for t in active {

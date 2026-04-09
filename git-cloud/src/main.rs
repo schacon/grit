@@ -1,4 +1,5 @@
-//! CLI entry for `git-cloud`: initialize harness task DB, sync from CSV, and run the cloud agent loop.
+//! CLI entry for `git-cloud`: initialize harness task DB, sync from CSV, supervise cloud agents (`run`),
+//! and merge their work locally (`integrate`).
 
 mod ansi;
 mod cursor;
@@ -61,8 +62,10 @@ struct Cli {
 
 #[derive(clap::Subcommand, Debug)]
 enum Command {
-    /// Poll cloud agents, merge results, run tests, push, and spawn new agents.
+    /// Poll cloud agents, mark finished runs in SQLite, and spawn new agents (merge separately via `integrate`).
     Run,
+    /// Merge `finished` tasks into `main`, run harness, commit/push, mark `integrated`.
+    Integrate,
     /// Re-run harness for `failed` tasks, then mark `completed` in SQLite when the CSV has `fully_passing=true`.
     Update,
     /// Show task counts by status from `.git/cloud.sqlite`.
@@ -82,6 +85,9 @@ fn main() -> Result<()> {
         Some(Command::Run) => {
             orchestrator::run_loop(&repo_root)?;
         }
+        Some(Command::Integrate) => {
+            orchestrator::integrate_loop(&repo_root)?;
+        }
         Some(Command::Update) => {
             orchestrator::update_harness(&repo_root)?;
             orchestrator::sync_completed_from_csv(&repo_root)?;
@@ -92,7 +98,7 @@ fn main() -> Result<()> {
         None => {
             if !cli.init {
                 anyhow::bail!(
-                    "expected `--init` or a subcommand: `run`, `update`, `summary` (see --help)"
+                    "expected `--init` or a subcommand: `run`, `integrate`, `update`, `summary` (see --help)"
                 );
             }
         }
