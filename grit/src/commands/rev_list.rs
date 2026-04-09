@@ -647,7 +647,6 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     let graft_parents = load_graft_parents(&repo.git_dir);
-    let included_commits: HashSet<ObjectId> = result.commits.iter().copied().collect();
     let object_type_commit_oid_only = options.objects
         && matches!(&options.output_mode, OutputMode::OidOnly)
         && object_type_filter_commit_only(options.filter.as_ref());
@@ -683,12 +682,9 @@ pub fn run(args: Args) -> Result<()> {
                     if !no_commit_header && !is_oneline {
                         let mut header = format!("commit {prefix}{oid}");
                         if show_parents {
-                            let parents = visible_parents_for_output(
-                                &repo,
-                                *oid,
-                                &included_commits,
-                                &graft_parents,
-                            )?;
+                            // Match Git: parent lines come from the commit object (and grafts), not
+                            // from "visible" parents after narrowing the walk (e.g. `-n 1`).
+                            let parents = commit_parents_for_output(&repo, *oid, &graft_parents)?;
                             for parent in parents {
                                 header.push(' ');
                                 header.push_str(&parent.to_hex());
@@ -713,8 +709,9 @@ pub fn run(args: Args) -> Result<()> {
                     }
                 }
                 OutputMode::Parents => {
-                    let parents =
-                        visible_parents_for_output(&repo, *oid, &included_commits, &graft_parents)?;
+                    // Same as Git `rev-list --parents`: always emit stored parent OIDs, even when
+                    // those parents are outside the selected commit set (`-n`, etc.).
+                    let parents = commit_parents_for_output(&repo, *oid, &graft_parents)?;
                     if parents.is_empty() {
                         println!("{prefix}{oid}");
                     } else {
@@ -1183,48 +1180,4 @@ fn commit_parents_for_output(
     let object = repo.odb.read(&oid)?;
     let commit = parse_commit(&object.data)?;
     Ok(commit.parents)
-}
-
-fn collect_visible_parent(
-    repo: &Repository,
-    candidate: ObjectId,
-    included: &HashSet<ObjectId>,
-    graft_parents: &HashMap<ObjectId, Vec<ObjectId>>,
-    seen: &mut HashSet<ObjectId>,
-    out: &mut Vec<ObjectId>,
-) -> Result<()> {
-    if !seen.insert(candidate) {
-        return Ok(());
-    }
-    if included.contains(&candidate) {
-        out.push(candidate);
-        return Ok(());
-    }
-    let parents = commit_parents_for_output(repo, candidate, graft_parents)?;
-    for parent in parents {
-        collect_visible_parent(repo, parent, included, graft_parents, seen, out)?;
-    }
-    Ok(())
-}
-
-fn visible_parents_for_output(
-    repo: &Repository,
-    oid: ObjectId,
-    included: &HashSet<ObjectId>,
-    graft_parents: &HashMap<ObjectId, Vec<ObjectId>>,
-) -> Result<Vec<ObjectId>> {
-    let direct_parents = commit_parents_for_output(repo, oid, graft_parents)?;
-    let mut seen = HashSet::new();
-    let mut visible = Vec::new();
-    for parent in direct_parents {
-        collect_visible_parent(
-            repo,
-            parent,
-            included,
-            graft_parents,
-            &mut seen,
-            &mut visible,
-        )?;
-    }
-    Ok(visible)
 }
