@@ -244,6 +244,7 @@ run_one() {
         EDITOR=: VISUAL=: LC_ALL=C LANG=C _prereq_DEFAULT_REPO_FORMAT=set \
         GRIT_TEST_LIB_SUMMARY=1 \
         ${utf8_nfd_to_nfc:+GIT_TEST_UTF8_NFD_TO_NFC=$utf8_nfd_to_nfc} \
+        ${git_test_allow_sudo:+GIT_TEST_ALLOW_SUDO=$git_test_allow_sudo} \
         GUST_BIN="$BIN" \
         GIT_TEST_BUILTIN_HASH=sha1 \
         GIT_SOURCE_DIR="$REPO/git" \
