@@ -50,6 +50,7 @@ pub mod index_name_hash_lazy;
 pub mod interpret_trailers;
 pub mod line_log;
 pub mod ls_remote;
+pub mod mailinfo;
 pub mod mailmap;
 pub mod merge_base;
 pub mod merge_diff;
