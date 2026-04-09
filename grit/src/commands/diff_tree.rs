@@ -12,7 +12,7 @@ use encoding_rs::Encoding;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     count_changes, detect_renames, diff_trees, diff_trees_show_tree_entries, format_raw,
-    format_raw_abbrev, unified_diff, zero_oid, DiffEntry, DiffStatus,
+    format_raw_abbrev, unified_diff, DiffEntry, DiffStatus,
 };
 use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::merge_diff::{
@@ -23,6 +23,7 @@ use grit_lib::odb::Odb;
 use grit_lib::pathspec::{context_from_mode_octal, matches_pathspec_with_context};
 use grit_lib::repo::{resolve_dot_git, Repository};
 use grit_lib::rev_parse::resolve_revision;
+use regex::Regex;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
@@ -125,6 +126,8 @@ struct Options {
     pickaxe_grep: Option<String>,
     /// Treat `-S` pattern as a regex (count regex matches per side).
     pickaxe_regex: bool,
+    /// Show all matching files when using pickaxe, not only those with count changes (`--pickaxe-all`).
+    pickaxe_all: bool,
     /// Submodule diff format (`log` shows one-line summaries for gitlinks, like Git's `diff --submodule=log`).
     submodule_mode: Option<String>,
 }
@@ -166,6 +169,7 @@ impl Default for Options {
             pickaxe_string: None,
             pickaxe_grep: None,
             pickaxe_regex: false,
+            pickaxe_all: false,
             submodule_mode: None,
         }
     }
@@ -317,33 +321,6 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                         }
                     }
                 }
-                _ if arg.starts_with("-S") => {
-                    if arg.len() > 2 {
-                        opts.pickaxe_string = Some(arg[2..].to_owned());
-                    } else {
-                        i += 1;
-                        let next = argv
-                            .get(i)
-                            .ok_or_else(|| anyhow::anyhow!("-S requires an argument"))?;
-                        opts.pickaxe_string = Some(next.clone());
-                    }
-                }
-                _ if arg.starts_with("-G") => {
-                    if arg.len() > 2 {
-                        opts.pickaxe_grep = Some(arg[2..].to_owned());
-                    } else {
-                        i += 1;
-                        let next = argv
-                            .get(i)
-                            .ok_or_else(|| anyhow::anyhow!("-G requires an argument"))?;
-                        opts.pickaxe_grep = Some(next.clone());
-                    }
-                }
-                "--pickaxe-regex" => opts.pickaxe_regex = true,
-                "--pickaxe-all" => {}
-                _ if arg.starts_with("--submodule=") => {
-                    opts.submodule_mode = Some(arg["--submodule=".len()..].to_string());
-                }
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("--diff-merges=")
                     || arg.starts_with("--format=")
@@ -351,6 +328,37 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     || arg.starts_with("--relative") =>
                 {
                     // ignored
+                }
+                "--pickaxe-regex" => opts.pickaxe_regex = true,
+                "--pickaxe-all" => opts.pickaxe_all = true,
+                s if s.starts_with("-S") => {
+                    if s.len() > 2 {
+                        opts.pickaxe_string = Some(s[2..].to_owned());
+                    } else {
+                        i += 1;
+                        if i >= argv.len() {
+                            bail!("option `-S` requires a value");
+                        }
+                        opts.pickaxe_string = Some(argv[i].clone());
+                    }
+                    i += 1;
+                    continue;
+                }
+                s if s.starts_with("-G") => {
+                    if s.len() > 2 {
+                        opts.pickaxe_grep = Some(s[2..].to_owned());
+                    } else {
+                        i += 1;
+                        if i >= argv.len() {
+                            bail!("option `-G` requires a value");
+                        }
+                        opts.pickaxe_grep = Some(argv[i].clone());
+                    }
+                    i += 1;
+                    continue;
+                }
+                _ if arg.starts_with("--submodule=") => {
+                    opts.submodule_mode = Some(arg["--submodule=".len()..].to_string());
                 }
                 _ => bail!("unknown option: {arg}"),
             }
@@ -1945,23 +1953,13 @@ fn read_blob_pair(odb: &Odb, entry: &DiffEntry) -> Result<(String, String)> {
     Ok((old_content, new_content))
 }
 
-/// Apply all post-diff filters: pathspecs and max-depth.
+/// Apply post-diff filters: pathspecs, max-depth, and pickaxe (`-S` / `-G`).
 fn filter_entries(odb: &Odb, entries: Vec<DiffEntry>, opts: &Options) -> Result<Vec<DiffEntry>> {
-    let filtered = filter_pathspecs(entries, &opts.pathspecs);
-    let filtered = if let Some(depth) = opts.max_depth {
-        filter_max_depth(filtered, depth, &opts.pathspecs)
-    } else {
-        filtered
-    };
-    apply_pickaxe_filter(odb, filtered, opts)
-}
-
-/// Read blob bytes for pickaxe checks (empty for missing/zero OIDs).
-fn read_content_raw_for_pickaxe(odb: &Odb, oid: &ObjectId) -> Vec<u8> {
-    if *oid == zero_oid() {
-        return Vec::new();
+    let mut filtered = filter_pathspecs(entries, &opts.pathspecs);
+    if let Some(depth) = opts.max_depth {
+        filtered = filter_max_depth(filtered, depth, &opts.pathspecs);
     }
-    odb.read(oid).map(|o| o.data).unwrap_or_default()
+    apply_pickaxe_filter(odb, filtered, opts)
 }
 
 /// Keep only diff entries that match `-G` / `-S` pickaxe rules (same semantics as `git diff`).
@@ -1971,59 +1969,71 @@ fn apply_pickaxe_filter(
     opts: &Options,
 ) -> Result<Vec<DiffEntry>> {
     if let Some(ref pattern) = opts.pickaxe_grep {
-        let re = regex::Regex::new(pattern)
-            .with_context(|| format!("invalid pickaxe regex: {pattern}"))?;
-        return Ok(entries
-            .into_iter()
-            .filter(|e| {
-                let old = read_content_raw_for_pickaxe(odb, &e.old_oid);
-                let new = read_content_raw_for_pickaxe(odb, &e.new_oid);
-                let old_s = String::from_utf8_lossy(&old);
-                let new_s = String::from_utf8_lossy(&new);
-                for line in new_s.lines() {
+        let re =
+            Regex::new(pattern).with_context(|| format!("invalid pickaxe regex: {pattern}"))?;
+        let mut out = Vec::new();
+        for e in entries {
+            let (old, new) = read_blob_pair(odb, &e)?;
+            let mut keep = false;
+            for line in new.lines() {
+                if re.is_match(line) {
+                    keep = true;
+                    break;
+                }
+            }
+            if !keep {
+                for line in old.lines() {
                     if re.is_match(line) {
-                        return true;
+                        keep = true;
+                        break;
                     }
                 }
-                for line in old_s.lines() {
-                    if re.is_match(line) {
-                        return true;
-                    }
-                }
-                false
-            })
-            .collect());
+            }
+            if keep {
+                out.push(e);
+            }
+        }
+        return Ok(out);
     }
+
     if let Some(ref needle) = opts.pickaxe_string {
         if opts.pickaxe_regex {
-            let re = regex::Regex::new(needle)
-                .with_context(|| format!("invalid pickaxe regex: {needle}"))?;
-            return Ok(entries
-                .into_iter()
-                .filter(|e| {
-                    let old = read_content_raw_for_pickaxe(odb, &e.old_oid);
-                    let new = read_content_raw_for_pickaxe(odb, &e.new_oid);
-                    let old_s = String::from_utf8_lossy(&old);
-                    let new_s = String::from_utf8_lossy(&new);
-                    let old_count = re.find_iter(&old_s).count();
-                    let new_count = re.find_iter(&new_s).count();
+            let re =
+                Regex::new(needle).with_context(|| format!("invalid pickaxe regex: {needle}"))?;
+            let mut out = Vec::new();
+            for e in entries {
+                let (old, new) = read_blob_pair(odb, &e)?;
+                let old_count = re.find_iter(&old).count();
+                let new_count = re.find_iter(&new).count();
+                let keep = if opts.pickaxe_all {
+                    old_count > 0 || new_count > 0
+                } else {
                     old_count != new_count
-                })
-                .collect());
+                };
+                if keep {
+                    out.push(e);
+                }
+            }
+            return Ok(out);
         }
-        return Ok(entries
-            .into_iter()
-            .filter(|e| {
-                let old = read_content_raw_for_pickaxe(odb, &e.old_oid);
-                let new = read_content_raw_for_pickaxe(odb, &e.new_oid);
-                let old_s = String::from_utf8_lossy(&old);
-                let new_s = String::from_utf8_lossy(&new);
-                let old_count = old_s.matches(needle.as_str()).count();
-                let new_count = new_s.matches(needle.as_str()).count();
+
+        let mut out = Vec::new();
+        for e in entries {
+            let (old, new) = read_blob_pair(odb, &e)?;
+            let old_count = old.matches(needle.as_str()).count();
+            let new_count = new.matches(needle.as_str()).count();
+            let keep = if opts.pickaxe_all {
+                old_count > 0 || new_count > 0
+            } else {
                 old_count != new_count
-            })
-            .collect());
+            };
+            if keep {
+                out.push(e);
+            }
+        }
+        return Ok(out);
     }
+
     Ok(entries)
 }
 

@@ -29,7 +29,7 @@ use grit_lib::write_tree::write_tree_from_index;
 use time::OffsetDateTime;
 
 use crate::commands::diff_index;
-use crate::explicit_exit::ExplicitExit;
+use crate::explicit_exit::{ExplicitExit, SilentNonZeroExit};
 
 /// Count distinct paths that have any unmerged index stage (matches `git merge` conflict scoring).
 fn unmerged_path_count(index: &Index) -> usize {
@@ -1514,7 +1514,7 @@ Aborting"
             let n = unmerged_path_count(&merge_result.index);
             return Err(anyhow::Error::new(StrategyTrialConflict(n)));
         }
-        std::process::exit(1);
+        return Err(anyhow::Error::new(SilentNonZeroExit { code: 1 }));
     }
 
     if args.squash {
@@ -2308,7 +2308,7 @@ fn do_octopus_merge(
                     eprintln!("fatal: merge program failed");
                 }
                 if exit_on_conflict {
-                    std::process::exit(2);
+                    return Err(anyhow::Error::new(SilentNonZeroExit { code: 2 }));
                 }
                 bail!("fatal: merge program failed");
             }
@@ -2398,7 +2398,7 @@ fn do_octopus_merge(
                 eprintln!("fatal: merge program failed");
             }
             if exit_on_conflict {
-                std::process::exit(2);
+                return Err(anyhow::Error::new(SilentNonZeroExit { code: 2 }));
             }
             bail!("fatal: merge program failed");
         }

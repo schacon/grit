@@ -14,6 +14,8 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
+use grit_lib::crlf::{get_file_attrs, load_gitattributes, AttrRule};
 use grit_lib::diff::{
     anchored_unified_diff, count_changes, count_git_lines, detect_renames, diff_index_to_tree,
     diff_index_to_worktree, diff_tree_to_worktree, diff_trees, diffcore_count_changes,
@@ -1433,11 +1435,31 @@ pub fn run(mut args: Args) -> Result<()> {
             .unwrap_or(false)
     };
 
-    // --check: check for whitespace errors
+    // `--check`: whitespace / conflict-marker diagnostics. With `--exit-code`, Git uses 1 for a
+    // diff that passes the check and 3 when the check fails; without `--exit-code`, a failed
+    // check exits 2 (see t4017-diff-retval).
     if args.check {
-        let has_errors = check_whitespace_errors(&mut out, &entries, &repo.odb, wt_for_content)?;
-        if has_errors {
+        let attr_rules: Option<Vec<AttrRule>> = wt_for_content.map(load_gitattributes);
+        let config_for_attrs = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let has_ws_errors = check_whitespace_errors(
+            &mut out,
+            &entries,
+            &repo.odb,
+            wt_for_content,
+            attr_rules.as_deref(),
+            &config_for_attrs,
+        )?;
+        if has_ws_errors {
+            if args.exit_code {
+                std::process::exit(3);
+            }
             std::process::exit(2);
+        }
+        if args.exit_code || args.quiet {
+            if has_diff {
+                std::process::exit(1);
+            }
+            return Ok(());
         }
         return Ok(());
     }
@@ -3858,6 +3880,59 @@ fn write_name_status(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> 
     Ok(())
 }
 
+/// Git default conflict marker width (`DEFAULT_CONFLICT_MARKER_SIZE` in upstream).
+const DEFAULT_CONFLICT_MARKER_SIZE: usize = 7;
+
+fn conflict_marker_size_for_path(
+    rules: Option<&[AttrRule]>,
+    rel_path: &str,
+    config: &ConfigSet,
+) -> usize {
+    let mut size = DEFAULT_CONFLICT_MARKER_SIZE;
+    if let Some(rules) = rules {
+        let fa = get_file_attrs(rules, rel_path, config);
+        if let Some(ref s) = fa.conflict_marker_size {
+            if let Ok(n) = s.trim().parse::<i32>() {
+                if n > 0 {
+                    size = n as usize;
+                }
+            }
+        }
+    }
+    size
+}
+
+/// Match upstream `is_conflict_marker` in `git/diff.c`.
+fn is_conflict_marker_line(body: &str, marker_size: usize) -> bool {
+    let line = body.trim_end_matches(['\n', '\r']);
+    let len = line.len();
+    if len < marker_size {
+        return false;
+    }
+    let first = match line.as_bytes().first().copied() {
+        Some(b) => b,
+        None => return false,
+    };
+    if !matches!(first, b'=' | b'>' | b'<' | b'|') {
+        return false;
+    }
+    for i in 1..marker_size {
+        if line.as_bytes().get(i).copied() != Some(first) {
+            return false;
+        }
+    }
+    // Middle conflict line is exactly `marker_size` '=' characters (no trailing label).
+    if first == b'=' && len == marker_size {
+        return true;
+    }
+    if len < marker_size + 1 {
+        return false;
+    }
+    line.as_bytes()
+        .get(marker_size)
+        .is_some_and(|b| b.is_ascii_whitespace())
+}
+
 /// Check for whitespace errors in added/modified lines.
 /// Returns true if any errors were found.
 fn check_whitespace_errors(
@@ -3865,6 +3940,8 @@ fn check_whitespace_errors(
     entries: &[DiffEntry],
     odb: &Odb,
     work_tree: Option<&Path>,
+    attr_rules: Option<&[AttrRule]>,
+    config: &ConfigSet,
 ) -> Result<bool> {
     use grit_lib::diff::zero_oid;
     let mut has_errors = false;
@@ -3874,6 +3951,7 @@ fn check_whitespace_errors(
             continue;
         }
         let path = entry.path();
+        let marker_size = conflict_marker_size_for_path(attr_rules, path, config);
 
         // Read old and new content
         let old_content = if entry.old_oid == zero_oid() {
@@ -3903,11 +3981,7 @@ fn check_whitespace_errors(
                     let line = change.value();
                     // Check for conflict markers
                     let bare = line.trim_end_matches('\n').trim_end_matches('\r');
-                    if bare.starts_with("<<<<<<< ")
-                        || bare.starts_with(">>>>>>> ")
-                        || bare == "======="
-                        || bare.starts_with("=======")
-                    {
+                    if is_conflict_marker_line(bare, marker_size) {
                         writeln!(out, "{}:{}: leftover conflict marker", path, line_no)?;
                         write!(out, "+{}", line)?;
                         if !line.ends_with('\n') {
