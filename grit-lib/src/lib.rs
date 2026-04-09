@@ -56,6 +56,7 @@ pub mod patch_ids;
 pub mod pathspec;
 pub mod promisor;
 pub mod prune_packed;
+pub mod quote_path;
 pub mod reflog;
 pub mod refs;
 pub mod reftable;

@@ -169,10 +169,7 @@ pub fn run(args: Args) -> Result<()> {
     };
     let cwd_prefix = cwd_prefix_bytes(work_tree, &cwd)?;
     let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-    let quote_path = match config.get_bool("core.quotePath") {
-        Some(Ok(v)) => v,
-        Some(Err(_)) | None => true,
-    };
+    let quote_fully = config.quote_path_fully();
     let index_path = resolved_env_index_path(&repo);
     let mut index = if args.sparse {
         grit_lib::index::Index::load(&index_path).context("loading index")?
@@ -432,7 +429,7 @@ pub fn run(args: Args) -> Result<()> {
                 display_path_from_cwd(&entry.path, &cwd_prefix)
             };
             let name = String::from_utf8_lossy(display);
-            let qname = format_ls_path(&name, use_nul, quote_path);
+            let qname = format_ls_path(&name, use_nul, quote_fully);
             if let Some(t) = tag {
                 write!(out, "{} ", t)?;
             }
@@ -466,7 +463,7 @@ pub fn run(args: Args) -> Result<()> {
                 display_path_from_cwd(&entry.path, &cwd_prefix)
             };
             let name = String::from_utf8_lossy(display);
-            let qname = format_ls_path(&name, use_nul, quote_path);
+            let qname = format_ls_path(&name, use_nul, quote_fully);
             if let Some(t) = tag {
                 write!(out, "{} ", t)?;
             }
@@ -582,7 +579,7 @@ pub fn run(args: Args) -> Result<()> {
 
         for display in &output_paths {
             let name = String::from_utf8_lossy(display);
-            let qname = format_ls_path(&name, use_nul, quote_path);
+            let qname = format_ls_path(&name, use_nul, quote_fully);
             if args.show_tag {
                 write!(out, "? {qname}")?;
             } else {
@@ -1056,54 +1053,12 @@ fn describe_eol(data: &[u8]) -> String {
     }
 }
 
-/// Format a path for `ls-files` output: optionally C-quote per `core.quotePath`.
-fn format_ls_path(name: &str, use_nul: bool, quote_path: bool) -> String {
-    if use_nul || !quote_path {
+/// Format a path for `ls-files` output: C-quote per `core.quotepath` / `core.quotePath`.
+fn format_ls_path(name: &str, use_nul: bool, quote_fully: bool) -> String {
+    if use_nul {
         return name.to_owned();
     }
-    maybe_quote(name)
-}
-
-/// Quote a path name with C-style escaping if it contains special characters.
-fn maybe_quote(name: &str) -> String {
-    let mut out = String::with_capacity(name.len() + 2);
-    let mut needs_quotes = false;
-    for ch in name.chars() {
-        match ch {
-            '"' => {
-                out.push_str("\\\"");
-                needs_quotes = true;
-            }
-            '\\' => {
-                out.push_str("\\\\");
-                needs_quotes = true;
-            }
-            '\t' => {
-                out.push_str("\\t");
-                needs_quotes = true;
-            }
-            '\n' => {
-                out.push_str("\\n");
-                needs_quotes = true;
-            }
-            '\r' => {
-                out.push_str("\\r");
-                needs_quotes = true;
-            }
-            c if c.is_control() || (c as u32) >= 0x80 => {
-                for b in c.to_string().bytes() {
-                    out.push_str(&format!("\\{:03o}", b));
-                }
-                needs_quotes = true;
-            }
-            c => out.push(c),
-        }
-    }
-    if needs_quotes {
-        format!("\"{out}\"")
-    } else {
-        out
-    }
+    grit_lib::quote_path::quote_c_style(name, quote_fully)
 }
 
 fn status_tag(entry: &IndexEntry) -> char {
