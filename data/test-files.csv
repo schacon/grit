@@ -350,7 +350,7 @@ t12960-init-quiet-template	t1	yes	36	36	0	true	ok	0
 t12970-branch-verbose-abbrev	t1	yes	34	34	0	true	ok	0
 t12980-tag-force-replace	t1	yes	33	33	0	true	ok	0
 t12990-commit-reuse-message	t1	yes	32	32	0	true	ok	0
-t1300-config	t1	yes	497	276	221	false	ok	0
+t1300-config	t1	yes	497	292	205	false	ok	0
 t13000-add-bulk-paths	t1	yes	31	31	0	true	ok	0
 t1301-shared-repo	t1	yes	22	2	20	false	ok	0
 t13010-rm-ignore-unmatch	t1	yes	30	30	0	true	ok	0

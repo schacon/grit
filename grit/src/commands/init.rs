@@ -226,21 +226,18 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
         ConfigSet::load(None, true).unwrap_or_else(|_| ConfigSet::new())
     };
 
-    // Determine initial branch name:
-    // 1. --initial-branch / -b flag (only on fresh init)
-    // 2. GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME env (test support)
-    // 3. init.defaultBranch config
-    // 4. "master" as fallback
+    // Determine initial branch name (fresh init only), matching `repo_default_branch_name` in
+    // git/refs.c: env `GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME` wins over `init.defaultBranch` config.
     let initial_branch = if !is_reinit {
         if let Some(ref b) = args.initial_branch {
             b.clone()
         } else if let Ok(b) = std::env::var("GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME") {
             if !b.is_empty() {
                 b
+            } else if let Some(c) = config.get("init.defaultBranch") {
+                c
             } else {
-                config
-                    .get("init.defaultBranch")
-                    .unwrap_or_else(|| "master".to_owned())
+                "master".to_owned()
             }
         } else if let Some(b) = config.get("init.defaultBranch") {
             b
@@ -556,10 +553,9 @@ fn create_git_dir(git_dir: &Path, opts: CreateGitDirOptions<'_>) -> Result<()> {
             }
         }
 
-        if !is_reinit && !initial_branch.is_empty() {
-            config_content.push_str("[init]\n");
-            config_content.push_str(&format!("\tdefaultBranch = {initial_branch}\n"));
-        }
+        // Match upstream `git init`: the initial branch is recorded only in `HEAD`, not as
+        // `init.defaultBranch` in `.git/config`. Tests (e.g. t1300-config) expect `config --list`
+        // in a fresh repo to omit that key.
 
         // Write shared repository config when `--shared` or `core.sharedRepository` applies.
         if let Some(stored) = shared_repo_config_value {
