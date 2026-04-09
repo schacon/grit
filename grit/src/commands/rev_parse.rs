@@ -906,6 +906,7 @@ pub fn run(args: Args) -> Result<()> {
                 } else if p.is_file() {
                     let content = std::fs::read_to_string(p)
                         .with_context(|| format!("cannot read '{}'", p.display()))?;
+                    let mut found = false;
                     for line in content.lines() {
                         if let Some(rest) = line.strip_prefix("gitdir:") {
                             let rel = rest.trim();
@@ -916,14 +917,16 @@ pub fn run(args: Args) -> Result<()> {
                             };
                             let resolved = git_dir.canonicalize().unwrap_or(git_dir);
                             println!("{}", resolved.display());
-                            return Ok(());
+                            found = true;
+                            break;
                         }
                     }
-                    bail!("not a gitdir: {path_arg}");
+                    if !found {
+                        bail!("not a gitdir: {path_arg}");
+                    }
                 } else {
                     bail!("not a valid directory: {path_arg}");
                 }
-                return Ok(());
             }
             Action::Revision(rev, rev_symbolic_full_name, strict_before_first_dd) => {
                 let Some(current) = repo.as_ref() else {
