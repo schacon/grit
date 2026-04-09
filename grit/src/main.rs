@@ -2593,7 +2593,12 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
     }
     if rest.len() == 1 && (rest[0] == "-h" || rest[0] == "--help") {
         if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd) {
-            let code = if rest[0] == "--help" { 0 } else { 129 };
+            // Most builtins use exit 129 for `-h` (t0450). `git submodule -h` exits 0 (t7400).
+            let code = if subcmd == "submodule" || rest[0] == "--help" {
+                0
+            } else {
+                129
+            };
             print_upstream_synopsis_and_exit(subcmd, syn, code);
         }
     }
@@ -2627,7 +2632,7 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
             let code = match e.kind() {
                 clap::error::ErrorKind::DisplayHelp
                 | clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
-                    if rest.iter().any(|a| a == "--help") {
+                    if rest.iter().any(|a| a == "--help") || subcmd == "submodule" {
                         0
                     } else {
                         129
@@ -3746,7 +3751,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "stash" => commands::stash::run(parse_cmd_args(subcmd, rest)),
         "status" => commands::status::run(parse_cmd_args(subcmd, &preprocess_status_argv(rest))),
         "stripspace" => commands::stripspace::run(parse_cmd_args(subcmd, rest)),
-        "submodule" => commands::submodule::run(parse_cmd_args(subcmd, rest)),
+        "submodule" => commands::submodule::run_from_argv(rest),
         "submodule--helper" => commands::submodule::run_submodule_helper(rest),
         "switch" => commands::switch::run(parse_cmd_args(subcmd, rest)),
         "symbolic-ref" => commands::symbolic_ref::run(parse_cmd_args(subcmd, rest)),
