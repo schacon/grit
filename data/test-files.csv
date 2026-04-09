@@ -709,7 +709,7 @@ t4028-format-patch-mime-headers	t4	yes	3	3	0	true	ok	0
 t4029-diff-trailing-space	t4	yes	1	1	0	true	ok	0
 t4030-diff-textconv	t4	yes	19	3	16	false	ok	0
 t4031-diff-rewrite-binary	t4	yes	8	3	5	false	ok	0
-t4032-diff-inter-hunk-context	t4	yes	37	19	18	false	ok	0
+t4032-diff-inter-hunk-context	t4	yes	37	37	0	true	ok	0
 t4033-diff-patience	t4	yes	11	4	7	false	ok	0
 t4034-diff-words	t4	yes	66	7	59	false	ok	0
 t4035-diff-quiet	t4	yes	0	0	0	false	timeout	0

@@ -1710,6 +1710,7 @@ pub fn format_raw_abbrev(entry: &DiffEntry, abbrev_len: usize) -> String {
 /// - `old_path` — display path for the old side.
 /// - `new_path` — display path for the new side.
 /// - `context_lines` — number of context lines around changes (default: 3).
+/// - Inter-hunk context defaults to `0` (see [`unified_diff_with_prefix`]).
 ///
 /// # Returns
 ///
@@ -1727,18 +1728,23 @@ pub fn unified_diff(
         old_path,
         new_path,
         context_lines,
+        0,
         "a/",
         "b/",
     )
 }
 
 /// Same as `unified_diff` but with configurable source/destination prefixes.
+///
+/// `inter_hunk_context` is Git's `--inter-hunk-context`: adjacent hunks merge when
+/// the unchanged gap between them is at most `2 * context_lines + inter_hunk_context` lines.
 pub fn unified_diff_with_prefix(
     old_content: &str,
     new_content: &str,
     old_path: &str,
     new_path: &str,
     context_lines: usize,
+    inter_hunk_context: usize,
     src_prefix: &str,
     dst_prefix: &str,
 ) -> String {
@@ -1748,6 +1754,7 @@ pub fn unified_diff_with_prefix(
         old_path,
         new_path,
         context_lines,
+        inter_hunk_context,
         src_prefix,
         dst_prefix,
         None,
@@ -1762,6 +1769,7 @@ pub fn unified_diff_with_prefix_and_funcname(
     old_path: &str,
     new_path: &str,
     context_lines: usize,
+    inter_hunk_context: usize,
     src_prefix: &str,
     dst_prefix: &str,
     funcname_matcher: Option<&FuncnameMatcher>,
@@ -1772,6 +1780,7 @@ pub fn unified_diff_with_prefix_and_funcname(
         old_path,
         new_path,
         context_lines,
+        inter_hunk_context,
         src_prefix,
         dst_prefix,
         funcname_matcher,
@@ -1787,12 +1796,13 @@ pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
     old_path: &str,
     new_path: &str,
     context_lines: usize,
+    inter_hunk_context: usize,
     src_prefix: &str,
     dst_prefix: &str,
     funcname_matcher: Option<&FuncnameMatcher>,
     algorithm: similar::Algorithm,
 ) -> String {
-    use similar::TextDiff;
+    use similar::{group_diff_ops, udiff::UnifiedDiffHunk, TextDiff};
 
     let diff = TextDiff::configure()
         .algorithm(algorithm)
@@ -1812,11 +1822,16 @@ pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
 
     let old_lines: Vec<&str> = old_content.lines().collect();
 
-    for hunk in diff
-        .unified_diff()
-        .context_radius(context_lines)
-        .iter_hunks()
-    {
+    let group_radius = context_lines
+        .saturating_mul(2)
+        .saturating_add(inter_hunk_context);
+    let op_groups = group_diff_ops(diff.ops().to_vec(), group_radius);
+
+    for ops in op_groups {
+        if ops.is_empty() {
+            continue;
+        }
+        let hunk = UnifiedDiffHunk::new(ops, &diff, true);
         let hunk_str = format!("{hunk}");
         // The similar crate outputs @@ -a,b +c,d @@\n but Git adds
         // function context after the closing @@. Extract the hunk header

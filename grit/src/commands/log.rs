@@ -5752,6 +5752,7 @@ fn log_write_patch_entry(
         display_old,
         display_new,
         context_lines,
+        0,
         src_pfx,
         dst_pfx,
     );

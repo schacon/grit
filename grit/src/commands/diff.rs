@@ -647,6 +647,20 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let repo = Repository::discover(None).context("not a git repository")?;
 
+    if args.inter_hunk_context.is_none() {
+        if let Ok(cfg) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
+            if let Some(raw) = cfg.get("diff.interhunkcontext") {
+                match cfg.get_i64("diff.interhunkcontext") {
+                    Some(Ok(n)) if n < 0 => {
+                        anyhow::bail!("negative value for 'diff.interHunkContext': '{raw}'");
+                    }
+                    Some(Ok(_)) => {}
+                    _ => anyhow::bail!("invalid value for 'diff.interHunkContext': '{raw}'"),
+                }
+            }
+        }
+    }
+
     let emit_unified_patch = diff_emit_unified_patch_from_argv(&raw_args);
 
     // Resolve diff prefixes from config and command-line options
@@ -1398,6 +1412,15 @@ pub fn run(mut args: Args) -> Result<()> {
             None
         };
         let context_lines = args.unified.or(config_context).unwrap_or(3);
+        let inter_hunk_context = args
+            .inter_hunk_context
+            .or_else(|| {
+                grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+                    .ok()
+                    .and_then(|cfg| cfg.get("diff.interhunkcontext"))
+                    .and_then(|s| s.parse().ok())
+            })
+            .unwrap_or(0);
         if args.shortstat {
             write_shortstat(
                 &mut out,
@@ -1503,7 +1526,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     wt_for_content,
                     suppress_blank_empty,
                     patch_abbrev,
-                    args.inter_hunk_context,
+                    inter_hunk_context,
                     args.binary,
                     &src_prefix,
                     &dst_prefix,
@@ -2844,7 +2867,7 @@ fn write_patch_with_prefix(
     work_tree: Option<&Path>,
     suppress_blank_empty: bool,
     abbrev_len: usize,
-    _inter_hunk_context: Option<usize>,
+    inter_hunk_context: usize,
     show_binary: bool,
     src_prefix: &str,
     dst_prefix: &str,
@@ -3016,6 +3039,7 @@ fn write_patch_with_prefix(
                 display_old,
                 display_new,
                 context_lines,
+                inter_hunk_context,
                 src_prefix,
                 dst_prefix,
             );
