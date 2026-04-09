@@ -2862,6 +2862,23 @@ fn preprocess_diff_args(rest: &[String]) -> Vec<String> {
     let word_diff_modes = ["plain", "color", "porcelain", "none"];
     while i < rest.len() {
         let arg = &rest[i];
+        if arg == "-X" {
+            if i + 1 < rest.len() && !rest[i + 1].starts_with('-') {
+                result.push(format!("--dirstat={}", rest[i + 1]));
+                i += 2;
+            } else {
+                result.push("--dirstat=".to_owned());
+                i += 1;
+            }
+            continue;
+        }
+        if let Some(param) = arg.strip_prefix("-X") {
+            if !param.is_empty() {
+                result.push(format!("--dirstat={param}"));
+                i += 1;
+                continue;
+            }
+        }
         if arg == "-U" {
             // `-U <N>` with a space — merge into `--unified=<N>`
             if i + 1 < rest.len() {

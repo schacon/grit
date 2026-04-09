@@ -724,7 +724,7 @@ t4043-diff-rename-binary	t4	yes	3	3	0	true	ok	0
 t4044-diff-index-unique-abbrev	t4	yes	2	1	1	false	ok	0
 t4045-diff-relative	t4	yes	38	32	6	false	ok	1
 t4046-diff-unmerged	t4	yes	8	3	5	false	ok	0
-t4047-diff-dirstat	t4	yes	41	4	37	false	ok	0
+t4047-diff-dirstat	t4	yes	41	41	0	true	ok	0
 t4047-diff-numstat	t4	yes	26	26	0	true	ok	0
 t4048-diff-combined-binary	t4	yes	14	14	0	true	ok	0
 t4049-diff-stat-count	t4	yes	4	1	3	false	ok	0

@@ -16,8 +16,8 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
     anchored_unified_diff, count_changes, count_git_lines, detect_renames, diff_index_to_tree,
-    diff_index_to_worktree, diff_tree_to_worktree, diff_trees, should_break_rewrite_for_stat,
-    unified_diff, zero_oid, DiffEntry, DiffStatus,
+    diff_index_to_worktree, diff_tree_to_worktree, diff_trees, diffcore_count_changes,
+    should_break_rewrite_for_stat, unified_diff, zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::error::Error;
@@ -388,15 +388,31 @@ pub struct Args {
     #[arg(short = 's', long = "no-patch")]
     pub no_patch: bool,
 
-    /// Directory-level diffstat (`--dirstat=lines`, etc.). Empty value means `lines`.
+    /// Directory-level diffstat (`--dirstat=lines`, etc.). Empty value means default `changes`.
+    /// Later `--dirstat` / `-X` options override earlier ones (Git semantics).
     #[arg(
         long = "dirstat",
         value_name = "PARAM",
         default_missing_value = "",
         num_args = 0..=1,
+        require_equals = true,
+        action = clap::ArgAction::Append
+    )]
+    pub dirstat: Vec<String>,
+
+    /// Synonym for `--dirstat=files` (optional `=<param>` like `--dirstat`).
+    #[arg(
+        long = "dirstat-by-file",
+        value_name = "PARAM",
+        default_missing_value = "",
+        num_args = 0..=1,
         require_equals = true
     )]
-    pub dirstat: Option<String>,
+    pub dirstat_by_file: Option<String>,
+
+    /// Set `--dirstat=cumulative` (Git synonym).
+    #[arg(long = "cumulative")]
+    pub dirstat_cumulative_flag: bool,
 
     /// Number of context lines in unified diff output (default: 3).
     #[arg(
@@ -486,6 +502,106 @@ pub struct Args {
     /// Commits or paths. Use `--` to separate revisions from paths.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub args: Vec<String>,
+}
+
+/// Parsed `--dirstat` / `diff.dirstat` options (Git-compatible).
+#[derive(Clone, Debug)]
+struct DirstatOptions {
+    /// `changes` (byte damage), `lines` (insertion+deletion lines), or `files` (1 per file).
+    mode: DirstatMode,
+    cumulative: bool,
+    /// Minimum permille (parts per thousand) to print a line; default 30 = 3%.
+    permille: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DirstatMode {
+    Changes,
+    Lines,
+    Files,
+}
+
+impl Default for DirstatOptions {
+    fn default() -> Self {
+        Self {
+            mode: DirstatMode::Changes,
+            cumulative: false,
+            permille: 30,
+        }
+    }
+}
+
+impl DirstatOptions {
+    fn is_default_everything(&self) -> bool {
+        self.mode == DirstatMode::Changes && !self.cumulative && self.permille == 30
+    }
+}
+
+fn parse_dirstat_apply_tokens(
+    params: &str,
+    opts: &mut DirstatOptions,
+    strict: bool,
+    warnings: &mut Vec<String>,
+) -> Result<()> {
+    if params.is_empty() {
+        return Ok(());
+    }
+    for raw in params.split(',') {
+        let p = raw.trim();
+        if p.is_empty() {
+            continue;
+        }
+        if p.eq_ignore_ascii_case("changes") {
+            opts.mode = DirstatMode::Changes;
+        } else if p.eq_ignore_ascii_case("lines") {
+            opts.mode = DirstatMode::Lines;
+        } else if p.eq_ignore_ascii_case("files") {
+            opts.mode = DirstatMode::Files;
+        } else if p.eq_ignore_ascii_case("noncumulative") {
+            opts.cumulative = false;
+        } else if p.eq_ignore_ascii_case("cumulative") {
+            opts.cumulative = true;
+        } else if p.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            match parse_dirstat_percentage_permille(p) {
+                Some(pm) => opts.permille = pm,
+                None => {
+                    let msg = format!(
+                        "Failed to parse --dirstat/-X option parameter:\n  Failed to parse dirstat cut-off percentage '{p}'\n"
+                    );
+                    if strict {
+                        bail!("{msg}");
+                    }
+                    warnings.push(format!(
+                        "Found errors in 'diff.dirstat' config variable:\n  Failed to parse dirstat cut-off percentage '{p}'\n"
+                    ));
+                }
+            }
+        } else {
+            let msg = format!(
+                "Failed to parse --dirstat/-X option parameter:\n  Unknown dirstat parameter '{p}'\n"
+            );
+            if strict {
+                bail!("{msg}");
+            }
+            warnings.push(format!(
+                "Found errors in 'diff.dirstat' config variable:\n  Unknown dirstat parameter '{p}'\n"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn parse_dirstat_params_lenient(params: &str) -> (DirstatOptions, Vec<String>) {
+    let mut o = DirstatOptions::default();
+    let mut warnings = Vec::new();
+    let _ = parse_dirstat_apply_tokens(params, &mut o, false, &mut warnings);
+    (o, warnings)
+}
+
+#[derive(Clone, Debug)]
+struct DirstatFile {
+    name: String,
+    changed: u64,
 }
 
 /// Run the `diff` command.
@@ -725,10 +841,24 @@ pub fn run(mut args: Args) -> Result<()> {
                     // Accepted for compatibility
                 }
                 s if s == "--dirstat" => {
-                    args.dirstat = Some(String::new());
+                    args.dirstat.push(String::new());
                 }
                 s if s.starts_with("--dirstat=") => {
-                    args.dirstat = Some(s.strip_prefix("--dirstat=").unwrap_or("").to_owned());
+                    args.dirstat
+                        .push(s.strip_prefix("--dirstat=").unwrap_or("").to_owned());
+                }
+                s if s == "--dirstat-by-file" => {
+                    args.dirstat_by_file = Some(String::new());
+                }
+                s if s.starts_with("--dirstat-by-file=") => {
+                    args.dirstat_by_file = Some(
+                        s.strip_prefix("--dirstat-by-file=")
+                            .unwrap_or("")
+                            .to_owned(),
+                    );
+                }
+                "--cumulative" => {
+                    args.dirstat_cumulative_flag = true;
                 }
                 _ => {
                     extra_revs.push(r.clone());
@@ -1188,6 +1318,10 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // `--quiet` alone suppresses stdout, but it still must honor `--exit-code` (below). `-s` /
     // `--no-patch` suppresses the unified patch without implying `--quiet`.
+    let dirstat_cli_active = !args.dirstat.is_empty() || args.dirstat_by_file.is_some();
+    let (dirstat_opts, dirstat_config_warnings) =
+        resolve_dirstat_options(&args, &repo.git_dir, dirstat_cli_active)?;
+
     let format_besides_unified_patch = args.shortstat
         || stat_enabled
         || args.stat_count.is_some()
@@ -1199,8 +1333,12 @@ pub fn run(mut args: Args) -> Result<()> {
         || args.name_only
         || args.name_status
         || (args.summary && !stat_enabled)
-        || args.dirstat.is_some();
+        || dirstat_opts.is_some();
     let quiet_suppresses_stdout = args.quiet && !format_besides_unified_patch;
+
+    for w in &dirstat_config_warnings {
+        eprintln!("warning: {w}");
+    }
 
     if !quiet_suppresses_stdout {
         let config_context = if args.unified.is_none() {
@@ -1221,6 +1359,16 @@ pub fn run(mut args: Args) -> Result<()> {
                 wt_for_content,
                 args.break_rewrites,
             )?;
+            if let Some(ref ds) = dirstat_opts {
+                write_dirstat(
+                    &mut out,
+                    ds,
+                    &entries,
+                    &repo.odb,
+                    wt_for_content,
+                    args.break_rewrites,
+                )?;
+            }
         } else if stat_enabled
             || args.stat_count.is_some()
             || args.stat_width.is_some()
@@ -1280,8 +1428,15 @@ pub fn run(mut args: Args) -> Result<()> {
                     write!(out, "{patch}")?;
                 }
             }
-            if args.dirstat.is_some() {
-                write_dirstat_lines(&mut out, &entries, &repo.odb, wt_for_content)?;
+            if let Some(ref ds) = dirstat_opts {
+                write_dirstat(
+                    &mut out,
+                    ds,
+                    &entries,
+                    &repo.odb,
+                    wt_for_content,
+                    args.break_rewrites,
+                )?;
             }
             if show_unified {
                 write_patch_with_prefix(
@@ -1891,39 +2046,222 @@ fn diff_emit_unified_patch_from_argv(argv: &[String]) -> bool {
     emit
 }
 
-/// Lines-mode `--dirstat`: one line per top-level directory, `pct% path/`.
-fn write_dirstat_lines(
+fn resolve_dirstat_options(
+    args: &Args,
+    git_dir: &std::path::Path,
+    cli_active: bool,
+) -> Result<(Option<DirstatOptions>, Vec<String>)> {
+    use grit_lib::config::ConfigSet;
+    let config = ConfigSet::load(Some(git_dir), false).unwrap_or_else(|_| ConfigSet::new());
+    let mut warnings = Vec::new();
+
+    let mut opts = DirstatOptions::default();
+
+    if let Some(ref cfg_val) = config.get("diff.dirstat") {
+        let (o, w) = parse_dirstat_params_lenient(cfg_val);
+        warnings.extend(w);
+        opts = o;
+    }
+
+    if args.dirstat_cumulative_flag {
+        parse_dirstat_apply_tokens("cumulative", &mut opts, true, &mut warnings)?;
+    }
+
+    if let Some(ref p) = args.dirstat_by_file {
+        parse_dirstat_apply_tokens("files", &mut opts, true, &mut warnings)?;
+        if !p.is_empty() {
+            parse_dirstat_apply_tokens(p, &mut opts, true, &mut warnings)?;
+        }
+    }
+
+    for param in &args.dirstat {
+        if param.is_empty() {
+            opts = DirstatOptions::default();
+        } else {
+            parse_dirstat_apply_tokens(param, &mut opts, true, &mut warnings)?;
+        }
+    }
+
+    if !cli_active
+        && opts.is_default_everything() && config.get("diff.dirstat").is_none() {
+            return Ok((None, warnings));
+        }
+
+    Ok((Some(opts), warnings))
+}
+
+fn parse_dirstat_percentage_permille(s: &str) -> Option<u32> {
+    let mut parts = s.splitn(2, '.');
+    let whole = parts.next()?.parse::<u32>().ok()?;
+    let mut permille = whole.saturating_mul(10);
+    if let Some(rest) = parts.next() {
+        let mut chars = rest.chars();
+        let d = chars.next()?;
+        if !d.is_ascii_digit() {
+            return None;
+        }
+        permille = permille.saturating_add(d.to_digit(10)?);
+        if chars.next().is_some_and(|c| c.is_ascii_digit()) {
+            // Git ignores further fractional digits after the first
+        }
+        if chars.any(|c| !c.is_ascii_digit()) {
+            return None;
+        }
+    }
+    Some(permille)
+}
+
+fn dirstat_damage_for_entry(
+    odb: &Odb,
+    entry: &DiffEntry,
+    work_tree: Option<&Path>,
+    break_rewrites: bool,
+    mode: DirstatMode,
+) -> u64 {
+    let path = entry.path();
+    let old_raw = read_content_raw(odb, &entry.old_oid);
+    let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, path);
+
+    match mode {
+        DirstatMode::Files => 1,
+        DirstatMode::Lines => {
+            if break_rewrites
+                && entry.status == DiffStatus::Modified
+                && !is_binary(&old_raw)
+                && !is_binary(&new_raw)
+                && should_break_rewrite_for_stat(&old_raw, &new_raw)
+            {
+                let ins = count_git_lines(&new_raw) as u64;
+                let del = count_git_lines(&old_raw) as u64;
+                return ins.saturating_add(del);
+            }
+            let old_content = String::from_utf8_lossy(&old_raw).into_owned();
+            let new_content = String::from_utf8_lossy(&new_raw).into_owned();
+            let (ins, del) = count_changes(&old_content, &new_content);
+            let mut damage = (ins as u64).saturating_add(del as u64);
+            if is_binary(&old_raw) || is_binary(&new_raw) {
+                damage = damage.div_ceil(64);
+            }
+            damage
+        }
+        DirstatMode::Changes => {
+            if entry.old_oid == entry.new_oid {
+                return 0;
+            }
+            if entry.status == DiffStatus::Added {
+                return new_raw.len() as u64;
+            }
+            if entry.status == DiffStatus::Deleted {
+                return old_raw.len() as u64;
+            }
+            let (copied, added) = diffcore_count_changes(&old_raw, &new_raw);
+            let old_len = old_raw.len() as u64;
+            let removed = old_len.saturating_sub(copied);
+            let mut damage = removed.saturating_add(added);
+            if damage == 0 {
+                damage = 1;
+            }
+            damage
+        }
+    }
+}
+
+fn gather_dirstat_recursive(
     out: &mut impl Write,
+    files: &[DirstatFile],
+    idx: &mut usize,
+    changed_total: u64,
+    base_len: usize,
+    base: &str,
+    permille: u32,
+    cumulative: bool,
+) -> Result<u64> {
+    let mut sum = 0u64;
+    let mut sources = 0u32;
+
+    while *idx < files.len() {
+        let f = &files[*idx];
+        let name = f.name.as_str();
+        if name.len() < base_len {
+            break;
+        }
+        if !name.starts_with(base) {
+            break;
+        }
+        let rel = &name[base_len..];
+        if let Some(slash_rel) = rel.find('/') {
+            let slash_abs = base_len + slash_rel;
+            let new_base_len = slash_abs + 1;
+            let sub = gather_dirstat_recursive(
+                out,
+                files,
+                idx,
+                changed_total,
+                new_base_len,
+                &name[..new_base_len],
+                permille,
+                cumulative,
+            )?;
+            sum = sum.saturating_add(sub);
+            sources = sources.saturating_add(1);
+        } else {
+            sum = sum.saturating_add(f.changed);
+            *idx += 1;
+            sources = sources.saturating_add(2);
+        }
+    }
+
+    if base_len > 0 && sources != 1 && sum > 0 && changed_total > 0 {
+        let permille_val = ((sum as u128) * 1000 / (changed_total as u128)) as u32;
+        if permille_val >= permille {
+            let int_part = permille_val / 10;
+            let frac = permille_val % 10;
+            writeln!(out, " {:>4}.{}% {}", int_part, frac, &base[..base_len])?;
+            if !cumulative {
+                return Ok(sum);
+            }
+        }
+    }
+    Ok(if cumulative { 0 } else { sum })
+}
+
+fn write_dirstat(
+    out: &mut impl Write,
+    opts: &DirstatOptions,
     entries: &[DiffEntry],
     odb: &Odb,
     work_tree: Option<&Path>,
+    break_rewrites: bool,
 ) -> Result<()> {
     if entries.is_empty() {
         return Ok(());
     }
-    let mut total_lines: usize = 0;
-    let mut per_dir: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut files: Vec<DirstatFile> = Vec::with_capacity(entries.len());
+    let mut changed_total = 0u64;
     for e in entries {
-        let path = e.path();
-        let top = path.split('/').next().unwrap_or(path).to_string();
-        let old = read_content(odb, &e.old_oid, None, path);
-        let new = read_content(odb, &e.new_oid, work_tree, path);
-        let old_lc = old.lines().count();
-        let new_lc = new.lines().count();
-        let delta = old_lc.abs_diff(new_lc);
-        total_lines = total_lines.saturating_add(delta);
-        *per_dir.entry(top).or_insert(0) += delta;
+        let name = e.path().to_string();
+        let damage = dirstat_damage_for_entry(odb, e, work_tree, break_rewrites, opts.mode);
+        changed_total = changed_total.saturating_add(damage);
+        files.push(DirstatFile {
+            name,
+            changed: damage,
+        });
     }
-    if total_lines == 0 {
+    if changed_total == 0 {
         return Ok(());
     }
-    for (dir, lines) in per_dir {
-        if lines == 0 {
-            continue;
-        }
-        let pct = (lines as f64) * 100.0 / (total_lines as f64);
-        writeln!(out, " {pct:.1}% {dir}/")?;
-    }
+    files.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut idx = 0usize;
+    gather_dirstat_recursive(
+        out,
+        &files,
+        &mut idx,
+        changed_total,
+        0,
+        "",
+        opts.permille,
+        opts.cumulative,
+    )?;
     Ok(())
 }
 
