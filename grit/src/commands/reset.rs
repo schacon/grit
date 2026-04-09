@@ -887,6 +887,13 @@ fn reset_paths(
     if repo.work_tree.is_none() {
         bail!("fatal: mixed reset is not allowed in a bare repository");
     }
+    let work_tree = repo.work_tree.as_ref().unwrap();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| work_tree.to_path_buf());
+    let prefix = crate::pathspec::pathdiff(&cwd, work_tree);
+    let resolved_specs: Vec<String> = paths
+        .iter()
+        .map(|p| crate::pathspec::resolve_pathspec(p, work_tree, prefix.as_deref()))
+        .collect();
     // On an unborn branch, the tree is empty (no commit exists yet).
     let tree_entries = match resolve_to_commit(repo, commit_spec) {
         Ok(commit_oid) => {
@@ -919,16 +926,43 @@ fn reset_paths(
     let precompose_unicode =
         grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir));
 
-    for path_str in paths {
+    let matched_paths: Vec<String> = if paths.is_empty() {
+        Vec::new()
+    } else {
+        let mut out: Vec<String> = index
+            .entries
+            .iter()
+            .filter(|e| {
+                e.stage() == 0
+                    && grit_lib::pathspec::matches_pathspec_list(
+                        &String::from_utf8_lossy(&e.path),
+                        &resolved_specs,
+                    )
+            })
+            .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        out.sort();
+        if out.is_empty() {
+            bail!(
+                "pathspec '{}' did not match any file(s) known to git",
+                paths.join(" ")
+            );
+        }
+        out
+    };
+
+    for path_str in matched_paths {
         let path_bytes = path_str.as_bytes().to_vec();
 
         let tree_key_bytes = tree_map
             .keys()
-            .find(|k| path_matches_index_or_tree_key(path_str, k, precompose_unicode))
+            .find(|k| path_matches_index_or_tree_key(&path_str, k, precompose_unicode))
             .cloned();
         let in_tree = tree_key_bytes.is_some();
         let index_match = index.entries.iter().find(|e| {
-            e.stage() == 0 && path_matches_index_or_tree_key(path_str, &e.path, precompose_unicode)
+            e.stage() == 0 && path_matches_index_or_tree_key(&path_str, &e.path, precompose_unicode)
         });
         let in_index = index_match.is_some();
         if !in_tree && !in_index {

@@ -187,7 +187,100 @@ pub fn run(mut args: Args) -> Result<()> {
     let mut sparse_only_pathspecs: Vec<String> = Vec::new();
     let mut matched_any_eligible = false;
 
+    let use_pathspec_list =
+        args.pathspec.iter().any(|s| s.starts_with(':')) || args.pathspec.len() > 1;
+    if use_pathspec_list {
+        let cwd = std::env::current_dir().context("resolving current directory")?;
+        let prefix = crate::pathspec::pathdiff(&cwd, work_tree);
+        let full_specs = grit_lib::pathspec::extend_pathspec_list_implicit_cwd(
+            &args
+                .pathspec
+                .iter()
+                .map(|s| crate::pathspec::resolve_pathspec(s, work_tree, prefix.as_deref()))
+                .collect::<Vec<_>>(),
+            prefix
+                .as_deref()
+                .map(|s| s.trim_end_matches('/'))
+                .filter(|s| !s.is_empty()),
+        );
+
+        let matches: Vec<String> = index
+            .entries
+            .iter()
+            .filter(|e| {
+                if e.stage() != 0 {
+                    return false;
+                }
+                let p = String::from_utf8_lossy(&e.path);
+                grit_lib::pathspec::matches_pathspec_list(&p, &full_specs)
+            })
+            .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
+        if matches.is_empty() {
+            if args.ignore_unmatch {
+                // No index paths matched; nothing to remove.
+            } else {
+                bail!(
+                    "fatal: pathspec '{}' did not match any files",
+                    args.pathspec.join(" ")
+                );
+            }
+        } else {
+            for path_str in &matches {
+                if check_symlink_in_path(work_tree, Path::new(path_str)).is_some() {
+                    bail!("'{path_str}' is beyond a symbolic link");
+                }
+            }
+
+            let eligible: Vec<String> = if args.sparse || !sparse_enabled {
+                matches
+            } else {
+                matches
+                    .into_iter()
+                    .filter(|p| {
+                        index.get(p.as_bytes(), 0).is_some_and(|e| {
+                            rm_entry_matches_sparse_worktree(e, p, &sparse_patterns, cone_cfg)
+                        })
+                    })
+                    .collect()
+            };
+
+            if eligible.is_empty() {
+                sparse_only_pathspecs.push(args.pathspec.join(" "));
+            } else {
+                matched_any_eligible = true;
+                for path_str in eligible {
+                    match safety_check(
+                        &repo,
+                        &index,
+                        &repo.odb,
+                        work_tree,
+                        &path_str,
+                        &head_tree_map,
+                        &args,
+                    ) {
+                        Ok(()) => to_remove.push(path_str),
+                        Err(kind) => {
+                            if let Some(entry) = errors_by_kind.iter_mut().find(|(k, _)| *k == kind)
+                            {
+                                entry.1.push(path_str);
+                            } else {
+                                errors_by_kind.push((kind, vec![path_str]));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     for pathspec in &include_specs {
+        if use_pathspec_list {
+            break;
+        }
         let rel = resolve_rel(pathspec, work_tree)?;
 
         // Refuse to rm through a symlinked leading path component.

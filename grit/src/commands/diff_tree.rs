@@ -24,7 +24,7 @@ use grit_lib::merge_diff::{
 };
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
-use grit_lib::pathspec::{context_from_mode_octal, matches_pathspec_with_context};
+use grit_lib::pathspec::{context_from_mode_octal, matches_pathspec_list_with_context};
 use grit_lib::quote_path::{format_diff_path_with_prefix, quote_c_style};
 use grit_lib::repo::{resolve_dot_git, Repository};
 
@@ -2154,19 +2154,19 @@ fn diff_entry_pathspec_context(entry: &DiffEntry) -> grit_lib::pathspec::Pathspe
 
 fn diff_entry_matches_pathspecs(entry: &DiffEntry, pathspecs: &[String]) -> bool {
     let ctx = diff_entry_pathspec_context(entry);
-    pathspecs.iter().any(|spec| {
-        if let Some(ref p) = entry.new_path {
-            if matches_pathspec_with_context(spec, p, ctx) {
-                return true;
-            }
+    if let Some(ref p) = entry.new_path {
+        if matches_pathspec_list_with_context(p, pathspecs, ctx) {
+            return true;
         }
-        if let Some(ref p) = entry.old_path {
-            if entry.new_path.as_ref() != Some(p) && matches_pathspec_with_context(spec, p, ctx) {
-                return true;
-            }
+    }
+    if let Some(ref p) = entry.old_path {
+        if entry.new_path.as_ref() != Some(p)
+            && matches_pathspec_list_with_context(p, pathspecs, ctx)
+        {
+            return true;
         }
-        false
-    })
+    }
+    false
 }
 
 /// Parse a whitespace-separated list of OID strings.

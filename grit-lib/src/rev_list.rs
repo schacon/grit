@@ -2367,18 +2367,13 @@ fn commit_touches_paths(
         if sparse {
             return Ok(true);
         }
-        return Ok(commit_map.keys().any(|path| {
-            paths.iter().any(|spec| {
-                crate::pathspec::matches_pathspec_with_context(
-                    spec,
-                    path,
-                    crate::pathspec::PathspecMatchContext {
-                        is_directory: false,
-                        is_git_submodule: false,
-                    },
-                )
-            })
-        }));
+        let ctx = crate::pathspec::PathspecMatchContext {
+            is_directory: false,
+            is_git_submodule: false,
+        };
+        return Ok(commit_map
+            .keys()
+            .any(|path| crate::pathspec::matches_pathspec_list_with_context(path, paths, ctx)));
     }
 
     // Single-parent commit: include only when requested paths changed.
@@ -2461,10 +2456,7 @@ fn path_differs_for_specs(
     paths.extend(parent.keys().cloned());
 
     for path in &paths {
-        if !specs
-            .iter()
-            .any(|spec| crate::pathspec::matches_pathspec(spec, path))
-        {
+        if !crate::pathspec::matches_pathspec_list(path, specs) {
             continue;
         }
         if current.get(path) != parent.get(path) {

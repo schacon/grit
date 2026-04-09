@@ -1330,13 +1330,11 @@ fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {
     if pathspecs.is_empty() {
         return true;
     }
-    pathspecs.iter().any(|spec| {
-        grit_lib::pathspec::matches_pathspec_with_context(
-            spec,
-            path,
-            grit_lib::pathspec::PathspecMatchContext::default(),
-        )
-    })
+    grit_lib::pathspec::matches_pathspec_list_with_context(
+        path,
+        pathspecs,
+        grit_lib::pathspec::PathspecMatchContext::default(),
+    )
 }
 
 /// Return the file type category for a mode: 0=regular, 1=executable, 2=symlink, 3=submodule, 4=other

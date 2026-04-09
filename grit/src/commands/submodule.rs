@@ -222,7 +222,6 @@ use grit_lib::error::Error as LibError;
 use grit_lib::index::MODE_GITLINK;
 use grit_lib::merge_diff::blob_oid_at_path;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
-use grit_lib::pathspec::matches_pathspec;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{self, resolve_revision};
@@ -2757,7 +2756,7 @@ fn pathspec_selected(pathspecs: &[String], sm_path: &str) -> bool {
     if pathspecs.is_empty() {
         return true;
     }
-    pathspecs.iter().any(|spec| matches_pathspec(spec, sm_path))
+    grit_lib::pathspec::matches_pathspec_list(sm_path, pathspecs)
 }
 
 /// Working tree directory for a submodule given the path Git uses in the summary diff (often the

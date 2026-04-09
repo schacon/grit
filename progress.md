@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   322 |
+| Completed   |   323 |
 | In progress |     5 |
-| Remaining   |   444 |
+| Remaining   |   443 |
 | **Total**   |   771 |
 
-Task lines in `PLAN.md`: 322 completed (`[x]`), 5 in progress (`[~]`), 444 remaining (`[ ]`).
+Task lines in `PLAN.md`: 323 completed (`[x]`), 5 in progress (`[~]`), 443 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t6132-pathspec-exclude` — 31/31 tests pass (exclude pathspec lists: `matches_pathspec_list` in grit-lib; cwd-relative resolution for short/long magic; implicit cwd positive for `PATHSPEC_PREFER_CWD` commands; `log` honors `--format` with `--oneline`; archive subtrees from cwd; add staging for all-exclude pathspecs; `diff` parses `--cached` when mixed with rev args; `grep --untracked` + magic pathspec argv fixes)
 - `t3309-notes-merge-auto-resolve` — 31/31 tests pass (`notes merge`: `union` / `cat_sort_uniq` blob combine like Git; successful merge commits use two parents; `notes.mergeStrategy` config errors match upstream expectations)
 - `t4063-diff-blobs` — 18/18 tests pass (`diff`: blob↔blob and `rev:path` pairs without treating blobs as trees; `HEAD:one..HEAD:two` range split; `rev:path` vs worktree file uses tree path + modes + `write_patch_with_prefix`; raw blob OID vs existing file uses filename as old path; `rev_parse::resolve_treeish_blob_at_path` for tree walks)
 - `t5524-pull-msg` — 3/3 tests pass (`git pull --no-rebase --log` merge message preserves `$` in subject lines; `--log=1` limits shortlog; harness CSV/dashboards refreshed; `PLAN.md` marked complete)

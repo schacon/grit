@@ -652,13 +652,21 @@ fn stash_is_intent_to_add_only(
 // Push (save)
 // ---------------------------------------------------------------------------
 
-fn do_push(opts: PushOpts) -> Result<()> {
+fn do_push(mut opts: PushOpts) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo
         .work_tree
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot stash in a bare repository"))?
         .to_path_buf();
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| work_tree.clone());
+    let prefix = crate::pathspec::pathdiff(&cwd, &work_tree);
+    opts.pathspec = opts
+        .pathspec
+        .iter()
+        .map(|p| crate::pathspec::resolve_pathspec(p, &work_tree, prefix.as_deref()))
+        .collect();
 
     let head = resolve_head(&repo.git_dir)?;
     let head_oid = head
@@ -2870,35 +2878,13 @@ fn do_clear() -> Result<()> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Check if a path matches any of the given pathspecs.
+/// Check if a path matches the pathspec list (Git semantics, including `:(exclude)`).
 fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {
-    for spec in pathspecs {
-        // Strip leading "--" if present (from clap parsing)
-        let spec = spec.strip_prefix("--").unwrap_or(spec);
-        // Simple matching: exact match or glob-like prefix
-        if path == spec {
-            return true;
-        }
-        // Simple glob: if spec ends with *, match prefix
-        if let Some(prefix) = spec.strip_suffix('*') {
-            if path.starts_with(prefix) {
-                return true;
-            }
-        }
-        // Directory prefix: spec/ matches all files under spec
-        if spec.ends_with('/') && path.starts_with(spec) {
-            return true;
-        }
-        // If spec doesn't contain '/' and doesn't have glob, also try as directory prefix
-        if !spec.contains('/') && path.starts_with(&format!("{spec}/")) {
-            return true;
-        }
-        // Glob pattern matching for patterns like "foo b*"
-        if spec.contains('*') && glob_match(spec, path) {
-            return true;
-        }
-    }
-    false
+    let specs: Vec<String> = pathspecs
+        .iter()
+        .map(|s| s.strip_prefix("--").unwrap_or(s.as_str()).to_owned())
+        .collect();
+    grit_lib::pathspec::matches_pathspec_list(path, &specs)
 }
 
 /// Simple glob matching (only supports * wildcard).

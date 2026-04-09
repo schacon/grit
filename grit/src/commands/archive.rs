@@ -12,7 +12,6 @@ use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{convert_to_worktree, get_file_attrs, load_gitattributes, ConversionConfig};
 use grit_lib::git_date::parse::parse_date_basic;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
-use grit_lib::pathspec::matches_pathspec_for_object;
 use grit_lib::refs::{list_refs, resolve_ref};
 use grit_lib::repo::Repository;
 use std::fs::File;
@@ -574,13 +573,37 @@ fn prune_empty_directory_entries(entries: &mut Vec<ArchiveEntry>) {
     });
 }
 
+/// When `git archive` runs from a subdirectory of the work tree, Git archives that subtree only
+/// (pathspecs match relative to cwd). `cwd_prefix` is the repo-relative cwd (`sub` for `repo/sub`).
+fn tree_data_for_cwd_prefix(
+    repo: &Repository,
+    root_tree_data: &[u8],
+    cwd_prefix: Option<&str>,
+) -> Result<Vec<u8>> {
+    let Some(p) = cwd_prefix.filter(|s| !s.is_empty()) else {
+        return Ok(root_tree_data.to_vec());
+    };
+    let mut data = root_tree_data.to_vec();
+    for part in p.split('/').filter(|seg| !seg.is_empty()) {
+        let entries = parse_tree(&data)?;
+        let Some(entry) = entries.iter().find(|e| e.name == part.as_bytes()) else {
+            bail!("current working directory is not a tree entry");
+        };
+        if entry.mode != 0o040000 {
+            bail!("current working directory is not a directory");
+        }
+        data = repo.odb.read(&entry.oid)?.data;
+    }
+    Ok(data)
+}
+
 fn build_archive(
     repo: &Repository,
     config: &ConfigSet,
     tree_data: &[u8],
     prefix: &str,
     pathspecs: &[String],
-    _cwd_prefix: Option<&str>,
+    cwd_prefix: Option<&str>,
     mtime_secs: u64,
     commit_oid: Option<ObjectId>,
     add_files: &[PathBuf],
@@ -592,19 +615,28 @@ fn build_archive(
     let attr_rules = load_gitattributes(&work_tree);
     let max_tree_depth = resolve_max_tree_depth(config)?;
 
+    let scoped_tree = tree_data_for_cwd_prefix(repo, tree_data, cwd_prefix)?;
+
     let mut entries: Vec<ArchiveEntry> = Vec::new();
     if !pathspecs.is_empty() {
         for ps in pathspecs {
             let one = vec![ps.clone()];
-            if !tree_has_pathspec_match(repo, tree_data, "", &one, &attr_rules, max_tree_depth, 0)?
-            {
+            if !tree_has_pathspec_match(
+                repo,
+                &scoped_tree,
+                "",
+                &one,
+                &attr_rules,
+                max_tree_depth,
+                0,
+            )? {
                 bail!("pathspec '{ps}' did not match any files");
             }
         }
     }
     collect_entries(
         repo,
-        tree_data,
+        &scoped_tree,
         prefix,
         "",
         0,
@@ -822,9 +854,7 @@ fn pathspec_match_any(
     if specs.is_empty() {
         return true;
     }
-    specs
-        .iter()
-        .any(|s| matches_pathspec_for_object(s, tree_path, mode, attr_rules))
+    grit_lib::pathspec::matches_pathspec_list_for_object(tree_path, mode, attr_rules, specs)
 }
 
 fn tree_has_pathspec_match(

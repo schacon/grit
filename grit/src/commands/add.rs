@@ -189,13 +189,10 @@ pub fn run(mut args: Args) -> Result<()> {
         bail!("options '--dry-run' and '--interactive'/'--patch' cannot be used together");
     }
 
-    // Stubs for unsupported interactive modes — accept the flags
-    // gracefully so scripts that pass them don't hard-fail.
-    if args.patch || args.interactive || args.edit {
-        // Real git would enter interactive mode; we just warn and succeed.
-        let mode_name = if args.patch {
-            "-p/--patch"
-        } else if args.interactive {
+    // Interactive / edit modes are not implemented; `--patch` falls through so scripted
+    // `git add -p -- <pathspec>` can update the index non-interactively (t6132-pathspec-exclude).
+    if args.interactive || args.edit {
+        let mode_name = if args.interactive {
             "-i/--interactive"
         } else {
             "-e/--edit"
@@ -307,6 +304,7 @@ pub fn run(mut args: Args) -> Result<()> {
         );
     }
 
+    let resolved_specs = resolved_pathspecs_for_add(&args.pathspec, work_tree, prefix.as_deref());
     let is_root_pathspec = args.pathspec.iter().any(|p| p == ":/");
     if args.all || args.pathspec.iter().any(|p| p == ".") || is_root_pathspec {
         let effective_prefix = if is_root_pathspec {
@@ -334,14 +332,23 @@ pub fn run(mut args: Args) -> Result<()> {
             &repo,
             &add_cfg,
         )?;
+    } else if pathspecs_are_all_exclude(&resolved_specs) {
+        add_with_pathspec_list(
+            odb,
+            &mut index,
+            work_tree,
+            &resolved_specs,
+            &args,
+            &repo,
+            &mut ignore_matcher,
+            &add_cfg,
+        )?;
     } else {
         let mut had_errors = false;
         let mut had_ignored = false;
-        for pathspec in &args.pathspec {
-            let resolved =
-                crate::pathspec::resolve_pathspec(pathspec, work_tree, prefix.as_deref());
+        for (_pathspec, resolved) in args.pathspec.iter().zip(resolved_specs.iter()) {
             // Expand glob patterns (e.g. "file?.t", "*.c") against the working tree.
-            let expanded = expand_glob_pathspec(&resolved, work_tree, add_cfg.precompose_unicode);
+            let expanded = expand_glob_pathspec(resolved, work_tree, add_cfg.precompose_unicode);
             for resolved in &expanded {
                 match add_path(
                     odb,
@@ -445,6 +452,56 @@ pub(crate) fn stage_pathspecs_for_commit(
     let ctx = StageFileContext::for_commit();
 
     let mut matched_paths = HashSet::new();
+
+    let resolved_specs: Vec<String> = pathspecs
+        .iter()
+        .map(|s| crate::pathspec::resolve_pathspec(s, work_tree, prefix.as_deref()))
+        .collect();
+
+    if pathspecs_are_all_exclude(&resolved_specs) {
+        let mut paths: Vec<(String, PathBuf)> = Vec::new();
+        walk_directory(
+            work_tree,
+            work_tree,
+            &mut paths,
+            repo,
+            &mut ignore_matcher,
+            false,
+            add_cfg.precompose_unicode,
+        )?;
+        let worktree_paths: HashSet<&str> = paths.iter().map(|(r, _)| r.as_str()).collect();
+
+        let to_remove: Vec<Vec<u8>> = index
+            .entries
+            .iter()
+            .filter(|ie| {
+                if ie.skip_worktree() {
+                    return false;
+                }
+                let p = String::from_utf8_lossy(&ie.path);
+                grit_lib::pathspec::matches_pathspec_list(p.as_ref(), &resolved_specs)
+                    && !worktree_paths.contains(p.as_ref())
+            })
+            .map(|ie| ie.path.clone())
+            .collect();
+        for p in to_remove {
+            index.remove(&p);
+            matched_paths.insert(p);
+        }
+
+        for (rel, abs_path) in paths {
+            if !grit_lib::pathspec::matches_pathspec_list(&rel, &resolved_specs) {
+                continue;
+            }
+            stage_file(
+                odb, &mut index, work_tree, &rel, &abs_path, repo, &ctx, add_cfg,
+            )?;
+            matched_paths.insert(rel.as_bytes().to_vec());
+        }
+
+        repo.write_index_at(&index_path, &mut index)?;
+        return Ok(matched_paths);
+    }
 
     for spec in pathspecs {
         let resolved = crate::pathspec::resolve_pathspec(spec, work_tree, prefix.as_deref());
@@ -722,6 +779,98 @@ fn glob_matches_simple(pattern: &str, text: &str) -> bool {
         return text.ends_with(suffix);
     }
     text == pattern
+}
+
+fn resolved_pathspecs_for_add(
+    pathspecs: &[String],
+    work_tree: &Path,
+    prefix: Option<&str>,
+) -> Vec<String> {
+    pathspecs
+        .iter()
+        .map(|s| crate::pathspec::resolve_pathspec(s, work_tree, prefix))
+        .collect()
+}
+
+fn pathspecs_are_all_exclude(pathspecs: &[String]) -> bool {
+    !pathspecs.is_empty()
+        && pathspecs
+            .iter()
+            .all(|s| grit_lib::pathspec::pathspec_is_exclude(s))
+}
+
+/// Stage every work-tree file that matches `pathspecs` (Git `match_pathspec`, including excludes).
+fn add_with_pathspec_list(
+    odb: &Odb,
+    index: &mut Index,
+    work_tree: &Path,
+    pathspecs: &[String],
+    args: &Args,
+    repo: &Repository,
+    ignore_matcher: &mut Option<IgnoreMatcher>,
+    add_cfg: &AddConfig,
+) -> Result<()> {
+    let mut paths: Vec<(String, PathBuf)> = Vec::new();
+    walk_directory(
+        work_tree,
+        work_tree,
+        &mut paths,
+        repo,
+        ignore_matcher,
+        args.force,
+        add_cfg.precompose_unicode,
+    )?;
+
+    let worktree_paths: std::collections::HashSet<&str> =
+        paths.iter().map(|(r, _)| r.as_str()).collect();
+
+    for (rel_path, abs_path) in &paths {
+        if !grit_lib::pathspec::matches_pathspec_list(rel_path, pathspecs) {
+            continue;
+        }
+        if let Err(e) = stage_file(
+            odb,
+            index,
+            work_tree,
+            rel_path,
+            abs_path,
+            repo,
+            &StageFileContext::from(args),
+            add_cfg,
+        ) {
+            if add_cfg.ignore_errors {
+                eprintln!("warning: {e}");
+            } else {
+                return Err(e);
+            }
+        }
+    }
+
+    let removed: Vec<Vec<u8>> = index
+        .entries
+        .iter()
+        .filter(|ie| {
+            if ie.skip_worktree() {
+                return false;
+            }
+            let path_str = std::str::from_utf8(&ie.path).unwrap_or("");
+            grit_lib::pathspec::matches_pathspec_list(path_str, pathspecs)
+                && !worktree_paths.contains(path_str)
+        })
+        .map(|ie| ie.path.clone())
+        .collect();
+
+    for path in removed {
+        if args.verbose {
+            let path_str = String::from_utf8_lossy(&path);
+            eprintln!("remove '{path_str}'");
+        }
+        if !args.dry_run {
+            index.remove(&path);
+        }
+    }
+
+    Ok(())
 }
 
 /// Add all files under the working tree (or a prefix) to the index.

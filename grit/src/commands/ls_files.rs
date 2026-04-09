@@ -246,10 +246,36 @@ pub fn run(args: Args) -> Result<()> {
 
     pathspec_filter = expand_ls_files_globs(pathspec_filter, work_tree, &index, precompose_walk);
 
+    let cwd_prefix_str = String::from_utf8_lossy(&cwd_prefix).into_owned();
+    let cwd_trim = cwd_prefix_str.trim_end_matches('/').to_string();
+    let cwd_for_resolve = (!cwd_trim.is_empty()).then_some(cwd_trim);
+    let resolved_pathspec_strings: Vec<String> = pathspec_filter
+        .iter()
+        .map(|ps| {
+            let raw = pathspec_for_lib_path_match(ps);
+            match ps {
+                Pathspec::Magic(_) => {
+                    crate::pathspec::resolve_pathspec(&raw, work_tree, cwd_for_resolve.as_deref())
+                }
+                _ => raw,
+            }
+        })
+        .collect();
+    let pathspec_lib_strings = grit_lib::pathspec::extend_pathspec_list_implicit_cwd(
+        &resolved_pathspec_strings,
+        cwd_for_resolve.as_deref(),
+    );
+
     // For `--error-unmatch`, Git matches pathspecs separately against index output vs untracked
     // output (`-c` vs `-o`). A pathspec that only hits tracked files does not satisfy `-o`.
     let mut matched_index: Vec<bool> = vec![false; pathspec_filter.len()];
     let mut matched_others: Vec<bool> = vec![false; pathspec_filter.len()];
+    for i in 0..resolved_pathspec_strings.len() {
+        if grit_lib::pathspec::pathspec_is_exclude(&resolved_pathspec_strings[i]) {
+            matched_index[i] = true;
+            matched_others[i] = true;
+        }
+    }
 
     // Build exclude/ignore matcher if needed (before cached loop so -i -c works).
     // Git order: standard excludes (global → info → .gitignore), plus `-X` files and `-x` patterns.
@@ -284,14 +310,21 @@ pub fn run(args: Args) -> Result<()> {
         if entry.overlay_tree_skip_output() {
             continue;
         }
-        // Filter by pathspec
+        // Filter by pathspec (Git `match_pathspec`: positives ORed, then excludes subtracted).
         if !pathspec_filter.is_empty() {
-            let idx = pathspec_filter
-                .iter()
-                .position(|spec| spec.matches(&entry.path));
-            match idx {
-                Some(i) => matched_index[i] = true,
-                None => continue,
+            if !grit_lib::pathspec::matches_pathspec_list(
+                &String::from_utf8_lossy(&entry.path),
+                &pathspec_lib_strings,
+            ) {
+                continue;
+            }
+            for (i, spec) in pathspec_filter.iter().enumerate() {
+                if grit_lib::pathspec::pathspec_is_exclude(&resolved_pathspec_strings[i]) {
+                    continue;
+                }
+                if spec.matches(&entry.path) {
+                    matched_index[i] = true;
+                }
             }
         }
 
@@ -489,12 +522,11 @@ pub fn run(args: Args) -> Result<()> {
         let mut filtered_untracked: Vec<Vec<u8>> = Vec::new();
         for path_bytes in &untracked {
             if !pathspec_filter.is_empty() {
-                let idx = pathspec_filter
-                    .iter()
-                    .position(|spec| spec.matches(path_bytes));
-                match idx {
-                    Some(_) => {}
-                    None => continue,
+                if !grit_lib::pathspec::matches_pathspec_list(
+                    &String::from_utf8_lossy(path_bytes),
+                    &pathspec_lib_strings,
+                ) {
+                    continue;
                 }
             }
 
@@ -520,6 +552,9 @@ pub fn run(args: Args) -> Result<()> {
 
             if !pathspec_filter.is_empty() {
                 for (i, spec) in pathspec_filter.iter().enumerate() {
+                    if grit_lib::pathspec::pathspec_is_exclude(&pathspec_lib_strings[i]) {
+                        continue;
+                    }
                     if spec.matches(path_bytes) {
                         matched_others[i] = true;
                     }
@@ -829,6 +864,14 @@ fn expand_ls_files_globs(
     out
 }
 
+/// String form of a parsed `ls-files` pathspec for [`grit_lib::pathspec::matches_pathspec_list`].
+fn pathspec_for_lib_path_match(spec: &Pathspec) -> String {
+    match spec {
+        Pathspec::Literal(b) => String::from_utf8_lossy(b).into_owned(),
+        Pathspec::Glob(s) | Pathspec::Magic(s) => s.clone(),
+    }
+}
+
 impl Pathspec {
     fn matches(&self, path: &[u8]) -> bool {
         match self {
@@ -861,7 +904,7 @@ impl Pathspec {
             }
             Pathspec::Magic(spec) => {
                 let path_str = String::from_utf8_lossy(path);
-                crate::pathspec::pathspec_matches(spec, &path_str)
+                grit_lib::pathspec::pathspec_matches(spec, &path_str)
             }
         }
     }
@@ -996,10 +1039,19 @@ fn resolve_pathspec(
             // `:/` or `:/*` — match all paths under the work tree root (git pathspec magic).
             return Ok(Pathspec::Glob("*".to_string()));
         }
+        // Short magic after `:/` (e.g. `:/!sub2`, `:/^foo`) must stay a full pathspec string for
+        // `grit_lib::pathspec` — not a literal `!sub2` path (t6132-pathspec-exclude).
+        if rest.starts_with('^') || rest.starts_with('!') {
+            return Ok(Pathspec::Magic(nfc_lossy));
+        }
         if has_glob_chars(rest) {
             return Ok(Pathspec::Glob(rest.to_string()));
         }
         return Ok(Pathspec::Literal(rest.as_bytes().to_vec()));
+    }
+    // `:!foo`, `:^bar`, etc. — short magic must not be resolved as a repo-relative path.
+    if nfc_lossy.starts_with(':') && !nfc_lossy.starts_with(":(") {
+        return Ok(Pathspec::Magic(nfc_lossy));
     }
     if has_glob_chars(&nfc_lossy) {
         // For glob pathspecs, prepend the cwd prefix (relative to work_tree)

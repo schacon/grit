@@ -331,6 +331,45 @@ pub fn pathdiff(cwd: &Path, work_tree: &Path) -> Option<String> {
         .map(|p| p.to_string_lossy().to_string())
 }
 
+/// For exclude (and other cwd-relative) pathspec magic from a subdirectory, Git resolves the
+/// pattern against the current directory (`:!sub/` from `repo/sub` → exclude `sub/sub/`).
+fn prepend_cwd_to_short_exclude_pathspec(spec: &str, cwd: &str) -> Option<String> {
+    let cwd = cwd.trim_end_matches('/');
+    if cwd.is_empty() {
+        return None;
+    }
+    let bytes = spec.as_bytes();
+    if bytes.first().copied() != Some(b':') {
+        return None;
+    }
+    // `:/path` is `:(top)` short form — exclude is relative to repo root, not cwd (t6132).
+    if bytes.get(1).copied() == Some(b'/') {
+        return None;
+    }
+    let mut i = 1usize;
+    while i < bytes.len() && bytes[i] != b':' {
+        let ch = bytes[i];
+        if ch == b'^' {
+            i += 1;
+            continue;
+        }
+        let is_magic = matches!(ch, b'!' | b'/');
+        if is_magic {
+            i += 1;
+            continue;
+        }
+        break;
+    }
+    if i < bytes.len() && bytes[i] == b':' {
+        i += 1;
+    }
+    let pattern = spec.get(i..)?;
+    if pattern.is_empty() || pattern.starts_with('/') {
+        return None;
+    }
+    Some(format!("{}{}/{pattern}", &spec[..i], cwd))
+}
+
 /// Resolve a pathspec string to a path relative to the repository work tree.
 ///
 /// `prefix` is the current directory relative to the work tree (no trailing slash),
@@ -375,14 +414,33 @@ pub fn resolve_pathspec(pathspec: &str, work_tree: &Path, prefix: Option<&str>) 
     }
 
     if pathspec.starts_with(':') {
+        if let Some(p) = prefix {
+            if !p.is_empty() && !grit_lib::pathspec::literal_pathspecs_enabled() {
+                let cwd_ps = format!("{}/", p.trim_end_matches('/'));
+                if pathspec.starts_with(":(") {
+                    if let Some(resolved) = resolve_magic_pathspec(pathspec, &cwd_ps) {
+                        return resolved;
+                    }
+                    return pathspec.to_owned();
+                }
+                if grit_lib::pathspec::pathspec_is_exclude(pathspec) {
+                    if let Some(fixed) = prepend_cwd_to_short_exclude_pathspec(pathspec, p) {
+                        return fixed;
+                    }
+                }
+            }
+        }
         if let Some(rest) = pathspec.strip_prefix(":/") {
+            // `:/!foo` / `:/^bar` — `:/` is `:(top)`; the tail is still short magic, not a literal path.
+            if rest.starts_with('!') || rest.starts_with('^') {
+                return pathspec.to_owned();
+            }
             return rest.to_owned();
         }
-        if pathspec.len() > 1 && pathspec.as_bytes()[1] == b'(' {
-            if let Some(close) = pathspec[2..].find(')') {
-                let pattern = &pathspec[close + 3..];
-                return pattern.to_owned();
-            }
+        // Long magic `:(...)` must stay intact — `:(exclude)path` is not the same as `path`
+        // (t6132-pathspec-exclude, grep --untracked with exclude pathspecs).
+        if pathspec.starts_with(":(") {
+            return pathspec.to_owned();
         }
         return pathspec.to_owned();
     }

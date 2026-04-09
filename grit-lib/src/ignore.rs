@@ -842,6 +842,9 @@ pub fn normalize_repo_relative(repo: &Repository, cwd: &Path, path: &str) -> Res
             "this operation must be run in a work tree".to_owned(),
         ));
     };
+    if path.starts_with(':') {
+        return Ok(path.to_owned());
+    }
     let input = Path::new(path);
     let combined = if input.is_absolute() {
         input.to_path_buf()

@@ -510,7 +510,7 @@ impl CommitGraphChain {
         let mut any_pathspec_maybe = false;
         let mut checked_any_keys = false;
         for spec in pathspecs {
-            if spec.is_empty() {
+            if spec.is_empty() || crate::pathspec::pathspec_is_exclude(spec) {
                 continue;
             }
             let Some(norm) = crate::pathspec::bloom_lookup_prefix_with_cwd(spec, bloom_cwd) else {

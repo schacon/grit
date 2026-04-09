@@ -458,6 +458,17 @@ fn run_inner(pattern_tokens: Vec<PatternToken>, mut args: Args) -> Result<()> {
     } else {
         pathspecs
     };
+    let implicit_cwd = repo.work_tree.as_ref().and_then(|wt| {
+        let cwd = std::env::current_dir().ok()?;
+        crate::pathspec::pathdiff(&cwd, wt)
+    });
+    pathspecs = grit_lib::pathspec::extend_pathspec_list_implicit_cwd(
+        &pathspecs,
+        implicit_cwd
+            .as_deref()
+            .map(|s| s.trim_end_matches('/'))
+            .filter(|s| !s.is_empty()),
+    );
 
     let single_rev_path =
         (!args.no_index && !args.cached && tree_ish.is_none() && pathspecs.len() == 1)
@@ -880,7 +891,11 @@ fn grep_cached(
 
         // Pathspec filtering is relative to the superproject
         let is_submodule = entry.mode == MODE_GITLINK;
-        if !pathspecs.is_empty() && !any_pathspec_matches(&full_path, pathspecs, is_submodule) {
+        let ps_ctx = grit_lib::pathspec::PathspecMatchContext {
+            is_directory: false,
+            is_git_submodule: is_submodule,
+        };
+        if !pathspecs.is_empty() && !any_pathspec_matches(&full_path, pathspecs, ps_ctx) {
             continue;
         }
 
@@ -1088,7 +1103,11 @@ fn grep_worktree(
 
         // Pathspec filtering is relative to the superproject
         let is_submodule = entry.mode == MODE_GITLINK;
-        if !pathspecs.is_empty() && !any_pathspec_matches(&full_rel, pathspecs, is_submodule) {
+        let ps_ctx = grit_lib::pathspec::PathspecMatchContext {
+            is_directory: false,
+            is_git_submodule: is_submodule,
+        };
+        if !pathspecs.is_empty() && !any_pathspec_matches(&full_rel, pathspecs, ps_ctx) {
             continue;
         }
 
@@ -1350,7 +1369,181 @@ fn grep_worktree(
             }
         }
     }
+
+    if args.untracked {
+        let indexed: std::collections::HashSet<String> = index
+            .entries
+            .iter()
+            .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+            .collect();
+        grep_untracked_worktree_files(
+            work_tree,
+            work_tree,
+            "",
+            path_prefix,
+            repo,
+            compiled,
+            args,
+            pathspecs,
+            &indexed,
+            &diff_attrs,
+            need_sep,
+            out,
+            open_paths,
+            &mut found_any,
+        )?;
+    }
+
     Ok(found_any)
+}
+
+/// Grep untracked files under `work_tree` (paths with no index entry), honoring pathspecs.
+fn grep_untracked_worktree_files(
+    work_tree: &Path,
+    dir: &Path,
+    rel_from_root: &str,
+    path_prefix: &str,
+    repo: &Repository,
+    compiled: &CompiledGrep,
+    args: &Args,
+    pathspecs: &[String],
+    indexed: &std::collections::HashSet<String>,
+    diff_attrs: &[DiffAttrRule],
+    need_sep: &mut bool,
+    out: &mut (impl Write + ?Sized),
+    open_paths: &mut Option<Vec<String>>,
+    found_any: &mut bool,
+) -> Result<()> {
+    let mut entries: Vec<_> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
+        Err(_) => return Ok(()),
+    };
+    entries.sort_by_key(|e| e.file_name());
+
+    for entry in entries {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str == ".git" {
+            continue;
+        }
+        let rel = if rel_from_root.is_empty() {
+            name_str.to_string()
+        } else {
+            format!("{rel_from_root}/{name_str}")
+        };
+
+        let ft = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+
+        if ft.is_dir() {
+            grep_untracked_worktree_files(
+                work_tree,
+                &entry.path(),
+                &rel,
+                path_prefix,
+                repo,
+                compiled,
+                args,
+                pathspecs,
+                indexed,
+                diff_attrs,
+                need_sep,
+                out,
+                open_paths,
+                found_any,
+            )?;
+            continue;
+        }
+
+        if !ft.is_file() {
+            continue;
+        }
+
+        if indexed.contains(&rel) {
+            continue;
+        }
+
+        let full_rel = if path_prefix.is_empty() {
+            rel.clone()
+        } else {
+            format!("{path_prefix}{rel}")
+        };
+        let ps_ctx = grit_lib::pathspec::PathspecMatchContext::default();
+        if !pathspecs.is_empty() && !any_pathspec_matches(&full_rel, pathspecs, ps_ctx) {
+            continue;
+        }
+
+        if let Some(max_depth) = args.effective_max_depth() {
+            let display_path = worktree_display_rel(repo, path_prefix, &rel, args);
+            if !path_allowed_at_max_depth(&display_path, pathspecs, max_depth) {
+                continue;
+            }
+        }
+
+        let full_path = work_tree.join(&rel);
+        let content = match std::fs::read(&full_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let binary_override = check_binary_override(diff_attrs, &rel);
+        let is_binary = grep_is_binary(repo, &rel, &content, args, binary_override);
+        let output_path = grep_output_path(repo, &full_rel);
+
+        if is_binary && args.ignore_binary {
+            continue;
+        }
+
+        if is_binary && !args.text_mode {
+            if args.count || args.files_with_matches || args.files_without_match || args.quiet {
+                let content_str =
+                    blob_as_grep_text(repo, &rel, &content, None, args, binary_override);
+                let display_rel = worktree_display_rel(repo, path_prefix, &rel, args);
+                if grep_content(
+                    &display_rel,
+                    None,
+                    &content_str,
+                    compiled,
+                    args,
+                    need_sep,
+                    out,
+                    open_paths,
+                )? {
+                    *found_any = true;
+                }
+            } else {
+                let content_str =
+                    blob_as_grep_text(repo, &rel, &content, None, args, binary_override);
+                let has_match = compiled
+                    .atoms
+                    .iter()
+                    .any(|r| r.as_ref().is_some_and(|re| re.is_match(&content_str)));
+                if has_match {
+                    writeln!(out, "Binary file {} matches", output_path)?;
+                    *found_any = true;
+                }
+            }
+        } else {
+            let content_str = blob_as_grep_text(repo, &rel, &content, None, args, binary_override);
+            let display_rel = worktree_display_rel(repo, path_prefix, &rel, args);
+            if grep_content(
+                &display_rel,
+                None,
+                &content_str,
+                compiled,
+                args,
+                need_sep,
+                out,
+                open_paths,
+            )? {
+                *found_any = true;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Check if a pathspec contains glob special characters.
@@ -1410,9 +1603,16 @@ fn matches_pathspec(path: &str, pathspec: &str, is_dir: bool) -> bool {
     }
 }
 
-/// Check if any pathspec matches a path.
-fn any_pathspec_matches(path: &str, pathspecs: &[String], is_dir: bool) -> bool {
-    pathspecs.iter().any(|p| matches_pathspec(path, p, is_dir))
+/// Check if `path` matches the pathspec list (Git semantics, including `:(exclude)`).
+fn any_pathspec_matches(
+    path: &str,
+    pathspecs: &[String],
+    ctx: grit_lib::pathspec::PathspecMatchContext,
+) -> bool {
+    if pathspecs.is_empty() {
+        return true;
+    }
+    grit_lib::pathspec::matches_pathspec_list_with_context(path, pathspecs, ctx)
 }
 
 /// Collapse `.`, `..`, and empty segments in a `/`-separated repo-relative path.
@@ -1454,7 +1654,7 @@ fn pathspecs_relative_to_cwd(repo: &Repository, pathspecs: &[String]) -> Vec<Str
     pathspecs
         .iter()
         .map(|s| {
-            if Path::new(s).is_absolute() {
+            if Path::new(s).is_absolute() || s.starts_with(':') {
                 s.clone()
             } else {
                 normalize_repo_rel_path(&format!("{prefix}/{s}"))
@@ -1709,7 +1909,13 @@ fn grep_filesystem(
             }
         } else if ft.is_file() {
             // Apply pathspec filter
-            if !pathspecs.is_empty() && !any_pathspec_matches(&display_path, pathspecs, false) {
+            if !pathspecs.is_empty()
+                && !any_pathspec_matches(
+                    &display_path,
+                    pathspecs,
+                    grit_lib::pathspec::PathspecMatchContext::default(),
+                )
+            {
                 continue;
             }
 
@@ -2588,9 +2794,11 @@ fn grep_tree(
         let is_gitlink = entry.mode == 0o160000;
 
         // Apply pathspec filter
-        if !pathspecs.is_empty()
-            && !any_pathspec_matches(&full_name, pathspecs, is_tree || is_gitlink)
-        {
+        let ps_ctx = grit_lib::pathspec::PathspecMatchContext {
+            is_directory: is_tree,
+            is_git_submodule: is_gitlink,
+        };
+        if !pathspecs.is_empty() && !any_pathspec_matches(&full_name, pathspecs, ps_ctx) {
             continue;
         }
 

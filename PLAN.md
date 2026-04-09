@@ -769,7 +769,7 @@ commit → check it off → move on.
 - [ ] `t6430-merge-recursive` █████░░░░░░░░░░░░░░░ 10/36 (26 left) — merge-recursive backend test
 - [~] `t6416-recursive-corner-cases` ██████████░░░░░░░░░░ 21/40 (19 left) — recursive merge corner cases involving criss-cross merges
 - [ ] `t6017-rev-list-stdin` ████░░░░░░░░░░░░░░░░ 9/37 (28 left) — log family learns --stdin
-- [ ] `t6132-pathspec-exclude` ░░░░░░░░░░░░░░░░░░░░ 1/31 (30 left) — test case exclude pathspec
+- [x] `t6132-pathspec-exclude` — 31/31 tests pass (Git `match_pathspec`: positive OR + exclude subtraction, implicit `.` / cwd-scoped positives; `log` `--oneline --format=%s`; archive from subdir; add exclude-only + `-p` non-interactive; clean/rm/grep/ls-files `PATHSPEC_PREFER_CWD`; reset pathspec list; `diff` trailing `--cached`; `grep --untracked`; Bloom skips exclude specs)
 - [ ] `t6135-pathspec-with-attrs` ██░░░░░░░░░░░░░░░░░░ 5/37 (32 left) — test labels in pathspecs
 - [ ] `t6112-rev-list-filters-objects` ██████░░░░░░░░░░░░░░ 18/54 (36 left) — git rev-list using object filtering
 - [ ] `t6022-rev-list-missing` ░░░░░░░░░░░░░░░░░░░░ 1/40 (39 left) — handling of missing objects in rev-list

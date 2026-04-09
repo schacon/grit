@@ -258,27 +258,29 @@ pub fn bloom_lookup_prefix(spec: &str) -> Option<String> {
 /// Whether every pathspec can participate in Bloom precomputation (Git `forbid_bloom_filters`).
 #[must_use]
 pub fn pathspecs_allow_bloom(specs: &[String]) -> bool {
-    specs
-        .iter()
-        .all(|s| !s.is_empty() && bloom_lookup_prefix_with_cwd(s, None).is_some())
+    specs.iter().all(|s| {
+        !s.is_empty() && !pathspec_is_exclude(s) && bloom_lookup_prefix_with_cwd(s, None).is_some()
+    })
 }
 
-/// True if `path` is matched by `spec` (Git pathspec syntax, including magic and globals).
+/// Returns whether `spec` uses Git's exclude magic (`:(exclude)`, `:!`, `:^`, etc.).
 #[must_use]
-pub fn pathspec_matches(spec: &str, path: &str) -> bool {
-    let (elem_magic, raw_pattern) = parse_element_magic(spec);
-    let magic = combine_magic(elem_magic);
+pub fn pathspec_is_exclude(spec: &str) -> bool {
+    let (elem_magic, _) = parse_element_magic(spec);
+    combine_magic(elem_magic).exclude
+}
 
+/// True if `spec` uses `:(top)` or short `:/` (repo-root-relative) magic.
+#[must_use]
+pub fn pathspec_has_top(spec: &str) -> bool {
+    let (elem_magic, _) = parse_element_magic(spec);
+    combine_magic(elem_magic).top
+}
+
+fn pathspec_match_one_positive(path: &str, magic: PathspecMagic, raw_pattern: &str) -> bool {
     if magic.literal && magic.glob {
-        // Git dies; treat as non-match for robustness.
         return false;
     }
-
-    if magic.exclude {
-        // Exclude pathspecs are handled by higher layers; do not match positively here.
-        return false;
-    }
-
     let pattern = strip_top_magic(raw_pattern);
     let path_for_match = if let Some(prefix) = magic.prefix.as_deref() {
         if !path.starts_with(prefix) {
@@ -288,8 +290,235 @@ pub fn pathspec_matches(spec: &str, path: &str) -> bool {
     } else {
         path
     };
-
     pathspec_matches_tail(pattern, path_for_match, magic)
+}
+
+/// True if `path` is matched by `spec` (Git pathspec syntax, including magic and globals).
+///
+/// Exclude pathspecs never match positively here; see [`matches_pathspec_list`].
+#[must_use]
+pub fn pathspec_matches(spec: &str, path: &str) -> bool {
+    let (elem_magic, raw_pattern) = parse_element_magic(spec);
+    let magic = combine_magic(elem_magic);
+
+    if magic.exclude {
+        return false;
+    }
+
+    pathspec_match_one_positive(path, magic, raw_pattern)
+}
+
+fn matches_pathspec_element_with_context(
+    spec: &str,
+    path: &str,
+    ctx: PathspecMatchContext,
+) -> bool {
+    let (elem_magic, raw_pattern) = parse_element_magic(spec);
+    let magic = combine_magic(elem_magic);
+    if magic.exclude {
+        return false;
+    }
+    if magic.literal && magic.glob {
+        return false;
+    }
+    if magic.attr_name.is_some() {
+        return pathspec_matches(spec, path);
+    }
+    if magic.literal || magic.glob || magic.icase {
+        return pathspec_matches(spec, path);
+    }
+    let pattern = strip_top_magic(raw_pattern);
+    let path_for_match = if let Some(prefix) = magic.prefix.as_deref() {
+        if !path.starts_with(prefix) {
+            return false;
+        }
+        &path[prefix.len()..]
+    } else {
+        path
+    };
+    matches_pathspec_with_context(pattern, path_for_match, ctx)
+}
+
+fn pathspec_exclude_element_matches_with_context(
+    spec: &str,
+    path: &str,
+    ctx: PathspecMatchContext,
+) -> bool {
+    let (elem_magic, raw_pattern) = parse_element_magic(spec);
+    let mut magic = combine_magic(elem_magic);
+    if !magic.exclude {
+        return false;
+    }
+    magic.exclude = false;
+    if magic.literal && magic.glob {
+        return false;
+    }
+    if magic.attr_name.is_some() {
+        // Attribute pathspecs need `.gitattributes` context; use
+        // [`matches_pathspec_list_for_object`] for those.
+        return false;
+    }
+    if magic.literal || magic.glob || magic.icase {
+        return pathspec_match_one_positive(path, magic, raw_pattern);
+    }
+    let pattern = strip_top_magic(raw_pattern);
+    let path_for_match = if let Some(prefix) = magic.prefix.as_deref() {
+        if !path.starts_with(prefix) {
+            return false;
+        }
+        &path[prefix.len()..]
+    } else {
+        path
+    };
+    matches_pathspec_with_context(pattern, path_for_match, ctx)
+}
+
+/// True if `path` is matched by an exclude pathspec's pattern. Returns `false` if `spec` is not
+/// an exclude pathspec.
+#[must_use]
+pub fn pathspec_exclude_matches(spec: &str, path: &str) -> bool {
+    pathspec_exclude_element_matches_with_context(spec, path, PathspecMatchContext::default())
+}
+
+/// When every pathspec is an exclude and none use `:(top)` / `:/`, Git prepends an implicit
+/// positive that matches only under the process cwd (relative to the work tree), not the whole
+/// repository (`PATHSPEC_PREFER_CWD` in `pathspec.c`). `cwd_from_repo_root` is that prefix
+/// without a trailing slash, or empty at the work tree root.
+#[must_use]
+pub fn extend_pathspec_list_implicit_cwd(
+    specs: &[String],
+    cwd_from_repo_root: Option<&str>,
+) -> Vec<String> {
+    if specs.is_empty() {
+        return specs.to_vec();
+    }
+    if !specs.iter().all(|s| pathspec_is_exclude(s)) {
+        return specs.to_vec();
+    }
+    let any_top = specs.iter().any(|s| pathspec_has_top(s));
+    if any_top {
+        return specs.to_vec();
+    }
+    let Some(cwd) = cwd_from_repo_root.map(str::trim).filter(|s| !s.is_empty()) else {
+        return specs.to_vec();
+    };
+    let cwd = cwd.trim_end_matches('/');
+    if cwd.is_empty() {
+        return specs.to_vec();
+    }
+    let mut out = Vec::with_capacity(specs.len() + 1);
+    out.push(format!("{cwd}/"));
+    out.extend_from_slice(specs);
+    out
+}
+
+/// Git `match_pathspec` semantics over a pathspec list: OR of positive specs minus OR of exclude
+/// specs. If every element is exclude-only, Git implicitly prepends `.` (match all); this
+/// function does the same.
+#[must_use]
+pub fn matches_pathspec_list(path: &str, specs: &[String]) -> bool {
+    matches_pathspec_list_with_context(path, specs, PathspecMatchContext::default())
+}
+
+/// Like [`matches_pathspec_list`], but uses `ctx` for non-magic pathspec elements (trailing `/`).
+#[must_use]
+pub fn matches_pathspec_list_with_context(
+    path: &str,
+    specs: &[String],
+    ctx: PathspecMatchContext,
+) -> bool {
+    if specs.is_empty() {
+        return true;
+    }
+    let has_exclude = specs.iter().any(|s| pathspec_is_exclude(s));
+    let positive_specs: Vec<&String> = specs.iter().filter(|s| !pathspec_is_exclude(s)).collect();
+    let positive = if positive_specs.is_empty() {
+        true
+    } else {
+        positive_specs
+            .iter()
+            .any(|s| matches_pathspec_element_with_context(s, path, ctx))
+    };
+    if !positive {
+        return false;
+    }
+    if !has_exclude {
+        return true;
+    }
+    let excluded = specs.iter().any(|s| {
+        pathspec_is_exclude(s) && pathspec_exclude_element_matches_with_context(s, path, ctx)
+    });
+    !excluded
+}
+
+/// `matches_pathspec_list` for tree/index objects with mode and `.gitattributes` rules.
+#[must_use]
+pub fn matches_pathspec_list_for_object(
+    path: &str,
+    mode: u32,
+    attr_rules: &[AttrRule],
+    specs: &[String],
+) -> bool {
+    if specs.is_empty() {
+        return true;
+    }
+    let has_exclude = specs.iter().any(|s| pathspec_is_exclude(s));
+    let positive_specs: Vec<&String> = specs.iter().filter(|s| !pathspec_is_exclude(s)).collect();
+    let positive = if positive_specs.is_empty() {
+        true
+    } else {
+        positive_specs
+            .iter()
+            .any(|s| matches_pathspec_for_object(s, path, mode, attr_rules))
+    };
+    if !positive {
+        return false;
+    }
+    if !has_exclude {
+        return true;
+    }
+    let excluded = specs.iter().any(|s| {
+        pathspec_is_exclude(s) && matches_pathspec_exclude_for_object(s, path, mode, attr_rules)
+    });
+    !excluded
+}
+
+fn matches_pathspec_exclude_for_object(
+    spec: &str,
+    path: &str,
+    mode: u32,
+    attr_rules: &[AttrRule],
+) -> bool {
+    let (elem_magic, raw_pattern) = parse_element_magic(spec);
+    let mut magic = combine_magic(elem_magic);
+    if !magic.exclude {
+        return false;
+    }
+    magic.exclude = false;
+    if magic.literal && magic.glob {
+        return false;
+    }
+    let ctx = context_from_mode_bits(mode);
+    let is_dir_for_attr = path.ends_with('/') || ctx.is_directory || ctx.is_git_submodule;
+    if let Some(ref attr) = magic.attr_name {
+        if !path_has_gitattribute(attr_rules, path, is_dir_for_attr, attr) {
+            return false;
+        }
+    }
+    let pattern = strip_top_magic(raw_pattern);
+    let path_for_match = if let Some(prefix) = magic.prefix.as_deref() {
+        if !path.starts_with(prefix) {
+            return false;
+        }
+        &path[prefix.len()..]
+    } else {
+        path
+    };
+    if magic.literal || magic.glob || magic.icase {
+        pathspec_matches_tail(pattern, path_for_match, magic)
+    } else {
+        matches_pathspec_with_context(pattern, path_for_match, ctx)
+    }
 }
 
 fn pathspec_matches_tail(pattern: &str, path: &str, magic: PathspecMagic) -> bool {
@@ -566,5 +795,13 @@ mod tree_entry_pathspec_tests {
                 ..Default::default()
             }
         ));
+    }
+
+    #[test]
+    fn exclude_top_short_magic_subtracts_from_positive() {
+        let specs = vec!["*".to_string(), ":/!sub2".to_string()];
+        assert!(matches_pathspec_list("sub/file", &specs));
+        assert!(!matches_pathspec_list("sub2/file", &specs));
+        assert!(pathspec_exclude_matches(":/!sub2", "sub2/file"));
     }
 }
