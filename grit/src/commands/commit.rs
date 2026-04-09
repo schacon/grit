@@ -203,8 +203,77 @@ struct FixupParsed {
     commit_ref: String,
 }
 
+/// `git commit` accepts options after path arguments (`commit <path> -m <msg>`). Clap stores those
+/// in the trailing `pathspec` bucket; peel known message/file options back into typed fields.
+fn peel_commit_options_from_pathspec_bucket(args: &mut Args) {
+    let pspec = std::mem::take(&mut args.pathspec);
+    if pspec.is_empty() {
+        return;
+    }
+    let mut out_paths = Vec::new();
+    let mut i = 0usize;
+    while i < pspec.len() {
+        let a = pspec[i].as_str();
+        match a {
+            "-m" | "--message" => {
+                if let Some(v) = pspec.get(i + 1) {
+                    args.message.push(v.clone());
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "-F" | "--file" => {
+                if args.file.is_none() {
+                    if let Some(v) = pspec.get(i + 1) {
+                        args.file = Some(v.clone());
+                        i += 2;
+                        continue;
+                    }
+                }
+                out_paths.push(pspec[i].clone());
+                i += 1;
+            }
+            _ if a.starts_with("--message=") => {
+                args.message
+                    .push(a.trim_start_matches("--message=").to_owned());
+                i += 1;
+            }
+            _ if a.starts_with("--file=") => {
+                if args.file.is_none() {
+                    args.file = Some(a.trim_start_matches("--file=").to_owned());
+                    i += 1;
+                    continue;
+                }
+                out_paths.push(pspec[i].clone());
+                i += 1;
+            }
+            _ if a.len() > 2 && a.starts_with("-m") => {
+                args.message.push(a[2..].to_owned());
+                i += 1;
+            }
+            _ if a.len() > 2 && a.starts_with("-F") => {
+                if args.file.is_none() {
+                    args.file = Some(a[2..].to_owned());
+                    i += 1;
+                    continue;
+                }
+                out_paths.push(pspec[i].clone());
+                i += 1;
+            }
+            _ => {
+                out_paths.push(pspec[i].clone());
+                i += 1;
+            }
+        }
+    }
+    args.pathspec = out_paths;
+}
+
 /// Run the `commit` command.
 pub fn run(mut args: Args) -> Result<()> {
+    peel_commit_options_from_pathspec_bucket(&mut args);
+
     // Tests and some scripts pass `-q` after `-m MSG`; if it lands in the
     // trailing pathspec bucket, strip it so we match Git (quiet is already
     // handled by the top-level flag).

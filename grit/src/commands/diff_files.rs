@@ -6,8 +6,8 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
-    count_changes, detect_copies, format_stat_line, stat_matches, unified_diff, zero_oid,
-    DiffEntry, DiffStatus,
+    count_changes, detect_copies, format_stat_line, rewrite_dissimilarity_index_percent,
+    should_break_rewrite_for_stat, stat_matches, unified_diff, zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
@@ -50,6 +50,43 @@ pub fn run(args: Args) -> Result<()> {
 
     let mut diff_entries: Vec<DiffEntry> = changes.iter().map(change_to_diff_entry).collect();
 
+    if options.break_rewrites {
+        for entry in &mut diff_entries {
+            if entry.status != DiffStatus::Modified {
+                continue;
+            }
+            let old_raw = if entry.old_oid == zero_oid() {
+                Vec::new()
+            } else {
+                match repo.odb.read(&entry.old_oid) {
+                    Ok(obj) => obj.data,
+                    Err(_) => continue,
+                }
+            };
+            let new_raw = if entry.new_oid == zero_oid() {
+                Vec::new()
+            } else {
+                let path = entry.new_path.as_deref().unwrap_or(entry.path());
+                let abs = work_tree.join(path);
+                match fs::read(&abs) {
+                    Ok(b) => b,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                    Err(_) => continue,
+                }
+            };
+            if grit_lib::merge_file::is_binary(&old_raw)
+                || grit_lib::merge_file::is_binary(&new_raw)
+            {
+                continue;
+            }
+            if should_break_rewrite_for_stat(&old_raw, &new_raw) {
+                if let Some(pct) = rewrite_dissimilarity_index_percent(&old_raw, &new_raw) {
+                    entry.score = Some(pct);
+                }
+            }
+        }
+    }
+
     if options.reverse {
         diff_entries = diff_entries
             .into_iter()
@@ -86,14 +123,28 @@ pub fn run(args: Args) -> Result<()> {
         diff_entries = grit_lib::diff::detect_renames(&repo.odb, diff_entries, threshold);
     }
 
+    if options.summary {
+        print_diff_files_summary(&diff_entries)?;
+    }
+    if !options.quiet && options.suppress_diff {
+        if (options.exit_code || options.quiet) && !diff_entries.is_empty() {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
     if !options.quiet && !options.suppress_diff {
         match options.format {
             OutputFormat::Raw => {
-                for entry in &diff_entries {
-                    println!(
-                        "{}",
-                        render_raw_diff_entry(entry, &repo, options.abbrev, options.reverse)?
-                    );
+                if options.summary && !options.explicit_raw {
+                    // `git diff-files --summary` replaces default raw output unless `--raw` is given.
+                } else {
+                    for entry in &diff_entries {
+                        println!(
+                            "{}",
+                            render_raw_diff_entry(entry, &repo, options.abbrev, options.reverse)?
+                        );
+                    }
                 }
             }
             OutputFormat::NameOnly => {
@@ -144,6 +195,109 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
+fn quote_c_style_path(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 2);
+    let mut needs_quotes = false;
+    for ch in name.chars() {
+        match ch {
+            '"' => {
+                out.push_str("\\\"");
+                needs_quotes = true;
+            }
+            '\\' => {
+                out.push_str("\\\\");
+                needs_quotes = true;
+            }
+            '\t' => {
+                out.push_str("\\t");
+                needs_quotes = true;
+            }
+            '\n' => {
+                out.push_str("\\n");
+                needs_quotes = true;
+            }
+            '\r' => {
+                out.push_str("\\r");
+                needs_quotes = true;
+            }
+            c if c.is_control() => {
+                out.push_str(&format!("\\{:03o}", u32::from(c)));
+                needs_quotes = true;
+            }
+            c => out.push(c),
+        }
+    }
+    if needs_quotes {
+        format!("\"{out}\"")
+    } else {
+        out
+    }
+}
+
+fn format_rename_summary_display(old: &str, new: &str) -> String {
+    let pretty = grit_lib::diff::format_rename_path(old, new);
+    quote_c_style_path(&pretty)
+}
+
+/// Emit `git diff-files --summary` lines (rewrites, deletes, mode changes, renames/copies).
+fn print_diff_files_summary(entries: &[DiffEntry]) -> Result<()> {
+    for entry in entries {
+        match entry.status {
+            DiffStatus::Renamed => {
+                let old = entry.old_path.as_deref().unwrap_or("");
+                let new = entry.new_path.as_deref().unwrap_or("");
+                let display = format_rename_summary_display(old, new);
+                let sim = entry.score.unwrap_or(100);
+                println!(" rename {display} ({sim}%)");
+            }
+            DiffStatus::Copied => {
+                let old = entry.old_path.as_deref().unwrap_or("");
+                let new = entry.new_path.as_deref().unwrap_or("");
+                let display = format_rename_summary_display(old, new);
+                let sim = entry.score.unwrap_or(100);
+                println!(" copy {display} ({sim}%)");
+            }
+            DiffStatus::Added => {
+                println!(
+                    " create mode {} {}",
+                    entry.new_mode,
+                    quote_c_style_path(entry.path())
+                );
+            }
+            DiffStatus::Deleted => {
+                println!(
+                    " delete mode {} {}",
+                    entry.old_mode,
+                    quote_c_style_path(entry.path())
+                );
+            }
+            DiffStatus::TypeChanged => {
+                println!(
+                    " mode change {} => {} {}",
+                    entry.old_mode,
+                    entry.new_mode,
+                    quote_c_style_path(entry.path())
+                );
+            }
+            DiffStatus::Modified => {
+                if entry.old_mode != entry.new_mode && entry.old_oid == entry.new_oid {
+                    println!(
+                        " mode change {} => {} {}",
+                        entry.old_mode,
+                        entry.new_mode,
+                        quote_c_style_path(entry.path())
+                    );
+                }
+                if let Some(pct) = entry.score {
+                    println!(" rewrite {} ({pct}%)", quote_c_style_path(entry.path()));
+                }
+            }
+            DiffStatus::Unmerged => {}
+        }
+    }
+    Ok(())
+}
+
 // ── Internal types ───────────────────────────────────────────────────
 
 /// Output format for `diff-files`.
@@ -178,6 +332,8 @@ struct Options {
     abbrev: Option<usize>,
     /// Chosen output format.
     format: OutputFormat,
+    /// True only when `--raw` was passed (default format is raw but must be suppressed with `--summary`).
+    explicit_raw: bool,
     /// Suppress diff output (-s / --no-patch).
     suppress_diff: bool,
     /// Optional diff-filter specification.
@@ -192,6 +348,10 @@ struct Options {
     find_copies_harder: bool,
     /// Swap old/new sides (reverse diff).
     reverse: bool,
+    /// Emit condensed summary lines (renames, mode changes, rewrites with `-B`).
+    summary: bool,
+    /// Detect complete rewrites (`-B` / `--break-rewrites`) for summary/raw dissimilarity.
+    break_rewrites: bool,
 }
 
 /// A single changed file: index side vs working tree.
@@ -220,6 +380,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut exit_code = false;
     let mut abbrev: Option<usize> = None;
     let mut format = OutputFormat::Raw;
+    let mut explicit_raw = false;
     let mut suppress_diff = false;
     let mut diff_filter: Option<String> = None;
     let mut ignore_submodules = false;
@@ -228,6 +389,8 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut find_copies_harder = false;
     let mut c_count = 0u32;
     let mut reverse = false;
+    let mut summary = false;
+    let mut break_rewrites = false;
     let mut end_of_options = false;
 
     let mut idx = 0usize;
@@ -243,6 +406,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-R" => reverse = true,
                 "--raw" => {
                     format = OutputFormat::Raw;
+                    explicit_raw = true;
                     suppress_diff = false;
                 }
                 "-p" | "--patch" | "-u" => {
@@ -264,6 +428,20 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "--name-status" => {
                     format = OutputFormat::NameStatus;
                     suppress_diff = false;
+                }
+                "--summary" => summary = true,
+                "-B" | "--break-rewrites" => break_rewrites = true,
+                _ if arg.starts_with("--break-rewrites=") => break_rewrites = true,
+                _ if arg.starts_with("-B") && arg.len() > 2 => {
+                    let rest = &arg[2..];
+                    let num = rest.strip_suffix('%').unwrap_or(rest);
+                    if num.is_empty() || num.chars().all(|c| c.is_ascii_digit()) {
+                        break_rewrites = true;
+                    } else if !rest.chars().all(|c| c.is_ascii_digit() || c == '%') {
+                        bail!("unsupported option: {arg}");
+                    } else {
+                        break_rewrites = true;
+                    }
                 }
                 "--exit-code" => exit_code = true,
                 "-q" | "--quiet" => quiet = true,
@@ -384,6 +562,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         exit_code,
         abbrev,
         format,
+        explicit_raw,
         suppress_diff,
         diff_filter,
         ignore_submodules,
@@ -391,6 +570,8 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         find_copies,
         find_copies_harder,
         reverse,
+        summary,
+        break_rewrites,
     })
 }
 
@@ -639,6 +820,7 @@ fn render_raw_diff_entry(
     let status_str = match (entry.status, entry.score) {
         (DiffStatus::Renamed, Some(s)) => format!("R{s:03}"),
         (DiffStatus::Copied, Some(s)) => format!("C{s:03}"),
+        (DiffStatus::Modified, Some(pct)) => format!("M{pct:03}"),
         _ => entry.status.letter().to_string(),
     };
 

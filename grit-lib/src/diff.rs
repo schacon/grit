@@ -2473,6 +2473,30 @@ pub fn should_break_rewrite_for_stat(old: &[u8], new: &[u8]) -> bool {
     should_break_rewrite_inner(old, new, DIFF_DEFAULT_BREAK_SCORE)
 }
 
+/// Git `merge_score` from `diffcore-break.c` when a pair is considered broken: how much of the
+/// source blob was removed (0–[`DIFF_MAX_SCORE`] scale). Used for `dissimilarity index` metadata.
+#[must_use]
+pub fn rewrite_merge_score(old: &[u8], new: &[u8]) -> Option<u64> {
+    if old.is_empty() {
+        return None;
+    }
+    let max_size = old.len().max(new.len());
+    if max_size < DIFF_MINIMUM_BREAK_SIZE {
+        return None;
+    }
+    let (src_copied, _) = diffcore_count_changes(old, new);
+    let src_copied = src_copied.min(old.len() as u64);
+    let src_removed = (old.len() as u64).saturating_sub(src_copied);
+    Some(src_removed * DIFF_MAX_SCORE / old.len() as u64)
+}
+
+/// Percentage shown in `dissimilarity index N%` for a rewrite (`similarity_index` in Git's diff.c).
+#[must_use]
+pub fn rewrite_dissimilarity_index_percent(old: &[u8], new: &[u8]) -> Option<u32> {
+    let score = rewrite_merge_score(old, new)?;
+    Some((score * 100 / DIFF_MAX_SCORE).min(100) as u32)
+}
+
 fn should_break_rewrite_inner(src: &[u8], dst: &[u8], break_score: u64) -> bool {
     if src.is_empty() {
         return false;
