@@ -48,9 +48,8 @@ pub fn sequencer_is_revert_sequence(git_dir: &Path) -> bool {
 pub fn write_abort_safety_file(git_dir: &Path) -> std::io::Result<()> {
     let seq_dir = git_dir.join("sequencer");
     fs::create_dir_all(&seq_dir)?;
-    let head = resolve_head(git_dir).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::Other, format!("resolve HEAD: {e}"))
-    })?;
+    let head =
+        resolve_head(git_dir).map_err(|e| std::io::Error::other(format!("resolve HEAD: {e}")))?;
     let line = match head.oid() {
         Some(oid) => format!("{}\n", oid.to_hex()),
         None => "\n".to_string(),

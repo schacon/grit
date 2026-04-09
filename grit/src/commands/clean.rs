@@ -152,11 +152,12 @@ pub fn run(args: Args) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    if args.interactive && !args.dry_run {
-        if !run_interactive_clean(&mut out, &args, &cwd, &work_tree, &to_remove)? {
-            out.flush()?;
-            return Ok(());
-        }
+    if args.interactive
+        && !args.dry_run
+        && !run_interactive_clean(&mut out, &args, &cwd, &work_tree, &to_remove)?
+    {
+        out.flush()?;
+        return Ok(());
     }
 
     for (path, is_dir) in &to_remove {
@@ -359,7 +360,7 @@ fn collect_untracked(
 
         let rel = path
             .strip_prefix(work_tree)
-            .map(|p| path_to_slash(p))
+            .map(path_to_slash)
             .unwrap_or_else(|_| name.clone());
 
         if args.ignored_too
@@ -425,13 +426,13 @@ fn collect_untracked(
             if args.force < 2 {
                 if let Some(index_ref) = index {
                     if submodule_containing_path(&rel, index_ref).is_some()
-                        && !pathspec_enters_any(&pathspecs, cwd_prefix, &rel)
+                        && !pathspec_enters_any(pathspecs, cwd_prefix, &rel)
                     {
                         continue;
                     }
                 }
                 if is_nested_git_metadata(&path)
-                    && !pathspec_enters_any(&pathspecs, cwd_prefix, &rel)
+                    && !pathspec_enters_any(pathspecs, cwd_prefix, &rel)
                 {
                     continue;
                 }
@@ -621,7 +622,7 @@ fn collect_untracked(
                 rel.clone()
             };
 
-            if is_tracked(tracked, index, &work_tree, &rel_for_track) {
+            if is_tracked(tracked, index, work_tree, &rel_for_track) {
                 continue;
             }
 
@@ -833,10 +834,7 @@ fn pathdiff(cwd: &Path, work_tree: &Path) -> Option<String> {
     if cwd_canon == wt_canon {
         return None;
     }
-    cwd_canon
-        .strip_prefix(&wt_canon)
-        .ok()
-        .map(|p| path_to_slash(p))
+    cwd_canon.strip_prefix(&wt_canon).ok().map(path_to_slash)
 }
 
 fn path_for_clean_display(cwd: &Path, work_tree: &Path, repo_rel: &str) -> String {
@@ -1071,7 +1069,7 @@ fn dir_has_any_ignored(
 
         let rel = path
             .strip_prefix(work_tree)
-            .map(|p| path_to_slash(p))
+            .map(path_to_slash)
             .unwrap_or(name);
 
         let is_dir = path.is_dir();
@@ -1117,7 +1115,7 @@ fn dir_all_ignored(
         saw_entry = true;
         let rel = path
             .strip_prefix(work_tree)
-            .map(|p| path_to_slash(p))
+            .map(path_to_slash)
             .unwrap_or(name);
 
         let is_dir = path.is_dir();
