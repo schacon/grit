@@ -343,7 +343,7 @@ commit → check it off → move on.
 
 - [ ] `t3311-notes-merge-fanout` ░░░░░░░░░░░░░░░░░░░░ 1/24 (23 left) — Test notes merging at various fanout levels
 - [ ] `t3418-rebase-continue` ████░░░░░░░░░░░░░░░░ 6/30 (24 left) — git rebase --continue tests
-- [ ] `t3650-replay-basics` ███░░░░░░░░░░░░░░░░░ 6/31 (25 left) — basic git replay tests
+- [x] `t3650-replay-basics` — basic git replay tests (31/31)
 - [ ] `t3426-rebase-submodule` ██░░░░░░░░░░░░░░░░░░ 4/29 (25 left) — rebase can handle submodules
 - [ ] `t3452-history-split` ░░░░░░░░░░░░░░░░░░░░ 0/25 (25 left) — tests for git-history split subcommand
 - [ ] `t3203-branch-output` ███████░░░░░░░░░░░░░ 15/41 (26 left) — git branch display tests

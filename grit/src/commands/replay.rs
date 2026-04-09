@@ -1,8 +1,9 @@
-//! `grit replay` — replay commits on a new base.
+//! `grit replay` — replay commits on a new base (Git-compatible subset).
 //!
-//! Replays a linear range of commits onto a new base, using merge-ort style
-//! tree merging for each replayed commit and printing an `update-ref --stdin`
-//! command for the updated branch.
+//! Replays commits selected by `rev-list` semantics onto `--onto` or advances a
+//! single branch with `--advance`, using merge-ort style tree merging. Ref
+//! updates are applied atomically (best-effort) or printed with
+//! `--ref-action=print`.
 
 use crate::commands::merge::{
     merge_trees_for_replay, MergeDirectoryRenamesMode, MergeRenameOptions,
@@ -16,11 +17,12 @@ use grit_lib::merge_file::MergeFavor;
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
 };
-use grit_lib::refs::resolve_ref;
+use grit_lib::refs::{self, read_head, resolve_ref};
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rev_list::{rev_list, split_revision_token, OrderingMode, RevListOptions};
+use grit_lib::rev_parse::{expand_rev_token_circ_bang, resolve_revision_as_commit};
 use grit_lib::write_tree::write_tree_from_index;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -30,19 +32,30 @@ use time::OffsetDateTime;
 #[derive(Debug, ClapArgs)]
 #[command(about = "Replay commits on a new base")]
 pub struct Args {
-    /// Raw arguments forwarded to the system Git binary.
+    /// Raw arguments forwarded from the grit dispatcher.
     #[arg(value_name = "ARG", num_args = 0.., allow_hyphen_values = true, trailing_var_arg = true)]
     pub args: Vec<String>,
 }
 
-#[derive(Debug, Default)]
-struct ParsedReplayArgs {
-    onto: Option<String>,
-    range: Option<String>,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RefAction {
+    Update,
+    Print,
 }
 
-fn parse_args(raw: &[String]) -> Result<ParsedReplayArgs> {
-    let mut parsed = ParsedReplayArgs::default();
+#[derive(Debug, Default)]
+struct ParsedReplayCli {
+    onto: Option<String>,
+    advance: Option<String>,
+    contained: bool,
+    ref_action_cli: Option<String>,
+    branches: bool,
+    ancestry_path: Option<String>,
+    revisions: Vec<String>,
+}
+
+fn parse_replay_cli(raw: &[String]) -> Result<ParsedReplayCli> {
+    let mut out = ParsedReplayCli::default();
     let mut i = 0usize;
     while i < raw.len() {
         let arg = &raw[i];
@@ -50,7 +63,7 @@ fn parse_args(raw: &[String]) -> Result<ParsedReplayArgs> {
             let Some(value) = raw.get(i + 1) else {
                 bail!("error: option '--onto' requires a value");
             };
-            parsed.onto = Some(value.clone());
+            out.onto = Some(value.clone());
             i += 2;
             continue;
         }
@@ -58,58 +71,284 @@ fn parse_args(raw: &[String]) -> Result<ParsedReplayArgs> {
             if value.is_empty() {
                 bail!("error: option '--onto' requires a value");
             }
-            parsed.onto = Some(value.to_owned());
+            out.onto = Some(value.to_owned());
+            i += 1;
+            continue;
+        }
+        if arg == "--advance" {
+            let Some(value) = raw.get(i + 1) else {
+                bail!("error: option '--advance' requires a value");
+            };
+            out.advance = Some(value.clone());
+            i += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--advance=") {
+            if value.is_empty() {
+                bail!("error: option '--advance' requires a value");
+            }
+            out.advance = Some(value.to_owned());
+            i += 1;
+            continue;
+        }
+        if arg == "--contained" {
+            out.contained = true;
+            i += 1;
+            continue;
+        }
+        if arg == "--ref-action" {
+            let Some(value) = raw.get(i + 1) else {
+                bail!("error: option '--ref-action' requires a value");
+            };
+            out.ref_action_cli = Some(value.clone());
+            i += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--ref-action=") {
+            if value.is_empty() {
+                bail!("error: option '--ref-action' requires a value");
+            }
+            out.ref_action_cli = Some(value.to_owned());
+            i += 1;
+            continue;
+        }
+        if arg == "--branches" {
+            out.branches = true;
+            i += 1;
+            continue;
+        }
+        if arg == "--ancestry-path" {
+            let Some(value) = raw.get(i + 1) else {
+                bail!("error: option '--ancestry-path' requires a value");
+            };
+            out.ancestry_path = Some(value.clone());
+            i += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--ancestry-path=") {
+            if value.is_empty() {
+                bail!("error: option '--ancestry-path' requires a value");
+            }
+            out.ancestry_path = Some(value.to_owned());
             i += 1;
             continue;
         }
         if arg.starts_with('-') {
             bail!("unsupported option: {arg}");
         }
-        if parsed.range.is_some() {
-            bail!("error: multiple revision ranges are not supported");
-        }
-        parsed.range = Some(arg.clone());
+        out.revisions.push(arg.clone());
         i += 1;
     }
-    Ok(parsed)
+    Ok(out)
+}
+
+fn parse_ref_action_mode(raw: Option<&str>, source: &str) -> Result<RefAction> {
+    let s = raw.unwrap_or("update").trim();
+    if s.eq_ignore_ascii_case("update") {
+        return Ok(RefAction::Update);
+    }
+    if s.eq_ignore_ascii_case("print") {
+        return Ok(RefAction::Print);
+    }
+    bail!(
+        "invalid {source} value: '{raw}'",
+        raw = raw.unwrap_or_default()
+    );
+}
+
+fn ref_action_for_run(repo: &Repository, cli: Option<&str>) -> Result<RefAction> {
+    if let Some(v) = cli {
+        return parse_ref_action_mode(Some(v), "--ref-action");
+    }
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    if let Some(v) = config.get("replay.refAction") {
+        return parse_ref_action_mode(Some(&v), "replay.refAction");
+    }
+    Ok(RefAction::Update)
+}
+
+fn peel_committish_for_mode(repo: &Repository, spec: &str, mode: &str) -> Result<ObjectId> {
+    resolve_revision_as_commit(repo, spec)
+        .map_err(|_| anyhow::anyhow!("fatal: '{spec}' is not a valid commit-ish for {mode}\n"))
+}
+
+fn try_dwim_single_branch_ref(git_dir: &Path, spec: &str) -> Result<Option<String>> {
+    let want_short = spec.strip_prefix("refs/heads/").unwrap_or(spec);
+    let mut matches: Vec<String> = Vec::new();
+    for (name, _) in refs::list_refs(git_dir, "refs/heads/")? {
+        if name == spec {
+            matches.push(name);
+            continue;
+        }
+        if let Some(tail) = name.strip_prefix("refs/heads/") {
+            if tail == want_short {
+                matches.push(name);
+            }
+        }
+    }
+    matches.sort();
+    matches.dedup();
+    if matches.len() == 1 {
+        Ok(Some(matches[0].clone()))
+    } else {
+        Ok(None)
+    }
+}
+
+fn collect_revision_specs(
+    repo: &Repository,
+    parsed: &ParsedReplayCli,
+) -> Result<(Vec<String>, Vec<String>)> {
+    let mut positive = Vec::new();
+    let mut negative = Vec::new();
+    for rev in &parsed.revisions {
+        for expanded in expand_rev_token_circ_bang(repo, rev)? {
+            let (pos, neg) = split_revision_token(&expanded);
+            positive.extend(pos);
+            negative.extend(neg);
+        }
+    }
+    if parsed.branches {
+        for (name, _) in refs::list_refs(&repo.git_dir, "refs/heads/")? {
+            positive.push(name);
+        }
+    }
+    Ok((positive, negative))
+}
+
+fn build_commit_to_refs_map(repo: &Repository) -> Result<HashMap<ObjectId, Vec<String>>> {
+    let mut map: HashMap<ObjectId, Vec<String>> = HashMap::new();
+    if let Ok(head_oid) = resolve_ref(&repo.git_dir, "HEAD") {
+        if let Ok(commit_oid) = grit_lib::rev_parse::peel_to_commit_for_merge_base(repo, head_oid) {
+            map.entry(commit_oid).or_default().push("HEAD".to_owned());
+        }
+    }
+    for (name, oid) in refs::list_refs(&repo.git_dir, "refs/")? {
+        let Ok(commit_oid) = grit_lib::rev_parse::peel_to_commit_for_merge_base(repo, oid) else {
+            continue;
+        };
+        map.entry(commit_oid).or_default().push(name);
+    }
+    Ok(map)
+}
+
+#[derive(Debug)]
+struct RefUpdateLine {
+    refname: String,
+    new_oid: ObjectId,
+    old_oid: ObjectId,
 }
 
 /// Run `grit replay`.
 pub fn run(args: Args) -> Result<()> {
-    let parsed = parse_args(&args.args)?;
-    let onto_spec = parsed
-        .onto
-        .ok_or_else(|| anyhow::anyhow!("error: option --onto is mandatory"))?;
-    let range = parsed
-        .range
-        .ok_or_else(|| anyhow::anyhow!("error: replay requires a revision range"))?;
-    let (upstream_spec, branch_spec) = range
-        .split_once("..")
-        .ok_or_else(|| anyhow::anyhow!("error: replay currently requires a <old>..<new> range"))?;
-    if upstream_spec.is_empty() || branch_spec.is_empty() {
-        bail!("error: invalid replay range '{range}'");
+    let parsed = parse_replay_cli(&args.args)?;
+    let has_onto = parsed.onto.is_some();
+    let has_advance = parsed.advance.is_some();
+    if !has_onto && !has_advance {
+        eprintln!("error: option --onto or --advance is mandatory");
+        eprintln!();
+        eprintln!("usage: git replay ([--contained] --onto <newbase> | --advance <branch>) [--ref-action[=<mode>]] <revision-range>");
+        std::process::exit(129);
+    }
+    if has_advance && parsed.contained {
+        bail!("fatal: options '--advance' and '--contained' cannot be used together");
+    }
+    if has_advance && has_onto {
+        bail!("fatal: options '--advance' and '--onto' cannot be used together");
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;
-    let onto_oid = resolve_revision(&repo, &onto_spec)
-        .with_context(|| format!("bad revision '{onto_spec}'"))?;
-    let upstream_oid = resolve_revision(&repo, upstream_spec)
-        .with_context(|| format!("bad revision '{upstream_spec}'"))?;
-    let (target_ref, old_tip) = resolve_target_branch(&repo, branch_spec)?;
-    let branch_tip = resolve_revision(&repo, branch_spec)
-        .with_context(|| format!("bad revision '{branch_spec}'"))?;
-    let commits = collect_linear_commits_to_replay(&repo, upstream_oid, branch_tip)?;
+    let ref_mode = ref_action_for_run(&repo, parsed.ref_action_cli.as_deref())
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let (positive_specs, negative_specs) = collect_revision_specs(&repo, &parsed)?;
+    if positive_specs.is_empty() {
+        bail!("fatal: need some commits to replay");
+    }
+
+    let mut rev_opts = RevListOptions::default();
+    rev_opts.ordering = OrderingMode::Topo;
+    rev_opts.reverse = true;
+    if let Some(ap) = parsed.ancestry_path.as_deref() {
+        rev_opts.ancestry_path = true;
+        let bottom = resolve_revision_as_commit(&repo, ap).map_err(|e| {
+            anyhow::anyhow!(
+                "{}",
+                e.to_string()
+                    .trim_start_matches("fatal: ")
+                    .trim_end_matches('\n')
+            )
+        })?;
+        rev_opts.ancestry_path_bottoms = vec![bottom];
+    }
+
+    let result = rev_list(&repo, &positive_specs, &negative_specs, &rev_opts)?;
+    let commits = result.commits;
+    if commits.is_empty() {
+        return Ok(());
+    }
+
+    let detached_head = read_head(&repo.git_dir)?.is_none();
+
+    let onto_oid = if let Some(onto_spec) = parsed.onto.as_deref() {
+        peel_committish_for_mode(&repo, onto_spec, "--onto")
+            .map_err(|e| anyhow::anyhow!("{}", e.to_string().trim_end_matches('\n')))?
+    } else {
+        let adv = parsed.advance.as_deref().expect("advance when no onto");
+        let full = try_dwim_single_branch_ref(&repo.git_dir, adv)?
+            .ok_or_else(|| anyhow::anyhow!("fatal: argument to --advance must be a reference"))?;
+        if positive_specs.len() > 1 {
+            bail!("fatal: cannot advance target with multiple sources because ordering would be ill-defined");
+        }
+        peel_committish_for_mode(&repo, &full, "--advance")
+            .map_err(|e| anyhow::anyhow!("{}", e.to_string().trim_end_matches('\n')))?
+    };
+
+    let positive_ref_fullnames: HashSet<String> = {
+        let mut s = HashSet::new();
+        for spec in &positive_specs {
+            if let Ok(Some(full)) = try_dwim_single_branch_ref(&repo.git_dir, spec) {
+                s.insert(full);
+            }
+        }
+        s
+    };
+
+    let advance_full_ref = if has_advance {
+        Some(
+            try_dwim_single_branch_ref(&repo.git_dir, parsed.advance.as_deref().expect("advance"))?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("fatal: argument to --advance must be a reference")
+                })?,
+        )
+    } else {
+        None
+    };
+
+    if has_onto && positive_ref_fullnames.len() < positive_specs.len() {
+        bail!("fatal: all positive revisions given must be references");
+    }
+
+    let commit_to_refs = build_commit_to_refs_map(&repo)?;
+
     let merge_renormalize = read_merge_renormalize(&repo);
     let directory_renames = read_directory_renames(&repo);
+    let merge_dir_mode = MergeDirectoryRenamesMode::FromConfig;
+    let rename_opts = MergeRenameOptions::from_config(&repo);
+
+    let mut replayed: HashMap<ObjectId, ObjectId> = HashMap::new();
+    let mut replayed_tip = onto_oid;
     let mut cached_upstream_renames: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
 
-    let mut replayed_tip = onto_oid;
-    for commit_oid in commits {
+    for &commit_oid in &commits {
         let commit_obj = repo.odb.read(&commit_oid)?;
         let commit = parse_commit(&commit_obj.data)?;
         let parent_oid = *commit.parents.first().ok_or_else(|| {
-            anyhow::anyhow!("replaying down from root commit is not supported yet!")
+            anyhow::anyhow!("fatal: replaying down from root commit is not supported yet!")
         })?;
+        if commit.parents.len() > 1 {
+            bail!("fatal: replaying merge commits is not supported yet!");
+        }
 
         let base_tree = commit_tree(&repo, parent_oid)?;
         let ours_tree = commit_tree(&repo, replayed_tip)?;
@@ -179,8 +418,8 @@ pub fn run(args: Args) -> Result<()> {
             false,
             false,
             false,
-            MergeDirectoryRenamesMode::Disabled,
-            MergeRenameOptions::from_config(&repo),
+            merge_dir_mode,
+            rename_opts.clone(),
         )?;
         if merge_result.has_conflicts {
             let reason = merge_result
@@ -193,55 +432,105 @@ pub fn run(args: Args) -> Result<()> {
 
         let merged_tree = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
 
-        // Drop commits that become empty after replay (matching git replay).
         if merged_tree == ours_tree && theirs_tree != base_tree {
+            replayed.insert(commit_oid, replayed_tip);
             continue;
         }
 
         replayed_tip = create_replayed_commit(&repo, replayed_tip, merged_tree, &commit)?;
+        replayed.insert(commit_oid, replayed_tip);
     }
 
-    println!(
-        "update refs/heads/{} {} {}",
-        target_ref,
-        replayed_tip.to_hex(),
-        old_tip.to_hex()
-    );
+    let mut updates: Vec<RefUpdateLine> = Vec::new();
+
+    if let Some(adv_full) = advance_full_ref {
+        let old_oid = resolve_ref(&repo.git_dir, &adv_full)?;
+        updates.push(RefUpdateLine {
+            refname: adv_full,
+            new_oid: replayed_tip,
+            old_oid,
+        });
+    } else {
+        let mut seen_ref: HashSet<String> = HashSet::new();
+        for commit_oid in &commits {
+            let Some(&new_tip) = replayed.get(commit_oid) else {
+                continue;
+            };
+            let Some(refs_at) = commit_to_refs.get(commit_oid) else {
+                continue;
+            };
+            for r in refs_at {
+                if r == "HEAD" {
+                    if !detached_head {
+                        continue;
+                    }
+                } else if !parsed.contained && !positive_ref_fullnames.contains(r) {
+                    continue;
+                }
+                if !seen_ref.insert(r.clone()) {
+                    continue;
+                }
+                let old_oid = resolve_ref(&repo.git_dir, r)?;
+                if old_oid == new_tip {
+                    continue;
+                }
+                updates.push(RefUpdateLine {
+                    refname: r.clone(),
+                    new_oid: new_tip,
+                    old_oid,
+                });
+            }
+        }
+    }
+
+    let reflog_msg = if has_advance {
+        format!(
+            "replay --advance {}",
+            parsed.advance.as_deref().expect("advance")
+        )
+    } else {
+        format!("replay --onto {}", onto_oid.to_hex())
+    };
+
+    match ref_mode {
+        RefAction::Print => {
+            let mut out = std::io::stdout().lock();
+            for u in &updates {
+                writeln!(
+                    out,
+                    "update {} {} {}",
+                    u.refname,
+                    u.new_oid.to_hex(),
+                    u.old_oid.to_hex()
+                )?;
+            }
+        }
+        RefAction::Update => {
+            for u in &updates {
+                refs::write_ref(&repo.git_dir, &u.refname, &u.new_oid)
+                    .with_context(|| format!("failed to update ref {}", u.refname))?;
+                if refs::should_autocreate_reflog(&repo.git_dir, &u.refname) {
+                    let _ = refs::append_reflog(
+                        &repo.git_dir,
+                        &u.refname,
+                        &u.old_oid,
+                        &u.new_oid,
+                        &resolve_committer_ident_string(&repo)?,
+                        &reflog_msg,
+                        false,
+                    );
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
-fn resolve_target_branch(repo: &Repository, spec: &str) -> Result<(String, ObjectId)> {
-    let refname = if spec.starts_with("refs/") {
-        spec.to_owned()
-    } else {
-        format!("refs/heads/{spec}")
-    };
-    let oid = resolve_ref(&repo.git_dir, &refname)
-        .with_context(|| format!("argument to replay range must be a local branch: {spec}"))?;
-    Ok((refname.trim_start_matches("refs/heads/").to_owned(), oid))
-}
-
-fn collect_linear_commits_to_replay(
-    repo: &Repository,
-    start_exclusive: ObjectId,
-    tip: ObjectId,
-) -> Result<Vec<ObjectId>> {
-    let mut commits = Vec::new();
-    let mut current = tip;
-    while current != start_exclusive {
-        let obj = repo.odb.read(&current)?;
-        let commit = parse_commit(&obj.data)?;
-        if commit.parents.is_empty() {
-            bail!("replaying down from root commit is not supported yet!");
-        }
-        if commit.parents.len() > 1 {
-            bail!("replaying merge commits is not supported yet!");
-        }
-        commits.push(current);
-        current = commit.parents[0];
-    }
-    commits.reverse();
-    Ok(commits)
+fn resolve_committer_ident_string(repo: &Repository) -> Result<String> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let now = OffsetDateTime::now_utc();
+    Ok(resolve_committer_ident(&config, now))
 }
 
 fn commit_tree(repo: &Repository, commit_oid: ObjectId) -> Result<ObjectId> {
@@ -760,8 +1049,6 @@ fn detect_side_renames(
         }
     }
 
-    // Fallback: if similarity-based rename detection missed some obvious
-    // one-to-one filename moves, match by identical basename.
     let mut deleted_by_name: HashMap<Vec<u8>, Vec<Vec<u8>>> = HashMap::new();
     let mut added_by_name: HashMap<Vec<u8>, Vec<Vec<u8>>> = HashMap::new();
     for entry in &diff_entries {
