@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 mod alias;
 mod branch_tracking;
 mod bundle_uri;
+mod bundle_uri_test_tool;
 mod commands;
 mod dotfile;
 mod explicit_exit;
@@ -4556,6 +4557,23 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                             .with_context(|| "could not get the bundle-uri list")?;
                             crate::http_bundle_uri::print_bundle_list_from_pairs(&pairs);
                             Ok(())
+                        }
+                        "parse-key-values" => {
+                            let path = rest.get(2).map(|s| s.as_str()).unwrap_or("");
+                            if path.is_empty() {
+                                bail!("usage: test-tool bundle-uri parse-key-values <input>");
+                            }
+                            let code = crate::bundle_uri_test_tool::parse_key_values_file(path)?;
+                            std::process::exit(code);
+                        }
+                        "parse-config" => {
+                            let path = rest.get(2).map(|s| s.as_str()).unwrap_or("");
+                            if path.is_empty() {
+                                bail!("usage: test-tool bundle-uri parse-config <input>");
+                            }
+                            let code =
+                                crate::bundle_uri_test_tool::parse_config_file("<uri>", path)?;
+                            std::process::exit(code);
                         }
                         other => bail!("test-tool bundle-uri: unknown subcommand '{other}'"),
                     }

@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   308 |
+| Completed   |   309 |
 | In progress |     5 |
-| Remaining   |   456 |
+| Remaining   |   455 |
 | **Total**   |   769 |
 
-Task lines in `PLAN.md`: 308 completed (`[x]`), 5 in progress (`[~]`), 456 remaining (`[ ]`).
+Task lines in `PLAN.md`: 309 completed (`[x]`), 5 in progress (`[~]`), 455 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5750-bundle-uri-parse` — 13/13 tests pass (`test-tool bundle-uri parse-key-values` / `parse-config`: Git `bundle-uri.c` semantics, `git_path::relative_url`, stderr messages; harness CSV/dashboards refreshed)
 - `t3423-rebase-reword` — 3/3 tests pass (`rebase -i`: parse `reword`/`r` in todo; run commit editor with `prepare-commit-msg` source `reword`; `rebase --continue` after conflict uses `rebase-merge/message` template; noop-fast-forward path restricted to `pick` only so `reword` still opens editor)
 - `t3417-rebase-whitespace-fix` — 4/4 tests pass (`rebase --whitespace=fix`: apply `fix_blob_bytes` to merged index after three-way merge; noop pick path rebuilds tree + commit when whitespace fix is active; harness CSV refreshed)
 - `t7011-skip-worktree-reading` — 15/15 tests pass (`update-index` skip-worktree no-op / `--remove` clears entry; `--remove` on missing untracked path is silent; `reset` preserves skip-worktree; `diff-index` skips worktree for skip-worktree; `commit` pathspec rejects skip-worktree)
