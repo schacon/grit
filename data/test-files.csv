@@ -859,7 +859,7 @@ t5002-archive-attr-pattern	t5	yes	19	5	14	false	ok	0
 t5003-archive-zip	t5	yes	82	82	0	true	ok	0
 t5004-archive-corner-cases	t5	yes	14	9	5	false	ok	0
 t5100-count-objects	t5	yes	26	24	2	false	ok	0
-t5100-mailinfo	t5	yes	52	7	45	false	ok	0
+t5100-mailinfo	t5	yes	52	52	0	true	ok	0
 t5150-request-pull	t5	yes	10	2	8	false	ok	0
 t5200-update-server-info	t5	yes	8	6	2	false	ok	0
 t5300-pack-object	t5	yes	63	38	25	false	ok	0
