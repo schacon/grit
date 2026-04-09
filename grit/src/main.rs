@@ -23,6 +23,7 @@ mod explicit_exit;
 mod ext_transport;
 mod fetch_transport;
 mod file_upload_pack_v2;
+mod git_binary_base85;
 mod git_column;
 mod git_commit_encoding;
 mod git_path;

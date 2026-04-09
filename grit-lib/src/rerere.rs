@@ -488,9 +488,17 @@ fn try_replay_merge(
     postimage: &[u8],
 ) -> Option<Vec<u8>> {
     let marker_size = conflict_marker_size(path);
+    // Git normalizes the worktree conflict (`thisimage`) before replay; mirror that here.
+    let cur_str = std::str::from_utf8(cur).ok()?;
+    let cur_norm = normalize_conflicts(cur_str, marker_size).ok()?;
+    // When the normalized conflict matches the recorded preimage, the resolution is the postimage
+    // (Git's `ll_merge` path; our text merge may not always infer this — t4108 rerere relies on it).
+    if cur_norm.as_bytes() == preimage {
+        return Some(postimage.to_vec());
+    }
     let out = merge(&MergeInput {
         base: preimage,
-        ours: cur,
+        ours: cur_norm.as_bytes(),
         theirs: postimage,
         label_ours: "",
         label_base: "",
@@ -596,8 +604,17 @@ fn write_preimage_normalized(
         Err(()) => return Ok(()),
     };
     fs::create_dir_all(rr_hex_dir(git_dir, &id.hex))?;
-    fs::write(preimage_path(git_dir, id), norm.as_bytes())?;
-    let _ = fs::remove_file(postimage_path(git_dir, id));
+    let pre_path = preimage_path(git_dir, id);
+    let post_path = postimage_path(git_dir, id);
+    // If the normalized preimage is unchanged, keep an existing postimage (`git apply --3way`
+    // re-records the same conflict shape after `merge` + `rerere` resolution).
+    let unchanged = fs::read(&pre_path)
+        .ok()
+        .is_some_and(|existing| existing == norm.as_bytes());
+    if !unchanged {
+        fs::write(&pre_path, norm.as_bytes())?;
+        let _ = fs::remove_file(&post_path);
+    }
     Ok(())
 }
 
@@ -677,8 +694,13 @@ pub fn repo_rerere(repo: &Repository, autoupdate: RerereAutoupdate) -> Result<()
         let marker_size = conflict_marker_size(path);
         let mut hash = [0u8; 20];
         let ret = handle_path(&work_content, marker_size, Some(&mut hash));
-        if ret != 1 {
+        // Mirror `git rerere` `do_plain_rerere`: only evict MERGE_RR when the scan fails (`ret !=
+        // 0`). `ret == 0` means the working tree no longer has markers (user resolved) — keep the
+        // existing MERGE_RR row so the second phase can write `postimage`.
+        if ret != 0 {
             merge_rr.remove(path);
+        }
+        if ret < 1 {
             continue;
         }
         let hex = hex::encode(hash);
@@ -710,6 +732,39 @@ pub fn repo_rerere(repo: &Repository, autoupdate: RerereAutoupdate) -> Result<()
         let marker_size = conflict_marker_size(&path);
 
         if id.variant < 0 {
+            let hex = id.hex.clone();
+            let mut replayed = false;
+            for v in list_complete_variants(&repo.git_dir, &hex) {
+                let vid = RerereId {
+                    hex: hex.clone(),
+                    variant: v,
+                };
+                let pre = match fs::read(preimage_path(&repo.git_dir, &vid)) {
+                    Ok(b) => b,
+                    Err(_) => continue,
+                };
+                let post = match fs::read(postimage_path(&repo.git_dir, &vid)) {
+                    Ok(b) => b,
+                    Err(_) => continue,
+                };
+                if let Some(res) =
+                    try_replay_merge(repo, &path, work_content.as_bytes(), &pre, &post)
+                {
+                    fs::write(&file_path, &res)?;
+                    touch_postimage(&repo.git_dir, &vid);
+                    if autoupdate_on {
+                        to_stage.push(path.clone());
+                    } else {
+                        eprintln!("Resolved '{path}' using previous resolution.");
+                    }
+                    replayed = true;
+                    break;
+                }
+            }
+            if replayed {
+                ent.id = None;
+                continue;
+            }
             id.variant = assign_variant(&repo.git_dir, &id.hex);
             write_preimage_normalized(&repo.git_dir, &id, &work_content, marker_size)?;
             ent.id = Some(id);

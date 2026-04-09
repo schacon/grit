@@ -12,15 +12,19 @@
 //! - `grit apply --directory=<dir>` — prepend directory to paths
 //! - Reads from stdin if no file argument given
 
+use crate::explicit_exit::ExplicitExit;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
-use grit_lib::crlf;
+use grit_lib::crlf::{self, FileAttrs, MergeAttr};
 use grit_lib::index::{Index, IndexEntry};
+use grit_lib::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
+use grit_lib::objects::ObjectId;
 use grit_lib::objects::ObjectKind;
 use grit_lib::quote_path::quote_c_style;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rerere::{repo_rerere, rerere_enabled, RerereAutoupdate};
+use grit_lib::rev_parse::{resolve_revision, resolve_revision_for_patch_old_blob};
 use grit_lib::ws::{self, WhitespaceGitAttr, WS_BLANK_AT_EOF, WS_DEFAULT_RULE, WS_INCOMPLETE_LINE};
 use regex::Regex;
 use std::borrow::Cow;
@@ -129,6 +133,18 @@ pub struct Args {
     /// Attempt a three-way merge if the patch does not apply cleanly.
     #[arg(long = "3way")]
     pub three_way: bool,
+
+    /// With `--3way`, resolve conflicts using our version (`git apply --ours`).
+    #[arg(long = "ours", requires = "three_way", conflicts_with_all = ["theirs", "union"])]
+    pub ours: bool,
+
+    /// With `--3way`, resolve conflicts using their version (`git apply --theirs`).
+    #[arg(long = "theirs", requires = "three_way", conflicts_with_all = ["ours", "union"])]
+    pub theirs: bool,
+
+    /// With `--3way`, resolve conflicts using a union merge (`git apply --union`).
+    #[arg(long = "union", requires = "three_way", conflicts_with_all = ["ours", "theirs"])]
+    pub union: bool,
 
     /// Include context and removed lines in the output.
     #[arg(long = "include")]
@@ -423,6 +439,234 @@ impl FilePatch {
     }
 }
 
+/// Outcome of a `--3way` attempt for one file (blob-level).
+#[derive(Debug)]
+struct ThreeWayBlobResult {
+    merged_bytes: Vec<u8>,
+    conflicted: bool,
+    /// Stage blobs when `conflicted` (base, ours, theirs); unused entries are zero OID for add/add base.
+    stages: [ObjectId; 3],
+}
+
+fn resolve_apply_conflict_style(repo: &Repository) -> ConflictStyle {
+    let Ok(config) = ConfigSet::load(Some(&repo.git_dir), true) else {
+        return ConflictStyle::Merge;
+    };
+    match config
+        .get("merge.conflictstyle")
+        .unwrap_or_default()
+        .to_lowercase()
+        .as_str()
+    {
+        "diff3" => ConflictStyle::Diff3,
+        "zdiff3" => ConflictStyle::ZealousDiff3,
+        _ => ConflictStyle::Merge,
+    }
+}
+
+fn merge_favor_from_apply_args(args: &Args) -> MergeFavor {
+    if args.union {
+        MergeFavor::Union
+    } else if args.theirs {
+        MergeFavor::Theirs
+    } else if args.ours {
+        MergeFavor::Ours
+    } else {
+        MergeFavor::None
+    }
+}
+
+fn effective_merge_favor_for_path(file_attrs: &FileAttrs, cli: MergeFavor) -> MergeFavor {
+    if matches!(file_attrs.merge, MergeAttr::Driver(ref s) if s == "union") {
+        MergeFavor::Union
+    } else {
+        cli
+    }
+}
+
+fn conflict_marker_size_for_path(file_attrs: &FileAttrs) -> usize {
+    file_attrs
+        .conflict_marker_size
+        .as_deref()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(7)
+}
+
+fn count_hunk_line_changes(fp: &FilePatch) -> (usize, usize) {
+    let mut add = 0usize;
+    let mut del = 0usize;
+    for h in &fp.hunks {
+        for line in &h.lines {
+            match line {
+                HunkLine::Add(_) => add += 1,
+                HunkLine::Remove(_) => del += 1,
+                _ => {}
+            }
+        }
+    }
+    (add, del)
+}
+
+/// Try Git's `apply --3way` in-core merge: base = patch preimage, theirs = patch postimage, ours = `our_bytes`.
+fn try_three_way_merge_blob(
+    repo: &Repository,
+    fp: &FilePatch,
+    our_bytes: &[u8],
+    ws_mode: ApplyWhitespaceMode,
+    forward_apply: bool,
+    patch_input_display: &str,
+    favor: MergeFavor,
+    style: ConflictStyle,
+    file_attrs: &FileAttrs,
+    direct_to_threeway: bool,
+) -> Result<Option<ThreeWayBlobResult>> {
+    if !forward_apply {
+        return Ok(None);
+    }
+    if fp.is_deleted {
+        return Ok(None);
+    }
+    if fp.involves_gitlink() {
+        return Ok(None);
+    }
+    if fp.is_rename {
+        let (a, d) = count_hunk_line_changes(fp);
+        if a == 0 && d == 0 {
+            return Ok(None);
+        }
+    }
+    if fp.is_new && !direct_to_threeway {
+        return Ok(None);
+    }
+    let (pre_bytes, preimage_oid): (Vec<u8>, Option<ObjectId>) = if fp.is_new {
+        (Vec::new(), None)
+    } else {
+        let Some(prefix) = fp.old_oid.as_deref() else {
+            return Ok(None);
+        };
+        let oid = resolve_revision_for_patch_old_blob(repo, prefix)?;
+        let obj = repo.odb.read(&oid)?;
+        (obj.data, Some(oid))
+    };
+
+    let post_bytes: Vec<u8> = if let Some(bin) = fp.binary_patch.as_ref() {
+        inflate_binary_payload(&bin.forward_compressed)?
+    } else if fp.hunks.is_empty() {
+        pre_bytes.clone()
+    } else {
+        let pre_text = String::from_utf8_lossy(&pre_bytes);
+        let post_text = apply_hunks(
+            pre_text.as_ref(),
+            fp,
+            ws_mode,
+            forward_apply,
+            patch_input_display,
+        )?;
+        post_text.into_bytes()
+    };
+
+    if pre_bytes == our_bytes {
+        let oid_base = preimage_oid.unwrap_or(ObjectId::zero());
+        let oid_ours = repo.odb.write(ObjectKind::Blob, our_bytes)?;
+        let oid_theirs = repo.odb.write(ObjectKind::Blob, &post_bytes)?;
+        return Ok(Some(ThreeWayBlobResult {
+            merged_bytes: post_bytes,
+            conflicted: false,
+            stages: [oid_base, oid_ours, oid_theirs],
+        }));
+    }
+    if pre_bytes == post_bytes || our_bytes == post_bytes {
+        let oid_base = preimage_oid.unwrap_or(ObjectId::zero());
+        let oid_ours = repo.odb.write(ObjectKind::Blob, our_bytes)?;
+        let oid_theirs = repo.odb.write(ObjectKind::Blob, &post_bytes)?;
+        return Ok(Some(ThreeWayBlobResult {
+            merged_bytes: our_bytes.to_vec(),
+            conflicted: false,
+            stages: [oid_base, oid_ours, oid_theirs],
+        }));
+    }
+
+    let base_hex = preimage_oid.map(|o| o.to_hex()).unwrap_or_default();
+    let abbrev_len = 7usize;
+    let base_abbrev = if base_hex.is_empty() {
+        String::new()
+    } else if base_hex.len() > abbrev_len {
+        base_hex[..abbrev_len].to_string()
+    } else {
+        base_hex.clone()
+    };
+    let label_base = match style {
+        ConflictStyle::ZealousDiff3 if base_abbrev.chars().all(|c| c.is_ascii_hexdigit()) => {
+            base_abbrev.clone()
+        }
+        ConflictStyle::Diff3 | ConflictStyle::ZealousDiff3 if !base_abbrev.is_empty() => {
+            format!("{base_abbrev}:content")
+        }
+        _ => "base".to_string(),
+    };
+
+    let merged = merge(&MergeInput {
+        base: &pre_bytes,
+        ours: our_bytes,
+        theirs: &post_bytes,
+        label_ours: "ours",
+        label_base: &label_base,
+        label_theirs: "theirs",
+        favor,
+        style,
+        marker_size: conflict_marker_size_for_path(file_attrs),
+        diff_algorithm: None,
+        ignore_all_space: false,
+        ignore_space_change: false,
+        ignore_space_at_eol: false,
+        ignore_cr_at_eol: false,
+    })
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let oid_base = preimage_oid.unwrap_or(ObjectId::zero());
+    let oid_ours = repo.odb.write(ObjectKind::Blob, our_bytes)?;
+    let oid_theirs = repo.odb.write(ObjectKind::Blob, &post_bytes)?;
+
+    Ok(Some(ThreeWayBlobResult {
+        merged_bytes: merged.content,
+        conflicted: merged.conflicts > 0,
+        stages: [oid_base, oid_ours, oid_theirs],
+    }))
+}
+
+fn add_conflicted_index_stages(
+    index: &mut Index,
+    path_bytes: &[u8],
+    mode: u32,
+    stages: &[ObjectId; 3],
+) {
+    index.entries.retain(|e| e.path != path_bytes);
+    for (stage_idx, oid) in stages.iter().enumerate() {
+        if oid.is_zero() {
+            continue;
+        }
+        let stage = (stage_idx + 1) as u8;
+        let entry = IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid: *oid,
+            flags: ((path_bytes.len().min(0xFFF)) as u16 & 0x0FFF) | ((stage as u16) << 12),
+            flags_extended: None,
+            path: path_bytes.to_vec(),
+        };
+        index.add_or_replace(entry);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Parsing
 // ---------------------------------------------------------------------------
@@ -433,6 +677,24 @@ impl FilePatch {
 /// submodule handling (`t4137-apply-submodule`).
 fn sanitize_patch_header_value(s: &mut String) {
     *s = s.trim().trim_end_matches('\r').to_string();
+}
+
+/// Strip Git's `diff --git a/... b/...` path prefix when it leaked into stored paths.
+///
+/// Binary patches often omit `---`/`+++` lines that would normally resynchronize names; without
+/// this, paths like `a/bin.png` are misinterpreted as real file paths (`t4108-apply-threeway`).
+fn strip_git_diff_path_prefix(path: &str) -> String {
+    if path == "/dev/null" {
+        return path.to_string();
+    }
+    let p = path.trim_start_matches("./");
+    if let Some(rest) = p.strip_prefix("a/") {
+        return rest.to_string();
+    }
+    if let Some(rest) = p.strip_prefix("b/") {
+        return rest.to_string();
+    }
+    path.to_string()
 }
 
 fn sanitize_file_patch_headers(fp: &mut FilePatch) {
@@ -458,6 +720,7 @@ fn sanitize_file_patch_headers(fp: &mut FilePatch) {
     .flatten()
     {
         sanitize_patch_header_value(s);
+        **s = strip_git_diff_path_prefix(s);
     }
 }
 
@@ -1450,16 +1713,9 @@ fn decode_binary_patch_line(line: &str, out: &mut Vec<u8>) -> Result<()> {
         bail!("empty binary patch payload line");
     };
     let expected_len = decode_binary_line_len(len_ch)?;
-    let encoded = chars.as_str();
-    let mut decoded = decode_base85_payload(encoded)?;
-    let decode_len = expected_len.min(decoded.len());
-    if decode_len == 0 {
-        bail!(
-            "binary patch payload decode short read: expected {expected_len}, got {}",
-            decoded.len()
-        );
-    }
-    decoded.truncate(decode_len);
+    let body = chars.as_str().as_bytes();
+    let decoded = crate::git_binary_base85::decode_body(body, expected_len)
+        .context("invalid binary patch base85")?;
     out.extend_from_slice(&decoded);
     Ok(())
 }
@@ -1474,52 +1730,6 @@ fn decode_binary_line_len(ch: char) -> Result<usize> {
     bail!("invalid binary patch line length marker: '{ch}'")
 }
 
-fn decode_base85_payload(encoded: &str) -> Result<Vec<u8>> {
-    const CHARS: &[u8] =
-        b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~";
-    let mut table = [255u8; 256];
-    for (idx, &c) in CHARS.iter().enumerate() {
-        table[c as usize] = idx as u8;
-    }
-
-    let bytes = encoded.as_bytes();
-    let mut out = Vec::new();
-    let mut pos = 0usize;
-    while pos < bytes.len() {
-        let group_end = (pos + 5).min(bytes.len());
-        let group = &bytes[pos..group_end];
-        let group_len = group.len();
-        if group_len < 2 {
-            bail!("invalid base85 payload length");
-        }
-
-        let mut acc: u32 = 0;
-        for &b in group {
-            let v = table[b as usize];
-            if v == 255 {
-                bail!("invalid base85 digit in binary patch");
-            }
-            acc = acc
-                .checked_mul(85)
-                .and_then(|n| n.checked_add(v as u32))
-                .ok_or_else(|| anyhow::anyhow!("base85 overflow"))?;
-        }
-        for _ in group_len..5 {
-            acc = acc
-                .checked_mul(85)
-                .and_then(|n| n.checked_add(84))
-                .ok_or_else(|| anyhow::anyhow!("base85 overflow"))?;
-        }
-
-        let raw = acc.to_be_bytes();
-        let produced = if group_len == 5 { 4 } else { group_len - 1 };
-        out.extend_from_slice(&raw[..produced]);
-        pos += group_len;
-    }
-
-    Ok(out)
-}
-
 /// Inflate zlib-compressed binary payload.
 fn inflate_binary_payload(compressed: &[u8]) -> Result<Vec<u8>> {
     use flate2::read::ZlibDecoder;
@@ -1530,9 +1740,6 @@ fn inflate_binary_payload(compressed: &[u8]) -> Result<Vec<u8>> {
     decoder
         .read_to_end(&mut out)
         .context("failed to inflate binary patch payload")?;
-    if !out.is_empty() && !out.ends_with(b"\n") {
-        out.push(b'\n');
-    }
     Ok(out)
 }
 
@@ -2064,7 +2271,10 @@ fn find_hunk_start(
     fp: &FilePatch,
 ) -> usize {
     let adjusted_nominal = if hunk.old_count > 0 {
-        let required_context = ws_mode.context.unwrap_or(0).min(hunk.old_count);
+        let required_context = ws_mode
+            .context
+            .unwrap_or(hunk.old_count)
+            .min(hunk.old_count);
         nominal.saturating_sub(hunk.old_count - required_context)
     } else {
         nominal
@@ -2826,8 +3036,10 @@ fn apply_hunks(
             loop {
                 if !match_beginning && !match_end {
                     let adjusted_nominal = if hunk_to_apply.old_count > 0 {
-                        let required_context =
-                            ws_mode.context.unwrap_or(0).min(hunk_to_apply.old_count);
+                        let required_context = ws_mode
+                            .context
+                            .unwrap_or(hunk_to_apply.old_count)
+                            .min(hunk_to_apply.old_count);
                         hunk_start.saturating_sub(hunk_to_apply.old_count - required_context)
                     } else {
                         hunk_start
@@ -3844,6 +4056,13 @@ pub fn run(mut args: Args) -> Result<()> {
     verify_patch_paths_not_beyond_symlink(&patches, &args)?;
     let ws_mode = resolve_apply_whitespace_mode(&args);
 
+    if args.three_way && args.reject {
+        bail!("options '--reject' and '--3way' cannot be used together");
+    }
+    if args.three_way && Repository::discover(None).is_err() {
+        bail!("'--3way' outside a repository");
+    }
+
     // For --cached, we need a repository and index.
     // For working tree apply, we may or may not be in a repo.
     if args.cached {
@@ -3857,15 +4076,19 @@ pub fn run(mut args: Args) -> Result<()> {
         }
 
         if args.index {
-            verify_worktree_matches_index(&patches, &args)?;
             if let Ok(repo) = Repository::discover(None) {
                 if let Some(wt) = repo.work_tree.as_deref() {
                     let index = repo.load_index().unwrap_or_else(|_| Index::new());
                     for fp in &patches {
+                        verify_worktree_matches_index_for_patch(fp, &args)?;
                         if fp.involves_gitlink() {
                             verify_worktree_gitlink_patch(fp, &args, wt, &index)?;
                         }
                     }
+                }
+            } else {
+                for fp in &patches {
+                    verify_worktree_matches_index_for_patch(fp, &args)?;
                 }
             }
             apply_to_worktree(&patches, &args, ws_mode, &patch_input_display)?;
@@ -3875,6 +4098,15 @@ pub fn run(mut args: Args) -> Result<()> {
             apply_to_worktree(&patches, &args, ws_mode, &patch_input_display)?;
             if args.intent_to_add {
                 apply_intent_to_add_entries(&patches, &args)?;
+            }
+        }
+    }
+
+    if args.three_way && !args.cached {
+        if let Ok(repo) = Repository::discover(None) {
+            let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+            if rerere_enabled(&config, &repo.git_dir) {
+                let _ = repo_rerere(&repo, RerereAutoupdate::FromConfig);
             }
         }
     }
@@ -4010,6 +4242,23 @@ impl ApplyCrlfContext {
     }
 }
 
+fn file_attrs_for_apply_path(ctx: &ApplyCrlfContext, rel_path: &str) -> FileAttrs {
+    let rules =
+        crlf::load_gitattributes_for_checkout(&ctx.work_tree, rel_path, &ctx.index, &ctx.repo.odb);
+    crlf::get_file_attrs(&rules, rel_path, false, &ctx.config)
+}
+
+fn file_attrs_for_index_apply(repo: &Repository, index: &Index, rel_path: &str) -> FileAttrs {
+    let Ok(config) = ConfigSet::load(Some(&repo.git_dir), true) else {
+        return FileAttrs::default();
+    };
+    let Some(wt) = repo.work_tree.as_ref() else {
+        return FileAttrs::default();
+    };
+    let rules = crlf::load_gitattributes_for_checkout(wt, rel_path, index, &repo.odb);
+    crlf::get_file_attrs(&rules, rel_path, false, &config)
+}
+
 /// Submodule/gitlink patches: ensure the work tree state matches what `--index` apply expects.
 fn verify_worktree_gitlink_patch(
     fp: &FilePatch,
@@ -4106,78 +4355,52 @@ fn ensure_gitlink_placeholder_dirs(patches: &[FilePatch], args: &Args) -> Result
     Ok(())
 }
 
-/// Apply patches to the working tree.
-/// Verify that working tree files match the index (required for --index mode).
-fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<()> {
-    let repo = Repository::discover(None).context("not a git repository")?;
-    let index = match repo.load_index() {
-        Ok(idx) => idx,
-        Err(_) => return Ok(()),
-    };
-    let work_tree = repo
-        .work_tree
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("bare repository"))?;
-    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-    let conv = crlf::ConversionConfig::from_config(&config);
-    let ctx = ApplyCrlfContext {
-        repo,
-        work_tree,
-        index,
-        config,
-        conv,
+/// Verify the working tree matches the index for paths touched by one patch (`git apply --index`).
+///
+/// Git checks each patch in sequence; unrelated dirty files must not abort the whole apply
+/// (`t4108-apply-threeway` dirty working tree case).
+fn verify_worktree_matches_index_for_patch(fp: &FilePatch, args: &Args) -> Result<()> {
+    let Some(ctx) = ApplyCrlfContext::load() else {
+        return Ok(());
     };
 
-    for fp in patches {
-        if fp.is_new {
-            if let Some(target) = fp.target_path() {
-                let adjusted = adjust_path(target, args.directory.as_deref());
-                if let Some(entry) = ctx.index.get(adjusted.as_bytes(), 0) {
-                    let path = PathBuf::from(&adjusted);
-                    if !path.exists() {
-                        bail!("{adjusted}: does not match index");
-                    }
-                    let wt_content = ctx.blob_for_index_hash(&path, &adjusted, entry.mode)?;
-                    let wt_oid =
-                        grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &wt_content);
-                    if wt_oid != entry.oid {
-                        bail!("{adjusted}: does not match index");
-                    }
+    if fp.is_new {
+        if let Some(target) = fp.target_path() {
+            let adjusted = adjust_path(target, args.directory.as_deref());
+            if let Some(entry) = ctx.index.get(adjusted.as_bytes(), 0) {
+                let path = PathBuf::from(&adjusted);
+                if !path.exists() {
+                    bail!("{adjusted}: does not match index");
                 }
-            }
-            continue;
-        }
-        // Skip submodule-only patches; file→submodule transitions keep a blob preimage on disk.
-        if fp.old_mode.as_deref() == Some("160000")
-            || (fp.new_mode.as_deref() == Some("160000")
-                && fp.old_mode.as_deref() == Some("160000"))
-        {
-            continue;
-        }
-        let path_str = fp
-            .source_path()
-            .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let adjusted = adjust_path(path_str, args.directory.as_deref());
-        let path = PathBuf::from(&adjusted);
-
-        if !path.exists() {
-            continue;
-        }
-
-        // Get index entry
-        if let Some(entry) = ctx.index.get(adjusted.as_bytes(), 0) {
-            let wt_content = ctx.blob_for_index_hash(&path, &adjusted, entry.mode)?;
-            let wt_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &wt_content);
-            if wt_oid != entry.oid {
-                bail!("{adjusted}: does not match index");
-            }
-            // Also verify the patch's expected old OID matches the index
-            if let Some(ref expected_oid) = fp.old_oid {
-                let index_hex = entry.oid.to_hex();
-                if !index_hex.starts_with(expected_oid.as_str()) {
+                let wt_content = ctx.blob_for_index_hash(&path, &adjusted, entry.mode)?;
+                let wt_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &wt_content);
+                if wt_oid != entry.oid {
                     bail!("{adjusted}: does not match index");
                 }
             }
+        }
+        return Ok(());
+    }
+    if fp.old_mode.as_deref() == Some("160000")
+        || (fp.new_mode.as_deref() == Some("160000") && fp.old_mode.as_deref() == Some("160000"))
+    {
+        return Ok(());
+    }
+    let path_str = fp
+        .source_path()
+        .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
+    let adjusted = adjust_path(path_str, args.directory.as_deref());
+    let path = PathBuf::from(&adjusted);
+
+    if !path.exists() {
+        return Ok(());
+    }
+
+    if let Some(entry) = ctx.index.get(adjusted.as_bytes(), 0) {
+        let wt_content = ctx.blob_for_index_hash(&path, &adjusted, entry.mode)?;
+        let wt_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &wt_content);
+        if wt_oid != entry.oid {
+            bail!("{adjusted}: does not match index");
         }
     }
 
@@ -4328,7 +4551,11 @@ fn write_worktree_path(
 }
 
 fn verify_old_oid_matches_content(expected_oid: &str, content: &str) -> Result<()> {
-    let actual_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, content.as_bytes());
+    verify_old_oid_matches_bytes(expected_oid, content.as_bytes())
+}
+
+fn verify_old_oid_matches_bytes(expected_oid: &str, content: &[u8]) -> Result<()> {
+    let actual_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, content);
     let actual_hex = actual_oid.to_hex();
     if !actual_hex.starts_with(expected_oid) {
         bail!("patch does not apply");
@@ -4432,7 +4659,9 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
             if target_exists_now {
                 if Path::new(&target_adjusted).is_dir() {
                     set_path_and_descendants_state(&mut current_exists, &target_adjusted, false);
-                } else {
+                } else if !args.three_way {
+                    // With `--3way`, Git may emit multiple add/add hunks for the same path
+                    // (`t4108-apply-threeway`); the real check happens during apply.
                     bail!("{target_adjusted}: already exists");
                 }
             }
@@ -4486,6 +4715,13 @@ fn apply_to_worktree(
 ) -> Result<()> {
     let crlf_ctx = ApplyCrlfContext::load();
     let mut had_rejects = false;
+    let mut apply_nonzero = false;
+    let three_way_allowed = crlf_ctx.is_some();
+    let conflict_style = crlf_ctx
+        .as_ref()
+        .map(|c| resolve_apply_conflict_style(&c.repo))
+        .unwrap_or(ConflictStyle::Merge);
+    let merge_favor_cli = merge_favor_from_apply_args(args);
     // Snapshot source-side file contents used by cross-path rename/copy patches
     // so later modifications/removals do not affect subsequent patch sections.
     let mut source_snapshots: HashMap<String, String> = HashMap::new();
@@ -4566,6 +4802,53 @@ fn apply_to_worktree(
                 fs::create_dir_all(&path)?;
                 continue;
             }
+            let path_exists = path.exists();
+            let add_add_threeway =
+                args.three_way && path_exists && fp.old_path.as_deref() == Some("/dev/null");
+            if add_add_threeway {
+                let Some(ctx) = crlf_ctx.as_ref() else {
+                    bail!("not a git repository");
+                };
+                let repo = &ctx.repo;
+                let mode_for_read = ctx
+                    .index
+                    .get(path_adjusted.as_bytes(), 0)
+                    .map(|e| e.mode)
+                    .unwrap_or_else(|| parse_mode(fp.new_mode.as_deref().unwrap_or("100644")));
+                let our_bytes = if path.is_file() || path.is_symlink() {
+                    ctx.blob_for_index_hash(&path, &path_adjusted, mode_for_read)?
+                } else {
+                    bail!("cannot read the current contents of '{}'", path_str);
+                };
+                let file_attrs = file_attrs_for_apply_path(ctx, &path_adjusted);
+                let favor = effective_merge_favor_for_path(&file_attrs, merge_favor_cli);
+                if let Some(tw) = try_three_way_merge_blob(
+                    repo,
+                    fp,
+                    &our_bytes,
+                    ws_mode,
+                    !args.reverse,
+                    patch_input_display,
+                    favor,
+                    conflict_style,
+                    &file_attrs,
+                    true,
+                )? {
+                    if tw.conflicted {
+                        apply_nonzero = true;
+                    }
+                    let merged_text = String::from_utf8_lossy(&tw.merged_bytes).into_owned();
+                    write_worktree_path(
+                        &path,
+                        &merged_text,
+                        fp.new_mode.as_deref(),
+                        None,
+                        crlf_ctx.as_ref(),
+                        &path_adjusted,
+                    )?;
+                    continue;
+                }
+            }
             let content = apply_hunks("", fp, ws_mode, !args.reverse, patch_input_display)
                 .with_context(|| {
                     format!("failed to apply hunks for new file {}", path.display())
@@ -4590,6 +4873,81 @@ fn apply_to_worktree(
         let read_path = PathBuf::from(&source_adjusted);
         let source_contains_target =
             fp.is_rename && read_path != path && target_is_inside_source(&path, &read_path);
+
+        if fp.binary_patch.is_some() {
+            let old_bytes: Vec<u8> = if source_adjusted != path_adjusted {
+                if !read_path.exists() && can_apply_with_empty_preimage(fp) {
+                    Vec::new()
+                } else if read_path.symlink_metadata()?.file_type().is_symlink() {
+                    read_symlink_target_bytes(&read_path)?
+                } else {
+                    fs::read(&read_path)
+                        .with_context(|| format!("failed to read {}", read_path.display()))?
+                }
+            } else if !read_path.exists() && can_apply_with_empty_preimage(fp) {
+                Vec::new()
+            } else if read_path.symlink_metadata()?.file_type().is_symlink() {
+                read_symlink_target_bytes(&read_path)?
+            } else {
+                fs::read(&read_path)
+                    .with_context(|| format!("failed to read {}", read_path.display()))?
+            };
+            if !args.reject {
+                if let Some(expected_oid) = fp.old_oid.as_deref() {
+                    if !ws_mode.whitespace_fix && !args.three_way {
+                        verify_old_oid_matches_bytes(expected_oid, &old_bytes)?;
+                    }
+                }
+            }
+            #[cfg(unix)]
+            let source_exec_bit = if source_adjusted != path_adjusted {
+                use std::os::unix::fs::PermissionsExt;
+                fs::metadata(&read_path)
+                    .ok()
+                    .map(|meta| meta.permissions().mode() & 0o111 != 0)
+            } else {
+                None
+            };
+            let binary_patch = fp.binary_patch.as_ref().expect("checked");
+            let new_bytes = inflate_binary_payload(&binary_patch.forward_compressed)?;
+            if let Some(expected_new) = fp.new_oid.as_deref() {
+                let actual = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &new_bytes);
+                if !actual.to_hex().starts_with(expected_new) {
+                    bail!("patch does not apply");
+                }
+            }
+            if source_contains_target {
+                remove_path_for_replacement(&read_path)?;
+            }
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() && !parent.exists() {
+                    fs::create_dir_all(parent)?;
+                }
+            }
+            fs::write(&path, &new_bytes)
+                .with_context(|| format!("failed to write {}", path.display()))?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Some(mode) = fp.new_mode.as_deref() {
+                    let perm = if mode == "100755" { 0o755 } else { 0o644 };
+                    fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
+                } else if let Some(executable) = source_exec_bit {
+                    let perm = if executable { 0o755 } else { 0o644 };
+                    fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
+                }
+            }
+
+            if fp.is_rename && read_path != path && !source_contains_target {
+                remove_path_for_replacement(&read_path)?;
+                if let Some(parent) = read_path.parent() {
+                    remove_empty_dirs_up(parent);
+                }
+            }
+            continue;
+        }
+
         let load_old_content_from_disk = || -> Result<String> {
             match &crlf_ctx {
                 Some(ctx) => {
@@ -4627,7 +4985,7 @@ fn apply_to_worktree(
         // matches hunks against file content instead; skip strict OID checks in that mode.
         if !args.reject {
             if let Some(expected_oid) = fp.old_oid.as_deref() {
-                if !ws_mode.whitespace_fix {
+                if !ws_mode.whitespace_fix && !args.three_way {
                     verify_old_oid_matches_content(expected_oid, &old_content)?;
                 }
             }
@@ -4641,43 +4999,6 @@ fn apply_to_worktree(
         } else {
             None
         };
-
-        if let Some(binary_patch) = fp.binary_patch.as_ref() {
-            if !args.allow_binary_replacement {
-                bail!("cannot apply binary patch without --binary");
-            }
-            let new_bytes = inflate_binary_payload(&binary_patch.forward_compressed)?;
-            if source_contains_target {
-                remove_path_for_replacement(&read_path)?;
-            }
-            if let Some(parent) = path.parent() {
-                if !parent.as_os_str().is_empty() && !parent.exists() {
-                    fs::create_dir_all(parent)?;
-                }
-            }
-            fs::write(&path, &new_bytes)
-                .with_context(|| format!("failed to write {}", path.display()))?;
-
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Some(mode) = fp.new_mode.as_deref() {
-                    let perm = if mode == "100755" { 0o755 } else { 0o644 };
-                    fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
-                } else if let Some(executable) = source_exec_bit {
-                    let perm = if executable { 0o755 } else { 0o644 };
-                    fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
-                }
-            }
-
-            if fp.is_rename && read_path != path && !source_contains_target {
-                remove_path_for_replacement(&read_path)?;
-                if let Some(parent) = read_path.parent() {
-                    remove_empty_dirs_up(parent);
-                }
-            }
-            continue;
-        }
 
         if fp.hunks.is_empty() {
             if source_adjusted != path_adjusted {
@@ -4719,6 +5040,43 @@ fn apply_to_worktree(
                 patch_input_display,
             )
             .with_context(|| format!("failed to apply patch to {}", path.display()))?
+        } else if args.three_way && three_way_allowed {
+            let ctx = crlf_ctx.as_ref().context("not a git repository")?;
+            let repo = &ctx.repo;
+            let file_attrs = file_attrs_for_apply_path(ctx, &path_adjusted);
+            let favor = effective_merge_favor_for_path(&file_attrs, merge_favor_cli);
+            if let Some(tw) = try_three_way_merge_blob(
+                repo,
+                fp,
+                old_content.as_bytes(),
+                ws_mode,
+                !args.reverse,
+                patch_input_display,
+                favor,
+                conflict_style,
+                &file_attrs,
+                false,
+            )
+            .with_context(|| format!("failed to apply patch to {}", path.display()))?
+            {
+                if tw.conflicted {
+                    apply_nonzero = true;
+                }
+                (
+                    String::from_utf8_lossy(&tw.merged_bytes).into_owned(),
+                    Vec::new(),
+                )
+            } else {
+                let content = apply_hunks(
+                    &old_content,
+                    fp,
+                    ws_mode,
+                    !args.reverse,
+                    patch_input_display,
+                )
+                .with_context(|| format!("failed to apply patch to {}", path.display()))?;
+                (content, Vec::new())
+            }
         } else {
             let content = apply_hunks(
                 &old_content,
@@ -4760,6 +5118,15 @@ fn apply_to_worktree(
         bail!("patch failed");
     }
 
+    // With `--index`, the index is updated in a second phase (`apply_to_index`). Git still writes
+    // unmerged entries even when the work tree contains conflict markers; do not exit early.
+    if apply_nonzero && !args.index {
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 1,
+            message: String::new(),
+        }));
+    }
+
     Ok(())
 }
 
@@ -4771,6 +5138,9 @@ fn apply_to_index(
     patch_input_display: &str,
 ) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    let conflict_style = resolve_apply_conflict_style(&repo);
+    let merge_favor_cli = merge_favor_from_apply_args(args);
+    let mut apply_nonzero = false;
     let mut index = match repo.load_index() {
         Ok(idx) => idx,
         Err(_) => Index::new(),
@@ -4814,10 +5184,29 @@ fn apply_to_index(
         }
 
         if let Some(binary_patch) = fp.binary_patch.as_ref() {
-            if !args.allow_binary_replacement {
-                bail!("cannot apply binary patch without --binary");
+            let source_index = if source_adjusted != target_adjusted {
+                &original_index
+            } else {
+                &index
+            };
+            let Some(old_ent) = source_index.get(source_adjusted.as_bytes(), 0) else {
+                bail!("{source_adjusted} not found in index");
+            };
+            if let Some(expected_oid) = fp.old_oid.as_deref() {
+                if !ws_mode.whitespace_fix && !args.three_way {
+                    let index_hex = old_ent.oid.to_hex();
+                    if !index_hex.starts_with(expected_oid) {
+                        bail!("patch does not apply");
+                    }
+                }
             }
             let new_bytes = inflate_binary_payload(&binary_patch.forward_compressed)?;
+            if let Some(expected_new) = fp.new_oid.as_deref() {
+                let actual = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &new_bytes);
+                if !actual.to_hex().starts_with(expected_new) {
+                    bail!("patch does not apply");
+                }
+            }
             let new_oid = repo.odb.write(ObjectKind::Blob, &new_bytes)?;
 
             let mode = if let Some(m) = fp.new_mode.as_deref() {
@@ -4939,9 +5328,15 @@ fn apply_to_index(
             continue;
         }
 
-        // Get old content from index (or empty for new files)
+        let path_bytes = target_adjusted.as_bytes();
+        // Index preimage: for new-file patches, read the target path when present (add/add --3way).
         let old_content = if fp.is_new {
-            String::new()
+            if let Some(entry) = index.get(path_bytes, 0) {
+                let obj = repo.odb.read(&entry.oid)?;
+                String::from_utf8_lossy(&obj.data).into_owned()
+            } else {
+                String::new()
+            }
         } else {
             let source_index = if source_adjusted != target_adjusted {
                 &original_index
@@ -4959,27 +5354,62 @@ fn apply_to_index(
         };
         if !fp.is_new {
             if let Some(expected_oid) = fp.old_oid.as_deref() {
-                if !ws_mode.whitespace_fix {
+                if !ws_mode.whitespace_fix && !args.three_way {
                     verify_old_oid_matches_content(expected_oid, &old_content)?;
                 }
             }
         }
 
-        let new_content = if fp.hunks.is_empty() {
-            old_content.clone()
+        let file_attrs = file_attrs_for_index_apply(&repo, &index, &target_raw);
+        let favor = effective_merge_favor_for_path(&file_attrs, merge_favor_cli);
+        let direct_to_threeway = fp.is_new && !old_content.is_empty();
+
+        let (new_content, threeway_out) = if fp.hunks.is_empty() {
+            (old_content.clone(), None)
+        } else if args.three_way {
+            if let Some(tw) = try_three_way_merge_blob(
+                &repo,
+                fp,
+                old_content.as_bytes(),
+                ws_mode,
+                !args.reverse,
+                patch_input_display,
+                favor,
+                conflict_style,
+                &file_attrs,
+                direct_to_threeway,
+            )
+            .with_context(|| format!("failed to apply patch to {target_adjusted}"))?
+            {
+                if tw.conflicted {
+                    apply_nonzero = true;
+                }
+                (
+                    String::from_utf8_lossy(&tw.merged_bytes).into_owned(),
+                    Some(tw),
+                )
+            } else {
+                let s = apply_hunks(
+                    &old_content,
+                    fp,
+                    ws_mode,
+                    !args.reverse,
+                    patch_input_display,
+                )
+                .with_context(|| format!("failed to apply patch to {target_adjusted}"))?;
+                (s, None)
+            }
         } else {
-            apply_hunks(
+            let s = apply_hunks(
                 &old_content,
                 fp,
                 ws_mode,
                 !args.reverse,
                 patch_input_display,
             )
-            .with_context(|| format!("failed to apply patch to {target_adjusted}"))?
+            .with_context(|| format!("failed to apply patch to {target_adjusted}"))?;
+            (s, None)
         };
-
-        // Write new blob to ODB
-        let new_oid = repo.odb.write(ObjectKind::Blob, new_content.as_bytes())?;
 
         // Determine mode
         let mode = if let Some(m) = fp.new_mode.as_deref() {
@@ -4994,6 +5424,19 @@ fn apply_to_index(
         } else {
             0o100644
         };
+
+        if let Some(tw) = threeway_out.as_ref() {
+            if tw.conflicted {
+                add_conflicted_index_stages(&mut index, path_bytes, mode, &tw.stages);
+                if fp.is_rename && source_adjusted != target_adjusted {
+                    index.remove(source_adjusted.as_bytes());
+                }
+                continue;
+            }
+        }
+
+        // Write new blob to ODB
+        let new_oid = repo.odb.write(ObjectKind::Blob, new_content.as_bytes())?;
 
         // Update index entry
         let size = new_content.len() as u32;
@@ -5021,6 +5464,18 @@ fn apply_to_index(
     }
 
     repo.write_index(&mut index)?;
+    if apply_nonzero {
+        if args.three_way {
+            let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+            if rerere_enabled(&config, &repo.git_dir) {
+                let _ = repo_rerere(&repo, RerereAutoupdate::FromConfig);
+            }
+        }
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 1,
+            message: String::new(),
+        }));
+    }
     Ok(())
 }
 

@@ -778,7 +778,7 @@ t4104-apply-boundary	t4	yes	24	24	0	true	ok	0
 t4105-apply-fuzz	t4	yes	9	5	4	false	ok	0
 t4106-apply-stdin	t4	yes	3	3	0	true	ok	0
 t4107-apply-ignore-whitespace	t4	yes	11	11	0	true	ok	0
-t4108-apply-threeway	t4	yes	18	3	15	false	ok	0
+t4108-apply-threeway	t4	yes	18	18	0	true	ok	0
 t4109-apply-multifrag	t4	yes	3	3	0	true	ok	0
 t4110-apply-scan	t4	yes	1	1	0	true	ok	0
 t4111-apply-subdir	t4	yes	10	10	0	true	ok	0

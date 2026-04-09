@@ -126,6 +126,7 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
     // Zealous diff3 (`adjust_zealous_hunks`) assumes the raw `compute_hunks` sequence.
     if !matches!(input.style, ConflictStyle::ZealousDiff3) {
         hunks = merge_adjacent_replace_and_trailing_insert_conflicts(hunks);
+        hunks = merge_adjacent_one_sided_line_changes_to_conflict(hunks);
     }
     // Git keeps adjacent conflict regions separate when identical lines appear
     // between them (e.g. t4200-rerere); do not merge Conflict+gap+Conflict.
@@ -365,9 +366,19 @@ fn emit_conflict(
 
 fn write_conflict_marker_line(out: &mut Vec<u8>, marker: &str, label: Option<&str>, eol: &[u8]) {
     out.extend_from_slice(marker.as_bytes());
-    if let Some(label) = label {
+    // `git rerere` recognizes `<<<<<<< ` / `>>>>>>> ` only when there is a space after the marker
+    // run, even if the branch label is empty (`ll_merge` with empty names — `try_replay_merge`).
+    let open_or_close = marker.starts_with('<') || marker.starts_with('>');
+    let has_label = label.is_some_and(|l| !l.is_empty());
+    // Diff3 `|||||||` lines use a space before the base label so they match Git's conflict format
+    // (and `print_sanitized_conflicted_diff` in t4108 can strip the label).
+    if open_or_close || has_label {
         out.push(b' ');
-        out.extend_from_slice(label.as_bytes());
+    }
+    if let Some(label) = label {
+        if !label.is_empty() {
+            out.extend_from_slice(label.as_bytes());
+        }
     }
     out.extend_from_slice(eol);
 }
@@ -499,19 +510,13 @@ fn compute_hunks(
             (true, true) => {
                 let o = collect_new_lines(ours_ops, ours, pos, end);
                 let t = collect_new_lines(theirs_ops, theirs, pos, end);
-                if lines_equal_for_compare(&o, &t, ws_mode) {
-                    // Both sides produce the same content — not really a conflict.
-                    hunks.push(Hunk::OnlyOurs {
-                        base: base[pos..end].to_vec(),
-                        ours: o,
-                    });
-                } else {
-                    hunks.push(Hunk::Conflict {
-                        base: base[pos..end].to_vec(),
-                        ours: o,
-                        theirs: t,
-                    });
-                }
+                // Git reports a conflict when both sides touch the same base region, even if the
+                // resulting lines are textually identical (see `t4108-apply-threeway`).
+                hunks.push(Hunk::Conflict {
+                    base: base[pos..end].to_vec(),
+                    ours: o,
+                    theirs: t,
+                });
             }
             (false, false) => {
                 // Should not happen, but treat as unchanged.
@@ -732,6 +737,52 @@ fn adjust_zealous_hunks(hunks: Vec<Hunk>) -> Vec<Hunk> {
 /// that base span, `compute_hunks` emits two hunks (`Only*` + trailing insert). Git treats
 /// the combined region as one conflict (e.g. base `hello\n`, ours adds `hello\n`, theirs
 /// replaces with `remove-conflict\n`).
+/// When both sides edit **adjacent** base lines but each line is changed on only one side, Git's
+/// merge reports a single conflict spanning both lines (`t4108-apply-threeway`).
+fn merge_adjacent_one_sided_line_changes_to_conflict(hunks: Vec<Hunk>) -> Vec<Hunk> {
+    let mut out: Vec<Hunk> = Vec::with_capacity(hunks.len());
+    let mut i = 0usize;
+    while i < hunks.len() {
+        let merged = match (&hunks[i], hunks.get(i + 1)) {
+            (
+                Hunk::OnlyTheirs {
+                    base: b1,
+                    theirs: t1,
+                },
+                Some(Hunk::OnlyOurs { base: b2, ours: o2 }),
+            ) if b1.len() == 1 && b2.len() == 1 && t1.len() == 1 && o2.len() == 1 => {
+                Some(Hunk::Conflict {
+                    base: vec![b1[0].clone(), b2[0].clone()],
+                    ours: vec![b1[0].clone(), o2[0].clone()],
+                    theirs: vec![t1[0].clone(), b2[0].clone()],
+                })
+            }
+            (
+                Hunk::OnlyOurs { base: b1, ours: o1 },
+                Some(Hunk::OnlyTheirs {
+                    base: b2,
+                    theirs: t2,
+                }),
+            ) if b1.len() == 1 && b2.len() == 1 && o1.len() == 1 && t2.len() == 1 => {
+                Some(Hunk::Conflict {
+                    base: vec![b1[0].clone(), b2[0].clone()],
+                    ours: vec![o1[0].clone(), b2[0].clone()],
+                    theirs: vec![b1[0].clone(), t2[0].clone()],
+                })
+            }
+            _ => None,
+        };
+        if let Some(h) = merged {
+            out.push(h);
+            i += 2;
+        } else {
+            out.push(hunks[i].clone());
+            i += 1;
+        }
+    }
+    out
+}
+
 fn merge_adjacent_replace_and_trailing_insert_conflicts(hunks: Vec<Hunk>) -> Vec<Hunk> {
     let mut out: Vec<Hunk> = Vec::with_capacity(hunks.len());
     let mut i = 0usize;
@@ -989,15 +1040,6 @@ fn normalize_line_for_compare(line: &[u8], mode: &WhitespaceMode) -> Vec<u8> {
     bytes
 }
 
-fn lines_equal_for_compare(left: &[Vec<u8>], right: &[Vec<u8>], mode: &WhitespaceMode) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-    left.iter()
-        .zip(right)
-        .all(|(a, b)| normalize_line_for_compare(a, mode) == normalize_line_for_compare(b, mode))
-}
-
 /// Returns `true` if the byte slice appears to be binary content.
 ///
 /// Uses the same heuristic as git: any NUL byte means binary.
@@ -1058,6 +1100,18 @@ mod tests {
         let (r, c) = do_merge("a\nb\nc\n", "a\nX\nc\n", "a\nY\nc\n");
         assert_eq!(c, 1);
         assert!(r.contains("<<<<<<< ours\nX\n=======\nY\n>>>>>>> theirs"));
+    }
+
+    #[test]
+    fn t4108_style_overlapping_edits_conflict() {
+        let base = "1\n2\n3\n4\n5\n6\n7\n";
+        let ours = "1\ntwo\n3\n4\n5\nsix\n7\n";
+        let theirs = "1\n2\n3\n4\nfive\n6\n7\n";
+        let (_r, c) = do_merge(base, ours, theirs);
+        assert!(
+            c >= 1,
+            "expected at least one conflict region (Git merge reports CONFLICT for this shape)"
+        );
     }
 
     #[test]

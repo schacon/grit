@@ -4128,10 +4128,14 @@ fn write_git_binary_patch(
     std::io::Write::write_all(&mut encoder, new_content)?;
     let compressed = encoder.finish()?;
 
-    // Encode in base85 lines (max 52 raw bytes per line)
+    // Encode in base85 lines (max 52 raw bytes per line; length prefix matches `git/diff.c`).
     for chunk in compressed.chunks(52) {
-        let len_char = (chunk.len() as u8 + b'A' - 1) as char;
-        let encoded = base85_encode(chunk);
+        let len_char = if chunk.len() <= 26 {
+            (b'A' - 1 + chunk.len() as u8) as char
+        } else {
+            (b'a' - 27 + chunk.len() as u8) as char
+        };
+        let encoded = crate::git_binary_base85::encode(chunk);
         writeln!(out, "{len_char}{encoded}")?;
     }
     writeln!(out)?;
@@ -4148,8 +4152,12 @@ fn write_git_binary_patch(
         std::io::Write::write_all(&mut encoder2, _old_content)?;
         let compressed2 = encoder2.finish()?;
         for chunk in compressed2.chunks(52) {
-            let len_char = (chunk.len() as u8 + b'A' - 1) as char;
-            let encoded = base85_encode(chunk);
+            let len_char = if chunk.len() <= 26 {
+                (b'A' - 1 + chunk.len() as u8) as char
+            } else {
+                (b'a' - 27 + chunk.len() as u8) as char
+            };
+            let encoded = crate::git_binary_base85::encode(chunk);
             writeln!(out, "{len_char}{encoded}")?;
         }
         writeln!(out)?;
@@ -4157,36 +4165,6 @@ fn write_git_binary_patch(
 
     let _ = (old_path, new_path); // used in header already
     Ok(())
-}
-
-/// Encode bytes in git's base85 format.
-fn base85_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] =
-        b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~";
-    let mut result = String::new();
-    for chunk in data.chunks(4) {
-        let mut acc: u32 = 0;
-        for (i, &byte) in chunk.iter().enumerate() {
-            acc |= (byte as u32) << (24 - i * 8);
-        }
-        // Pad if chunk is less than 4 bytes
-        let out_len = match chunk.len() {
-            1 => 2,
-            2 => 3,
-            3 => 4,
-            4 => 5,
-            _ => unreachable!(),
-        };
-        let mut buf = [0u8; 5];
-        for i in (0..5).rev() {
-            buf[i] = CHARS[(acc % 85) as usize];
-            acc /= 85;
-        }
-        for &b in &buf[..out_len] {
-            result.push(b as char);
-        }
-    }
-    result
 }
 
 /// Write a `diff --git` header plus index/mode lines.

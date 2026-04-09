@@ -1033,6 +1033,7 @@ pub fn diff_tree_to_worktree(
     let mut index_entries: std::collections::BTreeMap<&[u8], &IndexEntry> =
         std::collections::BTreeMap::new();
     let mut index_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut stage0_paths: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
     for ie in &index.entries {
         if ie.stage() != 0 {
             continue;
@@ -1040,12 +1041,28 @@ pub fn diff_tree_to_worktree(
         let path = String::from_utf8_lossy(&ie.path).to_string();
         index_entries.insert(&ie.path, ie);
         index_paths.insert(path);
+        stage0_paths.insert(ie.path.clone());
+    }
+
+    // Paths with only unmerged stages (1–3) and no stage 0 — `git diff <rev>` must still list them
+    // so combined `diff --cc` conflict hunks can be emitted (`t4108-apply-threeway`).
+    let mut unmerged_only_paths: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    for ie in &index.entries {
+        if !(1..=3).contains(&ie.stage()) {
+            continue;
+        }
+        if stage0_paths.contains(&ie.path) {
+            continue;
+        }
+        unmerged_only_paths.insert(String::from_utf8_lossy(&ie.path).into_owned());
     }
 
     // Union of tree paths + index paths
     let mut all_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     all_paths.extend(tree_map.keys().cloned());
     all_paths.extend(index_paths.iter().cloned());
+    all_paths.extend(unmerged_only_paths.iter().cloned());
 
     let mut result = Vec::new();
 
@@ -1094,6 +1111,28 @@ pub fn diff_tree_to_worktree(
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => return Err(Error::Io(e)),
         };
+
+        if unmerged_only_paths.contains(path) {
+            if let (Some(te), Some(ref meta)) = (tree_entry, wt_meta.as_ref()) {
+                let file_attrs = crlf::get_file_attrs(&attrs, path, false, &config);
+                let wt_oid =
+                    hash_worktree_file(odb, &file_path, meta, &conv, &file_attrs, path, None)?;
+                let wt_mode = mode_from_metadata(meta);
+                if wt_oid != te.oid || wt_mode != te.mode {
+                    result.push(DiffEntry {
+                        status: DiffStatus::Modified,
+                        old_path: Some(path.clone()),
+                        new_path: Some(path.clone()),
+                        old_mode: format_mode(te.mode),
+                        new_mode: format_mode(wt_mode),
+                        old_oid: te.oid,
+                        new_oid: wt_oid,
+                        score: None,
+                    });
+                }
+            }
+            continue;
+        }
 
         match (tree_entry, wt_meta) {
             (Some(te), Some(ref meta)) => {
