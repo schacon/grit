@@ -158,7 +158,7 @@ test_expect_success 'git diff HEAD does not segfault' '
 	test_grep "error: corrupted cache-tree has entries not present in index" err
 '
 
-test_expect_failure 'can switch to another branch when status is empty' '
+test_expect_success 'can switch to another branch when status is empty' '
 	git clean -ffdqx &&
 	git status --porcelain -uno >actual &&
 	test_must_be_empty actual &&
@@ -175,7 +175,7 @@ test_expect_success 'fast-forward from non-duplicate entries to duplicate' '
 	git merge final
 '
 
-test_expect_failure 'clean status, switch branches, status still clean' '
+test_expect_success 'clean status, switch branches, status still clean' '
 	git status --porcelain -uno >actual &&
 	test_must_be_empty actual &&
 	git checkout base &&
