@@ -2287,6 +2287,44 @@ fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Resul
     }
 }
 
+/// Expand a single revision token that ends with `^!` (Git: commit without its parents).
+///
+/// Returns one token unchanged when `^!` is absent. When present, returns two tokens: the base
+/// revision (without `^!`) and a negative spec `^<first-parent-hex>` so that `rev-list` includes
+/// exactly that commit when combined with the exclusion. Merge commits and other multi-parent
+/// commits are rejected with the same ambiguity error as Git.
+///
+/// # Errors
+///
+/// Returns [`Error::Message`] for ambiguous `^!` (merge commit) and resolution failures.
+pub fn expand_rev_token_circ_bang(repo: &Repository, token: &str) -> Result<Vec<String>> {
+    let Some(base) = token.strip_suffix("^!") else {
+        return Ok(vec![token.to_owned()]);
+    };
+    if base.is_empty() {
+        return Err(Error::Message(format!(
+            "fatal: ambiguous argument '{token}': unknown revision or path not in the working tree.\n\
+Use '--' to separate paths from revisions, like this:\n\
+'git <command> [<revision>...] -- [<file>...]'"
+        )));
+    }
+    let oid = resolve_revision_for_range_end(repo, base)?;
+    let commit_oid = peel_to_commit_for_merge_base(repo, oid)?;
+    let obj = repo.odb.read(&commit_oid)?;
+    let commit = parse_commit(&obj.data)?;
+    if commit.parents.len() != 1 {
+        return Err(Error::Message(format!(
+            "fatal: ambiguous argument '{token}': unknown revision or path not in the working tree.\n\
+Use '--' to separate paths from revisions, like this:\n\
+'git <command> [<revision>...] -- [<file>...]'"
+        )));
+    }
+    Ok(vec![
+        base.to_owned(),
+        format!("^{}", commit.parents[0].to_hex()),
+    ])
+}
+
 /// Split `spec` into `(base, peel_inner)` for `^{...}` / `^0` suffixes (same rules as revision parsing).
 #[must_use]
 pub fn parse_peel_suffix(spec: &str) -> (&str, Option<&str>) {

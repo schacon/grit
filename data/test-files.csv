@@ -650,7 +650,7 @@ t3514-cherry-pick-revert-gpg	t3	skip	2	0	0	false	ok	0
 t3600-rm	t3	yes	82	54	28	false	ok	0
 t3601-rm-pathspec-file	t3	yes	5	2	3	false	ok	0
 t3602-rm-sparse-checkout	t3	yes	13	2	11	false	ok	0
-t3650-replay-basics	t3	yes	0	0	0	false	timeout	0
+t3650-replay-basics	t3	yes	31	31	0	true	ok	0
 t3700-add	t3	yes	58	42	16	false	ok	0
 t3700-add-pathspec-file	t3	yes	24	24	0	true	ok	0
 t3701-add-interactive	t3	yes	130	27	103	false	ok	0

@@ -1060,7 +1060,8 @@ fn parse_date_to_epoch(s: &str) -> Option<i64> {
 /// with `%d` / `%D` when decorations are required.
 fn resolve_decoration_display(args: &Args, format_requires_decorations: bool) -> (bool, bool) {
     let mut show = format_requires_decorations;
-    let mut full = format_requires_decorations;
+    // Git enables decorations for `%d` / `%D` with short ref names; `--decorate=full` opts in.
+    let mut full = false;
     for arg in std::env::args() {
         if arg == "--no-decorate" {
             show = false;

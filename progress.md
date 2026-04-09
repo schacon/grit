@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   279 |
+| Completed   |   280 |
 | In progress |     4 |
-| Remaining   |   485 |
+| Remaining   |   484 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 279 completed (`[x]`), 4 in progress (`[~]`), 485 remaining (`[ ]`).
+Task lines in `PLAN.md`: 280 completed (`[x]`), 4 in progress (`[~]`), 484 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t3650-replay-basics` — 31/31 tests pass (`replay`: `--onto` / `--advance` / `--contained`, `--ref-action` + `replay.refAction`, `--branches` with branch refnames, `--ancestry-path`, detached `HEAD` updates, reflog messages, `merge.directoryRenames=false`; `rev_parse::expand_rev_token_circ_bang` for `topic1^!`; `log` `%d` uses short decorations like Git unless `--decorate=full`)
 - `t0040-parse-options` — 94/94 tests pass (`parse-options` / `parse-options-flags` / `parse-subcommand` test-tool: Git-style argv scanning with intermingled args and `+` NODASH; selective usage append; negated-option error names; stdout/stderr flush before `process::exit`; skip global `--git-completion-helper` when nested after `test-tool`; harness `test_run_` no longer wraps bodies in `$(...)` so backticks in heredocs are not executed)
 - `t1502-rev-parse-parseopt` — 37/37 tests pass (`rev-parse --parseopt`: stdin option spec parsing, `cat <<\\EOF` help output, `--keep-dashdash` / `--stop-at-non-option` / `--stuck-long`, negated long names + synthetic `no-<name>` parse entries for ambiguity; harness CSV/dashboards refreshed)
 - `t3427-rebase-subtree` — 3/3 tests pass (`rebase -Xsubtree=…`, `--empty=ask` stops for empty pick then `--skip`, with and without `--rebase-merges --onto`; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
@@ -154,4 +155,4 @@ Task lines in `PLAN.md`: 279 completed (`[x]`), 4 in progress (`[~]`), 485 remai
 
 ## What Remains
 
-485 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+484 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
