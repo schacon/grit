@@ -466,7 +466,7 @@ commit → check it off → move on.
 - [ ] `t4017-diff-retval` ███████████████░░░░░ 30/38 (8 left) — Return value of diffs
 - [ ] `t4035-diff-quiet` █████████████░░░░░░░ 15/23 (8 left) — Return value of diffs
 - [ ] `t4213-log-tabexpand` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — log/show --expand-tabs
-- [ ] `t4058-diff-duplicates` ████████░░░░░░░░░░░░ 7/16 (9 left) — test tree diff when trees have duplicate entries
+- [x] `t4058-diff-duplicates` ████████████████████ 16/16 (0 left) — test tree diff when trees have duplicate entries
 - [ ] `t4008-diff-break-rewrite` ███████░░░░░░░░░░░░░ 5/14 (9 left) — Break and then rename
 
 - [x] `t4120-apply-popt` ████████████████████ 12/12 (0 left) — git apply -p handling.

@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   267 |
+| Completed   |   268 |
 | In progress |     4 |
-| Remaining   |   497 |
+| Remaining   |   496 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 267 completed (`[x]`), 4 in progress (`[~]`), 497 remaining (`[ ]`).
+Task lines in `PLAN.md`: 268 completed (`[x]`), 4 in progress (`[~]`), 496 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t4058-diff-duplicates` — 16/16 tests pass (duplicate-tree diff/checkout: flip `test_expect_failure` → `test_expect_success` for empty-status branch switches; behavior already matched Git)
 - `t5619-clone-local-ambiguous-transport` — 2/2 tests pass (malicious submodule URL resolved to bogus protocol; `submodule update --init` fails with `protocol .* is not supported` and does not expose `sensitive/secret` under `.git/modules/sub/objects`; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5514-fetch-multiple` — 25/25 tests pass (`fetch --all` / `--multiple`, `fetch.all` / `--no-all`, `skipFetchAll`, parallel `--jobs`, tags; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t7105-reset-patch` — 13/13 tests pass (`git reset -p`: interactive hunk prompts, `HEAD`/`@`/default tree, `HEAD^`/`HEAD^{tree}`, blob/unknown ref failures, pathspec `-- dir` and `HEAD^ -- dir`; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
@@ -142,4 +143,4 @@ Task lines in `PLAN.md`: 267 completed (`[x]`), 4 in progress (`[~]`), 497 remai
 
 ## What Remains
 
-497 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+496 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.

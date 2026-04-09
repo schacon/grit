@@ -1,10 +1,10 @@
-/// Git-compatible wildmatch pattern matching.
-///
-/// Implements shell-style pattern matching for `?`, `\`, `[]`, and `*`
-/// characters, with special handling of `**` for directory matching.
-///
-/// Based on the algorithm by Rich Salz (1986), modified by Wayne Davison
-/// for special `/` handling and `**` glob support.
+//! Git-compatible wildmatch pattern matching.
+//!
+//! Implements shell-style pattern matching for `?`, `\`, `[]`, and `*`
+//! characters, with special handling of `**` for directory matching.
+//!
+//! Based on the algorithm by Rich Salz (1986), modified by Wayne Davison
+//! for special `/` handling and `**` glob support.
 
 pub const WM_CASEFOLD: u32 = 1;
 pub const WM_PATHNAME: u32 = 2;
