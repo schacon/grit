@@ -246,7 +246,14 @@ fn fetch_remote(
             .with_context(|| format!("remote '{remote_name}' not found; no such remote"))?
     };
 
-    let mut remote_path = if url.starts_with("git://") {
+    let is_ext_url = url.starts_with("ext::");
+    if is_ext_url {
+        crate::protocol::check_protocol_allowed("ext", Some(git_dir))?;
+    }
+
+    let mut remote_path = if is_ext_url {
+        PathBuf::new()
+    } else if url.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", Some(git_dir))?;
         let Some(p) = crate::fetch_transport::try_local_path_for_git_daemon_url(&url) else {
             bail!("git: could not resolve '{}' to a local repository", url);
@@ -275,7 +282,7 @@ fn fetch_remote(
     };
     // Resolve relative paths from the repository root (not process CWD), for both
     // configured `remote.<name>.url` and path-based remotes (`git fetch ./server`).
-    if remote_path.is_relative() {
+    if !is_ext_url && remote_path.is_relative() {
         let base = configured_remote_base(git_dir);
         remote_path = base.join(&remote_path);
         if url_override.is_none() && !remote_path.exists() {
@@ -294,21 +301,26 @@ fn fetch_remote(
         }
     }
 
-    // Open the remote repository
-    let remote_repo = open_repo(&remote_path).with_context(|| {
-        format!(
-            "could not open remote repository at '{}'",
-            remote_path.display()
-        )
-    })?;
+    let remote_repo = if is_ext_url {
+        None
+    } else {
+        Some(open_repo(&remote_path).with_context(|| {
+            format!(
+                "could not open remote repository at '{}'",
+                remote_path.display()
+            )
+        })?)
+    };
 
     if crate::ssh_transport::is_configured_ssh_url(&url) {
-        if let Ok(spec) = crate::ssh_transport::parse_ssh_url(&url) {
-            let _ = crate::ssh_transport::record_fake_ssh_line(
-                &spec.host,
-                "git-upload-pack",
-                &crate::ssh_transport::ssh_remote_repo_path_for_display(&remote_repo.git_dir),
-            );
+        if let Some(ref remote_repo) = remote_repo {
+            if let Ok(spec) = crate::ssh_transport::parse_ssh_url(&url) {
+                let _ = crate::ssh_transport::record_fake_ssh_line(
+                    &spec.host,
+                    "git-upload-pack",
+                    &crate::ssh_transport::ssh_remote_repo_path_for_display(&remote_repo.git_dir),
+                );
+            }
         }
     }
     let fetch_key = format!("remote.{remote_name}.fetch");
@@ -365,7 +377,8 @@ fn fetch_remote(
     // Explicit command-line refspecs (including negative `^` patterns) are handled only on the
     // direct local path — upload-pack negotiation does not build FETCH_HEAD for those (t5582).
     // `protocol.version=1` also requires upload-pack so packet traces show `fetch< version 1`.
-    let use_upload_pack_negotiation = !crate::ssh_transport::is_configured_ssh_url(&url)
+    let use_upload_pack_negotiation = !is_ext_url
+        && !crate::ssh_transport::is_configured_ssh_url(&url)
         && ((use_skipping && !user_passed_cli_refspecs) || client_proto == 1);
 
     let upload_pack_refspecs: &[String] = if prefetch_left_no_positive {
@@ -374,7 +387,18 @@ fn fetch_remote(
         cli_refspecs
     };
 
-    let (remote_heads, remote_tags) = if url.starts_with("git://") {
+    let (remote_heads, remote_tags) = if is_ext_url {
+        let (heads, tags, _, _) =
+            crate::fetch_transport::with_packet_trace_identity("fetch", || {
+                crate::ext_transport::fetch_via_ext_skipping(
+                    git_dir,
+                    &url,
+                    "git-upload-pack",
+                    upload_pack_refspecs,
+                )
+            })?;
+        (heads, tags)
+    } else if url.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", Some(git_dir))?;
         // Always use the native git:// transport so `GIT_TRACE_PACKET` matches upstream
         // (`fetch> ...\\0\\0version=1\\0`), not a local upload-pack pipe.
@@ -393,6 +417,9 @@ fn fetch_remote(
         )?;
         (heads, tags)
     } else {
+        let remote_repo = remote_repo
+            .as_ref()
+            .expect("non-ext fetch has local remote repo");
         let heads = refs::list_refs(&remote_repo.git_dir, "refs/heads/")?;
         let tags = refs::list_refs(&remote_repo.git_dir, "refs/tags/")?;
         // Copy objects from remote → local. Match Git: only copy the closure of refs this
@@ -424,7 +451,9 @@ fn fetch_remote(
     // Handle --depth / --deepen: write shallow graft info
     let effective_depth = args.depth.or(args.deepen);
     if let Some(depth) = effective_depth {
-        write_shallow_info(git_dir, &remote_heads, &remote_repo, depth)?;
+        if let Some(ref remote_repo) = remote_repo {
+            write_shallow_info(git_dir, &remote_heads, remote_repo, depth)?;
+        }
     }
 
     // Prune namespace: URL/path remotes with explicit refspecs update refs outside
@@ -444,14 +473,23 @@ fn fetch_remote(
     let mut has_updates = false;
 
     // Determine the remote's HEAD branch for FETCH_HEAD
-    let remote_head_branch = determine_remote_head(&remote_repo.git_dir);
+    let remote_head_branch = remote_repo
+        .as_ref()
+        .and_then(|r| determine_remote_head(&r.git_dir));
 
     // Collect FETCH_HEAD entries
     let mut fetch_head_entries: Vec<String> = Vec::new();
 
     // Upload-pack negotiation already honored CLI refspecs via `collect_wants`; the object-less
     // `refs::resolve_ref` path below would fail for tag-only names like `to_fetch`.
-    if user_passed_cli_refspecs && !prefetch_left_no_positive && !use_upload_pack_negotiation {
+    if user_passed_cli_refspecs
+        && !prefetch_left_no_positive
+        && !use_upload_pack_negotiation
+        && !is_ext_url
+    {
+        let remote_repo = remote_repo
+            .as_ref()
+            .expect("CLI refspec fetch requires a local remote repository");
         // Collect negative refspecs first (^pattern)
         let negative_patterns: Vec<&str> = cli_refspecs
             .iter()

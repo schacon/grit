@@ -1028,7 +1028,7 @@ t5731-protocol-v2-bundle-uri-git	t5	yes	8	1	7	false	ok	0
 t5732-protocol-v2-bundle-uri-http	t5	yes	9	9	0	true	ok	0
 t5750-bundle-uri-parse	t5	yes	13	0	13	false	ok	0
 t5801-remote-helpers	t5	skip	35	0	0	false	ok	1
-t5802-connect-helper	t5	yes	8	2	6	false	ok	0
+t5802-connect-helper	t5	yes	8	8	0	true	ok	0
 t5810-proto-disable-local	t5	yes	54	53	1	false	ok	0
 t5811-proto-disable-git	t5	yes	26	9	17	false	ok	0
 t5812-proto-disable-http	t5	yes	29	11	18	false	ok	0

@@ -89,7 +89,7 @@ fn parse_ref_advertisement_line(line: &str) -> Option<(ObjectId, String, &str)> 
     Some((oid, refname.to_string(), caps))
 }
 
-fn read_advertisement(
+pub(crate) fn read_advertisement(
     child_stdout: &mut impl Read,
 ) -> Result<(Vec<(String, ObjectId)>, Option<String>)> {
     let mut out = Vec::new();
@@ -125,7 +125,10 @@ fn read_advertisement(
     Ok((out, head_symref))
 }
 
-fn collect_wants(advertised: &[(String, ObjectId)], refspecs: &[String]) -> Result<Vec<ObjectId>> {
+pub(crate) fn collect_wants(
+    advertised: &[(String, ObjectId)],
+    refspecs: &[String],
+) -> Result<Vec<ObjectId>> {
     if refspecs.is_empty() {
         let mut wants = Vec::new();
         for (name, oid) in advertised {
@@ -189,14 +192,28 @@ fn collect_wants(advertised: &[(String, ObjectId)], refspecs: &[String]) -> Resu
 }
 
 /// Tests invoke `git-upload-pack`; use grit to serve grit-created object stores.
-fn spawn_upload_pack(cmd_template: Option<&str>, repo_path: &Path) -> Result<std::process::Child> {
+///
+/// `client_proto` is passed to [`protocol_wire::merge_git_protocol_env_for_child`] (use `0` when
+/// the reader expects a v0 ref advertisement, e.g. `ext::` transport).
+pub(crate) fn spawn_upload_pack_with_proto(
+    cmd_template: Option<&str>,
+    repo_path: &Path,
+    client_proto: u8,
+) -> Result<std::process::Child> {
     let repo_path = repo_path
         .canonicalize()
         .unwrap_or_else(|_| repo_path.to_path_buf());
     let rp = repo_path.to_string_lossy();
     let rp_escaped = rp.replace('\'', "'\"'\"'");
 
-    let client_proto = protocol_wire::effective_client_protocol_version();
+    let apply_proto_env = |c: &mut Command| {
+        if client_proto == 0 {
+            c.env_remove("GIT_PROTOCOL");
+        } else {
+            protocol_wire::merge_git_protocol_env_for_child(c, client_proto);
+        }
+    };
+
     let Some(cmd_template) = cmd_template else {
         let mut c = Command::new(grit_executable());
         c.arg("upload-pack")
@@ -205,7 +222,7 @@ fn spawn_upload_pack(cmd_template: Option<&str>, repo_path: &Path) -> Result<std
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
-        protocol_wire::merge_git_protocol_env_for_child(&mut c, client_proto);
+        apply_proto_env(&mut c);
         return c
             .spawn()
             .with_context(|| format!("failed to spawn grit upload-pack for {}", rp));
@@ -219,7 +236,7 @@ fn spawn_upload_pack(cmd_template: Option<&str>, repo_path: &Path) -> Result<std
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
-        protocol_wire::merge_git_protocol_env_for_child(&mut c, client_proto);
+        apply_proto_env(&mut c);
         return c
             .spawn()
             .with_context(|| format!("failed to spawn grit upload-pack for {}", rp));
@@ -233,7 +250,7 @@ fn spawn_upload_pack(cmd_template: Option<&str>, repo_path: &Path) -> Result<std
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
-        protocol_wire::merge_git_protocol_env_for_child(&mut c, client_proto);
+        apply_proto_env(&mut c);
         return c
             .spawn()
             .with_context(|| format!("failed to spawn '{} {}'", trimmed, rp));
@@ -248,12 +265,23 @@ fn spawn_upload_pack(cmd_template: Option<&str>, repo_path: &Path) -> Result<std
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
-    protocol_wire::merge_git_protocol_env_for_child(&mut c, client_proto);
+    apply_proto_env(&mut c);
     c.spawn()
         .with_context(|| format!("failed to spawn upload-pack: {script}"))
 }
 
-fn drain_child_stdout_to_eof(r: &mut impl Read) -> std::io::Result<()> {
+pub(crate) fn spawn_upload_pack(
+    cmd_template: Option<&str>,
+    repo_path: &Path,
+) -> Result<std::process::Child> {
+    spawn_upload_pack_with_proto(
+        cmd_template,
+        repo_path,
+        protocol_wire::effective_client_protocol_version(),
+    )
+}
+
+pub(crate) fn drain_child_stdout_to_eof(r: &mut impl Read) -> std::io::Result<()> {
     let mut buf = [0u8; 8192];
     loop {
         match r.read(&mut buf) {
@@ -532,7 +560,7 @@ fn fetch_upload_pack_negotiate_pack_bytes(
     Ok(pack_buf)
 }
 
-fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
+pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     local_git_dir: &Path,
     advertised: &[(String, ObjectId)],
     stdin: &mut impl Write,
