@@ -573,7 +573,7 @@ t3300-funny-names	t3	yes	21	8	13	false	ok	0
 t3301-notes	t3	yes	0	0	0	false	timeout	0
 t3301-notes-basic	t3	yes	38	38	0	true	ok	0
 t3302-notes-index-expensive	t3	yes	12	10	2	false	ok	0
-t3303-notes-subtrees	t3	yes	23	0	23	false	ok	0
+t3303-notes-subtrees	t3	yes	23	23	0	true	ok	0
 t3304-notes-mixed	t3	yes	6	6	0	true	ok	0
 t3305-notes-fanout	t3	yes	7	7	0	true	ok	0
 t3306-notes-prune	t3	yes	12	4	8	false	ok	0

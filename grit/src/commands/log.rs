@@ -4363,6 +4363,28 @@ fn load_notes_map_for_ref(
     map
 }
 
+/// Concatenate two note blobs the same way as Git's `combine_notes_concatenate` in `notes.c`:
+/// empty `new` leaves `cur` unchanged; empty or missing `cur` becomes `new`; otherwise join with
+/// `\n\n` after stripping one trailing newline from `cur`.
+fn combine_notes_concatenate_blobs(cur: &[u8], new: &[u8]) -> Vec<u8> {
+    if new.is_empty() {
+        return cur.to_vec();
+    }
+    if cur.is_empty() {
+        return new.to_vec();
+    }
+    let mut cur_len = cur.len();
+    if cur_len > 0 && cur[cur_len - 1] == b'\n' {
+        cur_len -= 1;
+    }
+    let mut out = Vec::with_capacity(cur_len.saturating_add(2).saturating_add(new.len()));
+    out.extend_from_slice(&cur[..cur_len]);
+    out.push(b'\n');
+    out.push(b'\n');
+    out.extend_from_slice(new);
+    out
+}
+
 fn collect_notes_map_recursive(
     repo: &Repository,
     tree_oid: &grit_lib::objects::ObjectId,
@@ -4385,7 +4407,22 @@ fn collect_notes_map_recursive(
             collect_notes_map_recursive(repo, &entry.oid, full_hex, map);
         } else if let Ok(commit_oid) = full_hex.parse::<grit_lib::objects::ObjectId>() {
             if let Ok(blob) = repo.odb.read(&entry.oid) {
-                map.insert(commit_oid, blob.data);
+                use std::collections::hash_map::Entry;
+                match map.entry(commit_oid) {
+                    Entry::Vacant(e) => {
+                        e.insert(blob.data);
+                    }
+                    Entry::Occupied(mut e) => {
+                        // Same as Git when two tree paths resolve to one commit id: skip if the note
+                        // blob is identical (`combine_notes` short-circuit on matching oids).
+                        if e.get().as_slice() == blob.data.as_slice() {
+                            continue;
+                        }
+                        let combined =
+                            combine_notes_concatenate_blobs(e.get(), blob.data.as_slice());
+                        e.insert(combined);
+                    }
+                }
             }
         }
     }

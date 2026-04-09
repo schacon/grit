@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 293 completed (`[x]`), 4 in progress (`[~]`), 472 remai
 
 ## Recently completed
 
+- `t3303-notes-subtrees` — 23/23 tests pass (`fast-import`: `data <<TERM` heredoc, `M … inline` blobs, `deleteall`; `log` notes map: concatenate duplicate commit paths like Git’s `combine_notes_concatenate`, skip identical blob payloads)
 - `t5323-pack-redundant` — 18/18 tests pass (`pack-redundant`: Git `minimize` algorithm, `--i-still-use-this` / stdin ignore / verbose + alt-odb; `clone --mirror` implies bare layout; `fsck` resolves relative `objects/info/alternates` against `objects/`)
 - `t4042-diff-textconv-caching` — 8/8 tests pass (notes-backed textconv cache per driver; Git-compatible textconv subprocess layout; `diff --no-index` textconv + `core.attributesFile`; harness `nongit` aligned with upstream; `run-tests.sh` uses per-file `timeout_prefix`)
 - `t5002-archive-attr-pattern` — 19/19 tests pass (gitattributes: trailing `/` = directory-only rules; `get_file_attrs` / `path_has_gitattribute` take `is_dir`; prune empty dirs from archive like Git; ustar directory mode `0755` not `0000`)
