@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   247 |
+| Completed   |   248 |
 | In progress |     4 |
-| Remaining   |   517 |
+| Remaining   |   516 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 247 completed (`[x]`), 4 in progress (`[~]`), 517 remaining (`[ ]`).
+Task lines in `PLAN.md`: 248 completed (`[x]`), 4 in progress (`[~]`), 516 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t8003-blame-corner-cases` — 30/30 tests pass (`blame` rev/file disambiguation: commit-ish peel vs index DWIM/abbrev blob; `HEAD^` range parsing; harness CSV refreshed)
 - `t3305-notes-fanout` — 7/7 tests pass (notes tree automatic fanout 0↔1 restructuring on add/remove; harness + upstream `run-upstream-tests.sh` verified; `PLAN.md` entry marked complete; dashboards refreshed)
 - `t12780-show-ref-head-detached` — 36/36 tests pass (`show-ref`: `--head` with detached HEAD, `--verify`, `--exists`, `--hash`, `--abbrev`, `-d`/`--dereference`, `--branches`/`--tags`, patterns; harness CSV/dashboards refreshed)
 - `t12820-diff-no-index-symlink` — 41/41 tests pass (symlink add/modify/delete, `diff`/`diff --cached`/`diff-tree`, stat/numstat/name output, multi-symlink and file↔symlink replacements; harness CSV/dashboards refreshed)
@@ -117,4 +118,4 @@ Task lines in `PLAN.md`: 247 completed (`[x]`), 4 in progress (`[~]`), 517 remai
 
 ## What Remains
 
-517 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+516 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.

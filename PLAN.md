@@ -922,7 +922,7 @@ commit → check it off → move on.
 - [ ] `t8006-blame-textconv` ███████░░░░░░░░░░░░░ 6/16 (10 left) — git blame textconv support
 - [ ] `t8014-blame-ignore-fuzzy` █████░░░░░░░░░░░░░░░ 4/16 (12 left) — git blame ignore fuzzy heuristic
 - [ ] `t8013-blame-ignore-revs` ███░░░░░░░░░░░░░░░░░ 3/19 (16 left) — ignore revisions when blaming
-- [ ] `t8003-blame-corner-cases` ████████░░░░░░░░░░░░ 12/30 (18 left) — git blame corner cases
+- [x] `t8003-blame-corner-cases` ████████████████████ 30/30 (0 left) — git blame corner cases
 - [ ] `t8020-last-modified` ░░░░░░░░░░░░░░░░░░░░ 1/28 (27 left) — last-modified tests
 
 ## 10. Contrib/Other (15 files)
