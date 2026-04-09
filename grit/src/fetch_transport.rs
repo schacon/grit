@@ -260,6 +260,27 @@ fn merge_remote_refs_into_upload_pack_advertisement(
     Ok(())
 }
 
+fn advertised_refs_matching_src_pattern(
+    advertised: &[(String, ObjectId)],
+    src_pattern: &str,
+) -> Vec<ObjectId> {
+    if let Some(star_pos) = src_pattern.find('*') {
+        let prefix = &src_pattern[..star_pos];
+        let suffix = &src_pattern[star_pos + 1..];
+        advertised
+            .iter()
+            .filter(|(name, _)| {
+                name.starts_with(prefix)
+                    && name.ends_with(suffix)
+                    && name.len() >= prefix.len() + suffix.len()
+            })
+            .map(|(_, o)| *o)
+            .collect()
+    } else {
+        Vec::new()
+    }
+}
+
 pub(crate) fn collect_wants(
     advertised: &[(String, ObjectId)],
     refspecs: &[String],
@@ -302,7 +323,28 @@ pub(crate) fn collect_wants(
             .map(|(a, _)| a)
             .unwrap_or(spec_clean);
         if src.contains('*') {
-            bail!("glob refspec in upload-pack fetch not supported");
+            let mut matched = advertised_refs_matching_src_pattern(advertised, src);
+            if matched.is_empty() {
+                bail!("could not find any remote ref matching glob '{src}'");
+            }
+            wants.append(&mut matched);
+            continue;
+        }
+        if src.eq_ignore_ascii_case("HEAD") {
+            let oid = advertised
+                .iter()
+                .find(|(n, _)| n == "HEAD")
+                .map(|(_, o)| *o)
+                .with_context(|| "could not find remote ref 'HEAD' in advertisement")?;
+            wants.push(oid);
+            continue;
+        }
+        if src.len() == 40 && src.chars().all(|c| c.is_ascii_hexdigit()) {
+            let oid: ObjectId = src
+                .parse()
+                .with_context(|| format!("invalid object id '{src}' in refspec"))?;
+            wants.push(oid);
+            continue;
         }
         let remote_ref = if src.starts_with("refs/") {
             src.to_string()
@@ -323,6 +365,9 @@ pub(crate) fn collect_wants(
             .with_context(|| format!("could not find remote ref '{remote_ref}'"))?;
         wants.push(oid);
     }
+    wants.retain(|o| *o != zero_oid());
+    wants.sort_by_key(|o| o.to_hex());
+    wants.dedup();
     Ok(wants)
 }
 
