@@ -383,21 +383,26 @@ pub fn delete_ref(git_dir: &Path, refname: &str) -> Result<()> {
     remove_packed_ref(&storage_dir, refname)?;
 
     let log_path = storage_dir.join("logs").join(refname);
-    let _ = fs::remove_file(&log_path);
 
-    // Remove empty parent directories under `logs/refs/heads/` so a deleted nested ref
-    // does not leave `logs/refs/heads/d` as a directory (which would block reflogs for
-    // a later branch named `d`).
-    let logs_heads = storage_dir.join("logs/refs/heads");
-    let mut parent = log_path.parent();
-    while let Some(p) = parent {
-        if p == logs_heads.as_path() || !p.starts_with(&logs_heads) {
-            break;
+    // Keep `logs/refs/heads/<name>` when deleting a branch so `branch -D` + later recreate can
+    // retain history (matches upstream expectations in t1507 `log -g` with `@{now}`).
+    if !refname.starts_with("refs/heads/") {
+        let _ = fs::remove_file(&log_path);
+
+        // Remove empty parent directories under `logs/refs/heads/` so a deleted nested ref
+        // does not leave `logs/refs/heads/d` as a directory (which would block reflogs for
+        // a later branch named `d`).
+        let logs_heads = storage_dir.join("logs/refs/heads");
+        let mut parent = log_path.parent();
+        while let Some(p) = parent {
+            if p == logs_heads.as_path() || !p.starts_with(&logs_heads) {
+                break;
+            }
+            if fs::remove_dir(p).is_err() {
+                break;
+            }
+            parent = p.parent();
         }
-        if fs::remove_dir(p).is_err() {
-            break;
-        }
-        parent = p.parent();
     }
 
     Ok(())

@@ -29,7 +29,9 @@ use grit_lib::rev_list::{
     collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, rev_list,
     split_symmetric_diff, OrderingMode, RevListOptions,
 };
-use grit_lib::rev_parse::{resolve_revision_as_commit, try_parse_double_dot_log_range};
+use grit_lib::rev_parse::{
+    reflog_walk_refname, resolve_revision_as_commit, try_parse_double_dot_log_range,
+};
 use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
 use std::collections::{HashMap, HashSet};
@@ -3249,6 +3251,49 @@ fn reflog_transition_touches_paths(
     }))
 }
 
+fn next_reflog_at_open_for_suffix(spec: &str, mut from: usize) -> Option<usize> {
+    let b = spec.as_bytes();
+    while let Some(rel) = spec[from..].find("@{") {
+        let i = from + rel;
+        if b.get(i + 2) == Some(&b'-') {
+            let after_open = i + 2;
+            let close = spec[after_open..].find('}').map(|j| after_open + j)?;
+            from = close + 1;
+            continue;
+        }
+        return Some(i);
+    }
+    None
+}
+
+fn reflog_entry_unix_ts(entry: &grit_lib::reflog::ReflogEntry) -> Option<i64> {
+    let parts: Vec<&str> = entry.identity.rsplitn(3, ' ').collect();
+    if parts.len() >= 2 {
+        parts[1].parse().ok()
+    } else {
+        None
+    }
+}
+
+fn reflog_entry_tz(entry: &grit_lib::reflog::ReflogEntry) -> &str {
+    let parts: Vec<&str> = entry.identity.rsplitn(3, ' ').collect();
+    parts.first().copied().unwrap_or("+0000")
+}
+
+fn format_reflog_selector_date(
+    display_name: &str,
+    entry: &grit_lib::reflog::ReflogEntry,
+) -> String {
+    if let Some(ts) = reflog_entry_unix_ts(entry) {
+        let tz = reflog_entry_tz(entry);
+        let pseudo = format!("x {ts} {tz}");
+        let date = format_date_with_mode(&pseudo, None);
+        format!("{display_name}@{{{date}}}")
+    } else {
+        format!("{display_name}@{{0}}")
+    }
+}
+
 /// Run the reflog walk mode (`log -g` / `log --walk-reflogs`).
 fn run_reflog_walk(
     repo: &Repository,
@@ -3264,7 +3309,9 @@ fn run_reflog_walk(
         "HEAD".to_string()
     } else {
         let r = &args.revisions[0];
-        if r == "HEAD" || r.starts_with("refs/") {
+        if let Ok(Some(w)) = reflog_walk_refname(repo, r) {
+            w
+        } else if r == "HEAD" || r.starts_with("refs/") {
             r.clone()
         } else if r.starts_with("@{") {
             // Resolve @{-N} to the previous branch name
@@ -3323,6 +3370,46 @@ fn run_reflog_walk(
         resolve_effective_pathspecs(repo, &args.pathspecs)?
     };
 
+    let nr = entries.len();
+    let mut start_j: Option<usize> = None;
+    let mut use_date_selector = false;
+
+    let mut pos = 0usize;
+    while let Some(at) = next_reflog_at_open_for_suffix(orig_r, pos) {
+        let inner_start = at + 2;
+        let Some(close) = orig_r[inner_start..].find('}').map(|j| inner_start + j) else {
+            break;
+        };
+        let inner = &orig_r[inner_start..close];
+        let inner_l = inner.to_ascii_lowercase();
+        if inner_l == "u" || inner_l == "upstream" || inner_l == "push" {
+            pos = close + 1;
+            continue;
+        }
+        if let Ok(n) = inner.parse::<usize>() {
+            let idx = nr.checked_sub(1 + n);
+            start_j = Some(idx.unwrap_or(0));
+            use_date_selector = false;
+        } else if let Some(target_ts) = grit_lib::rev_parse::reflog_date_selector_timestamp(inner) {
+            let mut picked = 0usize;
+            for (j, e) in entries.iter().enumerate() {
+                if let Some(ts) = reflog_entry_unix_ts(e) {
+                    if ts <= target_ts {
+                        picked = j;
+                    }
+                }
+            }
+            start_j = Some(picked);
+            use_date_selector = true;
+        } else {
+            start_j = Some(nr.saturating_sub(1));
+            use_date_selector = false;
+        }
+        pos = close + 1;
+    }
+
+    let start_j = start_j.unwrap_or(nr.saturating_sub(1));
+
     let max = args.max_count.unwrap_or(usize::MAX);
     let skip = args.skip.unwrap_or(0);
 
@@ -3339,7 +3426,8 @@ fn run_reflog_walk(
     let mut shown = 0usize;
     let mut skipped = 0usize;
 
-    for (i, entry) in entries.iter().rev().enumerate() {
+    for j in (0..=start_j).rev() {
+        let entry = &entries[j];
         if shown >= max {
             break;
         }
@@ -3399,7 +3487,12 @@ fn run_reflog_walk(
             continue;
         }
 
-        let selector = format!("{}@{{{}}}", display_name, i);
+        let selector = if use_date_selector {
+            format_reflog_selector_date(display_name, entry)
+        } else {
+            let idx_from_tip = nr - 1 - j;
+            format!("{display_name}@{{{idx_from_tip}}}")
+        };
 
         // NUL separator between entries for multi-line formats
         let is_oneline_fmt = args.format.as_deref() == Some("oneline") || args.oneline;
@@ -3554,17 +3647,9 @@ fn run_reflog_walk(
             let full_hex = entry.new_oid.to_hex();
             let abbrev = &full_hex[..abbrev_len.min(full_hex.len())];
             if args.null_terminator {
-                write!(
-                    out,
-                    "{} {}@{{{}}}: {}\0",
-                    abbrev, display_name, i, entry.message
-                )?;
+                write!(out, "{} {}: {}\0", abbrev, selector, entry.message)?;
             } else {
-                writeln!(
-                    out,
-                    "{} {}@{{{}}}: {}",
-                    abbrev, display_name, i, entry.message
-                )?;
+                writeln!(out, "{} {}: {}", abbrev, selector, entry.message)?;
             }
         } else {
             // Full format with Reflog headers
@@ -3588,7 +3673,6 @@ fn run_reflog_walk(
             for line in commit_data.message.lines() {
                 writeln!(out, "    {}", line)?;
             }
-            writeln!(out)?;
         }
         shown += 1;
     }
@@ -5726,7 +5810,8 @@ fn format_author_date_internal(ident: &str, date_mode: Option<&str>, for_header:
             format!("{ts}")
         }
         _ => {
-            // Default Git date format: "Thu Apr 7 15:13:13 2005 -0700" (matches C git `show_date`)
+            // Default Git date format: "Thu Apr 7 15:13:13 2005 -0700" (single space before day;
+            // matches C git `show_date`).
             let adjusted = ts + tz_offset_secs;
             let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                 .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);

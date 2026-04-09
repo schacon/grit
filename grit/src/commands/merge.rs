@@ -24,6 +24,7 @@ use grit_lib::objects::{
 };
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::{resolve_upstream_symbolic_name, upstream_suffix_info};
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
 use time::OffsetDateTime;
@@ -6630,6 +6631,18 @@ fn build_merge_message(
 ) -> String {
     if let Some(msg) = custom {
         return ensure_trailing_newline(msg);
+    }
+    // `merge new@{u}` — default message names the resolved remote-tracking branch (t1507).
+    if upstream_suffix_info(branch_name).is_some() {
+        if let Ok(full) = resolve_upstream_symbolic_name(repo, branch_name) {
+            if let Some(rest) = full.strip_prefix("refs/remotes/") {
+                return ensure_trailing_newline(&format!("Merge remote-tracking branch '{rest}'"));
+            }
+            if full.starts_with("refs/heads/") {
+                let short = full.strip_prefix("refs/heads/").unwrap_or(&full);
+                return ensure_trailing_newline(&format!("Merge branch '{short}'"));
+            }
+        }
     }
     // For @{-N} (and @{-N}<suffix>) specs, use the resolved previous branch
     // name in the default merge message, matching git's behavior.
