@@ -804,7 +804,7 @@ t4130-apply-criss-cross-rename	t4	yes	7	7	0	true	ok	0
 t4131-apply-fake-ancestor	t4	yes	3	3	0	true	ok	0
 t4132-apply-removal	t4	yes	14	14	0	true	ok	0
 t4133-apply-filenames	t4	yes	4	4	0	true	ok	0
-t4134-apply-submodule	t4	yes	2	1	1	false	ok	0
+t4134-apply-submodule	t4	yes	2	2	0	true	ok	0
 t4135-apply-weird-filenames	t4	yes	19	19	0	true	ok	0
 t4136-apply-check	t4	yes	6	3	3	false	ok	0
 t4137-apply-submodule	t4	yes	28	11	17	false	ok	0
