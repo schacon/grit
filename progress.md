@@ -16,6 +16,7 @@ Task lines in `PLAN.md`: 250 completed (`[x]`), 4 in progress (`[~]`), 514 remai
 ## Recently completed
 
 - `t7064-wtstatus-pv2` — 28/28 tests pass (`status --porcelain=v2`: branch headers with NUL EOL in `-z`, stash reflog count, merge/unmerged `u` lines without worktree OID column, rename `R100` token + path layout, intent-to-add mode columns, submodule `S???` tokens via `submodule_porcelain_flags`, output section order; `.test_tick` filtered from `!` lines to match upstream exclude template)
+- `t12620-rev-parse-resolve-ref` — 32/32 tests pass (setup `cd repo` confined to subshell so trash cwd stays at trash root for `(cd repo && …)` cases; harness CSV refreshed)
 - `t3425-rebase-topology-merges` — 13/13 tests pass (`rev_list` topo-order uses min-heap tie-break like Git; `log` honors `A..B` exclusions; `format-patch` accepts `rebase --apply` flags and cherry symmetric ranges; rebase todo drops merge commits unless `--rebase-merges`; two-parent merge replay uses merge-base three-way or skips when tree already matches)
 - `t8003-blame-corner-cases` — 30/30 tests pass (`blame` rev/file disambiguation: commit-ish peel vs index DWIM/abbrev blob; `HEAD^` range parsing; harness CSV refreshed)
 - `t3305-notes-fanout` — 7/7 tests pass (notes tree automatic fanout 0↔1 restructuring on add/remove; harness + upstream `run-upstream-tests.sh` verified; `PLAN.md` entry marked complete; dashboards refreshed)
