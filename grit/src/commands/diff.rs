@@ -38,7 +38,6 @@ use grit_lib::merge_diff::{
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{rev_list, RevListOptions};
 use grit_lib::rev_parse::{
     abbreviate_object_id, resolve_revision, resolve_treeish_blob_at_path, show_prefix,
     split_treeish_colon, TreeishBlobAtPath,
@@ -49,7 +48,9 @@ use similar::{ChangeTag, TextDiff};
 use std::fmt::Write as FmtWrite;
 use std::sync::Arc;
 
-use crate::commands::diff_index::{write_patch_entry, SubmoduleIgnoreFlags};
+use crate::commands::diff_index::{
+    write_patch_entry, SubmoduleIgnoreFlags, SubmodulePatchFormat,
+};
 
 /// Shared gitattributes + config for per-path diff algorithm selection (`diff.<driver>.algorithm`).
 #[derive(Clone)]
@@ -152,71 +153,6 @@ fn submodule_ignore_flags_from_diff_arg(ignore_sm: &str) -> SubmoduleIgnoreFlags
     }
 }
 
-fn write_submodule_log_lines(
-    out: &mut impl Write,
-    repo: &Repository,
-    entry: &DiffEntry,
-) -> Result<()> {
-    let z = zero_oid();
-    if entry.old_oid == z || entry.new_oid == z {
-        return Ok(());
-    }
-    let old_a = abbreviate_object_id(repo, entry.old_oid, 7)?;
-    let new_a = abbreviate_object_id(repo, entry.new_oid, 7)?;
-    writeln!(out, "Submodule {} {}..{}:", entry.path(), old_a, new_a)?;
-    let Some(wt) = repo.work_tree.as_deref() else {
-        return Ok(());
-    };
-    let sub_path = wt.join(entry.path());
-    let Ok(sub_repo) = Repository::discover(Some(&sub_path)) else {
-        return Ok(());
-    };
-    let mut opts = RevListOptions::default();
-    opts.first_parent = true;
-    let Ok(res) = rev_list(
-        &sub_repo,
-        &[entry.new_oid.to_hex()],
-        &[entry.old_oid.to_hex()],
-        &opts,
-    ) else {
-        return Ok(());
-    };
-    for oid in res.commits.iter().rev() {
-        let Ok(obj) = sub_repo.odb.read(oid) else {
-            continue;
-        };
-        if obj.kind != ObjectKind::Commit {
-            continue;
-        }
-        let Ok(c) = parse_commit(&obj.data) else {
-            continue;
-        };
-        let subject = submodule_commit_subject_line(&c);
-        writeln!(out, "  > {subject}")?;
-    }
-    Ok(())
-}
-
-fn submodule_commit_subject_line(c: &grit_lib::objects::CommitData) -> String {
-    let enc = c.encoding.as_deref().unwrap_or("UTF-8");
-    let is_latin1 = enc.eq_ignore_ascii_case("ISO8859-1")
-        || enc.eq_ignore_ascii_case("ISO-8859-1")
-        || enc.eq_ignore_ascii_case("LATIN1")
-        || enc.eq_ignore_ascii_case("ISO-8859-15");
-    if let Some(raw) = c.raw_message.as_deref() {
-        let line = raw.split(|b| *b == b'\n').next().unwrap_or(raw);
-        if is_latin1 {
-            return line
-                .iter()
-                .map(|&b| b as char)
-                .collect::<String>()
-                .trim()
-                .to_owned();
-        }
-        return String::from_utf8_lossy(line).trim().to_string();
-    }
-    c.message.lines().next().unwrap_or("").trim().to_owned()
-}
 use std::env;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
@@ -4462,16 +4398,18 @@ fn write_patch_with_prefix(
 
         if let Some(fmt) = submodule_fmt {
             if entry.old_mode == "160000" || entry.new_mode == "160000" {
-                if fmt == "log"
-                    && entry.old_mode == "160000"
-                    && entry.new_mode == "160000"
-                    && matches!(
-                        entry.status,
-                        DiffStatus::Modified | DiffStatus::Renamed | DiffStatus::Copied
-                    )
-                    && entry.old_oid != entry.new_oid
-                {
-                    write_submodule_log_lines(out, repo, entry)?;
+                if fmt == "log" {
+                    write_patch_entry(
+                        out,
+                        repo,
+                        odb,
+                        entry,
+                        context_lines,
+                        work_tree,
+                        SubmodulePatchFormat::Log,
+                        submodule_ignore,
+                        &path_for_attrs,
+                    )?;
                     continue;
                 }
                 if fmt == "diff" {
@@ -4482,7 +4420,7 @@ fn write_patch_with_prefix(
                         entry,
                         context_lines,
                         work_tree,
-                        true,
+                        SubmodulePatchFormat::Diff,
                         submodule_ignore,
                         &path_for_attrs,
                     )?;

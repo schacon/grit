@@ -3,9 +3,10 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
-    detect_renames, diff_trees, read_submodule_head_oid, stat_matches, zero_oid, DiffEntry,
-    DiffStatus,
+    detect_renames, diff_trees, read_submodule_head_oid, submodule_commit_subject_line,
+    stat_matches, zero_oid, DiffEntry, DiffStatus,
 };
+use grit_lib::rev_list::{rev_list, RevListOptions};
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK, MODE_TREE,
 };
@@ -89,7 +90,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     if options.patch
-        && options.submodule_diff
+        && options.submodule_format != SubmodulePatchFormat::Short
         && !options.cached
         && !options.ignore_submodules_all
         && !options.ignore_dirty_submodules
@@ -292,7 +293,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     entry,
                     options.context_lines,
                     wt,
-                    options.submodule_diff,
+                    options.submodule_format,
                     sm_ignore,
                     p,
                 )?;
@@ -474,8 +475,8 @@ struct Options {
     ignore_untracked_in_submodules: bool,
     /// When true, skip submodule dirty detection (no "contains …" lines; no worktree diff inside submodule).
     ignore_dirty_submodules: bool,
-    /// Emit recursive unified diff for submodule commits (`--submodule=diff`).
-    submodule_diff: bool,
+    /// Submodule patch format when `-p` and `--submodule` are used.
+    submodule_format: SubmodulePatchFormat,
     quiet: bool,
     exit_code: bool,
     abbrev: Option<usize>,
@@ -525,6 +526,18 @@ pub(crate) struct SubmoduleIgnoreFlags {
     pub(crate) ignore_dirty: bool,
 }
 
+/// How `diff-index -p` formats gitlink (submodule) entries when `--submodule` is set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum SubmodulePatchFormat {
+    /// Default: `Subproject commit` unified hunks only (same as no `--submodule`).
+    #[default]
+    Short,
+    /// `Submodule path old..new:` with commit subjects (`git diff --submodule=log`).
+    Log,
+    /// Recursive unified diff inside the submodule (`--submodule=diff`).
+    Diff,
+}
+
 fn parse_options(argv: &[String]) -> Result<Options> {
     let mut cached = false;
     let mut match_missing = false;
@@ -533,7 +546,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     // unless `--ignore-submodules=none` is passed (see t4060).
     let mut ignore_untracked_in_submodules = true;
     let mut ignore_dirty_submodules = false;
-    let mut submodule_diff = false;
+    let mut submodule_format = SubmodulePatchFormat::Short;
     let mut quiet = false;
     let mut exit_code = false;
     let mut abbrev: Option<usize> = None;
@@ -700,13 +713,14 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     };
                 }
                 "--submodule" => {
-                    submodule_diff = true;
+                    submodule_format = SubmodulePatchFormat::Log;
                 }
                 _ if arg.starts_with("--submodule=") => {
                     let val = arg.trim_start_matches("--submodule=");
-                    submodule_diff = match val {
-                        "diff" => true,
-                        "short" | "log" => false,
+                    submodule_format = match val {
+                        "short" => SubmodulePatchFormat::Short,
+                        "log" => SubmodulePatchFormat::Log,
+                        "diff" => SubmodulePatchFormat::Diff,
                         _ => bail!("unsupported option: {arg}"),
                     };
                 }
@@ -736,7 +750,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         ignore_submodules_all,
         ignore_untracked_in_submodules,
         ignore_dirty_submodules,
-        submodule_diff,
+        submodule_format,
         quiet,
         exit_code,
         abbrev,
@@ -1488,6 +1502,113 @@ fn submodule_display_name(full_path: &str) -> &str {
     full_path.rsplit('/').next().unwrap_or(full_path)
 }
 
+fn write_submodule_log_commit_lines(
+    out: &mut impl Write,
+    sub_repo: &Repository,
+    old_commit: ObjectId,
+    new_commit: ObjectId,
+    fast_forward: bool,
+    fast_backward: bool,
+) -> Result<()> {
+    let z = zero_oid();
+    if old_commit == z || new_commit == z {
+        return Ok(());
+    }
+    let mut opts = RevListOptions::default();
+    opts.first_parent = true;
+    if fast_forward {
+        let Ok(res) = rev_list(
+            sub_repo,
+            &[new_commit.to_hex()],
+            &[old_commit.to_hex()],
+            &opts,
+        ) else {
+            return Ok(());
+        };
+        for oid in res.commits.iter().rev() {
+            let Ok(obj) = sub_repo.odb.read(oid) else {
+                continue;
+            };
+            if obj.kind != ObjectKind::Commit {
+                continue;
+            }
+            let Ok(c) = parse_commit(&obj.data) else {
+                continue;
+            };
+            let subject = submodule_commit_subject_line(&c);
+            writeln!(out, "  > {subject}")?;
+        }
+        return Ok(());
+    }
+    if fast_backward {
+        let Ok(res) = rev_list(
+            sub_repo,
+            &[old_commit.to_hex()],
+            &[new_commit.to_hex()],
+            &opts,
+        ) else {
+            return Ok(());
+        };
+        for oid in res.commits.iter().rev() {
+            let Ok(obj) = sub_repo.odb.read(oid) else {
+                continue;
+            };
+            if obj.kind != ObjectKind::Commit {
+                continue;
+            }
+            let Ok(c) = parse_commit(&obj.data) else {
+                continue;
+            };
+            let subject = submodule_commit_subject_line(&c);
+            writeln!(out, "  < {subject}")?;
+        }
+        return Ok(());
+    }
+    let Ok(fwd) = rev_list(
+        sub_repo,
+        &[new_commit.to_hex()],
+        &[old_commit.to_hex()],
+        &opts,
+    ) else {
+        return Ok(());
+    };
+    let Ok(bwd) = rev_list(
+        sub_repo,
+        &[old_commit.to_hex()],
+        &[new_commit.to_hex()],
+        &opts,
+    ) else {
+        return Ok(());
+    };
+    for oid in fwd.commits.iter().rev() {
+        let Ok(obj) = sub_repo.odb.read(oid) else {
+            continue;
+        };
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let Ok(c) = parse_commit(&obj.data) else {
+            continue;
+        };
+        let subject = submodule_commit_subject_line(&c);
+        writeln!(out, "  > {subject}")?;
+    }
+    for oid in bwd.commits.iter().rev() {
+        let Ok(obj) = sub_repo.odb.read(oid) else {
+            continue;
+        };
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let Ok(c) = parse_commit(&obj.data) else {
+            continue;
+        };
+        let subject = submodule_commit_subject_line(&c);
+        writeln!(out, "  < {subject}")?;
+    }
+    Ok(())
+}
+
 pub(crate) fn write_submodule_diff_recursive(
     out: &mut impl Write,
     super_repo: &Repository,
@@ -1497,6 +1618,7 @@ pub(crate) fn write_submodule_diff_recursive(
     dirty: SubmoduleDirtyFlags,
     ignore_dirty_for_inner: bool,
     submodule_ignore: SubmoduleIgnoreFlags,
+    submodule_format: SubmodulePatchFormat,
     context_lines: usize,
 ) -> Result<()> {
     let z = zero_oid();
@@ -1585,7 +1707,7 @@ pub(crate) fn write_submodule_diff_recursive(
                         e,
                         context_lines,
                         Some(&sub_path),
-                        true,
+                        SubmodulePatchFormat::Diff,
                         submodule_ignore,
                         &inner_full,
                     )?;
@@ -1614,7 +1736,7 @@ pub(crate) fn write_submodule_diff_recursive(
                         e,
                         context_lines,
                         None,
-                        true,
+                        SubmodulePatchFormat::Diff,
                         submodule_ignore,
                         &inner_full,
                     )?;
@@ -1650,12 +1772,33 @@ pub(crate) fn write_submodule_diff_recursive(
         writeln!(out, ":")?;
     }
 
-    if message == Some("(commits not present)") || old_tree.is_none() && new_tree.is_none() {
+    if message == Some("(commits not present)") {
+        return Ok(());
+    }
+    if message.is_some() {
+        return Ok(());
+    }
+
+    if submodule_format == SubmodulePatchFormat::Log {
+        if let Some(sr) = sub_repo.as_ref() {
+            write_submodule_log_commit_lines(
+                out,
+                sr,
+                old_commit,
+                new_commit,
+                fast_forward,
+                fast_backward,
+            )?;
+        }
         return Ok(());
     }
 
     let use_worktree_for_right =
         dirty.modified && !ignore_dirty_for_inner && new_commit != z && sub_repo.is_some();
+
+    if submodule_format != SubmodulePatchFormat::Diff {
+        return Ok(());
+    }
 
     if use_worktree_for_right {
         let sr = sub_repo.as_ref().unwrap();
@@ -1672,7 +1815,7 @@ pub(crate) fn write_submodule_diff_recursive(
                     e,
                     context_lines,
                     Some(&sub_path),
-                    true,
+                    SubmodulePatchFormat::Diff,
                     submodule_ignore,
                     &inner_full,
                 )?;
@@ -1701,7 +1844,7 @@ pub(crate) fn write_submodule_diff_recursive(
                     e,
                     context_lines,
                     None,
-                    true,
+                    SubmodulePatchFormat::Diff,
                     submodule_ignore,
                     &inner_full,
                 )?;
@@ -1730,13 +1873,13 @@ pub(crate) fn write_patch_entry(
     entry: &DiffEntry,
     context_lines: usize,
     work_tree: Option<&Path>,
-    submodule_diff: bool,
+    submodule_format: SubmodulePatchFormat,
     submodule_ignore: SubmoduleIgnoreFlags,
     full_path_from_root: &str,
 ) -> Result<()> {
     let z = zero_oid();
 
-    if submodule_diff {
+    if submodule_format != SubmodulePatchFormat::Short {
         // Typechange blob→gitlink: tree had a blob, index records a gitlink.
         let is_blob_to_gitlink = entry.old_mode != "000000"
             && entry.old_mode != "160000"
@@ -1749,11 +1892,36 @@ pub(crate) fn write_patch_entry(
             && entry.new_mode != "000000";
 
         if is_gitlink_to_blob {
-            // Index gitlink, worktree blob: blob delete first, then submodule as new.
+            // Submodule summary first, then blob delete (matches `git diff --submodule=log`).
+            write_submodule_diff_recursive(
+                out,
+                repo,
+                full_path_from_root,
+                entry.old_oid,
+                z,
+                SubmoduleDirtyFlags::default(),
+                submodule_ignore.ignore_dirty,
+                submodule_ignore,
+                submodule_format,
+                context_lines,
+            )?;
             let mut blob_del = entry.clone();
             blob_del.status = DiffStatus::Deleted;
             blob_del.old_mode = entry.new_mode.clone();
             blob_del.old_oid = entry.new_oid;
+            blob_del.new_path = None;
+            blob_del.new_mode = "000000".to_owned();
+            blob_del.new_oid = z;
+            write_patch_entry_inner(out, repo, odb, &blob_del, context_lines, work_tree, "")?;
+            return Ok(());
+        }
+
+        if is_blob_to_gitlink {
+            // Blob delete first, then submodule summary (matches `git diff --submodule=log`).
+            let mut blob_del = entry.clone();
+            blob_del.status = DiffStatus::Deleted;
+            blob_del.old_mode = entry.old_mode.clone();
+            blob_del.old_oid = entry.old_oid;
             blob_del.new_path = None;
             blob_del.new_mode = "000000".to_owned();
             blob_del.new_oid = z;
@@ -1763,44 +1931,14 @@ pub(crate) fn write_patch_entry(
                 repo,
                 full_path_from_root,
                 z,
-                entry.old_oid,
+                entry.new_oid,
                 SubmoduleDirtyFlags::default(),
                 submodule_ignore.ignore_dirty,
                 submodule_ignore,
+                submodule_format,
                 context_lines,
             )?;
             return Ok(());
-        }
-
-        if is_blob_to_gitlink {
-            // Tree blob, index gitlink: submodule deleted first, then blob as new.
-            write_submodule_diff_recursive(
-                out,
-                repo,
-                full_path_from_root,
-                entry.old_oid,
-                z,
-                SubmoduleDirtyFlags::default(),
-                submodule_ignore.ignore_dirty,
-                submodule_ignore,
-                context_lines,
-            )?;
-            let mut blob_add = entry.clone();
-            blob_add.status = DiffStatus::Added;
-            blob_add.old_path = None;
-            blob_add.old_mode = "000000".to_owned();
-            blob_add.old_oid = z;
-            blob_add.new_mode = entry.new_mode.clone();
-            blob_add.new_oid = entry.new_oid;
-            return write_patch_entry_inner(
-                out,
-                repo,
-                odb,
-                &blob_add,
-                context_lines,
-                work_tree,
-                "",
-            );
         }
 
         if entry.old_mode == "160000" || entry.new_mode == "160000" {
@@ -1832,6 +1970,7 @@ pub(crate) fn write_patch_entry(
                 dirty,
                 submodule_ignore.ignore_dirty,
                 submodule_ignore,
+                submodule_format,
                 context_lines,
             )?;
             return Ok(());
