@@ -279,7 +279,7 @@ t12160-cherry-pick-conflict-resolve	t1	yes	34	34	0	true	ok	0
 t12170-for-each-ref-count-limit	t1	yes	33	33	0	true	ok	0
 t12180-show-ref-hash-abbrev	t1	yes	33	33	0	true	ok	0
 t12190-update-ref-deref-symref	t1	yes	35	35	0	true	ok	0
-t12200-check-ignore-pathname	t1	yes	30	29	1	false	ok	0
+t12200-check-ignore-pathname	t1	yes	30	30	0	true	ok	0
 t12210-merge-file-marker-size	t1	yes	30	30	0	true	ok	0
 t12220-diff-no-index-recursive	t1	yes	36	36	0	true	ok	0
 t12230-diff-cached-word-diff	t1	yes	35	35	0	true	ok	0
