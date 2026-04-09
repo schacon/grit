@@ -612,7 +612,7 @@ commit → check it off → move on.
 - [ ] `t5620-backfill` ████░░░░░░░░░░░░░░░░ 2/10 (8 left) — git backfill on partial clones
 - [ ] `t5315-pack-objects-compression` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — pack-object compression configuration
 - [ ] `t5506-remote-groups` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — git remote group handling
-- [ ] `t5900-repo-selection` ░░░░░░░░░░░░░░░░░░░░ 0/8 (8 left) — selecting remote repo in ambiguous cases
+- [x] `t5900-repo-selection` — selecting remote repo in ambiguous cases (8/8)
 - [ ] `t5582-fetch-negative-refspec` ████████░░░░░░░░░░░░ 7/16 (9 left) — 
 - [ ] `t5305-include-tag` ████████░░░░░░░░░░░░ 6/15 (9 left) — git pack-object --include-tag
 - [ ] `t5401-update-hooks` ██████░░░░░░░░░░░░░░ 4/13 (9 left) — Test the update hook infrastructure.
