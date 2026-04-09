@@ -16,7 +16,9 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
-use grit_lib::index::{Index, IndexEntry};
+use grit_lib::index::{
+    Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
+};
 use grit_lib::objects::ObjectKind;
 use grit_lib::quote_path::quote_c_style;
 use grit_lib::repo::Repository;
@@ -317,6 +319,10 @@ struct FilePatch {
     old_mode: Option<String>,
     /// New mode from extended header.
     new_mode: Option<String>,
+    /// Source line (1-based) of `old mode` / `deleted file mode` for diagnostics.
+    old_mode_line: Option<usize>,
+    /// Source line (1-based) of `new mode` / `new file mode` for diagnostics.
+    new_mode_line: Option<usize>,
     /// Whether this file is being newly created.
     is_new: bool,
     /// Whether this file is being deleted.
@@ -438,9 +444,15 @@ fn sanitize_patch_header_value(s: &mut String) {
 fn sanitize_file_patch_headers(fp: &mut FilePatch) {
     if let Some(ref mut s) = fp.old_mode {
         sanitize_patch_header_value(s);
+        if s.is_empty() {
+            fp.old_mode = None;
+        }
     }
     if let Some(ref mut s) = fp.new_mode {
         sanitize_patch_header_value(s);
+        if s.is_empty() {
+            fp.new_mode = None;
+        }
     }
     if let Some(ref mut s) = fp.old_oid {
         sanitize_patch_header_value(s);
@@ -919,6 +931,8 @@ fn parse_traditional_patch_pair(
         saw_new_header: true,
         old_mode: None,
         new_mode: None,
+        old_mode_line: None,
+        new_mode_line: None,
         is_new: false,
         is_deleted: false,
         is_rename: false,
@@ -1159,6 +1173,8 @@ fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
                 saw_new_header: false,
                 old_mode: None,
                 new_mode: None,
+                old_mode_line: None,
+                new_mode_line: None,
                 is_new: false,
                 is_deleted: false,
                 is_rename: false,
@@ -1180,8 +1196,12 @@ fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
             if let Some((a, b)) = split_diff_git_paths(rest) {
                 fp.diff_old_path = Some(a.clone());
                 fp.diff_new_path = Some(b.clone());
-                fp.old_path = Some(a);
-                fp.new_path = Some(b);
+                fp.old_path = Some(skip_tree_prefix_str(&a, p_strip).ok_or_else(|| {
+                    anyhow::anyhow!("malformed old path in diff --git header: {a}")
+                })?);
+                fp.new_path = Some(skip_tree_prefix_str(&b, p_strip).ok_or_else(|| {
+                    anyhow::anyhow!("malformed new path in diff --git header: {b}")
+                })?);
             }
             i += 1;
 
@@ -1192,16 +1212,37 @@ fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
                 && !lines[i].starts_with("@@ ")
             {
                 let line = lines[i];
+                let line_no = i + 1;
                 if let Some(val) = line.strip_prefix("old mode ") {
-                    fp.old_mode = Some(val.to_string());
+                    let v = val.trim_end_matches('\r').trim_end();
+                    if v.is_empty() {
+                        bail!("invalid mode on line {line_no}: {line}");
+                    }
+                    fp.old_mode = Some(v.to_string());
+                    fp.old_mode_line = Some(line_no);
                 } else if let Some(val) = line.strip_prefix("new mode ") {
-                    fp.new_mode = Some(val.to_string());
+                    let v = val.trim_end_matches('\r').trim_end();
+                    if v.is_empty() {
+                        bail!("invalid mode on line {line_no}: {line}");
+                    }
+                    fp.new_mode = Some(v.to_string());
+                    fp.new_mode_line = Some(line_no);
                 } else if let Some(val) = line.strip_prefix("new file mode ") {
+                    let v = val.trim_end_matches('\r').trim_end();
+                    if v.is_empty() {
+                        bail!("invalid mode on line {line_no}: {line}");
+                    }
                     fp.is_new = true;
-                    fp.new_mode = Some(val.to_string());
+                    fp.new_mode = Some(v.to_string());
+                    fp.new_mode_line = Some(line_no);
                 } else if let Some(val) = line.strip_prefix("deleted file mode ") {
+                    let v = val.trim_end_matches('\r').trim_end();
+                    if v.is_empty() {
+                        bail!("invalid mode on line {line_no}: {line}");
+                    }
                     fp.is_deleted = true;
-                    fp.old_mode = Some(val.to_string());
+                    fp.old_mode = Some(v.to_string());
+                    fp.old_mode_line = Some(line_no);
                 } else if let Some(val) = line.strip_prefix("rename from ") {
                     fp.is_rename = true;
                     if let Some(p) = find_name_extended_header(val, p_extended) {
@@ -1228,10 +1269,18 @@ fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
                     fp.dissimilarity_index = val.trim_end_matches('%').parse().ok();
                 } else if let Some(val) = line.strip_prefix("index ") {
                     // Parse "index abc123..def456 100644" or "index abc123..def456"
-                    let hash_part = val.split_whitespace().next().unwrap_or("");
+                    let mut parts = val.split_whitespace();
+                    let hash_part = parts.next().unwrap_or("");
                     if let Some((old, new)) = hash_part.split_once("..") {
                         fp.old_oid = Some(old.to_string());
                         fp.new_oid = Some(new.to_string());
+                    }
+                    if let Some(mode_tok) = parts.next() {
+                        let v = mode_tok.trim_end_matches('\r').trim_end();
+                        if !v.is_empty() {
+                            fp.old_mode = Some(v.to_string());
+                            fp.old_mode_line = Some(line_no);
+                        }
                     }
                 } else if line == "GIT binary patch" {
                     let (binary_patch, next_i) = parse_binary_patch(&lines, i + 1)?;
@@ -1369,6 +1418,7 @@ fn merge_adjacent_blob_to_gitlink_patches(patches: &mut Vec<FilePatch>) {
             merged.new_path = add.new_path.clone();
             merged.saw_new_header = add.saw_new_header;
             merged.new_mode = Some("160000".to_string());
+            merged.new_mode_line = add.new_mode_line;
             merged.is_deleted = false;
             merged.is_new = false;
             merged.new_oid = add.new_oid.clone();
@@ -1897,7 +1947,12 @@ fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> 
 fn reverse_patches(patches: &mut [FilePatch]) {
     for fp in patches.iter_mut() {
         std::mem::swap(&mut fp.old_path, &mut fp.new_path);
-        std::mem::swap(&mut fp.old_mode, &mut fp.new_mode);
+        // Match Git `reverse_patches`: only swap mode headers when the forward patch had a new
+        // mode or was a deletion (`t4129` reverse apply + mode-only diffs).
+        if fp.new_mode.is_some() || fp.is_deleted {
+            std::mem::swap(&mut fp.old_mode, &mut fp.new_mode);
+            std::mem::swap(&mut fp.old_mode_line, &mut fp.new_mode_line);
+        }
         std::mem::swap(&mut fp.old_oid, &mut fp.new_oid);
         std::mem::swap(&mut fp.is_new, &mut fp.is_deleted);
         if let Some(binary) = fp.binary_patch.as_mut() {
@@ -3816,6 +3871,7 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         "<stdin>".to_string()
     };
+    validate_and_canonicalize_patch_modes(&mut patches, &patch_input_display)?;
 
     // Info-only modes unless explicitly overridden by --apply.
     let info_only = (args.stat || args.numstat || args.summary) && !args.apply;
@@ -3843,6 +3899,8 @@ pub fn run(mut args: Args) -> Result<()> {
     }
     verify_patch_paths_not_beyond_symlink(&patches, &args)?;
     let ws_mode = resolve_apply_whitespace_mode(&args);
+
+    prepare_patch_modes_for_apply(&mut patches, &args)?;
 
     // For --cached, we need a repository and index.
     // For working tree apply, we may or may not be in a repo.
@@ -4314,16 +4372,67 @@ fn write_worktree_path(
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        if let Some(mode) = mode {
-            let perm = if mode == "100755" { 0o755 } else { 0o644 };
-            fs::set_permissions(path, fs::Permissions::from_mode(perm))?;
+        if let Some(mode_str) = mode {
+            if mode_str != "120000" {
+                chmod_worktree_regular(path, parse_mode(mode_str))?;
+            }
         } else if let Some(executable) = source_exec_bit {
-            let perm = if executable { 0o755 } else { 0o644 };
-            fs::set_permissions(path, fs::Permissions::from_mode(perm))?;
+            chmod_worktree_regular(
+                path,
+                if executable {
+                    MODE_EXECUTABLE
+                } else {
+                    MODE_REGULAR
+                },
+            )?;
         }
     }
 
+    Ok(())
+}
+
+#[cfg(unix)]
+fn process_umask_bits() -> u32 {
+    static UMASK_CACHE: OnceLock<u32> = OnceLock::new();
+    *UMASK_CACHE.get_or_init(|| {
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(status) = fs::read_to_string("/proc/self/status") {
+                for line in status.lines() {
+                    let line = line.trim_start();
+                    if let Some(rest) = line.strip_prefix("Umask:") {
+                        let tok = rest.trim();
+                        if let Ok(v) = u32::from_str_radix(tok, 8) {
+                            return v;
+                        }
+                    }
+                }
+            }
+        }
+        0o022
+    })
+}
+
+/// Worktree permission bits for a regular file from index mode and current umask (Git checkout).
+#[cfg(unix)]
+fn worktree_mode_from_index_mode(index_mode: u32) -> u32 {
+    let base = if index_mode == MODE_EXECUTABLE {
+        0o777
+    } else {
+        0o666
+    };
+    base & !process_umask_bits()
+}
+
+#[cfg(unix)]
+fn chmod_worktree_regular(path: &Path, index_mode: u32) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let perm_bits = if matches!(index_mode, MODE_REGULAR | MODE_EXECUTABLE) {
+        worktree_mode_from_index_mode(index_mode)
+    } else {
+        index_mode & 0o777
+    };
+    fs::set_permissions(path, fs::Permissions::from_mode(perm_bits))?;
     Ok(())
 }
 
@@ -4633,13 +4742,11 @@ fn apply_to_worktree(
             }
         }
         #[cfg(unix)]
-        let source_exec_bit = if source_adjusted != path_adjusted {
+        let source_exec_bit = {
             use std::os::unix::fs::PermissionsExt;
             fs::metadata(&read_path)
                 .ok()
-                .map(|meta| meta.permissions().mode() & 0o111 != 0)
-        } else {
-            None
+                .map(|meta| meta.permissions().mode() & 0o100 != 0)
         };
 
         if let Some(binary_patch) = fp.binary_patch.as_ref() {
@@ -4660,13 +4767,17 @@ fn apply_to_worktree(
 
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
                 if let Some(mode) = fp.new_mode.as_deref() {
-                    let perm = if mode == "100755" { 0o755 } else { 0o644 };
-                    fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
+                    chmod_worktree_regular(&path, parse_mode(mode))?;
                 } else if let Some(executable) = source_exec_bit {
-                    let perm = if executable { 0o755 } else { 0o644 };
-                    fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
+                    chmod_worktree_regular(
+                        &path,
+                        if executable {
+                            MODE_EXECUTABLE
+                        } else {
+                            MODE_REGULAR
+                        },
+                    )?;
                 }
             }
 
@@ -4703,9 +4814,7 @@ fn apply_to_worktree(
 
             #[cfg(unix)]
             if let Some(mode) = fp.new_mode.as_deref() {
-                use std::os::unix::fs::PermissionsExt;
-                let perm = if mode == "100755" { 0o755 } else { 0o644 };
-                fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
+                chmod_worktree_regular(&path, parse_mode(mode))?;
             }
             continue;
         }
@@ -5178,7 +5287,289 @@ fn check_patches(
     Ok(())
 }
 
-/// Parse an octal mode string like "100644" to u32.
+const S_IFMT: u32 = 0o170000;
+const S_IFREG: u32 = 0o100000;
+const S_IFLNK: u32 = 0o120000;
+const S_IFDIR: u32 = 0o040000;
+const S_IFGITLINK: u32 = 0o160000;
+
+/// Git `ce_permissions`: only the owner execute bit matters for regular files.
+fn ce_permissions(mode: u32) -> u32 {
+    if mode & 0o100 != 0 {
+        0o755
+    } else {
+        0o644
+    }
+}
+
+/// Git `create_ce_mode` for stat modes.
+fn create_ce_mode(mode: u32) -> u32 {
+    match mode & S_IFMT {
+        S_IFLNK => MODE_SYMLINK,
+        S_IFDIR => S_IFDIR,
+        S_IFGITLINK => MODE_GITLINK,
+        S_IFREG => S_IFREG | ce_permissions(mode),
+        0 => S_IFREG | ce_permissions(mode),
+        _ => MODE_REGULAR,
+    }
+}
+
+/// Canonicalize a parsed tree mode (Git `canon_mode`).
+fn canon_mode(mode: u32) -> u32 {
+    match mode & S_IFMT {
+        S_IFREG => S_IFREG | ce_permissions(mode),
+        S_IFLNK => MODE_SYMLINK,
+        S_IFDIR => S_IFDIR,
+        S_IFGITLINK => MODE_GITLINK,
+        _ => MODE_REGULAR,
+    }
+}
+
+/// Git `ce_mode_from_stat` (matches `read-cache.h`).
+fn ce_mode_from_stat(ce: Option<u32>, st_mode: u32, trust_file_mode: bool) -> u32 {
+    let is_reg = st_mode & S_IFMT == S_IFREG;
+    if !trust_file_mode && is_reg {
+        if let Some(ce_m) = ce {
+            if ce_m & S_IFMT == S_IFREG {
+                return ce_m;
+            }
+        }
+        return create_ce_mode(0o666);
+    }
+    create_ce_mode(st_mode)
+}
+
+/// Parse a mode token from a patch header (Git `parse_mode_line`); returns canonical index mode.
+fn parse_mode_token(line: &str, patch_input_display: &str, line_no: usize) -> Result<u32> {
+    let line = line.trim_end_matches('\r').trim_end();
+    let mut end = 0usize;
+    for (i, ch) in line.char_indices() {
+        if !matches!(ch, '0'..='7') {
+            end = i;
+            break;
+        }
+    }
+    if end == 0 && !line.is_empty() && matches!(line.as_bytes()[0], b'0'..=b'7') {
+        end = line.len();
+    }
+    if end == 0 {
+        if patch_input_display.is_empty() || patch_input_display == "<stdin>" {
+            bail!("invalid mode on line {line_no}: {line}");
+        }
+        bail!("invalid mode at {patch_input_display}:{line_no}: {line}");
+    }
+    let rest = &line[end..];
+    if !rest.is_empty() && !rest.starts_with(|c: char| c.is_ascii_whitespace()) {
+        if patch_input_display.is_empty() || patch_input_display == "<stdin>" {
+            bail!("invalid mode on line {line_no}: {line}");
+        }
+        bail!("invalid mode at {patch_input_display}:{line_no}: {line}");
+    }
+    let oct_str = &line[..end];
+    let raw = u32::from_str_radix(oct_str, 8).map_err(|_| {
+        if patch_input_display.is_empty() || patch_input_display == "<stdin>" {
+            anyhow::anyhow!("invalid mode on line {line_no}: {line}")
+        } else {
+            anyhow::anyhow!("invalid mode at {patch_input_display}:{line_no}: {line}")
+        }
+    })?;
+    Ok(canon_mode(raw))
+}
+
+fn validate_and_canonicalize_patch_modes(
+    patches: &mut [FilePatch],
+    patch_input_display: &str,
+) -> Result<()> {
+    for fp in patches.iter_mut() {
+        if let Some(ref s) = fp.old_mode {
+            let line = fp.old_mode_line.unwrap_or(0);
+            let canon = parse_mode_token(s, patch_input_display, line.max(1))?;
+            fp.old_mode = Some(format!("{canon:o}"));
+        }
+        if let Some(ref s) = fp.new_mode {
+            let line = fp.new_mode_line.unwrap_or(0);
+            let canon = parse_mode_token(s, patch_input_display, line.max(1))?;
+            fp.new_mode = Some(format!("{canon:o}"));
+        }
+    }
+    Ok(())
+}
+
+/// Parse canonical mode string (already validated) to `u32`.
 fn parse_mode(s: &str) -> u32 {
-    u32::from_str_radix(s, 8).unwrap_or(0o100644)
+    u32::from_str_radix(s.trim(), 8).unwrap_or(MODE_REGULAR)
+}
+
+fn preimage_mode_mismatch_warn(path: &str, st_mode: u32, expected: u32) {
+    eprintln!(
+        "warning: {} has type {:o}, expected {:o}",
+        path, st_mode, expected
+    );
+}
+
+/// Git `check_preimage`: compute `st_mode` for comparing against `patch->old_mode`.
+fn preimage_st_mode_for_apply(
+    trust_file_mode: bool,
+    cached: bool,
+    check_index: bool,
+    ce_mode: Option<u32>,
+    st_stat: Option<u32>,
+    patch_old_declared: Option<u32>,
+    old_path_display: &str,
+) -> Result<u32> {
+    if cached {
+        return ce_mode
+            .ok_or_else(|| anyhow::anyhow!("{old_path_display}: does not exist in index"));
+    }
+    if check_index {
+        let ce = ce_mode
+            .ok_or_else(|| anyhow::anyhow!("{old_path_display}: does not exist in index"))?;
+        let st = st_stat.ok_or_else(|| anyhow::anyhow!("failed to stat {}", old_path_display))?;
+        let is_reg = st & S_IFMT == S_IFREG;
+        if trust_file_mode || !is_reg {
+            return Ok(ce_mode_from_stat(Some(ce), st, trust_file_mode));
+        }
+        return Ok(ce);
+    }
+    let st = st_stat.ok_or_else(|| anyhow::anyhow!("failed to stat {}", old_path_display))?;
+    let is_reg = st & S_IFMT == S_IFREG;
+    if trust_file_mode || !is_reg {
+        return Ok(ce_mode_from_stat(ce_mode, st, trust_file_mode));
+    }
+    if let Some(ce) = ce_mode {
+        return Ok(ce);
+    }
+    Ok(patch_old_declared.unwrap_or(MODE_REGULAR))
+}
+
+/// Reconcile patch extended modes with index/stat like Git `check_preimage`.
+fn reconcile_filepatch_preimage_modes(
+    fp: &mut FilePatch,
+    trust_file_mode: bool,
+    cached: bool,
+    check_index: bool,
+    ce_mode: Option<u32>,
+    st_stat: Option<u32>,
+    old_path_display: &str,
+) -> Result<()> {
+    if fp.is_new {
+        return Ok(());
+    }
+    let old_name = fp
+        .old_path
+        .as_deref()
+        .filter(|p| *p != "/dev/null")
+        .unwrap_or(old_path_display);
+
+    let patch_old = fp.old_mode.as_ref().map(|s| parse_mode(s));
+
+    let st_mode = preimage_st_mode_for_apply(
+        trust_file_mode,
+        cached,
+        check_index,
+        ce_mode,
+        st_stat,
+        patch_old,
+        old_path_display,
+    )?;
+
+    if fp.old_mode.is_none() {
+        fp.old_mode = Some(format!("{st_mode:o}"));
+    }
+    let effective_old = patch_old.unwrap_or(st_mode);
+    if (st_mode ^ effective_old) & S_IFMT != 0 {
+        bail!("{old_name}: wrong type");
+    }
+    if st_mode != effective_old {
+        preimage_mode_mismatch_warn(old_name, st_mode, effective_old);
+    }
+    if fp.new_mode.is_none() && !fp.is_deleted {
+        fp.new_mode = Some(format!("{st_mode:o}"));
+    }
+    Ok(())
+}
+
+/// Fill in missing `old_mode` / `new_mode` and emit mode mismatch warnings (Git `check_preimage`).
+fn prepare_patch_modes_for_apply(patches: &mut [FilePatch], args: &Args) -> Result<()> {
+    let repo_ok = Repository::discover(None).ok();
+    let index = repo_ok.as_ref().and_then(|r| r.load_index().ok());
+    let trust_file_mode = repo_ok
+        .as_ref()
+        .map(|r| {
+            ConfigSet::load(Some(&r.git_dir), true)
+                .unwrap_or_default()
+                .get_bool("core.fileMode")
+                .and_then(|v| v.ok())
+                .unwrap_or(true)
+        })
+        .unwrap_or(true);
+
+    for fp in patches.iter_mut() {
+        if fp.is_new {
+            continue;
+        }
+        let Some(source) = fp.source_path() else {
+            continue;
+        };
+        if source == "/dev/null" {
+            continue;
+        }
+        let adjusted = adjust_path(source, args.directory.as_deref());
+        let ce_mode = index
+            .as_ref()
+            .and_then(|ix| ix.get(adjusted.as_bytes(), 0))
+            .map(|e| e.mode);
+
+        if args.cached {
+            reconcile_filepatch_preimage_modes(
+                fp,
+                trust_file_mode,
+                true,
+                false,
+                ce_mode,
+                None,
+                &adjusted,
+            )?;
+            continue;
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = Path::new(&adjusted);
+            let st_stat = match fs::symlink_metadata(path) {
+                Ok(meta) => Some(meta.permissions().mode()),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    if can_apply_with_empty_preimage(fp) {
+                        None
+                    } else {
+                        return Err(err)
+                            .with_context(|| format!("failed to stat {}", path.display()));
+                    }
+                }
+                Err(err) => {
+                    return Err(err).with_context(|| format!("failed to stat {}", path.display()));
+                }
+            };
+            let Some(st) = st_stat else {
+                continue;
+            };
+            reconcile_filepatch_preimage_modes(
+                fp,
+                trust_file_mode,
+                false,
+                args.index,
+                ce_mode,
+                Some(st),
+                &adjusted,
+            )?;
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (ce_mode, trust_file_mode);
+            bail!("file mode handling is only supported on Unix");
+        }
+    }
+
+    Ok(())
 }

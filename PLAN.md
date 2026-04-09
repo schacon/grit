@@ -479,7 +479,7 @@ commit → check it off → move on.
 - [ ] `t4119-apply-config` █░░░░░░░░░░░░░░░░░░░ 1/11 (10 left) — git apply --whitespace=strip and configuration file.
 
 - [ ] `t4215-log-skewed-merges` ░░░░░░░░░░░░░░░░░░░░ 0/10 (10 left) — git log --graph of skewed merges
-- [ ] `t4129-apply-samemode` ██████████░░░░░░░░░░ 12/23 (11 left) — applying patch with mode bits
+- [x] `t4129-apply-samemode` — applying patch with mode bits (23/23)
 - [x] `t4048-diff-combined-binary` ████████████████████ 14/14 (0 left) — combined and merge diff handle binary files and textconv
 - [ ] `t4012-diff-binary` ███░░░░░░░░░░░░░░░░░ 2/13 (11 left) — Binary diff and apply
 
