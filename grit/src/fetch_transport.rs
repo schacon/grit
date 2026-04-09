@@ -393,6 +393,12 @@ pub(crate) fn spawn_upload_pack_with_proto(
         .with_context(|| format!("failed to spawn upload-pack: {script}"))
 }
 
+/// Spawn `upload-pack` for local pipe negotiation ([`fetch_via_upload_pack_skipping`], etc.).
+///
+/// Always uses **protocol v0** ref advertisement for the child (`GIT_PROTOCOL` cleared), even when
+/// the user's `protocol.version` is 2. The local fetch client reads the v0 pkt-line ref list via
+/// [`read_advertisement`]; a v2 server would emit `version 2` capability lines first and no ref
+/// rows, which breaks refspec resolution (e.g. `t5501-fetch-push-alternates`).
 pub(crate) fn spawn_upload_pack(
     cmd_template: Option<&str>,
     repo_path: &Path,
@@ -401,6 +407,7 @@ pub(crate) fn spawn_upload_pack(
     // spawn the server side without forcing `GIT_PROTOCOL=version=2`, even when the client
     // defaults to `protocol.version=2` for HTTP/file v2 — otherwise `upload-pack` enters the v2
     // path and rejects v0 `want` lines as "unknown capability" (t0411 lazy-fetch re-enable).
+    // Force protocol 0 on the wire so the ref advertisement matches [`read_advertisement`] (t5501).
     spawn_upload_pack_with_proto(cmd_template, repo_path, 0)
 }
 
