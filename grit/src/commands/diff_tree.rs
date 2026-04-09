@@ -1678,6 +1678,7 @@ fn write_patch_entry(
         0,
         "",
         "",
+        quote_fully,
     );
     write!(out, "{patch}")?;
 

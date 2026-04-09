@@ -75,7 +75,12 @@ pub struct Args {
     pub allow_empty: bool,
 
     /// Strip N leading path components from diff paths (default: 1).
-    #[arg(short = 'p', default_value = "1")]
+    #[arg(
+        short = 'p',
+        default_value = "1",
+        allow_hyphen_values = true,
+        value_parser = parse_apply_p_value
+    )]
     pub strip: usize,
 
     /// Prepend directory to all file paths in the patch.
@@ -775,11 +780,34 @@ fn find_name_common_bounded(
     Some(slice.to_vec())
 }
 
+/// Path bytes from a traditional `---`/`+++` nameline that starts with `"` (GNU `diff -u`):
+/// `"a/"sub/file1` is `a/` (quoted) immediately followed by `sub/file1` → `a/sub/file1`.
+fn traditional_quoted_nameline_path_bytes(line: &[u8]) -> Option<Vec<u8>> {
+    let s = std::str::from_utf8(line).ok()?;
+    let mut remaining = s;
+    let mut out = Vec::new();
+    if !remaining.starts_with('"') {
+        return None;
+    }
+    let (decoded, rest) = unquote_c_style_diff_prefix(remaining)?;
+    out.extend_from_slice(&decoded);
+    remaining = rest;
+    if !remaining.is_empty() && !remaining.starts_with('"') {
+        let end = remaining
+            .as_bytes()
+            .iter()
+            .position(|&b| b == b'\t' || b == b'\n' || b == b'\r')
+            .unwrap_or(remaining.len());
+        out.extend_from_slice(&remaining.as_bytes()[..end]);
+    }
+    Some(out)
+}
+
 /// Git `find_name_traditional` on the line after `--- ` / `+++ ` (no prefix).
 fn find_name_traditional(line: &[u8], def: Option<&[u8]>, p_value: usize) -> Option<Vec<u8>> {
     if line.first() == Some(&b'"') {
-        let (decoded, _) = unquote_c_style_diff_prefix(std::str::from_utf8(line).ok()?)?;
-        let skip = skip_tree_prefix_bytes(&decoded, p_value)?;
+        let full = traditional_quoted_nameline_path_bytes(line)?;
+        let skip = skip_tree_prefix_bytes(&full, p_value)?;
         return Some(skip.to_vec());
     }
     let ts = diff_timestamp_len(line);
@@ -968,8 +996,17 @@ fn parse_traditional_patch_pair(
 /// Default filename from `diff --git` when both sides agree (Git `git_header_name`).
 fn git_header_def_name(line: &str, p_value: usize) -> Option<String> {
     let rest = line.strip_prefix("diff --git ").unwrap_or(line);
-    let rest_b = rest.as_bytes();
 
+    if let Some((a_token, b_token)) = split_diff_git_paths(rest) {
+        let ra = skip_tree_prefix_bytes(a_token.as_bytes(), p_value)?;
+        let rb = skip_tree_prefix_bytes(b_token.as_bytes(), p_value)?;
+        if ra != rb {
+            return None;
+        }
+        return bytes_to_path_string(ra).ok();
+    }
+
+    let rest_b = rest.as_bytes();
     if rest_b.first() == Some(&b'"') {
         let (first_decoded, second_raw) = unquote_c_style_diff_prefix(rest)?;
         let rel_first = skip_tree_prefix_bytes(&first_decoded, p_value)?;
@@ -985,57 +1022,13 @@ fn git_header_def_name(line: &str, p_value: usize) -> Option<String> {
             }
         } else {
             let rel2 = skip_tree_prefix_bytes(second.as_bytes(), p_value)?;
-            if rel2.len() != rel_first.len() || rel2 != rel_first {
+            if rel2 != rel_first {
                 return None;
             }
         }
         return bytes_to_path_string(rel_first).ok();
     }
 
-    let name = skip_tree_prefix_bytes(rest_b, p_value)?;
-    let name_start = name.as_ptr() as usize - rest_b.as_ptr() as usize;
-
-    for offset in 0..name.len() {
-        if name[offset] != b'"' {
-            continue;
-        }
-        let second_slice = &rest_b[name_start + offset..];
-        let (decoded, _) = unquote_c_style_diff_prefix(std::str::from_utf8(second_slice).ok()?)?;
-        let np = skip_tree_prefix_bytes(&decoded, p_value)?;
-        let plen = np.len();
-        if plen < offset
-            && name.len() > plen
-            && &name[..plen] == np
-            && name[plen].is_ascii_whitespace()
-        {
-            return bytes_to_path_string(np).ok();
-        }
-        return None;
-    }
-
-    let line_len = rest.len().saturating_sub(name_start);
-    let mut len = 0usize;
-    while len < line_len {
-        match rest_b[name_start + len] {
-            b'\n' => return None,
-            b'\t' | b' ' => {
-                let after = name_start + len + 1;
-                if after > name_start + line_len {
-                    return None;
-                }
-                let second =
-                    skip_tree_prefix_bytes(&rest_b[after..name_start + line_len], p_value)?;
-                let names_match =
-                    name.len() >= len && second.len() >= len && name[..len] == second[..len];
-                let boundary_ok = second.get(len) == Some(&b'\n') || second.len() == len;
-                if names_match && boundary_ok {
-                    return bytes_to_path_string(&name[..len]).ok();
-                }
-            }
-            _ => {}
-        }
-        len += 1;
-    }
     None
 }
 
@@ -1180,8 +1173,12 @@ fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
             if let Some((a, b)) = split_diff_git_paths(rest) {
                 fp.diff_old_path = Some(a.clone());
                 fp.diff_new_path = Some(b.clone());
-                fp.old_path = Some(a);
-                fp.new_path = Some(b);
+                let old_raw = skip_tree_prefix_bytes(a.as_bytes(), p_strip)
+                    .ok_or_else(|| anyhow::anyhow!("unable to strip path prefix"))?;
+                let new_raw = skip_tree_prefix_bytes(b.as_bytes(), p_strip)
+                    .ok_or_else(|| anyhow::anyhow!("unable to strip path prefix"))?;
+                fp.old_path = Some(bytes_to_path_string(old_raw)?);
+                fp.new_path = Some(bytes_to_path_string(new_raw)?);
             }
             i += 1;
 
@@ -1688,6 +1685,54 @@ fn parse_range(s: &str) -> Result<(usize, usize)> {
 // ---------------------------------------------------------------------------
 // Strip / directory adjustment
 // ---------------------------------------------------------------------------
+
+/// Parse `-p` like Git: a non-negative integer, with Git's error text on failure.
+fn parse_apply_p_value(raw: &str) -> Result<usize, String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Err(format!(
+            "option -p expects a non-negative integer, got '{raw}'"
+        ));
+    }
+    if s.starts_with('-') {
+        return Err(format!(
+            "option -p expects a non-negative integer, got '{raw}'"
+        ));
+    }
+    if !s.chars().all(|c| c.is_ascii_digit()) {
+        return Err(format!(
+            "option -p expects a non-negative integer, got '{raw}'"
+        ));
+    }
+    s.parse::<usize>()
+        .map_err(|_| format!("option -p expects a non-negative integer, got '{raw}'"))
+}
+
+/// Reject `-p` counts that strip past every path component in a `diff --git` header (Git error).
+fn ensure_diff_git_headers_strip_ok(lines: &[&str], strip: usize) -> Result<()> {
+    if strip == 0 {
+        return Ok(());
+    }
+    for (idx, line) in lines.iter().enumerate() {
+        if !line.starts_with("diff --git ") {
+            continue;
+        }
+        let rest = line.trim_end_matches(['\r', '\n']);
+        let rest = &rest["diff --git ".len()..];
+        let Some((a, b)) = split_diff_git_paths(rest) else {
+            continue;
+        };
+        if skip_tree_prefix_bytes(a.as_bytes(), strip).is_none()
+            || skip_tree_prefix_bytes(b.as_bytes(), strip).is_none()
+        {
+            bail!(
+                "git diff header lacks filename information when removing {strip} leading pathname components (line {})",
+                idx + 1
+            );
+        }
+    }
+    Ok(())
+}
 
 /// Strip `n` leading path components.
 fn strip_components(path: &str, n: usize) -> String {
@@ -3796,6 +3841,9 @@ pub fn run(mut args: Args) -> Result<()> {
         }
         buf
     };
+
+    let diff_git_lines: Vec<&str> = input.lines().collect();
+    ensure_diff_git_headers_strip_ok(&diff_git_lines, args.strip)?;
 
     let mut patches = parse_patch(&input, args.strip)?;
     normalize_mismatched_diff_git_paths(&mut patches, args.strip);

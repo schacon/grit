@@ -6954,6 +6954,7 @@ fn log_write_patch_entry(
         0,
         src_pfx,
         dst_pfx,
+        true,
     );
     let patch = apply_diff_output_indicators(&patch, args);
     write!(out, "{patch}")?;

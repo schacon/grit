@@ -1267,6 +1267,7 @@ fn show_commit(
                 context,
                 &args.anchored,
                 line_algo,
+                true,
             )
         } else {
             unified_diff(&old_content, &new_content, old_path, new_path, context)
