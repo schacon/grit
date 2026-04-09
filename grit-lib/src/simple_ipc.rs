@@ -127,7 +127,7 @@ fn read_one_packet<R: Read>(r: &mut R, buf: &mut Vec<u8>) -> io::Result<Option<(
 fn read_packetized_to_end<R: Read>(r: &mut R) -> io::Result<Vec<u8>> {
     let mut out = Vec::new();
     loop {
-        if read_one_packet(r, &mut out)? == None {
+        if read_one_packet(r, &mut out)?.is_none() {
             break;
         }
     }

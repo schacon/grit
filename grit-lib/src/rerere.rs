@@ -236,9 +236,9 @@ fn handle_conflict(
             put_marker(&mut out, '>', marker_size);
             if let Some(h) = ctx {
                 h.update(one.as_bytes());
-                h.update(&[0]);
+                h.update([0]);
                 h.update(two.as_bytes());
-                h.update(&[0]);
+                h.update([0]);
             }
             return Ok(out);
         } else {
@@ -838,7 +838,7 @@ pub fn rerere_post_commit(repo: &Repository) -> Result<()> {
 /// `git rerere clear` — drop unresolved preimages tracked in `MERGE_RR`, remove `MERGE_RR`.
 pub fn rerere_clear(git_dir: &Path) -> Result<()> {
     let merge_rr = read_merge_rr(git_dir)?;
-    for (_path, ent) in &merge_rr {
+    for ent in merge_rr.values() {
         let Some(id) = &ent.id else {
             continue;
         };
