@@ -3103,21 +3103,36 @@ fn run_set_url(args: &SetUrlArgs, _quiet: bool) -> Result<()> {
 
     let url_key = format!("submodule.{}.url", sm.name);
     config.set(&url_key, &args.newurl)?;
+    // When the logical submodule name differs from its path, drop any mistaken
+    // `submodule.<path>.url` entry so `git config` sees a single canonical URL
+    // (matches Git `submodule set-url` + `.gitmodules` layout).
+    if sm.name != sm.path {
+        let path_url_key = format!("submodule.{}.url", sm.path);
+        let _ = config.unset(&path_url_key);
+    }
     config.write()?;
 
-    // Also update in local config if initialized.
+    // Mirror `git submodule set-url`: after `.gitmodules`, run the same URL sync as
+    // `submodule sync` for initialized (active) submodules only.
     let config_path = repo.git_dir.join("config");
-    if config_path.exists() {
-        let local_content = fs::read_to_string(&config_path)?;
-        let mut local_config = ConfigFile::parse(&config_path, &local_content, ConfigScope::Local)?;
-        let has_url = local_config.entries.iter().any(|e| e.key == url_key);
-        if has_url {
-            local_config.set(&url_key, &args.newurl)?;
-            local_config.write()?;
-        }
+    if !config_path.exists() {
+        return Ok(());
+    }
+    let local_content = fs::read_to_string(&config_path)?;
+    let mut local_config = ConfigFile::parse(&config_path, &local_content, ConfigScope::Local)?;
+    let has_url = local_config.entries.iter().any(|e| e.key == url_key);
+    if !has_url {
+        return Ok(());
     }
 
-    // Sync the submodule's remote.origin.url (like git submodule sync does).
+    let super_url = resolve_submodule_super_url(work_tree, &repo.git_dir, &args.newurl)?;
+    local_config.set(&url_key, &super_url)?;
+    if sm.name != sm.path {
+        let path_url_key = format!("submodule.{}.url", sm.path);
+        let _ = local_config.unset(&path_url_key);
+    }
+    local_config.write()?;
+
     let resolved_url =
         resolve_submodule_sub_origin_url(work_tree, &repo.git_dir, &sm.path, &args.newurl)?;
     let sub_path = work_tree.join(&sm.path);
