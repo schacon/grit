@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -1246,7 +1246,7 @@ t7520-ignored-hook-warning	t7	yes	5	3	2	false	ok	0
 t7521-ignored-mode	t7	yes	12	1	11	false	ok	0
 t7524-commit-summary	t7	yes	2	2	0	true	ok	0
 t7525-status-rename	t7	yes	15	10	5	false	ok	0
-t7526-commit-pathspec-file	t7	yes	11	2	9	false	ok	0
+t7526-commit-pathspec-file	t7	yes	11	11	0	true	ok	0
 t7527-builtin-fsmonitor	t7	yes	0	0	0	false	ok	0
 t7528-signed-commit-ssh	t7	skip	29	0	0	false	ok	3
 t7600-merge	t7	skip	83	0	0	false	ok	0

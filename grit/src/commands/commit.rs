@@ -26,7 +26,7 @@ use crate::ident::{resolve_email, resolve_name, IdentRole};
 
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use time::OffsetDateTime;
@@ -183,6 +183,14 @@ pub struct Args {
     #[arg(long = "reset-author")]
     pub reset_author: bool,
 
+    /// Read pathspecs from a file (use `-` for stdin), same rules as `git add`.
+    #[arg(long = "pathspec-from-file", value_name = "FILE")]
+    pub pathspec_from_file: Option<String>,
+
+    /// NUL-separated entries for `--pathspec-from-file` (C-quoting not allowed).
+    #[arg(long = "pathspec-file-nul")]
+    pub pathspec_file_nul: bool,
+
     /// Pathspec — files to include in the commit (stages them first).
     #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
     pub pathspec: Vec<String>,
@@ -214,6 +222,35 @@ pub fn run(mut args: Args) -> Result<()> {
         .is_some_and(|s| s == "-q" || s == "--quiet")
     {
         args.pathspec.pop();
+    }
+
+    if args.pathspec_file_nul && args.pathspec_from_file.is_none() {
+        bail!("fatal: the option '--pathspec-file-nul' requires '--pathspec-from-file'");
+    }
+
+    if let Some(ref psf) = args.pathspec_from_file {
+        if args.interactive || args.patch {
+            bail!(
+                "fatal: options '--pathspec-from-file' and '--interactive/--patch' cannot be used together"
+            );
+        }
+        if args.all {
+            bail!("fatal: options '--pathspec-from-file' and '-a' cannot be used together");
+        }
+        if !args.pathspec.is_empty() {
+            bail!("fatal: '--pathspec-from-file' and pathspec arguments cannot be used together");
+        }
+        let data = if psf == "-" {
+            let mut buf = Vec::new();
+            std::io::stdin()
+                .read_to_end(&mut buf)
+                .context("reading pathspecs from stdin")?;
+            buf
+        } else {
+            fs::read(psf).with_context(|| format!("cannot read pathspec file '{psf}'"))?
+        };
+        args.pathspec =
+            crate::pathspec::parse_pathspecs_from_source(&data, args.pathspec_file_nul)?;
     }
 
     // Validate conflicting options
@@ -300,6 +337,18 @@ pub fn run(mut args: Args) -> Result<()> {
         if args.file.is_some() {
             bail!("fatal: options '-F' and '--fixup' cannot be used together");
         }
+    }
+
+    let fixup_amend_style = fixup_parsed
+        .as_ref()
+        .is_some_and(|f| matches!(f.mode, FixupMode::AmendStyle { .. }));
+    if args.pathspec.is_empty()
+        && (args.include
+            || (args.only
+                && !args.allow_empty
+                && (!args.amend || (fixup_parsed.is_some() && !fixup_amend_style))))
+    {
+        bail!("fatal: No paths with --include/--only does not make sense.");
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;
