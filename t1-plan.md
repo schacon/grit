@@ -125,7 +125,7 @@
 - [ ] t12610-rev-list-all-branches.sh
 - [x] t12620-rev-parse-resolve-ref.sh
 - [ ] t12630-rev-parse-is-bare.sh
-- [ ] t12650-config-null-value.sh
+- [x] t12650-config-null-value.sh
 - [x] t12660-init-shared-perm.sh
 - [ ] t12670-branch-force-delete.sh
 - [ ] t12700-add-edit-intent.sh

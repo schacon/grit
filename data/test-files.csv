@@ -319,7 +319,7 @@ t12610-rev-list-all-branches	t1	yes	32	30	2	false	ok	0
 t12620-rev-parse-resolve-ref	t1	yes	32	32	0	true	ok	0
 t12630-rev-parse-is-bare	t1	yes	33	33	0	true	ok	0
 t12640-config-list-show-origin	t1	yes	33	33	0	true	ok	0
-t12650-config-null-value	t1	yes	34	33	1	false	ok	0
+t12650-config-null-value	t1	yes	34	34	0	true	ok	0
 t12660-init-shared-perm	t1	yes	37	37	0	true	ok	0
 t12670-branch-force-delete	t1	yes	32	32	0	true	ok	0
 t12700-add-edit-intent	t1	yes	37	31	6	false	ok	0
