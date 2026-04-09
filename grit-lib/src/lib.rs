@@ -40,6 +40,7 @@ pub mod ls_remote;
 pub mod merge_base;
 pub mod merge_diff;
 pub mod merge_file;
+pub mod mergetool_vimdiff;
 pub mod midx;
 pub mod name_rev;
 pub mod objects;
