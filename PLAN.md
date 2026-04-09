@@ -256,7 +256,7 @@ commit → check it off → move on.
 - [x] `t3012-ls-files-dedup` ████████████████████ 3/3 (0 left) — git ls-files --deduplicate test
 - [x] `t3307-notes-man` ████████████████████ 3/3 (0 left) — Examples from the git-notes man page
 
-- [ ] `t3423-rebase-reword` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git rebase interactive with rewording
+- [x] `t3423-rebase-reword` ████████████████████ 3/3 (0 left) — git rebase interactive with rewording
 - [ ] `t3702-add-edit` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — add -e basic tests
 - [ ] `t3450-history` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — tests for git-history command
 - [x] `t3305-notes-fanout` ████████████████████ 7/7 (0 left) — Test that adding/removing many notes triggers automatic fanout restructuring
