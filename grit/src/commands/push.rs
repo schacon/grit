@@ -20,7 +20,8 @@ use grit_lib::push_submodules::{
 };
 use grit_lib::refs;
 use grit_lib::repo::Repository;
-use grit_lib::state::resolve_head;
+use grit_lib::rev_parse;
+use grit_lib::state::{resolve_head, HeadState};
 
 use std::fs;
 use std::io::{self, IsTerminal, Write};
@@ -166,6 +167,15 @@ struct RefUpdate {
     expected_oid: Option<ObjectId>,
     /// Per-refspec force flag (from '+' prefix).
     refspec_force: bool,
+    /// When set, first column of pre-push stdin uses this instead of `local_ref` (Git uses literal `HEAD`).
+    pre_push_local_name: Option<String>,
+}
+
+fn pre_push_hook_local_display(u: &RefUpdate) -> &str {
+    u.pre_push_local_name
+        .as_deref()
+        .or(u.local_ref.as_deref())
+        .unwrap_or("(delete)")
 }
 
 /// Stable ref processing order for `push --mirror --atomic` (matches Git's stderr ordering in
@@ -746,6 +756,7 @@ fn push_to_url(
                 new_oid: Some(*local_oid),
                 expected_oid: None,
                 refspec_force: false,
+                pre_push_local_name: None,
             });
         }
         // Delete remote refs that don't exist locally
@@ -763,6 +774,7 @@ fn push_to_url(
                     new_oid: None,
                     expected_oid: None,
                     refspec_force: false,
+                    pre_push_local_name: None,
                 });
             }
         }
@@ -795,6 +807,7 @@ fn push_to_url(
                 new_oid: Some(*local_oid),
                 expected_oid: None,
                 refspec_force: false,
+                pre_push_local_name: None,
             });
         }
     } else if args.delete {
@@ -823,6 +836,7 @@ fn push_to_url(
                 new_oid: None,
                 expected_oid,
                 refspec_force: false,
+                pre_push_local_name: None,
             });
         }
     } else if !args.refspecs.is_empty() {
@@ -871,6 +885,7 @@ fn push_to_url(
                     new_oid: None,
                     expected_oid,
                     refspec_force: per_refspec_force,
+                    pre_push_local_name: None,
                 });
                 continue;
             }
@@ -904,6 +919,7 @@ fn push_to_url(
                             new_oid: Some(*local_oid),
                             expected_oid: None,
                             refspec_force: per_refspec_force,
+                            pre_push_local_name: None,
                         });
                     }
                 }
@@ -925,36 +941,25 @@ fn push_to_url(
                 continue;
             }
 
-            // Resolve HEAD to its target ref
-            let resolved_src = if src == "HEAD" {
-                match grit_lib::state::resolve_head(&repo.git_dir) {
-                    Ok(head) => match head {
-                        grit_lib::state::HeadState::Branch { refname, .. } => refname,
-                        grit_lib::state::HeadState::Detached { oid, .. } => oid.to_hex(),
-                        grit_lib::state::HeadState::Invalid => src.clone(),
-                    },
-                    Err(_) => src.clone(),
-                }
-            } else {
-                src.clone()
-            };
-            // When pushing HEAD without explicit :dst, use the resolved branch name
+            // When pushing HEAD without explicit :dst, use the resolved branch name for the remote side.
             let effective_dst = if dst == "HEAD" && src == "HEAD" {
-                resolved_src.clone()
+                match resolve_head(&repo.git_dir) {
+                    Ok(HeadState::Branch { refname, .. }) => refname,
+                    Ok(HeadState::Detached { oid, .. }) => oid.to_hex(),
+                    _ => dst.clone(),
+                }
             } else {
                 dst.clone()
             };
-            let (local_ref, local_oid) = resolve_push_src(&repo.git_dir, &resolved_src)
-                .with_context(|| format!("src refspec '{}' does not match any", src))?;
-            let remote_ref = if !spec_clean.contains(':') && !effective_dst.starts_with("refs/") {
-                if local_ref.starts_with("refs/tags/") {
+            let (local_ref, local_oid, pre_push_local_name) =
+                resolve_push_src_for_refspec(repo, &src)
+                    .with_context(|| format!("src refspec '{}' does not match any", src))?;
+            let remote_ref =
+                if !effective_dst.starts_with("refs/") && local_ref.starts_with("refs/tags/") {
                     format!("refs/tags/{effective_dst}")
                 } else {
                     normalize_ref(&effective_dst)
-                }
-            } else {
-                normalize_ref(&effective_dst)
-            };
+                };
             let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
 
             let expected_oid = resolve_force_with_lease_expect(
@@ -971,6 +976,7 @@ fn push_to_url(
                 new_oid: Some(local_oid),
                 expected_oid,
                 refspec_force: per_refspec_force,
+                pre_push_local_name,
             });
         }
     } else if !push_refspecs_from_config.is_empty() {
@@ -1033,6 +1039,7 @@ fn push_to_url(
                             new_oid: Some(*local_oid),
                             expected_oid: None,
                             refspec_force: force_flag,
+                            pre_push_local_name: None,
                         });
                     }
                 }
@@ -1063,6 +1070,7 @@ fn push_to_url(
                         new_oid: Some(local_oid),
                         expected_oid: None,
                         refspec_force: force_flag,
+                        pre_push_local_name: None,
                     });
                 } else {
                     submodule_tips.push(local_oid);
@@ -1071,14 +1079,14 @@ fn push_to_url(
             i += 1;
         }
     } else {
-        // Default: push current branch
+        // Default: push current branch (honors push.default upstream vs current/simple).
         let branch = current_branch.context("not on a branch; specify a refspec to push")?;
 
-        let local_ref = format!("refs/heads/{branch}");
-        let remote_ref = local_ref.clone();
+        let (local_ref, remote_ref) =
+            default_push_refs_for_current_branch(repo, config, remote_name, branch)?;
 
         let local_oid = refs::resolve_ref(&repo.git_dir, &local_ref)
-            .with_context(|| format!("branch '{}' has no commits", branch))?;
+            .with_context(|| format!("branch '{branch}' has no commits"))?;
         let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
 
         let expected_oid = resolve_force_with_lease_expect(
@@ -1095,6 +1103,7 @@ fn push_to_url(
             new_oid: Some(local_oid),
             expected_oid,
             refspec_force: false,
+            pre_push_local_name: None,
         });
     }
 
@@ -1113,6 +1122,7 @@ fn push_to_url(
                 new_oid: Some(*local_oid),
                 expected_oid: None,
                 refspec_force: false,
+                pre_push_local_name: None,
             });
         }
     }
@@ -1149,6 +1159,7 @@ fn push_to_url(
                                         new_oid: Some(*tag_oid),
                                         expected_oid: None,
                                         refspec_force: false,
+                                        pre_push_local_name: None,
                                     });
                                 }
                             }
@@ -1297,6 +1308,7 @@ fn push_to_url(
                     new_oid: Some(*local_oid),
                     expected_oid: None,
                     refspec_force: false,
+                    pre_push_local_name: None,
                 });
             }
         }
@@ -1420,9 +1432,27 @@ fn push_to_url(
     // Run pre-push hook (unless --no-verify)
     if !args.no_verify {
         let zero_oid = "0".repeat(40);
+        let mut hook_order: Vec<usize> = (0..updates.len()).collect();
+        if hook_order.len() > 1 {
+            let has_refs_named = updates
+                .iter()
+                .any(|u| pre_push_hook_local_display(u).starts_with("refs/"));
+            let has_non_refs_named = updates.iter().any(|u| {
+                let n = pre_push_hook_local_display(u);
+                n != "(delete)" && !n.starts_with("refs/")
+            });
+            if has_refs_named && has_non_refs_named {
+                hook_order.sort_by(|&ia, &ib| {
+                    let pa = pre_push_hook_local_display(&updates[ia]).starts_with("refs/");
+                    let pb = pre_push_hook_local_display(&updates[ib]).starts_with("refs/");
+                    pb.cmp(&pa)
+                });
+            }
+        }
         let mut hook_lines = Vec::new();
-        for update in &updates {
-            let local_ref = update.local_ref.as_deref().unwrap_or("(delete)");
+        for i in hook_order {
+            let update = &updates[i];
+            let local_ref = pre_push_hook_local_display(update);
             let local_oid = update
                 .new_oid
                 .map(|o| o.to_hex())
@@ -2177,6 +2207,7 @@ fn collect_matching_push_updates(
             new_oid: Some(*local_oid),
             expected_oid,
             refspec_force,
+            pre_push_local_name: None,
         });
     }
     Ok(())
@@ -2517,6 +2548,7 @@ fn push_prune_glob_refspec(
                 new_oid: None,
                 expected_oid,
                 refspec_force: force,
+                pre_push_local_name: None,
             });
         }
     }
@@ -2564,28 +2596,95 @@ fn normalize_ref(name: &str) -> String {
     }
 }
 
-fn resolve_push_src(git_dir: &Path, src: &str) -> Result<(String, ObjectId)> {
-    if src.starts_with("refs/") {
-        let oid = refs::resolve_ref(git_dir, src)?;
-        return Ok((src.to_owned(), oid));
+fn push_default_mode(config: &ConfigSet) -> String {
+    config
+        .get("push.default")
+        .map(|v| v.to_ascii_lowercase())
+        .unwrap_or_else(|| "simple".to_owned())
+}
+
+fn default_push_refs_for_current_branch(
+    _repo: &Repository,
+    config: &ConfigSet,
+    remote_name: &str,
+    branch: &str,
+) -> Result<(String, String)> {
+    let local_ref = format!("refs/heads/{branch}");
+    match push_default_mode(config).as_str() {
+        "upstream" => {
+            let track_remote = config
+                .get(&format!("branch.{branch}.remote"))
+                .filter(|r| r != ".")
+                .with_context(|| {
+                    format!(
+                        "The current branch {branch} has no upstream branch.\n\
+                         To push the current branch and set the remote as upstream, use\n\n\
+                            git push --set-upstream {remote_name} {branch}\n"
+                    )
+                })?;
+            if track_remote != remote_name {
+                bail!(
+                    "You are pushing to remote '{remote_name}', which is not the upstream of\n\
+                     your current branch '{branch}', without telling me what to push\n\
+                     to update which remote branch."
+                );
+            }
+            let merge = config
+                .get(&format!("branch.{branch}.merge"))
+                .with_context(|| format!("branch '{branch}' has no configured merge ref"))?;
+            Ok((local_ref, merge))
+        }
+        _ => Ok((local_ref.clone(), local_ref)),
     }
+}
+
+fn resolve_push_src_for_refspec(
+    repo: &Repository,
+    src: &str,
+) -> Result<(String, ObjectId, Option<String>)> {
+    if src == "HEAD" {
+        return match resolve_head(&repo.git_dir)? {
+            HeadState::Branch {
+                refname,
+                oid: Some(oid),
+                ..
+            } => Ok((refname, oid, Some("HEAD".to_owned()))),
+            HeadState::Detached { oid } => Ok((oid.to_hex(), oid, Some("HEAD".to_owned()))),
+            HeadState::Branch { .. } | HeadState::Invalid => {
+                bail!("HEAD does not point to a valid object");
+            }
+        };
+    }
+
+    if src.starts_with("refs/") {
+        let oid = refs::resolve_ref(&repo.git_dir, src)?;
+        return Ok((src.to_owned(), oid, None));
+    }
+
     if src.len() == 40 {
         if let Ok(oid) = src.parse::<ObjectId>() {
-            return Ok((src.to_owned(), oid));
+            return Ok((src.to_owned(), oid, None));
         }
     }
+
     let mut matches: Vec<(String, ObjectId)> = Vec::new();
     for prefix in &["refs/heads/", "refs/tags/", "refs/remotes/"] {
         let full = format!("{prefix}{src}");
-        if let Ok(oid) = refs::resolve_ref(git_dir, &full) {
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &full) {
             matches.push((full, oid));
         }
     }
     match matches.len() {
-        0 => bail!("ref not found: {}", src),
-        1 => Ok(matches.into_iter().next().unwrap()),
+        0 => {
+            let oid = rev_parse::resolve_revision(repo, src)?;
+            Ok((src.to_owned(), oid, None))
+        }
+        1 => {
+            let (name, oid) = matches.into_iter().next().unwrap();
+            Ok((name, oid, None))
+        }
         _ => {
-            eprintln!("error: src refspec {} matches more than one", src);
+            eprintln!("error: src refspec {src} matches more than one");
             bail!("failed to push some refs");
         }
     }

@@ -987,7 +987,7 @@ t5563-simple-http-auth	t5	skip	17	0	0	false	ok	0
 t5564-http-proxy	t5	yes	8	3	5	false	ok	0
 t5565-push-multiple	t5	yes	2	2	0	true	ok	0
 t5570-git-daemon	t5	yes	25	14	11	false	ok	0
-t5571-pre-push-hook	t5	yes	11	5	6	false	ok	0
+t5571-pre-push-hook	t5	yes	11	10	1	false	ok	0
 t5572-pull-submodule	t5	yes	69	22	47	false	ok	0
 t5573-pull-verify-signatures	t5	skip	16	0	0	false	ok	0
 t5574-fetch-output	t5	yes	14	1	13	false	ok	0

@@ -6,12 +6,12 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   322 |
+| Completed   |   325 |
 | In progress |     5 |
-| Remaining   |   444 |
+| Remaining   |   441 |
 | **Total**   |   771 |
 
-Task lines in `PLAN.md`: 322 completed (`[x]`), 5 in progress (`[~]`), 444 remaining (`[ ]`).
+Task lines in `PLAN.md`: 325 completed (`[x]`), 5 in progress (`[~]`), 441 remaining (`[ ]`).
 
 ## Recently completed
 
@@ -21,6 +21,7 @@ Task lines in `PLAN.md`: 322 completed (`[x]`), 5 in progress (`[~]`), 444 remai
 - `t5605-clone-local` — 23/23 tests pass (streaming pack unpack for 0-byte objects; local clone without `--shared` no longer writes source `alternates`; `--no-hardlinks` / `file://` copy-only objects; `--upload-pack` local-path rejection + env prefix for grit `upload-pack`; corrupt loose ref validation before ref copy; `fetch` no-op when `remote.*.url` is a bundle file; bundle clone HEAD/default-branch parity with Git for `bundle create tip` without `HEAD` line)
 - `t7418-submodule-sparse-gitmodules` — 9/9 tests pass (`read-tree -u`: gitlink checkout as empty dir, not blob read; `test-tool submodule` config-list/set/unset/writeable + harness delegation; `submodule summary --for-status`: ignore=all + index-vs-tree-out-of-sync gitlinks like `diff-index --ignore-submodules=dirty`; `submodule add`: `is_writing_gitmodules_ok` guard)
 - `t5609-clone-branch` — 7/7 tests pass (`clone --branch`: `read_raw_ref` for ref existence so `refs/remotes/origin/HEAD` is set when default branch is packed; reject `--branch` when `refs/heads/<name>` missing on source, including empty repos)
+- `t5571-pre-push-hook` — 11/11 tests pass (`push`: pre-push stdin uses literal `HEAD` and rev specs like `HEAD~`; `push.default=upstream` maps to `branch.*.merge` on the upstream remote; tag refspecs `tag:dst` map short `dst` under `refs/tags/` when source is a tag ref; hook stdin order matches Git for mixed ref/rev specs; harness CSV/dashboards refreshed)
 - `t5802-connect-helper` — 8/8 tests pass (`ext::` sh -c upload-pack argv extraction; `git daemon --inetd` minimal path; streaming unpack zero-byte trees + duplicate `want` dedup; fetch NAK round + tag-following for ext/HTTP; rev-parse `tag^1` peels tags; harness CSV/dashboards refreshed)
 - `t7421-submodule-summary-add` — 5/5 tests pass (`submodule summary`: index↔commit gitlink diff, pathspecs + renamed paths, `rev-parse` first line for abbrev; `submodule update --remote`: local URL fast path updates `refs/remotes/origin/*` + copies objects, stages gitlink in super index)
 - `t3422-rebase-incompatible-options` — 52/52 tests pass (`rebase`: apply vs merge option incompatibility; `rebase.rebaseMerges` / `rebase.updateRefs` with apply options; preprocess `-C<n>` for clap; harness CSV refreshed)
@@ -208,4 +209,4 @@ Task lines in `PLAN.md`: 322 completed (`[x]`), 5 in progress (`[~]`), 444 remai
 
 ## What Remains
 
-445 task lines still open in `PLAN.md` (plus 5 in progress). See `PLAN.md` for the full prioritized list.
+441 task lines still open in `PLAN.md` (plus 5 in progress). See `PLAN.md` for the full prioritized list.
