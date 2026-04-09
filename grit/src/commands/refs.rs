@@ -3,7 +3,9 @@
 //! Provides subcommands for ref database operations:
 //! - `verify`  — verify the ref database integrity
 //! - `migrate` — migrate ref storage format (stub)
+//! - `list`    — alias for `for-each-ref` (same options and output)
 
+use crate::commands::for_each_ref;
 use anyhow::{Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use std::fs;
@@ -31,8 +33,11 @@ pub enum RefsAction {
     },
     /// Optimize the ref database (pack loose refs).
     Optimize,
-    /// List all refs.
-    List,
+    /// List refs with filtering, sorting, and format atoms (`git for-each-ref` compatible).
+    List {
+        #[command(flatten)]
+        list_args: for_each_ref::Args,
+    },
 }
 
 /// Run `grit refs`.
@@ -43,7 +48,7 @@ pub fn run(args: Args) -> Result<()> {
         RefsAction::Verify => verify_refs(&repo),
         RefsAction::Migrate { ref_format } => migrate_refs(&repo, &ref_format),
         RefsAction::Optimize => optimize_refs(&repo),
-        RefsAction::List => list_refs(&repo),
+        RefsAction::List { list_args } => for_each_ref::run_refs_list(list_args),
     }
 }
 
@@ -373,14 +378,6 @@ fn verify_refs_dir(repo: &Repository, dir: &Path, bad_ref_name_level: &str) -> R
         }
     }
     Ok(errors)
-}
-
-fn list_refs(repo: &Repository) -> Result<()> {
-    let refs = grit_lib::refs::list_refs(&repo.git_dir, "refs/").context("failed to list refs")?;
-    for (name, oid) in refs {
-        println!("{oid} {name}");
-    }
-    Ok(())
 }
 
 fn optimize_refs(_repo: &Repository) -> Result<()> {

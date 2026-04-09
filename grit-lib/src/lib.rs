@@ -34,6 +34,7 @@ pub mod ignore;
 pub mod index;
 pub mod line_log;
 pub mod ls_remote;
+pub mod mailmap;
 pub mod merge_base;
 pub mod merge_diff;
 pub mod merge_file;
