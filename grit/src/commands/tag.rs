@@ -12,6 +12,8 @@ use grit_lib::reflog::reflog_path;
 use grit_lib::refs::append_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
+
+use crate::porcelain_rev::{resolve_porcelain_commitish_filter, resolve_porcelain_points_at};
 use grit_lib::state::resolve_head;
 use std::fs;
 use std::io::{self, Write};
@@ -405,22 +407,19 @@ fn list_tags(
 
     // Filter by --contains
     if let Some(rev) = contains {
-        let target =
-            resolve_revision(repo, rev).with_context(|| format!("not a valid commit: '{rev}'"))?;
+        let target = resolve_porcelain_commitish_filter(repo, rev)?;
         tags.retain(|(_, tag_oid)| tag_contains(repo, tag_oid, &target));
     }
 
     // Filter by --no-contains
     if let Some(rev) = no_contains {
-        let target =
-            resolve_revision(repo, rev).with_context(|| format!("not a valid commit: '{rev}'"))?;
+        let target = resolve_porcelain_commitish_filter(repo, rev)?;
         tags.retain(|(_, tag_oid)| !tag_contains(repo, tag_oid, &target));
     }
 
     // Filter by --points-at
     if let Some(rev) = points_at {
-        let target =
-            resolve_revision(repo, rev).with_context(|| format!("not a valid object: '{rev}'"))?;
+        let target = resolve_porcelain_points_at(repo, rev, false)?;
         tags.retain(|(_, tag_oid)| tag_points_at(repo, tag_oid, &target));
     }
 

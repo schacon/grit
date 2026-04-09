@@ -32,6 +32,7 @@ mod ident;
 mod pack_objects_upload;
 pub mod pathspec;
 pub mod pkt_line;
+mod porcelain_rev;
 mod precompose;
 pub mod protocol;
 mod protocol_wire;

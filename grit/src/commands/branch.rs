@@ -6,10 +6,12 @@ use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::zero_oid;
 use grit_lib::merge_base::count_symmetric_ahead_behind;
 use grit_lib::merge_base::is_ancestor;
-use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{resolve_revision, resolve_upstream_symbolic_name, symbolic_full_name};
+
+use crate::porcelain_rev::{resolve_porcelain_commitish_filter, resolve_porcelain_merged_commit};
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::stripspace::{process as stripspace_process, Mode as StripspaceMode};
 use std::collections::HashSet;
@@ -420,7 +422,7 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
                     .oid()
                     .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?
             } else {
-                resolve_revision_must_be_commit(repo, merged_val)?
+                resolve_porcelain_merged_commit(repo, merged_val)?
             };
             for b in &branches {
                 if is_ancestor(repo, b.oid, target_oid).unwrap_or(false) {
@@ -438,7 +440,7 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
                 .oid()
                 .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?
         } else {
-            resolve_revision_must_be_commit(repo, no_merged_val)?
+            resolve_porcelain_merged_commit(repo, no_merged_val)?
         };
         branches.retain(|b| !is_ancestor(repo, b.oid, target_oid).unwrap_or(true));
     }
@@ -448,7 +450,7 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         let contain_oids: Vec<ObjectId> = args
             .contains
             .iter()
-            .map(|r| resolve_revision_must_be_commit(repo, r))
+            .map(|r| resolve_porcelain_commitish_filter(repo, r))
             .collect::<Result<_>>()?;
         branches.retain(|b| {
             contain_oids
@@ -459,7 +461,7 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
 
     // Apply --no-contains filter
     for no_contains_rev in &args.no_contains {
-        let no_contains_oid = resolve_revision_must_be_commit(repo, no_contains_rev)?;
+        let no_contains_oid = resolve_porcelain_commitish_filter(repo, no_contains_rev)?;
         branches.retain(|b| !is_ancestor(repo, no_contains_oid, b.oid).unwrap_or(true));
     }
 
@@ -576,24 +578,6 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     }
 
     Ok(())
-}
-
-/// Resolve a revision and require the peeled object to be a commit (Git `branch --contains` rules).
-///
-/// On failure, prints Git-compatible messages to stderr and exits with code 129.
-fn resolve_revision_must_be_commit(repo: &Repository, spec: &str) -> Result<ObjectId> {
-    let oid = resolve_revision(repo, spec)?;
-    let object = repo.odb.read(&oid)?;
-    let hex = oid.to_hex();
-    let kind_msg = match object.kind {
-        ObjectKind::Commit => return Ok(oid),
-        ObjectKind::Tree => "tree",
-        ObjectKind::Blob => "blob",
-        ObjectKind::Tag => "tag",
-    };
-    eprintln!("error: object {hex} is a {kind_msg}, not a commit");
-    eprintln!("error: no such commit {hex}");
-    std::process::exit(129);
 }
 
 /// Sort branches by the given key.

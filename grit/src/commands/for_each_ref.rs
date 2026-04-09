@@ -13,6 +13,11 @@ use grit_lib::objects::{
 use grit_lib::refs::read_head;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
+
+use crate::porcelain_rev::{
+    resolve_porcelain_commitish_filter, resolve_porcelain_merged_commit,
+    resolve_porcelain_points_at,
+};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fs;
@@ -572,21 +577,15 @@ fn parse_packed_refs(git_dir: &Path) -> Result<Vec<(String, ObjectId)>> {
 
 fn apply_filters(repo: &Repository, opts: &Options, refs: &mut Vec<RefEntry>) -> Result<()> {
     if let Some(points_spec) = &opts.points_at {
-        let points_oid = resolve_revision(repo, points_spec)?;
-        // `resolve_revision` accepts a full 40-hex OID even when the object is
-        // absent (matching `git rev-parse`). For `--points-at`, Grit requires
-        // the object to exist so invalid targets are rejected (see t13070).
-        repo.odb
-            .read(&points_oid)
-            .map_err(|_| anyhow::anyhow!("object {points_oid} not found"))?;
+        let points_oid = resolve_porcelain_points_at(repo, points_spec, true)?;
         refs.retain(|entry| {
             entry.oid == Some(points_oid)
                 || entry.oid.and_then(|oid| peel_to_non_tag(repo, oid).ok()) == Some(points_oid)
         });
     }
 
-    let merged_base = resolve_optional_commitish(repo, opts.merged.as_ref())?;
-    let no_merged_base = resolve_optional_commitish(repo, opts.no_merged.as_ref())?;
+    let merged_base = resolve_optional_merged_commitish(repo, opts.merged.as_ref())?;
+    let no_merged_base = resolve_optional_merged_commitish(repo, opts.no_merged.as_ref())?;
     if let Some(base) = merged_base {
         refs.retain(|entry| {
             entry
@@ -607,8 +606,8 @@ fn apply_filters(repo: &Repository, opts: &Options, refs: &mut Vec<RefEntry>) ->
         });
     }
 
-    let contains_base = resolve_optional_commitish(repo, opts.contains.as_ref())?;
-    let no_contains_base = resolve_optional_commitish(repo, opts.no_contains.as_ref())?;
+    let contains_base = resolve_optional_contains_commitish(repo, opts.contains.as_ref())?;
+    let no_contains_base = resolve_optional_contains_commitish(repo, opts.no_contains.as_ref())?;
     if let Some(base) = contains_base {
         refs.retain(|entry| {
             entry
@@ -632,13 +631,24 @@ fn apply_filters(repo: &Repository, opts: &Options, refs: &mut Vec<RefEntry>) ->
     Ok(())
 }
 
-fn resolve_optional_commitish(
+fn resolve_optional_merged_commitish(
     repo: &Repository,
     raw: Option<&Option<String>>,
 ) -> Result<Option<ObjectId>> {
     match raw {
         None => Ok(None),
-        Some(Some(spec)) => Ok(Some(resolve_revision(repo, spec)?)),
+        Some(Some(spec)) => Ok(Some(resolve_porcelain_merged_commit(repo, spec)?)),
+        Some(None) => Ok(Some(resolve_porcelain_merged_commit(repo, "HEAD")?)),
+    }
+}
+
+fn resolve_optional_contains_commitish(
+    repo: &Repository,
+    raw: Option<&Option<String>>,
+) -> Result<Option<ObjectId>> {
+    match raw {
+        None => Ok(None),
+        Some(Some(spec)) => Ok(Some(resolve_porcelain_commitish_filter(repo, spec)?)),
         Some(None) => Ok(Some(resolve_revision(repo, "HEAD")?)),
     }
 }
