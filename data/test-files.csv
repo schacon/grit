@@ -835,7 +835,7 @@ t4210-log-i18n	t4	yes	21	17	4	false	ok	0
 t4211-line-log	t4	yes	53	21	32	false	ok	0
 t4212-log-corrupt	t4	yes	13	3	10	false	ok	0
 t4213-log-tabexpand	t4	yes	9	1	8	false	ok	0
-t4214-log-graph-octopus	t4	yes	17	6	11	false	ok	0
+t4214-log-graph-octopus	t4	yes	17	17	0	true	ok	0
 t4215-log-skewed-merges	t4	yes	10	0	10	false	ok	0
 t4216-log-bloom	t4	yes	167	12	155	false	ok	0
 t4217-log-limit	t4	yes	3	1	2	false	ok	0

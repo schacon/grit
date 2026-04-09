@@ -1,20 +1,21 @@
 # Progress — Grit Test Coverage
 
-**Updated:** 2026-04-08
+**Updated:** 2026-04-09
 
 ## Counts (derived from plan.md)
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   252 |
+| Completed   |   253 |
 | In progress |     4 |
-| Remaining   |   512 |
+| Remaining   |   511 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 252 completed (`[x]`), 4 in progress (`[~]`), 512 remaining (`[ ]`).
+Task lines in `PLAN.md`: 253 completed (`[x]`), 4 in progress (`[~]`), 511 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t4214-log-graph-octopus` — 17/17 tests pass (`git log --graph` skewed-left octopus, crossover, and colored graph lines; harness CSV/dashboards refreshed)
 - `t3060-ls-files-with-tree` — 8/8 tests pass (`ls-files --with-tree`: `Index::overlay_tree_on_index`, `-s/-u`/`--recurse-submodules` incompatibilities with `fatal:` + exit 128, cwd pathspec `sub/` matches `sub/file`; harness CSV refreshed)
 - `t12660-init-shared-perm` — 37/37 tests pass (default `grit init` applies Git-style group-shared chmod on `.git` tree: 775 dirs / 664 HEAD under umask 022; explicit `--shared` / `core.sharedRepository` writes config + `receive.denyNonFastforwards`; reinit without shared config leaves modes unchanged)
 - `t7520-ignored-hook-warning` — 5/5 tests pass (`tests/test-lib.sh` `test_hook`: `--disable`/`--remove`, resolve hook dir via `git rev-parse --absolute-git-dir`; second hint line uses `git config set advice.ignoredHook false`)
