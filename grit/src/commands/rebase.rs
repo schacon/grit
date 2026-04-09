@@ -381,6 +381,7 @@ fn validate_compat_options(args: &Args) -> Result<()> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RebaseTodoCmd {
     Pick,
+    Reword,
     Fixup,
     Squash,
 }
@@ -389,6 +390,7 @@ impl RebaseTodoCmd {
     fn as_str(self) -> &'static str {
         match self {
             RebaseTodoCmd::Pick => "pick",
+            RebaseTodoCmd::Reword => "reword",
             RebaseTodoCmd::Fixup => "fixup",
             RebaseTodoCmd::Squash => "squash",
         }
@@ -397,6 +399,7 @@ impl RebaseTodoCmd {
     fn parse_word(word: &str) -> Option<Self> {
         match word {
             "pick" | "p" => Some(RebaseTodoCmd::Pick),
+            "reword" | "r" => Some(RebaseTodoCmd::Reword),
             "fixup" | "f" => Some(RebaseTodoCmd::Fixup),
             "squash" | "s" => Some(RebaseTodoCmd::Squash),
             _ => None,
@@ -1295,6 +1298,27 @@ fn run_shell_editor(editor: &str, path: &Path) -> Result<std::process::ExitStatu
     }
     .context("failed to run editor")?;
     Ok(status)
+}
+
+/// Opens `GIT_EDITOR` on `COMMIT_EDITMSG` for an interactive reword during `rebase -i`.
+///
+/// Matches Git's sequencer path: seed the file, run `prepare-commit-msg` with source `reword`,
+/// then invoke the commit editor. Returns the edited message text (before final cleanup).
+fn run_commit_editor_for_reword(
+    repo: &Repository,
+    git_dir: &Path,
+    template: &str,
+) -> Result<String> {
+    let editmsg = git_dir.join("COMMIT_EDITMSG");
+    fs::write(&editmsg, template)?;
+    run_prepare_commit_msg_hook(repo, &editmsg, "reword")?;
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    let editor = git_editor_cmd(&config)?;
+    let status = run_shell_editor(&editor, &editmsg)?;
+    if !status.success() {
+        bail!("there was a problem with the editor");
+    }
+    fs::read_to_string(&editmsg).context("read COMMIT_EDITMSG after editor")
 }
 
 fn worktree_matches_head(repo: &Repository, git_dir: &Path) -> Result<bool> {
@@ -2396,9 +2420,11 @@ fn cherry_pick_for_rebase(
     let head_obj = repo.odb.read(&head_oid)?;
     let head_commit = parse_commit(&head_obj.data)?;
     let head_tree_oid = head_commit.tree;
+    let root_rebase = rb_dir.join("root").exists();
 
     // Already at the picked commit's parent tip — nothing to replay (matches Git's noop pick).
     // Fixup/squash must still run merge + message folding even when parent == HEAD.
+    // Reword still needs the commit editor even when the tree is already applied.
     if todo_cmd == RebaseTodoCmd::Pick {
         if let Some(p) = commit.parents.first() {
             if head_oid == *p {
@@ -2411,6 +2437,49 @@ fn cherry_pick_for_rebase(
                     checkout_merged_index(repo, wt, &old_index, &idx)?;
                 }
                 fs::write(git_dir.join("HEAD"), format!("{}\n", commit_oid.to_hex()))?;
+                return Ok(());
+            }
+        }
+    }
+    if todo_cmd == RebaseTodoCmd::Reword {
+        if let Some(p) = commit.parents.first() {
+            if head_oid == *p {
+                let old_index = load_index(repo)?;
+                let mut idx = Index::new();
+                idx.entries = tree_to_index_entries(repo, &commit_tree_oid, "")?;
+                idx.sort();
+                repo.write_index(&mut idx)?;
+                if let Some(wt) = &repo.work_tree {
+                    checkout_merged_index(repo, wt, &old_index, &idx)?;
+                }
+                let (template, _enc, _raw) = if root_rebase {
+                    let msg = message_for_root_replayed_commit(repo, &commit, true);
+                    (msg, commit.encoding.clone(), None)
+                } else {
+                    transcoded_replayed_message(&commit, &config)
+                };
+                let after_editor = run_commit_editor_for_reword(repo, git_dir, &template)?;
+                let cleaned =
+                    apply_commit_msg_cleanup(&after_editor, rebase_commit_msg_cleanup(&config));
+                let (message, encoding, raw_message) =
+                    finalize_message_for_commit_encoding(cleaned, &config);
+                let now = time::OffsetDateTime::now_utc();
+                let committer = resolve_identity(&config, "COMMITTER")?;
+                let commit_data = CommitData {
+                    tree: commit_tree_oid,
+                    parents: vec![head_oid],
+                    author: commit.author.clone(),
+                    committer: format_ident(&committer, now),
+                    author_raw: commit.author_raw.clone(),
+                    committer_raw: commit.committer_raw.clone(),
+                    encoding,
+                    message,
+                    raw_message,
+                };
+                let commit_bytes = serialize_commit(&commit_data);
+                let new_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
+                fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
+                append_rebase_rewrite_line(rb_dir, commit_oid, &new_oid)?;
                 return Ok(());
             }
         }
@@ -2462,11 +2531,15 @@ fn cherry_pick_for_rebase(
         }
     }
 
-    let root_rebase = rb_dir.join("root").exists();
-
     if has_conflicts {
         let _ = grit_lib::rerere::repo_rerere(repo, grit_lib::rerere::RerereAutoupdate::FromConfig);
-        fs::write(git_dir.join("MERGE_MSG"), &commit.message)?;
+        if todo_cmd == RebaseTodoCmd::Reword {
+            let (unicode, _enc, _raw) = transcoded_replayed_message(&commit, &config);
+            write_rebase_conflict_message(git_dir, &commit, &config)?;
+            fs::write(rb_dir.join("message"), unicode)?;
+        } else {
+            fs::write(git_dir.join("MERGE_MSG"), &commit.message)?;
+        }
         bail!("conflicts during cherry-pick of {}", commit_oid.to_hex());
     }
 
@@ -2560,20 +2633,34 @@ fn cherry_pick_for_rebase(
         return Ok(());
     }
 
-    // Create the rebased commit, preserving the original author (normal pick)
+    // Create the rebased commit, preserving the original author (normal pick / reword)
     let tree_oid = write_tree_from_index(&repo.odb, &merged_index, "")?;
 
     let now = time::OffsetDateTime::now_utc();
     let committer = resolve_identity(&config, "COMMITTER")?;
 
-    let (message, encoding, raw_message) = if root_rebase {
-        let msg = message_for_root_replayed_commit(repo, &commit, true);
-        (msg, commit.encoding.clone(), None)
+    let (message, encoding, raw_message) = if todo_cmd == RebaseTodoCmd::Reword {
+        let template = if root_rebase {
+            message_for_root_replayed_commit(repo, &commit, true)
+        } else {
+            let (unicode, _enc, _raw) = transcoded_replayed_message(&commit, &config);
+            unicode
+        };
+        let after_editor = run_commit_editor_for_reword(repo, git_dir, &template)?;
+        let cleaned = apply_commit_msg_cleanup(&after_editor, rebase_commit_msg_cleanup(&config));
+        finalize_message_for_commit_encoding(cleaned, &config)
     } else {
-        transcoded_replayed_message(&commit, &config)
+        let (msg_base, _enc_base, _raw_base) = if root_rebase {
+            let msg = message_for_root_replayed_commit(repo, &commit, true);
+            (msg, commit.encoding.clone(), None)
+        } else {
+            transcoded_replayed_message(&commit, &config)
+        };
+        let raw_msg = commit_message_after_prepare_hook(repo, git_dir, &msg_base, "message")?;
+        let message = apply_commit_msg_cleanup(&raw_msg, rebase_commit_msg_cleanup(&config));
+        finalize_message_for_commit_encoding(message, &config)
     };
-    let raw_msg = commit_message_after_prepare_hook(repo, git_dir, &message, "message")?;
-    let message = apply_commit_msg_cleanup(&raw_msg, rebase_commit_msg_cleanup(&config));
+
     let commit_data = CommitData {
         tree: tree_oid,
         parents: vec![head_oid],
@@ -2700,6 +2787,7 @@ fn read_current_rebase_todo_cmd(rb_dir: &Path) -> RebaseTodoCmd {
         return RebaseTodoCmd::Pick;
     };
     match s.trim() {
+        "reword" => RebaseTodoCmd::Reword,
         "fixup" => RebaseTodoCmd::Fixup,
         "squash" => RebaseTodoCmd::Squash,
         _ => RebaseTodoCmd::Pick,
@@ -2833,6 +2921,36 @@ fn do_continue() -> Result<()> {
             clear_squash_ctx(&rb_dir);
             oid
         }
+    } else if todo_cmd == RebaseTodoCmd::Reword {
+        let template = {
+            let rb_msg = rb_dir.join("message");
+            if rb_msg.exists() {
+                fs::read_to_string(&rb_msg)?
+            } else {
+                let (unicode, _enc, _raw) = transcoded_replayed_message(&original_commit, &config);
+                unicode
+            }
+        };
+        let after_editor = run_commit_editor_for_reword(&repo, git_dir, &template)?;
+        let cleaned = apply_commit_msg_cleanup(&after_editor, rebase_commit_msg_cleanup(&config));
+        let (message, encoding, raw_message) =
+            finalize_message_for_commit_encoding(cleaned, &config);
+        let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
+        let now = time::OffsetDateTime::now_utc();
+        let committer = resolve_identity(&config, "COMMITTER")?;
+        let commit_data = CommitData {
+            tree: tree_oid,
+            parents: vec![head_oid],
+            author: original_commit.author.clone(),
+            committer: format_ident(&committer, now),
+            author_raw: original_commit.author_raw.clone(),
+            committer_raw: original_commit.committer_raw.clone(),
+            encoding,
+            message,
+            raw_message,
+        };
+        let commit_bytes = serialize_commit(&commit_data);
+        repo.odb.write(ObjectKind::Commit, &commit_bytes)?
     } else {
         let (message, encoding, raw_message) =
             read_rebase_continue_message(git_dir, &original_commit, &config)?;
