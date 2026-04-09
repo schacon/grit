@@ -204,7 +204,7 @@ struct FixupParsed {
     commit_ref: String,
 }
 
-/// Split `-m` / `-F` (and `=` forms) out of the trailing pathspec bucket.
+/// Split `-m` / `-F` (and `=` / glued forms) out of the trailing pathspec bucket.
 ///
 /// Clap routes all trailing tokens into `pathspec`; Git allows `git commit <path> -m msg`.
 fn peel_message_flags_from_pathspec(args: &mut Args) {
@@ -246,6 +246,18 @@ fn peel_message_flags_from_pathspec(args: &mut Args) {
             }
             i += 1;
             continue;
+        }
+        if a.len() > 2 && a.starts_with("-m") && !a.starts_with("--") {
+            args.message.push(a[2..].to_owned());
+            i += 1;
+            continue;
+        }
+        if a.len() > 2 && a.starts_with("-F") && !a.starts_with("--") {
+            if args.file.is_none() {
+                args.file = Some(a[2..].to_owned());
+                i += 1;
+                continue;
+            }
         }
         out.push(ps[i].clone());
         i += 1;

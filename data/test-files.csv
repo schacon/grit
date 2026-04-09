@@ -699,7 +699,7 @@ t4019-diff-wserror	t4	yes	21	5	16	false	ok	0
 t4020-diff-external	t4	yes	0	0	0	false	timeout	0
 t4020-diff-plumbing	t4	yes	21	21	0	true	ok	0
 t4021-format-patch-numbered	t4	yes	14	14	0	true	ok	0
-t4022-diff-rewrite	t4	yes	11	6	5	false	ok	0
+t4022-diff-rewrite	t4	yes	11	11	0	true	ok	0
 t4023-diff-rename-typechange	t4	yes	4	0	4	false	ok	0
 t4024-diff-optimize-common	t4	yes	2	2	0	true	ok	0
 t4025-hunk-header	t4	yes	2	2	0	true	ok	0

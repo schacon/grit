@@ -17,7 +17,8 @@ use clap::Args as ClapArgs;
 use grit_lib::diff::{
     anchored_unified_diff, count_changes, count_git_lines, detect_renames, diff_index_to_tree,
     diff_index_to_worktree, diff_tree_to_worktree, diff_trees, diffcore_count_changes,
-    should_break_rewrite_for_stat, unified_diff, zero_oid, DiffEntry, DiffStatus,
+    rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat, unified_diff, zero_oid,
+    DiffEntry, DiffStatus,
 };
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::error::Error;
@@ -280,6 +281,10 @@ pub struct Args {
     /// Break complete rewrite into delete + add pair.
     #[arg(short = 'B', long = "break-rewrites")]
     pub break_rewrites: bool,
+
+    /// Omit preimage lines for deleted files (irreversible delete).
+    #[arg(short = 'D', long = "irreversible-delete")]
+    pub irreversible_delete: bool,
 
     /// Output a binary diff that can be applied with git-apply.
     #[arg(long = "binary")]
@@ -644,6 +649,14 @@ pub fn run(mut args: Args) -> Result<()> {
     let raw_args: Vec<String> = std::env::args().collect();
     let has_separator = raw_args.iter().any(|a| a == "--");
     let (mut revs, paths) = parse_rev_and_paths(&args.args, has_separator);
+    // Options parsed by clap can remain in the `revs` bucket when `--` separates paths
+    // (`git diff -D -- path`). Drop duplicates so they are not treated as revision names.
+    if args.irreversible_delete {
+        revs.retain(|r| r != "-D" && r != "--irreversible-delete");
+    }
+    if args.break_rewrites {
+        revs.retain(|r| r != "-B" && r != "--break-rewrites");
+    }
 
     // Outside any repository, `git diff <path> <path>` behaves like `diff --no-index` (t4035).
     if Repository::discover(None).is_err() && revs.is_empty() && paths.len() == 2 && !args.cached {
@@ -1314,6 +1327,29 @@ pub fn run(mut args: Args) -> Result<()> {
         entries
     };
 
+    if args.break_rewrites {
+        for entry in &mut entries {
+            if entry.status != DiffStatus::Modified {
+                continue;
+            }
+            let old_raw = read_content_raw(&repo.odb, &entry.old_oid);
+            let new_raw = read_content_raw_or_worktree(
+                &repo.odb,
+                &entry.new_oid,
+                wt_for_content,
+                entry.path(),
+            );
+            if is_binary(&old_raw) || is_binary(&new_raw) {
+                continue;
+            }
+            if should_break_rewrite_for_stat(&old_raw, &new_raw) {
+                if let Some(pct) = rewrite_dissimilarity_index_percent(&old_raw, &new_raw) {
+                    entry.score = Some(pct);
+                }
+            }
+        }
+    }
+
     let merge_in_progress = std::fs::metadata(repo.git_dir.join("MERGE_HEAD")).is_ok();
     let mut conflict_combined_patches: Vec<String> = Vec::new();
     if merge_in_progress && !args.cached && revs.is_empty() && work_tree.is_some() {
@@ -1483,7 +1519,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 &ws_mode,
             )?;
             if args.summary {
-                write_diff_summary(&mut out, &entries)?;
+                write_diff_summary(&mut out, &entries, args.break_rewrites)?;
             }
         } else if args.raw {
             let oid_len = if args.full_index || args.no_abbrev {
@@ -1509,7 +1545,7 @@ pub fn run(mut args: Args) -> Result<()> {
         } else if args.name_status {
             write_name_status(&mut out, &entries)?;
         } else if args.summary && !stat_enabled {
-            write_diff_summary(&mut out, &entries)?;
+            write_diff_summary(&mut out, &entries, args.break_rewrites)?;
         } else {
             let patch_abbrev = if args.full_index {
                 40
@@ -1548,6 +1584,8 @@ pub fn run(mut args: Args) -> Result<()> {
                     patch_abbrev,
                     inter_hunk_context,
                     args.binary,
+                    args.break_rewrites,
+                    args.irreversible_delete,
                     &src_prefix,
                     &dst_prefix,
                     args.submodule.as_deref(),
@@ -2930,6 +2968,9 @@ fn write_diff_header_with_prefix(
                 writeln!(out, "{b}old mode {}{r}", entry.old_mode)?;
                 writeln!(out, "{b}new mode {}{r}", entry.new_mode)?;
             }
+            if let Some(pct) = entry.score {
+                writeln!(out, "{b}dissimilarity index {pct}%{r}")?;
+            }
             // Pure mode change with identical blob: Git omits the `index` line (t3419-rebase-patch-id).
             if entry.old_oid == entry.new_oid && entry.old_mode != entry.new_mode {
                 return Ok(());
@@ -3002,6 +3043,8 @@ fn write_patch_with_prefix(
     abbrev_len: usize,
     inter_hunk_context: usize,
     show_binary: bool,
+    break_rewrites: bool,
+    irreversible_delete: bool,
     src_prefix: &str,
     dst_prefix: &str,
     submodule_fmt: Option<&str>,
@@ -3106,6 +3149,10 @@ fn write_patch_with_prefix(
             continue;
         }
 
+        if entry.status == DiffStatus::Deleted && irreversible_delete {
+            continue;
+        }
+
         if is_binary(&old_content_raw) || is_binary(&new_content_raw) {
             if show_binary {
                 // --binary: output a "GIT binary patch" block
@@ -3146,6 +3193,44 @@ fn write_patch_with_prefix(
         } else {
             new_path
         };
+
+        if break_rewrites
+            && irreversible_delete
+            && entry.status == DiffStatus::Modified
+            && entry.score.is_some()
+        {
+            let new_lc = count_git_lines(&new_content_raw);
+            let new_start = if new_lc == 0 { 0 } else { 1 };
+            writeln!(
+                out,
+                "--- {}",
+                if display_old == "/dev/null" {
+                    "/dev/null".to_owned()
+                } else {
+                    format!("{src_prefix}{display_old}")
+                }
+            )?;
+            writeln!(
+                out,
+                "+++ {}",
+                if display_new == "/dev/null" {
+                    "/dev/null".to_owned()
+                } else {
+                    format!("{dst_prefix}{display_new}")
+                }
+            )?;
+            writeln!(out, "@@ -?,? +{new_start},{new_lc} @@")?;
+            for chunk in new_content.split_inclusive('\n') {
+                if chunk.ends_with('\n') {
+                    let body = chunk.strip_suffix('\n').unwrap_or(chunk);
+                    writeln!(out, "+{body}")?;
+                } else if !chunk.is_empty() {
+                    writeln!(out, "+{chunk}")?;
+                    writeln!(out, "\\ No newline at end of file")?;
+                }
+            }
+            continue;
+        }
 
         if word_diff {
             let patch = word_diff_output(
@@ -3637,7 +3722,11 @@ fn write_numstat(
 
 /// Write only the names of changed files.
 /// Write `--summary` output for rename/copy/mode-change entries.
-fn write_diff_summary(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> {
+fn write_diff_summary(
+    out: &mut impl Write,
+    entries: &[DiffEntry],
+    break_rewrites: bool,
+) -> Result<()> {
     for entry in entries {
         match entry.status {
             DiffStatus::Renamed => {
@@ -3669,6 +3758,13 @@ fn write_diff_summary(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()>
                     entry.old_mode,
                     quote_c_style(entry.path())
                 )?;
+            }
+            DiffStatus::Modified => {
+                if break_rewrites {
+                    if let Some(pct) = entry.score {
+                        writeln!(out, " rewrite {} ({pct}%)", quote_c_style(entry.path()))?;
+                    }
+                }
             }
             _ => {}
         }
@@ -3703,6 +3799,21 @@ fn write_raw(out: &mut impl Write, entries: &[DiffEntry], abbrev_len: usize) -> 
                 let old_path = entry.old_path.as_deref().unwrap_or("");
                 let new_path = entry.new_path.as_deref().unwrap_or("");
                 writeln!(out, ":{old_mode} {new_mode} {old_oid} {new_oid} {status}{score:03}\t{old_path}\t{new_path}")?;
+            }
+            DiffStatus::Modified => {
+                if let Some(pct) = entry.score {
+                    writeln!(
+                        out,
+                        ":{old_mode} {new_mode} {old_oid} {new_oid} {status}{pct:03}\t{}",
+                        entry.path()
+                    )?;
+                } else {
+                    writeln!(
+                        out,
+                        ":{old_mode} {new_mode} {old_oid} {new_oid} {status}\t{}",
+                        entry.path()
+                    )?;
+                }
             }
             _ => {
                 writeln!(
