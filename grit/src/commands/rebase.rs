@@ -669,15 +669,21 @@ fn reset_index_to_head(repo: &Repository, git_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+fn usable_editor_value(s: Option<String>) -> Option<String> {
+    let s = s?.trim().to_string();
+    if s.is_empty() || s == ":" {
+        return None;
+    }
+    Some(s)
+}
+
 fn sequence_editor_cmd(config: &ConfigSet) -> Result<String> {
-    std::env::var("GIT_SEQUENCE_EDITOR")
-        .ok()
-        .or_else(|| config.get("sequence.editor"))
-        .or_else(|| std::env::var("GIT_EDITOR").ok())
-        .or_else(|| config.get("core.editor"))
-        .or_else(|| std::env::var("VISUAL").ok())
-        .or_else(|| std::env::var("EDITOR").ok())
-        .filter(|s| !s.trim().is_empty())
+    usable_editor_value(std::env::var("GIT_SEQUENCE_EDITOR").ok())
+        .or_else(|| usable_editor_value(config.get("sequence.editor")))
+        .or_else(|| usable_editor_value(std::env::var("GIT_EDITOR").ok()))
+        .or_else(|| usable_editor_value(config.get("core.editor")))
+        .or_else(|| usable_editor_value(std::env::var("VISUAL").ok()))
+        .or_else(|| usable_editor_value(std::env::var("EDITOR").ok()))
         .ok_or_else(|| anyhow::anyhow!("Terminal is dumb, but EDITOR unset"))
 }
 

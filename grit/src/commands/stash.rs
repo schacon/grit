@@ -2636,7 +2636,15 @@ fn apply_stash_impl(
                     flags_extended: None,
                     path: path_bytes.to_vec(),
                 };
-                new_index.stage_file(new_entry);
+                // Do not replace unmerged index entries: `stage_file` strips stages 1–3, which
+                // would hide merge conflicts after stash apply (t9903 conflict prompt).
+                let has_unmerged = new_index
+                    .entries
+                    .iter()
+                    .any(|e| e.path == path_bytes && e.stage() > 0);
+                if !has_unmerged {
+                    new_index.stage_file(new_entry);
+                }
             } else {
                 new_index.remove(path.as_bytes());
             }

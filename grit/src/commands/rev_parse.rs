@@ -948,6 +948,23 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                 // Use ONLY the per-action flag (not global, to support mixed usage)
                 let use_symbolic = *rev_symbolic_full_name;
 
+                // When `HEAD` is symbolic but the branch tip does not exist yet (empty bare repo,
+                // orphan checkout), Git prints the literal `HEAD` unless `--short` is used
+                // (`rev-parse` exits 128 with no stdout for `--short HEAD` in that state; t9903).
+                if rev == "HEAD"
+                    && short_len.is_none()
+                    && !abbrev_ref
+                    && !use_symbolic
+                    && current.is_bare()
+                    && matches!(
+                        refs::read_symbolic_ref(&current.git_dir, "HEAD"),
+                        Ok(Some(ref target)) if refs::resolve_ref(&current.git_dir, target).is_err()
+                    )
+                {
+                    println!("HEAD");
+                    continue;
+                }
+
                 if abbrev_ref {
                     // --abbrev-ref: resolve to symbolic name and abbreviate
                     if let Some(full) = symbolic_full_name(current, rev) {
@@ -1076,6 +1093,11 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                             }
                         }
                         if matches!(&e, LibError::Message(m) if m.contains("ambiguous argument")) {
+                            // With `--short`, match Git: no stdout for the failed rev; exit via
+                            // fail_verify after other actions (t9903 bare/orphan prompt).
+                            if short_len.is_some() {
+                                return fail_verify(quiet, false);
+                            }
                             println!("{rev}");
                             seen_ambiguous_revision = true;
                             deferred_fatal_stderr = Some(msg);
@@ -1090,6 +1112,11 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                         }
                         if msg.contains("ambiguous") {
                             return Err(anyhow::anyhow!("{msg}"));
+                        }
+                        // With `--short`, Git does not echo the unresolved spec to stdout; it fails
+                        // with "Needed a single revision" (t9903 `__git_ps1` + bare/orphan repos).
+                        if short_len.is_some() {
+                            return fail_verify(quiet, false);
                         }
                         if no_revs || amb_prefix.is_some() {
                             if let Some(path_prefix) = prefix.as_deref() {

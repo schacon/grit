@@ -1600,6 +1600,6 @@ t9890-init-object-format	t9	yes	31	31	0	true	ok	0
 t9900-branch-verbose-all	t9	yes	33	33	0	true	ok	0
 t9901-git-web--browse	t9	yes	5	5	0	true	ok	0
 t9902-completion	t9	yes	259	259	0	true	ok	3
-t9903-bash-prompt	t9	yes	67	53	14	false	ok	0
+t9903-bash-prompt	t9	yes	67	67	0	true	ok	0
 t9910-tag-pattern-glob	t9	yes	32	32	0	true	ok	0
 t9920-commit-tree-author-env	t9	yes	26	26	0	true	ok	0
