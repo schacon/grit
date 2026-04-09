@@ -3222,7 +3222,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
             commands::index_pack::run(parse_cmd_args(subcmd, &argv))
         }
         "init" => commands::init::run(parse_cmd_args(subcmd, rest), opts.bare),
-        "interpret-trailers" => commands::interpret_trailers::run(parse_cmd_args(subcmd, rest)),
+        "interpret-trailers" => commands::interpret_trailers::run_from_argv(rest),
         "last-modified" => commands::last_modified::run(parse_cmd_args(subcmd, rest)),
         "log" => {
             let rest = preprocess_log_args(rest);
