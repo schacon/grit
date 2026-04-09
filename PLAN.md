@@ -281,7 +281,7 @@ commit → check it off → move on.
 - [ ] `t3010-ls-files-killed-modified` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — git ls-files -k and -m flags test.
 
 - [ ] `t3503-cherry-pick-root` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — test cherry-picking (and reverting) a root commit
-- [ ] `t3101-ls-tree-dirname` █████████████░░░░░░░ 13/19 (6 left) — git ls-tree directory and filenames handling.
+- [x] `t3101-ls-tree-dirname` — git ls-tree directory and filenames handling (19/19 harness).
 
 - [ ] `t3906-stash-submodule` ████████████░░░░░░░░ 10/16 (6 left) — stash can handle submodules
 - [ ] `t3904-stash-patch` ████████░░░░░░░░░░░░ 4/10 (6 left) — stash -p
