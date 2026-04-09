@@ -151,7 +151,29 @@ pub fn symbolic_full_name(repo: &Repository, spec: &str) -> Option<String> {
             return Some(candidate);
         }
     }
+    // Remote name alone: `one` → `refs/remotes/one/HEAD` when `remote.one.url` exists (matches Git).
+    if let Some(full) = remote_tracking_head_symbolic_target(repo, spec) {
+        return Some(full);
+    }
     None
+}
+
+/// When `name` is a configured remote, return the full ref `refs/remotes/<name>/HEAD` resolves to.
+fn remote_tracking_head_symbolic_target(repo: &Repository, name: &str) -> Option<String> {
+    if name.contains('/')
+        || matches!(
+            name,
+            "HEAD" | "FETCH_HEAD" | "MERGE_HEAD" | "CHERRY_PICK_HEAD" | "REVERT_HEAD"
+        )
+    {
+        return None;
+    }
+    let config = ConfigSet::load(Some(&repo.git_dir), true).ok()?;
+    let url_key = format!("remote.{name}.url");
+    config.get(&url_key)?;
+    let head_ref = format!("refs/remotes/{name}/HEAD");
+    let target = refs::read_symbolic_ref(&repo.git_dir, &head_ref).ok()??;
+    Some(target)
 }
 
 /// Expand an `@{-N}` token to the corresponding previous branch name.
@@ -1394,6 +1416,13 @@ fn resolve_base(
         format!("refs/notes/{spec}"),
     ] {
         if let Ok(oid) = refs::resolve_ref(&repo.git_dir, candidate) {
+            return Ok(oid);
+        }
+    }
+
+    // `git log one` / `git rev-parse one`: remote name → `refs/remotes/<name>/HEAD` (Git DWIM).
+    if let Some(head_ref) = remote_tracking_head_symbolic_target(repo, spec) {
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &head_ref) {
             return Ok(oid);
         }
     }

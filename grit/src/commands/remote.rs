@@ -6,6 +6,7 @@
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::refs;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -59,6 +60,9 @@ pub struct AddArgs {
     /// Track only this branch (may be given more than once).
     #[arg(short = 't', long = "track")]
     pub track: Vec<String>,
+    /// Set `refs/remotes/<name>/HEAD` to track this branch on the remote.
+    #[arg(short = 'm', long = "master", value_name = "BRANCH")]
+    pub master: Option<String>,
     /// Fetch immediately after adding.
     #[arg(short = 'f')]
     pub fetch: bool,
@@ -129,8 +133,6 @@ pub struct UpdateArgs {
     pub groups: Vec<String>,
 }
 
-// ── Entrypoint ──────────────────────────────────────────────────────
-
 pub fn run(args: Args) -> Result<()> {
     match args.subcommand {
         Some(RemoteSubcommand::Add(add_args)) => cmd_add(add_args),
@@ -147,8 +149,6 @@ pub fn run(args: Args) -> Result<()> {
         None => cmd_list(args.verbose),
     }
 }
-
-// ── List remotes ────────────────────────────────────────────────────
 
 fn cmd_list(verbose: bool) -> Result<()> {
     let git_dir = resolve_git_dir()?;
@@ -170,8 +170,6 @@ fn cmd_list(verbose: bool) -> Result<()> {
 
     Ok(())
 }
-
-// ── Add ─────────────────────────────────────────────────────────────
 
 fn cmd_add(args: AddArgs) -> Result<()> {
     let git_dir = resolve_git_dir()?;
@@ -200,6 +198,13 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     config_file.set(&format!("remote.{}.fetch", args.name), &fetch_refspec)?;
     config_file.write().context("writing config")?;
 
+    if let Some(ref master) = args.master {
+        let head_ref = format!("refs/remotes/{}/HEAD", args.name);
+        let target = format!("refs/remotes/{}/{}", args.name, master);
+        refs::write_symbolic_ref(&git_dir, &head_ref, &target)
+            .with_context(|| format!("Could not setup master '{master}'"))?;
+    }
+
     // If -f was given, fetch immediately.
     if args.fetch {
         let self_exe = std::env::current_exe().context("cannot determine own executable")?;
@@ -215,8 +220,6 @@ fn cmd_add(args: AddArgs) -> Result<()> {
 
     Ok(())
 }
-
-// ── Remove ──────────────────────────────────────────────────────────
 
 fn cmd_remove(args: RemoveArgs) -> Result<()> {
     let git_dir = resolve_git_dir()?;
@@ -276,8 +279,6 @@ fn cmd_remove(args: RemoveArgs) -> Result<()> {
 
     Ok(())
 }
-
-// ── Rename ──────────────────────────────────────────────────────────
 
 fn cmd_rename(args: RenameArgs) -> Result<()> {
     let git_dir = resolve_git_dir()?;
@@ -342,8 +343,6 @@ fn cmd_rename(args: RenameArgs) -> Result<()> {
     Ok(())
 }
 
-// ── Get URL ─────────────────────────────────────────────────────────
-
 fn cmd_get_url(args: GetUrlArgs) -> Result<()> {
     let git_dir = resolve_git_dir()?;
     let config = load_local_config(&git_dir)?;
@@ -357,8 +356,6 @@ fn cmd_get_url(args: GetUrlArgs) -> Result<()> {
         None => bail!("No such remote '{}'", args.name),
     }
 }
-
-// ── Set URL ─────────────────────────────────────────────────────────
 
 fn cmd_set_url(args: SetUrlArgs) -> Result<()> {
     let git_dir = resolve_git_dir()?;
@@ -379,8 +376,6 @@ fn cmd_set_url(args: SetUrlArgs) -> Result<()> {
 
     Ok(())
 }
-
-// ── Show ────────────────────────────────────────────────────────────
 
 fn cmd_show(args: ShowArgs) -> Result<()> {
     let git_dir = resolve_git_dir()?;
@@ -405,8 +400,6 @@ fn cmd_show(args: ShowArgs) -> Result<()> {
         None => bail!("No such remote '{}'", args.name),
     }
 }
-
-// ── Set Branches ────────────────────────────────────────────────────
 
 fn cmd_set_branches(args: SetBranchesArgs) -> Result<()> {
     let git_dir = resolve_git_dir()?;
@@ -438,8 +431,6 @@ fn cmd_set_branches(args: SetBranchesArgs) -> Result<()> {
     config_file.write().context("writing config")?;
     Ok(())
 }
-
-// ── Prune ───────────────────────────────────────────────────────────
 
 fn cmd_prune(args: PruneArgs) -> Result<()> {
     let git_dir = resolve_git_dir()?;
@@ -487,8 +478,6 @@ fn cmd_prune(args: PruneArgs) -> Result<()> {
     Ok(())
 }
 
-// ── Update ──────────────────────────────────────────────────────────
-
 fn cmd_update(args: UpdateArgs) -> Result<()> {
     let git_dir = resolve_git_dir()?;
     let config = load_local_config(&git_dir)?;
@@ -505,16 +494,18 @@ fn cmd_update(args: UpdateArgs) -> Result<()> {
             if all_remotes.contains_key(group) {
                 names.push(group.clone());
             } else {
-                // Check remotes.<group> config for group members
                 let group_key = format!("remotes.{group}");
-                if let Some(members) = config.get(&group_key) {
-                    for member in members.split_whitespace() {
-                        if !names.contains(&member.to_string()) {
-                            names.push(member.to_string());
+                let member_lines = config.get_all(&group_key);
+                if member_lines.is_empty() {
+                    bail!("No such remote or remote group: '{}'", group);
+                }
+                for line in &member_lines {
+                    for member in line.split_whitespace() {
+                        let m = member.to_string();
+                        if !names.contains(&m) {
+                            names.push(m);
                         }
                     }
-                } else {
-                    bail!("No such remote or remote group: '{}'", group);
                 }
             }
         }
@@ -556,8 +547,6 @@ fn cmd_update(args: UpdateArgs) -> Result<()> {
 
     Ok(())
 }
-
-// ── Helpers ─────────────────────────────────────────────────────────
 
 struct RemoteInfo {
     url: String,
