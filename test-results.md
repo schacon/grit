@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-09 (t2108 / update-index refresh racy)**
+
+- `cargo test -p grit-lib --lib`: 155 passed
+- `./scripts/run-tests.sh t2108-update-index-refresh-racy.sh`: 6/6 passed
+
 **2026-04-09 (t5609 / clone --branch)**
 
 - `cargo test -p grit-lib --lib`: 152 passed

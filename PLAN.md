@@ -203,7 +203,7 @@ commit → check it off → move on.
 - [ ] `t2200-add-update` █████████████░░░░░░░ 13/19 (6 left) — git add -u
 
 - [ ] `t2500-untracked-overwriting` ████████░░░░░░░░░░░░ 4/10 (6 left) — Test handling of overwriting untracked files
-- [ ] `t2108-update-index-refresh-racy` ░░░░░░░░░░░░░░░░░░░░ 0/6 (6 left) — update-index refresh tests related to racy timestamps
+- [x] `t2108-update-index-refresh-racy` ████████████████████ 6/6 (0 left) — update-index refresh tests related to racy timestamps
 - [ ] `t2017-checkout-orphan` █████████░░░░░░░░░░░ 6/13 (7 left) — git checkout --orphan
 
 - [ ] `t2003-checkout-cache-mkdir` ██████░░░░░░░░░░░░░░ 3/10 (7 left) — git checkout-index --prefix test.
