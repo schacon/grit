@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   268 |
+| Completed   |   269 |
 | In progress |     4 |
-| Remaining   |   496 |
+| Remaining   |   495 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 268 completed (`[x]`), 4 in progress (`[~]`), 496 remaining (`[ ]`).
+Task lines in `PLAN.md`: 269 completed (`[x]`), 4 in progress (`[~]`), 495 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t6437-submodule-merge` — 22/22 tests pass (directory/submodule merge: submodule work tree preserved, conflict material relocated; `merge --abort` clears state; `test_expect_failure` → `test_expect_success` for cases now passing; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t4058-diff-duplicates` — 16/16 tests pass (duplicate-tree diff/checkout: flip `test_expect_failure` → `test_expect_success` for empty-status branch switches; behavior already matched Git)
 - `t5619-clone-local-ambiguous-transport` — 2/2 tests pass (malicious submodule URL resolved to bogus protocol; `submodule update --init` fails with `protocol .* is not supported` and does not expose `sensitive/secret` under `.git/modules/sub/objects`; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5514-fetch-multiple` — 25/25 tests pass (`fetch --all` / `--multiple`, `fetch.all` / `--no-all`, `skipFetchAll`, parallel `--jobs`, tags; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
@@ -143,4 +144,4 @@ Task lines in `PLAN.md`: 268 completed (`[x]`), 4 in progress (`[~]`), 496 remai
 
 ## What Remains
 
-496 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+495 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.

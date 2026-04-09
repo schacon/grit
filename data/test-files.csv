@@ -1136,7 +1136,7 @@ t6434-merge-with-no-common-ancestor	t6	yes	3	3	0	true	ok	0
 t6435-merge-sparse	t6	yes	6	4	2	false	ok	0
 t6435-merge-sparse-directory	t6	yes	2	2	0	true	ok	0
 t6436-merge-overwrite	t6	yes	18	10	8	false	ok	0
-t6437-submodule-merge	t6	yes	20	8	12	false	ok	2
+t6437-submodule-merge	t6	yes	22	22	0	true	ok	0
 t6438-submodule-directory-file-conflicts	t6	yes	56	12	44	false	ok	0
 t6439-merge-co-error-msgs	t6	yes	6	6	0	true	ok	0
 t6500-gc	t6	yes	0	0	0	false	timeout	0
