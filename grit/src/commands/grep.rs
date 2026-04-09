@@ -6,6 +6,12 @@ use regex::{Regex, RegexBuilder};
 use std::io::{self, Write};
 use std::path::Path;
 
+use crate::commands::grep_expr::{
+    collect_atom_indices, line_matches_expr, match_expr_eval, CompiledGrep, GrepExpr,
+};
+use crate::commands::grep_pattern::PatternToken;
+use crate::explicit_exit::ExplicitExit;
+use grit_lib::attributes::quote_path_for_check_attr;
 use grit_lib::config::ConfigSet;
 use grit_lib::index::{MODE_GITLINK, MODE_TREE};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
@@ -65,10 +71,6 @@ pub struct Args {
     #[arg(short = 'v', long = "invert-match")]
     pub invert_match: bool,
 
-    /// Explicit pattern (can be used multiple times).
-    #[arg(short = 'e', value_name = "PATTERN", allow_hyphen_values = true)]
-    pub patterns: Vec<String>,
-
     /// Use extended regular expressions.
     #[arg(short = 'E', long = "extended-regexp")]
     pub extended_regexp: bool,
@@ -88,22 +90,6 @@ pub struct Args {
     /// Search blobs registered in the index file instead of the work tree.
     #[arg(long = "cached")]
     pub cached: bool,
-
-    /// Read patterns from file, one per line.
-    #[arg(short = 'f', long = "file", value_name = "FILE")]
-    pub pattern_file: Option<String>,
-
-    /// Combine patterns with AND (all -e patterns must match).
-    #[arg(long = "and")]
-    pub and: bool,
-
-    /// Combine patterns with OR (any -e pattern must match) — this is the default.
-    #[arg(long = "or")]
-    pub or: bool,
-
-    /// Negate the next pattern (can appear multiple times).
-    #[arg(long = "not", action = clap::ArgAction::Count)]
-    pub not: u8,
 
     /// Require all patterns to match (line-level AND).
     #[arg(long = "all-match")]
@@ -185,6 +171,10 @@ pub struct Args {
     #[arg(long = "full-name")]
     pub full_name: bool,
 
+    /// Use NUL as filename delimiter in output.
+    #[arg(short = 'z', long = "null")]
+    pub null_following_name: bool,
+
     /// Print an empty line between matches from different files.
     #[arg(long = "break")]
     pub file_break: bool,
@@ -260,10 +250,27 @@ impl Args {
             None => None, // default: unlimited
         }
     }
+
+    fn sep_byte(&self) -> u8 {
+        if self.null_following_name {
+            0
+        } else {
+            b':'
+        }
+    }
 }
 
-/// Run `grit grep`.
-pub fn run(mut args: Args) -> Result<()> {
+/// Entry point after `main` peels pattern-expression tokens from argv.
+pub fn run_with_pattern_tokens(pattern_tokens: Vec<PatternToken>, args: Args) -> Result<()> {
+    run_inner(pattern_tokens, args)
+}
+
+/// Run `grit grep` (no pre-parsed pattern tokens).
+pub fn run(args: Args) -> Result<()> {
+    run_inner(Vec::new(), args)
+}
+
+fn run_inner(pattern_tokens: Vec<PatternToken>, mut args: Args) -> Result<()> {
     let has_attr_src = std::env::var("GIT_ATTR_SOURCE")
         .ok()
         .filter(|s| !s.is_empty())
@@ -367,29 +374,32 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    // Parse positional arguments: [pattern] [tree-ish] [-- pathspec...]
-    let (mut patterns, tree_ish, pathspecs) = parse_positional(&args, &repo)?;
+    // Positional: [pattern] [tree-ish] [-- pathspec...] — pattern only when no peeled `-e`/`-f`.
+    let has_peeled_patterns = !pattern_tokens.is_empty();
+    let (first_pos_pattern, tree_ish, mut pathspecs) =
+        parse_positional(&args, &repo, has_peeled_patterns)?;
+    pathspecs = pathspecs_relative_to_cwd(&repo, &pathspecs);
 
-    // Read patterns from file if -f is given
-    if let Some(ref pattern_file) = args.pattern_file {
-        let content = std::fs::read_to_string(pattern_file)
-            .with_context(|| format!("cannot read pattern file: '{pattern_file}'"))?;
-        for line in content.lines() {
-            if !line.is_empty() {
-                patterns.push(line.to_string());
+    let mut pattern_tokens = pattern_tokens;
+    if pattern_tokens.is_empty() {
+        if let Some(p) = first_pos_pattern {
+            for part in p.split('\n') {
+                if !part.is_empty() {
+                    pattern_tokens.push(PatternToken::Atom(part.to_string()));
+                }
             }
         }
     }
 
-    if patterns.is_empty() {
+    if pattern_tokens.is_empty() {
         bail!("no pattern given");
     }
 
-    // Determine matching mode: --all-match or --and means all patterns must match a line
-    let all_match = args.all_match || args.and;
-
-    // Build the regex matchers
-    let matchers = build_matchers(&patterns, &args)?;
+    let (expr, atom_strings) = crate::commands::grep_expr::parse_pattern_tokens(&pattern_tokens)?;
+    let compiled = build_compiled_grep(expr, &atom_strings, &args)?;
+    if args.invert_match {
+        args.only_matching = false;
+    }
 
     let stdout = io::stdout();
     let mut out_handle = stdout.lock();
@@ -401,7 +411,6 @@ pub fn run(mut args: Args) -> Result<()> {
     };
     // Tracks whether we need a "--" separator before the next context group
     let mut need_sep = false;
-    let all_match = all_match; // shadow to pass into closures
 
     let found_any;
     if args.no_index {
@@ -410,12 +419,11 @@ pub fn run(mut args: Args) -> Result<()> {
         found_any = grep_filesystem(
             &start_dir,
             "",
-            &matchers,
+            &compiled,
             &args,
             &pathspecs,
             &mut need_sep,
             out,
-            all_match,
         )?;
     } else if let Some(tree_spec) = &tree_ish {
         // Search a tree object
@@ -451,39 +459,20 @@ pub fn run(mut args: Args) -> Result<()> {
             &tree_obj.data,
             "",
             0,
-            &matchers,
+            &compiled,
             &args,
             &pathspecs,
             Some(tree_spec),
             &mut need_sep,
             out,
-            all_match,
             &diff_attrs,
         )?;
     } else if args.cached {
         // Search index blobs (--cached)
-        found_any = grep_cached(
-            &repo,
-            "",
-            &matchers,
-            &args,
-            &pathspecs,
-            &mut need_sep,
-            out,
-            all_match,
-        )?;
+        found_any = grep_cached(&repo, "", &compiled, &args, &pathspecs, &mut need_sep, out)?;
     } else {
         // Search working tree (tracked files from index)
-        found_any = grep_worktree(
-            &repo,
-            "",
-            &matchers,
-            &args,
-            &pathspecs,
-            &mut need_sep,
-            out,
-            all_match,
-        )?;
+        found_any = grep_worktree(&repo, "", &compiled, &args, &pathspecs, &mut need_sep, out)?;
     }
 
     if found_any {
@@ -498,12 +487,11 @@ pub fn run(mut args: Args) -> Result<()> {
 fn grep_cached(
     repo: &Repository,
     path_prefix: &str,
-    matchers: &[Regex],
+    compiled: &CompiledGrep,
     args: &Args,
     pathspecs: &[String],
     need_sep: &mut bool,
     out: &mut (impl Write + ?Sized),
-    all_match: bool,
 ) -> Result<bool> {
     let index = repo.load_index().context("loading index")?;
     // Load diff attrs from index (for --cached, use index attrs) or worktree
@@ -546,12 +534,11 @@ fn grep_cached(
                         if grep_cached(
                             &sub_repo,
                             &format!("{display_path}/"),
-                            matchers,
+                            compiled,
                             args,
                             pathspecs,
                             need_sep,
                             out,
-                            all_match,
                         )? {
                             found_any = true;
                         }
@@ -562,8 +549,7 @@ fn grep_cached(
         }
 
         if let Some(max_depth) = args.effective_max_depth() {
-            let depth = display_path.matches('/').count();
-            if depth > max_depth {
+            if !path_allowed_at_max_depth(&display_path, pathspecs, max_depth) {
                 continue;
             }
         }
@@ -586,21 +572,16 @@ fn grep_cached(
             if is_binary && !args.text_mode {
                 if args.count || args.files_with_matches || args.files_without_match || args.quiet {
                     let content = String::from_utf8_lossy(&obj.data);
-                    if grep_content(
-                        &display_path,
-                        &content,
-                        matchers,
-                        args,
-                        None,
-                        need_sep,
-                        out,
-                        all_match,
-                    )? {
+                    let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
+                    if grep_content(&rel, None, &content, compiled, args, need_sep, out)? {
                         found_any = true;
                     }
                 } else {
                     let content = String::from_utf8_lossy(&obj.data);
-                    let has_match = matchers.iter().any(|re| re.is_match(&content));
+                    let has_match = compiled
+                        .atoms
+                        .iter()
+                        .any(|r| r.as_ref().is_some_and(|re| re.is_match(&content)));
                     if has_match {
                         writeln!(out, "Binary file {} matches", display_path)?;
                         found_any = true;
@@ -608,16 +589,8 @@ fn grep_cached(
                 }
             } else {
                 let content = String::from_utf8_lossy(&obj.data);
-                if grep_content(
-                    &display_path,
-                    &content,
-                    matchers,
-                    args,
-                    None,
-                    need_sep,
-                    out,
-                    all_match,
-                )? {
+                let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
+                if grep_content(&rel, None, &content, compiled, args, need_sep, out)? {
                     found_any = true;
                 }
             }
@@ -648,21 +621,16 @@ fn grep_cached(
         if is_binary && !args.text_mode {
             if args.count || args.files_with_matches || args.files_without_match || args.quiet {
                 let content = String::from_utf8_lossy(&obj.data);
-                if grep_content(
-                    &display_path,
-                    &content,
-                    matchers,
-                    args,
-                    None,
-                    need_sep,
-                    out,
-                    all_match,
-                )? {
+                let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
+                if grep_content(&rel, None, &content, compiled, args, need_sep, out)? {
                     found_any = true;
                 }
             } else {
                 let content = String::from_utf8_lossy(&obj.data);
-                let has_match = matchers.iter().any(|re| re.is_match(&content));
+                let has_match = compiled
+                    .atoms
+                    .iter()
+                    .any(|r| r.as_ref().is_some_and(|re| re.is_match(&content)));
                 if has_match {
                     writeln!(out, "Binary file {} matches", display_path)?;
                     found_any = true;
@@ -670,16 +638,8 @@ fn grep_cached(
             }
         } else {
             let content = String::from_utf8_lossy(&obj.data);
-            if grep_content(
-                &display_path,
-                &content,
-                matchers,
-                args,
-                None,
-                need_sep,
-                out,
-                all_match,
-            )? {
+            let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
+            if grep_content(&rel, None, &content, compiled, args, need_sep, out)? {
                 found_any = true;
             }
         }
@@ -692,12 +652,11 @@ fn grep_cached(
 fn grep_worktree(
     repo: &Repository,
     path_prefix: &str,
-    matchers: &[Regex],
+    compiled: &CompiledGrep,
     args: &Args,
     pathspecs: &[String],
     need_sep: &mut bool,
     out: &mut (impl Write + ?Sized),
-    all_match: bool,
 ) -> Result<bool> {
     let work_tree = repo
         .work_tree
@@ -712,7 +671,7 @@ fn grep_worktree(
 
     for entry in &index.entries {
         let path_str = String::from_utf8_lossy(&entry.path).to_string();
-        let display_path = format!("{path_prefix}{path_str}");
+        let display_path = worktree_display_rel(repo, path_prefix, &path_str, args);
 
         // Pathspec filtering is relative to the superproject
         let is_submodule = entry.mode == MODE_GITLINK;
@@ -738,12 +697,11 @@ fn grep_worktree(
                     if grep_worktree(
                         &sub_repo,
                         &format!("{display_path}/"),
-                        matchers,
+                        compiled,
                         args,
                         pathspecs,
                         need_sep,
                         out,
-                        all_match,
                     )? {
                         found_any = true;
                     }
@@ -754,8 +712,7 @@ fn grep_worktree(
 
         // Apply max-depth filter
         if let Some(max_depth) = args.effective_max_depth() {
-            let depth = display_path.matches('/').count();
-            if depth > max_depth {
+            if !path_allowed_at_max_depth(&display_path, pathspecs, max_depth) {
                 continue;
             }
         }
@@ -784,21 +741,16 @@ fn grep_worktree(
             if is_binary && !args.text_mode {
                 if args.count || args.files_with_matches || args.files_without_match || args.quiet {
                     let content_str = String::from_utf8_lossy(&content);
-                    if grep_content(
-                        &display_path,
-                        &content_str,
-                        matchers,
-                        args,
-                        None,
-                        need_sep,
-                        out,
-                        all_match,
-                    )? {
+                    let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
+                    if grep_content(&rel, None, &content_str, compiled, args, need_sep, out)? {
                         found_any = true;
                     }
                 } else {
                     let content_str = String::from_utf8_lossy(&content);
-                    let has_match = matchers.iter().any(|re| re.is_match(&content_str));
+                    let has_match = compiled
+                        .atoms
+                        .iter()
+                        .any(|r| r.as_ref().is_some_and(|re| re.is_match(&content_str)));
                     if has_match {
                         writeln!(out, "Binary file {} matches", display_path)?;
                         found_any = true;
@@ -806,16 +758,8 @@ fn grep_worktree(
                 }
             } else {
                 let content_str = String::from_utf8_lossy(&content);
-                if grep_content(
-                    &display_path,
-                    &content_str,
-                    matchers,
-                    args,
-                    None,
-                    need_sep,
-                    out,
-                    all_match,
-                )? {
+                let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
+                if grep_content(&rel, None, &content_str, compiled, args, need_sep, out)? {
                     found_any = true;
                 }
             }
@@ -854,21 +798,16 @@ fn grep_worktree(
             if is_binary && !args.text_mode {
                 if args.count || args.files_with_matches || args.files_without_match || args.quiet {
                     let content_str = String::from_utf8_lossy(&obj.data);
-                    if grep_content(
-                        &display_path,
-                        &content_str,
-                        matchers,
-                        args,
-                        None,
-                        need_sep,
-                        out,
-                        all_match,
-                    )? {
+                    let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
+                    if grep_content(&rel, None, &content_str, compiled, args, need_sep, out)? {
                         found_any = true;
                     }
                 } else {
                     let content_str = String::from_utf8_lossy(&obj.data);
-                    let has_match = matchers.iter().any(|re| re.is_match(&content_str));
+                    let has_match = compiled
+                        .atoms
+                        .iter()
+                        .any(|r| r.as_ref().is_some_and(|re| re.is_match(&content_str)));
                     if has_match {
                         writeln!(out, "Binary file {} matches", display_path)?;
                         found_any = true;
@@ -876,16 +815,8 @@ fn grep_worktree(
                 }
             } else {
                 let content_str = String::from_utf8_lossy(&obj.data);
-                if grep_content(
-                    &display_path,
-                    &content_str,
-                    matchers,
-                    args,
-                    None,
-                    need_sep,
-                    out,
-                    all_match,
-                )? {
+                let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
+                if grep_content(&rel, None, &content_str, compiled, args, need_sep, out)? {
                     found_any = true;
                 }
             }
@@ -916,21 +847,16 @@ fn grep_worktree(
         if is_binary && !args.text_mode {
             if args.count || args.files_with_matches || args.files_without_match || args.quiet {
                 let content_str = String::from_utf8_lossy(&content);
-                if grep_content(
-                    &display_path,
-                    &content_str,
-                    matchers,
-                    args,
-                    None,
-                    need_sep,
-                    out,
-                    all_match,
-                )? {
+                let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
+                if grep_content(&rel, None, &content_str, compiled, args, need_sep, out)? {
                     found_any = true;
                 }
             } else {
                 let content_str = String::from_utf8_lossy(&content);
-                let has_match = matchers.iter().any(|re| re.is_match(&content_str));
+                let has_match = compiled
+                    .atoms
+                    .iter()
+                    .any(|r| r.as_ref().is_some_and(|re| re.is_match(&content_str)));
                 if has_match {
                     writeln!(out, "Binary file {} matches", display_path)?;
                     found_any = true;
@@ -938,16 +864,8 @@ fn grep_worktree(
             }
         } else {
             let content_str = String::from_utf8_lossy(&content);
-            if grep_content(
-                &display_path,
-                &content_str,
-                matchers,
-                args,
-                None,
-                need_sep,
-                out,
-                all_match,
-            )? {
+            let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
+            if grep_content(&rel, None, &content_str, compiled, args, need_sep, out)? {
                 found_any = true;
             }
         }
@@ -1003,6 +921,9 @@ fn matches_pathspec(path: &str, pathspec: &str, is_dir: bool) -> bool {
         false
     } else {
         // Plain prefix matching
+        if pathspec == "." {
+            return true;
+        }
         path == pathspec
             || path.starts_with(&format!("{pathspec}/"))
             || (is_dir && pathspec.starts_with(&format!("{path}/")))
@@ -1012,6 +933,54 @@ fn matches_pathspec(path: &str, pathspec: &str, is_dir: bool) -> bool {
 /// Check if any pathspec matches a path.
 fn any_pathspec_matches(path: &str, pathspecs: &[String], is_dir: bool) -> bool {
     pathspecs.iter().any(|p| matches_pathspec(path, p, is_dir))
+}
+
+/// Collapse `.`, `..`, and empty segments in a `/`-separated repo-relative path.
+fn normalize_repo_rel_path(path: &str) -> String {
+    let mut stack: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            stack.pop();
+        } else {
+            stack.push(part);
+        }
+    }
+    if stack.is_empty() {
+        ".".to_string()
+    } else {
+        stack.join("/")
+    }
+}
+
+/// Rebase pathspecs from the current working directory (Git pathspec behavior).
+fn pathspecs_relative_to_cwd(repo: &Repository, pathspecs: &[String]) -> Vec<String> {
+    let Some(wt) = repo.work_tree.as_deref() else {
+        return pathspecs.to_vec();
+    };
+    let Ok(cwd) = std::env::current_dir() else {
+        return pathspecs.to_vec();
+    };
+    let Ok(rel) = cwd.strip_prefix(wt) else {
+        return pathspecs.to_vec();
+    };
+    let prefix = rel.to_string_lossy();
+    let prefix = prefix.trim_end_matches('/');
+    if prefix.is_empty() {
+        return pathspecs.to_vec();
+    }
+    pathspecs
+        .iter()
+        .map(|s| {
+            if Path::new(s).is_absolute() {
+                s.clone()
+            } else {
+                normalize_repo_rel_path(&format!("{prefix}/{s}"))
+            }
+        })
+        .collect()
 }
 
 /// Binary override from .gitattributes diff attribute.
@@ -1145,12 +1114,11 @@ fn check_binary_override(rules: &[DiffAttrRule], path: &str) -> BinaryOverride {
 fn grep_filesystem(
     dir: &Path,
     prefix: &str,
-    matchers: &[Regex],
+    compiled: &CompiledGrep,
     args: &Args,
     pathspecs: &[String],
     need_sep: &mut bool,
     out: &mut (impl Write + ?Sized),
-    all_match: bool,
 ) -> Result<bool> {
     let mut found_any = false;
     let mut entries: Vec<_> = match std::fs::read_dir(dir) {
@@ -1181,12 +1149,11 @@ fn grep_filesystem(
             if grep_filesystem(
                 &entry.path(),
                 &display_path,
-                matchers,
+                compiled,
                 args,
                 pathspecs,
                 need_sep,
                 out,
-                all_match,
             )? {
                 found_any = true;
             }
@@ -1207,7 +1174,10 @@ fn grep_filesystem(
             }
             if is_binary && !args.text_mode {
                 let content_str = String::from_utf8_lossy(&content);
-                let has_match = matchers.iter().any(|re| re.is_match(&content_str));
+                let has_match = compiled
+                    .atoms
+                    .iter()
+                    .any(|r| r.as_ref().is_some_and(|re| re.is_match(&content_str)));
                 if has_match {
                     writeln!(out, "Binary file {} matches", display_path)?;
                     found_any = true;
@@ -1216,13 +1186,12 @@ fn grep_filesystem(
                 let content_str = String::from_utf8_lossy(&content);
                 if grep_content(
                     &display_path,
-                    &content_str,
-                    matchers,
-                    args,
                     None,
+                    &content_str,
+                    compiled,
+                    args,
                     need_sep,
                     out,
-                    all_match,
                 )? {
                     found_any = true;
                 }
@@ -1281,15 +1250,14 @@ fn is_revision(repo: &Repository, spec: &str) -> bool {
     }
 }
 
-/// Parse positional arguments into (patterns, tree_ish, pathspecs).
+/// Parse positional arguments into (optional first pattern, tree_ish, pathspecs).
 fn parse_positional(
     args: &Args,
     repo: &Repository,
-) -> Result<(Vec<String>, Option<String>, Vec<String>)> {
-    let mut patterns = args.patterns.clone();
+    has_peeled_patterns: bool,
+) -> Result<(Option<String>, Option<String>, Vec<String>)> {
     let positional = &args.positional;
 
-    // Find `--` separator
     let sep_pos = positional.iter().position(|a| a == "--");
 
     let (before_sep, pathspecs) = match sep_pos {
@@ -1299,33 +1267,33 @@ fn parse_positional(
 
     let mut tree_ish = None;
 
-    if patterns.is_empty() {
+    if !has_peeled_patterns {
         if before_sep.is_empty() {
-            return Ok((patterns, tree_ish, pathspecs));
+            return Ok((None, tree_ish, pathspecs));
         }
-        patterns.push(before_sep[0].clone());
+        let first = before_sep[0].clone();
         let rest = &before_sep[1..];
         if !rest.is_empty() && is_revision(repo, &rest[0]) {
             tree_ish = Some(rest[0].clone());
             let mut ps = pathspecs;
             ps.extend(rest[1..].iter().cloned());
-            return Ok((patterns, tree_ish, ps));
+            return Ok((Some(first), tree_ish, ps));
         }
         let mut ps = pathspecs;
         ps.extend(rest.iter().cloned());
-        return Ok((patterns, tree_ish, ps));
+        return Ok((Some(first), tree_ish, ps));
     }
 
     if !before_sep.is_empty() && is_revision(repo, &before_sep[0]) {
         tree_ish = Some(before_sep[0].clone());
         let mut ps = pathspecs;
         ps.extend(before_sep[1..].iter().cloned());
-        return Ok((patterns, tree_ish, ps));
+        return Ok((None, tree_ish, ps));
     }
 
     let mut ps = pathspecs;
     ps.extend(before_sep.iter().cloned());
-    Ok((patterns, tree_ish, ps))
+    Ok((None, tree_ish, ps))
 }
 
 /// Build regex matchers from patterns.
@@ -1462,33 +1430,201 @@ fn fix_charclass_escapes(pat: &str) -> String {
     result
 }
 
-fn build_matchers(patterns: &[String], args: &Args) -> Result<Vec<Regex>> {
-    let mut matchers = Vec::new();
+fn build_one_regex(pat: &str, args: &Args) -> Result<Regex> {
     let use_bre = !args.extended_regexp && !args.fixed_strings && !args.perl_regexp;
-    for pat in patterns {
-        let effective = if args.fixed_strings {
-            regex::escape(pat)
-        } else if use_bre {
-            bre_to_ere(pat)
-        } else if args.perl_regexp {
-            // Perl regex: pass through as-is (Rust regex handles most PCRE)
-            pat.clone()
-        } else {
-            // ERE: fix character class escapes for Rust regex compatibility
-            fix_charclass_escapes(pat)
-        };
-        let effective = if args.word_regexp {
-            format!(r"\b{effective}\b")
-        } else {
-            effective
-        };
-        let re = RegexBuilder::new(&effective)
-            .case_insensitive(args.ignore_case)
-            .build()
-            .with_context(|| format!("invalid pattern: '{pat}'"))?;
-        matchers.push(re);
+    // Git ERE does not accept PCRE `\p{...}` / `\P{...}`; Rust's engine does — reject for parity.
+    if args.extended_regexp && !args.perl_regexp && !args.fixed_strings {
+        if pat.contains("\\p{") || pat.contains("\\P{") {
+            bail!("invalid pattern: '{pat}'");
+        }
     }
-    Ok(matchers)
+    let effective = if args.fixed_strings {
+        regex::escape(pat)
+    } else if use_bre {
+        bre_to_ere(pat)
+    } else if args.perl_regexp {
+        pat.to_string()
+    } else {
+        fix_charclass_escapes(pat)
+    };
+    let effective = if args.word_regexp {
+        format!(r"\b{effective}\b")
+    } else {
+        effective
+    };
+    RegexBuilder::new(&effective)
+        .case_insensitive(args.ignore_case)
+        .build()
+        .with_context(|| format!("invalid pattern: '{pat}'"))
+}
+
+fn build_compiled_grep(
+    expr: GrepExpr,
+    atom_strings: &[String],
+    args: &Args,
+) -> Result<CompiledGrep> {
+    if args.perl_regexp {
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 128,
+            message: "fatal: cannot use Perl-compatible regexes when not compiled with USE_LIBPCRE"
+                .to_string(),
+        }));
+    }
+    let mut atoms = Vec::with_capacity(atom_strings.len());
+    for pat in atom_strings {
+        atoms.push(Some(build_one_regex(pat, args)?));
+    }
+    Ok(CompiledGrep { atoms, expr })
+}
+
+fn word_char_git(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// Git-compatible next match for `--only-matching` with `-w` (retry like `headerless_match_one_pattern`).
+fn next_match_from_bol(
+    line: &str,
+    bol: usize,
+    args: &Args,
+    compiled: &CompiledGrep,
+    atom_indices: &[usize],
+) -> Option<(usize, usize)> {
+    let end = line.len();
+    if bol > end {
+        return None;
+    }
+    let mut best: Option<(usize, usize)> = None;
+    for &ai in atom_indices {
+        let Some(re) = compiled.atoms.get(ai).and_then(|x| x.as_ref()) else {
+            continue;
+        };
+        let m = if args.word_regexp {
+            next_word_bounded_match(line, re, bol)
+        } else {
+            line.get(bol..)
+                .and_then(|sl| re.find(sl))
+                .map(|m| (bol + m.start(), bol + m.end()))
+        };
+        let Some((abs_s, abs_e)) = m else {
+            continue;
+        };
+        if abs_s > end || abs_e > end {
+            continue;
+        }
+        let take = match best {
+            None => true,
+            Some((bs, _be)) if abs_s < bs => true,
+            Some((bs, be)) if abs_s == bs && abs_e > be => true,
+            _ => false,
+        };
+        if take {
+            best = Some((abs_s, abs_e));
+        }
+    }
+    best
+}
+
+fn next_word_bounded_match(line: &str, re: &Regex, mut search: usize) -> Option<(usize, usize)> {
+    let bytes = line.as_bytes();
+    let end = line.len();
+    while search < end {
+        let slice = line.get(search..)?;
+        let m = re.find(slice)?;
+        let abs_s = search + m.start();
+        let abs_e = search + m.end();
+        let left_ok = abs_s == 0 || !word_char_git(bytes[abs_s - 1]);
+        let right_ok = abs_e >= end || !word_char_git(bytes[abs_e]);
+        if left_ok && right_ok && abs_s < abs_e {
+            return Some((abs_s, abs_e));
+        }
+        let mut bol = abs_s + 1;
+        while bol < end && word_char_git(bytes[bol - 1]) && word_char_git(bytes[bol]) {
+            bol += 1;
+        }
+        search = bol;
+    }
+    None
+}
+
+fn cwd_strip_repo_rel(repo: &Repository, repo_rel_path: &str, args: &Args) -> String {
+    if args.full_name {
+        return repo_rel_path.to_string();
+    }
+    let Some(wt) = repo.work_tree.as_deref() else {
+        return repo_rel_path.to_string();
+    };
+    let Ok(cwd) = std::env::current_dir() else {
+        return repo_rel_path.to_string();
+    };
+    let Ok(rel) = cwd.strip_prefix(wt) else {
+        return repo_rel_path.to_string();
+    };
+    let rel = rel.to_string_lossy();
+    let rel = rel.trim_start_matches('/').trim_end_matches('/');
+    if rel.is_empty() {
+        return repo_rel_path.to_string();
+    }
+    let prefix = format!("{rel}/");
+    if repo_rel_path.starts_with(&prefix) {
+        repo_rel_path[prefix.len()..].to_string()
+    } else {
+        repo_rel_path.to_string()
+    }
+}
+
+fn worktree_display_rel(
+    repo: &Repository,
+    path_prefix: &str,
+    path_str: &str,
+    args: &Args,
+) -> String {
+    let full = format!("{path_prefix}{path_str}");
+    cwd_strip_repo_rel(repo, &full, args)
+}
+
+fn path_for_output(path: &str, args: &Args) -> String {
+    if args.null_following_name {
+        path.to_string()
+    } else {
+        quote_path_for_check_attr(path)
+    }
+}
+
+/// Git `within_depth`: count `/` in `tail`; each slash increments depth; require depth <= max_depth.
+fn within_depth_tail(tail: &str, max_depth: usize) -> bool {
+    let mut depth = 0usize;
+    for b in tail.as_bytes() {
+        if *b == b'/' {
+            depth += 1;
+            if depth > max_depth {
+                return false;
+            }
+        }
+    }
+    depth <= max_depth
+}
+
+fn path_allowed_at_max_depth(path: &str, pathspecs: &[String], max_depth: usize) -> bool {
+    if pathspecs.is_empty() {
+        return path.matches('/').count() <= max_depth;
+    }
+    // Git ignores --max-depth when pathspecs contain active wildcards (see git-grep(1)).
+    if pathspecs.iter().any(|p| has_glob_chars(p)) {
+        return true;
+    }
+    pathspecs.iter().any(|ps| {
+        if ps == "." {
+            return within_depth_tail(path, max_depth);
+        }
+        if path == ps.as_str() {
+            return within_depth_tail("", max_depth);
+        }
+        let prefix = format!("{ps}/");
+        if path.starts_with(&prefix) {
+            return within_depth_tail(&path[prefix.len()..], max_depth);
+        }
+        false
+    })
 }
 
 // Color constants
@@ -1499,46 +1635,19 @@ const COLOR_MATCH: &str = "\x1b[1;31m";
 const COLOR_SEP: &str = "\x1b[36m";
 const COLOR_RESET: &str = "\x1b[m";
 
-/// Colorize all matches in a line.
-fn colorize_matches(line: &str, matchers: &[Regex]) -> String {
-    let mut ranges: Vec<(usize, usize)> = Vec::new();
-    for re in matchers {
-        for m in re.find_iter(line) {
-            ranges.push((m.start(), m.end()));
-        }
-    }
-    if ranges.is_empty() {
-        return line.to_string();
-    }
-    ranges.sort();
-    let mut merged: Vec<(usize, usize)> = Vec::new();
-    for (s, e) in ranges {
-        if let Some(last) = merged.last_mut() {
-            if s <= last.1 {
-                last.1 = last.1.max(e);
-                continue;
-            }
-        }
-        merged.push((s, e));
-    }
-    let mut result = String::new();
-    let mut pos = 0;
-    for (s, e) in merged {
-        result.push_str(&line[pos..s]);
-        result.push_str(COLOR_MATCH);
-        result.push_str(&line[s..e]);
-        result.push_str(COLOR_RESET);
-        pos = e;
-    }
-    result.push_str(&line[pos..]);
-    result
-}
-
 fn sep_char(ch: char, color: bool) -> String {
     if color {
         format!("{COLOR_SEP}{ch}{COLOR_RESET}")
     } else {
         ch.to_string()
+    }
+}
+
+fn sep_out(args: &Args, color: bool, ch: char) -> String {
+    if args.null_following_name {
+        "\0".to_string()
+    } else {
+        sep_char(ch, color)
     }
 }
 
@@ -1579,69 +1688,149 @@ fn fmt_col(n: usize, color: bool) -> String {
     }
 }
 
-/// Get column (1-based) of first match in a line.
-fn first_match_col(line: &str, matchers: &[Regex]) -> Option<usize> {
-    let mut earliest: Option<usize> = None;
-    for re in matchers {
-        if let Some(m) = re.find(line) {
-            let col = m.start() + 1;
-            earliest = Some(earliest.map_or(col, |e: usize| e.min(col)));
+fn content_satisfies_all_match(compiled: &CompiledGrep, content: &str) -> bool {
+    for re_opt in &compiled.atoms {
+        let Some(re) = re_opt.as_ref() else {
+            continue;
+        };
+        if !content.lines().any(|line| re.is_match(line)) {
+            return false;
         }
     }
-    earliest
+    true
+}
+
+/// 1-based column of first match (Git semantics) for a line.
+fn column_for_line(line: &str, compiled: &CompiledGrep, invert: bool) -> usize {
+    let mut col: isize = -1;
+    let mut icol: isize = -1;
+    let hit = match_expr_eval(
+        &compiled.expr,
+        line,
+        &compiled.atoms,
+        &mut col,
+        &mut icol,
+        true,
+    );
+    let _ = hit;
+    let cno = if invert { icol } else { col };
+    if cno < 0 {
+        1
+    } else {
+        (cno + 1) as usize
+    }
+}
+
+fn colorize_line(line: &str, compiled: &CompiledGrep, atom_indices: &[usize]) -> String {
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    for &i in atom_indices {
+        if let Some(re) = compiled.atoms.get(i).and_then(|x| x.as_ref()) {
+            for m in re.find_iter(line) {
+                ranges.push((m.start(), m.end()));
+            }
+        }
+    }
+    if ranges.is_empty() {
+        return line.to_string();
+    }
+    ranges.sort();
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (s, e) in ranges {
+        if let Some(last) = merged.last_mut() {
+            if s <= last.1 {
+                last.1 = last.1.max(e);
+                continue;
+            }
+        }
+        merged.push((s, e));
+    }
+    let mut result = String::new();
+    let mut pos = 0;
+    for (s, e) in merged {
+        result.push_str(&line[pos..s]);
+        result.push_str(COLOR_MATCH);
+        result.push_str(&line[s..e]);
+        result.push_str(COLOR_RESET);
+        pos = e;
+    }
+    result.push_str(&line[pos..]);
+    result
+}
+
+fn line_prefix(
+    display_name: &str,
+    sep: char,
+    args: &Args,
+    color: bool,
+    lno: Option<usize>,
+    col: Option<usize>,
+) -> String {
+    let mut s = String::new();
+    if !display_name.is_empty() {
+        s.push_str(&fmt_name(display_name, color));
+        s.push_str(&sep_out(args, color, sep));
+    }
+    if let Some(n) = lno {
+        s.push_str(&fmt_num(n, color));
+        s.push_str(&sep_out(args, color, sep));
+    }
+    if let Some(c) = col {
+        s.push_str(&fmt_col(c, color));
+        s.push_str(&sep_out(args, color, sep));
+    }
+    s
 }
 
 /// Search content of a single file. Returns true if any match found.
-/// `need_sep` tracks whether a "--" separator should be printed before the next context group.
+/// `relative_path` is repo-relative (may be cwd-stripped for work tree / tree search).
+/// `rev_label` is e.g. `Some("HEAD")` for object-store grep (`HEAD:path` in output).
 fn grep_content(
-    filename: &str,
+    relative_path: &str,
+    rev_label: Option<&str>,
     content: &str,
-    matchers: &[Regex],
+    compiled: &CompiledGrep,
     args: &Args,
-    tree_prefix: Option<&str>,
     need_sep: &mut bool,
     out: &mut (impl Write + ?Sized),
-    all_match: bool,
 ) -> Result<bool> {
     let color = args.use_color();
-
-    let display_name = match tree_prefix {
-        Some(p) => format!("{p}:{filename}"),
-        None => filename.to_string(),
+    let quoted_path = path_for_output(relative_path, args);
+    let full_display = match rev_label {
+        Some(r) => format!("{r}:{quoted_path}"),
+        None => quoted_path,
     };
     let show_name = args.show_filename();
-    // When suppressing filenames, use empty display_name so prefix is omitted
     let display_name = if show_name {
-        display_name
+        full_display.clone()
     } else {
         String::new()
     };
+
+    let mut atom_indices_all: Vec<usize> = Vec::new();
+    collect_atom_indices(&compiled.expr, &mut atom_indices_all);
 
     let lines: Vec<&str> = content.lines().collect();
     let nlines = lines.len();
     let before = args.before_ctx();
     let after = args.after_ctx();
     let use_context = args.has_context();
+    let col_mode = args.column;
 
-    // Collect matching line indices
     let mut match_indices: Vec<usize> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
-        let line_matches = if all_match {
-            matchers.iter().all(|re| re.is_match(line))
-        } else {
-            matchers.iter().any(|re| re.is_match(line))
-        };
-        let effective_match = if args.invert_match {
-            !line_matches
-        } else {
-            line_matches
-        };
-        if effective_match {
+        let mut hit = line_matches_expr(&compiled.expr, line, &compiled.atoms, col_mode);
+        if args.invert_match {
+            hit = !hit;
+        }
+        if hit {
             match_indices.push(i);
         }
     }
 
-    // Apply --max-count: truncate matches (negative means no limit)
+    if args.all_match && !content_satisfies_all_match(compiled, content) {
+        match_indices.clear();
+    }
+
     if let Some(max) = args.max_count {
         if max >= 0 {
             match_indices.truncate(max as usize);
@@ -1651,15 +1840,12 @@ fn grep_content(
     let has_match = !match_indices.is_empty();
     let match_count = match_indices.len() as u64;
 
-    // For --heading mode, we print the filename once and then suppress it in line output
     let display_name = if args.heading && has_match && show_name {
-        // Heading will be printed below; use empty display_name for per-line output
         String::new()
     } else {
         display_name
     };
 
-    // Special modes: files-with-matches, files-without-match, count
     if args.files_with_matches {
         if has_match {
             writeln!(out, "{}", fmt_name(&display_name, color))?;
@@ -1677,12 +1863,9 @@ fn grep_content(
 
     if args.count {
         if match_count > 0 {
-            writeln!(
-                out,
-                "{}{}",
-                name_prefix(&display_name, ':', color),
-                match_count
-            )?;
+            let prefix = line_prefix(&display_name, ':', args, color, None, None);
+            write!(out, "{prefix}{match_count}")?;
+            writeln!(out)?;
         }
         return Ok(has_match);
     }
@@ -1691,99 +1874,58 @@ fn grep_content(
         return Ok(false);
     }
 
-    // --break: print empty line between file groups
     if args.file_break && *need_sep {
         writeln!(out)?;
     }
 
-    // --heading: print filename once above the matches
     if args.heading && show_name {
-        let heading_name = match tree_prefix {
-            Some(p) => format!("{p}:{filename}"),
-            None => filename.to_string(),
-        };
-        writeln!(out, "{}", fmt_name(&heading_name, color))?;
+        writeln!(out, "{}", fmt_name(&full_display, color))?;
     }
 
-    // --only-matching
     if args.only_matching {
         for &idx in &match_indices {
             let line = lines[idx];
-            // For each matcher, iterate over matches tracking column
-            // as git does: accumulate cno from initial col+1 then add rm_eo
-            // after each match (git grep.c show_line logic).
-            for re in matchers {
-                // Find the first match to get the initial column.
-                let first_m = re.find(line);
-                if first_m.is_none() {
-                    continue;
+            let mut bol = 0usize;
+            let mut cno = 0usize;
+            let mut first = true;
+            loop {
+                let Some((abs_s, abs_e)) =
+                    next_match_from_bol(line, bol, args, compiled, &atom_indices_all)
+                else {
+                    break;
+                };
+                if first {
+                    cno = abs_s + 1;
+                    first = false;
                 }
-                let first_m = first_m.unwrap();
-                let mut cno = first_m.start() + 1; // 1-indexed initial column
-                let mut remaining = &line[first_m.start()..];
-
-                // Output first match
-                {
-                    let matched_text = first_m.as_str();
-                    let mut prefix_str = name_prefix(&display_name, ':', color);
-                    if args.show_line_number() {
-                        prefix_str.push_str(&fmt_num(idx + 1, color));
-                        prefix_str.push_str(&sep_char(':', color));
-                    }
-                    if args.column {
-                        prefix_str.push_str(&fmt_col(cno, color));
-                        prefix_str.push_str(&sep_char(':', color));
-                    }
-                    if color {
-                        writeln!(out, "{prefix_str}{COLOR_MATCH}{matched_text}{COLOR_RESET}")?;
-                    } else {
-                        writeln!(out, "{prefix_str}{matched_text}")?;
-                    }
+                let matched_text = line.get(abs_s..abs_e).unwrap_or("");
+                let prefix = if args.column {
+                    line_prefix(&display_name, ':', args, color, Some(idx + 1), Some(cno))
+                } else {
+                    line_prefix(&display_name, ':', args, color, Some(idx + 1), None)
+                };
+                if color {
+                    writeln!(out, "{prefix}{COLOR_MATCH}{matched_text}{COLOR_RESET}")?;
+                } else {
+                    writeln!(out, "{prefix}{matched_text}")?;
                 }
-
-                // Advance past first match and find subsequent matches
-                let match_len = first_m.end() - first_m.start();
-                cno += match_len;
-                remaining = &remaining[match_len..];
-
-                loop {
-                    let next_m = re.find(remaining);
-                    if next_m.is_none() {
-                        break;
-                    }
-                    let next_m = next_m.unwrap();
-                    let matched_text = next_m.as_str();
-                    let col = cno + next_m.start();
-                    let mut prefix_str = name_prefix(&display_name, ':', color);
-                    if args.show_line_number() {
-                        prefix_str.push_str(&fmt_num(idx + 1, color));
-                        prefix_str.push_str(&sep_char(':', color));
-                    }
-                    if args.column {
-                        prefix_str.push_str(&fmt_col(col, color));
-                        prefix_str.push_str(&sep_char(':', color));
-                    }
-                    if color {
-                        writeln!(out, "{prefix_str}{COLOR_MATCH}{matched_text}{COLOR_RESET}")?;
-                    } else {
-                        writeln!(out, "{prefix_str}{matched_text}")?;
-                    }
-                    let advance = next_m.end();
-                    cno += advance;
-                    remaining = &remaining[advance..];
-                }
+                cno += abs_e - bol;
+                bol = abs_e;
             }
         }
+        *need_sep = true;
         return Ok(true);
     }
 
-    // Context mode
     if use_context {
-        // Build groups of (start, end) ranges
         let mut groups: Vec<(usize, usize)> = Vec::new();
         for &idx in &match_indices {
             let start = idx.saturating_sub(before);
-            let end = (idx + after).min(nlines - 1);
+            let end = if nlines == 0 {
+                0
+            } else {
+                (idx + after).min(nlines - 1)
+            };
             if let Some(last) = groups.last_mut() {
                 if start <= last.1 + 1 {
                     last.1 = last.1.max(end);
@@ -1796,7 +1938,6 @@ fn grep_content(
         let match_set: std::collections::HashSet<usize> = match_indices.iter().copied().collect();
 
         for &(start, end) in &groups {
-            // Print separator between groups (including across files)
             if *need_sep {
                 writeln!(out, "--")?;
             }
@@ -1804,49 +1945,55 @@ fn grep_content(
 
             for i in start..=end {
                 let is_match_line = match_set.contains(&i);
-                let separator = if is_match_line { ':' } else { '-' };
-                let mut prefix_str = name_prefix(&display_name, separator, color);
-                if args.show_line_number() {
-                    prefix_str.push_str(&fmt_num(i + 1, color));
-                    prefix_str.push_str(&sep_char(separator, color));
-                }
-                if args.column && is_match_line {
-                    if let Some(col) = first_match_col(lines[i], matchers) {
-                        prefix_str.push_str(&fmt_col(col, color));
-                        prefix_str.push_str(&sep_char(separator, color));
-                    }
-                }
-                if color && is_match_line {
-                    writeln!(out, "{prefix_str}{}", colorize_matches(lines[i], matchers))?;
+                let sep = if is_match_line { ':' } else { '-' };
+                let col = if args.column && is_match_line {
+                    Some(column_for_line(lines[i], compiled, args.invert_match))
                 } else {
-                    writeln!(out, "{prefix_str}{}", lines[i])?;
+                    None
+                };
+                let prefix = line_prefix(
+                    &display_name,
+                    sep,
+                    args,
+                    color,
+                    args.show_line_number().then_some(i + 1),
+                    col,
+                );
+                if color && is_match_line {
+                    writeln!(
+                        out,
+                        "{}{}",
+                        prefix,
+                        colorize_line(lines[i], compiled, &atom_indices_all)
+                    )?;
+                } else {
+                    writeln!(out, "{}{}", prefix, lines[i])?;
                 }
             }
         }
     } else {
-        // No context — just print matching lines
         for &idx in &match_indices {
             let line = lines[idx];
-            let mut prefix_str = name_prefix(&display_name, ':', color);
-            if args.show_line_number() {
-                prefix_str.push_str(&fmt_num(idx + 1, color));
-                prefix_str.push_str(&sep_char(':', color));
-            }
-            if args.column {
-                let col = if args.invert_match {
-                    Some(1) // non-matching lines default to column 1
-                } else {
-                    first_match_col(line, matchers)
-                };
-                if let Some(col) = col {
-                    prefix_str.push_str(&fmt_col(col, color));
-                    prefix_str.push_str(&sep_char(':', color));
-                }
-            }
+            let col = args
+                .column
+                .then_some(column_for_line(line, compiled, args.invert_match));
+            let prefix = line_prefix(
+                &display_name,
+                ':',
+                args,
+                color,
+                args.show_line_number().then_some(idx + 1),
+                col,
+            );
             if color {
-                writeln!(out, "{prefix_str}{}", colorize_matches(line, matchers))?;
+                writeln!(
+                    out,
+                    "{}{}",
+                    prefix,
+                    colorize_line(line, compiled, &atom_indices_all)
+                )?;
             } else {
-                writeln!(out, "{prefix_str}{line}")?;
+                writeln!(out, "{prefix}{line}")?;
             }
         }
     }
@@ -1860,14 +2007,13 @@ fn grep_tree(
     repo: &Repository,
     tree_data: &[u8],
     prefix: &str,
-    depth: usize,
-    matchers: &[Regex],
+    _depth: usize,
+    compiled: &CompiledGrep,
     args: &Args,
     pathspecs: &[String],
     tree_name: Option<&str>,
     need_sep: &mut bool,
     out: &mut (impl Write + ?Sized),
-    all_match: bool,
     diff_attrs: &[DiffAttrRule],
 ) -> Result<bool> {
     let entries = parse_tree(tree_data)?;
@@ -1927,13 +2073,12 @@ fn grep_tree(
                             &sub_tree_obj.data,
                             &full_name,
                             0,
-                            matchers,
+                            compiled,
                             args,
                             pathspecs,
                             tree_name,
                             need_sep,
                             out,
-                            all_match,
                             &sub_diff_attrs,
                         )? {
                             found = true;
@@ -1945,32 +2090,25 @@ fn grep_tree(
         }
 
         if is_tree {
-            if let Some(max_depth) = args.effective_max_depth() {
-                if depth >= max_depth {
-                    continue;
-                }
-            }
             let sub_obj = repo.odb.read(&entry.oid)?;
             if grep_tree(
                 repo,
                 &sub_obj.data,
                 &full_name,
-                depth + 1,
-                matchers,
+                _depth + 1,
+                compiled,
                 args,
                 pathspecs,
                 tree_name,
                 need_sep,
                 out,
-                all_match,
                 diff_attrs,
             )? {
                 found = true;
             }
         } else {
             if let Some(max_depth) = args.effective_max_depth() {
-                let file_depth = full_name.matches('/').count();
-                if file_depth > max_depth {
+                if !path_allowed_at_max_depth(&full_name, pathspecs, max_depth) {
                     continue;
                 }
             }
@@ -1994,7 +2132,10 @@ fn grep_tree(
 
             if is_binary && !args.text_mode {
                 let content = String::from_utf8_lossy(&obj.data);
-                let has_match = matchers.iter().any(|re| re.is_match(&content));
+                let has_match = compiled
+                    .atoms
+                    .iter()
+                    .any(|r| r.as_ref().is_some_and(|re| re.is_match(&content)));
                 if has_match {
                     if !args.quiet {
                         let display = match tree_name {
@@ -2007,9 +2148,8 @@ fn grep_tree(
                 }
             } else {
                 let content = String::from_utf8_lossy(&obj.data);
-                if grep_content(
-                    &full_name, &content, matchers, args, tree_name, need_sep, out, all_match,
-                )? {
+                let rel = cwd_strip_repo_rel(repo, &full_name, args);
+                if grep_content(&rel, tree_name, &content, compiled, args, need_sep, out)? {
                     found = true;
                 }
             }

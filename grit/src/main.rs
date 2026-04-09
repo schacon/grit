@@ -3207,7 +3207,12 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 // Insert the winning flag back (at beginning, before positionals)
                 rest.insert(0, keep);
             }
-            commands::grep::run(parse_cmd_args(subcmd, &rest))
+            let (pattern_tokens, rest_for_clap) =
+                commands::grep_pattern::extract_pattern_tokens(&rest)?;
+            commands::grep::run_with_pattern_tokens(
+                pattern_tokens,
+                parse_cmd_args(subcmd, &rest_for_clap),
+            )
         }
         "hash-object" => commands::hash_object::run(parse_cmd_args(subcmd, rest)),
         "help" => commands::help::run(parse_cmd_args(subcmd, rest)),

@@ -105,17 +105,13 @@ pub struct Args {
     #[arg(long = "skip")]
     pub skip: Option<usize>,
 
-    /// Filter by author (regex pattern).
-    #[arg(long = "author")]
-    pub author: Option<String>,
+    /// Filter by author (regex); multiple `--author` options are ORed.
+    #[arg(long = "author", value_name = "PATTERN")]
+    pub authors: Vec<String>,
 
-    /// Filter by committer (regex pattern).
-    #[arg(long = "committer")]
-    pub committer_filter: Option<String>,
-
-    /// Filter by commit message (regex pattern).
-    #[arg(long = "grep")]
-    pub grep: Option<String>,
+    /// Filter by committer (regex); multiple options are ORed.
+    #[arg(long = "committer", value_name = "PATTERN")]
+    pub committers: Vec<String>,
 
     /// Skip merge commits.
     #[arg(long = "no-merges")]
@@ -279,9 +275,14 @@ pub struct Args {
     #[arg(long = "output-indicator-context", value_name = "C", hide = true)]
     pub output_indicator_context: Option<String>,
 
-    /// Grep log messages.
+    /// Grep commit messages (regex unless `--fixed-strings`); multiple `--grep` are ORed unless
+    /// `--all-match` requires every pattern to match.
     #[arg(long = "grep", value_name = "PATTERN")]
     pub grep_patterns: Vec<String>,
+
+    /// Grep reflog messages (`log -g` only); multiple options are ORed unless `--all-match`.
+    #[arg(long = "grep-reflog", value_name = "PATTERN")]
+    pub grep_reflog_patterns: Vec<String>,
 
     /// Invert grep match.
     #[arg(long = "invert-grep")]
@@ -504,9 +505,11 @@ fn run_line_log(repo: &Repository, args: Args) -> Result<()> {
         None,
         args.skip,
         args.first_parent,
-        None,
-        None,
-        None,
+        &[],
+        &[],
+        &[],
+        false,
+        false,
         args.no_merges,
         args.merges,
         &[][..],
@@ -2017,6 +2020,69 @@ pub fn run(mut args: Args) -> Result<()> {
         c
     };
 
+    if !args.walk_reflogs && !args.grep_reflog_patterns.is_empty() {
+        anyhow::bail!("--grep-reflog can only be used with -g");
+    }
+
+    let mut author_res: Vec<Regex> = Vec::new();
+    for p in &args.authors {
+        let pat = if args.fixed_strings {
+            regex::escape(p)
+        } else {
+            p.clone()
+        };
+        let re = RegexBuilder::new(&pat)
+            .case_insensitive(true)
+            .build()
+            .with_context(|| format!("invalid --author regex: {p}"))?;
+        author_res.push(re);
+    }
+    let mut committer_res: Vec<Regex> = Vec::new();
+    for p in &args.committers {
+        let pat = if args.fixed_strings {
+            regex::escape(p)
+        } else {
+            p.clone()
+        };
+        let re = RegexBuilder::new(&pat)
+            .case_insensitive(true)
+            .build()
+            .with_context(|| format!("invalid --committer regex: {p}"))?;
+        committer_res.push(re);
+    }
+    let mut grep_res: Vec<Regex> = Vec::new();
+    for p in &args.grep_patterns {
+        let pat = if args.fixed_strings {
+            regex::escape(p)
+        } else {
+            p.replace(r"\|", "|")
+        };
+        let mut b = RegexBuilder::new(&pat);
+        if args.regexp_ignore_case {
+            b.case_insensitive(true);
+        }
+        let re = b
+            .build()
+            .with_context(|| format!("invalid --grep regex: {p}"))?;
+        grep_res.push(re);
+    }
+    let mut grep_reflog_res: Vec<Regex> = Vec::new();
+    for p in &args.grep_reflog_patterns {
+        let pat = if args.fixed_strings {
+            regex::escape(p)
+        } else {
+            p.replace(r"\|", "|")
+        };
+        let mut b = RegexBuilder::new(&pat);
+        if args.regexp_ignore_case {
+            b.case_insensitive(true);
+        }
+        let re = b
+            .build()
+            .with_context(|| format!("invalid --grep-reflog regex: {p}"))?;
+        grep_reflog_res.push(re);
+    }
+
     // --no-graph overrides --graph
     if args.no_graph {
         args.graph = false;
@@ -2048,7 +2114,14 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Handle -g / --walk-reflogs mode
     if args.walk_reflogs {
-        return run_reflog_walk(&repo, &args);
+        return run_reflog_walk(
+            &repo,
+            &args,
+            &author_res,
+            &committer_res,
+            &grep_res,
+            &grep_reflog_res,
+        );
     }
 
     // Handle --no-walk: show given commits without walking parents
@@ -2117,31 +2190,6 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         std::collections::HashMap::new()
     };
-
-    // Compile filter regexes
-    let author_re = args
-        .author
-        .as_ref()
-        .map(|p| RegexBuilder::new(p).case_insensitive(true).build())
-        .transpose()
-        .context("invalid --author regex")?;
-    let committer_re = args
-        .committer_filter
-        .as_ref()
-        .map(|p| RegexBuilder::new(p).case_insensitive(true).build())
-        .transpose()
-        .context("invalid --committer regex")?;
-    let grep_re = args
-        .grep
-        .as_ref()
-        .map(|p| {
-            let pattern = p.replace(r"\|", "|");
-            RegexBuilder::new(&pattern)
-                .case_insensitive(args.regexp_ignore_case)
-                .build()
-        })
-        .transpose()
-        .context("invalid --grep regex")?;
 
     let format_requires_decorations = args
         .format
@@ -2216,9 +2264,11 @@ pub fn run(mut args: Args) -> Result<()> {
             if args.follow { None } else { args.max_count }, // follow needs full walk for rename tracking
             args.skip,
             args.first_parent,
-            author_re.as_ref(),
-            committer_re.as_ref(),
-            grep_re.as_ref(),
+            &author_res,
+            &committer_res,
+            &grep_res,
+            args.all_match,
+            args.invert_grep,
             args.no_merges,
             args.merges,
             effective_pathspecs,
@@ -2286,9 +2336,11 @@ pub fn run(mut args: Args) -> Result<()> {
             if args.follow { None } else { args.max_count }, // follow needs full walk for rename tracking
             args.skip,
             args.first_parent,
-            author_re.as_ref(),
-            committer_re.as_ref(),
-            grep_re.as_ref(),
+            &author_res,
+            &committer_res,
+            &grep_res,
+            args.all_match,
+            args.invert_grep,
             args.no_merges,
             args.merges,
             effective_pathspecs,
@@ -2681,8 +2733,31 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
     Ok(())
 }
 
+fn reflog_grep_matches(patterns: &[Regex], text: &str, all_match: bool, invert: bool) -> bool {
+    if patterns.is_empty() {
+        return true;
+    }
+    let m = if all_match {
+        patterns.iter().all(|re| re.is_match(text))
+    } else {
+        patterns.iter().any(|re| re.is_match(text))
+    };
+    if invert {
+        !m
+    } else {
+        m
+    }
+}
+
 /// Run the reflog walk mode (`log -g` / `log --walk-reflogs`).
-fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
+fn run_reflog_walk(
+    repo: &Repository,
+    args: &Args,
+    author_res: &[Regex],
+    committer_res: &[Regex],
+    grep_res: &[Regex],
+    grep_reflog_res: &[Regex],
+) -> Result<()> {
     // Determine which ref to walk
     let refname = if args.revisions.is_empty() {
         "HEAD".to_string()
@@ -2773,6 +2848,37 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
             },
             Err(_) => continue,
         };
+
+        let author_ok =
+            author_res.is_empty() || author_res.iter().any(|re| re.is_match(&commit_data.author));
+        if !author_ok {
+            continue;
+        }
+        let committer_ok = committer_res.is_empty()
+            || committer_res
+                .iter()
+                .any(|re| re.is_match(&commit_data.committer));
+        if !committer_ok {
+            continue;
+        }
+        let msg_ok = reflog_grep_matches(
+            grep_res,
+            &commit_data.message,
+            args.all_match,
+            args.invert_grep,
+        );
+        if !msg_ok {
+            continue;
+        }
+        let reflog_ok = reflog_grep_matches(
+            grep_reflog_res,
+            &entry.message,
+            args.all_match,
+            args.invert_grep,
+        );
+        if !reflog_ok {
+            continue;
+        }
 
         let selector = format!("{}@{{{}}}", display_name, i);
 
@@ -3130,9 +3236,11 @@ struct WalkCommitsIter<'a> {
     skip_n: usize,
     max_count: Option<usize>,
     first_parent: bool,
-    author_re: Option<&'a Regex>,
-    committer_re: Option<&'a Regex>,
-    grep_re: Option<&'a Regex>,
+    author_res: &'a [Regex],
+    committer_res: &'a [Regex],
+    grep_res: &'a [Regex],
+    all_match_grep: bool,
+    invert_grep: bool,
     no_merges: bool,
     merges_only: bool,
     pathspecs: &'a [String],
@@ -3147,9 +3255,11 @@ impl<'a> WalkCommitsIter<'a> {
         max_count: Option<usize>,
         skip: Option<usize>,
         first_parent: bool,
-        author_re: Option<&'a Regex>,
-        committer_re: Option<&'a Regex>,
-        grep_re: Option<&'a Regex>,
+        author_res: &'a [Regex],
+        committer_res: &'a [Regex],
+        grep_res: &'a [Regex],
+        all_match_grep: bool,
+        invert_grep: bool,
         no_merges: bool,
         merges_only: bool,
         pathspecs: &'a [String],
@@ -3172,9 +3282,11 @@ impl<'a> WalkCommitsIter<'a> {
             skip_n: skip.unwrap_or(0),
             max_count,
             first_parent,
-            author_re,
-            committer_re,
-            grep_re,
+            author_res,
+            committer_res,
+            grep_res,
+            all_match_grep,
+            invert_grep,
             no_merges,
             merges_only,
             pathspecs,
@@ -3230,20 +3342,35 @@ impl<'a> WalkCommitsIter<'a> {
             if self.merges_only && !is_merge {
                 continue;
             }
-            if let Some(re) = self.author_re {
-                if !re.is_match(&info.author) {
-                    continue;
-                }
+            let author_ok = self.author_res.is_empty()
+                || self.author_res.iter().any(|re| re.is_match(&info.author));
+            if !author_ok {
+                continue;
             }
-            if let Some(re) = self.committer_re {
-                if !re.is_match(&info.committer) {
-                    continue;
-                }
+            let committer_ok = self.committer_res.is_empty()
+                || self
+                    .committer_res
+                    .iter()
+                    .any(|re| re.is_match(&info.committer));
+            if !committer_ok {
+                continue;
             }
-            if let Some(re) = self.grep_re {
-                if !re.is_match(&info.message) {
-                    continue;
+            let msg_ok = if self.grep_res.is_empty() {
+                true
+            } else {
+                let m = if self.all_match_grep {
+                    self.grep_res.iter().all(|re| re.is_match(&info.message))
+                } else {
+                    self.grep_res.iter().any(|re| re.is_match(&info.message))
+                };
+                if self.invert_grep {
+                    !m
+                } else {
+                    m
                 }
+            };
+            if !msg_ok {
+                continue;
             }
             if !self.pathspecs.is_empty() && !commit_touches_paths(self.odb, &info, self.pathspecs)?
             {
@@ -3290,9 +3417,11 @@ fn walk_commits(
     max_count: Option<usize>,
     skip: Option<usize>,
     first_parent: bool,
-    author_re: Option<&Regex>,
-    committer_re: Option<&Regex>,
-    grep_re: Option<&Regex>,
+    author_res: &[Regex],
+    committer_res: &[Regex],
+    grep_res: &[Regex],
+    all_match_grep: bool,
+    invert_grep: bool,
     no_merges: bool,
     merges_only: bool,
     pathspecs: &[String],
@@ -3308,9 +3437,11 @@ fn walk_commits(
         max_count,
         skip,
         first_parent,
-        author_re,
-        committer_re,
-        grep_re,
+        author_res,
+        committer_res,
+        grep_res,
+        all_match_grep,
+        invert_grep,
         no_merges,
         merges_only,
         pathspecs,
