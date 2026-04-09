@@ -141,8 +141,12 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
                 let clone_url =
                     config_last_value(&local_cfg, &url_key).unwrap_or_else(|| m.url.clone());
 
-                if sub_path.exists() {
-                    let _ = fs::remove_dir_all(&sub_path);
+                if let Ok(meta) = fs::symlink_metadata(&sub_path) {
+                    if meta.is_dir() {
+                        let _ = fs::remove_dir_all(&sub_path);
+                    } else {
+                        let _ = fs::remove_file(&sub_path);
+                    }
                 }
 
                 let clone_src_str =

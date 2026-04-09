@@ -357,13 +357,18 @@ fn parse_local_config(git_dir: &Path) -> Result<ConfigFile> {
 
 /// Set `core.worktree` in a separate git-dir so checkouts materialize files (matches Git after
 /// `clone --separate-git-dir`).
+///
+/// Uses a path relative to `git_dir` (not an absolute path) so nested submodules store
+/// `../../../work/sub2` under `.git/modules/.../modules/sub2`, matching C Git and allowing
+/// `reset_work_tree_to_interested` to copy `modules/sub1/modules/sub2` (t1013).
 fn set_separate_gitdir_worktree(grit_bin: &Path, git_dir: &Path, work_tree: &Path) {
+    let wt = pathdiff_relative(git_dir, work_tree);
     let _ = grit_subprocess(grit_bin)
         .arg("--git-dir")
         .arg(git_dir)
         .arg("config")
         .arg("core.worktree")
-        .arg(work_tree)
+        .arg(&wt)
         .status();
 }
 
@@ -1126,6 +1131,9 @@ fn read_submodule_commit(repo: &Repository, submodule_path: &str) -> Result<Opti
             if entry.mode == MODE_GITLINK {
                 return Ok(Some(entry.oid.to_hex()));
             }
+            // Path exists in the index but is not a gitlink (e.g. replaced by a regular file).
+            // `submodule update` must not treat it as a submodule (t1013 read-tree).
+            return Ok(None);
         }
     }
 
@@ -1670,6 +1678,22 @@ fn attach_existing_submodule_worktree(
     modules_dir: &Path,
     sub_path: &Path,
 ) -> Result<()> {
+    if sub_path.exists() {
+        let meta = fs::symlink_metadata(sub_path)?;
+        if meta.is_file() || meta.file_type().is_symlink() {
+            fs::remove_file(sub_path).with_context(|| {
+                format!(
+                    "cannot replace file at submodule path {}",
+                    sub_path.display()
+                )
+            })?;
+        } else if !meta.is_dir() {
+            bail!(
+                "submodule path '{}' exists but is not a directory",
+                sub_path.display()
+            );
+        }
+    }
     if !sub_path.exists() {
         fs::create_dir_all(sub_path)?;
     }

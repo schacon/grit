@@ -2057,13 +2057,34 @@ pub fn init_repository_separate_git_dir(
         skip_hooks_info,
     )?;
 
-    let git_dir_abs = git_dir
-        .canonicalize()
-        .unwrap_or_else(|_| git_dir.to_path_buf());
+    // Use a relative `gitdir:` path from the work tree (matches C Git). Absolute paths break
+    // nested submodule layouts: the inner clone would keep a `.git` directory instead of a
+    // gitfile, so `.git/modules/<outer>/modules/<inner>` is never created (t1013).
     let gitfile = work_tree.join(".git");
-    fs::write(gitfile, format!("gitdir: {}\n", git_dir_abs.display()))?;
+    let rel_git_dir = pathdiff_relative_gitfile(work_tree, git_dir);
+    fs::write(gitfile, format!("gitdir: {rel_git_dir}\n"))?;
 
     Repository::open(git_dir, Some(work_tree))
+}
+
+/// Relative path from `from` to `to` using `..` segments (forward slashes), for gitfile lines.
+fn pathdiff_relative_gitfile(from: &Path, to: &Path) -> String {
+    let from_c = fs::canonicalize(from).unwrap_or_else(|_| from.to_path_buf());
+    let to_c = fs::canonicalize(to).unwrap_or_else(|_| to.to_path_buf());
+    let from_comp: Vec<Component<'_>> = from_c.components().collect();
+    let to_comp: Vec<Component<'_>> = to_c.components().collect();
+    let mut i = 0usize;
+    while i < from_comp.len() && i < to_comp.len() && from_comp[i] == to_comp[i] {
+        i += 1;
+    }
+    let mut out = PathBuf::new();
+    for _ in i..from_comp.len() {
+        out.push("..");
+    }
+    for c in &to_comp[i..] {
+        out.push(c.as_os_str());
+    }
+    out.to_string_lossy().replace('\\', "/")
 }
 
 /// Initialise a **minimal** bare repository directory layout matching `git clone --template= --bare`.

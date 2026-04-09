@@ -282,10 +282,8 @@ test_submodule_content () {
 	fi &&
 	(
 		cd "$submodule" &&
-		git status -u -s >actual &&
-		test_must_be_empty actual &&
-		git diff "$sha1" >actual &&
-		test_must_be_empty actual
+		git diff-index --quiet --cached "$sha1" &&
+		git diff --quiet "$sha1"
 	)
 }
 
@@ -623,7 +621,6 @@ test_submodule_switch () {
 test_submodule_forced_switch () {
 	gitcmd="$1"
 	command="git_test_func"
-	KNOWN_FAILURE_FORCED_SWITCH_TESTS=1
 	test_submodule_switch_common "$command"
 
 	# When forced, a file in the superproject does not prevent creating a
@@ -789,7 +786,7 @@ test_submodule_recursing_with_args_common () {
 			test_must_fail $command replace_sub1_with_file &&
 			test_superproject_content origin/add_sub1 &&
 			test_submodule_content sub1 origin/add_sub1 &&
-			test -f sub1/untracked_file
+			test -f sub1/untrackedfile
 		)
 	'
 

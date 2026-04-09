@@ -19,7 +19,6 @@ use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::sparse_checkout::{parse_sparse_checkout_file, path_in_sparse_checkout_patterns};
-use grit_lib::submodule_gitdir::submodule_modules_git_dir;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -363,17 +362,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // Phase 2: perform all removals (only reached when all checks passed).
-    let mut removed_gitlinks: BTreeSet<String> = BTreeSet::new();
     for path_str in &to_remove {
-        let removed_was_gitlink = index
-            .entries
-            .iter()
-            .filter(|e| e.path == path_str.as_bytes())
-            .any(|e| e.mode == 0o160000);
-        if removed_was_gitlink {
-            removed_gitlinks.insert(path_str.clone());
-        }
-
         if args.dry_run {
             if !args.quiet {
                 println!("rm '{path_str}'");
@@ -384,7 +373,6 @@ pub fn run(mut args: Args) -> Result<()> {
         if !args.cached {
             let abs_path = work_tree.join(path_str);
             if abs_path.exists() || abs_path.symlink_metadata().is_ok() {
-                let removed_was_gitlink = removed_gitlinks.contains(path_str);
                 let is_real_dir = fs::symlink_metadata(&abs_path)
                     .map(|m| m.file_type().is_dir())
                     .unwrap_or(false);
@@ -394,14 +382,6 @@ pub fn run(mut args: Args) -> Result<()> {
                     }
                 } else if let Err(e) = fs::remove_file(&abs_path) {
                     bail!("cannot remove '{path_str}': {e}");
-                }
-                // Submodule gitdirs live under `.git/modules/<path>`; remove them so a path
-                // can be reused as a regular directory (matches Git's `git rm` behaviour).
-                if removed_was_gitlink {
-                    let modules_gitdir = submodule_modules_git_dir(&repo.git_dir, path_str);
-                    if modules_gitdir.exists() {
-                        let _ = fs::remove_dir_all(&modules_gitdir);
-                    }
                 }
                 remove_empty_parents(&abs_path, work_tree);
             }

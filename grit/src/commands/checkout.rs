@@ -2421,7 +2421,7 @@ fn checkout_record_path_result(
 /// rewritten even if HEAD already matches (needed when the path was a regular file and is now a
 /// gitlink, leaving an empty submodule directory). When false, a no-op checkout is avoided so
 /// symlinked submodule paths (e.g. `g` → `b`) do not spuriously populate the shared directory.
-fn checkout_gitlink_worktree_entry(
+pub(crate) fn checkout_gitlink_worktree_entry(
     repo: &Repository,
     work_tree: &Path,
     rel: &str,
