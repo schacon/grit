@@ -265,15 +265,15 @@ pub fn try_local_git_dir(spec: &SshUrl) -> Option<PathBuf> {
         return resolve_git_dir_at(path);
     }
     if let Ok(trash) = std::env::var("TRASH_DIRECTORY") {
-        let joined = PathBuf::from(&trash).join(&spec.ssh_host).join(&spec.path);
-        if let Some(gd) = resolve_git_dir_at(&joined) {
-            return Some(gd);
-        }
-        // `t5601` keeps the sample repo at `$TRASH_DIRECTORY/src` while SSH URLs use
-        // `myhost:src` (expected layout `$TRASH_DIRECTORY/myhost/src`). Create a symlink on Unix
-        // so `host:path` resolves to the same repository as `./path` when present.
-        let direct = PathBuf::from(&trash).join(&spec.path);
+        let trash_pb = PathBuf::from(trash);
+        let joined = trash_pb.join(&spec.ssh_host).join(&spec.path);
+        // Prefer resolving `path` relative to the trash directory first: harnesses often `cd` to
+        // `$TRASH_DIRECTORY` before running the remote command (t5507: `host:remote` → `./remote`).
+        let direct = trash_pb.join(&spec.path);
         if let Some(gd) = resolve_git_dir_at(&direct) {
+            // `t5601` keeps the sample repo at `$TRASH_DIRECTORY/src` while SSH URLs use
+            // `myhost:src` (expected layout `$TRASH_DIRECTORY/myhost/src`). Create a symlink on Unix
+            // so `host:path` resolves to the same repository as `./path` when present.
             #[cfg(unix)]
             {
                 use std::os::unix::fs::symlink;
@@ -288,6 +288,9 @@ pub fn try_local_git_dir(spec: &SshUrl) -> Option<PathBuf> {
                     return Some(gd2);
                 }
             }
+            return Some(gd);
+        }
+        if let Some(gd) = resolve_git_dir_at(&joined) {
             return Some(gd);
         }
     }

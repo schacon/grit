@@ -924,7 +924,7 @@ t5503-tagfollow	t5	yes	12	6	6	false	ok	0
 t5504-fetch-receive-strict	t5	skip	29	0	0	false	ok	0
 t5505-remote	t5	yes	129	25	104	false	ok	1
 t5506-remote-groups	t5	yes	9	2	7	false	ok	0
-t5507-remote-environment	t5	yes	5	3	2	false	ok	0
+t5507-remote-environment	t5	yes	5	5	0	true	ok	0
 t5509-fetch-push-namespaces	t5	yes	15	4	11	false	ok	0
 t5510-fetch	t5	yes	215	35	180	false	ok	0
 t5511-refspec	t5	yes	47	24	23	false	ok	0
