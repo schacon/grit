@@ -1036,7 +1036,14 @@ fn pathdiff_from_repo_for_display(
     work_tree: &Path,
     repo_rel: &[u8],
 ) -> Result<Vec<u8>> {
-    let rel_str = std::str::from_utf8(repo_rel).unwrap_or("");
+    // Directory markers from `walk_worktree` end with `/`. `Path::join` drops that trailing
+    // separator, so we must re-attach it after the relative path is computed (t3009).
+    let dir_marker = repo_rel.ends_with(b"/");
+    let rel_for_path = repo_rel
+        .strip_suffix(b"/")
+        .filter(|s| !s.is_empty())
+        .unwrap_or(repo_rel);
+    let rel_str = std::str::from_utf8(rel_for_path).unwrap_or("");
     let target = work_tree.join(rel_str);
     let s = if cwd.strip_prefix(work_tree).is_ok() {
         pathdiff_relative_lexical(cwd, &target)?
@@ -1050,7 +1057,11 @@ fn pathdiff_from_repo_for_display(
     } else {
         pathdiff_relative_lexical(cwd, &target)?
     };
-    Ok(s.into_bytes())
+    let mut out = s.into_bytes();
+    if dir_marker && !out.ends_with(b"/") {
+        out.push(b'/');
+    }
+    Ok(out)
 }
 
 /// Relative path from directory `from` to path `to` (forward slashes), without resolving symlinks.
