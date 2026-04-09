@@ -9,7 +9,8 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
-use std::io::{Read, Write};
+use std::collections::{BTreeSet, HashSet};
+use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 
 mod alias;
@@ -3455,51 +3456,298 @@ fn preprocess_log_args(rest: &[String]) -> Vec<String> {
     result
 }
 
-/// Levenshtein edit distance between two strings.
-/// Read the `help.autocorrect` config setting.
-/// Returns None if not set, or Some(value) where value is the config string.
-fn get_autocorrect_setting() -> Option<String> {
-    // Check GIT_CONFIG_PARAMETERS first (set by -c)
-    if let Some(val) = protocol::check_config_param("help.autocorrect") {
-        return Some(val);
+/// Parsed `help.autocorrect` mode, matching `git/help.c` (`parse_autocorrect`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HelpAutocorrect {
+    Never,
+    Show,
+    Immediately,
+    Prompt,
+    DelayDeciseconds(u32),
+}
+
+/// Read and parse `help.autocorrect` (env overrides, then repo config).
+fn parse_help_autocorrect() -> Option<HelpAutocorrect> {
+    let raw = if let Some(val) = protocol::check_config_param("help.autocorrect") {
+        Some(val)
+    } else {
+        let git_dir = std::env::var("GIT_DIR")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                grit_lib::repo::Repository::discover(None)
+                    .ok()
+                    .map(|r| r.git_dir)
+            });
+        grit_lib::config::ConfigSet::load(git_dir.as_deref(), true)
+            .ok()
+            .and_then(|c| c.get("help.autocorrect"))
+    }?;
+    let s = raw.trim();
+    if let Some(b) = parse_bool_str(s) {
+        return Some(if b {
+            HelpAutocorrect::Immediately
+        } else {
+            HelpAutocorrect::Show
+        });
     }
-    // Try to discover git dir and load config
+    if s.eq_ignore_ascii_case("never") {
+        return Some(HelpAutocorrect::Never);
+    }
+    if s.eq_ignore_ascii_case("immediate") {
+        return Some(HelpAutocorrect::Immediately);
+    }
+    if s.eq_ignore_ascii_case("show") {
+        return Some(HelpAutocorrect::Show);
+    }
+    if s.eq_ignore_ascii_case("prompt") {
+        return Some(HelpAutocorrect::Prompt);
+    }
+    if let Ok(n) = s.parse::<i32>() {
+        if n >= 0 {
+            return Some(HelpAutocorrect::DelayDeciseconds(n as u32));
+        }
+        if n == -1 || n == 1 {
+            return Some(HelpAutocorrect::Immediately);
+        }
+    }
+    Some(HelpAutocorrect::Show)
+}
+
+/// Damerau–Levenshtein with Git's weights: `levenshtein(s1, s2, 0, 2, 1, 3)` in `git/levenshtein.c`.
+fn weighted_damerau_levenshtein(s1: &str, s2: &str) -> i32 {
+    let s1: Vec<char> = s1.chars().collect();
+    let s2: Vec<char> = s2.chars().collect();
+    let len1 = s1.len();
+    let len2 = s2.len();
+    if len1 == 0 {
+        return len2 as i32;
+    }
+    if len2 == 0 {
+        return (len1 as i32) * 3;
+    }
+    let w = 0;
+    let sub_cost = 2;
+    let ins_cost = 1;
+    let del_cost = 3;
+    let mut row0 = vec![0i32; len2 + 1];
+    let mut row1: Vec<i32> = (0..=len2).map(|j| j as i32 * ins_cost).collect();
+    let mut row2 = vec![0i32; len2 + 1];
+    for i in 0..len1 {
+        row2[0] = (i as i32 + 1) * del_cost;
+        for j in 0..len2 {
+            let mut best = row1[j] + if s1[i] == s2[j] { 0 } else { sub_cost };
+            if i > 0 && j > 0 && s1[i - 1] == s2[j] && s1[i] == s2[j - 1] && best > row0[j - 1] + w
+            {
+                best = row0[j - 1] + w;
+            }
+            best = best.min(row1[j + 1] + del_cost);
+            best = best.min(row2[j] + ins_cost);
+            row2[j + 1] = best;
+        }
+        std::mem::swap(&mut row0, &mut row1);
+        std::mem::swap(&mut row1, &mut row2);
+    }
+    row1[len2]
+}
+
+fn collect_alias_command_names(config: &grit_lib::config::ConfigSet) -> Vec<String> {
+    let mut names = Vec::new();
+    for e in config.entries() {
+        let key = &e.key;
+        if !key.starts_with("alias.") {
+            continue;
+        }
+        if key.ends_with(".command") {
+            if let Some(name) = key
+                .strip_prefix("alias.")
+                .and_then(|k| k.strip_suffix(".command"))
+            {
+                names.push(name.to_string());
+            }
+        } else if let Some(name) = key.strip_prefix("alias..") {
+            names.push(name.to_string());
+        } else {
+            let rest = key.strip_prefix("alias.").unwrap();
+            if !rest.contains('.') {
+                names.push(rest.to_string());
+            }
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn path_component_is_executable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .ok()
+            .is_some_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
+}
+
+fn collect_path_git_command_names(exec_path: Option<&Path>) -> Vec<String> {
+    let mut out = BTreeSet::new();
+    let Some(path_var) = std::env::var_os("PATH") else {
+        return Vec::new();
+    };
+    for dir in std::env::split_paths(&path_var) {
+        if exec_path.is_some_and(|ep| ep == dir.as_path()) {
+            continue;
+        }
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for ent in rd.flatten() {
+            let name = ent.file_name();
+            let name = name.to_string_lossy();
+            let Some(rest) = name.strip_prefix("git-") else {
+                continue;
+            };
+            let cmd_name = rest.strip_suffix(".exe").unwrap_or(rest);
+            if cmd_name.is_empty() || cmd_name.contains('/') || cmd_name.contains('\\') {
+                continue;
+            }
+            let p = ent.path();
+            if path_component_is_executable(&p) {
+                out.insert(cmd_name.to_string());
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
+fn unknown_cmd_similarity_score(cmd: &str, candidate: &str) -> i32 {
+    if COMMON_PORCELAIN_COMMANDS.contains(&candidate)
+        && candidate.len() >= cmd.len()
+        && candidate.starts_with(cmd)
+    {
+        return 0;
+    }
+    weighted_damerau_levenshtein(cmd, candidate) + 1
+}
+
+/// Handle an unknown subcommand like `help_unknown_cmd` in `git/help.c`.
+fn handle_unknown_git_command(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
+    const SIMILARITY_FLOOR: i32 = 7;
+
+    let mut mode = parse_help_autocorrect().unwrap_or(HelpAutocorrect::Show);
+    if mode == HelpAutocorrect::Prompt
+        && (!std::io::stdin().is_terminal() || !std::io::stderr().is_terminal())
+    {
+        mode = HelpAutocorrect::Never;
+    }
+    if mode == HelpAutocorrect::Never {
+        bail!("git: '{subcmd}' is not a git command. See 'git --help'.");
+    }
+
     let git_dir = std::env::var("GIT_DIR")
         .ok()
-        .map(std::path::PathBuf::from)
+        .map(PathBuf::from)
         .or_else(|| {
             grit_lib::repo::Repository::discover(None)
                 .ok()
                 .map(|r| r.git_dir)
         });
-    if let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) {
-        if let Some(val) = config.get("help.autocorrect") {
-            return Some(val);
-        }
-    }
-    None
-}
+    let config = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true).unwrap_or_default();
+    let exec_path = opts.exec_path.clone().or_else(|| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|e| e.parent().map(|p| p.to_path_buf()))
+    });
 
-fn strsim_distance(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    let (m, n) = (a.len(), b.len());
-    let mut dp = vec![vec![0usize; n + 1]; m + 1];
-    for i in 0..=m {
-        dp[i][0] = i;
+    let mut names: HashSet<String> = KNOWN_COMMANDS.iter().map(|s| (*s).to_string()).collect();
+    for a in collect_alias_command_names(&config) {
+        names.insert(a);
     }
-    for j in 0..=n {
-        dp[0][j] = j;
+    for p in collect_path_git_command_names(exec_path.as_deref()) {
+        names.insert(p);
     }
-    for i in 1..=m {
-        for j in 1..=n {
-            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            dp[i][j] = (dp[i - 1][j] + 1)
-                .min(dp[i][j - 1] + 1)
-                .min(dp[i - 1][j - 1] + cost);
+    let mut candidates: Vec<String> = names.into_iter().collect();
+    candidates.sort();
+
+    let mut scored: Vec<(i32, String)> = candidates
+        .into_iter()
+        .map(|c| {
+            let sim = unknown_cmd_similarity_score(subcmd, &c);
+            (sim, c)
+        })
+        .collect();
+    // Match `levenshtein_compare` in `git/help.c`: sort by similarity score (`len` field), then name.
+    scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+    let prefix_n = scored.iter().take_while(|(s, _)| *s == 0).count();
+    let (best_similarity, tie_count) = if scored.is_empty() {
+        (SIMILARITY_FLOOR + 1, 0usize)
+    } else if prefix_n == scored.len() {
+        (SIMILARITY_FLOOR + 1, 0usize)
+    } else {
+        let mut n = prefix_n + 1;
+        let best = scored[prefix_n].0;
+        while n < scored.len() && scored[n].0 == best {
+            n += 1;
+        }
+        (best, n - prefix_n)
+    };
+
+    let run_corrected = |corrected: &str| -> Result<()> {
+        eprintln!("WARNING: You called a grit command named '{subcmd}', which does not exist.");
+        match mode {
+            HelpAutocorrect::Immediately => {
+                eprintln!("Continuing under the assumption that you meant '{corrected}'.");
+            }
+            HelpAutocorrect::Prompt => {
+                eprint!("Run '{corrected}' instead [y/N]? ");
+                let _ = std::io::stderr().flush();
+                let mut line = String::new();
+                let _ = std::io::stdin().read_line(&mut line);
+                let line = line.trim();
+                if !line.starts_with('y') && !line.starts_with('Y') {
+                    std::process::exit(1);
+                }
+            }
+            HelpAutocorrect::DelayDeciseconds(d) => {
+                eprintln!(
+                    "Continuing in {:.1} seconds, assuming that you meant '{corrected}'.",
+                    d as f32 / 10.0
+                );
+                std::thread::sleep(std::time::Duration::from_millis(u64::from(d) * 100));
+            }
+            HelpAutocorrect::Show | HelpAutocorrect::Never => {}
+        }
+        // Re-enter the full argv path so `git-<cmd>` on `PATH` and `alias.*` work
+        // (same as Git re-running `run_argv` after `help_unknown_cmd`).
+        alias::run_command_with_aliases(corrected.to_string(), rest.to_vec(), opts)
+    };
+
+    let similar_enough = best_similarity < SIMILARITY_FLOOR;
+    let autocorrect_runs = !matches!(mode, HelpAutocorrect::Show | HelpAutocorrect::Never);
+    if autocorrect_runs && tie_count == 1 && similar_enough {
+        let corrected = scored[prefix_n].1.clone();
+        return run_corrected(&corrected);
+    }
+
+    eprintln!("git: '{subcmd}' is not a git command. See 'git --help'.");
+    if similar_enough && tie_count > 0 {
+        let start = prefix_n;
+        let msg = if tie_count == 1 {
+            "\nThe most similar command is"
+        } else {
+            "\nThe most similar commands are"
+        };
+        eprintln!("{msg}");
+        for (_, name) in scored.iter().skip(start).take(tie_count) {
+            eprintln!("\t{name}");
         }
     }
-    dp[m][n]
+    std::process::exit(1);
 }
 
 pub(crate) const KNOWN_COMMANDS: &[&str] = &[
@@ -3651,6 +3899,49 @@ pub(crate) const KNOWN_COMMANDS: &[&str] = &[
     "whatchanged",
     "worktree",
     "write-tree",
+];
+
+/// Porcelain commands Git treats as "common" for `help_unknown_cmd` prefix scoring
+/// (`common_mask` in `git/help.c`: init | worktree | info | history | remote).
+const COMMON_PORCELAIN_COMMANDS: &[&str] = &[
+    "add",
+    "clone",
+    "commit",
+    "init",
+    "mv",
+    "restore",
+    "rm",
+    "backfill",
+    "branch",
+    "checkout",
+    "cherry-pick",
+    "clean",
+    "fetch",
+    "format-patch",
+    "gc",
+    "grep",
+    "history",
+    "log",
+    "maintenance",
+    "merge",
+    "notes",
+    "pull",
+    "push",
+    "range-diff",
+    "rebase",
+    "reset",
+    "revert",
+    "shortlog",
+    "show",
+    "stash",
+    "status",
+    "submodule",
+    "switch",
+    "tag",
+    "bisect",
+    "describe",
+    "diff",
+    "worktree",
 ];
 
 /// Dispatch to the appropriate command handler.
@@ -4235,61 +4526,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 eprintln!("git: '{subcmd}' is not a git command. See 'git --help'.");
                 std::process::exit(1);
             }
-            let commands = KNOWN_COMMANDS;
-            // Find similar commands using edit distance
-            let mut suggestions: Vec<&str> = commands
-                .iter()
-                .filter(|cmd| strsim_distance(subcmd, cmd) <= 2)
-                .copied()
-                .collect();
-            suggestions.sort();
-
-            // Check help.autocorrect config
-            let autocorrect = get_autocorrect_setting();
-
-            match autocorrect.as_deref() {
-                Some("never") => {
-                    // With never, just say it's not a command, no suggestions
-                    bail!("git: '{subcmd}' is not a git command. See 'git --help'.");
-                }
-                Some("immediate") | Some("-1") if suggestions.len() == 1 => {
-                    // Auto-run the single matching command
-                    let corrected = suggestions[0].to_owned();
-                    eprintln!(
-                        "WARNING: You called a grit command named '{subcmd}', which does not exist."
-                    );
-                    eprintln!("Auto-correcting to 'grit {corrected}'");
-                    dispatch(&corrected, rest, opts)
-                }
-                _ => {
-                    // Try external command: look for git-<subcmd> in exec-path
-                    let ext_cmd = format!("git-{}", subcmd);
-                    let exec_path = opts.exec_path.clone().or_else(|| {
-                        std::env::current_exe()
-                            .ok()
-                            .and_then(|e| e.parent().map(|p| p.to_path_buf()))
-                    });
-                    if let Some(ref ep) = exec_path {
-                        let ext_path = ep.join(&ext_cmd);
-                        if ext_path.is_file() {
-                            let status = std::process::Command::new(&ext_path)
-                                .args(rest.iter())
-                                .status()
-                                .map_err(|e| anyhow::anyhow!("failed to run {}: {}", ext_cmd, e))?;
-                            std::process::exit(status.code().unwrap_or(1));
-                        }
-                    }
-                    // Default: show suggestions
-                    if suggestions.is_empty() {
-                        bail!("git: '{subcmd}' is not a git command. See 'git --help'.\n\nunrecognized subcommand");
-                    } else {
-                        let similar = suggestions.join("\n\t");
-                        bail!(
-                            "git: '{subcmd}' is not a git command. See 'git --help'.\n\nThe most similar command is\n\t{similar}\n\nunrecognized subcommand"
-                        );
-                    }
-                }
-            }
+            handle_unknown_git_command(subcmd, rest, opts)
         }
     }
 }

@@ -935,7 +935,7 @@ commit → check it off → move on.
 - [ ] `t9351-fast-export-anonymize` ██████████████░░░░░░ 12/17 (5 left) — basic tests for fast-export --anonymize
 - [ ] `t9210-scalar` █████████████░░░░░░░ 15/22 (7 left) — test the `scalar` command
 - [ ] `t9301-fast-import-notes` █████████░░░░░░░░░░░ 8/17 (9 left) — test git fast-import of notes objects
-- [ ] `t9003-help-autocorrect` ██░░░░░░░░░░░░░░░░░░ 1/10 (9 left) — help.autocorrect finding a match
+- [x] `t9003-help-autocorrect` — help.autocorrect finding a match (10/10)
 - [ ] `t9002-column` ███████░░░░░░░░░░░░░ 6/16 (10 left) — git column
 - [ ] `t9211-scalar-clone` █░░░░░░░░░░░░░░░░░░░ 1/14 (13 left) — test the `scalar clone` subcommand
 - [ ] `t9303-fast-import-compression` ░░░░░░░░░░░░░░░░░░░░ 0/16 (16 left) — compression setting of fast-import utility
