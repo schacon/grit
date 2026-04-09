@@ -218,7 +218,7 @@ impl Odb {
     pub fn read_loose_verify_oid(path: &Path, expected_oid: &ObjectId) -> Result<Object> {
         let file = fs::File::open(path).map_err(Error::Io)?;
         let raw = read_zlib_loose_payload(file)?;
-        let obj = parse_object_bytes(&raw)?;
+        let obj = parse_object_bytes_with_oid(&raw, expected_oid)?;
         let computed = hash_object_from_parsed(&obj);
         if computed != *expected_oid {
             return Err(Error::LooseHashMismatch {
@@ -252,7 +252,9 @@ impl Odb {
         match fs::File::open(&path) {
             Ok(file) => {
                 let raw = read_zlib_loose_payload(file)?;
-                return parse_object_bytes_with_oid(&raw, oid);
+                // Match Git: loose objects are read from the path implied by `oid` without
+                // requiring the payload to hash back to that oid (t1006 corrupt-loose / swapped files).
+                return parse_object_bytes(&raw);
             }
             Err(_) => {
                 // Loose object not found; try pack files.
@@ -290,7 +292,7 @@ impl Odb {
             .join(oid.loose_suffix());
         if let Ok(file) = fs::File::open(&loose) {
             let raw = read_zlib_loose_payload(file)?;
-            return parse_object_bytes_with_oid(&raw, oid);
+            return parse_object_bytes(&raw);
         }
         pack::read_object_from_packs(objects_dir, oid)
     }
@@ -348,6 +350,11 @@ impl Odb {
             encoder.finish().map_err(|e| Error::Zlib(e.to_string()))?;
         }
         fs::rename(&tmp_path, &path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o444));
+        }
 
         Ok(oid)
     }
@@ -391,9 +398,56 @@ impl Odb {
             encoder.finish().map_err(|e| Error::Zlib(e.to_string()))?;
         }
         fs::rename(&tmp_path, &path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o444));
+        }
 
         Ok(oid)
     }
+
+    /// Returns true when a loose object exists at `oid`'s path and zlib-decompresses to a
+    /// structurally valid `<type> <size>\0<payload>` object (type may be non-standard).
+    ///
+    /// Used for `git cat-file -e`, which succeeds for hand-crafted loose objects that
+    /// [`Self::read`] rejects due to [`Error::UnknownObjectType`].
+    #[must_use]
+    pub fn loose_object_plumbing_ok(&self, oid: &ObjectId) -> bool {
+        let path = self.object_path(oid);
+        let Ok(file) = fs::File::open(&path) else {
+            return false;
+        };
+        let Ok(raw) = read_zlib_loose_payload(file) else {
+            return false;
+        };
+        loose_store_bytes_header_valid(&raw)
+    }
+}
+
+fn loose_store_bytes_header_valid(raw: &[u8]) -> bool {
+    let nul = match raw.iter().position(|&b| b == 0) {
+        Some(i) => i,
+        None => return false,
+    };
+    let header = &raw[..nul];
+    let data = &raw[nul + 1..];
+    let sp = match header.iter().position(|&b| b == b' ') {
+        Some(i) => i,
+        None => return false,
+    };
+    if sp == 0 || sp > 32 {
+        return false;
+    }
+    let size_str = match std::str::from_utf8(&header[sp + 1..]) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let size: usize = match size_str.parse() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    data.len() == size
 }
 
 /// Update `path`'s mtime to "now" (Git `utime(path, NULL)`), returning whether it succeeded.

@@ -4561,20 +4561,45 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                     // Match `git/t/helper/test-genrandom.c`: `test-tool genrandom <seed> [<size>]`.
                     // With two args only, emit until the pipe breaks (size omitted → unbounded).
                     use std::io::Write;
+                    fn parse_genrandom_size(arg: &str) -> anyhow::Result<usize> {
+                        // Match `git_parse_ulong` + `get_unit_factor`: optional `k`/`m`/`g` suffix.
+                        if arg.is_empty() || arg.contains('-') {
+                            anyhow::bail!("cannot parse genrandom size '{arg}'");
+                        }
+                        let lower = arg.to_ascii_lowercase();
+                        let (num, mult): (&str, u128) = match lower.as_bytes().last().copied() {
+                            Some(b'k') => (&lower[..lower.len() - 1], 1024),
+                            Some(b'm') => (&lower[..lower.len() - 1], 1024 * 1024),
+                            Some(b'g') => (&lower[..lower.len() - 1], 1024_u128 * 1024 * 1024),
+                            _ => (lower.as_str(), 1),
+                        };
+                        if num.is_empty() {
+                            anyhow::bail!("cannot parse genrandom size '{arg}'");
+                        }
+                        let val: u128 = num
+                            .parse()
+                            .map_err(|_| anyhow::anyhow!("cannot parse genrandom size '{arg}'"))?;
+                        let total = val.checked_mul(mult).ok_or_else(|| {
+                            anyhow::anyhow!("cannot parse genrandom size '{arg}'")
+                        })?;
+                        usize::try_from(total)
+                            .map_err(|_| anyhow::anyhow!("cannot parse genrandom size '{arg}'"))
+                    }
                     if rest.len() < 2 {
                         bail!("usage: test-tool genrandom <seed_string> [<size>]");
                     }
                     let seed = rest[1].as_str();
                     let count: Option<usize> = if rest.len() >= 3 {
-                        Some(rest[2].parse().with_context(|| {
+                        Some(parse_genrandom_size(rest[2].as_str()).with_context(|| {
                             format!("cannot parse genrandom size '{}'", rest[2])
                         })?)
                     } else {
                         None
                     };
-                    let mut state: u64 = seed
-                        .bytes()
-                        .fold(0u64, |a, b| a.wrapping_mul(31).wrapping_add(b as u64));
+                    let mut next: u64 = 0;
+                    for b in seed.bytes() {
+                        next = next.wrapping_mul(11).wrapping_add(b as u64);
+                    }
                     let stdout = std::io::stdout();
                     let mut out = stdout.lock();
                     let mut buf = vec![0u8; 8192];
@@ -4583,10 +4608,8 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                             while remaining > 0 {
                                 let chunk = remaining.min(8192);
                                 for b in &mut buf[..chunk] {
-                                    state = state
-                                        .wrapping_mul(6364136223846793005)
-                                        .wrapping_add(1442695040888963407);
-                                    *b = ((state >> 33) ^ state) as u8;
+                                    next = next.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                                    *b = ((next >> 16) & 0xff) as u8;
                                 }
                                 out.write_all(&buf[..chunk])?;
                                 remaining -= chunk;
@@ -4594,10 +4617,8 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                         }
                         None => loop {
                             for b in &mut buf {
-                                state = state
-                                    .wrapping_mul(6364136223846793005)
-                                    .wrapping_add(1442695040888963407);
-                                *b = ((state >> 33) ^ state) as u8;
+                                next = next.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                                *b = ((next >> 16) & 0xff) as u8;
                             }
                             match out.write_all(&buf) {
                                 Ok(()) => {}
@@ -4831,6 +4852,23 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
         "dirname" => {
             for arg in &rest[1..] {
                 println!("{}", posix_dirname(arg));
+            }
+            Ok(())
+        }
+        "file-size" => {
+            // Match `git/t/helper/test-path-utils.c`: print st.st_size per path, newline-separated.
+            let mut err = 0i32;
+            for path in rest.iter().skip(1) {
+                match std::fs::metadata(path) {
+                    Ok(m) => println!("{}", m.len()),
+                    Err(e) => {
+                        eprintln!("error: Cannot stat '{path}': {e}");
+                        err = 1;
+                    }
+                }
+            }
+            if err != 0 {
+                std::process::exit(err);
             }
             Ok(())
         }
