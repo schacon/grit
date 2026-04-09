@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::ignore::IgnoreMatcher;
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
@@ -821,6 +821,21 @@ fn apply_sparse_checkout(git_dir: &Path, index: &mut Index) -> Result<()> {
     Ok(())
 }
 
+/// Submodule gitlink (`160000`): ensure an empty directory exists at `rel` under `work_tree`.
+///
+/// Git does not populate submodule contents during `read-tree -u` (same as clone); the recorded
+/// OID names a commit in the submodule ODB, not a blob in the superproject.
+fn ensure_gitlink_placeholder_dir(work_tree: &Path, rel: &str) -> Result<()> {
+    let full_path = work_tree.join(rel);
+    if full_path.is_file() || full_path.is_symlink() {
+        let _ = std::fs::remove_file(&full_path);
+    } else if full_path.is_dir() && !full_path.join(".git").exists() {
+        let _ = std::fs::remove_dir_all(&full_path);
+    }
+    let _ = std::fs::create_dir_all(&full_path);
+    Ok(())
+}
+
 /// True if the working tree already has this index entry (blob/symlink) at `abs_path`.
 ///
 /// When `read-tree -u` refreshes after files were removed from disk, the index may still
@@ -900,11 +915,17 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let abs_path = work_tree.join(&path_str);
-        if old_stage0
-            .get(&entry.path)
-            .is_some_and(|old_entry| same_blob(old_entry, entry))
+        if entry.mode != MODE_GITLINK
+            && old_stage0
+                .get(&entry.path)
+                .is_some_and(|old_entry| same_blob(old_entry, entry))
             && checkout_entry_present_on_disk(&abs_path, entry.mode)
         {
+            continue;
+        }
+
+        if entry.mode == MODE_GITLINK {
+            ensure_gitlink_placeholder_dir(&work_tree, &path_str)?;
             continue;
         }
 

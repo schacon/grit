@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   315 |
+| Completed   |   318 |
 | In progress |     5 |
-| Remaining   |   450 |
-| **Total**   |   770 |
+| Remaining   |   448 |
+| **Total**   |   771 |
 
-Task lines in `PLAN.md`: 315 completed (`[x]`), 5 in progress (`[~]`), 450 remaining (`[ ]`).
+Task lines in `PLAN.md`: 318 completed (`[x]`), 5 in progress (`[~]`), 448 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t7418-submodule-sparse-gitmodules` — 9/9 tests pass (`read-tree -u`: gitlink checkout as empty dir, not blob read; `test-tool submodule` config-list/set/unset/writeable + harness delegation; `submodule summary --for-status`: ignore=all + index-vs-tree-out-of-sync gitlinks like `diff-index --ignore-submodules=dirty`; `submodule add`: `is_writing_gitmodules_ok` guard)
 - `t5609-clone-branch` — 7/7 tests pass (`clone --branch`: `read_raw_ref` for ref existence so `refs/remotes/origin/HEAD` is set when default branch is packed; reject `--branch` when `refs/heads/<name>` missing on source, including empty repos)
 - `t5802-connect-helper` — 8/8 tests pass (`ext::` sh -c upload-pack argv extraction; `git daemon --inetd` minimal path; streaming unpack zero-byte trees + duplicate `want` dedup; fetch NAK round + tag-following for ext/HTTP; rev-parse `tag^1` peels tags; harness CSV/dashboards refreshed)
 - `t7421-submodule-summary-add` — 5/5 tests pass (`submodule summary`: index↔commit gitlink diff, pathspecs + renamed paths, `rev-parse` first line for abbrev; `submodule update --remote`: local URL fast path updates `refs/remotes/origin/*` + copies objects, stages gitlink in super index)
