@@ -12,7 +12,7 @@ use tempfile::NamedTempFile;
 use crate::config::ConfigSet;
 use crate::crlf::{get_file_attrs, load_gitattributes, DiffAttr, FileAttrs};
 use crate::diff::{diff_trees, DiffStatus};
-use crate::objects::{parse_commit, ObjectId};
+use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::textconv_cache::{read_textconv_cache, write_textconv_cache};
 
@@ -44,8 +44,77 @@ pub fn combined_diff_paths(odb: &Odb, commit_tree: &ObjectId, parents: &[ObjectI
     for s in &per_parent[1..] {
         common = common.intersection(s).cloned().collect();
     }
-    let mut out: Vec<String> = common.into_iter().collect();
-    out.sort();
+    if common.is_empty() {
+        return Vec::new();
+    }
+    paths_in_tree_order(odb, commit_tree, "", &common)
+}
+
+/// All blob paths in `tree_oid`, depth-first in Git tree entry order (for `diff` / `log`
+/// `--rotate-to` / `--skip-to`).
+#[must_use]
+pub fn all_blob_paths_in_tree_order(odb: &Odb, tree_oid: &ObjectId) -> Vec<String> {
+    all_blob_paths_dfs(odb, tree_oid, "")
+}
+
+fn all_blob_paths_dfs(odb: &Odb, tree_oid: &ObjectId, prefix: &str) -> Vec<String> {
+    let Ok(obj) = odb.read(tree_oid) else {
+        return Vec::new();
+    };
+    if obj.kind != ObjectKind::Tree {
+        return Vec::new();
+    }
+    let Ok(entries) = parse_tree(&obj.data) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for e in entries {
+        let name = String::from_utf8_lossy(&e.name);
+        let path = if prefix.is_empty() {
+            name.into_owned()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        if e.mode == 0o040000 {
+            out.extend(all_blob_paths_dfs(odb, &e.oid, &path));
+        } else {
+            out.push(path);
+        }
+    }
+    out
+}
+
+/// List paths under `prefix` that appear in `want`, following merge-tree entry order (Git
+/// `traverse_trees` order), not lexicographic sorting.
+fn paths_in_tree_order(
+    odb: &Odb,
+    tree_oid: &ObjectId,
+    prefix: &str,
+    want: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    let Ok(obj) = odb.read(tree_oid) else {
+        return Vec::new();
+    };
+    if obj.kind != ObjectKind::Tree {
+        return Vec::new();
+    }
+    let Ok(entries) = parse_tree(&obj.data) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for e in entries {
+        let name = String::from_utf8_lossy(&e.name);
+        let path = if prefix.is_empty() {
+            name.into_owned()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        if e.mode == 0o040000 {
+            out.extend(paths_in_tree_order(odb, &e.oid, &path, want));
+        } else if want.contains(&path) {
+            out.push(path);
+        }
+    }
     out
 }
 

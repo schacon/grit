@@ -496,6 +496,12 @@ fn list_tree(
                         || (p.ends_with('/') && ps == full_name)
                 });
             if is_tree && is_ancestor && !args.recursive {
+                // Match Git's `read_tree` + `show_recursive`: with pathspecs we descend into prefix
+                // trees even without `-r`. `-t` then lists those intermediate trees (see t3100).
+                if args.show_trees {
+                    let display_name = make_cwd_relative(&full_name, cwd_prefix);
+                    print_entry(repo, entry, &display_name, args, out, term, quote_fully)?;
+                }
                 let sub_obj = repo.odb.read(&entry.oid)?;
                 list_tree(
                     repo,
