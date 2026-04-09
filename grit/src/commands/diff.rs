@@ -3543,6 +3543,18 @@ fn write_stat(
     Ok(())
 }
 
+/// Returns whether Git would use C-style quoting for this path in diff output
+/// (`quote_c_style(name, NULL, NULL, 0) != 0` in Git's `quote.c`).
+///
+/// Used for rename display: when either side needs quoting, Git prints
+/// `quote(old) => quote(new)` instead of the compact `pfx{mid => mid}sfx` form
+/// (see `pprint_rename` in `diff.c`).
+fn path_requires_c_style_quoting(name: &str) -> bool {
+    name.chars().any(|ch| {
+        matches!(ch, '"' | '\\' | '\t' | '\n' | '\r') || ch.is_control() || ch as u32 > 127
+    })
+}
+
 /// C-style quote a path if it contains special characters (tab, newline, etc.).
 /// Returns the quoted string (with surrounding double-quotes) if quoting is needed,
 /// otherwise returns the original string.
@@ -3588,9 +3600,11 @@ fn quote_c_style(name: &str) -> String {
 /// Format a rename/copy path for numstat: `{old_quoted}\t{new_quoted}` or
 /// `{old_quoted} => {new_quoted}` depending on format.
 fn format_rename_display(old: &str, new: &str) -> String {
-    // Use the pretty-print format with common prefix/suffix like c/{b/a => d/e}
-    let pretty = grit_lib::diff::format_rename_path(old, new);
-    quote_c_style(&pretty)
+    if path_requires_c_style_quoting(old) || path_requires_c_style_quoting(new) {
+        format!("{} => {}", quote_c_style(old), quote_c_style(new))
+    } else {
+        grit_lib::diff::format_rename_path(old, new)
+    }
 }
 
 /// Write machine-readable numstat output: `{insertions}\t{deletions}\t{path}`.

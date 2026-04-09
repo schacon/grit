@@ -690,7 +690,7 @@ t4013-diff-various	t4	yes	230	230	0	true	ok	0
 t4014-format-patch	t4	yes	215	42	173	false	ok	0
 t4015-diff-whitespace	t4	yes	0	0	0	false	timeout	0
 t4015-format-patch-options	t4	yes	12	12	0	true	ok	0
-t4016-diff-quote	t4	yes	5	2	3	false	ok	0
+t4016-diff-quote	t4	yes	5	5	0	true	ok	0
 t4017-diff-retval	t4	yes	0	0	0	false	timeout	0
 t4018-diff-files	t4	yes	41	39	2	false	ok	0
 t4018-diff-funcname	t4	yes	0	0	0	false	timeout	0
