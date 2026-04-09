@@ -13,6 +13,7 @@ cd "$(dirname "$0")" || exit 1
 ###########################################################################
 
 test_expect_success 'setup: create repo with initial commit' '
+	cd "$TRASH_DIRECTORY" &&
 	"$REAL_GIT" init repo &&
 	cd repo &&
 	"$REAL_GIT" config user.name "Test User" &&
@@ -27,9 +28,13 @@ test_expect_success 'setup: create repo with initial commit' '
 
 ###########################################################################
 # Section 2: Basic update-ref (non-stdin)
+# Each block begins with `cd "$TRASH_DIRECTORY"` because this harness keeps
+# the shell cwd across tests (unlike upstream git/t), so `cd repo` must start
+# from the trash root every time.
 ###########################################################################
 
 test_expect_success 'update-ref creates a new ref' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	HEAD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	grit update-ref refs/heads/new-branch "$HEAD_OID" &&
@@ -39,6 +44,7 @@ test_expect_success 'update-ref creates a new ref' '
 '
 
 test_expect_success 'update-ref can update existing ref' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	OLD_OID=$("$REAL_GIT" rev-parse HEAD~1) &&
 	grit update-ref refs/heads/new-branch "$OLD_OID" &&
@@ -48,6 +54,7 @@ test_expect_success 'update-ref can update existing ref' '
 '
 
 test_expect_success 'update-ref with old value check succeeds when matching' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	OLD_OID=$("$REAL_GIT" rev-parse HEAD~1) &&
 	NEW_OID=$("$REAL_GIT" rev-parse HEAD) &&
@@ -55,12 +62,14 @@ test_expect_success 'update-ref with old value check succeeds when matching' '
 '
 
 test_expect_success 'update-ref with wrong old value fails' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	WRONG_OID=$("$REAL_GIT" rev-parse HEAD~1) &&
 	test_must_fail grit update-ref refs/heads/new-branch "$WRONG_OID" "$WRONG_OID"
 '
 
 test_expect_success 'update-ref -d deletes a ref' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	HEAD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	grit update-ref refs/heads/to-delete "$HEAD_OID" &&
@@ -74,6 +83,7 @@ test_expect_success 'update-ref -d deletes a ref' '
 ###########################################################################
 
 test_expect_success 'update-ref --stdin create command' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	HEAD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	printf "create refs/heads/stdin-branch %s\n" "$HEAD_OID" |
@@ -84,6 +94,7 @@ test_expect_success 'update-ref --stdin create command' '
 '
 
 test_expect_success 'update-ref --stdin update command' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	OLD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	NEW_OID=$("$REAL_GIT" rev-parse HEAD~1) &&
@@ -95,6 +106,7 @@ test_expect_success 'update-ref --stdin update command' '
 '
 
 test_expect_success 'update-ref --stdin delete command' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	CURRENT=$("$REAL_GIT" rev-parse HEAD~1) &&
 	printf "delete refs/heads/stdin-branch %s\n" "$CURRENT" |
@@ -103,6 +115,7 @@ test_expect_success 'update-ref --stdin delete command' '
 '
 
 test_expect_success 'update-ref --stdin multiple commands in one batch' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	HEAD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	OLD_OID=$("$REAL_GIT" rev-parse HEAD~1) &&
@@ -117,6 +130,7 @@ test_expect_success 'update-ref --stdin multiple commands in one batch' '
 ###########################################################################
 
 test_expect_success 'update-ref --stdin -z create command' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	HEAD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	printf "create refs/heads/nul-branch %s\0" "$HEAD_OID" |
@@ -127,6 +141,7 @@ test_expect_success 'update-ref --stdin -z create command' '
 '
 
 test_expect_success 'update-ref --stdin -z update command' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	OLD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	NEW_OID=$("$REAL_GIT" rev-parse HEAD~1) &&
@@ -138,6 +153,7 @@ test_expect_success 'update-ref --stdin -z update command' '
 '
 
 test_expect_success 'update-ref --stdin -z delete command' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	CURRENT=$("$REAL_GIT" rev-parse HEAD~1) &&
 	printf "delete refs/heads/nul-branch %s\0" "$CURRENT" |
@@ -146,6 +162,7 @@ test_expect_success 'update-ref --stdin -z delete command' '
 '
 
 test_expect_success 'update-ref --stdin -z multiple creates' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	HEAD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	OLD_OID=$("$REAL_GIT" rev-parse HEAD~1) &&
@@ -156,6 +173,7 @@ test_expect_success 'update-ref --stdin -z multiple creates' '
 '
 
 test_expect_success 'update-ref --stdin -z create and delete in one batch' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	HEAD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	NUL_A_OID=$("$REAL_GIT" rev-parse refs/heads/nul-a) &&
@@ -166,6 +184,7 @@ test_expect_success 'update-ref --stdin -z create and delete in one batch' '
 '
 
 test_expect_success 'update-ref --stdin -z verify command succeeds on match' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	NUL_C_OID=$("$REAL_GIT" rev-parse refs/heads/nul-c) &&
 	printf "verify refs/heads/nul-c %s\0" "$NUL_C_OID" |
@@ -173,6 +192,7 @@ test_expect_success 'update-ref --stdin -z verify command succeeds on match' '
 '
 
 test_expect_success 'update-ref --stdin -z verify command fails on mismatch' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	WRONG=$("$REAL_GIT" rev-parse HEAD~1) &&
 	printf "verify refs/heads/nul-c %s\0" "$WRONG" |
@@ -184,6 +204,7 @@ test_expect_success 'update-ref --stdin -z verify command fails on mismatch' '
 ###########################################################################
 
 test_expect_success 'update-ref --no-deref on symbolic ref updates symref itself' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	HEAD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	"$REAL_GIT" symbolic-ref refs/heads/symlink refs/heads/master &&
@@ -198,6 +219,7 @@ test_expect_success 'update-ref --no-deref on symbolic ref updates symref itself
 ###########################################################################
 
 test_expect_success 'update-ref creates deeply nested ref' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	HEAD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	grit update-ref refs/custom/deep/nested/ref "$HEAD_OID" &&
@@ -207,6 +229,7 @@ test_expect_success 'update-ref creates deeply nested ref' '
 '
 
 test_expect_success 'update-ref creates refs/notes/ namespace' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	HEAD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	grit update-ref refs/notes/commits "$HEAD_OID" &&
@@ -214,6 +237,7 @@ test_expect_success 'update-ref creates refs/notes/ namespace' '
 '
 
 test_expect_success 'update-ref creates refs/stash ref' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	HEAD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	grit update-ref refs/stash "$HEAD_OID" &&
@@ -225,6 +249,7 @@ test_expect_success 'update-ref creates refs/stash ref' '
 ###########################################################################
 
 test_expect_success 'update-ref -m sets reflog message' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	HEAD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	grit update-ref -m "test message" refs/heads/reflog-test "$HEAD_OID" &&
@@ -236,27 +261,32 @@ test_expect_success 'update-ref -m sets reflog message' '
 ###########################################################################
 
 test_expect_success 'update-ref -d on nonexistent ref is silent' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	grit update-ref -d refs/heads/no-such-ref &&
 	test_must_fail grit show-ref --exists refs/heads/no-such-ref
 '
 
 test_expect_success 'update-ref --stdin -z with empty input succeeds' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	printf "" | grit update-ref --stdin -z
 '
 
 test_expect_success 'update-ref --stdin with empty input succeeds' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	printf "" | grit update-ref --stdin
 '
 
 test_expect_success 'update-ref with invalid OID fails' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	test_must_fail grit update-ref refs/heads/bad-oid "not-a-valid-oid"
 '
 
 test_expect_success 'update-ref --stdin -z create then verify in single batch' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	HEAD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	printf "create refs/heads/batch-verify %s\0verify refs/heads/batch-verify %s\0" "$HEAD_OID" "$HEAD_OID" |
@@ -265,6 +295,7 @@ test_expect_success 'update-ref --stdin -z create then verify in single batch' '
 '
 
 test_expect_success 'update-ref --stdin -z atomic: all-or-nothing on conflict' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	HEAD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	OLD_OID=$("$REAL_GIT" rev-parse HEAD~1) &&
@@ -276,6 +307,7 @@ test_expect_success 'update-ref --stdin -z atomic: all-or-nothing on conflict' '
 '
 
 test_expect_success 'update-ref --stdin -z handles update without old value' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	HEAD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	printf "update refs/heads/no-old-val %s\0" "$HEAD_OID" |
@@ -284,6 +316,7 @@ test_expect_success 'update-ref --stdin -z handles update without old value' '
 '
 
 test_expect_success 'update-ref --stdin newline: create + update + delete batch' '
+	cd "$TRASH_DIRECTORY" &&
 	cd repo &&
 	HEAD_OID=$("$REAL_GIT" rev-parse HEAD) &&
 	OLD_OID=$("$REAL_GIT" rev-parse HEAD~1) &&
