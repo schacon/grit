@@ -18,6 +18,7 @@ use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::index::{Index, IndexEntry};
 use grit_lib::objects::ObjectKind;
+use grit_lib::quote_path::quote_c_style;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::ws::{self, WhitespaceGitAttr, WS_BLANK_AT_EOF, WS_DEFAULT_RULE, WS_INCOMPLETE_LINE};
@@ -1106,7 +1107,16 @@ fn header_line_file_path(line: &str, p_value: usize) -> String {
 
 /// Path from `rename from` / `copy from` lines (Git `find_name` with `terminate == 0`).
 fn find_name_extended_header(rest: &str, p_extended: usize) -> Option<String> {
-    let b = rest.trim_end_matches(['\r', '\n']).as_bytes();
+    let rest = rest.trim_end_matches(['\r', '\n']);
+    let b = rest.as_bytes();
+    if b.first() == Some(&b'"') {
+        let (decoded, tail) = unquote_c_style_diff_prefix(rest)?;
+        if !tail.trim().is_empty() {
+            return None;
+        }
+        let skip = skip_tree_prefix_bytes(&decoded, p_extended)?;
+        return bytes_to_path_string(skip).ok();
+    }
     let end = b
         .iter()
         .position(|&c| c == b'\t' || c == b'\n' || c == b'\r' || c == b' ')
@@ -1552,6 +1562,11 @@ fn parse_hunk(lines: &[&str], start: usize) -> Result<(Hunk, usize)> {
     while i < lines.len() {
         let line = lines[i];
         if line.starts_with("@@ ") || line.starts_with("diff --git ") {
+            break;
+        }
+        // `---` / `+++` with a space begin a new file header; do not treat `---` as a `-` hunk line
+        // (would misparse `--- /dev/null` as a remove of `-- /dev/null` and merge the next file).
+        if line.starts_with("--- ") || line.starts_with("+++ ") {
             break;
         }
         if line == "-- " {
@@ -2963,7 +2978,15 @@ fn write_reject_file(path: &Path, patch: &FilePatch, rejected_hunks: &[Hunk]) ->
 // Stat / numstat / summary output
 // ---------------------------------------------------------------------------
 
-fn show_stat(patches: &[FilePatch], directory: Option<&str>) {
+fn apply_quote_path_fully() -> bool {
+    Repository::discover(None)
+        .ok()
+        .and_then(|r| ConfigSet::load(Some(&r.git_dir), true).ok())
+        .map(|c| c.quote_path_fully())
+        .unwrap_or(true)
+}
+
+fn show_stat(patches: &[FilePatch], directory: Option<&str>, quote_fully: bool) {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
@@ -2977,13 +3000,14 @@ fn show_stat(patches: &[FilePatch], directory: Option<&str>) {
             .effective_path()
             .map(|p| adjust_path(p, directory))
             .unwrap_or_else(|| "(unknown)".to_string());
+        let display = quote_c_style(&path, quote_fully);
         let (add, del) = count_hunk_changes(&fp.hunks);
-        if path.len() > max_path_len {
-            max_path_len = path.len();
+        if display.len() > max_path_len {
+            max_path_len = display.len();
         }
         total_add += add;
         total_del += del;
-        entries.push((path, add, del));
+        entries.push((display, add, del));
     }
 
     for (path, add, del) in &entries {
@@ -3005,7 +3029,7 @@ fn show_stat(patches: &[FilePatch], directory: Option<&str>) {
     );
 }
 
-fn show_numstat(patches: &[FilePatch], directory: Option<&str>) {
+fn show_numstat(patches: &[FilePatch], directory: Option<&str>, quote_fully: bool) {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
@@ -3014,8 +3038,9 @@ fn show_numstat(patches: &[FilePatch], directory: Option<&str>) {
             .effective_path()
             .map(|p| adjust_path(p, directory))
             .unwrap_or_else(|| "(unknown)".to_string());
+        let display = quote_c_style(&path, quote_fully);
         let (add, del) = count_hunk_changes(&fp.hunks);
-        let _ = writeln!(out, "{add}\t{del}\t{path}");
+        let _ = writeln!(out, "{add}\t{del}\t{display}");
     }
 }
 
@@ -3157,11 +3182,16 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Info-only modes unless explicitly overridden by --apply.
     let info_only = (args.stat || args.numstat || args.summary) && !args.apply;
+    let quote_fully = if args.stat || args.numstat {
+        apply_quote_path_fully()
+    } else {
+        true
+    };
     if args.stat {
-        show_stat(&patches, args.directory.as_deref());
+        show_stat(&patches, args.directory.as_deref(), quote_fully);
     }
     if args.numstat {
-        show_numstat(&patches, args.directory.as_deref());
+        show_numstat(&patches, args.directory.as_deref(), quote_fully);
     }
     if args.summary {
         show_summary(&patches, args.directory.as_deref());

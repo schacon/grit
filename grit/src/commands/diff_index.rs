@@ -3,8 +3,8 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
-    detect_copies, detect_renames, diff_trees, read_submodule_head_oid, stat_matches, zero_oid,
-    DiffEntry, DiffStatus,
+    detect_renames, diff_trees, read_submodule_head_oid, stat_matches, zero_oid, DiffEntry,
+    DiffStatus,
 };
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK, MODE_TREE,
@@ -12,6 +12,7 @@ use grit_lib::index::{
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pathspec::{context_from_mode_bits, matches_pathspec_with_context};
+use grit_lib::quote_path::{format_diff_path_with_prefix, quote_c_style};
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::merge_bases;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
@@ -37,6 +38,9 @@ pub fn run(mut args: Args) -> Result<()> {
         crate::precompose::precompose_plumbing_argv(&mut args.args);
     }
     let options = parse_options(&args.args)?;
+    let quote_fully = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+        .unwrap_or_default()
+        .quote_path_fully();
     let tree_oid = resolve_tree_ish(&repo, &options.tree_ish)?;
 
     let mut tree_map = BTreeMap::new();
@@ -144,12 +148,13 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let diff_entries = if options.find_copies {
         let threshold = options.find_renames.unwrap_or(50);
-        // Build source tree entries for copy detection.
+        // Build source tree entries for copy detection (`path, mode, oid` order matches
+        // `grit_lib::diff::detect_copies`).
         let source_tree_entries: Vec<(String, String, ObjectId)> = tree_map
             .iter()
             .map(|(path, snap)| (path.clone(), format!("{:06o}", snap.mode), snap.oid))
             .collect();
-        detect_copies(
+        grit_lib::diff::detect_copies(
             &repo.odb,
             diff_entries,
             threshold,
@@ -258,8 +263,16 @@ pub fn run(mut args: Args) -> Result<()> {
         } else if options.numstat {
             write_diff_index_numstat(&diff_entries, &repo.odb)?;
         } else if options.name_only {
+            let term = if options.nul_terminated { b'\0' } else { b'\n' };
+            let stdout = std::io::stdout();
+            let mut out = stdout.lock();
             for entry in &diff_entries {
-                println!("{}", entry.path());
+                if options.nul_terminated {
+                    out.write_all(entry.path().as_bytes())?;
+                } else {
+                    write!(out, "{}", quote_c_style(entry.path(), quote_fully))?;
+                }
+                out.write_all(&[term])?;
             }
         } else if options.patch {
             let stdout = std::io::stdout();
@@ -285,29 +298,14 @@ pub fn run(mut args: Args) -> Result<()> {
                 )?;
             }
         } else if options.name_status {
-            for entry in &diff_entries {
-                match (entry.status, entry.score) {
-                    (DiffStatus::Renamed, Some(s)) => {
-                        println!(
-                            "R{:03}\t{}\t{}",
-                            s,
-                            entry.old_path.as_deref().unwrap_or(""),
-                            entry.new_path.as_deref().unwrap_or("")
-                        );
-                    }
-                    (DiffStatus::Copied, Some(s)) => {
-                        println!(
-                            "C{:03}\t{}\t{}",
-                            s,
-                            entry.old_path.as_deref().unwrap_or(""),
-                            entry.new_path.as_deref().unwrap_or("")
-                        );
-                    }
-                    _ => {
-                        println!("{}\t{}", entry.status.letter(), entry.path());
-                    }
-                }
-            }
+            let stdout = std::io::stdout();
+            let mut out = stdout.lock();
+            write_diff_index_name_status(
+                &mut out,
+                &diff_entries,
+                quote_fully,
+                options.nul_terminated,
+            )?;
         } else {
             let stdout = std::io::stdout();
             let mut out = stdout.lock();
@@ -321,9 +319,14 @@ pub fn run(mut args: Args) -> Result<()> {
                         !options.cached,
                     )?;
                 } else {
-                    let line =
-                        render_raw_diff_entry(entry, &repo, options.abbrev, !options.cached)?;
-                    writeln!(out, "{}", line)?;
+                    let line = render_raw_diff_entry(
+                        entry,
+                        &repo,
+                        options.abbrev,
+                        !options.cached,
+                        quote_fully,
+                    )?;
+                    writeln!(out, "{line}")?;
                 }
             }
         }
@@ -986,9 +989,17 @@ fn diff_tree_vs_worktree(
 
     for (path, index_snapshot) in index_map {
         // Match Git: `diff-index` without `--cached` reports tree↔index differences first.
-        // Only when the tree and index agree for a path do we compare the index to the work tree
-        // (t1501: new staged file + dirty worktree still shows as `A` with zero OIDs, not `M`).
-        if tree_map.get(path).copied() != Some(*index_snapshot) {
+        // Compare index to worktree when:
+        // - Tree and index agree for this path (t1501: tree≠index stays as tree↔index only), or
+        // - The path is not in the tree but is in the index (staged add): chmod/content drift in
+        //   the work tree must update the recorded snapshot so rename output shows `new mode`
+        //   (t3300-funny-names).
+        let tree_snap = tree_map.get(path).copied();
+        let compare_worktree = match tree_snap {
+            Some(ts) => ts == *index_snapshot,
+            None => true,
+        };
+        if !compare_worktree {
             continue;
         }
 
@@ -1062,22 +1073,37 @@ fn diff_tree_vs_worktree(
         match read_worktree_snapshot_from_meta(repo, &abs, &meta)? {
             Some(worktree_snapshot) => {
                 if worktree_snapshot != *index_snapshot {
-                    let old = tree_map.get(path).copied().or(Some(*index_snapshot));
-                    // Use zero OID for worktree side — the blob is not
-                    // in the object database, matching git's behaviour.
-                    let wt_placeholder = Snapshot {
-                        mode: worktree_snapshot.mode,
-                        oid: zero_oid(),
-                    };
-                    merged.insert(
-                        path.clone(),
-                        RawChange {
-                            path: path.clone(),
-                            status: 'M',
-                            old,
-                            new: Some(wt_placeholder),
-                        },
-                    );
+                    if tree_snap.is_none() {
+                        // Staged add only in the index: refresh the `new` snapshot from the work
+                        // tree (e.g. `chmod` after `git add`) while keeping status `A` so rename
+                        // detection still pairs the delete with this add (t3300-funny-names).
+                        merged.insert(
+                            path.clone(),
+                            RawChange {
+                                path: path.clone(),
+                                status: 'A',
+                                old: None,
+                                new: Some(worktree_snapshot),
+                            },
+                        );
+                    } else {
+                        let old = tree_map.get(path).copied().or(Some(*index_snapshot));
+                        // Use zero OID for worktree side — the blob is not
+                        // in the object database, matching git's behaviour.
+                        let wt_placeholder = Snapshot {
+                            mode: worktree_snapshot.mode,
+                            oid: zero_oid(),
+                        };
+                        merged.insert(
+                            path.clone(),
+                            RawChange {
+                                path: path.clone(),
+                                status: 'M',
+                                old,
+                                new: Some(wt_placeholder),
+                            },
+                        );
+                    }
                 }
             }
             None => {
@@ -1189,6 +1215,65 @@ fn raw_change_to_diff_entry(change: &RawChange) -> DiffEntry {
     }
 }
 
+pub(crate) fn write_diff_index_name_status(
+    out: &mut impl std::io::Write,
+    entries: &[DiffEntry],
+    quote_fully: bool,
+    nul: bool,
+) -> Result<()> {
+    for entry in entries {
+        match (entry.status, entry.score) {
+            (DiffStatus::Renamed, Some(s)) => {
+                if nul {
+                    write!(out, "R{s:03}\0")?;
+                    out.write_all(entry.old_path.as_deref().unwrap_or("").as_bytes())?;
+                    out.write_all(b"\0")?;
+                    out.write_all(entry.new_path.as_deref().unwrap_or("").as_bytes())?;
+                    out.write_all(b"\0")?;
+                } else {
+                    writeln!(
+                        out,
+                        "R{s:03}\t{}\t{}",
+                        quote_c_style(entry.old_path.as_deref().unwrap_or(""), quote_fully),
+                        quote_c_style(entry.new_path.as_deref().unwrap_or(""), quote_fully),
+                    )?;
+                }
+            }
+            (DiffStatus::Copied, Some(s)) => {
+                if nul {
+                    write!(out, "C{s:03}\0")?;
+                    out.write_all(entry.old_path.as_deref().unwrap_or("").as_bytes())?;
+                    out.write_all(b"\0")?;
+                    out.write_all(entry.new_path.as_deref().unwrap_or("").as_bytes())?;
+                    out.write_all(b"\0")?;
+                } else {
+                    writeln!(
+                        out,
+                        "C{s:03}\t{}\t{}",
+                        quote_c_style(entry.old_path.as_deref().unwrap_or(""), quote_fully),
+                        quote_c_style(entry.new_path.as_deref().unwrap_or(""), quote_fully),
+                    )?;
+                }
+            }
+            _ => {
+                if nul {
+                    write!(out, "{}\0", entry.status.letter())?;
+                    out.write_all(entry.path().as_bytes())?;
+                    out.write_all(b"\0")?;
+                } else {
+                    writeln!(
+                        out,
+                        "{}\t{}",
+                        entry.status.letter(),
+                        quote_c_style(entry.path(), quote_fully)
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Write one `diff-index` raw record in Git's `-z` format.
 ///
 /// The colon-prefixed status line ends with a NUL byte (no tab before paths).
@@ -1259,6 +1344,7 @@ fn render_raw_diff_entry(
     repo: &Repository,
     abbrev: Option<usize>,
     diff_index_uncached: bool,
+    quote_fully: bool,
 ) -> Result<String> {
     let width = abbrev.unwrap_or(40).clamp(4, 40);
 
@@ -1296,11 +1382,11 @@ fn render_raw_diff_entry(
         DiffStatus::Renamed | DiffStatus::Copied => {
             format!(
                 "{}\t{}",
-                entry.old_path.as_deref().unwrap_or(""),
-                entry.new_path.as_deref().unwrap_or("")
+                quote_c_style(entry.old_path.as_deref().unwrap_or(""), quote_fully),
+                quote_c_style(entry.new_path.as_deref().unwrap_or(""), quote_fully),
             )
         }
-        _ => entry.path().to_owned(),
+        _ => quote_c_style(entry.path(), quote_fully),
     };
 
     Ok(format!(
@@ -1764,9 +1850,13 @@ pub(crate) fn write_patch_entry_inner(
     work_tree: Option<&Path>,
     path_prefix: &str,
 ) -> Result<()> {
-    use grit_lib::diff::unified_diff;
+    use grit_lib::diff::unified_diff_with_prefix;
 
     validate_patch_entry_oids(entry)?;
+
+    let quote_fully = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+        .unwrap_or_default()
+        .quote_path_fully();
 
     let old_path = entry
         .old_path
@@ -1785,9 +1875,11 @@ pub(crate) fn write_patch_entry_inner(
             format!("{path_prefix}/{new_path}"),
         )
     };
+    let git_old = format_diff_path_with_prefix("a/", &disp_old, quote_fully);
+    let git_new = format_diff_path_with_prefix("b/", &disp_new, quote_fully);
 
     if entry.old_mode == "160000" || entry.new_mode == "160000" {
-        writeln!(out, "diff --git a/{disp_old} b/{disp_new}")?;
+        writeln!(out, "diff --git {git_old} {git_new}")?;
         match entry.status {
             DiffStatus::Added => {
                 writeln!(out, "new file mode {}", entry.new_mode)?;
@@ -1798,7 +1890,11 @@ pub(crate) fn write_patch_entry_inner(
                     &entry.new_oid.to_hex()[..7]
                 )?;
                 writeln!(out, "--- /dev/null")?;
-                writeln!(out, "+++ b/{disp_new}")?;
+                writeln!(
+                    out,
+                    "+++ {}",
+                    format_diff_path_with_prefix("b/", &disp_new, quote_fully)
+                )?;
                 writeln!(out, "@@ -0,0 +1 @@")?;
                 writeln!(out, "+Subproject commit {}", entry.new_oid.to_hex())?;
             }
@@ -1810,7 +1906,11 @@ pub(crate) fn write_patch_entry_inner(
                     &entry.old_oid.to_hex()[..7],
                     &entry.new_oid.to_hex()[..7]
                 )?;
-                writeln!(out, "--- a/{disp_old}")?;
+                writeln!(
+                    out,
+                    "--- {}",
+                    format_diff_path_with_prefix("a/", &disp_old, quote_fully)
+                )?;
                 writeln!(out, "+++ /dev/null")?;
                 writeln!(out, "@@ -1 +0,0 @@")?;
                 writeln!(out, "-Subproject commit {}", entry.old_oid.to_hex())?;
@@ -1824,8 +1924,16 @@ pub(crate) fn write_patch_entry_inner(
                         &entry.new_oid.to_hex()[..7],
                         entry.old_mode
                     )?;
-                    writeln!(out, "--- a/{disp_old}")?;
-                    writeln!(out, "+++ b/{disp_new}")?;
+                    writeln!(
+                        out,
+                        "--- {}",
+                        format_diff_path_with_prefix("a/", &disp_old, quote_fully)
+                    )?;
+                    writeln!(
+                        out,
+                        "+++ {}",
+                        format_diff_path_with_prefix("b/", &disp_new, quote_fully)
+                    )?;
                     writeln!(out, "@@ -1 +1 @@")?;
                     writeln!(out, "-Subproject commit {}", entry.old_oid.to_hex())?;
                     writeln!(out, "+Subproject commit {}", entry.new_oid.to_hex())?;
@@ -1837,8 +1945,16 @@ pub(crate) fn write_patch_entry_inner(
                         &entry.new_oid.to_hex()[..7],
                         entry.old_mode
                     )?;
-                    writeln!(out, "--- a/{disp_old}")?;
-                    writeln!(out, "+++ b/{disp_new}")?;
+                    writeln!(
+                        out,
+                        "--- {}",
+                        format_diff_path_with_prefix("a/", &disp_old, quote_fully)
+                    )?;
+                    writeln!(
+                        out,
+                        "+++ {}",
+                        format_diff_path_with_prefix("b/", &disp_new, quote_fully)
+                    )?;
                     writeln!(out, "@@ -1 +0,0 @@")?;
                     writeln!(out, "-Subproject commit {}", entry.old_oid.to_hex())?;
                 } else {
@@ -1849,8 +1965,16 @@ pub(crate) fn write_patch_entry_inner(
                         &entry.new_oid.to_hex()[..7],
                         entry.new_mode
                     )?;
-                    writeln!(out, "--- a/{disp_old}")?;
-                    writeln!(out, "+++ b/{disp_new}")?;
+                    writeln!(
+                        out,
+                        "--- {}",
+                        format_diff_path_with_prefix("a/", &disp_old, quote_fully)
+                    )?;
+                    writeln!(
+                        out,
+                        "+++ {}",
+                        format_diff_path_with_prefix("b/", &disp_new, quote_fully)
+                    )?;
                     writeln!(out, "@@ -0,0 +1 @@")?;
                     writeln!(out, "+Subproject commit {}", entry.new_oid.to_hex())?;
                 }
@@ -1864,8 +1988,16 @@ pub(crate) fn write_patch_entry_inner(
                         &entry.new_oid.to_hex()[..7],
                         entry.old_mode
                     )?;
-                    writeln!(out, "--- a/{disp_old}")?;
-                    writeln!(out, "+++ b/{disp_new}")?;
+                    writeln!(
+                        out,
+                        "--- {}",
+                        format_diff_path_with_prefix("a/", &disp_old, quote_fully)
+                    )?;
+                    writeln!(
+                        out,
+                        "+++ {}",
+                        format_diff_path_with_prefix("b/", &disp_new, quote_fully)
+                    )?;
                     writeln!(out, "@@ -1 +0,0 @@")?;
                     writeln!(out, "-Subproject commit {}", entry.old_oid.to_hex())?;
                 } else if entry.new_mode == "160000" {
@@ -1876,8 +2008,16 @@ pub(crate) fn write_patch_entry_inner(
                         &entry.new_oid.to_hex()[..7],
                         entry.new_mode
                     )?;
-                    writeln!(out, "--- a/{disp_old}")?;
-                    writeln!(out, "+++ b/{disp_new}")?;
+                    writeln!(
+                        out,
+                        "--- {}",
+                        format_diff_path_with_prefix("a/", &disp_old, quote_fully)
+                    )?;
+                    writeln!(
+                        out,
+                        "+++ {}",
+                        format_diff_path_with_prefix("b/", &disp_new, quote_fully)
+                    )?;
                     writeln!(out, "@@ -0,0 +1 @@")?;
                     writeln!(out, "+Subproject commit {}", entry.new_oid.to_hex())?;
                 }
@@ -1887,7 +2027,7 @@ pub(crate) fn write_patch_entry_inner(
         return Ok(());
     }
 
-    writeln!(out, "diff --git a/{disp_old} b/{disp_new}")?;
+    writeln!(out, "diff --git {git_old} {git_new}")?;
 
     match entry.status {
         DiffStatus::Added => {
@@ -1929,10 +2069,14 @@ pub(crate) fn write_patch_entry_inner(
             }
         }
         DiffStatus::Renamed => {
+            if entry.old_mode != entry.new_mode {
+                writeln!(out, "old mode {}", entry.old_mode)?;
+                writeln!(out, "new mode {}", entry.new_mode)?;
+            }
             let sim = entry.score.unwrap_or(100);
             writeln!(out, "similarity index {sim}%")?;
-            writeln!(out, "rename from {old_path}")?;
-            writeln!(out, "rename to {new_path}")?;
+            writeln!(out, "rename from {}", quote_c_style(old_path, quote_fully))?;
+            writeln!(out, "rename to {}", quote_c_style(new_path, quote_fully))?;
             if entry.old_oid != entry.new_oid {
                 writeln!(
                     out,
@@ -1945,8 +2089,8 @@ pub(crate) fn write_patch_entry_inner(
         DiffStatus::Copied => {
             let sim = entry.score.unwrap_or(100);
             writeln!(out, "similarity index {sim}%")?;
-            writeln!(out, "copy from {old_path}")?;
-            writeln!(out, "copy to {new_path}")?;
+            writeln!(out, "copy from {}", quote_c_style(old_path, quote_fully))?;
+            writeln!(out, "copy to {}", quote_c_style(new_path, quote_fully))?;
             if entry.old_oid != entry.new_oid {
                 writeln!(
                     out,
@@ -1989,20 +2133,17 @@ pub(crate) fn write_patch_entry_inner(
         && (is_binary_driver_path(repo, work_tree, old_path)
             || is_binary_driver_path(repo, work_tree, new_path));
     if treat_as_binary_by_driver || is_binary(&old_raw) || is_binary(&new_raw) {
-        let display_old = if entry.status == DiffStatus::Added {
-            "/dev/null"
+        let bo = if entry.status == DiffStatus::Added {
+            "/dev/null".to_owned()
         } else {
-            old_path
+            format_diff_path_with_prefix("a/", old_path, quote_fully)
         };
-        let display_new = if entry.status == DiffStatus::Deleted {
-            "/dev/null"
+        let bn = if entry.status == DiffStatus::Deleted {
+            "/dev/null".to_owned()
         } else {
-            new_path
+            format_diff_path_with_prefix("b/", new_path, quote_fully)
         };
-        writeln!(
-            out,
-            "Binary files a/{display_old} and b/{display_new} differ"
-        )?;
+        writeln!(out, "Binary files {bo} and {bn} differ")?;
         return Ok(());
     }
 
@@ -2012,20 +2153,23 @@ pub(crate) fn write_patch_entry_inner(
     let display_old = if entry.status == DiffStatus::Added {
         "/dev/null".to_owned()
     } else {
-        disp_old.clone()
+        format_diff_path_with_prefix("a/", &disp_old, quote_fully)
     };
     let display_new = if entry.status == DiffStatus::Deleted {
         "/dev/null".to_owned()
     } else {
-        disp_new.clone()
+        format_diff_path_with_prefix("b/", &disp_new, quote_fully)
     };
 
-    let patch = unified_diff(
+    let patch = unified_diff_with_prefix(
         &old_content,
         &new_content,
         &display_old,
         &display_new,
         context_lines,
+        0,
+        "",
+        "",
     );
     write!(out, "{patch}")?;
 

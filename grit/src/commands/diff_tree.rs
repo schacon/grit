@@ -14,8 +14,9 @@ use grit_lib::combined_tree_diff::{
 };
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
-    count_changes, detect_renames, diff_trees, diff_trees_show_tree_entries, format_raw,
-    format_raw_abbrev, unified_diff, DiffEntry, DiffStatus,
+    count_changes, detect_copies as lib_detect_copies, detect_renames, diff_trees,
+    diff_trees_show_tree_entries, format_raw, format_raw_abbrev, unified_diff_with_prefix,
+    DiffEntry, DiffStatus,
 };
 use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::merge_diff::{
@@ -24,7 +25,10 @@ use grit_lib::merge_diff::{
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pathspec::{context_from_mode_octal, matches_pathspec_with_context};
+use grit_lib::quote_path::{format_diff_path_with_prefix, quote_c_style};
 use grit_lib::repo::{resolve_dot_git, Repository};
+
+use crate::commands::diff_index::write_diff_index_name_status;
 use grit_lib::rev_parse::resolve_revision;
 use regex::Regex;
 use std::io::{self, BufRead, Write};
@@ -117,6 +121,8 @@ struct Options {
     max_depth: Option<i32>,
     /// Exit with 1 if there are differences.
     exit_code: bool,
+    /// NUL-terminate fields/lines (`-z`) for machine-readable output.
+    nul_terminated: bool,
     /// Suppress all output, implies exit_code.
     quiet: bool,
     /// Re-merge parents and diff against merge result tree.
@@ -168,6 +174,7 @@ impl Default for Options {
             stat_too: false,
             max_depth: None,
             exit_code: false,
+            nul_terminated: false,
             quiet: false,
             remerge_diff: false,
             reverse: false,
@@ -247,6 +254,7 @@ fn parse_options(repo: &Repository, argv: &[String]) -> Result<Options> {
                     opts.quiet = true;
                     opts.exit_code = true;
                 }
+                "-z" => opts.nul_terminated = true,
                 "--remerge-diff" => opts.remerge_diff = true,
                 "--full-index" => opts.full_index = true,
                 _ if arg.starts_with("--max-depth=") => {
@@ -469,7 +477,7 @@ fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Res
     };
     let oid1 = resolve_to_tree(repo, spec_a)?;
     let oid2 = resolve_to_tree(repo, spec_b)?;
-    let max_tree_depth = resolve_max_tree_depth(repo)?;
+    let max_tree_depth = resolve_max_tree_depth(repo);
     let old_tree = if is_magic_empty_tree_oid(&oid1) {
         None
     } else {
@@ -490,15 +498,7 @@ fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Res
     let filtered = filter_entries(&repo.odb, &repo, entries, opts)?;
     let has_diff = !filtered.is_empty();
     if !opts.quiet {
-        print_diff(
-            out,
-            &repo.odb,
-            &filtered,
-            opts,
-            old_tree,
-            &repo.git_dir,
-            repo.work_tree.as_deref(),
-        )?;
+        print_diff(out, repo, &filtered, opts, old_tree)?;
     }
     Ok(has_diff)
 }
@@ -515,7 +515,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
     match obj.kind {
         ObjectKind::Commit => {
             let commit = parse_commit(&obj.data).context("parsing commit")?;
-            let max_tree_depth = resolve_max_tree_depth(repo)?;
+            let max_tree_depth = resolve_max_tree_depth(repo);
             validate_tree_depth_limit(&repo.odb, &commit.tree, 0, max_tree_depth)?;
             if commit.parents.is_empty() {
                 if opts.root {
@@ -524,15 +524,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     has_diff = !filtered.is_empty();
                     if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                         write_commit_header(out, &oid, &obj.data, opts)?;
-                        print_diff(
-                            out,
-                            &repo.odb,
-                            &filtered,
-                            opts,
-                            None,
-                            &repo.git_dir,
-                            repo.work_tree.as_deref(),
-                        )?;
+                        print_diff(out, repo, &filtered, opts, None)?;
                     }
                 }
             } else if commit.parents.len() == 2
@@ -634,15 +626,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 has_diff = !filtered.is_empty();
                 if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                     write_commit_header(out, &oid, &obj.data, opts)?;
-                    print_diff(
-                        out,
-                        &repo.odb,
-                        &filtered,
-                        opts,
-                        Some(&parent_tree),
-                        &repo.git_dir,
-                        repo.work_tree.as_deref(),
-                    )?;
+                    print_diff(out, repo, &filtered, opts, Some(&parent_tree))?;
                 }
             }
         }
@@ -779,15 +763,7 @@ fn process_stdin_commit(
             let filtered = filter_entries(&repo.odb, &repo, entries, opts)?;
             let hd = !filtered.is_empty();
             if !opts.quiet {
-                print_diff(
-                    out,
-                    &repo.odb,
-                    &filtered,
-                    opts,
-                    None,
-                    &repo.git_dir,
-                    repo.work_tree.as_deref(),
-                )?;
+                print_diff(out, repo, &filtered, opts, None)?;
             }
             hd
         } else {
@@ -799,15 +775,7 @@ fn process_stdin_commit(
         let filtered = filter_entries(&repo.odb, &repo, entries, opts)?;
         let hd = !filtered.is_empty();
         if !opts.quiet {
-            print_diff(
-                out,
-                &repo.odb,
-                &filtered,
-                opts,
-                None,
-                &repo.git_dir,
-                repo.work_tree.as_deref(),
-            )?;
+            print_diff(out, repo, &filtered, opts, None)?;
         }
         hd
     };
@@ -844,15 +812,7 @@ fn process_stdin_two_trees(
     let filtered = filter_entries(&repo.odb, &repo, entries, opts)?;
     let has_diff = !filtered.is_empty();
     if !opts.quiet {
-        print_diff(
-            out,
-            &repo.odb,
-            &filtered,
-            opts,
-            None,
-            &repo.git_dir,
-            repo.work_tree.as_deref(),
-        )?;
+        print_diff(out, repo, &filtered, opts, None)?;
     }
     Ok(has_diff)
 }
@@ -1074,7 +1034,7 @@ fn collect_tree_blobs_recursive(
     odb: &Odb,
     tree_oid: &ObjectId,
     prefix: &str,
-) -> Result<Vec<(ObjectId, String, String)>> {
+) -> Result<Vec<(String, String, ObjectId)>> {
     let obj = odb.read(tree_oid)?;
     let tree = parse_tree(&obj.data)?;
     let mut result = Vec::new();
@@ -1091,78 +1051,10 @@ fn collect_tree_blobs_recursive(
                 result.extend(sub);
             }
         } else {
-            result.push((entry.oid, path, format!("{:06o}", entry.mode)));
+            result.push((path, format!("{:06o}", entry.mode), entry.oid));
         }
     }
     Ok(result)
-}
-
-/// Detect copies among added entries by checking if their blob matches
-/// any existing (unchanged or modified) entry in the old tree.
-///
-/// `old_tree_entries` provides all blobs from the old tree for
-/// `--find-copies-harder`.  When `harder` is false, only entries in
-/// the diff itself are considered as sources.
-fn detect_copies(
-    _odb: &grit_lib::odb::Odb,
-    entries: Vec<DiffEntry>,
-    threshold: u32,
-    harder: bool,
-    old_tree_entries: &[(ObjectId, String, String)], // (oid, path, mode)
-) -> Vec<DiffEntry> {
-    use std::collections::HashMap;
-
-    // Build source map: blob OID → (path, mode).
-    let mut sources: HashMap<ObjectId, (String, String)> = HashMap::new();
-
-    if harder {
-        // Use all old-tree blobs as potential copy sources.
-        for (oid, path, mode) in old_tree_entries {
-            sources
-                .entry(*oid)
-                .or_insert_with(|| (path.clone(), mode.clone()));
-        }
-    }
-
-    // Also add modified entries from the diff as sources.
-    for entry in &entries {
-        match entry.status {
-            DiffStatus::Added | DiffStatus::Deleted => {}
-            _ => {
-                if entry.old_oid.as_bytes() != &[0u8; 20] {
-                    if let Some(ref p) = entry.old_path {
-                        sources
-                            .entry(entry.old_oid)
-                            .or_insert_with(|| (p.clone(), entry.old_mode.clone()));
-                    }
-                }
-            }
-        }
-    }
-
-    let mut result = Vec::with_capacity(entries.len());
-    for entry in entries {
-        if entry.status == DiffStatus::Added {
-            if let Some((src_path, src_mode)) = sources.get(&entry.new_oid) {
-                // Exact OID match → 100% copy.
-                if 100 >= threshold {
-                    result.push(DiffEntry {
-                        old_path: Some(src_path.clone()),
-                        new_path: entry.new_path,
-                        old_oid: entry.new_oid,
-                        new_oid: entry.new_oid,
-                        old_mode: src_mode.clone(),
-                        new_mode: entry.new_mode,
-                        status: DiffStatus::Copied,
-                        score: Some(100),
-                    });
-                    continue;
-                }
-            }
-        }
-        result.push(entry);
-    }
-    result
 }
 
 fn is_gitlink_mode(mode: &str) -> bool {
@@ -1403,16 +1295,67 @@ fn print_combined_paths(
     Ok(())
 }
 
+fn write_raw_diff_tree_z(
+    out: &mut impl Write,
+    entry: &DiffEntry,
+    abbrev_len: Option<usize>,
+) -> Result<()> {
+    let ellipsis = if std::env::var("GIT_PRINT_SHA1_ELLIPSIS").ok().as_deref() == Some("yes") {
+        "..."
+    } else {
+        ""
+    };
+    let old_hex = format!("{}", entry.old_oid);
+    let new_hex = format!("{}", entry.new_oid);
+    let (old_disp, new_disp) = if let Some(len) = abbrev_len {
+        let oa = &old_hex[..len.min(old_hex.len())];
+        let na = &new_hex[..len.min(new_hex.len())];
+        (oa.to_string(), na.to_string())
+    } else {
+        (old_hex, new_hex)
+    };
+
+    let status_str = match (entry.status, entry.score) {
+        (DiffStatus::Renamed, Some(s)) => format!("R{s:03}"),
+        (DiffStatus::Copied, Some(s)) => format!("C{s:03}"),
+        _ => entry.status.letter().to_string(),
+    };
+
+    write!(
+        out,
+        ":{} {} {}{} {}{} {}\0",
+        entry.old_mode, entry.new_mode, old_disp, ellipsis, new_disp, ellipsis, status_str
+    )?;
+    match entry.status {
+        DiffStatus::Renamed | DiffStatus::Copied => {
+            out.write_all(entry.old_path.as_deref().unwrap_or("").as_bytes())?;
+            out.write_all(b"\0")?;
+            out.write_all(entry.new_path.as_deref().unwrap_or("").as_bytes())?;
+            out.write_all(b"\0")?;
+        }
+        _ => {
+            out.write_all(entry.path().as_bytes())?;
+            out.write_all(b"\0")?;
+        }
+    }
+    Ok(())
+}
+
 /// Print the diff entries according to `opts.format`.
 fn print_diff(
     out: &mut impl Write,
-    odb: &Odb,
+    repo: &Repository,
     entries: &[DiffEntry],
     opts: &Options,
     old_tree_oid: Option<&ObjectId>,
-    git_dir: &Path,
-    work_tree: Option<&Path>,
 ) -> Result<bool> {
+    let odb = &repo.odb;
+    let git_dir: &Path = repo.git_dir.as_ref();
+    let work_tree = repo.work_tree.as_deref();
+    let quote_fully = ConfigSet::load(Some(&repo.git_dir), true)
+        .unwrap_or_default()
+        .quote_path_fully();
+
     // Apply rename detection if requested.
     let owned_entries;
     let old_blobs = if opts.find_copies.is_some() && opts.find_copies_harder {
@@ -1427,7 +1370,7 @@ fn print_diff(
     let entries = if let Some(threshold) = opts.find_renames {
         let mut result = detect_renames(odb, entries.to_vec(), threshold);
         if let Some(copy_threshold) = opts.find_copies {
-            result = detect_copies(
+            result = lib_detect_copies(
                 odb,
                 result,
                 copy_threshold,
@@ -1438,7 +1381,7 @@ fn print_diff(
         owned_entries = result;
         &owned_entries[..]
     } else if let Some(copy_threshold) = opts.find_copies {
-        owned_entries = detect_copies(
+        owned_entries = lib_detect_copies(
             odb,
             entries.to_vec(),
             copy_threshold,
@@ -1481,11 +1424,18 @@ fn print_diff(
             // Otherwise show raw output normally.
             let suppress_raw = opts.pretty.is_some() && opts.summary;
             if !suppress_raw {
-                for entry in entries {
-                    if let Some(abbrev_len) = opts.abbrev {
-                        writeln!(out, "{}", format_raw_abbrev(entry, abbrev_len))?;
-                    } else {
-                        writeln!(out, "{}", format_raw(entry))?;
+                if opts.nul_terminated {
+                    let abbrev = opts.abbrev;
+                    for entry in entries {
+                        write_raw_diff_tree_z(out, entry, abbrev)?;
+                    }
+                } else {
+                    for entry in entries {
+                        if let Some(abbrev_len) = opts.abbrev {
+                            writeln!(out, "{}", format_raw_abbrev(entry, abbrev_len))?;
+                        } else {
+                            writeln!(out, "{}", format_raw(entry))?;
+                        }
                     }
                 }
             }
@@ -1496,7 +1446,7 @@ fn print_diff(
         OutputFormat::Patch => {
             // --patch-with-stat: show stat before patch
             if opts.patch_with_stat {
-                print_stat_summary(out, odb, entries)?;
+                print_stat_summary(out, odb, entries, quote_fully)?;
                 writeln!(out)?;
             }
             // --patch-with-raw: show raw before patch
@@ -1519,46 +1469,28 @@ fn print_diff(
                     opts.abbrev,
                     opts.full_index,
                     git_dir,
+                    quote_fully,
                 )?;
             }
         }
         OutputFormat::Stat => {
-            print_stat_summary(out, odb, entries)?;
+            print_stat_summary(out, odb, entries, quote_fully)?;
             if opts.summary {
                 write_summary(out, entries)?;
             }
         }
         OutputFormat::NameOnly => {
             for entry in entries {
-                writeln!(out, "{}", entry.path())?;
+                if opts.nul_terminated {
+                    out.write_all(entry.path().as_bytes())?;
+                    out.write_all(b"\0")?;
+                } else {
+                    writeln!(out, "{}", quote_c_style(entry.path(), quote_fully))?;
+                }
             }
         }
         OutputFormat::NameStatus => {
-            for entry in entries {
-                match (entry.status, entry.score) {
-                    (DiffStatus::Renamed, Some(s)) => {
-                        writeln!(
-                            out,
-                            "R{:03}\t{}\t{}",
-                            s,
-                            entry.old_path.as_deref().unwrap_or(""),
-                            entry.new_path.as_deref().unwrap_or("")
-                        )?;
-                    }
-                    (DiffStatus::Copied, Some(s)) => {
-                        writeln!(
-                            out,
-                            "C{:03}\t{}\t{}",
-                            s,
-                            entry.old_path.as_deref().unwrap_or(""),
-                            entry.new_path.as_deref().unwrap_or("")
-                        )?;
-                    }
-                    _ => {
-                        writeln!(out, "{}\t{}", entry.status.letter(), entry.path())?;
-                    }
-                }
-            }
+            write_diff_index_name_status(out, entries, quote_fully, opts.nul_terminated)?;
         }
     }
     Ok(false)
@@ -1635,6 +1567,7 @@ fn write_patch_entry(
     abbrev: Option<usize>,
     full_index: bool,
     git_dir: &Path,
+    quote_fully: bool,
 ) -> Result<bool> {
     let (old_content, new_content) = read_blob_pair(odb, entry)?;
 
@@ -1652,7 +1585,10 @@ fn write_patch_entry(
     let old_abbrev = abbrev_oid(&old_hex, abbrev, full_index);
     let new_abbrev = abbrev_oid(&new_hex, abbrev, full_index);
 
-    writeln!(out, "diff --git a/{old_path} b/{new_path}")?;
+    let git_old = format_diff_path_with_prefix("a/", old_path, quote_fully);
+    let git_new = format_diff_path_with_prefix("b/", new_path, quote_fully);
+
+    writeln!(out, "diff --git {git_old} {git_new}")?;
 
     match entry.status {
         DiffStatus::Added => {
@@ -1675,10 +1611,14 @@ fn write_patch_entry(
             }
         }
         DiffStatus::Renamed => {
+            if entry.old_mode != entry.new_mode {
+                writeln!(out, "old mode {}", entry.old_mode)?;
+                writeln!(out, "new mode {}", entry.new_mode)?;
+            }
             let sim = entry.score.unwrap_or(100);
             writeln!(out, "similarity index {sim}%")?;
-            writeln!(out, "rename from {old_path}")?;
-            writeln!(out, "rename to {new_path}")?;
+            writeln!(out, "rename from {}", quote_c_style(old_path, quote_fully))?;
+            writeln!(out, "rename to {}", quote_c_style(new_path, quote_fully))?;
             if entry.old_oid != entry.new_oid {
                 writeln!(out, "index {old_abbrev}..{new_abbrev}")?;
             }
@@ -1686,8 +1626,8 @@ fn write_patch_entry(
         DiffStatus::Copied => {
             let sim = entry.score.unwrap_or(100);
             writeln!(out, "similarity index {sim}%")?;
-            writeln!(out, "copy from {old_path}")?;
-            writeln!(out, "copy to {new_path}")?;
+            writeln!(out, "copy from {}", quote_c_style(old_path, quote_fully))?;
+            writeln!(out, "copy to {}", quote_c_style(new_path, quote_fully))?;
             if entry.old_oid != entry.new_oid {
                 writeln!(out, "index {old_abbrev}..{new_abbrev}")?;
             }
@@ -1699,31 +1639,45 @@ fn write_patch_entry(
         DiffStatus::Unmerged => {}
     }
 
-    let display_old = if entry.status == DiffStatus::Added {
-        "/dev/null"
-    } else {
-        old_path
-    };
-    let display_new = if entry.status == DiffStatus::Deleted {
-        "/dev/null"
-    } else {
-        new_path
-    };
     let path_for_attrs = entry.path();
     let old_raw = old_content.as_bytes();
     let new_raw = new_content.as_bytes();
     if is_binary_for_diff(git_dir, path_for_attrs, old_raw)
         || is_binary_for_diff(git_dir, path_for_attrs, new_raw)
     {
-        writeln!(out, "Binary files a/{new_path} and b/{new_path} differ")?;
+        let bo = if entry.status == DiffStatus::Added {
+            "/dev/null".to_owned()
+        } else {
+            format_diff_path_with_prefix("a/", old_path, quote_fully)
+        };
+        let bn = if entry.status == DiffStatus::Deleted {
+            "/dev/null".to_owned()
+        } else {
+            format_diff_path_with_prefix("b/", new_path, quote_fully)
+        };
+        writeln!(out, "Binary files {bo} and {bn} differ")?;
         return Ok(false);
     }
-    let patch = unified_diff(
+
+    let display_old = if entry.status == DiffStatus::Added {
+        "/dev/null".to_owned()
+    } else {
+        format_diff_path_with_prefix("a/", old_path, quote_fully)
+    };
+    let display_new = if entry.status == DiffStatus::Deleted {
+        "/dev/null".to_owned()
+    } else {
+        format_diff_path_with_prefix("b/", new_path, quote_fully)
+    };
+    let patch = unified_diff_with_prefix(
         &old_content,
         &new_content,
-        display_old,
-        display_new,
+        &display_old,
+        &display_new,
         context_lines,
+        0,
+        "",
+        "",
     );
     write!(out, "{patch}")?;
 
@@ -1731,10 +1685,19 @@ fn write_patch_entry(
 }
 
 /// Write a `--stat` summary.
-fn print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) -> Result<bool> {
+fn print_stat_summary(
+    out: &mut impl Write,
+    odb: &Odb,
+    entries: &[DiffEntry],
+    quote_fully: bool,
+) -> Result<bool> {
     use grit_lib::diff::format_stat_line_width;
 
-    let max_path_len = entries.iter().map(|e| e.path().len()).max().unwrap_or(0);
+    let max_path_len = entries
+        .iter()
+        .map(|e| quote_c_style(e.path(), quote_fully).len())
+        .max()
+        .unwrap_or(0);
     let mut total_ins = 0usize;
     let mut total_del = 0usize;
 
@@ -1753,10 +1716,11 @@ fn print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) ->
     let count_width = format!("{}", max_count).len();
 
     for (path, ins, del) in &file_stats {
+        let q = quote_c_style(path, quote_fully);
         writeln!(
             out,
             "{}",
-            format_stat_line_width(path, *ins, *del, max_path_len, count_width)
+            format_stat_line_width(&q, *ins, *del, max_path_len, count_width)
         )?;
     }
 
@@ -1814,15 +1778,13 @@ fn is_magic_empty_tree_oid(oid: &ObjectId) -> bool {
         || hex == "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 }
 
-fn resolve_max_tree_depth(repo: &Repository) -> Result<usize> {
-    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)?;
-    let depth = if let Some(raw) = config.get("core.maxtreedepth") {
-        raw.parse::<usize>()
-            .map_err(|_| anyhow::anyhow!("invalid core.maxtreedepth: '{raw}'"))?
+fn resolve_max_tree_depth(repo: &Repository) -> usize {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    if let Some(raw) = config.get("core.maxtreedepth") {
+        raw.parse::<usize>().unwrap_or(DEFAULT_MAX_TREE_DEPTH)
     } else {
         DEFAULT_MAX_TREE_DEPTH
-    };
-    Ok(depth)
+    }
 }
 
 fn validate_tree_depth_limit(
