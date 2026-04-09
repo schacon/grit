@@ -76,7 +76,7 @@ t0411-clone-from-partial	t0	yes	7	4	3	false	ok	0
 t0450-txt-doc-vs-help	t0	yes	548	542	6	false	ok	0
 t0500-progress-display	t0	yes	16	0	16	false	ok	0
 t0600-reffiles-backend	t0	yes	33	12	21	false	ok	0
-t0601-reffiles-pack-refs	t0	yes	0	0	0	false	ok	0
+t0601-reffiles-pack-refs	t0	yes	47	47	0	true	ok	0
 t0602-reffiles-fsck	t0	yes	23	4	19	false	ok	0
 t0610-reftable-basics	t0	skip	73	0	0	false	ok	0
 t0611-reftable-httpd	t0	skip	1	0	1	false	ok	0
