@@ -612,7 +612,7 @@ t3422-rebase-incompatible-options	t3	yes	52	19	33	false	ok	0
 t3423-rebase-reword	t3	yes	3	1	2	false	ok	0
 t3424-rebase-empty	t3	yes	19	3	16	false	ok	1
 t3425-rebase-topology-merges	t3	yes	13	13	0	true	ok	0
-t3426-rebase-submodule	t3	yes	29	2	27	false	ok	0
+t3426-rebase-submodule	t3	yes	29	29	0	true	ok	0
 t3427-rebase-subtree	t3	yes	3	3	0	true	ok	0
 t3428-rebase-signoff	t3	yes	7	1	6	false	ok	0
 t3429-rebase-edit-todo	t3	yes	7	2	5	false	ok	0
