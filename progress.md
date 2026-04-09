@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 264 completed (`[x]`), 4 in progress (`[~]`), 500 remai
 
 ## Recently completed
 
+- `t10860-switch-force-create` — 30/30 tests pass (`switch`: `-c`/`--create`, start points, `switch -`, detach/orphan, `--discard-changes`, untracked preservation; harness CSV/dashboards refreshed; `t1-plan.md` marked complete)
 - `t7450-bad-git-dotfiles` — 50/50 tests pass (submodule name/url validation, fsck symlink and `.gitmodules` checks, nested submodule git dirs, harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5351-unpack-large-objects` — 7/7 tests pass (`GIT_ALLOC_LIMIT` + `core.bigFileThreshold` streaming unpack, dry-run, trace2 fsync batch path, skip already-packed objects; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5308-pack-detect-duplicates` — 6/6 tests pass (`index-pack` allows duplicate OIDs by default; `--strict` rejects duplicates with non-zero exit and leaves objects out of the ODB; `cat-file --batch-check` resolves OIDs in packs with duplicate runs; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
