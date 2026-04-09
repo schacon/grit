@@ -1195,9 +1195,24 @@ fn resolve_identity(config: &ConfigSet, kind: &str) -> Result<(String, String)> 
     let name_var = format!("GIT_{kind}_NAME");
     let email_var = format!("GIT_{kind}_EMAIL");
 
-    let name = crate::ident::read_git_identity_name_from_env(&name_var)
-        .or_else(|| config.get("user.name"))
-        .unwrap_or_else(|| "Unknown".to_owned());
+    let mut name = match crate::ident::read_git_identity_name_env(&name_var) {
+        crate::ident::GitIdentityNameEnv::Set(s) => s,
+        crate::ident::GitIdentityNameEnv::Unset => {
+            if let Some(v) = config.get("user.name") {
+                let t = v.trim();
+                if !t.is_empty() {
+                    t.to_owned()
+                } else {
+                    crate::ident::ident_default_name(config)
+                }
+            } else {
+                crate::ident::ident_default_name(config)
+            }
+        }
+    };
+    if name.trim().is_empty() {
+        name = "Unknown".to_owned();
+    }
     let email = std::env::var(&email_var)
         .ok()
         .or_else(|| config.get("user.email"))

@@ -2471,7 +2471,6 @@ fn resolve_author(
     }
 
     let name = resolve_name(config, IdentRole::Author)?;
-    validate_ident_name(&name, "author")?;
 
     let email = resolve_email(config, IdentRole::Author)?;
 
@@ -2492,7 +2491,6 @@ fn resolve_author(
 /// Resolve the committer identity from env and config.
 fn resolve_committer(config: &ConfigSet, now: OffsetDateTime) -> Result<String> {
     let name = resolve_name(config, IdentRole::Committer)?;
-    validate_ident_name(&name, "committer")?;
 
     let email = resolve_email(config, IdentRole::Committer)?;
 

@@ -22,7 +22,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 use crate::git_commit_encoding::commit_message_unicode_for_display;
-use crate::ident::read_git_identity_name_from_env;
+use crate::ident::{read_git_identity_name_env, GitIdentityNameEnv};
 
 /// Arguments for `grit format-patch`.
 #[derive(Debug, ClapArgs)]
@@ -927,16 +927,18 @@ fn format_cover_letter(
 
 /// Get the signoff identity, preferring GIT_COMMITTER_NAME/EMAIL env vars.
 fn get_signoff_identity(committer_ident: &str) -> (String, String) {
-    let env_name = read_git_identity_name_from_env("GIT_COMMITTER_NAME");
     let env_email = std::env::var("GIT_COMMITTER_EMAIL").ok();
 
-    let name = env_name.unwrap_or_else(|| {
-        if let Some(bracket) = committer_ident.find('<') {
-            committer_ident[..bracket].trim().to_string()
-        } else {
-            "Unknown".to_string()
+    let name = match read_git_identity_name_env("GIT_COMMITTER_NAME") {
+        GitIdentityNameEnv::Set(s) if !s.is_empty() => s,
+        _ => {
+            if let Some(bracket) = committer_ident.find('<') {
+                committer_ident[..bracket].trim().to_string()
+            } else {
+                "Unknown".to_string()
+            }
         }
-    });
+    };
     let email = env_email.unwrap_or_else(|| {
         extract_email(committer_ident)
             .unwrap_or("unknown")

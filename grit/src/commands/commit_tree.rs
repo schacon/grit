@@ -14,11 +14,12 @@ use std::io::Read;
 use time::format_description::well_known::Rfc3339;
 use time::{format_description, OffsetDateTime, PrimitiveDateTime, UtcOffset};
 
+use grit_lib::config::ConfigSet;
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{resolve_revision_for_commit_tree_tree, resolve_revision_for_range_end};
 
-use crate::ident::read_git_identity_name_from_env;
+use crate::ident::{read_git_identity_name_env, GitIdentityNameEnv};
 
 /// Arguments for `grit commit-tree`.
 #[derive(Debug, ClapArgs)]
@@ -46,6 +47,7 @@ pub struct Args {
 /// Run `grit commit-tree`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
 
     let tree_oid = resolve_revision_for_commit_tree_tree(&repo, &args.tree)
         .with_context(|| format!("not a valid object name: '{}'", args.tree))?;
@@ -72,8 +74,8 @@ pub fn run(args: Args) -> Result<()> {
     let now_unix = current_unix_timestamp();
     let tz_str = local_tz_string();
 
-    let author = build_identity("AUTHOR", &now_unix, &tz_str)?;
-    let committer = build_identity("COMMITTER", &now_unix, &tz_str)?;
+    let author = build_identity("AUTHOR", &config, &now_unix, &tz_str)?;
+    let committer = build_identity("COMMITTER", &config, &now_unix, &tz_str)?;
 
     let commit_data = CommitData {
         tree: tree_oid,
@@ -119,14 +121,35 @@ fn build_message(args: &Args) -> Result<String> {
 }
 
 /// Build a `"Name <email> <timestamp> <tz>"` identity string.
-fn build_identity(prefix: &str, now_unix: &str, tz_str: &str) -> Result<String> {
+fn build_identity(
+    prefix: &str,
+    config: &ConfigSet,
+    now_unix: &str,
+    tz_str: &str,
+) -> Result<String> {
     let name_key = format!("GIT_{prefix}_NAME");
     let email_key = format!("GIT_{prefix}_EMAIL");
     let date_key = format!("GIT_{prefix}_DATE");
 
-    let name = read_git_identity_name_from_env(&name_key)
-        .or_else(|| read_git_identity_name_from_env("GIT_AUTHOR_NAME"))
-        .unwrap_or_else(|| "Unknown".to_owned());
+    let name = if prefix == "COMMITTER" {
+        match read_git_identity_name_env(&name_key) {
+            GitIdentityNameEnv::Set(s) => s,
+            GitIdentityNameEnv::Unset => match read_git_identity_name_env("GIT_AUTHOR_NAME") {
+                GitIdentityNameEnv::Set(s) => s,
+                GitIdentityNameEnv::Unset => crate::ident::ident_default_name(config),
+            },
+        }
+    } else {
+        match read_git_identity_name_env(&name_key) {
+            GitIdentityNameEnv::Set(s) => s,
+            GitIdentityNameEnv::Unset => crate::ident::ident_default_name(config),
+        }
+    };
+    let name = if name.trim().is_empty() {
+        "Unknown".to_owned()
+    } else {
+        name
+    };
     let email = env::var(&email_key)
         .or_else(|_| env::var("GIT_AUTHOR_EMAIL"))
         .unwrap_or_else(|_| "unknown@unknown".to_owned());
