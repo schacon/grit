@@ -1065,7 +1065,10 @@ fn push_to_url(
                 && update.remote_ref.starts_with("refs/tags/")
                 && old != new
             {
-                pre_reject[i] = Some("Updates were rejected because the tag already exists in the remote.".to_string());
+                pre_reject[i] = Some(
+                    "Updates were rejected because the tag already exists in the remote."
+                        .to_string(),
+                );
             }
         }
     }
