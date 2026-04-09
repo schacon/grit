@@ -870,7 +870,7 @@ commit → check it off → move on.
 - [ ] `t7411-submodule-config` ██░░░░░░░░░░░░░░░░░░ 2/20 (18 left) — Test submodules config cache infrastructure
 
 - [ ] `t7519-status-fsmonitor` ████████░░░░░░░░░░░░ 14/33 (19 left) — git status with file system watcher
-- [ ] `t7401-submodule-summary` ████░░░░░░░░░░░░░░░░ 6/25 (19 left) — Summary support for submodules
+- [x] `t7401-submodule-summary` — Summary support for submodules (25/25)
 
 - [ ] `t7704-repack-cruft` ████░░░░░░░░░░░░░░░░ 6/25 (19 left) — git repack works correctly
 - [ ] `t7407-submodule-foreach` ██░░░░░░░░░░░░░░░░░░ 3/23 (20 left) — Test 
