@@ -629,7 +629,7 @@ t3440-rebase-trailer	t3	yes	0	0	0	false	timeout	0
 t3441-rebase-exec	t3	yes	3	3	0	true	ok	0
 t3442-rebase-onto-upstream	t3	yes	3	3	0	true	ok	0
 t3450-history	t3	yes	2	2	0	true	ok	0
-t3451-history-reword	t3	yes	14	0	14	false	ok	0
+t3451-history-reword	t3	yes	14	14	0	true	ok	0
 t3452-history-split	t3	yes	25	0	25	false	ok	0
 t3500-cherry	t3	yes	4	4	0	true	ok	0
 t3501-revert-cherry-pick	t3	yes	21	21	0	true	ok	0

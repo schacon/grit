@@ -322,7 +322,7 @@ commit → check it off → move on.
 
 - [ ] `t3422-rebase-incompatible-options` ██████████████░░░░░░ 38/52 (14 left) — test if rebase detects and aborts on incompatible options
 - [ ] `t3011-common-prefixes-and-directory-traversal` ██████░░░░░░░░░░░░░░ 7/21 (14 left) — directory traversal handling, especially with common prefixes
-- [ ] `t3451-history-reword` ░░░░░░░░░░░░░░░░░░░░ 0/14 (14 left) — tests for git-history reword subcommand
+- [x] `t3451-history-reword` — 14/14 tests pass — tests for git-history reword subcommand
 - [ ] `t3920-crlf-messages` ███░░░░░░░░░░░░░░░░░ 3/18 (15 left) — Test ref-filter and pretty APIs for commit and tag messages using CRLF
 - [ ] `t3001-ls-files-others-exclude` ████████░░░░░░░░░░░░ 11/27 (16 left) — git ls-files --others --exclude
 

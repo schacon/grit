@@ -20,6 +20,7 @@ use grit_lib::ident::{
 use grit_lib::line_log::{
     format_line_log_diff, line_log_filter_commits, parse_line_log_ranges, rewritten_first_parent,
 };
+use grit_lib::merge_base::is_ancestor;
 use grit_lib::merge_diff::{blob_text_for_diff, is_binary_for_diff};
 use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -208,6 +209,10 @@ pub struct Args {
     /// Show log for all refs.
     #[arg(long = "all")]
     pub all: bool,
+
+    /// Include all branch tips (refs/heads/) in the revision walk.
+    #[arg(long = "branches")]
+    pub branches: bool,
 
     /// Follow file renames (single file only).
     #[arg(long = "follow")]
@@ -1063,8 +1068,59 @@ fn run_line_log(repo: &Repository, args: Args, _patch_context: usize) -> Result<
 }
 
 /// Extract epoch timestamp from a Git ident string.
+fn sort_revision_specs_by_committer_desc(repo: &Repository, specs: &mut Vec<String>) -> Result<()> {
+    use std::cmp::Reverse;
+    let mut metas: Vec<(Reverse<i64>, String)> = Vec::with_capacity(specs.len());
+    for s in specs.drain(..) {
+        let oid = resolve_revision_as_commit(repo, &s)?;
+        let obj = repo.odb.read(&oid)?;
+        let c = parse_commit(&obj.data)?;
+        let e = extract_epoch_from_ident(&c.committer);
+        metas.push((Reverse(e), s));
+    }
+    metas.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    specs.extend(metas.into_iter().map(|(_, s)| s));
+    Ok(())
+}
+
 fn extract_epoch_from_ident(ident: &str) -> i64 {
     committer_timestamp_for_until_filter(ident)
+}
+
+/// When `git log --graph <tip> --branches` is used, Git prefers `<tip>` as the leftmost
+/// branch tip when it is incomparable with the current first commit (t3451-history-reword).
+fn prefer_explicit_tip_first_in_graph_walk(
+    repo: &Repository,
+    args: &Args,
+    commits: &mut Vec<ObjectId>,
+) -> Result<()> {
+    let Some(tip_spec) = args
+        .revisions
+        .iter()
+        .find(|r| *r != "--" && !r.starts_with('-'))
+    else {
+        return Ok(());
+    };
+    let tip_oid = resolve_revision_as_commit(repo, tip_spec)?;
+    let Some(&first) = commits.first() else {
+        return Ok(());
+    };
+    if first == tip_oid {
+        return Ok(());
+    }
+    let Some(pos) = commits.iter().position(|&c| c == tip_oid) else {
+        return Ok(());
+    };
+    if pos == 0 {
+        return Ok(());
+    }
+    let incomparable = !is_ancestor(repo, first, tip_oid)? && !is_ancestor(repo, tip_oid, first)?;
+    if !incomparable {
+        return Ok(());
+    }
+    commits.remove(pos);
+    commits.insert(0, tip_oid);
+    Ok(())
 }
 
 /// Parse a date string into a Unix epoch timestamp.
@@ -1165,6 +1221,16 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
         }
     }
 
+    if args.branches {
+        let mut seen: std::collections::HashSet<String> = revision_specs.iter().cloned().collect();
+        for (_, oid) in grit_lib::refs::list_refs(&repo.git_dir, "refs/heads/")? {
+            let s = oid.to_hex();
+            if seen.insert(s.clone()) {
+                revision_specs.push(s);
+            }
+        }
+    }
+
     if !implied_pathspecs.is_empty() {
         validate_pathspec_scope(repo, &implied_pathspecs)?;
     }
@@ -1213,8 +1279,16 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
         positive_specs.push("HEAD".to_owned());
     }
 
+    if args.branches {
+        sort_revision_specs_by_committer_desc(repo, &mut positive_specs)?;
+    }
+
     let mut result = rev_list(repo, &positive_specs, &negative_specs, &options)
         .map_err(|e| anyhow::anyhow!("rev-list failed: {e}"))?;
+
+    if args.branches {
+        prefer_explicit_tip_first_in_graph_walk(repo, args, &mut result.commits)?;
+    }
 
     if args.simplify_by_decoration {
         result.commits = simplify_by_decoration_for_graph(repo, &result.commits)?;
@@ -1938,8 +2012,15 @@ impl AsciiGraph {
             }
         };
 
-        if line.len() < self.width {
-            line.push_str(&" ".repeat(self.width - line.len()));
+        let pad_width =
+            if shown_commit_line && self.current.as_ref().is_some_and(|c| c.parents.len() == 2) {
+                // Match Git's `*   subject` spacing for two-parent merges (t3451-history-reword).
+                self.width.saturating_sub(2)
+            } else {
+                self.width
+            };
+        if line.len() < pad_width {
+            line.push_str(&" ".repeat(pad_width - line.len()));
         }
         (line, shown_commit_line)
     }
@@ -2537,11 +2618,37 @@ pub fn run(mut args: Args) -> Result<()> {
     let (start_oids, exclude_oids) = if args.all {
         (collect_all_ref_oids(&repo.git_dir)?, Vec::new())
     } else if args.revisions.is_empty() {
-        let head = resolve_head(&repo.git_dir)?;
-        match head.oid() {
-            Some(oid) => (vec![*oid], Vec::new()),
-            None => {
-                anyhow::bail!("your current branch 'main' does not have any commits yet");
+        if args.branches {
+            let mut pairs: Vec<(ObjectId, i64)> = Vec::new();
+            let mut seen: std::collections::HashSet<ObjectId> = std::collections::HashSet::new();
+            for (_, oid) in grit_lib::refs::list_refs(&repo.git_dir, "refs/heads/")? {
+                if seen.insert(oid) {
+                    let obj = repo.odb.read(&oid)?;
+                    let c = parse_commit(&obj.data)?;
+                    let e = extract_epoch_from_ident(&c.committer);
+                    pairs.push((oid, e));
+                }
+            }
+            pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            let oids: Vec<ObjectId> = pairs.into_iter().map(|(o, _)| o).collect();
+            if oids.is_empty() {
+                let head = resolve_head(&repo.git_dir)?;
+                match head.oid() {
+                    Some(oid) => (vec![*oid], Vec::new()),
+                    None => {
+                        anyhow::bail!("your current branch 'main' does not have any commits yet");
+                    }
+                }
+            } else {
+                (oids, Vec::new())
+            }
+        } else {
+            let head = resolve_head(&repo.git_dir)?;
+            match head.oid() {
+                Some(oid) => (vec![*oid], Vec::new()),
+                None => {
+                    anyhow::bail!("your current branch 'main' does not have any commits yet");
+                }
             }
         }
     } else {

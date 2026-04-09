@@ -331,115 +331,7 @@ pub fn run(args: Args) -> Result<()> {
 
     let commit_to_refs = build_commit_to_refs_map(&repo)?;
 
-    let merge_renormalize = read_merge_renormalize(&repo);
-    let directory_renames = read_directory_renames(&repo);
-    let merge_dir_mode = MergeDirectoryRenamesMode::FromConfig;
-    let rename_opts = MergeRenameOptions::from_config(&repo);
-
-    let mut replayed: HashMap<ObjectId, ObjectId> = HashMap::new();
-    let mut replayed_tip = onto_oid;
-    let mut cached_upstream_renames: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
-
-    for &commit_oid in &commits {
-        let commit_obj = repo.odb.read(&commit_oid)?;
-        let commit = parse_commit(&commit_obj.data)?;
-        let parent_oid = *commit.parents.first().ok_or_else(|| {
-            anyhow::anyhow!("fatal: replaying down from root commit is not supported yet!")
-        })?;
-        if commit.parents.len() > 1 {
-            bail!("fatal: replaying merge commits is not supported yet!");
-        }
-
-        let base_tree = commit_tree(&repo, parent_oid)?;
-        let ours_tree = commit_tree(&repo, replayed_tip)?;
-        let theirs_tree = commit.tree;
-
-        let base_entries_raw = tree_to_map(tree_to_index_entries(&repo, &base_tree, "")?);
-        let mut ours_entries = tree_to_map(tree_to_index_entries(&repo, &ours_tree, "")?);
-        let theirs_entries_raw = tree_to_map(tree_to_index_entries(&repo, &theirs_tree, "")?);
-
-        let changed_paths = collect_changed_paths(&base_entries_raw, &theirs_entries_raw);
-        let should_refresh_upstream = should_refresh_upstream_rename_cache(
-            &base_entries_raw,
-            &theirs_entries_raw,
-            &cached_upstream_renames,
-        );
-        if should_refresh_upstream {
-            let detected = detect_side_renames(&repo, &base_entries_raw, &ours_entries, true)?;
-            cached_upstream_renames = filter_renames_for_changed_paths(detected, &changed_paths);
-        }
-
-        let mut topic_renames = HashMap::new();
-        if likely_has_rename_candidates(&base_entries_raw, &theirs_entries_raw) {
-            topic_renames =
-                detect_side_renames(&repo, &base_entries_raw, &theirs_entries_raw, true)?;
-            for (old, new) in &topic_renames {
-                if cached_upstream_renames.get(old) == Some(new) {
-                    cached_upstream_renames.remove(old);
-                }
-            }
-        }
-
-        if directory_renames {
-            apply_directory_renames_to_ours_additions(
-                &base_entries_raw,
-                &mut ours_entries,
-                &topic_renames,
-                &theirs_entries_raw,
-            );
-        }
-
-        let base_entries = apply_cached_renames(
-            &base_entries_raw,
-            &cached_upstream_renames,
-            &ours_entries,
-            Some(&base_entries_raw),
-        );
-        let theirs_entries = apply_cached_renames(
-            &theirs_entries_raw,
-            &cached_upstream_renames,
-            &ours_entries,
-            Some(&base_entries_raw),
-        );
-
-        let merge_result = merge_trees_for_replay(
-            &repo,
-            &base_entries,
-            &ours_entries,
-            &theirs_entries,
-            &short_oid(commit_oid),
-            &short_oid(parent_oid),
-            &replayed_tip.to_hex(),
-            &commit_oid.to_hex(),
-            MergeFavor::None,
-            None,
-            merge_renormalize,
-            false,
-            false,
-            false,
-            false,
-            merge_dir_mode,
-            rename_opts,
-        )?;
-        if merge_result.has_conflicts {
-            let reason = merge_result
-                .conflict_descriptions
-                .first()
-                .map(|entry| entry.subject_path.as_str())
-                .unwrap_or("conflict");
-            bail!("replay stopped due to merge conflict in {reason}");
-        }
-
-        let merged_tree = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
-
-        if merged_tree == ours_tree && theirs_tree != base_tree {
-            replayed.insert(commit_oid, replayed_tip);
-            continue;
-        }
-
-        replayed_tip = create_replayed_commit(&repo, replayed_tip, merged_tree, &commit)?;
-        replayed.insert(commit_oid, replayed_tip);
-    }
+    let (replayed_tip, replayed) = replay_commits_onto(&repo, &commits, onto_oid)?;
 
     let mut updates: Vec<RefUpdateLine> = Vec::new();
 
@@ -525,6 +417,125 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Replay `commits` (oldest first) onto `onto`, returning the new tip and a map from each
+/// source commit OID to its replayed OID (used by `grit replay` and `grit history reword`).
+pub(crate) fn replay_commits_onto(
+    repo: &Repository,
+    commits: &[ObjectId],
+    mut replayed_tip: ObjectId,
+) -> Result<(ObjectId, HashMap<ObjectId, ObjectId>)> {
+    let merge_renormalize = read_merge_renormalize(repo);
+    let directory_renames = read_directory_renames(repo);
+    let merge_dir_mode = MergeDirectoryRenamesMode::FromConfig;
+    let rename_opts = MergeRenameOptions::from_config(repo);
+
+    let mut replayed: HashMap<ObjectId, ObjectId> = HashMap::new();
+    let mut cached_upstream_renames: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
+
+    for &commit_oid in commits {
+        let commit_obj = repo.odb.read(&commit_oid)?;
+        let commit = parse_commit(&commit_obj.data)?;
+        let parent_oid = *commit.parents.first().ok_or_else(|| {
+            anyhow::anyhow!("fatal: replaying down from root commit is not supported yet!")
+        })?;
+        if commit.parents.len() > 1 {
+            bail!("fatal: replaying merge commits is not supported yet!");
+        }
+
+        let base_tree = commit_tree(repo, parent_oid)?;
+        let ours_tree = commit_tree(repo, replayed_tip)?;
+        let theirs_tree = commit.tree;
+
+        let base_entries_raw = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
+        let mut ours_entries = tree_to_map(tree_to_index_entries(repo, &ours_tree, "")?);
+        let theirs_entries_raw = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
+
+        let changed_paths = collect_changed_paths(&base_entries_raw, &theirs_entries_raw);
+        let should_refresh_upstream = should_refresh_upstream_rename_cache(
+            &base_entries_raw,
+            &theirs_entries_raw,
+            &cached_upstream_renames,
+        );
+        if should_refresh_upstream {
+            let detected = detect_side_renames(repo, &base_entries_raw, &ours_entries, true)?;
+            cached_upstream_renames = filter_renames_for_changed_paths(detected, &changed_paths);
+        }
+
+        let mut topic_renames = HashMap::new();
+        if likely_has_rename_candidates(&base_entries_raw, &theirs_entries_raw) {
+            topic_renames =
+                detect_side_renames(repo, &base_entries_raw, &theirs_entries_raw, true)?;
+            for (old, new) in &topic_renames {
+                if cached_upstream_renames.get(old) == Some(new) {
+                    cached_upstream_renames.remove(old);
+                }
+            }
+        }
+
+        if directory_renames {
+            apply_directory_renames_to_ours_additions(
+                &base_entries_raw,
+                &mut ours_entries,
+                &topic_renames,
+                &theirs_entries_raw,
+            );
+        }
+
+        let base_entries = apply_cached_renames(
+            &base_entries_raw,
+            &cached_upstream_renames,
+            &ours_entries,
+            Some(&base_entries_raw),
+        );
+        let theirs_entries = apply_cached_renames(
+            &theirs_entries_raw,
+            &cached_upstream_renames,
+            &ours_entries,
+            Some(&base_entries_raw),
+        );
+
+        let merge_result = merge_trees_for_replay(
+            repo,
+            &base_entries,
+            &ours_entries,
+            &theirs_entries,
+            &short_oid(commit_oid),
+            &short_oid(parent_oid),
+            &replayed_tip.to_hex(),
+            &commit_oid.to_hex(),
+            MergeFavor::None,
+            None,
+            merge_renormalize,
+            false,
+            false,
+            false,
+            false,
+            merge_dir_mode,
+            rename_opts,
+        )?;
+        if merge_result.has_conflicts {
+            let reason = merge_result
+                .conflict_descriptions
+                .first()
+                .map(|entry| entry.subject_path.as_str())
+                .unwrap_or("conflict");
+            bail!("replay stopped due to merge conflict in {reason}");
+        }
+
+        let merged_tree = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
+
+        if merged_tree == ours_tree && theirs_tree != base_tree {
+            replayed.insert(commit_oid, replayed_tip);
+            continue;
+        }
+
+        replayed_tip = create_replayed_commit(repo, replayed_tip, merged_tree, &commit)?;
+        replayed.insert(commit_oid, replayed_tip);
+    }
+
+    Ok((replayed_tip, replayed))
 }
 
 fn resolve_committer_ident_string(repo: &Repository) -> Result<String> {

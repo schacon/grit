@@ -3398,9 +3398,18 @@ fn preprocess_log_pickaxe_args(rest: Vec<String>) -> Vec<String> {
 
 fn preprocess_log_args(rest: &[String]) -> Vec<String> {
     let mut result = Vec::new();
+    let mut saw_graph = false;
     let mut i = 0usize;
     while i < rest.len() {
         let arg = &rest[i];
+        if arg == "--graph" {
+            if !saw_graph {
+                result.push("--graph".to_string());
+                saw_graph = true;
+            }
+            i += 1;
+            continue;
+        }
         if let Some(spec) = arg.strip_prefix("-L:") {
             result.push("-L".to_string());
             result.push(spec.to_string());
@@ -3763,7 +3772,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         }
         "hash-object" => commands::hash_object::run(parse_cmd_args(subcmd, rest)),
         "help" => commands::help::run(parse_cmd_args(subcmd, rest)),
-        "history" => commands::history::run(parse_cmd_args(subcmd, rest)),
+        "history" => commands::history::run_from_argv(rest),
         "hook" => commands::hook::run(parse_cmd_args(subcmd, rest)),
         "http-backend" => commands::http_backend::run(parse_cmd_args(subcmd, rest)),
         "http-fetch" => commands::http_fetch::run(parse_cmd_args(subcmd, rest)),

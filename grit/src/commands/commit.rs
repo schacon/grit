@@ -1813,7 +1813,7 @@ fn resolve_commit_editor(repo: &Repository) -> String {
     }
 }
 
-fn launch_commit_editor(repo: &Repository, path: &Path) -> Result<()> {
+pub(crate) fn launch_commit_editor(repo: &Repository, path: &Path) -> Result<()> {
     let editor = resolve_commit_editor(repo);
     // Match Git: the editor command is run under `sh -c` with the path as `$1` (not `$@`),
     // so `test_set_editor` patterns like `EDITOR='"$FAKE_EDITOR"'` expand and receive the file.
@@ -1833,7 +1833,7 @@ fn launch_commit_editor(repo: &Repository, path: &Path) -> Result<()> {
 /// Post-editor cleanup matching Git `strbuf_stripspace` with `comment_prefix = "#"` (default
 /// `cleanup=strip`): skip `#` lines, trim trailing whitespace per line, collapse runs of empty
 /// lines to a single blank between paragraphs, trim leading/trailing blank lines.
-fn cleanup_edited_commit_message(message: &str) -> String {
+pub(crate) fn cleanup_edited_commit_message(message: &str) -> String {
     fn line_cleanup(line: &str) -> usize {
         let mut len = line.len();
         while len > 0 {

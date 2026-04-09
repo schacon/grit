@@ -532,10 +532,10 @@ fn check_good_are_ancestors_of_bad(
             break;
         }
     }
-    if !all_ancestors
-        && check_merge_bases(repo, git_dir, terms, bad, goods, no_checkout)?.is_some() {
-            return Ok(AncestorCheck::MergeBaseCheckedOut);
-        }
+    if !all_ancestors && check_merge_bases(repo, git_dir, terms, bad, goods, no_checkout)?.is_some()
+    {
+        return Ok(AncestorCheck::MergeBaseCheckedOut);
+    }
     let _ = fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -1136,12 +1136,11 @@ fn replay_bisect_state_line(
     for rev in &revs {
         let oid = resolve_revision(repo, rev).with_context(|| format!("Bad rev input: {rev}"))?;
         bisect_write(repo, git_dir, terms, cmd, rev, false)?;
-        if verify_expected
-            && Some(oid) != expected {
-                let _ = fs::remove_file(state_dir.join("BISECT_ANCESTORS_OK"));
-                let _ = fs::remove_file(state_dir.join("BISECT_EXPECTED_REV"));
-                verify_expected = false;
-            }
+        if verify_expected && Some(oid) != expected {
+            let _ = fs::remove_file(state_dir.join("BISECT_ANCESTORS_OK"));
+            let _ = fs::remove_file(state_dir.join("BISECT_EXPECTED_REV"));
+            verify_expected = false;
+        }
     }
     Ok(())
 }
@@ -1174,12 +1173,11 @@ fn passive_state_cmd(
         .and_then(|s| ObjectId::from_hex(s.trim()).ok());
     for (rev, oid) in &resolved {
         bisect_write(repo, git_dir, terms, cmd, rev, false)?;
-        if verify_expected
-            && Some(*oid) != expected {
-                let _ = fs::remove_file(state_dir.join("BISECT_ANCESTORS_OK"));
-                let _ = fs::remove_file(state_dir.join("BISECT_EXPECTED_REV"));
-                verify_expected = false;
-            }
+        if verify_expected && Some(*oid) != expected {
+            let _ = fs::remove_file(state_dir.join("BISECT_ANCESTORS_OK"));
+            let _ = fs::remove_file(state_dir.join("BISECT_EXPECTED_REV"));
+            verify_expected = false;
+        }
     }
     bisect_auto_next(repo, git_dir, terms)
 }
@@ -1291,12 +1289,11 @@ fn bisect_skip_inner(repo: &Repository, args: &[String]) -> Result<i32> {
         .and_then(|s| ObjectId::from_hex(s.trim()).ok());
     for (rev, oid) in &resolved {
         bisect_write(repo, git_dir, &terms, "skip", rev, false)?;
-        if verify_expected
-            && Some(*oid) != expected {
-                let _ = fs::remove_file(state_dir.join("BISECT_ANCESTORS_OK"));
-                let _ = fs::remove_file(state_dir.join("BISECT_EXPECTED_REV"));
-                verify_expected = false;
-            }
+        if verify_expected && Some(*oid) != expected {
+            let _ = fs::remove_file(state_dir.join("BISECT_ANCESTORS_OK"));
+            let _ = fs::remove_file(state_dir.join("BISECT_EXPECTED_REV"));
+            verify_expected = false;
+        }
     }
     bisect_auto_next(repo, git_dir, &terms)
 }

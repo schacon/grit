@@ -181,7 +181,7 @@ fn relative_path(parent: &str, name: &str) -> String {
 /// Run the `status` command.
 pub fn run(mut args: Args) -> Result<()> {
     // Whether the user passed `--porcelain` (before `-z` may synthesize it).
-    let explicit_porcelain = args.porcelain.is_some();
+    let _explicit_porcelain = args.porcelain.is_some();
     // -z implies porcelain
     if args.null_terminated && args.porcelain.is_none() {
         args.porcelain = Some("v1".to_string());
@@ -255,13 +255,6 @@ pub fn run(mut args: Args) -> Result<()> {
     }
     if args.no_show_stash {
         show_stash = false;
-    }
-
-    // Unlike upstream Git v1 porcelain, grit always prints the `##` line when the user
-    // passes `--porcelain` explicitly. `-z` alone only implies porcelain for path lines;
-    // it does not add the branch header (matches Git unless `-b` is used).
-    if explicit_porcelain && args.porcelain.as_deref() == Some("v1") && !args.no_branch {
-        args.branch = true;
     }
 
     // Normalize untracked-files values: "false"/"0" → "no", "true"/"1" → "normal"
