@@ -1439,6 +1439,25 @@ impl ConfigSet {
             .unwrap_or(true)
     }
 
+    /// Resolved `core.logAllRefUpdates` using this merged set (includes `git -c` / env), then Git's
+    /// bare-repo default when the key is unset everywhere.
+    #[must_use]
+    pub fn effective_log_refs_config(&self, git_dir: &Path) -> refs::LogRefsConfig {
+        if let Some(v) = self.get("core.logAllRefUpdates") {
+            let lower = v.trim().to_ascii_lowercase();
+            let parsed = match lower.as_str() {
+                "always" => Some(refs::LogRefsConfig::Always),
+                "1" | "true" | "yes" | "on" => Some(refs::LogRefsConfig::Normal),
+                "0" | "false" | "no" | "off" | "never" => Some(refs::LogRefsConfig::None),
+                _ => None,
+            };
+            if let Some(c) = parsed {
+                return c;
+            }
+        }
+        refs::effective_log_refs_config(git_dir)
+    }
+
     /// Get an integer value, supporting Git's `k`/`m`/`g` suffixes.
     pub fn get_i64(&self, key: &str) -> Option<std::result::Result<i64, String>> {
         self.get(key).map(|v| parse_i64(&v))

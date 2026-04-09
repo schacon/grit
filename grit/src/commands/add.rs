@@ -44,6 +44,7 @@ fn resolved_env_index_path(repo: &Repository) -> PathBuf {
 #[command(about = "Add file contents to the index")]
 pub struct Args {
     /// Files to add. Use '.' to add everything.
+    #[arg(value_name = "PATHSPEC", num_args = 0.., trailing_var_arg = true, allow_hyphen_values = true)]
     pub pathspec: Vec<String>,
 
     /// Update tracked files (don't add new files).

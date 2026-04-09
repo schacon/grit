@@ -3204,6 +3204,41 @@ fn reflog_grep_matches(patterns: &[Regex], text: &str, all_match: bool, invert: 
     }
 }
 
+/// Whether a reflog transition (`old_oid` → `new_oid`) touches any of `pathspecs`.
+///
+/// Used for `git reflog show -- <path>` / `log -g -- <path>`: Git filters reflog lines by whether
+/// the tree diff for that specific reflog step matches the pathspec.
+fn reflog_transition_touches_paths(
+    odb: &Odb,
+    old_oid: &ObjectId,
+    new_oid: &ObjectId,
+    pathspecs: &[String],
+) -> Result<bool> {
+    if pathspecs.is_empty() {
+        return Ok(true);
+    }
+    let new_obj = odb.read(new_oid)?;
+    let new_commit = parse_commit(&new_obj.data)?;
+    let old_tree = if old_oid.is_zero() {
+        None
+    } else {
+        let old_obj = match odb.read(old_oid) {
+            Ok(o) => o,
+            Err(_) => return Ok(false),
+        };
+        let old_commit = match parse_commit(&old_obj.data) {
+            Ok(c) => c,
+            Err(_) => return Ok(false),
+        };
+        Some(old_commit.tree)
+    };
+    let entries = diff_trees(odb, old_tree.as_ref(), Some(&new_commit.tree), "")?;
+    Ok(entries.iter().any(|e| {
+        let path = e.path();
+        pathspecs.iter().any(|ps| path_matches(path, ps))
+    }))
+}
+
 /// Run the reflog walk mode (`log -g` / `log --walk-reflogs`).
 fn run_reflog_walk(
     repo: &Repository,
@@ -3271,6 +3306,13 @@ fn run_reflog_walk(
         return Ok(());
     }
 
+    let effective_pathspecs = if args.pathspecs.is_empty() {
+        Vec::new()
+    } else {
+        validate_pathspec_scope(repo, &args.pathspecs)?;
+        resolve_effective_pathspecs(repo, &args.pathspecs)?
+    };
+
     let max = args.max_count.unwrap_or(usize::MAX);
     let skip = args.skip.unwrap_or(0);
 
@@ -3304,6 +3346,17 @@ fn run_reflog_walk(
             },
             Err(_) => continue,
         };
+
+        if !effective_pathspecs.is_empty()
+            && !reflog_transition_touches_paths(
+                &repo.odb,
+                &entry.old_oid,
+                &entry.new_oid,
+                &effective_pathspecs,
+            )?
+        {
+            continue;
+        }
 
         let author_ok =
             author_res.is_empty() || author_res.iter().any(|re| re.is_match(&commit_data.author));

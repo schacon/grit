@@ -2838,6 +2838,8 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
         "config_edit" => extract_options::<commands::config::EditArgs>(show_all),
         "reflog_show" => extract_options::<commands::reflog::ShowArgs>(show_all),
         "reflog_expire" => extract_options::<commands::reflog::ExpireArgs>(show_all),
+        "reflog_list" => extract_options::<commands::reflog::ListArgs>(show_all),
+        "reflog_drop" => extract_options::<commands::reflog::DropArgs>(show_all),
         "reflog_delete" => extract_options::<commands::reflog::DeleteArgs>(show_all),
         "reflog_exists" => extract_options::<commands::reflog::ExistsArgs>(show_all),
         "describe" => extract_options::<commands::describe::Args>(show_all),

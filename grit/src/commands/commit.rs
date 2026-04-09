@@ -852,27 +852,30 @@ pub fn run(mut args: Args) -> Result<()> {
                 commit_data.message.lines().next().unwrap_or("")
             )
         };
-        // Write to HEAD reflog
-        let _ = append_reflog(
-            &repo.git_dir,
-            "HEAD",
-            &old_oid,
-            &commit_oid,
-            &commit_data.committer,
-            &msg,
-            false,
-        );
-        // Write to branch reflog if on a branch
-        if let HeadState::Branch { refname, .. } = &head {
-            let _ = append_reflog(
-                &repo.git_dir,
-                refname,
-                &old_oid,
-                &commit_oid,
-                &commit_data.committer,
-                &msg,
-                false,
-            );
+        match &head {
+            HeadState::Branch { refname, .. } => {
+                let _ = append_reflog(
+                    &repo.git_dir,
+                    refname,
+                    &old_oid,
+                    &commit_oid,
+                    &commit_data.committer,
+                    &msg,
+                    false,
+                );
+                let _ = grit_lib::reflog::mirror_branch_reflog_to_head(&repo.git_dir, refname);
+            }
+            _ => {
+                let _ = append_reflog(
+                    &repo.git_dir,
+                    "HEAD",
+                    &old_oid,
+                    &commit_oid,
+                    &commit_data.committer,
+                    &msg,
+                    false,
+                );
+            }
         }
     }
 
