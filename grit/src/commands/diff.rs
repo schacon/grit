@@ -526,6 +526,16 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let repo = Repository::discover(None).context("not a git repository")?;
 
+    let patch_context = if let Some(u) = args.unified {
+        u
+    } else {
+        let cfg = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+            .context("loading git config")?;
+        grit_lib::config::resolve_diff_context_lines(&cfg)
+            .map_err(|m| anyhow::anyhow!(m))?
+            .unwrap_or(3)
+    };
+
     let emit_unified_patch = diff_emit_unified_patch_from_argv(&raw_args);
 
     // Resolve diff prefixes from config and command-line options
@@ -537,7 +547,15 @@ pub fn run(mut args: Args) -> Result<()> {
         && !args.cached
         && split_treeish_colon(&revs[0]).is_some()
     {
-        return run_diff_blob_vs_file(&repo, &args, &revs[0], &paths[0], &src_prefix, &dst_prefix);
+        return run_diff_blob_vs_file(
+            &repo,
+            &args,
+            &revs[0],
+            &paths[0],
+            &src_prefix,
+            &dst_prefix,
+            patch_context,
+        );
     }
 
     // Expand A...B (symmetric diff) → merge-base(A,B)..B
@@ -1203,16 +1221,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let quiet_suppresses_stdout = args.quiet && !format_besides_unified_patch;
 
     if !quiet_suppresses_stdout {
-        let config_context = if args.unified.is_none() {
-            // Read diff.context from config
-            grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
-                .ok()
-                .and_then(|cfg| cfg.get("diff.context"))
-                .and_then(|s| s.parse::<usize>().ok())
-        } else {
-            None
-        };
-        let context_lines = args.unified.or(config_context).unwrap_or(3);
+        let context_lines = patch_context;
         if args.shortstat {
             write_shortstat(
                 &mut out,
@@ -1321,6 +1330,7 @@ fn run_diff_blob_vs_file(
     file_path: &str,
     src_prefix: &str,
     dst_prefix: &str,
+    patch_context: usize,
 ) -> Result<()> {
     let wt = repo
         .work_tree
@@ -1340,15 +1350,7 @@ fn run_diff_blob_vs_file(
     let disk_bytes = fs::read(&abs).unwrap_or_default();
     let disk_text = String::from_utf8_lossy(&disk_bytes);
 
-    let context_lines = if let Some(u) = args.unified {
-        u
-    } else {
-        grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
-            .ok()
-            .and_then(|cfg| cfg.get("diff.context"))
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(3)
-    };
+    let context_lines = patch_context;
 
     let has_diff = blob_text != disk_text;
     if !has_diff {

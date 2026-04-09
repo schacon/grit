@@ -1396,6 +1396,16 @@ impl ConfigSet {
             .map(|e| e.value.clone().unwrap_or_else(|| "true".to_owned()))
     }
 
+    /// Last (highest-priority) [`ConfigEntry`] for a key, including origin metadata.
+    ///
+    /// Bare boolean keys are returned with [`ConfigEntry::value`] set to `None` (same as `get`,
+    /// which maps them to `"true"` for string lookups).
+    #[must_use]
+    pub fn get_last_entry(&self, key: &str) -> Option<ConfigEntry> {
+        let canon = canonical_key(key).ok()?;
+        self.entries.iter().rev().find(|e| e.key == canon).cloned()
+    }
+
     /// Get all values for a key (multi-valued; in load order).
     #[must_use]
     pub fn get_all(&self, key: &str) -> Vec<String> {
@@ -1760,6 +1770,119 @@ pub fn parse_i64(s: &str) -> std::result::Result<i64, String> {
         .map_err(|_| format!("invalid integer: '{s}'"))?;
     base.checked_mul(multiplier)
         .ok_or_else(|| format!("integer overflow: '{s}'"))
+}
+
+/// Why [`parse_git_config_int_strict`] failed (mirrors Git `errno` after `git_parse_signed`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitConfigIntStrictError {
+    /// `EINVAL` — trailing junk, unknown unit suffix, or not a number.
+    InvalidUnit,
+    /// `ERANGE` — value does not fit in `i64` after scaling.
+    OutOfRange,
+}
+
+/// Parse a signed decimal integer with optional `k`/`m`/`g` multiplier suffix, requiring the
+/// entire input (trimmed) to be consumed — same constraints as Git's `git_parse_signed` used by
+/// `git_config_int` (so `no` and `1foo` are rejected, unlike [`parse_i64`]).
+pub fn parse_git_config_int_strict(raw: &str) -> std::result::Result<i64, GitConfigIntStrictError> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Err(GitConfigIntStrictError::InvalidUnit);
+    }
+
+    let bytes = s.as_bytes();
+    let mut idx = 0usize;
+    if matches!(bytes.first(), Some(b'+') | Some(b'-')) {
+        idx = 1;
+    }
+    if idx >= bytes.len() {
+        return Err(GitConfigIntStrictError::InvalidUnit);
+    }
+    let digit_start = idx;
+    while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+        idx += 1;
+    }
+    if idx == digit_start {
+        return Err(GitConfigIntStrictError::InvalidUnit);
+    }
+
+    let num_part =
+        std::str::from_utf8(&bytes[..idx]).map_err(|_| GitConfigIntStrictError::InvalidUnit)?;
+    let suffix =
+        std::str::from_utf8(&bytes[idx..]).map_err(|_| GitConfigIntStrictError::InvalidUnit)?;
+    let mult: i64 = match suffix {
+        "" => 1,
+        "k" | "K" => 1024,
+        "m" | "M" => 1024 * 1024,
+        "g" | "G" => 1024_i64
+            .checked_mul(1024)
+            .and_then(|x| x.checked_mul(1024))
+            .ok_or(GitConfigIntStrictError::OutOfRange)?,
+        _ => return Err(GitConfigIntStrictError::InvalidUnit),
+    };
+
+    let val: i64 = num_part
+        .parse()
+        .map_err(|_| GitConfigIntStrictError::InvalidUnit)?;
+    val.checked_mul(mult)
+        .ok_or(GitConfigIntStrictError::OutOfRange)
+}
+
+const DIFF_CONTEXT_KEY: &str = "diff.context";
+
+fn format_bad_numeric_diff_context(
+    value: &str,
+    err: GitConfigIntStrictError,
+    entry: &ConfigEntry,
+) -> String {
+    let detail = match err {
+        GitConfigIntStrictError::InvalidUnit => "invalid unit",
+        GitConfigIntStrictError::OutOfRange => "out of range",
+    };
+    if entry.scope == ConfigScope::Command || entry.file.is_none() {
+        return format!(
+            "fatal: bad numeric config value '{value}' for '{DIFF_CONTEXT_KEY}': {detail}"
+        );
+    }
+    let path = entry
+        .file
+        .as_deref()
+        .map(config_error_path_display)
+        .unwrap_or_default();
+    format!("fatal: bad numeric config value '{value}' for '{DIFF_CONTEXT_KEY}' in file {path}: {detail}")
+}
+
+fn format_bad_diff_context_variable(entry: &ConfigEntry) -> String {
+    if entry.scope == ConfigScope::Command || entry.file.is_none() {
+        return format!("fatal: unable to parse '{DIFF_CONTEXT_KEY}' from command-line config");
+    }
+    let path = entry
+        .file
+        .as_deref()
+        .map(config_error_path_display)
+        .unwrap_or_default();
+    format!(
+        "fatal: bad config variable '{DIFF_CONTEXT_KEY}' in file '{path}' at line {}",
+        entry.line
+    )
+}
+
+/// Read `diff.context` from a loaded [`ConfigSet`] with Git-compatible validation.
+///
+/// Returns `Ok(None)` when the key is unset. When set, the value must be a non-negative integer
+/// acceptable to Git's diff machinery (same rules as `git diff` / `git log -p`).
+pub fn resolve_diff_context_lines(cfg: &ConfigSet) -> std::result::Result<Option<usize>, String> {
+    let Some(entry) = cfg.get_last_entry(DIFF_CONTEXT_KEY) else {
+        return Ok(None);
+    };
+    let value_src = entry.value.as_deref().unwrap_or("").trim();
+    match parse_git_config_int_strict(value_src) {
+        Ok(n) if n < 0 => Err(format_bad_diff_context_variable(&entry)),
+        Ok(n) => Ok(Some(usize::try_from(n).map_err(|_| {
+            format_bad_numeric_diff_context(value_src, GitConfigIntStrictError::OutOfRange, &entry)
+        })?)),
+        Err(e) => Err(format_bad_numeric_diff_context(value_src, e, &entry)),
+    }
 }
 
 /// Parse a Git color value and return the ANSI escape sequence.
