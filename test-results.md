@@ -1,5 +1,9 @@
 # Test Results
 
+**Updated:** 2026-04-09
+
+- `./scripts/run-tests.sh t7507-commit-verbose.sh`: 45/45 passing (verbose commit template, `commit.verbose`, comment char stripping; harness CSV/dashboards refreshed; no code changes in this pass).
+
 **Updated:** 2026-04-08
 
 - `./scripts/run-tests.sh t3060-ls-files-with-tree.sh`: 8/8 passing (`ls-files --with-tree`: tree overlay on index, usage incompatibilities, conflict + missing-index cases; harness CSV/dashboards refreshed).
