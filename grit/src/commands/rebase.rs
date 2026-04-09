@@ -118,16 +118,24 @@ pub struct Args {
     pub exec: Option<String>,
 
     /// Use the merge backend for rebasing (default, accepted for compatibility).
-    #[arg(long = "merge", short = 'm')]
+    #[arg(long = "merge", short = 'm', conflicts_with = "apply")]
     pub merge: bool,
 
     /// Use the apply backend for rebasing (accepted for compatibility).
-    #[arg(long = "apply")]
+    #[arg(long = "apply", conflicts_with = "merge")]
     pub apply: bool,
 
     /// Rebase merge commits (accepted for compatibility; uses `rebase-merge/` state layout when set).
-    #[arg(long = "rebase-merges", alias = "r")]
+    #[arg(
+        long = "rebase-merges",
+        alias = "r",
+        conflicts_with = "no_rebase_merges"
+    )]
     pub rebase_merges: bool,
+
+    /// Disable rebasing merges even when `rebase.rebaseMerges` is true.
+    #[arg(long = "no-rebase-merges", conflicts_with = "rebase_merges")]
+    pub no_rebase_merges: bool,
 
     /// Force rebase even if the current branch is up to date.
     #[arg(long = "no-ff", alias = "force-rebase")]
@@ -161,8 +169,24 @@ pub struct Args {
     pub verbose: bool,
 
     /// Update stale tracking branches after rebase.
-    #[arg(long = "update-refs")]
+    #[arg(long = "update-refs", conflicts_with = "no_update_refs")]
     pub update_refs: bool,
+
+    /// Do not update other branches even when `rebase.updateRefs` is true.
+    #[arg(long = "no-update-refs", conflicts_with = "update_refs")]
+    pub no_update_refs: bool,
+
+    /// How to handle commits that become empty (merge backend; accepted for compatibility).
+    #[arg(long = "empty", value_name = "mode")]
+    pub empty: Option<String>,
+
+    /// Merge strategy (merge backend; accepted for compatibility).
+    #[arg(short = 's', long = "strategy", value_name = "strategy")]
+    pub strategy: Option<String>,
+
+    /// Options for the merge strategy (merge backend; accepted for compatibility).
+    #[arg(short = 'X', long = "strategy-option", value_name = "option")]
+    pub strategy_option: Vec<String>,
 
     /// Branch to rebase (checkout first, then rebase onto upstream).
     #[arg(value_name = "BRANCH")]
@@ -213,6 +237,15 @@ pub struct Args {
 pub fn preprocess_rebase_argv(rest: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for arg in rest {
+        // Clap does not accept glued `-C<n>`; Git's rebase passes this through to the apply backend.
+        if arg.len() > 2 && arg.starts_with("-C") && !arg.starts_with("--") {
+            let suffix = &arg[2..];
+            if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) {
+                out.push("-C".to_string());
+                out.push(suffix.to_string());
+                continue;
+            }
+        }
         if arg.len() > 2
             && arg.starts_with('-')
             && !arg.starts_with("--")
@@ -237,11 +270,7 @@ pub fn preprocess_rebase_argv(rest: &[String]) -> Vec<String> {
 
 /// Run the `rebase` command.
 pub fn run(mut args: Args) -> Result<()> {
-    validate_compat_options(&args)?;
-
-    if args.rebase_merges {
-        args.merge = true;
-    }
+    validate_compat_syntax(&args)?;
 
     if args.root {
         if args.keep_base {
@@ -363,7 +392,7 @@ pub fn run(mut args: Args) -> Result<()> {
 //   msgnum      — 1-based index of current patch
 //   end         — total number of patches
 
-fn validate_compat_options(args: &Args) -> Result<()> {
+fn validate_compat_syntax(args: &Args) -> Result<()> {
     if let Some(ref c) = args.context_lines {
         if c.parse::<u32>().is_err() {
             bail!("switch `C' expects a numerical value");
@@ -375,6 +404,102 @@ fn validate_compat_options(args: &Args) -> Result<()> {
             bail!("Invalid whitespace option: '{ws}'");
         }
     }
+    if let Some(ref empty) = args.empty {
+        let e = empty.to_ascii_lowercase();
+        if !matches!(e.as_str(), "drop" | "keep" | "stop" | "ask") {
+            bail!(
+                "unrecognized empty type '{empty}'; valid values are \"drop\", \"keep\", and \"stop\"."
+            );
+        }
+    }
+    Ok(())
+}
+
+/// True when the user requested the merge-style rebase backend via flags that Git treats as merge-only.
+fn merge_backend_requested_by_flags(args: &Args, want_autosquash: bool) -> bool {
+    if args.merge || args.interactive || args.exec.is_some() || args.keep_empty {
+        return true;
+    }
+    if args.empty.is_some() {
+        return true;
+    }
+    if want_autosquash {
+        return true;
+    }
+    if args.strategy.is_some() || !args.strategy_option.is_empty() {
+        return true;
+    }
+    let reapply_explicit = args.reapply_cherry_picks || args.no_reapply_cherry_picks;
+    if reapply_explicit && !args.keep_base {
+        return true;
+    }
+    if args.root && args.onto.is_none() {
+        return true;
+    }
+    false
+}
+
+/// True when options force the apply backend (`git am` style), matching Git's `git_am_opts` / `--apply`.
+fn apply_backend_forced(args: &Args) -> bool {
+    if args.apply {
+        return true;
+    }
+    if args.context_lines.is_some() {
+        return true;
+    }
+    args.whitespace
+        .as_deref()
+        .is_some_and(|w| w.eq_ignore_ascii_case("fix") || w.eq_ignore_ascii_case("strip"))
+}
+
+/// Reject mixing apply-only and merge-only options (and config) the same way as upstream `git rebase`.
+fn validate_apply_merge_backend_combo(
+    args: &Args,
+    config: &ConfigSet,
+    want_autosquash: bool,
+) -> Result<()> {
+    let apply_forced = apply_backend_forced(args);
+    if !apply_forced {
+        return Ok(());
+    }
+
+    let merge_requested = merge_backend_requested_by_flags(args, want_autosquash);
+    if merge_requested {
+        bail!("apply options and merge options cannot be used together");
+    }
+
+    let rebase_merges_cli = if args.no_rebase_merges {
+        Some(false)
+    } else if args.rebase_merges {
+        Some(true)
+    } else {
+        None
+    };
+    let config_rebase_merges = config.get_bool("rebase.rebaseMerges").and_then(|r| r.ok());
+    let effective_rebase_merges =
+        rebase_merges_cli.unwrap_or(config_rebase_merges.unwrap_or(false));
+
+    let update_refs_cli = if args.no_update_refs {
+        Some(false)
+    } else if args.update_refs {
+        Some(true)
+    } else {
+        None
+    };
+    let config_update_refs = config.get_bool("rebase.updateRefs").and_then(|r| r.ok());
+    let effective_update_refs = update_refs_cli.unwrap_or(config_update_refs.unwrap_or(false));
+
+    if effective_rebase_merges {
+        bail!(
+            "apply options are incompatible with rebase.rebaseMerges.  Consider adding --no-rebase-merges"
+        );
+    }
+    if effective_update_refs {
+        bail!(
+            "apply options are incompatible with rebase.updateRefs.  Consider adding --no-update-refs"
+        );
+    }
+
     Ok(())
 }
 
@@ -1100,7 +1225,7 @@ fn is_rebase_in_progress(git_dir: &Path) -> bool {
 }
 
 fn choose_rebase_backend(args: &Args) -> RebaseBackend {
-    if args.apply {
+    if apply_backend_forced(args) {
         RebaseBackend::Apply
     } else {
         // `git rebase --merge` and `git rebase --interactive` both use `.git/rebase-merge/`.
@@ -1450,6 +1575,8 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
     let want_autosquash =
         (args.autosquash || (config_autosquash && args.interactive)) && !args.no_autosquash;
 
+    validate_apply_merge_backend_combo(&args, &config, want_autosquash)?;
+
     let mut autostash_oid: Option<ObjectId> = None;
     let mut had_rebase_autostash = false;
 
@@ -1578,8 +1705,13 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         print_rebase_diffstat(&repo, branch_base, onto_oid)?;
     }
 
-    let reapply_cherry_picks =
-        args.reapply_cherry_picks || (args.keep_base && !args.no_reapply_cherry_picks);
+    let reapply_cherry_picks = if args.reapply_cherry_picks {
+        true
+    } else if args.no_reapply_cherry_picks {
+        false
+    } else {
+        args.keep_base
+    };
     let filter_cherry_equivalents = !reapply_cherry_picks && !args.interactive;
     let mut commits = if args.root {
         collect_commits_for_root_rebase(&repo, head_oid, onto_oid)?

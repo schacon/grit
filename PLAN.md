@@ -320,7 +320,7 @@ commit → check it off → move on.
 - [ ] `t3512-cherry-pick-submodule` ██░░░░░░░░░░░░░░░░░░ 2/15 (13 left) — cherry-pick can handle submodules
 - [ ] `t3437-rebase-fixup-options` ░░░░░░░░░░░░░░░░░░░░ 0/13 (13 left) — git rebase interactive fixup options
 
-- [ ] `t3422-rebase-incompatible-options` ██████████████░░░░░░ 38/52 (14 left) — test if rebase detects and aborts on incompatible options
+- [x] `t3422-rebase-incompatible-options` — 52/52 tests pass — apply vs merge rebase option validation + `-C` argv preprocessing
 - [ ] `t3011-common-prefixes-and-directory-traversal` ██████░░░░░░░░░░░░░░ 7/21 (14 left) — directory traversal handling, especially with common prefixes
 - [x] `t3451-history-reword` — 14/14 tests pass — tests for git-history reword subcommand
 - [ ] `t3920-crlf-messages` ███░░░░░░░░░░░░░░░░░ 3/18 (15 left) — Test ref-filter and pretty APIs for commit and tag messages using CRLF
