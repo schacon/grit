@@ -828,7 +828,12 @@ pub fn run(mut args: Args) -> Result<()> {
         .context("setting up alternates")?;
         propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
     } else {
-        copy_objects(&source.git_dir, &dest.git_dir).context("copying objects")?;
+        let has_reference = !args.reference.is_empty() || !args.reference_if_able.is_empty();
+        // With `--reference`, match Git: do not copy loose/pack objects from the source into the
+        // new repo; they are reached via `objects/info/alternates` only (`t5501-fetch-push-alternates`).
+        if !has_reference {
+            copy_objects(&source.git_dir, &dest.git_dir).context("copying objects")?;
+        }
         merge_alternates_from_source_objects(&source.git_dir, &dest.git_dir.join("objects"))
             .context("merging source alternates")?;
         append_reference_alternates(
@@ -838,16 +843,13 @@ pub fn run(mut args: Args) -> Result<()> {
         )
         .context("adding --reference alternates")?;
         // For local clones, borrow objects from the source via alternates (like `git clone --local`).
-        // When `--reference` / `--reference-if-able` is used, Git only records those alternates
-        // (plus merged lines from the source's own `alternates` file); the loose/pack copy from the
-        // source already materializes objects locally (`t7408-submodule-reference`).
+        // When using `--reference`, the source may match a reference path; `add_alternate_objects_line`
+        // dedupes so the same `objects` directory is not listed twice.
         let alt_dir = dest.git_dir.join("objects/info");
         let _ = fs::create_dir_all(&alt_dir);
-        if args.reference.is_empty() && args.reference_if_able.is_empty() {
-            let source_objects = source.git_dir.join("objects");
-            if let Ok(abs) = source_objects.canonicalize() {
-                add_alternate_objects_line(&alt_dir, &abs)?;
-            }
+        let source_objects = source.git_dir.join("objects");
+        if let Ok(abs) = source_objects.canonicalize() {
+            add_alternate_objects_line(&alt_dir, &abs)?;
         }
         propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
     }
@@ -2313,7 +2315,10 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         .context("setting up alternates")?;
         propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
     } else {
-        copy_objects(&source.git_dir, &dest.git_dir).context("copying objects")?;
+        let has_reference = !args.reference.is_empty() || !args.reference_if_able.is_empty();
+        if !has_reference {
+            copy_objects(&source.git_dir, &dest.git_dir).context("copying objects")?;
+        }
         merge_alternates_from_source_objects(&source.git_dir, &dest.git_dir.join("objects"))
             .context("merging source alternates")?;
         append_reference_alternates(
@@ -2324,11 +2329,9 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         .context("adding --reference alternates")?;
         let alt_dir = dest.git_dir.join("objects/info");
         let _ = fs::create_dir_all(&alt_dir);
-        if args.reference.is_empty() && args.reference_if_able.is_empty() {
-            let source_objects = source.git_dir.join("objects");
-            if let Ok(abs) = source_objects.canonicalize() {
-                add_alternate_objects_line(&alt_dir, &abs)?;
-            }
+        let source_objects = source.git_dir.join("objects");
+        if let Ok(abs) = source_objects.canonicalize() {
+            add_alternate_objects_line(&alt_dir, &abs)?;
         }
         propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
     }
