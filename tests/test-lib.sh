@@ -898,6 +898,9 @@ test_set_prereq () {
 	eval "_prereq_$1=set"
 }
 
+# Grit implements the traditional loose-ref + packed-refs layout (not reftable).
+test_set_prereq REFFILES
+
 # Lazy prerequisites (git/t0000 nested-lazy): script runs in a temp dir under trash.
 lazily_testable_prereq=
 lazily_tested_prereq=
