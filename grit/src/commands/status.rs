@@ -360,14 +360,15 @@ pub fn run(mut args: Args) -> Result<()> {
     let hide_untracked = untracked_mode == "no";
 
     // Porcelain v1: Git omits the `##` branch line when `--untracked-files=no` (e.g.
-    // `status --porcelain -uno`). Grit still defaults to showing `##` for plain `--porcelain`
-    // so clean repos and mixed outputs match our status tests (t12570). `-b` / `--branch`
-    // always forces the header.
+    // `status --porcelain -uno`) or when pathspecs narrow the output (t0008). For a full
+    // worktree scan with no pathspec, show `##` by default so clean repos match t12570.
+    // `-b` / `--branch` always forces the header.
     if explicit_porcelain
         && args.porcelain.as_deref() == Some("v1")
         && !args.no_branch
         && !args.branch
         && !hide_untracked
+        && args.pathspec.is_empty()
     {
         args.branch = true;
     }
