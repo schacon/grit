@@ -785,7 +785,7 @@ t4111-apply-subdir	t4	yes	10	10	0	true	ok	0
 t4112-apply-renames	t4	yes	2	0	2	false	ok	0
 t4113-apply-ending	t4	yes	3	1	2	false	ok	0
 t4114-apply-typechange	t4	yes	12	9	3	false	ok	0
-t4115-apply-symlink	t4	yes	8	2	6	false	ok	0
+t4115-apply-symlink	t4	yes	8	8	0	true	ok	0
 t4116-apply-reverse	t4	yes	7	6	1	false	ok	0
 t4117-apply-reject	t4	yes	8	5	3	false	ok	0
 t4118-apply-empty-context	t4	yes	3	3	0	true	ok	0

@@ -24,7 +24,7 @@ use grit_lib::rev_parse::resolve_revision;
 use grit_lib::ws::{self, WhitespaceGitAttr, WS_BLANK_AT_EOF, WS_DEFAULT_RULE, WS_INCOMPLETE_LINE};
 use regex::Regex;
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -435,6 +435,17 @@ fn sanitize_patch_header_value(s: &mut String) {
     *s = s.trim().trim_end_matches('\r').to_string();
 }
 
+/// Drop a leading `a/` or `b/` from `---` / `+++` names when `-p0` leaves the prefix in place.
+fn strip_diff_ab_prefix(path: &str) -> String {
+    if path == "/dev/null" {
+        return path.to_string();
+    }
+    path.strip_prefix("a/")
+        .or_else(|| path.strip_prefix("b/"))
+        .map(str::to_owned)
+        .unwrap_or_else(|| path.to_string())
+}
+
 fn sanitize_file_patch_headers(fp: &mut FilePatch) {
     if let Some(ref mut s) = fp.old_mode {
         sanitize_patch_header_value(s);
@@ -458,6 +469,12 @@ fn sanitize_file_patch_headers(fp: &mut FilePatch) {
     .flatten()
     {
         sanitize_patch_header_value(s);
+    }
+    if let Some(ref mut s) = fp.old_path {
+        *s = strip_diff_ab_prefix(s);
+    }
+    if let Some(ref mut s) = fp.new_path {
+        *s = strip_diff_ab_prefix(s);
     }
 }
 
@@ -1228,10 +1245,20 @@ fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
                     fp.dissimilarity_index = val.trim_end_matches('%').parse().ok();
                 } else if let Some(val) = line.strip_prefix("index ") {
                     // Parse "index abc123..def456 100644" or "index abc123..def456"
-                    let hash_part = val.split_whitespace().next().unwrap_or("");
+                    // Git's `gitdiff_index` sets `old_mode` from the trailing octal mode.
+                    let mut parts = val.split_whitespace();
+                    let hash_part = parts.next().unwrap_or("");
                     if let Some((old, new)) = hash_part.split_once("..") {
                         fp.old_oid = Some(old.to_string());
                         fp.new_oid = Some(new.to_string());
+                    }
+                    if let Some(mode_tok) = parts.next() {
+                        // `index 0000000..039727e` has a second token that is a new OID, not a mode.
+                        let looks_like_mode = mode_tok.chars().all(|c| c.is_ascii_digit())
+                            && (3..=6).contains(&mode_tok.len());
+                        if looks_like_mode {
+                            fp.old_mode = Some(mode_tok.to_string());
+                        }
                     }
                 } else if line == "GIT binary patch" {
                     let (binary_patch, next_i) = parse_binary_patch(&lines, i + 1)?;
@@ -1790,100 +1817,229 @@ fn adjust_path(path: &str, directory: Option<&str>) -> String {
     format!("{dir}{path}")
 }
 
-fn symlink_prefix(path: &str, symlink_overlay: &HashMap<String, bool>) -> Option<String> {
-    let components: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
-    if components.len() <= 1 {
-        return None;
-    }
-
-    let mut prefix = PathBuf::new();
-    for component in &components[..components.len() - 1] {
-        prefix.push(component);
-        let prefix_str = prefix.to_string_lossy().into_owned();
-        let is_symlink = symlink_overlay
-            .get(&prefix_str)
-            .copied()
-            .unwrap_or_else(|| {
-                fs::symlink_metadata(&prefix)
-                    .map(|meta| meta.file_type().is_symlink())
-                    .unwrap_or(false)
-            });
-        if is_symlink {
-            return Some(prefix_str);
-        }
-    }
-    None
+/// True if `path` names an existing path (including a dangling symlink).
+///
+/// [`Path::exists`] follows symlinks and returns false for dangling links; Git
+/// `lstat`-based checks treat those paths as present (see `t4115-apply-symlink`).
+fn path_lexists(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok()
 }
 
-fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> Result<()> {
-    let mut symlink_overlay: HashMap<String, bool> = HashMap::new();
-    let mut replaced_directories_with_symlink: HashMap<String, bool> = HashMap::new();
+/// Git `has_symlink_leading_path`: any path prefix (excluding the final component)
+/// is an existing symlink.
+fn has_symlink_leading_path(rel_path: &str) -> bool {
+    if rel_path.is_empty() || rel_path == "/dev/null" {
+        return false;
+    }
+    let trimmed = rel_path.trim_end_matches('/');
+    let Some((dir, _)) = trimmed.rsplit_once('/') else {
+        return false;
+    };
+    let mut prefix = PathBuf::new();
+    for component in dir.split('/').filter(|c| !c.is_empty()) {
+        prefix.push(component);
+        if fs::symlink_metadata(&prefix)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+    }
+    false
+}
 
+fn mode_string_is_symlink(mode: Option<&str>) -> bool {
+    let Some(s) = mode else {
+        return false;
+    };
+    parse_mode(s) & 0o170000 == 0o120000
+}
+
+/// Git `check_patch`: default `new_mode` from `old_mode` / disk when the patch omits it.
+fn resolve_effective_new_mode_string(
+    fp: &FilePatch,
+    source_adjusted: &str,
+    path_adjusted: &str,
+) -> String {
+    if let Some(m) = fp.new_mode.as_deref() {
+        return m.to_string();
+    }
+    if fp.is_new {
+        return "100644".to_string();
+    }
+    if source_adjusted == path_adjusted {
+        return fp.old_mode.clone().unwrap_or_else(|| "100644".to_string());
+    }
+    if let Some(m) = fp.old_mode.as_deref() {
+        return m.to_string();
+    }
+    let read_path = Path::new(source_adjusted);
+    if let Ok(meta) = fs::symlink_metadata(read_path) {
+        if meta.file_type().is_symlink() {
+            return "120000".to_string();
+        }
+        #[cfg(unix)]
+        if meta.is_file() {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(m) = fs::metadata(read_path) {
+                let perm = m.permissions().mode();
+                return if perm & 0o111 != 0 {
+                    "100755".to_string()
+                } else {
+                    "100644".to_string()
+                };
+            }
+        }
+    }
+    "100644".to_string()
+}
+
+/// Effective file mode for symlink tracking, matching Git after `check_patch` fills modes.
+fn effective_mode_for_symlink_tracking(
+    fp: &FilePatch,
+    is_new_path: bool,
+    args: &Args,
+) -> Option<String> {
+    if is_new_path {
+        if fp.is_rename {
+            let src = fp.old_path.as_deref().filter(|p| *p != "/dev/null")?;
+            let tgt = fp.new_path.as_deref().filter(|p| *p != "/dev/null")?;
+            let src_adj = adjust_path(src, args.directory.as_deref());
+            let tgt_adj = adjust_path(tgt, args.directory.as_deref());
+            if src_adj == tgt_adj {
+                return None;
+            }
+            if mode_string_is_symlink(fp.new_mode.as_deref().or(fp.old_mode.as_deref())) {
+                return Some("120000".to_string());
+            }
+            let old_meta = fs::symlink_metadata(&src_adj).ok()?;
+            return old_meta
+                .file_type()
+                .is_symlink()
+                .then_some("120000".to_string());
+        }
+        let new_name = fp.new_path.as_deref().filter(|p| *p != "/dev/null")?;
+        let adjusted = adjust_path(new_name, args.directory.as_deref());
+        let meta = fs::symlink_metadata(&adjusted).ok()?;
+        return meta
+            .file_type()
+            .is_symlink()
+            .then_some("120000".to_string());
+    }
+
+    let old = fp.old_path.as_deref().filter(|p| *p != "/dev/null")?;
+    if mode_string_is_symlink(fp.old_mode.as_deref()) {
+        return Some("120000".to_string());
+    }
+    let adjusted = adjust_path(old, args.directory.as_deref());
+    let meta = fs::symlink_metadata(&adjusted).ok()?;
+    meta.file_type()
+        .is_symlink()
+        .then_some("120000".to_string())
+}
+
+/// Git `prepare_symlink_changes`: symlinks removed by rename/delete vs. created or kept.
+fn prepare_symlink_patch_sets(
+    patches: &[FilePatch],
+    args: &Args,
+) -> (HashSet<String>, HashSet<String>) {
+    let mut removed_symlinks = HashSet::new();
+    let mut kept_symlinks = HashSet::new();
     for fp in patches {
-        if let Some(source) = fp.source_path() {
-            let source_adjusted = adjust_path(source, args.directory.as_deref());
-            if !source_adjusted.is_empty() {
-                if let Some(prefix) = symlink_prefix(&source_adjusted, &symlink_overlay) {
-                    let allow_delete_under_replaced_dir = fp.is_deleted
-                        && source_adjusted.starts_with(&format!("{prefix}/"))
-                        && replaced_directories_with_symlink
-                            .get(&prefix)
-                            .copied()
-                            .unwrap_or(false);
-                    if !allow_delete_under_replaced_dir {
-                        bail!("{source_adjusted}: beyond a symbolic link");
-                    }
-                }
+        if let Some(old) = fp.old_path.as_deref().filter(|p| *p != "/dev/null") {
+            if effective_mode_for_symlink_tracking(fp, false, args)
+                .as_deref()
+                .is_some_and(|m| mode_string_is_symlink(Some(m)))
+                && (fp.is_rename || fp.is_deleted)
+            {
+                removed_symlinks.insert(adjust_path(old, args.directory.as_deref()));
             }
         }
-        if let Some(target) = fp.target_path() {
-            let target_adjusted = adjust_path(target, args.directory.as_deref());
-            if !target_adjusted.is_empty() {
-                if let Some(prefix) = symlink_prefix(&target_adjusted, &symlink_overlay) {
-                    let allow_delete_under_replaced_dir = fp.is_deleted
-                        && target_adjusted.starts_with(&format!("{prefix}/"))
-                        && replaced_directories_with_symlink
-                            .get(&prefix)
-                            .copied()
-                            .unwrap_or(false);
-                    if !allow_delete_under_replaced_dir {
-                        bail!("{target_adjusted}: beyond a symbolic link");
-                    }
-                }
+        if let Some(new_name) = fp.new_path.as_deref().filter(|p| *p != "/dev/null") {
+            if effective_mode_for_symlink_tracking(fp, true, args)
+                .as_deref()
+                .is_some_and(|m| mode_string_is_symlink(Some(m)))
+            {
+                kept_symlinks.insert(adjust_path(new_name, args.directory.as_deref()));
             }
         }
+    }
+    (removed_symlinks, kept_symlinks)
+}
 
-        let source_adjusted = fp
-            .source_path()
-            .map(|p| adjust_path(p, args.directory.as_deref()))
-            .unwrap_or_default();
-        let target_adjusted = fp
-            .target_path()
-            .map(|p| adjust_path(p, args.directory.as_deref()))
-            .unwrap_or_default();
-        let target_is_existing_dir =
-            !target_adjusted.is_empty() && Path::new(&target_adjusted).is_dir();
+fn index_entry_is_symlink(index: &Index, path: &str) -> bool {
+    index
+        .get(path.as_bytes(), 0)
+        .is_some_and(|e| e.mode == grit_lib::index::MODE_SYMLINK)
+}
 
-        if fp.is_deleted {
-            if !source_adjusted.is_empty() {
-                symlink_overlay.insert(source_adjusted, false);
-            }
+/// Git `path_is_beyond_symlink` for postimage paths (see `apply.c`).
+fn path_is_beyond_symlink(
+    removed_symlinks: &HashSet<String>,
+    kept_symlinks: &HashSet<String>,
+    path: &str,
+    use_index: bool,
+    index: Option<&Index>,
+) -> bool {
+    if path.is_empty() || path == "/dev/null" {
+        return false;
+    }
+    let mut name = path.trim_end_matches('/').to_string();
+    loop {
+        let Some(pos) = name.rfind('/') else {
+            break;
+        };
+        if pos == 0 {
+            break;
+        }
+        name.truncate(pos);
+        if name.is_empty() {
+            break;
+        }
+        if kept_symlinks.contains(&name) {
+            return true;
+        }
+        if removed_symlinks.contains(&name) {
             continue;
         }
-
-        if fp.is_rename && source_adjusted != target_adjusted && !source_adjusted.is_empty() {
-            symlink_overlay.insert(source_adjusted, false);
-        }
-
-        if !target_adjusted.is_empty() {
-            if fp.new_mode.as_deref() == Some("120000") {
-                if target_is_existing_dir {
-                    replaced_directories_with_symlink.insert(target_adjusted.clone(), true);
+        if use_index {
+            if let Some(idx) = index {
+                if index_entry_is_symlink(idx, &name) {
+                    return true;
                 }
-                symlink_overlay.insert(target_adjusted, true);
-            } else if fp.new_mode.is_some() || fp.is_new {
-                symlink_overlay.insert(target_adjusted, false);
             }
+        } else if path_lexists(Path::new(&name))
+            && fs::symlink_metadata(&name)
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn verify_patch_paths_not_beyond_symlink(
+    patches: &[FilePatch],
+    args: &Args,
+    index: Option<&Index>,
+) -> Result<()> {
+    let use_index = args.index || args.cached;
+    let (removed, kept) = prepare_symlink_patch_sets(patches, args);
+
+    for fp in patches {
+        if fp.is_deleted {
+            continue;
+        }
+        let Some(target) = fp.target_path() else {
+            continue;
+        };
+        let adjusted = adjust_path(target, args.directory.as_deref());
+        if adjusted.is_empty() {
+            continue;
+        }
+        if path_is_beyond_symlink(&removed, &kept, &adjusted, use_index, index) {
+            bail!("affected file '{adjusted}' is beyond a symbolic link");
         }
     }
     Ok(())
@@ -3589,6 +3745,13 @@ fn write_reject_file(path: &Path, patch: &FilePatch, rejected_hunks: &[Hunk]) ->
         }
     }
 
+    if fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        fs::remove_file(path).with_context(|| format!("failed to remove {}", path.display()))?;
+    }
+
     let old_hdr = patch.old_path.as_deref().unwrap_or("/dev/null");
     let new_hdr = patch.new_path.as_deref().unwrap_or("/dev/null");
 
@@ -3841,7 +4004,16 @@ pub fn run(mut args: Args) -> Result<()> {
         build_fake_ancestor_file(&patches, &args, path)?;
         return Ok(());
     }
-    verify_patch_paths_not_beyond_symlink(&patches, &args)?;
+    let index_for_symlink_check = if args.index || args.cached {
+        Repository::discover(None)
+            .ok()
+            .and_then(|r| r.load_index().ok())
+    } else {
+        None
+    };
+    if args.index || args.cached {
+        verify_patch_paths_not_beyond_symlink(&patches, &args, index_for_symlink_check.as_ref())?;
+    }
     let ws_mode = resolve_apply_whitespace_mode(&args);
 
     // For --cached, we need a repository and index.
@@ -4186,7 +4358,7 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
 
 fn read_symlink_target_bytes(path: &Path) -> Result<Vec<u8>> {
     let target = fs::read_link(path)
-        .with_context(|| format!("failed to read symlink target {}", path.display()))?;
+        .with_context(|| format!("unable to read symlink {}", path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
@@ -4336,25 +4508,17 @@ fn verify_old_oid_matches_content(expected_oid: &str, content: &str) -> Result<(
     Ok(())
 }
 
-fn record_path_existence(
-    path: &str,
-    current: &mut HashMap<String, bool>,
-    initial: &mut HashMap<String, bool>,
-) {
-    if current.contains_key(path) {
-        return;
-    }
-    let exists = Path::new(path).exists();
-    current.insert(path.to_string(), exists);
-    initial.insert(path.to_string(), exists);
-}
-
 /// Return true when a patch can apply to a missing preimage as empty content.
 ///
 /// This matches hunks whose old side starts from line 0 with count 0 and
 /// contains only additions.
 fn can_apply_with_empty_preimage(fp: &FilePatch) -> bool {
     if fp.hunks.is_empty() {
+        return false;
+    }
+    // Only creation-style patches may treat a missing preimage as empty. A modify header with
+    // `@@ -0,0` is still invalid if the path does not exist (see `t4115-apply-symlink`).
+    if fp.old_path.as_deref() != Some("/dev/null") {
         return false;
     }
 
@@ -4374,17 +4538,18 @@ fn can_apply_with_empty_preimage(fp: &FilePatch) -> bool {
 /// moved away by an earlier rename) and prevents partially-applied worktree
 /// state when such sequences are detected.
 fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Result<()> {
-    let mut current_exists: HashMap<String, bool> = HashMap::new();
+    let (removed_symlinks, kept_symlinks) = prepare_symlink_patch_sets(patches, args);
     let mut initial_exists: HashMap<String, bool> = HashMap::new();
 
     for fp in patches {
-        if let Some(source) = fp.source_path() {
-            let adjusted = adjust_path(source, args.directory.as_deref());
-            record_path_existence(&adjusted, &mut current_exists, &mut initial_exists);
-        }
-        if let Some(target) = fp.target_path() {
-            let adjusted = adjust_path(target, args.directory.as_deref());
-            record_path_existence(&adjusted, &mut current_exists, &mut initial_exists);
+        for path in [fp.source_path(), fp.target_path()].into_iter().flatten() {
+            let adjusted = adjust_path(path, args.directory.as_deref());
+            if adjusted.is_empty() {
+                continue;
+            }
+            initial_exists
+                .entry(adjusted.clone())
+                .or_insert_with(|| path_lexists(Path::new(&adjusted)));
         }
     }
 
@@ -4398,84 +4563,143 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
             .map(|p| adjust_path(p, args.directory.as_deref()))
             .unwrap_or_default();
 
-        let source_exists_now = current_exists
-            .get(&source_adjusted)
-            .copied()
-            .unwrap_or_else(|| Path::new(&source_adjusted).exists());
+        // Match Git `check_patch_list`: every patch is validated against the *initial* work tree,
+        // not the partially-applied result of earlier hunks (see `t4115-apply-symlink`).
+        let source_on_disk = path_lexists(Path::new(&source_adjusted));
         let source_existed_initially = initial_exists
             .get(&source_adjusted)
             .copied()
-            .unwrap_or(source_exists_now);
+            .unwrap_or(source_on_disk);
 
         if fp.is_deleted {
-            if !source_exists_now {
+            if !source_on_disk {
                 if source_existed_initially {
                     continue;
                 }
-                bail!(
-                    "failed to read {}: No such file or directory (os error 2)",
-                    source_adjusted
-                );
-            }
-            set_path_and_descendants_state(&mut current_exists, &source_adjusted, false);
-            if source_adjusted != target_adjusted {
-                set_path_and_descendants_state(&mut current_exists, &target_adjusted, false);
+                bail!("{source_adjusted}: No such file or directory");
             }
             continue;
         }
 
         if fp.is_new {
-            let target_exists_now = current_exists
-                .get(&target_adjusted)
-                .copied()
-                .unwrap_or_else(|| Path::new(&target_adjusted).exists());
-            if target_exists_now {
+            let target_on_disk = path_lexists(Path::new(&target_adjusted));
+            if target_on_disk {
                 if Path::new(&target_adjusted).is_dir() {
-                    set_path_and_descendants_state(&mut current_exists, &target_adjusted, false);
+                    // Git replaces empty-ish dirs; mirror apply_to_worktree precheck.
                 } else {
                     bail!("{target_adjusted}: already exists");
                 }
             }
-            current_exists.insert(target_adjusted.clone(), true);
+            if path_is_beyond_symlink(
+                &removed_symlinks,
+                &kept_symlinks,
+                &target_adjusted,
+                false,
+                None,
+            ) {
+                bail!("affected file '{target_adjusted}' is beyond a symbolic link");
+            }
             continue;
         }
 
-        if !source_exists_now {
-            let can_use_initial_snapshot = source_adjusted != target_adjusted
-                && (fp.is_copy || fp.is_rename)
-                && source_existed_initially;
-            if !can_use_initial_snapshot && !can_apply_with_empty_preimage(fp) {
-                bail!(
-                    "failed to read {}: No such file or directory (os error 2)",
-                    source_adjusted
-                );
+        if !source_on_disk {
+            if !can_apply_with_empty_preimage(fp) {
+                bail!("{source_adjusted}: No such file or directory");
             }
+        } else if !can_apply_with_empty_preimage(fp) && has_symlink_leading_path(&source_adjusted) {
+            bail!("reading from '{source_adjusted}' beyond a symbolic link");
         }
 
-        if fp.is_rename && source_adjusted != target_adjusted {
-            set_path_and_descendants_state(&mut current_exists, &source_adjusted, false);
+        if path_is_beyond_symlink(
+            &removed_symlinks,
+            &kept_symlinks,
+            &target_adjusted,
+            false,
+            None,
+        ) {
+            bail!("affected file '{target_adjusted}' is beyond a symbolic link");
         }
-        current_exists.insert(target_adjusted, true);
     }
 
     Ok(())
 }
 
-fn set_path_and_descendants_state(
-    current_exists: &mut HashMap<String, bool>,
+/// Pending work-tree state while planning `apply` (Git checks the full patch list before writing).
+#[derive(Clone)]
+enum PendingBody {
+    Text(String),
+    Bytes(Vec<u8>),
+}
+
+fn pending_read_text(
+    pending: &HashMap<String, PendingBody>,
     path: &str,
-    exists: bool,
-) {
-    current_exists.insert(path.to_string(), exists);
-    let prefix = format!("{path}/");
-    let affected: Vec<String> = current_exists
-        .keys()
-        .filter(|key| key.starts_with(&prefix))
-        .cloned()
-        .collect();
-    for key in affected {
-        current_exists.insert(key, exists);
+    crlf_ctx: Option<&ApplyCrlfContext>,
+) -> Result<String> {
+    match pending.get(path) {
+        Some(PendingBody::Text(s)) => Ok(s.clone()),
+        Some(PendingBody::Bytes(_)) => bail!("{path}: binary patch conflict during apply planning"),
+        None => {
+            let p = Path::new(path);
+            if !path_lexists(p) {
+                bail!("{path}: No such file or directory");
+            }
+            if has_symlink_leading_path(path) {
+                bail!("reading from '{path}' beyond a symbolic link");
+            }
+            match crlf_ctx {
+                Some(ctx) => ctx.normalized_text(p, path),
+                None => read_worktree_blob_as_text(p).map_err(|e| anyhow::anyhow!("{e}")),
+            }
+        }
     }
+}
+
+fn pending_set_text(pending: &mut HashMap<String, PendingBody>, path: String, content: String) {
+    pending.insert(path, PendingBody::Text(content));
+}
+
+fn pending_set_bytes(pending: &mut HashMap<String, PendingBody>, path: String, bytes: Vec<u8>) {
+    pending.insert(path, PendingBody::Bytes(bytes));
+}
+
+fn pending_remove(pending: &mut HashMap<String, PendingBody>, path: &str) {
+    pending.remove(path);
+}
+
+enum PlannedWorktreeOp {
+    Delete {
+        path: PathBuf,
+    },
+    SubmoduleDir {
+        path: PathBuf,
+    },
+    WriteText {
+        path: PathBuf,
+        path_adjusted: String,
+        content: String,
+        mode_for_write: String,
+        source_exec_bit: Option<bool>,
+        remove_nested_in_source_first: Option<PathBuf>,
+        rename_remove_source: Option<PathBuf>,
+    },
+    WriteBinary {
+        path: PathBuf,
+        new_mode: Option<String>,
+        source_exec_bit: Option<bool>,
+        bytes: Vec<u8>,
+        remove_nested_in_source_first: Option<PathBuf>,
+        rename_remove_source: Option<PathBuf>,
+    },
+    ChmodOnly {
+        path: PathBuf,
+        mode: String,
+    },
+    Reject {
+        path_adjusted: String,
+        patch_idx: usize,
+        rejected: Vec<Hunk>,
+    },
 }
 
 fn apply_to_worktree(
@@ -4512,7 +4736,10 @@ fn apply_to_worktree(
     }
     precheck_worktree_patch_sequence(patches, args)?;
 
-    for fp in patches {
+    let mut pending: HashMap<String, PendingBody> = HashMap::new();
+    let mut planned: Vec<PlannedWorktreeOp> = Vec::new();
+
+    for (patch_idx, fp) in patches.iter().enumerate() {
         let path_str = fp
             .target_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
@@ -4520,18 +4747,8 @@ fn apply_to_worktree(
         let path = PathBuf::from(&path_adjusted);
 
         if fp.is_deleted {
-            // Delete the file (or directory for submodules)
-            if path.is_dir() {
-                fs::remove_dir_all(&path)
-                    .with_context(|| format!("failed to remove directory {}", path.display()))?;
-            } else if path.exists() {
-                fs::remove_file(&path)
-                    .with_context(|| format!("failed to remove {}", path.display()))?;
-            }
-            // Clean up empty parent directories
-            if let Some(parent) = path.parent() {
-                remove_empty_dirs_up(parent);
-            }
+            planned.push(PlannedWorktreeOp::Delete { path });
+            pending_remove(&mut pending, &path_adjusted);
             continue;
         }
 
@@ -4539,92 +4756,55 @@ fn apply_to_worktree(
             && fp.old_mode.as_deref() != Some("160000")
             && !fp.is_new
         {
-            if path.is_file() || path.is_symlink() {
-                fs::remove_file(&path).with_context(|| {
-                    format!(
-                        "failed to remove file before submodule dir {}",
-                        path.display()
-                    )
-                })?;
-            }
-            fs::create_dir_all(&path)
-                .with_context(|| format!("failed to create {}", path.display()))?;
+            planned.push(PlannedWorktreeOp::SubmoduleDir { path });
+            pending_remove(&mut pending, &path_adjusted);
             continue;
         }
 
         if fp.is_new {
-            // Submodule: create directory
             if fp.new_mode.as_deref() == Some("160000") {
-                if path.is_file() || path.is_symlink() {
-                    fs::remove_file(&path).with_context(|| {
-                        format!(
-                            "failed to remove file before submodule dir {}",
-                            path.display()
-                        )
-                    })?;
-                }
-                fs::create_dir_all(&path)?;
+                planned.push(PlannedWorktreeOp::SubmoduleDir { path });
+                pending_remove(&mut pending, &path_adjusted);
                 continue;
             }
             let content = apply_hunks("", fp, ws_mode, !args.reverse, patch_input_display)
                 .with_context(|| {
                     format!("failed to apply hunks for new file {}", path.display())
                 })?;
-            write_worktree_path(
-                &path,
-                &content,
-                fp.new_mode.as_deref(),
-                None,
-                crlf_ctx.as_ref(),
-                &path_adjusted,
-            )?;
+            pending_set_text(&mut pending, path_adjusted.clone(), content.clone());
+            let mode_for_write = fp.new_mode.clone().unwrap_or_else(|| "100644".to_string());
+            planned.push(PlannedWorktreeOp::WriteText {
+                path,
+                path_adjusted,
+                content,
+                mode_for_write,
+                source_exec_bit: None,
+                remove_nested_in_source_first: None,
+                rename_remove_source: None,
+            });
             continue;
         }
 
-        // Modify existing file — read preimage from source side (important
-        // for rename/copy patches where target may not exist yet).
         let source_adjusted = fp
             .source_path()
             .map(|p| adjust_path(p, args.directory.as_deref()))
             .unwrap_or_else(|| path_adjusted.clone());
+        let effective_new_mode =
+            resolve_effective_new_mode_string(fp, &source_adjusted, &path_adjusted);
         let read_path = PathBuf::from(&source_adjusted);
         let source_contains_target =
             fp.is_rename && read_path != path && target_is_inside_source(&path, &read_path);
-        let load_old_content_from_disk = || -> Result<String> {
-            match &crlf_ctx {
-                Some(ctx) => {
-                    if !read_path.exists() && can_apply_with_empty_preimage(fp) {
-                        Ok(String::new())
-                    } else {
-                        ctx.normalized_text(&read_path, &source_adjusted)
-                    }
-                }
-                None => match read_worktree_blob_as_text(&read_path) {
-                    Ok(content) => Ok(content),
-                    Err(err)
-                        if err.kind() == std::io::ErrorKind::NotFound
-                            && can_apply_with_empty_preimage(fp) =>
-                    {
-                        Ok(String::new())
-                    }
-                    Err(err) => {
-                        Err(err).with_context(|| format!("failed to read {}", read_path.display()))
-                    }
-                },
-            }
-        };
+
         let old_content = if source_adjusted != path_adjusted {
             if let Some(snapshot) = source_snapshots.get(&source_adjusted) {
                 snapshot.clone()
             } else {
-                load_old_content_from_disk()?
+                pending_read_text(&pending, &source_adjusted, crlf_ctx.as_ref())?
             }
         } else {
-            load_old_content_from_disk()?
+            pending_read_text(&pending, &source_adjusted, crlf_ctx.as_ref())?
         };
-        // With `--whitespace=fix`, a prior apply can normalize trailing whitespace so the
-        // worktree no longer hashes to the patch's `index` line preimage (see t4125). Git
-        // matches hunks against file content instead; skip strict OID checks in that mode.
+
         if !args.reject {
             if let Some(expected_oid) = fp.old_oid.as_deref() {
                 if !ws_mode.whitespace_fix {
@@ -4632,6 +4812,7 @@ fn apply_to_worktree(
                 }
             }
         }
+
         #[cfg(unix)]
         let source_exec_bit = if source_adjusted != path_adjusted {
             use std::os::unix::fs::PermissionsExt;
@@ -4641,71 +4822,55 @@ fn apply_to_worktree(
         } else {
             None
         };
+        #[cfg(not(unix))]
+        let source_exec_bit: Option<bool> = None;
+
+        let remove_nested_in_source_first = if source_contains_target {
+            Some(read_path.clone())
+        } else {
+            None
+        };
+
+        let rename_remove_source = if fp.is_rename && read_path != path && !source_contains_target {
+            Some(read_path.clone())
+        } else {
+            None
+        };
 
         if let Some(binary_patch) = fp.binary_patch.as_ref() {
             if !args.allow_binary_replacement {
                 bail!("cannot apply binary patch without --binary");
             }
             let new_bytes = inflate_binary_payload(&binary_patch.forward_compressed)?;
-            if source_contains_target {
-                remove_path_for_replacement(&read_path)?;
-            }
-            if let Some(parent) = path.parent() {
-                if !parent.as_os_str().is_empty() && !parent.exists() {
-                    fs::create_dir_all(parent)?;
-                }
-            }
-            fs::write(&path, &new_bytes)
-                .with_context(|| format!("failed to write {}", path.display()))?;
-
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Some(mode) = fp.new_mode.as_deref() {
-                    let perm = if mode == "100755" { 0o755 } else { 0o644 };
-                    fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
-                } else if let Some(executable) = source_exec_bit {
-                    let perm = if executable { 0o755 } else { 0o644 };
-                    fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
-                }
-            }
-
-            if fp.is_rename && read_path != path && !source_contains_target {
-                remove_path_for_replacement(&read_path)?;
-                if let Some(parent) = read_path.parent() {
-                    remove_empty_dirs_up(parent);
-                }
-            }
+            pending_set_bytes(&mut pending, path_adjusted.clone(), new_bytes.clone());
+            planned.push(PlannedWorktreeOp::WriteBinary {
+                path,
+                new_mode: fp.new_mode.clone(),
+                source_exec_bit,
+                bytes: new_bytes,
+                remove_nested_in_source_first,
+                rename_remove_source,
+            });
             continue;
         }
 
         if fp.hunks.is_empty() {
             if source_adjusted != path_adjusted {
-                if source_contains_target {
-                    remove_path_for_replacement(&read_path)?;
-                }
-                write_worktree_path(
-                    &path,
-                    &old_content,
-                    fp.new_mode.as_deref(),
+                pending_set_text(&mut pending, path_adjusted.clone(), old_content.clone());
+                planned.push(PlannedWorktreeOp::WriteText {
+                    path,
+                    path_adjusted,
+                    content: old_content,
+                    mode_for_write: effective_new_mode,
                     source_exec_bit,
-                    crlf_ctx.as_ref(),
-                    &path_adjusted,
-                )?;
-                if fp.is_rename && read_path != path && !source_contains_target {
-                    remove_path_for_replacement(&read_path)?;
-                    if let Some(parent) = read_path.parent() {
-                        remove_empty_dirs_up(parent);
-                    }
-                }
-                continue;
-            }
-
-            #[cfg(unix)]
-            if let Some(mode) = fp.new_mode.as_deref() {
-                use std::os::unix::fs::PermissionsExt;
-                let perm = if mode == "100755" { 0o755 } else { 0o644 };
-                fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
+                    remove_nested_in_source_first,
+                    rename_remove_source,
+                });
+            } else if let Some(mode) = fp.new_mode.as_deref() {
+                planned.push(PlannedWorktreeOp::ChmodOnly {
+                    path,
+                    mode: mode.to_string(),
+                });
             }
             continue;
         }
@@ -4730,28 +4895,151 @@ fn apply_to_worktree(
             .with_context(|| format!("failed to apply patch to {}", path.display()))?;
             (content, Vec::new())
         };
-        if source_contains_target {
-            remove_path_for_replacement(&read_path)?;
-        }
-        write_worktree_path(
-            &path,
-            &new_content,
-            fp.new_mode.as_deref(),
+
+        pending_set_text(&mut pending, path_adjusted.clone(), new_content.clone());
+        planned.push(PlannedWorktreeOp::WriteText {
+            path,
+            path_adjusted: path_adjusted.clone(),
+            content: new_content,
+            mode_for_write: effective_new_mode,
             source_exec_bit,
-            crlf_ctx.as_ref(),
-            &path_adjusted,
-        )?;
+            remove_nested_in_source_first,
+            rename_remove_source,
+        });
 
         if !rejected_hunks.is_empty() {
             had_rejects = true;
-            let reject_path = PathBuf::from(format!("{path_adjusted}.rej"));
-            write_reject_file(&reject_path, fp, &rejected_hunks)?;
+            if args.reject {
+                eprintln!("Checking patch {path_adjusted}...");
+                eprintln!(
+                    "Applying patch {path_adjusted} with {} reject...",
+                    rejected_hunks.len()
+                );
+                for (i, _) in rejected_hunks.iter().enumerate() {
+                    eprintln!("Rejected hunk #{}.", i + 1);
+                }
+            }
+            planned.push(PlannedWorktreeOp::Reject {
+                path_adjusted,
+                patch_idx,
+                rejected: rejected_hunks,
+            });
         }
+    }
 
-        if fp.is_rename && read_path != path && !source_contains_target {
-            remove_path_for_replacement(&read_path)?;
-            if let Some(parent) = read_path.parent() {
-                remove_empty_dirs_up(parent);
+    for op in planned {
+        match op {
+            PlannedWorktreeOp::Delete { path } => {
+                if path_lexists(&path) {
+                    let meta = fs::symlink_metadata(&path)?;
+                    if meta.file_type().is_dir() && !meta.file_type().is_symlink() {
+                        fs::remove_dir_all(&path).with_context(|| {
+                            format!("failed to remove directory {}", path.display())
+                        })?;
+                    } else {
+                        fs::remove_file(&path)
+                            .with_context(|| format!("failed to remove {}", path.display()))?;
+                    }
+                }
+                if let Some(parent) = path.parent() {
+                    remove_empty_dirs_up(parent);
+                }
+            }
+            PlannedWorktreeOp::SubmoduleDir { path } => {
+                if path.is_file() || path.is_symlink() {
+                    fs::remove_file(&path).with_context(|| {
+                        format!(
+                            "failed to remove file before submodule dir {}",
+                            path.display()
+                        )
+                    })?;
+                }
+                fs::create_dir_all(&path)
+                    .with_context(|| format!("failed to create {}", path.display()))?;
+            }
+            PlannedWorktreeOp::WriteText {
+                path,
+                path_adjusted,
+                content,
+                mode_for_write,
+                source_exec_bit,
+                remove_nested_in_source_first,
+                rename_remove_source,
+            } => {
+                if let Some(nested) = remove_nested_in_source_first {
+                    remove_path_for_replacement(&nested)?;
+                }
+                write_worktree_path(
+                    &path,
+                    &content,
+                    Some(mode_for_write.as_str()),
+                    source_exec_bit,
+                    crlf_ctx.as_ref(),
+                    &path_adjusted,
+                )?;
+                if let Some(src) = rename_remove_source {
+                    remove_path_for_replacement(&src)?;
+                    if let Some(parent) = src.parent() {
+                        remove_empty_dirs_up(parent);
+                    }
+                }
+            }
+            PlannedWorktreeOp::WriteBinary {
+                path,
+                new_mode,
+                source_exec_bit,
+                bytes,
+                remove_nested_in_source_first,
+                rename_remove_source,
+            } => {
+                if let Some(nested) = remove_nested_in_source_first {
+                    remove_path_for_replacement(&nested)?;
+                }
+                if let Some(parent) = path.parent() {
+                    if !parent.as_os_str().is_empty() && !parent.exists() {
+                        fs::create_dir_all(parent)?;
+                    }
+                }
+                fs::write(&path, &bytes)
+                    .with_context(|| format!("failed to write {}", path.display()))?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Some(mode) = new_mode.as_deref() {
+                        let perm = if mode == "100755" { 0o755 } else { 0o644 };
+                        fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
+                    } else if let Some(executable) = source_exec_bit {
+                        let perm = if executable { 0o755 } else { 0o644 };
+                        fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
+                    }
+                }
+                if let Some(src) = rename_remove_source {
+                    remove_path_for_replacement(&src)?;
+                    if let Some(parent) = src.parent() {
+                        remove_empty_dirs_up(parent);
+                    }
+                }
+            }
+            PlannedWorktreeOp::ChmodOnly { path, mode } => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let perm = if mode == "100755" { 0o755 } else { 0o644 };
+                    fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = (path, mode);
+                }
+            }
+            PlannedWorktreeOp::Reject {
+                path_adjusted,
+                patch_idx,
+                rejected,
+            } => {
+                let fp = &patches[patch_idx];
+                let reject_path = PathBuf::from(format!("{path_adjusted}.rej"));
+                write_reject_file(&reject_path, fp, &rejected)?;
             }
         }
     }
