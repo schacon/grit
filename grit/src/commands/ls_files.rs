@@ -1253,7 +1253,7 @@ fn is_modified(entry: &IndexEntry, path: &std::path::Path) -> bool {
 /// Return the status tag character for an index entry (used by `-t`).
 /// Format a path for `ls-files` output: C-quote per `core.quotepath` / `core.quotePath`.
 fn format_ls_path(name: &str, use_nul: bool, quote_fully: bool) -> String {
-    if use_nul || !quote_fully {
+    if use_nul {
         return name.to_owned();
     }
     grit_lib::quote_path::quote_c_style(name, quote_fully)
