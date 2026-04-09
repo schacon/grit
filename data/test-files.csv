@@ -686,7 +686,7 @@ t4010-diff-pathspec	t4	yes	17	17	0	true	ok	0
 t4011-diff-symlink	t4	yes	8	7	1	false	ok	0
 t4011-diff-tree	t4	yes	110	109	1	false	ok	0
 t4012-diff-binary	t4	yes	13	3	10	false	ok	0
-t4013-diff-various	t4	yes	0	0	0	false	timeout	0
+t4013-diff-various	t4	yes	230	230	0	true	ok	0
 t4014-format-patch	t4	yes	215	42	173	false	ok	0
 t4015-diff-whitespace	t4	yes	0	0	0	false	timeout	0
 t4015-format-patch-options	t4	yes	12	12	0	true	ok	0
