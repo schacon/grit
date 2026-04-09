@@ -602,7 +602,7 @@ commit → check it off → move on.
 - [x] `t5409-colorize-remote-messages` — remote messages are colorized on the client (Git `sideband.c` semantics; harness `test_decode_color` matches upstream `awk` decoder for combined SGR)
 - [ ] `t5571-pre-push-hook` ███████░░░░░░░░░░░░░ 4/11 (7 left) — check pre-push hooks
 - [ ] `t5313-pack-bounds-checks` ████░░░░░░░░░░░░░░░░ 2/9 (7 left) — bounds-checking of access to mmapped on-disk file formats
-- [ ] `t5617-clone-submodules-remote` ████░░░░░░░░░░░░░░░░ 2/9 (7 left) — Test cloning repos with submodules using remote-tracking branches
+- [x] `t5617-clone-submodules-remote` — Test cloning repos with submodules using remote-tracking branches (9/9 harness)
 - [ ] `t5538-push-shallow` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — push from/to a shallow clone
 - [ ] `t5539-fetch-http-shallow` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — fetch/clone from a shallow clone over http
 - [ ] `t5309-pack-delta-cycles` ░░░░░░░░░░░░░░░░░░░░ 0/7 (7 left) — test index-pack handling of delta cycles in packfiles
