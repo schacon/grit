@@ -918,6 +918,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let _ = grit_lib::rerere::rerere_post_commit(&repo);
+    let _ = crate::commands::maintenance::run_auto_after_commit(&repo, args.quiet);
     cleanup_merge_state(&repo.git_dir);
 
     // Refresh the index file Git used for this commit (including `GIT_INDEX_FILE`).
