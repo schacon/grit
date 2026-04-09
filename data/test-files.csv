@@ -660,7 +660,7 @@ t3704-add-pathspec-file	t3	yes	11	11	0	true	ok	0
 t3705-add-sparse-checkout	t3	yes	20	3	17	false	ok	0
 t3800-mktag	t3	yes	151	62	89	false	ok	0
 t3900-i18n-commit	t3	yes	38	38	0	true	ok	0
-t3901-i18n-patch	t3	yes	20	0	20	false	ok	0
+t3901-i18n-patch	t3	yes	20	20	0	true	ok	0
 t3902-quoted	t3	yes	13	13	0	true	ok	0
 t3902-quoted-ls-tree	t3	yes	8	8	0	true	ok	0
 t3903-stash	t3	yes	0	0	0	false	timeout	0
