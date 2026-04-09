@@ -954,7 +954,7 @@ t5533-push-cas	t5	yes	23	11	12	false	ok	0
 t5534-push-signed	t5	skip	13	0	0	false	ok	0
 t5535-fetch-push-symref	t5	yes	3	3	0	true	ok	0
 t5536-fetch-conflicts	t5	yes	7	7	0	true	ok	0
-t5537-fetch-shallow	t5	yes	16	3	13	false	ok	0
+t5537-fetch-shallow	t5	yes	16	16	0	true	ok	0
 t5538-push-shallow	t5	yes	8	2	6	false	ok	0
 t5539-fetch-http-shallow	t5	yes	8	1	7	false	ok	0
 t5540-fetch-push-edge-cases	t5	yes	12	12	0	true	ok	0
