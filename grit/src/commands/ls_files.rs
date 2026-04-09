@@ -453,7 +453,14 @@ pub fn run(args: Args) -> Result<()> {
         let indexed_paths: BTreeSet<Vec<u8>> =
             index.entries.iter().map(|e| e.path.clone()).collect();
         let mut untracked = Vec::new();
-        walk_worktree(work_tree, work_tree, &indexed_paths, &mut untracked, true)?;
+        walk_worktree(
+            work_tree,
+            work_tree,
+            &indexed_paths,
+            &mut untracked,
+            true,
+            args.directory,
+        )?;
         untracked.sort();
 
         let mut filtered_untracked: Vec<Vec<u8>> = Vec::new();
@@ -569,16 +576,42 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
+/// Returns true when `dir/.git` denotes an embedded Git repository Git should not recurse into.
+///
+/// Matches Git: a **regular file** named `.git` (non-submodule test in t3000) is ignored; a
+/// **symlink** (gitlink) or a **directory** with `HEAD` / `commondir` (normal or linked worktree)
+/// is treated as a repository boundary.
+fn dot_git_marks_git_repository(dot_git: &std::path::Path) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(dot_git) else {
+        return false;
+    };
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    if meta.is_file() {
+        return false;
+    }
+    if meta.is_dir() {
+        return dot_git.join("HEAD").exists() || dot_git.join("commondir").exists();
+    }
+    false
+}
+
 /// Walk the worktree and collect paths of untracked files.
 ///
-/// Returns whether any path was recorded under `dir` (files, nested repo markers, or empty
-/// untracked directories). `is_root` skips emitting a synthetic `""/` entry for the repo root.
+/// Returns whether any path was recorded under `dir` (files, nested repo markers, or when
+/// `emit_empty_directories` is set, empty untracked directory markers ending with `/`).
+/// `is_root` skips emitting a synthetic `""/` entry for the repo root.
+///
+/// `emit_empty_directories` matches Git: plain `ls-files --others` does not list empty
+/// untracked directories; `--directory` adds `name/` markers for empty dirs (used by completion).
 fn walk_worktree(
     root: &std::path::Path,
     dir: &std::path::Path,
     indexed: &BTreeSet<Vec<u8>>,
     out: &mut Vec<Vec<u8>>,
     is_root: bool,
+    emit_empty_directories: bool,
 ) -> Result<bool> {
     let rel_bytes = path_to_bytes(dir.strip_prefix(root).unwrap_or(dir));
 
@@ -622,7 +655,7 @@ fn walk_worktree(
             }
         } else if ft.is_dir() {
             let dot_git = path.join(".git");
-            if dot_git.exists() {
+            if dot_git_marks_git_repository(&dot_git) {
                 // Untracked git repository: emit as a directory entry
                 // (git treats these as opaque and doesn't recurse into them)
                 let dir_prefix_str = format!("{}/", String::from_utf8_lossy(&rel_bytes));
@@ -638,21 +671,25 @@ fn walk_worktree(
                 }
                 continue;
             }
-            if walk_worktree(root, &path, indexed, out, false)? {
+            if walk_worktree(root, &path, indexed, out, false, emit_empty_directories)? {
                 added = true;
             }
         }
     }
 
-    // Git lists empty untracked directories as `name/` when walking for `ls-files -o`
-    // (needed for `--directory` / bash completion).
+    // With `ls-files --others --directory`, Git lists empty untracked dirs as `name/`.
     let has_tracked_under = |prefix: &[u8]| {
         let prefix_slash: Vec<u8> = [prefix, b"/"].concat();
         indexed
             .iter()
             .any(|t| t == prefix || t.starts_with(&prefix_slash))
     };
-    if !added && !is_root && !rel_bytes.is_empty() && !has_tracked_under(&rel_bytes) {
+    if emit_empty_directories
+        && !added
+        && !is_root
+        && !rel_bytes.is_empty()
+        && !has_tracked_under(&rel_bytes)
+    {
         let mut dir_entry = rel_bytes;
         dir_entry.push(b'/');
         out.push(dir_entry);
