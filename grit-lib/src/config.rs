@@ -1511,11 +1511,10 @@ impl ConfigSet {
             }
         }
 
-        // Global config
+        // Global config (Git merges every existing file: XDG then ~/.gitconfig).
         for path in global_config_paths() {
             if let Ok(Some(f)) = ConfigFile::from_path(&path, ConfigScope::Global) {
                 Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?;
-                break; // Only use the first found
             }
         }
 
@@ -1577,20 +1576,70 @@ impl ConfigSet {
         Ok(set)
     }
 
-    /// Read repository config early (Git `read_early_config`): only `.git/config` plus includes.
+    /// Read configuration the way Git's `read_early_config` / `do_git_config_sequence` does:
+    /// system (unless disabled), global files in Git order, optional repository `config` /
+    /// `config.worktree`, then `GIT_CONFIG_PARAMETERS`.
     ///
-    /// Does not load global, system, worktree, or command-line layers.
-    pub fn read_early_config(git_dir: &Path, key: &str) -> Result<Option<String>> {
-        let path = git_dir.join("config");
+    /// When `git_dir` is `None` (no discovered repository, e.g. `GIT_CEILING_DIRECTORIES`), only
+    /// non-repo layers are read — matching Git when discovery returns no gitdir (t1309 ceiling #2).
+    ///
+    /// Returns all values for `key` in load order (Git's `read_early_config` callback runs once per
+    /// occurrence).
+    ///
+    /// This matches upstream ordering for `test-tool config read_early_config` (t1309, t1305).
+    pub fn read_early_config(git_dir: Option<&Path>, key: &str) -> Result<Vec<String>> {
         let mut set = Self::new();
         let ctx = IncludeContext {
-            git_dir: Some(git_dir.to_path_buf()),
+            git_dir: git_dir.map(PathBuf::from),
             command_line_relative_include_is_error: false,
         };
-        if let Some(f) = ConfigFile::from_path(&path, ConfigScope::Local)? {
-            set.merge_file_with_includes(&f, true, &ctx)?;
+
+        // System
+        if std::env::var("GIT_CONFIG_NOSYSTEM").is_err() {
+            let system_path = std::env::var("GIT_CONFIG_SYSTEM")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::path::PathBuf::from("/etc/gitconfig"));
+            if let Ok(Some(f)) = ConfigFile::from_path(&system_path, ConfigScope::System) {
+                Self::merge_with_includes(&mut set, &f, true, 0, &ctx)?;
+            }
         }
-        Ok(set.get(key))
+
+        // Global: all existing candidates (Git merges every readable file).
+        for path in global_config_paths() {
+            if let Ok(Some(f)) = ConfigFile::from_path(&path, ConfigScope::Global) {
+                Self::merge_with_includes(&mut set, &f, true, 0, &ctx)?;
+            }
+        }
+
+        if let Some(gd) = git_dir {
+            let common_dir = crate::repo::common_git_dir_for_config(gd);
+            // Local (commondir) — skip when format is newer than supported (t1309).
+            let local_path = common_dir.join("config");
+            if let Some(msg) = crate::repo::early_config_ignore_repo_reason(&common_dir) {
+                eprintln!("warning: ignoring git dir '{}': {}", gd.display(), msg);
+            } else if let Ok(Some(f)) = ConfigFile::from_path(&local_path, ConfigScope::Local) {
+                set.merge_file_with_includes(&f, true, &ctx)?;
+            }
+
+            // Worktree-specific config (when enabled for this repo).
+            let wt_path = gd.join("config.worktree");
+            if crate::repo::worktree_config_enabled(&common_dir) {
+                if let Ok(Some(f)) = ConfigFile::from_path(&wt_path, ConfigScope::Worktree) {
+                    Self::merge_with_includes(&mut set, &f, true, 0, &ctx)?;
+                }
+            }
+        }
+
+        // GIT_CONFIG_PARAMETERS — same as full load (`load_with_options` default).
+        if let Ok(params) = std::env::var("GIT_CONFIG_PARAMETERS") {
+            if !params.trim().is_empty() {
+                let pseudo = Path::new(":GIT_CONFIG_PARAMETERS");
+                let cmd_file = ConfigFile::from_git_config_parameters(pseudo, &params)?;
+                Self::merge_with_includes(&mut set, &cmd_file, true, 0, &ctx)?;
+            }
+        }
+
+        Ok(set.get_all(key))
     }
 
     /// Merge a single config file, optionally expanding `[include]` / `[includeIf]`.
@@ -2455,16 +2504,14 @@ fn global_config_paths() -> Vec<PathBuf> {
         return paths;
     }
 
-    // $HOME/.gitconfig
-    if let Some(home) = home_dir() {
-        paths.push(home.join(".gitconfig"));
-    }
-
-    // $XDG_CONFIG_HOME/git/config
+    // Git order: XDG `git/config` first, then `~/.gitconfig` (see `git_global_config_paths`).
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
         paths.push(PathBuf::from(xdg).join("git/config"));
     } else if let Some(home) = home_dir() {
         paths.push(home.join(".config/git/config"));
+    }
+    if let Some(home) = home_dir() {
+        paths.push(home.join(".gitconfig"));
     }
 
     paths

@@ -367,7 +367,7 @@ t1307-config-blob	t1	yes	13	11	2	false	ok	0
 t13070-for-each-ref-points-at	t1	yes	32	32	0	true	ok	0
 t1308-config-set	t1	yes	0	0	0	false	timeout	0
 t13080-show-ref-loose-packed	t1	yes	31	31	0	true	ok	0
-t1309-early-config	t1	yes	8	4	4	false	ok	2
+t1309-early-config	t1	yes	10	10	0	true	ok	0
 t1310-config-default	t1	yes	5	5	0	true	ok	0
 t1311-config-optional	t1	yes	3	3	0	true	ok	0
 t13120-diff-no-index-dir-file	t1	yes	37	37	0	true	ok	0
