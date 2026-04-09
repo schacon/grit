@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-09 (t3422 / rebase incompatible options)**
+
+- `cargo test -p grit-lib --lib`: 152 passed
+- `./scripts/run-tests.sh t3422-rebase-incompatible-options.sh`: 52/52 passed
+
 **2026-04-09 (t3417 / rebase whitespace fix)**
 
 - `cargo test -p grit-lib --lib`: 147 passed
