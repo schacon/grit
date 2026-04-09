@@ -9,6 +9,7 @@ use grit_lib::config::ConfigSet;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind, TreeEntry};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::abbreviate_object_id;
 
 /// Default maximum tree recursion depth when `core.maxtreedepth` is unset.
 const DEFAULT_MAX_TREE_DEPTH: usize = 2048;
@@ -553,13 +554,7 @@ fn print_entry(
     };
 
     if let Some(fmt) = &args.format {
-        let line = fmt
-            .replace("%(objectmode)", &format!("{:06o}", entry.mode))
-            .replace("%(objecttype)", kind_str)
-            .replace("%(objectname)", &entry.oid.to_hex())
-            .replace("%(path)", name);
-        // Expand %xNN hex escapes (e.g. %x09 -> tab)
-        let line = expand_hex_escapes(&line);
+        let line = expand_ls_tree_format(repo, fmt, entry, name, kind_str, args)?;
         write!(out, "{line}")?;
     } else if args.name_only {
         if args.null_terminated {
@@ -568,9 +563,7 @@ fn print_entry(
             write!(out, "{}", quote_path_name(name))?;
         }
     } else if args.object_only {
-        let hex = entry.oid.to_hex();
-        let abbrev = ls_tree_abbrev_len(args);
-        write!(out, "{}", &hex[..abbrev.min(hex.len())])?;
+        write!(out, "{}", ls_tree_object_name(repo, entry, args)?)?;
     } else if args.long {
         let size_str = if kind_str == "blob" {
             match repo.odb.read(&entry.oid) {
@@ -580,59 +573,157 @@ fn print_entry(
         } else {
             "      -".to_string()
         };
-        let hex = entry.oid.to_hex();
-        let abbrev = ls_tree_abbrev_len(args);
-        let oid_str = &hex[..abbrev.min(hex.len())];
         write!(
             out,
-            "{:06o} {kind_str} {oid_str} {size_str}\t{name}",
-            entry.mode
+            "{:06o} {kind_str} {} {size_str}\t{name}",
+            entry.mode,
+            ls_tree_object_name(repo, entry, args)?
         )?;
     } else {
-        let hex = entry.oid.to_hex();
-        let abbrev = ls_tree_abbrev_len(args);
-        let oid_str = &hex[..abbrev.min(hex.len())];
-        write!(out, "{:06o} {kind_str} {oid_str}\t{name}", entry.mode)?;
+        write!(
+            out,
+            "{:06o} {kind_str} {}\t{name}",
+            entry.mode,
+            ls_tree_object_name(repo, entry, args)?
+        )?;
     }
     out.write_all(&[term])?;
     Ok(())
 }
 
-fn expand_hex_escapes(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            if chars.peek() == Some(&'x') || chars.peek() == Some(&'X') {
-                chars.next();
-                let mut hex = String::new();
-                for _ in 0..2 {
-                    if let Some(&d) = chars.peek() {
-                        if d.is_ascii_hexdigit() {
-                            hex.push(d);
-                            chars.next();
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                if hex.len() == 2 {
-                    if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                        result.push(byte as char);
-                        continue;
-                    }
-                }
-                result.push('%');
-                result.push('x');
-                result.push_str(&hex);
-            } else {
-                result.push(c);
-            }
+/// Object name for `ls-tree` output: full hex unless `--abbrev`, then a unique prefix (Git:
+/// `repo_find_unique_abbrev`).
+fn ls_tree_object_name(repo: &Repository, entry: &TreeEntry, args: &Args) -> Result<String> {
+    let min_len = ls_tree_abbrev_len(args);
+    if min_len >= 40 {
+        return Ok(entry.oid.to_hex());
+    }
+    abbreviate_object_id(repo, entry.oid, min_len).map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+fn ls_tree_object_size_field(
+    repo: &Repository,
+    entry: &TreeEntry,
+    kind_str: &str,
+    padded: bool,
+) -> String {
+    if kind_str != "blob" {
+        return if padded {
+            format!("{:>7}", "-")
         } else {
-            result.push(c);
+            "-".to_string()
+        };
+    }
+    match repo.odb.read(&entry.oid) {
+        Ok(obj) => {
+            if padded {
+                format!("{:>7}", obj.data.len())
+            } else {
+                format!("{}", obj.data.len())
+            }
+        }
+        Err(_) => {
+            if padded {
+                "      -".to_string()
+            } else {
+                "-".to_string()
+            }
         }
     }
-    result
+}
+
+/// Expand `git ls-tree --format` placeholders (see `builtin/ls-tree.c` `show_tree_fmt`).
+fn expand_ls_tree_format(
+    repo: &Repository,
+    fmt: &str,
+    entry: &TreeEntry,
+    display_path: &str,
+    kind_str: &str,
+    args: &Args,
+) -> Result<String> {
+    let mut out = String::new();
+    let bs = fmt.as_bytes();
+    let mut i = 0usize;
+    while i < bs.len() {
+        if bs[i] != b'%' {
+            let start = i;
+            while i < bs.len() && bs[i] != b'%' {
+                i += 1;
+            }
+            out.push_str(&fmt[start..i]);
+            continue;
+        }
+        i += 1;
+        if i >= bs.len() {
+            break;
+        }
+        match bs[i] {
+            b'%' => {
+                out.push('%');
+                i += 1;
+            }
+            b'n' => {
+                out.push('\n');
+                i += 1;
+            }
+            b'x' | b'X' => {
+                i += 1;
+                let Some(b1) = bs.get(i).copied() else {
+                    bail!("bad ls-tree format: incomplete %x escape");
+                };
+                let Some(b2) = bs.get(i + 1).copied() else {
+                    bail!("bad ls-tree format: incomplete %x escape");
+                };
+                let h1 = (b1 as char).to_digit(16);
+                let h2 = (b2 as char).to_digit(16);
+                let Some((d1, d2)) = h1.zip(h2) else {
+                    bail!("bad ls-tree format: invalid %x escape");
+                };
+                out.push(char::from_u32(d1 * 16 + d2).unwrap_or('\u{FFFD}'));
+                i += 2;
+            }
+            b'(' => {
+                let tail = &fmt[i..];
+                let consumed = if tail.starts_with("(objectsize:padded)") {
+                    out.push_str(&ls_tree_object_size_field(repo, entry, kind_str, true));
+                    "(objectsize:padded)".len()
+                } else if tail.starts_with("(objectsize)") {
+                    out.push_str(&ls_tree_object_size_field(repo, entry, kind_str, false));
+                    "(objectsize)".len()
+                } else if tail.starts_with("(objectmode)") {
+                    out.push_str(&format!("{:06o}", entry.mode));
+                    "(objectmode)".len()
+                } else if tail.starts_with("(objecttype)") {
+                    out.push_str(kind_str);
+                    "(objecttype)".len()
+                } else if tail.starts_with("(objectname)") {
+                    out.push_str(&ls_tree_object_name(repo, entry, args)?);
+                    "(objectname)".len()
+                } else if tail.starts_with("(path)") {
+                    out.push_str(&quote_path_for_ls_tree_format(
+                        display_path,
+                        args.null_terminated,
+                    ));
+                    "(path)".len()
+                } else {
+                    let end = tail.find(')').map(|p| p + 1).unwrap_or(tail.len());
+                    bail!("bad ls-tree format: %{}", &tail[..end]);
+                };
+                i += consumed;
+            }
+            _ => bail!("bad ls-tree format: unknown % escape"),
+        }
+    }
+    Ok(out)
+}
+
+/// `%(path)` uses C-style quoting like `quote_c_style` when not `-z` (see `show_tree_fmt`).
+fn quote_path_for_ls_tree_format(path: &str, null_terminated: bool) -> String {
+    if null_terminated {
+        path.to_string()
+    } else {
+        quote_path_name(path)
+    }
 }
 
 fn quote_path_name(name: &str) -> String {
