@@ -9,6 +9,9 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use encoding_rs::Encoding;
+use grit_lib::combined_tree_diff::{
+    combined_diff_paths_filtered, CombinedDiffPath, CombinedParentStatus, CombinedTreeDiffOptions,
+};
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     count_changes, detect_renames, diff_trees, diff_trees_show_tree_entries, format_raw,
@@ -130,6 +133,8 @@ struct Options {
     pickaxe_all: bool,
     /// Submodule diff format (`log` shows one-line summaries for gitlinks, like Git's `diff --submodule=log`).
     submodule_mode: Option<String>,
+    /// Object id spec for `--find-object` (resolved against the repo before the walk).
+    find_object: Option<String>,
 }
 
 impl Default for Options {
@@ -171,6 +176,7 @@ impl Default for Options {
             pickaxe_regex: false,
             pickaxe_all: false,
             submodule_mode: None,
+            find_object: None,
         }
     }
 }
@@ -321,9 +327,22 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                         }
                     }
                 }
+                _ if arg.starts_with("--find-object=") => {
+                    opts.find_object = Some(arg["--find-object=".len()..].to_string());
+                }
+                "--find-object" => {
+                    i += 1;
+                    let next = argv
+                        .get(i)
+                        .ok_or_else(|| anyhow::anyhow!("`--find-object` requires a value"))?;
+                    opts.find_object = Some(next.clone());
+                }
+                _ if arg.starts_with("--format=") => {
+                    let val = &arg["--format=".len()..];
+                    opts.pretty = Some(format!("format:{val}"));
+                }
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("--diff-merges=")
-                    || arg.starts_with("--format=")
                     || arg.starts_with("-O")
                     || arg.starts_with("--relative") =>
                 {
@@ -448,7 +467,7 @@ fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Res
         validate_tree_depth_limit(&repo.odb, tree_oid, 0, max_tree_depth)?;
     }
     let entries = diff_with_opts(&repo.odb, old_tree, new_tree, opts)?;
-    let filtered = filter_entries(&repo.odb, entries, opts)?;
+    let filtered = filter_entries(&repo.odb, &repo, entries, opts)?;
     let has_diff = !filtered.is_empty();
     if !opts.quiet {
         print_diff(
@@ -481,7 +500,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
             if commit.parents.is_empty() {
                 if opts.root {
                     let entries = diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
-                    let filtered = filter_entries(&repo.odb, entries, opts)?;
+                    let filtered = filter_entries(&repo.odb, &repo, entries, opts)?;
                     has_diff = !filtered.is_empty();
                     if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                         write_commit_header(out, &oid, &obj.data, opts)?;
@@ -516,6 +535,39 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 if !opts.quiet && (hd || opts.pretty.is_some()) {
                     write_commit_header(out, &oid, &obj.data, opts)?;
                     out.write_all(&buf)?;
+                }
+            } else if commit.parents.len() > 1
+                && opts.combined_patch
+                && matches!(
+                    opts.format,
+                    OutputFormat::NameStatus | OutputFormat::NameOnly
+                )
+            {
+                let find_oid = if let Some(ref spec) = opts.find_object {
+                    Some(
+                        resolve_revision(repo, spec)
+                            .with_context(|| format!("unable to resolve '{spec}'"))?,
+                    )
+                } else {
+                    None
+                };
+                let walk = CombinedTreeDiffOptions {
+                    recursive: opts.recursive,
+                    tree_in_recursive: find_oid.is_some(),
+                };
+                let paths = combined_diff_paths_filtered(
+                    &repo.odb,
+                    &commit.tree,
+                    &commit.parents,
+                    &walk,
+                    find_oid.as_ref(),
+                )?;
+                has_diff = !paths.is_empty();
+                if !opts.quiet && (has_diff || opts.pretty.is_some()) {
+                    write_commit_header(out, &oid, &obj.data, opts)?;
+                    if has_diff {
+                        print_combined_paths(out, &paths, opts)?;
+                    }
                 }
             } else if commit.parents.len() > 1
                 && opts.combined_patch
@@ -558,7 +610,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 let parent_tree = commit_tree(&repo.odb, &commit.parents[0])?;
                 let entries =
                     diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
-                let filtered = filter_entries(&repo.odb, entries, opts)?;
+                let filtered = filter_entries(&repo.odb, &repo, entries, opts)?;
                 has_diff = !filtered.is_empty();
                 if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                     write_commit_header(out, &oid, &obj.data, opts)?;
@@ -704,7 +756,7 @@ fn process_stdin_commit(
     } else if parent_oids.is_empty() {
         if opts.root {
             let entries = diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
-            let filtered = filter_entries(&repo.odb, entries, opts)?;
+            let filtered = filter_entries(&repo.odb, &repo, entries, opts)?;
             let hd = !filtered.is_empty();
             if !opts.quiet {
                 print_diff(
@@ -724,7 +776,7 @@ fn process_stdin_commit(
     } else {
         let parent_tree = commit_tree(&repo.odb, &parent_oids[0])?;
         let entries = diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
-        let filtered = filter_entries(&repo.odb, entries, opts)?;
+        let filtered = filter_entries(&repo.odb, &repo, entries, opts)?;
         let hd = !filtered.is_empty();
         if !opts.quiet {
             print_diff(
@@ -769,7 +821,7 @@ fn process_stdin_two_trees(
         (Some(oid1), Some(&oid2))
     };
     let entries = diff_with_opts(&repo.odb, old_side, new_side, opts)?;
-    let filtered = filter_entries(&repo.odb, entries, opts)?;
+    let filtered = filter_entries(&repo.odb, &repo, entries, opts)?;
     let has_diff = !filtered.is_empty();
     if !opts.quiet {
         print_diff(
@@ -1302,6 +1354,35 @@ fn print_submodule_log_for_entry(
     Ok(())
 }
 
+/// Print combined merge paths (`-c` / `--cc` with `--name-status` / `--name-only`).
+fn print_combined_paths(
+    out: &mut impl Write,
+    paths: &[CombinedDiffPath],
+    opts: &Options,
+) -> Result<()> {
+    for p in paths {
+        match opts.format {
+            OutputFormat::NameOnly => {
+                writeln!(out, "{}", p.path)?;
+            }
+            OutputFormat::NameStatus => {
+                let letters: String = p
+                    .parents
+                    .iter()
+                    .map(|side| match side.status {
+                        CombinedParentStatus::Added => 'A',
+                        CombinedParentStatus::Modified => 'M',
+                        CombinedParentStatus::Deleted => 'D',
+                    })
+                    .collect();
+                writeln!(out, "{letters}\t{}", p.path)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Print the diff entries according to `opts.format`.
 fn print_diff(
     out: &mut impl Write,
@@ -1773,6 +1854,7 @@ fn write_commit_header(
             if template == "%s" {
                 let first_line = commit.message.lines().next().unwrap_or("");
                 writeln!(out, "{first_line}")?;
+                writeln!(out)?;
                 return Ok(false);
             }
         }
@@ -1954,12 +2036,36 @@ fn read_blob_pair(odb: &Odb, entry: &DiffEntry) -> Result<(String, String)> {
 }
 
 /// Apply post-diff filters: pathspecs, max-depth, and pickaxe (`-S` / `-G`).
-fn filter_entries(odb: &Odb, entries: Vec<DiffEntry>, opts: &Options) -> Result<Vec<DiffEntry>> {
+fn filter_entries(
+    odb: &Odb,
+    repo: &Repository,
+    entries: Vec<DiffEntry>,
+    opts: &Options,
+) -> Result<Vec<DiffEntry>> {
     let mut filtered = filter_pathspecs(entries, &opts.pathspecs);
     if let Some(depth) = opts.max_depth {
         filtered = filter_max_depth(filtered, depth, &opts.pathspecs);
     }
-    apply_pickaxe_filter(odb, filtered, opts)
+    let filtered = apply_pickaxe_filter(odb, filtered, opts)?;
+    apply_find_object_filter(repo, filtered, opts)
+}
+
+/// Keep entries whose old or new blob OID matches `--find-object` (non-combined diffs).
+fn apply_find_object_filter(
+    repo: &Repository,
+    entries: Vec<DiffEntry>,
+    opts: &Options,
+) -> Result<Vec<DiffEntry>> {
+    let Some(ref spec) = opts.find_object else {
+        return Ok(entries);
+    };
+    let oid =
+        resolve_revision(repo, spec).with_context(|| format!("unable to resolve '{spec}'"))?;
+    let filtered: Vec<DiffEntry> = entries
+        .into_iter()
+        .filter(|e| e.old_oid == oid || e.new_oid == oid)
+        .collect();
+    Ok(filtered)
 }
 
 /// Keep only diff entries that match `-G` / `-S` pickaxe rules (same semantics as `git diff`).

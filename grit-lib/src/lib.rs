@@ -17,6 +17,7 @@
 
 pub mod attributes;
 pub mod check_ref_format;
+pub mod combined_tree_diff;
 pub mod commit_encoding;
 pub mod commit_pretty;
 pub mod commit_trailers;

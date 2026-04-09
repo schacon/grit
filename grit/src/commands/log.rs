@@ -6,10 +6,12 @@
 use crate::explicit_exit::ExplicitExit;
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::combined_tree_diff::{combined_diff_paths_filtered, CombinedTreeDiffOptions};
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{get_file_attrs, load_gitattributes, DiffAttr};
 use grit_lib::diff::{
-    count_changes, diff_trees, format_raw, unified_diff, zero_oid, DiffEntry, DiffStatus,
+    count_changes, diff_trees, diff_trees_show_tree_entries, format_raw, unified_diff, zero_oid,
+    DiffEntry, DiffStatus,
 };
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::git_date::parse::parse_date_basic;
@@ -492,6 +494,10 @@ pub struct Args {
     /// Show tree objects in diff.
     #[arg(long = "show-trees")]
     pub show_trees: bool,
+
+    /// Recurse into trees in diffs (`-t`, same as `git log -t`).
+    #[arg(short = 't', hide = true)]
+    pub recurse_trees: bool,
 
     /// Generate diff with N lines of context.
     #[arg(short = 'U', long = "unified", value_name = "N")]
@@ -2746,6 +2752,7 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         None
     };
+    let find_object_tree_recursive = args.show_trees || args.recurse_trees;
     let since_str = args.since_as_filter.as_ref().or(args.since.as_ref());
     let since_threshold = since_str.and_then(|s| parse_date_to_epoch(s));
     let until_threshold = args.until.as_ref().and_then(|s| parse_date_to_epoch(s));
@@ -2813,6 +2820,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 &args,
                 diff_filter_str,
                 find_oid,
+                find_object_tree_recursive,
                 decoration_map_for_simplify,
                 since_threshold,
                 until_threshold,
@@ -2931,7 +2939,13 @@ pub fn run(mut args: Args) -> Result<()> {
             commits
                 .into_iter()
                 .filter(|(_oid, info)| {
-                    commit_has_object(&repo.odb, info, &find_oid_buf).unwrap_or_default()
+                    commit_has_object(
+                        &repo.odb,
+                        info,
+                        &find_oid_buf,
+                        args.show_trees || args.recurse_trees,
+                    )
+                    .unwrap_or_default()
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -4769,6 +4783,7 @@ fn commit_passes_post_walk_filters(
     args: &Args,
     diff_filter: Option<&str>,
     find_oid: Option<ObjectId>,
+    find_object_tree_recursive: bool,
     decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
     since_threshold: Option<i64>,
     until_threshold: Option<i64>,
@@ -4803,7 +4818,7 @@ fn commit_passes_post_walk_filters(
         let has = if args.remerge_diff && info.parents.len() == 2 {
             commit_has_remerge_object(repo, info, &fo).unwrap_or_default()
         } else {
-            commit_has_object(odb, info, &fo).unwrap_or_default()
+            commit_has_object(odb, info, &fo, find_object_tree_recursive).unwrap_or_default()
         };
         if !has {
             return Ok(false);
@@ -6952,7 +6967,25 @@ fn commit_has_remerge_object(
 }
 
 /// Check whether a commit's diff introduces or removes a specific object.
-fn commit_has_object(odb: &Odb, info: &CommitInfo, target: &ObjectId) -> Result<bool> {
+///
+/// When `tree_in_recursive` is true, tree directory lines are included in the diff (Git
+/// `tree_in_recursive` / `log -t`), which is required for `--find-object` on tree OIDs.
+fn commit_has_object(
+    odb: &Odb,
+    info: &CommitInfo,
+    target: &ObjectId,
+    tree_in_recursive: bool,
+) -> Result<bool> {
+    if info.parents.len() > 1 {
+        let walk = CombinedTreeDiffOptions {
+            recursive: true,
+            tree_in_recursive,
+        };
+        let paths =
+            combined_diff_paths_filtered(odb, &info.tree, &info.parents, &walk, Some(target))?;
+        return Ok(!paths.is_empty());
+    }
+
     let parent_tree = if let Some(parent) = info.parents.first() {
         let pobj = odb.read(parent)?;
         let pc = parse_commit(&pobj.data)?;
@@ -6961,7 +6994,11 @@ fn commit_has_object(odb: &Odb, info: &CommitInfo, target: &ObjectId) -> Result<
         None
     };
 
-    let entries = diff_trees(odb, parent_tree.as_ref(), Some(&info.tree), "")?;
+    let entries = if tree_in_recursive {
+        diff_trees_show_tree_entries(odb, parent_tree.as_ref(), Some(&info.tree), "")?
+    } else {
+        diff_trees(odb, parent_tree.as_ref(), Some(&info.tree), "")?
+    };
     for entry in &entries {
         if entry.old_oid == *target || entry.new_oid == *target {
             return Ok(true);
