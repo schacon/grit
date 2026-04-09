@@ -1008,7 +1008,7 @@ t5610-clone-detached	t5	skip	13	2	11	false	ok	1
 t5611-clone-config	t5	yes	13	9	4	false	ok	0
 t5612-clone-refspec	t5	yes	13	13	0	true	ok	0
 t5613-info-alternate	t5	yes	13	13	0	true	ok	0
-t5614-clone-submodules-shallow	t5	yes	9	4	5	false	ok	0
+t5614-clone-submodules-shallow	t5	yes	9	9	0	true	ok	0
 t5615-alternate-env	t5	yes	9	9	0	true	ok	0
 t5616-partial-clone	t5	yes	47	9	38	false	ok	0
 t5617-clone-submodules-remote	t5	yes	9	3	6	false	ok	0
