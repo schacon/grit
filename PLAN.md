@@ -494,7 +494,7 @@ commit → check it off → move on.
 - [ ] `t4103-apply-binary` █████░░░░░░░░░░░░░░░ 7/24 (17 left) — git apply handling binary patches
 
 - [ ] `t4300-merge-tree` ████░░░░░░░░░░░░░░░░ 5/22 (17 left) — git merge-tree
-- [ ] `t4135-apply-weird-filenames` ███░░░░░░░░░░░░░░░░░ 3/20 (17 left) — git apply with weird postimage filenames
+- [x] `t4135-apply-weird-filenames` ███████████████████░ 19/20 (1 left) — git apply with weird postimage filenames (traditional + git headers: timestamps, C-quoted paths, `/dev/null`; one `test_expect_failure` quote case remains)
 - [ ] `t4030-diff-textconv` ██░░░░░░░░░░░░░░░░░░ 2/19 (17 left) — diff.*.textconv tests
 - [ ] `t4151-am-abort` ██░░░░░░░░░░░░░░░░░░ 2/20 (18 left) — am --abort
 - [ ] `t4002-diff-basic` █████████████░░░░░░░ 44/63 (19 left) — Test diff raw-output.
