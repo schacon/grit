@@ -2056,6 +2056,37 @@ pub fn reflog_walk_refname(repo: &Repository, spec: &str) -> Result<Option<Strin
     Ok(Some(dwim_refname(repo, current_spec.as_str())))
 }
 
+/// Resolve a user revision string to the reflog file ref name for `log -g` / `rev-list -g`.
+///
+/// Mirrors Git `add_reflog_for_walk` / `read_complete_reflog` ref resolution before reading
+/// `logs/<ref>`.
+pub fn resolve_reflog_walk_log_ref(repo: &Repository, r: &str) -> Result<String> {
+    if let Ok(Some(w)) = reflog_walk_refname(repo, r) {
+        return Ok(w);
+    }
+    if r == "HEAD" || r.starts_with("refs/") {
+        return Ok(r.to_string());
+    }
+    if r.starts_with("@{") {
+        if let Some(n_str) = r.strip_prefix("@{").and_then(|s| s.strip_suffix('}')) {
+            if let Some(stripped) = n_str.strip_prefix('-') {
+                if stripped.parse::<usize>().is_ok() {
+                    if let Ok(branch) = refs::resolve_at_n_branch(&repo.git_dir, r) {
+                        return Ok(format!("refs/heads/{branch}"));
+                    }
+                }
+            }
+        }
+        return Ok(r.to_string());
+    }
+    let candidate = format!("refs/heads/{r}");
+    if refs::resolve_ref(&repo.git_dir, &candidate).is_ok() {
+        Ok(candidate)
+    } else {
+        Ok(r.to_string())
+    }
+}
+
 /// Try to resolve `ref@{...}` with optional chained `@{...}` steps (e.g. `other@{u}@{1}`).
 fn try_resolve_reflog_index(repo: &Repository, spec: &str) -> Result<Option<ObjectId>> {
     let Some((prefix, steps)) = split_reflog_at_chain(spec) else {

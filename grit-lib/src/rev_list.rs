@@ -2451,6 +2451,70 @@ fn commit_touches_paths(
     Ok(sparse)
 }
 
+/// Whether `oid` would be included in a dense path-limited history walk for `paths`.
+///
+/// Matches the non-Bloom parts of [`commit_touches_paths`] with `full_history = false` and
+/// `sparse = false`: single-parent commits require a tree change on `paths` vs their parent;
+/// merge commits are omitted when exactly one parent is tree-same on `paths` (Git `TREESAME`
+/// simplification). Used by `log -g -- <path>` to align with Git's reflog path filtering.
+pub fn commit_visible_for_dense_pathspecs(
+    repo: &Repository,
+    oid: ObjectId,
+    paths: &[String],
+) -> Result<bool> {
+    if paths.is_empty() {
+        return Ok(true);
+    }
+    let commit = load_commit(repo, oid)?;
+    let parents = commit.parents.clone();
+    let commit_entries = flatten_tree(repo, commit.tree, "")?;
+    let commit_map: HashMap<String, ObjectId> = commit_entries.into_iter().collect();
+
+    if parents.is_empty() {
+        return Ok(commit_map.keys().any(|path| {
+            paths.iter().any(|spec| {
+                crate::pathspec::matches_pathspec_with_context(
+                    spec,
+                    path,
+                    crate::pathspec::PathspecMatchContext {
+                        is_directory: false,
+                        is_git_submodule: false,
+                    },
+                )
+            })
+        }));
+    }
+
+    if parents.len() == 1 {
+        let parent = load_commit(repo, parents[0])?;
+        let parent_map: HashMap<String, ObjectId> =
+            flatten_tree(repo, parent.tree, "")?.into_iter().collect();
+        return Ok(path_differs_for_specs(&commit_map, &parent_map, paths));
+    }
+
+    let mut treesame_parents = 0usize;
+    let mut differs_any = false;
+    for parent_oid in &parents {
+        let parent = load_commit(repo, *parent_oid)?;
+        let parent_map: HashMap<String, ObjectId> =
+            flatten_tree(repo, parent.tree, "")?.into_iter().collect();
+        let differs = path_differs_for_specs(&commit_map, &parent_map, paths);
+        if differs {
+            differs_any = true;
+        } else {
+            treesame_parents += 1;
+        }
+    }
+
+    if treesame_parents == 1 {
+        return Ok(false);
+    }
+    if differs_any {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 fn path_differs_for_specs(
     current: &HashMap<String, ObjectId>,
     parent: &HashMap<String, ObjectId>,

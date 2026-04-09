@@ -3,15 +3,19 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
+use grit_lib::diff::diff_trees;
 use grit_lib::git_date::parse::parse_date_basic;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId};
 use grit_lib::pack;
+use grit_lib::pathspec::matches_pathspec;
 use grit_lib::promisor::read_promisor_missing_oids;
+use grit_lib::reflog::{read_reflog_dwim, ReflogEntry};
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
-    collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, render_commit,
-    render_commit_with_color, rev_list, split_symmetric_diff, tag_targets, FilterObjectKind,
-    MissingAction, ObjectFilter, OrderingMode, OutputMode, RevListOptions,
+    collect_revision_specs_with_stdin, commit_visible_for_dense_pathspecs, is_symmetric_diff,
+    merge_bases, render_commit, render_commit_with_color, rev_list, split_symmetric_diff,
+    tag_targets, FilterObjectKind, MissingAction, ObjectFilter, OrderingMode, OutputMode,
+    RevListOptions,
 };
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -100,6 +104,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut use_bitmap_index = false;
     let mut unpacked_only = false;
     let mut test_bitmap = false;
+    let mut walk_reflog = false;
 
     let mut i = 0usize;
     while i < args.args.len() {
@@ -375,25 +380,7 @@ pub fn run(args: Args) -> Result<()> {
                 "--abbrev-commit" | "--no-abbrev-commit" => { /* silently accept */ }
                 "--abbrev" => abbrev_len = 7,
                 "--reflog" | "--walk-reflogs" | "-g" => {
-                    // Walk reflog: output all OIDs in the reflog
-                    let refname = if revision_specs.is_empty() {
-                        "HEAD".to_string()
-                    } else {
-                        let r = &revision_specs[0];
-                        if r == "HEAD" || r.starts_with("refs/") {
-                            r.clone()
-                        } else {
-                            format!("refs/heads/{r}")
-                        }
-                    };
-                    let entries = grit_lib::reflog::read_reflog(&repo.git_dir, &refname)
-                        .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    let stdout = std::io::stdout();
-                    let mut out = stdout.lock();
-                    for entry in entries.iter().rev() {
-                        writeln!(out, "{}", entry.new_oid.to_hex())?;
-                    }
-                    return Ok(());
+                    walk_reflog = true;
                 }
                 _ if arg.starts_with("--filter=") => {
                     let spec = arg.trim_start_matches("--filter=");
@@ -532,6 +519,25 @@ pub fn run(args: Args) -> Result<()> {
         if let Some(def) = default_rev {
             revision_specs.push(def);
         }
+    }
+
+    if walk_reflog {
+        if revision_specs.is_empty() {
+            eprintln!("usage: git rev-list [<options>] <commit>... [--] [<path>...]");
+            std::process::exit(129);
+        }
+        return run_rev_list_reflog_walk(
+            &repo,
+            &revision_specs,
+            options.max_count,
+            options.skip,
+            options.max_parents,
+            options.min_parents,
+            options.since_cutoff,
+            options.until_cutoff,
+            &options.paths,
+            show_parents,
+        );
     }
 
     // Handle symmetric diff (A...B) tokens
@@ -1035,6 +1041,250 @@ fn parse_rev_list_date(s: &str) -> Result<i64> {
     }
     s.parse::<i64>()
         .with_context(|| format!("invalid date: '{s}'"))
+}
+
+struct RevListReflogWalkLog {
+    entries: Vec<ReflogEntry>,
+    recno: isize,
+    nr: usize,
+    tie_order: usize,
+}
+
+fn reflog_entry_unix_ts_rev(entry: &ReflogEntry) -> Option<i64> {
+    let parts: Vec<&str> = entry.identity.rsplitn(3, ' ').collect();
+    if parts.len() >= 2 {
+        parts[1].parse().ok()
+    } else {
+        None
+    }
+}
+
+fn rev_list_reflog_message_is_checkout(message: &str) -> bool {
+    message
+        .trim_start()
+        .to_ascii_lowercase()
+        .starts_with("checkout:")
+}
+
+fn rev_list_tree_matches_any_pathspec(
+    odb: &grit_lib::odb::Odb,
+    tree_oid: &ObjectId,
+    pathspecs: &[String],
+) -> Result<bool> {
+    let paths = grit_lib::diff::head_path_states(odb, Some(tree_oid))?;
+    Ok(paths.keys().any(|path| {
+        pathspecs
+            .iter()
+            .any(|ps| matches_pathspec(ps, path.as_str()))
+    }))
+}
+
+fn rev_list_reflog_transition_touches_paths(
+    repo: &Repository,
+    old_oid: &ObjectId,
+    new_oid: &ObjectId,
+    reflog_message: &str,
+    pathspecs: &[String],
+) -> Result<bool> {
+    if pathspecs.is_empty() {
+        return Ok(true);
+    }
+    let odb = &repo.odb;
+    let new_obj = odb.read(new_oid)?;
+    let new_commit = parse_commit(&new_obj.data)?;
+
+    let tree_diff_touches = |from_tree: Option<ObjectId>, to_tree: &ObjectId| -> Result<bool> {
+        let entries = diff_trees(odb, from_tree.as_ref(), Some(to_tree), "")?;
+        Ok(entries.iter().any(|e| {
+            let path = e.path();
+            pathspecs.iter().any(|ps| matches_pathspec(ps, path))
+        }))
+    };
+
+    if new_commit.parents.len() >= 2 {
+        if !commit_visible_for_dense_pathspecs(repo, *new_oid, pathspecs)? {
+            return Ok(false);
+        }
+        for p in &new_commit.parents {
+            let p_obj = match odb.read(p) {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            let p_commit = match parse_commit(&p_obj.data) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            if tree_diff_touches(Some(p_commit.tree), &new_commit.tree)? {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
+
+    if new_commit.parents.len() < 2 && rev_list_reflog_message_is_checkout(reflog_message) {
+        return rev_list_tree_matches_any_pathspec(odb, &new_commit.tree, pathspecs);
+    }
+
+    let old_tree = if old_oid.is_zero() {
+        None
+    } else {
+        let old_obj = match odb.read(old_oid) {
+            Ok(o) => o,
+            Err(_) => return Ok(false),
+        };
+        let old_commit = match parse_commit(&old_obj.data) {
+            Ok(c) => c,
+            Err(_) => return Ok(false),
+        };
+        Some(old_commit.tree)
+    };
+    tree_diff_touches(old_tree, &new_commit.tree)
+}
+
+fn run_rev_list_reflog_walk(
+    repo: &Repository,
+    revision_specs: &[String],
+    max_count: Option<usize>,
+    skip_n: usize,
+    max_parents: Option<usize>,
+    min_parents: Option<usize>,
+    since_cutoff: Option<i64>,
+    until_cutoff: Option<i64>,
+    paths: &[String],
+    show_parents: bool,
+) -> Result<()> {
+    let mut walks: Vec<RevListReflogWalkLog> = Vec::new();
+    for (tie_order, spec) in revision_specs.iter().enumerate() {
+        let log_ref = grit_lib::rev_parse::resolve_reflog_walk_log_ref(repo, spec)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let entries =
+            read_reflog_dwim(&repo.git_dir, &log_ref).map_err(|e| anyhow::anyhow!("{e}"))?;
+        if entries.is_empty() {
+            continue;
+        }
+        let nr = entries.len();
+        walks.push(RevListReflogWalkLog {
+            entries,
+            recno: (nr - 1) as isize,
+            nr,
+            tie_order,
+        });
+    }
+
+    if walks.is_empty() {
+        return Ok(());
+    }
+
+    let graft_parents = load_graft_parents(&repo.git_dir);
+    let max = max_count.unwrap_or(usize::MAX);
+    let mut shown = 0usize;
+    let mut skipped = 0usize;
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+
+    loop {
+        if shown >= max {
+            break;
+        }
+
+        let mut best_i: Option<usize> = None;
+        let mut best_ts = i64::MIN;
+        let mut best_tie = usize::MAX;
+
+        for (i, w) in walks.iter().enumerate() {
+            if w.recno < 0 {
+                continue;
+            }
+            let e = &w.entries[w.recno as usize];
+            let Some(ts) = reflog_entry_unix_ts_rev(e) else {
+                continue;
+            };
+            if ts > best_ts || (ts == best_ts && w.tie_order < best_tie) {
+                best_ts = ts;
+                best_tie = w.tie_order;
+                best_i = Some(i);
+            }
+        }
+
+        let Some(wi) = best_i else {
+            break;
+        };
+
+        let w = &mut walks[wi];
+        let entry = w.entries[w.recno as usize].clone();
+        w.recno -= 1;
+
+        let commit_data = match repo.odb.read(&entry.new_oid) {
+            Ok(obj) => match parse_commit(&obj.data) {
+                Ok(c) => c,
+                Err(_) => continue,
+            },
+            Err(_) => continue,
+        };
+
+        let n_parents = commit_data.parents.len();
+        if let Some(mx) = max_parents {
+            if n_parents > mx {
+                continue;
+            }
+        }
+        if let Some(mn) = min_parents {
+            if n_parents < mn {
+                continue;
+            }
+        }
+
+        if let Some(since) = since_cutoff {
+            if let Some(ets) = reflog_entry_unix_ts_rev(&entry) {
+                if ets < since {
+                    continue;
+                }
+            }
+        }
+        if let Some(until) = until_cutoff {
+            if let Some(ets) = reflog_entry_unix_ts_rev(&entry) {
+                if ets > until {
+                    continue;
+                }
+            }
+        }
+
+        if !paths.is_empty()
+            && !rev_list_reflog_transition_touches_paths(
+                repo,
+                &entry.old_oid,
+                &entry.new_oid,
+                &entry.message,
+                paths,
+            )?
+        {
+            continue;
+        }
+
+        if skipped < skip_n {
+            skipped += 1;
+            continue;
+        }
+
+        if show_parents {
+            let parents = commit_parents_for_output(&repo, entry.new_oid, &graft_parents)?;
+            if parents.is_empty() {
+                writeln!(out, "{}", entry.new_oid.to_hex())?;
+            } else {
+                let tail = parents
+                    .iter()
+                    .map(ObjectId::to_hex)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                writeln!(out, "{} {}", entry.new_oid.to_hex(), tail)?;
+            }
+        } else {
+            writeln!(out, "{}", entry.new_oid.to_hex())?;
+        }
+        shown += 1;
+    }
+
+    Ok(())
 }
 
 fn expand_parent_shorthand(repo: &Repository, spec: &str) -> Result<Vec<String>> {

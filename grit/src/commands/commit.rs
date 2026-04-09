@@ -1067,6 +1067,11 @@ pub fn run(mut args: Args) -> Result<()> {
                 "commit (amend): {}",
                 commit_data.message.lines().next().unwrap_or("")
             )
+        } else if commit_data.parents.len() >= 2 {
+            format!(
+                "commit (merge): {}",
+                commit_data.message.lines().next().unwrap_or("")
+            )
         } else {
             format!(
                 "commit: {}",

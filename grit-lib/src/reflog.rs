@@ -49,6 +49,25 @@ pub fn reflog_exists(git_dir: &Path, refname: &str) -> bool {
     path.is_file()
 }
 
+/// Read a reflog using Git's loose ref DWIM rules when the direct path is missing.
+///
+/// Tries `refname`, then `refs/<refname>`, then `refs/heads/<refname>` (when `refname` is not
+/// already under `refs/`). Matches `read_complete_reflog` in Git's `reflog-walk.c`.
+pub fn read_reflog_dwim(git_dir: &Path, refname: &str) -> Result<Vec<ReflogEntry>> {
+    let mut entries = read_reflog(git_dir, refname)?;
+    if !entries.is_empty() {
+        return Ok(entries);
+    }
+    if !refname.starts_with("refs/") {
+        entries = read_reflog(git_dir, &format!("refs/{refname}"))?;
+        if !entries.is_empty() {
+            return Ok(entries);
+        }
+        entries = read_reflog(git_dir, &format!("refs/heads/{refname}"))?;
+    }
+    Ok(entries)
+}
+
 /// Read all reflog entries for the given ref, in file order (oldest first).
 ///
 /// Returns an empty vec if the reflog file does not exist.

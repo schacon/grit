@@ -29,14 +29,14 @@ use grit_lib::merge_base::is_ancestor;
 use grit_lib::merge_diff::{blob_text_for_diff, is_binary_for_diff};
 use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
-use grit_lib::reflog::read_reflog;
+use grit_lib::reflog::{read_reflog_dwim, ReflogEntry};
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
-    collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, rev_list,
-    split_symmetric_diff, OrderingMode, RevListOptions,
+    collect_revision_specs_with_stdin, commit_visible_for_dense_pathspecs, is_symmetric_diff,
+    merge_bases, rev_list, split_symmetric_diff, OrderingMode, RevListOptions,
 };
 use grit_lib::rev_parse::{
-    reflog_walk_refname, resolve_revision_as_commit, try_parse_double_dot_log_range,
+    resolve_reflog_walk_log_ref, resolve_revision_as_commit, try_parse_double_dot_log_range,
 };
 use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
@@ -3505,21 +3505,78 @@ fn reflog_grep_matches(patterns: &[Regex], text: &str, all_match: bool, invert: 
     }
 }
 
-/// Whether a reflog transition (`old_oid` → `new_oid`) touches any of `pathspecs`.
+fn reflog_message_is_checkout(message: &str) -> bool {
+    message
+        .trim_start()
+        .to_ascii_lowercase()
+        .starts_with("checkout:")
+}
+
+fn tree_matches_any_pathspec(odb: &Odb, tree_oid: &ObjectId, pathspecs: &[String]) -> Result<bool> {
+    let paths = grit_lib::diff::head_path_states(odb, Some(tree_oid))?;
+    Ok(paths
+        .keys()
+        .any(|path| pathspecs.iter().any(|ps| path_matches(path.as_str(), ps))))
+}
+
+/// Whether a reflog step matches `pathspecs`.
 ///
-/// Used for `git reflog show -- <path>` / `log -g -- <path>`: Git filters reflog lines by whether
-/// the tree diff for that specific reflog step matches the pathspec.
+/// Checkouts match if the pathspec names a path present in either the old or new commit tree
+/// (Git `log -g -- <path>`). Other single-parent steps use the reflog transition diff. Merges use
+/// dense path simplification plus per-parent diffs vs the merge result (t1414).
 fn reflog_transition_touches_paths(
-    odb: &Odb,
+    repo: &Repository,
     old_oid: &ObjectId,
     new_oid: &ObjectId,
+    reflog_message: &str,
     pathspecs: &[String],
 ) -> Result<bool> {
     if pathspecs.is_empty() {
         return Ok(true);
     }
+    let odb = &repo.odb;
     let new_obj = odb.read(new_oid)?;
     let new_commit = parse_commit(&new_obj.data)?;
+
+    let tree_diff_touches = |from_tree: Option<&ObjectId>, to_tree: &ObjectId| -> Result<bool> {
+        let old_t = if let Some(t) = from_tree {
+            Some(*t)
+        } else {
+            None
+        };
+        let entries = diff_trees(odb, old_t.as_ref(), Some(to_tree), "")?;
+        Ok(entries.iter().any(|e| {
+            let path = e.path();
+            pathspecs.iter().any(|ps| path_matches(path, ps))
+        }))
+    };
+
+    if new_commit.parents.len() >= 2 {
+        if !commit_visible_for_dense_pathspecs(repo, *new_oid, pathspecs)? {
+            return Ok(false);
+        }
+        for p in &new_commit.parents {
+            let p_obj = match odb.read(p) {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            let p_commit = match parse_commit(&p_obj.data) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            if tree_diff_touches(Some(&p_commit.tree), &new_commit.tree)? {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
+
+    if new_commit.parents.len() < 2 && reflog_message_is_checkout(reflog_message) {
+        // Match Git: only the checkout *destination* tree counts (t1414 `log -g -- two.t` omits
+        // `main → side` when `two.t` exists only on `main`).
+        return tree_matches_any_pathspec(odb, &new_commit.tree, pathspecs);
+    }
+
     let old_tree = if old_oid.is_zero() {
         None
     } else {
@@ -3533,11 +3590,7 @@ fn reflog_transition_touches_paths(
         };
         Some(old_commit.tree)
     };
-    let entries = diff_trees(odb, old_tree.as_ref(), Some(&new_commit.tree), "")?;
-    Ok(entries.iter().any(|e| {
-        let path = e.path();
-        pathspecs.iter().any(|ps| path_matches(path, ps))
-    }))
+    tree_diff_touches(old_tree.as_ref(), &new_commit.tree)
 }
 
 fn next_reflog_at_open_for_suffix(spec: &str, mut from: usize) -> Option<usize> {
@@ -3572,98 +3625,38 @@ fn reflog_entry_tz(entry: &grit_lib::reflog::ReflogEntry) -> &str {
 fn format_reflog_selector_date(
     display_name: &str,
     entry: &grit_lib::reflog::ReflogEntry,
+    date_mode: Option<&str>,
 ) -> String {
     if let Some(ts) = reflog_entry_unix_ts(entry) {
         let tz = reflog_entry_tz(entry);
-        // `format_date_with_mode` parses Git signature tails via `parse_signature_tail`, which
-        // requires the `Name <email>` prefix before `<unix> <tz>` (see grit-lib `ident.rs`).
         let pseudo = format!("x <x@x> {ts} {tz}");
-        let date = format_date_with_mode(&pseudo, None);
+        let date = format_date_with_mode(&pseudo, date_mode);
         format!("{display_name}@{{{date}}}")
     } else {
         format!("{display_name}@{{0}}")
     }
 }
 
-/// Run the reflog walk mode (`log -g` / `log --walk-reflogs`).
-fn run_reflog_walk(
-    repo: &Repository,
-    args: &Args,
-    _patch_context: usize,
-    author_res: &[Regex],
-    committer_res: &[Regex],
-    grep_res: &[Regex],
-    grep_reflog_res: &[Regex],
-) -> Result<()> {
-    // Determine which ref to walk
-    let refname = if args.revisions.is_empty() {
-        "HEAD".to_string()
-    } else {
-        let r = &args.revisions[0];
-        if let Ok(Some(w)) = reflog_walk_refname(repo, r) {
-            w
-        } else if r == "HEAD" || r.starts_with("refs/") {
-            r.clone()
-        } else if r.starts_with("@{") {
-            // Resolve @{-N} to the previous branch name
-            if let Some(n_str) = r.strip_prefix("@{").and_then(|s| s.strip_suffix('}')) {
-                if let Some(stripped) = n_str.strip_prefix('-') {
-                    if let Ok(_n) = stripped.parse::<usize>() {
-                        if let Ok(branch) = grit_lib::refs::resolve_at_n_branch(&repo.git_dir, r) {
-                            format!("refs/heads/{branch}")
-                        } else {
-                            r.clone()
-                        }
-                    } else {
-                        r.clone()
-                    }
-                } else {
-                    r.clone()
-                }
-            } else {
-                r.clone()
-            }
-        } else {
-            let candidate = format!("refs/heads/{r}");
-            if grit_lib::refs::resolve_ref(&repo.git_dir, &candidate).is_ok() {
-                candidate
-            } else {
-                r.clone()
-            }
-        }
-    };
+/// Reflog file key plus display name for `%gd` / headers (matches Git `complete_reflogs`).
+struct ReflogWalkRef {
+    log_ref: String,
+    display_name: String,
+    user_spec: String,
+    entries: Vec<ReflogEntry>,
+    recno: isize,
+    nr: usize,
+    force_date_selector: bool,
+    tie_order: usize,
+}
 
-    // Use the original user-provided name for display (preserve full ref name if given)
-    let orig_r_owned = args
-        .revisions
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "HEAD".to_string());
-    let orig_r = orig_r_owned.as_str();
-    let display_name = if orig_r.starts_with("refs/") {
-        orig_r
-    } else if refname.starts_with("refs/heads/") {
-        refname.strip_prefix("refs/heads/").unwrap_or(&refname)
-    } else {
-        &refname
-    };
-
-    let entries = read_reflog(&repo.git_dir, &refname).map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    if entries.is_empty() {
-        return Ok(());
-    }
-
-    let effective_pathspecs = if args.pathspecs.is_empty() {
-        Vec::new()
-    } else {
-        validate_pathspec_scope(repo, &args.pathspecs)?;
-        resolve_effective_pathspecs(repo, &args.pathspecs)?
-    };
-
+fn reflog_start_index_and_date_flag(
+    orig_r: &str,
+    entries: &[ReflogEntry],
+) -> (usize, bool, Option<i64>) {
     let nr = entries.len();
     let mut start_j: Option<usize> = None;
     let mut use_date_selector = false;
+    let mut target_ts_for_warn: Option<i64> = None;
 
     let mut pos = 0usize;
     while let Some(at) = next_reflog_at_open_for_suffix(orig_r, pos) {
@@ -3682,15 +3675,17 @@ fn run_reflog_walk(
             start_j = Some(idx.unwrap_or(0));
             use_date_selector = false;
         } else if let Some(target_ts) = grit_lib::rev_parse::reflog_date_selector_timestamp(inner) {
-            let mut picked = 0usize;
-            for (j, e) in entries.iter().enumerate() {
-                if let Some(ts) = reflog_entry_unix_ts(e) {
+            target_ts_for_warn = Some(target_ts);
+            let mut picked = None::<usize>;
+            for i in (0..nr).rev() {
+                if let Some(ts) = reflog_entry_unix_ts(&entries[i]) {
                     if ts <= target_ts {
-                        picked = j;
+                        picked = Some(i);
+                        break;
                     }
                 }
             }
-            start_j = Some(picked);
+            start_j = Some(picked.unwrap_or(0));
             use_date_selector = true;
         } else {
             start_j = Some(nr.saturating_sub(1));
@@ -3700,6 +3695,127 @@ fn run_reflog_walk(
     }
 
     let start_j = start_j.unwrap_or(nr.saturating_sub(1));
+    (start_j, use_date_selector, target_ts_for_warn)
+}
+
+fn reflog_display_name_for(log_ref: &str, user_spec: &str) -> String {
+    if user_spec.starts_with("refs/") {
+        user_spec.to_string()
+    } else if log_ref.starts_with("refs/heads/") {
+        log_ref
+            .strip_prefix("refs/heads/")
+            .unwrap_or(log_ref)
+            .to_string()
+    } else {
+        log_ref.to_string()
+    }
+}
+
+/// Run the reflog walk mode (`log -g` / `log --walk-reflogs`).
+fn run_reflog_walk(
+    repo: &Repository,
+    args: &Args,
+    _patch_context: usize,
+    author_res: &[Regex],
+    committer_res: &[Regex],
+    grep_res: &[Regex],
+    grep_reflog_res: &[Regex],
+) -> Result<()> {
+    let rev_specs: Vec<String> = if args.revisions.is_empty() {
+        vec!["HEAD".to_string()]
+    } else {
+        args.revisions.clone()
+    };
+
+    let date_mode = args.date.as_deref();
+    let force_unix_gd = date_mode == Some("unix");
+
+    let since_ts = args.since.as_ref().and_then(|s| parse_date_to_epoch(s));
+    let until_ts = args.until.as_ref().and_then(|s| parse_date_to_epoch(s));
+
+    let max_parents = if args.no_merges { Some(1usize) } else { None };
+    let min_parents = if args.merges { Some(2usize) } else { None };
+
+    let mut walks: Vec<ReflogWalkRef> = Vec::new();
+    for (tie_order, orig_r) in rev_specs.iter().enumerate() {
+        let log_ref =
+            resolve_reflog_walk_log_ref(repo, orig_r).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let entries =
+            read_reflog_dwim(&repo.git_dir, &log_ref).map_err(|e| anyhow::anyhow!("{e}"))?;
+        if entries.is_empty() {
+            continue;
+        }
+        let display_name = reflog_display_name_for(&log_ref, orig_r);
+        let (start_j, mut use_date, target_ts_for_warn) =
+            reflog_start_index_and_date_flag(orig_r, &entries);
+        if force_unix_gd {
+            use_date = true;
+        }
+        if let Some(target_ts) = target_ts_for_warn {
+            if let Some(oldest_ts) = entries.first().and_then(reflog_entry_unix_ts) {
+                if target_ts < oldest_ts {
+                    let e = &entries[0];
+                    if let Some(ts) = reflog_entry_unix_ts(e) {
+                        let tz = reflog_entry_tz(e);
+                        let pseudo = format!("x <x@x> {ts} {tz}");
+                        let when = format_date_with_mode(&pseudo, Some("rfc"));
+                        eprintln!(
+                            "warning: log for '{}' only goes back to {}",
+                            display_name, when
+                        );
+                    }
+                }
+            }
+        }
+        let nr = entries.len();
+        let recno = start_j as isize;
+        walks.push(ReflogWalkRef {
+            log_ref,
+            display_name,
+            user_spec: orig_r.to_string(),
+            entries,
+            recno,
+            nr,
+            force_date_selector: use_date,
+            tie_order,
+        });
+    }
+
+    // `log -g HEAD@{date} HEAD`: Git walks HEAD from the tip; the date-limited spec does not
+    // narrow the walk when a plain committish for the same ref is also given (t1414).
+    let mut drop_date_when_plain: HashSet<usize> = HashSet::new();
+    let mut by_log: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, w) in walks.iter().enumerate() {
+        by_log.entry(w.log_ref.clone()).or_default().push(i);
+    }
+    for indices in by_log.values() {
+        let has_plain = indices.iter().any(|&i| !walks[i].user_spec.contains("@{"));
+        if !has_plain {
+            continue;
+        }
+        for &i in indices {
+            if walks[i].force_date_selector {
+                drop_date_when_plain.insert(i);
+            }
+        }
+    }
+    walks = walks
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| !drop_date_when_plain.contains(i))
+        .map(|(_, w)| w)
+        .collect();
+
+    if walks.is_empty() {
+        return Ok(());
+    }
+
+    let effective_pathspecs = if args.pathspecs.is_empty() {
+        Vec::new()
+    } else {
+        validate_pathspec_scope(repo, &args.pathspecs)?;
+        resolve_effective_pathspecs(repo, &args.pathspecs)?
+    };
 
     let max = args.max_count.unwrap_or(usize::MAX);
     let skip = args.skip.unwrap_or(0);
@@ -3707,7 +3823,6 @@ fn run_reflog_walk(
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    // Detect format
     let is_format_separator = args
         .format
         .as_deref()
@@ -3717,17 +3832,43 @@ fn run_reflog_walk(
     let mut shown = 0usize;
     let mut skipped = 0usize;
 
-    for j in (0..=start_j).rev() {
-        let entry = &entries[j];
+    loop {
         if shown >= max {
             break;
         }
-        if skipped < skip {
-            skipped += 1;
-            continue;
+
+        let mut best_i: Option<usize> = None;
+        let mut best_ts = i64::MIN;
+        let mut best_tie = usize::MAX;
+
+        for (i, w) in walks.iter().enumerate() {
+            if w.recno < 0 {
+                continue;
+            }
+            let e = &w.entries[w.recno as usize];
+            let Some(ts) = reflog_entry_unix_ts(e) else {
+                continue;
+            };
+            if ts > best_ts || (ts == best_ts && w.tie_order < best_tie) {
+                best_ts = ts;
+                best_tie = w.tie_order;
+                best_i = Some(i);
+            }
         }
 
-        // Read the commit object for this entry
+        let Some(wi) = best_i else {
+            break;
+        };
+
+        let w = &mut walks[wi];
+        let entry = w.entries[w.recno as usize].clone();
+        let j = w.recno as usize;
+        let nr = w.nr;
+        let display_name = w.display_name.clone();
+        let use_date_sel = w.force_date_selector;
+
+        w.recno -= 1;
+
         let commit_data = match repo.odb.read(&entry.new_oid) {
             Ok(obj) => match parse_commit(&obj.data) {
                 Ok(c) => c,
@@ -3736,11 +3877,39 @@ fn run_reflog_walk(
             Err(_) => continue,
         };
 
+        let n_parents = commit_data.parents.len();
+        if let Some(mx) = max_parents {
+            if n_parents > mx {
+                continue;
+            }
+        }
+        if let Some(mn) = min_parents {
+            if n_parents < mn {
+                continue;
+            }
+        }
+
+        if let Some(since) = since_ts {
+            if let Some(ets) = reflog_entry_unix_ts(&entry) {
+                if ets < since {
+                    continue;
+                }
+            }
+        }
+        if let Some(until) = until_ts {
+            if let Some(ets) = reflog_entry_unix_ts(&entry) {
+                if ets > until {
+                    continue;
+                }
+            }
+        }
+
         if !effective_pathspecs.is_empty()
             && !reflog_transition_touches_paths(
-                &repo.odb,
+                repo,
                 &entry.old_oid,
                 &entry.new_oid,
+                &entry.message,
                 &effective_pathspecs,
             )?
         {
@@ -3778,14 +3947,18 @@ fn run_reflog_walk(
             continue;
         }
 
-        let selector = if use_date_selector {
-            format_reflog_selector_date(display_name, entry)
+        if skipped < skip {
+            skipped += 1;
+            continue;
+        }
+
+        let selector = if use_date_sel {
+            format_reflog_selector_date(&display_name, &entry, date_mode)
         } else {
             let idx_from_tip = nr - 1 - j;
             format!("{display_name}@{{{idx_from_tip}}}")
         };
 
-        // NUL separator between entries for multi-line formats
         let is_oneline_fmt = args.format.as_deref() == Some("oneline") || args.oneline;
         if args.null_terminator && shown > 0 && !is_oneline_fmt {
             write!(out, "\0")?;
@@ -3896,7 +4069,6 @@ fn run_reflog_walk(
                 }
                 "raw" => {
                     writeln!(out, "commit {}", entry.new_oid.to_hex())?;
-                    // Write raw commit data
                     writeln!(out, "tree {}", commit_data.tree.to_hex())?;
                     for parent in &commit_data.parents {
                         writeln!(out, "parent {}", parent.to_hex())?;
@@ -3943,9 +4115,7 @@ fn run_reflog_walk(
                 writeln!(out, "{} {}: {}", abbrev, selector, entry.message)?;
             }
         } else {
-            // Full format with Reflog headers
             writeln!(out, "commit {}", entry.new_oid.to_hex())?;
-            // Strip timestamp from identity for Reflog: line (git shows only Name <email>)
             let ident_display = if let Some(email_end) = entry.identity.rfind('>') {
                 &entry.identity[..email_end + 1]
             } else {
