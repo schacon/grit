@@ -118,9 +118,19 @@ case "$1" in
     done
     ;;
   sha1)
-    sha1sum | cut -d' ' -f1 ;;
+    if [ "${2:-}" = "-b" ]; then
+      python3 -c "import sys,hashlib; d=sys.stdin.buffer.read(); sys.stdout.buffer.write(hashlib.sha1(d).digest())"
+    else
+      sha1sum | cut -d' ' -f1
+    fi
+    ;;
   sha256)
-    sha256sum | cut -d' ' -f1 ;;
+    if [ "${2:-}" = "-b" ]; then
+      python3 -c "import sys,hashlib; d=sys.stdin.buffer.read(); sys.stdout.buffer.write(hashlib.sha256(d).digest())"
+    else
+      sha256sum | cut -d' ' -f1
+    fi
+    ;;
   genrandom)
     shift
     exec "$SCRIPT_DIR/grit" test-tool genrandom "$@" ;;

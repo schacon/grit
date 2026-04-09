@@ -875,7 +875,7 @@ t5304-prune-packed	t5	yes	20	18	2	false	ok	0
 t5305-include-tag	t5	yes	15	12	3	false	ok	0
 t5306-pack-nobase	t5	yes	4	2	2	false	ok	0
 t5307-pack-missing-commit	t5	yes	5	5	0	true	ok	0
-t5308-pack-detect-duplicates	t5	yes	6	2	4	false	ok	0
+t5308-pack-detect-duplicates	t5	yes	6	6	0	true	ok	0
 t5309-pack-delta-cycles	t5	yes	7	2	5	false	ok	0
 t5310-pack-bitmaps	t5	yes	236	26	210	false	ok	0
 t5311-pack-bitmaps-shallow	t5	yes	6	6	0	true	ok	0
