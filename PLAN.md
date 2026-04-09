@@ -610,7 +610,7 @@ commit → check it off → move on.
 - [ ] `t5810-proto-disable-local` █████████████████░░░ 46/54 (8 left) — test disabling of local paths in clone/fetch
 - [ ] `t5545-push-options` ███████░░░░░░░░░░░░░ 5/13 (8 left) — pushing to a repository using push options
 - [ ] `t5322-pack-objects-sparse` █████░░░░░░░░░░░░░░░ 3/11 (8 left) — pack-objects object selection using sparse algorithm
-- [ ] `t5620-backfill` ████░░░░░░░░░░░░░░░░ 2/10 (8 left) — git backfill on partial clones
+- [x] `t5620-backfill` — git backfill on partial clones (10/10 harness)
 - [ ] `t5315-pack-objects-compression` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — pack-object compression configuration
 - [ ] `t5506-remote-groups` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — git remote group handling
 - [x] `t5900-repo-selection` — selecting remote repo in ambiguous cases (8/8)

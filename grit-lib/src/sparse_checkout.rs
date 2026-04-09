@@ -772,10 +772,24 @@ fn path_in_expanded_cone(path: &str, lines: &[String]) -> bool {
     let Some((parents, recursive)) = parse_expanded_cone_parent_recursive(lines) else {
         return false;
     };
-    let path = path.trim_start_matches('/').trim_end_matches('/');
+    let raw = path.trim_start_matches('/');
+    let is_directory_path = raw.ends_with('/');
+    let path = raw.trim_end_matches('/');
 
     if !path.contains('/') {
-        return true;
+        // Top-level: files are always in-cone (`/*`). Directories are in-cone only when
+        // they lead into an expanded parent/recursive rule (Git uses dtype when matching).
+        // Callers pass directories with a trailing slash (e.g. `a/`); files have none.
+        if !is_directory_path {
+            return true;
+        }
+        if parents.is_empty() && recursive.is_empty() {
+            return false;
+        }
+        return parents.iter().any(|p| p == path)
+            || recursive
+                .iter()
+                .any(|r| r == path || r.starts_with(&format!("{path}/")));
     }
 
     for r in &recursive {
@@ -1070,4 +1084,30 @@ pub fn path_matches_sparse_patterns(path: &str, patterns: &[String], cone_mode: 
     }
 
     included
+}
+
+#[cfg(test)]
+mod path_in_expanded_cone_tests {
+    use super::path_in_sparse_checkout_patterns;
+
+    #[test]
+    fn root_only_cone_includes_files_not_top_level_dirs() {
+        let lines = vec!["/*".to_string(), "!/*/".to_string()];
+        assert!(path_in_sparse_checkout_patterns("file.1.txt", &lines, true));
+        assert!(!path_in_sparse_checkout_patterns("a/", &lines, true));
+        assert!(!path_in_sparse_checkout_patterns("d/", &lines, true));
+    }
+
+    #[test]
+    fn expanded_cone_with_d_includes_d_tree_not_sibling_a() {
+        let lines = vec!["/*".to_string(), "!/*/".to_string(), "/d/".to_string()];
+        assert!(path_in_sparse_checkout_patterns("file.1.txt", &lines, true));
+        assert!(path_in_sparse_checkout_patterns("d/", &lines, true));
+        assert!(!path_in_sparse_checkout_patterns("a/", &lines, true));
+        assert!(path_in_sparse_checkout_patterns(
+            "d/e/file.1.txt",
+            &lines,
+            true
+        ));
+    }
 }

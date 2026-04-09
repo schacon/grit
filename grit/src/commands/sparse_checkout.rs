@@ -7,6 +7,7 @@
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::config::{ConfigFile, ConfigScope};
+use grit_lib::error::Error as GritError;
 use grit_lib::ignore::path_in_sparse_checkout as path_in_sparse_checkout_lines;
 use grit_lib::index::MODE_TREE;
 use grit_lib::objects::parse_commit;
@@ -412,10 +413,10 @@ fn cmd_set(repo: &Repository, args: &SetArgs) -> Result<()> {
                 let body = ws.to_sparse_checkout_file();
                 write_sparse_file(repo, &body)?;
                 let patterns = read_sparse_patterns(repo)?;
-                apply_sparse_patterns(repo, &patterns, true)?;
                 crate::commands::promisor_hydrate::hydrate_sparse_patterns_after_sparse_checkout_update(
                     repo, &patterns, true,
                 )?;
+                apply_sparse_patterns(repo, &patterns, true)?;
             } else {
                 let mut lines = lines;
                 if lines.is_empty() {
@@ -424,10 +425,10 @@ fn cmd_set(repo: &Repository, args: &SetArgs) -> Result<()> {
                 let body: String = lines.iter().map(|l| format!("{l}\n")).collect();
                 write_sparse_file(repo, &body)?;
                 let patterns = read_sparse_patterns(repo)?;
-                apply_sparse_patterns(repo, &patterns, false)?;
                 crate::commands::promisor_hydrate::hydrate_sparse_patterns_after_sparse_checkout_update(
                     repo, &patterns, false,
                 )?;
+                apply_sparse_patterns(repo, &patterns, false)?;
             }
             Ok(())
         } else {
@@ -468,10 +469,10 @@ fn cmd_set(repo: &Repository, args: &SetArgs) -> Result<()> {
             }
             let patterns = read_sparse_patterns(repo)?;
             let apply_cone = cone && !file_only_cone;
-            apply_sparse_patterns(repo, &patterns, apply_cone)?;
             crate::commands::promisor_hydrate::hydrate_sparse_patterns_after_sparse_checkout_update(
                 repo, &patterns, apply_cone,
             )?;
+            apply_sparse_patterns(repo, &patterns, apply_cone)?;
             Ok(())
         }
     })();
@@ -562,10 +563,10 @@ fn cmd_add(repo: &Repository, args: &AddArgs) -> Result<()> {
             write_sparse_file(repo, &body)?;
         }
         let patterns = read_sparse_patterns(repo)?;
-        apply_sparse_patterns(repo, &patterns, cone)?;
         crate::commands::promisor_hydrate::hydrate_sparse_patterns_after_sparse_checkout_update(
             repo, &patterns, cone,
         )?;
+        apply_sparse_patterns(repo, &patterns, cone)?;
         Ok(())
     })();
     release_sparse_lock(repo);
@@ -603,10 +604,10 @@ fn cmd_reapply(repo: &Repository, args: &ReapplyArgs) -> Result<()> {
         .and_then(|v| v.parse::<bool>().ok())
         .unwrap_or(true);
     let patterns = read_sparse_patterns(repo)?;
-    apply_sparse_patterns(repo, &patterns, cone)?;
     crate::commands::promisor_hydrate::hydrate_sparse_patterns_after_sparse_checkout_update(
         repo, &patterns, cone,
     )?;
+    apply_sparse_patterns(repo, &patterns, cone)?;
     Ok(())
 }
 
@@ -1086,6 +1087,12 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String], cone_mode: bool
 
     let index_path = repo.index_path();
     let mut index = repo.load_index_at(&index_path).context("reading index")?;
+    if index.entries.is_empty() {
+        crate::commands::clone::ensure_index_from_head_if_missing(repo)?;
+        index = repo
+            .load_index_at(&index_path)
+            .context("reading index after building from HEAD")?;
+    }
 
     if index.version < 3 {
         index.version = 3;
@@ -1122,8 +1129,23 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String], cone_mode: bool
                     if let Some(parent) = full_path.parent() {
                         let _ = fs::create_dir_all(parent);
                     }
-                    if let Ok(obj) = repo.odb.read(&entry.oid) {
-                        let _ = fs::write(&full_path, &obj.data);
+                    let blob_data = match repo.odb.read(&entry.oid) {
+                        Ok(obj) => Some(obj.data),
+                        Err(GritError::ObjectNotFound(_)) => {
+                            if crate::commands::promisor_hydrate::try_lazy_fetch_promisor_object(
+                                repo, entry.oid,
+                            )
+                            .is_ok()
+                            {
+                                repo.odb.read(&entry.oid).ok().map(|o| o.data)
+                            } else {
+                                None
+                            }
+                        }
+                        Err(_) => None,
+                    };
+                    if let Some(data) = blob_data {
+                        let _ = fs::write(&full_path, &data);
                     }
                 }
             }

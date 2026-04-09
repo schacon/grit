@@ -41,15 +41,13 @@ pub struct CombinedParentSide {
 }
 
 /// Options for the multitree walk.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct CombinedTreeDiffOptions {
     /// Recurse into sub-trees (`diff_options.flags.recursive`).
     pub recursive: bool,
     /// Emit tree directory lines when recursing (`tree_in_recursive`, e.g. `--find-object`).
     pub tree_in_recursive: bool,
 }
-
 
 fn is_tree_mode(mode: u32) -> bool {
     (mode & 0o170000) == 0o040000
@@ -235,10 +233,9 @@ fn ll_diff_tree_paths(
 
                 let isdir = is_tree_mode(te.mode);
                 let mut do_emit = true;
-                if isdir
-                    && should_recurse_dir(&full_path, opt) {
-                        do_emit = opt.tree_in_recursive;
-                    }
+                if isdir && should_recurse_dir(&full_path, opt) {
+                    do_emit = opt.tree_in_recursive;
+                }
 
                 if do_emit {
                     emit_combined_path(

@@ -3932,11 +3932,15 @@ fn setup_remote_tracking_head(
     Ok(())
 }
 
-/// Build `.git/index` from `HEAD` when missing (e.g. `clone --no-checkout` before sparse-checkout).
+/// Build `.git/index` from `HEAD` when missing or empty (e.g. `clone --no-checkout` before
+/// `sparse-checkout set`).
 pub(crate) fn ensure_index_from_head_if_missing(repo: &Repository) -> Result<()> {
     let index_path = repo.index_path();
     if index_path.exists() {
-        return Ok(());
+        let idx = repo.load_index_at(&index_path).unwrap_or_default();
+        if !idx.entries.is_empty() {
+            return Ok(());
+        }
     }
     let head_content = fs::read_to_string(repo.git_dir.join("HEAD")).context("reading HEAD")?;
     let head = head_content.trim();
