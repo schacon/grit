@@ -17,6 +17,7 @@ use std::path::Path;
 
 use crate::error::{Error, Result};
 use crate::objects::ObjectId;
+use crate::reflog;
 
 /// The current state of HEAD.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -252,6 +253,293 @@ pub fn detect_in_progress(git_dir: &Path) -> Vec<InProgressOperation> {
     ops
 }
 
+/// Snapshot of repository state used by `git status` long-format output (`wt-status.c`).
+///
+/// This mirrors Git's `struct wt_status_state` closely enough for advice lines and
+/// branch headers (merge, rebase, cherry-pick, revert, bisect, am, detached HEAD).
+#[derive(Debug, Clone, Default)]
+pub struct WtStatusState {
+    /// `MERGE_HEAD` exists (merge or merge+rebase).
+    pub merge_in_progress: bool,
+    /// `.git/rebase-merge/` exists and `interactive` is present.
+    pub rebase_interactive_in_progress: bool,
+    /// Rebase without interactive marker (`rebase-merge` non-interactive or `rebase-apply`).
+    pub rebase_in_progress: bool,
+    /// Display string for the branch being rebased (from `head-name`, may be absent).
+    pub rebase_branch: Option<String>,
+    /// Display string for the rebase onto commit (from `onto`, abbreviated OID or name).
+    pub rebase_onto: Option<String>,
+    /// `rebase-apply/applying` exists.
+    pub am_in_progress: bool,
+    /// Empty patch in `am` session (`rebase-apply/patch` has size 0).
+    pub am_empty_patch: bool,
+    /// `CHERRY_PICK_HEAD` or sequencer pick without head.
+    pub cherry_pick_in_progress: bool,
+    /// `None` means "in progress" without a specific commit (null OID / sequencer-only).
+    pub cherry_pick_head_oid: Option<ObjectId>,
+    /// `REVERT_HEAD` or sequencer revert without head.
+    pub revert_in_progress: bool,
+    pub revert_head_oid: Option<ObjectId>,
+    /// `BISECT_LOG` exists (checked under common dir).
+    pub bisect_in_progress: bool,
+    pub bisecting_from: Option<String>,
+    /// Detached HEAD: human label (`wt_status_get_detached_from`).
+    pub detached_from: Option<String>,
+    /// True when `HEAD` OID equals the detached tip OID.
+    pub detached_at: bool,
+}
+
+fn abbrev_oid(oid: &ObjectId) -> String {
+    oid.to_hex()[..7].to_string()
+}
+
+fn read_trimmed_line(path: &Path) -> Option<String> {
+    let s = fs::read_to_string(path).ok()?;
+    let mut line = s.lines().next()?.to_string();
+    while line.ends_with('\n') || line.ends_with('\r') {
+        line.pop();
+    }
+    if line.is_empty() {
+        None
+    } else {
+        Some(line)
+    }
+}
+
+/// Read a single-line ref/OID file like Git `get_branch()` in `wt-status.c`.
+fn get_branch_display(git_dir: &Path, rel: &str) -> Option<String> {
+    let path = git_dir.join(rel);
+    let mut sb = read_trimmed_line(&path)?;
+    if let Some(branch_name) = sb.strip_prefix("refs/heads/") {
+        sb = branch_name.to_string();
+    } else if sb.starts_with("refs/") {
+        // keep full ref for remotes etc.
+    } else if ObjectId::from_hex(&sb).is_ok() {
+        let oid = ObjectId::from_hex(&sb).ok()?;
+        sb = abbrev_oid(&oid);
+    } else if sb == "detached HEAD" {
+        return None;
+    }
+    Some(sb)
+}
+
+fn strip_ref_for_display(full: &str) -> String {
+    if let Some(s) = full.strip_prefix("refs/tags/") {
+        return s.to_string();
+    }
+    if let Some(s) = full.strip_prefix("refs/remotes/") {
+        return s.to_string();
+    }
+    if let Some(s) = full.strip_prefix("refs/heads/") {
+        return s.to_string();
+    }
+    full.to_string()
+}
+
+fn tag_name_for_oid(git_dir: &Path, oid: ObjectId) -> Option<String> {
+    let tags = crate::refs::list_refs(git_dir, "refs/tags/").ok()?;
+    let mut names: Vec<String> = tags
+        .into_iter()
+        .filter(|(_, o)| *o == oid)
+        .map(|(name, _)| name.strip_prefix("refs/tags/").unwrap_or(&name).to_string())
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    names.sort();
+    names.into_iter().next()
+}
+
+fn dwim_detach_label(git_dir: &Path, target: &str, noid: ObjectId) -> String {
+    if target == "HEAD" {
+        return abbrev_oid(&noid);
+    }
+    if target.starts_with("refs/") {
+        if let Ok(oid) = crate::refs::resolve_ref(git_dir, target) {
+            if oid == noid {
+                return strip_ref_for_display(target);
+            }
+        }
+    }
+    for candidate in [
+        format!("refs/heads/{target}"),
+        format!("refs/tags/{target}"),
+        format!("refs/remotes/{target}"),
+    ] {
+        if let Ok(oid) = crate::refs::resolve_ref(git_dir, &candidate) {
+            if oid == noid {
+                return strip_ref_for_display(&candidate);
+            }
+        }
+    }
+    if target.len() == 40 {
+        if let Ok(oid) = ObjectId::from_hex(target) {
+            if oid == noid {
+                return abbrev_oid(&noid);
+            }
+        }
+    }
+    if !target.is_empty()
+        && target.chars().all(|c| c.is_ascii_hexdigit())
+        && target.len() <= 40
+        && noid.to_hex().starts_with(target)
+    {
+        if let Some(tag) = tag_name_for_oid(git_dir, noid) {
+            return tag;
+        }
+    }
+    abbrev_oid(&noid)
+}
+
+fn wt_status_get_detached_from(git_dir: &Path, head_oid: ObjectId) -> Option<(String, bool)> {
+    let entries = reflog::read_reflog(git_dir, "HEAD").ok()?;
+    for entry in entries.iter().rev() {
+        let msg = entry.message.trim();
+        let Some(rest) = msg.strip_prefix("checkout: moving from ") else {
+            continue;
+        };
+        let Some(idx) = rest.rfind(" to ") else {
+            continue;
+        };
+        let target = rest[idx + 4..].trim();
+        let noid = entry.new_oid;
+        let label = dwim_detach_label(git_dir, target, noid);
+        let detached_at = head_oid == noid;
+        return Some((label, detached_at));
+    }
+    None
+}
+
+fn wt_status_check_rebase(git_dir: &Path, state: &mut WtStatusState) -> bool {
+    let apply = git_dir.join("rebase-apply");
+    if apply.is_dir() {
+        if apply.join("applying").exists() {
+            state.am_in_progress = true;
+            let patch = apply.join("patch");
+            if let Ok(meta) = patch.metadata() {
+                if meta.len() == 0 {
+                    state.am_empty_patch = true;
+                }
+            }
+        } else {
+            state.rebase_in_progress = true;
+            state.rebase_branch = get_branch_display(git_dir, "rebase-apply/head-name");
+            state.rebase_onto = get_branch_display(git_dir, "rebase-apply/onto");
+        }
+        return true;
+    }
+    let merge = git_dir.join("rebase-merge");
+    if merge.is_dir() {
+        if merge.join("interactive").exists() {
+            state.rebase_interactive_in_progress = true;
+        } else {
+            state.rebase_in_progress = true;
+        }
+        state.rebase_branch = get_branch_display(git_dir, "rebase-merge/head-name");
+        state.rebase_onto = get_branch_display(git_dir, "rebase-merge/onto");
+        return true;
+    }
+    false
+}
+
+fn sequencer_first_replay(git_dir: &Path) -> Option<bool> {
+    let path = git_dir.join("sequencer").join("todo");
+    if !path.is_file() {
+        return None;
+    }
+    let content = fs::read_to_string(&path).ok()?;
+    for line in content.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        let mut parts = t.split_whitespace();
+        let cmd = parts.next()?;
+        return Some(matches!(cmd, "pick" | "p" | "revert" | "r"));
+    }
+    None
+}
+
+/// Fill [`WtStatusState`] the same way Git `wt_status_get_state` does (without sparse checkout %).
+///
+/// `get_detached_from` matches Git's third parameter: when true and `head` is detached, populate
+/// `detached_from` / `detached_at` from the `HEAD` reflog.
+pub fn wt_status_get_state(
+    git_dir: &Path,
+    head: &HeadState,
+    get_detached_from: bool,
+) -> Result<WtStatusState> {
+    let mut state = WtStatusState::default();
+
+    if git_dir.join("MERGE_HEAD").exists() {
+        wt_status_check_rebase(git_dir, &mut state);
+        state.merge_in_progress = true;
+    } else if wt_status_check_rebase(git_dir, &mut state) {
+        // rebase/am state already filled
+    } else if let Some(oid) = read_cherry_pick_head(git_dir)? {
+        state.cherry_pick_in_progress = true;
+        state.cherry_pick_head_oid = Some(oid);
+    }
+
+    let bisect_base = crate::refs::common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf());
+    if bisect_base.join("BISECT_LOG").exists() {
+        state.bisect_in_progress = true;
+        state.bisecting_from = get_branch_display(&bisect_base, "BISECT_START");
+    }
+
+    if let Some(oid) = read_revert_head(git_dir)? {
+        state.revert_in_progress = true;
+        state.revert_head_oid = Some(oid);
+    }
+
+    if let Some(is_pick) = sequencer_first_replay(git_dir) {
+        if is_pick && !state.cherry_pick_in_progress {
+            state.cherry_pick_in_progress = true;
+            state.cherry_pick_head_oid = None;
+        } else if !is_pick && !state.revert_in_progress {
+            state.revert_in_progress = true;
+            state.revert_head_oid = None;
+        }
+    }
+
+    if get_detached_from {
+        if let HeadState::Detached { oid } = head {
+            if let Some((label, at)) = wt_status_get_detached_from(git_dir, *oid) {
+                state.detached_from = Some(label);
+                state.detached_at = at;
+            }
+        }
+    }
+
+    Ok(state)
+}
+
+/// Whether a split commit is in progress during interactive rebase (`wt-status.c` `split_commit_in_progress`).
+pub fn split_commit_in_progress(git_dir: &Path, head: &HeadState) -> bool {
+    let HeadState::Detached { oid: head_oid } = head else {
+        return false;
+    };
+    let Some(amend_line) = read_trimmed_line(&git_dir.join("rebase-merge/amend")) else {
+        return false;
+    };
+    let Some(orig_line) = read_trimmed_line(&git_dir.join("rebase-merge/orig-head")) else {
+        return false;
+    };
+    let Ok(amend_oid) = ObjectId::from_hex(amend_line.trim()) else {
+        return false;
+    };
+    let Ok(orig_head_oid) = ObjectId::from_hex(orig_line.trim()) else {
+        return false;
+    };
+    if amend_line == orig_line {
+        head_oid != &amend_oid
+    } else if let Ok(Some(cur_orig)) = read_orig_head(git_dir) {
+        cur_orig != orig_head_oid
+    } else {
+        false
+    }
+}
+
 /// Build a complete [`RepoState`] snapshot for a repository.
 ///
 /// # Parameters
@@ -318,14 +606,30 @@ pub fn read_merge_msg(git_dir: &Path) -> Result<Option<String>> {
     }
 }
 
-/// Read CHERRY_PICK_HEAD.
+/// Read CHERRY_PICK_HEAD when it contains a valid 40-hex OID; `None` if missing, empty, or invalid
+/// (Git ignores malformed `CHERRY_PICK_HEAD` for the "commit $abbrev" line; sequencer still applies).
 pub fn read_cherry_pick_head(git_dir: &Path) -> Result<Option<ObjectId>> {
-    read_single_oid_file(&git_dir.join("CHERRY_PICK_HEAD"))
+    read_oid_head_file_optional(&git_dir.join("CHERRY_PICK_HEAD"))
 }
 
-/// Read REVERT_HEAD.
+/// Read REVERT_HEAD when it contains a valid OID; `None` if missing, empty, or invalid.
 pub fn read_revert_head(git_dir: &Path) -> Result<Option<ObjectId>> {
-    read_single_oid_file(&git_dir.join("REVERT_HEAD"))
+    read_oid_head_file_optional(&git_dir.join("REVERT_HEAD"))
+}
+
+fn read_oid_head_file_optional(path: &Path) -> Result<Option<ObjectId>> {
+    match fs::read_to_string(path) {
+        Ok(content) => {
+            let trimmed = content.trim();
+            if trimmed.is_empty() {
+                Ok(None)
+            } else {
+                Ok(ObjectId::from_hex(trimmed).ok())
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(Error::Io(e)),
+    }
 }
 
 /// Read ORIG_HEAD.

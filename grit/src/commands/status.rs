@@ -15,7 +15,10 @@ use grit_lib::index::{Index, IndexEntry, MODE_GITLINK, MODE_TREE};
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::reflog;
 use grit_lib::repo::Repository;
-use grit_lib::state::{detect_in_progress, resolve_head, HeadState};
+use grit_lib::rev_parse::abbreviate_object_id;
+use grit_lib::state::{
+    resolve_head, split_commit_in_progress, wt_status_get_state, HeadState, WtStatusState,
+};
 
 use crate::branch_tracking::{
     format_tracking_info, shorten_tracking_ref, stat_branch_pair, upstream_tracking_full_ref,
@@ -202,7 +205,7 @@ pub fn run(mut args: Args) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
 
     let head = resolve_head(&repo.git_dir)?;
-    let in_progress = detect_in_progress(&repo.git_dir);
+    let wt_state = wt_status_get_state(&repo.git_dir, &head, true)?;
 
     // Load full config for status.displayCommentPrefix and advice.statusHints
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
@@ -479,7 +482,7 @@ pub fn run(mut args: Args) -> Result<()> {
             &args,
             colopts,
             effective_no_ahead_behind,
-            &in_progress,
+            &wt_state,
             &index,
             index_sparse_on_disk,
             &staged_long,
@@ -1651,7 +1654,10 @@ pub(crate) fn write_status_branch_header(
                 show_hints && !omit_diverged_pull_hint,
             )?;
             if !tracking.is_empty() {
-                for line in tracking.trim_end().lines() {
+                for line in tracking.trim().lines() {
+                    if line.is_empty() {
+                        continue;
+                    }
                     cpw(out, cp, line)?;
                 }
                 cpw(out, cp, "")?;
@@ -1694,7 +1700,197 @@ fn cpw(out: &mut impl Write, prefix: &str, line: &str) -> Result<()> {
     Ok(())
 }
 
-/// Long format (default).
+fn status_unique_abbrev(repo: &Repository, oid: ObjectId) -> String {
+    abbreviate_object_id(repo, oid, 7).unwrap_or_else(|_| oid.to_hex()[..7].to_string())
+}
+
+fn long_status_unmerged_label(mask: u8) -> &'static str {
+    match mask {
+        1 => "both deleted:",
+        2 => "added by us:",
+        3 => "deleted by them:",
+        4 => "added by them:",
+        5 => "deleted by us:",
+        6 => "both added:",
+        7 => "both modified:",
+        _ => "unmerged:",
+    }
+}
+
+fn long_status_unmerged_label_width() -> usize {
+    (1u8..=7)
+        .map(|m| long_status_unmerged_label(m).len())
+        .max()
+        .unwrap_or(0)
+        + 1
+}
+
+fn long_status_print_unmerged_header(
+    out: &mut impl Write,
+    cp: &str,
+    show_hints: bool,
+    unmerged: &[(String, u8)],
+    show_unstage_hint: bool,
+    head: &HeadState,
+) -> Result<()> {
+    cpw(out, cp, "Unmerged paths:")?;
+    if !show_hints {
+        return Ok(());
+    }
+    let mut both_deleted = false;
+    let mut del_mod_conflict = false;
+    let mut not_deleted = false;
+    for (_, mask) in unmerged {
+        match *mask {
+            0 => {}
+            1 => both_deleted = true,
+            3 | 5 => del_mod_conflict = true,
+            _ => not_deleted = true,
+        }
+    }
+    if show_unstage_hint {
+        if head.oid().is_some() {
+            cpw(
+                out,
+                cp,
+                "  (use \"git restore --staged <file>...\" to unstage)",
+            )?;
+        } else {
+            cpw(out, cp, "  (use \"git rm --cached <file>...\" to unstage)")?;
+        }
+    }
+    if !both_deleted {
+        if !del_mod_conflict {
+            cpw(out, cp, "  (use \"git add <file>...\" to mark resolution)")?;
+        } else {
+            cpw(
+                out,
+                cp,
+                "  (use \"git add/rm <file>...\" as appropriate to mark resolution)",
+            )?;
+        }
+    } else if !del_mod_conflict && !not_deleted {
+        cpw(out, cp, "  (use \"git rm <file>...\" to mark resolution)")?;
+    } else {
+        cpw(
+            out,
+            cp,
+            "  (use \"git add/rm <file>...\" as appropriate to mark resolution)",
+        )?;
+    }
+    Ok(())
+}
+
+fn long_status_abbrev_oid_in_line(repo: &Repository, line: &str) -> String {
+    let parts: Vec<&str> = line.splitn(3, ' ').collect();
+    if parts.len() < 2 {
+        return line.to_string();
+    }
+    let cmd = parts[0];
+    if matches!(cmd, "exec" | "x" | "label" | "l") {
+        return line.to_string();
+    }
+    let oid_s = parts[1];
+    if oid_s.len() != 40 || !oid_s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return line.to_string();
+    }
+    if grit_lib::rev_parse::resolve_revision(repo, oid_s).is_err() {
+        return line.to_string();
+    }
+    format!(
+        "{} {} {}",
+        cmd,
+        &oid_s[..7],
+        parts.get(2).copied().unwrap_or("")
+    )
+}
+
+fn long_status_read_rebase_todo_lines(
+    repo: &Repository,
+    git_dir: &Path,
+    rel: &str,
+) -> Result<Option<Vec<String>>> {
+    let path = git_dir.join(rel);
+    let Ok(content) = fs::read_to_string(&path) else {
+        return Ok(None);
+    };
+    let mut out = Vec::new();
+    for line in content.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        out.push(long_status_abbrev_oid_in_line(repo, t));
+    }
+    Ok(Some(out))
+}
+
+fn long_status_print_rebase_information(
+    out: &mut impl Write,
+    cp: &str,
+    show_hints: bool,
+    repo: &Repository,
+    git_dir: &Path,
+) -> Result<()> {
+    let have_done =
+        long_status_read_rebase_todo_lines(repo, git_dir, "rebase-merge/done")?.unwrap_or_default();
+    let todo_path = git_dir.join("rebase-merge/git-rebase-todo");
+    let yet_to_do =
+        match long_status_read_rebase_todo_lines(repo, git_dir, "rebase-merge/git-rebase-todo")? {
+            Some(v) => v,
+            None if todo_path.exists() => {
+                cpw(out, cp, "git-rebase-todo is missing.")?;
+                Vec::new()
+            }
+            None => Vec::new(),
+        };
+    const NR_SHOW: usize = 2;
+    if have_done.is_empty() {
+        cpw(out, cp, "No commands done.")?;
+    } else {
+        let n = have_done.len();
+        if n == 1 {
+            cpw(out, cp, &format!("Last command done (1 command done):"))?;
+        } else {
+            cpw(out, cp, &format!("Last commands done ({n} commands done):"))?;
+        }
+        let start = if n > NR_SHOW { n - NR_SHOW } else { 0 };
+        for line in have_done.iter().skip(start) {
+            cpw(out, cp, &format!("   {line}"))?;
+        }
+        if n > NR_SHOW && show_hints {
+            let path = git_dir.join("rebase-merge/done");
+            cpw(out, cp, &format!("  (see more in file {})", path.display()))?;
+        }
+    }
+    if yet_to_do.is_empty() {
+        cpw(out, cp, "No commands remaining.")?;
+    } else {
+        let n = yet_to_do.len();
+        if n == 1 {
+            cpw(out, cp, "Next command to do (1 remaining command):")?;
+        } else {
+            cpw(
+                out,
+                cp,
+                &format!("Next commands to do ({n} remaining commands):"),
+            )?;
+        }
+        for line in yet_to_do.iter().take(NR_SHOW) {
+            cpw(out, cp, &format!("   {line}"))?;
+        }
+        if show_hints {
+            cpw(
+                out,
+                cp,
+                "  (use \"git rebase --edit-todo\" to view and edit)",
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Long format (default), matching Git `wt-status.c` layout and advice text.
 fn format_long(
     out: &mut impl Write,
     head: &HeadState,
@@ -1703,7 +1899,7 @@ fn format_long(
     _args: &Args,
     colopts: ColOpts,
     effective_no_ahead_behind: bool,
-    in_progress: &[grit_lib::state::InProgressOperation],
+    state: &WtStatusState,
     expanded_index: &Index,
     index_sparse_on_disk: bool,
     staged: &[grit_lib::diff::DiffEntry],
@@ -1712,15 +1908,12 @@ fn format_long(
     ignored_files: &[String],
     hide_untracked: bool,
 ) -> Result<()> {
-    // Determine comment prefix
-    let comment_prefix = match config.get("status.displayCommentPrefix") {
+    let comment_prefix: &str = match config.get("status.displayCommentPrefix") {
         Some(v) if v == "true" || v == "yes" || v == "on" || v == "1" => "# ",
         _ => "",
     };
     let cp = comment_prefix;
 
-    // Determine if hints should be shown.
-    // `GIT_ADVICE` globally overrides per-advice config knobs.
     let config_hints = match config.get("advice.statusHints") {
         Some(v) if v == "false" || v == "no" || v == "off" || v == "0" => false,
         _ => true,
@@ -1730,22 +1923,252 @@ fn format_long(
         .and_then(|v| parse_bool_str(&v))
         .unwrap_or(config_hints);
 
-    write_status_branch_header(
-        out,
-        head,
-        repo,
-        cp,
-        show_hints,
-        effective_no_ahead_behind,
-        false,
-        None,
-    )?;
+    match head {
+        HeadState::Branch {
+            short_name,
+            oid: Some(_),
+            ..
+        } => {
+            cpw(out, cp, &format!("On branch {short_name}"))?;
+            let tracking = format_tracking_info(
+                repo,
+                short_name,
+                if effective_no_ahead_behind {
+                    AheadBehindMode::Quick
+                } else {
+                    AheadBehindMode::Full
+                },
+                show_hints,
+            )?;
+            if !tracking.is_empty() {
+                for line in tracking.trim().lines() {
+                    if line.is_empty() {
+                        continue;
+                    }
+                    cpw(out, cp, line)?;
+                }
+                cpw(out, cp, "")?;
+            }
+        }
+        HeadState::Branch {
+            short_name,
+            oid: None,
+            ..
+        } => {
+            cpw(out, cp, &format!("On branch {short_name}"))?;
+            cpw(out, cp, "")?;
+            cpw(out, cp, "No commits yet")?;
+            cpw(out, cp, "")?;
+        }
+        HeadState::Detached { oid } => {
+            if state.rebase_interactive_in_progress {
+                let onto = state.rebase_onto.as_deref().unwrap_or("");
+                cpw(
+                    out,
+                    cp,
+                    &format!("interactive rebase in progress; onto {onto}"),
+                )?;
+            } else if state.rebase_in_progress && !state.am_in_progress {
+                let onto = state.rebase_onto.as_deref().unwrap_or("");
+                cpw(out, cp, &format!("rebase in progress; onto {onto}"))?;
+            } else if let Some(df) = state.detached_from.as_deref() {
+                if state.detached_at {
+                    cpw(out, cp, &format!("HEAD detached at {df}"))?;
+                } else {
+                    cpw(out, cp, &format!("HEAD detached from {df}"))?;
+                }
+            } else {
+                let short = &oid.to_hex()[..7];
+                cpw(out, cp, &format!("HEAD detached at {short}"))?;
+            }
+        }
+        HeadState::Invalid => {
+            cpw(out, cp, "Not currently on any branch.")?;
+        }
+    }
 
-    // In-progress operations
-    for op in in_progress {
+    let git_dir = &repo.git_dir;
+    let merge_msg_exists = git_dir.join("MERGE_MSG").exists();
+
+    if state.merge_in_progress {
+        if state.rebase_interactive_in_progress {
+            long_status_print_rebase_information(out, cp, show_hints, repo, git_dir)?;
+            cpw(out, cp, "")?;
+        }
+        if long_status_has_unmerged(expanded_index) {
+            cpw(out, cp, "You have unmerged paths.")?;
+            if show_hints {
+                cpw(out, cp, "  (fix conflicts and run \"git commit\")")?;
+                cpw(out, cp, "  (use \"git merge --abort\" to abort the merge)")?;
+            }
+            cpw(out, cp, "")?;
+        } else {
+            cpw(out, cp, "All conflicts fixed but you are still merging.")?;
+            if show_hints {
+                cpw(out, cp, "  (use \"git commit\" to conclude merge)")?;
+            }
+            cpw(out, cp, "")?;
+        }
+    } else if state.am_in_progress {
+        cpw(out, cp, "You are in the middle of an am session.")?;
+        if state.am_empty_patch {
+            cpw(out, cp, "The current patch is empty.")?;
+        }
+        if show_hints {
+            if !state.am_empty_patch {
+                cpw(
+                    out,
+                    cp,
+                    "  (fix conflicts and then run \"git am --continue\")",
+                )?;
+            }
+            cpw(out, cp, "  (use \"git am --skip\" to skip this patch)")?;
+            if state.am_empty_patch {
+                cpw(
+                    out,
+                    cp,
+                    "  (use \"git am --allow-empty\" to record this patch as an empty commit)",
+                )?;
+            }
+            cpw(
+                out,
+                cp,
+                "  (use \"git am --abort\" to restore the original branch)",
+            )?;
+        }
         cpw(out, cp, "")?;
-        cpw(out, cp, &format!("You are currently {}.", op.description()))?;
-        cpw(out, cp, &format!("  ({})", op.hint()))?;
+    } else if state.rebase_in_progress || state.rebase_interactive_in_progress {
+        long_status_print_rebase_information(out, cp, show_hints, repo, git_dir)?;
+        let has_um = long_status_has_unmerged(expanded_index);
+        if has_um {
+            long_status_print_rebase_state(out, cp, state)?;
+            if show_hints {
+                cpw(
+                    out,
+                    cp,
+                    "  (fix conflicts and then run \"git rebase --continue\")",
+                )?;
+                cpw(out, cp, "  (use \"git rebase --skip\" to skip this patch)")?;
+                cpw(
+                    out,
+                    cp,
+                    "  (use \"git rebase --abort\" to check out the original branch)",
+                )?;
+            }
+            cpw(out, cp, "")?;
+        } else if state.rebase_in_progress || merge_msg_exists {
+            long_status_print_rebase_state(out, cp, state)?;
+            if show_hints {
+                cpw(
+                    out,
+                    cp,
+                    "  (all conflicts fixed: run \"git rebase --continue\")",
+                )?;
+            }
+            cpw(out, cp, "")?;
+        } else if split_commit_in_progress(git_dir, head) {
+            long_status_print_splitting(out, cp, show_hints, state)?;
+        } else {
+            long_status_print_editing(out, cp, show_hints, state)?;
+        }
+    } else if state.cherry_pick_in_progress {
+        if let Some(oid) = state.cherry_pick_head_oid {
+            let abbrev = status_unique_abbrev(repo, oid);
+            cpw(
+                out,
+                cp,
+                &format!("You are currently cherry-picking commit {abbrev}."),
+            )?;
+        } else {
+            cpw(out, cp, "Cherry-pick currently in progress.")?;
+        }
+        if show_hints {
+            if long_status_has_unmerged(expanded_index) {
+                cpw(
+                    out,
+                    cp,
+                    "  (fix conflicts and run \"git cherry-pick --continue\")",
+                )?;
+            } else if state.cherry_pick_head_oid.is_none() {
+                cpw(
+                    out,
+                    cp,
+                    "  (run \"git cherry-pick --continue\" to continue)",
+                )?;
+            } else {
+                cpw(
+                    out,
+                    cp,
+                    "  (all conflicts fixed: run \"git cherry-pick --continue\")",
+                )?;
+            }
+            cpw(
+                out,
+                cp,
+                "  (use \"git cherry-pick --skip\" to skip this patch)",
+            )?;
+            cpw(
+                out,
+                cp,
+                "  (use \"git cherry-pick --abort\" to cancel the cherry-pick operation)",
+            )?;
+        }
+        cpw(out, cp, "")?;
+    } else if state.revert_in_progress {
+        if let Some(oid) = state.revert_head_oid {
+            let abbrev = status_unique_abbrev(repo, oid);
+            cpw(
+                out,
+                cp,
+                &format!("You are currently reverting commit {abbrev}."),
+            )?;
+        } else {
+            cpw(out, cp, "Revert currently in progress.")?;
+        }
+        if show_hints {
+            if long_status_has_unmerged(expanded_index) {
+                cpw(
+                    out,
+                    cp,
+                    "  (fix conflicts and run \"git revert --continue\")",
+                )?;
+            } else if state.revert_head_oid.is_none() {
+                cpw(out, cp, "  (run \"git revert --continue\" to continue)")?;
+            } else {
+                cpw(
+                    out,
+                    cp,
+                    "  (all conflicts fixed: run \"git revert --continue\")",
+                )?;
+            }
+            cpw(out, cp, "  (use \"git revert --skip\" to skip this patch)")?;
+            cpw(
+                out,
+                cp,
+                "  (use \"git revert --abort\" to cancel the revert operation)",
+            )?;
+        }
+        cpw(out, cp, "")?;
+    }
+
+    if state.bisect_in_progress {
+        if let Some(from) = state.bisecting_from.as_deref() {
+            cpw(
+                out,
+                cp,
+                &format!("You are currently bisecting, started from branch '{from}'."),
+            )?;
+        } else {
+            cpw(out, cp, "You are currently bisecting.")?;
+        }
+        if show_hints {
+            cpw(
+                out,
+                cp,
+                "  (use \"git bisect reset\" to get back to the original branch)",
+            )?;
+        }
+        cpw(out, cp, "")?;
     }
 
     if let Some(msg) = sparse_checkout_banner(config, expanded_index, index_sparse_on_disk) {
@@ -1754,25 +2177,45 @@ fn format_long(
         cpw(out, cp, "")?;
     }
 
-    // Track whether we've printed any section (to know if we need a separator)
-    let mut has_section = false;
+    let unmerged_map = unmerged_paths_and_mask(expanded_index);
+    let mut unmerged_paths: Vec<(String, u8)> =
+        unmerged_map.iter().map(|(p, m)| (p.clone(), *m)).collect();
 
-    // Staged changes
-    if !staged.is_empty() {
-        has_section = true;
+    let staged_normal: Vec<&DiffEntry> = staged
+        .iter()
+        .filter(|e| e.status != DiffStatus::Unmerged)
+        .collect();
+    let unstaged_normal: Vec<&DiffEntry> = unstaged
+        .iter()
+        .filter(|e| e.status != DiffStatus::Unmerged && !unmerged_map.contains_key(e.path()))
+        .collect();
+
+    let has_unmerged = !unmerged_paths.is_empty();
+    let committable = state.merge_in_progress && !has_unmerged && !staged_normal.is_empty();
+    let show_staged_unstage_hints = show_hints
+        && head.oid().is_some()
+        && !((state.merge_in_progress || state.cherry_pick_in_progress) && !has_unmerged);
+    let unlisted_untracked_line = hide_untracked
+        && !has_unmerged
+        && !staged_normal.is_empty()
+        && (state.merge_in_progress
+            || state.cherry_pick_in_progress
+            || state.revert_in_progress
+            || state.rebase_in_progress
+            || state.rebase_interactive_in_progress);
+
+    let dirty_like_git_worktree = !unstaged_normal.is_empty() || has_unmerged;
+
+    if !staged_normal.is_empty() {
         cpw(out, cp, "Changes to be committed:")?;
-        if show_hints {
-            if head.oid().is_some() {
-                cpw(
-                    out,
-                    cp,
-                    "  (use \"git restore --staged <file>...\" to unstage)",
-                )?;
-            } else {
-                cpw(out, cp, "  (use \"git rm --cached <file>...\" to unstage)")?;
-            }
+        if show_staged_unstage_hints {
+            cpw(
+                out,
+                cp,
+                "  (use \"git restore --staged <file>...\" to unstage)",
+            )?;
         }
-        for entry in staged {
+        for entry in &staged_normal {
             let label = match entry.status {
                 DiffStatus::Added => "new file",
                 DiffStatus::Deleted => "deleted",
@@ -1787,27 +2230,57 @@ fn format_long(
         cpw(out, cp, "")?;
     }
 
-    // Unstaged changes
-    if !unstaged.is_empty() {
-        if has_section {
-            // blank line already printed after previous section
-        } else {
-            has_section = true;
+    if !unmerged_paths.is_empty() {
+        unmerged_paths.sort_by(|a, b| a.0.cmp(&b.0));
+        let show_unstage_unmerged = !state.merge_in_progress
+            && !state.cherry_pick_in_progress
+            && (state.rebase_in_progress
+                || state.rebase_interactive_in_progress
+                || state.revert_in_progress);
+        long_status_print_unmerged_header(
+            out,
+            cp,
+            show_hints,
+            &unmerged_paths,
+            show_unstage_unmerged,
+            head,
+        )?;
+        let label_w = long_status_unmerged_label_width();
+        for (path, mask) in &unmerged_paths {
+            let how = long_status_unmerged_label(*mask);
+            let pad = label_w.saturating_sub(how.len());
+            let spaces: String = std::iter::repeat(' ').take(pad).collect();
+            cpw(out, cp, &format!("\t{how}{spaces}{path}"))?;
         }
+        cpw(out, cp, "")?;
+    }
+
+    if !unstaged_normal.is_empty() {
+        let has_deleted = unstaged_normal
+            .iter()
+            .any(|e| e.status == DiffStatus::Deleted);
         cpw(out, cp, "Changes not staged for commit:")?;
         if show_hints {
-            cpw(
-                out,
-                cp,
-                "  (use \"git add <file>...\" to update what will be committed)",
-            )?;
+            if has_deleted {
+                cpw(
+                    out,
+                    cp,
+                    "  (use \"git add/rm <file>...\" to update what will be committed)",
+                )?;
+            } else {
+                cpw(
+                    out,
+                    cp,
+                    "  (use \"git add <file>...\" to update what will be committed)",
+                )?;
+            }
             cpw(
                 out,
                 cp,
                 "  (use \"git restore <file>...\" to discard changes in working directory)",
             )?;
         }
-        for entry in unstaged {
+        for entry in &unstaged_normal {
             let label = match entry.status {
                 DiffStatus::Deleted => "deleted",
                 DiffStatus::Modified => "modified",
@@ -1819,13 +2292,7 @@ fn format_long(
         cpw(out, cp, "")?;
     }
 
-    // Untracked files
     if !untracked.is_empty() {
-        if has_section {
-            // blank line already printed after previous section
-        } else {
-            has_section = true;
-        }
         cpw(out, cp, "Untracked files:")?;
         if show_hints {
             cpw(
@@ -1846,11 +2313,7 @@ fn format_long(
         cpw(out, cp, "")?;
     }
 
-    // Ignored files
     if !ignored_files.is_empty() {
-        if has_section {
-            // blank line already printed after previous section
-        }
         cpw(out, cp, "Ignored files:")?;
         if show_hints {
             cpw(
@@ -1871,8 +2334,7 @@ fn format_long(
         cpw(out, cp, "")?;
     }
 
-    // "Untracked files not listed" message when -uno is used
-    if hide_untracked {
+    if unlisted_untracked_line {
         if show_hints {
             cpw(
                 out,
@@ -1882,51 +2344,146 @@ fn format_long(
         } else {
             cpw(out, cp, "Untracked files not listed")?;
         }
-    }
-
-    // Footer messages
-    if staged.is_empty() && unstaged.is_empty() && untracked.is_empty() {
-        if hide_untracked {
-            // When hiding untracked, don't say "working tree clean"
-        } else if !ignored_files.is_empty() {
-            cpw(
-                out,
-                cp,
-                "nothing to commit but untracked files present (use \"git add\" to track)",
-            )?;
-        } else {
-            cpw(out, cp, "nothing to commit, working tree clean")?;
+    } else if !committable {
+        // `dirty_like_git_worktree` matches Git `wt_status_check_worktree_changes` use in
+        // the footer (untracked-only uses a different message).
+        if dirty_like_git_worktree {
+            if show_hints {
+                cpw(
+                    out,
+                    cp,
+                    "no changes added to commit (use \"git add\" and/or \"git commit -a\")",
+                )?;
+            } else {
+                cpw(out, cp, "no changes added to commit")?;
+            }
+        } else if staged_normal.is_empty() && unstaged_normal.is_empty() && untracked.is_empty() {
+            if hide_untracked {
+                if show_hints {
+                    cpw(
+                        out,
+                        cp,
+                        "nothing to commit (use -u to show untracked files)",
+                    )?;
+                } else {
+                    cpw(out, cp, "nothing to commit")?;
+                }
+            } else if !ignored_files.is_empty() {
+                cpw(
+                    out,
+                    cp,
+                    "nothing to commit but untracked files present (use \"git add\" to track)",
+                )?;
+            } else {
+                cpw(out, cp, "nothing to commit, working tree clean")?;
+            }
+        } else if !staged_normal.is_empty() && unstaged_normal.is_empty() && untracked.is_empty() {
+            // only staged: no footer
+        } else if staged_normal.is_empty() && unstaged_normal.is_empty() && !untracked.is_empty() {
+            if show_hints {
+                cpw(
+                    out,
+                    cp,
+                    "nothing added to commit but untracked files present (use \"git add\" to track)",
+                )?;
+            } else {
+                cpw(
+                    out,
+                    cp,
+                    "nothing added to commit but untracked files present",
+                )?;
+            }
         }
-    } else if !staged.is_empty() && unstaged.is_empty() && untracked.is_empty() {
-        // Only staged changes — no footer needed (git doesn't print one)
-    } else if staged.is_empty() && !unstaged.is_empty() && untracked.is_empty() {
-        cpw(
-            out,
-            cp,
-            "no changes added to commit (use \"git add\" and/or \"git commit -a\")",
-        )?;
-    } else if staged.is_empty() && unstaged.is_empty() && !untracked.is_empty() {
+    } else if staged_normal.is_empty() && unstaged_normal.is_empty() && untracked.is_empty() {
         if show_hints {
             cpw(
                 out,
                 cp,
-                "nothing added to commit but untracked files present (use \"git add\" to track)",
+                "nothing to commit (use -u to show untracked files)",
             )?;
         } else {
-            cpw(
-                out,
-                cp,
-                "nothing added to commit but untracked files present",
-            )?;
+            cpw(out, cp, "nothing to commit")?;
         }
-    } else if staged.is_empty() {
+    }
+
+    Ok(())
+}
+
+fn long_status_has_unmerged(index: &Index) -> bool {
+    index
+        .entries
+        .iter()
+        .any(|e| e.stage() > 0 && e.stage() <= 3)
+}
+
+fn long_status_print_rebase_state(
+    out: &mut impl Write,
+    cp: &str,
+    state: &WtStatusState,
+) -> Result<()> {
+    let branch = state.rebase_branch.as_deref().unwrap_or("");
+    let onto = state.rebase_onto.as_deref().unwrap_or("");
+    cpw(
+        out,
+        cp,
+        &format!("You are currently rebasing branch '{branch}' on '{onto}'."),
+    )
+}
+
+fn long_status_print_splitting(
+    out: &mut impl Write,
+    cp: &str,
+    show_hints: bool,
+    state: &WtStatusState,
+) -> Result<()> {
+    let branch = state.rebase_branch.as_deref().unwrap_or("");
+    let onto = state.rebase_onto.as_deref().unwrap_or("");
+    cpw(
+        out,
+        cp,
+        &format!(
+            "You are currently splitting a commit while rebasing branch '{branch}' on '{onto}'."
+        ),
+    )?;
+    if show_hints {
         cpw(
             out,
             cp,
-            "no changes added to commit (use \"git add\" and/or \"git commit -a\")",
+            "  (Once your working directory is clean, run \"git rebase --continue\")",
         )?;
     }
+    cpw(out, cp, "")?;
+    Ok(())
+}
 
+fn long_status_print_editing(
+    out: &mut impl Write,
+    cp: &str,
+    show_hints: bool,
+    state: &WtStatusState,
+) -> Result<()> {
+    let branch = state.rebase_branch.as_deref().unwrap_or("");
+    let onto = state.rebase_onto.as_deref().unwrap_or("");
+    cpw(
+        out,
+        cp,
+        &format!(
+            "You are currently editing a commit while rebasing branch '{branch}' on '{onto}'."
+        ),
+    )?;
+    if show_hints {
+        cpw(
+            out,
+            cp,
+            "  (use \"git commit --amend\" to amend the current commit)",
+        )?;
+        cpw(
+            out,
+            cp,
+            "  (use \"git rebase --continue\" once you are satisfied with your changes)",
+        )?;
+    }
+    cpw(out, cp, "")?;
     Ok(())
 }
 
