@@ -470,7 +470,9 @@ pub fn fetch_via_upload_pack_skipping(
     Option<String>,
     Option<ObjectId>,
 )> {
-    let mut child = spawn_upload_pack(upload_pack_cmd, remote_repo_path)?;
+    // Force v0 advertisement (immediate ref pkt-lines). v2 stops after `version 2` until `ls-refs`,
+    // which leaves `read_advertisement` with an empty ref list and breaks fetch.
+    let mut child = spawn_upload_pack_with_proto(upload_pack_cmd, remote_repo_path, 0)?;
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 

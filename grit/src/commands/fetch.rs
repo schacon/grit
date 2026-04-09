@@ -21,7 +21,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Arguments for `grit fetch`.
-#[derive(Debug, ClapArgs)]
+#[derive(Debug, Clone, ClapArgs)]
 #[command(about = "Download objects and refs from another repository")]
 pub struct Args {
     /// Remote name or path to fetch from (defaults to "origin").
@@ -43,6 +43,10 @@ pub struct Args {
     /// Fetch all configured remotes.
     #[arg(long)]
     pub all: bool,
+
+    /// Fetch several remotes (each argument names a remote).
+    #[arg(long)]
+    pub multiple: bool,
 
     /// Fetch tags from the remote.
     #[arg(long)]
@@ -170,7 +174,22 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    let result = if args.all {
+    let result = if args.multiple {
+        if args.all {
+            bail!("--multiple and --all are incompatible");
+        }
+        let names = args.refspecs.clone();
+        if names.is_empty() {
+            bail!("fetch --multiple requires at least one remote");
+        }
+        for name in &names {
+            let mut inner = args.clone();
+            inner.multiple = false;
+            inner.refspecs.clear();
+            fetch_remote(&git_dir, &config, name, None, &inner)?;
+        }
+        Ok(())
+    } else if args.all {
         let remotes = collect_remote_names(&config);
         if remotes.is_empty() {
             bail!("no remotes configured");
@@ -382,14 +401,20 @@ fn collect_wants_for_upload_pack(
         if !refname.starts_with("refs/heads/") {
             continue;
         }
+        // Use the configured fetch refspecs for destination mapping. A previous implementation
+        // always compared against `refs/remotes/<remote_name>/…`, which breaks when several
+        // remotes share a URL but use different refspec namespaces (t5505: `second` vs `origin`).
         let Some(local_ref) = map_ref_through_refspecs(refname, &effective_refspecs) else {
             continue;
         };
         let tip_oid = refs::resolve_ref(remote_git_dir, refname)
             .ok()
             .unwrap_or(*oid);
-        let local_tracking_oid = read_loose_ref_chain(local_git_dir, &local_ref)
-            .or_else(|| refs::resolve_ref(local_git_dir, &local_ref).ok());
+        // Prefer full ref resolution so packed-refs are visible; loose-only reads miss
+        // remote-tracking refs stored only in packed-refs (t5505: second remote same as origin).
+        let local_tracking_oid = refs::resolve_ref(local_git_dir, &local_ref)
+            .ok()
+            .or_else(|| read_loose_ref_chain(local_git_dir, &local_ref));
         if local_tracking_oid.as_ref() == Some(&tip_oid) {
             continue;
         }
@@ -566,6 +591,9 @@ fn fetch_remote(
     }
 
     let display_url = resolve_fetch_display_url(git_dir, &url, url_override, remote_repo.as_ref())?;
+    // Only remap tracking namespace for path/URL fetches (`git fetch ./repo`). When the user
+    // names a configured remote (`git fetch second`), always store under that remote even if
+    // its URL points at the same repository as `origin` (t5505 `remote add -f second`).
     let effective_tracking_remote = if url_override.is_some() {
         remote_repo
             .as_ref()
@@ -681,8 +709,14 @@ fn fetch_remote(
     // Local (non-SSH) non-URL fetches use the upload-pack protocol like upstream Git. This keeps
     // `GIT_TRACE_PACKET` lines (`upload-pack< want …`) and tag-following wants aligned with
     // tests such as t5503-tagfollow. CLI refspecs are applied after the pack is received.
-    let use_upload_pack_negotiation =
-        !is_ext_url && !is_http_url && !crate::ssh_transport::is_configured_ssh_url(&url);
+    //
+    // When several remotes share the same repository URL, skip upload-pack: the negotiator can
+    // stall when all wanted objects already exist locally (t5505 `git fetch second`).
+    let coalesced_multi = coalesced_remotes.len() > 1;
+    let use_upload_pack_negotiation = !is_ext_url
+        && !is_http_url
+        && !crate::ssh_transport::is_configured_ssh_url(&url)
+        && !coalesced_multi;
 
     let upload_pack_refspecs: &[String] = if prefetch_left_no_positive {
         &[]
@@ -1154,8 +1188,21 @@ fn fetch_remote(
             }
         }
     } else {
+        // When several remotes share the same repository URL we still fetch once, but each
+        // `git fetch <name>` must map advertised refs through **that** remote's refspecs first.
+        // If we merge all coalesced refspecs in config order, a second remote that reuses
+        // `origin`'s URL would incorrectly resolve to `refs/remotes/origin/*` (t5505).
         let mut union_refspecs: Vec<FetchRefspec> = Vec::new();
+        let primary_key = format!("remote.{remote_name}.fetch");
+        let mut primary = collect_refspecs(config, &primary_key);
+        if primary.is_empty() {
+            primary = default_fetch_refspecs(remote_name);
+        }
+        union_refspecs.extend(primary);
         for rn in &coalesced_remotes {
+            if rn == remote_name {
+                continue;
+            }
             let key = format!("remote.{rn}.fetch");
             let mut rs = collect_refspecs(config, &key);
             if rs.is_empty() {
@@ -2272,18 +2319,20 @@ fn normalize_fetch_refspec_dst(dst: &str) -> String {
     }
     format!("refs/heads/{d}")
 }
-/// A parsed refspec (e.g. "+refs/heads/*:refs/remotes/origin/*").
+/// A parsed fetch refspec (e.g. `+refs/heads/*:refs/remotes/origin/*`).
+///
+/// Used by `git fetch` and by `git remote show` when classifying remote branches.
 #[derive(Clone)]
-struct FetchRefspec {
+pub struct FetchRefspec {
     /// Source pattern (remote side), e.g. "refs/heads/*".
-    src: String,
+    pub src: String,
     /// Destination pattern (local side), e.g. "refs/remotes/origin/*".
-    dst: String,
+    pub dst: String,
     /// Whether this is a force refspec (leading '+').
     #[allow(dead_code)]
-    force: bool,
+    pub force: bool,
     /// Whether this is a negative (exclusion) refspec (leading '^').
-    negative: bool,
+    pub negative: bool,
 }
 
 /// Returns true if `refname` is excluded by a negative refspec pattern (without the leading `^`).
@@ -2295,7 +2344,7 @@ fn ref_excluded_by_negative_pattern(pattern: &str, refname: &str) -> bool {
     match_glob_pattern(pattern, refname).is_some() || pattern == refname
 }
 
-fn ref_excluded_by_fetch_refspecs(refname: &str, refspecs: &[FetchRefspec]) -> bool {
+pub fn ref_excluded_by_fetch_refspecs(refname: &str, refspecs: &[FetchRefspec]) -> bool {
     refspecs
         .iter()
         .any(|rs| rs.negative && ref_excluded_by_negative_pattern(&rs.src, refname))
@@ -2440,7 +2489,7 @@ fn longest_common_ref_prefix_from_cli_positive(cli: &[String]) -> Option<String>
 }
 
 /// When `remote.<name>.fetch` is unset, Git uses `refs/heads/*:refs/remotes/<name>/*`.
-fn default_fetch_refspecs(remote_name: &str) -> Vec<FetchRefspec> {
+pub fn default_fetch_refspecs(remote_name: &str) -> Vec<FetchRefspec> {
     vec![FetchRefspec {
         src: "refs/heads/*".to_owned(),
         dst: format!("refs/remotes/{remote_name}/*"),
@@ -2450,7 +2499,7 @@ fn default_fetch_refspecs(remote_name: &str) -> Vec<FetchRefspec> {
 }
 
 /// Collect all fetch refspecs from a config key (may be multi-valued).
-fn collect_refspecs(config: &ConfigSet, key: &str) -> Vec<FetchRefspec> {
+pub fn collect_refspecs(config: &ConfigSet, key: &str) -> Vec<FetchRefspec> {
     let mut result = Vec::new();
     for entry in config.entries() {
         if entry.key == key {
@@ -2519,8 +2568,23 @@ fn map_ref_through_refspecs_ex(
 /// For a refspec like `refs/heads/*:refs/remotes/origin/*`, if the remote ref
 /// is `refs/heads/main`, the result is `refs/remotes/origin/main`.
 /// Returns None if no refspec matches.
-fn map_ref_through_refspecs(remote_ref: &str, refspecs: &[FetchRefspec]) -> Option<String> {
+pub fn map_ref_through_refspecs(remote_ref: &str, refspecs: &[FetchRefspec]) -> Option<String> {
     map_ref_through_refspecs_ex(remote_ref, refspecs).map(|(m, _)| m)
+}
+
+/// Effective fetch refspecs for `remote.<name>.fetch`, matching Git when no positive refspec is set.
+#[must_use]
+pub fn remote_fetch_refspecs(config: &ConfigSet, remote_name: &str) -> Vec<FetchRefspec> {
+    let key = format!("remote.{remote_name}.fetch");
+    let specs = collect_refspecs(config, &key);
+    let has_positive = specs.iter().any(|s| !s.negative);
+    if has_positive {
+        specs
+    } else {
+        let mut out = default_fetch_refspecs(remote_name);
+        out.extend(specs);
+        out
+    }
 }
 
 /// Reverse-map a local ref through configured refspecs to find

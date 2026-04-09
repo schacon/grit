@@ -266,6 +266,7 @@ pub fn run(args: Args) -> Result<()> {
         refspecs: args.refspecs.clone(),
         filter: None,
         all: false,
+        multiple: false,
         tags: false,
         no_tags: false,
         prune: false,
