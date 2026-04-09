@@ -3,6 +3,8 @@
 //! Only **local (file://)** transports are supported.  Copies objects from
 //! the local repository to the remote and updates remote refs.
 
+use crate::protocol_wire;
+use crate::wire_trace;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{parse_bool, parse_color, ConfigFile, ConfigScope, ConfigSet};
@@ -245,7 +247,27 @@ fn push_to_url(
     push_all: bool,
     push_refspecs_from_config: &[String],
 ) -> Result<()> {
-    let remote_path = if crate::ssh_transport::is_configured_ssh_url(url) {
+    if protocol_wire::effective_client_protocol_version() == 1 {
+        wire_trace::trace_packet_push('<', "version 1");
+    }
+    if url.starts_with("git://") && protocol_wire::effective_client_protocol_version() == 1 {
+        if let Ok(parsed) = crate::fetch_transport::parse_git_url(url) {
+            let virtual_host = std::env::var("GIT_OVERRIDE_VIRTUAL_HOST")
+                .unwrap_or_else(|_| format!("{}:{}", parsed.host, parsed.port));
+            let show = format!(
+                "git-receive-pack {}\\0host={}\\0\\0version=1\\0",
+                parsed.path, virtual_host
+            );
+            wire_trace::trace_packet_push('>', &show);
+        }
+    }
+    let remote_path = if url.starts_with("git://") {
+        crate::protocol::check_protocol_allowed("git", Some(&repo.git_dir))?;
+        let Some(p) = crate::fetch_transport::try_local_path_for_git_daemon_url(url) else {
+            bail!("git: could not resolve '{}' to a local repository", url);
+        };
+        p
+    } else if crate::ssh_transport::is_configured_ssh_url(url) {
         crate::protocol::check_protocol_allowed("ssh", Some(&repo.git_dir))?;
         let spec = crate::ssh_transport::parse_ssh_url(url)?;
         let Some(gd) = crate::ssh_transport::try_local_git_dir(&spec) else {
@@ -271,6 +293,16 @@ fn push_to_url(
             remote_path.display()
         )
     })?;
+
+    if crate::ssh_transport::is_configured_ssh_url(url) {
+        if let Ok(spec) = crate::ssh_transport::parse_ssh_url(url) {
+            let _ = crate::ssh_transport::record_fake_ssh_line(
+                &spec.host,
+                "git-receive-pack",
+                &crate::ssh_transport::ssh_remote_repo_path_for_display(&remote_repo.git_dir),
+            );
+        }
+    }
 
     let remote_config = ConfigSet::load(Some(&remote_repo.git_dir), false)?;
 

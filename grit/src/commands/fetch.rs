@@ -5,6 +5,7 @@
 //! repository, copies missing objects (loose + packs), and updates
 //! remote-tracking refs under `refs/remotes/<remote>/`.
 
+use crate::protocol_wire;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
@@ -245,7 +246,13 @@ fn fetch_remote(
             .with_context(|| format!("remote '{remote_name}' not found; no such remote"))?
     };
 
-    let mut remote_path = if crate::ssh_transport::is_configured_ssh_url(&url) {
+    let mut remote_path = if url.starts_with("git://") {
+        crate::protocol::check_protocol_allowed("git", Some(git_dir))?;
+        let Some(p) = crate::fetch_transport::try_local_path_for_git_daemon_url(&url) else {
+            bail!("git: could not resolve '{}' to a local repository", url);
+        };
+        p
+    } else if crate::ssh_transport::is_configured_ssh_url(&url) {
         crate::protocol::check_protocol_allowed("ssh", Some(git_dir))?;
         let spec = crate::ssh_transport::parse_ssh_url(&url)?;
         let Some(gd) = crate::ssh_transport::try_local_git_dir(&spec) else {
@@ -295,6 +302,15 @@ fn fetch_remote(
         )
     })?;
 
+    if crate::ssh_transport::is_configured_ssh_url(&url) {
+        if let Ok(spec) = crate::ssh_transport::parse_ssh_url(&url) {
+            let _ = crate::ssh_transport::record_fake_ssh_line(
+                &spec.host,
+                "git-upload-pack",
+                &crate::ssh_transport::ssh_remote_repo_path_for_display(&remote_repo.git_dir),
+            );
+        }
+    }
     let fetch_key = format!("remote.{remote_name}.fetch");
     let mut configured_refspecs = collect_refspecs(config, &fetch_key);
     let had_configured_fetch = !configured_refspecs.is_empty();
@@ -344,12 +360,13 @@ fn fetch_remote(
         config.get(&key)
     });
 
+    let client_proto = protocol_wire::effective_client_protocol_version();
     // Local fetch with skipping negotiator uses upload-pack for configured/default fetches.
     // Explicit command-line refspecs (including negative `^` patterns) are handled only on the
     // direct local path — upload-pack negotiation does not build FETCH_HEAD for those (t5582).
-    let use_upload_pack_negotiation = use_skipping
-        && !crate::ssh_transport::is_configured_ssh_url(&url)
-        && !user_passed_cli_refspecs;
+    // `protocol.version=1` also requires upload-pack so packet traces show `fetch< version 1`.
+    let use_upload_pack_negotiation = !crate::ssh_transport::is_configured_ssh_url(&url)
+        && ((use_skipping && !user_passed_cli_refspecs) || client_proto == 1);
 
     let upload_pack_refspecs: &[String] = if prefetch_left_no_positive {
         &[]
@@ -357,14 +374,24 @@ fn fetch_remote(
         cli_refspecs
     };
 
-    let (remote_heads, remote_tags) = if use_upload_pack_negotiation {
+    let (remote_heads, remote_tags) = if url.starts_with("git://") {
+        crate::protocol::check_protocol_allowed("git", Some(git_dir))?;
+        // Always use the native git:// transport so `GIT_TRACE_PACKET` matches upstream
+        // (`fetch> ...\\0\\0version=1\\0`), not a local upload-pack pipe.
+        let (heads, tags, _, _) =
+            crate::fetch_transport::with_packet_trace_identity("fetch", || {
+                crate::fetch_transport::fetch_via_git_protocol_skipping(git_dir, &url, cli_refspecs)
+            })?;
+        (heads, tags)
+    } else if use_upload_pack_negotiation {
         crate::protocol::check_protocol_allowed("file", Some(git_dir))?;
-        crate::fetch_transport::fetch_via_upload_pack_skipping(
+        let (heads, tags, _, _) = crate::fetch_transport::fetch_via_upload_pack_skipping(
             git_dir,
             &remote_path,
             upload_pack_cmd.as_deref(),
             upload_pack_refspecs,
-        )?
+        )?;
+        (heads, tags)
     } else {
         let heads = refs::list_refs(&remote_repo.git_dir, "refs/heads/")?;
         let tags = refs::list_refs(&remote_repo.git_dir, "refs/tags/")?;

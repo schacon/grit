@@ -26,8 +26,10 @@ mod pack_objects_upload;
 pub mod pathspec;
 pub mod pkt_line;
 pub mod protocol;
+mod protocol_wire;
 mod ssh_transport;
 mod trace_packet;
+mod wire_trace;
 
 mod upstream_help_builtin_synopsis {
     include!(concat!(env!("OUT_DIR"), "/upstream_help_synopsis.rs"));

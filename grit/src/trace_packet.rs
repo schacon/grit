@@ -1,7 +1,7 @@
 //! Append-only helpers for `GIT_TRACE_PACKET` (compat with upstream Git tests).
 
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{stderr, Write};
 
 /// Open the trace destination from `GIT_TRACE_PACKET`, if enabled.
 ///
@@ -25,6 +25,12 @@ pub fn trace_packet_line(line: &[u8]) {
     let Some(dest) = trace_packet_dest() else {
         return;
     };
+    if dest == "/dev/stderr" {
+        let mut err = stderr().lock();
+        let _ = err.write_all(line);
+        let _ = err.write_all(b"\n");
+        return;
+    }
     if let Ok(mut out) = OpenOptions::new().create(true).append(true).open(&dest) {
         let _ = out.write_all(line);
         let _ = out.write_all(b"\n");

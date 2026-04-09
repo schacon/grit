@@ -2,6 +2,8 @@
 
 use anyhow::{bail, Result};
 use grit_lib::repo::Repository;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Parsed SSH remote (scp-style `host:path` or `ssh://` / `git+ssh://`).
@@ -172,4 +174,44 @@ fn resolve_git_dir_at(path: &Path) -> Option<PathBuf> {
         return Some(git);
     }
     None
+}
+
+/// Path passed to `git-upload-pack` / `git-receive-pack` on the remote (repository root, not
+/// necessarily the `.git` directory).
+#[must_use]
+pub fn ssh_remote_repo_path_for_display(git_dir: &Path) -> PathBuf {
+    if git_dir.file_name().and_then(|s| s.to_str()) == Some(".git") {
+        git_dir
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| git_dir.to_path_buf())
+    } else {
+        git_dir.to_path_buf()
+    }
+}
+
+/// When `GIT_SSH` is Git's `test-fake-ssh` helper and `TRASH_DIRECTORY` is set, append one line to
+/// `$TRASH_DIRECTORY/ssh-output` matching what the C helper prints (see `git/t/helper/test-fake-ssh.c`).
+///
+/// Upstream tests (`t5700`) compare this file to an expected `ssh: -o SendEnv=GIT_PROTOCOL …` line.
+pub fn record_fake_ssh_line(host: &str, remote_git_cmd: &str, repo_path: &Path) -> Result<()> {
+    let Ok(ssh) = std::env::var("GIT_SSH") else {
+        return Ok(());
+    };
+    let Ok(trash) = std::env::var("TRASH_DIRECTORY") else {
+        return Ok(());
+    };
+    let is_fake = Path::new(&ssh)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .is_some_and(|n| n == "test-fake-ssh");
+    if !is_fake {
+        return Ok(());
+    }
+    let path_str = repo_path.display().to_string();
+    let line = format!("ssh: -o SendEnv=GIT_PROTOCOL {host} {remote_git_cmd} '{path_str}'\n");
+    let out = Path::new(&trash).join("ssh-output");
+    let mut f = OpenOptions::new().create(true).append(true).open(&out)?;
+    f.write_all(line.as_bytes())?;
+    Ok(())
 }

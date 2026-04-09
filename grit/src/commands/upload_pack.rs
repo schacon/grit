@@ -6,16 +6,21 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
+use grit_lib::diff::zero_oid;
 use grit_lib::merge_base;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
+use grit_lib::state::resolve_head;
+use grit_lib::state::HeadState;
 use std::collections::HashSet;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use crate::commands::serve_v2::{serve_loop, ServerCaps};
 use crate::pkt_line;
+use crate::protocol_wire;
 
 /// Arguments for `grit upload-pack`.
 #[derive(Debug, ClapArgs)]
@@ -38,7 +43,8 @@ pub fn run(args: Args) -> Result<()> {
         )
     })?;
 
-    if server_protocol_version_from_env() == 2 {
+    let server_proto = protocol_wire::server_protocol_version_from_git_protocol_env();
+    if server_proto == 2 {
         let caps = ServerCaps::load(&repo.git_dir);
         if args.advertise_refs {
             let mut out = io::stdout();
@@ -57,10 +63,14 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if args.advertise_refs {
-        return advertise_refs_with_caps(&repo);
+        return advertise_refs_with_caps(&repo, server_proto);
     }
 
     let mut out = io::stdout();
+    if server_proto == 1 {
+        pkt_line::write_line(&mut out, "version 1")?;
+        out.flush()?;
+    }
     write_ref_advertisement(&mut out, &repo.git_dir)?;
     pkt_line::write_flush(&mut out)?;
     out.flush()?;
@@ -204,10 +214,17 @@ fn ok_to_give_up(
 
 fn write_ref_advertisement(w: &mut impl Write, git_dir: &Path) -> Result<()> {
     let version = crate::version_string();
+    let set = ConfigSet::load(Some(git_dir), false).unwrap_or_default();
+    let object_format = set
+        .get("extensions.objectformat")
+        .or_else(|| set.get("extensions.objectFormat"))
+        .map(|s| s.to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "sha1".to_owned());
     let caps = format!(
         "multi_ack thin-pack side-band side-band-64k ofs-delta shallow deepen-since deepen-not \
          deepen-relative no-progress include-tag multi_ack_detailed allow-tip-sha1-in-want \
-         allow-reachable-sha1-in-want no-done symref=HEAD:{} filter object-format=sha1 \
+         allow-reachable-sha1-in-want no-done symref=HEAD:{} filter object-format={object_format} \
          agent=git/{} ref-in-want",
         refs::read_symbolic_ref(git_dir, "HEAD")
             .ok()
@@ -222,6 +239,42 @@ fn write_ref_advertisement(w: &mut impl Write, git_dir: &Path) -> Result<()> {
         let len = 4 + line.len();
         write!(w, "{:04x}{}", len, line)?;
         first = false;
+    } else {
+        // Unborn or dangling `HEAD` symref: Git omits a `HEAD` advertisement and may use the
+        // first non-branch/non-tag ref as the capability carrier (see `t5700` branchless remote).
+        let under_refs = refs::list_refs(git_dir, "refs/")?;
+        let non_standard: Vec<(String, ObjectId)> = under_refs
+            .into_iter()
+            .filter(|(n, _)| !n.starts_with("refs/heads/") && !n.starts_with("refs/tags/"))
+            .collect();
+        if !non_standard.is_empty() {
+            for (i, (refname, oid)) in non_standard.iter().enumerate() {
+                let line = if i == 0 {
+                    format!("{}\t{}\0{}\n", oid.to_hex(), refname, caps)
+                } else {
+                    format!("{}\t{}\n", oid.to_hex(), refname)
+                };
+                let len = 4 + line.len();
+                write!(w, "{:04x}{}", len, line)?;
+            }
+            first = false;
+        } else if let Ok(HeadState::Detached { oid }) = resolve_head(git_dir) {
+            let line = format!("{}\tHEAD\0{}\n", oid.to_hex(), caps);
+            let len = 4 + line.len();
+            write!(w, "{:04x}{}", len, line)?;
+            first = false;
+        } else if let Ok(HeadState::Branch { oid: Some(oid), .. }) = resolve_head(git_dir) {
+            let line = format!("{}\tHEAD\0{}\n", oid.to_hex(), caps);
+            let len = 4 + line.len();
+            write!(w, "{:04x}{}", len, line)?;
+            first = false;
+        } else if let Ok(HeadState::Branch { oid: None, .. }) = resolve_head(git_dir) {
+            let z = zero_oid();
+            let line = format!("{}\tHEAD\0{}\n", z.to_hex(), caps);
+            let len = 4 + line.len();
+            write!(w, "{:04x}{}", len, line)?;
+            first = false;
+        }
     }
 
     let all_refs = list_all_refs(git_dir)?;
@@ -241,8 +294,12 @@ fn write_ref_advertisement(w: &mut impl Write, git_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn advertise_refs_with_caps(repo: &Repository) -> Result<()> {
+fn advertise_refs_with_caps(repo: &Repository, server_proto: u8) -> Result<()> {
     let mut out = io::stdout();
+    if server_proto == 1 {
+        pkt_line::write_line(&mut out, "version 1")?;
+        out.flush()?;
+    }
     write_ref_advertisement(&mut out, &repo.git_dir)?;
     write!(out, "0000")?;
     out.flush()?;
@@ -257,26 +314,6 @@ fn list_all_refs(git_dir: &Path) -> Result<Vec<(String, ObjectId)>> {
         }
     }
     Ok(result)
-}
-
-/// Highest protocol version requested via `GIT_PROTOCOL` (`version=0`, `version=1`, `version=2`).
-///
-/// When unset, returns 0 so behaviour matches historical Git upload-pack defaults.
-fn server_protocol_version_from_env() -> u8 {
-    let Ok(raw) = std::env::var("GIT_PROTOCOL") else {
-        return 0;
-    };
-    let mut best = 0u8;
-    for part in raw.split(':') {
-        let Some(rest) = part.strip_prefix("version=") else {
-            continue;
-        };
-        let v = rest.parse::<u8>().unwrap_or(0);
-        if v > best {
-            best = v;
-        }
-    }
-    best
 }
 
 /// Open a repository (bare or non-bare).

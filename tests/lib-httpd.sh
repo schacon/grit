@@ -73,6 +73,13 @@ for _a in "\$@"; do
 	http://*|https://*) _http=1; break ;;
 	esac
 done
+# After start_httpd, \$HTTPD_URL is set. Fetch/pull/push do not repeat the remote URL on the
+# command line, so delegate those to real git so smart-HTTP transport keeps working in the suite.
+if test "\$_http" != 1 && test -n "\${HTTPD_URL-}"; then
+	case "\$*" in
+	*fetch*|*pull*|*push*) _http=1 ;;
+	esac
+fi
 # test-tool bundle-uri ls-remote <url> must use grit: system git has no test-tool.
 case "\$*" in
 *"test-tool"*"bundle-uri"*) _http=0 ;;
@@ -182,6 +189,7 @@ start_httpd() {
 
 	HTTPD_DEST="127.0.0.1:$LIB_HTTPD_PORT"
 	HTTPD_URL="$HTTPD_PROTO://$HTTPD_DEST"
+	export HTTPD_URL
 	HTTPD_URL_USER="$HTTPD_PROTO://user%40host@$HTTPD_DEST"
 	HTTPD_URL_USER_PASS="$HTTPD_PROTO://user%40host:pass%40host@$HTTPD_DEST"
 

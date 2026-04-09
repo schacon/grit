@@ -1016,7 +1016,7 @@ t5618-alternate-refs	t5	yes	6	2	4	false	ok	0
 t5619-clone-local-ambiguous-transport	t5	yes	2	0	2	false	ok	0
 t5620-backfill	t5	yes	10	5	5	false	ok	0
 t5621-clone-revision	t5	yes	12	12	0	true	ok	0
-t5700-protocol-v1	t5	yes	24	5	19	false	ok	0
+t5700-protocol-v1	t5	yes	24	24	0	true	ok	0
 t5701-git-serve	t5	yes	25	25	0	true	ok	0
 t5702-protocol-v2	t5	yes	85	12	73	false	ok	0
 t5703-upload-pack-ref-in-want	t5	yes	26	4	22	false	ok	0
