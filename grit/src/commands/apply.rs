@@ -12,15 +12,17 @@
 //! - `grit apply --directory=<dir>` — prepend directory to paths
 //! - Reads from stdin if no file argument given
 
+use crate::explicit_exit::SilentNonZeroExit;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::index::{Index, IndexEntry};
-use grit_lib::objects::ObjectKind;
+use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::quote_path::quote_c_style;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
+use grit_lib::unpack_objects::apply_delta;
 use grit_lib::ws::{self, WhitespaceGitAttr, WS_BLANK_AT_EOF, WS_DEFAULT_RULE, WS_INCOMPLETE_LINE};
 use regex::Regex;
 use std::borrow::Cow;
@@ -335,6 +337,10 @@ struct FilePatch {
     new_oid: Option<String>,
     /// Parsed binary patch payload (`GIT binary patch`) if present.
     binary_patch: Option<BinaryPatchPayload>,
+    /// True when the patch body is only `Binary files … differ` / `Files … differ` (no literal/delta).
+    ///
+    /// Git resolves the postimage from the object database when the `index` line carries full OIDs.
+    binary_metadata_only: bool,
     /// Hunks to apply.
     hunks: Vec<Hunk>,
     /// Merged `core.whitespace` + `whitespace` attribute (Git `ws_rule`); `0` before assignment.
@@ -344,14 +350,12 @@ struct FilePatch {
 /// Binary patch payload as compressed base85 chunks for forward/reverse apply.
 #[derive(Debug, Clone)]
 struct BinaryPatchPayload {
-    #[allow(dead_code)]
     forward_compressed: Vec<u8>,
-    #[allow(dead_code)]
     forward_declared_size: usize,
-    #[allow(dead_code)]
+    forward_is_delta: bool,
     reverse_compressed: Vec<u8>,
-    #[allow(dead_code)]
     reverse_declared_size: usize,
+    reverse_is_delta: bool,
 }
 
 impl FilePatch {
@@ -458,6 +462,31 @@ fn sanitize_file_patch_headers(fp: &mut FilePatch) {
     .flatten()
     {
         sanitize_patch_header_value(s);
+    }
+}
+
+/// Strip `a/` / `b/` prefixes and apply `-p` stripping for git-generated paths (Git `git-apply`).
+fn normalize_git_apply_paths(fp: &mut FilePatch, strip: usize) {
+    fn map_path(path: &str, strip: usize) -> String {
+        if path == "/dev/null" {
+            return path.to_string();
+        }
+        if let Some(rest) = path.strip_prefix("a/").or_else(|| path.strip_prefix("b/")) {
+            return path_after_strip(rest, strip);
+        }
+        path.to_string()
+    }
+    if let Some(ref mut p) = fp.diff_old_path {
+        *p = map_path(p, strip);
+    }
+    if let Some(ref mut p) = fp.diff_new_path {
+        *p = map_path(p, strip);
+    }
+    if let Some(ref mut p) = fp.old_path {
+        *p = map_path(p, strip);
+    }
+    if let Some(ref mut p) = fp.new_path {
+        *p = map_path(p, strip);
     }
 }
 
@@ -928,6 +957,7 @@ fn parse_traditional_patch_pair(
         old_oid: None,
         new_oid: None,
         binary_patch: None,
+        binary_metadata_only: false,
         hunks: Vec::new(),
         ws_rule: 0,
     };
@@ -1138,7 +1168,8 @@ fn find_name_extended_header(rest: &str, p_extended: usize) -> Option<String> {
 /// Parse a unified diff into a list of `FilePatch` entries.
 ///
 /// `strip` is Git's `p_value` (`-p` count, default 1).
-fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
+/// `patch_label` is used in binary parse errors (e.g. path or `"<stdin>"`).
+fn parse_patch(input: &str, strip: usize, patch_label: &str) -> Result<Vec<FilePatch>> {
     let lines: Vec<&str> = input.lines().collect();
     let mut patches = Vec::new();
     let mut i = 0;
@@ -1168,6 +1199,7 @@ fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
                 old_oid: None,
                 new_oid: None,
                 binary_patch: None,
+                binary_metadata_only: false,
                 hunks: Vec::new(),
                 ws_rule: 0,
             };
@@ -1234,9 +1266,17 @@ fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
                         fp.new_oid = Some(new.to_string());
                     }
                 } else if line == "GIT binary patch" {
-                    let (binary_patch, next_i) = parse_binary_patch(&lines, i + 1)?;
+                    let git_binary_line_1based = i + 1;
+                    let (binary_patch, next_i) =
+                        parse_binary_patch(&lines, i + 1, patch_label, git_binary_line_1based)?;
                     fp.binary_patch = Some(binary_patch);
                     i = next_i;
+                    break;
+                } else if (line.starts_with("Binary files ") || line.starts_with("Files "))
+                    && line.ends_with(" differ")
+                {
+                    fp.binary_metadata_only = true;
+                    i += 1;
                     break;
                 }
                 // skip other extended headers
@@ -1311,6 +1351,11 @@ fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
         } else {
             i += 1;
         }
+    }
+
+    normalize_mismatched_diff_git_paths(&mut patches, p_strip);
+    for fp in patches.iter_mut() {
+        normalize_git_apply_paths(fp, p_strip);
     }
 
     Ok(patches)
@@ -1397,31 +1442,107 @@ fn subproject_commit_from_hunks(fp: &FilePatch) -> String {
 }
 
 /// Parse a `GIT binary patch` payload.
-fn parse_binary_patch(lines: &[&str], mut i: usize) -> Result<(BinaryPatchPayload, usize)> {
-    let (forward_compressed, forward_declared_size) = parse_binary_literal(lines, &mut i)?;
-    let (reverse_compressed, reverse_declared_size) =
-        if i < lines.len() && lines[i].starts_with("literal ") {
-            parse_binary_literal(lines, &mut i)?
-        } else {
-            (Vec::new(), 0)
-        };
+///
+/// `i` is the 0-based index of the first line after `GIT binary patch` (the `literal`/`delta` line).
+/// `git_binary_line_1based` is the 1-based line number of the `GIT binary patch` header (for errors).
+fn parse_binary_patch(
+    lines: &[&str],
+    mut i: usize,
+    patch_label: &str,
+    git_binary_line_1based: usize,
+) -> Result<(BinaryPatchPayload, usize)> {
+    let start_line = i + 1;
+    let (forward_compressed, forward_declared_size, forward_is_delta, mut i) =
+        parse_binary_literal(
+            lines,
+            &mut i,
+            patch_label,
+            start_line,
+            git_binary_line_1based,
+        )?;
+    let (reverse_compressed, reverse_declared_size, reverse_is_delta, i_after_rev) = if i < lines
+        .len()
+        && (lines[i].starts_with("literal ") || lines[i].starts_with("delta "))
+    {
+        let rev_start = i + 1;
+        parse_binary_literal(
+            lines,
+            &mut i,
+            patch_label,
+            rev_start,
+            git_binary_line_1based,
+        )?
+    } else {
+        (Vec::new(), 0, false, i)
+    };
+    i = i_after_rev;
 
     Ok((
         BinaryPatchPayload {
             forward_compressed,
             forward_declared_size,
+            forward_is_delta,
             reverse_compressed,
             reverse_declared_size,
+            reverse_is_delta,
         },
         i,
     ))
 }
 
-/// Parse one `literal <size>` block from a binary patch.
-fn parse_binary_literal(lines: &[&str], i: &mut usize) -> Result<(Vec<u8>, usize)> {
+/// True when `hex` is a full 40-character object id (Git `git apply` binary full-index requirement).
+fn oid_hex_is_full(hex: &str) -> bool {
+    hex.len() == 40 && hex.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn binary_patch_report_path(fp: &FilePatch) -> String {
+    fp.target_path()
+        .or_else(|| fp.effective_path())
+        .unwrap_or("<?>")
+        .to_string()
+}
+
+/// Postimage bytes for a metadata-only binary patch: read `new_oid` from the object database.
+fn binary_postimage_from_odb(repo: &Repository, fp: &FilePatch) -> Result<Vec<u8>> {
+    let path = binary_patch_report_path(fp);
+    let Some(new_hex) = fp.new_oid.as_deref() else {
+        bail!("cannot apply binary patch to '{path}' without full index line");
+    };
+    let Some(old_hex) = fp.old_oid.as_deref() else {
+        bail!("cannot apply binary patch to '{path}' without full index line");
+    };
+    if !oid_hex_is_full(new_hex) || !oid_hex_is_full(old_hex) {
+        bail!("cannot apply binary patch to '{path}' without full index line");
+    }
+    let new_id = ObjectId::from_hex(new_hex).context("invalid new object id in index line")?;
+    if new_id.is_zero() {
+        return Ok(Vec::new());
+    }
+    let obj = repo
+        .odb
+        .read(&new_id)
+        .with_context(|| format!("the necessary postimage {new_hex} cannot be read"))?;
+    if obj.kind != ObjectKind::Blob {
+        bail!("object {new_hex} is not a blob");
+    }
+    Ok(obj.data)
+}
+
+/// Parse one `literal <size>` or `delta <size>` block from a binary patch.
+fn parse_binary_literal(
+    lines: &[&str],
+    i: &mut usize,
+    patch_label: &str,
+    _header_line_no: usize,
+    unrecognized_report_line: usize,
+) -> Result<(Vec<u8>, usize, bool, usize)> {
     let header = lines.get(*i).copied().unwrap_or_default();
-    let Some(size_str) = header.strip_prefix("literal ") else {
-        bail!("unsupported binary patch section: '{header}'");
+    let (size_str, is_delta) = if let Some(s) = header.strip_prefix("literal ") {
+        (s, false)
+    } else if let Some(s) = header.strip_prefix("delta ") {
+        (s, true)
+    } else {
+        bail!("unrecognized binary patch at {patch_label}:{unrecognized_report_line}");
     };
     let declared_size: usize = size_str
         .trim()
@@ -1436,11 +1557,37 @@ fn parse_binary_literal(lines: &[&str], i: &mut usize) -> Result<(Vec<u8>, usize
             *i += 1;
             break;
         }
-        decode_binary_patch_line(line, &mut compressed)?;
+        let line_no = *i + 1;
+        if let Err(e) = decode_binary_patch_line(line, &mut compressed) {
+            let eof_line = lines.len().saturating_add(1);
+            let inflated_try = inflate_binary_payload(&compressed).ok();
+            let size_bad = !is_delta
+                && inflated_try
+                    .as_ref()
+                    .map_or(true, |b| b.len() != declared_size);
+            if size_bad {
+                bail!("corrupt binary patch at {patch_label}:{eof_line}: ");
+            }
+            return Err(anyhow::anyhow!(
+                "corrupt binary patch at {patch_label}:{line_no}: {line}: {e}"
+            ));
+        }
         *i += 1;
     }
 
-    Ok((compressed, declared_size))
+    let inflated = match inflate_binary_payload(&compressed) {
+        Ok(v) => v,
+        Err(_) => {
+            let eof_line = lines.len().saturating_add(1);
+            bail!("corrupt binary patch at {patch_label}:{eof_line}: ");
+        }
+    };
+    if !is_delta && inflated.len() != declared_size {
+        let eof_line = lines.len().saturating_add(1);
+        bail!("corrupt binary patch at {patch_label}:{eof_line}: ");
+    }
+
+    Ok((compressed, declared_size, is_delta, *i))
 }
 
 /// Decode one binary patch payload line into compressed bytes.
@@ -1530,8 +1677,98 @@ fn inflate_binary_payload(compressed: &[u8]) -> Result<Vec<u8>> {
     decoder
         .read_to_end(&mut out)
         .context("failed to inflate binary patch payload")?;
-    if !out.is_empty() && !out.ends_with(b"\n") {
-        out.push(b'\n');
+    Ok(out)
+}
+
+fn apply_binary_patch_fragment(
+    compressed: &[u8],
+    is_delta: bool,
+    preimage: &[u8],
+) -> Result<Vec<u8>> {
+    let inflated = inflate_binary_payload(compressed)?;
+    if is_delta {
+        apply_delta(preimage, &inflated).map_err(|e| anyhow::anyhow!("{e}"))
+    } else {
+        Ok(inflated)
+    }
+}
+
+fn verify_old_oid_matches_blob(expected_oid: &str, content: &[u8]) -> Result<()> {
+    if oid_hex_is_full(expected_oid) {
+        let expected_id = ObjectId::from_hex(expected_oid).context("invalid object id in patch")?;
+        if expected_id.is_zero() {
+            if !content.is_empty() {
+                bail!("patch does not apply");
+            }
+            return Ok(());
+        }
+    }
+    let actual = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, content);
+    let actual_hex = actual.to_hex();
+    if oid_hex_is_full(expected_oid) {
+        if actual_hex != expected_oid {
+            bail!("patch does not apply");
+        }
+    } else if !actual_hex.starts_with(expected_oid) {
+        bail!("patch does not apply");
+    }
+    Ok(())
+}
+
+fn verify_new_oid_matches_blob(expected_oid: &str, content: &[u8]) -> Result<()> {
+    let actual = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, content);
+    let actual_hex = actual.to_hex();
+    if oid_hex_is_full(expected_oid) {
+        if actual_hex != expected_oid {
+            bail!("binary patch creates incorrect result (expecting {expected_oid}, got {actual_hex})");
+        }
+    } else if !actual_hex.starts_with(expected_oid) {
+        bail!("patch does not apply");
+    }
+    Ok(())
+}
+
+/// Read raw bytes that hash like an index blob (clean pipeline when CRLF context is active).
+fn read_worktree_blob_bytes(
+    path: &Path,
+    rel_path: &str,
+    mode_hint: Option<u32>,
+    crlf_ctx: Option<&ApplyCrlfContext>,
+) -> Result<Vec<u8>> {
+    let meta = fs::symlink_metadata(path)?;
+    if meta.file_type().is_symlink() {
+        return read_symlink_target_bytes(path);
+    }
+    let raw = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    // Binary blobs must match the object store byte-for-byte; CRLF conversion would break
+    // `git apply` preimage checks for NUL-containing files (t4103).
+    if grit_lib::merge_file::is_binary(&raw) {
+        return Ok(raw);
+    }
+    if let Some(ctx) = crlf_ctx {
+        let mode = mode_hint.unwrap_or(0o100644);
+        ctx.blob_for_index_hash(path, rel_path, mode)
+    } else {
+        Ok(raw)
+    }
+}
+
+fn resolve_binary_postimage_bytes(
+    repo: Option<&Repository>,
+    fp: &FilePatch,
+    preimage: &[u8],
+) -> Result<Vec<u8>> {
+    if fp.binary_metadata_only {
+        let r =
+            repo.ok_or_else(|| anyhow::anyhow!("cannot apply binary patch (not in repository)"))?;
+        return binary_postimage_from_odb(r, fp);
+    }
+    let Some(bp) = fp.binary_patch.as_ref() else {
+        bail!("missing binary patch data");
+    };
+    let out = apply_binary_patch_fragment(&bp.forward_compressed, bp.forward_is_delta, preimage)?;
+    if let Some(new_hex) = fp.new_oid.as_deref() {
+        verify_new_oid_matches_blob(new_hex, &out)?;
     }
     Ok(out)
 }
@@ -2011,7 +2248,7 @@ fn normalize_mismatched_diff_git_paths(patches: &mut [FilePatch], strip: usize) 
     }
 }
 
-fn validate_patch_headers(patches: &[FilePatch], strip: usize) -> Result<()> {
+fn validate_patch_headers(patches: &[FilePatch], _strip: usize) -> Result<()> {
     for fp in patches {
         if (fp.diff_old_path.is_some() || fp.diff_new_path.is_some())
             && !fp.hunks.is_empty()
@@ -2024,7 +2261,7 @@ fn validate_patch_headers(patches: &[FilePatch], strip: usize) -> Result<()> {
             if let (Some(diff_old), Some(old)) =
                 (fp.diff_old_path.as_deref(), fp.old_path.as_deref())
             {
-                if old != "/dev/null" && path_after_strip(diff_old, strip) != old {
+                if old != "/dev/null" && diff_old != old {
                     bail!("inconsistent old filename");
                 }
             }
@@ -2034,7 +2271,7 @@ fn validate_patch_headers(patches: &[FilePatch], strip: usize) -> Result<()> {
             if let (Some(diff_new), Some(new)) =
                 (fp.diff_new_path.as_deref(), fp.new_path.as_deref())
             {
-                if new != "/dev/null" && path_after_strip(diff_new, strip) != new {
+                if new != "/dev/null" && diff_new != new {
                     bail!("inconsistent new filename");
                 }
             }
@@ -3769,6 +4006,12 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
+    let patch_input_display = if args.patches.len() == 1 && args.patches[0].as_os_str() != "-" {
+        args.patches[0].to_string_lossy().into_owned()
+    } else {
+        "<stdin>".to_string()
+    };
+
     // Read patch input
     let input = if args.patches.is_empty() {
         let mut buf = String::new();
@@ -3797,8 +4040,18 @@ pub fn run(mut args: Args) -> Result<()> {
         buf
     };
 
-    let mut patches = parse_patch(&input, args.strip)?;
-    normalize_mismatched_diff_git_paths(&mut patches, args.strip);
+    let mut patches = match parse_patch(&input, args.strip, &patch_input_display) {
+        Ok(p) => p,
+        Err(e) => {
+            let msg = format!("{e:#}");
+            if msg.contains("unrecognized binary patch at") {
+                eprintln!("error: {msg}");
+                eprintln!(r#"error: No valid patches in input (allow with "--allow-empty")"#);
+                return Err(anyhow::Error::new(SilentNonZeroExit { code: 1 }));
+            }
+            return Err(e);
+        }
+    };
     postprocess_gitlink_file_patches(&mut patches);
     merge_adjacent_blob_to_gitlink_patches(&mut patches);
     validate_patch_headers(&patches, args.strip)?;
@@ -3808,14 +4061,9 @@ pub fn run(mut args: Args) -> Result<()> {
     }
     assign_ws_rules(&mut patches, &args);
     if patches.is_empty() && !args.allow_empty {
-        bail!("No valid patches in input");
+        eprintln!("error: No valid patches in input (allow with \"--allow-empty\")");
+        return Err(anyhow::Error::new(SilentNonZeroExit { code: 1 }));
     }
-
-    let patch_input_display = if args.patches.len() == 1 && args.patches[0].as_os_str() != "-" {
-        args.patches[0].to_string_lossy().into_owned()
-    } else {
-        "<stdin>".to_string()
-    };
 
     // Info-only modes unless explicitly overridden by --apply.
     let info_only = (args.stat || args.numstat || args.summary) && !args.apply;
@@ -4566,6 +4814,32 @@ fn apply_to_worktree(
                 fs::create_dir_all(&path)?;
                 continue;
             }
+            if fp.binary_metadata_only || fp.binary_patch.is_some() {
+                let repo_opt = Repository::discover(None).ok();
+                let preimage = Vec::new();
+                if !args.reject {
+                    if let Some(expected_oid) = fp.old_oid.as_deref() {
+                        if !ws_mode.whitespace_fix {
+                            verify_old_oid_matches_blob(expected_oid, &preimage)?;
+                        }
+                    }
+                }
+                let new_bytes = resolve_binary_postimage_bytes(repo_opt.as_ref(), fp, &preimage)?;
+                if let Some(parent) = path.parent() {
+                    if !parent.as_os_str().is_empty() && !parent.exists() {
+                        fs::create_dir_all(parent)?;
+                    }
+                }
+                fs::write(&path, &new_bytes)
+                    .with_context(|| format!("failed to write {}", path.display()))?;
+                #[cfg(unix)]
+                if let Some(mode) = fp.new_mode.as_deref() {
+                    use std::os::unix::fs::PermissionsExt;
+                    let perm = if mode == "100755" { 0o755 } else { 0o644 };
+                    fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
+                }
+                continue;
+            }
             let content = apply_hunks("", fp, ws_mode, !args.reverse, patch_input_display)
                 .with_context(|| {
                     format!("failed to apply hunks for new file {}", path.display())
@@ -4625,7 +4899,11 @@ fn apply_to_worktree(
         // With `--whitespace=fix`, a prior apply can normalize trailing whitespace so the
         // worktree no longer hashes to the patch's `index` line preimage (see t4125). Git
         // matches hunks against file content instead; skip strict OID checks in that mode.
-        if !args.reject {
+        //
+        // Binary patches verify the preimage against raw blob bytes below; CRLF-normalized
+        // text can disagree with the object store for paths that are binary in the patch.
+        let is_binary_patch = fp.binary_metadata_only || fp.binary_patch.is_some();
+        if !args.reject && !is_binary_patch {
             if let Some(expected_oid) = fp.old_oid.as_deref() {
                 if !ws_mode.whitespace_fix {
                     verify_old_oid_matches_content(expected_oid, &old_content)?;
@@ -4642,11 +4920,29 @@ fn apply_to_worktree(
             None
         };
 
-        if let Some(binary_patch) = fp.binary_patch.as_ref() {
-            if !args.allow_binary_replacement {
-                bail!("cannot apply binary patch without --binary");
+        if fp.binary_metadata_only || fp.binary_patch.is_some() {
+            let repo_opt = Repository::discover(None).ok();
+            if !read_path.exists() {
+                bail!(
+                    "failed to read {}: No such file or directory (os error 2)",
+                    source_adjusted
+                );
             }
-            let new_bytes = inflate_binary_payload(&binary_patch.forward_compressed)?;
+            let mode_hint = fp.old_mode.as_deref().map(parse_mode);
+            let preimage_bytes = read_worktree_blob_bytes(
+                &read_path,
+                &source_adjusted,
+                mode_hint,
+                crlf_ctx.as_ref(),
+            )?;
+            if !args.reject {
+                if let Some(expected_oid) = fp.old_oid.as_deref() {
+                    if !ws_mode.whitespace_fix {
+                        verify_old_oid_matches_blob(expected_oid, &preimage_bytes)?;
+                    }
+                }
+            }
+            let new_bytes = resolve_binary_postimage_bytes(repo_opt.as_ref(), fp, &preimage_bytes)?;
             if source_contains_target {
                 remove_path_for_replacement(&read_path)?;
             }
@@ -4813,11 +5109,30 @@ fn apply_to_index(
             continue;
         }
 
-        if let Some(binary_patch) = fp.binary_patch.as_ref() {
-            if !args.allow_binary_replacement {
-                bail!("cannot apply binary patch without --binary");
+        if fp.binary_metadata_only || fp.binary_patch.is_some() {
+            let preimage_bytes = if fp.is_new {
+                Vec::new()
+            } else {
+                let source_index = if source_adjusted != target_adjusted {
+                    &original_index
+                } else {
+                    &index
+                };
+                let Some(ent) = source_index.get(source_adjusted.as_bytes(), 0) else {
+                    bail!("{source_adjusted} not found in index");
+                };
+                let obj = repo.odb.read(&ent.oid)?;
+                if obj.kind != ObjectKind::Blob {
+                    bail!("{source_adjusted} not found in index");
+                }
+                obj.data
+            };
+            if let Some(expected_oid) = fp.old_oid.as_deref() {
+                if !ws_mode.whitespace_fix {
+                    verify_old_oid_matches_blob(expected_oid, &preimage_bytes)?;
+                }
             }
-            let new_bytes = inflate_binary_payload(&binary_patch.forward_compressed)?;
+            let new_bytes = resolve_binary_postimage_bytes(Some(&repo), fp, &preimage_bytes)?;
             let new_oid = repo.odb.write(ObjectKind::Blob, &new_bytes)?;
 
             let mode = if let Some(m) = fp.new_mode.as_deref() {
@@ -5119,6 +5434,51 @@ fn check_patches(
             if !path.exists() {
                 bail!("{}: does not exist", path.display());
             }
+            continue;
+        }
+
+        if fp.binary_metadata_only || fp.binary_patch.is_some() {
+            let repo_opt = Repository::discover(None).ok();
+            if fp.is_new {
+                if path.exists() {
+                    bail!("{}: already exists", path.display());
+                }
+                let preimage = Vec::new();
+                if let Some(expected_oid) = fp.old_oid.as_deref() {
+                    if !ws_mode.whitespace_fix {
+                        verify_old_oid_matches_blob(expected_oid, &preimage)?;
+                    }
+                }
+                let _ = resolve_binary_postimage_bytes(repo_opt.as_ref(), fp, &preimage)?;
+                continue;
+            }
+            let read_path = fp
+                .source_path()
+                .map(|p| PathBuf::from(adjust_path(p, args.directory.as_deref())))
+                .unwrap_or_else(|| path.clone());
+            let source_adjusted = fp
+                .source_path()
+                .map(|p| adjust_path(p, args.directory.as_deref()))
+                .unwrap_or_else(|| path_adjusted.clone());
+            if !read_path.exists() {
+                bail!(
+                    "failed to read {}: No such file or directory (os error 2)",
+                    source_adjusted
+                );
+            }
+            let mode_hint = fp.old_mode.as_deref().map(parse_mode);
+            let preimage = read_worktree_blob_bytes(
+                &read_path,
+                &source_adjusted,
+                mode_hint,
+                crlf_ctx.as_ref(),
+            )?;
+            if let Some(expected_oid) = fp.old_oid.as_deref() {
+                if !ws_mode.whitespace_fix {
+                    verify_old_oid_matches_blob(expected_oid, &preimage)?;
+                }
+            }
+            let _ = resolve_binary_postimage_bytes(repo_opt.as_ref(), fp, &preimage)?;
             continue;
         }
 

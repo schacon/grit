@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-09 (t4103 / apply binary)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t4103-apply-binary.sh`: 24/24 passed
+
 **2026-04-09 (t4063 / diff blobs)**
 
 - `cargo test -p grit-lib --lib`: 155 passed
