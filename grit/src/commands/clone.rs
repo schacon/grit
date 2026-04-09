@@ -11,6 +11,7 @@ use grit_lib::diff::zero_oid;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs;
+use grit_lib::reftable;
 use grit_lib::repo::{
     init_bare_clone_minimal, init_repository, init_repository_separate_git_dir, Repository,
 };
@@ -148,6 +149,10 @@ pub struct Args {
     /// Store the git directory at this path; work tree uses a gitfile `.git`.
     #[arg(long = "separate-git-dir", value_name = "GITDIR")]
     pub separate_git_dir: Option<PathBuf>,
+
+    /// Ref storage backend for the new repository (`files` or `reftable`).
+    #[arg(long = "ref-format", value_name = "FORMAT")]
+    pub ref_format: Option<String>,
 }
 
 /// Returns `true` when `name` is valid as a remote name (same idea as Git's `valid_remote_name`).
@@ -169,6 +174,77 @@ fn default_branch_from_config() -> Option<String> {
 
 fn default_head_branch_fallback() -> String {
     default_branch_from_config().unwrap_or_else(|| "master".to_owned())
+}
+
+fn resolved_clone_ref_storage(args: &Args) -> Result<&'static str> {
+    match args.ref_format.as_deref() {
+        None | Some("files") => Ok("files"),
+        Some("reftable") => Ok("reftable"),
+        Some(other) => bail!("unknown ref storage format: {other}"),
+    }
+}
+
+fn clone_write_direct_ref(git_dir: &Path, refname: &str, oid_hex: &str) -> Result<()> {
+    let oid =
+        ObjectId::from_hex(oid_hex.trim()).with_context(|| format!("invalid OID for {refname}"))?;
+    if grit_lib::reftable::is_reftable_repo(git_dir) {
+        reftable::reftable_write_ref(git_dir, refname, &oid, None, None)
+            .map_err(|e| anyhow::anyhow!("{e}"))
+    } else {
+        let path = git_dir.join(refname);
+        if let Some(p) = path.parent() {
+            fs::create_dir_all(p)?;
+        }
+        fs::write(path, format!("{}\n", oid.to_hex()))
+            .with_context(|| format!("writing ref {refname}"))
+    }
+}
+
+fn clone_write_symref(git_dir: &Path, refname: &str, target: &str) -> Result<()> {
+    let target = target.trim();
+    if grit_lib::reftable::is_reftable_repo(git_dir) {
+        reftable::reftable_write_symref(git_dir, refname, target, None, None)
+            .map_err(|e| anyhow::anyhow!("{e}"))
+    } else {
+        let path = git_dir.join(refname);
+        if let Some(p) = path.parent() {
+            fs::create_dir_all(p)?;
+        }
+        fs::write(path, format!("ref: {target}\n"))
+            .with_context(|| format!("writing symref {refname}"))
+    }
+}
+
+fn clone_ref_file_exists(git_dir: &Path, refname: &str) -> bool {
+    if grit_lib::reftable::is_reftable_repo(git_dir) {
+        grit_lib::refs::resolve_ref(git_dir, refname).is_ok()
+    } else {
+        git_dir.join(refname).is_file()
+    }
+}
+
+fn clone_read_direct_ref_oid(git_dir: &Path, refname: &str) -> Result<String> {
+    if grit_lib::reftable::is_reftable_repo(git_dir) {
+        let oid = grit_lib::refs::resolve_ref(git_dir, refname)
+            .with_context(|| format!("reading ref {refname}"))?;
+        Ok(oid.to_hex())
+    } else {
+        let path = git_dir.join(refname);
+        let s = fs::read_to_string(&path).with_context(|| format!("reading ref file {refname}"))?;
+        Ok(s.trim().to_string())
+    }
+}
+
+fn strip_refs_for_revision_clone(git_dir: &Path) -> Result<()> {
+    if grit_lib::reftable::is_reftable_repo(git_dir) {
+        let refs = grit_lib::refs::list_refs(git_dir, "refs/")?;
+        for (name, _) in refs {
+            reftable::reftable_delete_ref(git_dir, &name).map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
+        Ok(())
+    } else {
+        strip_refs_under(&git_dir.join("refs"))
+    }
 }
 
 fn clone_default_remote_from_c_flags(config: &[String]) -> Option<String> {
@@ -248,7 +324,7 @@ fn head_points_to_missing_ref(repo: &Repository) -> bool {
         return false;
     };
     let refname = refname.trim();
-    !repo.git_dir.join(refname).exists()
+    !clone_ref_file_exists(&repo.git_dir, refname)
 }
 
 /// Clone checked out the remote's unborn default branch (symref exists, branch ref missing on source).
@@ -267,7 +343,7 @@ fn is_unborn_remote_default_checkout(
     let Some(h) = sr.strip_prefix("refs/heads/") else {
         return false;
     };
-    h == branch && !source_git_dir.join(sr).exists() && head_points_to_missing_ref(dest)
+    h == branch && !clone_ref_file_exists(source_git_dir, sr) && head_points_to_missing_ref(dest)
 }
 
 /// Perform checkout of `HEAD` when it points at a missing branch (unborn), matching Git clone.
@@ -282,12 +358,10 @@ fn checkout_head_allow_unborn(repo: &Repository) -> Result<()> {
 
     let oid = if let Some(refname) = head.strip_prefix("ref: ") {
         let refname = refname.trim();
-        let ref_path = repo.git_dir.join(refname);
-        if !ref_path.exists() {
+        if !clone_ref_file_exists(&repo.git_dir, refname) {
             return Ok(());
         }
-        let oid_str =
-            fs::read_to_string(&ref_path).with_context(|| format!("reading ref {refname}"))?;
+        let oid_str = clone_read_direct_ref_oid(&repo.git_dir, refname)?;
         ObjectId::from_hex(oid_str.trim()).with_context(|| format!("invalid OID in {refname}"))?
     } else if head.len() == 40 && head.chars().all(|c| c.is_ascii_hexdigit()) {
         ObjectId::from_hex(head).context("invalid OID in HEAD")?
@@ -425,6 +499,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
     maybe_warn_shallow_options_ignored(&repo_path_str, &args);
     let remote_name = resolve_remote_name(&args)?;
+    let ref_storage = resolved_clone_ref_storage(&args)?;
 
     // Determine target directory
     let target_name = args.directory.unwrap_or_else(|| {
@@ -491,6 +566,7 @@ pub fn run(mut args: Args) -> Result<()> {
             sep_git,
             initial_branch,
             template_dir.as_deref(),
+            ref_storage,
         )
         .with_context(|| {
             format!(
@@ -499,7 +575,7 @@ pub fn run(mut args: Args) -> Result<()> {
             )
         })?
     } else if args.bare && args.template.as_ref().is_some_and(|s| s.is_empty()) {
-        init_bare_clone_minimal(&target_path, initial_branch).with_context(|| {
+        init_bare_clone_minimal(&target_path, initial_branch, ref_storage).with_context(|| {
             format!(
                 "failed to initialize bare clone '{}'",
                 target_path.display()
@@ -513,6 +589,7 @@ pub fn run(mut args: Args) -> Result<()> {
             args.bare,
             initial_branch,
             template_dir.as_deref(),
+            ref_storage,
         )
         .with_context(|| format!("failed to initialize '{}'", target_path.display()))?
     };
@@ -599,19 +676,12 @@ pub fn run(mut args: Args) -> Result<()> {
         if let Some(branch) =
             resolve_remote_tracked_branch_name(&dest.git_dir, &remote_name, initial_branch)
         {
-            let remote_ref = dest
-                .git_dir
-                .join("refs/remotes")
-                .join(&remote_name)
-                .join(&branch);
-            let oid_str = fs::read_to_string(&remote_ref).context("reading remote ref")?;
-            let oid = oid_str.trim().to_string();
+            let remote_ref_name = format!("refs/remotes/{remote_name}/{branch}");
+            let oid = clone_read_direct_ref_oid(&dest.git_dir, &remote_ref_name)
+                .context("reading remote ref")?;
 
-            let local_ref_path = dest.git_dir.join("refs/heads").join(&branch);
-            if let Some(parent) = local_ref_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&local_ref_path, format!("{oid}\n"))?;
+            let local_ref_name = format!("refs/heads/{branch}");
+            clone_write_direct_ref(&dest.git_dir, &local_ref_name, &oid)?;
 
             fs::write(
                 dest.git_dir.join("HEAD"),
@@ -622,7 +692,9 @@ pub fn run(mut args: Args) -> Result<()> {
                 .context("setting up branch tracking")?;
         } else if let Some(ref branch) = head_branch {
             if let Some(sr) = source_head_symref.as_deref() {
-                if sr == format!("refs/heads/{branch}") && !source.git_dir.join(sr).exists() {
+                if sr == format!("refs/heads/{branch}")
+                    && !clone_ref_file_exists(&source.git_dir, sr)
+                {
                     setup_branch_tracking(&dest.git_dir, branch, &remote_name)
                         .context("setting up branch tracking")?;
                 }
@@ -695,7 +767,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // and no remote.fetch (matches git clone --revision).
     if let Some(ref revision) = args.revision {
         let rev_oid = resolve_revision_for_clone(&source, revision, &remote_name)?;
-        strip_refs_under(&dest.git_dir.join("refs"))?;
+        strip_refs_for_revision_clone(&dest.git_dir)?;
         fs::write(dest.git_dir.join("HEAD"), format!("{}\n", rev_oid))?;
         remove_revision_clone_remote_config(&dest.git_dir, &remote_name)?;
     }
@@ -808,6 +880,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
     }
     maybe_warn_shallow_options_ignored(&args.repository, &args);
     let remote_name = resolve_remote_name(&args)?;
+    let ref_storage = resolved_clone_ref_storage(&args)?;
 
     let path_for_basename = PathBuf::from(&spec.path);
     let target_name = args.directory.clone().unwrap_or_else(|| {
@@ -868,6 +941,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
             sep_git,
             initial_branch,
             template_dir.as_deref(),
+            ref_storage,
         )
         .with_context(|| {
             format!(
@@ -876,7 +950,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
             )
         })?
     } else if args.bare && args.template.as_ref().is_some_and(|s| s.is_empty()) {
-        init_bare_clone_minimal(&target_path, initial_branch).with_context(|| {
+        init_bare_clone_minimal(&target_path, initial_branch, ref_storage).with_context(|| {
             format!(
                 "failed to initialize bare clone '{}'",
                 target_path.display()
@@ -890,6 +964,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
             args.bare,
             initial_branch,
             template_dir.as_deref(),
+            ref_storage,
         )
         .with_context(|| format!("failed to initialize '{}'", target_path.display()))?
     };
@@ -943,19 +1018,12 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         )?;
 
         if let Some(ref branch) = head_branch {
-            let remote_ref = dest
-                .git_dir
-                .join("refs/remotes")
-                .join(&remote_name)
-                .join(branch);
-            if remote_ref.exists() {
-                let oid_str = fs::read_to_string(&remote_ref).context("reading remote ref")?;
-                let oid = oid_str.trim().to_string();
-                let local_ref_path = dest.git_dir.join("refs/heads").join(branch);
-                if let Some(parent) = local_ref_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(&local_ref_path, format!("{oid}\n"))?;
+            let remote_ref_name = format!("refs/remotes/{remote_name}/{branch}");
+            if clone_ref_file_exists(&dest.git_dir, &remote_ref_name) {
+                let oid = clone_read_direct_ref_oid(&dest.git_dir, &remote_ref_name)
+                    .context("reading remote ref")?;
+                let local_ref_name = format!("refs/heads/{branch}");
+                clone_write_direct_ref(&dest.git_dir, &local_ref_name, &oid)?;
                 fs::write(
                     dest.git_dir.join("HEAD"),
                     format!("ref: refs/heads/{branch}\n"),
@@ -963,7 +1031,9 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                 setup_branch_tracking(&dest.git_dir, branch, &remote_name)
                     .context("setting up branch tracking")?;
             } else if let Some(sr) = source_head_symref.as_deref() {
-                if sr == format!("refs/heads/{branch}") && !source.git_dir.join(sr).exists() {
+                if sr == format!("refs/heads/{branch}")
+                    && !clone_ref_file_exists(&source.git_dir, sr)
+                {
                     setup_branch_tracking(&dest.git_dir, branch, &remote_name)
                         .context("setting up branch tracking")?;
                 }
@@ -989,7 +1059,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
 
     if let Some(ref revision) = args.revision {
         let rev_oid = resolve_revision_for_clone(&source, revision, &remote_name)?;
-        strip_refs_under(&dest.git_dir.join("refs"))?;
+        strip_refs_for_revision_clone(&dest.git_dir)?;
         fs::write(dest.git_dir.join("HEAD"), format!("{}\n", rev_oid))?;
         remove_revision_clone_remote_config(&dest.git_dir, &remote_name)?;
     }
@@ -1540,25 +1610,15 @@ fn copy_refs_as_remote(
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     for (refname, oid) in &heads {
         let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
-        let dst_ref = dst_git_dir
-            .join("refs/remotes")
-            .join(remote_name)
-            .join(branch);
-        if let Some(parent) = dst_ref.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
+        let dst_name = format!("refs/remotes/{remote_name}/{branch}");
+        clone_write_direct_ref(dst_git_dir, &dst_name, &oid.to_hex())?;
     }
 
     if !no_tags {
         let tags = grit_lib::refs::list_refs(src_git_dir, "refs/tags/")
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         for (refname, oid) in &tags {
-            let dst_ref = dst_git_dir.join(refname);
-            if let Some(parent) = dst_ref.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
+            clone_write_direct_ref(dst_git_dir, refname, &oid.to_hex())?;
         }
     }
 
@@ -1567,7 +1627,6 @@ fn copy_refs_as_remote(
         let packed_refs = src_git_dir.join("packed-refs");
         if packed_refs.is_file() {
             let content = fs::read_to_string(&packed_refs)?;
-            let dst_remotes = dst_git_dir.join("refs/remotes").join(remote_name);
             for line in content.lines() {
                 if line.is_empty() || line.starts_with('#') || line.starts_with('^') {
                     continue;
@@ -1579,20 +1638,13 @@ fn copy_refs_as_remote(
                 };
 
                 if let Some(branch) = refname.strip_prefix("refs/heads/") {
-                    let dst_ref = dst_remotes.join(branch);
-                    if let Some(parent) = dst_ref.parent() {
-                        fs::create_dir_all(parent)?;
-                    }
-                    if !dst_ref.exists() {
-                        fs::write(&dst_ref, format!("{oid}\n"))?;
+                    let dst_name = format!("refs/remotes/{remote_name}/{branch}");
+                    if !clone_ref_file_exists(dst_git_dir, &dst_name) {
+                        clone_write_direct_ref(dst_git_dir, &dst_name, oid)?;
                     }
                 } else if !no_tags && refname.starts_with("refs/tags/") {
-                    let dst_ref = dst_git_dir.join(refname);
-                    if let Some(parent) = dst_ref.parent() {
-                        fs::create_dir_all(parent)?;
-                    }
-                    if !dst_ref.exists() {
-                        fs::write(&dst_ref, format!("{oid}\n"))?;
+                    if !clone_ref_file_exists(dst_git_dir, refname) {
+                        clone_write_direct_ref(dst_git_dir, refname, oid)?;
                     }
                 }
             }
@@ -1626,11 +1678,7 @@ fn copy_refs_direct(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
         let refs =
             grit_lib::refs::list_refs(src_git_dir, prefix).map_err(|e| anyhow::anyhow!("{e}"))?;
         for (refname, oid) in &refs {
-            let dst_ref = dst_git_dir.join(refname);
-            if let Some(parent) = dst_ref.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
+            clone_write_direct_ref(dst_git_dir, refname, &oid.to_hex())?;
         }
     }
 
@@ -1649,12 +1697,8 @@ fn copy_refs_direct(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
             };
 
             if refname.starts_with("refs/heads/") || refname.starts_with("refs/tags/") {
-                let dst_ref = dst_git_dir.join(refname);
-                if let Some(parent) = dst_ref.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                if !dst_ref.exists() {
-                    fs::write(&dst_ref, format!("{oid}\n"))?;
+                if !clone_ref_file_exists(dst_git_dir, refname) {
+                    clone_write_direct_ref(dst_git_dir, refname, oid)?;
                 }
             }
         }
@@ -2019,13 +2063,11 @@ fn run_post_checkout_after_clone(repo: &Repository) -> Result<()> {
     let head = head_content.trim();
     let new_oid = if let Some(refname) = head.strip_prefix("ref: ") {
         let refname = refname.trim();
-        let ref_path = repo.git_dir.join(refname);
-        if !ref_path.exists() {
+        if !clone_ref_file_exists(&repo.git_dir, refname) {
             // Unborn branch: nothing checked out; no commit for post-checkout.
             return Ok(());
         }
-        let oid_str =
-            fs::read_to_string(&ref_path).with_context(|| format!("reading ref {refname}"))?;
+        let oid_str = clone_read_direct_ref_oid(&repo.git_dir, refname)?;
         ObjectId::from_hex(oid_str.trim()).with_context(|| format!("invalid OID in {refname}"))?
     } else {
         ObjectId::from_hex(head).context("invalid OID in HEAD")?
@@ -2052,8 +2094,7 @@ fn determine_head_branch(src_git_dir: &Path, requested: Option<&str>) -> Result<
         if let Some(rest) = content.strip_prefix("ref: ") {
             let rest = rest.trim();
             if let Some(branch) = rest.strip_prefix("refs/heads/") {
-                let ref_path = src_git_dir.join(rest);
-                if ref_path.is_file() {
+                if clone_ref_file_exists(src_git_dir, rest) {
                     return Ok(Some(branch.to_string()));
                 }
             }
@@ -2086,19 +2127,20 @@ fn resolve_remote_tracked_branch_name(
     remote_name: &str,
     preferred: &str,
 ) -> Option<String> {
-    let remote_dir = dest_git_dir.join("refs/remotes").join(remote_name);
-    let preferred_path = remote_dir.join(preferred);
-    if preferred_path.is_file() {
+    let preferred_name = format!("refs/remotes/{remote_name}/{preferred}");
+    if clone_ref_file_exists(dest_git_dir, &preferred_name) {
         return Some(preferred.to_string());
     }
-    let entries = fs::read_dir(&remote_dir).ok()?;
+    let prefix = format!("refs/remotes/{remote_name}/");
+    let refs = grit_lib::refs::list_refs(dest_git_dir, &prefix).ok()?;
     let mut names: Vec<String> = Vec::new();
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name == "HEAD" || !entry.path().is_file() {
-            continue;
+    for (full, _) in refs {
+        if let Some(rest) = full.strip_prefix(&prefix) {
+            if rest == "HEAD" || rest.contains('/') {
+                continue;
+            }
+            names.push(rest.to_string());
         }
-        names.push(name);
     }
     names.sort();
     if names.len() == 1 {
@@ -2122,8 +2164,7 @@ fn guess_checkout_branch(
 ) -> Result<Option<String>> {
     if let Some(sr) = symref {
         if let Some(branch) = sr.strip_prefix("refs/heads/") {
-            let ref_path = src_git_dir.join(sr);
-            if ref_path.is_file() {
+            if clone_ref_file_exists(src_git_dir, sr) {
                 return Ok(Some(branch.to_string()));
             }
             // Unborn branch: HEAD symref points at refs/heads/<name> but the ref file
@@ -2168,22 +2209,13 @@ fn setup_remote_tracking_head(
     symref: Option<&str>,
     detached_oid: Option<&str>,
 ) -> Result<()> {
-    let origin_head_path = dest_git_dir
-        .join("refs/remotes")
-        .join(remote_name)
-        .join("HEAD");
+    let origin_head_ref = format!("refs/remotes/{remote_name}/HEAD");
 
     if let Some(sr) = symref {
         if let Some(branch) = sr.strip_prefix("refs/heads/") {
-            let ref_path = src_git_dir.join(sr);
-            if ref_path.is_file() {
-                if let Some(parent) = origin_head_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(
-                    &origin_head_path,
-                    format!("ref: refs/remotes/{remote_name}/{branch}\n"),
-                )?;
+            if clone_ref_file_exists(src_git_dir, sr) {
+                let sym_target = format!("refs/remotes/{remote_name}/{branch}");
+                clone_write_symref(dest_git_dir, &origin_head_ref, &sym_target)?;
                 return Ok(());
             }
             // Source default branch ref is missing (dangling HEAD): do not create
@@ -2194,13 +2226,8 @@ fn setup_remote_tracking_head(
 
     if let Some(oid_hex) = detached_oid {
         if let Some(branch) = guess_checkout_branch(src_git_dir, None, Some(oid_hex))? {
-            if let Some(parent) = origin_head_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(
-                &origin_head_path,
-                format!("ref: refs/remotes/{remote_name}/{branch}\n"),
-            )?;
+            let sym_target = format!("refs/remotes/{remote_name}/{branch}");
+            clone_write_symref(dest_git_dir, &origin_head_ref, &sym_target)?;
         }
     }
 
@@ -2216,9 +2243,8 @@ pub(crate) fn ensure_index_from_head_if_missing(repo: &Repository) -> Result<()>
     let head_content = fs::read_to_string(repo.git_dir.join("HEAD")).context("reading HEAD")?;
     let head = head_content.trim();
     let oid = if let Some(refname) = head.strip_prefix("ref: ") {
-        let ref_path = repo.git_dir.join(refname);
-        let oid_str =
-            fs::read_to_string(&ref_path).with_context(|| format!("reading ref {refname}"))?;
+        let refname = refname.trim();
+        let oid_str = clone_read_direct_ref_oid(&repo.git_dir, refname)?;
         ObjectId::from_hex(oid_str.trim()).with_context(|| format!("invalid OID in {refname}"))?
     } else {
         ObjectId::from_hex(head).context("invalid OID in HEAD")?
@@ -2243,9 +2269,7 @@ fn checkout_head(repo: &Repository) -> Result<()> {
     // Resolve to an OID
     let oid = if let Some(refname) = head.strip_prefix("ref: ") {
         let refname = refname.trim();
-        let ref_path = repo.git_dir.join(refname);
-        let oid_str =
-            fs::read_to_string(&ref_path).with_context(|| format!("reading ref {refname}"))?;
+        let oid_str = clone_read_direct_ref_oid(&repo.git_dir, refname)?;
         ObjectId::from_hex(oid_str.trim()).with_context(|| format!("invalid OID in {refname}"))?
     } else {
         ObjectId::from_hex(head).context("invalid OID in HEAD")?
@@ -2520,7 +2544,7 @@ fn run_bundle_clone(args: Args) -> Result<()> {
     }
 
     // Determine target directory
-    let target_name = args.directory.unwrap_or_else(|| {
+    let target_name = args.directory.clone().unwrap_or_else(|| {
         let base = bundle_path
             .file_stem()
             .unwrap_or_default()
@@ -2575,9 +2599,11 @@ fn run_bundle_clone(args: Args) -> Result<()> {
         })
         .unwrap_or_else(|| "master".to_string());
 
+    let ref_storage = resolved_clone_ref_storage(&args)?;
+
     // Initialize target repo
     fs::create_dir_all(&target_path)?;
-    let dest = init_repository(&target_path, args.bare, &head_branch, None)
+    let dest = init_repository(&target_path, args.bare, &head_branch, None, ref_storage)
         .with_context(|| format!("failed to initialize '{}'", target_path.display()))?;
 
     // Unbundle pack data
@@ -2599,19 +2625,12 @@ fn run_bundle_clone(args: Args) -> Result<()> {
         }
         // Write as remote tracking ref
         if let Some(branch) = refname.strip_prefix("refs/heads/") {
-            let remote_ref_path = dest.git_dir.join("refs/remotes/origin").join(branch);
-            if let Some(parent) = remote_ref_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&remote_ref_path, format!("{}\n", oid.to_hex()))?;
+            let dst_name = format!("refs/remotes/origin/{branch}");
+            clone_write_direct_ref(&dest.git_dir, &dst_name, &oid.to_hex())?;
         }
         // Also write tags directly
         if refname.starts_with("refs/tags/") {
-            let ref_path = dest.git_dir.join(refname);
-            if let Some(parent) = ref_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&ref_path, format!("{}\n", oid.to_hex()))?;
+            clone_write_direct_ref(&dest.git_dir, refname, &oid.to_hex())?;
         }
     }
 
@@ -2620,11 +2639,8 @@ fn run_bundle_clone(args: Args) -> Result<()> {
         .iter()
         .find(|(r, _)| r == &format!("refs/heads/{}", head_branch))
     {
-        let branch_ref_path = dest.git_dir.join("refs/heads").join(&head_branch);
-        if let Some(parent) = branch_ref_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&branch_ref_path, format!("{}\n", oid.to_hex()))?;
+        let branch_ref_name = format!("refs/heads/{head_branch}");
+        clone_write_direct_ref(&dest.git_dir, &branch_ref_name, &oid.to_hex())?;
     }
 
     // Set up origin remote config

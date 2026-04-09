@@ -15,6 +15,7 @@ use grit_lib::refs;
 use grit_lib::repo::Repository;
 use std::collections::HashSet;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Arguments for `grit fetch`.
@@ -148,7 +149,11 @@ pub fn run(args: Args) -> Result<()> {
         }
         Ok(())
     } else {
-        let remote_name = args.remote.as_deref().unwrap_or("origin");
+        let remote_resolved = args
+            .remote
+            .clone()
+            .unwrap_or_else(|| default_fetch_remote_name(&git_dir, &config));
+        let remote_name = remote_resolved.as_str();
         // Remote config takes precedence over path-like names, even if the
         // remote name contains '/' or matches an existing directory.
         let url_key = format!("remote.{remote_name}.url");
@@ -169,6 +174,106 @@ pub fn run(args: Args) -> Result<()> {
         super::submodule::recursive_fetch_submodules(true)?;
     }
     result
+}
+
+/// When `git fetch` is run with no remote argument, Git uses `branch.<current>.remote`
+/// if set; otherwise `origin`.
+/// Current branch name when `HEAD` is a symbolic ref to `refs/heads/<name>`.
+fn current_branch_from_head(git_dir: &Path) -> Option<String> {
+    let head_raw = fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head = head_raw.trim();
+    let target = head.strip_prefix("ref: ")?.trim();
+    let branch = target.strip_prefix("refs/heads/")?;
+    Some(branch.to_string())
+}
+
+/// FETCH_HEAD "for merge" when the current branch tracks this remote and the remote ref
+/// matches `branch.<name>.merge` (Git `branch_merge_matches` / `add_merge_config`).
+fn fetch_head_is_for_merge_with_branch(
+    git_dir: &Path,
+    config: &ConfigSet,
+    remote_name: &str,
+    remote_refname: &str,
+) -> bool {
+    let Some(branch) = current_branch_from_head(git_dir) else {
+        return false;
+    };
+    let remote_key = format!("branch.{branch}.remote");
+    let Some(cfg_remote) = config.get(&remote_key) else {
+        return false;
+    };
+    if cfg_remote.trim() != remote_name {
+        return false;
+    }
+    let merge_key = format!("branch.{branch}.merge");
+    let Some(merge_ref) = config.get(&merge_key) else {
+        return false;
+    };
+    merge_ref.trim() == remote_refname
+}
+
+/// When there is no `branch.*.merge` for HEAD, Git marks only the first ref from the first
+/// non-pattern remote fetch refspec as for-merge (`get_ref_map` in fetch.c).
+fn fetch_head_is_for_merge_first_refspec_only(
+    refspecs: &[FetchRefspec],
+    is_first_remote_head: bool,
+) -> bool {
+    if !is_first_remote_head {
+        return false;
+    }
+    let Some(first) = refspecs.iter().find(|r| !r.negative && !r.src.is_empty()) else {
+        return false;
+    };
+    !first.src.contains('*')
+}
+
+/// True when `HEAD` names `refs/heads/<b>`, `branch.<b>.remote` matches `remote_name`, and
+/// `branch.<b>.merge` is set (Git `branch_has_merge_config` for default fetch).
+fn branch_has_merge_config_for_remote(
+    git_dir: &Path,
+    config: &ConfigSet,
+    remote_name: &str,
+) -> bool {
+    let Some(branch) = current_branch_from_head(git_dir) else {
+        return false;
+    };
+    let remote_key = format!("branch.{branch}.remote");
+    let Some(cfg_remote) = config.get(&remote_key) else {
+        return false;
+    };
+    if cfg_remote.trim() != remote_name {
+        return false;
+    }
+    let merge_key = format!("branch.{branch}.merge");
+    config.get(&merge_key).is_some()
+}
+
+fn default_fetch_remote_name(git_dir: &Path, config: &ConfigSet) -> String {
+    let Ok(head_raw) = fs::read_to_string(git_dir.join("HEAD")) else {
+        return "origin".to_owned();
+    };
+    let head = head_raw.trim();
+    let Some(rest) = head.strip_prefix("ref: ") else {
+        return "origin".to_owned();
+    };
+    let target = rest.trim();
+    let Some(branch) = target.strip_prefix("refs/heads/") else {
+        return "origin".to_owned();
+    };
+    let remote_key = format!("branch.{branch}.remote");
+    let Some(remote) = config.get(&remote_key) else {
+        return "origin".to_owned();
+    };
+    let remote = remote.trim();
+    if remote.is_empty() {
+        return "origin".to_owned();
+    }
+    let url_key = format!("remote.{remote}.url");
+    if config.get(&url_key).is_some() {
+        remote.to_owned()
+    } else {
+        "origin".to_owned()
+    }
 }
 
 fn should_recurse_fetch_submodules(config: &ConfigSet, args: &Args) -> bool {
@@ -673,7 +778,8 @@ fn fetch_remote(
         }
 
         // Standard path: update remote-tracking refs from remote heads
-        for (refname, remote_oid) in &remote_heads {
+        let has_merge_cfg = branch_has_merge_config_for_remote(git_dir, config, remote_name);
+        for (idx, (refname, remote_oid)) in remote_heads.iter().enumerate() {
             // refname is like "refs/heads/main"
             let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
 
@@ -688,9 +794,15 @@ fn fetch_remote(
             };
             updated_refs.push(local_ref.clone());
 
-            // Build FETCH_HEAD entry
-            let is_default = remote_head_branch.as_deref() == Some(branch);
-            let not_for_merge = if is_default { "" } else { "\tnot-for-merge" };
+            // Build FETCH_HEAD entry (Git `get_ref_map` / `add_merge_config` semantics)
+            let is_merge = if has_merge_cfg {
+                fetch_head_is_for_merge_with_branch(git_dir, config, remote_name, refname)
+            } else if refspecs.is_empty() {
+                idx == 0
+            } else {
+                fetch_head_is_for_merge_first_refspec_only(&refspecs, idx == 0)
+            };
+            let not_for_merge = if is_merge { "" } else { "\tnot-for-merge" };
             fetch_head_entries.push(format!(
                 "{}{not_for_merge}\tbranch '{branch}' of {url}",
                 remote_oid,
@@ -814,22 +926,45 @@ fn fetch_remote(
         prune_stale_refs(git_dir, &dst_prefix, &updated_refs, remote_name, args.quiet)?;
     }
 
-    // Update refs/remotes/<remote>/HEAD to mirror the remote's default branch.
-    // We store it as a direct ref to keep completion and ref lookups aligned.
-    if let Some(default_branch) = remote_head_branch.as_deref() {
-        let head_source = format!("refs/heads/{default_branch}");
-        let mapped_default = if refspecs.is_empty() {
-            Some(format!("{dst_prefix}{default_branch}"))
-        } else {
-            map_ref_through_refspecs(&head_source, &refspecs)
-        };
-        if let Some(mapped_default_ref) = mapped_default {
-            if let Ok(default_oid) = refs::resolve_ref(git_dir, &mapped_default_ref) {
-                let remote_head_ref = format!("refs/remotes/{remote_name}/HEAD");
-                updated_refs.push(remote_head_ref.clone());
-                if read_ref_oid(git_dir, &remote_head_ref).as_ref() != Some(&default_oid) {
-                    refs::write_ref(git_dir, &remote_head_ref, &default_oid)
-                        .with_context(|| format!("updating ref {remote_head_ref}"))?;
+    // Update `refs/remotes/<remote>/HEAD` to match the remote's default branch (Git `set_head`).
+    let follow = parse_follow_remote_head(config, remote_name);
+    let do_set_head =
+        cli_refspecs.is_empty() && !refspecs.is_empty() && follow.mode != FollowRemoteHead::Never;
+    if do_set_head {
+        if follow.mode != FollowRemoteHead::Never {
+            trace_ls_refs_head_prefix();
+        }
+        if let Some(default_branch) = remote_head_branch.as_deref() {
+            let head_source = format!("refs/heads/{default_branch}");
+            let mapped_default = if refspecs.is_empty() {
+                Some(format!("{dst_prefix}{default_branch}"))
+            } else {
+                map_ref_through_refspecs(&head_source, &refspecs)
+            };
+            if let Some(mapped_default_ref) = mapped_default {
+                if refs::resolve_ref(git_dir, &mapped_default_ref).is_ok() {
+                    let remote_head_ref = format!("refs/remotes/{remote_name}/HEAD");
+                    let previous = read_remote_head_previous(git_dir, remote_name);
+                    let head_missing = matches!(previous, RemoteHeadPrevious::Missing);
+                    // Git: `create_only` is true unless `followRemoteHEAD` is `always`, so
+                    // `create`/`warn` only create `refs/remotes/<r>/HEAD` when missing (no overwrite).
+                    let should_write = match follow.mode {
+                        FollowRemoteHead::Never => false,
+                        FollowRemoteHead::Create | FollowRemoteHead::Warn => head_missing,
+                        FollowRemoteHead::Always => true,
+                    };
+                    if should_write {
+                        refs::write_symbolic_ref(git_dir, &remote_head_ref, &mapped_default_ref)
+                            .with_context(|| format!("updating symbolic ref {remote_head_ref}"))?;
+                        updated_refs.push(remote_head_ref);
+                    }
+                    maybe_warn_follow_remote_head(
+                        &follow,
+                        remote_name,
+                        default_branch,
+                        previous,
+                        args.quiet,
+                    );
                 }
             }
         }
@@ -1494,6 +1629,145 @@ fn write_shallow_info(
     let content = entries.join("\n") + "\n";
     fs::write(&shallow_path, content).context("writing shallow file")?;
     Ok(())
+}
+
+/// `remote.<name>.followRemoteHEAD` (subset matching Git's `remote.h`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FollowRemoteHead {
+    Never,
+    Create,
+    Warn,
+    Always,
+}
+
+/// Parsed `remote.<name>.followRemoteHEAD` plus optional `warn-if-not-<branch>` suffix.
+struct FollowRemoteHeadConfig {
+    mode: FollowRemoteHead,
+    /// When `mode == Warn` and this is `Some`, suppress the warning if the remote HEAD branch
+    /// equals this name (Git's `warn-if-not-<branch>`).
+    no_warn_branch: Option<String>,
+}
+
+fn parse_follow_remote_head(config: &ConfigSet, remote_name: &str) -> FollowRemoteHeadConfig {
+    let key = format!("remote.{remote_name}.followRemoteHEAD");
+    let key_alt = format!("remote.{remote_name}.followremotehead");
+    let raw = config
+        .get(&key)
+        .or_else(|| config.get(&key_alt))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if raw.is_empty() {
+        return FollowRemoteHeadConfig {
+            mode: FollowRemoteHead::Create,
+            no_warn_branch: None,
+        };
+    }
+    let lower = raw.to_ascii_lowercase();
+    if lower == "never" {
+        return FollowRemoteHeadConfig {
+            mode: FollowRemoteHead::Never,
+            no_warn_branch: None,
+        };
+    }
+    if lower == "create" {
+        return FollowRemoteHeadConfig {
+            mode: FollowRemoteHead::Create,
+            no_warn_branch: None,
+        };
+    }
+    if lower == "warn" {
+        return FollowRemoteHeadConfig {
+            mode: FollowRemoteHead::Warn,
+            no_warn_branch: None,
+        };
+    }
+    if lower == "always" {
+        return FollowRemoteHeadConfig {
+            mode: FollowRemoteHead::Always,
+            no_warn_branch: None,
+        };
+    }
+    let prefix = "warn-if-not-";
+    if lower.starts_with(prefix) {
+        let branch = raw[prefix.len()..].to_string();
+        return FollowRemoteHeadConfig {
+            mode: FollowRemoteHead::Warn,
+            no_warn_branch: if branch.is_empty() {
+                None
+            } else {
+                Some(branch)
+            },
+        };
+    }
+    FollowRemoteHeadConfig {
+        mode: FollowRemoteHead::Create,
+        no_warn_branch: None,
+    }
+}
+
+fn trace_ls_refs_head_prefix() {
+    crate::trace_packet::trace_packet_line(b"fetch> ref-prefix HEAD");
+}
+
+/// Previous `refs/remotes/<remote>/HEAD` state for `followRemoteHEAD` warnings.
+enum RemoteHeadPrevious {
+    Symref(String),
+    DetachedOid(ObjectId),
+    Missing,
+}
+
+fn read_remote_head_previous(git_dir: &Path, remote_name: &str) -> RemoteHeadPrevious {
+    let head_ref = format!("refs/remotes/{remote_name}/HEAD");
+    let sym = match refs::read_symbolic_ref(git_dir, &head_ref) {
+        Ok(s) => s,
+        Err(_) => None,
+    };
+    if let Some(target) = sym {
+        let prefix = format!("refs/remotes/{remote_name}/");
+        let short = target
+            .strip_prefix(&prefix)
+            .map(|s| s.to_string())
+            .unwrap_or(target);
+        return RemoteHeadPrevious::Symref(short);
+    }
+    match read_ref_oid(git_dir, &head_ref) {
+        Some(oid) => RemoteHeadPrevious::DetachedOid(oid),
+        None => RemoteHeadPrevious::Missing,
+    }
+}
+
+fn maybe_warn_follow_remote_head(
+    follow: &FollowRemoteHeadConfig,
+    remote_name: &str,
+    remote_default_branch: &str,
+    previous: RemoteHeadPrevious,
+    quiet: bool,
+) {
+    if quiet || follow.mode != FollowRemoteHead::Warn {
+        return;
+    }
+    if let Some(ref skip) = follow.no_warn_branch {
+        if skip == remote_default_branch {
+            return;
+        }
+    }
+    let mut stdout = std::io::stdout();
+    match previous {
+        RemoteHeadPrevious::Symref(prev_short) if prev_short != remote_default_branch => {
+            let _ = writeln!(
+                stdout,
+                "'HEAD' at '{remote_name}' is '{remote_default_branch}', but we have '{prev_short}' locally."
+            );
+        }
+        RemoteHeadPrevious::DetachedOid(oid) => {
+            let _ = writeln!(
+                stdout,
+                "'HEAD' at '{remote_name}' is '{remote_default_branch}', but we have a detached HEAD pointing to '{}' locally.",
+                oid.to_hex()
+            );
+        }
+        _ => {}
+    }
 }
 
 /// A parsed refspec (e.g. "+refs/heads/*:refs/remotes/origin/*").

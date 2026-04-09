@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -925,7 +925,7 @@ t5505-remote	t5	yes	0	0	0	false	timeout	1
 t5506-remote-groups	t5	yes	9	1	8	false	ok	0
 t5507-remote-environment	t5	yes	5	3	2	false	ok	0
 t5509-fetch-push-namespaces	t5	yes	15	4	11	false	ok	0
-t5510-fetch	t5	yes	215	81	134	false	ok	0
+t5510-fetch	t5	yes	215	93	122	false	ok	0
 t5511-refspec	t5	yes	47	24	23	false	ok	0
 t5512-ls-remote	t5	yes	0	0	0	false	timeout	0
 t5513-fetch-track	t5	yes	2	2	0	true	ok	0

@@ -1672,6 +1672,7 @@ fn write_fresh_git_directory(
     bare: bool,
     initial_branch: &str,
     template_dir: Option<&Path>,
+    ref_storage: &str,
 ) -> Result<()> {
     let mut subs = vec![
         "objects",
@@ -1689,6 +1690,15 @@ fn write_fresh_git_directory(
         fs::create_dir_all(git_dir.join(sub))?;
     }
 
+    if ref_storage == "reftable" {
+        let reftable_dir = git_dir.join("reftable");
+        fs::create_dir_all(&reftable_dir)?;
+        let tables_list = reftable_dir.join("tables.list");
+        if !tables_list.exists() {
+            fs::write(&tables_list, "")?;
+        }
+    }
+
     if let Some(tmpl) = template_dir {
         if tmpl.is_dir() {
             copy_template(tmpl, git_dir)?;
@@ -1698,11 +1708,22 @@ fn write_fresh_git_directory(
     let head_content = format!("ref: refs/heads/{initial_branch}\n");
     fs::write(git_dir.join("HEAD"), head_content)?;
 
-    let config_content = if bare {
-        "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = true\n"
+    let needs_extensions = ref_storage == "reftable";
+    let repo_version = if needs_extensions { 1 } else { 0 };
+
+    let mut config_content = String::from("[core]\n");
+    config_content.push_str(&format!("\trepositoryformatversion = {repo_version}\n"));
+    config_content.push_str("\tfilemode = true\n");
+    if bare {
+        config_content.push_str("\tbare = true\n");
     } else {
-        "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n"
-    };
+        config_content.push_str("\tbare = false\n");
+        config_content.push_str("\tlogallrefupdates = true\n");
+    }
+    if needs_extensions {
+        config_content.push_str("[extensions]\n");
+        config_content.push_str("\trefStorage = reftable\n");
+    }
     fs::write(git_dir.join("config"), config_content)?;
 
     // Merge `config` from the template on top of the default (matches `git clone --template`).
@@ -1752,10 +1773,11 @@ pub fn init_repository_separate_git_dir(
     git_dir: &Path,
     initial_branch: &str,
     template_dir: Option<&Path>,
+    ref_storage: &str,
 ) -> Result<Repository> {
     fs::create_dir_all(work_tree)?;
     fs::create_dir_all(git_dir)?;
-    write_fresh_git_directory(git_dir, false, initial_branch, template_dir)?;
+    write_fresh_git_directory(git_dir, false, initial_branch, template_dir, ref_storage)?;
 
     let git_dir_abs = git_dir
         .canonicalize()
@@ -1779,7 +1801,11 @@ pub fn init_repository_separate_git_dir(
 /// # Errors
 ///
 /// Returns [`Error::Io`] on filesystem failures.
-pub fn init_bare_clone_minimal(git_dir: &Path, initial_branch: &str) -> Result<()> {
+pub fn init_bare_clone_minimal(
+    git_dir: &Path,
+    initial_branch: &str,
+    ref_storage: &str,
+) -> Result<()> {
     for sub in &[
         "objects",
         "objects/info",
@@ -1791,11 +1817,28 @@ pub fn init_bare_clone_minimal(git_dir: &Path, initial_branch: &str) -> Result<(
         fs::create_dir_all(git_dir.join(sub))?;
     }
 
+    if ref_storage == "reftable" {
+        let reftable_dir = git_dir.join("reftable");
+        fs::create_dir_all(&reftable_dir)?;
+        let tables_list = reftable_dir.join("tables.list");
+        if !tables_list.exists() {
+            fs::write(&tables_list, "")?;
+        }
+    }
+
     let head_content = format!("ref: refs/heads/{initial_branch}\n");
     fs::write(git_dir.join("HEAD"), head_content)?;
 
-    let config_content =
-        "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = true\n";
+    let needs_extensions = ref_storage == "reftable";
+    let repo_version = if needs_extensions { 1 } else { 0 };
+    let mut config_content = String::from("[core]\n");
+    config_content.push_str(&format!("\trepositoryformatversion = {repo_version}\n"));
+    config_content.push_str("\tfilemode = true\n");
+    config_content.push_str("\tbare = true\n");
+    if needs_extensions {
+        config_content.push_str("[extensions]\n");
+        config_content.push_str("\trefStorage = reftable\n");
+    }
     fs::write(git_dir.join("config"), config_content)?;
 
     fs::write(
@@ -1810,6 +1853,7 @@ pub fn init_repository(
     bare: bool,
     initial_branch: &str,
     template_dir: Option<&Path>,
+    ref_storage: &str,
 ) -> Result<Repository> {
     let git_dir = if bare {
         path.to_path_buf()
@@ -1821,7 +1865,7 @@ pub fn init_repository(
         fs::create_dir_all(path)?;
     }
     fs::create_dir_all(&git_dir)?;
-    write_fresh_git_directory(&git_dir, bare, initial_branch, template_dir)?;
+    write_fresh_git_directory(&git_dir, bare, initial_branch, template_dir, ref_storage)?;
 
     let work_tree = if bare { None } else { Some(path) };
     Repository::open(&git_dir, work_tree)
