@@ -13,7 +13,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use grit_lib::config::{parse_bool, ConfigSet};
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
@@ -24,6 +24,7 @@ use grit_lib::rerere::rerere_clear;
 use grit_lib::rev_parse::resolve_revision_for_patch_old_blob;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
+use grit_lib::ws::{parse_whitespace_rule, ws_fix_copy_line, WS_DEFAULT_RULE};
 
 /// Arguments for `grit am`.
 #[derive(Debug, ClapArgs)]
@@ -156,6 +157,34 @@ pub struct Args {
     /// Do not transcode the message to UTF-8 (matches `git am --no-utf8`; `t3901`).
     #[arg(long = "no-utf8")]
     pub no_utf8: bool,
+
+    /// Passed through to the internal patch application (same as `git apply`).
+    #[arg(long = "whitespace", value_name = "ACTION")]
+    pub whitespace: Option<String>,
+
+    #[arg(long = "ignore-space-change")]
+    pub ignore_space_change: bool,
+
+    #[arg(long = "ignore-whitespace")]
+    pub ignore_whitespace: bool,
+
+    /// Prefix paths in the patch with this directory (same as `git apply --directory`).
+    #[arg(long = "directory", value_name = "ROOT")]
+    pub directory: Option<String>,
+
+    /// Remove this many leading path components from paths in the patch (`git apply -p`).
+    #[arg(short = 'p', value_name = "NUM")]
+    pub strip: Option<u32>,
+
+    /// Ensure at least this many lines of context match (`git apply -C`).
+    #[arg(short = 'C', value_name = "N")]
+    pub context: Option<u32>,
+
+    #[arg(long = "exclude", value_name = "PATH")]
+    pub exclude: Vec<String>,
+
+    #[arg(long = "include", value_name = "PATH")]
+    pub include: Vec<String>,
 }
 
 /// A parsed patch from an mbox message.
@@ -192,6 +221,216 @@ struct AmOptions {
     allow_empty: bool,
     /// When false, keep non-UTF-8 message bytes from the patch (`git am --no-utf8`).
     mail_utf8: bool,
+    /// `git apply` passthrough: stored in `rebase-apply/apply-opt` and used while applying.
+    apply: ApplySettings,
+}
+
+/// Whitespace handling for patch application (`git apply --whitespace=…`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum ApplyWhitespaceAction {
+    #[default]
+    Warn,
+    Nowarn,
+    Error,
+    Fix,
+}
+
+/// How strongly to ignore whitespace when matching patch lines (`git apply` ignore options).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum ApplyIgnoreWhitespace {
+    #[default]
+    None,
+    /// `--ignore-space-change`
+    Change,
+    /// `--ignore-whitespace`
+    All,
+}
+
+/// Settings derived from `git am` passthrough flags and `apply.*` config (mirrors `git apply`).
+#[derive(Debug, Clone)]
+struct ApplySettings {
+    /// Raw argv for `apply-opt` (shell-quoted, one line).
+    apply_opt_argv: Vec<String>,
+    p_value: u32,
+    directory: Option<std::path::PathBuf>,
+    /// `UINT_MAX` in C → do not relax context; `n` from `-C n` → minimum context lines to keep.
+    min_context: u32,
+    whitespace_action: ApplyWhitespaceAction,
+    ignore_whitespace: ApplyIgnoreWhitespace,
+    ws_rule: u32,
+    exclude: Vec<String>,
+    include: Vec<String>,
+}
+
+fn sq_quote_str_am(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+fn sq_quote_argv_am(args: &[String]) -> String {
+    args.iter()
+        .map(|a| sq_quote_str_am(a))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn apply_directory_prefix(root: &str) -> PathBuf {
+    let mut s = root.to_string();
+    if !s.is_empty() && !s.ends_with('/') && !s.ends_with('\\') {
+        s.push(std::path::MAIN_SEPARATOR);
+    }
+    PathBuf::from(s)
+}
+
+fn build_apply_settings(args: &Args, config: &ConfigSet) -> Result<ApplySettings> {
+    let mut argv: Vec<String> = Vec::new();
+
+    if let Some(ws) = args.whitespace.as_deref() {
+        argv.push(format!("--whitespace={}", ws.trim()));
+    }
+    if args.ignore_space_change {
+        argv.push("--ignore-space-change".to_string());
+    }
+    if args.ignore_whitespace {
+        argv.push("--ignore-whitespace".to_string());
+    }
+    if let Some(dir) = args.directory.as_deref() {
+        argv.push(format!("--directory={dir}"));
+    }
+    for ex in &args.exclude {
+        argv.push(format!("--exclude={ex}"));
+    }
+    for inc in &args.include {
+        argv.push(format!("--include={inc}"));
+    }
+    if let Some(c) = args.context {
+        argv.push("-C".to_string());
+        argv.push(c.to_string());
+    }
+    if let Some(p) = args.strip {
+        argv.push("-p".to_string());
+        argv.push(p.to_string());
+    }
+    if args.reject {
+        argv.push("--reject".to_string());
+    }
+
+    let p_value = args.strip.unwrap_or(1);
+    let directory = match args.directory.as_deref() {
+        Some(d) if !d.is_empty() => Some(apply_directory_prefix(d)),
+        _ => None,
+    };
+    let min_context = args.context.unwrap_or(u32::MAX);
+
+    let mut whitespace_action = ApplyWhitespaceAction::Warn;
+    if let Some(ws) = args.whitespace.as_deref() {
+        let w = ws.trim();
+        match w.to_ascii_lowercase().as_str() {
+            "nowarn" => whitespace_action = ApplyWhitespaceAction::Nowarn,
+            "warn" | "" => whitespace_action = ApplyWhitespaceAction::Warn,
+            "error" => whitespace_action = ApplyWhitespaceAction::Error,
+            "error-all" => whitespace_action = ApplyWhitespaceAction::Error,
+            "strip" | "fix" => whitespace_action = ApplyWhitespaceAction::Fix,
+            _ => bail!("unrecognized whitespace option '{w}'"),
+        }
+    } else if let Some(cfg) = config.get("apply.whitespace") {
+        let w = cfg.trim();
+        match w.to_ascii_lowercase().as_str() {
+            "nowarn" => whitespace_action = ApplyWhitespaceAction::Nowarn,
+            "warn" => whitespace_action = ApplyWhitespaceAction::Warn,
+            "error" | "error-all" => whitespace_action = ApplyWhitespaceAction::Error,
+            "strip" | "fix" => whitespace_action = ApplyWhitespaceAction::Fix,
+            _ => {}
+        }
+    }
+
+    let mut ignore_whitespace = ApplyIgnoreWhitespace::None;
+    if args.ignore_space_change {
+        ignore_whitespace = ApplyIgnoreWhitespace::Change;
+    } else if args.ignore_whitespace {
+        ignore_whitespace = ApplyIgnoreWhitespace::All;
+    } else if let Some(cfg) = config.get("apply.ignorewhitespace") {
+        let w = cfg.trim().to_ascii_lowercase();
+        if w == "change" || w == "true" {
+            ignore_whitespace = ApplyIgnoreWhitespace::Change;
+        } else if w == "all" {
+            ignore_whitespace = ApplyIgnoreWhitespace::All;
+        }
+    }
+
+    let ws_rule = config
+        .get("core.whitespace")
+        .and_then(|s| parse_whitespace_rule(s.trim()).ok())
+        .unwrap_or(WS_DEFAULT_RULE);
+
+    Ok(ApplySettings {
+        apply_opt_argv: argv,
+        p_value,
+        directory,
+        min_context,
+        whitespace_action,
+        ignore_whitespace,
+        ws_rule,
+        exclude: args.exclude.clone(),
+        include: args.include.clone(),
+    })
+}
+
+impl ApplySettings {
+    /// Map a path from the patch (`---` / `+++` / `diff --git`, often with `a/` or `i/` prefix)
+    /// to an absolute worktree path, applying `-p` and `--directory` like `git apply`.
+    fn resolve_worktree_path(&self, work_tree: &Path, patch_path: &str) -> PathBuf {
+        let rel = strip_components(patch_path, self.p_value as usize);
+        match &self.directory {
+            Some(root) => {
+                let mut out = work_tree.to_path_buf();
+                out.push(root);
+                out.push(rel);
+                out
+            }
+            None => work_tree.join(rel),
+        }
+    }
+
+    fn line_matches(&self, file_line: &str, patch_line: &str) -> bool {
+        match self.ignore_whitespace {
+            ApplyIgnoreWhitespace::None => file_line == patch_line,
+            ApplyIgnoreWhitespace::Change => {
+                normalize_ws_change(file_line) == normalize_ws_change(patch_line)
+            }
+            ApplyIgnoreWhitespace::All => strip_all_ws(file_line) == strip_all_ws(patch_line),
+        }
+    }
+}
+
+fn normalize_ws_change(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut last_was_space = false;
+    for ch in s.chars() {
+        if ch.is_ascii_whitespace() {
+            if !last_was_space {
+                out.push(' ');
+                last_was_space = true;
+            }
+        } else {
+            out.push(ch);
+            last_was_space = false;
+        }
+    }
+    out
+}
+
+fn strip_all_ws(s: &str) -> String {
+    s.chars().filter(|c| !c.is_ascii_whitespace()).collect()
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -389,7 +628,7 @@ fn resolve_keep_cr(args: &Args, config: &ConfigSet) -> bool {
     config_bool(config, "am.keepcr").unwrap_or(false)
 }
 
-fn build_am_options(args: &Args, config: &ConfigSet) -> AmOptions {
+fn build_am_options(args: &Args, config: &ConfigSet) -> Result<AmOptions> {
     let three_way = if args.no_three_way {
         false
     } else if args.three_way {
@@ -401,7 +640,8 @@ fn build_am_options(args: &Args, config: &ConfigSet) -> AmOptions {
     };
     let message_id = args.message_id || config_bool(config, "am.messageid").unwrap_or(false);
     let keep_cr = resolve_keep_cr(args, config);
-    AmOptions {
+    let apply = build_apply_settings(args, config)?;
+    Ok(AmOptions {
         quiet: if args.no_quiet { false } else { args.quiet },
         three_way,
         keep_cr,
@@ -414,7 +654,8 @@ fn build_am_options(args: &Args, config: &ConfigSet) -> AmOptions {
         empty: args.empty.clone().unwrap_or_else(|| "stop".to_string()),
         allow_empty: args.allow_empty,
         mail_utf8: !args.no_utf8,
-    }
+        apply,
+    })
 }
 
 fn continue_overrides_from_args(args: &Args) -> AmOptionOverrides {
@@ -575,7 +816,7 @@ fn do_am(args: Args) -> Result<()> {
     }
 
     // Apply patches
-    let opts = build_am_options(&args, &config);
+    let opts = build_am_options(&args, &config)?;
     // Save options to state dir for --continue
     save_am_options(&state_dir, &opts)?;
     apply_remaining(&repo, &opts, None)?;
@@ -655,7 +896,7 @@ fn do_am_stdin(args: Args) -> Result<()> {
         fs::write(&patch_file, serialized)?;
     }
 
-    let opts = build_am_options(&args, &config);
+    let opts = build_am_options(&args, &config)?;
     save_am_options(&state_dir, &opts)?;
     apply_remaining(&repo, &opts, None)?;
     Ok(())
@@ -862,23 +1103,27 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
     // Try to apply the diff to the working tree. With `--3way`, Git verifies patch index
     // preimages against the work tree even when a fuzzy apply could succeed; mismatch must
     // fall through to the 3-way path (t4151 `changes.mbox`).
-    let apply_result =
-        apply_patch_to_worktree(work_tree, &patch.diff, opts.keep_cr, opts.three_way);
+    let apply_result = apply_patch_to_worktree(
+        work_tree,
+        &patch.diff,
+        opts.keep_cr,
+        opts.three_way,
+        opts.reject,
+        &opts.apply,
+    );
 
     match apply_result {
-        Ok(affected_paths) => {
-            // Stage only the files that the patch touched
+        Ok((affected_paths, had_reject)) => {
+            if had_reject {
+                fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
+                bail!("patch rejected");
+            }
             stage_affected_files(repo, &affected_paths)?;
         }
         Err(e) => {
             if opts.three_way {
-                // Attempt 3-way merge
                 apply_three_way(repo, patch)?;
             } else {
-                if opts.reject {
-                    let _ = write_reject_files_for_patch(work_tree, &patch.diff);
-                }
-                // Save message for --continue
                 fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
                 return Err(e);
             }
@@ -1313,21 +1558,22 @@ fn find_tree_path_matching_content(
     Ok(None)
 }
 
-fn write_reject_files_for_patch(work_tree: &Path, diff: &str) -> Result<()> {
-    let file_patches = parse_patch(diff)?;
-    for fp in &file_patches {
-        let Some(path_str) = fp.effective_path() else {
-            continue;
-        };
-        let rel_path = strip_components(path_str, 1);
-        let reject_path = work_tree.join(format!("{rel_path}.rej"));
-        if let Some(parent) = reject_path.parent() {
-            if !parent.as_os_str().is_empty() && !parent.exists() {
-                fs::create_dir_all(parent)?;
-            }
+fn write_reject_file_for_path(
+    work_tree: &Path,
+    apply: &ApplySettings,
+    path_str: &str,
+    reject_body: &str,
+) -> Result<()> {
+    let abs = apply.resolve_worktree_path(work_tree, path_str);
+    let mut rej_os = abs.as_os_str().to_os_string();
+    rej_os.push(".rej");
+    let rej = PathBuf::from(rej_os);
+    if let Some(parent) = rej.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            fs::create_dir_all(parent)?;
         }
-        fs::write(&reject_path, diff.as_bytes())?;
     }
+    fs::write(&rej, reject_body.as_bytes())?;
     Ok(())
 }
 
@@ -1423,8 +1669,35 @@ fn verify_old_oid_matches_content(expected_oid: &str, content: &str) -> Result<(
     Ok(())
 }
 
+fn path_allowed_by_apply_filters(apply: &ApplySettings, rel_under_strip: &str) -> bool {
+    if !apply.exclude.is_empty() {
+        for ex in &apply.exclude {
+            if rel_under_strip == ex.as_str() || rel_under_strip.starts_with(&format!("{ex}/")) {
+                return false;
+            }
+        }
+    }
+    if !apply.include.is_empty() {
+        return apply.include.iter().any(|inc| {
+            rel_under_strip == inc.as_str() || rel_under_strip.starts_with(&format!("{inc}/"))
+        });
+    }
+    true
+}
+
+fn worktree_rel_path(work_tree: &Path, abs: &Path) -> Result<String> {
+    let rel = abs.strip_prefix(work_tree).with_context(|| {
+        format!(
+            "path {} is outside work tree {}",
+            abs.display(),
+            work_tree.display()
+        )
+    })?;
+    Ok(rel.to_string_lossy().replace('\\', "/"))
+}
+
 /// Apply a unified diff to the working tree files.
-/// Returns the list of affected relative paths.
+/// Returns paths relative to the work tree (for index staging).
 ///
 /// When `strict_preimage` is true, every non-zero `index` preimage in the patch must match the
 /// current work tree file (Git `git apply` with 3-way fallback semantics).
@@ -1433,31 +1706,28 @@ fn apply_patch_to_worktree(
     diff: &str,
     keep_cr: bool,
     strict_preimage: bool,
-) -> Result<Vec<String>> {
-    // Parse the diff into file patches using the same logic as `grit apply`
+    reject_mode: bool,
+    apply: &ApplySettings,
+) -> Result<(Vec<String>, bool)> {
     let file_patches = parse_patch(diff)?;
     let mut affected = Vec::new();
+    let mut had_reject = false;
 
     for fp in &file_patches {
         let path_str = fp
             .effective_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let rel_path = strip_components(path_str, 1);
-        let path = work_tree.join(&rel_path);
+        let rel_for_filter = strip_components(path_str, apply.p_value as usize);
+        if !path_allowed_by_apply_filters(apply, &rel_for_filter) {
+            continue;
+        }
 
         if fp.is_rename {
-            // Handle rename: old path is removed, new path is added
-            if let Some(old) = &fp.old_path {
-                let old_rel = strip_components(old, 0);
-                let old_abs = work_tree.join(&old_rel);
+            if let Some(old_raw) = &fp.old_path {
+                let old_abs = apply.resolve_worktree_path(work_tree, old_raw);
+                let new_raw = fp.new_path.as_deref().unwrap_or(path_str);
+                let new_abs = apply.resolve_worktree_path(work_tree, new_raw);
                 if old_abs.exists() {
-                    // Read old content, apply hunks if any, write to new path
-                    let new_rel = fp
-                        .new_path
-                        .as_deref()
-                        .map(|p| strip_components(p, 0))
-                        .unwrap_or_else(|| rel_path.clone());
-                    let new_abs = work_tree.join(&new_rel);
                     if let Some(parent) = new_abs.parent() {
                         if !parent.as_os_str().is_empty() && !parent.exists() {
                             fs::create_dir_all(parent)?;
@@ -1471,19 +1741,41 @@ fn apply_patch_to_worktree(
                     let new_content = if fp.hunks.is_empty() {
                         old_content
                     } else {
-                        apply_hunks(&old_content, &fp.hunks).with_context(|| {
-                            format!("failed to apply patch to {}", old_abs.display())
-                        })?
+                        let (lines, rejects) = apply_hunks_to_lines(
+                            &lines_from_file_content(&old_content),
+                            &fp.hunks,
+                            apply,
+                            reject_mode,
+                        )?;
+                        if !rejects.is_empty() {
+                            had_reject = true;
+                            let disp = rel_for_filter.clone();
+                            let body = format!(
+                                "diff a/{disp} b/{disp}\t(rejected hunks)\n{}",
+                                rejects.join("")
+                            );
+                            write_reject_file_for_path(work_tree, apply, path_str, &body)?;
+                            if !reject_mode {
+                                bail!("patch rejected");
+                            }
+                        }
+                        lines_to_file_content(
+                            &lines,
+                            old_content.is_empty() || old_content.ends_with('\n'),
+                            !fp.hunks.is_empty(),
+                        )
                     };
                     fs::write(&new_abs, new_content.as_bytes())?;
                     fs::remove_file(&old_abs)?;
-                    affected.push(old_rel);
-                    affected.push(new_rel);
+                    affected.push(worktree_rel_path(work_tree, &old_abs)?);
+                    affected.push(worktree_rel_path(work_tree, &new_abs)?);
                 }
             }
             continue;
         }
 
+        let path = apply.resolve_worktree_path(work_tree, path_str);
+        let rel_path = worktree_rel_path(work_tree, &path)?;
         affected.push(rel_path.clone());
 
         if fp.is_deleted {
@@ -1509,7 +1801,21 @@ fn apply_patch_to_worktree(
                     fs::create_dir_all(parent)?;
                 }
             }
-            let content = apply_hunks("", &fp.hunks)?;
+            let old_lines: Vec<String> = Vec::new();
+            let (lines, rejects) = apply_hunks_to_lines(&old_lines, &fp.hunks, apply, reject_mode)?;
+            if !rejects.is_empty() {
+                had_reject = true;
+                let disp = rel_for_filter.clone();
+                let body = format!(
+                    "diff a/{disp} b/{disp}\t(rejected hunks)\n{}",
+                    rejects.join("")
+                );
+                write_reject_file_for_path(work_tree, apply, path_str, &body)?;
+                if !reject_mode {
+                    bail!("patch rejected");
+                }
+            }
+            let content = lines_to_file_content(&lines, true, !fp.hunks.is_empty());
             fs::write(&path, content.as_bytes())?;
             #[cfg(unix)]
             if fp.new_mode.as_deref() == Some("100755") {
@@ -1519,7 +1825,6 @@ fn apply_patch_to_worktree(
             continue;
         }
 
-        // Modify existing file
         let old_content =
             fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
         if let Some(expected_oid) = fp.old_oid.as_deref() {
@@ -1538,12 +1843,40 @@ fn apply_patch_to_worktree(
             continue;
         }
 
-        let new_content = apply_hunks(&old_content, &fp.hunks)
-            .with_context(|| format!("failed to apply patch to {}", path.display()))?;
+        let old_lines = lines_from_file_content(&old_content);
+        let (lines, rejects) = apply_hunks_to_lines(&old_lines, &fp.hunks, apply, reject_mode)?;
+        if !rejects.is_empty() {
+            had_reject = true;
+            let disp = rel_for_filter.clone();
+            let body = format!(
+                "diff a/{disp} b/{disp}\t(rejected hunks)\n{}",
+                rejects.join("")
+            );
+            write_reject_file_for_path(work_tree, apply, path_str, &body)?;
+            if !reject_mode {
+                bail!("patch rejected");
+            }
+        }
+        let new_content = lines_to_file_content(
+            &lines,
+            old_content.is_empty() || old_content.ends_with('\n'),
+            !fp.hunks.is_empty(),
+        );
         fs::write(&path, new_content.as_bytes())?;
     }
 
-    Ok(affected)
+    Ok((affected, had_reject))
+}
+
+fn lines_from_file_content(content: &str) -> Vec<String> {
+    if content.is_empty() {
+        return Vec::new();
+    }
+    let mut v: Vec<String> = content.split('\n').map(str::to_string).collect();
+    if v.last().is_some_and(|l| l.is_empty()) {
+        v.pop();
+    }
+    v
 }
 
 /// Stage only the files affected by the patch into the index.
@@ -2009,6 +2342,16 @@ fn do_abort() -> Result<()> {
 // ── Save/Load options ───────────────────────────────────────────────
 
 fn save_am_options(state_dir: &Path, opts: &AmOptions) -> Result<()> {
+    let quoted = sq_quote_argv_am(&opts.apply.apply_opt_argv);
+    fs::write(
+        state_dir.join("apply-opt"),
+        if quoted.is_empty() {
+            String::new()
+        } else {
+            format!("{quoted}\n")
+        },
+    )?;
+
     let mut out = String::new();
     if opts.three_way {
         out.push_str("threeway\n");
@@ -2045,8 +2388,118 @@ fn save_am_options(state_dir: &Path, opts: &AmOptions) -> Result<()> {
     Ok(())
 }
 
+fn apply_settings_from_saved_argv(argv: Vec<String>) -> ApplySettings {
+    let mut s = ApplySettings {
+        apply_opt_argv: argv.clone(),
+        p_value: 1,
+        directory: None,
+        min_context: u32::MAX,
+        whitespace_action: ApplyWhitespaceAction::Warn,
+        ignore_whitespace: ApplyIgnoreWhitespace::None,
+        ws_rule: WS_DEFAULT_RULE,
+        exclude: Vec::new(),
+        include: Vec::new(),
+    };
+
+    let mut i = 0usize;
+    while i < argv.len() {
+        let a = argv[i].as_str();
+        if let Some(rest) = a.strip_prefix("--whitespace=") {
+            let w = rest.trim();
+            match w.to_ascii_lowercase().as_str() {
+                "nowarn" => s.whitespace_action = ApplyWhitespaceAction::Nowarn,
+                "warn" | "" => s.whitespace_action = ApplyWhitespaceAction::Warn,
+                "error" | "error-all" => s.whitespace_action = ApplyWhitespaceAction::Error,
+                "strip" | "fix" => s.whitespace_action = ApplyWhitespaceAction::Fix,
+                _ => {}
+            }
+            i += 1;
+            continue;
+        }
+        if a == "--ignore-space-change" {
+            s.ignore_whitespace = ApplyIgnoreWhitespace::Change;
+            i += 1;
+            continue;
+        }
+        if a == "--ignore-whitespace" {
+            s.ignore_whitespace = ApplyIgnoreWhitespace::All;
+            i += 1;
+            continue;
+        }
+        if let Some(rest) = a.strip_prefix("--directory=") {
+            if !rest.is_empty() {
+                s.directory = Some(apply_directory_prefix(rest));
+            }
+            i += 1;
+            continue;
+        }
+        if a == "--directory" && i + 1 < argv.len() {
+            s.directory = Some(apply_directory_prefix(&argv[i + 1]));
+            i += 2;
+            continue;
+        }
+        if let Some(rest) = a.strip_prefix("--exclude=") {
+            s.exclude.push(rest.to_string());
+            i += 1;
+            continue;
+        }
+        if let Some(rest) = a.strip_prefix("--include=") {
+            s.include.push(rest.to_string());
+            i += 1;
+            continue;
+        }
+        if a == "-C" && i + 1 < argv.len() {
+            if let Ok(n) = argv[i + 1].parse::<u32>() {
+                s.min_context = n;
+            }
+            i += 2;
+            continue;
+        }
+        if let Some(rest) = a.strip_prefix("-C") {
+            if !rest.is_empty() {
+                if let Ok(n) = rest.parse::<u32>() {
+                    s.min_context = n;
+                }
+            }
+            i += 1;
+            continue;
+        }
+        if a == "-p" && i + 1 < argv.len() {
+            if let Ok(n) = argv[i + 1].parse::<u32>() {
+                s.p_value = n;
+            }
+            i += 2;
+            continue;
+        }
+        if let Some(rest) = a.strip_prefix("-p") {
+            if !rest.is_empty() {
+                if let Ok(n) = rest.parse::<u32>() {
+                    s.p_value = n;
+                }
+            }
+            i += 1;
+            continue;
+        }
+        if a == "--reject" {
+            i += 1;
+            continue;
+        }
+        i += 1;
+    }
+
+    s
+}
+
 fn load_am_options(state_dir: &Path) -> AmOptions {
     let content = fs::read_to_string(state_dir.join("options")).unwrap_or_default();
+    let apply_raw = fs::read_to_string(state_dir.join("apply-opt")).unwrap_or_default();
+    let apply_argv: Vec<String> = shell_words::split(apply_raw.trim())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
+    let apply = apply_settings_from_saved_argv(apply_argv);
+
     let mut opts = AmOptions {
         quiet: false,
         three_way: false,
@@ -2060,6 +2513,7 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
         empty: "stop".to_string(),
         allow_empty: false,
         mail_utf8: true,
+        apply,
     };
     for line in content.lines() {
         match line.trim() {
@@ -3448,120 +3902,256 @@ fn parse_range(s: &str) -> Result<(usize, usize)> {
     }
 }
 
-fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
-    let has_trailing_newline = old_content.is_empty() || old_content.ends_with('\n');
-    let old_lines: Vec<&str> = if old_content.is_empty() {
-        Vec::new()
-    } else {
-        let mut lines: Vec<&str> = old_content.split('\n').collect();
-        if lines.last().is_some_and(|line| line.is_empty()) {
-            lines.pop();
-        }
-        lines
-    };
+fn apply_settings_for_three_way() -> ApplySettings {
+    ApplySettings {
+        apply_opt_argv: Vec::new(),
+        p_value: 1,
+        directory: None,
+        min_context: u32::MAX,
+        whitespace_action: ApplyWhitespaceAction::Warn,
+        ignore_whitespace: ApplyIgnoreWhitespace::None,
+        ws_rule: WS_DEFAULT_RULE,
+        exclude: Vec::new(),
+        include: Vec::new(),
+    }
+}
 
-    let mut result: Vec<String> = Vec::new();
-    let mut old_idx: usize = 0;
+/// Count leading / trailing context lines in a hunk (for `-C` fuzz limits).
+fn hunk_context_counts(hunk: &Hunk) -> (usize, usize) {
+    let mut leading = 0usize;
+    for hl in &hunk.lines {
+        if matches!(hl, HunkLine::Context(_)) {
+            leading += 1;
+        } else {
+            break;
+        }
+    }
+    let mut trailing = 0usize;
+    let mut i = hunk.lines.len();
+    while i > 0 {
+        i -= 1;
+        match &hunk.lines[i] {
+            HunkLine::Context(_) => trailing += 1,
+            HunkLine::NoNewline => {}
+            _ => break,
+        }
+    }
+    (leading, trailing)
+}
+
+fn trim_hunk_lines(hunk: &Hunk, drop_leading: usize, drop_trailing: usize) -> Vec<HunkLine> {
+    if drop_leading == 0 && drop_trailing == 0 {
+        return hunk.lines.clone();
+    }
+    let mut lines = hunk.lines.clone();
+    let mut to_drop_lead = drop_leading;
+    while to_drop_lead > 0
+        && lines
+            .first()
+            .is_some_and(|l| matches!(l, HunkLine::Context(_)))
+    {
+        lines.remove(0);
+        to_drop_lead -= 1;
+    }
+    let mut to_drop_trail = drop_trailing;
+    while to_drop_trail > 0
+        && lines
+            .last()
+            .is_some_and(|l| matches!(l, HunkLine::Context(_)))
+    {
+        lines.pop();
+        to_drop_trail -= 1;
+    }
+    lines
+}
+
+fn try_apply_hunk_slice(
+    apply: &ApplySettings,
+    old_lines: &[&str],
+    lines_slice: &[HunkLine],
+    start_idx: usize,
+    fix_ws: bool,
+) -> Result<(usize, Vec<String>)> {
+    let mut old_idx = start_idx;
+    let mut produced: Vec<String> = Vec::new();
+    for hl in lines_slice {
+        match hl {
+            HunkLine::Context(s) => {
+                if old_idx >= old_lines.len() {
+                    bail!("context mismatch");
+                }
+                if !apply.line_matches(old_lines[old_idx], s.as_str()) {
+                    bail!("context mismatch");
+                }
+                old_idx += 1;
+                produced.push(s.clone());
+            }
+            HunkLine::Remove(s) => {
+                if old_idx >= old_lines.len() {
+                    bail!("remove mismatch");
+                }
+                if !apply.line_matches(old_lines[old_idx], s.as_str()) {
+                    bail!("remove mismatch");
+                }
+                old_idx += 1;
+            }
+            HunkLine::Add(s) => {
+                let line = if fix_ws && apply.whitespace_action == ApplyWhitespaceAction::Fix {
+                    ws_fix_copy_line(s, apply.ws_rule).0
+                } else {
+                    s.clone()
+                };
+                produced.push(line);
+            }
+            HunkLine::NoNewline => {}
+        }
+    }
+    Ok((old_idx, produced))
+}
+
+fn find_hunk_position(
+    apply: &ApplySettings,
+    old_lines: &[&str],
+    hunk: &Hunk,
+) -> Result<(usize, Vec<HunkLine>)> {
+    let hunk_start = if hunk.old_start == 0 {
+        0
+    } else {
+        hunk.old_start - 1
+    };
+    let fix_ws = apply.whitespace_action == ApplyWhitespaceAction::Fix;
+    let (full_leading, full_trailing) = hunk_context_counts(hunk);
+    let allow_fuzz = apply.min_context != u32::MAX;
+    let mut cur_lead_drop = 0usize;
+    let mut cur_trail_drop = 0usize;
+
+    loop {
+        let eff_leading = full_leading.saturating_sub(cur_lead_drop);
+        let eff_trailing = full_trailing.saturating_sub(cur_trail_drop);
+        let trimmed = trim_hunk_lines(hunk, cur_lead_drop, cur_trail_drop);
+
+        if try_apply_hunk_slice(apply, old_lines, &trimmed, hunk_start, fix_ws).is_ok() {
+            return Ok((hunk_start, trimmed));
+        }
+        for pos in 0..=old_lines.len() {
+            if pos == hunk_start {
+                continue;
+            }
+            if try_apply_hunk_slice(apply, old_lines, &trimmed, pos, fix_ws).is_ok() {
+                return Ok((pos, trimmed));
+            }
+        }
+
+        if !allow_fuzz {
+            break;
+        }
+        if eff_leading <= apply.min_context as usize && eff_trailing <= apply.min_context as usize {
+            break;
+        }
+        if eff_leading >= eff_trailing && eff_leading > apply.min_context as usize {
+            cur_lead_drop += 1;
+        } else if eff_trailing > apply.min_context as usize {
+            cur_trail_drop += 1;
+        } else {
+            break;
+        }
+    }
+    bail!("patch does not apply")
+}
+
+fn format_reject_hunk(hunk: &Hunk) -> String {
+    let mut out = String::new();
+    let (old_start, old_count, new_start, new_count) = (
+        hunk.old_start,
+        hunk._old_count,
+        hunk._new_start,
+        hunk._new_count,
+    );
+    out.push_str(&format!(
+        "@@ -{},{} +{},{} @@\n",
+        old_start, old_count, new_start, new_count
+    ));
+    for hl in &hunk.lines {
+        match hl {
+            HunkLine::Context(s) => {
+                out.push(' ');
+                out.push_str(s);
+                out.push('\n');
+            }
+            HunkLine::Remove(s) => {
+                out.push('-');
+                out.push_str(s);
+                out.push('\n');
+            }
+            HunkLine::Add(s) => {
+                out.push('+');
+                out.push_str(s);
+                out.push('\n');
+            }
+            HunkLine::NoNewline => out.push_str("\\ No newline at end of file\n"),
+        }
+    }
+    out
+}
+
+fn apply_hunks_to_lines(
+    old_lines_in: &[String],
+    hunks: &[Hunk],
+    apply: &ApplySettings,
+    reject_mode: bool,
+) -> Result<(Vec<String>, Vec<String>)> {
+    let mut lines: Vec<String> = old_lines_in.to_vec();
+    let mut rejects: Vec<String> = Vec::new();
 
     for hunk in hunks {
-        let hunk_start = if hunk.old_start == 0 {
-            0
-        } else {
-            hunk.old_start - 1
-        };
-
-        while old_idx < hunk_start && old_idx < old_lines.len() {
-            result.push(old_lines[old_idx].to_string());
-            old_idx += 1;
-        }
-
-        for hl in &hunk.lines {
-            match hl {
-                HunkLine::Context(s) => {
-                    if old_idx >= old_lines.len() {
-                        bail!(
-                            "context mismatch at line {}: expected {:?}, got EOF",
-                            old_idx + 1,
-                            s
-                        );
-                    }
-                    if old_lines[old_idx] != s.as_str() {
-                        bail!(
-                            "context mismatch at line {}: expected {:?}, got {:?}",
-                            old_idx + 1,
-                            s,
-                            old_lines[old_idx]
-                        );
-                    }
-                    old_idx += 1;
-                    result.push(s.clone());
+        let old_refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        match find_hunk_position(apply, &old_refs, hunk) {
+            Ok((pos, trimmed)) => {
+                let fix_ws = apply.whitespace_action == ApplyWhitespaceAction::Fix;
+                let (end_pos, insert) =
+                    try_apply_hunk_slice(apply, &old_refs, &trimmed, pos, fix_ws)?;
+                let mut new_lines: Vec<String> = Vec::new();
+                new_lines.extend(lines[..pos].iter().cloned());
+                new_lines.extend(insert);
+                new_lines.extend(lines[end_pos..].iter().cloned());
+                lines = new_lines;
+            }
+            Err(e) => {
+                if !reject_mode {
+                    return Err(e);
                 }
-                HunkLine::Remove(s) => {
-                    if old_idx >= old_lines.len() {
-                        bail!(
-                            "remove mismatch at line {}: expected {:?}, got EOF",
-                            old_idx + 1,
-                            s
-                        );
-                    }
-                    if old_lines[old_idx] != s.as_str() {
-                        bail!(
-                            "remove mismatch at line {}: expected {:?}, got {:?}",
-                            old_idx + 1,
-                            s,
-                            old_lines[old_idx]
-                        );
-                    }
-                    old_idx += 1;
-                }
-                HunkLine::Add(s) => {
-                    result.push(s.clone());
-                }
-                HunkLine::NoNewline => {}
+                rejects.push(format_reject_hunk(hunk));
             }
         }
     }
 
-    while old_idx < old_lines.len() {
-        result.push(old_lines[old_idx].to_string());
-        old_idx += 1;
+    Ok((lines, rejects))
+}
+
+fn lines_to_file_content(lines: &[String], had_trailing_nl: bool, had_hunks: bool) -> String {
+    if lines.is_empty() {
+        return String::new();
     }
-
-    if result.is_empty() {
-        return Ok(String::new());
-    }
-
-    let ends_no_newline = hunks.last().is_some_and(|h| {
-        let mut last_was_add = false;
-        let mut saw_no_newline_after_add = false;
-        for hl in &h.lines {
-            match hl {
-                HunkLine::Add(_) => {
-                    last_was_add = true;
-                    saw_no_newline_after_add = false;
-                }
-                HunkLine::NoNewline if last_was_add => {
-                    saw_no_newline_after_add = true;
-                }
-                HunkLine::Remove(_) => {
-                    last_was_add = false;
-                }
-                HunkLine::Context(_) => {
-                    last_was_add = false;
-                    saw_no_newline_after_add = false;
-                }
-                _ => {}
-            }
-        }
-        saw_no_newline_after_add
-    });
-
-    let mut out = result.join("\n");
-    if !ends_no_newline && (has_trailing_newline || !hunks.is_empty()) {
+    let mut out = lines.join("\n");
+    if had_trailing_nl || had_hunks {
         out.push('\n');
     }
+    out
+}
 
-    Ok(out)
+fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
+    let has_trailing_newline = old_content.is_empty() || old_content.ends_with('\n');
+    let old_lines_vec = lines_from_file_content(old_content);
+    let apply = apply_settings_for_three_way();
+    let (lines, rejects) = apply_hunks_to_lines(&old_lines_vec, hunks, &apply, false)?;
+    if !rejects.is_empty() {
+        bail!("patch rejected");
+    }
+    Ok(lines_to_file_content(
+        &lines,
+        has_trailing_newline,
+        !hunks.is_empty(),
+    ))
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
