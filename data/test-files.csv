@@ -409,7 +409,7 @@ t1405-main-ref-store-reftable	t1	yes	29	29	0	true	ok	0
 t1406-submodule-ref-store	t1	yes	15	8	7	false	ok	0
 t1407-worktree-ref-store	t1	skip	4	1	3	false	ok	0
 t1408-packed-refs	t1	yes	3	3	0	true	ok	0
-t1409-avoid-packing-refs	t1	yes	0	0	0	false	ok	0
+t1409-avoid-packing-refs	t1	yes	11	11	0	true	ok	0
 t1410-reflog	t1	yes	0	0	0	false	timeout	1
 t1411-reflog-show	t1	yes	17	8	9	false	ok	0
 t1412-reflog-loop	t1	yes	3	0	3	false	ok	0
