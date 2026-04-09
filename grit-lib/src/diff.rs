@@ -2425,7 +2425,11 @@ fn hash_blob_spans(buf: &[u8], is_text: bool) -> SpanHashTop {
 }
 
 /// Approximate copied vs added material between two blobs (Git `diffcore_count_changes`).
-fn diffcore_count_changes(old: &[u8], new: &[u8]) -> (u64, u64) {
+///
+/// Returns `(copied_bytes_from_src, literal_added_bytes_in_dst)` matching Git's
+/// `diffcore_count_changes` semantics (used for `--dirstat=changes` damage).
+#[must_use]
+pub fn diffcore_count_changes(old: &[u8], new: &[u8]) -> (u64, u64) {
     let src_is_text = !crate::merge_file::is_binary(old);
     let dst_is_text = !crate::merge_file::is_binary(new);
     let src_count = hash_blob_spans(old, src_is_text);
