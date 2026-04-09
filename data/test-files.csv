@@ -890,7 +890,7 @@ t5319-multi-pack-index	t5	yes	0	0	0	false	timeout	0
 t5320-delta-islands	t5	yes	15	15	0	true	ok	0
 t5321-pack-large-objects	t5	yes	2	2	0	true	ok	0
 t5322-pack-objects-sparse	t5	yes	11	5	6	false	ok	0
-t5323-pack-redundant	t5	yes	18	2	16	false	ok	0
+t5323-pack-redundant	t5	yes	18	18	0	true	ok	0
 t5324-split-commit-graph	t5	yes	42	9	33	false	ok	0
 t5325-reverse-index	t5	yes	16	16	0	true	ok	0
 t5326-multi-pack-bitmaps	t5	yes	357	357	0	true	ok	0

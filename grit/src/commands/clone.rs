@@ -322,6 +322,12 @@ fn checkout_head_allow_unborn(repo: &Repository) -> Result<()> {
 }
 
 pub fn run(mut args: Args) -> Result<()> {
+    // `git clone --mirror` is a bare clone into `<name>.git` with a full ref mirror;
+    // the object store must live at `<repo>/objects/...`, not `<repo>/.git/objects/...`.
+    if args.mirror {
+        args.bare = true;
+    }
+
     let partial_blob_none = matches!(args.filter.as_deref(), Some("blob:none"));
 
     let deepen =
