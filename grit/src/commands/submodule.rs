@@ -13,6 +13,7 @@ use grit_lib::index::MODE_GITLINK;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
+use grit_lib::submodule_gitdir::submodule_modules_git_dir;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
@@ -560,7 +561,7 @@ pub fn refresh_submodule_gitfiles(repo: &Repository) -> Result<()> {
         if !sm_dir.is_dir() {
             continue;
         }
-        let modules_git = repo.git_dir.join("modules").join(&path);
+        let modules_git = submodule_modules_git_dir(&repo.git_dir, &path);
         if !modules_git.exists() {
             continue;
         }
@@ -761,7 +762,7 @@ fn checkout_submodule_worktree(
     oid: &str,
 ) -> Result<()> {
     let sub_path = work_tree.join(submodule_path);
-    let modules_dir = repo.git_dir.join("modules").join(submodule_path);
+    let modules_dir = submodule_modules_git_dir(&repo.git_dir, submodule_path);
 
     // CWD must lie inside `GIT_WORK_TREE`; the superproject root is outside the submodule tree.
     // `--force`: after `clone --no-checkout`, HEAD may already equal `oid` while the index and
@@ -838,7 +839,7 @@ fn run_status(args: &StatusArgs) -> Result<()> {
                 read_submodule_head(&sub_path)
             } else {
                 // gitfile indirection: check .git/modules/<name>/HEAD
-                let modules_head = repo.git_dir.join("modules").join(&m.name).join("HEAD");
+                let modules_head = submodule_modules_git_dir(&repo.git_dir, &m.name).join("HEAD");
                 if modules_head.exists() {
                     read_head_from_file(&modules_head)
                 } else {
@@ -995,7 +996,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             }
         }
 
-        let modules_dir = repo.git_dir.join("modules").join(&m.path);
+        let modules_dir = submodule_modules_git_dir(&repo.git_dir, &m.path);
 
         // Submodule checkouts must use a gitfile at `<path>/.git` pointing at
         // `.git/modules/<name>/`. A nested `.git` directory breaks `git rev-parse --git-dir`
@@ -1267,7 +1268,7 @@ fn run_add(args: &AddArgs) -> Result<()> {
         eprintln!("Adding existing repo at '{}' to the index", path);
     } else {
         // Clone the submodule.
-        let modules_dir = repo.git_dir.join("modules").join(&path);
+        let modules_dir = submodule_modules_git_dir(&repo.git_dir, &path);
         // Only create the parent directory; git clone --separate-git-dir
         // will create the modules_dir itself.
         if let Some(parent) = modules_dir.parent() {
@@ -1867,7 +1868,7 @@ fn run_absorbgitdirs(args: &AbsorbgitdirsArgs) -> Result<()> {
             continue;
         }
 
-        let modules_dir = repo.git_dir.join("modules").join(&m.name);
+        let modules_dir = submodule_modules_git_dir(&repo.git_dir, &m.name);
 
         // Create the modules directory if needed.
         fs::create_dir_all(modules_dir.parent().unwrap())?;

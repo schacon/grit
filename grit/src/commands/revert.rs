@@ -1044,6 +1044,21 @@ fn three_way_merge_with_content(
             (Some(be), Some(oe), Some(te)) if same_blob(be, te) => {
                 out.entries.push(oe.clone());
             }
+            (Some(be), Some(oe), Some(te))
+                if be.mode == 0o160000 && oe.mode == 0o160000 && te.mode == 0o160000 =>
+            {
+                if same_blob(oe, te) {
+                    out.entries.push(oe.clone());
+                } else if same_blob(be, oe) {
+                    out.entries.push(te.clone());
+                } else if same_blob(be, te) {
+                    out.entries.push(oe.clone());
+                } else {
+                    stage_entry(&mut out, be, 1);
+                    stage_entry(&mut out, oe, 2);
+                    stage_entry(&mut out, te, 3);
+                }
+            }
             // All three differ → try content merge
             (Some(be), Some(oe), Some(te)) => {
                 content_merge_or_conflict(repo, &mut out, &path, be, oe, te)?;
@@ -1103,6 +1118,13 @@ fn content_merge_or_conflict(
     ours: &IndexEntry,
     theirs: &IndexEntry,
 ) -> Result<()> {
+    if base.mode == 0o160000 || ours.mode == 0o160000 || theirs.mode == 0o160000 {
+        stage_entry(index, base, 1);
+        stage_entry(index, ours, 2);
+        stage_entry(index, theirs, 3);
+        return Ok(());
+    }
+
     let base_obj = repo.odb.read(&base.oid)?;
     let ours_obj = repo.odb.read(&ours.oid)?;
     let theirs_obj = repo.odb.read(&theirs.oid)?;
@@ -1225,13 +1247,10 @@ fn write_entry_to_worktree(repo: &Repository, abs_path: &Path, entry: &IndexEntr
     if entry.mode == 0o160000 {
         if abs_path.is_file() || abs_path.is_symlink() {
             let _ = fs::remove_file(abs_path);
-        } else if abs_path.is_dir() && abs_path.join(".git").exists() {
-            // Submodule checkout: leave populated work tree intact.
-            return Ok(());
         } else if abs_path.is_dir() {
             let _ = fs::remove_dir_all(abs_path);
         }
-        let _ = fs::create_dir_all(abs_path);
+        fs::create_dir_all(abs_path)?;
         return Ok(());
     }
 
