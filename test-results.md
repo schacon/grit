@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-09 (t5571 / pre-push hook)**
+
+- `cargo test -p grit-lib --lib`: 155 passed
+- `./scripts/run-tests.sh t5571-pre-push-hook.sh`: 11/11 passed
+
 **2026-04-09 (t3417 / rebase whitespace fix)**
 
 - `cargo test -p grit-lib --lib`: 147 passed

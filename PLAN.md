@@ -602,7 +602,7 @@ commit → check it off → move on.
 - [ ] `t5312-prune-corruption` ███████░░░░░░░░░░░░░ 4/11 (7 left) — 
 
 - [x] `t5409-colorize-remote-messages` — remote messages are colorized on the client (Git `sideband.c` semantics; harness `test_decode_color` matches upstream `awk` decoder for combined SGR)
-- [ ] `t5571-pre-push-hook` ███████░░░░░░░░░░░░░ 4/11 (7 left) — check pre-push hooks
+- [x] `t5571-pre-push-hook` — pre-push hook stdin/argv and push.default upstream (11/11 harness)
 - [ ] `t5313-pack-bounds-checks` ████░░░░░░░░░░░░░░░░ 2/9 (7 left) — bounds-checking of access to mmapped on-disk file formats
 - [x] `t5617-clone-submodules-remote` — Test cloning repos with submodules using remote-tracking branches (9/9 harness)
 - [ ] `t5538-push-shallow` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — push from/to a shallow clone

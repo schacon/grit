@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   313 |
+| Completed   |   314 |
 | In progress |     5 |
-| Remaining   |   452 |
+| Remaining   |   451 |
 | **Total**   |   770 |
 
-Task lines in `PLAN.md`: 313 completed (`[x]`), 5 in progress (`[~]`), 452 remaining (`[ ]`).
+Task lines in `PLAN.md`: 314 completed (`[x]`), 5 in progress (`[~]`), 451 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5571-pre-push-hook` — 11/11 tests pass (`push`: pre-push stdin uses literal `HEAD` and rev specs like `HEAD~`; `push.default=upstream` maps to `branch.*.merge` on the upstream remote; tag refspecs `tag:dst` map short `dst` under `refs/tags/` when source is a tag ref; hook stdin order matches Git for mixed ref/rev specs; harness CSV/dashboards refreshed)
 - `t5802-connect-helper` — 8/8 tests pass (`ext::` sh -c upload-pack argv extraction; `git daemon --inetd` minimal path; streaming unpack zero-byte trees + duplicate `want` dedup; fetch NAK round + tag-following for ext/HTTP; rev-parse `tag^1` peels tags; harness CSV/dashboards refreshed)
 - `t7421-submodule-summary-add` — 5/5 tests pass (`submodule summary`: index↔commit gitlink diff, pathspecs + renamed paths, `rev-parse` first line for abbrev; `submodule update --remote`: local URL fast path updates `refs/remotes/origin/*` + copies objects, stages gitlink in super index)
 - `t5620-backfill` — 10/10 tests pass (expanded-cone path matching: top-level dirs excluded unless in cone; `sparse-checkout` hydrates before apply + empty-index rebuild from HEAD; promisor lazy-fetch reads local ODB first; checkout skips `skip_worktree` paths)
