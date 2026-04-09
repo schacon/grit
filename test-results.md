@@ -10,6 +10,7 @@
 - `./scripts/run-tests.sh t5321-pack-large-objects.sh`: 2/2 passing (`index-pack --stdin` on fixture pack; `GIT_TEST_OE_DELTA_SIZE=2 git pack-objects` repack; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t4120-apply-popt.sh`: 12/12 passing (`git apply -p` strip count, invalid `-p` diagnostics, quoted traditional diff paths, `--stat` oversized strip, mode-only and rename with `--index`; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t6436-merge-overwrite.sh`: 18/18 passing (merge overwrite safety; harness CSV/dashboards refreshed).
+- `./scripts/run-tests.sh t5519-push-alternates.sh`: 8/8 passing (push with alternate ODB; no code changes; harness CSV/dashboards refreshed).
 
 **Updated:** 2026-04-08
 

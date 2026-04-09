@@ -934,7 +934,7 @@ t5515-fetch-merge-logic	t5	yes	65	1	64	false	ok	0
 t5516-fetch-push	t5	yes	124	10	114	false	ok	0
 t5517-push-mirror	t5	yes	13	8	5	false	ok	0
 t5518-fetch-exit-status	t5	yes	3	3	0	true	ok	0
-t5519-push-alternates	t5	yes	8	2	6	false	ok	0
+t5519-push-alternates	t5	yes	8	8	0	true	ok	0
 t5520-pull	t5	yes	80	12	68	false	ok	0
 t5521-pull-options	t5	yes	22	6	16	false	ok	0
 t5522-pull-symlink	t5	yes	4	3	1	false	ok	0
