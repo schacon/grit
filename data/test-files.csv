@@ -830,7 +830,7 @@ t4207-log-decoration	t4	yes	23	23	0	true	ok	0
 t4207-log-decoration-colors	t4	yes	4	4	0	true	ok	0
 t4208-diff-pathspec-magic	t4	yes	22	21	1	false	ok	0
 t4208-log-magic-pathspec	t4	yes	21	12	9	false	ok	0
-t4209-log-pickaxe	t4	yes	0	0	0	false	timeout	0
+t4209-log-pickaxe	t4	yes	48	48	0	true	ok	0
 t4210-log-i18n	t4	yes	21	17	4	false	ok	0
 t4211-line-log	t4	yes	53	21	32	false	ok	0
 t4212-log-corrupt	t4	yes	13	13	0	true	ok	0
