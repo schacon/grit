@@ -253,9 +253,23 @@ pub struct Args {
     #[arg(long = "no-diff-merges")]
     pub no_diff_merges: bool,
 
-    /// Produce dense combined diff for merge commits.
+    /// Show merge diffs in the default format (`log.diffMerges`, usually separate parents).
+    ///
+    /// Unlike `--diff-merges`, plain `-m` does not imply `--patch` by itself.
+    #[arg(short = 'm')]
+    pub merge_diff_m: bool,
+
+    /// Combined diff for merge commits (shortcut for `--diff-merges=combined -p`).
+    #[arg(short = 'c')]
+    pub merge_diff_c: bool,
+
+    /// Dense combined diff for merge commits (`--diff-merges=dense-combined -p`).
     #[arg(long = "cc")]
     pub cc: bool,
+
+    /// First-parent merge diffs (shortcut for `--diff-merges=first-parent -p`).
+    #[arg(long = "dd")]
+    pub merge_diff_dd: bool,
 
     /// Show diff against a mechanical re-merge of the parents (two-parent merges).
     #[arg(long = "remerge-diff")]
@@ -452,6 +466,211 @@ pub struct Args {
     /// Suppress diff output (line-log: show commits only).
     #[arg(short = 's')]
     pub suppress_diff: bool,
+}
+
+/// How merge commits are diffed in `git log` (`--diff-merges`, `-m`, `-c`, `--cc`, `--dd`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MergeDiffFormat {
+    /// No merge diff (`--diff-merges=off` / default when no merge diff requested).
+    Off,
+    /// Diff only against the first parent (`--diff-merges=first-parent`, `--dd`, `--first-parent` default).
+    FirstParent,
+    /// One diff per parent (`separate`, plain `-m` with default `log.diffMerges`, `--diff-merges=on`).
+    Separate,
+    /// Combined diff (`-c`, `--diff-merges=combined`).
+    Combined,
+    /// Dense combined diff (`--cc`, `--diff-merges=dense-combined`).
+    DenseCombined,
+    /// Remerge diff (`--remerge-diff`); handled mainly before this enum is consulted.
+    Remerge,
+}
+
+impl MergeDiffFormat {
+    fn parse_diff_merges_cli_value(s: &str, default_on: MergeDiffFormat) -> Option<Self> {
+        let s = s.trim();
+        match s {
+            "off" | "none" => Some(Self::Off),
+            "1" | "first-parent" => Some(Self::FirstParent),
+            "separate" => Some(Self::Separate),
+            "c" | "combined" => Some(Self::Combined),
+            "cc" | "dense-combined" => Some(Self::DenseCombined),
+            "r" | "remerge" => Some(Self::Remerge),
+            "m" | "on" => Some(default_on),
+            _ => None,
+        }
+    }
+
+    fn parse_log_diff_merges_config(s: &str) -> Result<Self> {
+        let s = s.trim();
+        match s {
+            "off" | "none" => Ok(Self::Off),
+            "1" | "first-parent" => Ok(Self::FirstParent),
+            "separate" => Ok(Self::Separate),
+            "c" | "combined" => Ok(Self::Combined),
+            "cc" | "dense-combined" => Ok(Self::DenseCombined),
+            "r" | "remerge" => Ok(Self::Remerge),
+            // `m` / `on` in config are no-ops in C Git (leave default); initial default is separate.
+            "m" | "on" => Ok(Self::Separate),
+            _ => anyhow::bail!("fatal: bad config variable 'log.diffMerges' in file '.git/config'"),
+        }
+    }
+}
+
+fn log_diff_merges_default_format(git_dir: &Path) -> Result<MergeDiffFormat> {
+    let cfg = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    if let Some(raw) = cfg
+        .get("log.diffMerges")
+        .or_else(|| cfg.get("log.diffmerges"))
+    {
+        MergeDiffFormat::parse_log_diff_merges_config(&raw)
+    } else {
+        Ok(MergeDiffFormat::Separate)
+    }
+}
+
+fn validate_log_diff_merges_config(git_dir: &Path) -> Result<()> {
+    let cfg = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    if let Some(raw) = cfg
+        .get("log.diffMerges")
+        .or_else(|| cfg.get("log.diffmerges"))
+    {
+        let _ = MergeDiffFormat::parse_log_diff_merges_config(&raw)?;
+    }
+    Ok(())
+}
+
+/// Apply `git log` merge-diff flags, validate config, and set implied `--patch` for `-c` / `--cc` / `--dd` / `--remerge-diff`.
+fn normalize_log_merge_diff_args(args: &mut Args, git_dir: &Path) -> Result<()> {
+    validate_log_diff_merges_config(git_dir)?;
+
+    if (args.merge_diff_c || args.cc || args.merge_diff_dd || args.remerge_diff)
+        && !args.no_patch {
+            args.patch = true;
+        }
+
+    if args.merge_diff_c && args.cc {
+        anyhow::bail!("options '-c' and '--cc' cannot be used together");
+    }
+
+    Ok(())
+}
+
+fn effective_merge_diff_format(
+    args: &Args,
+    is_merge: bool,
+    git_dir: &Path,
+) -> Result<MergeDiffFormat> {
+    if !is_merge {
+        return Ok(MergeDiffFormat::FirstParent);
+    }
+    if args.remerge_diff {
+        return Ok(MergeDiffFormat::Remerge);
+    }
+    if args.merge_diff_c {
+        return Ok(MergeDiffFormat::Combined);
+    }
+    if args.cc {
+        return Ok(MergeDiffFormat::DenseCombined);
+    }
+    if args.merge_diff_dd {
+        return Ok(MergeDiffFormat::FirstParent);
+    }
+    if args.no_diff_merges {
+        return Ok(MergeDiffFormat::Off);
+    }
+    if let Some(ref s) = args.diff_merges {
+        let default_on = log_diff_merges_default_format(git_dir)?;
+        if let Some(fmt) = MergeDiffFormat::parse_diff_merges_cli_value(s, default_on) {
+            return Ok(fmt);
+        }
+        anyhow::bail!("invalid value for '--diff-merges': '{s}'");
+    }
+    if args.merge_diff_m {
+        return log_diff_merges_default_format(git_dir);
+    }
+    if args.first_parent {
+        return Ok(MergeDiffFormat::FirstParent);
+    }
+    Ok(MergeDiffFormat::Off)
+}
+
+/// Whether a merge commit should emit any diff (stat/raw/patch) for the current log options.
+fn merge_commit_wants_diff(args: &Args, git_dir: &Path) -> Result<bool> {
+    Ok(effective_merge_diff_format(args, true, git_dir)? != MergeDiffFormat::Off)
+}
+
+/// Whether `git log` should run diff machinery for a commit (false for merge + `off` unless only `-m` without patch — then still false).
+fn log_commit_needs_diff_output(args: &Args, info: &CommitInfo, git_dir: &Path) -> Result<bool> {
+    let wants_diff = args.patch
+        || args.patch_u
+        || !args.stat.is_empty()
+        || args.name_only
+        || args.name_status
+        || args.raw
+        || args.cc
+        || args.merge_diff_c
+        || args.remerge_diff
+        || args.patch_with_stat;
+    if !wants_diff {
+        return Ok(false);
+    }
+    let is_merge = info.parents.len() > 1;
+    if is_merge && !merge_commit_wants_diff(args, git_dir)? {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// Whether unified patch hunks should be printed (honors `-m` not implying `-p` alone).
+fn log_wants_patch_hunks(args: &Args, info: &CommitInfo, git_dir: &Path) -> Result<bool> {
+    if args.no_patch || args.suppress_diff {
+        return Ok(false);
+    }
+    let is_merge = info.parents.len() > 1;
+    let patch = args.patch || args.patch_u;
+    if !patch {
+        return Ok(false);
+    }
+    if is_merge && effective_merge_diff_format(args, true, git_dir)? == MergeDiffFormat::Off {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// Whether combined-style merge diff is active (`-c` / `--cc`).
+fn merge_diff_is_combined_style(args: &Args, is_merge: bool, git_dir: &Path) -> Result<bool> {
+    if !is_merge {
+        return Ok(false);
+    }
+    let f = effective_merge_diff_format(args, true, git_dir)?;
+    Ok(matches!(
+        f,
+        MergeDiffFormat::Combined | MergeDiffFormat::DenseCombined
+    ))
+}
+
+/// Whether log should use the dense combined diff implementation (`--cc`).
+fn merge_diff_is_dense_combined(args: &Args, is_merge: bool, git_dir: &Path) -> Result<bool> {
+    if !is_merge {
+        return Ok(false);
+    }
+    Ok(effective_merge_diff_format(args, true, git_dir)? == MergeDiffFormat::DenseCombined)
+}
+
+/// Whether log should emit one diff per parent (`separate` / `-m` default).
+fn merge_diff_is_separate(args: &Args, is_merge: bool, git_dir: &Path) -> Result<bool> {
+    if !is_merge {
+        return Ok(false);
+    }
+    Ok(effective_merge_diff_format(args, true, git_dir)? == MergeDiffFormat::Separate)
+}
+
+/// Whether log should emit a remerge diff for merges.
+fn merge_diff_is_remerge(args: &Args, is_merge: bool, git_dir: &Path) -> Result<bool> {
+    if !is_merge {
+        return Ok(false);
+    }
+    Ok(effective_merge_diff_format(args, true, git_dir)? == MergeDiffFormat::Remerge)
 }
 
 /// Whether log/show diff output should use ANSI colors on stdout (Git `color.diff` / `color.ui`).
@@ -771,6 +990,7 @@ fn run_line_log(repo: &Repository, args: Args) -> Result<()> {
             parent_override.as_deref(),
             true,
             None,
+            None,
         )?;
         if show_patch {
             if let Some(ds) = displays.get(oid) {
@@ -1047,6 +1267,8 @@ fn run_graph_log(repo: &Repository, args: &Args) -> Result<()> {
         None
     };
 
+    let mut notes_cache = NotesMapCache::new(repo);
+
     let stdout = io::stdout();
     let mut out = stdout.lock();
     let mut graph = AsciiGraph::new();
@@ -1062,7 +1284,9 @@ fn run_graph_log(repo: &Repository, args: &Args) -> Result<()> {
             || args.name_only
             || args.name_status
             || args.raw
-            || args.cc);
+            || args.cc
+            || args.merge_diff_c
+            || args.remerge_diff);
 
     let graph_stat_prefix: Option<String> = if show_commit_body && !args.stat.is_empty() {
         let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
@@ -1112,10 +1336,14 @@ fn run_graph_log(repo: &Repository, args: &Args) -> Result<()> {
             write_commit_diff(
                 &mut out,
                 repo,
+                &node.oid,
                 &info,
                 args,
                 &combined_pathspecs,
                 graph_stat_prefix.as_deref(),
+                decorations.as_ref(),
+                use_color,
+                &mut notes_cache,
             )?;
         }
     }
@@ -2112,6 +2340,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;
+    normalize_log_merge_diff_args(&mut args, &repo.git_dir)?;
     if !args.line_range.is_empty() {
         return run_line_log(&repo, args);
     }
@@ -2316,7 +2545,9 @@ pub fn run(mut args: Args) -> Result<()> {
         || args.name_status
         || args.raw
         || args.cc
-        || args.remerge_diff;
+        || args.merge_diff_c
+        || args.remerge_diff
+        || args.patch_with_stat;
 
     let mut notes_cache = NotesMapCache::new(&repo);
     let flush_each = out.is_terminal();
@@ -2382,16 +2613,21 @@ pub fn run(mut args: Args) -> Result<()> {
                 None,
                 false,
                 None,
+                None,
             )?;
 
             if show_diff {
                 write_commit_diff(
                     &mut out,
                     &repo,
+                    &oid,
                     &commit_data,
                     &args,
                     effective_pathspecs,
                     None,
+                    decorations.as_ref(),
+                    use_color,
+                    &mut notes_cache,
                 )?;
             }
             if flush_each {
@@ -2545,16 +2781,21 @@ pub fn run(mut args: Args) -> Result<()> {
                 None,
                 false,
                 None,
+                None,
             )?;
 
             if show_diff {
                 write_commit_diff(
                     &mut out,
                     &repo,
+                    oid,
                     commit_data,
                     &args,
                     &combined_pathspecs,
                     None,
+                    decorations.as_ref(),
+                    use_color,
+                    &mut notes_cache,
                 )?;
             }
         }
@@ -2782,7 +3023,9 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
         || args.name_status
         || args.raw
         || args.cc
-        || args.remerge_diff;
+        || args.merge_diff_c
+        || args.remerge_diff
+        || args.patch_with_stat;
 
     let mut notes_cache = NotesMapCache::new(repo);
 
@@ -2802,9 +3045,21 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
             None,
             false,
             None,
+            None,
         )?;
         if show_diff {
-            write_commit_diff(&mut out, repo, commit_data, args, &args.pathspecs, None)?;
+            write_commit_diff(
+                &mut out,
+                repo,
+                oid,
+                commit_data,
+                args,
+                &args.pathspecs,
+                None,
+                decorations.as_ref(),
+                false,
+                &mut notes_cache,
+            )?;
         }
     }
 
@@ -3848,6 +4103,7 @@ fn run_symmetric_log(repo: &Repository, args: &Args) -> Result<()> {
             None,
             false,
             log_marker,
+            None,
         )?;
     }
 
@@ -3870,6 +4126,7 @@ fn format_commit(
     parent_line_override: Option<&[ObjectId]>,
     line_log: bool,
     log_marker: Option<char>,
+    merge_from_parent: Option<&ObjectId>,
 ) -> Result<()> {
     let hex = oid.to_hex();
     let abbrev_len = if args.no_abbrev {
@@ -3878,6 +4135,12 @@ fn format_commit(
         parse_abbrev(&args.abbrev)
     };
     let display_parents = parent_line_override.unwrap_or(info.parents.as_slice());
+    let merge_suffix = merge_from_parent
+        .map(|p| {
+            let h = p.to_hex();
+            format!(" (from {})", &h[..abbrev_len.min(h.len())])
+        })
+        .unwrap_or_default();
 
     if args.oneline || args.format.as_deref() == Some("oneline") {
         let first_line = info.message.lines().next().unwrap_or("");
@@ -3928,7 +4191,7 @@ fn format_commit(
         }
         Some("short") => {
             let dec = format_decoration(&hex, decorations);
-            writeln!(out, "commit {hex}{dec}")?;
+            writeln!(out, "commit {hex}{merge_suffix}{dec}")?;
             if display_parents.len() > 1 {
                 let parent_abbrevs: Vec<String> = display_parents
                     .iter()
@@ -3950,9 +4213,9 @@ fn format_commit(
         Some("medium") | None => {
             let dec = format_decoration(&hex, decorations);
             if use_color {
-                writeln!(out, "\x1b[33mcommit {hex}\x1b[m{dec}")?;
+                writeln!(out, "\x1b[33mcommit {hex}{merge_suffix}\x1b[m{dec}")?;
             } else {
-                writeln!(out, "commit {hex}{dec}")?;
+                writeln!(out, "commit {hex}{merge_suffix}{dec}")?;
             }
             if display_parents.len() > 1 {
                 let parent_abbrevs: Vec<String> = display_parents
@@ -3981,7 +4244,7 @@ fn format_commit(
         }
         Some("full") => {
             let dec = format_decoration(&hex, decorations);
-            writeln!(out, "commit {hex}{dec}")?;
+            writeln!(out, "commit {hex}{merge_suffix}{dec}")?;
             if display_parents.len() > 1 {
                 let parent_abbrevs: Vec<String> = display_parents
                     .iter()
@@ -4003,7 +4266,7 @@ fn format_commit(
         }
         Some("fuller") => {
             let dec = format_decoration(&hex, decorations);
-            writeln!(out, "commit {hex}{dec}")?;
+            writeln!(out, "commit {hex}{merge_suffix}{dec}")?;
             if display_parents.len() > 1 {
                 let parent_abbrevs: Vec<String> = display_parents
                     .iter()
@@ -5171,18 +5434,46 @@ fn compute_commit_diff(odb: &Odb, info: &CommitInfo) -> Result<Vec<DiffEntry>> {
     }
 }
 
+fn compute_commit_diff_against_parent(
+    odb: &Odb,
+    info: &CommitInfo,
+    parent_idx: usize,
+) -> Result<Vec<DiffEntry>> {
+    if parent_idx >= info.parents.len() {
+        return Ok(Vec::new());
+    }
+    let parent_obj = odb.read(&info.parents[parent_idx])?;
+    let parent_commit = parse_commit(&parent_obj.data)?;
+    Ok(diff_trees(
+        odb,
+        Some(&parent_commit.tree),
+        Some(&info.tree),
+        "",
+    )?)
+}
+
 /// Write diff output for a single commit.
 fn write_commit_diff(
     out: &mut impl Write,
     repo: &Repository,
+    commit_oid: &ObjectId,
     info: &CommitInfo,
     args: &Args,
     pathspecs: &[String],
     graph_stat_prefix: Option<&str>,
+    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
+    use_color: bool,
+    notes_cache: &mut NotesMapCache<'_>,
 ) -> Result<()> {
     let odb = &repo.odb;
+    let git_dir = &repo.git_dir;
+    let is_merge = info.parents.len() > 1;
 
-    if args.remerge_diff && info.parents.len() == 2 {
+    if !log_commit_needs_diff_output(args, info, git_dir)? {
+        return Ok(());
+    }
+
+    if merge_diff_is_remerge(args, is_merge, git_dir)? && info.parents.len() == 2 {
         use crate::commands::remerge_diff::{write_remerge_diff, RemergeDiffOptions};
         let find_oid = if let Some(ref s) = args.find_object {
             Some(grit_lib::rev_parse::resolve_revision(repo, s)?)
@@ -5201,48 +5492,112 @@ fn write_commit_diff(
         return write_remerge_diff(out, repo, &info.tree, &info.parents, &opts);
     }
 
-    let is_merge = info.parents.len() > 1;
+    let show_patch = log_wants_patch_hunks(args, info, git_dir)?;
+    let separate = merge_diff_is_separate(args, is_merge, git_dir)?;
+
+    if separate {
+        for (i, parent_oid) in info.parents.iter().enumerate() {
+            let mut entries = compute_commit_diff_against_parent(odb, info, i)?;
+            if entries.is_empty() {
+                continue;
+            }
+            if let Some(ref order_path) = args.order_file {
+                entries = crate::commands::diff::apply_orderfile_entries(entries, order_path);
+            }
+            // First parent: the main `format_commit` was already printed; only extra headers
+            // repeat the commit with `(from <parent>)` for parents 2+ (matches Git).
+            if i > 0 {
+                format_commit(
+                    out,
+                    commit_oid,
+                    info,
+                    args,
+                    decorations,
+                    use_color,
+                    notes_cache,
+                    odb,
+                    None,
+                    false,
+                    None,
+                    Some(parent_oid),
+                )?;
+            }
+            write_commit_diff_body(
+                out,
+                odb,
+                git_dir,
+                &entries,
+                &entries,
+                args,
+                graph_stat_prefix,
+                show_patch,
+                false,
+            )?;
+        }
+        return Ok(());
+    }
+
     let mut entries = compute_commit_diff(odb, info)?;
     if entries.is_empty() {
         return Ok(());
     }
 
-    // Apply orderfile sorting if specified
     if let Some(ref order_path) = args.order_file {
         entries = crate::commands::diff::apply_orderfile_entries(entries, order_path);
     }
 
-    // For --cc mode on merge commits, compute combined diff entries
-    // (only files that differ from ALL parents).
-    let combined_entries = if args.cc && is_merge {
+    let combined_entries = if merge_diff_is_combined_style(args, is_merge, git_dir)? {
         compute_combined_diff_entries(odb, info)?
     } else {
         entries.clone()
     };
 
-    // Determine if patch content will be shown (for --- separator logic)
-    let has_patch = (args.patch || args.patch_u || args.cc) && {
-        let show_entries = if args.cc && is_merge {
-            &combined_entries
-        } else {
-            &entries
-        };
-        !show_entries.is_empty()
+    write_commit_diff_body(
+        out,
+        odb,
+        git_dir,
+        &entries,
+        &combined_entries,
+        args,
+        graph_stat_prefix,
+        show_patch,
+        is_merge,
+    )?;
+
+    Ok(())
+}
+
+fn write_commit_diff_body(
+    out: &mut impl Write,
+    odb: &Odb,
+    git_dir: &Path,
+    entries: &[DiffEntry],
+    combined_entries: &[DiffEntry],
+    args: &Args,
+    graph_stat_prefix: Option<&str>,
+    show_patch: bool,
+    treat_as_merge_for_format: bool,
+) -> Result<()> {
+    let combined_style = merge_diff_is_combined_style(args, treat_as_merge_for_format, git_dir)?;
+    let list_raw_name = if combined_style {
+        combined_entries
+    } else {
+        entries
     };
+    let list_patch = if combined_style {
+        combined_entries
+    } else {
+        entries
+    };
+    let has_patch = show_patch && !list_patch.is_empty();
 
     if args.raw {
-        let show_entries = if args.cc && is_merge {
-            &combined_entries
-        } else {
-            &entries
-        };
-        for entry in show_entries {
+        for entry in list_raw_name {
             writeln!(out, "{}", format_raw(entry))?;
         }
         writeln!(out)?;
     }
 
-    // Print --- separator when stat + patch are both shown
     if !args.stat.is_empty() {
         if has_patch {
             writeln!(out, "---")?;
@@ -5252,45 +5607,30 @@ fn write_commit_diff(
         log_print_stat_summary(
             out,
             odb,
-            &entries,
+            entries,
             has_patch,
             args,
             graph_stat_prefix,
-            &repo.git_dir,
+            git_dir,
         )?;
     }
 
     if args.name_only {
-        let show_entries = if args.cc && is_merge {
-            &combined_entries
-        } else {
-            &entries
-        };
-        for entry in show_entries {
+        for entry in list_raw_name {
             writeln!(out, "{}", entry.path())?;
         }
         writeln!(out)?;
     }
 
     if args.name_status {
-        let show_entries = if args.cc && is_merge {
-            &combined_entries
-        } else {
-            &entries
-        };
-        for entry in show_entries {
+        for entry in list_raw_name {
             writeln!(out, "{}\t{}", entry.status.letter(), entry.path())?;
         }
         writeln!(out)?;
     }
 
-    if args.patch || args.patch_u || args.cc {
-        let show_entries = if args.cc && is_merge {
-            &combined_entries
-        } else {
-            &entries
-        };
-        for entry in show_entries {
+    if show_patch {
+        for entry in list_patch {
             log_write_patch_entry(out, odb, entry, args)?;
         }
     }
