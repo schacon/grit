@@ -1,10 +1,12 @@
 //! SSH URL parsing and local resolution for test harnesses (`GIT_SSH` wrappers).
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use grit_lib::repo::Repository;
+use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 /// Parsed SSH remote (scp-style `host:path` or `ssh://` / `git+ssh://`).
 #[derive(Debug, Clone)]
@@ -188,6 +190,67 @@ pub fn ssh_remote_repo_path_for_display(git_dir: &Path) -> PathBuf {
     } else {
         git_dir.to_path_buf()
     }
+}
+
+/// Shell-quote `s` with single quotes like Git's `sq_quote_buf` (`git/quote.c`).
+fn sq_quote_shell_arg(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        match ch {
+            '\'' => out.push_str("'\\''"),
+            '!' => out.push_str("'\\!'"),
+            _ => out.push(ch),
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// When an SSH URL does not resolve to a local repository, match Git's behavior for
+/// `GIT_SSH` / `GIT_SSH_COMMAND` before reporting failure.
+///
+/// If `GIT_SSH_COMMAND` is set (non-empty), or `GIT_SSH` is unset/empty, returns `Ok(())` so the
+/// caller can emit the usual "could not resolve" error.
+///
+/// If `GIT_SSH` is set, runs the same argv Git uses for the initial probe:
+/// `GIT_SSH`, `host`, and one argument `upload-pack … '<path>'`, then exits with the child's status
+/// (see `git/connect.c` `git_connect` + `fill_ssh_args`). This records arguments for test wrappers
+/// such as in `t5602-clone-remote-exec.sh`.
+pub(crate) fn unresolved_ssh_clone_invoke_git_ssh(
+    host: &str,
+    upload_pack: Option<&str>,
+    remote_repo_path: &str,
+) -> Result<()> {
+    let ssh_cmd_set = std::env::var_os("GIT_SSH_COMMAND").is_some_and(|v| v != OsString::new());
+    if ssh_cmd_set {
+        return Ok(());
+    }
+
+    let ssh = match std::env::var("GIT_SSH") {
+        Ok(s) if !s.is_empty() => s,
+        _ => return Ok(()),
+    };
+
+    let quoted_path = sq_quote_shell_arg(remote_repo_path);
+    let remote_cmd = match upload_pack {
+        None => format!("git-upload-pack {quoted_path}"),
+        Some(p) => format!("{} {quoted_path}", p.trim()),
+    };
+
+    let status = Command::new(&ssh)
+        .arg(host)
+        .arg(&remote_cmd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .status()
+        .with_context(|| format!("failed to execute GIT_SSH '{ssh}'"))?;
+
+    if status.success() {
+        return Ok(());
+    }
+    std::process::exit(status.code().unwrap_or(1));
 }
 
 /// When `GIT_SSH` is Git's `test-fake-ssh` helper and `TRASH_DIRECTORY` is set, append one line to
