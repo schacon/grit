@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   294 |
+| Completed   |   295 |
 | In progress |     4 |
-| Remaining   |   471 |
+| Remaining   |   470 |
 | **Total**   |   769 |
 
-Task lines in `PLAN.md`: 294 completed (`[x]`), 4 in progress (`[~]`), 471 remaining (`[ ]`).
+Task lines in `PLAN.md`: 295 completed (`[x]`), 4 in progress (`[~]`), 470 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5318-pack-objects-revs-exclude` — 9/9 tests pass (`pack-objects --revs` resolves branch names via `rev_parse::resolve_revision` so packed refs work after `pack-refs`; `^master` exclusion and `--stdin-packs`; harness CSV/dashboards refreshed)
 - `t7011-skip-worktree-reading` — 15/15 tests pass (`update-index` skip-worktree no-op / `--remove` clears entry; `--remove` on missing untracked path is silent; `reset` preserves skip-worktree; `diff-index` skips worktree for skip-worktree; `commit` pathspec rejects skip-worktree)
 - `t3303-notes-subtrees` — 23/23 tests pass (`fast-import`: `data <<TERM` heredoc, `M … inline` blobs, `deleteall`; `log` notes map: concatenate duplicate commit paths like Git’s `combine_notes_concatenate`, skip identical blob payloads)
 - `t5323-pack-redundant` — 18/18 tests pass (`pack-redundant`: Git `minimize` algorithm, `--i-still-use-this` / stdin ignore / verbose + alt-odb; `clone --mirror` implies bare layout; `fsck` resolves relative `objects/info/alternates` against `objects/`)
