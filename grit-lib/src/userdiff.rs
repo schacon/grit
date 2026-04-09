@@ -3,6 +3,7 @@
 //! This module implements the subset of Git's `userdiff` behavior needed for
 //! hunk-header function context extraction.
 
+use crate::attributes::{collect_attrs_for_path, AttrValue, MacroTable};
 use crate::config::ConfigSet;
 use crate::crlf::{get_file_attrs, AttrRule, DiffAttr};
 use regex::{Regex, RegexBuilder};
@@ -237,6 +238,21 @@ pub fn matcher_for_path(
         return Ok(None);
     };
     matcher_for_driver(config, driver)
+}
+
+/// Like [`matcher_for_path`] but uses parsed `.gitattributes` rules from [`crate::attributes`].
+pub fn matcher_for_path_parsed(
+    config: &ConfigSet,
+    rules: &[crate::attributes::AttrRule],
+    macros: &MacroTable,
+    rel_path: &str,
+    ignore_case: bool,
+) -> Result<Option<FuncnameMatcher>, String> {
+    let map = collect_attrs_for_path(rules, macros, rel_path, ignore_case);
+    let Some(AttrValue::Value(driver)) = map.get("diff") else {
+        return Ok(None);
+    };
+    matcher_for_driver(config, driver.as_str())
 }
 
 /// Resolve a function-name matcher for a named diff driver.
