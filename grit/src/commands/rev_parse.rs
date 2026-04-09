@@ -746,7 +746,10 @@ pub fn run(args: Args) -> Result<()> {
                         ];
                         let use_common = common_paths
                             .iter()
-                            .any(|p| path_arg == *p || path_arg.starts_with(&format!("{}/", p)));
+                            .any(|p| path_arg == *p || path_arg.starts_with(&format!("{}/", p)))
+                            // Linked worktrees keep sparse-checkout under their admin dir
+                            // (`.git/worktrees/<name>/info/sparse-checkout`), not in commondir.
+                            && !path_arg.starts_with("info/sparse-checkout");
                         if use_common {
                             let common = refs::common_dir(&current.git_dir)
                                 .unwrap_or_else(|| current.git_dir.clone());
@@ -755,49 +758,10 @@ pub fn run(args: Args) -> Result<()> {
                             current.git_dir.join(path_arg)
                         }
                     };
-                    // Output relative path when possible (relative to cwd)
-                    // Use original path_arg_out to preserve double slashes etc.
-                    let cwd = std::env::current_dir().unwrap_or_default();
-                    let git_dir_rel = if let Ok(rel) = current.git_dir.strip_prefix(&cwd) {
-                        rel.display().to_string()
-                    } else {
-                        // Compute relative path from cwd to git_dir
-                        let git_abs = current
-                            .git_dir
-                            .canonicalize()
-                            .unwrap_or_else(|_| current.git_dir.clone());
-                        let cwd_abs = cwd.canonicalize().unwrap_or(cwd.clone());
-                        let git_comps: Vec<_> = git_abs.components().collect();
-                        let cwd_comps: Vec<_> = cwd_abs.components().collect();
-                        let common = git_comps
-                            .iter()
-                            .zip(cwd_comps.iter())
-                            .take_while(|(a, b)| a == b)
-                            .count();
-                        let up = cwd_comps.len() - common;
-                        let mut result = std::path::PathBuf::new();
-                        for _ in 0..up {
-                            result.push("..");
-                        }
-                        for comp in &git_comps[common..] {
-                            result.push(comp.as_os_str());
-                        }
-                        result.display().to_string()
-                    };
-                    // If the resolved path is under git_dir, use git_dir_rel + path_arg_out.
-                    // When cwd is the bare repo root, `git_dir_rel` is empty; avoid a leading `/`.
-                    let output = if resolved.starts_with(&current.git_dir) {
-                        if git_dir_rel.is_empty() {
-                            path_arg_out.clone()
-                        } else {
-                            format!("{git_dir_rel}/{path_arg_out}")
-                        }
-                    } else if let Ok(rel) = resolved.strip_prefix(&cwd) {
-                        rel.display().to_string()
-                    } else {
-                        resolved.display().to_string()
-                    };
-                    println!("{output}");
+                    // Git 2.43+ prints an absolute path here so `test -f "$(git -C dir rev-parse
+                    // --git-path …)"` works when the shell cwd differs from `-C` (t1091).
+                    let out = resolved.canonicalize().unwrap_or_else(|_| resolved.clone());
+                    println!("{}", out.display().to_string().replace('\\', "/"));
                 } else {
                     bail!("not a git repository");
                 }

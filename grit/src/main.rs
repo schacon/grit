@@ -3770,6 +3770,13 @@ fn unknown_cmd_similarity_score(cmd: &str, candidate: &str) -> i32 {
 fn handle_unknown_git_command(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
     const SIMILARITY_FLOOR: i32 = 7;
 
+    // Config keys and similar dotted tokens are never git subcommands; skip autocorrect so
+    // `test_must_fail git -C repo core.sparseCheckoutCone` stays a controlled failure (t1091).
+    if subcmd.contains('.') {
+        eprintln!("git: '{subcmd}' is not a git command. See 'git --help'.");
+        std::process::exit(1);
+    }
+
     let mut mode = parse_help_autocorrect().unwrap_or(HelpAutocorrect::Show);
     if mode == HelpAutocorrect::Prompt
         && (!std::io::stdin().is_terminal() || !std::io::stderr().is_terminal())
