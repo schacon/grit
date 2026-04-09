@@ -2424,6 +2424,28 @@ pub fn parse_path_optional(s: &str) -> Option<String> {
 /// - unquoted `key=value` tokens separated by whitespace
 ///
 /// Backslash escapes are interpreted minimally inside double quotes.
+/// Return the last `key=value` assignment for `key` in a `GIT_CONFIG_PARAMETERS` payload.
+///
+/// Matches Git's command-line config layering: later tokens win. Keys are canonicalized the same
+/// way as file-backed config (`fetch.output` and `FETCH.Output` both match `fetch.output`).
+#[must_use]
+pub fn git_config_parameters_last_value(raw: &str, key: &str) -> Option<String> {
+    let Ok(canon) = canonical_key(key) else {
+        return None;
+    };
+    let mut last: Option<String> = None;
+    for entry in parse_config_parameters(raw) {
+        if let Some((k, v)) = entry.split_once('=') {
+            if canonical_key(k.trim()).ok().as_ref() == Some(&canon) {
+                last = Some(v.to_owned());
+            }
+        } else if canonical_key(entry.trim()).ok().as_ref() == Some(&canon) {
+            last = Some("true".to_owned());
+        }
+    }
+    last
+}
+
 pub(crate) fn parse_config_parameters(raw: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut buf = String::new();
