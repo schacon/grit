@@ -815,7 +815,9 @@ fn fetch_remote(
     }
 
     // Update refs/remotes/<remote>/HEAD to mirror the remote's default branch.
-    // We store it as a direct ref to keep completion and ref lookups aligned.
+    // Git stores this as a **symbolic** ref to the remote-tracking branch (e.g.
+    // `ref: refs/remotes/origin/main\n`) so `git pull <remote>` in a detached
+    // HEAD can discover which branch to merge (matches C Git; t7406).
     if let Some(default_branch) = remote_head_branch.as_deref() {
         let head_source = format!("refs/heads/{default_branch}");
         let mapped_default = if refspecs.is_empty() {
@@ -824,12 +826,15 @@ fn fetch_remote(
             map_ref_through_refspecs(&head_source, &refspecs)
         };
         if let Some(mapped_default_ref) = mapped_default {
-            if let Ok(default_oid) = refs::resolve_ref(git_dir, &mapped_default_ref) {
+            if refs::resolve_ref(git_dir, &mapped_default_ref).is_ok() {
                 let remote_head_ref = format!("refs/remotes/{remote_name}/HEAD");
                 updated_refs.push(remote_head_ref.clone());
-                if read_ref_oid(git_dir, &remote_head_ref).as_ref() != Some(&default_oid) {
-                    refs::write_ref(git_dir, &remote_head_ref, &default_oid)
-                        .with_context(|| format!("updating ref {remote_head_ref}"))?;
+                let want_sym = format!("ref: {mapped_default_ref}\n");
+                let path = git_dir.join(&remote_head_ref);
+                let cur = fs::read_to_string(&path).unwrap_or_default();
+                if cur != want_sym {
+                    refs::write_symbolic_ref(git_dir, &remote_head_ref, &mapped_default_ref)
+                        .with_context(|| format!("updating symbolic ref {remote_head_ref}"))?;
                 }
             }
         }

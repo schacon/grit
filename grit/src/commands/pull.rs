@@ -23,8 +23,15 @@ pub struct Args {
     #[arg(value_name = "BRANCH")]
     pub branch: Option<String>,
 
-    /// Rebase instead of merge. Optionally accepts a strategy like "merges".
-    #[arg(long = "rebase", short = 'r', num_args = 0..=1, default_missing_value = "true")]
+    /// Rebase instead of merge. Use `--rebase=merges` for the merges strategy; a bare `--rebase`
+    /// must not consume the remote name (`git pull --rebase origin` matches C Git).
+    #[arg(
+        long = "rebase",
+        short = 'r',
+        num_args = 0..=1,
+        default_missing_value = "true",
+        require_equals = true
+    )]
     pub rebase: Option<String>,
 
     /// Only allow fast-forward merges.
@@ -146,11 +153,25 @@ pub fn run(args: Args) -> Result<()> {
             bail!("bad revision '{merge_branch}': could not resolve in remote");
         };
 
+        // Update remote-tracking refs (matches `git fetch` + `git pull` on file paths).
+        // Without this, `rebase`/`merge` still resolve the short name `main` to the stale
+        // local `refs/heads/main` while detached (t7406 submodule pull).
+        let tracking_ref = format!("refs/remotes/{remote_name}/{merge_branch}");
+        refs::write_ref(&repo.git_dir, &tracking_ref, &remote_oid)
+            .with_context(|| format!("update remote-tracking ref {tracking_ref}"))?;
+        if let Ok(Some(sym)) = refs::read_symbolic_ref(&remote_repo.git_dir, "HEAD") {
+            let short = sym.strip_prefix("refs/heads/").unwrap_or(&sym);
+            if short == merge_branch.as_str() {
+                let remote_head_ref = format!("refs/remotes/{remote_name}/HEAD");
+                let _ = refs::write_symbolic_ref(&repo.git_dir, &remote_head_ref, &tracking_ref);
+            }
+        }
+
         // Write FETCH_HEAD for compatibility
         let fetch_head = format!("{}\t\t{}\n", remote_oid.to_hex(), merge_branch);
         std::fs::write(repo.git_dir.join("FETCH_HEAD"), &fetch_head)?;
 
-        let res = do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &merge_branch);
+        let res = do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &tracking_ref);
         if res.is_ok() {
             maybe_update_submodules_after_pull(&args, &config)?;
         }
@@ -224,10 +245,21 @@ pub fn run(args: Args) -> Result<()> {
 
     // Step 2: Determine the remote-tracking ref to merge/rebase from
     let tracking_ref = format!("refs/remotes/{remote_name}/{merge_branch}");
-    let remote_oid = refs::resolve_ref(&repo.git_dir, &tracking_ref)
-        .with_context(|| format!("no tracking ref '{tracking_ref}' after fetch"))?;
+    let (merge_from_ref, remote_oid) = match refs::resolve_ref(&repo.git_dir, &tracking_ref) {
+        Ok(oid) => (tracking_ref.clone(), oid),
+        Err(_) => {
+            // Detached `pull <remote>` uses `refs/remotes/<remote>/HEAD` when no branch is given.
+            let remote_head = format!("refs/remotes/{remote_name}/HEAD");
+            let sym = refs::read_symbolic_ref(&repo.git_dir, &remote_head)?
+                .with_context(|| format!("no tracking ref '{tracking_ref}' after fetch"))?;
+            let oid = refs::resolve_ref(&repo.git_dir, &sym).with_context(|| {
+                format!("no tracking ref '{sym}' (from {remote_head}) after fetch")
+            })?;
+            (sym, oid)
+        }
+    };
 
-    let res = do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &tracking_ref);
+    let res = do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &merge_from_ref);
     if res.is_ok() {
         maybe_update_submodules_after_pull(&args, &config)?;
     }
