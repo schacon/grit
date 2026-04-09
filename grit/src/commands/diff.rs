@@ -14,13 +14,15 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::attributes::{collect_attrs_for_path, load_gitattributes_for_diff, AttrValue};
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{get_file_attrs, load_gitattributes, AttrRule};
 use grit_lib::diff::{
-    anchored_unified_diff, count_changes, count_git_lines, detect_renames, diff_index_to_tree,
-    diff_index_to_worktree, diff_tree_to_worktree, diff_trees, diffcore_count_changes,
-    rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat, unified_diff, zero_oid,
-    DiffEntry, DiffStatus,
+    anchored_unified_diff, count_changes, count_changes_with_algorithm, count_git_lines,
+    detect_renames, diff_index_to_tree, diff_index_to_worktree, diff_tree_to_worktree, diff_trees,
+    diffcore_count_changes, rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat,
+    unified_diff, unified_diff_with_prefix_and_funcname_and_algorithm, zero_oid, DiffEntry,
+    DiffStatus,
 };
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::error::Error;
@@ -31,9 +33,88 @@ use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, RevListOptions};
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision, split_treeish_colon};
+use grit_lib::userdiff::matcher_for_path_parsed;
 use regex::Regex;
+use std::fmt::Write as FmtWrite;
+use std::sync::Arc;
 
 use crate::commands::diff_index::{write_patch_entry, SubmoduleIgnoreFlags};
+
+/// Shared gitattributes + config for per-path diff algorithm selection (`diff.<driver>.algorithm`).
+#[derive(Clone)]
+struct DiffAlgoContext {
+    attrs: Arc<grit_lib::attributes::ParsedGitAttributes>,
+    config: Arc<grit_lib::config::ConfigSet>,
+    ignore_case_attrs: bool,
+}
+
+/// Map a Git `diff.algorithm` / driver algorithm string to a `similar` line algorithm.
+fn match_grit_diff_algorithm_name(name: &str) -> Option<similar::Algorithm> {
+    match name.to_ascii_lowercase().as_str() {
+        "myers" | "default" => Some(similar::Algorithm::Myers),
+        "histogram" | "patience" => Some(similar::Algorithm::Patience),
+        "minimal" => Some(similar::Algorithm::Lcs),
+        _ => None,
+    }
+}
+
+fn diff_algo_from_config_default(cfg: &grit_lib::config::ConfigSet) -> similar::Algorithm {
+    cfg.get("diff.algorithm")
+        .as_deref()
+        .and_then(match_grit_diff_algorithm_name)
+        .unwrap_or(similar::Algorithm::Myers)
+}
+
+/// Last algorithm-related flag on the argv wins (matches Git).
+fn parse_cli_diff_algorithm_from_argv() -> Option<similar::Algorithm> {
+    let argv: Vec<String> = std::env::args().collect();
+    let mut last = None;
+    let mut i = 0usize;
+    while i < argv.len() {
+        let a = argv[i].as_str();
+        match a {
+            "--histogram" | "--patience" => last = Some(similar::Algorithm::Patience),
+            "--minimal" => last = Some(similar::Algorithm::Lcs),
+            s if s.starts_with("--diff-algorithm=") => {
+                let v = s.strip_prefix("--diff-algorithm=").unwrap_or("");
+                last = match_grit_diff_algorithm_name(v);
+            }
+            "--diff-algorithm" => {
+                if let Some(v) = argv.get(i + 1) {
+                    last = match_grit_diff_algorithm_name(v);
+                    i += 1;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    last
+}
+
+fn diff_algorithm_for_path(
+    rel_path: &str,
+    cli_override: Option<similar::Algorithm>,
+    ctx: &DiffAlgoContext,
+) -> similar::Algorithm {
+    if let Some(a) = cli_override {
+        return a;
+    }
+    let map = collect_attrs_for_path(
+        &ctx.attrs.rules,
+        &ctx.attrs.macros,
+        rel_path,
+        ctx.ignore_case_attrs,
+    );
+    if let Some(AttrValue::Value(driver)) = map.get("diff") {
+        if let Some(algo_key) = ctx.config.get(&format!("diff.{driver}.algorithm")) {
+            if let Some(a) = match_grit_diff_algorithm_name(&algo_key) {
+                return a;
+            }
+        }
+    }
+    diff_algo_from_config_default(&ctx.config)
+}
 
 fn submodule_ignore_flags_from_diff_arg(ignore_sm: &str) -> SubmoduleIgnoreFlags {
     match ignore_sm {
@@ -616,6 +697,37 @@ struct DirstatFile {
     changed: u64,
 }
 
+/// Write the `diff --git` line for `git diff --no-index`.
+fn write_no_index_diff_git_line(out: &mut String, path_a: &str, path_b: &str) {
+    let _ = writeln!(out, "diff --git a/{path_a} b/{path_b}");
+}
+
+fn abbrev_oid_hex(data: &[u8], abbrev_len: usize) -> String {
+    let oid = Odb::hash_object_data(ObjectKind::Blob, data);
+    let hex = oid.to_hex();
+    let len = abbrev_len.min(hex.len());
+    hex[..len].to_owned()
+}
+
+fn write_no_index_index_lines(
+    out: &mut String,
+    data_a: &[u8],
+    data_b: &[u8],
+    mode_a: &str,
+    mode_b: &str,
+    abbrev_len: usize,
+) {
+    let a = abbrev_oid_hex(data_a, abbrev_len);
+    let b = abbrev_oid_hex(data_b, abbrev_len);
+    if mode_a == mode_b {
+        let _ = writeln!(out, "index {a}..{b} {mode_a}");
+    } else {
+        let _ = writeln!(out, "index {a}..{b}");
+        let _ = writeln!(out, "old mode {mode_a}");
+        let _ = writeln!(out, "new mode {mode_b}");
+    }
+}
+
 /// Run the `diff` command.
 pub fn run(mut args: Args) -> Result<()> {
     // Parse --stat=<width>[,<name-width>[,<count>]] into separate fields
@@ -645,7 +757,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // --no-index: compare two files outside a git repository
     if args.no_index {
-        return run_no_index(&args);
+        return run_no_index(args);
     }
 
     let raw_args: Vec<String> = std::env::args().collect();
@@ -662,7 +774,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Outside any repository, `git diff <path> <path>` behaves like `diff --no-index` (t4035).
     if Repository::discover(None).is_err() && revs.is_empty() && paths.len() == 2 && !args.cached {
-        return run_no_index(&args);
+        return run_no_index(args);
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;
@@ -693,6 +805,26 @@ pub fn run(mut args: Args) -> Result<()> {
             }
         }
     }
+
+    let merged_attrs = match load_gitattributes_for_diff(&repo) {
+        Ok(m) => m,
+        Err(Error::InvalidRef(msg)) if msg.starts_with("bad --attr-source") => {
+            eprintln!("fatal: bad --attr-source or GIT_ATTR_SOURCE");
+            std::process::exit(128);
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let diff_config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+        .unwrap_or_else(|_| grit_lib::config::ConfigSet::new());
+    let ignore_case_attrs = diff_config
+        .get("core.ignorecase")
+        .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "1"));
+    let diff_algo_ctx = DiffAlgoContext {
+        attrs: Arc::new(merged_attrs),
+        config: Arc::new(diff_config),
+        ignore_case_attrs,
+    };
+    let diff_algo_cli = parse_cli_diff_algorithm_from_argv();
 
     let emit_unified_patch = diff_emit_unified_patch_from_argv(&raw_args);
 
@@ -1511,6 +1643,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 args.break_rewrites,
                 line_ignore,
                 &ws_mode,
+                &diff_algo_ctx,
+                diff_algo_cli,
             )?;
             if let Some(ref ds) = dirstat_opts {
                 write_dirstat(
@@ -1543,6 +1677,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 line_ignore,
                 &ws_mode,
                 quote_path_fully,
+                &diff_algo_ctx,
+                diff_algo_cli,
             )?;
             if args.summary {
                 write_diff_summary(&mut out, &entries, args.break_rewrites, quote_path_fully)?;
@@ -1565,6 +1701,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 args.break_rewrites,
                 line_ignore,
                 &ws_mode,
+                &diff_algo_ctx,
+                diff_algo_cli,
             )?;
         } else if args.name_only {
             write_name_only(&mut out, &entries, quote_path_fully)?;
@@ -1617,6 +1755,8 @@ pub fn run(mut args: Args) -> Result<()> {
                     args.submodule.as_deref(),
                     submodule_ignore_flags_from_diff_arg(ignore_sm),
                     line_ignore,
+                    &diff_algo_ctx,
+                    diff_algo_cli,
                 )?;
             }
         }
@@ -1845,7 +1985,7 @@ fn run_diff_two_paths(
 /// Split args on `--` to separate revisions from paths.
 ///
 /// Run `diff --no-index <path_a> <path_b>` — compare two files outside a repo.
-fn run_no_index(args: &Args) -> Result<()> {
+fn run_no_index(args: Args) -> Result<()> {
     // Collect paths (skip "--" separators and unrecognized flags)
     let paths: Vec<&String> = args
         .args
@@ -1856,13 +1996,46 @@ fn run_no_index(args: &Args) -> Result<()> {
         bail!("diff --no-index requires exactly two paths");
     }
 
-    let path_a = Path::new(paths[0].as_str());
-    let path_b = Path::new(paths[1].as_str());
+    let path_a_str = paths[0].as_str().to_owned();
+    let path_b_str = paths[1].as_str().to_owned();
+
+    let path_a = Path::new(path_a_str.as_str());
+    let path_b = Path::new(path_b_str.as_str());
 
     // If both paths are directories, diff all files recursively
     if path_a.is_dir() && path_b.is_dir() {
         return run_no_index_dirs(args, path_a, path_b);
     }
+
+    let repo_opt = Repository::discover(None).ok();
+    let merged_attrs = if let Some(ref r) = repo_opt {
+        match load_gitattributes_for_diff(r) {
+            Ok(m) => m,
+            Err(Error::InvalidRef(msg)) if msg.starts_with("bad --attr-source") => {
+                eprintln!("fatal: bad --attr-source or GIT_ATTR_SOURCE");
+                std::process::exit(128);
+            }
+            Err(e) => return Err(e.into()),
+        }
+    } else {
+        grit_lib::attributes::ParsedGitAttributes::default()
+    };
+    let diff_config = repo_opt
+        .as_ref()
+        .map(|r| {
+            grit_lib::config::ConfigSet::load(Some(&r.git_dir), true)
+                .unwrap_or_else(|_| grit_lib::config::ConfigSet::new())
+        })
+        .unwrap_or_default();
+    let ignore_case_attrs = diff_config
+        .get("core.ignorecase")
+        .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "1"));
+    let diff_algo_ctx = DiffAlgoContext {
+        attrs: Arc::new(merged_attrs),
+        config: Arc::new(diff_config),
+        ignore_case_attrs,
+    };
+    let diff_algo_cli = parse_cli_diff_algorithm_from_argv();
 
     // Read file or symlink target (for symlinks, read the target path as content)
     let read_path_or_symlink = |p: &Path, name: &str| -> Result<Vec<u8>> {
@@ -1875,8 +2048,8 @@ fn run_no_index(args: &Args) -> Result<()> {
         }
         std::fs::read(p).with_context(|| format!("could not read '{}'", name))
     };
-    let data_a = read_path_or_symlink(path_a, paths[0])?;
-    let data_b = read_path_or_symlink(path_b, paths[1])?;
+    let data_a = read_path_or_symlink(path_a, &path_a_str)?;
+    let data_b = read_path_or_symlink(path_b, &path_b_str)?;
 
     if data_a == data_b {
         return Ok(());
@@ -1900,33 +2073,53 @@ fn run_no_index(args: &Args) -> Result<()> {
         std::process::exit(1);
     }
     let context_lines = args.unified.unwrap_or(3);
+    let inter_hunk_context = args.inter_hunk_context.unwrap_or(0);
+    let patch_abbrev = if args.full_index {
+        40usize
+    } else if let Some(n) = args.abbrev {
+        n.max(4).min(40)
+    } else {
+        7
+    };
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
+    let algo_for_paths = |rel_a: &str, rel_b: &str| -> similar::Algorithm {
+        let a = diff_algorithm_for_path(rel_a, diff_algo_cli, &diff_algo_ctx);
+        let b = diff_algorithm_for_path(rel_b, diff_algo_cli, &diff_algo_ctx);
+        if a == b {
+            a
+        } else {
+            diff_algo_from_config_default(&diff_algo_ctx.config)
+        }
+    };
+
     if args.name_only {
-        writeln!(out, "{}", paths[1])?;
+        writeln!(out, "{path_b_str}")?;
         std::process::exit(1);
     }
 
     if args.name_status {
-        writeln!(out, "M\t{}", paths[1])?;
+        writeln!(out, "M\t{path_b_str}")?;
         std::process::exit(1);
     }
 
     if args.numstat {
-        let (adds, dels) = count_changes(&text_a, &text_b);
-        writeln!(out, "{}\t{}\t{}", adds, dels, paths[1])?;
+        let algo = algo_for_paths(path_a_str.as_str(), path_b_str.as_str());
+        let (adds, dels) = count_changes_with_algorithm(&text_a, &text_b, algo);
+        writeln!(out, "{}\t{}\t{}", adds, dels, path_b_str)?;
         std::process::exit(1);
     }
 
     if args.stat.is_some() || args.shortstat {
-        let (adds, dels) = count_changes(&text_a, &text_b);
+        let algo = algo_for_paths(path_a_str.as_str(), path_b_str.as_str());
+        let (adds, dels) = count_changes_with_algorithm(&text_a, &text_b, algo);
         if args.stat.is_some() {
-            let display = if paths[0] != paths[1] {
-                format!("{} => {}", paths[0], paths[1])
+            let display = if path_a_str != path_b_str {
+                format!("{path_a_str} => {path_b_str}")
             } else {
-                paths[0].to_string()
+                path_a_str.clone()
             };
             let total = adds + dels;
             writeln!(out, " {} | {}", display, total)?;
@@ -1950,9 +2143,7 @@ fn run_no_index(args: &Args) -> Result<()> {
         std::process::exit(1);
     }
 
-    // Determine the effective diff algorithm: last-specified algorithm flag wins.
     let use_anchored = if !args.anchored.is_empty() {
-        // Check if a non-anchored algorithm flag appears after --anchored in args
         let raw_args: Vec<String> = std::env::args().collect();
         let last_anchored_pos = raw_args.iter().rposition(|a| a.starts_with("--anchored"));
         let last_other_algo_pos = raw_args.iter().rposition(|a| {
@@ -1962,27 +2153,65 @@ fn run_no_index(args: &Args) -> Result<()> {
                 || a.starts_with("--diff-algorithm")
         });
         match (last_anchored_pos, last_other_algo_pos) {
-            (Some(a), Some(o)) => a > o, // anchored wins only if it's last
+            (Some(a), Some(o)) => a > o,
             (Some(_), None) => true,
             _ => false,
         }
     } else {
         false
     };
+
+    let symlink_mode = |p: &Path| -> &'static str {
+        std::fs::symlink_metadata(p)
+            .ok()
+            .and_then(|m| m.file_type().is_symlink().then_some("120000"))
+            .unwrap_or("100644")
+    };
+    let mode_a = symlink_mode(path_a);
+    let mode_b = symlink_mode(path_b);
+
     let diff_output = if use_anchored {
-        anchored_unified_diff(
+        let mut s = String::new();
+        write_no_index_diff_git_line(&mut s, path_a_str.as_str(), path_b_str.as_str());
+        write_no_index_index_lines(&mut s, &data_a, &data_b, mode_a, mode_b, patch_abbrev);
+        s.push_str(&anchored_unified_diff(
             &text_a,
             &text_b,
-            paths[0],
-            paths[1],
+            &path_a_str,
+            &path_b_str,
             context_lines,
             &args.anchored,
-        )
+        ));
+        s
     } else {
-        unified_diff(&text_a, &text_b, paths[0], paths[1], context_lines)
+        let algo = algo_for_paths(path_a_str.as_str(), path_b_str.as_str());
+        let func_matcher = matcher_for_path_parsed(
+            diff_algo_ctx.config.as_ref(),
+            &diff_algo_ctx.attrs.rules,
+            &diff_algo_ctx.attrs.macros,
+            path_a_str.as_str(),
+            diff_algo_ctx.ignore_case_attrs,
+        )
+        .unwrap_or(None);
+        let body = unified_diff_with_prefix_and_funcname_and_algorithm(
+            &text_a,
+            &text_b,
+            &path_a_str,
+            &path_b_str,
+            context_lines,
+            inter_hunk_context,
+            "a/",
+            "b/",
+            func_matcher.as_ref(),
+            algo,
+        );
+        let mut s = String::new();
+        write_no_index_diff_git_line(&mut s, path_a_str.as_str(), path_b_str.as_str());
+        write_no_index_index_lines(&mut s, &data_a, &data_b, mode_a, mode_b, patch_abbrev);
+        s.push_str(&body);
+        s
     };
 
-    // Determine color mode
     let use_color = match args.color.as_deref() {
         Some("always") => true,
         Some("never") => false,
@@ -2011,7 +2240,6 @@ fn run_no_index(args: &Args) -> Result<()> {
         write!(out, "{diff_output}")?;
     }
 
-    // Exit with code 1 to indicate differences (like git)
     if args.exit_code || args.quiet {
         std::process::exit(1);
     }
@@ -2019,7 +2247,7 @@ fn run_no_index(args: &Args) -> Result<()> {
 }
 
 /// Diff two directories recursively with --no-index.
-fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
+fn run_no_index_dirs(args: Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
     use std::collections::BTreeSet;
 
     /// Leaf content for diff: symlink target as bytes, or regular file bytes. Directories are not
@@ -2064,11 +2292,49 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
     collect_files(dir_a, "", &mut files_a)?;
     collect_files(dir_b, "", &mut files_b)?;
 
+    let repo_opt = Repository::discover(None).ok();
+    let merged_attrs = if let Some(ref r) = repo_opt {
+        match load_gitattributes_for_diff(r) {
+            Ok(m) => m,
+            Err(Error::InvalidRef(msg)) if msg.starts_with("bad --attr-source") => {
+                eprintln!("fatal: bad --attr-source or GIT_ATTR_SOURCE");
+                std::process::exit(128);
+            }
+            Err(e) => return Err(e.into()),
+        }
+    } else {
+        grit_lib::attributes::ParsedGitAttributes::default()
+    };
+    let diff_config = repo_opt
+        .as_ref()
+        .map(|r| {
+            grit_lib::config::ConfigSet::load(Some(&r.git_dir), true)
+                .unwrap_or_else(|_| grit_lib::config::ConfigSet::new())
+        })
+        .unwrap_or_default();
+    let ignore_case_attrs = diff_config
+        .get("core.ignorecase")
+        .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "1"));
+    let diff_algo_ctx = DiffAlgoContext {
+        attrs: Arc::new(merged_attrs),
+        config: Arc::new(diff_config),
+        ignore_case_attrs,
+    };
+    let diff_algo_cli = parse_cli_diff_algorithm_from_argv();
+    let patch_abbrev = if args.full_index {
+        40usize
+    } else if let Some(n) = args.abbrev {
+        n.max(4).min(40)
+    } else {
+        7
+    };
+
     let all_files: BTreeSet<_> = files_a.iter().chain(files_b.iter()).cloned().collect();
     let mut has_diff = false;
     let stdout = io::stdout();
     let mut out = stdout.lock();
     let context_lines = args.unified.unwrap_or(3);
+    let inter_hunk_context = args.inter_hunk_context.unwrap_or(0);
     let ws_mode = WhitespaceMode {
         ignore_all_space: args.ignore_all_space,
         ignore_space_change: args.ignore_space_change,
@@ -2118,17 +2384,17 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
             continue;
         }
 
-        let old_label = if data_a.is_some() {
-            format!("a/{}", rel)
+        let display_old: &str = if data_a.is_none() {
+            "/dev/null"
         } else {
-            "/dev/null".to_string()
+            rel.as_str()
         };
-        let new_label = if data_b.is_some() {
-            format!("b/{}", rel)
+        let display_new: &str = if data_b.is_none() {
+            "/dev/null"
         } else {
-            "/dev/null".to_string()
+            rel.as_str()
         };
-        writeln!(out, "diff --git a/{} b/{}", rel, rel)?;
+        writeln!(out, "diff --git a/{rel} b/{rel}")?;
         let mode_a = fa
             .symlink_metadata()
             .ok()
@@ -2144,9 +2410,39 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
         } else if data_b.is_none() {
             writeln!(out, "deleted file mode {mode_a}")?;
         }
-        let patch =
-            grit_lib::diff::unified_diff(&text_a, &text_b, &old_label, &new_label, context_lines);
-        write!(out, "{}", patch)?;
+        let da = data_a.as_deref().unwrap_or(&[]);
+        let db = data_b.as_deref().unwrap_or(&[]);
+        let a = abbrev_oid_hex(da, patch_abbrev);
+        let b = abbrev_oid_hex(db, patch_abbrev);
+        if mode_a == mode_b {
+            writeln!(out, "index {a}..{b} {mode_a}")?;
+        } else {
+            writeln!(out, "index {a}..{b}")?;
+            writeln!(out, "old mode {mode_a}")?;
+            writeln!(out, "new mode {mode_b}")?;
+        }
+        let algo = diff_algorithm_for_path(rel.as_str(), diff_algo_cli, &diff_algo_ctx);
+        let func_matcher = matcher_for_path_parsed(
+            diff_algo_ctx.config.as_ref(),
+            &diff_algo_ctx.attrs.rules,
+            &diff_algo_ctx.attrs.macros,
+            rel.as_str(),
+            diff_algo_ctx.ignore_case_attrs,
+        )
+        .unwrap_or(None);
+        let patch = unified_diff_with_prefix_and_funcname_and_algorithm(
+            &text_a,
+            &text_b,
+            display_old,
+            display_new,
+            context_lines,
+            inter_hunk_context,
+            "a/",
+            "b/",
+            func_matcher.as_ref(),
+            algo,
+        );
+        write!(out, "{patch}")?;
     }
 
     if has_diff {
@@ -2784,6 +3080,8 @@ fn stat_ins_del_for_entry(
     break_rewrites: bool,
     line_ignore: Option<&[Regex]>,
     ws_mode: &WhitespaceMode,
+    algo_ctx: &DiffAlgoContext,
+    algo_cli: Option<similar::Algorithm>,
 ) -> (usize, usize) {
     let old_raw = read_content_raw(odb, &entry.old_oid);
     let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, entry.path());
@@ -2807,7 +3105,8 @@ fn stat_ins_del_for_entry(
         old_content = ws_mode.normalize(&old_content);
         new_content = ws_mode.normalize(&new_content);
     }
-    count_changes(&old_content, &new_content)
+    let algo = diff_algorithm_for_path(entry.path(), algo_cli, algo_ctx);
+    count_changes_with_algorithm(&old_content, &new_content, algo)
 }
 
 /// Write a GIT binary patch block (used by --binary).
@@ -3076,6 +3375,8 @@ fn write_patch_with_prefix(
     submodule_fmt: Option<&str>,
     submodule_ignore: SubmoduleIgnoreFlags,
     line_ignore: Option<&[Regex]>,
+    algo_ctx: &DiffAlgoContext,
+    algo_cli: Option<similar::Algorithm>,
 ) -> Result<()> {
     for entry in entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
@@ -3277,7 +3578,17 @@ fn write_patch_with_prefix(
                 write!(out, "{patch}")?;
             }
         } else {
-            let patch = grit_lib::diff::unified_diff_with_prefix(
+            let rel_for_attrs = entry.path();
+            let algo = diff_algorithm_for_path(rel_for_attrs, algo_cli, algo_ctx);
+            let func_matcher = matcher_for_path_parsed(
+                algo_ctx.config.as_ref(),
+                &algo_ctx.attrs.rules,
+                &algo_ctx.attrs.macros,
+                rel_for_attrs,
+                algo_ctx.ignore_case_attrs,
+            )
+            .unwrap_or(None);
+            let patch = unified_diff_with_prefix_and_funcname_and_algorithm(
                 &old_content,
                 &new_content,
                 display_old,
@@ -3286,6 +3597,8 @@ fn write_patch_with_prefix(
                 inter_hunk_context,
                 src_prefix,
                 dst_prefix,
+                func_matcher.as_ref(),
+                algo,
             );
             let patch = if suppress_blank_empty {
                 strip_blank_context_trailing_space(&patch)
@@ -3504,6 +3817,8 @@ fn write_shortstat(
     break_rewrites: bool,
     line_ignore: Option<&[Regex]>,
     ws_mode: &WhitespaceMode,
+    algo_ctx: &DiffAlgoContext,
+    algo_cli: Option<similar::Algorithm>,
 ) -> Result<()> {
     if entries.is_empty() {
         return Ok(());
@@ -3514,8 +3829,16 @@ fn write_shortstat(
     let mut files_changed = 0usize;
 
     for entry in entries {
-        let (ins, del) =
-            stat_ins_del_for_entry(odb, entry, work_tree, break_rewrites, line_ignore, ws_mode);
+        let (ins, del) = stat_ins_del_for_entry(
+            odb,
+            entry,
+            work_tree,
+            break_rewrites,
+            line_ignore,
+            ws_mode,
+            algo_ctx,
+            algo_cli,
+        );
         total_ins += ins;
         total_del += del;
         files_changed += 1;
@@ -3575,6 +3898,8 @@ fn write_stat(
     line_ignore: Option<&[Regex]>,
     ws_mode: &WhitespaceMode,
     quote_path_fully: bool,
+    algo_ctx: &DiffAlgoContext,
+    algo_cli: Option<similar::Algorithm>,
 ) -> Result<()> {
     if entries.is_empty() {
         return Ok(());
@@ -3615,8 +3940,16 @@ fn write_stat(
                 is_binary: true,
             });
         } else {
-            let (ins, del) =
-                stat_ins_del_for_entry(odb, entry, work_tree, break_rewrites, line_ignore, ws_mode);
+            let (ins, del) = stat_ins_del_for_entry(
+                odb,
+                entry,
+                work_tree,
+                break_rewrites,
+                line_ignore,
+                ws_mode,
+                algo_ctx,
+                algo_cli,
+            );
             files.push(FileStatInput {
                 path_display: display_paths[i].clone(),
                 insertions: ins,
@@ -3672,10 +4005,20 @@ fn write_numstat(
     break_rewrites: bool,
     line_ignore: Option<&[Regex]>,
     ws_mode: &WhitespaceMode,
+    algo_ctx: &DiffAlgoContext,
+    algo_cli: Option<similar::Algorithm>,
 ) -> Result<()> {
     for entry in entries {
-        let (ins, del) =
-            stat_ins_del_for_entry(odb, entry, work_tree, break_rewrites, line_ignore, ws_mode);
+        let (ins, del) = stat_ins_del_for_entry(
+            odb,
+            entry,
+            work_tree,
+            break_rewrites,
+            line_ignore,
+            ws_mode,
+            algo_ctx,
+            algo_cli,
+        );
         match entry.status {
             DiffStatus::Renamed | DiffStatus::Copied => {
                 let old = entry.old_path.as_deref().unwrap_or("");

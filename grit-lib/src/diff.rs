@@ -2295,9 +2295,24 @@ pub fn format_stat_line_width(
 ///
 /// Returns `(insertions, deletions)`.
 pub fn count_changes(old_content: &str, new_content: &str) -> (usize, usize) {
+    count_changes_with_algorithm(old_content, new_content, similar::Algorithm::Myers)
+}
+
+/// Count insertions and deletions using the given line-diff algorithm.
+///
+/// Git's `--stat` / `--numstat` follow the configured diff algorithm; this mirrors that by
+/// running [`similar::TextDiff`] with an explicit [`similar::Algorithm`].
+#[must_use]
+pub fn count_changes_with_algorithm(
+    old_content: &str,
+    new_content: &str,
+    algorithm: similar::Algorithm,
+) -> (usize, usize) {
     use similar::{ChangeTag, TextDiff};
 
-    let diff = TextDiff::from_lines(old_content, new_content);
+    let diff = TextDiff::configure()
+        .algorithm(algorithm)
+        .diff_lines(old_content, new_content);
     let mut ins = 0;
     let mut del = 0;
 

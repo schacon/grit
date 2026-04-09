@@ -1056,6 +1056,36 @@ fn walk_tree_attrs(
     Ok(())
 }
 
+/// Load merged `.gitattributes` rules for diff and merge (respects `GIT_ATTR_SOURCE` / `attr.tree`).
+///
+/// Resolution order matches Git's attribute source for diff: optional tree from
+/// [`resolve_attr_treeish`], then work tree stack (or bare `info/attributes` only).
+///
+/// # Errors
+///
+/// Returns an error when a tree-ish source is set from the environment or command line and cannot
+/// be resolved (Git: *"bad --attr-source or GIT_ATTR_SOURCE"*).
+pub fn load_gitattributes_for_diff(
+    repo: &Repository,
+) -> std::result::Result<ParsedGitAttributes, crate::error::Error> {
+    let (treeish, ignore_bad_tree) = resolve_attr_treeish(repo, None)?;
+    if let Some(spec) = treeish.filter(|s| !s.is_empty()) {
+        match resolve_tree_oid(repo, &spec) {
+            Ok(oid) => return load_gitattributes_from_tree(&repo.odb, &oid),
+            Err(_) if ignore_bad_tree => {}
+            Err(_) => {
+                return Err(crate::error::Error::InvalidRef(format!(
+                    "bad --attr-source or GIT_ATTR_SOURCE: {spec}"
+                )));
+            }
+        }
+    }
+    if let Some(wt) = repo.work_tree.as_deref() {
+        return load_gitattributes_stack(repo, wt);
+    }
+    load_gitattributes_bare(repo)
+}
+
 /// Resolve `attr.tree`, `GIT_ATTR_SOURCE`, `--source` precedence for check-attr.
 ///
 /// The second return value is `ignore_bad_resolution`: when true (only for `attr.tree` from
