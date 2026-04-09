@@ -584,19 +584,15 @@ pub fn diff_index_to_worktree(
             }
             continue;
         }
-        if ie.skip_worktree() {
-            // Sparse checkout: paths outside the cone are not expected to exist on disk.
-            // Git's status omits them from the index↔worktree diff (wt-status.c).
+        // Sparse checkout: paths outside the cone are not expected on disk; `assume_unchanged`
+        // is treated as clean without reading the filesystem (wt-status.c).
+        if ie.skip_worktree() || ie.assume_unchanged() {
             continue;
         }
         // Use str slice directly to avoid allocation for path joining;
         // only allocate String if we need it for DiffEntry output.
         let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");
         let is_intent_to_add = ie.intent_to_add();
-
-        if ie.assume_unchanged() || ie.skip_worktree() {
-            continue;
-        }
 
         // Gitlink entries (submodules): compare checked-out HEAD to the recorded commit.
         // An uninitialized path (no `.git` in the directory) is not dirty — same as Git.
@@ -1052,6 +1048,15 @@ pub fn diff_tree_to_worktree(
     let mut result = Vec::new();
 
     for path in &all_paths {
+        if index_entries
+            .get(path.as_bytes())
+            .is_some_and(|ie| ie.skip_worktree())
+        {
+            // Sparse checkout: `git diff <rev>` does not report tree↔worktree drift for
+            // skip-worktree paths (they are outside the sparse cone). Matches t7012 stash flow.
+            continue;
+        }
+
         let tree_entry = tree_map.get(path.as_str());
 
         // Gitlink entries (submodules) — compare HEAD commit, not file content.

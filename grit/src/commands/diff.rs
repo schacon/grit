@@ -1022,7 +1022,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let raw_args: Vec<String> = std::env::args().collect();
     let has_separator = raw_args.iter().any(|a| a == "--");
-    let (mut revs, paths) = parse_rev_and_paths(&args.args, has_separator);
+    let (mut revs, raw_path_args) = parse_rev_and_paths(&args.args, has_separator);
     // Options parsed by clap can remain in the `revs` bucket when `--` separates paths
     // (`git diff -D -- path`). Drop duplicates so they are not treated as revision names.
     if args.irreversible_delete {
@@ -1033,7 +1033,11 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // Outside any repository, `git diff <path> <path>` behaves like `diff --no-index` (t4035).
-    if Repository::discover(None).is_err() && revs.is_empty() && paths.len() == 2 && !args.cached {
+    if Repository::discover(None).is_err()
+        && revs.is_empty()
+        && raw_path_args.len() == 2
+        && !args.cached
+    {
         return run_no_index(args);
     }
 
@@ -1108,13 +1112,13 @@ pub fn run(mut args: Args) -> Result<()> {
             p.pop(); // trailing '/'
             p
         });
-    let paths: Vec<String> = paths
-        .into_iter()
+    let paths: Vec<String> = raw_path_args
+        .iter()
         .map(|p| {
             if let Some(wt) = repo.work_tree.as_ref() {
-                resolve_pathspec(&p, wt, pathspec_prefix.as_deref())
+                resolve_pathspec(p, wt, pathspec_prefix.as_deref())
             } else {
-                p
+                p.clone()
             }
         })
         .collect();
@@ -1515,7 +1519,7 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     // Filter by pathspecs
-    let entries = filter_by_paths(entries, &paths);
+    let entries = filter_by_paths(entries, &raw_path_args);
 
     // Build whitespace mode from flags
     let ws_mode = WhitespaceMode {
@@ -3443,6 +3447,10 @@ fn parse_rev_and_paths(args: &[String], has_separator: bool) -> (Vec<String>, Ve
         for arg in args {
             if in_paths {
                 paths.push(arg.clone());
+            } else if arg.starts_with(":!") || arg.starts_with(":^") {
+                // Git pathspec exclusion (`:!` / `:^`); never a revision (t7012, `git diff HEAD :!path`).
+                in_paths = true;
+                paths.push(arg.clone());
             } else if std::fs::symlink_metadata(std::path::Path::new(arg)).is_ok() {
                 in_paths = true;
                 paths.push(arg.clone());
@@ -3534,17 +3542,39 @@ fn commit_or_tree_oid(repo: &Repository, spec: &str) -> Result<ObjectId> {
 
 /// Filter diff entries to only those matching the given pathspecs.
 /// Empty pathspecs means include everything.
+///
+/// Supports Git exclude pathspecs (`:!` / `:^`): when only exclusions are given, the
+/// include set defaults to `.` (all paths), then exclusions are removed (same as `git rm`).
 fn filter_by_paths(entries: Vec<DiffEntry>, paths: &[String]) -> Vec<DiffEntry> {
     if paths.is_empty() {
         return entries;
+    }
+    let mut include_specs: Vec<&str> = Vec::new();
+    let mut exclude_inners: Vec<&str> = Vec::new();
+    for spec in paths {
+        if let Some(inner) = spec.strip_prefix(":!").or_else(|| spec.strip_prefix(":^")) {
+            exclude_inners.push(inner);
+        } else {
+            include_specs.push(spec.as_str());
+        }
+    }
+    if include_specs.is_empty() && !exclude_inners.is_empty() {
+        include_specs.push(".");
     }
     entries
         .into_iter()
         .filter(|e| {
             let path = e.path();
-            paths
+            let included = include_specs.iter().any(|spec| {
+                if spec == &"." || spec.is_empty() {
+                    return true;
+                }
+                crate::pathspec::pathspec_matches(spec, path)
+            });
+            let excluded = exclude_inners
                 .iter()
-                .any(|spec| crate::pathspec::pathspec_matches(spec, path))
+                .any(|inner| crate::pathspec::pathspec_matches(inner, path));
+            included && !excluded
         })
         .collect()
 }

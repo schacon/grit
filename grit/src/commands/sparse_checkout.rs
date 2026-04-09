@@ -19,6 +19,7 @@ use grit_lib::sparse_checkout::{
     ConeWorkspace, NonConePatterns,
 };
 use grit_lib::state::resolve_head;
+use std::collections::HashSet;
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -1190,6 +1191,96 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String], cone_mode: bool
 
     repo.write_index_at(&index_path, &mut index)
         .context("writing index")?;
+
+    // Remove untracked paths outside the sparse cone (Git `sparse_checkout_set` / t7012).
+    let indexed_paths: HashSet<String> = index
+        .entries
+        .iter()
+        .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+        .collect();
+    remove_untracked_outside_sparse(
+        work_tree,
+        work_tree,
+        &indexed_paths,
+        patterns,
+        effective_cone,
+        cone_struct.as_ref(),
+        &non_cone,
+    )?;
+
+    Ok(())
+}
+
+fn remove_untracked_outside_sparse(
+    work_tree: &Path,
+    current: &Path,
+    indexed_paths: &HashSet<String>,
+    patterns: &[String],
+    effective_cone: bool,
+    cone_struct: Option<&ConePatterns>,
+    non_cone: &NonConePatterns,
+) -> Result<()> {
+    let Ok(read_dir) = fs::read_dir(current) else {
+        return Ok(());
+    };
+    for ent in read_dir {
+        let ent = ent.context("reading work tree directory")?;
+        let path = ent.path();
+        let rel = path
+            .strip_prefix(work_tree)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if rel == ".git" || rel.starts_with(".git/") {
+            continue;
+        }
+        let meta = fs::symlink_metadata(&path).context("stat work tree path")?;
+        if meta.is_dir() {
+            remove_untracked_outside_sparse(
+                work_tree,
+                &path,
+                indexed_paths,
+                patterns,
+                effective_cone,
+                cone_struct,
+                non_cone,
+            )?;
+            if fs::read_dir(&path)
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(false)
+            {
+                let included = if effective_cone {
+                    path_in_sparse_checkout(&rel, true, cone_struct, non_cone)
+                } else {
+                    path_in_sparse_checkout_lines(&rel, patterns)
+                };
+                if !included && !indexed_paths.contains(&rel) {
+                    let _ = fs::remove_dir(&path);
+                    if let Some(parent) = path.parent() {
+                        remove_empty_dirs_up_to(parent, work_tree);
+                    }
+                }
+            }
+            continue;
+        }
+        if !meta.is_file() && !meta.file_type().is_symlink() {
+            continue;
+        }
+        if indexed_paths.contains(&rel) {
+            continue;
+        }
+        let included = if effective_cone {
+            path_in_sparse_checkout(&rel, true, cone_struct, non_cone)
+        } else {
+            path_in_sparse_checkout_lines(&rel, patterns)
+        };
+        if !included {
+            let _ = fs::remove_file(&path);
+            if let Some(parent) = path.parent() {
+                remove_empty_dirs_up_to(parent, work_tree);
+            }
+        }
+    }
     Ok(())
 }
 

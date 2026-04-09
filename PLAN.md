@@ -806,7 +806,7 @@ commit → check it off → move on.
 - [ ] `t7815-grep-binary` █████████████████░░░ 19/22 (3 left) — git grep in binary files
 - [x] `t7417-submodule-path-url` — check handling of .gitmodule path with dash
 - [ ] `t7113-post-index-change-hook` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — post index change hook
-- [ ] `t7012-skip-worktree-writing` ████████████░░░░░░░░ 7/11 (4 left) — test worktree writing operations when skip-worktree is used
+- [x] `t7012-skip-worktree-writing` — test worktree writing operations when skip-worktree is used (11/11)
 - [ ] `t7604-merge-custom-message` ██████████░░░░░░░░░░ 4/8 (4 left) — git merge
 
 - [ ] `t7106-reset-unborn-branch` ████████░░░░░░░░░░░░ 3/7 (4 left) — git reset should work on unborn branch
