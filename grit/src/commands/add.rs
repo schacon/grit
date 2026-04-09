@@ -653,7 +653,7 @@ fn update_tracked(
                         || p.starts_with(&format!("{spec}/"))
                 });
             if !matches_tracked {
-                eprintln!("fatal: pathspec '{spec}' did not match any file(s) known to git");
+                eprintln!("error: pathspec '{spec}' did not match any file(s) known to git");
                 std::process::exit(128);
             }
         }
@@ -699,7 +699,9 @@ fn update_tracked(
 
     for (raw_path, path_str) in &tracked {
         let abs_path = work_tree.join(path_str);
-        if abs_path.exists() {
+        // Use symlink_metadata so a symlink whose target was removed still counts as
+        // present (`exists()` follows the link and returns false).
+        if fs::symlink_metadata(&abs_path).is_ok() {
             if args.dry_run {
                 // For dry-run, hash without writing to ODB
                 if let Ok(data) = std::fs::read(&abs_path) {
