@@ -577,6 +577,21 @@ fn parse_options(argv: &[String]) -> Result<Options> {
 
 // ── Core diff logic ──────────────────────────────────────────────────
 
+/// True when the index entry has real cached stat data from the filesystem.
+///
+/// After `read-tree` or `update-index --cacheinfo`, Git leaves ctime/mtime/dev/ino/size at
+/// zero until refresh; `diff-files` must not treat "blob on disk matches index OID" as clean
+/// in that state (see Git `ce_match_stat_basic` / `run_diff_files`).
+fn index_stat_is_trusted(entry: &IndexEntry) -> bool {
+    entry.size != 0
+        || entry.mtime_sec != 0
+        || entry.mtime_nsec != 0
+        || entry.ctime_sec != 0
+        || entry.ctime_nsec != 0
+        || entry.dev != 0
+        || entry.ino != 0
+}
+
 /// Build the list of changes between the index and the working tree.
 fn collect_changes(
     repo: &Repository,
@@ -625,9 +640,17 @@ fn collect_changes(
                 WorktreeStatus::Unchanged => { /* skip — stat says identical */ }
                 WorktreeStatus::Modified(wt_mode, wt_oid) => {
                     let idx_canonical = canonicalize_mode(*idx_mode);
-                    // Content and mode match the index: treat as clean even if the index entry
-                    // was created without racily-clean stat data (e.g. `git apply --index`,
-                    // `git am`). Smudged stat metadata alone must not imply a diff-files hit.
+                    // Content and mode match the index: treat as clean only when the index
+                    // already carries real stat data. After `read-tree` or `update-index
+                    // --cacheinfo`, Git leaves stat fields zeroed; `diff-files` must still
+                    // report dirty until `checkout-index -u` or `update-index --refresh`
+                    // (matches `ce_match_stat_basic` + `ie_modified` in Git). The OID/mode
+                    // shortcut is for smudged entries from `apply`/`am` where stat is wrong
+                    // but was recorded from the filesystem at least once.
+                    let content_matches_index = wt_oid == *idx_oid && wt_mode == idx_canonical;
+                    if content_matches_index && index_stat_is_trusted(idx_entry) {
+                        continue;
+                    }
                     if wt_oid != *idx_oid || wt_mode != idx_canonical {
                         // Detect type changes (e.g., symlink ↔ regular, regular ↔ submodule)
                         let status = if mode_type(idx_canonical) != mode_type(wt_mode) {
@@ -640,6 +663,20 @@ fn collect_changes(
                             Change {
                                 path: path.clone(),
                                 status,
+                                old_mode: idx_canonical,
+                                new_mode: wt_mode,
+                                old_oid: *idx_oid,
+                                new_oid: wt_oid,
+                            },
+                        );
+                    } else {
+                        // Same blob and mode on disk as in the index, but index stat is
+                        // uninitialized (e.g. post-`read-tree` checkout without `-u`).
+                        changes.insert(
+                            path.clone(),
+                            Change {
+                                path: path.clone(),
+                                status: 'M',
                                 old_mode: idx_canonical,
                                 new_mode: wt_mode,
                                 old_oid: *idx_oid,
