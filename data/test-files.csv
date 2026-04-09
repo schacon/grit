@@ -183,7 +183,7 @@ t10820-commit-allow-amend	t1	yes	30	30	0	true	ok	0
 t10830-add-pathspec-force	t1	yes	32	32	0	true	ok	0
 t10840-rm-dry-run-force	t1	yes	33	33	0	true	ok	0
 t10850-mv-multi-source	t1	yes	30	30	0	true	ok	0
-t10860-switch-force-create	t1	yes	30	27	3	false	ok	0
+t10860-switch-force-create	t1	yes	30	30	0	true	ok	0
 t10870-restore-head-source	t1	yes	31	31	0	true	ok	0
 t10880-reset-hard-soft-path	t1	yes	31	31	0	true	ok	0
 t10890-cherry-pick-message	t1	yes	30	30	0	true	ok	0

@@ -46,7 +46,7 @@
 - [ ] t10830-add-pathspec-force.sh
 - [ ] t10840-rm-dry-run-force.sh
 - [ ] t10850-mv-multi-source.sh
-- [ ] t10860-switch-force-create.sh
+- [x] t10860-switch-force-create.sh
 - [ ] t10870-restore-head-source.sh
 - [ ] t10880-reset-hard-soft-path.sh
 - [ ] t10890-cherry-pick-message.sh
