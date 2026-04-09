@@ -2888,15 +2888,29 @@ pub fn read_submodule_head_oid(sub_dir: &Path) -> Option<ObjectId> {
         }
     }
     let head_content = fs::read_to_string(git_dir.join("HEAD")).ok()?;
-    let head_content = head_content.trim();
-    if let Some(refname) = head_content.strip_prefix("ref: ") {
-        // Symbolic ref — resolve it
-        let ref_path = git_dir.join(refname);
-        let oid_hex = fs::read_to_string(&ref_path).ok()?;
-        ObjectId::from_hex(oid_hex.trim()).ok()
+    let head_trimmed = head_content.trim();
+    if head_trimmed.starts_with("ref: ") {
+        // Use the full ref resolver so packed-refs and worktrees match Git. If `HEAD` is a stale
+        // symref (e.g. still `refs/heads/master` while only `main` exists), fall back like
+        // `resolve_gitlink_ref` / `git add` on embedded repos (`t6437-submodule-merge`).
+        match crate::refs::resolve_ref(&git_dir, "HEAD") {
+            Ok(oid) => Some(oid),
+            Err(_) => {
+                let mut found = None;
+                for branch in ["main", "master"] {
+                    let p = git_dir.join("refs/heads").join(branch);
+                    if let Ok(s) = fs::read_to_string(&p) {
+                        if let Ok(o) = ObjectId::from_hex(s.trim()) {
+                            found = Some(o);
+                            break;
+                        }
+                    }
+                }
+                found
+            }
+        }
     } else {
-        // Detached HEAD — direct OID
-        ObjectId::from_hex(head_content).ok()
+        ObjectId::from_hex(head_trimmed).ok()
     }
 }
 

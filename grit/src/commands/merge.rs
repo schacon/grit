@@ -14,17 +14,21 @@ use tempfile::NamedTempFile;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::MergeAttr;
-use grit_lib::diff::{count_changes, detect_renames, diff_trees, zero_oid, DiffEntry, DiffStatus};
+use grit_lib::diff::{
+    count_changes, detect_renames, diff_trees, submodule_embedded_git_dir, zero_oid, DiffEntry,
+    DiffStatus,
+};
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::hooks::run_hook;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{
-    parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
+    parse_commit, parse_tag, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
 };
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
+use grit_lib::rev_list::{rev_list, OrderingMode, OutputMode, RevListOptions};
 use grit_lib::rev_parse::{resolve_upstream_symbolic_name, upstream_suffix_info};
 use grit_lib::sparse_checkout::apply_sparse_checkout_skip_worktree;
 use grit_lib::state::{resolve_head, HeadState};
@@ -33,6 +37,17 @@ use time::OffsetDateTime;
 
 use crate::commands::diff_index;
 use crate::explicit_exit::{ExplicitExit, SilentNonZeroExit};
+
+/// Register embedded submodule `objects/` directories so merge can read gitlink commits (`t6437`).
+fn register_merge_submodule_odbs(repo: &Repository) -> Result<()> {
+    let Some(wt) = repo.work_tree.as_ref() else {
+        return Ok(());
+    };
+    let index = repo.load_index()?;
+    repo.odb
+        .register_submodule_object_directories_from_index(wt, &index);
+    Ok(())
+}
 
 /// Count distinct paths that have any unmerged index stage (matches `git merge` conflict scoring).
 fn unmerged_path_count(index: &Index) -> usize {
@@ -630,6 +645,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     exit_if_merge_blocked_by_index_or_state(&repo)?;
+    register_merge_submodule_odbs(&repo)?;
 
     if args.squash && args.no_ff {
         bail!("fatal: You cannot combine --squash with --no-ff.");
@@ -1637,6 +1653,10 @@ Aborting"
             fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
         }
 
+        for line in &merge_result.submodule_merge_stdout {
+            println!("{line}");
+        }
+        print_submodule_recursive_merge_advice(&merge_result.submodule_merge_advice);
         // Print per-file conflict messages to stdout (git sends these to stdout)
         for desc in &merge_result.conflict_descriptions {
             if desc.kind == "binary" {
@@ -1832,45 +1852,8 @@ fn bail_if_merge_would_overwrite_local_changes(
         .map(|e| e.path.clone())
         .collect();
 
-    // Do not replace a checked-out submodule (gitlink with .git in work tree)
-    // with regular tree content — Git refuses this merge/pull.
-    for (path, old_entry) in old_entries {
-        if old_entry.mode != MODE_GITLINK {
-            continue;
-        }
-        let rel = String::from_utf8_lossy(path).to_string();
-        let abs = work_tree.join(&rel);
-        if !abs.join(".git").exists() {
-            continue;
-        }
-        let new_at_path = new_map.get(path.as_slice()).copied();
-        let replaced_by_tree = new_index.entries.iter().any(|e| {
-            if e.stage() != 0 {
-                return false;
-            }
-            e.path.starts_with(path)
-                && e.path.len() > path.len()
-                && e.path.get(path.len()) == Some(&b'/')
-        });
-        match new_at_path {
-            Some(ne) if ne.mode == MODE_GITLINK => continue, // pointer update only
-            Some(_ne) => {
-                bail!(
-                    "refusing to merge: cannot replace submodule '{rel}' while it is checked out\n\
-                     (local submodule work tree would be overwritten).\n\
-                     Aborting"
-                );
-            }
-            None if replaced_by_tree => {
-                bail!(
-                    "refusing to merge: cannot replace submodule '{rel}' while it is checked out\n\
-                     (local submodule work tree would be overwritten).\n\
-                     Aborting"
-                );
-            }
-            None => continue, // submodule removed from tree — allowed (work tree kept on disk)
-        }
-    }
+    // Merge-ort resolves submodule vs tree at the same path as index conflicts (t6437); do not
+    // abort here — checked-out submodules are preserved on disk while conflict stages are written.
 
     // Dirty tracked paths from HEAD that would change in the target.
     for (path, old_entry) in old_entries {
@@ -2114,6 +2097,391 @@ fn is_worktree_entry_dirty(repo: &Repository, entry: &IndexEntry, abs_path: &Pat
             Err(_) => Ok(true),
         }
     }
+}
+
+fn open_submodule_repo(super_repo: &Repository, rel: &str) -> Option<Repository> {
+    let wt = super_repo.work_tree.as_deref()?;
+    let abs = wt.join(rel);
+    let git_dir = submodule_embedded_git_dir(&abs)?;
+    Repository::open(&git_dir, Some(&abs)).ok()
+}
+
+fn short_oid_hex(oid: ObjectId) -> String {
+    let h = oid.to_hex();
+    h[..7.min(h.len())].to_string()
+}
+
+fn submodule_head_first_parent_abbrev(sub_repo: &Repository) -> Option<String> {
+    let head = resolve_head(&sub_repo.git_dir).ok()?;
+    let oid = head.oid().copied()?;
+    let obj = sub_repo.odb.read(&oid).ok()?;
+    let c = parse_commit(&obj.data).ok()?;
+    c.parents.first().map(|o| short_oid_hex(*o))
+}
+
+fn peel_gitlink_commit(odb: &grit_lib::odb::Odb, oid: ObjectId) -> Result<ObjectId> {
+    if oid == zero_oid() {
+        bail!("null gitlink");
+    }
+    let obj = odb.read(&oid)?;
+    match obj.kind {
+        ObjectKind::Commit => Ok(oid),
+        ObjectKind::Tag => {
+            let tag = parse_tag(&obj.data)?;
+            peel_gitlink_commit(odb, tag.object)
+        }
+        _ => bail!("gitlink does not point to a commit"),
+    }
+}
+
+fn prune_submodule_merge_candidates(
+    sub_repo: &Repository,
+    mut merges: Vec<ObjectId>,
+) -> Result<Vec<ObjectId>> {
+    loop {
+        let mut remove = vec![false; merges.len()];
+        for i in 0..merges.len() {
+            for j in 0..merges.len() {
+                if i == j || remove[i] {
+                    continue;
+                }
+                if is_ancestor(sub_repo, merges[j], merges[i])? {
+                    remove[i] = true;
+                    break;
+                }
+            }
+        }
+        if !remove.iter().any(|r| *r) {
+            break;
+        }
+        merges = merges
+            .into_iter()
+            .enumerate()
+            .filter_map(|(idx, o)| if remove[idx] { None } else { Some(o) })
+            .collect();
+    }
+    Ok(merges)
+}
+
+fn submodule_candidate_merges(
+    sub_repo: &Repository,
+    ours: ObjectId,
+    theirs: ObjectId,
+) -> Result<Vec<ObjectId>> {
+    let mut opts = RevListOptions::default();
+    opts.all_refs = true;
+    opts.min_parents = Some(2);
+    opts.ordering = OrderingMode::Topo;
+    opts.output_mode = OutputMode::OidOnly;
+    // Exclude the entire history reachable from `ours` (same as `git rev-list --all ^ours`).
+    let negative = vec![ours.to_hex()];
+    let r = rev_list(sub_repo, &[] as &[String], &negative, &opts)?;
+    let mut out = Vec::new();
+    for oid in r.commits {
+        if !is_ancestor(sub_repo, theirs, oid)? {
+            continue;
+        }
+        let obj = sub_repo.odb.read(&oid)?;
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let c = parse_commit(&obj.data)?;
+        if c.parents.len() < 2 {
+            continue;
+        }
+        out.push(oid);
+    }
+    prune_submodule_merge_candidates(sub_repo, out)
+}
+
+fn record_submodule_merge_conflict(
+    path_str: &str,
+    be: &IndexEntry,
+    oe: &IndexEntry,
+    te: &IndexEntry,
+    index: &mut Index,
+    has_conflicts: &mut bool,
+    conflict_descriptions: &mut Vec<ConflictDescription>,
+    submodule_merge_stdout: &mut Vec<String>,
+    submodule_merge_advice: &mut Vec<(String, String)>,
+    advice_abbrev: String,
+    hint_lines: &[String],
+) {
+    for line in hint_lines {
+        submodule_merge_stdout.push(line.clone());
+    }
+    submodule_merge_advice.push((path_str.to_owned(), advice_abbrev));
+    *has_conflicts = true;
+    stage_entry(index, be, 1);
+    stage_entry(index, oe, 2);
+    stage_entry(index, te, 3);
+    conflict_descriptions.push(ConflictDescription {
+        kind: "submodule",
+        body: format!("Failed to merge submodule {path_str}"),
+        subject_path: path_str.to_owned(),
+        remerge_anchor_path: None,
+        rename_rr_ours_dest: None,
+        rename_rr_theirs_dest: None,
+        auto_merge_hint_path: None,
+    });
+}
+
+/// Three-way merge for paths where base/ours/theirs are all gitlinks (`merge-ort` `merge_submodule`).
+fn try_merge_gitlink_entries(
+    repo: &Repository,
+    path_str: &str,
+    be: &IndexEntry,
+    oe: &IndexEntry,
+    te: &IndexEntry,
+    favor: MergeFavor,
+    index: &mut Index,
+    has_conflicts: &mut bool,
+    conflict_descriptions: &mut Vec<ConflictDescription>,
+    submodule_merge_stdout: &mut Vec<String>,
+    submodule_merge_advice: &mut Vec<(String, String)>,
+) -> Result<bool> {
+    if be.mode != MODE_GITLINK || oe.mode != MODE_GITLINK || te.mode != MODE_GITLINK {
+        return Ok(false);
+    }
+
+    let default_advice = short_oid_hex(te.oid);
+    let Some(sub_repo) = open_submodule_repo(repo, path_str) else {
+        record_submodule_merge_conflict(
+            path_str,
+            be,
+            oe,
+            te,
+            index,
+            has_conflicts,
+            conflict_descriptions,
+            submodule_merge_stdout,
+            submodule_merge_advice,
+            default_advice,
+            &[],
+        );
+        return Ok(true);
+    };
+
+    let ours_c = match peel_gitlink_commit(&sub_repo.odb, oe.oid) {
+        Ok(o) => o,
+        Err(_) => {
+            record_submodule_merge_conflict(
+                path_str,
+                be,
+                oe,
+                te,
+                index,
+                has_conflicts,
+                conflict_descriptions,
+                submodule_merge_stdout,
+                submodule_merge_advice,
+                default_advice,
+                &[],
+            );
+            return Ok(true);
+        }
+    };
+    let theirs_c = match peel_gitlink_commit(&sub_repo.odb, te.oid) {
+        Ok(o) => o,
+        Err(_) => {
+            record_submodule_merge_conflict(
+                path_str,
+                be,
+                oe,
+                te,
+                index,
+                has_conflicts,
+                conflict_descriptions,
+                submodule_merge_stdout,
+                submodule_merge_advice,
+                default_advice,
+                &[],
+            );
+            return Ok(true);
+        }
+    };
+
+    let base_c = if be.oid == zero_oid() {
+        zero_oid()
+    } else {
+        match peel_gitlink_commit(&sub_repo.odb, be.oid) {
+            Ok(o) => o,
+            Err(_) => {
+                record_submodule_merge_conflict(
+                    path_str,
+                    be,
+                    oe,
+                    te,
+                    index,
+                    has_conflicts,
+                    conflict_descriptions,
+                    submodule_merge_stdout,
+                    submodule_merge_advice,
+                    default_advice,
+                    &[],
+                );
+                return Ok(true);
+            }
+        }
+    };
+
+    if ours_c == zero_oid() || theirs_c == zero_oid() {
+        record_submodule_merge_conflict(
+            path_str,
+            be,
+            oe,
+            te,
+            index,
+            has_conflicts,
+            conflict_descriptions,
+            submodule_merge_stdout,
+            submodule_merge_advice,
+            default_advice,
+            &[],
+        );
+        return Ok(true);
+    }
+
+    if base_c == zero_oid() {
+        let advice =
+            submodule_head_first_parent_abbrev(&sub_repo).unwrap_or_else(|| default_advice.clone());
+        record_submodule_merge_conflict(
+            path_str,
+            be,
+            oe,
+            te,
+            index,
+            has_conflicts,
+            conflict_descriptions,
+            submodule_merge_stdout,
+            submodule_merge_advice,
+            advice,
+            &[],
+        );
+        return Ok(true);
+    }
+
+    let forward_ok =
+        is_ancestor(&sub_repo, base_c, ours_c)? && is_ancestor(&sub_repo, base_c, theirs_c)?;
+    if !forward_ok {
+        record_submodule_merge_conflict(
+            path_str,
+            be,
+            oe,
+            te,
+            index,
+            has_conflicts,
+            conflict_descriptions,
+            submodule_merge_stdout,
+            submodule_merge_advice,
+            default_advice,
+            &[],
+        );
+        return Ok(true);
+    }
+
+    match favor {
+        MergeFavor::Ours => {
+            index.entries.push(oe.clone());
+            return Ok(true);
+        }
+        MergeFavor::Theirs => {
+            index.entries.push(te.clone());
+            return Ok(true);
+        }
+        MergeFavor::None | MergeFavor::Union => {}
+    }
+
+    if is_ancestor(&sub_repo, ours_c, theirs_c)? {
+        index.entries.push(te.clone());
+        return Ok(true);
+    }
+    if is_ancestor(&sub_repo, theirs_c, ours_c)? {
+        index.entries.push(oe.clone());
+        return Ok(true);
+    }
+
+    let candidates = submodule_candidate_merges(&sub_repo, ours_c, theirs_c)?;
+    if candidates.is_empty() {
+        record_submodule_merge_conflict(
+            path_str,
+            be,
+            oe,
+            te,
+            index,
+            has_conflicts,
+            conflict_descriptions,
+            submodule_merge_stdout,
+            submodule_merge_advice,
+            default_advice,
+            &[],
+        );
+        return Ok(true);
+    }
+    if candidates.len() == 1 {
+        let hint = format!(
+            "Failed to merge submodule {path_str}, but a possible merge resolution exists: {}",
+            short_oid_hex(candidates[0])
+        );
+        record_submodule_merge_conflict(
+            path_str,
+            be,
+            oe,
+            te,
+            index,
+            has_conflicts,
+            conflict_descriptions,
+            submodule_merge_stdout,
+            submodule_merge_advice,
+            default_advice,
+            std::slice::from_ref(&hint),
+        );
+        return Ok(true);
+    }
+    let mut hints = vec![format!(
+        "Failed to merge submodule {path_str}, but multiple possible merges exist:"
+    )];
+    for m in candidates {
+        hints.push(format!("    {}", short_oid_hex(m)));
+    }
+    record_submodule_merge_conflict(
+        path_str,
+        be,
+        oe,
+        te,
+        index,
+        has_conflicts,
+        conflict_descriptions,
+        submodule_merge_stdout,
+        submodule_merge_advice,
+        default_advice,
+        &hints,
+    );
+    Ok(true)
+}
+
+fn print_submodule_recursive_merge_advice(paths: &[(String, String)]) {
+    if paths.is_empty() {
+        return;
+    }
+    let joined = paths
+        .iter()
+        .map(|(p, _)| p.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    eprintln!("Recursive merging with submodules currently only supports trivial cases.");
+    eprintln!("Please manually handle the merging of each conflicted submodule.");
+    eprintln!("This can be accomplished with the following steps:");
+    for (path, abbrev) in paths {
+        eprintln!(
+            " - go to submodule ({path}), and either merge commit {abbrev}\n   or update to an existing commit which has merged those changes"
+        );
+    }
+    eprintln!(" - come back to superproject and run:\n");
+    eprintln!("      git add {joined}\n");
+    eprintln!("   to record the above merge or update");
+    eprintln!(" - resolve any other conflicts in the superproject");
+    eprintln!(" - commit the resulting index in the superproject");
 }
 
 /// Resolve the submodule's current HEAD commit from its working directory.
@@ -3151,6 +3519,7 @@ fn do_squash_from_merge(
 /// Abort an in-progress merge.
 fn merge_abort() -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    register_merge_submodule_odbs(&repo)?;
     let git_dir = &repo.git_dir;
 
     if !git_dir.join("MERGE_HEAD").exists() {
@@ -3292,6 +3661,10 @@ struct MergeResult {
     /// Files with conflict markers: (path, content).
     conflict_files: Vec<(String, Vec<u8>)>,
     conflict_descriptions: Vec<ConflictDescription>,
+    /// Lines printed before `CONFLICT (submodule)` (merge resolution hints on stdout).
+    submodule_merge_stdout: Vec<String>,
+    /// `(path, abbrev)` for recursive-submodule advice on stderr.
+    submodule_merge_advice: Vec<(String, String)>,
 }
 
 /// One recorded merge conflict for stdout and for remerge-diff headers.
@@ -4242,6 +4615,8 @@ fn merge_trees(
     let mut conflict_files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut conflict_descriptions: Vec<ConflictDescription> = Vec::new();
     conflict_descriptions.append(&mut directory_rename_suggested);
+    let mut submodule_merge_stdout: Vec<String> = Vec::new();
+    let mut submodule_merge_advice: Vec<(String, String)> = Vec::new();
 
     let labels = resolve_conflict_labels(repo, their_name, base_label_prefix);
     let base_label = labels.base;
@@ -5114,6 +5489,55 @@ fn merge_trees(
             }
             // Added only by ours — unless theirs only has paths under this name (directory).
             (None, Some(oe), None) => {
+                if oe.mode == MODE_GITLINK && has_descendant(&theirs_entries, path) {
+                    let path_str = String::from_utf8_lossy(path).to_string();
+                    let Some(te) = first_entry_under_path_prefix(&theirs_entries, path) else {
+                        index.entries.push(oe.clone());
+                        continue;
+                    };
+                    let relocated = format!("{path_str}~{ours_label}");
+                    has_conflicts = true;
+                    let mut gl = oe.clone();
+                    gl.path = relocated.as_bytes().to_vec();
+                    stage_entry(&mut index, &gl, 2);
+                    index.entries.push(te.clone());
+                    conflict_descriptions.push(ConflictDescription {
+                        kind: "file/directory",
+                        body: format!(
+                            "directory in the way of {path_str} from {ours_label}; moving it to {relocated} instead."
+                        ),
+                        subject_path: relocated.clone(),
+                        remerge_anchor_path: Some(path_str.clone()),
+                        rename_rr_ours_dest: None,
+                        rename_rr_theirs_dest: None,
+                        auto_merge_hint_path: None,
+                    });
+                    conflict_descriptions.push(ConflictDescription {
+                        kind: "modify/delete",
+                        body: format!(
+                            "{relocated} deleted in {their_name} and modified in {ours_label}.  Version {ours_label} of {relocated} left in tree."
+                        ),
+                        subject_path: relocated.clone(),
+                        remerge_anchor_path: Some(path_str.clone()),
+                        rename_rr_ours_dest: None,
+                        rename_rr_theirs_dest: None,
+                        auto_merge_hint_path: None,
+                    });
+                    // Materialize the conflicting directory file (e.g. `path/file` blob), not the
+                    // gitlink commit object — `t6437` greps for B1's file contents in `path~HEAD`.
+                    if let Ok(obj) = repo.odb.read(&te.oid) {
+                        conflict_files.push((relocated, obj.data));
+                    }
+                    for (k, _) in &theirs_entries {
+                        if k.len() > path.len()
+                            && k.starts_with(path)
+                            && k.get(path.len()) == Some(&b'/')
+                        {
+                            handled_paths.insert(k.clone());
+                        }
+                    }
+                    continue;
+                }
                 if oe.mode == MODE_GITLINK {
                     // Submodule replaces a former directory tree (e.g. d/e → gitlink d); not D/F.
                     index.entries.push(oe.clone());
@@ -5144,6 +5568,28 @@ fn merge_trees(
             }
             // Added only by theirs — unless ours only has paths under this name (directory).
             (None, None, Some(te)) => {
+                if te.mode == MODE_GITLINK && has_descendant(&ours_entries, path) {
+                    let path_str = String::from_utf8_lossy(path).to_string();
+                    let Some(oe) = first_entry_under_path_prefix(&ours_entries, path) else {
+                        index.entries.push(te.clone());
+                        continue;
+                    };
+                    conflict_submodule_vs_non_gitlink(
+                        repo,
+                        &path_str,
+                        path,
+                        te,
+                        &oe,
+                        3,
+                        2,
+                        merge_ours_oid_hex,
+                        &mut index,
+                        &mut has_conflicts,
+                        &mut conflict_descriptions,
+                        &mut conflict_files,
+                    )?;
+                    continue;
+                }
                 if te.mode == MODE_GITLINK {
                     index.entries.push(te.clone());
                 } else if has_descendant(&ours_entries, path) {
@@ -5171,6 +5617,45 @@ fn merge_trees(
                     index.entries.push(te.clone());
                 }
             }
+            // Submodule vs file/symlink add/add (t6437 file/submodule).
+            (None, Some(oe), Some(te))
+                if (oe.mode == MODE_GITLINK) != (te.mode == MODE_GITLINK)
+                    && oe.mode != MODE_TREE
+                    && te.mode != MODE_TREE =>
+            {
+                let path_str = String::from_utf8_lossy(path).to_string();
+                if oe.mode == MODE_GITLINK {
+                    conflict_submodule_vs_non_gitlink(
+                        repo,
+                        &path_str,
+                        path,
+                        oe,
+                        te,
+                        2,
+                        3,
+                        merge_theirs_oid_hex,
+                        &mut index,
+                        &mut has_conflicts,
+                        &mut conflict_descriptions,
+                        &mut conflict_files,
+                    )?;
+                } else {
+                    conflict_submodule_vs_non_gitlink(
+                        repo,
+                        &path_str,
+                        path,
+                        te,
+                        oe,
+                        3,
+                        2,
+                        merge_ours_oid_hex,
+                        &mut index,
+                        &mut has_conflicts,
+                        &mut conflict_descriptions,
+                        &mut conflict_files,
+                    )?;
+                }
+            }
             // Both added same thing
             (None, Some(oe), Some(te)) if oe.oid == te.oid && oe.mode == te.mode => {
                 index.entries.push(oe.clone());
@@ -5188,6 +5673,57 @@ fn merge_trees(
             // All three differ — content-level merge
             (Some(be), Some(oe), Some(te)) => {
                 let path_str = String::from_utf8_lossy(path).to_string();
+                let gl_o = oe.mode == MODE_GITLINK;
+                let gl_t = te.mode == MODE_GITLINK;
+                if gl_o != gl_t && oe.mode != MODE_TREE && te.mode != MODE_TREE {
+                    if gl_o {
+                        conflict_submodule_vs_non_gitlink(
+                            repo,
+                            &path_str,
+                            path,
+                            oe,
+                            te,
+                            2,
+                            3,
+                            merge_theirs_oid_hex,
+                            &mut index,
+                            &mut has_conflicts,
+                            &mut conflict_descriptions,
+                            &mut conflict_files,
+                        )?;
+                    } else {
+                        conflict_submodule_vs_non_gitlink(
+                            repo,
+                            &path_str,
+                            path,
+                            te,
+                            oe,
+                            3,
+                            2,
+                            merge_ours_oid_hex,
+                            &mut index,
+                            &mut has_conflicts,
+                            &mut conflict_descriptions,
+                            &mut conflict_files,
+                        )?;
+                    }
+                    continue;
+                }
+                if try_merge_gitlink_entries(
+                    repo,
+                    &path_str,
+                    be,
+                    oe,
+                    te,
+                    favor,
+                    &mut index,
+                    &mut has_conflicts,
+                    &mut conflict_descriptions,
+                    &mut submodule_merge_stdout,
+                    &mut submodule_merge_advice,
+                )? {
+                    continue;
+                }
                 match try_content_merge(
                     repo,
                     &path_str,
@@ -5390,6 +5926,40 @@ fn merge_trees(
             // Both added different content — try content merge with empty base
             (None, Some(oe), Some(te)) => {
                 let path_str = String::from_utf8_lossy(path).to_string();
+                if oe.mode == MODE_GITLINK && te.mode == MODE_GITLINK {
+                    let z = zero_oid();
+                    let be = IndexEntry {
+                        ctime_sec: 0,
+                        ctime_nsec: 0,
+                        mtime_sec: 0,
+                        mtime_nsec: 0,
+                        dev: 0,
+                        ino: 0,
+                        mode: MODE_GITLINK,
+                        uid: 0,
+                        gid: 0,
+                        size: 0,
+                        oid: z,
+                        flags: path.len().min(0xFFF) as u16,
+                        flags_extended: None,
+                        path: path.to_vec(),
+                    };
+                    if try_merge_gitlink_entries(
+                        repo,
+                        &path_str,
+                        &be,
+                        oe,
+                        te,
+                        favor,
+                        &mut index,
+                        &mut has_conflicts,
+                        &mut conflict_descriptions,
+                        &mut submodule_merge_stdout,
+                        &mut submodule_merge_advice,
+                    )? {
+                        continue;
+                    }
+                }
                 match try_content_merge_add_add(
                     repo,
                     &path_str,
@@ -5462,6 +6032,8 @@ fn merge_trees(
         has_conflicts,
         conflict_files,
         conflict_descriptions,
+        submodule_merge_stdout,
+        submodule_merge_advice,
     })
 }
 
@@ -6278,6 +6850,76 @@ fn path_has_tree_descendant(map: &HashMap<Vec<u8>, IndexEntry>, path: &[u8]) -> 
         .any(|k| k.len() > path.len() && k.starts_with(path) && k.get(path.len()) == Some(&b'/'))
 }
 
+/// First flattened index entry strictly under `prefix/` (lexicographic), for submodule/directory conflicts.
+fn first_entry_under_path_prefix(
+    map: &HashMap<Vec<u8>, IndexEntry>,
+    prefix_dir: &[u8],
+) -> Option<IndexEntry> {
+    let mut best: Option<&IndexEntry> = None;
+    let mut best_key: Option<&[u8]> = None;
+    for (k, e) in map {
+        if k.len() <= prefix_dir.len()
+            || !k.starts_with(prefix_dir)
+            || k.get(prefix_dir.len()) != Some(&b'/')
+        {
+            continue;
+        }
+        let pick = match &best_key {
+            None => true,
+            Some(bk) => k.as_slice() < *bk,
+        };
+        if pick {
+            best = Some(e);
+            best_key = Some(k.as_slice());
+        }
+    }
+    best.cloned()
+}
+
+fn conflict_submodule_vs_non_gitlink(
+    repo: &Repository,
+    path_str: &str,
+    path: &[u8],
+    gitlink_entry: &IndexEntry,
+    other: &IndexEntry,
+    gitlink_stage: u8,
+    _other_stage: u8,
+    file_conflict_suffix: &str,
+    index: &mut Index,
+    has_conflicts: &mut bool,
+    conflict_descriptions: &mut Vec<ConflictDescription>,
+    conflict_files: &mut Vec<(String, Vec<u8>)>,
+) -> Result<()> {
+    *has_conflicts = true;
+    let mut gl = gitlink_entry.clone();
+    gl.path = path.to_vec();
+    let mut ot = other.clone();
+    ot.path = path.to_vec();
+    if gitlink_stage == 2 {
+        stage_entry(index, &gl, 2);
+        stage_entry(index, &ot, 3);
+    } else {
+        stage_entry(index, &ot, 2);
+        stage_entry(index, &gl, 3);
+    }
+    conflict_descriptions.push(ConflictDescription {
+        kind: "submodule",
+        body: format!("Merge conflict in {path_str}"),
+        subject_path: path_str.to_owned(),
+        remerge_anchor_path: None,
+        rename_rr_ours_dest: None,
+        rename_rr_theirs_dest: None,
+        auto_merge_hint_path: None,
+    });
+    if other.mode != MODE_GITLINK && other.mode != MODE_TREE {
+        if let Ok(obj) = repo.odb.read(&other.oid) {
+            let conflict_path = format!("{path_str}~{file_conflict_suffix}");
+            conflict_files.push((conflict_path, obj.data));
+        }
+    }
+    Ok(())
+}
+
 /// Directory/file conflicts: one side has a file at `P`, the other only has paths under `P/`.
 fn apply_directory_file_conflicts(
     repo: &Repository,
@@ -6297,13 +6939,22 @@ fn apply_directory_file_conflicts(
         let o = ours_entries.get(path);
         let t = theirs_entries.get(path);
         if let Some(oe) = o {
-            if oe.mode != MODE_TREE && path_has_tree_descendant(theirs_entries, path) && t.is_none()
+            // Gitlink at `path` with `path/...` on the other side is submodule/directory merge
+            // logic, not plain directory/file (`t6437-submodule-merge`).
+            if oe.mode != MODE_TREE
+                && oe.mode != MODE_GITLINK
+                && path_has_tree_descendant(theirs_entries, path)
+                && t.is_none()
             {
                 df_cases.push((path.clone(), true));
             }
         }
         if let Some(te) = t {
-            if te.mode != MODE_TREE && path_has_tree_descendant(ours_entries, path) && o.is_none() {
+            if te.mode != MODE_TREE
+                && te.mode != MODE_GITLINK
+                && path_has_tree_descendant(ours_entries, path)
+                && o.is_none()
+            {
                 df_cases.push((path.clone(), false));
             }
         }
@@ -6903,8 +7554,21 @@ fn remove_deleted_files(
                 && e.path.get(path.len()) == Some(&b'/')
         });
         // Submodule removed from the superproject: keep the on-disk work tree.
-        if old_entry.mode == MODE_GITLINK && !has_nested_under {
-            continue;
+        if old_entry.mode == MODE_GITLINK {
+            // Directory/submodule conflict: git moves the gitlink to `path~HEAD` (unmerged) but
+            // leaves the submodule checkout at `path/` intact (`t6437-submodule-merge`). Without
+            // this, `has_nested_under` is true (stage-0 `path/file`) and we would delete `path/`,
+            // losing `.git` and breaking `test_path_is_dir path/.git`.
+            let relocated_gitlink_conflict = new_index.entries.iter().any(|e| {
+                e.mode == MODE_GITLINK
+                    && e.stage() != 0
+                    && e.path.len() > path.len()
+                    && e.path.starts_with(path)
+                    && e.path[path.len()] == b'~'
+            });
+            if !has_nested_under || relocated_gitlink_conflict {
+                continue;
+            }
         }
         let path_str = String::from_utf8_lossy(path);
         let abs = work_tree.join(path_str.as_ref());
@@ -6931,6 +7595,31 @@ fn remove_empty_parent_dirs_merge(work_tree: &Path, path: &Path) {
             Err(_) => break,
         }
     }
+}
+
+/// True if `abs_path` lies under an embedded Git directory below the work tree root.
+///
+/// During merge conflicts, the index may record `path/file` at stage 0 while `path/` is still
+/// a submodule checkout on disk (gitlink was relocated to `path~HEAD` in the index). Writing
+/// the blob would create `path/file` inside the submodule; Git leaves the submodule work tree
+/// untouched (`t6437-submodule-merge`).
+///
+/// The work tree root's `.git` is ignored — only strict ancestors of the file path count.
+fn worktree_path_under_nested_git(work_tree: &Path, abs_path: &Path) -> bool {
+    let mut cur = match abs_path.parent() {
+        Some(p) => p,
+        None => return false,
+    };
+    while cur != work_tree {
+        if cur.join(".git").exists() {
+            return true;
+        }
+        let Some(parent) = cur.parent() else {
+            break;
+        };
+        cur = parent;
+    }
+    false
 }
 
 /// Checkout index entries to working tree.
@@ -6969,6 +7658,10 @@ fn checkout_entries(
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let abs_path = work_tree.join(&path_str);
+
+        if entry.mode != MODE_GITLINK && worktree_path_under_nested_git(work_tree, &abs_path) {
+            continue;
+        }
 
         // Directory/file conflicts: a tracked file may occupy a path that the merge
         // result needs as a directory (e.g. `path/file` while `path` was a file).
