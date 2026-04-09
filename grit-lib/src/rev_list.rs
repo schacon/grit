@@ -3361,7 +3361,15 @@ fn collect_tree_objects_filtered(
                     omitted.push(entry.oid);
                 }
             } else {
-                // Git historically tolerates lone non-blob entries in blob slots.
+                // Non-blob in a blob-named slot: Git's list-objects only tolerates this when the
+                // child OID was not yet seen (lone broken tip, t6102). If the OID was already
+                // emitted (e.g. as a tree from another tip), report corruption like upstream.
+                if emitted.contains(&entry.oid) {
+                    return Err(Error::CorruptObject(format!(
+                        "object {} is not a blob",
+                        entry.oid
+                    )));
+                }
                 if emitted.insert(entry.oid) {
                     result.push((entry.oid, path));
                 }
