@@ -5,6 +5,7 @@
 //! `error: object fails fsck: <camelCaseId>: <detail>`.
 
 use crate::check_ref_format::{check_refname_format, RefNameOptions};
+use crate::git_date::tm::date_overflows;
 use crate::objects::{ObjectId, ObjectKind};
 
 /// Git-compatible fsck failure for loose object validation.
@@ -242,8 +243,27 @@ fn fsck_ident(
         ));
     }
 
+    let ts_start = p;
     while p < ident_end && data[p].is_ascii_digit() {
         p += 1;
+    }
+    let ts_len = p - ts_start;
+    if ts_len > 21 {
+        return Err(FsckError::new(
+            "badDateOverflow",
+            format!("invalid {oid_line} line - date causes integer overflow"),
+        ));
+    }
+    let ts_str = std::str::from_utf8(&data[ts_start..p])
+        .map_err(|_| FsckError::new("badDate", format!("invalid {oid_line} line - bad date")))?;
+    let raw: u128 = ts_str
+        .parse()
+        .map_err(|_| FsckError::new("badDate", format!("invalid {oid_line} line - bad date")))?;
+    if raw > u64::MAX as u128 || date_overflows(raw as u64) {
+        return Err(FsckError::new(
+            "badDateOverflow",
+            format!("invalid {oid_line} line - date causes integer overflow"),
+        ));
     }
 
     if p >= ident_end || data[p] != b' ' {

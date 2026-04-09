@@ -3,6 +3,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
+use grit_lib::git_date::parse::parse_date_basic;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId};
 use grit_lib::pack;
 use grit_lib::promisor::read_promisor_missing_oids;
@@ -410,6 +411,28 @@ pub fn run(args: Args) -> Result<()> {
                             default_rev = Some(val.to_string());
                         }
                     }
+                }
+                "--until" | "--before" => {
+                    i += 1;
+                    let Some(val) = args.args.get(i) else {
+                        bail!("{arg} requires a date");
+                    };
+                    options.until_cutoff = Some(parse_rev_list_date(val)?);
+                }
+                _ if arg.starts_with("--until=") || arg.starts_with("--before=") => {
+                    let val = arg.split_once('=').map(|(_, v)| v).unwrap_or_default();
+                    options.until_cutoff = Some(parse_rev_list_date(val)?);
+                }
+                "--since" | "--after" => {
+                    i += 1;
+                    let Some(val) = args.args.get(i) else {
+                        bail!("{arg} requires a date");
+                    };
+                    options.since_cutoff = Some(parse_rev_list_date(val)?);
+                }
+                _ if arg.starts_with("--since=") || arg.starts_with("--after=") => {
+                    let val = arg.split_once('=').map(|(_, v)| v).unwrap_or_default();
+                    options.since_cutoff = Some(parse_rev_list_date(val)?);
                 }
                 _ => bail!("unsupported option: {arg}"),
             }
@@ -983,6 +1006,32 @@ fn parse_non_negative(text: &str, flag: &str) -> Result<usize> {
         return Ok(usize::MAX);
     }
     Ok(value as usize)
+}
+
+fn parse_rev_list_date(s: &str) -> Result<i64> {
+    let s = s.trim();
+    if let Ok((ts, _)) = parse_date_basic(s) {
+        return i64::try_from(ts).context("date out of range for rev-list cutoff");
+    }
+    if s.len() >= 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
+        let parts: Vec<&str> = s[..10].split('-').collect();
+        if parts.len() == 3 {
+            if let (Ok(y), Ok(m), Ok(d)) = (
+                parts[0].parse::<i32>(),
+                parts[1].parse::<u8>(),
+                parts[2].parse::<u8>(),
+            ) {
+                if let Ok(month) = time::Month::try_from(m) {
+                    if let Ok(date) = time::Date::from_calendar_date(y, month, d) {
+                        let dt = date.with_hms(0, 0, 0).unwrap().assume_utc();
+                        return Ok(dt.unix_timestamp());
+                    }
+                }
+            }
+        }
+    }
+    s.parse::<i64>()
+        .with_context(|| format!("invalid date: '{s}'"))
 }
 
 fn expand_parent_shorthand(repo: &Repository, spec: &str) -> Result<Vec<String>> {

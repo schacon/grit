@@ -11,6 +11,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::error::{Error, Result};
+use crate::ident::{committer_unix_seconds_for_ordering, parse_signature_times};
 use crate::ignore::{parse_sparse_patterns_from_blob, path_matches_sparse_pattern_list};
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::pack;
@@ -392,6 +393,10 @@ pub struct RevListOptions {
     /// With `--use-bitmap-index`, emit OID-only object lines (no paths / trailing space) for filters
     /// that match Git's bitmap object formatting.
     pub bitmap_oid_only_objects: bool,
+    /// Exclude commits with committer date strictly after this Unix timestamp (`--until` / `--before`).
+    pub until_cutoff: Option<i64>,
+    /// Exclude commits with committer date strictly before this Unix timestamp (`--since` / `--after`).
+    pub since_cutoff: Option<i64>,
 }
 
 impl Default for RevListOptions {
@@ -433,6 +438,8 @@ impl Default for RevListOptions {
             use_bitmap_index: false,
             unpacked_only: false,
             bitmap_oid_only_objects: false,
+            until_cutoff: None,
+            since_cutoff: None,
         }
     }
 }
@@ -672,6 +679,25 @@ pub fn rev_list(
     // Cherry-pick: remove equivalent commits
     if options.cherry_pick {
         ordered.retain(|oid| !cherry_equivalent.contains(oid));
+    }
+
+    if options.until_cutoff.is_some() || options.since_cutoff.is_some() {
+        let until = options.until_cutoff;
+        let since = options.since_cutoff;
+        ordered.retain(|oid| {
+            let ts = graph.committer_time(*oid);
+            if let Some(u) = until {
+                if ts > u {
+                    return false;
+                }
+            }
+            if let Some(s) = since {
+                if ts < s {
+                    return false;
+                }
+            }
+            true
+        });
     }
 
     if options.skip > 0 {
@@ -1162,31 +1188,10 @@ pub fn render_commit_with_color(
                 }
                 ""
             }
-            fn extract_timestamp(ident: &str) -> &str {
-                let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
-                if parts.len() >= 2 {
-                    parts[1]
-                } else {
-                    ""
-                }
-            }
-            fn parse_ident_date(ident: &str) -> Option<(i64, &str)> {
-                let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
-                if parts.len() < 2 {
-                    return None;
-                }
-                let ts: i64 = parts[1].parse().ok()?;
-                Some((ts, parts[0]))
-            }
-            fn parse_tz(offset_str: &str) -> i64 {
-                let tz_bytes = offset_str.as_bytes();
-                if tz_bytes.len() >= 5 {
-                    let sign = if tz_bytes[0] == b'-' { -1i64 } else { 1i64 };
-                    let h: i64 = offset_str[1..3].parse().unwrap_or(0);
-                    let m: i64 = offset_str[3..5].parse().unwrap_or(0);
-                    sign * (h * 3600 + m * 60)
-                } else {
-                    0
+            fn extract_timestamp(ident: &str) -> String {
+                match parse_signature_times(ident) {
+                    Some(p) => p.unix_seconds.to_string(),
+                    None => String::new(),
                 }
             }
             fn weekday_str(dt: &time::OffsetDateTime) -> &'static str {
@@ -1225,10 +1230,11 @@ pub fn render_commit_with_color(
                 }
             }
             fn extract_date_default(ident: &str) -> String {
-                let Some((ts, offset_str)) = parse_ident_date(ident) else {
+                let Some(p) = parse_signature_times(ident) else {
                     return String::new();
                 };
-                let adjusted = ts + parse_tz(offset_str);
+                let offset_str = ident.get(p.tz_hhmm_range.clone()).unwrap_or("+0000");
+                let adjusted = p.unix_seconds + p.tz_offset_secs;
                 let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                     .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
                 format!(
@@ -1244,10 +1250,11 @@ pub fn render_commit_with_color(
                 )
             }
             fn extract_date_rfc2822(ident: &str) -> String {
-                let Some((ts, offset_str)) = parse_ident_date(ident) else {
+                let Some(p) = parse_signature_times(ident) else {
                     return String::new();
                 };
-                let adjusted = ts + parse_tz(offset_str);
+                let offset_str = ident.get(p.tz_hhmm_range.clone()).unwrap_or("+0000");
+                let adjusted = p.unix_seconds + p.tz_offset_secs;
                 let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                     .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
                 format!(
@@ -1263,19 +1270,20 @@ pub fn render_commit_with_color(
                 )
             }
             fn extract_date_short(ident: &str) -> String {
-                let Some((ts, offset_str)) = parse_ident_date(ident) else {
+                let Some(p) = parse_signature_times(ident) else {
                     return String::new();
                 };
-                let adjusted = ts + parse_tz(offset_str);
+                let adjusted = p.unix_seconds + p.tz_offset_secs;
                 let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                     .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
                 format!("{:04}-{:02}-{:02}", dt.year(), dt.month() as u8, dt.day())
             }
             fn extract_date_iso(ident: &str) -> String {
-                let Some((ts, offset_str)) = parse_ident_date(ident) else {
+                let Some(p) = parse_signature_times(ident) else {
                     return String::new();
                 };
-                let adjusted = ts + parse_tz(offset_str);
+                let offset_str = ident.get(p.tz_hhmm_range.clone()).unwrap_or("+0000");
+                let adjusted = p.unix_seconds + p.tz_offset_secs;
                 let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                     .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
                 format!(
@@ -1521,19 +1529,18 @@ pub fn render_commit_with_color(
                             Some('l') => target.push_str(extract_email_local(&commit.author)),
                             Some('d') => target.push_str(&extract_date_default(&commit.author)),
                             Some('D') => target.push_str(&extract_date_rfc2822(&commit.author)),
-                            Some('t') => target.push_str(extract_timestamp(&commit.author)),
+                            Some('t') => target.push_str(&extract_timestamp(&commit.author)),
                             Some('s') => target.push_str(&extract_date_short(&commit.author)),
                             Some('i') => target.push_str(&extract_date_iso(&commit.author)),
                             Some('I') => {
-                                let Some((ts, offset_str)) = parse_ident_date(&commit.author)
-                                else {
+                                let Some(p) = parse_signature_times(&commit.author) else {
                                     break;
                                 };
-                                let adjusted = ts + parse_tz(offset_str);
+                                let adjusted = p.unix_seconds + p.tz_offset_secs;
                                 let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                                     .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-                                let sign_ch = if parse_tz(offset_str) >= 0 { '+' } else { '-' };
-                                let abs_off = parse_tz(offset_str).unsigned_abs();
+                                let sign_ch = if p.tz_offset_secs >= 0 { '+' } else { '-' };
+                                let abs_off = p.tz_offset_secs.unsigned_abs();
                                 target.push_str(&format!(
                                     "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{:02}:{:02}",
                                     dt.year(),
@@ -1548,14 +1555,14 @@ pub fn render_commit_with_color(
                                 ));
                             }
                             Some('r') => {
-                                let Some((ts, _)) = parse_ident_date(&commit.author) else {
+                                let Some(p) = parse_signature_times(&commit.author) else {
                                     break;
                                 };
                                 let now = std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .unwrap_or_default()
                                     .as_secs() as i64;
-                                target.push_str(&format_relative_date(now - ts));
+                                target.push_str(&format_relative_date(now - p.unix_seconds));
                             }
                             Some(other) => {
                                 target.push('%');
@@ -1578,19 +1585,18 @@ pub fn render_commit_with_color(
                             Some('l') => target.push_str(extract_email_local(&commit.committer)),
                             Some('d') => target.push_str(&extract_date_default(&commit.committer)),
                             Some('D') => target.push_str(&extract_date_rfc2822(&commit.committer)),
-                            Some('t') => target.push_str(extract_timestamp(&commit.committer)),
+                            Some('t') => target.push_str(&extract_timestamp(&commit.committer)),
                             Some('s') => target.push_str(&extract_date_short(&commit.committer)),
                             Some('i') => target.push_str(&extract_date_iso(&commit.committer)),
                             Some('I') => {
-                                let Some((ts, offset_str)) = parse_ident_date(&commit.committer)
-                                else {
+                                let Some(p) = parse_signature_times(&commit.committer) else {
                                     break;
                                 };
-                                let adjusted = ts + parse_tz(offset_str);
+                                let adjusted = p.unix_seconds + p.tz_offset_secs;
                                 let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                                     .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-                                let sign_ch = if parse_tz(offset_str) >= 0 { '+' } else { '-' };
-                                let abs_off = parse_tz(offset_str).unsigned_abs();
+                                let sign_ch = if p.tz_offset_secs >= 0 { '+' } else { '-' };
+                                let abs_off = p.tz_offset_secs.unsigned_abs();
                                 target.push_str(&format!(
                                     "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{:02}:{:02}",
                                     dt.year(),
@@ -1605,14 +1611,14 @@ pub fn render_commit_with_color(
                                 ));
                             }
                             Some('r') => {
-                                let Some((ts, _)) = parse_ident_date(&commit.committer) else {
+                                let Some(p) = parse_signature_times(&commit.committer) else {
                                     break;
                                 };
                                 let now = std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .unwrap_or_default()
                                     .as_secs() as i64;
-                                target.push_str(&format_relative_date(now - ts));
+                                target.push_str(&format_relative_date(now - p.unix_seconds));
                             }
                             Some(other) => {
                                 target.push('%');
@@ -2328,15 +2334,6 @@ fn load_commit(repo: &Repository, oid: ObjectId) -> Result<crate::objects::Commi
     parse_commit(&object.data)
 }
 
-fn parse_signature_time(sig: &str) -> i64 {
-    let mut parts = sig.split_whitespace().collect::<Vec<_>>();
-    if parts.len() < 2 {
-        return 0;
-    }
-    let ts = parts.remove(parts.len().saturating_sub(2));
-    ts.parse::<i64>().unwrap_or(0)
-}
-
 /// Merge command-line arguments and `--stdin` input lines for this subset.
 ///
 /// Returns `(positive_specs, negative_specs)`.
@@ -2474,7 +2471,7 @@ impl<'r> CommitGraph<'r> {
             parents.truncate(1);
         }
         self.committer_time
-            .insert(oid, parse_signature_time(&commit.committer));
+            .insert(oid, committer_unix_seconds_for_ordering(&commit.committer));
         self.parents.insert(oid, parents);
         Ok(())
     }

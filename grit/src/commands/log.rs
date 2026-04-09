@@ -8,6 +8,11 @@ use clap::Args as ClapArgs;
 use grit_lib::diff::{
     count_changes, diff_trees, format_raw, format_stat_line, DiffEntry, DiffStatus,
 };
+use grit_lib::git_date::parse::parse_date_basic;
+use grit_lib::ident::{
+    committer_timestamp_for_until_filter, committer_unix_seconds_for_ordering,
+    parse_signature_tail, signature_timestamp_for_pretty, timestamp_for_at_ct, SignatureTail,
+};
 use grit_lib::line_log::{
     format_line_log_diff, line_log_filter_commits, parse_line_log_ranges, rewritten_first_parent,
 };
@@ -725,18 +730,15 @@ fn run_line_log(repo: &Repository, args: Args) -> Result<()> {
 
 /// Extract epoch timestamp from a Git ident string.
 fn extract_epoch_from_ident(ident: &str) -> i64 {
-    if let Some(gt) = ident.rfind('>') {
-        let after = ident[gt + 1..].trim();
-        if let Some(epoch_str) = after.split_whitespace().next() {
-            return epoch_str.parse::<i64>().unwrap_or(0);
-        }
-    }
-    0
+    committer_timestamp_for_until_filter(ident)
 }
 
 /// Parse a date string into a Unix epoch timestamp.
 fn parse_date_to_epoch(s: &str) -> Option<i64> {
     let s = s.trim();
+    if let Ok((ts, _off_min)) = parse_date_basic(s) {
+        return i64::try_from(ts).ok();
+    }
     if s.len() >= 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
         let parts: Vec<&str> = s[..10].split('-').collect();
         if parts.len() == 3 {
@@ -2628,8 +2630,8 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
 
     // Sort by committer timestamp descending (same as regular log)
     commits.sort_by(|a, b| {
-        let ts_a = extract_timestamp(&a.1.committer);
-        let ts_b = extract_timestamp(&b.1.committer);
+        let ts_a = committer_unix_seconds_for_ordering(&a.1.committer);
+        let ts_b = committer_unix_seconds_for_ordering(&b.1.committer);
         ts_b.cmp(&ts_a)
     });
 
@@ -3103,9 +3105,9 @@ fn format_ident_for_header(ident: &str) -> String {
     }
 }
 
-/// Format date from ident for header display.
+/// Format date from ident for header display (`Date:` / `AuthorDate:`).
 fn format_date_for_header(ident: &str) -> String {
-    format_date_with_mode(ident, None)
+    format_author_date_internal(ident, None, true)
 }
 
 /// Parsed commit with its OID.
@@ -3359,33 +3361,61 @@ fn path_matches(path: &str, pathspec: &str) -> bool {
 fn read_commit_timestamp(odb: &Odb, oid: &ObjectId) -> i64 {
     match odb.read(oid) {
         Ok(obj) => match parse_commit(&obj.data) {
-            Ok(commit) => extract_timestamp(&commit.committer),
+            Ok(commit) => committer_unix_seconds_for_ordering(&commit.committer),
             Err(_) => 0,
         },
         Err(_) => 0,
     }
 }
 
-fn extract_timestamp(ident: &str) -> i64 {
-    // Format: "Name <email> timestamp offset"
-    let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
-    if parts.len() >= 2 {
-        parts[1].parse().unwrap_or(0)
-    } else {
-        0
+fn extract_timestamp(ident: &str) -> String {
+    match timestamp_for_at_ct(signature_timestamp_for_pretty(ident)) {
+        Some(ts) => ts.to_string(),
+        None => String::new(),
     }
 }
 
-/// Parse a timezone offset string like "+0200" or "-0500" into seconds.
-fn parse_tz_offset(offset: &str) -> i64 {
-    let bytes = offset.as_bytes();
-    if bytes.len() < 5 {
-        return 0;
+fn format_relative_from_diff(diff: i64) -> String {
+    if diff < 0 {
+        "in the future".to_owned()
+    } else if diff < 60 {
+        format!("{} seconds ago", diff)
+    } else if diff < 3600 {
+        let m = diff / 60;
+        if m == 1 {
+            "1 minute ago".to_owned()
+        } else {
+            format!("{m} minutes ago")
+        }
+    } else if diff < 86400 {
+        let h = diff / 3600;
+        if h == 1 {
+            "1 hour ago".to_owned()
+        } else {
+            format!("{h} hours ago")
+        }
+    } else if diff < 86400 * 30 {
+        let d = diff / 86400;
+        if d == 1 {
+            "1 day ago".to_owned()
+        } else {
+            format!("{d} days ago")
+        }
+    } else if diff < 86400 * 365 {
+        let months = diff / (86400 * 30);
+        if months == 1 {
+            "1 month ago".to_owned()
+        } else {
+            format!("{months} months ago")
+        }
+    } else {
+        let years = diff / (86400 * 365);
+        if years == 1 {
+            "1 year ago".to_owned()
+        } else {
+            format!("{years} years ago")
+        }
     }
-    let sign = if bytes[0] == b'-' { -1i64 } else { 1i64 };
-    let hours: i64 = offset[1..3].parse().unwrap_or(0);
-    let minutes: i64 = offset[3..5].parse().unwrap_or(0);
-    sign * (hours * 3600 + minutes * 60)
 }
 
 /// Lazily loads the git-notes map on first use so `grit log` does not read every
@@ -3631,7 +3661,7 @@ fn format_commit(
     notes_cache: &mut NotesMapCache<'_>,
     odb: &Odb,
     parent_line_override: Option<&[ObjectId]>,
-    line_log: bool,
+    _line_log: bool,
 ) -> Result<()> {
     let hex = oid.to_hex();
     let abbrev_len = if args.no_abbrev {
@@ -3729,16 +3759,13 @@ fn format_commit(
             writeln!(
                 out,
                 "Date:   {}",
-                format_date_with_mode(&info.author, date_format)
+                format_author_date_internal(&info.author, date_format, true)
             )?;
             writeln!(out)?;
             for line in info.message.lines() {
                 writeln!(out, "    {line}")?;
             }
             write_notes(out, oid, notes_cache, args, odb)?;
-            if !line_log {
-                writeln!(out)?;
-            }
         }
         Some("full") => {
             let dec = format_decoration(&hex, decorations);
@@ -3779,13 +3806,13 @@ fn format_commit(
             writeln!(
                 out,
                 "AuthorDate: {}",
-                format_date_with_mode(&info.author, date_format)
+                format_author_date_internal(&info.author, date_format, true)
             )?;
             writeln!(out, "Commit:     {}", format_ident_display(&info.committer))?;
             writeln!(
                 out,
                 "CommitDate: {}",
-                format_date_with_mode(&info.committer, date_format)
+                format_author_date_internal(&info.committer, date_format, true)
             )?;
             writeln!(out)?;
             for line in info.message.lines() {
@@ -4083,7 +4110,7 @@ fn apply_format_string(
                         }
                         Some('t') => {
                             chars.next();
-                            result.push_str(&format!("{}", extract_timestamp(&info.author)));
+                            result.push_str(&extract_timestamp(&info.author).to_string());
                         }
                         Some('s') => {
                             chars.next();
@@ -4138,7 +4165,7 @@ fn apply_format_string(
                         }
                         Some('t') => {
                             chars.next();
-                            result.push_str(&format!("{}", extract_timestamp(&info.committer)));
+                            result.push_str(&extract_timestamp(&info.committer).to_string());
                         }
                         Some('s') => {
                             chars.next();
@@ -4478,20 +4505,48 @@ fn format_ident_display(ident: &str) -> String {
 }
 
 /// Format the date from an ident string for display, with optional date mode.
-fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
-    // Git ident: "Name <email> timestamp offset"
-    let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
-    if parts.len() < 2 {
-        return ident.to_owned();
-    }
-    let ts_str = parts[1];
-    let offset_str = parts[0];
-    let ts = match ts_str.parse::<i64>() {
-        Ok(v) => v,
-        Err(_) => return format!("{ts_str} {offset_str}"),
+///
+/// When `for_header` is true (pretty `Date:` lines), unparsable dates use the Unix epoch in UTC
+/// (`+0000`), matching Git. When false (`%ad` and other format placeholders), unparsable dates
+/// yield an empty string for the default format (t4212).
+fn format_author_date_internal(ident: &str, date_mode: Option<&str>, for_header: bool) -> String {
+    let tail = parse_signature_tail(ident);
+    let (ts, tz_offset_secs, offset_str) = match tail {
+        Some(SignatureTail::Valid(p)) => {
+            let off = ident
+                .get(p.tz_hhmm_range.clone())
+                .unwrap_or("+0000")
+                .to_owned();
+            (p.unix_seconds, p.tz_offset_secs, off)
+        }
+        Some(SignatureTail::Overflow) if for_header => (0i64, 0i64, "+0000".to_owned()),
+        Some(SignatureTail::Overflow) => {
+            return match date_mode {
+                None => "Thu Jan 1 00:00:00 1970 +0000".to_owned(),
+                Some("relative") => {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64;
+                    format_relative_from_diff(now)
+                }
+                _ => String::new(),
+            };
+        }
+        Some(SignatureTail::NonNumeric) if for_header => (0i64, 0i64, "+0000".to_owned()),
+        Some(SignatureTail::NonNumeric) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            return match date_mode {
+                Some("relative") => format_relative_from_diff(now),
+                _ => String::new(),
+            };
+        }
+        None if for_header => (0i64, 0i64, "+0000".to_owned()),
+        None => return String::new(),
     };
-
-    let tz_offset_secs = parse_tz_offset(offset_str);
 
     match date_mode {
         Some("short") => {
@@ -4542,52 +4597,11 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
             format!("{ts} {offset_str}")
         }
         Some("relative") => {
-            // Show relative time like "2 hours ago", "3 days ago"
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs() as i64;
-            let diff = now - ts;
-            if diff < 0 {
-                "in the future".to_owned()
-            } else if diff < 60 {
-                format!("{} seconds ago", diff)
-            } else if diff < 3600 {
-                let m = diff / 60;
-                if m == 1 {
-                    "1 minute ago".to_owned()
-                } else {
-                    format!("{m} minutes ago")
-                }
-            } else if diff < 86400 {
-                let h = diff / 3600;
-                if h == 1 {
-                    "1 hour ago".to_owned()
-                } else {
-                    format!("{h} hours ago")
-                }
-            } else if diff < 86400 * 30 {
-                let d = diff / 86400;
-                if d == 1 {
-                    "1 day ago".to_owned()
-                } else {
-                    format!("{d} days ago")
-                }
-            } else if diff < 86400 * 365 {
-                let months = diff / (86400 * 30);
-                if months == 1 {
-                    "1 month ago".to_owned()
-                } else {
-                    format!("{months} months ago")
-                }
-            } else {
-                let years = diff / (86400 * 365);
-                if years == 1 {
-                    "1 year ago".to_owned()
-                } else {
-                    format!("{years} years ago")
-                }
-            }
+            format_relative_from_diff(now - ts)
         }
         Some("rfc") | Some("rfc2822") => {
             // RFC 2822: Thu, 07 Apr 2005 22:13:13 +0200
@@ -4633,8 +4647,7 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
             format!("{ts}")
         }
         _ => {
-            // Default Git date format: "Thu Apr  7 15:13:13 2005 -0700"
-            // Note: day is right-justified in a 2-char field (space-padded)
+            // Default Git date format: "Thu Apr 7 15:13:13 2005 -0700" (matches C git `show_date`)
             let adjusted = ts + tz_offset_secs;
             let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                 .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
@@ -4662,7 +4675,7 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
                 time::Month::December => "Dec",
             };
             format!(
-                "{} {} {:>2} {:02}:{:02}:{:02} {} {}",
+                "{} {} {} {:02}:{:02}:{:02} {} {}",
                 weekday,
                 month,
                 dt.day(),
@@ -4676,7 +4689,10 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
     }
 }
 
-/// Format the date from an ident string (legacy, default mode).
+fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
+    format_author_date_internal(ident, date_mode, false)
+}
+
 /// Resolve a revision string to an ObjectId.
 fn resolve_revision(repo: &Repository, rev: &str) -> Result<ObjectId> {
     // Delegate to the library's full revision parser which handles

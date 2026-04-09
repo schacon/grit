@@ -30,6 +30,7 @@ pub mod fsck_standalone;
 pub mod git_date;
 pub mod gitmodules;
 pub mod hooks;
+pub mod ident;
 pub mod ignore;
 pub mod index;
 pub mod line_log;
