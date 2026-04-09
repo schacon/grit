@@ -19,6 +19,7 @@
 - `./scripts/run-tests.sh t7520-ignored-hook-warning.sh`: 5/5 passing (`test_hook --disable`/`--remove` + `rev-parse --absolute-git-dir`; ignored-hook hint second line matches `git config set advice.ignoredHook false`; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t7064-wtstatus-pv2.sh`: 28/28 passing (`status --porcelain=v2`; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t3425-rebase-topology-merges.sh`: 13/13 passing (topo-order tie-break, `log A..B` exclusions, `format-patch` for `rebase --apply`, merge todo omission, merge replay; harness CSV/dashboards refreshed).
+- `./scripts/run-tests.sh t12610-rev-list-all-branches.sh`: 32/32 passing (setup returns cwd to trash root for harness that persists cwd between tests).
 - `cargo test -p grit-lib --lib`: 121/121 passing.
 - `./scripts/run-tests.sh t13180-log-patch-stat.sh`: 35/35 passing (`grit log` oneline/graph/decorate/skip/max-count/reverse/format; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t10560-switch-create-detach.sh`: 28/28 passing (`switch -- <branch>` disambiguation; invalid `-c`/`-C`/`--orphan` branch names rejected like Git; harness CSV/dashboards refreshed).
