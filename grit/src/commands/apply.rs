@@ -239,7 +239,8 @@ fn config_whitespace_fix() -> bool {
     let Some(value) = config.get("apply.whitespace") else {
         return false;
     };
-    value.eq_ignore_ascii_case("fix")
+    // `apply.whitespace` mirrors `--whitespace`; `strip` is an alias for `fix` (t4119).
+    value.eq_ignore_ascii_case("fix") || value.eq_ignore_ascii_case("strip")
 }
 
 fn whitespace_option_was_explicitly_set() -> bool {
@@ -339,6 +340,9 @@ struct FilePatch {
     hunks: Vec<Hunk>,
     /// Merged `core.whitespace` + `whitespace` attribute (Git `ws_rule`); `0` before assignment.
     ws_rule: u32,
+    /// Git `patch->is_toplevel_relative`: set for `diff --git` patches only. When false, paths are
+    /// prefixed with the setup directory (work-tree-relative CWD) like `prefix_patch` in Git.
+    is_toplevel_relative: bool,
 }
 
 /// Binary patch payload as compressed base85 chunks for forward/reverse apply.
@@ -420,6 +424,15 @@ impl FilePatch {
     /// True when this patch touches a gitlink/submodule (mode `160000`).
     fn involves_gitlink(&self) -> bool {
         self.old_mode.as_deref() == Some("160000") || self.new_mode.as_deref() == Some("160000")
+    }
+
+    /// Work-tree-relative path for filesystem IO and `.gitattributes` (Git `prefix_patch`).
+    fn worktree_rel_operational(&self, adjusted: &str, setup_prefix: &str) -> String {
+        if self.is_toplevel_relative {
+            adjusted.to_string()
+        } else {
+            format!("{setup_prefix}{adjusted}")
+        }
     }
 }
 
@@ -806,7 +819,12 @@ fn is_dev_null_nameline(line: &[u8]) -> bool {
         .unwrap_or(false)
 }
 
-fn guess_p_value_from_nameline(line: &[u8]) -> Option<usize> {
+fn count_slashes_in_prefix(prefix: &str) -> usize {
+    prefix.bytes().filter(|&b| b == b'/').count()
+}
+
+/// Git `guess_p_value` for traditional patches (`apply.c`). Uses `setup_git_directory` prefix.
+fn guess_p_value_from_nameline(line: &[u8], setup_prefix: Option<&str>) -> Option<usize> {
     if is_dev_null_nameline(line) {
         return None;
     }
@@ -814,6 +832,15 @@ fn guess_p_value_from_nameline(line: &[u8]) -> Option<usize> {
     let name_str = String::from_utf8_lossy(&name);
     if !name_str.contains('/') {
         return Some(0);
+    }
+    let pfx = setup_prefix.filter(|p| !p.is_empty())?;
+    if name_str.starts_with(pfx) {
+        return Some(count_slashes_in_prefix(pfx));
+    }
+    let slash = name_str.find('/')?;
+    let rest = name_str.get(slash + 1..)?;
+    if rest.starts_with(pfx) {
+        return Some(count_slashes_in_prefix(pfx) + 1);
     }
     None
 }
@@ -892,13 +919,14 @@ fn parse_traditional_patch_pair(
     new_line: &[u8],
     strip: usize,
     p_guess: &mut Option<usize>,
+    setup_prefix: Option<&str>,
 ) -> Result<FilePatch> {
     let old_p = old_line.strip_prefix(b"--- ").unwrap_or(old_line);
     let new_p = new_line.strip_prefix(b"+++ ").unwrap_or(new_line);
 
     if p_guess.is_none() {
-        let p = guess_p_value_from_nameline(old_p);
-        let q = guess_p_value_from_nameline(new_p);
+        let p = guess_p_value_from_nameline(old_p, setup_prefix);
+        let q = guess_p_value_from_nameline(new_p, setup_prefix);
         let chosen = match (p, q) {
             (None, None) => None,
             (Some(a), None) => Some(a),
@@ -930,6 +958,7 @@ fn parse_traditional_patch_pair(
         binary_patch: None,
         hunks: Vec::new(),
         ws_rule: 0,
+        is_toplevel_relative: false,
     };
 
     if is_dev_null_nameline(old_p) {
@@ -1143,6 +1172,8 @@ fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
     let mut patches = Vec::new();
     let mut i = 0;
     let mut p_guess_for_traditional: Option<usize> = None;
+    let setup_prefix = apply_setup_prefix();
+    let setup_prefix_for_guess = (!setup_prefix.is_empty()).then_some(setup_prefix.as_str());
 
     let p_strip = strip;
     let p_extended = strip.saturating_sub(1);
@@ -1170,6 +1201,7 @@ fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
                 binary_patch: None,
                 hunks: Vec::new(),
                 ws_rule: 0,
+                is_toplevel_relative: true,
             };
 
             let header_line = lines[i];
@@ -1296,6 +1328,7 @@ fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
                 new_line,
                 strip,
                 &mut p_guess_for_traditional,
+                setup_prefix_for_guess,
             )?;
             i += 2;
 
@@ -1372,6 +1405,7 @@ fn merge_adjacent_blob_to_gitlink_patches(patches: &mut Vec<FilePatch>) {
             merged.is_deleted = false;
             merged.is_new = false;
             merged.new_oid = add.new_oid.clone();
+            merged.is_toplevel_relative = del.is_toplevel_relative;
             merged.hunks.extend(add.hunks.clone());
             patches[i] = merged;
             patches.remove(i + 1);
@@ -1790,7 +1824,47 @@ fn adjust_path(path: &str, directory: Option<&str>) -> String {
     format!("{dir}{path}")
 }
 
-fn symlink_prefix(path: &str, symlink_overlay: &HashMap<String, bool>) -> Option<String> {
+fn apply_work_tree_root() -> Option<PathBuf> {
+    Repository::discover(None).ok().and_then(|r| r.work_tree)
+}
+
+/// Git `setup_git_directory` prefix: work-tree-relative path from CWD to repo root, with trailing `/`.
+fn apply_setup_prefix() -> String {
+    let Ok(repo) = Repository::discover(None) else {
+        return String::new();
+    };
+    let Some(wt) = repo.work_tree else {
+        return String::new();
+    };
+    let Ok(cwd) = std::env::current_dir() else {
+        return String::new();
+    };
+    let Ok(rel) = cwd.strip_prefix(&wt) else {
+        return String::new();
+    };
+    let s = rel.to_string_lossy();
+    let trimmed = s.trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!("{trimmed}/")
+    }
+}
+
+/// Absolute path for filesystem access. Git apply `chdir`s to the work tree root so patch paths
+/// are always resolved from there, even when the user runs `git apply` from a subdirectory.
+fn apply_fs_path(rel: &str, work_tree: Option<&Path>) -> PathBuf {
+    let Some(wt) = work_tree else {
+        return PathBuf::from(rel);
+    };
+    wt.join(rel)
+}
+
+fn symlink_prefix(
+    path: &str,
+    work_tree: Option<&Path>,
+    symlink_overlay: &HashMap<String, bool>,
+) -> Option<String> {
     let components: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
     if components.len() <= 1 {
         return None;
@@ -1800,11 +1874,12 @@ fn symlink_prefix(path: &str, symlink_overlay: &HashMap<String, bool>) -> Option
     for component in &components[..components.len() - 1] {
         prefix.push(component);
         let prefix_str = prefix.to_string_lossy().into_owned();
+        let full = apply_fs_path(&prefix_str, work_tree);
         let is_symlink = symlink_overlay
             .get(&prefix_str)
             .copied()
             .unwrap_or_else(|| {
-                fs::symlink_metadata(&prefix)
+                fs::symlink_metadata(&full)
                     .map(|meta| meta.file_type().is_symlink())
                     .unwrap_or(false)
             });
@@ -1816,38 +1891,43 @@ fn symlink_prefix(path: &str, symlink_overlay: &HashMap<String, bool>) -> Option
 }
 
 fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> Result<()> {
+    let work_tree = apply_work_tree_root();
+    let work_tree_ref = work_tree.as_deref();
+    let setup_prefix = apply_setup_prefix();
     let mut symlink_overlay: HashMap<String, bool> = HashMap::new();
     let mut replaced_directories_with_symlink: HashMap<String, bool> = HashMap::new();
 
     for fp in patches {
         if let Some(source) = fp.source_path() {
             let source_adjusted = adjust_path(source, args.directory.as_deref());
-            if !source_adjusted.is_empty() {
-                if let Some(prefix) = symlink_prefix(&source_adjusted, &symlink_overlay) {
+            let source_op = fp.worktree_rel_operational(&source_adjusted, &setup_prefix);
+            if !source_op.is_empty() {
+                if let Some(prefix) = symlink_prefix(&source_op, work_tree_ref, &symlink_overlay) {
                     let allow_delete_under_replaced_dir = fp.is_deleted
-                        && source_adjusted.starts_with(&format!("{prefix}/"))
+                        && source_op.starts_with(&format!("{prefix}/"))
                         && replaced_directories_with_symlink
                             .get(&prefix)
                             .copied()
                             .unwrap_or(false);
                     if !allow_delete_under_replaced_dir {
-                        bail!("{source_adjusted}: beyond a symbolic link");
+                        bail!("{source_op}: beyond a symbolic link");
                     }
                 }
             }
         }
         if let Some(target) = fp.target_path() {
             let target_adjusted = adjust_path(target, args.directory.as_deref());
-            if !target_adjusted.is_empty() {
-                if let Some(prefix) = symlink_prefix(&target_adjusted, &symlink_overlay) {
+            let target_op = fp.worktree_rel_operational(&target_adjusted, &setup_prefix);
+            if !target_op.is_empty() {
+                if let Some(prefix) = symlink_prefix(&target_op, work_tree_ref, &symlink_overlay) {
                     let allow_delete_under_replaced_dir = fp.is_deleted
-                        && target_adjusted.starts_with(&format!("{prefix}/"))
+                        && target_op.starts_with(&format!("{prefix}/"))
                         && replaced_directories_with_symlink
                             .get(&prefix)
                             .copied()
                             .unwrap_or(false);
                     if !allow_delete_under_replaced_dir {
-                        bail!("{target_adjusted}: beyond a symbolic link");
+                        bail!("{target_op}: beyond a symbolic link");
                     }
                 }
             }
@@ -1861,28 +1941,30 @@ fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> 
             .target_path()
             .map(|p| adjust_path(p, args.directory.as_deref()))
             .unwrap_or_default();
+        let source_op = fp.worktree_rel_operational(&source_adjusted, &setup_prefix);
+        let target_op = fp.worktree_rel_operational(&target_adjusted, &setup_prefix);
         let target_is_existing_dir =
-            !target_adjusted.is_empty() && Path::new(&target_adjusted).is_dir();
+            !target_op.is_empty() && apply_fs_path(&target_op, work_tree_ref).is_dir();
 
         if fp.is_deleted {
-            if !source_adjusted.is_empty() {
-                symlink_overlay.insert(source_adjusted, false);
+            if !source_op.is_empty() {
+                symlink_overlay.insert(source_op, false);
             }
             continue;
         }
 
-        if fp.is_rename && source_adjusted != target_adjusted && !source_adjusted.is_empty() {
-            symlink_overlay.insert(source_adjusted, false);
+        if fp.is_rename && source_op != target_op && !source_op.is_empty() {
+            symlink_overlay.insert(source_op, false);
         }
 
-        if !target_adjusted.is_empty() {
+        if !target_op.is_empty() {
             if fp.new_mode.as_deref() == Some("120000") {
                 if target_is_existing_dir {
-                    replaced_directories_with_symlink.insert(target_adjusted.clone(), true);
+                    replaced_directories_with_symlink.insert(target_op.clone(), true);
                 }
-                symlink_overlay.insert(target_adjusted, true);
+                symlink_overlay.insert(target_op, true);
             } else if fp.new_mode.is_some() || fp.is_new {
-                symlink_overlay.insert(target_adjusted, false);
+                symlink_overlay.insert(target_op, false);
             }
         }
     }
@@ -1943,6 +2025,7 @@ fn reverse_patches(patches: &mut [FilePatch]) {
 /// say `target` (see `t4124-apply-ws-rule.sh`).
 fn assign_ws_rules(patches: &mut [FilePatch], args: &Args) {
     let cfg_rule = config_whitespace_rule_bits();
+    let setup_prefix = apply_setup_prefix();
     let Ok(repo) = Repository::discover(None) else {
         for fp in patches {
             fp.ws_rule = cfg_rule;
@@ -1962,7 +2045,8 @@ fn assign_ws_rules(patches: &mut [FilePatch], args: &Args) {
             .or_else(|| fp.effective_path())
             .unwrap_or("");
         let adjusted = adjust_path(path_for_attr, args.directory.as_deref());
-        let fa = crlf::get_file_attrs(&rules, &adjusted, false, &config);
+        let operational = fp.worktree_rel_operational(&adjusted, &setup_prefix);
+        let fa = crlf::get_file_attrs(&rules, &operational, false, &config);
         let attr = match fa.whitespace.as_deref() {
             None => WhitespaceGitAttr::Unspecified,
             Some("unset") => WhitespaceGitAttr::False,
@@ -4078,6 +4162,8 @@ fn verify_worktree_gitlink_patch(
 /// After `--index` apply, nested file patches may have removed an empty gitlink placeholder
 /// directory via `remove_empty_dirs_up`; recreate empty dirs for new/changed gitlinks.
 fn ensure_gitlink_placeholder_dirs(patches: &[FilePatch], args: &Args) -> Result<()> {
+    let work_tree = apply_work_tree_root();
+    let work_tree_ref = work_tree.as_deref();
     for fp in patches {
         let target_is_gitlink = fp.new_mode.as_deref() == Some("160000") && !fp.is_deleted;
         let need_empty_submodule_dir =
@@ -4089,7 +4175,7 @@ fn ensure_gitlink_placeholder_dirs(patches: &[FilePatch], args: &Args) -> Result
             continue;
         };
         let adjusted = adjust_path(path_str, args.directory.as_deref());
-        let path = PathBuf::from(&adjusted);
+        let path = apply_fs_path(&adjusted, work_tree_ref);
         if path.is_dir() {
             continue;
         }
@@ -4133,7 +4219,7 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
             if let Some(target) = fp.target_path() {
                 let adjusted = adjust_path(target, args.directory.as_deref());
                 if let Some(entry) = ctx.index.get(adjusted.as_bytes(), 0) {
-                    let path = PathBuf::from(&adjusted);
+                    let path = ctx.work_tree.join(&adjusted);
                     if !path.exists() {
                         bail!("{adjusted}: does not match index");
                     }
@@ -4158,7 +4244,7 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
             .source_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
         let adjusted = adjust_path(path_str, args.directory.as_deref());
-        let path = PathBuf::from(&adjusted);
+        let path = ctx.work_tree.join(&adjusted);
 
         if !path.exists() {
             continue;
@@ -4338,13 +4424,14 @@ fn verify_old_oid_matches_content(expected_oid: &str, content: &str) -> Result<(
 
 fn record_path_existence(
     path: &str,
+    work_tree: Option<&Path>,
     current: &mut HashMap<String, bool>,
     initial: &mut HashMap<String, bool>,
 ) {
     if current.contains_key(path) {
         return;
     }
-    let exists = Path::new(path).exists();
+    let exists = apply_fs_path(path, work_tree).exists();
     current.insert(path.to_string(), exists);
     initial.insert(path.to_string(), exists);
 }
@@ -4374,17 +4461,22 @@ fn can_apply_with_empty_preimage(fp: &FilePatch) -> bool {
 /// moved away by an earlier rename) and prevents partially-applied worktree
 /// state when such sequences are detected.
 fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Result<()> {
+    let work_tree = apply_work_tree_root();
+    let work_tree_ref = work_tree.as_deref();
+    let setup_prefix = apply_setup_prefix();
     let mut current_exists: HashMap<String, bool> = HashMap::new();
     let mut initial_exists: HashMap<String, bool> = HashMap::new();
 
     for fp in patches {
         if let Some(source) = fp.source_path() {
             let adjusted = adjust_path(source, args.directory.as_deref());
-            record_path_existence(&adjusted, &mut current_exists, &mut initial_exists);
+            let op = fp.worktree_rel_operational(&adjusted, &setup_prefix);
+            record_path_existence(&op, work_tree_ref, &mut current_exists, &mut initial_exists);
         }
         if let Some(target) = fp.target_path() {
             let adjusted = adjust_path(target, args.directory.as_deref());
-            record_path_existence(&adjusted, &mut current_exists, &mut initial_exists);
+            let op = fp.worktree_rel_operational(&adjusted, &setup_prefix);
+            record_path_existence(&op, work_tree_ref, &mut current_exists, &mut initial_exists);
         }
     }
 
@@ -4397,13 +4489,15 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
             .target_path()
             .map(|p| adjust_path(p, args.directory.as_deref()))
             .unwrap_or_default();
+        let source_op = fp.worktree_rel_operational(&source_adjusted, &setup_prefix);
+        let target_op = fp.worktree_rel_operational(&target_adjusted, &setup_prefix);
 
         let source_exists_now = current_exists
-            .get(&source_adjusted)
+            .get(&source_op)
             .copied()
-            .unwrap_or_else(|| Path::new(&source_adjusted).exists());
+            .unwrap_or_else(|| apply_fs_path(&source_op, work_tree_ref).exists());
         let source_existed_initially = initial_exists
-            .get(&source_adjusted)
+            .get(&source_op)
             .copied()
             .unwrap_or(source_exists_now);
 
@@ -4414,48 +4508,47 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
                 }
                 bail!(
                     "failed to read {}: No such file or directory (os error 2)",
-                    source_adjusted
+                    source_op
                 );
             }
-            set_path_and_descendants_state(&mut current_exists, &source_adjusted, false);
-            if source_adjusted != target_adjusted {
-                set_path_and_descendants_state(&mut current_exists, &target_adjusted, false);
+            set_path_and_descendants_state(&mut current_exists, &source_op, false);
+            if source_op != target_op {
+                set_path_and_descendants_state(&mut current_exists, &target_op, false);
             }
             continue;
         }
 
         if fp.is_new {
             let target_exists_now = current_exists
-                .get(&target_adjusted)
+                .get(&target_op)
                 .copied()
-                .unwrap_or_else(|| Path::new(&target_adjusted).exists());
+                .unwrap_or_else(|| apply_fs_path(&target_op, work_tree_ref).exists());
             if target_exists_now {
-                if Path::new(&target_adjusted).is_dir() {
-                    set_path_and_descendants_state(&mut current_exists, &target_adjusted, false);
+                if apply_fs_path(&target_op, work_tree_ref).is_dir() {
+                    set_path_and_descendants_state(&mut current_exists, &target_op, false);
                 } else {
-                    bail!("{target_adjusted}: already exists");
+                    bail!("{target_op}: already exists");
                 }
             }
-            current_exists.insert(target_adjusted.clone(), true);
+            current_exists.insert(target_op.clone(), true);
             continue;
         }
 
         if !source_exists_now {
-            let can_use_initial_snapshot = source_adjusted != target_adjusted
-                && (fp.is_copy || fp.is_rename)
-                && source_existed_initially;
+            let can_use_initial_snapshot =
+                source_op != target_op && (fp.is_copy || fp.is_rename) && source_existed_initially;
             if !can_use_initial_snapshot && !can_apply_with_empty_preimage(fp) {
                 bail!(
                     "failed to read {}: No such file or directory (os error 2)",
-                    source_adjusted
+                    source_op
                 );
             }
         }
 
-        if fp.is_rename && source_adjusted != target_adjusted {
-            set_path_and_descendants_state(&mut current_exists, &source_adjusted, false);
+        if fp.is_rename && source_op != target_op {
+            set_path_and_descendants_state(&mut current_exists, &source_op, false);
         }
-        current_exists.insert(target_adjusted, true);
+        current_exists.insert(target_op, true);
     }
 
     Ok(())
@@ -4484,6 +4577,9 @@ fn apply_to_worktree(
     ws_mode: ApplyWhitespaceMode,
     patch_input_display: &str,
 ) -> Result<()> {
+    let work_tree = apply_work_tree_root();
+    let work_tree_ref = work_tree.as_deref();
+    let setup_prefix = apply_setup_prefix();
     let crlf_ctx = ApplyCrlfContext::load();
     let mut had_rejects = false;
     // Snapshot source-side file contents used by cross-path rename/copy patches
@@ -4498,16 +4594,18 @@ fn apply_to_worktree(
         };
         let source_adjusted = adjust_path(source, args.directory.as_deref());
         let target_adjusted = adjust_path(target, args.directory.as_deref());
-        if source_adjusted == target_adjusted || source_snapshots.contains_key(&source_adjusted) {
+        let source_op = fp.worktree_rel_operational(&source_adjusted, &setup_prefix);
+        let target_op = fp.worktree_rel_operational(&target_adjusted, &setup_prefix);
+        if source_op == target_op || source_snapshots.contains_key(&source_op) {
             continue;
         }
+        let snap_path = apply_fs_path(&source_op, work_tree_ref);
         let snap_ok = match &crlf_ctx {
-            Some(ctx) => ctx.normalized_text(Path::new(&source_adjusted), &source_adjusted),
-            None => read_worktree_blob_as_text(Path::new(&source_adjusted))
-                .map_err(|e| anyhow::anyhow!("{e}")),
+            Some(ctx) => ctx.normalized_text(&snap_path, &source_op),
+            None => read_worktree_blob_as_text(&snap_path).map_err(|e| anyhow::anyhow!("{e}")),
         };
         if let Ok(content) = snap_ok {
-            source_snapshots.insert(source_adjusted, content);
+            source_snapshots.insert(source_op, content);
         }
     }
     precheck_worktree_patch_sequence(patches, args)?;
@@ -4517,7 +4615,8 @@ fn apply_to_worktree(
             .target_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
         let path_adjusted = adjust_path(path_str, args.directory.as_deref());
-        let path = PathBuf::from(&path_adjusted);
+        let path_operational = fp.worktree_rel_operational(&path_adjusted, &setup_prefix);
+        let path = apply_fs_path(&path_operational, work_tree_ref);
 
         if fp.is_deleted {
             // Delete the file (or directory for submodules)
@@ -4576,7 +4675,7 @@ fn apply_to_worktree(
                 fp.new_mode.as_deref(),
                 None,
                 crlf_ctx.as_ref(),
-                &path_adjusted,
+                &path_operational,
             )?;
             continue;
         }
@@ -4587,7 +4686,8 @@ fn apply_to_worktree(
             .source_path()
             .map(|p| adjust_path(p, args.directory.as_deref()))
             .unwrap_or_else(|| path_adjusted.clone());
-        let read_path = PathBuf::from(&source_adjusted);
+        let source_operational = fp.worktree_rel_operational(&source_adjusted, &setup_prefix);
+        let read_path = apply_fs_path(&source_operational, work_tree_ref);
         let source_contains_target =
             fp.is_rename && read_path != path && target_is_inside_source(&path, &read_path);
         let load_old_content_from_disk = || -> Result<String> {
@@ -4596,7 +4696,7 @@ fn apply_to_worktree(
                     if !read_path.exists() && can_apply_with_empty_preimage(fp) {
                         Ok(String::new())
                     } else {
-                        ctx.normalized_text(&read_path, &source_adjusted)
+                        ctx.normalized_text(&read_path, &source_operational)
                     }
                 }
                 None => match read_worktree_blob_as_text(&read_path) {
@@ -4613,8 +4713,8 @@ fn apply_to_worktree(
                 },
             }
         };
-        let old_content = if source_adjusted != path_adjusted {
-            if let Some(snapshot) = source_snapshots.get(&source_adjusted) {
+        let old_content = if source_operational != path_operational {
+            if let Some(snapshot) = source_snapshots.get(&source_operational) {
                 snapshot.clone()
             } else {
                 load_old_content_from_disk()?
@@ -4633,7 +4733,7 @@ fn apply_to_worktree(
             }
         }
         #[cfg(unix)]
-        let source_exec_bit = if source_adjusted != path_adjusted {
+        let source_exec_bit = if source_operational != path_operational {
             use std::os::unix::fs::PermissionsExt;
             fs::metadata(&read_path)
                 .ok()
@@ -4680,7 +4780,7 @@ fn apply_to_worktree(
         }
 
         if fp.hunks.is_empty() {
-            if source_adjusted != path_adjusted {
+            if source_operational != path_operational {
                 if source_contains_target {
                     remove_path_for_replacement(&read_path)?;
                 }
@@ -4690,7 +4790,7 @@ fn apply_to_worktree(
                     fp.new_mode.as_deref(),
                     source_exec_bit,
                     crlf_ctx.as_ref(),
-                    &path_adjusted,
+                    &path_operational,
                 )?;
                 if fp.is_rename && read_path != path && !source_contains_target {
                     remove_path_for_replacement(&read_path)?;
@@ -4739,12 +4839,12 @@ fn apply_to_worktree(
             fp.new_mode.as_deref(),
             source_exec_bit,
             crlf_ctx.as_ref(),
-            &path_adjusted,
+            &path_operational,
         )?;
 
         if !rejected_hunks.is_empty() {
             had_rejects = true;
-            let reject_path = PathBuf::from(format!("{path_adjusted}.rej"));
+            let reject_path = apply_fs_path(&format!("{path_operational}.rej"), work_tree_ref);
             write_reject_file(&reject_path, fp, &rejected_hunks)?;
         }
 
@@ -5107,13 +5207,17 @@ fn check_patches(
     ws_mode: ApplyWhitespaceMode,
     patch_input_display: &str,
 ) -> Result<()> {
+    let work_tree = apply_work_tree_root();
+    let work_tree_ref = work_tree.as_deref();
+    let setup_prefix = apply_setup_prefix();
     let crlf_ctx = ApplyCrlfContext::load();
     for fp in patches {
         let path_str = fp
             .effective_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
         let path_adjusted = adjust_path(path_str, args.directory.as_deref());
-        let path = PathBuf::from(&path_adjusted);
+        let path_operational = fp.worktree_rel_operational(&path_adjusted, &setup_prefix);
+        let path = apply_fs_path(&path_operational, work_tree_ref);
 
         if fp.is_deleted {
             if !path.exists() {
@@ -5131,20 +5235,18 @@ fn check_patches(
             continue;
         }
 
-        let read_path = fp
-            .source_path()
-            .map(|p| PathBuf::from(adjust_path(p, args.directory.as_deref())))
-            .unwrap_or_else(|| path.clone());
         let source_adjusted = fp
             .source_path()
             .map(|p| adjust_path(p, args.directory.as_deref()))
             .unwrap_or_else(|| path_adjusted.clone());
+        let source_operational = fp.worktree_rel_operational(&source_adjusted, &setup_prefix);
+        let read_path = apply_fs_path(&source_operational, work_tree_ref);
         let old_content = match &crlf_ctx {
             Some(ctx) => {
                 if !read_path.exists() && can_apply_with_empty_preimage(fp) {
                     String::new()
                 } else {
-                    ctx.normalized_text(&read_path, &source_adjusted)?
+                    ctx.normalized_text(&read_path, &source_operational)?
                 }
             }
             None => match fs::read_to_string(&read_path) {
