@@ -18,6 +18,9 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use crate::grit_exe;
 
 /// Arguments for `grit mv`.
 #[derive(Debug, ClapArgs)]
@@ -520,12 +523,16 @@ pub fn run(args: Args) -> Result<()> {
                     update_gitmodules_submodule_path(
                         &repo, work_tree, &mut index, &row.src, &row.dst,
                     )?;
+                    rename_submodule_modules_dir(&repo.git_dir, &row.src, &row.dst)?;
                 }
             }
         }
 
         let src_abs = work_tree.join(&row.src);
         let dst_abs = work_tree.join(&row.dst);
+        let row_is_gitlink = index
+            .get(row.src.as_bytes(), 0)
+            .is_some_and(|e| e.mode == MODE_GITLINK);
 
         if row.do_fs_rename
             && !row.index_only
@@ -542,6 +549,9 @@ pub fn run(args: Args) -> Result<()> {
             if src_abs.exists() {
                 fs::rename(&src_abs, &dst_abs)
                     .with_context(|| format!("renaming '{}' failed", row.src))?;
+            }
+            if row_is_gitlink {
+                rewrite_submodule_worktree_gitfile(&repo.git_dir, work_tree, &row.dst)?;
             }
         }
 
@@ -704,6 +714,110 @@ fn empty_dir_has_sparse_contents(name: &str, index: &Index) -> bool {
 
 /// When renaming a submodule (gitlink), update `submodule.*.path` in `.gitmodules`
 /// and refresh the `.gitmodules` blob in the index.
+/// When renaming a submodule directory, move `.git/modules/<old>` → `.git/modules/<new>` (Git
+/// stores the object database under the path name).
+fn rename_submodule_modules_dir(
+    super_git_dir: &Path,
+    old_path: &str,
+    new_path: &str,
+) -> Result<()> {
+    let old_modules = super_git_dir.join("modules").join(old_path);
+    if !old_modules.is_dir() {
+        return Ok(());
+    }
+    let new_modules = super_git_dir.join("modules").join(new_path);
+    if new_modules.exists() {
+        bail!(
+            "cannot move submodule gitdir: destination '{}' already exists",
+            new_modules.display()
+        );
+    }
+    fs::rename(&old_modules, &new_modules).with_context(|| {
+        format!(
+            "renaming submodule gitdir {} -> {}",
+            old_modules.display(),
+            new_modules.display()
+        )
+    })?;
+    Ok(())
+}
+
+/// Point `<work_tree>/<sub_path>/.git` at `.git/modules/<sub_path>` using a relative path.
+fn rewrite_submodule_worktree_gitfile(
+    super_git_dir: &Path,
+    work_tree: &Path,
+    sub_path: &str,
+) -> Result<()> {
+    let sub_wt = work_tree.join(sub_path);
+    let gitfile = sub_wt.join(".git");
+    if !gitfile.is_file() {
+        return Ok(());
+    }
+    let modules_dir = super_git_dir.join("modules").join(sub_path);
+    if !modules_dir.is_dir() {
+        return Ok(());
+    }
+    let rel = pathdiff_relative(&sub_wt, &modules_dir);
+    fs::write(&gitfile, format!("gitdir: {rel}\n"))
+        .with_context(|| format!("updating submodule gitfile at {}", gitfile.display()))?;
+    refresh_submodule_core_worktree(super_git_dir, work_tree, sub_path)?;
+    Ok(())
+}
+
+/// Update `core.worktree` in `.git/modules/<path>` after the submodule directory was renamed on disk.
+fn refresh_submodule_core_worktree(
+    super_git_dir: &Path,
+    work_tree: &Path,
+    sub_path: &str,
+) -> Result<()> {
+    let modules_dir = super_git_dir.join("modules").join(sub_path);
+    let sub_wt = work_tree.join(sub_path);
+    if !modules_dir.is_dir() || !sub_wt.join(".git").exists() {
+        return Ok(());
+    }
+    let wt = pathdiff_relative(&modules_dir, &sub_wt);
+    let grit_bin = grit_exe::grit_executable();
+    let status = Command::new(&grit_bin)
+        .arg("--git-dir")
+        .arg(&modules_dir)
+        .args(["config", "core.worktree"])
+        .arg(&wt)
+        .status()
+        .with_context(|| format!("setting core.worktree for {}", modules_dir.display()))?;
+    if !status.success() {
+        bail!(
+            "failed to set core.worktree in submodule gitdir {}",
+            modules_dir.display()
+        );
+    }
+    Ok(())
+}
+
+/// Relative path from directory `from` to path `to` (for gitfile `gitdir:` lines).
+fn pathdiff_relative(from: &Path, to: &Path) -> String {
+    let from_abs = from.canonicalize().unwrap_or_else(|_| from.to_path_buf());
+    let to_abs = to.canonicalize().unwrap_or_else(|_| to.to_path_buf());
+
+    let from_parts: Vec<_> = from_abs.components().collect();
+    let to_parts: Vec<_> = to_abs.components().collect();
+
+    let common = from_parts
+        .iter()
+        .zip(to_parts.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let mut result = PathBuf::new();
+    for _ in common..from_parts.len() {
+        result.push("..");
+    }
+    for part in &to_parts[common..] {
+        result.push(part);
+    }
+
+    result.to_string_lossy().into_owned()
+}
+
 fn update_gitmodules_submodule_path(
     repo: &Repository,
     work_tree: &Path,

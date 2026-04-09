@@ -8,18 +8,20 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use encoding_rs::Encoding;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     count_changes, detect_renames, diff_trees, diff_trees_show_tree_entries, format_raw,
     format_raw_abbrev, unified_diff, DiffEntry, DiffStatus,
 };
+use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::merge_diff::{
     combined_diff_paths, format_combined_textconv_patch, is_binary_for_diff,
 };
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pathspec::{context_from_mode_octal, matches_pathspec_with_context};
-use grit_lib::repo::Repository;
+use grit_lib::repo::{resolve_dot_git, Repository};
 use grit_lib::rev_parse::resolve_revision;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
@@ -117,6 +119,8 @@ struct Options {
     remerge_diff: bool,
     /// Swap the two tree sides (`-R`), inverting raw/patch output like Git.
     reverse: bool,
+    /// Submodule diff format (`log` shows one-line summaries for gitlinks, like Git's `diff --submodule=log`).
+    submodule_mode: Option<String>,
 }
 
 impl Default for Options {
@@ -153,6 +157,7 @@ impl Default for Options {
             quiet: false,
             remerge_diff: false,
             reverse: false,
+            submodule_mode: None,
         }
     }
 }
@@ -303,6 +308,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                         }
                     }
                 }
+                _ if arg.starts_with("--submodule=") => {
+                    opts.submodule_mode = Some(arg["--submodule=".len()..].to_string());
+                }
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("--diff-merges=")
                     || arg.starts_with("--format=")
@@ -406,7 +414,15 @@ fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Res
     let filtered = filter_entries(entries, opts);
     let has_diff = !filtered.is_empty();
     if !opts.quiet {
-        print_diff(out, &repo.odb, &filtered, opts, old_tree, &repo.git_dir)?;
+        print_diff(
+            out,
+            &repo.odb,
+            &filtered,
+            opts,
+            old_tree,
+            &repo.git_dir,
+            repo.work_tree.as_deref(),
+        )?;
     }
     Ok(has_diff)
 }
@@ -432,7 +448,15 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     has_diff = !filtered.is_empty();
                     if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                         write_commit_header(out, &oid, &obj.data, opts)?;
-                        print_diff(out, &repo.odb, &filtered, opts, None, &repo.git_dir)?;
+                        print_diff(
+                            out,
+                            &repo.odb,
+                            &filtered,
+                            opts,
+                            None,
+                            &repo.git_dir,
+                            repo.work_tree.as_deref(),
+                        )?;
                     }
                 }
             } else if commit.parents.len() == 2
@@ -508,6 +532,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                         opts,
                         Some(&parent_tree),
                         &repo.git_dir,
+                        repo.work_tree.as_deref(),
                     )?;
                 }
             }
@@ -640,7 +665,15 @@ fn process_stdin_commit(
             let entries = diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
             let filtered = filter_entries(entries, opts);
             let hd = !filtered.is_empty();
-            print_diff(out, &repo.odb, &filtered, opts, None, &repo.git_dir)?;
+            print_diff(
+                out,
+                &repo.odb,
+                &filtered,
+                opts,
+                None,
+                &repo.git_dir,
+                repo.work_tree.as_deref(),
+            )?;
             hd
         } else {
             false
@@ -650,7 +683,15 @@ fn process_stdin_commit(
         let entries = diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
         let filtered = filter_entries(entries, opts);
         let hd = !filtered.is_empty();
-        print_diff(out, &repo.odb, &filtered, opts, None, &repo.git_dir)?;
+        print_diff(
+            out,
+            &repo.odb,
+            &filtered,
+            opts,
+            None,
+            &repo.git_dir,
+            repo.work_tree.as_deref(),
+        )?;
         hd
     };
 
@@ -683,7 +724,15 @@ fn process_stdin_two_trees(
     };
     let entries = diff_with_opts(&repo.odb, old_side, new_side, opts)?;
     let filtered = filter_entries(entries, opts);
-    print_diff(out, &repo.odb, &filtered, opts, None, &repo.git_dir)
+    print_diff(
+        out,
+        &repo.odb,
+        &filtered,
+        opts,
+        None,
+        &repo.git_dir,
+        repo.work_tree.as_deref(),
+    )
 }
 
 // ── Diff helpers ─────────────────────────────────────────────────────
@@ -994,6 +1043,213 @@ fn detect_copies(
     result
 }
 
+fn is_gitlink_mode(mode: &str) -> bool {
+    mode == "160000"
+}
+
+/// For `submodule=log`, Git collapses a pure submodule path change (same gitlink OID) into a
+/// single `(new submodule)` line at the new path — omit the paired delete at the old path.
+fn preprocess_gitlink_renames_for_submodule_log(entries: Vec<DiffEntry>) -> Vec<DiffEntry> {
+    let mut out = Vec::with_capacity(entries.len());
+    let mut i = 0usize;
+    while i < entries.len() {
+        let e = &entries[i];
+        if i + 1 < entries.len()
+            && e.status == DiffStatus::Deleted
+            && is_gitlink_mode(&e.old_mode)
+            && entries[i + 1].status == DiffStatus::Added
+            && is_gitlink_mode(&entries[i + 1].new_mode)
+            && e.old_oid == entries[i + 1].new_oid
+            && e.old_oid != grit_lib::diff::zero_oid()
+        {
+            out.push(entries[i + 1].clone());
+            i += 2;
+        } else {
+            out.push(entries[i].clone());
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Open the submodule object database for `path`, matching Git's `open_submodule`: prefer the
+/// checked-out work tree (gitfile), else `.git/modules/<path>` when the work tree was removed.
+fn open_submodule_repo(
+    super_git_dir: &Path,
+    work_tree: Option<&Path>,
+    path: &str,
+) -> Option<Repository> {
+    if let Some(wt) = work_tree {
+        let sub_wt = wt.join(path);
+        let dot_git = sub_wt.join(".git");
+        if dot_git.exists() {
+            if let Ok(gd) = resolve_dot_git(&dot_git) {
+                if let Ok(repo) = Repository::open(&gd, Some(&sub_wt)) {
+                    return Some(repo);
+                }
+            }
+        }
+    }
+    let modules_dir = super_git_dir.join("modules").join(path);
+    if modules_dir.is_dir() {
+        Repository::open(&modules_dir, None).ok()
+    } else {
+        None
+    }
+}
+
+fn commit_exists_in_repo(repo: &Repository, oid: &ObjectId) -> bool {
+    match repo.odb.read(oid) {
+        Ok(obj) => obj.kind == ObjectKind::Commit,
+        Err(_) => false,
+    }
+}
+
+fn format_submodule_log_subject(commit: &grit_lib::objects::CommitData) -> String {
+    let first_line = commit.message.lines().next().unwrap_or("").trim_end();
+    let raw_body: &[u8] = commit
+        .raw_message
+        .as_deref()
+        .unwrap_or(commit.message.as_bytes());
+    if let Some(enc_name) = commit.encoding.as_deref() {
+        if let Some(enc) = Encoding::for_label(enc_name.as_bytes()) {
+            let (cow, _, _) = enc.decode(raw_body);
+            let s = cow.lines().next().unwrap_or("").trim_end();
+            if !s.is_empty() {
+                return s.to_string();
+            }
+        }
+    }
+    first_line.to_string()
+}
+
+fn print_submodule_log_for_entry(
+    out: &mut impl Write,
+    super_git_dir: &Path,
+    work_tree: Option<&Path>,
+    entry: &DiffEntry,
+    abbrev_len: usize,
+) -> Result<()> {
+    let zero = grit_lib::diff::zero_oid();
+    let path = entry.path();
+    let (one, two) = match entry.status {
+        DiffStatus::Added => (zero, entry.new_oid),
+        DiffStatus::Deleted => (entry.old_oid, zero),
+        DiffStatus::Modified | DiffStatus::TypeChanged => (entry.old_oid, entry.new_oid),
+        DiffStatus::Renamed | DiffStatus::Copied => (entry.old_oid, entry.new_oid),
+        DiffStatus::Unmerged => return Ok(()),
+    };
+
+    let mut message: Option<&'static str> = None;
+    if one == zero {
+        message = Some("(new submodule)");
+    } else if two == zero {
+        message = Some("(submodule deleted)");
+    }
+
+    let sub_repo = open_submodule_repo(super_git_dir, work_tree, path);
+    if sub_repo.is_none() && message.is_none() {
+        message = Some("(commits not present)");
+    }
+
+    let left = if one != zero {
+        sub_repo
+            .as_ref()
+            .filter(|r| commit_exists_in_repo(r, &one))
+            .map(|_| one)
+    } else {
+        Some(one)
+    };
+    let right = if two != zero {
+        sub_repo
+            .as_ref()
+            .filter(|r| commit_exists_in_repo(r, &two))
+            .map(|_| two)
+    } else {
+        Some(two)
+    };
+
+    if sub_repo.is_some() && message.is_none()
+        && ((one != zero && left.is_none()) || (two != zero && right.is_none())) {
+            message = Some("(commits not present)");
+        }
+
+    let mut fast_forward = false;
+    let mut fast_backward = false;
+    if let (Some(ref sr), Some(l), Some(r)) = (&sub_repo, left, right) {
+        if l != r && l != zero && r != zero {
+            if let Ok(bases) = merge_bases_first_vs_rest(sr, l, &[r]) {
+                if let Some(b) = bases.first() {
+                    if *b == l {
+                        fast_forward = true;
+                    } else if *b == r {
+                        fast_backward = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if one == two {
+        return Ok(());
+    }
+
+    let sep = if fast_forward || fast_backward {
+        ".."
+    } else {
+        "..."
+    };
+    let one_hex = one.to_hex();
+    let two_hex = two.to_hex();
+    let a1 = abbrev_oid(&one_hex, Some(abbrev_len), false);
+    let a2 = abbrev_oid(&two_hex, Some(abbrev_len), false);
+    write!(out, "Submodule {path} {a1}{sep}{a2}")?;
+    if let Some(m) = message {
+        writeln!(out, " {m}")?;
+    } else if fast_backward {
+        writeln!(out, " (rewind):")?;
+    } else {
+        writeln!(out, ":")?;
+    }
+
+    if let (Some(sr), Some(l), Some(r)) = (sub_repo, left, right) {
+        if l != zero && r != zero && l != r {
+            let l_ancestor_of_r = merge_bases_first_vs_rest(&sr, l, &[r])
+                .ok()
+                .and_then(|b| b.first().copied())
+                .is_some_and(|b| b == l);
+            if l_ancestor_of_r {
+                let mut cur = r;
+                let mut logged: Vec<grit_lib::objects::CommitData> = Vec::new();
+                while cur != l {
+                    let obj = match sr.odb.read(&cur) {
+                        Ok(o) => o,
+                        Err(_) => break,
+                    };
+                    if obj.kind != ObjectKind::Commit {
+                        break;
+                    }
+                    let data = match parse_commit(&obj.data) {
+                        Ok(d) => d,
+                        Err(_) => break,
+                    };
+                    let Some(parent) = data.parents.first().copied() else {
+                        break;
+                    };
+                    logged.push(data);
+                    cur = parent;
+                }
+                for data in logged {
+                    let subj = format_submodule_log_subject(&data);
+                    writeln!(out, "  > {subj}")?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Print the diff entries according to `opts.format`.
 fn print_diff(
     out: &mut impl Write,
@@ -1002,6 +1258,7 @@ fn print_diff(
     opts: &Options,
     old_tree_oid: Option<&ObjectId>,
     git_dir: &Path,
+    work_tree: Option<&Path>,
 ) -> Result<bool> {
     // Apply rename detection if requested.
     let owned_entries;
@@ -1039,6 +1296,31 @@ fn print_diff(
     } else {
         entries
     };
+
+    let submodule_log = opts.format == OutputFormat::Patch
+        && opts.submodule_mode.as_deref().is_some_and(|m| m == "log");
+
+    let preprocessed_owned;
+    let entries = if submodule_log {
+        preprocessed_owned = preprocess_gitlink_renames_for_submodule_log(entries.to_vec());
+        &preprocessed_owned[..]
+    } else {
+        entries
+    };
+
+    if submodule_log {
+        let abbrev_len = if opts.full_index {
+            40usize
+        } else {
+            opts.abbrev.unwrap_or(7)
+        };
+        for entry in entries {
+            if is_gitlink_mode(&entry.old_mode) || is_gitlink_mode(&entry.new_mode) {
+                print_submodule_log_for_entry(out, git_dir, work_tree, entry, abbrev_len)?;
+            }
+        }
+        return Ok(false);
+    }
 
     match opts.format {
         OutputFormat::Raw => {
