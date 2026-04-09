@@ -571,7 +571,11 @@ fn reset_paths(
                 continue;
             }
         } else if intent_to_add {
-            // With -N, keep removed paths as intent-to-add entries (Git index uses null OID).
+            // With -N, keep removed paths as intent-to-add (empty blob OID, like `add -N`).
+            let empty_oid = repo
+                .odb
+                .write(ObjectKind::Blob, b"")
+                .context("writing empty blob for intent-to-add index entry")?;
             let mut ita_entry = IndexEntry {
                 ctime_sec: 0,
                 ctime_nsec: 0,
@@ -583,7 +587,7 @@ fn reset_paths(
                 uid: 0,
                 gid: 0,
                 size: 0,
-                oid: zero_oid(),
+                oid: empty_oid,
                 flags: path_bytes.len().min(0xFFF) as u16,
                 flags_extended: None,
                 path: path_bytes.clone(),

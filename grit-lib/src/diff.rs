@@ -646,6 +646,8 @@ pub fn diff_index_to_worktree(
                         new_path: Some(path_str_ref.to_owned()),
                         old_mode: "000000".to_owned(),
                         new_mode: format_mode(worktree_mode),
+                        // `ita_invisible_in_index`: null OID on the index side for patch output
+                        // (`index 0000000..`, t2203); index entry still stores the empty blob.
                         old_oid: zero_oid(),
                         new_oid: worktree_oid,
                         score: None,
@@ -661,7 +663,7 @@ pub fn diff_index_to_worktree(
                         new_path: None,
                         old_mode: format_mode(ie.mode),
                         new_mode: "000000".to_owned(),
-                        old_oid: empty_blob_oid(),
+                        old_oid: ie.oid,
                         new_oid: zero_oid(),
                         score: None,
                     });

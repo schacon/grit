@@ -23,9 +23,9 @@ use grit_lib::crlf::{
 use grit_lib::diff::{
     anchored_unified_diff, count_changes, count_changes_with_algorithm, count_git_lines,
     detect_renames, diff_index_to_tree, diff_index_to_worktree, diff_tree_to_worktree, diff_trees,
-    diffcore_count_changes, rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat,
-    unified_diff, unified_diff_with_prefix_and_funcname_and_algorithm, zero_oid, DiffEntry,
-    DiffStatus,
+    diffcore_count_changes, empty_blob_oid, rewrite_dissimilarity_index_percent,
+    should_break_rewrite_for_stat, unified_diff,
+    unified_diff_with_prefix_and_funcname_and_algorithm, zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::error::Error;
@@ -3663,11 +3663,17 @@ fn write_diff_header_with_prefix(
     match entry.status {
         DiffStatus::Added => {
             writeln!(out, "{b}new file mode {}{r}", entry.new_mode)?;
+            let new_for_index_line =
+                if entry.old_oid == zero_oid() && entry.new_oid == empty_blob_oid() {
+                    empty_blob_oid()
+                } else {
+                    entry.new_oid
+                };
             writeln!(
                 out,
                 "{b}index {}..{}{r}",
                 abbr(&entry.old_oid),
-                abbr(&entry.new_oid)
+                abbr(&new_for_index_line)
             )?;
         }
         DiffStatus::Deleted => {
@@ -3938,6 +3944,16 @@ fn write_patch_with_prefix(
                 old_content = apply_ignore_matching_lines_to_text(&old_content, ign);
                 new_content = apply_ignore_matching_lines_to_text(&new_content, ign);
             }
+        }
+
+        // Intent-to-add empty file: header + `index 0000000..e69de29` only (t2203).
+        if !cached
+            && entry.status == DiffStatus::Added
+            && entry.old_oid == zero_oid()
+            && old_content.is_empty()
+            && new_content.is_empty()
+        {
+            continue;
         }
 
         // For Added files, show --- /dev/null; for Deleted files, show +++ /dev/null
