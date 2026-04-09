@@ -865,7 +865,7 @@ t5200-update-server-info	t5	yes	8	6	2	false	ok	0
 t5300-pack-object	t5	yes	63	38	25	false	ok	0
 t5300-unpack-objects	t5	yes	23	22	1	false	ok	0
 t5301-sliding-window	t5	yes	6	0	6	false	ok	0
-t5302-pack-index	t5	yes	36	14	22	false	ok	0
+t5302-pack-index	t5	yes	36	36	0	true	ok	0
 t5302-show-index	t5	yes	17	16	1	false	ok	0
 t5303-pack-corruption	t5	yes	25	25	0	true	ok	0
 t5303-pack-corruption-resilience	t5	yes	36	23	13	false	ok	0
