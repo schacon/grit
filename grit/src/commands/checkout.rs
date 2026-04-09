@@ -4808,16 +4808,6 @@ fn checkout_index_to_worktree(
 
     let _ = crate::commands::submodule::refresh_submodule_gitfiles(repo);
 
-    if !git_dir_is_nested_modules_repo(&repo.git_dir) {
-        let grit_bin = grit_exe::grit_executable();
-        let _ = Command::new(&grit_bin)
-            .args(["submodule", "update", "--init"])
-            .current_dir(work_tree)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .status();
-    }
-
     Ok(())
 }
 
