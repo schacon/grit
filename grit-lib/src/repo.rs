@@ -381,7 +381,15 @@ impl Repository {
     /// Like [`Repository::load_index`], but reads from an explicit index file path
     /// (e.g. `GIT_INDEX_FILE` or a worktree-specific index).
     pub fn load_index_at(&self, path: &std::path::Path) -> Result<Index> {
-        Index::load_expand_sparse_optional(path, &self.odb)
+        let mut idx = Index::load_expand_sparse_optional(path, &self.odb)?;
+        if let Some(ref wt) = self.work_tree {
+            crate::sparse_checkout::clear_skip_worktree_from_present_files(
+                &self.git_dir,
+                wt,
+                &mut idx,
+            );
+        }
+        Ok(idx)
     }
 
     /// Write the index to the default path after optionally collapsing skip-worktree
@@ -1934,6 +1942,7 @@ fn write_fresh_git_directory(
     initial_branch: &str,
     template_dir: Option<&Path>,
     ref_storage: &str,
+    skip_hooks_and_info: bool,
 ) -> Result<()> {
     let mut subs = vec![
         "objects",
@@ -1943,7 +1952,7 @@ fn write_fresh_git_directory(
         "refs/heads",
         "refs/tags",
     ];
-    if !bare {
+    if !bare && !skip_hooks_and_info {
         subs.push("info");
         subs.push("hooks");
     }
@@ -2036,9 +2045,17 @@ pub fn init_repository_separate_git_dir(
     template_dir: Option<&Path>,
     ref_storage: &str,
 ) -> Result<Repository> {
+    let skip_hooks_info = template_dir.is_some_and(|p| p.as_os_str().is_empty());
     fs::create_dir_all(work_tree)?;
     fs::create_dir_all(git_dir)?;
-    write_fresh_git_directory(git_dir, false, initial_branch, template_dir, ref_storage)?;
+    write_fresh_git_directory(
+        git_dir,
+        false,
+        initial_branch,
+        template_dir,
+        ref_storage,
+        skip_hooks_info,
+    )?;
 
     let git_dir_abs = git_dir
         .canonicalize()
@@ -2116,6 +2133,7 @@ pub fn init_repository(
     template_dir: Option<&Path>,
     ref_storage: &str,
 ) -> Result<Repository> {
+    let skip_hooks_info = !bare && template_dir.is_some_and(|p| p.as_os_str().is_empty());
     let git_dir = if bare {
         path.to_path_buf()
     } else {
@@ -2126,7 +2144,14 @@ pub fn init_repository(
         fs::create_dir_all(path)?;
     }
     fs::create_dir_all(&git_dir)?;
-    write_fresh_git_directory(&git_dir, bare, initial_branch, template_dir, ref_storage)?;
+    write_fresh_git_directory(
+        &git_dir,
+        bare,
+        initial_branch,
+        template_dir,
+        ref_storage,
+        skip_hooks_info,
+    )?;
 
     let work_tree = if bare { None } else { Some(path) };
     Repository::open(&git_dir, work_tree)
