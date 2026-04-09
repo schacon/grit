@@ -27,6 +27,10 @@ pub struct Args {
     /// Don't remove loose refs after packing.
     #[arg(long = "no-prune")]
     pub no_prune: bool,
+
+    /// Accepted for Git compatibility; `maintenance`/hooks may pass this. Ignored for now.
+    #[arg(long)]
+    pub auto: bool,
 }
 
 /// Run `grit pack-refs`.

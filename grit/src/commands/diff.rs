@@ -31,8 +31,8 @@ use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions
 use grit_lib::error::Error;
 use grit_lib::index::Index;
 use grit_lib::merge_diff::{
-    blob_text_for_diff_with_oid, diff_textconv_active, format_worktree_conflict_combined,
-    run_textconv,
+    blob_text_for_diff_with_oid, combined_diff_paths, diff_textconv_active,
+    format_worktree_conflict_combined, run_textconv,
 };
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -1134,6 +1134,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // Expand A..B → A B (two-rev diff)
     // trailing_var_arg may capture flags like --name-only into args.
     // Move them back into the flags struct so they take effect.
+    let mut want_combined_diff = false;
     let mut extra_revs = Vec::new();
     let mut rev_idx = 0;
     while rev_idx < revs.len() {
@@ -1141,6 +1142,9 @@ pub fn run(mut args: Args) -> Result<()> {
         if r.starts_with("--") || r.starts_with("-") && r.len() > 1 {
             // Re-apply trailing flags
             match r.as_str() {
+                "-c" => {
+                    want_combined_diff = true;
+                }
                 "--name-only" => args.name_only = true,
                 "--name-status" => args.name_status = true,
                 "--numstat" => args.numstat = true,
@@ -1285,8 +1289,12 @@ pub fn run(mut args: Args) -> Result<()> {
                         args.find_renames = Some("50".to_owned());
                     }
                 }
-                s if s == "-C" || s == "-CC" || s.starts_with("--find-copies") => {
+                // `-CC` is copy detection; combined diff is spelled `--cc` only (Git).
+                s if s == "-C" || s.starts_with("--find-copies") => {
                     args.find_copies = Some("50".to_owned());
+                }
+                "--cc" => {
+                    want_combined_diff = true;
                 }
                 "--find-copies-harder" => {
                     args.find_copies_harder = true;
@@ -1402,40 +1410,84 @@ pub fn run(mut args: Args) -> Result<()> {
         (false, 0) => work_tree, // unstaged: index vs worktree
         (false, 1) => work_tree, // one rev: tree vs worktree
         (_, 2) => None,          // two revs: tree vs tree
+        (_, 3) if want_combined_diff && args.name_only && !args.cached => None,
         _ => None,
     };
 
-    let entries: Vec<DiffEntry> = match (args.cached, revs.len()) {
-        (true, 0) => {
-            // --cached with no revision: index vs HEAD
-            diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?
+    let entries: Vec<DiffEntry> = if want_combined_diff
+        && revs.len() == 3
+        && args.name_only
+        && !args.cached
+    {
+        let merge_oid = resolve_revision(&repo, &revs[0])
+            .with_context(|| format!("unknown revision: '{}'", revs[0]))?;
+        let p_a = resolve_revision(&repo, &revs[1])
+            .with_context(|| format!("unknown revision: '{}'", revs[1]))?;
+        let p_b = resolve_revision(&repo, &revs[2])
+            .with_context(|| format!("unknown revision: '{}'", revs[2]))?;
+        let merge_obj = repo
+            .odb
+            .read(&merge_oid)
+            .with_context(|| format!("reading object {merge_oid}"))?;
+        if merge_obj.kind != ObjectKind::Commit {
+            bail!("combined diff requires a merge commit");
         }
-        (true, 1) => {
-            // --cached with one revision: index vs that commit's tree
-            let tree_oid = commit_or_tree_oid(&repo, &revs[0])?;
-            diff_index_to_tree(&repo.odb, &index, Some(&tree_oid))?
+        let merge_commit = parse_commit(&merge_obj.data).context("parsing merge commit")?;
+        if merge_commit.parents.len() != 2 {
+            bail!("combined diff requires a merge commit with exactly two parents");
         }
-        (false, 0) => {
-            // No flags: unstaged changes (index vs worktree)
-            let wt = work_tree
-                .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
-            diff_index_to_worktree(&repo.odb, &index, wt)?
+        let parents_ok = merge_commit.parents == [p_a, p_b] || merge_commit.parents == [p_b, p_a];
+        if !parents_ok {
+            bail!("combined diff: revisions do not match merge parents");
         }
-        (false, 1) => {
-            // One revision: tree vs worktree
-            let tree_oid = commit_or_tree_oid(&repo, &revs[0])?;
-            let wt = work_tree
-                .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
-            diff_tree_to_worktree(&repo.odb, Some(&tree_oid), wt, &index)?
-        }
-        (_, 2) => {
-            // Two revisions: tree-to-tree diff
-            let tree1 = commit_or_tree_oid(&repo, &revs[0])?;
-            let tree2 = commit_or_tree_oid(&repo, &revs[1])?;
-            diff_trees(&repo.odb, Some(&tree1), Some(&tree2), "")?
-        }
-        _ => {
-            bail!("too many revisions");
+        let names = combined_diff_paths(&repo.odb, &merge_commit.tree, &[p_a, p_b]);
+        let z = zero_oid();
+        names
+            .into_iter()
+            .map(|p| DiffEntry {
+                status: DiffStatus::Modified,
+                old_path: Some(p.clone()),
+                new_path: Some(p),
+                old_mode: "100644".to_string(),
+                new_mode: "100644".to_string(),
+                old_oid: z,
+                new_oid: z,
+                score: None,
+            })
+            .collect()
+    } else {
+        match (args.cached, revs.len()) {
+            (true, 0) => {
+                // --cached with no revision: index vs HEAD
+                diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?
+            }
+            (true, 1) => {
+                // --cached with one revision: index vs that commit's tree
+                let tree_oid = commit_or_tree_oid(&repo, &revs[0])?;
+                diff_index_to_tree(&repo.odb, &index, Some(&tree_oid))?
+            }
+            (false, 0) => {
+                // No flags: unstaged changes (index vs worktree)
+                let wt = work_tree
+                    .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+                diff_index_to_worktree(&repo.odb, &index, wt)?
+            }
+            (false, 1) => {
+                // One revision: tree vs worktree
+                let tree_oid = commit_or_tree_oid(&repo, &revs[0])?;
+                let wt = work_tree
+                    .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+                diff_tree_to_worktree(&repo.odb, Some(&tree_oid), wt, &index)?
+            }
+            (_, 2) => {
+                // Two revisions: tree-to-tree diff
+                let tree1 = commit_or_tree_oid(&repo, &revs[0])?;
+                let tree2 = commit_or_tree_oid(&repo, &revs[1])?;
+                diff_trees(&repo.odb, Some(&tree1), Some(&tree2), "")?
+            }
+            _ => {
+                bail!("too many revisions");
+            }
         }
     };
 

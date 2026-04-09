@@ -140,6 +140,7 @@ pub fn run(args: Args) -> Result<()> {
             all: true,
             prune: true,
             no_prune: false,
+            auto: false,
         })?;
     }
 
@@ -148,7 +149,12 @@ pub fn run(args: Args) -> Result<()> {
     if !args.no_prune {
         if let Some(expire) = gc_prune_expire_cli(&args, &cfg) {
             if quiet_effective {
-                trace_run_command_git_invocation(&["prune", "--expire", expire.as_str(), "--no-progress"]);
+                trace_run_command_git_invocation(&[
+                    "prune",
+                    "--expire",
+                    expire.as_str(),
+                    "--no-progress",
+                ]);
             } else {
                 trace_run_command_git_invocation(&["prune", "--expire", expire.as_str()]);
             }

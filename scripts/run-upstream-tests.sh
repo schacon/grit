@@ -39,6 +39,15 @@ exec "\$GRIT" "\$@"
 WRAPPER
 chmod +x "$WORKDIR/git"
 
+# Upstream git/t/test-lib.sh prepends GIT_BUILD_DIR/bin-wrappers to PATH only when
+# bin-wrappers/git exists and is executable. Otherwise it sets with_dashes and
+# prepends GIT_BUILD_DIR to PATH — but this workdir has no top-level `git`
+# binary (only GIT-BUILD-OPTIONS), so every test sees `usage: git ...` from the
+# stub in git/t/git. Install the real wrapper as bin-wrappers/git.
+mkdir -p "$WORKDIR/bin-wrappers"
+cp "$WORKDIR/git" "$WORKDIR/bin-wrappers/git"
+chmod +x "$WORKDIR/bin-wrappers/git"
+
 # Create GIT-BUILD-OPTIONS
 cat > "$WORKDIR/GIT-BUILD-OPTIONS" <<EOF
 SHELL_PATH='/bin/sh'

@@ -406,6 +406,7 @@ fn optimize_refs(_repo: &Repository) -> Result<()> {
         all: true,
         prune: false,
         no_prune: false,
+        auto: false,
     })
 }
 
