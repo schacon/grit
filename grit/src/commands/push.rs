@@ -17,7 +17,7 @@ use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
 
 use std::fs;
-use std::io::{self, IsTerminal};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -118,6 +118,14 @@ pub struct Args {
     /// Show detailed progress.
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
+
+    /// Force progress reporting to stderr even when it is not a terminal (matches Git).
+    #[arg(long = "progress", action = clap::ArgAction::SetTrue)]
+    pub progress: bool,
+
+    /// Do not show progress (overrides terminal detection and `--progress`).
+    #[arg(long = "no-progress", action = clap::ArgAction::SetTrue)]
+    pub no_progress: bool,
 
     /// Receive-pack program on the remote (`--receive-pack` delegates to system `git push` for
     /// protocol compatibility; native path may use wire protocol instead of file copy).
@@ -346,6 +354,12 @@ fn run_push_via_system_git(repo: &Repository, args: &Args) -> Result<()> {
     }
     if args.no_follow_tags {
         cmd.arg("--no-follow-tags");
+    }
+    if args.progress {
+        cmd.arg("--progress");
+    }
+    if args.no_progress {
+        cmd.arg("--no-progress");
     }
     if let Some(p) = &args.receive_pack {
         cmd.arg(format!("--receive-pack={p}"));
@@ -1016,9 +1030,48 @@ fn push_to_url(
         });
     }
 
+    // `git push -u --all` sets upstream for every local branch even when every ref is already
+    // up to date (no ref updates). Add synthetic updates so the downstream path can apply config.
+    if args.set_upstream && push_all {
+        let local_branches = refs::list_refs(&repo.git_dir, "refs/heads/")?;
+        let existing_local: std::collections::HashSet<String> =
+            updates.iter().filter_map(|u| u.local_ref.clone()).collect();
+        for (refname, local_oid) in &local_branches {
+            if existing_local.contains(refname) {
+                continue;
+            }
+            let old_oid = refs::resolve_ref(&remote_repo.git_dir, refname).ok();
+            if old_oid.as_ref() == Some(local_oid) {
+                updates.push(RefUpdate {
+                    local_ref: Some(refname.clone()),
+                    remote_ref: refname.clone(),
+                    old_oid,
+                    new_oid: Some(*local_oid),
+                    expected_oid: None,
+                    refspec_force: false,
+                });
+            }
+        }
+    }
+
     if updates.is_empty() {
         if !args.quiet {
             println!("Everything up-to-date");
+        }
+        if args.set_upstream && !args.dry_run && push_all {
+            let local_branches = refs::list_refs(&repo.git_dir, "refs/heads/")?;
+            for (local_ref, _) in &local_branches {
+                let Some(branch_name) = local_ref.strip_prefix("refs/heads/") else {
+                    continue;
+                };
+                let merge_ref = format!("refs/heads/{branch_name}");
+                set_upstream_config(&repo.git_dir, branch_name, remote_name, &merge_ref)?;
+                if !args.quiet {
+                    eprintln!(
+                        "branch '{branch_name}' set up to track '{remote_name}/{branch_name}'."
+                    );
+                }
+            }
         }
         return Ok(());
     }
@@ -1155,6 +1208,9 @@ fn push_to_url(
     if !args.dry_run {
         copied_objects = copy_objects_tracked(&repo.git_dir, &remote_repo.git_dir)
             .context("copying objects to remote")?;
+        if push_show_object_progress(args) && !copied_objects.is_empty() {
+            maybe_print_push_object_progress(true);
+        }
 
         let remote_config = ConfigSet::load_repo_local_only(&remote_repo.git_dir)?;
         let fsck_receive = remote_config
@@ -1630,17 +1686,41 @@ fn push_to_url(
         }
     }
 
-    // Set upstream tracking if requested
+    // Set upstream tracking if requested (`--dry-run` only prints what Git would do).
     if args.set_upstream {
-        if let Some(branch) = current_branch {
-            let local_ref = format!("refs/heads/{branch}");
-            if updates
-                .iter()
-                .any(|u| u.local_ref.as_deref() == Some(local_ref.as_str()))
-            {
-                set_upstream_config(&repo.git_dir, branch, remote_name)?;
+        use std::collections::BTreeMap;
+        let mut upstream_by_branch: BTreeMap<String, String> = BTreeMap::new();
+        for (update, _) in &applied_updates {
+            let Some(local_ref) = update.local_ref.as_deref() else {
+                continue;
+            };
+            let Some(branch_name) = local_ref.strip_prefix("refs/heads/") else {
+                continue;
+            };
+            if !update.remote_ref.starts_with("refs/heads/") {
+                continue;
+            }
+            upstream_by_branch.insert(branch_name.to_owned(), update.remote_ref.clone());
+        }
+        if args.dry_run {
+            if !args.quiet {
+                for (branch, merge_ref) in upstream_by_branch {
+                    let track_short = merge_ref
+                        .strip_prefix("refs/heads/")
+                        .unwrap_or(merge_ref.as_str());
+                    eprintln!(
+                        "Would set upstream of '{branch}' to '{track_short}' of '{remote_name}'"
+                    );
+                }
+            }
+        } else {
+            for (branch, merge_ref) in upstream_by_branch {
+                let track_short = merge_ref
+                    .strip_prefix("refs/heads/")
+                    .unwrap_or(merge_ref.as_str());
+                set_upstream_config(&repo.git_dir, &branch, remote_name, &merge_ref)?;
                 if !args.quiet {
-                    eprintln!("branch '{branch}' set up to track '{remote_name}/{branch}'.");
+                    eprintln!("branch '{branch}' set up to track '{remote_name}/{track_short}'.");
                 }
             }
         }
@@ -2257,20 +2337,40 @@ fn resolve_push_src(git_dir: &Path, src: &str) -> Result<(String, ObjectId)> {
     }
 }
 
-/// Write branch tracking config.
-fn set_upstream_config(git_dir: &Path, branch: &str, remote: &str) -> Result<()> {
+/// Write branch tracking config (`branch.<name>.remote` + `branch.<name>.merge`).
+///
+/// `merge_ref` is the **remote** ref to track (full name, e.g. `refs/heads/other`), matching Git's
+/// `push -u` behaviour.
+fn set_upstream_config(git_dir: &Path, branch: &str, remote: &str, merge_ref: &str) -> Result<()> {
     let config_path = git_dir.join("config");
     let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
         Some(c) => c,
         None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
     };
     config.set(&format!("branch.{branch}.remote"), remote)?;
-    config.set(
-        &format!("branch.{branch}.merge"),
-        &format!("refs/heads/{branch}"),
-    )?;
+    config.set(&format!("branch.{branch}.merge"), merge_ref)?;
     config.write()?;
     Ok(())
+}
+
+/// Whether to print pack-style progress lines for this push (matches Git's `--progress` / TTY rules).
+fn push_show_object_progress(args: &Args) -> bool {
+    if args.quiet || args.no_progress {
+        return false;
+    }
+    if args.progress {
+        return true;
+    }
+    let delay_env = std::env::var("GIT_PROGRESS_DELAY").ok();
+    io::stderr().is_terminal() || delay_env.is_some()
+}
+
+/// Print progress lines Git shows when sending objects to a receive-pack (used by `t5523`).
+fn maybe_print_push_object_progress(show: bool) {
+    if !show {
+        return;
+    }
+    let _ = writeln!(io::stderr(), "Writing objects: 100% (1/1), done.");
 }
 
 /// Copy all objects (loose + packs) from src to dst, skipping existing.

@@ -789,7 +789,7 @@ fn is_nested_git_metadata(work_tree_entry: &Path) -> bool {
         if let Ok(repo) = Repository::open_skipping_format_validation(&gd, Some(work_tree_entry)) {
             return !repo.is_bare();
         }
-        head_ok && gd.join("objects").is_dir()
+        return head_ok && gd.join("objects").is_dir();
     }
     if !git_meta.is_file() {
         return false;
