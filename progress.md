@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   258 |
+| Completed   |   259 |
 | In progress |     4 |
-| Remaining   |   506 |
+| Remaining   |   505 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 258 completed (`[x]`), 4 in progress (`[~]`), 506 remaining (`[ ]`).
+Task lines in `PLAN.md`: 259 completed (`[x]`), 4 in progress (`[~]`), 505 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5603-clone-dirname` — 47/47 tests pass (clone default directory from `host:path`, `ssh://` URLs: strip trailing slashes and `.git`, redact userinfo for dirname, preserve path segments like `foo@bar` and `test:1234`; harness CSV/dashboards refreshed)
 - `t3507-cherry-pick-conflict` — 44/44 tests pass (cherry-pick/revert conflicts: `CHERRY_PICK_HEAD`/`REVERT_HEAD`, advice text, `MERGE_MSG` scissors, diff3 markers, sequencer cleanup, sparse-checkout, `--continue` flags; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t4216-log-bloom` — 167/167 tests pass (commit-graph changed-path Bloom filters: `read-graph` bloom chunks, `GIT_TRACE2_PERF` statistics for path-limited `log`, incompatible settings/version warnings, split chains, trace2 filter counters; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5334-incremental-multi-pack-index` — 16/16 tests pass (incremental MIDX chain, bitmap/rev sidecars in `multi-pack-index.d`, `midx verify`, clone with `pack.allowPackReuse`; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
