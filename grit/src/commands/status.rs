@@ -21,6 +21,8 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use crate::git_column::{merge_column_config, print_columns, ColOpts, ColumnOptions};
+
 /// Arguments for `grit status`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Show the working tree status")]
@@ -72,12 +74,18 @@ pub struct Args {
     #[arg(long = "no-ahead-behind")]
     pub no_ahead_behind: bool,
 
-    /// Display untracked files in columns (accepted, not fully implemented).
-    #[arg(long = "column", value_name = "STYLE", num_args = 0..=1, default_missing_value = "always")]
+    /// Display untracked files in columns (Git `column.c` layout).
+    #[arg(
+        long = "column",
+        value_name = "STYLE",
+        num_args = 0..=1,
+        default_missing_value = "always",
+        overrides_with = "no_column"
+    )]
     pub column: Option<String>,
 
     /// Disable columnar output.
-    #[arg(long = "no-column")]
+    #[arg(long = "no-column", overrides_with = "column")]
     pub no_column: bool,
 
     /// Use v2 porcelain format.
@@ -141,6 +149,19 @@ pub fn run(mut args: Args) -> Result<()> {
     // Load full config for status.displayCommentPrefix and advice.statusHints
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
 
+    let mut colopts = ColOpts::new();
+    if args.no_column {
+        crate::git_column::parse_column_tokens_into("never", &mut colopts)
+            .map_err(|e| anyhow::anyhow!(e))?;
+    } else {
+        merge_column_config(&config, &mut colopts).map_err(|e| anyhow::anyhow!(e))?;
+        if let Some(style) = args.column.as_deref() {
+            crate::git_column::apply_column_cli_arg(&mut colopts, Some(style))
+                .map_err(|e| anyhow::anyhow!(e))?;
+        }
+    }
+    crate::git_column::finalize_colopts(&mut colopts, None);
+
     // Apply config-based overrides for status options
     let untracked_mode_str = match args.untracked.as_ref() {
         None => config
@@ -161,8 +182,9 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.no_short {
         args.short = false;
     }
-    // status.branch config: only apply if user didn't pass --branch or --no-branch
-    if !args.no_branch {
+    // status.branch config: only apply if user didn't pass --branch or --no-branch.
+    // Porcelain ignores `status.branch`; the `##` line requires explicit `-b` (Git tests).
+    if !args.no_branch && args.porcelain.is_none() {
         if let Some(val) = config.get("status.branch") {
             if !args.branch && (val == "true" || val == "yes" || val == "on" || val == "1") {
                 args.branch = true;
@@ -253,34 +275,49 @@ pub fn run(mut args: Args) -> Result<()> {
         (Vec::new(), Vec::new())
     };
 
+    // `status.relativePaths` (default true): when false, paths stay worktree-relative
+    // from repo root even when cwd is a subdirectory (Git `wt_status_collect`).
+    let status_relative_paths = match config.get("status.relativePaths") {
+        Some(v) if v == "false" || v == "no" || v == "off" || v == "0" => false,
+        _ => true,
+    };
+
     // Compute the cwd prefix relative to work_tree so paths are displayed
     // relative to the user's current directory (matching git behavior).
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let cwd_canon = cwd.canonicalize().unwrap_or(cwd);
-    let wt_canon = work_tree
-        .canonicalize()
-        .unwrap_or_else(|_| work_tree.to_path_buf());
-    let prefix = cwd_canon.strip_prefix(&wt_canon).ok().and_then(|p| {
-        if p.as_os_str().is_empty() {
-            None
-        } else {
-            Some(p.to_path_buf())
-        }
-    });
+    // Porcelain always uses paths relative to the work tree root (ignores `status.relativePaths`).
+    let prefix = if status_relative_paths && args.porcelain.is_none() {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let cwd_canon = cwd.canonicalize().unwrap_or(cwd);
+        let wt_canon = work_tree
+            .canonicalize()
+            .unwrap_or_else(|_| work_tree.to_path_buf());
+        cwd_canon.strip_prefix(&wt_canon).ok().and_then(|p| {
+            if p.as_os_str().is_empty() {
+                None
+            } else {
+                Some(p.to_path_buf())
+            }
+        })
+    } else {
+        None
+    };
 
     // Re-map paths from worktree-relative to cwd-relative when prefix is set.
+    // Git shows paths relative to the current directory (not `../` per nested dir only).
     let relativize = |wt_rel: &str| -> String {
-        if let Some(ref pfx) = prefix {
-            let target = Path::new(wt_rel);
-            // Compute ".." components to go up from prefix, then append target
-            let mut result = PathBuf::new();
-            for _ in pfx.components() {
-                result.push("..");
-            }
-            result.push(target);
-            result.to_string_lossy().to_string()
+        let Some(ref pfx) = prefix else {
+            return wt_rel.to_string();
+        };
+        let from_base = work_tree.join(pfx);
+        let to_path = work_tree.join(wt_rel.trim_end_matches('/'));
+        let rel = diff_paths_relative(&from_base, &to_path);
+        let s = rel.to_string_lossy().to_string();
+        if wt_rel.ends_with('/') && !s.is_empty() && !s.ends_with('/') {
+            format!("{s}/")
+        } else if wt_rel.ends_with('/') && s.is_empty() {
+            "./".to_owned()
         } else {
-            wt_rel.to_string()
+            s
         }
     };
 
@@ -290,24 +327,32 @@ pub fn run(mut args: Args) -> Result<()> {
         .filter(|spec| spec.as_str() != "--")
         .cloned()
         .collect();
-    let staged: Vec<grit_lib::diff::DiffEntry> = remap_diff_paths(&staged, &relativize)
+    let staged: Vec<grit_lib::diff::DiffEntry> = staged
         .into_iter()
         .filter(|entry| status_path_matches(entry.path(), &pathspecs))
         .collect();
-    let unstaged: Vec<grit_lib::diff::DiffEntry> = remap_diff_paths(&unstaged, &relativize)
+    let unstaged: Vec<grit_lib::diff::DiffEntry> = unstaged
         .into_iter()
         .filter(|entry| status_path_matches(entry.path(), &pathspecs))
         .collect();
     let untracked: Vec<String> = untracked
         .into_iter()
-        .map(|p| relativize(&p))
         .filter(|p| status_path_matches(p, &pathspecs))
         .collect();
     let ignored_files: Vec<String> = ignored_files
         .into_iter()
-        .map(|p| relativize(&p))
         .filter(|p| status_path_matches(p, &pathspecs))
         .collect();
+
+    let staged_long = remap_diff_paths(&staged, &relativize);
+    let unstaged_long = remap_diff_paths(&unstaged, &relativize);
+    let untracked_long: Vec<String> = untracked.iter().map(|p| relativize(p)).collect();
+    let ignored_long: Vec<String> = ignored_files.iter().map(|p| relativize(p)).collect();
+
+    let quote_path_cfg = match config.get_bool("core.quotePath") {
+        Some(Ok(v)) => v,
+        Some(Err(_)) | None => true,
+    };
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -338,6 +383,8 @@ pub fn run(mut args: Args) -> Result<()> {
             &unstaged,
             &untracked,
             &ignored_files,
+            &relativize,
+            quote_path_cfg,
         )?;
     } else {
         format_long(
@@ -346,21 +393,37 @@ pub fn run(mut args: Args) -> Result<()> {
             &repo,
             &config,
             &args,
+            colopts,
             &in_progress,
             &index,
             index_sparse_on_disk,
-            &staged,
-            &unstaged,
-            &untracked,
-            &ignored_files,
+            &staged_long,
+            &unstaged_long,
+            &untracked_long,
+            &ignored_long,
             hide_untracked,
         )?;
 
-        // -v: append cached diff; -vv: also append working tree diff
+        // -v: append cached diff; -vv: also append working tree diff.
+        // Git `wt_longstatus_print_verbose`: `-v` uses normal diff prefixes; with `-vv` and
+        // staged changes, print a second "Changes to be committed:" then cached diff with `c/`
+        // vs `i/`; if there are unstaged changes, print separator + "Changes not staged for
+        // commit:" then diff with `i/` vs `w/` (`diff.mnemonicprefix=true` for each).
         if args.verbose >= 1 {
             drop(out);
             let exe = std::env::current_exe().unwrap_or_else(|_| "grit".into());
+
+            // Git prints these lines without the status comment prefix (matches test `echo` lines).
+            if args.verbose >= 2 && !staged.is_empty() && head.oid().is_some() {
+                let stdout_h = io::stdout();
+                let mut out_h = stdout_h.lock();
+                writeln!(out_h, "Changes to be committed:")?;
+            }
+
             let mut cmd = std::process::Command::new(&exe);
+            if args.verbose >= 2 {
+                cmd.arg("-c").arg("diff.mnemonicprefix=true");
+            }
             cmd.arg("diff").arg("--cached");
             let output = cmd.output();
             if let Ok(o) = output {
@@ -369,13 +432,13 @@ pub fn run(mut args: Args) -> Result<()> {
                 out2.write_all(&o.stdout)?;
             }
 
-            if args.verbose >= 2 {
+            if args.verbose >= 2 && !unstaged.is_empty() {
                 let stdout3 = io::stdout();
                 let mut out3 = stdout3.lock();
                 writeln!(out3, "--------------------------------------------------")?;
                 writeln!(out3, "Changes not staged for commit:")?;
                 let mut cmd2 = std::process::Command::new(&exe);
-                cmd2.arg("diff");
+                cmd2.arg("-c").arg("diff.mnemonicprefix=true").arg("diff");
                 let output2 = cmd2.output();
                 if let Ok(o) = output2 {
                     out3.write_all(&o.stdout)?;
@@ -385,6 +448,83 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Quote a path for `git status -s` / porcelain (Git `quote_path` / C-style rules).
+fn quote_status_short_path(display: &str, quote_path_cfg: bool) -> String {
+    let mut out = String::with_capacity(display.len() + 2);
+    let mut needs_quotes = false;
+    for ch in display.chars() {
+        match ch {
+            ' ' => {
+                out.push(' ');
+                needs_quotes = true;
+            }
+            '"' => {
+                out.push_str("\\\"");
+                needs_quotes = true;
+            }
+            '\\' => {
+                out.push_str("\\\\");
+                needs_quotes = true;
+            }
+            '\t' => {
+                out.push_str("\\t");
+                needs_quotes = true;
+            }
+            '\n' => {
+                out.push_str("\\n");
+                needs_quotes = true;
+            }
+            '\r' => {
+                out.push_str("\\r");
+                needs_quotes = true;
+            }
+            c if c.is_control() => {
+                out.push_str(&format!("\\{:03o}", u32::from(c)));
+                needs_quotes = true;
+            }
+            c if (c as u32) >= 0x80 => {
+                if quote_path_cfg {
+                    for b in ch.to_string().bytes() {
+                        out.push_str(&format!("\\{:03o}", b));
+                    }
+                    needs_quotes = true;
+                } else {
+                    out.push(c);
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    if needs_quotes {
+        format!("\"{out}\"")
+    } else {
+        out
+    }
+}
+
+/// `to` expressed relative to `from` (Git-style: `..` segments then remainder).
+fn diff_paths_relative(from: &Path, to: &Path) -> PathBuf {
+    let from_components: Vec<std::path::Component<'_>> = from.components().collect();
+    let to_components: Vec<std::path::Component<'_>> = to.components().collect();
+    let mut i = 0usize;
+    let min = from_components.len().min(to_components.len());
+    while i < min && from_components[i] == to_components[i] {
+        i += 1;
+    }
+    let mut out = PathBuf::new();
+    for _ in i..from_components.len() {
+        out.push("..");
+    }
+    for c in to_components.iter().skip(i) {
+        out.push(c);
+    }
+    if out.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        out
+    }
 }
 
 /// Collect untracked files, filtering out ignored ones.
@@ -1058,6 +1198,10 @@ fn format_submodule_token(f: grit_lib::diff::SubmodulePorcelainFlags) -> String 
 }
 
 /// Short/porcelain format.
+///
+/// `staged` / `unstaged` / `untracked` / `ignored_files` use **work tree root** paths for
+/// ordering (Git sorts by repo-relative path). `relativize` maps those to cwd-relative strings
+/// for display when `status.relativePaths` applies.
 fn format_short(
     out: &mut impl Write,
     args: &Args,
@@ -1067,6 +1211,8 @@ fn format_short(
     unstaged: &[grit_lib::diff::DiffEntry],
     untracked: &[String],
     ignored_files: &[String],
+    relativize: &dyn Fn(&str) -> String,
+    quote_path_cfg: bool,
 ) -> Result<()> {
     let terminator = if args.null_terminated { '\0' } else { '\n' };
 
@@ -1138,29 +1284,55 @@ fn format_short(
             let old_p = e.old_path.as_deref().unwrap_or("");
             let new_p = e.new_path.as_deref().unwrap_or("");
             if args.null_terminated {
+                let new_disp = relativize(new_p);
+                let old_disp = relativize(old_p);
                 // Match git: current path (destination) first, then source, each NUL-terminated.
-                write!(out, "{new_p}\0")?;
+                write!(out, "{new_disp}\0")?;
                 if !old_p.is_empty() {
-                    write!(out, "{old_p}\0")?;
+                    write!(out, "{old_disp}\0")?;
                 }
-            } else if !old_p.is_empty() && !new_p.is_empty() {
-                writeln!(out, "{old_p} -> {new_p}")?;
             } else {
-                writeln!(out, "{}", e.path())?;
+                let old_disp = quote_status_short_path(&relativize(old_p), quote_path_cfg);
+                let new_disp = quote_status_short_path(&relativize(new_p), quote_path_cfg);
+                if !old_p.is_empty() && !new_p.is_empty() {
+                    writeln!(out, "{old_disp} -> {new_disp}")?;
+                } else {
+                    writeln!(
+                        out,
+                        "{}",
+                        quote_status_short_path(&relativize(e.path()), quote_path_cfg)
+                    )?;
+                }
             }
         } else if args.null_terminated {
-            write!(out, "{path}\0")?;
+            write!(out, "{}\0", relativize(path))?;
         } else {
-            writeln!(out, "{path}")?;
+            writeln!(
+                out,
+                "{}",
+                quote_status_short_path(&relativize(path), quote_path_cfg)
+            )?;
         }
     }
 
     for path in untracked {
-        write!(out, "?? {path}{terminator}")?;
+        let disp = if args.null_terminated {
+            relativize(path)
+        } else {
+            quote_status_short_path(&relativize(path), quote_path_cfg)
+        };
+        write!(out, "?? {disp}{terminator}")?;
     }
 
-    for path in ignored_files {
-        write!(out, "!! {path}{terminator}")?;
+    if args.ignored {
+        for path in ignored_files {
+            let disp = if args.null_terminated {
+                relativize(path)
+            } else {
+                quote_status_short_path(&relativize(path), quote_path_cfg)
+            };
+            write!(out, "!! {disp}{terminator}")?;
+        }
     }
 
     Ok(())
@@ -1205,56 +1377,18 @@ fn sparse_checkout_banner(
     ))
 }
 
-fn cpw(out: &mut impl Write, prefix: &str, line: &str) -> Result<()> {
-    if prefix.is_empty() {
-        writeln!(out, "{line}")?;
-    } else if line.is_empty() {
-        // Empty line: just "#" with no trailing space
-        writeln!(out, "{}", prefix.trim_end())?;
-    } else if line.starts_with('\t') {
-        // Tab-indented: "#\tfile" (no space between # and tab)
-        writeln!(out, "{}{line}", prefix.trim_end())?;
-    } else {
-        writeln!(out, "{prefix}{line}")?;
-    }
-    Ok(())
-}
-
-/// Long format (default).
-fn format_long(
+/// Write the long-format branch / upstream lines, shared by `status` and `commit --dry-run`.
+pub(crate) fn write_status_branch_header(
     out: &mut impl Write,
     head: &HeadState,
     repo: &Repository,
-    config: &ConfigSet,
-    args: &Args,
-    in_progress: &[grit_lib::state::InProgressOperation],
-    expanded_index: &Index,
-    index_sparse_on_disk: bool,
-    staged: &[grit_lib::diff::DiffEntry],
-    unstaged: &[grit_lib::diff::DiffEntry],
-    untracked: &[String],
-    ignored_files: &[String],
-    hide_untracked: bool,
+    comment_prefix: &str,
+    show_hints: bool,
+    no_ahead_behind: bool,
+    omit_diverged_pull_hint: bool,
+    orphan_no_commit_line: Option<&str>,
 ) -> Result<()> {
-    // Determine comment prefix
-    let comment_prefix = match config.get("status.displayCommentPrefix") {
-        Some(v) if v == "true" || v == "yes" || v == "on" || v == "1" => "# ",
-        _ => "",
-    };
     let cp = comment_prefix;
-
-    // Determine if hints should be shown.
-    // `GIT_ADVICE` globally overrides per-advice config knobs.
-    let config_hints = match config.get("advice.statusHints") {
-        Some(v) if v == "false" || v == "no" || v == "off" || v == "0" => false,
-        _ => true,
-    };
-    let show_hints = std::env::var("GIT_ADVICE")
-        .ok()
-        .and_then(|v| parse_bool_str(&v))
-        .unwrap_or(config_hints);
-
-    // Branch info
     match head {
         HeadState::Branch {
             short_name,
@@ -1262,7 +1396,7 @@ fn format_long(
             ..
         } => {
             cpw(out, cp, &format!("On branch {short_name}"))?;
-            if !args.no_ahead_behind {
+            if !no_ahead_behind {
                 if let Ok(Some(tracking)) = resolve_upstream_tracking(repo, short_name) {
                     match &tracking {
                         UpstreamTracking::Missing { .. } => {
@@ -1330,7 +1464,7 @@ fn format_long(
                                     ahead, behind
                                 ),
                             )?;
-                            if show_hints {
+                            if show_hints && !omit_diverged_pull_hint {
                                 cpw(out, cp, "  (use \"git pull\" if you want to integrate the remote branch with yours)")?;
                             }
                             cpw(out, cp, "")?;
@@ -1346,7 +1480,8 @@ fn format_long(
         } => {
             cpw(out, cp, &format!("On branch {short_name}"))?;
             cpw(out, cp, "")?;
-            cpw(out, cp, "No commits yet")?;
+            let msg = orphan_no_commit_line.unwrap_or("No commits yet");
+            cpw(out, cp, msg)?;
             cpw(out, cp, "")?;
         }
         HeadState::Detached { oid } => {
@@ -1357,6 +1492,69 @@ fn format_long(
             cpw(out, cp, "Not currently on any branch.")?;
         }
     }
+    Ok(())
+}
+
+fn cpw(out: &mut impl Write, prefix: &str, line: &str) -> Result<()> {
+    if prefix.is_empty() {
+        writeln!(out, "{line}")?;
+    } else if line.is_empty() {
+        // Empty line: just "#" with no trailing space
+        writeln!(out, "{}", prefix.trim_end())?;
+    } else if line.starts_with('\t') {
+        // Tab-indented: "#\tfile" (no space between # and tab)
+        writeln!(out, "{}{line}", prefix.trim_end())?;
+    } else {
+        writeln!(out, "{prefix}{line}")?;
+    }
+    Ok(())
+}
+
+/// Long format (default).
+fn format_long(
+    out: &mut impl Write,
+    head: &HeadState,
+    repo: &Repository,
+    config: &ConfigSet,
+    args: &Args,
+    colopts: ColOpts,
+    in_progress: &[grit_lib::state::InProgressOperation],
+    expanded_index: &Index,
+    index_sparse_on_disk: bool,
+    staged: &[grit_lib::diff::DiffEntry],
+    unstaged: &[grit_lib::diff::DiffEntry],
+    untracked: &[String],
+    ignored_files: &[String],
+    hide_untracked: bool,
+) -> Result<()> {
+    // Determine comment prefix
+    let comment_prefix = match config.get("status.displayCommentPrefix") {
+        Some(v) if v == "true" || v == "yes" || v == "on" || v == "1" => "# ",
+        _ => "",
+    };
+    let cp = comment_prefix;
+
+    // Determine if hints should be shown.
+    // `GIT_ADVICE` globally overrides per-advice config knobs.
+    let config_hints = match config.get("advice.statusHints") {
+        Some(v) if v == "false" || v == "no" || v == "off" || v == "0" => false,
+        _ => true,
+    };
+    let show_hints = std::env::var("GIT_ADVICE")
+        .ok()
+        .and_then(|v| parse_bool_str(&v))
+        .unwrap_or(config_hints);
+
+    write_status_branch_header(
+        out,
+        head,
+        repo,
+        cp,
+        show_hints,
+        args.no_ahead_behind,
+        false,
+        None,
+    )?;
 
     // In-progress operations
     for op in in_progress {
@@ -1451,9 +1649,15 @@ fn format_long(
                 "  (use \"git add <file>...\" to include in what will be committed)",
             )?;
         }
-        for path in untracked {
-            cpw(out, cp, &format!("\t{path}"))?;
-        }
+        let comment_line = if cp.is_empty() { "" } else { "#" };
+        let column_indent = format!("{comment_line}\t");
+        let copts = ColumnOptions {
+            width: None,
+            padding: 1,
+            indent: column_indent,
+            nl: "\n".to_owned(),
+        };
+        print_columns(out, untracked, colopts, &copts)?;
         cpw(out, cp, "")?;
     }
 
@@ -1470,9 +1674,15 @@ fn format_long(
                 "  (use \"git add -f <file>...\" to include in what will be committed)",
             )?;
         }
-        for path in ignored_files {
-            cpw(out, cp, &format!("\t{path}"))?;
-        }
+        let comment_line = if cp.is_empty() { "" } else { "#" };
+        let column_indent = format!("{comment_line}\t");
+        let copts = ColumnOptions {
+            width: None,
+            padding: 1,
+            indent: column_indent,
+            nl: "\n".to_owned(),
+        };
+        print_columns(out, ignored_files, colopts, &copts)?;
         cpw(out, cp, "")?;
     }
 
@@ -1637,6 +1847,11 @@ fn walk_for_untracked(
             .strip_prefix(work_tree)
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| name);
+
+        // test-lib.sh keeps harness state in the repo root; upstream status does not list these.
+        if rel == ".test_tick" || rel == ".test_oid_cache" {
+            continue;
+        }
 
         // Use file_type() from DirEntry — avoids extra stat syscall on Linux
         let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);

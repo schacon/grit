@@ -829,7 +829,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let emit_unified_patch = diff_emit_unified_patch_from_argv(&raw_args);
 
     // Resolve diff prefixes from config and command-line options
-    let (src_prefix, dst_prefix) = resolve_diff_prefixes(&args, &repo);
+    let (src_prefix, dst_prefix) = resolve_diff_prefixes(&args, &repo, args.cached);
 
     // `git diff <rev>:<path> <file>` — compare a blob from history to a worktree file.
     if revs.len() == 1
@@ -4348,7 +4348,7 @@ fn check_whitespace_errors(
 
 /// Resolve the source and destination prefixes for diff output, considering
 /// command-line flags and config options.
-fn resolve_diff_prefixes(args: &Args, repo: &Repository) -> (String, String) {
+fn resolve_diff_prefixes(args: &Args, repo: &Repository, cached: bool) -> (String, String) {
     if args.default_prefix {
         return ("a/".to_owned(), "b/".to_owned());
     }
@@ -4374,6 +4374,10 @@ fn resolve_diff_prefixes(args: &Args, repo: &Repository) -> (String, String) {
         }
         if let Some(ref val) = cfg.get("diff.mnemonicprefix") {
             if val == "true" || val == "yes" || val == "on" || val == "1" {
+                // Matches Git: cached diff is commit vs index (`c/` vs `i/`); otherwise index vs worktree (`i/` vs `w/`).
+                if cached {
+                    return ("c/".to_owned(), "i/".to_owned());
+                }
                 return ("i/".to_owned(), "w/".to_owned());
             }
         }

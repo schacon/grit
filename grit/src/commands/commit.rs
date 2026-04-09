@@ -434,41 +434,57 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    // If pathspec given, stage those specific files first (returns paths included in this commit)
-    let pathspec_matched: Option<HashSet<Vec<u8>>> = if !args.pathspec.is_empty() {
-        let Some(wt) = work_tree else {
-            bail!("pathspec requires a work tree");
+    // If pathspec given, stage those files. A real commit persists to disk; `--dry-run` only
+    // simulates staging in memory so status output matches Git without mutating the index.
+    let mut pathspec_matched: Option<HashSet<Vec<u8>>> =
+        if !args.pathspec.is_empty() && !args.dry_run {
+            let Some(wt) = work_tree else {
+                bail!("pathspec requires a work tree");
+            };
+            let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+            let core_filemode = config
+                .get_bool("core.filemode")
+                .and_then(|r| r.ok())
+                .unwrap_or(true);
+            let add_cfg = crate::commands::add::AddConfig {
+                core_filemode,
+                ignore_errors: false,
+                conv: grit_lib::crlf::ConversionConfig::from_config(&config),
+                attrs: grit_lib::crlf::load_gitattributes(wt),
+                config,
+            };
+            Some(crate::commands::add::stage_pathspecs_for_commit(
+                &repo,
+                wt,
+                &args.pathspec,
+                &add_cfg,
+            )?)
+        } else {
+            None
         };
-        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-        let core_filemode = config
-            .get_bool("core.filemode")
-            .and_then(|r| r.ok())
-            .unwrap_or(true);
-        let add_cfg = crate::commands::add::AddConfig {
-            core_filemode,
-            ignore_errors: false,
-            conv: grit_lib::crlf::ConversionConfig::from_config(&config),
-            attrs: grit_lib::crlf::load_gitattributes(wt),
-            config,
-        };
-        Some(crate::commands::add::stage_pathspecs_for_commit(
-            &repo,
-            wt,
-            &args.pathspec,
-            &add_cfg,
-        )?)
-    } else {
-        None
-    };
 
     let index_path = resolved_index_path(&repo);
 
-    // Load index
-    let index = match repo.load_index_at(&index_path) {
+    // Load index (after non-dry-run pathspec staging has updated the file on disk).
+    let mut index = match repo.load_index_at(&index_path) {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e.into()),
     };
+
+    if args.dry_run && !args.pathspec.is_empty() {
+        let Some(wt) = work_tree else {
+            bail!("pathspec requires a work tree");
+        };
+        let mut idx = index.clone();
+        pathspec_matched = Some(apply_pathspec_to_index(
+            &repo,
+            wt,
+            &mut idx,
+            &args.pathspec,
+        )?);
+        index = idx;
+    }
 
     // Resolve HEAD for parent(s) and optional base tree for partial commits
     let head = resolve_head(&repo.git_dir)?;
@@ -636,7 +652,15 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // --dry-run: show what would be committed and exit
     if args.dry_run {
-        print_dry_run(&head, &staged, &unstaged, &untracked)?;
+        print_dry_run(
+            &repo,
+            &config,
+            &head,
+            &staged,
+            &unstaged,
+            &untracked,
+            pathspec_matched.as_ref(),
+        )?;
         return Ok(());
     }
 
@@ -1027,71 +1051,117 @@ pub fn run(mut args: Args) -> Result<()> {
 
 /// Print dry-run output (like `git commit --dry-run`).
 fn print_dry_run(
+    repo: &Repository,
+    config: &ConfigSet,
     head: &HeadState,
     staged: &[DiffEntry],
     unstaged: &[DiffEntry],
     untracked: &[String],
+    pathspec_matched: Option<&HashSet<Vec<u8>>>,
 ) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    match head {
-        HeadState::Branch {
-            short_name,
-            oid: Some(_),
-            ..
-        } => {
-            writeln!(out, "On branch {short_name}")?;
-        }
-        HeadState::Branch {
-            short_name,
-            oid: None,
-            ..
-        } => {
-            writeln!(out, "On branch {short_name}")?;
-            writeln!(out)?;
-            writeln!(out, "No commits yet")?;
-        }
-        HeadState::Detached { oid } => {
-            let short = &oid.to_hex()[..7];
-            writeln!(out, "HEAD detached at {short}")?;
-        }
-        HeadState::Invalid => {
-            writeln!(out, "Not currently on any branch.")?;
-        }
-    }
+    let config_hints = match config.get("advice.statusHints") {
+        Some(v) if v == "false" || v == "no" || v == "off" || v == "0" => false,
+        _ => true,
+    };
+    let show_hints = std::env::var("GIT_ADVICE")
+        .ok()
+        .and_then(|v| match v.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        })
+        .unwrap_or(config_hints);
 
-    if !staged.is_empty() {
+    let orphan_line = if head.oid().is_none() {
+        Some("Initial commit")
+    } else {
+        None
+    };
+    crate::commands::status::write_status_branch_header(
+        &mut out,
+        head,
+        repo,
+        "",
+        show_hints,
+        false,
+        true,
+        orphan_line,
+    )?;
+
+    let (staged_show, unstaged_show, extra_untracked) = if let Some(matched) = pathspec_matched {
+        let mut staged_in = Vec::new();
+        let mut staged_out = Vec::new();
+        for e in staged {
+            let p = e.path().as_bytes();
+            if matched.contains(p) {
+                staged_in.push(e.clone());
+            } else {
+                staged_out.push(e.clone());
+            }
+        }
+        let unstaged_paths: HashSet<String> =
+            unstaged.iter().map(|e| e.path().to_string()).collect();
+        let mut u = unstaged.to_vec();
+        let mut extra_ut = Vec::new();
+        for e in staged_out {
+            if unstaged_paths.contains(e.path()) {
+                continue;
+            }
+            // Git: fully staged paths excluded from the commit are listed like untracked in
+            // `--dry-run` output when the worktree matches the index (e.g. new files).
+            if e.status == DiffStatus::Added {
+                extra_ut.push(e.path().to_string());
+            } else {
+                u.push(e);
+            }
+        }
+        (staged_in, u, extra_ut)
+    } else {
+        (staged.to_vec(), unstaged.to_vec(), Vec::new())
+    };
+
+    if !staged_show.is_empty() {
         writeln!(out)?;
         writeln!(out, "Changes to be committed:")?;
         writeln!(out, "  (use \"git restore --staged <file>...\" to unstage)")?;
-        for entry in staged {
+        for entry in &staged_show {
             let label = status_label_staged(entry.status);
             writeln!(out, "\t{label}:   {}", entry.path())?;
         }
     }
 
-    if !unstaged.is_empty() {
+    if !unstaged_show.is_empty() {
         writeln!(out)?;
         writeln!(out, "Changes not staged for commit:")?;
         writeln!(
             out,
             "  (use \"git add <file>...\" to update what will be committed)"
         )?;
-        for entry in unstaged {
+        writeln!(
+            out,
+            "  (use \"git restore <file>...\" to discard changes in working directory)"
+        )?;
+        for entry in &unstaged_show {
             let label = status_label_unstaged(entry.status);
             writeln!(out, "\t{label}:   {}", entry.path())?;
         }
     }
 
-    if !untracked.is_empty() {
+    let mut all_untracked: Vec<String> = untracked.to_vec();
+    all_untracked.extend(extra_untracked);
+    all_untracked.sort();
+
+    if !all_untracked.is_empty() {
         writeln!(out)?;
         writeln!(out, "Untracked files:")?;
         writeln!(
             out,
             "  (use \"git add <file>...\" to include in what will be committed)"
         )?;
-        for path in untracked {
+        for path in &all_untracked {
             writeln!(out, "\t{path}")?;
         }
     }
@@ -1168,6 +1238,115 @@ fn walk_untracked(
         }
     }
     Ok(())
+}
+
+/// Apply pathspec staging to `index` in memory (no disk write).
+///
+/// Returns the set of repository-relative paths that were staged (or removed) for this commit.
+fn apply_pathspec_to_index(
+    repo: &Repository,
+    work_tree: &Path,
+    index: &mut Index,
+    pathspecs: &[String],
+) -> Result<HashSet<Vec<u8>>> {
+    use std::os::unix::fs::MetadataExt;
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| work_tree.to_path_buf());
+    let prefix = crate::pathspec::pathdiff(&cwd, work_tree);
+
+    let mut matched_paths = HashSet::new();
+
+    for spec in pathspecs {
+        let resolved = crate::pathspec::resolve_pathspec(spec, work_tree, prefix.as_deref());
+        if !crate::pathspec::has_glob_chars(&resolved) {
+            let abs_path = work_tree.join(&resolved);
+            if let Ok(meta) = fs::symlink_metadata(&abs_path) {
+                let data = if meta.file_type().is_symlink() {
+                    let target = fs::read_link(&abs_path)?;
+                    target.to_string_lossy().into_owned().into_bytes()
+                } else {
+                    fs::read(&abs_path)?
+                };
+                let oid = repo.odb.write(ObjectKind::Blob, &data)?;
+                let mode = grit_lib::index::normalize_mode(meta.mode());
+                let raw_path = resolved.as_bytes().to_vec();
+                let entry = grit_lib::index::entry_from_stat(&abs_path, &raw_path, oid, mode)?;
+                index.add_or_replace(entry);
+                matched_paths.insert(raw_path);
+            } else {
+                index.remove(resolved.as_bytes());
+                matched_paths.insert(resolved.as_bytes().to_vec());
+            }
+            continue;
+        }
+
+        let (dir_prefix, pattern) = if let Some(slash_pos) = resolved.rfind('/') {
+            (&resolved[..slash_pos], &resolved[slash_pos + 1..])
+        } else {
+            ("", resolved.as_str())
+        };
+
+        let search_dir = if dir_prefix.is_empty() {
+            work_tree.to_path_buf()
+        } else {
+            work_tree.join(dir_prefix)
+        };
+
+        let mut spec_matched = false;
+        let mut matched_rels: Vec<String> = Vec::new();
+        if let Ok(entries) = fs::read_dir(&search_dir) {
+            for entry in entries.flatten() {
+                let name_str = entry.file_name().to_string_lossy().to_string();
+                if name_str == ".git" {
+                    continue;
+                }
+                if !grit_lib::wildmatch::wildmatch(pattern.as_bytes(), name_str.as_bytes(), 0) {
+                    continue;
+                }
+                let rel = if dir_prefix.is_empty() {
+                    name_str.clone()
+                } else {
+                    format!("{dir_prefix}/{name_str}")
+                };
+                matched_rels.push(rel);
+            }
+        }
+        if pattern.contains('[') && fs::symlink_metadata(search_dir.join(pattern)).is_ok() {
+            let rel = if dir_prefix.is_empty() {
+                pattern.to_string()
+            } else {
+                format!("{dir_prefix}/{pattern}")
+            };
+            if !matched_rels.contains(&rel) {
+                matched_rels.push(rel);
+            }
+        }
+
+        for rel in matched_rels {
+            let abs_path = work_tree.join(&rel);
+            if let Ok(meta) = fs::symlink_metadata(&abs_path) {
+                let data = if meta.file_type().is_symlink() {
+                    let target = fs::read_link(&abs_path)?;
+                    target.to_string_lossy().into_owned().into_bytes()
+                } else {
+                    fs::read(&abs_path)?
+                };
+                let oid = repo.odb.write(ObjectKind::Blob, &data)?;
+                let mode = grit_lib::index::normalize_mode(meta.mode());
+                let raw_path = rel.as_bytes().to_vec();
+                let entry = grit_lib::index::entry_from_stat(&abs_path, &raw_path, oid, mode)?;
+                index.add_or_replace(entry);
+                spec_matched = true;
+                matched_paths.insert(raw_path);
+            }
+        }
+
+        if !spec_matched {
+            bail!("pathspec '{spec}' did not match any file(s) known to git");
+        }
+    }
+
+    Ok(matched_paths)
 }
 
 /// Auto-stage tracked files (for `commit -a`).
