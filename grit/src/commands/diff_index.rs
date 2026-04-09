@@ -789,6 +789,34 @@ fn collect_tree_entries(
     Ok(())
 }
 
+/// Returns true when the work tree at `path` matches `index_snapshot` (stat cache or content hash).
+fn worktree_matches_index_snapshot(
+    repo: &Repository,
+    work_tree: &Path,
+    path: &str,
+    index_snapshot: Snapshot,
+    index_entries: &BTreeMap<&[u8], &IndexEntry>,
+) -> Result<bool> {
+    if index_snapshot.mode == MODE_GITLINK {
+        return Ok(true);
+    }
+    let abs = work_tree.join(path);
+    let meta = match fs::symlink_metadata(&abs) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e.into()),
+    };
+    if let Some(ie) = index_entries.get(path.as_bytes()) {
+        if stat_matches(ie, &meta) {
+            return Ok(true);
+        }
+    }
+    let Some(wt_snapshot) = read_worktree_snapshot_from_meta(repo, &abs, &meta)? else {
+        return Ok(false);
+    };
+    Ok(wt_snapshot == index_snapshot)
+}
+
 fn diff_tree_vs_index(
     tree_map: &BTreeMap<String, Snapshot>,
     index_map: &BTreeMap<String, Snapshot>,
@@ -850,6 +878,42 @@ fn diff_tree_vs_worktree(
     let mut merged = BTreeMap::new();
     for change in diff_tree_vs_index(tree_map, index_map) {
         merged.insert(change.path.clone(), change);
+    }
+
+    // Git `diff-index` without `--cached` compares the tree to the **working tree** for patch/raw
+    // purposes, while still classifying tree↔index conflicts. When the index differs from the tree,
+    // the recorded "new" side is the index blob if the work tree still matches the index; if the
+    // work tree has diverged further, the new side is the work tree (placeholder zero OID in raw,
+    // content read from disk for `-p`). See t9231-diff-index-patch and `git diff-index -p HEAD`.
+    for change in merged.values_mut() {
+        if !matches!(change.status, 'A' | 'M') {
+            continue;
+        }
+        let Some(index_snapshot) = change.new else {
+            continue;
+        };
+        if index_snapshot.mode == MODE_GITLINK {
+            continue;
+        }
+        let path = change.path.as_str();
+        if worktree_matches_index_snapshot(repo, work_tree, path, index_snapshot, &index_entries)? {
+            continue;
+        }
+        let abs = work_tree.join(path);
+        let meta = match fs::symlink_metadata(&abs) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let Some(wt_snapshot) = read_worktree_snapshot_from_meta(repo, &abs, &meta)? else {
+            continue;
+        };
+        change.new = Some(Snapshot {
+            mode: wt_snapshot.mode,
+            oid: zero_oid(),
+        });
     }
 
     for (path, index_snapshot) in index_map {
