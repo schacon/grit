@@ -59,9 +59,14 @@ fn spawn_upload_pack_readonly(
             .with_context(|| format!("failed to spawn grit upload-pack for {}", rp));
     };
 
-    if cmd_template.contains("git-upload-pack") {
+    let (leading_env, after_env) =
+        crate::fetch_transport::parse_leading_shell_env_assignments(cmd_template);
+    if after_env.contains("git-upload-pack") {
         let mut c = Command::new(grit_executable());
         base(&mut c);
+        for (k, v) in leading_env {
+            c.env(k, v);
+        }
         c.arg("upload-pack").arg(rp.as_ref());
         return c
             .spawn()

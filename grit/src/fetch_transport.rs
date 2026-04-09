@@ -27,6 +27,29 @@ thread_local! {
     static PACKET_TRACE_IDENTITY: Cell<&'static str> = const { Cell::new("fetch") };
 }
 
+/// Split a simple upload-pack command string into leading `VAR=value` tokens (shell-style, no
+/// quotes) and the remainder. Used when rewriting `… git-upload-pack` to `grit upload-pack` so
+/// tests like `GIT_TEST_ASSUME_DIFFERENT_OWNER=true git-upload-pack` keep their environment
+/// (`t0411-clone-from-partial`, `t5605-clone-dirname`).
+pub(crate) fn parse_leading_shell_env_assignments(template: &str) -> (Vec<(String, String)>, &str) {
+    let mut env_pairs = Vec::new();
+    let mut rest = template.trim();
+    while !rest.is_empty() {
+        let Some(token) = rest.split_whitespace().next() else {
+            break;
+        };
+        let Some((key, val)) = token.split_once('=') else {
+            break;
+        };
+        if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            break;
+        }
+        env_pairs.push((key.to_string(), val.to_string()));
+        rest = rest[token.len()..].trim_start();
+    }
+    (env_pairs, rest)
+}
+
 /// Run `f` with `GIT_TRACE_PACKET` lines labeled as `identity` (`fetch`, `clone`, …).
 pub fn with_packet_trace_identity<T>(
     identity: &'static str,
@@ -248,8 +271,12 @@ pub(crate) fn spawn_upload_pack_with_proto(
             .with_context(|| format!("failed to spawn grit upload-pack for {}", rp));
     };
 
-    if cmd_template.contains("git-upload-pack") {
+    let (leading_env, after_env) = parse_leading_shell_env_assignments(cmd_template);
+    if after_env.contains("git-upload-pack") {
         let mut c = Command::new(grit_executable());
+        for (k, v) in leading_env {
+            c.env(k, v);
+        }
         c.arg("upload-pack")
             .arg(rp.as_ref())
             .env_remove("GIT_TRACE_PACKET")
@@ -294,11 +321,11 @@ pub(crate) fn spawn_upload_pack(
     cmd_template: Option<&str>,
     repo_path: &Path,
 ) -> Result<std::process::Child> {
-    spawn_upload_pack_with_proto(
-        cmd_template,
-        repo_path,
-        protocol_wire::effective_client_protocol_version(),
-    )
+    // Local fetch/clone uses protocol v0 pkt-line negotiation (`want`/`have`/`done`). Always
+    // spawn the server side without forcing `GIT_PROTOCOL=version=2`, even when the client
+    // defaults to `protocol.version=2` for HTTP/file v2 — otherwise `upload-pack` enters the v2
+    // path and rejects v0 `want` lines as "unknown capability" (t0411 lazy-fetch re-enable).
+    spawn_upload_pack_with_proto(cmd_template, repo_path, 0)
 }
 
 pub(crate) fn drain_child_stdout_to_eof(r: &mut impl Read) -> std::io::Result<()> {

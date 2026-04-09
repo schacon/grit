@@ -36,12 +36,23 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
+    // Match `git upload-pack`: default `GIT_NO_LAZY_FETCH=1` so remote `pack-objects` does not
+    // lazy-fetch missing blobs (t0411-clone-from-partial, promisor clone via upload-pack).
+    if std::env::var("GIT_NO_LAZY_FETCH")
+        .ok()
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true)
+    {
+        std::env::set_var("GIT_NO_LAZY_FETCH", "1");
+    }
+
     let repo = open_repo(&args.directory).with_context(|| {
         format!(
             "could not open repository at '{}'",
             args.directory.display()
         )
     })?;
+    repo.enforce_safe_directory_git_dir()?;
 
     let server_proto = protocol_wire::server_protocol_version_from_git_protocol_env();
     if server_proto == 2 {

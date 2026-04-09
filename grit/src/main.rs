@@ -2324,6 +2324,13 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             continue;
         }
 
+        // --no-lazy-fetch (Git sets GIT_NO_LAZY_FETCH=1)
+        if arg == "--no-lazy-fetch" {
+            std::env::set_var("GIT_NO_LAZY_FETCH", "1");
+            i += 1;
+            continue;
+        }
+
         // Pathspec parsing globals accepted by Git before the subcommand.
         if arg == "--literal-pathspecs" {
             opts.literal_pathspecs = true;

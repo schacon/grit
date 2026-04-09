@@ -13,9 +13,54 @@ use grit_lib::repo::Repository;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Once;
 
 use crate::commands::index_pack;
 use crate::fetch_transport;
+
+static LAZY_FETCH_DISABLED_WARN: Once = Once::new();
+
+/// Match Git `git_env_bool("GIT_NO_LAZY_FETCH", 0)`: unset or empty → lazy fetch allowed; `0` /
+/// `false` / `no` / `off` → allowed; truthy spellings → disabled. Invalid values error like Git.
+pub(crate) fn git_no_lazy_fetch_env_disables_lazy() -> Result<bool> {
+    let raw = match std::env::var("GIT_NO_LAZY_FETCH") {
+        Err(_) => return Ok(false),
+        Ok(s) if s.trim().is_empty() => return Ok(false),
+        Ok(s) => s,
+    };
+    let t = raw.trim();
+    let lower = t.to_ascii_lowercase();
+    Ok(match lower.as_str() {
+        "0" | "false" | "no" | "off" => false,
+        "1" | "true" | "yes" | "on" => true,
+        _ => bail!("bad boolean environment value '{t}' for 'GIT_NO_LAZY_FETCH'"),
+    })
+}
+
+pub(crate) fn warn_lazy_fetch_disabled_once() {
+    LAZY_FETCH_DISABLED_WARN.call_once(|| {
+        eprintln!("warning: lazy fetching disabled; some objects may not be available");
+    });
+}
+
+/// Whether this process may perform promisor lazy-fetch, matching the client side of Git's
+/// `upload-pack` → `pack-objects` pairing: `upload-pack` defaults `GIT_NO_LAZY_FETCH=1` for the
+/// pack-objects child, so an **unset** variable means lazy fetch is off unless explicitly set to
+/// `0` / `false` / `no` / `off` (`t0411-clone-from-partial` test 6 vs 7).
+pub(crate) fn promisor_lazy_fetch_allowed_for_client_process() -> Result<bool> {
+    let raw = match std::env::var("GIT_NO_LAZY_FETCH") {
+        Err(_) => return Ok(false),
+        Ok(s) if s.trim().is_empty() => return Ok(false),
+        Ok(s) => s,
+    };
+    let t = raw.trim();
+    let lower = t.to_ascii_lowercase();
+    Ok(match lower.as_str() {
+        "0" | "false" | "no" | "off" => true,
+        "1" | "true" | "yes" | "on" => false,
+        _ => bail!("bad boolean environment value '{t}' for 'GIT_NO_LAZY_FETCH'"),
+    })
+}
 
 /// Resolved promisor object source: local ODB path or HTTP remote (system `git fetch`).
 pub(crate) enum PromisorSource {
@@ -50,12 +95,11 @@ fn open_promisor_remote_named(
     } else {
         path.join(".git").join("objects")
     };
-    if objects_dir.is_dir() {
-        return Ok(Some(PromisorSource::Local(grit_lib::odb::Odb::new(
-            &objects_dir,
-        ))));
-    }
-    Ok(None)
+    // Keep a promisor entry even when the source path was removed after clone (t0411): lazy fetch
+    // uses `upload-pack` against the recorded git dir, not this ODB.
+    Ok(Some(PromisorSource::Local(grit_lib::odb::Odb::new(
+        &objects_dir,
+    ))))
 }
 
 /// Ordered list of `(remote_name, source)` for promisor fetches: `extensions.partialclone` remote
@@ -121,11 +165,8 @@ pub(crate) fn try_lazy_fetch_promisor_object(repo: &Repository, oid: ObjectId) -
     if !repo_treats_promisor_packs(&repo.git_dir, &config) {
         bail!("not a promisor repository");
     }
-    if std::env::var("GIT_NO_LAZY_FETCH")
-        .ok()
-        .as_deref()
-        .is_some_and(|v| v != "0")
-    {
+    if git_no_lazy_fetch_env_disables_lazy()? {
+        warn_lazy_fetch_disabled_once();
         bail!("lazy fetching disabled");
     }
     if repo.odb.exists_local(&oid) {
@@ -189,8 +230,9 @@ fn resolve_remote_repo_path(base: &Path, url: &str) -> Result<PathBuf> {
     } else {
         base.join(p)
     };
-    p.canonicalize()
-        .with_context(|| format!("resolving promisor remote path {}", p.display()))
+    // Prefer a canonical path when the directory exists; if the source was removed after clone
+    // (t0411), keep the configured path so `upload-pack` can still be invoked the same way Git does.
+    Ok(p.canonicalize().unwrap_or(p))
 }
 
 /// Drop promisor-marker entries for blobs already present locally so
