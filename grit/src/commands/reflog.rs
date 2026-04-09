@@ -430,13 +430,18 @@ fn run_drop(args: DropArgs) -> Result<()> {
     Ok(())
 }
 
-/// Parse `--expire` / `--expire-unreachable` values (Git-compatible subset).
+/// Parse `--expire` / `--expire-unreachable` values (Git `parse_expiry_date` subset).
+///
+/// Git maps `all` and `now` to `TIME_MAX` so every reflog entry (always in the past) is pruned.
 fn parse_reflog_expire_cli(raw: &str, now: i64) -> Result<i64> {
     let s = raw.trim();
     if s.eq_ignore_ascii_case("never") || s.eq_ignore_ascii_case("false") {
         return Ok(0);
     }
-    if s.eq_ignore_ascii_case("now") || s == "0" {
+    if s.eq_ignore_ascii_case("all") || s.eq_ignore_ascii_case("now") {
+        return Ok(i64::MAX);
+    }
+    if s == "0" {
         return Ok(now);
     }
     if let Ok(v) = s.parse::<i64>() {
