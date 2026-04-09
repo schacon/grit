@@ -132,7 +132,7 @@ pub fn convert_blob_to_worktree_for_path(
     };
     let file_attrs = crate::crlf::get_file_attrs(&rules, path, &config);
     crate::crlf::convert_to_worktree(blob, path, &conv, &file_attrs, oid_hex, None)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        .map_err(|e| std::io::Error::other(e))
 }
 
 /// Prepare blob bytes for diff: optional textconv when `use_textconv` and `diff=<driver>`.

@@ -1887,7 +1887,7 @@ mod tests {
             .add_ref(RefRecord {
                 name: "refs/heads/main".to_owned(),
                 update_index: 1,
-                value: RefValue::Val1(oid.clone()),
+                value: RefValue::Val1(oid),
             })
             .unwrap();
         let data = writer.finish().unwrap();
@@ -1911,21 +1911,21 @@ mod tests {
             .add_ref(RefRecord {
                 name: "refs/heads/a".to_owned(),
                 update_index: 1,
-                value: RefValue::Val1(oid1.clone()),
+                value: RefValue::Val1(oid1),
             })
             .unwrap();
         writer
             .add_ref(RefRecord {
                 name: "refs/heads/b".to_owned(),
                 update_index: 1,
-                value: RefValue::Val1(oid2.clone()),
+                value: RefValue::Val1(oid2),
             })
             .unwrap();
         writer
             .add_ref(RefRecord {
                 name: "refs/tags/v1.0".to_owned(),
                 update_index: 1,
-                value: RefValue::Val2(oid3.clone(), oid1.clone()),
+                value: RefValue::Val2(oid3, oid1),
             })
             .unwrap();
         let data = writer.finish().unwrap();
@@ -1972,8 +1972,8 @@ mod tests {
             .add_log(LogRecord {
                 refname: "refs/heads/main".to_owned(),
                 update_index: 1,
-                old_id: old_oid.clone(),
-                new_id: new_oid.clone(),
+                old_id: old_oid,
+                new_id: new_oid,
                 name: "Test User".to_owned(),
                 email: "test@example.com".to_owned(),
                 time_seconds: 1700000000,
@@ -2009,7 +2009,7 @@ mod tests {
             .add_ref(RefRecord {
                 name: "refs/heads/main".to_owned(),
                 update_index: 1,
-                value: RefValue::Val1(oid.clone()),
+                value: RefValue::Val1(oid),
             })
             .unwrap();
         let data = writer.finish().unwrap();

@@ -17,8 +17,7 @@ use crate::rev_list::{rev_list, OrderingMode, RevListOptions};
 use crate::index::{MODE_GITLINK, MODE_TREE};
 
 /// Options for [`export_stream`].
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct FastExportOptions {
     /// Export all heads under `refs/heads/` (and reachable history).
     pub all: bool,
@@ -29,7 +28,6 @@ pub struct FastExportOptions {
     /// Emit `feature done` / trailing `done` (matches `git fast-import` when the feature is negotiated).
     pub use_done_feature: bool,
 }
-
 
 struct AnonState<'a> {
     seeds: &'a HashMap<String, String>,

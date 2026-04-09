@@ -517,7 +517,7 @@ mod tests {
             // Encode type+size header.
             let mut header = Vec::new();
             let mut size = data.len();
-            let first = ((type_code & 0x7) << 4) as u8 | (size & 0x0f) as u8;
+            let first = ((type_code & 0x7) << 4) | (size & 0x0f) as u8;
             size >>= 4;
             if size > 0 {
                 header.push(first | 0x80);
