@@ -194,7 +194,7 @@ t1091-sparse-checkout-builtin	t1	yes	76	53	23	false	ok	1
 t10910-show-ref-tags-branches	t1	yes	35	35	0	true	ok	0
 t1092-sparse-checkout-compatibility	t1	yes	106	49	57	false	ok	0
 t10920-update-ref-create-delete	t1	yes	29	29	0	true	ok	0
-t10930-symbolic-ref-read-write	t1	yes	29	28	1	false	ok	0
+t10930-symbolic-ref-read-write	t1	yes	29	29	0	true	ok	0
 t10940-check-ignore-dir-pattern	t1	yes	35	35	0	true	ok	0
 t10950-merge-file-labels-marker	t1	yes	32	32	0	true	ok	0
 t10960-hash-object-empty-binary	t1	yes	31	31	0	true	ok	0
