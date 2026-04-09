@@ -594,6 +594,16 @@ fn resolve_revision_impl(
         }
     }
 
+    // Pseudo-ref written by `git merge` / grit merge on conflict (tree OID, one line).
+    if spec == "AUTO_MERGE" {
+        let raw = fs::read_to_string(repo.git_dir.join("AUTO_MERGE"))
+            .map_err(|e| Error::Message(format!("failed to read AUTO_MERGE: {e}")))?;
+        let line = raw.lines().next().unwrap_or("").trim();
+        return line
+            .parse::<ObjectId>()
+            .map_err(|_| Error::InvalidRef("AUTO_MERGE: invalid object id".to_owned()));
+    }
+
     // Handle A...B (symmetric difference / merge-base)
     // Also handles A... (implies A...HEAD)
     if let Some(idx) = spec.find("...") {
@@ -1364,7 +1374,9 @@ fn resolve_base(
         Ok(None) => {}
     }
 
-    if is_hex_prefix(spec) && spec.len() < 40 {
+    // Short hex strings (e.g. `A`, `B`) are valid branch names; only treat as a hex
+    // abbreviation when long enough to plausibly be one (matches Git / t4301).
+    if spec.len() >= 4 && spec.len() < 40 && is_hex_prefix(spec) {
         let branch_ref = format!("refs/heads/{spec}");
         if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &branch_ref) {
             eprintln!("warning: refname '{spec}' is ambiguous.");
