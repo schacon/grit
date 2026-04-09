@@ -1100,7 +1100,7 @@ t6304-for-each-ref-detached-head	t6	yes	10	10	0	true	ok	0
 t6400-merge-df	t6	yes	7	5	2	false	ok	0
 t6401-merge-criss-cross	t6	yes	4	4	0	true	ok	0
 t6402-merge-rename	t6	yes	0	0	0	false	timeout	0
-t6403-merge-file	t6	yes	39	34	5	false	ok	0
+t6403-merge-file	t6	yes	39	39	0	true	ok	0
 t6404-recursive-merge	t6	yes	6	5	1	false	ok	0
 t6405-merge-symlinks	t6	yes	7	7	0	true	ok	0
 t6406-merge-attr	t6	yes	13	13	0	true	ok	0
