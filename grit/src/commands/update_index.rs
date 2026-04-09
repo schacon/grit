@@ -480,29 +480,32 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
             continue;
         }
 
+        // Git `read-cache.c:process_path`: skip-worktree entries are not refreshed from disk.
+        // Plain `update-index <path>` is a no-op; `--remove` drops the index entry even when
+        // the file still exists, unless `--ignore-skip-worktree-entries` is set.
+        if let Some(e) = index.get(&rel_bytes, 0) {
+            if e.skip_worktree() {
+                if path_mode == PathMode::Remove && !args.ignore_skip_worktree_entries {
+                    let _ = index.remove(&rel_bytes);
+                }
+                continue;
+            }
+        }
+
         // --remove: if the file doesn't exist on disk (or is a directory
         // that replaced it), remove the entry from the index.  If the file
         // *does* exist on disk, fall through to the normal update/add logic
         // so the index entry gets refreshed.
         if path_mode == PathMode::Remove {
-            // --ignore-skip-worktree-entries: skip entries with skip-worktree bit
-            if args.ignore_skip_worktree_entries {
-                if let Some(e) = index.get(&rel_bytes, 0) {
-                    if e.skip_worktree() {
-                        continue; // leave this entry alone
-                    }
-                }
-            }
             let file_exists = match std::fs::symlink_metadata(&abs_path) {
                 Ok(m) => !m.is_dir(),
                 Err(_) => false,
             };
             if !file_exists {
-                if !index.remove(&rel_bytes) && !args.ignore_missing {
-                    // Entry wasn't in the index — only error if the file is
-                    // truly gone (not just a directory replacement).
-                    bail!("'{}' is not in the index", input_path.display());
-                }
+                // Git `remove_one_path`: missing worktree files are dropped from the index
+                // when `--remove` is in effect; there is no error if the path was not tracked
+                // (`read-cache.c: remove_file_from_index` always succeeds).
+                let _ = index.remove(&rel_bytes);
                 continue;
             }
             // File exists on disk — fall through to update it in the index.

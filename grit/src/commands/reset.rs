@@ -29,6 +29,31 @@ fn zero_oid() -> ObjectId {
     ObjectId::zero()
 }
 
+/// When rebuilding the index from a tree (`reset` mixed/hard/merge), preserve cache-entry flags
+/// from the previous index for paths that still exist at stage 0.
+///
+/// Git keeps `CE_SKIP_WORKTREE` and `CE_VALID` (assume-unchanged) across this rebuild so sparse
+/// checkout state is not lost (`t7011-skip-worktree-reading`).
+fn preserve_index_cache_flags_from(old: &Index, new: &mut Index) {
+    for ne in new.entries.iter_mut() {
+        if ne.stage() != 0 {
+            continue;
+        }
+        let Some(oe) = old.get(&ne.path, 0) else {
+            continue;
+        };
+        if oe.assume_unchanged() {
+            ne.set_assume_unchanged(true);
+        }
+        if oe.skip_worktree() {
+            ne.set_skip_worktree(true);
+            if new.version < 3 {
+                new.version = 3;
+            }
+        }
+    }
+}
+
 /// The reset mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum ResetMode {
@@ -610,6 +635,9 @@ fn reset_commit(
     let mut new_index = Index::new();
     new_index.entries = tree_entries;
     new_index.sort();
+    // Git keeps cache-entry flags (assume-unchanged, skip-worktree) across mixed/hard/merge
+    // index rebuilds so sparse/skip-worktree paths stay marked (t7011).
+    preserve_index_cache_flags_from(&old_index, &mut new_index);
 
     if mode == ResetMode::Hard || mode == ResetMode::Keep || mode == ResetMode::Merge {
         // Hard/Keep/Merge require a working tree

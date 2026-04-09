@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -1154,7 +1154,7 @@ t7007-show	t7	yes	18	9	9	false	ok	0
 t7008-filter-branch-null-sha1	t7	yes	6	5	1	false	ok	0
 t7008-show-stat-raw-name	t7	yes	21	21	0	true	ok	0
 t7010-setup	t7	yes	16	10	6	false	ok	0
-t7011-skip-worktree-reading	t7	yes	15	8	7	false	ok	0
+t7011-skip-worktree-reading	t7	yes	15	15	0	true	ok	0
 t7012-skip-worktree-writing	t7	yes	11	8	3	false	ok	6
 t7020-commit-encoding	t7	yes	26	26	0	true	ok	0
 t7030-verify-tag	t7	skip	16	0	0	false	ok	0

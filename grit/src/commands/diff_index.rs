@@ -723,6 +723,13 @@ fn diff_tree_vs_worktree(
     for (path, index_snapshot) in index_map {
         let abs = work_tree.join(path);
 
+        // Git `diff-lib.c:do_oneway_diff`: do not examine the work tree for skip-worktree entries.
+        if let Some(ie) = index_entries.get(path.as_bytes()) {
+            if ie.skip_worktree() {
+                continue;
+            }
+        }
+
         if index_snapshot.mode == MODE_GITLINK {
             if ignore_submodules {
                 continue;
