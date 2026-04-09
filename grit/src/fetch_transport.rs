@@ -191,6 +191,22 @@ pub(crate) fn collect_wants(
     Ok(wants)
 }
 
+/// Pushes `oid` onto `wants` if it is not already present (order-preserving).
+pub(crate) fn push_want_unique(wants: &mut Vec<ObjectId>, oid: ObjectId) {
+    if !wants.contains(&oid) {
+        wants.push(oid);
+    }
+}
+
+/// Resolve CLI refspec sources to `want` OIDs for upload-pack (matches [`collect_wants`]).
+pub(crate) fn collect_wants_cli(
+    _remote_git_dir: &Path,
+    advertised: &[(String, ObjectId)],
+    cli_refspecs: &[String],
+) -> Result<Vec<ObjectId>> {
+    collect_wants(advertised, cli_refspecs)
+}
+
 /// Tests invoke `git-upload-pack`; use grit to serve grit-created object stores.
 ///
 /// `client_proto` is passed to [`protocol_wire::merge_git_protocol_env_for_child`] (use `0` when
@@ -432,13 +448,18 @@ pub fn fetch_upload_pack_explicit_wants(
 
 /// Fetch via `upload-pack` using skipping negotiation; unpack pack into `local_git_dir`.
 ///
+/// `compute_wants` builds the OID list sent as `want` lines (configured fetch, CLI refspecs, or
+/// tag-following). When `has_cli_refspecs` is false, empty wants follow the same early-exit rules as
+/// a fetch with no CLI refspecs.
+///
 /// Returns remote heads and tags from the ref advertisement, plus `HEAD` symref target
 /// from capabilities when present (e.g. `symref=HEAD:refs/heads/main`).
 pub fn fetch_via_upload_pack_skipping(
     local_git_dir: &Path,
     remote_repo_path: &Path,
     upload_pack_cmd: Option<&str>,
-    refspecs: &[String],
+    compute_wants: impl FnOnce(&[(String, ObjectId)]) -> Result<Vec<ObjectId>>,
+    has_cli_refspecs: bool,
 ) -> Result<(
     Vec<(String, ObjectId)>,
     Vec<(String, ObjectId)>,
@@ -450,9 +471,9 @@ pub fn fetch_via_upload_pack_skipping(
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 
     let (advertised, head_symref) = read_advertisement(&mut stdout)?;
-    let wants = collect_wants(&advertised, refspecs)?;
+    let wants = compute_wants(&advertised)?;
     if wants.is_empty() {
-        if refspecs.is_empty() && advertised.is_empty() {
+        if !has_cli_refspecs && advertised.is_empty() {
             drop(stdin);
             let _ = drain_child_stdout_to_eof(&mut stdout);
             let status = child.wait()?;
@@ -462,7 +483,7 @@ pub fn fetch_via_upload_pack_skipping(
             return Ok((Vec::new(), Vec::new(), head_symref, None));
         }
         // Empty repo / unborn default branch: nothing to transfer.
-        if refspecs.is_empty() {
+        if !has_cli_refspecs {
             drop(stdin);
             let _ = drain_child_stdout_to_eof(&mut stdout);
             let status = child.wait()?;

@@ -588,7 +588,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 &dest.git_dir,
                 &source.git_dir,
                 upload_cmd,
-                &[],
+                |adv| crate::fetch_transport::collect_wants(adv, &[]),
+                false,
             )
         });
         match fetch_res {
@@ -724,7 +725,8 @@ pub fn run(mut args: Args) -> Result<()> {
             &dest.git_dir,
             &source.git_dir,
             upload_cmd,
-            &[],
+            |adv| crate::fetch_transport::collect_wants(adv, &[]),
+            false,
         ) {
             Ok(_) => {
                 propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
@@ -1666,7 +1668,8 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                 &dest.git_dir,
                 &source.git_dir,
                 upload_cmd,
-                &[],
+                |adv| crate::fetch_transport::collect_wants(adv, &[]),
+                false,
             )
         });
         match fetch_res {
