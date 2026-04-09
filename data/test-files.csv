@@ -548,7 +548,7 @@ t3014-ls-files-pathspec-magic	t3	yes	29	27	2	false	ok	0
 t3020-ls-files-error-unmatch	t3	yes	3	3	0	true	ok	0
 t3030-merge-recursive	t3	yes	26	25	1	false	ok	0
 t3040-subprojects-basic	t3	yes	11	10	1	false	ok	0
-t3050-ls-files-unmerged	t3	yes	23	22	1	false	ok	0
+t3050-ls-files-unmerged	t3	yes	23	23	0	true	ok	0
 t3050-subprojects-fetch	t3	yes	4	4	0	true	ok	0
 t3060-ls-files-with-tree	t3	yes	8	8	0	true	ok	0
 t3070-wildmatch	t3	yes	1901	1901	0	true	ok	3
