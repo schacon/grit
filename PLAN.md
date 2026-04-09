@@ -637,7 +637,7 @@ commit → check it off → move on.
 - [ ] `t5509-fetch-push-namespaces` ██░░░░░░░░░░░░░░░░░░ 2/15 (13 left) — fetch/push involving ref namespaces
 - [ ] `t5332-multi-pack-reuse` █░░░░░░░░░░░░░░░░░░░ 1/14 (13 left) — pack-objects multi-pack reuse
 - [ ] `t5574-fetch-output` █░░░░░░░░░░░░░░░░░░░ 1/14 (13 left) — git fetch output format
-- [ ] `t5750-bundle-uri-parse` ░░░░░░░░░░░░░░░░░░░░ 0/13 (13 left) — Test bundle-uri bundle_uri_parse_line()
+- [x] `t5750-bundle-uri-parse` ████████████████████ 13/13 (0 left) — Test bundle-uri bundle_uri_parse_line()
 - [ ] `t5303-pack-corruption-resilience` ████████████░░░░░░░░ 22/36 (14 left) — resilience to pack corruptions with redundant objects
 - [ ] `t5604-clone-reference` ███████████░░░░░░░░░ 20/34 (14 left) — test clone --reference
 - [ ] `t5533-push-cas` ███████░░░░░░░░░░░░░ 9/23 (14 left) — compare & swap push force/delete safety
