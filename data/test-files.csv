@@ -1321,7 +1321,7 @@ t8190-rm-cached-deep	t8	yes	27	27	0	true	ok	0
 t8200-mv-rename	t8	yes	30	30	0	true	ok	0
 t8270-log-author-search	t8	yes	29	28	1	false	ok	0
 t8280-log-committer-search	t8	yes	29	29	0	true	ok	0
-t8290-log-grep-message	t8	yes	30	28	2	false	ok	0
+t8290-log-grep-message	t8	yes	30	30	0	true	ok	0
 t8300-rev-list-objects	t8	yes	34	34	0	true	ok	0
 t8310-for-each-ref-format-deep	t8	yes	32	32	0	true	ok	0
 t8320-config-global-local	t8	yes	34	34	0	true	ok	0
