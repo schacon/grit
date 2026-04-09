@@ -3377,6 +3377,41 @@ fn preprocess_fetch_argv(rest: &[String]) -> Vec<String> {
     out
 }
 
+/// `git format-patch -3` uses a negative-looking revision count; clap otherwise parses `-3` as
+/// unknown short flags and leaves `--stdout` in `revisions`. Peel off `-<digits>` and pass the
+/// count via a hidden long option.
+fn preprocess_format_patch_argv(rest: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(rest.len() + 1);
+    let mut max_count: Option<usize> = None;
+    let mut i = 0usize;
+    while i < rest.len() {
+        let arg = &rest[i];
+        if arg == "--" {
+            out.extend_from_slice(&rest[i..]);
+            break;
+        }
+        if arg.len() > 1
+            && arg.starts_with('-')
+            && arg.as_bytes().get(1).is_some_and(u8::is_ascii_digit)
+            && arg[1..].chars().all(|c| c.is_ascii_digit())
+        {
+            if let Ok(n) = arg[1..].parse::<usize>() {
+                if n > 0 {
+                    max_count = Some(n);
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+        out.push(arg.clone());
+        i += 1;
+    }
+    if let Some(n) = max_count {
+        out.insert(0, format!("--grit-format-patch-max-count={n}"));
+    }
+    out
+}
+
 fn preprocess_diff_args(rest: &[String]) -> Vec<String> {
     // Git rejects `--no-rename` as an invalid abbreviation (ambiguous with `--no-renames` /
     // `--no-rename-empty`). Clap would otherwise treat it as a revision and fail later.
@@ -4094,7 +4129,9 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "fmt-merge-msg" => commands::fmt_merge_msg::run(parse_cmd_args(subcmd, rest)),
         "for-each-ref" => commands::for_each_ref::run(parse_cmd_args(subcmd, rest)),
         "for-each-repo" => commands::for_each_repo::run(parse_cmd_args(subcmd, rest)),
-        "format-patch" => commands::format_patch::run(parse_cmd_args(subcmd, rest)),
+        "format-patch" => {
+            commands::format_patch::run(parse_cmd_args(subcmd, &preprocess_format_patch_argv(rest)))
+        }
         "fsck" => commands::fsck::run(parse_cmd_args(subcmd, rest)),
         "gc" => commands::gc::run(parse_cmd_args(subcmd, rest)),
         "get-tar-commit-id" => commands::get_tar_commit_id::run(parse_cmd_args(subcmd, rest)),

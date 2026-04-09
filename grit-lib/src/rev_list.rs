@@ -617,11 +617,31 @@ pub fn rev_list(
 
     let mut ordered = match options.ordering {
         OrderingMode::Default => {
-            let tips: Vec<ObjectId> = include
-                .iter()
-                .copied()
-                .filter(|oid| included.contains(oid))
-                .collect();
+            // When parent-count filters (`--max-parents=1` / `--no-merges`, `--merges`, …) drop a
+            // user-given tip (e.g. a merge commit under `--no-merges`), Git still seeds the walk
+            // from that tip's parents. Using only the first parent drops the other side of the
+            // merge and breaks `git format-patch` / `rev-list --max-parents=1` on merge HEAD.
+            let parent_count_filter_active =
+                options.min_parents.is_some() || options.max_parents.is_some();
+            let mut tips: Vec<ObjectId> = Vec::new();
+            let mut tip_seen = HashSet::new();
+            for &tip in &include {
+                if included.contains(&tip) {
+                    if tip_seen.insert(tip) {
+                        tips.push(tip);
+                    }
+                    continue;
+                }
+                if !parent_count_filter_active {
+                    continue;
+                }
+                let parents = graph.parents_of(tip).unwrap_or_default();
+                for p in parents {
+                    if tip_seen.insert(p) {
+                        tips.push(p);
+                    }
+                }
+            }
             date_order_walk(&mut graph, &tips, &included)?
         }
         OrderingMode::Topo | OrderingMode::Date => topo_sort(&mut graph, &included)?,

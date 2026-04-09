@@ -6,16 +6,19 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::ConfigSet;
-use grit_lib::diff::{count_changes, diff_trees, unified_diff, zero_oid};
+use grit_lib::config::{parse_bool, ConfigSet};
+use grit_lib::diff::{count_changes, diff_trees, unified_diff_with_prefix, zero_oid};
 use grit_lib::diffstat::{
     write_diffstat_block, DiffstatOptions, FileStatInput, FORMAT_PATCH_STAT_WIDTH,
 };
 use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::objects::{parse_commit, CommitData, ObjectId};
 use grit_lib::odb::Odb;
+use grit_lib::patch_ids::compute_patch_id;
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{rev_list, split_symmetric_diff, OrderingMode, RevListOptions};
+use grit_lib::rev_list::{
+    rev_list, split_revision_token, split_symmetric_diff, OrderingMode, RevListOptions,
+};
 use grit_lib::rev_parse::{resolve_revision, resolve_revision_for_range_end};
 use std::collections::HashSet;
 use std::io::{self, Write};
@@ -188,6 +191,10 @@ pub struct Args {
     /// Limit number of patches (e.g., -1 for only the last commit).
     #[arg(short = '1', hide = true)]
     pub last_one: bool,
+
+    /// Populated by the CLI layer from `-N` count shorthands (`format-patch -3`).
+    #[arg(long = "grit-format-patch-max-count", hide = true, value_name = "N")]
+    pub grit_format_patch_max_count: Option<usize>,
     /// Use the From: header to attribute patches (accepted, partial impl).
     #[arg(long = "from", default_missing_value = "", num_args = 0..=1, require_equals = true)]
     pub from: Option<String>,
@@ -244,6 +251,14 @@ pub struct Args {
     #[arg(long = "no-to")]
     pub no_to: bool,
 
+    /// Suppress From: header (overrides `format.from`).
+    #[arg(long = "no-from")]
+    pub no_from: bool,
+
+    /// Do not add `format.headers` from config (still allows `--add-header`).
+    #[arg(long = "no-add-header")]
+    pub no_add_header: bool,
+
     /// Progress display (accepted for compat, no-op).
     #[arg(long = "progress")]
     pub progress: bool,
@@ -265,12 +280,26 @@ pub struct Args {
     pub graph: bool,
 }
 
+/// How to populate the `From:` mbox header (the `From ` line is always the commit OID).
+#[derive(Debug, Clone)]
+enum FromHeaderMode {
+    /// Use the commit author (Git default when `format.from` is unset / false).
+    Author,
+    /// `format.from=true` or `--from` without `=` value.
+    Committer,
+    /// Explicit mailbox from `--from=` or `format.from=<ident>`.
+    Custom(String),
+    /// `--no-from` or suppressed.
+    Omit,
+}
+
 /// Extra headers/options computed from args, passed into formatting functions.
 struct PatchOptions {
     in_reply_to: Option<String>,
     cc: Vec<String>,
     to: Vec<String>,
     extra_headers: Vec<String>,
+    from_header: FromHeaderMode,
     signoff: bool,
     attach: bool,
     inline: bool,
@@ -283,6 +312,9 @@ struct PatchOptions {
     stat_count: Option<usize>,
     /// `format-patch --graph`: indent stat like Git's mbox graph mode.
     format_patch_graph: bool,
+    /// Unified diff path prefixes (`a/` / `b/` unless `format.noprefix` / `--no-prefix`).
+    diff_src_prefix: &'static str,
+    diff_dst_prefix: &'static str,
 }
 
 pub fn run(mut args: Args) -> Result<()> {
@@ -290,6 +322,50 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Load git configuration for format.* keys
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+
+    if let Some(raw) = config.get("format.noprefix") {
+        parse_bool(&raw).map_err(|e| {
+            let q = |s: &str| format!("'{s}'");
+            anyhow::anyhow!(
+                "fatal: {e} for {}\
+                 \nhint: {} used to accept any value and treat that as {}.\
+                 \nhint: Now it only accepts boolean values, like what {} does.",
+                q("format.noprefix"),
+                q("format.noprefix"),
+                q("true"),
+                q("diff.noprefix"),
+            )
+        })?;
+    }
+
+    let (diff_src_prefix, diff_dst_prefix) = if args.no_prefix {
+        ("", "")
+    } else if args.default_prefix {
+        ("a/", "b/")
+    } else {
+        match config.get("format.noprefix") {
+            Some(v) => {
+                let b = parse_bool(&v).map_err(|e| {
+                    let q = |s: &str| format!("'{s}'");
+                    anyhow::anyhow!(
+                        "fatal: {e} for {}\
+                         \nhint: {} used to accept any value and treat that as {}.\
+                         \nhint: Now it only accepts boolean values, like what {} does.",
+                        q("format.noprefix"),
+                        q("format.noprefix"),
+                        q("true"),
+                        q("diff.noprefix"),
+                    )
+                })?;
+                if b {
+                    ("", "")
+                } else {
+                    ("a/", "b/")
+                }
+            }
+            None => ("a/", "b/"),
+        }
+    };
 
     if let Some(ref val) = args.stat {
         if !val.is_empty() {
@@ -316,6 +392,13 @@ pub fn run(mut args: Args) -> Result<()> {
     let stat_name_width = args.stat_name_width;
     let stat_graph_width = args.stat_graph_width;
 
+    let filename_max_length = args.filename_max_length.or_else(|| {
+        config
+            .get("format.filenamemaxlength")
+            .or_else(|| config.get("format.filenameMaxLength"))
+            .and_then(|s| s.trim().parse().ok())
+    });
+
     let (positive_specs, exclude_specs): (Vec<&String>, Vec<&String>) =
         args.revisions.iter().partition(|s| !s.starts_with('^'));
     let exclude_rest: Vec<String> = exclude_specs
@@ -323,16 +406,19 @@ pub fn run(mut args: Args) -> Result<()> {
         .map(|s| s.strip_prefix('^').unwrap_or(s.as_str()).to_string())
         .collect();
 
+    let mut rev_tokens: Vec<String> = positive_specs.iter().map(|s| (*s).clone()).collect();
+    let max_count_flag = if args.last_one { Some(1) } else { None };
+    let max_count_from_argv = strip_leading_neg_count(&mut rev_tokens);
+    let mut max_count = max_count_flag
+        .or(args.grit_format_patch_max_count)
+        .or(max_count_from_argv);
+    if positive_specs.is_empty() && max_count.is_none() {
+        max_count = Some(1);
+    }
+
     // Determine the list of commits to format.
-    // `-1 <rev>` should format exactly `<rev>`.
-    let commits = if args.last_one {
-        if let Some(revision) = positive_specs.first() {
-            collect_single_commit(&repo, revision)?
-        } else {
-            collect_last_n_commits(&repo, 1)?
-        }
-    } else if args.cherry_pick && args.right_only {
-        let range_spec = positive_specs
+    let commits = if args.cherry_pick && args.right_only {
+        let range_spec = rev_tokens
             .first()
             .map(|s| s.as_str())
             .filter(|s| !s.is_empty())
@@ -348,15 +434,19 @@ pub fn run(mut args: Args) -> Result<()> {
                 "revision exclusions (^rev) are only supported with --cherry-pick --right-only"
             );
         }
-        let revision = if let Some(s) = positive_specs.first() {
-            (*s).clone()
-        } else {
-            "-1".to_owned()
-        };
         if args.root {
+            let revision = rev_tokens
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "-1".to_owned());
             collect_root_commits(&repo, &revision)?
         } else {
-            collect_commits(&repo, &revision)?
+            let (mut out, pos_specs, neg_specs) =
+                collect_commits_for_format_patch(&repo, &rev_tokens, max_count, args.topo_order)?;
+            if args.ignore_if_in_upstream {
+                filter_ignore_if_in_upstream(&repo, &pos_specs, &neg_specs, &mut out)?;
+            }
+            out
         }
     };
 
@@ -403,27 +493,33 @@ pub fn run(mut args: Args) -> Result<()> {
     let mut cc_list: Vec<String> = Vec::new();
     let mut extra_headers: Vec<String> = Vec::new();
 
-    // Read format.headers from config (multi-value)
-    for h in config.get_all("format.headers") {
-        let h = h.trim_end_matches('\n').to_string();
-        if h.is_empty() {
-            continue;
-        }
-        if let Some(val) = h.strip_prefix("To:") {
-            to_list.push(val.trim().to_string());
-        } else if let Some(val) = h.strip_prefix("Cc:") {
-            cc_list.push(val.trim().to_string());
-        } else {
-            extra_headers.push(h);
+    if !args.no_add_header {
+        // Read format.headers from config (multi-value)
+        for h in config.get_all("format.headers") {
+            let h = h.trim_end_matches('\n').to_string();
+            if h.is_empty() {
+                continue;
+            }
+            if let Some(val) = h.strip_prefix("To:") {
+                to_list.push(val.trim().to_string());
+            } else if let Some(val) = h.strip_prefix("Cc:") {
+                cc_list.push(val.trim().to_string());
+            } else {
+                extra_headers.push(h);
+            }
         }
     }
 
     // Read format.to and format.cc from config
-    if let Some(to) = config.get("format.to") {
-        to_list.push(to);
+    if !args.no_to {
+        if let Some(to) = config.get("format.to") {
+            to_list.push(to);
+        }
     }
-    if let Some(cc) = config.get("format.cc") {
-        cc_list.push(cc);
+    if !args.no_cc {
+        if let Some(cc) = config.get("format.cc") {
+            cc_list.push(cc);
+        }
     }
 
     // Append command-line --to and --cc
@@ -433,11 +529,34 @@ pub fn run(mut args: Args) -> Result<()> {
     // Append --add-header
     extra_headers.extend(args.add_header.iter().cloned());
 
+    let from_header_mode = if args.no_from {
+        FromHeaderMode::Omit
+    } else if let Some(ref from_arg) = args.from {
+        if from_arg.is_empty() {
+            FromHeaderMode::Committer
+        } else {
+            FromHeaderMode::Custom(from_arg.clone())
+        }
+    } else {
+        match config
+            .get("format.from")
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            None => FromHeaderMode::Author,
+            Some("true" | "yes" | "1") => FromHeaderMode::Committer,
+            Some("false" | "no" | "0") => FromHeaderMode::Author,
+            Some(s) => FromHeaderMode::Custom(s.to_owned()),
+        }
+    };
+
     let opts = PatchOptions {
         in_reply_to: args.in_reply_to.clone(),
         cc: cc_list,
         to: to_list,
         extra_headers,
+        from_header: from_header_mode,
         signoff: args.signoff,
         attach: args.attach,
         inline: args.inline,
@@ -449,6 +568,8 @@ pub fn run(mut args: Args) -> Result<()> {
         stat_graph_width,
         stat_count: args.stat_count,
         format_patch_graph: args.graph,
+        diff_src_prefix,
+        diff_dst_prefix,
     };
 
     let mut log_output_encoding = config
@@ -538,7 +659,7 @@ pub fn run(mut args: Args) -> Result<()> {
             let filename = format!(
                 "{:04}-{}.patch",
                 patch_num,
-                sanitize_subject_with_limit(subject_line, args.filename_max_length)
+                sanitize_subject_with_limit(subject_line, filename_max_length)
             );
             let path = out_dir.join(&filename);
             std::fs::write(&path, &patch)
@@ -610,89 +731,121 @@ fn collect_cherry_pick_right_only_commits(
     Ok(commits)
 }
 
-/// Collect commits to format, in patch order (oldest first).
-fn collect_commits(repo: &Repository, revision: &str) -> Result<Vec<(ObjectId, CommitData)>> {
-    // Check if it's a `-<n>` count form
-    if let Some(count_str) = revision.strip_prefix('-') {
-        if let Ok(count) = count_str.parse::<usize>() {
-            return collect_last_n_commits(repo, count);
-        }
-    }
-
-    // Two-dot range only (avoid matching `...` in symmetric diff).
-    if let Some((left, right)) = grit_lib::rev_parse::split_double_dot_range(revision) {
-        return collect_range_commits(repo, left, right);
-    }
-
-    // Otherwise treat as a "since" revision — all commits after it up to HEAD
-    let since_oid = resolve_revision(repo, revision)
-        .with_context(|| format!("unknown revision '{revision}'"))?;
-
-    // Walk from HEAD back, stop when we hit since_oid
-    let head_oid = resolve_head_oid(repo)?;
-    let mut commits = Vec::new();
-    let mut current = head_oid;
-
-    loop {
-        if current == since_oid {
-            break;
-        }
-        let obj = repo.odb.read(&current).context("reading commit")?;
-        let commit = parse_commit(&obj.data).context("parsing commit")?;
-        let parent = commit.parents.first().copied();
-        commits.push((current, commit));
-        match parent {
-            Some(p) => current = p,
-            None => break, // Root commit
-        }
-    }
-
-    // Reverse so oldest is first (patch order)
-    commits.reverse();
-    Ok(commits)
+/// If the first revision token is `-N`, strip it and return `Some(N)` (Git `format-patch -3`).
+fn strip_leading_neg_count(tokens: &mut Vec<String>) -> Option<usize> {
+    let Some(first) = tokens.first() else {
+        return None;
+    };
+    let rest = first.strip_prefix('-')?;
+    let n: usize = rest.parse().ok()?;
+    tokens.remove(0);
+    Some(n)
 }
 
-/// Collect commits in the range A..B (commits reachable from B but not from A).
-fn collect_range_commits(
+/// Resolve revision argv like Git `format-patch`: `rev_list` with `max_parents=1`, reversed for
+/// patch order. Returns positive/negative spec strings for `--ignore-if-in-upstream`.
+fn collect_commits_for_format_patch(
     repo: &Repository,
-    left: &str,
-    right: &str,
-) -> Result<Vec<(ObjectId, CommitData)>> {
-    let since_oid =
-        resolve_revision(repo, left).with_context(|| format!("unknown revision '{left}'"))?;
-    let until_oid =
-        resolve_revision(repo, right).with_context(|| format!("unknown revision '{right}'"))?;
+    rev_tokens: &[String],
+    max_count: Option<usize>,
+    topo_order: bool,
+) -> Result<(Vec<(ObjectId, CommitData)>, Vec<String>, Vec<String>)> {
+    let mut positive: Vec<String> = Vec::new();
+    let mut negative: Vec<String> = Vec::new();
 
-    let mut from_a = HashSet::new();
-    let mut stack = vec![since_oid];
-    while let Some(oid) = stack.pop() {
-        if !from_a.insert(oid) {
-            continue;
-        }
-        let obj = repo.odb.read(&oid).context("reading commit")?;
-        let commit = parse_commit(&obj.data).context("parsing commit")?;
-        for p in &commit.parents {
-            stack.push(*p);
+    if rev_tokens.is_empty() {
+        positive.push("HEAD".to_owned());
+    } else {
+        for t in rev_tokens {
+            let (pos, neg) = split_revision_token(t);
+            positive.extend(pos);
+            negative.extend(neg);
         }
     }
 
-    let mut commits = Vec::new();
-    let mut frontier = vec![until_oid];
-    let mut seen = HashSet::new();
-    while let Some(oid) = frontier.pop() {
-        if !seen.insert(oid) || from_a.contains(&oid) {
-            continue;
-        }
-        let obj = repo.odb.read(&oid).context("reading commit")?;
-        let commit = parse_commit(&obj.data).context("parsing commit")?;
-        for p in &commit.parents {
-            frontier.push(*p);
-        }
-        commits.push((oid, commit));
+    if positive.is_empty() {
+        positive.push("HEAD".to_owned());
     }
 
-    commits.reverse();
-    Ok(commits)
+    // `git format-patch <since>` with a single committish: same as `<since>..HEAD` (see `setup_revisions`).
+    if negative.is_empty() && positive.len() == 1 {
+        let spec = positive[0].trim();
+        if spec != "HEAD"
+            && !spec.is_empty()
+            && grit_lib::rev_parse::split_double_dot_range(spec).is_none()
+        {
+            let since = positive[0].clone();
+            positive[0] = "HEAD".to_owned();
+            negative.push(since);
+        }
+    }
+
+    let ordering = if topo_order {
+        OrderingMode::Topo
+    } else {
+        OrderingMode::Default
+    };
+
+    let opts = RevListOptions {
+        max_parents: Some(1),
+        reverse: true,
+        ordering,
+        max_count,
+        ..Default::default()
+    };
+
+    let result = rev_list(repo, &positive, &negative, &opts).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let mut commits = Vec::with_capacity(result.commits.len());
+    for oid in result.commits {
+        let obj = repo.odb.read(&oid).context("reading commit")?;
+        let c = parse_commit(&obj.data).context("parsing commit")?;
+        commits.push((oid, c));
+    }
+
+    Ok((commits, positive, negative))
+}
+
+/// Drop commits whose patch-id already appears on the other side of a two-endpoint range.
+fn filter_ignore_if_in_upstream(
+    repo: &Repository,
+    positive: &[String],
+    negative: &[String],
+    commits: &mut Vec<(ObjectId, CommitData)>,
+) -> Result<()> {
+    if positive.len() != 1 || negative.len() != 1 {
+        anyhow::bail!("--ignore-if-in-upstream requires exactly one range (e.g. main..side)");
+    }
+    // Match `get_patch_ids` in Git: collect patch-ids from commits reachable from the range's
+    // left endpoint but not from its right (`main..side` → `main` minus `side`).
+    let check_pos = vec![negative[0].clone()];
+    let check_neg = vec![positive[0].clone()];
+    let ids_result = rev_list(
+        repo,
+        &check_pos,
+        &check_neg,
+        &RevListOptions {
+            max_parents: Some(1),
+            ..Default::default()
+        },
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let mut upstream_patch_ids = HashSet::new();
+    for oid in ids_result.commits {
+        if let Ok(Some(pid)) = compute_patch_id(&repo.odb, &oid) {
+            upstream_patch_ids.insert(pid);
+        }
+    }
+
+    commits.retain(|(oid, _)| {
+        if let Ok(Some(pid)) = compute_patch_id(&repo.odb, oid) {
+            !upstream_patch_ids.contains(&pid)
+        } else {
+            true
+        }
+    });
+    Ok(())
 }
 
 /// Collect all commits from root up to the given revision (for --root).
@@ -851,15 +1004,15 @@ fn format_cover_letter(
 
     let charset_label = rfc2047_charset_label(log_output_encoding);
     let use_utf8_log = charset_label.eq_ignore_ascii_case("UTF-8");
-    let author_display = format_ident(
-        &crate::git_commit_encoding::decode_rfc2047_mailbox_from_line(&last_commit.author),
-    );
-    let from_header = if use_utf8_log {
-        encode_email_address(&author_display)
-    } else {
-        encode_email_address_for_charset(&author_display, &charset_label)
-    };
-    out.push_str(&format!("From: {from_header}\n"));
+    if !matches!(patch_opts.from_header, FromHeaderMode::Omit) {
+        let mailbox = mailbox_for_from_header(last_commit, &patch_opts.from_header);
+        let from_header = if use_utf8_log {
+            encode_email_address(&mailbox)
+        } else {
+            encode_email_address_for_charset(&mailbox, &charset_label)
+        };
+        out.push_str(&format!("From: {from_header}\n"));
+    }
 
     let date = format_date_rfc2822(&last_commit.author);
     out.push_str(&format!("Date: {date}\n"));
@@ -1000,10 +1153,24 @@ fn format_single_patch(
     for entry in &diff_entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
         let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
-        write_diff_header_to_string(&mut diff_text, entry);
+        write_diff_header_to_string(
+            &mut diff_text,
+            entry,
+            opts.diff_src_prefix,
+            opts.diff_dst_prefix,
+        );
         let old_content = read_blob_content(odb, &entry.old_oid);
         let new_content = read_blob_content(odb, &entry.new_oid);
-        let patch = unified_diff(&old_content, &new_content, old_path, new_path, 3);
+        let patch = unified_diff_with_prefix(
+            &old_content,
+            &new_content,
+            old_path,
+            new_path,
+            3,
+            0,
+            opts.diff_src_prefix,
+            opts.diff_dst_prefix,
+        );
         diff_text.push_str(&patch);
     }
 
@@ -1017,15 +1184,15 @@ fn format_single_patch(
     // From line
     out.push_str(&format!("From {} Mon Sep 17 00:00:00 2001\n", oid.to_hex()));
 
-    // From: author (RFC 2047 per `i18n.logOutputEncoding`, matching git)
-    let author_display =
-        format_ident(&crate::git_commit_encoding::decode_rfc2047_mailbox_from_line(&commit.author));
-    let from_header = if use_utf8_log {
-        encode_email_address(&author_display)
-    } else {
-        encode_email_address_for_charset(&author_display, &charset_label)
-    };
-    out.push_str(&format!("From: {from_header}\n"));
+    if !matches!(opts.from_header, FromHeaderMode::Omit) {
+        let mailbox = mailbox_for_from_header(commit, &opts.from_header);
+        let from_header = if use_utf8_log {
+            encode_email_address(&mailbox)
+        } else {
+            encode_email_address_for_charset(&mailbox, &charset_label)
+        };
+        out.push_str(&format!("From: {from_header}\n"));
+    }
 
     // Date: from author timestamp
     let date = format_date_rfc2822(&commit.author);
@@ -1188,7 +1355,12 @@ fn read_blob_content(odb: &Odb, oid: &ObjectId) -> String {
 }
 
 /// Write diff header to a string.
-fn write_diff_header_to_string(out: &mut String, entry: &grit_lib::diff::DiffEntry) {
+fn write_diff_header_to_string(
+    out: &mut String,
+    entry: &grit_lib::diff::DiffEntry,
+    src_prefix: &str,
+    dst_prefix: &str,
+) {
     use grit_lib::diff::DiffStatus;
     use std::fmt::Write;
 
@@ -1201,7 +1373,16 @@ fn write_diff_header_to_string(out: &mut String, entry: &grit_lib::diff::DiffEnt
         .as_deref()
         .unwrap_or(entry.old_path.as_deref().unwrap_or(""));
 
-    let _ = writeln!(out, "diff --git a/{old_path} b/{new_path}");
+    if src_prefix.is_empty() && dst_prefix.is_empty() {
+        let _ = writeln!(out, "diff --git {old_path} {new_path}");
+    } else {
+        let _ = writeln!(
+            out,
+            "diff --git {src_prefix}{old_path} {dst_prefix}{new_path}",
+            src_prefix = src_prefix,
+            dst_prefix = dst_prefix
+        );
+    }
 
     match entry.status {
         DiffStatus::Added => {
@@ -1244,6 +1425,22 @@ fn write_diff_header_to_string(out: &mut String, entry: &grit_lib::diff::DiffEnt
             let _ = writeln!(out, "new mode {}", entry.new_mode);
         }
         DiffStatus::Unmerged => {}
+    }
+}
+
+/// Build the `From:` mailbox for a patch from `format.from` / `--from`.
+fn mailbox_for_from_header(commit: &CommitData, mode: &FromHeaderMode) -> String {
+    match mode {
+        FromHeaderMode::Omit => String::new(),
+        FromHeaderMode::Author => format_ident(
+            &crate::git_commit_encoding::decode_rfc2047_mailbox_from_line(&commit.author),
+        ),
+        FromHeaderMode::Committer => format_ident(
+            &crate::git_commit_encoding::decode_rfc2047_mailbox_from_line(&commit.committer),
+        ),
+        FromHeaderMode::Custom(s) => {
+            format_ident(&crate::git_commit_encoding::decode_rfc2047_mailbox_from_line(s))
+        }
     }
 }
 
