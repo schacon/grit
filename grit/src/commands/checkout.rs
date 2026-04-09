@@ -3855,6 +3855,9 @@ fn checkout_index_to_worktree(
         if entry.stage() != 0 {
             continue;
         }
+        if entry.skip_worktree() {
+            continue;
+        }
 
         // Skip gitlink (submodule) entries — their OIDs reference commits
         // in the submodule's object store, not blobs in ours.
