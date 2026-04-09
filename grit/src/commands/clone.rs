@@ -852,6 +852,17 @@ pub fn run(mut args: Args) -> Result<()> {
         propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
     }
 
+    // `upload-pack` negotiation can succeed without transferring objects (e.g. advertisement
+    // parse quirks). Match `git clone --no-local` by ensuring the destination has a real ODB.
+    if !args.shared
+        && (use_upload_for_protocol_v1 || args.no_local)
+        && !dest.git_dir.join("objects/info/alternates").exists()
+        && objects_dir_has_no_data(&dest.git_dir)
+    {
+        copy_objects(&source.git_dir, &dest.git_dir)
+            .context("copying objects after empty fetch")?;
+    }
+
     if !use_upload_for_protocol_v1 {
         if crate::trace_packet::trace_packet_dest().is_some() {
             crate::trace_packet::trace_packet_line(b"clone> packfile negotiation complete");
@@ -2311,6 +2322,15 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
     }
 
+    if !args.shared
+        && use_upload_for_protocol_v1
+        && !dest.git_dir.join("objects/info/alternates").exists()
+        && objects_dir_has_no_data(&dest.git_dir)
+    {
+        copy_objects(&source.git_dir, &dest.git_dir)
+            .context("copying objects after empty fetch")?;
+    }
+
     let remote_url = args.repository.as_str();
 
     if !use_upload_for_protocol_v1 {
@@ -3068,6 +3088,42 @@ fn write_shallow_boundary(repo: &Repository, depth: usize) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// True when `<git-dir>/objects` has no `.pack` files and no loose object files.
+fn objects_dir_has_no_data(git_dir: &Path) -> bool {
+    let objects = git_dir.join("objects");
+    if !objects.is_dir() {
+        return true;
+    }
+    let pack_dir = objects.join("pack");
+    if pack_dir.is_dir() {
+        if let Ok(rd) = fs::read_dir(&pack_dir) {
+            for e in rd.flatten() {
+                if e.path()
+                    .extension()
+                    .is_some_and(|x| x.eq_ignore_ascii_case("pack"))
+                {
+                    return false;
+                }
+            }
+        }
+    }
+    if let Ok(rd) = fs::read_dir(&objects) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.len() == 2 && name.chars().all(|c| c.is_ascii_hexdigit()) {
+                if e.path().is_dir() {
+                    if let Ok(sub) = fs::read_dir(e.path()) {
+                        if sub.count() > 0 {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    true
 }
 
 /// Copy all objects (loose + packs) from source to destination.

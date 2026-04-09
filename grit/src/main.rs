@@ -253,6 +253,65 @@ pub(crate) fn write_git_trace(dest: &str, line: &str) {
     }
 }
 
+/// Append a `trace: run_command: git …` line when `GIT_TRACE` points at a file or stderr (t6500-gc).
+pub(crate) fn trace_run_command_git_invocation(args: &[&str]) {
+    if let Ok(trace_val) = std::env::var("GIT_TRACE") {
+        if trace_val.is_empty() || trace_val == "0" || trace_val.eq_ignore_ascii_case("false") {
+            return;
+        }
+        let mut line = String::from("git");
+        for a in args {
+            line.push(' ');
+            line.push_str(a);
+        }
+        let trace_line = if std::env::var("GIT_TRACE_BARE").ok().as_deref() == Some("1") {
+            format!("trace: run_command: {line}\n")
+        } else {
+            let now = time::OffsetDateTime::now_utc();
+            format!(
+                "{:02}:{:02}:{:02}.{:06} git.c:000               trace: run_command: {line}\n",
+                now.hour(),
+                now.minute(),
+                now.second(),
+                now.microsecond(),
+            )
+        };
+        write_git_trace(&trace_val, &trace_line);
+    }
+}
+
+/// Append a `test_subcommand`-compatible line to `GIT_TRACE2_EVENT` (JSON array of argv strings).
+pub(crate) fn trace2_emit_git_subcommand_argv(argv: &[String]) {
+    let Ok(path) = std::env::var("GIT_TRACE2_EVENT") else {
+        return;
+    };
+    if path.is_empty() {
+        return;
+    }
+    let mut esc = String::new();
+    esc.push('[');
+    for (i, a) in argv.iter().enumerate() {
+        if i > 0 {
+            esc.push(',');
+        }
+        esc.push('"');
+        for ch in a.chars() {
+            match ch {
+                '\\' => esc.push_str("\\\\"),
+                '"' => esc.push_str("\\\""),
+                c => esc.push(c),
+            }
+        }
+        esc.push('"');
+    }
+    esc.push_str("]\n");
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, esc.as_bytes()));
+}
+
 fn trace2_write_event(path: &str, event: &str, data: &str) -> std::io::Result<()> {
     use std::io::Write;
     let now = chrono_now();

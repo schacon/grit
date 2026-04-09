@@ -270,6 +270,10 @@ TEST_COMMITTER_DOMAIN=example.com
 export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 export GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 
+# Tests using GIT_TRACE grep lines starting with `trace:` (no timestamp prefix).
+GIT_TRACE_BARE=1
+export GIT_TRACE_BARE
+
 # Quiet git/grit unless TEST_VERBOSE is set
 if test -z "$TEST_VERBOSE"
 then
@@ -338,6 +342,16 @@ test_match_signal () {
 	return 1
 }
 
+# Used by lib-terminal.sh `test_terminal` (upstream test-lib-functions.sh).
+test_declared_prereq () {
+	case ",${test_prereq-}," in
+	*,$1,*)
+		return 0
+		;;
+	esac
+	return 1
+}
+
 test_grep () {
 	local negate=""
 	local invert=""
@@ -356,9 +370,44 @@ test_grep () {
 	# Always pass the pattern via -e so values like "--quiet" are not parsed as grep options.
 	if test -n "$negate"
 	then
-		! grep $invert -e "$pattern" "$@"
+		! command grep $invert -e "$pattern" "$@"
 	else
-		grep $invert -e "$pattern" "$@"
+		command grep $invert -e "$pattern" "$@"
+	fi
+}
+
+# GIT_TRACE2_EVENT helpers (upstream test-lib-functions.sh); use `command grep` so PATH cannot
+# shadow with a directory named `grep` (t6500-gc).
+test_subcommand () {
+	negate=
+	if test "$1" = "!"
+	then
+		negate=t
+		shift
+	fi
+	expr="$(printf '"%s",' "$@")"
+	expr="${expr%,}"
+	if test -n "$negate"
+	then
+		! command grep "\[$expr\]"
+	else
+		command grep "\[$expr\]"
+	fi
+}
+
+test_subcommand_flex () {
+	negate=
+	if test "$1" = "!"
+	then
+		negate=t
+		shift
+	fi
+	expr="$(printf '"%s".*' "$@")"
+	if test -n "$negate"
+	then
+		! command grep "\[$expr\]"
+	else
+		command grep "\[$expr\]"
 	fi
 }
 
@@ -1384,10 +1433,8 @@ test_path_is_dir_not_symlink () {
 test_expect_code () {
 	local expected_code="$1"
 	shift
-	set +e
 	"$@"
 	local actual_code=$?
-	set -e
 	if test "$actual_code" = "$expected_code"
 	then
 		return 0
