@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   259 |
+| Completed   |   260 |
 | In progress |     4 |
-| Remaining   |   505 |
+| Remaining   |   504 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 259 completed (`[x]`), 4 in progress (`[~]`), 505 remaining (`[ ]`).
+Task lines in `PLAN.md`: 260 completed (`[x]`), 4 in progress (`[~]`), 504 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5317-pack-objects-filter-objects` — 33/33 tests pass (`pack-objects --filter` object filtering; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5603-clone-dirname` — 47/47 tests pass (clone default directory from `host:path`, `ssh://` URLs: strip trailing slashes and `.git`, redact userinfo for dirname, preserve path segments like `foo@bar` and `test:1234`; harness CSV/dashboards refreshed)
 - `t3507-cherry-pick-conflict` — 44/44 tests pass (cherry-pick/revert conflicts: `CHERRY_PICK_HEAD`/`REVERT_HEAD`, advice text, `MERGE_MSG` scissors, diff3 markers, sequencer cleanup, sparse-checkout, `--continue` flags; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t4216-log-bloom` — 167/167 tests pass (commit-graph changed-path Bloom filters: `read-graph` bloom chunks, `GIT_TRACE2_PERF` statistics for path-limited `log`, incompatible settings/version warnings, split chains, trace2 filter counters; harness CSV/dashboards refreshed; `PLAN.md` marked complete)

@@ -883,7 +883,7 @@ t5313-pack-bounds-checks	t5	yes	9	2	7	false	ok	0
 t5314-pack-cycle-detection	t5	yes	2	1	1	false	ok	0
 t5315-pack-objects-compression	t5	yes	9	5	4	false	ok	0
 t5316-pack-delta-depth	t5	yes	5	3	2	false	ok	0
-t5317-pack-objects-filter-objects	t5	yes	33	9	24	false	ok	0
+t5317-pack-objects-filter-objects	t5	yes	33	33	0	true	ok	0
 t5318-commit-graph	t5	skip	85	0	0	false	ok	0
 t5318-pack-objects-revs-exclude	t5	yes	9	6	3	false	ok	0
 t5319-multi-pack-index	t5	yes	0	0	0	false	timeout	0
