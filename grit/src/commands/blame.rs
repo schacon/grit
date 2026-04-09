@@ -2,11 +2,12 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::ConfigSet;
+use grit_lib::config::{parse_color, ConfigSet};
 use grit_lib::crlf::{
     convert_to_git, get_file_attrs, load_gitattributes, load_gitattributes_from_index,
     ConversionConfig, GitAttributes,
 };
+use grit_lib::git_date::approx::approxidate_careful;
 use grit_lib::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -1463,6 +1464,98 @@ fn config_bool(config: &ConfigSet, key: &str) -> bool {
     matches!(config.get_bool(key), Some(Ok(true)))
 }
 
+/// Git `color.blame.highlightRecent` / `parse_color_fields` in `git/builtin/blame.c`: comma-separated
+/// tokens alternate color, date, color, date, … and must end after a color; the final slot's hop is `TIME_MAX`.
+fn parse_blame_highlight_recent(value: &str) -> Result<Vec<(i64, String)>> {
+    let parts: Vec<&str> = value.split(',').map(str::trim).collect();
+    let mut slots: Vec<(i64, String)> = Vec::new();
+    let mut expect_date = false;
+    for item in parts {
+        if item.is_empty() {
+            continue;
+        }
+        if !expect_date {
+            let ansi = parse_color(item).map_err(|e| {
+                anyhow::anyhow!("invalid color in color.blame.highlightRecent: {e}")
+            })?;
+            slots.push((0, ansi));
+            expect_date = true;
+        } else {
+            let hop = approxidate_careful(item, None) as i64;
+            let last = slots.last_mut().ok_or_else(|| {
+                anyhow::anyhow!("color.blame.highlightRecent: internal parse error")
+            })?;
+            last.0 = hop;
+            expect_date = false;
+        }
+    }
+    if !expect_date {
+        bail!("color.blame.highlightRecent must end with a color");
+    }
+    let last = slots.last_mut().ok_or_else(|| {
+        anyhow::anyhow!("color.blame.highlightRecent must contain at least one color")
+    })?;
+    last.0 = i64::MAX;
+    Ok(slots)
+}
+
+/// ANSI sequence for repeated-line blame metadata (Git default cyan when unset).
+const GIT_COLOR_CYAN: &str = "\x1b[36m";
+
+/// Applies `blame.coloring` when no `--color-lines` / `--color-by-age` flags are given, and loads
+/// color strings from `color.blame.*` (matches `git/builtin/blame.c`).
+fn apply_blame_color_config(config: &ConfigSet, args: &mut Args) -> Result<BlameColorStyle> {
+    let cli_color = args.color_lines || args.color_by_age;
+    if !cli_color {
+        match config.get("blame.coloring").as_deref() {
+            Some("repeatedLines") => args.color_lines = true,
+            Some("highlightRecent") => args.color_by_age = true,
+            Some("none") => {}
+            Some(other) => {
+                eprintln!("warning: invalid value for 'blame.coloring': '{other}'");
+            }
+            None => {}
+        }
+    }
+
+    let mut style = BlameColorStyle::default();
+
+    if args.color_lines {
+        if let Some(raw) = config.get("color.blame.repeatedLines") {
+            if raw.trim().is_empty() {
+                style.repeated_lines_ansi.clear();
+            } else {
+                style.repeated_lines_ansi = parse_color(raw.trim()).map_err(|e| {
+                    anyhow::anyhow!("invalid value for 'color.blame.repeatedLines': {e}")
+                })?;
+            }
+        }
+        if style.repeated_lines_ansi.is_empty() {
+            style.repeated_lines_ansi = GIT_COLOR_CYAN.to_string();
+        }
+    }
+
+    if args.color_by_age {
+        let default_spec = "blue,12 month ago,white,1 month ago,red";
+        let spec = config
+            .get("color.blame.highlightRecent")
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| default_spec.to_string());
+        style.age_buckets = parse_blame_highlight_recent(&spec)?;
+    }
+
+    Ok(style)
+}
+
+/// Parsed `color.blame.*` settings for default blame output.
+#[derive(Debug, Default)]
+struct BlameColorStyle {
+    /// ANSI start sequence for contiguous lines from the same commit (`--color-lines`).
+    repeated_lines_ansi: String,
+    /// `(hop, ansi)` buckets for `--color-by-age` / `highlightRecent` (last hop is `i64::MAX`).
+    age_buckets: Vec<(i64, String)>,
+}
+
 fn peel_to_commit_oid(odb: &Odb, mut oid: ObjectId) -> Result<Option<ObjectId>> {
     loop {
         let obj = odb.read(&oid)?;
@@ -1842,7 +1935,7 @@ fn line_similarity_and_lcs(a: &str, b: &str) -> (f64, usize) {
     (sim, lcs)
 }
 
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let odb = Odb::new(&repo.git_dir.join("objects"));
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
@@ -1927,6 +2020,8 @@ pub fn run(args: Args) -> Result<()> {
 
     let mark_unblamable = config_bool(&config, "blame.markUnblamableLines");
     let mark_ignored = config_bool(&config, "blame.markIgnoredLines");
+
+    let blame_color_style = apply_blame_color_config(&config, &mut args)?;
 
     let contents_override = if let Some(ref p) = args.contents {
         let path = PathBuf::from(p);
@@ -2108,6 +2203,7 @@ pub fn run(args: Args) -> Result<()> {
             &blame_lines,
             &commits,
             &args,
+            &blame_color_style,
             &file_path,
             mark_unblamable,
             mark_ignored,
@@ -3038,31 +3134,15 @@ fn annotate_author_and_time(
     (who, ts)
 }
 
-/// ANSI color codes.
 const RESET: &str = "\x1b[0m";
-const YELLOW: &str = "\x1b[33m";
-const BLUE: &str = "\x1b[34m";
-const CYAN: &str = "\x1b[36m";
-const WHITE: &str = "\x1b[37m";
 
-/// Classify a commit's age for --color-by-age.
-fn age_color(timestamp: i64) -> &'static str {
-    // Use a rough "now" based on the system clock
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let age_secs = now - timestamp;
-    let one_month = 30 * 24 * 3600;
-    let one_year = 365 * 24 * 3600;
-
-    if age_secs < one_month {
-        CYAN
-    } else if age_secs < one_year {
-        WHITE
-    } else {
-        BLUE
+/// Pick the ANSI color for a commit's author timestamp (Git `determine_line_heat`).
+fn age_color_for_timestamp(author_time: i64, buckets: &[(i64, String)]) -> &str {
+    let mut i = 0usize;
+    while i < buckets.len() && author_time > buckets[i].0 {
+        i += 1;
     }
+    buckets.get(i).map(|(_, c)| c.as_str()).unwrap_or("")
 }
 
 fn write_default(
@@ -3070,6 +3150,7 @@ fn write_default(
     lines: &[BlameLine],
     commits: &HashMap<ObjectId, CommitData>,
     args: &Args,
+    color_style: &BlameColorStyle,
     file_path: &str,
     mark_unblamable: bool,
     mark_ignored: bool,
@@ -3118,10 +3199,10 @@ fn write_default(
         let (color_start, color_end) = if args.color_by_age {
             let commit = &commits[&bl.oid];
             let ai = parse_author_field(&commit.author);
-            (age_color(ai.timestamp), RESET)
+            let c = age_color_for_timestamp(ai.timestamp, &color_style.age_buckets);
+            (c, RESET)
         } else if args.color_lines && prev_oid == Some(bl.oid) {
-            // Repeated (contiguous) commit — highlight
-            (YELLOW, RESET)
+            (color_style.repeated_lines_ansi.as_str(), RESET)
         } else if use_color {
             ("", "")
         } else {
