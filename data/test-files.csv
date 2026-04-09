@@ -435,7 +435,7 @@ t1462-refs-exists	t1	yes	12	3	9	false	ok	0
 t1463-refs-optimize	t1	yes	0	0	0	false	ok	0
 t1500-rev-parse	t1	yes	81	70	11	false	ok	0
 t1501-work-tree	t1	yes	39	28	11	false	ok	0
-t1502-rev-parse-parseopt	t1	yes	0	0	0	false	timeout	0
+t1502-rev-parse-parseopt	t1	yes	37	37	0	true	ok	0
 t1503-rev-parse-verify	t1	yes	12	11	1	false	ok	0
 t1504-ceiling-dirs	t1	yes	0	0	0	false	timeout	0
 t1504-revision-range	t1	yes	28	28	0	true	ok	0

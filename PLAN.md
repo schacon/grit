@@ -137,7 +137,7 @@ commit → check it off → move on.
 - [ ] `t1305-config-include` ██████░░░░░░░░░░░░░░ 12/37 (25 left) — test config file include directives
 - [ ] `t1001-read-tree-m-2way` ██░░░░░░░░░░░░░░░░░░ 4/29 (25 left) — Two way merge with read-tree -m $H $M
 
-- [ ] `t1502-rev-parse-parseopt` █████░░░░░░░░░░░░░░░ 11/37 (26 left) — test git rev-parse --parseopt
+- [x] `t1502-rev-parse-parseopt` ████████████████████ 37/37 (0 left) — test git rev-parse --parseopt
 - [ ] `t1700-split-index` █░░░░░░░░░░░░░░░░░░░ 2/28 (26 left) — split index mode tests
 - [ ] `t1900-repo-info` ████░░░░░░░░░░░░░░░░ 9/37 (28 left) — test git repo-info
 - [ ] `t0410-partial-clone` ████░░░░░░░░░░░░░░░░ 9/38 (29 left) — partial clone

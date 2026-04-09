@@ -115,6 +115,7 @@ pub mod reset;
 pub mod restore;
 pub mod rev_list;
 pub mod rev_parse;
+mod rev_parse_parseopt;
 pub mod revert;
 pub mod rm;
 pub mod scalar;
