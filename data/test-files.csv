@@ -496,7 +496,7 @@ t2050-checkout	t2	yes	80	80	0	true	ok	0
 t2050-git-dir-relative	t2	yes	4	2	2	false	ok	0
 t2060-switch	t2	yes	16	7	9	false	ok	0
 t2061-switch-orphan	t2	yes	15	5	10	false	ok	0
-t2070-restore	t2	yes	15	13	2	false	ok	0
+t2070-restore	t2	yes	15	15	0	true	ok	0
 t2071-restore-patch	t2	yes	15	6	9	false	ok	0
 t2072-restore-pathspec-file	t2	yes	12	3	9	false	ok	0
 t2080-parallel-checkout-basics	t2	yes	11	5	6	false	ok	0
