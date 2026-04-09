@@ -873,6 +873,8 @@ fn create_revert_commit(
         parents,
         author: format_ident(&author, now),
         committer: format_ident(&committer, now),
+        author_raw: Vec::new(),
+        committer_raw: Vec::new(),
         encoding: None,
         message: message.to_owned(),
         raw_message: None,

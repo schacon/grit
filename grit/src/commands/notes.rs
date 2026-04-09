@@ -465,6 +465,8 @@ fn write_notes_commit(
         parents: parent.into_iter().collect(),
         author: ident.clone(),
         committer: ident,
+        author_raw: Vec::new(),
+        committer_raw: Vec::new(),
         encoding: None,
         message: if message.ends_with('\n') {
             message.to_owned()
@@ -1333,6 +1335,8 @@ fn write_notes_commit_with_parents(
         parents: parents.to_vec(),
         author: ident.clone(),
         committer: ident,
+        author_raw: Vec::new(),
+        committer_raw: Vec::new(),
         encoding: None,
         message: if message.ends_with('\n') {
             message.to_owned()

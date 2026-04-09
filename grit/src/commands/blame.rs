@@ -2,6 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::commit_encoding;
 use grit_lib::config::{parse_color, ConfigSet};
 use grit_lib::crlf::{
     convert_to_git, get_file_attrs, load_gitattributes, load_gitattributes_from_index,
@@ -140,6 +141,14 @@ pub struct Args {
     #[arg(long = "progress")]
     pub progress: bool,
 
+    /// Emit porcelain output incrementally (same headers as `--porcelain`).
+    #[arg(long = "incremental")]
+    pub incremental: bool,
+
+    /// Override output encoding for commit metadata (`none` = raw object bytes).
+    #[arg(long = "encoding", value_name = "ENC", allow_hyphen_values = true)]
+    pub encoding: Option<String>,
+
     /// When true, emit git-annotate style output (tab-separated metadata).
     #[arg(skip)]
     pub annotate_output: bool,
@@ -218,6 +227,211 @@ fn parse_tz_offset_seconds(tz: &str) -> i32 {
     let hours: i32 = tz[1..3].parse().unwrap_or(0);
     let minutes: i32 = tz[3..5].parse().unwrap_or(0);
     sign * (hours * 3600 + minutes * 60)
+}
+
+fn trim_ascii_end_bytes(mut s: &[u8]) -> &[u8] {
+    while let Some(last) = s.last().copied() {
+        if last == b' ' || last == b'\t' {
+            s = &s[..s.len() - 1];
+        } else {
+            break;
+        }
+    }
+    s
+}
+
+fn trim_ascii_start_bytes(mut s: &[u8]) -> &[u8] {
+    while let Some(first) = s.first().copied() {
+        if first == b' ' || first == b'\t' {
+            s = &s[1..];
+        } else {
+            break;
+        }
+    }
+    s
+}
+
+fn split_ident_line_bytes(raw: &[u8]) -> Option<(&[u8], &[u8], &[u8])> {
+    let lt = raw.iter().position(|&b| b == b'<')?;
+    let gt = raw[lt + 1..].iter().position(|&b| b == b'>')? + lt + 1;
+    let name = trim_ascii_end_bytes(&raw[..lt]);
+    let email = raw.get(lt + 1..gt)?;
+    let tail = trim_ascii_start_bytes(raw.get(gt + 1..).unwrap_or_default());
+    Some((name, email, tail))
+}
+
+fn angle_bracket_mail_bytes(email_inner: &[u8]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(email_inner.len() + 2);
+    v.push(b'<');
+    v.extend_from_slice(email_inner);
+    v.push(b'>');
+    v
+}
+
+fn blame_summary_unicode(commit: &CommitData) -> String {
+    commit
+        .message
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .to_owned()
+}
+
+#[derive(Clone)]
+enum BlameMetaEncoding {
+    Utf8,
+    Raw,
+    Reencode(String),
+}
+
+impl BlameMetaEncoding {
+    fn from_config_and_cli(config: &ConfigSet, encoding_cli: Option<&str>) -> Result<Self> {
+        if let Some(v) = encoding_cli {
+            if v.eq_ignore_ascii_case("none") {
+                return Ok(Self::Raw);
+            }
+            return Ok(Self::Reencode(v.to_owned()));
+        }
+        let log_enc = config
+            .get("i18n.logOutputEncoding")
+            .or_else(|| config.get("i18n.logoutputencoding"));
+        let commit_enc = config
+            .get("i18n.commitEncoding")
+            .or_else(|| config.get("i18n.commitencoding"));
+        if let Some(enc) = log_enc {
+            if enc.is_empty() {
+                return Ok(Self::Raw);
+            }
+            return Ok(Self::Reencode(enc));
+        }
+        if let Some(enc) = commit_enc {
+            if enc.eq_ignore_ascii_case("utf-8") || enc.eq_ignore_ascii_case("utf8") {
+                return Ok(Self::Utf8);
+            }
+            return Ok(Self::Reencode(enc));
+        }
+        Ok(Self::Utf8)
+    }
+
+    fn author_name_bytes(&self, commit: &CommitData) -> Result<Vec<u8>> {
+        let raw = if commit.author_raw.is_empty() {
+            commit.author.as_bytes()
+        } else {
+            &commit.author_raw
+        };
+        match self {
+            Self::Utf8 => {
+                let ai = parse_author_field(&commit.author);
+                Ok(ai.name.into_bytes())
+            }
+            Self::Raw => {
+                let (n, _, _) = split_ident_line_bytes(raw)
+                    .ok_or_else(|| anyhow::anyhow!("malformed author line in commit object"))?;
+                Ok(n.to_vec())
+            }
+            Self::Reencode(label) => {
+                let ai = parse_author_field(&commit.author);
+                commit_encoding::reencode_utf8_to_label(label, &ai.name)
+                    .ok_or_else(|| anyhow::anyhow!("unsupported blame output encoding: {label}"))
+            }
+        }
+    }
+
+    fn author_mail_bytes(&self, commit: &CommitData) -> Result<Vec<u8>> {
+        let raw = if commit.author_raw.is_empty() {
+            commit.author.as_bytes()
+        } else {
+            &commit.author_raw
+        };
+        match self {
+            Self::Utf8 => {
+                let ai = parse_author_field(&commit.author);
+                Ok(format!("<{}>", ai.email).into_bytes())
+            }
+            Self::Raw => {
+                let (_, mail, _) = split_ident_line_bytes(raw)
+                    .ok_or_else(|| anyhow::anyhow!("malformed author line in commit object"))?;
+                Ok(angle_bracket_mail_bytes(mail))
+            }
+            Self::Reencode(label) => {
+                let ai = parse_author_field(&commit.author);
+                let line = format!("<{}>", ai.email);
+                commit_encoding::reencode_utf8_to_label(label, &line)
+                    .ok_or_else(|| anyhow::anyhow!("unsupported blame output encoding: {label}"))
+            }
+        }
+    }
+
+    fn committer_name_bytes(&self, commit: &CommitData) -> Result<Vec<u8>> {
+        let raw = if commit.committer_raw.is_empty() {
+            commit.committer.as_bytes()
+        } else {
+            &commit.committer_raw
+        };
+        match self {
+            Self::Utf8 => {
+                let ci = parse_author_field(&commit.committer);
+                Ok(ci.name.into_bytes())
+            }
+            Self::Raw => {
+                let (n, _, _) = split_ident_line_bytes(raw)
+                    .ok_or_else(|| anyhow::anyhow!("malformed committer line in commit object"))?;
+                Ok(n.to_vec())
+            }
+            Self::Reencode(label) => {
+                let ci = parse_author_field(&commit.committer);
+                commit_encoding::reencode_utf8_to_label(label, &ci.name)
+                    .ok_or_else(|| anyhow::anyhow!("unsupported blame output encoding: {label}"))
+            }
+        }
+    }
+
+    fn committer_mail_bytes(&self, commit: &CommitData) -> Result<Vec<u8>> {
+        let raw = if commit.committer_raw.is_empty() {
+            commit.committer.as_bytes()
+        } else {
+            &commit.committer_raw
+        };
+        match self {
+            Self::Utf8 => {
+                let ci = parse_author_field(&commit.committer);
+                Ok(format!("<{}>", ci.email).into_bytes())
+            }
+            Self::Raw => {
+                let (_, mail, _) = split_ident_line_bytes(raw)
+                    .ok_or_else(|| anyhow::anyhow!("malformed committer line in commit object"))?;
+                Ok(angle_bracket_mail_bytes(mail))
+            }
+            Self::Reencode(label) => {
+                let ci = parse_author_field(&commit.committer);
+                let line = format!("<{}>", ci.email);
+                commit_encoding::reencode_utf8_to_label(label, &line)
+                    .ok_or_else(|| anyhow::anyhow!("unsupported blame output encoding: {label}"))
+            }
+        }
+    }
+
+    fn summary_bytes(&self, commit: &CommitData) -> Result<Vec<u8>> {
+        match self {
+            Self::Utf8 => Ok(blame_summary_unicode(commit).into_bytes()),
+            Self::Raw => {
+                let body = commit
+                    .raw_message
+                    .as_deref()
+                    .unwrap_or(commit.message.as_bytes());
+                let first = body
+                    .split(|&b| b == b'\n')
+                    .find(|line| !line.iter().all(|&b| matches!(b, b' ' | b'\t' | b'\r')))
+                    .unwrap_or_default();
+                Ok(first.to_vec())
+            }
+            Self::Reencode(label) => {
+                let sum = blame_summary_unicode(commit);
+                commit_encoding::reencode_utf8_to_label(label, &sum)
+                    .ok_or_else(|| anyhow::anyhow!("unsupported blame output encoding: {label}"))
+            }
+        }
+    }
 }
 
 /// Resolve a file path through nested trees to get the blob OID + mode.
@@ -2148,7 +2362,11 @@ pub fn run(mut args: Args) -> Result<()> {
         blame_lines.retain(|b| keep.contains(&b.final_lineno));
     }
 
-    if args.progress && !args.reverse && !blame_lines.is_empty() {
+    if args.progress
+        && !args.reverse
+        && !blame_lines.is_empty()
+        && !(args.porcelain || args.line_porcelain || args.incremental)
+    {
         let delay_ms: u64 = std::env::var("GIT_PROGRESS_DELAY")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -2174,6 +2392,8 @@ pub fn run(mut args: Args) -> Result<()> {
                     parents: vec![],
                     author: "Not Committed Yet <not.committed.yet> 0 +0000".to_string(),
                     committer: "Not Committed Yet <not.committed.yet> 0 +0000".to_string(),
+                    author_raw: Vec::new(),
+                    committer_raw: Vec::new(),
                     encoding: None,
                     message: String::new(),
                     raw_message: None,
@@ -2185,13 +2405,17 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    if args.porcelain || args.line_porcelain {
+    let meta_enc = BlameMetaEncoding::from_config_and_cli(&config, args.encoding.as_deref())?;
+
+    if args.porcelain || args.line_porcelain || args.incremental {
         write_porcelain(
             &mut out,
             &blame_lines,
             &commits,
             &file_path,
             args.line_porcelain,
+            args.incremental,
+            &meta_enc,
             mark_unblamable,
             mark_ignored,
         )?;
@@ -2989,6 +3213,8 @@ fn write_porcelain(
     commits: &HashMap<ObjectId, CommitData>,
     filename: &str,
     line_porcelain: bool,
+    incremental: bool,
+    meta_enc: &BlameMetaEncoding,
     mark_unblamable: bool,
     mark_ignored: bool,
 ) -> Result<()> {
@@ -3007,7 +3233,13 @@ fn write_porcelain(
         group_counts[start] = Some(i - start);
     }
 
-    for (idx, bl) in lines.iter().enumerate() {
+    let mut order: Vec<usize> = (0..lines.len()).collect();
+    if incremental {
+        order.sort_by_key(|&idx| std::cmp::Reverse(lines[idx].final_lineno));
+    }
+
+    for &idx in &order {
+        let bl = &lines[idx];
         let hex = bl.oid.to_hex();
         let source_name = bl.source_file.as_deref().unwrap_or(filename).to_string();
         let first = seen.insert((bl.oid, source_name.clone()));
@@ -3024,21 +3256,25 @@ fn write_porcelain(
             let author = parse_author_field(&commit.author);
             let committer = parse_author_field(&commit.committer);
 
-            writeln!(out, "author {}", author.name)?;
-            writeln!(out, "author-mail <{}>", author.email)?;
+            out.write_all(b"author ")?;
+            out.write_all(&meta_enc.author_name_bytes(commit)?)?;
+            out.write_all(b"\n")?;
+            out.write_all(b"author-mail ")?;
+            out.write_all(&meta_enc.author_mail_bytes(commit)?)?;
+            out.write_all(b"\n")?;
             writeln!(out, "author-time {}", author.timestamp)?;
             writeln!(out, "author-tz {}", author.tz)?;
-            writeln!(out, "committer {}", committer.name)?;
-            writeln!(out, "committer-mail <{}>", committer.email)?;
+            out.write_all(b"committer ")?;
+            out.write_all(&meta_enc.committer_name_bytes(commit)?)?;
+            out.write_all(b"\n")?;
+            out.write_all(b"committer-mail ")?;
+            out.write_all(&meta_enc.committer_mail_bytes(commit)?)?;
+            out.write_all(b"\n")?;
             writeln!(out, "committer-time {}", committer.timestamp)?;
             writeln!(out, "committer-tz {}", committer.tz)?;
-            // Summary: first non-blank line of the commit message
-            let summary = commit
-                .message
-                .lines()
-                .find(|l| !l.trim().is_empty())
-                .unwrap_or("");
-            writeln!(out, "summary {summary}")?;
+            out.write_all(b"summary ")?;
+            out.write_all(&meta_enc.summary_bytes(commit)?)?;
+            out.write_all(b"\n")?;
             // Previous commit (parent) if not a root commit
             if !commit.parents.is_empty() {
                 let parent_hex = commit.parents[0].to_hex();

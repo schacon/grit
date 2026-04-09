@@ -26,3 +26,4 @@ tests/status_uall.expect
 tests/trace.output
 tests/repo.git/
 .env
+logs/agent_*

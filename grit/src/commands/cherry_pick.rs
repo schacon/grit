@@ -1331,6 +1331,8 @@ fn create_cherry_pick_commit(
         parents,
         author,
         committer,
+        author_raw: Vec::new(),
+        committer_raw: Vec::new(),
         encoding: None,
         message: message.to_owned(),
         raw_message: None,

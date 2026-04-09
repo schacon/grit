@@ -1403,6 +1403,8 @@ fn create_am_commit(
         parents,
         author: author_ident,
         committer: committer_ident,
+        author_raw: Vec::new(),
+        committer_raw: Vec::new(),
         encoding: None,
         message,
         raw_message: None,
