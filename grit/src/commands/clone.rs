@@ -2031,6 +2031,11 @@ fn is_ssh_url(url: &str) -> bool {
 fn run_ssh_clone(args: Args) -> Result<()> {
     let spec = crate::ssh_transport::parse_ssh_url(&args.repository)?;
     let Some(src_git_dir) = crate::ssh_transport::try_local_git_dir(&spec) else {
+        crate::ssh_transport::unresolved_ssh_clone_invoke_git_ssh(
+            &spec.host,
+            args.upload_pack.as_deref(),
+            &spec.path,
+        )?;
         bail!(
             "ssh: could not resolve '{}' to a local repository",
             args.repository
