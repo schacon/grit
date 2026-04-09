@@ -291,6 +291,8 @@ fn do_merge_or_rebase(
             abort: false,
             skip: false,
             quit: false,
+            edit_todo: false,
+            show_current_patch: false,
             exec: None,
             merge: false,
             apply: false,
