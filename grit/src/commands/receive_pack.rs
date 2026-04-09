@@ -6,19 +6,22 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::config::{parse_bool, ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::connectivity::{diagnose_push_connectivity_failure, push_tip_connected_to_refs};
 use grit_lib::hooks::{run_hook_in_git_dir, HookResult};
+use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::ObjectId;
 use grit_lib::pack::read_alternates_recursive;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
+use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::unpack_objects::{pack_bytes_to_object_map, unpack_objects, UnpackOptions};
 use std::collections::HashSet;
 use std::io::{self, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::grit_exe;
 use crate::pkt_line::{read_packet, write_flush, write_packet_raw, Packet};
 
 /// Arguments for `grit receive-pack`.
@@ -495,6 +498,26 @@ fn run_hooks_and_update_refs(
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
+    let remote_config = ConfigSet::load(Some(&repo.git_dir), false)?;
+    let deny_deletes = config_bool_any(
+        &remote_config,
+        &["receive.denyDeletes", "receive.denydeletes"],
+        false,
+    );
+    let deny_nff = config_bool_any(
+        &remote_config,
+        &["receive.denyNonFastForwards", "receive.denynonfastforwards"],
+        false,
+    );
+    let head_ref_for_delete = if repo.is_bare() {
+        None
+    } else {
+        match resolve_head(&repo.git_dir) {
+            Ok(HeadState::Branch { refname, .. }) => Some(refname),
+            _ => None,
+        }
+    };
+
     let (pre_receive_result, pre_receive_output) = run_hook_in_git_dir(
         repo,
         "pre-receive",
@@ -555,7 +578,18 @@ fn run_hooks_and_update_refs(
         bail!("reference-transaction hook declined the update");
     }
 
-    for (_old_hex, new_hex, refname) in updates {
+    for (old_hex, new_hex, refname) in updates {
+        check_receive_update_policy(
+            repo,
+            &remote_config,
+            refname,
+            old_hex,
+            new_hex,
+            deny_deletes,
+            deny_nff,
+            head_ref_for_delete.as_deref(),
+        )?;
+
         let old_for_update = refs::resolve_ref(&repo.git_dir, refname)
             .map(|oid| oid.to_hex())
             .unwrap_or_else(|_| zero_oid.to_owned());
@@ -619,5 +653,134 @@ fn run_hooks_and_update_refs(
         // post-receive is informational only.
     }
 
+    let auto_gc = config_bool_any(&remote_config, &["receive.autoGc", "receive.autogc"], true);
+    if auto_gc && !updates.is_empty() {
+        run_auto_maintenance_quiet(&repo.git_dir);
+    }
+
     Ok(())
+}
+
+fn config_bool_any(cfg: &ConfigSet, keys: &[&str], default: bool) -> bool {
+    for k in keys {
+        if let Some(v) = cfg.get_bool(k) {
+            return v.unwrap_or(default);
+        }
+    }
+    default
+}
+
+#[derive(Clone, Copy)]
+enum ReceiveDenyAction {
+    Unconfigured,
+    Ignore,
+    Warn,
+    Refuse,
+    UpdateInstead,
+}
+
+fn parse_receive_deny_action(value: Option<&str>) -> ReceiveDenyAction {
+    match value.map(str::trim) {
+        None => ReceiveDenyAction::Ignore,
+        Some(s) if s.eq_ignore_ascii_case("ignore") => ReceiveDenyAction::Ignore,
+        Some(s) if s.eq_ignore_ascii_case("warn") => ReceiveDenyAction::Warn,
+        Some(s) if s.eq_ignore_ascii_case("refuse") => ReceiveDenyAction::Refuse,
+        Some(s) if s.eq_ignore_ascii_case("updateinstead") => ReceiveDenyAction::UpdateInstead,
+        Some(s) => match parse_bool(s) {
+            Ok(true) => ReceiveDenyAction::Refuse,
+            Ok(false) => ReceiveDenyAction::Ignore,
+            Err(_) => ReceiveDenyAction::Ignore,
+        },
+    }
+}
+
+fn read_receive_deny_delete_current(cfg: &ConfigSet) -> ReceiveDenyAction {
+    let v = cfg
+        .get("receive.denyDeleteCurrent")
+        .or_else(|| cfg.get("receive.denydeletecurrent"));
+    match v.as_deref().map(str::trim) {
+        None => ReceiveDenyAction::Unconfigured,
+        Some(s) => parse_receive_deny_action(Some(s)),
+    }
+}
+
+fn check_receive_update_policy(
+    repo: &Repository,
+    cfg: &ConfigSet,
+    refname: &str,
+    old_hex: &str,
+    new_hex: &str,
+    deny_deletes: bool,
+    deny_nff: bool,
+    head_branch: Option<&str>,
+) -> Result<()> {
+    let zero_oid = "0".repeat(40);
+    let is_delete = new_hex == zero_oid;
+    let had_old = old_hex != zero_oid;
+
+    if is_delete && had_old && deny_deletes && refname.starts_with("refs/heads/") {
+        eprintln!("error: denying ref deletion for {refname}");
+        bail!("deletion prohibited");
+    }
+
+    if is_delete && had_old {
+        if let Some(head) = head_branch {
+            if refname == head {
+                let deny = read_receive_deny_delete_current(cfg);
+                match deny {
+                    ReceiveDenyAction::Ignore => {}
+                    ReceiveDenyAction::Warn => {
+                        eprintln!("warning: deleting the current branch");
+                    }
+                    ReceiveDenyAction::Refuse | ReceiveDenyAction::UpdateInstead => {
+                        eprintln!("error: refusing to delete the current branch: {refname}");
+                        bail!("deletion of the current branch prohibited");
+                    }
+                    ReceiveDenyAction::Unconfigured => {
+                        eprintln!(
+                            "error: By default, deleting the current branch is denied, because the next\n\
+                             'git clone' won't result in any file checked out, causing confusion.\n\
+                             \n\
+                             You can set 'receive.denyDeleteCurrent' configuration variable to\n\
+                             'warn' or 'ignore' in the remote repository to allow deleting the\n\
+                             current branch, with or without a warning message.\n\
+                             \n\
+                             To squelch this message, you can set it to 'refuse'."
+                        );
+                        eprintln!("error: refusing to delete the current branch: {refname}");
+                        bail!("deletion of the current branch prohibited");
+                    }
+                }
+            }
+        }
+    }
+
+    if deny_nff && !is_delete && had_old && refname.starts_with("refs/heads/") {
+        let old_oid =
+            ObjectId::from_hex(old_hex).with_context(|| format!("invalid old oid on {refname}"))?;
+        let new_oid =
+            ObjectId::from_hex(new_hex).with_context(|| format!("invalid new oid on {refname}"))?;
+        if old_oid != new_oid && !is_ancestor(repo, old_oid, new_oid)? {
+            eprintln!("error: denying non-fast-forward {refname} (you should pull first)");
+            bail!("non-fast-forward");
+        }
+    }
+
+    Ok(())
+}
+
+fn run_auto_maintenance_quiet(git_dir: &Path) {
+    let maintenance_auto = ConfigSet::load(Some(git_dir), false)
+        .ok()
+        .map(|c| config_bool_any(&c, &["maintenance.auto"], true))
+        .unwrap_or(true);
+    if !maintenance_auto {
+        return;
+    }
+    let _ = Command::new(grit_exe::grit_executable())
+        .args(["maintenance", "run", "--auto"])
+        .env("GIT_DIR", git_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }

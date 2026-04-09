@@ -116,6 +116,10 @@ pub struct Args {
     /// Show detailed progress.
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
+
+    /// Receive-pack program on the remote (shell command; uses wire protocol instead of file copy).
+    #[arg(long = "receive-pack", value_name = "RECEIVE_PACK")]
+    pub receive_pack: Option<String>,
 }
 
 /// A single ref update to perform on the remote.
@@ -293,6 +297,32 @@ fn push_to_url(
             remote_path.display()
         )
     })?;
+
+    if let Some(rp) = args.receive_pack.as_ref().filter(|s| !s.is_empty()) {
+        let send_refs = if push_all {
+            Vec::new()
+        } else if !args.refspecs.is_empty() {
+            args.refspecs.clone()
+        } else if args.mirror || args.delete || args.tags {
+            bail!(
+                "--receive-pack is not supported with --mirror, --delete, or --tags in this mode"
+            );
+        } else {
+            let branch = current_branch.context("not on a branch; specify a refspec to push")?;
+            vec![branch.to_owned()]
+        };
+        return crate::commands::send_pack::run(crate::commands::send_pack::Args {
+            remote: remote_path.display().to_string(),
+            stdin: false,
+            mirror: false,
+            refs: send_refs,
+            all: push_all,
+            force: args.force,
+            dry_run: args.dry_run,
+            receive_pack: Some(rp.clone()),
+            exec: None,
+        });
+    }
 
     if crate::ssh_transport::is_configured_ssh_url(url) {
         if let Ok(spec) = crate::ssh_transport::parse_ssh_url(url) {
@@ -1261,7 +1291,7 @@ fn read_receive_deny_delete_current(cfg: &ConfigSet) -> ReceiveDenyAction {
         .or_else(|| cfg.get("receive.denydeletecurrent"));
     match v {
         None => ReceiveDenyAction::Unconfigured,
-        Some(s) => parse_receive_deny_action(Some(&s)),
+        Some(s) => parse_receive_deny_action(Some(s.trim())),
     }
 }
 
