@@ -606,13 +606,17 @@ pub fn run(mut args: Args) -> Result<()> {
             parents = commit.parents;
         }
     } else {
-        if let Some(head_oid) = head.oid() {
-            parents.push(*head_oid);
-        }
-
-        // Check for MERGE_HEAD
         let merge_heads = grit_lib::state::read_merge_heads(&repo.git_dir)?;
-        parents.extend(merge_heads);
+        if merge_heads.len() > 1 {
+            // Octopus / multi-head merge in conflict: Git records parents as `MERGE_HEAD` lines
+            // only (sequential internal merges are not parents of the resolution commit; t7603).
+            parents.extend(merge_heads);
+        } else {
+            if let Some(head_oid) = head.oid() {
+                parents.push(*head_oid);
+            }
+            parents.extend(merge_heads);
+        }
     }
 
     let head_tree = match head.oid() {

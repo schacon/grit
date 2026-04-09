@@ -459,6 +459,31 @@ fn compose_octopus_final_index(pre_merge_index: &Index, final_index: &mut Index)
     final_index.sort();
 }
 
+/// Drop merge heads that are ancestors of another listed head (Git's "reduce parents").
+///
+/// Order of the remaining heads matches the first occurrence in the input (t7603).
+fn reduce_octopus_merge_heads(
+    repo: &Repository,
+    merge_oids: &[ObjectId],
+    merge_names: &[String],
+) -> Result<(Vec<ObjectId>, Vec<String>)> {
+    debug_assert_eq!(merge_oids.len(), merge_names.len());
+    let mut out_oids = Vec::with_capacity(merge_oids.len());
+    let mut out_names = Vec::with_capacity(merge_names.len());
+    for i in 0..merge_oids.len() {
+        let oid = merge_oids[i];
+        let redundant = merge_oids
+            .iter()
+            .enumerate()
+            .any(|(j, &other)| j != i && is_ancestor(repo, oid, other).unwrap_or(false));
+        if !redundant {
+            out_oids.push(oid);
+            out_names.push(merge_names[i].clone());
+        }
+    }
+    Ok((out_oids, out_names))
+}
+
 /// Restore index and working tree to match `head_oid` after a failed merge attempt
 /// (used when trying multiple `-s` strategies so a failed strategy leaves no residue).
 /// Write `index_snapshot` to disk and refresh the work tree (clears merge state files).
@@ -1248,6 +1273,28 @@ fn create_empty_base_commit(repo: &Repository) -> Result<ObjectId> {
         committer_raw: Vec::new(),
         encoding: None,
         message: "virtual base".to_string(),
+        raw_message: None,
+    };
+    let commit_bytes = serialize_commit(&commit_data);
+    Ok(repo.odb.write(ObjectKind::Commit, &commit_bytes)?)
+}
+
+/// Ephemeral commit recording one step of Git's sequential octopus merge (fast-forward between
+/// heads). The merge base for the next head uses this OID, not the original `HEAD` (t7603).
+fn write_octopus_step_commit(
+    repo: &Repository,
+    tree_oid: ObjectId,
+    parents: &[ObjectId],
+) -> Result<ObjectId> {
+    let commit_data = CommitData {
+        tree: tree_oid,
+        parents: parents.to_vec(),
+        author: "virtual <virtual> 0 +0000".to_string(),
+        committer: "virtual <virtual> 0 +0000".to_string(),
+        author_raw: Vec::new(),
+        committer_raw: Vec::new(),
+        encoding: None,
+        message: "internal octopus merge step".to_string(),
         raw_message: None,
     };
     let commit_bytes = serialize_commit(&commit_data);
@@ -2307,6 +2354,8 @@ fn do_octopus_merge(
         merge_names.push(name.clone());
     }
 
+    let (merge_oids, merge_names) = reduce_octopus_merge_heads(repo, &merge_oids, &merge_names)?;
+
     if merge_oids.is_empty() {
         if !args.quiet {
             eprintln!("Already up to date.");
@@ -2388,13 +2437,22 @@ fn do_octopus_merge(
     let head_tree = commit_tree(repo, head_oid)?;
     let head_entries = tree_to_map(tree_to_index_entries(repo, &head_tree, "")?);
 
+    fs::write(
+        repo.git_dir.join("ORIG_HEAD"),
+        format!("{}\n", head_oid.to_hex()),
+    )?;
+
     // Simulate the full octopus result to detect conflicts and unrelated index changes
     // before mutating the repo (matches git merge behavior).
     {
         let mut sim_entries = tree_to_index_entries(repo, &head_tree, "")?;
+        let mut sim_current_oid = head_oid;
         for (i, merge_oid) in merge_oids.iter().enumerate() {
-            let bases =
-                grit_lib::merge_base::merge_bases_first_vs_rest(repo, head_oid, &[*merge_oid])?;
+            let bases = grit_lib::merge_base::merge_bases_first_vs_rest(
+                repo,
+                sim_current_oid,
+                &[*merge_oid],
+            )?;
             if bases.is_empty() && !args.allow_unrelated_histories {
                 bail!("refusing to merge unrelated histories");
             }
@@ -2424,7 +2482,7 @@ fn do_octopus_merge(
                 head,
                 &merge_names[i],
                 &base_label_prefix,
-                &head_oid.to_hex(),
+                &sim_current_oid.to_hex(),
                 &merge_oid.to_hex(),
                 favor,
                 diff_algorithm,
@@ -2440,28 +2498,30 @@ fn do_octopus_merge(
             )?;
 
             if merge_result.has_conflicts {
-                let mut orig_index = Index::new();
-                orig_index.entries = pre_merge_index.entries.clone();
-                orig_index.sort();
-                repo.write_index(&mut orig_index)?;
-                if let Some(ref wt) = repo.work_tree {
-                    checkout_entries(repo, wt, &orig_index, None, false)?;
-                }
-                let _ = fs::remove_file(repo.git_dir.join("MERGE_HEAD"));
-                let _ = fs::remove_file(repo.git_dir.join("MERGE_MSG"));
-                let _ = fs::remove_file(repo.git_dir.join("MERGE_MODE"));
-                if !args.quiet {
-                    eprintln!("Merge with strategy octopus failed.");
-                    println!("Should not be doing an octopus.");
-                    eprintln!("fatal: merge program failed");
-                }
-                if exit_on_conflict {
-                    return Err(anyhow::Error::new(SilentNonZeroExit { code: 2 }));
-                }
-                bail!("fatal: merge program failed");
+                return finish_octopus_merge_on_conflict(
+                    repo,
+                    head,
+                    head_oid,
+                    &merge_oids,
+                    &merge_names,
+                    args,
+                    &pre_merge_index,
+                    &merge_result,
+                    exit_on_conflict,
+                );
             }
 
             sim_entries = merge_result.index.entries;
+            let step_parents = if i == 0 {
+                vec![head_oid, *merge_oid]
+            } else {
+                vec![sim_current_oid, *merge_oid]
+            };
+            let mut step_idx = Index::new();
+            step_idx.entries = sim_entries.clone();
+            step_idx.sort();
+            let step_tree = write_tree_from_index(&repo.odb, &step_idx, "")?;
+            sim_current_oid = write_octopus_step_commit(repo, step_tree, &step_parents)?;
         }
 
         let mut sim_index = Index::new();
@@ -2472,20 +2532,19 @@ fn do_octopus_merge(
         }
     }
 
-    // Save ORIG_HEAD
-    fs::write(
-        repo.git_dir.join("ORIG_HEAD"),
-        format!("{}\n", head_oid.to_hex()),
-    )?;
-
     // Start with HEAD's tree as "ours" and merge each branch sequentially
     let mut current_tree_entries = {
         let ours_tree = commit_tree(repo, head_oid)?;
         tree_to_index_entries(repo, &ours_tree, "")?
     };
+    let mut merge_current_oid = head_oid;
 
     for (i, merge_oid) in merge_oids.iter().enumerate() {
-        let bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, head_oid, &[*merge_oid])?;
+        let bases = grit_lib::merge_base::merge_bases_first_vs_rest(
+            repo,
+            merge_current_oid,
+            &[*merge_oid],
+        )?;
         if bases.is_empty() && !args.allow_unrelated_histories {
             bail!("refusing to merge unrelated histories");
         }
@@ -2515,7 +2574,7 @@ fn do_octopus_merge(
             head,
             &merge_names[i],
             &base_label_prefix,
-            &head_oid.to_hex(),
+            &merge_current_oid.to_hex(),
             &merge_oid.to_hex(),
             favor,
             diff_algorithm,
@@ -2531,29 +2590,31 @@ fn do_octopus_merge(
         )?;
 
         if merge_result.has_conflicts {
-            let mut orig_index = Index::new();
-            orig_index.entries = pre_merge_index.entries.clone();
-            orig_index.sort();
-            repo.write_index(&mut orig_index)?;
-            if let Some(ref wt) = repo.work_tree {
-                checkout_entries(repo, wt, &orig_index, None, false)?;
-            }
-            let _ = fs::remove_file(repo.git_dir.join("MERGE_HEAD"));
-            let _ = fs::remove_file(repo.git_dir.join("MERGE_MSG"));
-            let _ = fs::remove_file(repo.git_dir.join("MERGE_MODE"));
-            if !args.quiet {
-                eprintln!("Merge with strategy octopus failed.");
-                println!("Should not be doing an octopus.");
-                eprintln!("fatal: merge program failed");
-            }
-            if exit_on_conflict {
-                return Err(anyhow::Error::new(SilentNonZeroExit { code: 2 }));
-            }
-            bail!("fatal: merge program failed");
+            return finish_octopus_merge_on_conflict(
+                repo,
+                head,
+                head_oid,
+                &merge_oids,
+                &merge_names,
+                args,
+                &pre_merge_index,
+                &merge_result,
+                exit_on_conflict,
+            );
         }
 
         // Advance current_tree_entries to the merged result
         current_tree_entries = merge_result.index.entries;
+        let step_parents = if i == 0 {
+            vec![head_oid, *merge_oid]
+        } else {
+            vec![merge_current_oid, *merge_oid]
+        };
+        let mut step_idx = Index::new();
+        step_idx.entries = current_tree_entries.clone();
+        step_idx.sort();
+        let step_tree = write_tree_from_index(&repo.odb, &step_idx, "")?;
+        merge_current_oid = write_octopus_step_commit(repo, step_tree, &step_parents)?;
     }
 
     // All merges succeeded — build the octopus merge commit
@@ -3284,14 +3345,119 @@ fn merge_continue(message: Option<String>) -> Result<()> {
     Ok(())
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────
-
 struct MergeResult {
     index: Index,
     has_conflicts: bool,
     /// Files with conflict markers: (path, content).
     conflict_files: Vec<(String, Vec<u8>)>,
     conflict_descriptions: Vec<ConflictDescription>,
+}
+
+/// Multi-head merge hit conflicts: stage unmerged entries, write `MERGE_HEAD` with every merge
+/// parent (Git order), and refresh the worktree. `HEAD` stays at the pre-merge tip (Git keeps
+/// `ORIG_HEAD` there; the concluding `git commit` parents are `MERGE_HEAD` only — see `commit.rs`).
+/// Strategy trials restore the pre-merge index instead (`t7603-merge-reduce-heads`).
+fn finish_octopus_merge_on_conflict(
+    repo: &Repository,
+    head: &HeadState,
+    head_oid: ObjectId,
+    merge_oids: &[ObjectId],
+    merge_names: &[String],
+    args: &Args,
+    pre_merge_index: &Index,
+    merge_result: &MergeResult,
+    exit_on_merge_conflict: bool,
+) -> Result<()> {
+    if !exit_on_merge_conflict {
+        restore_index_and_worktree(repo, pre_merge_index)?;
+        let n = unmerged_path_count(&merge_result.index);
+        return Err(anyhow::Error::new(StrategyTrialConflict(n)));
+    }
+
+    let mut idx_auto = merge_result.index.clone();
+    materialize_unmerged_entries_for_merge_tree_tree(
+        repo,
+        &mut idx_auto,
+        &merge_result.conflict_files,
+    )?;
+    let auto_merge_tree = write_tree_from_index(&repo.odb, &idx_auto, "")?;
+    let _ = fs::write(
+        repo.git_dir.join("AUTO_MERGE"),
+        format!("{}\n", auto_merge_tree.to_hex()),
+    );
+
+    if args.squash {
+        let mut msg = build_squash_msg(repo, head_oid, merge_oids)?;
+        msg.push_str("# Conflicts:\n");
+        for desc in &merge_result.conflict_descriptions {
+            msg.push_str(&format!("#\t{}\n", desc.subject_path));
+        }
+        fs::write(repo.git_dir.join("SQUASH_MSG"), &msg)?;
+    } else {
+        let merge_head_content: String = merge_oids
+            .iter()
+            .map(|oid| format!("{}\n", oid.to_hex()))
+            .collect();
+        fs::write(repo.git_dir.join("MERGE_HEAD"), &merge_head_content)?;
+        let msg = build_octopus_merge_message(head, merge_names, args.message.as_deref(), repo);
+        fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
+        fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
+    }
+
+    let head_tree = commit_tree(repo, head_oid)?;
+    let head_entries = tree_to_map(tree_to_index_entries(repo, &head_tree, "")?);
+    let sparse_on = sparse_checkout_enabled(&repo.git_dir);
+    if let Some(ref wt) = repo.work_tree {
+        remove_deleted_files(wt, &head_entries, &merge_result.index, sparse_on)?;
+        checkout_entries(
+            repo,
+            wt,
+            &merge_result.index,
+            Some(&head_entries),
+            sparse_on,
+        )?;
+        let attr_rules = grit_lib::crlf::load_gitattributes(wt);
+        let crlf_config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
+        for (path, content) in &merge_result.conflict_files {
+            let abs = wt.join(path);
+            if let Some(parent) = abs.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let output = if let Some(ref config) = crlf_config {
+                let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, path, false, config);
+                let conv = grit_lib::crlf::ConversionConfig::from_config(config);
+                grit_lib::crlf::convert_to_worktree(content, path, &conv, &file_attrs, None, None)
+                    .map_err(|e| anyhow::anyhow!("smudge filter failed for {path}: {e}"))?
+            } else {
+                content.clone()
+            };
+            fs::write(&abs, &output)?;
+        }
+    }
+
+    let mut conflict_index = merge_result.index.clone();
+    refresh_index_stat_cache_from_worktree(repo, &mut conflict_index)?;
+    repo.write_index(&mut conflict_index)?;
+
+    for desc in &merge_result.conflict_descriptions {
+        if desc.kind == "binary" {
+            println!("warning: Cannot merge binary files: {}", desc.subject_path);
+            println!("Cannot merge binary files: {}", desc.subject_path);
+        } else {
+            println!("CONFLICT ({}): {}", desc.kind, desc.body);
+        }
+    }
+    println!("Automatic merge failed; fix conflicts and then commit the result.");
+    let rr = if args.no_rerere_autoupdate {
+        grit_lib::rerere::RerereAutoupdate::No
+    } else if args.rerere_autoupdate {
+        grit_lib::rerere::RerereAutoupdate::Yes
+    } else {
+        grit_lib::rerere::RerereAutoupdate::FromConfig
+    };
+    let _ = grit_lib::rerere::repo_rerere(repo, rr);
+
+    Err(anyhow::Error::new(SilentNonZeroExit { code: 1 }))
 }
 
 /// One recorded merge conflict for stdout and for remerge-diff headers.
