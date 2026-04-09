@@ -150,7 +150,7 @@
 - [x] t13010-rm-ignore-unmatch.sh
 - [ ] t13020-mv-force-overwrite.sh
 - [ ] t13030-switch-quiet-verbose.sh
-- [ ] t13040-restore-quiet-progress.sh
+- [x] t13040-restore-quiet-progress.sh
 - [ ] t1305-config-include.sh
 - [ ] t1306-xdg-files.sh
 - [ ] t13060-cherry-pick-mainline.sh
