@@ -1282,7 +1282,7 @@ t7817-grep-sparse-checkout	t7	yes	8	5	3	false	ok	0
 t7818-grep-extended	t7	yes	11	8	3	false	ok	0
 t7900-maintenance	t7	yes	72	31	41	false	ok	0
 t7901-stash-resolve-merge	t7	yes	7	7	0	true	ok	0
-t8001-annotate	t8	yes	117	97	20	false	ok	0
+t8001-annotate	t8	yes	117	117	0	true	ok	0
 t8002-blame	t8	yes	135	54	81	false	ok	0
 t8003-blame-corner-cases	t8	yes	30	27	3	false	ok	0
 t8004-blame-with-conflicts	t8	yes	3	3	0	true	ok	0
