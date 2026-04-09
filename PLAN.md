@@ -533,7 +533,7 @@ commit → check it off → move on.
 - [ ] `t4124-apply-ws-rule` ███░░░░░░░░░░░░░░░░░ 13/85 (72 left) — core.whitespace rules and git apply
 - [ ] `t4202-log` █████████░░░░░░░░░░░ 69/149 (80 left) — git log
 - [ ] `t4013-diff-various` ██████░░░░░░░░░░░░░░ 78/230 (152 left) — Various diff formatting options
-- [ ] `t4216-log-bloom` █░░░░░░░░░░░░░░░░░░░ 12/167 (155 left) — git log for a path with Bloom filters
+- [x] `t4216-log-bloom` ████████████████████ 167/167 (0 left) — git log for a path with Bloom filters
 - [ ] `t4014-format-patch` ████░░░░░░░░░░░░░░░░ 47/215 (168 left) — various format-patch tests
 
 ## 6. Transport (142 files)
