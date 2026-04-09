@@ -232,7 +232,7 @@ t11450-config-include-path	t1	yes	28	28	0	true	ok	0
 t11460-init-separate-git-dir	t1	yes	34	34	0	true	ok	0
 t11470-branch-copy-move	t1	yes	31	31	0	true	ok	0
 t11480-tag-message-file	t1	yes	35	35	0	true	ok	0
-t11490-commit-fixup-squash	t1	yes	33	32	1	false	ok	0
+t11490-commit-fixup-squash	t1	yes	33	33	0	true	ok	0
 t11500-add-chmod-intent	t1	yes	31	31	0	true	ok	0
 t11510-rm-cached-worktree	t1	yes	30	30	0	true	ok	0
 t11520-mv-directory-structure	t1	yes	31	31	0	true	ok	0
