@@ -4580,6 +4580,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                     }
                     Ok(())
                 }
+                "progress" => grit_lib::test_tool_progress::run().map_err(|e| e.into()),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }
