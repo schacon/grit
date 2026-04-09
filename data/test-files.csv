@@ -1267,7 +1267,7 @@ t7615-diff-algo-with-mergy-operations	t7	yes	7	5	2	false	ok	0
 t7700-repack	t7	yes	47	11	36	false	ok	0
 t7701-repack-unpack-unreachable	t7	yes	9	0	9	false	ok	0
 t7702-repack-cyclic-alternate	t7	yes	2	2	0	true	ok	0
-t7703-repack-geometric	t7	yes	18	2	16	false	ok	0
+t7703-repack-geometric	t7	yes	18	4	14	false	ok	0
 t7704-repack-cruft	t7	skip	25	5	20	false	ok	0
 t7800-difftool	t7	yes	0	0	0	false	timeout	0
 t7810-grep	t7	yes	0	0	0	false	timeout	0

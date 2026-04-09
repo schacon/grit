@@ -412,3 +412,7 @@ test_done() {
 		;;
 	esac
 }
+
+# Replace the dash-incompatible `test_commit_bulk` stub in test-lib.sh with the
+# fast-import implementation that honors `--start=` and related options.
+. "$TEST_DIRECTORY/test-lib-commit-bulk.sh"

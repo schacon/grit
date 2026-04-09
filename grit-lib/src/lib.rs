@@ -54,6 +54,7 @@ pub mod name_rev;
 pub mod objects;
 pub mod odb;
 pub mod pack;
+pub mod pack_geometry;
 pub mod pack_name_hash;
 pub mod parse_options_test_tool;
 pub mod patch_ids;
