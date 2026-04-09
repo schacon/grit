@@ -180,9 +180,7 @@ fn parse_options(args: &[String]) -> Result<LastModifiedOptions> {
                     let val = raw
                         .parse::<isize>()
                         .with_context(|| format!("invalid --max-depth value: {raw}"))?;
-                    if val < 0 {
-                        bail!("invalid --max-depth value: {raw}");
-                    }
+                    // Match git: negative max-depth disables the depth limit (same as `-r`).
                     opts.max_depth = Some(val);
                     opts.recursive = true;
                 }
