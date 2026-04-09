@@ -12,6 +12,7 @@ tests/expect
 tests/trash/
 scripts/subscripts/__pycache__
 tests/grit
+tests/bin.p4/
 tests/bin.*/
 tests/*.patch
 tests/before

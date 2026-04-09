@@ -21,11 +21,15 @@ then
 	skip_all='skipping git p4 tests, NO_P4_TESTS defined'
 	test_done
 fi
-if ! test_have_prereq PYTHON
+# Upstream uses the PYTHON lazy prereq from git/t/test-lib.sh; our harness does
+# not set it. Require python3 explicitly for git-p4.py.
+if ! command -v python3 >/dev/null 2>&1
 then
-	skip_all='skipping git p4 tests; python not available'
+	skip_all='skipping git p4 tests; python3 not available'
 	test_done
 fi
+PYTHON_PATH=$(command -v python3)
+export PYTHON_PATH
 ( p4 -h && p4d -h ) >/dev/null 2>&1 || {
 	skip_all='skipping git p4 tests; no p4 or p4d'
 	test_done

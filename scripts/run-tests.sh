@@ -73,6 +73,33 @@ rm -f "$TESTS_DIR/grit"
 cp "$BIN" "$TESTS_DIR/grit"
 chmod +x "$TESTS_DIR/grit"
 
+# Perforce p4/p4d for git-p4 tests (t9833, t9834, …). Prefer system install;
+# otherwise download Helix CLI binaries into tests/bin.p4/ (gitignored).
+P4_BIN_DIR="$TESTS_DIR/bin.p4"
+P4_URL_BASE="https://cdist2.perforce.com/perforce/r23.2/bin.linux26x86_64"
+ensure_p4_tools() {
+    if command -v p4 >/dev/null 2>&1 && command -v p4d >/dev/null 2>&1
+    then
+        return 0
+    fi
+    mkdir -p "$P4_BIN_DIR"
+    if [[ ! -x "$P4_BIN_DIR/p4" || ! -x "$P4_BIN_DIR/p4d" ]]
+    then
+        if command -v wget >/dev/null 2>&1
+        then
+            wget -q -O "$P4_BIN_DIR/p4" "$P4_URL_BASE/p4" &&
+                chmod a+x "$P4_BIN_DIR/p4" || rm -f "$P4_BIN_DIR/p4"
+            wget -q -O "$P4_BIN_DIR/p4d" "$P4_URL_BASE/p4d" &&
+                chmod a+x "$P4_BIN_DIR/p4d" || rm -f "$P4_BIN_DIR/p4d"
+        fi
+    fi
+    if [[ -x "$P4_BIN_DIR/p4" && -x "$P4_BIN_DIR/p4d" ]]
+    then
+        export PATH="$P4_BIN_DIR:$PATH"
+    fi
+}
+ensure_p4_tools
+
 mkdir -p "$DATA_DIR"
 python3 "$CATALOG"
 

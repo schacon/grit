@@ -1,0 +1,13 @@
+#!/bin/sh
+# Runs upstream git-p4.py with Python 3. Grit dispatches unknown `git p4` to
+# `git-p4` on PATH (see grit `find_git_external_helper`). `GIT_SOURCE_DIR` is
+# set by scripts/run-tests.sh to the repo's `git/` tree.
+set -e
+repo_git="${GIT_SOURCE_DIR:-}"
+if test -z "$repo_git"
+then
+	here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+	repo_git=$(CDPATH= cd -- "$here/.." && pwd)/git
+fi
+_py="${PYTHON_PATH:-python3}"
+exec "$_py" "$repo_git/git-p4.py" "$@"
