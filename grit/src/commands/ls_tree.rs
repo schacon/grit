@@ -85,7 +85,8 @@ pub struct Args {
     #[arg(long = "full-tree")]
     pub full_tree: bool,
 
-    /// The tree-ish to list.
+    /// The tree-ish to list (defaults to `HEAD` when omitted).
+    #[arg(default_value = "HEAD")]
     pub tree_ish: String,
 
     /// Paths to restrict listing.

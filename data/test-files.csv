@@ -1504,7 +1504,7 @@ t9310-tag-sort-version	t9	yes	27	27	0	true	ok	0
 t9320-commit-allow-empty	t9	yes	24	24	0	true	ok	0
 t9330-add-update-all	t9	yes	26	24	2	false	ok	0
 t9350-fast-export	t9	skip	73	0	0	false	ok	1
-t9351-fast-export-anonymize	t9	yes	17	9	8	false	ok	0
+t9351-fast-export-anonymize	t9	yes	17	17	0	true	ok	0
 t9400-for-each-ref-contains	t9	yes	25	25	0	true	ok	0
 t9400-git-cvsserver-server	t9	skip	45	0	0	false	ok	1
 t9401-git-cvsserver-crlf	t9	skip	18	0	0	false	ok	0

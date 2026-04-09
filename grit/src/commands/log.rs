@@ -11,12 +11,13 @@ use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions
 use grit_lib::line_log::{
     format_line_log_diff, line_log_filter_commits, parse_line_log_ranges, rewritten_first_parent,
 };
-use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
-    collect_revision_specs_with_stdin, rev_list, OrderingMode, RevListOptions,
+    collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, rev_list,
+    split_symmetric_diff, OrderingMode, RevListOptions,
 };
 use grit_lib::rev_parse::{resolve_revision_as_commit, try_parse_double_dot_log_range};
 use grit_lib::state::{resolve_head, HeadState};
@@ -100,6 +101,18 @@ pub struct Args {
     /// Show boundary commits.
     #[arg(long = "boundary")]
     pub boundary: bool,
+
+    /// Show left/right markers for symmetric range (`A...B`).
+    #[arg(long = "left-right")]
+    pub left_right: bool,
+
+    /// Show only commits reachable from the left side of `A...B`.
+    #[arg(long = "left-only")]
+    pub left_only: bool,
+
+    /// Show only commits reachable from the right side of `A...B`.
+    #[arg(long = "right-only")]
+    pub right_only: bool,
 
     /// Skip this many commits.
     #[arg(long = "skip")]
@@ -757,6 +770,7 @@ fn run_line_log(repo: &Repository, args: Args) -> Result<()> {
             &repo.odb,
             parent_override.as_deref(),
             true,
+            None,
         )?;
         if show_patch {
             if let Some(ds) = displays.get(oid) {
@@ -1498,6 +1512,7 @@ fn render_graph_commit_text(
                 false,
                 None,
                 parent_line,
+                None,
             );
         }
         if fmt.contains('%') {
@@ -1511,6 +1526,7 @@ fn render_graph_commit_text(
                 false,
                 None,
                 parent_line,
+                None,
             );
         }
     }
@@ -2099,6 +2115,13 @@ pub fn run(mut args: Args) -> Result<()> {
     if !args.line_range.is_empty() {
         return run_line_log(&repo, args);
     }
+    if args
+        .revisions
+        .iter()
+        .any(|r| r != "--" && is_symmetric_diff(r))
+    {
+        return run_symmetric_log(&repo, &args);
+    }
     validate_pathspec_scope(&repo, &args.pathspecs)?;
     let mut implied_pathspecs: Vec<String> = Vec::new();
 
@@ -2358,6 +2381,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 &repo.odb,
                 None,
                 false,
+                None,
             )?;
 
             if show_diff {
@@ -2520,6 +2544,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 &repo.odb,
                 None,
                 false,
+                None,
             )?;
 
             if show_diff {
@@ -2776,6 +2801,7 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
             &repo.odb,
             None,
             false,
+            None,
         )?;
         if show_diff {
             write_commit_diff(&mut out, repo, commit_data, args, &args.pathspecs, None)?;
@@ -3301,6 +3327,26 @@ impl<'a> WalkCommitsIter<'a> {
             }
 
             let obj = self.odb.read(&oid)?;
+            if obj.kind == ObjectKind::Tag {
+                let tag = parse_tag(&obj.data)?;
+                let mut target = tag.object;
+                loop {
+                    let t_obj = self.odb.read(&target)?;
+                    match t_obj.kind {
+                        ObjectKind::Commit => {
+                            let ts = read_commit_timestamp(self.odb, &target);
+                            self.queue.push((ts, target));
+                            break;
+                        }
+                        ObjectKind::Tag => {
+                            let inner = parse_tag(&t_obj.data)?;
+                            target = inner.object;
+                        }
+                        _ => break,
+                    }
+                }
+                continue;
+            }
             let commit = parse_commit(&obj.data)?;
 
             let info = CommitInfo {
@@ -3721,6 +3767,93 @@ fn commit_passes_post_walk_filters(
     Ok(true)
 }
 
+fn run_symmetric_log(repo: &Repository, args: &Args) -> Result<()> {
+    let mut lhs: Option<String> = None;
+    let mut rhs: Option<String> = None;
+    for rev in &args.revisions {
+        if rev == "--" {
+            break;
+        }
+        if rev.starts_with('-') && !rev.starts_with('^') {
+            continue;
+        }
+        if is_symmetric_diff(rev) {
+            if let Some((l, r)) = split_symmetric_diff(rev) {
+                lhs = Some(l);
+                rhs = Some(r);
+            }
+        }
+    }
+    let (lhs, rhs) = match (lhs, rhs) {
+        (Some(l), Some(r)) => (l, r),
+        _ => anyhow::bail!("symmetric revision required"),
+    };
+
+    let lhs_oid = grit_lib::rev_parse::resolve_revision(repo, &lhs)
+        .with_context(|| format!("bad revision '{lhs}'"))?;
+    let rhs_oid = grit_lib::rev_parse::resolve_revision(repo, &rhs)
+        .with_context(|| format!("bad revision '{rhs}'"))?;
+    let bases = merge_bases(repo, lhs_oid, rhs_oid, args.first_parent)
+        .context("failed to compute merge bases for symmetric range")?;
+    let negative: Vec<String> = bases.iter().map(|b| b.to_hex()).collect();
+
+    let positive = vec![lhs, rhs];
+    let options = RevListOptions {
+        left_right: true,
+        left_only: args.left_only,
+        right_only: args.right_only,
+        symmetric_left: Some(lhs_oid),
+        symmetric_right: Some(rhs_oid),
+        boundary: args.boundary,
+        first_parent: args.first_parent,
+        ordering: OrderingMode::Topo,
+        reverse: false,
+        ..RevListOptions::default()
+    };
+    let result = rev_list(repo, &positive, &negative, &options).context("rev-list failed")?;
+
+    let boundary_set: HashSet<ObjectId> = result.boundary_commits.iter().copied().collect();
+    let mut ordered = result.commits.clone();
+    if args.boundary {
+        for b in &result.boundary_commits {
+            ordered.push(*b);
+        }
+    }
+
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    let mut notes_cache = NotesMapCache::new(repo);
+
+    for oid in ordered {
+        let is_boundary = boundary_set.contains(&oid);
+        let log_marker = if is_boundary {
+            Some('-')
+        } else {
+            match result.left_right_map.get(&oid) {
+                Some(true) => Some('<'),
+                Some(false) => Some('>'),
+                None => None,
+            }
+        };
+        let info = load_commit_info(repo, oid)?;
+        format_commit(
+            &mut out,
+            &oid,
+            &info,
+            args,
+            None,
+            false,
+            &mut notes_cache,
+            &repo.odb,
+            None,
+            false,
+            log_marker,
+        )?;
+    }
+
+    Ok(())
+}
+
 /// Format and print a single commit.
 ///
 /// When `parent_line_override` is set (e.g. `log --parents` after line-log rewrite), `%p` / `%P`
@@ -3736,6 +3869,7 @@ fn format_commit(
     odb: &Odb,
     parent_line_override: Option<&[ObjectId]>,
     line_log: bool,
+    log_marker: Option<char>,
 ) -> Result<()> {
     let hex = oid.to_hex();
     let abbrev_len = if args.no_abbrev {
@@ -3780,6 +3914,7 @@ fn format_commit(
                 use_color,
                 note_bytes,
                 display_parents,
+                log_marker,
             );
             if is_tformat {
                 if args.null_terminator {
@@ -3911,6 +4046,7 @@ fn format_commit(
                 use_color,
                 note_bytes,
                 display_parents,
+                log_marker,
             );
             writeln!(out, "{formatted}")?;
         }
@@ -3930,6 +4066,7 @@ fn apply_format_string(
     use_color: bool,
     notes_raw: Option<&[u8]>,
     display_parents: &[ObjectId],
+    log_marker: Option<char>,
 ) -> String {
     let hex = oid.to_hex();
 
@@ -4303,6 +4440,12 @@ fn apply_format_string(
                 Some('n') => {
                     chars.next();
                     result.push('\n');
+                }
+                Some('m') => {
+                    chars.next();
+                    if let Some(c) = log_marker {
+                        result.push(c);
+                    }
                 }
                 Some('N') => {
                     chars.next();
