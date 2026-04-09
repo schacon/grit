@@ -1381,7 +1381,7 @@ t8880-mv-subdirectory	t8	yes	24	24	0	true	ok	0
 t8920-rev-parse-flags	t8	yes	31	31	0	true	ok	0
 t8930-rev-list-first-parent	t8	yes	32	32	0	true	ok	0
 t8940-for-each-ref-points-at	t8	yes	29	29	0	true	ok	0
-t8950-show-ref-patterns	t8	yes	29	27	2	false	ok	0
+t8950-show-ref-patterns	t8	yes	29	29	0	true	ok	0
 t8960-update-ref-stdin-nul	t8	yes	31	31	0	true	ok	0
 t8970-symbolic-ref-chains	t8	yes	30	30	0	true	ok	0
 t8980-config-get-regexp	t8	yes	27	27	0	true	ok	0
