@@ -1585,7 +1585,7 @@ t9829-git-p4-jobs	t9	skip	8	0	0	false	ok	0
 t9830-diff-stat-binary	t9	yes	38	38	0	true	ok	0
 t9830-git-p4-symlink-dir	t9	skip	2	0	0	false	ok	0
 t9831-git-p4-triggers	t9	skip	5	0	0	false	ok	0
-t9832-unshelve	t9	yes	0	0	0	false	ok	0
+t9832-unshelve	t9	yes	8	8	0	true	ok	0
 t9833-errors	t9	yes	0	0	0	false	ok	0
 t9834-git-p4-file-dir-bug	t9	skip	5	0	0	false	ok	0
 t9835-git-p4-metadata-encoding-python2	t9	skip	12	0	0	false	ok	0

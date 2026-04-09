@@ -145,16 +145,16 @@ setup_trash () {
 	mkdir -p "$TRASH_DIRECTORY"
 	# BIN_DIRECTORY is outside the working tree so git clean -x cannot remove it
 	mkdir -p "$BIN_DIRECTORY"
-	# Write a 'git' wrapper script that calls grit
+	# Write a 'git' wrapper script that calls grit (GUST_BIN)
 	cat >"$BIN_DIRECTORY/git" <<EOF
 #!/bin/sh
-exec /usr/bin/git "\$@"
+exec "$GUST_BIN" "\$@"
 EOF
 	chmod +x "$BIN_DIRECTORY/git"
 	# Also write a 'grit' wrapper
 	cat >"$BIN_DIRECTORY/grit" <<EOF
 #!/bin/sh
-exec /usr/bin/git "\$@"
+exec "$GUST_BIN" "\$@"
 EOF
 	chmod +x "$BIN_DIRECTORY/grit"
 	# Write a 'test-tool' wrapper for shell tests invoking it directly
@@ -953,6 +953,9 @@ test_set_prereq () {
 # Grit implements the traditional loose-ref + packed-refs layout (not reftable).
 test_set_prereq REFFILES
 
+# git-p4 and other Python-assisted tests (matches git/t/test-lib.sh: NO_PYTHON).
+test -z "$NO_PYTHON" && command -v python3 >/dev/null 2>&1 && test_set_prereq PYTHON
+
 # Lazy prerequisites (git/t0000 nested-lazy): script runs in a temp dir under trash.
 lazily_testable_prereq=
 lazily_tested_prereq=
@@ -982,6 +985,9 @@ export TAR
 
 PERL_PATH=${PERL_PATH:-$(command -v perl 2>/dev/null || echo /usr/bin/perl)}
 export PERL_PATH
+
+PYTHON_PATH=${PYTHON_PATH:-$(command -v python3 2>/dev/null || echo python3)}
+export PYTHON_PATH
 
 # test_set_port VAR — assign a random port (or use existing value)
 test_set_port () {
