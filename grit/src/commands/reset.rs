@@ -21,9 +21,13 @@ use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::refs::{append_reflog, resolve_ref, write_ref};
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision_as_commit};
+use grit_lib::rev_parse::{
+    abbreviate_object_id, resolve_revision, resolve_revision_as_commit,
+    revision_spec_contains_ancestry_navigation, split_treeish_colon,
+};
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::unicode_normalization::precompose_utf8_path;
+use similar::{Algorithm, TextDiff};
 
 /// The zero OID for reflog entries when there is no previous value.
 fn zero_oid() -> ObjectId {
@@ -216,7 +220,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let repo = Repository::discover(None).context("not a git repository")?;
 
-    // Handle -p (patch mode) by delegating to `git checkout-index`-like interactive unstaging
+    // Handle -p (patch mode): interactive partial unstaging / index application vs a treeish.
     if args.patch {
         return reset_patch(&repo, &args.rest);
     }
@@ -434,51 +438,219 @@ fn write_reset_reflog(
     }
 }
 
-/// Interactive patch-mode reset: present each staged hunk and ask whether
-/// to unstage it. This is the `git reset -p` flow.
-fn reset_patch(repo: &Repository, _rest: &[String]) -> Result<()> {
+/// Map `rev-parse` failures to the same stderr shape as `git reset -p`.
+fn map_reset_patch_rev_error(spec: &str, err: grit_lib::error::Error) -> anyhow::Error {
+    let s = err.to_string();
+    if s.contains("Could not parse object") {
+        anyhow::anyhow!("fatal: Could not parse object '{spec}'.")
+    } else if s.contains("ambiguous argument") {
+        err.into()
+    } else if s.contains("unknown revision") || s.contains("ObjectNotFound") {
+        anyhow::anyhow!(
+            "fatal: ambiguous argument '{spec}': unknown revision or path not in the working tree.\n\
+Use '--' to separate paths from revisions, like this:\n\
+'git <command> [<revision>...] -- [<file>...]'"
+        )
+    } else {
+        err.into()
+    }
+}
+
+/// Whether `token` looks like a short/full hex object id (for `reset -p` error propagation).
+fn looks_like_hex_object_id(token: &str) -> bool {
+    let t = token.trim();
+    (4..=40).contains(&t.len()) && t.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// First positional for `reset -p`: same DWIM as path-less `reset` (commit-ish vs pathspec), plus
+/// explicit treeish forms (`rev:path`, `...^{tree}`) that are not commit-ish.
+fn resolve_reset_patch_first_arg(repo: &Repository, first: &str) -> Result<Option<String>> {
+    let explicit_treeish = split_treeish_colon(first).is_some() || first.contains("^{");
+    if explicit_treeish {
+        return resolve_revision(repo, first)
+            .map(|_| Some(first.to_owned()))
+            .map_err(|e| map_reset_patch_rev_error(first, e));
+    }
+
+    if let Some(spec) = resolve_reset_first_arg_as_commit(repo, first) {
+        return Ok(Some(spec));
+    }
+    if revision_spec_contains_ancestry_navigation(first) {
+        return Ok(Some(first.to_owned()));
+    }
+    if looks_like_hex_object_id(first) {
+        return resolve_revision(repo, first)
+            .map(|_| Some(first.to_owned()))
+            .map_err(|e| map_reset_patch_rev_error(first, e));
+    }
+    Ok(None)
+}
+
+/// Split `rest` for `reset -p` into `(treeish_spec, pathspecs)` (Git-compatible).
+fn split_reset_patch_args(repo: &Repository, rest: &[String]) -> Result<(String, Vec<String>)> {
+    if rest.is_empty() {
+        return Ok(("HEAD".to_owned(), vec![]));
+    }
+
+    let mut i = 0usize;
+    while i < rest.len() {
+        let a = rest[i].as_str();
+        if matches!(
+            a,
+            "--soft"
+                | "--mixed"
+                | "--hard"
+                | "--merge"
+                | "--keep"
+                | "-q"
+                | "--quiet"
+                | "-N"
+                | "--intent-to-add"
+                | "--no-refresh"
+                | "--refresh"
+        ) {
+            i += 1;
+            continue;
+        }
+        break;
+    }
+    let rest = if i > 0 { &rest[i..] } else { rest };
+    if rest.is_empty() {
+        return Ok(("HEAD".to_owned(), vec![]));
+    }
+
+    if let Some(sep) = rest
+        .iter()
+        .position(|a| a == "--" || a == "--end-of-options")
+    {
+        let commit_spec = if sep == 0 {
+            "HEAD".to_owned()
+        } else {
+            rest[0].clone()
+        };
+        let paths = rest[sep + 1..].to_vec();
+        if sep == 0 {
+            return Ok((commit_spec, paths));
+        }
+        let treeish = resolve_reset_patch_first_arg(repo, &commit_spec)?;
+        let spec = treeish.unwrap_or(commit_spec);
+        return Ok((spec, paths));
+    }
+
+    let first = &rest[0];
+    let treeish = resolve_reset_patch_first_arg(repo, first)?;
+    if let Some(spec) = treeish {
+        let paths: Vec<String> = rest[1..]
+            .iter()
+            .filter(|a| {
+                !matches!(
+                    a.as_str(),
+                    "--soft"
+                        | "--mixed"
+                        | "--hard"
+                        | "--merge"
+                        | "--keep"
+                        | "-q"
+                        | "--quiet"
+                        | "-N"
+                        | "--intent-to-add"
+                        | "--no-refresh"
+                        | "--refresh"
+                )
+            })
+            .cloned()
+            .collect();
+        Ok((spec, paths))
+    } else {
+        Ok(("HEAD".to_owned(), rest.to_vec()))
+    }
+}
+
+/// Peel a resolved object to a tree OID (`commit` → its root tree).
+fn tree_oid_for_treeish(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
+    let obj = repo.odb.read(&oid)?;
+    match obj.kind {
+        ObjectKind::Tree => Ok(oid),
+        ObjectKind::Commit => Ok(parse_commit(&obj.data)?.tree),
+        _ => bail!("object {oid} is not a commit or tree"),
+    }
+}
+
+/// Resolve the tree OID for `git reset -p [<treeish>]`. Rejects `rev:path` blob forms.
+fn validate_reset_patch_treeish(repo: &Repository, treeish_spec: &str) -> Result<ObjectId> {
+    if let Some((lhs, rhs)) = split_treeish_colon(treeish_spec) {
+        if !lhs.is_empty() && !rhs.is_empty() {
+            let oid = resolve_revision(repo, treeish_spec)
+                .map_err(|e| map_reset_patch_rev_error(treeish_spec, e))?;
+            let obj = repo
+                .odb
+                .read(&oid)
+                .with_context(|| format!("reading object for '{treeish_spec}'"))?;
+            if obj.kind == ObjectKind::Blob {
+                bail!("fatal: Could not parse object '{treeish_spec}'.");
+            }
+        }
+    }
+    let oid = resolve_revision(repo, treeish_spec)
+        .map_err(|e| map_reset_patch_rev_error(treeish_spec, e))?;
+    tree_oid_for_treeish(repo, oid)
+}
+
+/// Interactive patch-mode reset (`git reset -p`): partial index updates toward `treeish`.
+fn reset_patch(repo: &Repository, rest: &[String]) -> Result<()> {
     use std::io::{self, BufRead, Write};
 
-    let head = resolve_head(&repo.git_dir)?;
-    let index_path = repo.index_path();
-    let mut index = repo.load_index_at(&index_path).context("loading index")?;
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
 
-    // Get HEAD tree entries (empty if unborn)
-    let tree_entries = if let Some(oid) = head.oid() {
-        let tree_oid = commit_to_tree(repo, oid)?;
-        tree_to_flat_entries(repo, &tree_oid, "")?
-    } else {
-        Vec::new()
-    };
-    let tree_map: HashMap<Vec<u8>, IndexEntry> = tree_entries
+    let (treeish_spec, path_args) = split_reset_patch_args(repo, rest)?;
+    let cwd = std::env::current_dir().context("resolving cwd")?;
+    let filter_paths: Vec<String> = path_args
+        .iter()
+        .map(|p| crate::commands::checkout::resolve_pathspec(p, work_tree, &cwd))
+        .collect();
+
+    let target_tree_oid = validate_reset_patch_treeish(repo, &treeish_spec)?;
+    let target_entries = tree_to_flat_entries(repo, &target_tree_oid, "")?;
+    let target_map: HashMap<Vec<u8>, IndexEntry> = target_entries
         .into_iter()
         .map(|e| (e.path.clone(), e))
         .collect();
 
-    // Find staged entries that differ from HEAD
+    let index_path = repo.index_path();
+    let mut index = repo.load_index_at(&index_path).context("loading index")?;
+
     let mut staged_paths: Vec<Vec<u8>> = Vec::new();
     for entry in &index.entries {
         if entry.stage() != 0 {
             continue;
         }
-        let in_tree = tree_map.get(&entry.path);
+        let path_str = String::from_utf8_lossy(&entry.path);
+        if !crate::commands::checkout::patch_path_filter_matches(&path_str, &filter_paths) {
+            continue;
+        }
+        let in_tree = target_map.get(&entry.path);
         let differs = match in_tree {
             Some(te) => te.oid != entry.oid || te.mode != entry.mode,
-            None => true, // new file
+            None => true,
         };
         if differs {
             staged_paths.push(entry.path.clone());
         }
     }
-    // Also find paths deleted from index (in tree but not in index)
-    for path in tree_map.keys() {
+    for path in target_map.keys() {
         if !index
             .entries
             .iter()
             .any(|e| e.path == *path && e.stage() == 0)
             && !staged_paths.contains(path)
         {
-            staged_paths.push(path.clone());
+            let path_str = String::from_utf8_lossy(path);
+            if crate::commands::checkout::patch_path_filter_matches(&path_str, &filter_paths) {
+                staged_paths.push(path.clone());
+            }
         }
     }
 
@@ -486,28 +658,204 @@ fn reset_patch(repo: &Repository, _rest: &[String]) -> Result<()> {
         return Ok(());
     }
 
+    staged_paths.sort();
+
     let stdin = io::stdin();
     let mut reader = stdin.lock();
+    let mut out = io::stdout();
 
-    for path in &staged_paths {
-        let path_str = String::from_utf8_lossy(path);
-        let action = if tree_map.contains_key(path) {
+    for path in staged_paths {
+        let path_str = String::from_utf8_lossy(&path).into_owned();
+
+        let index_blob = index.get(&path, 0).map(|e| e.oid);
+        let tree_entry = target_map.get(&path);
+        let tree_oid = tree_entry.map(|e| e.oid);
+        let tree_mode = tree_entry.map(|e| e.mode);
+
+        // Myers diff with **old = target tree**, **new = index** so the printed patch and
+        // `blend_line_diff_by_hunk_ranges` match Git (`reset -p` applies the tree side when a hunk
+        // is accepted).
+        let (index_bytes, tree_bytes) = match (index_blob, tree_oid) {
+            (Some(ib), Some(to)) => {
+                let iobj = repo.odb.read(&ib)?;
+                let tobj = repo.odb.read(&to)?;
+                if iobj.kind != ObjectKind::Blob || tobj.kind != ObjectKind::Blob {
+                    continue;
+                }
+                (iobj.data, tobj.data)
+            }
+            (Some(ib), None) => {
+                let iobj = repo.odb.read(&ib)?;
+                if iobj.kind != ObjectKind::Blob {
+                    continue;
+                }
+                (iobj.data, Vec::new())
+            }
+            (None, Some(to)) => {
+                let tobj = repo.odb.read(&to)?;
+                if tobj.kind != ObjectKind::Blob {
+                    continue;
+                }
+                (Vec::new(), tobj.data)
+            }
+            (None, None) => continue,
+        };
+
+        let tree_str = String::from_utf8_lossy(&tree_bytes);
+        let index_str = String::from_utf8_lossy(&index_bytes);
+        let text_diff = TextDiff::configure()
+            .algorithm(Algorithm::Myers)
+            .diff_lines(tree_str.as_ref(), index_str.as_ref());
+        let ops: Vec<_> = text_diff.ops().to_vec();
+        let has_change = ops
+            .iter()
+            .any(|o| !matches!(o, similar::DiffOp::Equal { .. }));
+        if !has_change {
+            continue;
+        }
+
+        let n_ops = ops.len();
+        let mut hunk_ranges: Vec<(usize, usize)> = vec![(0, n_ops)];
+        let mut accepted = vec![false; hunk_ranges.len()];
+        let mut hunk_cursor = 0usize;
+
+        let verb = if treeish_spec == "HEAD" || treeish_spec == "@" {
             "Unstage"
         } else {
-            "Unstage addition of"
+            "Apply"
         };
-        print!("{}  {}? ([y]es/[n]o) ", action, path_str);
-        io::stdout().flush()?;
-        let mut line = String::new();
-        reader.read_line(&mut line)?;
-        let answer = line.trim().to_lowercase();
-        if answer == "y" || answer == "yes" {
-            // Reset this path to tree version
-            index.remove(path);
-            if let Some(te) = tree_map.get(path) {
-                index.add_or_replace(te.clone());
+
+        'hunk_loop: loop {
+            let n_hunks = hunk_ranges.len();
+            if hunk_cursor >= n_hunks {
+                break;
+            }
+
+            let display_idx = hunk_cursor + 1;
+            let (s, e) = hunk_ranges[hunk_cursor];
+            let hunk_only = crate::commands::stash::partial_unified_for_op_range(
+                path_str.as_str(),
+                &tree_bytes,
+                &index_bytes,
+                &ops[s..e],
+                3,
+            );
+
+            writeln!(out, "diff --git a/{path_str} b/{path_str}").ok();
+            write!(out, "--- a/{path_str}\n+++ b/{path_str}\n").ok();
+            write!(out, "{hunk_only}").ok();
+            write!(
+                out,
+                "({display_idx}/{n_hunks}) {verb} this hunk to index [y,n,q,a,d,s,e,?]? "
+            )
+            .ok();
+            out.flush().ok();
+
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                break;
+            }
+            let answer = line.trim();
+            match answer {
+                "y" | "Y" => {
+                    accepted[hunk_cursor] = true;
+                    hunk_cursor += 1;
+                }
+                "n" | "N" => {
+                    hunk_cursor += 1;
+                }
+                "a" | "A" => {
+                    for j in hunk_cursor..n_hunks {
+                        accepted[j] = true;
+                    }
+                    break 'hunk_loop;
+                }
+                "d" | "D" => {
+                    break 'hunk_loop;
+                }
+                "q" | "Q" => {
+                    break;
+                }
+                "s" | "S" => {
+                    if !crate::commands::stash::split_hunk_at_first_gap(
+                        &mut hunk_ranges,
+                        hunk_cursor,
+                        &ops,
+                    ) {
+                        continue 'hunk_loop;
+                    }
+                    let n = hunk_ranges.len();
+                    accepted.resize(n, false);
+                    continue 'hunk_loop;
+                }
+                _ => {
+                    hunk_cursor += 1;
+                }
             }
         }
+
+        if !accepted.iter().any(|&a| a) {
+            continue;
+        }
+
+        let blended = crate::commands::checkout::blend_line_diff_by_hunk_ranges(
+            &tree_bytes,
+            &index_bytes,
+            &hunk_ranges,
+            &accepted,
+        );
+        let blended_bytes = blended.into_bytes();
+
+        if blended_bytes == index_bytes {
+            continue;
+        }
+
+        index.remove(&path);
+        if blended_bytes.is_empty() {
+            if let Some(te) = tree_entry {
+                if te.mode == MODE_GITLINK {
+                    index.add_or_replace(te.clone());
+                }
+            }
+            continue;
+        }
+
+        let blob_oid = Odb::hash_object_data(ObjectKind::Blob, &blended_bytes);
+        let mode = tree_mode.unwrap_or(0o100644);
+        let path_bytes = path.clone();
+        let abs_file = work_tree.join(&path_str);
+        let (cs, cns, ms, mns, dev, ino, fsz) = if let Ok(m) = std::fs::symlink_metadata(&abs_file)
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            (
+                m.ctime() as u32,
+                m.ctime_nsec() as u32,
+                m.mtime() as u32,
+                m.mtime_nsec() as u32,
+                m.dev() as u32,
+                m.ino() as u32,
+                m.size() as u32,
+            )
+        } else {
+            (0, 0, 0, 0, 0, 0, blended_bytes.len() as u32)
+        };
+        let entry = IndexEntry {
+            ctime_sec: cs,
+            ctime_nsec: cns,
+            mtime_sec: ms,
+            mtime_nsec: mns,
+            dev,
+            ino,
+            mode,
+            uid: 0,
+            gid: 0,
+            size: fsz,
+            oid: blob_oid,
+            flags: path_bytes.len().min(0xFFF) as u16,
+            flags_extended: None,
+            path: path_bytes,
+        };
+        index.add_or_replace(entry);
     }
 
     repo.write_index_at(&index_path, &mut index)
