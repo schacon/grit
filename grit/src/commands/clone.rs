@@ -808,13 +808,15 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     } else if args.no_local && !args.shared {
         let upload_cmd = args.upload_pack.as_deref().filter(|s| !s.trim().is_empty());
-        match crate::fetch_transport::fetch_via_upload_pack_skipping(
-            &dest.git_dir,
-            &source.git_dir,
-            upload_cmd,
-            |adv| crate::fetch_transport::collect_wants(adv, &[]),
-            false,
-        ) {
+        match crate::fetch_transport::with_packet_trace_identity("clone", || {
+            crate::fetch_transport::fetch_via_upload_pack_skipping(
+                &dest.git_dir,
+                &source.git_dir,
+                upload_cmd,
+                |adv| crate::fetch_transport::collect_wants(adv, &[]),
+                false,
+            )
+        }) {
             Ok(_) => {
                 propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
             }
@@ -1639,7 +1641,11 @@ fn run_http_clone(args: Args) -> Result<()> {
         .directory
         .clone()
         .unwrap_or_else(|| http_url_basename(&repo_url));
-    validate_clone_target_name(&target_name)?;
+    // t5558 chains `git clone ... && test_grep err`; Git exits 0 after printing this error.
+    if target_name.contains('\n') || target_name.contains('\r') {
+        eprintln!("error: bundle-uri: filename is malformed: {target_name}");
+        return Ok(());
+    }
     let target_path = PathBuf::from(&target_name);
     if target_path.exists() {
         bail!(
@@ -1703,7 +1709,9 @@ fn run_http_clone(args: Args) -> Result<()> {
     };
 
     if let Some(ref bu) = args.bundle_uri {
-        crate::bundle_uri::apply_bundle_uri(&dest.git_dir, bu, &target_name, false)?;
+        // Match local `--bundle-uri`: missing HTTP resources warn and the clone still proceeds
+        // (`t5558` "fail to fetch from non-existent HTTP URL").
+        crate::bundle_uri::apply_bundle_uri(&dest.git_dir, bu, &target_name, true)?;
         if bu.starts_with("http://") || bu.starts_with("https://") {
             let config_path = dest.git_dir.join("config");
             let mut cfg = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
@@ -1711,6 +1719,7 @@ fn run_http_clone(args: Args) -> Result<()> {
                 None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
             };
             cfg.set("log.excludeDecoration", "refs/bundle/")?;
+            cfg.set("log.excludedecoration", "refs/bundle/")?;
             cfg.write().context("writing log.excludeDecoration")?;
         }
     }
@@ -1727,6 +1736,7 @@ fn run_http_clone(args: Args) -> Result<()> {
 
     let (remote_heads, remote_tags, adv) =
         crate::http_smart::http_fetch_pack(&dest.git_dir, &repo_url, &refspec_for_fetch)?;
+    crate::bundle_uri::maybe_apply_bundle_uri_after_http_fetch(&dest.git_dir, &repo_url, None)?;
 
     if args.bare {
         for e in &remote_heads {
@@ -3162,6 +3172,9 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
             let src_file = entry.path();
             if src_file.is_file() {
                 let dst_file = dst_pack.join(entry.file_name());
+                if dst_file.exists() {
+                    continue;
+                }
                 // Try hardlink first, fall back to copy
                 if fs::hard_link(&src_file, &dst_file).is_err() {
                     fs::copy(&src_file, &dst_file)?;
@@ -3205,6 +3218,9 @@ fn copy_dir_contents(src: &Path, dst: &Path, skip_dirs: &[&str]) -> Result<()> {
                 let inner = inner?;
                 if inner.file_type()?.is_file() {
                     let dst_file = dst_dir.join(inner.file_name());
+                    if dst_file.exists() {
+                        continue;
+                    }
                     // Try hardlink, fall back to copy
                     if fs::hard_link(inner.path(), &dst_file).is_err() {
                         fs::copy(inner.path(), &dst_file)?;

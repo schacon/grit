@@ -480,7 +480,9 @@ pub fn fetch_via_upload_pack_skipping(
     Option<String>,
     Option<ObjectId>,
 )> {
-    let mut child = spawn_upload_pack(upload_pack_cmd, remote_repo_path)?;
+    // Use protocol v1 for this path: grit's upload-pack v2 advertises capabilities only until the
+    // client sends `ls-refs`, but this negotiator speaks v0 want/have after the first flush.
+    let mut child = spawn_upload_pack_with_proto(upload_pack_cmd, remote_repo_path, 1)?;
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 
@@ -573,7 +575,7 @@ fn fetch_upload_pack_negotiate_pack_bytes(
     upload_pack_cmd: Option<&str>,
     wants: &[ObjectId],
 ) -> Result<Vec<u8>> {
-    let mut child = spawn_upload_pack(upload_pack_cmd, remote_repo_path)?;
+    let mut child = spawn_upload_pack_with_proto(upload_pack_cmd, remote_repo_path, 1)?;
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 

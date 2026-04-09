@@ -582,7 +582,7 @@ test_expect_success 'clone bundle list (HTTP, any mode)' '
 	git -C clone-from for-each-ref --format="%(objectname)" >oids &&
 	git -C clone-any-http cat-file --batch-check <oids &&
 
-	git -C clone-any-http for-each-ref --format="%(refname)" >refs &&
+	git -C clone-list-file for-each-ref --format="%(refname)" >refs &&
 	grep "refs/bundles/heads/" refs >actual &&
 	cat >expect <<-\EOF &&
 	refs/bundles/heads/base

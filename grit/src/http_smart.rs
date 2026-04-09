@@ -64,7 +64,6 @@ fn agent_header() -> String {
 }
 
 fn http_get(url: &str) -> Result<Vec<u8>> {
-    trace2_child_start_git_remote_https(url);
     let resp = ureq::get(url)
         .set("Git-Protocol", "version=2")
         .set("User-Agent", &agent_header())
@@ -85,7 +84,6 @@ fn http_get(url: &str) -> Result<Vec<u8>> {
 }
 
 fn http_post(url: &str, content_type: &str, accept: &str, body: &[u8]) -> Result<Vec<u8>> {
-    trace2_child_start_git_remote_https(url);
     let resp = ureq::post(url)
         .set("Content-Type", content_type)
         .set("Accept", accept)

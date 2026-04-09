@@ -23,6 +23,7 @@ unicode-width = "0.2"
 libc = "0.2"
 hungarian = "1.1.1"
 ureq = "2.12"
+url = "2.5"
 icu_normalizer = "2.0.0"
 
 [workspace.lints.rust]

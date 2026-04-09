@@ -534,6 +534,7 @@ dependencies = [
  "time",
  "unicode-width",
  "ureq",
+ "url",
 ]
 
 [[package]]
