@@ -21,11 +21,13 @@ use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::ws::{self, WhitespaceGitAttr, WS_BLANK_AT_EOF, WS_DEFAULT_RULE, WS_INCOMPLETE_LINE};
+use regex::Regex;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 /// Arguments for `grit apply`.
 #[derive(Debug, ClapArgs)]
@@ -448,6 +450,584 @@ fn sanitize_file_patch_headers(fp: &mut FilePatch) {
     }
 }
 
+/// Collapse runs of `/` to a single slash (Git `squash_slash`).
+fn squash_slash_path(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut prev_slash = false;
+    for ch in s.chars() {
+        if ch == '/' {
+            if !prev_slash {
+                out.push('/');
+            }
+            prev_slash = true;
+        } else {
+            prev_slash = false;
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Unquote a leading C-style `"..."` from `line`; returns decoded bytes and remainder after closing `"`.
+/// Matches Git `unquote_c_style` / `quote.c` escapes used in diff headers.
+fn unquote_c_style_diff_prefix(line: &str) -> Option<(Vec<u8>, &str)> {
+    let b = line.as_bytes();
+    if b.first() != Some(&b'"') {
+        return None;
+    }
+    let mut q = &b[1..];
+    let mut out = Vec::new();
+    loop {
+        let len = q
+            .iter()
+            .position(|&c| c == b'"' || c == b'\\')
+            .unwrap_or(q.len());
+        out.extend_from_slice(&q[..len]);
+        q = &q[len..];
+        if q.is_empty() {
+            return None;
+        }
+        match q[0] {
+            b'"' => {
+                let rest = std::str::from_utf8(&q[1..]).ok()?;
+                return Some((out, rest));
+            }
+            b'\\' => {
+                q = &q[1..];
+                if q.is_empty() {
+                    return None;
+                }
+                let ch = q[0];
+                q = &q[1..];
+                match ch {
+                    b'a' => out.push(0x07),
+                    b'b' => out.push(0x08),
+                    b'f' => out.push(0x0c),
+                    b'n' => out.push(b'\n'),
+                    b'r' => out.push(b'\r'),
+                    b't' => out.push(b'\t'),
+                    b'v' => out.push(0x0b),
+                    b'\\' => out.push(b'\\'),
+                    b'"' => out.push(b'"'),
+                    b'0'..=b'3' => {
+                        if q.len() < 2 {
+                            return None;
+                        }
+                        let ch2 = q[0];
+                        let ch3 = q[1];
+                        if !(b'0'..=b'7').contains(&ch2) || !(b'0'..=b'7').contains(&ch3) {
+                            return None;
+                        }
+                        let ac = u32::from(ch - b'0') * 64
+                            + u32::from(ch2 - b'0') * 8
+                            + u32::from(ch3 - b'0');
+                        out.push(ac as u8);
+                        q = &q[2..];
+                    }
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        }
+    }
+}
+
+fn bytes_to_path_string(bytes: &[u8]) -> Result<String> {
+    let s = String::from_utf8(bytes.to_vec()).context("diff path is not valid UTF-8")?;
+    Ok(squash_slash_path(&s))
+}
+
+/// Skip `p_value` leading path components (Git `skip_tree_prefix`); `p_value == 0` allows absolute paths.
+fn skip_tree_prefix_bytes(line: &[u8], p_value: usize) -> Option<&[u8]> {
+    if p_value == 0 {
+        return Some(line);
+    }
+    let mut nslash = p_value;
+    let mut i = 0usize;
+    while i < line.len() {
+        if line[i] == b'/' {
+            nslash = nslash.saturating_sub(1);
+            if nslash == 0 {
+                return if i == 0 { None } else { Some(&line[i + 1..]) };
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Strip `p_value` leading `/`-separated components from a UTF-8 path (for `rename from` etc.).
+fn skip_tree_prefix_str(path: &str, p_value: usize) -> Option<String> {
+    let stripped = skip_tree_prefix_bytes(path.as_bytes(), p_value)?;
+    Some(String::from_utf8_lossy(stripped).into_owned())
+}
+
+fn sane_tz_len(line: &[u8]) -> usize {
+    const SUFFIX: &[u8] = b" +0500";
+    if line.len() < SUFFIX.len() || line[line.len() - SUFFIX.len()] != b' ' {
+        return 0;
+    }
+    let tz = &line[line.len() - SUFFIX.len()..];
+    if tz[1] != b'+' && tz[1] != b'-' {
+        return 0;
+    }
+    for p in &tz[2..] {
+        if !p.is_ascii_digit() {
+            return 0;
+        }
+    }
+    SUFFIX.len()
+}
+
+fn tz_with_colon_len(line: &[u8]) -> usize {
+    // Git: suffix is ` ±HH:MM` (space, sign, two hour digits, colon, two minute digits) = 7 bytes.
+    const SUFFIX_LEN: usize = 7;
+    if line.len() < SUFFIX_LEN || line[line.len() - 3] != b':' {
+        return 0;
+    }
+    let tz = &line[line.len() - SUFFIX_LEN..];
+    if tz[0] != b' ' || (tz[1] != b'+' && tz[1] != b'-') {
+        return 0;
+    }
+    let p = &tz[2..];
+    if p.len() != 5
+        || !p[0].is_ascii_digit()
+        || !p[1].is_ascii_digit()
+        || p[2] != b':'
+        || !p[3].is_ascii_digit()
+        || !p[4].is_ascii_digit()
+    {
+        return 0;
+    }
+    SUFFIX_LEN
+}
+
+fn date_len(line: &[u8]) -> usize {
+    const SHORT: &[u8] = b"72-02-05";
+    if line.len() < SHORT.len() || line[line.len() - 3] != b'-' {
+        return 0;
+    }
+    let mut p = line.len() - SHORT.len();
+    let date = &line[p..];
+    if !date[0].is_ascii_digit()
+        || !date[1].is_ascii_digit()
+        || date[2] != b'-'
+        || !date[3].is_ascii_digit()
+        || !date[4].is_ascii_digit()
+        || date[5] != b'-'
+        || !date[6].is_ascii_digit()
+        || !date[7].is_ascii_digit()
+    {
+        return 0;
+    }
+    if p >= 2 {
+        let y1 = line[p - 1];
+        let y2 = line[p - 2];
+        if y1.is_ascii_digit() && y2.is_ascii_digit() {
+            p -= 2;
+        }
+    }
+    line.len() - p
+}
+
+fn short_time_len(line: &[u8]) -> usize {
+    const PAT: &[u8] = b" 07:01:32";
+    if line.len() < PAT.len() || line[line.len() - 3] != b':' {
+        return 0;
+    }
+    let p = line.len() - PAT.len();
+    let time = &line[p..];
+    if time[0] != b' '
+        || !time[1].is_ascii_digit()
+        || !time[2].is_ascii_digit()
+        || time[3] != b':'
+        || !time[4].is_ascii_digit()
+        || !time[5].is_ascii_digit()
+        || time[6] != b':'
+        || !time[7].is_ascii_digit()
+        || !time[8].is_ascii_digit()
+    {
+        return 0;
+    }
+    PAT.len()
+}
+
+fn fractional_time_len(line: &[u8]) -> usize {
+    if line.is_empty() || !line[line.len() - 1].is_ascii_digit() {
+        return 0;
+    }
+    let mut p = line.len() - 1;
+    while p > 0 && line[p].is_ascii_digit() {
+        p -= 1;
+    }
+    if p == 0 || line[p] != b'.' {
+        return 0;
+    }
+    let n = short_time_len(&line[..p]);
+    if n == 0 {
+        return 0;
+    }
+    line.len() - p + n
+}
+
+fn trailing_spaces_len(line: &[u8]) -> usize {
+    if line.is_empty() || line[line.len() - 1] != b' ' {
+        return 0;
+    }
+    let mut p = line.len();
+    while p > 0 {
+        p -= 1;
+        if line[p] != b' ' {
+            return line.len() - (p + 1);
+        }
+    }
+    line.len()
+}
+
+fn diff_timestamp_len(line: &[u8]) -> usize {
+    if line.is_empty() || !line[line.len() - 1].is_ascii_digit() {
+        return 0;
+    }
+    let mut end = line.len();
+    let mut n = sane_tz_len(&line[..end]);
+    if n == 0 {
+        n = tz_with_colon_len(&line[..end]);
+    }
+    if n == 0 {
+        return 0;
+    }
+    end -= n;
+
+    n = short_time_len(&line[..end]);
+    if n == 0 {
+        n = fractional_time_len(&line[..end]);
+    }
+    if n == 0 {
+        return 0;
+    }
+    end -= n;
+
+    n = date_len(&line[..end]);
+    if n == 0 {
+        return 0;
+    }
+    end -= n;
+
+    if end == 0 {
+        return 0;
+    }
+    match line[end - 1] {
+        b'\t' => {
+            end -= 1;
+            line.len() - end
+        }
+        b' ' => {
+            end -= trailing_spaces_len(&line[..end]);
+            line.len() - end
+        }
+        _ => 0,
+    }
+}
+
+/// Git `find_name_common` with optional `end` bound (exclusive).
+fn find_name_common_bounded(
+    line: &[u8],
+    def: Option<&[u8]>,
+    p_value: usize,
+    end: usize,
+) -> Option<Vec<u8>> {
+    let end = end.min(line.len());
+    let mut start: Option<usize> = if p_value == 0 { Some(0) } else { None };
+    let mut p = p_value;
+    let mut i = 0usize;
+    while i < end {
+        let c = line[i];
+        i += 1;
+        if c == b'/' && p > 0 {
+            p -= 1;
+            if p == 0 {
+                start = Some(i);
+            }
+        }
+    }
+    let start = start?;
+    let len = i - start;
+    if len == 0 {
+        return def.map(|d| d.to_vec());
+    }
+    let slice = &line[start..i];
+    if let Some(d) = def {
+        if d.len() < len && slice.starts_with(d) {
+            return Some(d.to_vec());
+        }
+    }
+    Some(slice.to_vec())
+}
+
+/// Git `find_name_traditional` on the line after `--- ` / `+++ ` (no prefix).
+fn find_name_traditional(line: &[u8], def: Option<&[u8]>, p_value: usize) -> Option<Vec<u8>> {
+    if line.first() == Some(&b'"') {
+        let (decoded, _) = unquote_c_style_diff_prefix(std::str::from_utf8(line).ok()?)?;
+        let skip = skip_tree_prefix_bytes(&decoded, p_value)?;
+        return Some(skip.to_vec());
+    }
+    let ts = diff_timestamp_len(line);
+    let name_end = line.len().saturating_sub(ts);
+    find_name_common_bounded(line, def, p_value, name_end)
+}
+
+fn find_name_tab_terminated(line: &[u8], p_value: usize) -> Option<Vec<u8>> {
+    if line.first() == Some(&b'"') {
+        let (decoded, _) = unquote_c_style_diff_prefix(std::str::from_utf8(line).ok()?)?;
+        let skip = skip_tree_prefix_bytes(&decoded, p_value)?;
+        return Some(skip.to_vec());
+    }
+    let end = line
+        .iter()
+        .position(|&b| b == b'\t' || b == b'\n' || b == b'\r')
+        .unwrap_or(line.len());
+    find_name_common_bounded(line, None, p_value, end)
+}
+
+fn is_dev_null_nameline(line: &[u8]) -> bool {
+    line.strip_prefix(b"/dev/null")
+        .map(|rest| rest.is_empty() || rest.first().is_some_and(|b| b.is_ascii_whitespace()))
+        .unwrap_or(false)
+}
+
+fn guess_p_value_from_nameline(line: &[u8]) -> Option<usize> {
+    if is_dev_null_nameline(line) {
+        return None;
+    }
+    let name = find_name_traditional(line, None, 0)?;
+    let name_str = String::from_utf8_lossy(&name);
+    if !name_str.contains('/') {
+        return Some(0);
+    }
+    None
+}
+
+fn epoch_stamp_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"^([0-2][0-9]):([0-5][0-9]):00(?:\.0+)? ([-+][0-2][0-9]:?[0-5][0-9])")
+            .expect("epoch stamp regex")
+    })
+}
+
+/// True when the `---`/`+++` line has a tab-separated epoch timestamp (Git `has_epoch_timestamp`).
+fn has_epoch_timestamp(nameline: &[u8]) -> bool {
+    let Some(tab) = nameline.iter().position(|&b| b == b'\t') else {
+        return false;
+    };
+    let mut ts = &nameline[tab + 1..];
+    let epoch_hour = if let Some(r) = ts.strip_prefix(b"1969-12-31 ") {
+        ts = r;
+        24i32
+    } else if let Some(r) = ts.strip_prefix(b"1970-01-01 ") {
+        ts = r;
+        0i32
+    } else {
+        return false;
+    };
+    let end = ts.iter().position(|&b| b == b'\n').unwrap_or(ts.len());
+    let stamp = &ts[..end];
+    let stamp_str = match std::str::from_utf8(stamp) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let caps = match epoch_stamp_regex().captures(stamp_str) {
+        Some(c) => c,
+        None => return false,
+    };
+    let hour: i32 = caps
+        .get(1)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(-1);
+    let minute: i32 = caps
+        .get(2)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(-1);
+    let tz_s = match caps.get(3).map(|m| m.as_str()) {
+        Some(s) if !s.is_empty() => s,
+        _ => return false,
+    };
+    if hour < 0 || minute < 0 {
+        return false;
+    }
+    let tz_byte = tz_s.as_bytes()[0];
+    let tz_rest = &tz_s[1..];
+    let zoneoffset: i32 = if let Some(colon_pos) = tz_rest.find(':') {
+        let h: i32 = tz_rest[..colon_pos].parse().unwrap_or(0);
+        let mm: i32 = tz_rest[colon_pos + 1..].parse().unwrap_or(0);
+        h * 60 + mm
+    } else if tz_rest.len() >= 4 {
+        let n: i32 = tz_rest[..4].parse().unwrap_or(0);
+        (n / 100) * 60 + (n % 100)
+    } else {
+        return false;
+    };
+    let zoneoffset = if tz_byte == b'-' {
+        -zoneoffset
+    } else {
+        zoneoffset
+    };
+    hour * 60 + minute - zoneoffset == epoch_hour * 60
+}
+
+/// Parse `---` / `+++` pair for a traditional unified diff (Git `parse_traditional_patch`).
+fn parse_traditional_patch_pair(
+    old_line: &[u8],
+    new_line: &[u8],
+    strip: usize,
+    p_guess: &mut Option<usize>,
+) -> Result<FilePatch> {
+    let old_p = old_line.strip_prefix(b"--- ").unwrap_or(old_line);
+    let new_p = new_line.strip_prefix(b"+++ ").unwrap_or(new_line);
+
+    if p_guess.is_none() {
+        let p = guess_p_value_from_nameline(old_p);
+        let q = guess_p_value_from_nameline(new_p);
+        let chosen = match (p, q) {
+            (None, None) => None,
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (Some(a), Some(b)) if a == b => Some(a),
+            _ => None,
+        };
+        *p_guess = chosen;
+    }
+    let p_val = p_guess.unwrap_or(strip);
+
+    let mut fp = FilePatch {
+        diff_old_path: None,
+        diff_new_path: None,
+        old_path: None,
+        new_path: None,
+        saw_old_header: true,
+        saw_new_header: true,
+        old_mode: None,
+        new_mode: None,
+        is_new: false,
+        is_deleted: false,
+        is_rename: false,
+        is_copy: false,
+        similarity_index: None,
+        dissimilarity_index: None,
+        old_oid: None,
+        new_oid: None,
+        binary_patch: None,
+        hunks: Vec::new(),
+        ws_rule: 0,
+    };
+
+    if is_dev_null_nameline(old_p) {
+        fp.is_new = true;
+        let name = find_name_traditional(new_p, None, p_val)
+            .ok_or_else(|| anyhow::anyhow!("unable to find filename in traditional patch"))?;
+        fp.new_path = Some(bytes_to_path_string(&name)?);
+    } else if is_dev_null_nameline(new_p) {
+        fp.is_deleted = true;
+        let name = find_name_traditional(old_p, None, p_val)
+            .ok_or_else(|| anyhow::anyhow!("unable to find filename in traditional patch"))?;
+        fp.old_path = Some(bytes_to_path_string(&name)?);
+    } else {
+        let first_name = find_name_traditional(old_p, None, p_val)
+            .ok_or_else(|| anyhow::anyhow!("unable to find filename in traditional patch"))?;
+        let name = find_name_traditional(new_p, Some(&first_name), p_val)
+            .ok_or_else(|| anyhow::anyhow!("unable to find filename in traditional patch"))?;
+        let name_str = bytes_to_path_string(&name)?;
+        if has_epoch_timestamp(old_p) {
+            fp.is_new = true;
+            fp.new_path = Some(name_str);
+        } else if has_epoch_timestamp(new_p) {
+            fp.is_deleted = true;
+            fp.old_path = Some(name_str);
+        } else {
+            // Git uses the `+++` filename for both sides when neither line carries an epoch
+            // marker; the `---` line only participates via `def` when shortening `.orig` etc.
+            fp.old_path = Some(name_str.clone());
+            fp.new_path = Some(name_str);
+        }
+    }
+
+    Ok(fp)
+}
+
+/// Default filename from `diff --git` when both sides agree (Git `git_header_name`).
+fn git_header_def_name(line: &str, p_value: usize) -> Option<String> {
+    let rest = line.strip_prefix("diff --git ").unwrap_or(line);
+    let rest_b = rest.as_bytes();
+
+    if rest_b.first() == Some(&b'"') {
+        let (first_decoded, second_raw) = unquote_c_style_diff_prefix(rest)?;
+        let rel_first = skip_tree_prefix_bytes(&first_decoded, p_value)?;
+        let second = second_raw.trim_start_matches(|c: char| c.is_ascii_whitespace());
+        if second.is_empty() {
+            return None;
+        }
+        if second.as_bytes().first() == Some(&b'"') {
+            let (second_decoded, _) = unquote_c_style_diff_prefix(second)?;
+            let rel2 = skip_tree_prefix_bytes(&second_decoded, p_value)?;
+            if rel2 != rel_first {
+                return None;
+            }
+        } else {
+            let rel2 = skip_tree_prefix_bytes(second.as_bytes(), p_value)?;
+            if rel2.len() != rel_first.len() || rel2 != rel_first {
+                return None;
+            }
+        }
+        return bytes_to_path_string(rel_first).ok();
+    }
+
+    let name = skip_tree_prefix_bytes(rest_b, p_value)?;
+    let name_start = name.as_ptr() as usize - rest_b.as_ptr() as usize;
+
+    for offset in 0..name.len() {
+        if name[offset] != b'"' {
+            continue;
+        }
+        let second_slice = &rest_b[name_start + offset..];
+        let (decoded, _) = unquote_c_style_diff_prefix(std::str::from_utf8(second_slice).ok()?)?;
+        let np = skip_tree_prefix_bytes(&decoded, p_value)?;
+        let plen = np.len();
+        if plen < offset
+            && name.len() > plen
+            && &name[..plen] == np
+            && name[plen].is_ascii_whitespace()
+        {
+            return bytes_to_path_string(np).ok();
+        }
+        return None;
+    }
+
+    let line_len = rest.len().saturating_sub(name_start);
+    let mut len = 0usize;
+    while len < line_len {
+        match rest_b[name_start + len] {
+            b'\n' => return None,
+            b'\t' | b' ' => {
+                let after = name_start + len + 1;
+                if after > name_start + line_len {
+                    return None;
+                }
+                let second =
+                    skip_tree_prefix_bytes(&rest_b[after..name_start + line_len], p_value)?;
+                let names_match =
+                    name.len() >= len && second.len() >= len && name[..len] == second[..len];
+                let boundary_ok = second.get(len) == Some(&b'\n') || second.len() == len;
+                if names_match && boundary_ok {
+                    return bytes_to_path_string(&name[..len]).ok();
+                }
+            }
+            _ => {}
+        }
+        len += 1;
+    }
+    None
+}
+
 /// Git `name_terminate` for `---`/`+++` parsing (`TERM_TAB` only).
 fn diff_header_name_terminate(c: u8) -> bool {
     const TERM_SPACE: u8 = 1;
@@ -524,11 +1104,28 @@ fn header_line_file_path(line: &str, p_value: usize) -> String {
         .unwrap_or_else(|| line.split('\t').next().unwrap_or(line).to_string())
 }
 
+/// Path from `rename from` / `copy from` lines (Git `find_name` with `terminate == 0`).
+fn find_name_extended_header(rest: &str, p_extended: usize) -> Option<String> {
+    let b = rest.trim_end_matches(['\r', '\n']).as_bytes();
+    let end = b
+        .iter()
+        .position(|&c| c == b'\t' || c == b'\n' || c == b'\r' || c == b' ')
+        .unwrap_or(b.len());
+    let name = find_name_common_bounded(b, None, p_extended, end)?;
+    bytes_to_path_string(&name).ok()
+}
+
 /// Parse a unified diff into a list of `FilePatch` entries.
+///
+/// `strip` is Git's `p_value` (`-p` count, default 1).
 fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
     let lines: Vec<&str> = input.lines().collect();
     let mut patches = Vec::new();
     let mut i = 0;
+    let mut p_guess_for_traditional: Option<usize> = None;
+
+    let p_strip = strip;
+    let p_extended = strip.saturating_sub(1);
 
     while i < lines.len() {
         // Look for "diff --git" header or a bare ---/+++ pair.
@@ -555,8 +1152,11 @@ fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
                 ws_rule: 0,
             };
 
+            let header_line = lines[i];
+            let def_name = git_header_def_name(header_line, p_strip);
+
             // Parse "diff --git a/foo b/foo"
-            let rest = &lines[i]["diff --git ".len()..];
+            let rest = &header_line["diff --git ".len()..];
             if let Some((a, b)) = split_diff_git_paths(rest) {
                 fp.diff_old_path = Some(a.clone());
                 fp.diff_new_path = Some(b.clone());
@@ -584,16 +1184,24 @@ fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
                     fp.old_mode = Some(val.to_string());
                 } else if let Some(val) = line.strip_prefix("rename from ") {
                     fp.is_rename = true;
-                    fp.old_path = Some(val.to_string());
+                    if let Some(p) = find_name_extended_header(val, p_extended) {
+                        fp.old_path = Some(p);
+                    }
                 } else if let Some(val) = line.strip_prefix("rename to ") {
                     fp.is_rename = true;
-                    fp.new_path = Some(val.to_string());
+                    if let Some(p) = find_name_extended_header(val, p_extended) {
+                        fp.new_path = Some(p);
+                    }
                 } else if let Some(val) = line.strip_prefix("copy from ") {
                     fp.is_copy = true;
-                    fp.old_path = Some(val.to_string());
+                    if let Some(p) = find_name_extended_header(val, p_extended) {
+                        fp.old_path = Some(p);
+                    }
                 } else if let Some(val) = line.strip_prefix("copy to ") {
                     fp.is_copy = true;
-                    fp.new_path = Some(val.to_string());
+                    if let Some(p) = find_name_extended_header(val, p_extended) {
+                        fp.new_path = Some(p);
+                    }
                 } else if let Some(val) = line.strip_prefix("similarity index ") {
                     fp.similarity_index = val.trim_end_matches('%').parse().ok();
                 } else if let Some(val) = line.strip_prefix("dissimilarity index ") {
@@ -615,15 +1223,34 @@ fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
                 i += 1;
             }
 
+            if let Some(dn) = def_name {
+                if fp.old_path.is_none() {
+                    fp.old_path = Some(dn.clone());
+                }
+                if fp.new_path.is_none() {
+                    fp.new_path = Some(dn);
+                }
+            }
+
             // Parse ---/+++ headers if present
             if i < lines.len() && lines[i].starts_with("--- ") {
-                let old_p = &lines[i]["--- ".len()..];
-                fp.old_path = Some(header_line_file_path(old_p, strip));
+                let old_p = lines[i]["--- ".len()..].trim_end_matches(['\r', '\n']);
+                let old_b = old_p.as_bytes();
+                if is_dev_null_nameline(old_b) {
+                    fp.old_path = Some("/dev/null".to_string());
+                } else if let Some(p) = find_name_tab_terminated(old_b, p_strip) {
+                    fp.old_path = Some(bytes_to_path_string(&p)?);
+                }
                 fp.saw_old_header = true;
                 i += 1;
                 if i < lines.len() && lines[i].starts_with("+++ ") {
-                    let new_p = &lines[i]["+++ ".len()..];
-                    fp.new_path = Some(header_line_file_path(new_p, strip));
+                    let new_p = lines[i]["+++ ".len()..].trim_end_matches(['\r', '\n']);
+                    let new_b = new_p.as_bytes();
+                    if is_dev_null_nameline(new_b) {
+                        fp.new_path = Some("/dev/null".to_string());
+                    } else if let Some(p) = find_name_tab_terminated(new_b, p_strip) {
+                        fp.new_path = Some(bytes_to_path_string(&p)?);
+                    }
                     fp.saw_new_header = true;
                     i += 1;
                 }
@@ -642,45 +1269,15 @@ fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
             && i + 1 < lines.len()
             && lines[i + 1].starts_with("+++ ")
         {
-            // Bare unified diff without "diff --git" header
-            let mut fp = FilePatch {
-                diff_old_path: None,
-                diff_new_path: None,
-                old_path: None,
-                new_path: None,
-                saw_old_header: false,
-                saw_new_header: false,
-                old_mode: None,
-                new_mode: None,
-                is_new: false,
-                is_deleted: false,
-                is_rename: false,
-                is_copy: false,
-                similarity_index: None,
-                dissimilarity_index: None,
-                old_oid: None,
-                new_oid: None,
-                binary_patch: None,
-                hunks: Vec::new(),
-                ws_rule: 0,
-            };
-
-            let old_p = &lines[i]["--- ".len()..];
-            fp.old_path = Some(header_line_file_path(old_p, strip));
-            fp.saw_old_header = true;
-            i += 1;
-            let new_p = &lines[i]["+++ ".len()..];
-            fp.new_path = Some(header_line_file_path(new_p, strip));
-            fp.saw_new_header = true;
-            i += 1;
-
-            // Check for /dev/null
-            if fp.old_path.as_deref() == Some("/dev/null") {
-                fp.is_new = true;
-            }
-            if fp.new_path.as_deref() == Some("/dev/null") {
-                fp.is_deleted = true;
-            }
+            let old_line = lines[i].as_bytes();
+            let new_line = lines[i + 1].as_bytes();
+            let mut fp = parse_traditional_patch_pair(
+                old_line,
+                new_line,
+                strip,
+                &mut p_guess_for_traditional,
+            )?;
+            i += 2;
 
             // Parse hunks
             while i < lines.len() && lines[i].starts_with("@@ ") {
@@ -866,16 +1463,38 @@ fn inflate_binary_payload(compressed: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Split "a/path b/path" from `diff --git` line. Handles spaces in paths
-/// by scanning for ` b/` boundary. Falls back if that fails.
+/// Split the two path tokens from the remainder of a `diff --git` line (after `diff --git `).
 fn split_diff_git_paths(s: &str) -> Option<(String, String)> {
-    // Keep raw paths (with a/ b/ prefix) so -p<n> stripping works correctly.
+    let s = s.trim_end_matches(['\r', '\n']);
+
+    if s.as_bytes().first() == Some(&b'"') {
+        let (first, rest_raw) = unquote_c_style_diff_prefix(s)?;
+        let rest = rest_raw.trim_start_matches(|c: char| c.is_ascii_whitespace());
+        if rest.is_empty() {
+            return None;
+        }
+        if rest.as_bytes().first() == Some(&b'"') {
+            let (second, _) = unquote_c_style_diff_prefix(rest)?;
+            return Some((
+                String::from_utf8_lossy(&first).into_owned(),
+                String::from_utf8_lossy(&second).into_owned(),
+            ));
+        }
+        let second = rest;
+        if second.len() != first.len() || second.as_bytes() != first.as_slice() {
+            return None;
+        }
+        return Some((
+            String::from_utf8_lossy(&first).into_owned(),
+            second.to_string(),
+        ));
+    }
+
     if let Some(pos) = s.find(" b/") {
         let a = &s[..pos];
         let b = &s[pos + 1..];
         return Some((a.to_string(), b.to_string()));
     }
-    // Also handle /dev/null cases
     if s.starts_with("a/") {
         if let Some(pos) = s.find(" /dev/null") {
             let a = &s[..pos];
@@ -884,6 +1503,32 @@ fn split_diff_git_paths(s: &str) -> Option<(String, String)> {
     }
     if let Some(b) = s.strip_prefix("/dev/null ") {
         return Some(("/dev/null".to_string(), b.to_string()));
+    }
+
+    let name = s.as_bytes();
+    let line_len = name.len();
+    let mut len = 0usize;
+    while len < line_len {
+        match name[len] {
+            b'\n' => return None,
+            b'\t' | b' ' => {
+                if len + 1 > line_len {
+                    return None;
+                }
+                let second = &name[len + 1..line_len];
+                let names_match =
+                    name.len() >= len && second.len() >= len && name[..len] == second[..len];
+                let boundary_ok = second.get(len) == Some(&b'\n') || second.len() == len;
+                if names_match && boundary_ok {
+                    return Some((
+                        String::from_utf8_lossy(&name[..len]).into_owned(),
+                        String::from_utf8_lossy(second).into_owned(),
+                    ));
+                }
+            }
+            _ => {}
+        }
+        len += 1;
     }
     None
 }
