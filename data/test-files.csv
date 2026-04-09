@@ -1167,7 +1167,7 @@ t7061-wtstatus-ignore	t7	yes	25	0	25	false	ok	0
 t7062-status-worktree	t7	yes	26	26	0	true	ok	0
 t7062-wtstatus-ignorecase	t7	yes	1	1	0	true	ok	0
 t7063-status-untracked-cache	t7	yes	58	6	52	false	ok	0
-t7064-wtstatus-pv2	t7	yes	28	1	27	false	ok	0
+t7064-wtstatus-pv2	t7	yes	28	28	0	true	ok	0
 t7065-status-rename	t7	yes	28	25	3	false	ok	0
 t7066-status-ignored	t7	yes	32	30	2	false	ok	0
 t7067-status-untracked-dir	t7	yes	33	33	0	true	ok	0

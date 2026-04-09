@@ -2,6 +2,7 @@
 
 **Updated:** 2026-04-08
 
+- `./scripts/run-tests.sh t7064-wtstatus-pv2.sh`: 28/28 passing (`status --porcelain=v2`; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t3425-rebase-topology-merges.sh`: 13/13 passing (topo-order tie-break, `log A..B` exclusions, `format-patch` for `rebase --apply`, merge todo omission, merge replay; harness CSV/dashboards refreshed).
 - `cargo test -p grit-lib --lib`: 121/121 passing.
 - `./scripts/run-tests.sh t13180-log-patch-stat.sh`: 35/35 passing (`grit log` oneline/graph/decorate/skip/max-count/reverse/format; harness CSV/dashboards refreshed).
