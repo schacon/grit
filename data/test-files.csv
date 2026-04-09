@@ -377,7 +377,7 @@ t13150-diff-stat-insertions-deletions	t1	yes	42	40	2	false	ok	0
 t13180-log-patch-stat	t1	yes	35	35	0	true	ok	0
 t13190-log-format-body	t1	yes	36	36	0	true	ok	0
 t13200-rev-list-walk-options	t1	yes	35	35	0	true	ok	0
-t13210-rev-list-count-all	t1	yes	33	31	2	false	ok	0
+t13210-rev-list-count-all	t1	yes	33	33	0	true	ok	0
 t13220-rev-parse-worktree	t1	yes	36	34	2	false	ok	0
 t13230-rev-parse-upstream	t1	yes	35	35	0	true	ok	0
 t13240-config-get-all-values	t1	yes	32	32	0	true	ok	0
