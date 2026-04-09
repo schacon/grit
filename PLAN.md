@@ -662,6 +662,7 @@ commit → check it off → move on.
 - [ ] `t5511-refspec` ██████████░░░░░░░░░░ 24/47 (23 left) — refspec parsing
 - [ ] `t5551-http-fetch-smart` ███████░░░░░░░░░░░░░ 13/37 (24 left) — test smart fetching over http via http-backend ($HTTP_PROTO)
 - [x] `t5317-pack-objects-filter-objects` — git pack-objects using object filtering (33/33)
+- [x] `t5318-pack-objects-revs-exclude` — pack-objects `--revs` with `^ref` exclusion and `--stdin-packs` (9/9)
 - [ ] `t5304-prune` █████░░░░░░░░░░░░░░░ 8/32 (24 left) — prune
 - [ ] `t5531-deep-submodule-push` ███░░░░░░░░░░░░░░░░░ 5/29 (24 left) — test push with submodules
 - [ ] `t5548-push-porcelain` ░░░░░░░░░░░░░░░░░░░░ 1/25 (24 left) — Test git push porcelain output

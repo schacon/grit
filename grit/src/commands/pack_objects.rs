@@ -22,6 +22,7 @@ use grit_lib::objects::{parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -739,7 +740,8 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
                 let oid = if let Ok(oid) = ObjectId::from_hex(trimmed) {
                     oid
                 } else {
-                    resolve_ref(repo, trimmed)?
+                    resolve_revision(repo, trimmed)
+                        .with_context(|| format!("cannot resolve ref '{trimmed}'"))?
                 };
                 have_roots.insert(oid);
                 continue;
@@ -748,14 +750,16 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
                 let oid = if let Ok(oid) = ObjectId::from_hex(neg_ref) {
                     oid
                 } else {
-                    resolve_ref(repo, neg_ref)?
+                    resolve_revision(repo, neg_ref)
+                        .with_context(|| format!("cannot resolve ref '{neg_ref}'"))?
                 };
                 walk_reachable(repo, &oid, &mut exclude)?;
             } else {
                 let oid = if let Ok(oid) = ObjectId::from_hex(trimmed) {
                     oid
                 } else {
-                    resolve_ref(repo, trimmed)?
+                    resolve_revision(repo, trimmed)
+                        .with_context(|| format!("cannot resolve ref '{trimmed}'"))?
                 };
                 walk_reachable(repo, &oid, &mut oids)?;
             }
@@ -962,38 +966,6 @@ fn collect_all_loose(odb: &Odb, oids: &mut BTreeSet<ObjectId>) -> Result<()> {
         }
     }
     Ok(())
-}
-
-/// Resolve a ref name to an ObjectId.
-fn resolve_ref(repo: &Repository, refname: &str) -> Result<ObjectId> {
-    // Check refs/heads/, refs/tags/, and direct.
-    let candidates = [
-        repo.git_dir.join(refname),
-        repo.git_dir.join("refs/heads").join(refname),
-        repo.git_dir.join("refs/tags").join(refname),
-    ];
-    for path in &candidates {
-        if path.is_file() {
-            let content = std::fs::read_to_string(path)?;
-            let trimmed = content.trim();
-            if let Some(target) = trimmed.strip_prefix("ref: ") {
-                return resolve_ref(repo, target);
-            }
-            return ObjectId::from_hex(trimmed)
-                .map_err(|e| anyhow::anyhow!("cannot resolve ref '{refname}': {e}"));
-        }
-    }
-    // Try HEAD.
-    if refname == "HEAD" {
-        let head = std::fs::read_to_string(repo.git_dir.join("HEAD"))?;
-        let trimmed = head.trim();
-        if trimmed.starts_with("ref: ") {
-            return resolve_ref(repo, &trimmed[5..]);
-        }
-        return ObjectId::from_hex(trimmed)
-            .map_err(|e| anyhow::anyhow!("cannot resolve HEAD: {e}"));
-    }
-    bail!("cannot resolve ref '{refname}'")
 }
 
 /// Walk reachable objects from a commit/tree/tag/blob OID.
