@@ -356,10 +356,16 @@ fn collect_loose_refs(
         let entry = entry?;
         let file_name = entry.file_name().to_string_lossy().to_string();
         let next_relative = format!("{relative}/{file_name}");
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            collect_loose_refs(git_dir, &entry.path(), &next_relative, out)?;
-        } else if file_type.is_file() {
+        let path = entry.path();
+        // Use `metadata` on the path (follows symlinks). `DirEntry::file_type` does not,
+        // so symlinked ref files were invisible to show-ref (t8130).
+        let meta = match fs::metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if meta.is_dir() {
+            collect_loose_refs(git_dir, &path, &next_relative, out)?;
+        } else if meta.is_file() {
             if let Ok(oid) = grit_lib::refs::resolve_ref(git_dir, &next_relative) {
                 out.insert(next_relative, oid);
             }

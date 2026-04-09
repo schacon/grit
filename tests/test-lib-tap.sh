@@ -124,6 +124,7 @@ test_expect_success() {
 	test -f "$TRASH_DIRECTORY/.test-exports" && . "$TRASH_DIRECTORY/.test-exports"
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 	# Each test case starts at the trash root; bodies may `cd` elsewhere (e.g. setup
 	# leaves the shell inside a subdirectory).
 ||||||| b85df347
@@ -134,6 +135,11 @@ test_expect_success() {
 ||||||| b85df347
 =======
 >>>>>>> origin/cursor/-bc-51644bbb-5aca-4b38-8190-e2ee064634a1-64eb
+||||||| b85df347
+=======
+	# Each test starts from the trash root (matches git/t/test-lib.sh). Without this,
+	# a prior test that ends in a subdirectory (e.g. `cd repo`) breaks relative paths.
+>>>>>>> origin/cursor/t8130-show-ref-extra-test-b037
 	cd "$TRASH_DIRECTORY" || exit 1
 	test_run_ "$commands"
 	result=$?
