@@ -26,3 +26,4 @@ similar.workspace = true
 regex.workspace = true
 libc.workspace = true
 unicode-width.workspace = true
+encoding_rs = "0.8.35"

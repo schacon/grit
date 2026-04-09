@@ -137,6 +137,8 @@ pub fn run(mut args: Args) -> Result<()> {
         no_textconv: args.no_textconv,
         contents: args.contents,
         progress: false,
+        incremental: false,
+        encoding: None,
         annotate_output: true,
         args: args.args,
     })

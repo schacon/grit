@@ -17,6 +17,7 @@
 
 pub mod attributes;
 pub mod check_ref_format;
+pub mod commit_encoding;
 pub mod config;
 pub mod crlf;
 pub mod delta_encode;

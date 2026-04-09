@@ -630,17 +630,17 @@ pub fn run(mut args: Args) -> Result<()> {
             let obj = repo.odb.read(head_oid)?;
             let commit = grit_lib::objects::parse_commit(&obj.data)?;
             validate_amend_source_author(&commit.author)?;
-            Some(commit.author)
+            Some((commit.author, commit.author_raw))
         } else {
             None
         }
     } else {
         None
     };
-    let author = if let Some(preserved) = amend_author {
-        preserved
+    let (author, mut author_raw) = if let Some((preserved_author, preserved_raw)) = amend_author {
+        (preserved_author, preserved_raw)
     } else {
-        resolve_author(&args, &config, &repo, now)?
+        (resolve_author(&args, &config, &repo, now)?, Vec::new())
     };
     let committer = resolve_committer(&config, now)?;
 
@@ -719,11 +719,29 @@ pub fn run(mut args: Args) -> Result<()> {
         }
         _ => None,
     };
+    let mut committer_raw = Vec::new();
+    if let Some(ref enc_label) = encoding {
+        author_raw = crate::git_commit_encoding::encode_header_text(enc_label, &author)
+            .ok_or_else(|| anyhow::anyhow!("unsupported i18n.commitencoding: {enc_label}"))?;
+        committer_raw = crate::git_commit_encoding::encode_header_text(enc_label, &committer)
+            .ok_or_else(|| anyhow::anyhow!("unsupported i18n.commitencoding: {enc_label}"))?;
+        if raw_message.is_none() {
+            raw_message = Some(
+                crate::git_commit_encoding::encode_unicode(
+                    enc_label,
+                    message.trim_end_matches('\n'),
+                )
+                .ok_or_else(|| anyhow::anyhow!("unsupported i18n.commitencoding: {enc_label}"))?,
+            );
+        }
+    }
     let commit_data = CommitData {
         tree: tree_oid,
         parents,
         author,
         committer,
+        author_raw,
+        committer_raw,
         encoding,
         message,
         raw_message,

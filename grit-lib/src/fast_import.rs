@@ -358,6 +358,8 @@ impl<'a, R: BufRead> Importer<'a, R> {
             parents,
             author,
             committer,
+            author_raw: Vec::new(),
+            committer_raw: Vec::new(),
             encoding: None,
             message: message_str,
             raw_message,

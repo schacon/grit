@@ -488,6 +488,7 @@ dependencies = [
 name = "grit-lib"
 version = "0.1.2"
 dependencies = [
+ "encoding_rs",
  "flate2",
  "hex",
  "libc",

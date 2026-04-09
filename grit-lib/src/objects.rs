@@ -21,6 +21,7 @@
 use std::fmt;
 use std::str::FromStr;
 
+use crate::commit_encoding;
 use crate::error::{Error, Result};
 
 /// A 20-byte SHA-1 object identifier.
@@ -335,10 +336,16 @@ pub struct CommitData {
     pub tree: ObjectId,
     /// Parent commit IDs (zero or more).
     pub parents: Vec<ObjectId>,
-    /// Author field (raw string as Git stores it).
+    /// Author field decoded to Unicode (using `encoding` when present, else UTF-8).
     pub author: String,
-    /// Committer field (raw string as Git stores it).
+    /// Committer field decoded to Unicode.
     pub committer: String,
+    /// Exact `author` header payload bytes as stored in the object (after `author `).
+    ///
+    /// Empty means treat [`Self::author`] as UTF-8 when serializing (new commits).
+    pub author_raw: Vec<u8>,
+    /// Exact `committer` header payload bytes as stored in the object.
+    pub committer_raw: Vec<u8>,
     /// Optional encoding override (e.g. `"UTF-8"`).
     pub encoding: Option<String>,
     /// Commit message (everything after the blank line).
@@ -355,15 +362,22 @@ pub struct CommitData {
 ///
 /// Returns [`Error::CorruptObject`] if required headers are missing.
 pub fn parse_commit(data: &[u8]) -> Result<CommitData> {
-    // Headers are ASCII; the message body may be in another encoding (see
-    // `encoding` header). Find the blank line that separates headers from the
-    // body without interpreting body bytes as UTF-8.
+    // Header lines are mostly ASCII; author/committer payloads may match the `encoding` header.
+    // Continuation lines (leading SP) append to the previous header; we only retain author/committer.
+    #[derive(Clone, Copy)]
+    enum Continuation {
+        Author,
+        Committer,
+        Ignore,
+    }
+
     let mut pos = 0usize;
     let mut tree = None;
     let mut parents = Vec::new();
-    let mut author = None;
-    let mut committer = None;
+    let mut author_raw: Option<Vec<u8>> = None;
+    let mut committer_raw: Option<Vec<u8>> = None;
     let mut encoding = None;
+    let mut cont = Continuation::Ignore;
 
     while pos < data.len() {
         let line_start = pos;
@@ -374,38 +388,91 @@ pub fn parse_commit(data: &[u8]) -> Result<CommitData> {
         let line = &data[line_start..line_end];
         let after_nl = line_end.saturating_add(1);
         if line.is_empty() {
-            // Blank line: remainder is the message body (may be non-UTF-8).
             let body = data.get(after_nl..).unwrap_or_default();
-            let message = String::from_utf8_lossy(body).into_owned();
+            let message = commit_encoding::decode_bytes(encoding.as_deref(), body);
             let raw_message = std::str::from_utf8(body).is_err().then(|| body.to_vec());
+            let author_bytes = author_raw
+                .ok_or_else(|| Error::CorruptObject("commit missing author header".to_owned()))?;
+            let committer_bytes = committer_raw.ok_or_else(|| {
+                Error::CorruptObject("commit missing committer header".to_owned())
+            })?;
+            let author = commit_encoding::decode_bytes(encoding.as_deref(), &author_bytes);
+            let committer = commit_encoding::decode_bytes(encoding.as_deref(), &committer_bytes);
             return Ok(CommitData {
                 tree: tree
                     .ok_or_else(|| Error::CorruptObject("commit missing tree header".to_owned()))?,
                 parents,
-                author: author.ok_or_else(|| {
-                    Error::CorruptObject("commit missing author header".to_owned())
-                })?,
-                committer: committer.ok_or_else(|| {
-                    Error::CorruptObject("commit missing committer header".to_owned())
-                })?,
+                author,
+                committer,
+                author_raw: author_bytes,
+                committer_raw: committer_bytes,
                 encoding,
                 message,
                 raw_message,
             });
         }
-        let line_str = std::str::from_utf8(line).map_err(|_| {
-            Error::CorruptObject("commit header line is not valid UTF-8".to_owned())
-        })?;
-        if let Some(rest) = line_str.strip_prefix("tree ") {
-            tree = Some(rest.trim().parse::<ObjectId>()?);
-        } else if let Some(rest) = line_str.strip_prefix("parent ") {
-            parents.push(rest.trim().parse::<ObjectId>()?);
-        } else if let Some(rest) = line_str.strip_prefix("author ") {
-            author = Some(rest.to_owned());
-        } else if let Some(rest) = line_str.strip_prefix("committer ") {
-            committer = Some(rest.to_owned());
-        } else if let Some(rest) = line_str.strip_prefix("encoding ") {
-            encoding = Some(rest.to_owned());
+
+        if line.first() == Some(&b' ') {
+            let rest = line.get(1..).unwrap_or_default();
+            match cont {
+                Continuation::Author => {
+                    let a = author_raw.as_mut().ok_or_else(|| {
+                        Error::CorruptObject("orphan header continuation".to_owned())
+                    })?;
+                    a.extend_from_slice(rest);
+                }
+                Continuation::Committer => {
+                    let c = committer_raw.as_mut().ok_or_else(|| {
+                        Error::CorruptObject("orphan header continuation".to_owned())
+                    })?;
+                    c.extend_from_slice(rest);
+                }
+                Continuation::Ignore => {}
+            }
+            pos = after_nl;
+            continue;
+        }
+
+        let key_end = line
+            .iter()
+            .position(|&b| b == b' ')
+            .ok_or_else(|| Error::CorruptObject("malformed commit header line".to_owned()))?;
+        let key = &line[..key_end];
+        let rest = line.get(key_end + 1..).unwrap_or_default();
+
+        match key {
+            b"tree" => {
+                let line_str = std::str::from_utf8(rest).map_err(|_| {
+                    Error::CorruptObject("commit tree line is not valid UTF-8".to_owned())
+                })?;
+                tree = Some(line_str.trim().parse::<ObjectId>()?);
+                cont = Continuation::Ignore;
+            }
+            b"parent" => {
+                let line_str = std::str::from_utf8(rest).map_err(|_| {
+                    Error::CorruptObject("commit parent line is not valid UTF-8".to_owned())
+                })?;
+                parents.push(line_str.trim().parse::<ObjectId>()?);
+                cont = Continuation::Ignore;
+            }
+            b"author" => {
+                author_raw = Some(rest.to_vec());
+                cont = Continuation::Author;
+            }
+            b"committer" => {
+                committer_raw = Some(rest.to_vec());
+                cont = Continuation::Committer;
+            }
+            b"encoding" => {
+                let line_str = std::str::from_utf8(rest).map_err(|_| {
+                    Error::CorruptObject("commit encoding line is not valid UTF-8".to_owned())
+                })?;
+                encoding = Some(line_str.to_owned());
+                cont = Continuation::Ignore;
+            }
+            _ => {
+                cont = Continuation::Ignore;
+            }
         }
         pos = after_nl;
     }
@@ -520,8 +587,20 @@ pub fn serialize_commit(c: &CommitData) -> Vec<u8> {
     for p in &c.parents {
         out.extend_from_slice(format!("parent {p}\n").as_bytes());
     }
-    out.extend_from_slice(format!("author {}\n", c.author).as_bytes());
-    out.extend_from_slice(format!("committer {}\n", c.committer).as_bytes());
+    out.extend_from_slice(b"author ");
+    if c.author_raw.is_empty() {
+        out.extend_from_slice(c.author.as_bytes());
+    } else {
+        out.extend_from_slice(&c.author_raw);
+    }
+    out.push(b'\n');
+    out.extend_from_slice(b"committer ");
+    if c.committer_raw.is_empty() {
+        out.extend_from_slice(c.committer.as_bytes());
+    } else {
+        out.extend_from_slice(&c.committer_raw);
+    }
+    out.push(b'\n');
     if let Some(enc) = &c.encoding {
         out.extend_from_slice(format!("encoding {enc}\n").as_bytes());
     }

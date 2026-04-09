@@ -419,7 +419,7 @@ pub fn run(args: Args) -> Result<()> {
             false,
             false,
             merge_dir_mode,
-            rename_opts.clone(),
+            rename_opts,
         )?;
         if merge_result.has_conflicts {
             let reason = merge_result
@@ -604,6 +604,8 @@ fn create_replayed_commit(
         parents: vec![parent],
         author: based_on.author.clone(),
         committer,
+        author_raw: based_on.author_raw.clone(),
+        committer_raw: based_on.committer_raw.clone(),
         encoding: based_on.encoding.clone(),
         message: based_on.message.clone(),
         raw_message: None,

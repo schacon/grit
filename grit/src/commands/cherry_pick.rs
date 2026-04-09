@@ -550,7 +550,7 @@ fn walk_first_parent_filtered(
     while let Some(c) = current {
         let obj = repo.odb.read(&c)?;
         let commit = parse_commit(&obj.data)?;
-        let author_ok = author_sub.map_or(true, |sub| commit.author.contains(sub));
+        let author_ok = author_sub.is_none_or(|sub| commit.author.contains(sub));
         if author_ok {
             matches.push(c);
             if let Some(limit) = max_count {
@@ -1035,12 +1035,12 @@ pub(crate) fn abort_cherry_pick_or_revert() -> Result<()> {
 
 fn reset_to_head_tree(repo: &Repository, git_dir: &Path) -> Result<()> {
     let head = resolve_head(git_dir)?;
-    let old_index = load_index(&repo)?;
+    let old_index = load_index(repo)?;
     let mut new_index = Index::new();
     if let Some(head_oid) = head.oid() {
         let obj = repo.odb.read(head_oid)?;
         let commit = parse_commit(&obj.data)?;
-        new_index.entries = tree_to_index_entries(&repo, &commit.tree, "")?;
+        new_index.entries = tree_to_index_entries(repo, &commit.tree, "")?;
     }
     new_index.sort();
     repo.write_index(&mut new_index)?;
@@ -1331,6 +1331,8 @@ fn create_cherry_pick_commit(
         parents,
         author,
         committer,
+        author_raw: Vec::new(),
+        committer_raw: Vec::new(),
         encoding: None,
         message: message.to_owned(),
         raw_message: None,

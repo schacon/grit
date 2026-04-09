@@ -78,6 +78,8 @@ pub fn run(args: Args) -> Result<()> {
         parents: parent_oids,
         author,
         committer,
+        author_raw: Vec::new(),
+        committer_raw: Vec::new(),
         encoding: args.encoding.clone(),
         message,
         raw_message: None,
