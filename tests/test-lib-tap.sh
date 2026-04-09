@@ -119,7 +119,10 @@ test_expect_success() {
 	result=$?
 	# Each test case starts from the trash root; bodies often `cd` into subdirs and must not
 	# leave the harness cwd there (matches git/t/test-lib.sh: only initial cd into trash).
-	cd "$TRASH_DIRECTORY" || exit 1
+	cd "$TRASH_DIRECTORY" || {
+		echo >&2 "BUG: cannot cd to TRASH_DIRECTORY=$TRASH_DIRECTORY"
+		result=1
+	}
 	test -f "$TRASH_DIRECTORY/.test-exports" && . "$TRASH_DIRECTORY/.test-exports"
 	if test -f "$_TICK_FILE"
 	then
@@ -202,7 +205,10 @@ test_expect_failure() {
 	test -f "$_exports_file" && . "$_exports_file"
 	test_run_ "$commands" expecting_failure
 	result=$?
-	cd "$TRASH_DIRECTORY" || exit 1
+	cd "$TRASH_DIRECTORY" || {
+		echo >&2 "BUG: cannot cd to TRASH_DIRECTORY=$TRASH_DIRECTORY"
+		result=1
+	}
 	test -f "$_exports_file" && . "$_exports_file"
 	if test -f "$_TICK_FILE"
 	then
