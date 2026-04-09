@@ -903,7 +903,7 @@ t5332-multi-pack-reuse	t5	yes	14	1	13	false	ok	0
 t5333-pseudo-merge-bitmaps	t5	skip	18	3	15	false	ok	0
 t5334-incremental-multi-pack-index	t5	yes	16	16	0	true	ok	0
 t5335-compact-multi-pack-index	t5	yes	10	0	10	false	ok	0
-t5351-unpack-large-objects	t5	yes	7	4	3	false	ok	0
+t5351-unpack-large-objects	t5	yes	7	7	0	true	ok	0
 t5400-send-pack	t5	yes	17	10	7	false	ok	0
 t5401-update-hooks	t5	yes	13	4	9	false	ok	0
 t5402-post-merge-hook	t5	yes	7	3	4	false	ok	0
