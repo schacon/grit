@@ -51,7 +51,7 @@ t0080-tree-hash	t0	yes	30	30	0	true	ok	0
 t0080-unit-test-output	t0	yes	1	1	0	true	ok	0
 t0081-find-pack	t0	yes	4	4	0	true	ok	0
 t0090-cache-tree	t0	yes	22	0	22	false	ok	0
-t0091-bugreport	t0	yes	13	11	2	false	ok	0
+t0091-bugreport	t0	yes	13	13	0	true	ok	0
 t0092-diagnose	t0	yes	4	4	0	true	ok	0
 t0095-bloom	t0	yes	11	11	0	true	ok	0
 t0100-previous	t0	yes	6	6	0	true	ok	0

@@ -2767,7 +2767,10 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
                 msg = msg.replace("Usage:", "usage:");
                 print!("{msg}");
             } else {
-                let _ = e.print();
+                // Match Git's lowercase "usage:" line; clap's `print()` leaves "Usage:".
+                let mut msg = e.render().to_string();
+                msg = msg.replace("Usage:", "usage:");
+                eprint!("{msg}");
                 if subcmd == "stash" && !stash_explicit_subcommand(rest) {
                     print_stash_invalid_option_usage_header();
                 }
