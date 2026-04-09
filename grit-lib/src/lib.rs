@@ -18,6 +18,7 @@
 pub mod attributes;
 pub mod check_ref_format;
 pub mod commit_encoding;
+pub mod commit_pretty;
 pub mod commit_trailers;
 pub mod config;
 pub mod crlf;
@@ -45,6 +46,7 @@ pub mod mailmap;
 pub mod merge_base;
 pub mod merge_diff;
 pub mod merge_file;
+pub mod merge_trees;
 pub mod mergetool_vimdiff;
 pub mod midx;
 pub mod name_rev;

@@ -4872,6 +4872,16 @@ fn format_commit(
             write_notes(out, oid, notes_cache, args, odb)?;
             writeln!(out)?;
         }
+        Some("reference") => {
+            let subject = info.message.lines().next().unwrap_or("");
+            let line = grit_lib::commit_pretty::format_reference_line(
+                oid,
+                subject,
+                &info.committer,
+                abbrev_len,
+            );
+            writeln!(out, "{line}")?;
+        }
         Some(other) => {
             // Try as a format string directly
             let note_bytes = notes_cache.map().get(oid).map(Vec::as_slice);

@@ -13,16 +13,23 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
+use std::io::{stdin, IsTerminal, Write};
 use std::path::Path;
+use std::process::Command;
+use tempfile::NamedTempFile;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
-use grit_lib::merge_file::{merge, MergeInput};
+use grit_lib::merge_file::MergeFavor;
+use grit_lib::merge_trees::{
+    index_tree_oid_matches_head, merge_trees_three_way, WhitespaceMergeOptions,
+};
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
 };
+use grit_lib::refs::append_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
@@ -84,6 +91,14 @@ pub struct Args {
     /// Open an editor for the commit message.
     #[arg(short = 'e', long = "edit")]
     pub edit: bool,
+
+    /// Refer to the reverted commit using the `reference` pretty format (like `git show --pretty=reference`).
+    #[arg(long = "reference", conflicts_with = "no_reference")]
+    pub reference: bool,
+
+    /// Disable reference-format commit lines even if `revert.reference` is set.
+    #[arg(long = "no-reference", conflicts_with = "reference")]
+    pub no_reference: bool,
 }
 
 /// Run the `revert` command.
@@ -108,7 +123,18 @@ pub fn run(args: Args) -> Result<()> {
 
 // ── Main revert flow ────────────────────────────────────────────────
 
-fn do_revert(args: Args) -> Result<()> {
+fn merge_revert_reference_config(git_dir: &Path, args: &mut Args) -> Result<()> {
+    if args.reference || args.no_reference {
+        return Ok(());
+    }
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    if config.get_bool("revert.reference") == Some(Ok(true)) {
+        args.reference = true;
+    }
+    Ok(())
+}
+
+fn do_revert(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
@@ -190,6 +216,7 @@ fn do_revert(args: Args) -> Result<()> {
         write_abort_safety_file(git_dir)?;
     }
 
+    merge_revert_reference_config(git_dir, &mut args)?;
     run_revert_sequence(&repo, &expanded, &args, None)
 }
 
@@ -214,6 +241,12 @@ fn write_revert_sequencer_opts(git_dir: &Path, args: &Args) -> Result<()> {
     }
     if args.no_edit {
         opts.push_str("\tedit = false\n");
+    }
+    if args.reference {
+        opts.push_str("\treference = true\n");
+    }
+    if args.no_reference {
+        opts.push_str("\treference = false\n");
     }
     fs::write(seq_dir.join("opts"), &opts)?;
     Ok(())
@@ -252,6 +285,14 @@ fn merge_revert_sequencer_opts(git_dir: &Path, args: &mut Args) {
                 "edit" if val == "false" => {
                     args.no_edit = true;
                     args.edit = false;
+                }
+                "reference" if val == "true" => {
+                    args.reference = true;
+                    args.no_reference = false;
+                }
+                "reference" if val == "false" => {
+                    args.no_reference = true;
+                    args.reference = false;
                 }
                 _ => {}
             }
@@ -349,7 +390,7 @@ fn reset_revert_to_head_tree(repo: &Repository, git_dir: &Path) -> Result<()> {
     let index_path = repo.index_path();
     repo.write_index_at(&index_path, &mut new_index)?;
     if let Some(wt) = &repo.work_tree {
-        checkout_merged_index(repo, wt, &old_index, &new_index)?;
+        checkout_merged_index(repo, wt, &old_index, &new_index, &BTreeMap::new())?;
     }
     Ok(())
 }
@@ -404,6 +445,9 @@ fn run_revert_sequence(
             }
             Err(e) => {
                 let err_msg = format!("{e}");
+                if err_msg.contains("DIRTY_INDEX_REVERT") {
+                    std::process::exit(128);
+                }
                 if err_msg.contains("CONFLICT_EXIT_REVERT") {
                     if specs.len() > 1 {
                         save_revert_sequencer_after_failure(
@@ -515,6 +559,191 @@ fn append_signoff_revert(msg: &str, git_dir: &Path) -> Result<String> {
     Ok(format!("{trimmed}\n\n{signoff_line}\n"))
 }
 
+fn should_use_reference_format(git_dir: &Path, args: &Args) -> Result<bool> {
+    if args.no_reference {
+        return Ok(false);
+    }
+    if args.reference {
+        return Ok(true);
+    }
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    Ok(config.get_bool("revert.reference") == Some(Ok(true)))
+}
+
+fn merge_commit_message_for_revert(
+    commit: &CommitData,
+    commit_oid: ObjectId,
+    use_reference: bool,
+    comment_char: char,
+) -> (String, String) {
+    let subject_line = commit.message.lines().next().unwrap_or("");
+    let oid_full = commit_oid.to_hex();
+
+    if use_reference {
+        let title = format!("{comment_char} *** SAY WHY WE ARE REVERTING ON THE TITLE LINE ***");
+        let ref_line = grit_lib::commit_pretty::format_reference_line(
+            &commit_oid,
+            subject_line,
+            &commit.committer,
+            7,
+        );
+        // Trailing blank line matches the template file `git revert --edit` presents
+        // (see t3501 "git revert --reference with core.commentChar").
+        let body = format!("This reverts commit {ref_line}.\n\n");
+        return (title, body);
+    }
+
+    let body = format!("This reverts commit {oid_full}.\n");
+
+    if let Some(rest) = subject_line.strip_prefix("Revert \"") {
+        if let Some(orig) = rest.strip_suffix('"') {
+            if !orig.starts_with("Revert \"") {
+                let title = format!("Reapply \"{orig}\"\n");
+                return (title, body);
+            }
+        }
+    }
+
+    let title = format!("Revert \"{subject_line}\"\n");
+    (title, body)
+}
+
+fn merge_conflict_advice_enabled(git_dir: &Path) -> bool {
+    let Ok(config) = ConfigSet::load(Some(git_dir), true) else {
+        return true;
+    };
+    config.get_bool("advice.mergeConflict") != Some(Ok(false))
+}
+
+fn parse_strategy_options_revert(
+    strategy_options: &[String],
+) -> (MergeFavor, WhitespaceMergeOptions) {
+    let mut favor = MergeFavor::None;
+    let mut ws = WhitespaceMergeOptions::default();
+    for opt in strategy_options {
+        match opt.as_str() {
+            "theirs" => favor = MergeFavor::Theirs,
+            "ours" => favor = MergeFavor::Ours,
+            "ignore-all-space" => ws.ignore_all_space = true,
+            "ignore-space-change" => ws.ignore_space_change = true,
+            "ignore-space-at-eol" => ws.ignore_space_at_eol = true,
+            "ignore-cr-at-eol" => ws.ignore_cr_at_eol = true,
+            _ => {}
+        }
+    }
+    (favor, ws)
+}
+
+fn error_dirty_index_revert(repo: &Repository, head_oid: ObjectId) -> Result<()> {
+    if super::merge::index_matches_head_tree(repo, head_oid)? {
+        return Ok(());
+    }
+    eprintln!("your local changes would be overwritten by revert.");
+    let git_dir = &repo.git_dir;
+    let Ok(config) = ConfigSet::load(Some(git_dir), true) else {
+        return Ok(());
+    };
+    if config.get_bool("advice.commitBeforeMerge") != Some(Ok(false)) {
+        eprintln!("commit your changes or stash them to proceed.");
+    }
+    bail!("DIRTY_INDEX_REVERT");
+}
+
+fn is_effective_editor_value(raw: &str) -> bool {
+    let t = raw.trim();
+    !t.is_empty() && t != ":"
+}
+
+fn resolve_revert_editor(git_dir: &Path) -> String {
+    if let Ok(e) = std::env::var("GIT_EDITOR") {
+        if is_effective_editor_value(&e) {
+            return e;
+        }
+    }
+    if let Ok(config) = ConfigSet::load(Some(git_dir), true) {
+        if let Some(e) = config.get("core.editor") {
+            if is_effective_editor_value(&e) {
+                return e;
+            }
+        }
+    }
+    if let Ok(e) = std::env::var("VISUAL") {
+        if is_effective_editor_value(&e) {
+            return e;
+        }
+    }
+    if let Ok(e) = std::env::var("EDITOR") {
+        if is_effective_editor_value(&e) {
+            return e;
+        }
+    }
+    if std::env::var("VISUAL").is_ok() || std::env::var("EDITOR").is_ok() {
+        "true".to_owned()
+    } else {
+        "vi".to_owned()
+    }
+}
+
+fn comment_char_for_revert(git_dir: &Path) -> char {
+    let Ok(config) = ConfigSet::load(Some(git_dir), true) else {
+        return '#';
+    };
+    let Some(raw) = config.get("core.commentChar") else {
+        return '#';
+    };
+    let t = raw.trim();
+    if t.eq_ignore_ascii_case("auto") {
+        return '#';
+    }
+    t.chars().next().unwrap_or('#')
+}
+
+fn launch_revert_editor(git_dir: &Path, path: &Path) -> Result<()> {
+    let editor = resolve_revert_editor(git_dir);
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(format!("{editor} \"$1\""))
+        .arg("sh")
+        .arg(path)
+        .status()
+        .with_context(|| format!("failed to launch editor '{editor}'"))?;
+    if !status.success() {
+        bail!("editor exited with non-zero status");
+    }
+    Ok(())
+}
+
+fn cleanup_edited_revert_message(message: &str, comment_prefix: char) -> String {
+    let prefix = comment_prefix.to_string();
+    let mut out = String::new();
+    let mut empties = 0usize;
+    let mut i = 0usize;
+    while i < message.len() {
+        let rest = &message[i..];
+        let (line_with_nl, advance) = if let Some(pos) = rest.find('\n') {
+            (&rest[..=pos], pos + 1)
+        } else {
+            (rest, rest.len())
+        };
+        i += advance;
+        if line_with_nl.starts_with(&prefix) {
+            continue;
+        }
+        let content_len = line_with_nl.trim_end_matches(['\r', '\n', ' ', '\t']).len();
+        if content_len > 0 {
+            if empties > 0 && !out.is_empty() {
+                out.push('\n');
+            }
+            empties = 0;
+            out.push_str(&line_with_nl[..content_len]);
+            out.push('\n');
+        } else {
+            empties += 1;
+        }
+    }
+    out
+}
+
 fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
     let git_dir = &repo.git_dir;
 
@@ -527,9 +756,8 @@ fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
     }
     let commit = parse_commit(&commit_obj.data)?;
 
-    // Determine parent (base for the original change).
-    let parent_oid = if commit.parents.len() > 1 {
-        // Merge commit — require --mainline.
+    // Parent tree for the original change (empty tree for root commits, matching Git).
+    let parent_tree_oid = if commit.parents.len() > 1 {
         let m = args.mainline.ok_or_else(|| {
             anyhow::anyhow!(
                 "commit {} is a merge but no -m option was given",
@@ -539,17 +767,18 @@ fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
         if m == 0 || m > commit.parents.len() {
             bail!("commit {} does not have parent {}", commit_oid, m);
         }
-        commit.parents[m - 1]
+        let parent_oid = commit.parents[m - 1];
+        let parent_obj = repo.odb.read(&parent_oid)?;
+        let parent_commit = parse_commit(&parent_obj.data)?;
+        parent_commit.tree
     } else if commit.parents.is_empty() {
-        bail!("cannot revert a root commit (no parent)");
+        repo.odb.write(ObjectKind::Tree, &[])?
     } else {
-        commit.parents[0]
+        let parent_oid = commit.parents[0];
+        let parent_obj = repo.odb.read(&parent_oid)?;
+        let parent_commit = parse_commit(&parent_obj.data)?;
+        parent_commit.tree
     };
-
-    // Read the parent commit's tree.
-    let parent_obj = repo.odb.read(&parent_oid)?;
-    let parent_commit = parse_commit(&parent_obj.data)?;
-    let parent_tree_oid = parent_commit.tree;
 
     // The commit's own tree.
     let commit_tree_oid = commit.tree;
@@ -564,24 +793,31 @@ fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
     let head_commit = parse_commit(&head_obj.data)?;
     let head_tree_oid = head_commit.tree;
 
-    // Three-way merge:  base=commit_tree, ours=HEAD_tree, theirs=parent_tree
-    // This effectively reverses the commit's changes.
-    let base_entries = tree_to_map(tree_to_index_entries(repo, &commit_tree_oid, "")?);
-    let ours_entries = tree_to_map(tree_to_index_entries(repo, &head_tree_oid, "")?);
-    let theirs_entries = tree_to_map(tree_to_index_entries(repo, &parent_tree_oid, "")?);
+    if !args.no_commit {
+        error_dirty_index_revert(repo, head_oid)?;
+    }
 
-    let mut merged_index =
-        three_way_merge_with_content(repo, &base_entries, &ours_entries, &theirs_entries)?;
+    let use_reference = should_use_reference_format(git_dir, args)?;
+    let comment_char = comment_char_for_revert(git_dir);
+    let (favor, ws_opts) = parse_strategy_options_revert(&args.strategy_option);
+    let merged = merge_trees_three_way(
+        repo,
+        commit_tree_oid,
+        head_tree_oid,
+        parent_tree_oid,
+        favor,
+        ws_opts,
+        "parent of reverted commit",
+    )?;
+    let mut merged_index = merged.index;
+    let conflict_map = merged.conflict_content;
 
     // Check for conflicts (any entry with stage != 0).
     let has_conflicts = merged_index.entries.iter().any(|e| e.stage() != 0);
 
     // Check if the revert produces an empty commit (no changes).
-    if !has_conflicts {
-        let merged_tree = write_tree_from_index(&repo.odb, &merged_index, "")?;
-        if merged_tree == head_tree_oid {
-            bail!("EMPTY_REVERT_STOP: error: The previous revert is now empty, possibly due to conflict resolution.");
-        }
+    if !has_conflicts && index_tree_oid_matches_head(&repo.odb, &merged_index, &head_tree_oid)? {
+        bail!("EMPTY_REVERT_STOP: error: The previous revert is now empty, possibly due to conflict resolution.");
     }
 
     // Load old index BEFORE writing new one (needed for worktree cleanup).
@@ -597,15 +833,21 @@ fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
         .work_tree
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot revert in a bare repository"))?;
-    checkout_merged_index(repo, work_tree, &old_index, &merged_index)?;
+    checkout_merged_index(repo, work_tree, &old_index, &merged_index, &conflict_map)?;
+
+    let (title_line, body_suffix) =
+        merge_commit_message_for_revert(&commit, commit_oid, use_reference, comment_char);
+    let short_oid = &commit_oid.to_hex()[..7];
+    let subject = commit.message.lines().next().unwrap_or("");
+
+    let template_msg = if use_reference {
+        format!("{title_line}\n\n{body_suffix}")
+    } else {
+        format!("{title_line}{body_suffix}")
+    };
 
     if has_conflicts {
-        let short_oid = &commit_oid.to_hex()[..7];
-        let subject = commit.message.lines().next().unwrap_or("");
-        let msg = format!(
-            "Revert \"{subject}\"\n\nThis reverts commit {oid}.\n",
-            oid = commit_oid.to_hex()
-        );
+        let msg = template_msg.clone();
         fs::write(
             git_dir.join("REVERT_HEAD"),
             format!("{}\n", commit_oid.to_hex()),
@@ -616,17 +858,22 @@ fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
         )?;
         fs::write(git_dir.join("MERGE_MSG"), &msg)?;
 
-        eprintln!(
-            "error: could not revert {short_oid}... {subject}\n\
-             hint: after resolving the conflicts, mark the corrected paths\n\
-             hint: with 'git add <paths>' or 'git rm <paths>'\n\
-             hint: and commit the result with 'git revert --continue'"
-        );
+        eprintln!("error: could not revert {short_oid}... {subject}");
+        if merge_conflict_advice_enabled(git_dir) {
+            eprintln!("hint: After resolving the conflicts, mark them with");
+            eprintln!("hint: \"git add/rm <pathspec>\", then run");
+            eprintln!("hint: \"git revert --continue\".");
+            eprintln!("hint: You can instead skip this commit with \"git revert --skip\".");
+            eprintln!("hint: To abort and get back to the state before \"git revert\",");
+            eprintln!("hint: run \"git revert --abort\".");
+            eprintln!(
+                "hint: Disable this message with \"git config set advice.mergeConflict false\""
+            );
+        }
         return Err(anyhow::anyhow!("CONFLICT_EXIT_REVERT"));
     }
 
     if args.no_commit {
-        // Write REVERT_HEAD but don't commit.
         fs::write(
             git_dir.join("REVERT_HEAD"),
             format!("{}\n", commit_oid.to_hex()),
@@ -634,13 +881,23 @@ fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
         return Ok(());
     }
 
-    let subject = commit.message.lines().next().unwrap_or("");
-    let mut msg = format!(
-        "Revert \"{subject}\"\n\nThis reverts commit {oid}.\n",
-        oid = commit_oid.to_hex()
-    );
+    let mut msg = template_msg;
     if args.signoff {
         msg = append_signoff_revert(&msg, git_dir)?;
+    }
+
+    let should_edit = args.edit || (!args.no_edit && stdin().is_terminal());
+    if should_edit {
+        let mut tmp = NamedTempFile::new_in(git_dir).context("temp file for revert message")?;
+        let p = tmp.path().to_path_buf();
+        write!(tmp, "{msg}")?;
+        tmp.flush()?;
+        launch_revert_editor(git_dir, &p)?;
+        let edited = fs::read_to_string(&p).unwrap_or_default();
+        msg = cleanup_edited_revert_message(&edited, comment_char);
+        if msg.trim().is_empty() {
+            bail!("Aborting commit due to empty commit message.");
+        }
     }
 
     create_revert_commit(repo, &head, &merged_index, &msg)?;
@@ -683,6 +940,8 @@ pub(crate) fn do_continue() -> Result<()> {
         strategy_option: vec![],
         no_edit: false,
         edit: false,
+        reference: false,
+        no_reference: false,
     };
     merge_revert_sequencer_opts(git_dir, &mut opts);
 
@@ -883,7 +1142,38 @@ fn create_revert_commit(
     let commit_bytes = serialize_commit(&commit_data);
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
 
+    let old_oid = head
+        .oid()
+        .copied()
+        .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
     update_head(git_dir, head, &commit_oid)?;
+
+    let reflog_subject = message
+        .lines()
+        .find(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
+        .unwrap_or_else(|| message.lines().next().unwrap_or(""));
+    let reflog_msg = format!("revert: {reflog_subject}");
+    let ident = &commit_data.committer;
+    let _ = append_reflog(
+        git_dir,
+        "HEAD",
+        &old_oid,
+        &commit_oid,
+        ident,
+        &reflog_msg,
+        false,
+    );
+    if let HeadState::Branch { refname, .. } = head {
+        let _ = append_reflog(
+            git_dir,
+            refname,
+            &old_oid,
+            &commit_oid,
+            ident,
+            &reflog_msg,
+            false,
+        );
+    }
 
     let _ = fs::remove_file(git_dir.join("REVERT_HEAD"));
     let _ = fs::remove_file(git_dir.join("CHERRY_PICK_HEAD"));
@@ -992,181 +1282,13 @@ fn tree_to_index_entries(
     Ok(result)
 }
 
-fn tree_to_map(entries: Vec<IndexEntry>) -> HashMap<Vec<u8>, IndexEntry> {
-    let mut out = HashMap::new();
-    for e in entries {
-        out.insert(e.path.clone(), e);
-    }
-    out
-}
-
-fn same_blob(a: &IndexEntry, b: &IndexEntry) -> bool {
-    a.oid == b.oid && a.mode == b.mode
-}
-
-fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {
-    let mut e = src.clone();
-    e.flags = (e.flags & 0x0FFF) | ((stage as u16) << 12);
-    index.entries.push(e);
-}
-
-/// Three-way merge with content-level merging for conflicting files.
-///
-/// base = commit_tree (what we're reverting)
-/// ours = HEAD_tree (current state)
-/// theirs = parent_tree (state before the commit)
-fn three_way_merge_with_content(
-    repo: &Repository,
-    base: &HashMap<Vec<u8>, IndexEntry>,
-    ours: &HashMap<Vec<u8>, IndexEntry>,
-    theirs: &HashMap<Vec<u8>, IndexEntry>,
-) -> Result<Index> {
-    let mut all_paths = BTreeSet::new();
-    all_paths.extend(base.keys().cloned());
-    all_paths.extend(ours.keys().cloned());
-    all_paths.extend(theirs.keys().cloned());
-
-    let mut out = Index::new();
-
-    for path in all_paths {
-        let b = base.get(&path);
-        let o = ours.get(&path);
-        let t = theirs.get(&path);
-
-        match (b, o, t) {
-            // Both sides same → take ours
-            (_, Some(oe), Some(te)) if same_blob(oe, te) => {
-                out.entries.push(oe.clone());
-            }
-            // Base == ours, only theirs changed → take theirs
-            (Some(be), Some(oe), Some(te)) if same_blob(be, oe) => {
-                out.entries.push(te.clone());
-            }
-            // Base == theirs, only ours changed → take ours
-            (Some(be), Some(oe), Some(te)) if same_blob(be, te) => {
-                out.entries.push(oe.clone());
-            }
-            // All three differ → try content merge
-            (Some(be), Some(oe), Some(te)) => {
-                content_merge_or_conflict(repo, &mut out, &path, be, oe, te)?;
-            }
-            // Added only in ours (not in base, not in theirs)
-            (None, Some(oe), None) => {
-                out.entries.push(oe.clone());
-            }
-            // Added only in theirs (not in base, not in ours)
-            (None, None, Some(te)) => {
-                out.entries.push(te.clone());
-            }
-            // Added in both with same content
-            (None, Some(oe), Some(te)) if same_blob(oe, te) => {
-                out.entries.push(oe.clone());
-            }
-            // Added in both with different content → conflict
-            (None, Some(oe), Some(te)) => {
-                stage_entry(&mut out, oe, 2);
-                stage_entry(&mut out, te, 3);
-            }
-            // Deleted by both → skip
-            (Some(_), None, None) => {}
-            // Deleted by theirs, unchanged in ours (base == ours)
-            (Some(be), Some(oe), None) if same_blob(be, oe) => {
-                // theirs deleted it → delete
-            }
-            // Deleted by ours, unchanged in theirs (base == theirs)
-            (Some(be), None, Some(te)) if same_blob(be, te) => {
-                // ours deleted it → delete
-            }
-            // Deleted by theirs, modified in ours → conflict
-            (Some(be), Some(oe), None) => {
-                stage_entry(&mut out, be, 1);
-                stage_entry(&mut out, oe, 2);
-            }
-            // Deleted by ours, modified in theirs → conflict
-            (Some(be), None, Some(te)) => {
-                stage_entry(&mut out, be, 1);
-                stage_entry(&mut out, te, 3);
-            }
-            // Nothing anywhere
-            (None, None, None) => {}
-        }
-    }
-
-    out.sort();
-    Ok(out)
-}
-
-/// Try a content-level three-way merge; fall back to conflict stages.
-fn content_merge_or_conflict(
-    repo: &Repository,
-    index: &mut Index,
-    path: &[u8],
-    base: &IndexEntry,
-    ours: &IndexEntry,
-    theirs: &IndexEntry,
-) -> Result<()> {
-    let base_obj = repo.odb.read(&base.oid)?;
-    let ours_obj = repo.odb.read(&ours.oid)?;
-    let theirs_obj = repo.odb.read(&theirs.oid)?;
-
-    // Only attempt content merge for text blobs.
-    if grit_lib::merge_file::is_binary(&base_obj.data)
-        || grit_lib::merge_file::is_binary(&ours_obj.data)
-        || grit_lib::merge_file::is_binary(&theirs_obj.data)
-    {
-        // Binary conflict.
-        stage_entry(index, base, 1);
-        stage_entry(index, ours, 2);
-        stage_entry(index, theirs, 3);
-        return Ok(());
-    }
-
-    let path_str = String::from_utf8_lossy(path);
-    let input = MergeInput {
-        base: &base_obj.data,
-        ours: &ours_obj.data,
-        theirs: &theirs_obj.data,
-        label_ours: "HEAD",
-        label_base: "parent of reverted commit",
-        label_theirs: &path_str,
-        favor: Default::default(),
-        style: Default::default(),
-        marker_size: 7,
-        diff_algorithm: None,
-        ignore_all_space: false,
-        ignore_space_change: false,
-        ignore_space_at_eol: false,
-        ignore_cr_at_eol: false,
-    };
-
-    let result = merge(&input)?;
-
-    if result.conflicts > 0 {
-        // Add conflict stages.
-        stage_entry(index, base, 1);
-        stage_entry(index, ours, 2);
-        stage_entry(index, theirs, 3);
-    } else {
-        // Clean merge → write merged blob.
-        let merged_oid = repo.odb.write(ObjectKind::Blob, &result.content)?;
-        let mut entry = ours.clone();
-        entry.oid = merged_oid;
-        // Use ours mode (or theirs if ours didn't change from base).
-        if base.mode == ours.mode && base.mode != theirs.mode {
-            entry.mode = theirs.mode;
-        }
-        index.entries.push(entry);
-    }
-
-    Ok(())
-}
-
 /// Write merged index entries to the working tree.
 fn checkout_merged_index(
     repo: &Repository,
     work_tree: &Path,
     old_index: &Index,
     index: &Index,
+    conflict_content: &BTreeMap<Vec<u8>, ObjectId>,
 ) -> Result<()> {
     let new_paths: HashSet<Vec<u8>> = index.entries.iter().map(|e| e.path.clone()).collect();
 
@@ -1186,7 +1308,6 @@ fn checkout_merged_index(
         }
     }
 
-    // Write new entries.
     let mut written = HashSet::new();
 
     for entry in &index.entries {
@@ -1197,8 +1318,13 @@ fn checkout_merged_index(
             write_entry_to_worktree(repo, &abs_path, entry)?;
             written.insert(entry.path.clone());
         } else if entry.stage() == 2 && !written.contains(&entry.path) {
-            // For conflicts, write the ours (stage 2) version to worktree.
-            write_entry_to_worktree(repo, &abs_path, entry)?;
+            if let Some(marker_oid) = conflict_content.get(&entry.path) {
+                let mut marker_entry = entry.clone();
+                marker_entry.oid = *marker_oid;
+                write_entry_to_worktree(repo, &abs_path, &marker_entry)?;
+            } else {
+                write_entry_to_worktree(repo, &abs_path, entry)?;
+            }
             written.insert(entry.path.clone());
         }
     }

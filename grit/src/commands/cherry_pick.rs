@@ -19,9 +19,12 @@ use grit_lib::commit_trailers::{
 use grit_lib::config::ConfigSet;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_file::{merge, MergeFavor, MergeInput};
+use grit_lib::merge_trees::{merge_trees_three_way, WhitespaceMergeOptions};
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
 };
+use grit_lib::reflog::read_reflog;
+use grit_lib::refs::append_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
@@ -261,10 +264,20 @@ pub struct Args {
     /// Open an editor for the commit message.
     #[arg(short = 'e', long = "edit")]
     pub edit: bool,
+
+    /// Unsupported on cherry-pick (revert-only); accepted to print upstream usage.
+    #[arg(long = "reference", hide = true)]
+    pub reference: bool,
 }
 
 /// Run the `cherry-pick` command.
 pub fn run(args: Args) -> Result<()> {
+    if args.reference {
+        eprintln!("usage: git cherry-pick [--edit] [-n] [-m <parent-number>] [-s] [-x] [--ff]");
+        eprintln!("                       [-S[<keyid>]] <commit>...");
+        eprintln!("   or: git cherry-pick (--continue | --skip | --abort | --quit)");
+        std::process::exit(129);
+    }
     // Validate -m value early: 0 is invalid (1-based), exit 129 like git.
     if let Some(m) = args.mainline {
         if m == 0 {
@@ -300,9 +313,13 @@ pub fn run(args: Args) -> Result<()> {
 
 // ── Main cherry-pick flow ───────────────────────────────────────────
 
-fn do_cherry_pick(args: Args) -> Result<()> {
+fn do_cherry_pick(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
+
+    if args.commits.len() == 1 && args.commits[0] == "-" {
+        args.commits = vec![resolve_previous_checkout_from_reflog(git_dir, 1)?];
+    }
 
     let commit_oids = expand_commit_specs(&repo, &args.commits)?;
 
@@ -525,6 +542,29 @@ fn remove_pick_oid_from_sequencer_todo_if_present(git_dir: &Path, oid: ObjectId)
     Ok(())
 }
 
+fn parse_checkout_moving_message(message: &str) -> Option<(String, String)> {
+    let rest = message.strip_prefix("checkout: moving from ")?;
+    let idx = rest.rfind(" to ")?;
+    let from = rest[..idx].to_string();
+    let to = rest[idx + 4..].to_string();
+    Some((from, to))
+}
+
+/// Resolve the Nth previous branch/commit checked out from, using `logs/HEAD` (like `git cherry-pick -`).
+fn resolve_previous_checkout_from_reflog(git_dir: &Path, n: usize) -> Result<String> {
+    let entries = read_reflog(git_dir, "HEAD").context("read HEAD reflog")?;
+    let mut count = 0usize;
+    for entry in entries.iter().rev() {
+        if let Some((from, _to)) = parse_checkout_moving_message(&entry.message) {
+            count += 1;
+            if count == n {
+                return Ok(from);
+            }
+        }
+    }
+    bail!("bad revision '-'");
+}
+
 /// Expand commit specs, handling A..B ranges.
 fn expand_commit_specs(repo: &Repository, specs: &[String]) -> Result<Vec<ObjectId>> {
     let max_count = cherry_pick_rev_max_count();
@@ -701,38 +741,46 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
     };
 
     // Three-way merge
-    let base_entries = tree_to_map(tree_to_index_entries(repo, &parent_tree_oid, "")?);
-
-    // For --no-commit mode, use current index as "ours" (may differ from HEAD
-    // when multiple commits are being picked without committing).
-    let ours_entries = if args.no_commit {
+    // For --no-commit mode, use current index tree as "ours" when it has content.
+    let ours_tree_oid = if args.no_commit {
         let cur_index = load_index(repo)?;
-        // If the index has only stage-0 entries and differs from HEAD tree,
-        // use the index entries as ours.
         let stage0: Vec<IndexEntry> = cur_index
             .entries
             .into_iter()
             .filter(|e| e.stage() == 0)
             .collect();
         if !stage0.is_empty() {
-            tree_to_map(stage0)
+            let mut tmp = Index::new();
+            tmp.entries = stage0;
+            tmp.sort();
+            write_tree_from_index(&repo.odb, &tmp, "")?
         } else {
-            tree_to_map(tree_to_index_entries(repo, &head_tree_oid, "")?)
+            head_tree_oid
         }
     } else {
-        tree_to_map(tree_to_index_entries(repo, &head_tree_oid, "")?)
+        head_tree_oid
     };
-    let theirs_entries = tree_to_map(tree_to_index_entries(repo, &commit_tree_oid, "")?);
 
     let (favor, ws_opts) = parse_strategy_options(&args.strategy_option);
-    let mut merge_result = three_way_merge_with_content(
+    let ws_merge = WhitespaceMergeOptions {
+        ignore_all_space: ws_opts.ignore_all_space,
+        ignore_space_change: ws_opts.ignore_space_change,
+        ignore_space_at_eol: ws_opts.ignore_space_at_eol,
+        ignore_cr_at_eol: ws_opts.ignore_cr_at_eol,
+    };
+    let merged = merge_trees_three_way(
         repo,
-        &base_entries,
-        &ours_entries,
-        &theirs_entries,
+        parent_tree_oid,
+        ours_tree_oid,
+        commit_tree_oid,
         favor,
-        ws_opts,
+        ws_merge,
+        "parent of picked commit",
     )?;
+    let mut merge_result = MergeResult {
+        index: merged.index,
+        conflict_content: merged.conflict_content,
+    };
 
     let has_conflicts = merge_result.index.entries.iter().any(|e| e.stage() != 0);
 
@@ -820,6 +868,37 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
         // `cherry-pick --continue` (which re-reads sequencer opts),
         // not by a bare `git commit` that the user makes manually.
         fs::write(git_dir.join("MERGE_MSG"), &msg)?;
+
+        let head_oid_conflict = head
+            .oid()
+            .copied()
+            .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+        let now = time::OffsetDateTime::now_utc();
+        let ident = resolve_committer_ident(&ConfigSet::load(Some(git_dir), true)?, now)?;
+        let cp_reflog = format!(
+            "cherry-pick: {}",
+            commit.message.lines().next().unwrap_or("")
+        );
+        let _ = append_reflog(
+            git_dir,
+            "HEAD",
+            &head_oid_conflict,
+            &head_oid_conflict,
+            &ident,
+            &cp_reflog,
+            false,
+        );
+        if let HeadState::Branch { refname, .. } = &head {
+            let _ = append_reflog(
+                git_dir,
+                refname,
+                &head_oid_conflict,
+                &head_oid_conflict,
+                &ident,
+                &cp_reflog,
+                false,
+            );
+        }
 
         let short_oid = &commit_oid.to_hex()[..7];
         let subject = commit.message.lines().next().unwrap_or("");
@@ -1382,7 +1461,36 @@ fn create_cherry_pick_commit(
     let commit_bytes = serialize_commit(&commit_data);
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
 
+    let old_oid = head
+        .oid()
+        .copied()
+        .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
     update_head(git_dir, head, &commit_oid)?;
+
+    let subject = message.lines().next().unwrap_or("");
+    let reflog_msg = format!("cherry-pick: {subject}");
+    let ident = &commit_data.committer;
+    let _ = append_reflog(
+        git_dir,
+        "HEAD",
+        &old_oid,
+        &commit_oid,
+        ident,
+        &reflog_msg,
+        false,
+    );
+    if let HeadState::Branch { refname, .. } = head {
+        let _ = append_reflog(
+            git_dir,
+            refname,
+            &old_oid,
+            &commit_oid,
+            ident,
+            &reflog_msg,
+            false,
+        );
+    }
+
     cleanup_cherry_pick_state(git_dir);
 
     Ok(())
@@ -1718,6 +1826,13 @@ fn checkout_merged_index(
     index: &Index,
     conflict_content: &BTreeMap<Vec<u8>, ObjectId>,
 ) -> Result<()> {
+    let old_stage0: HashMap<Vec<u8>, &IndexEntry> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| (e.path.clone(), e))
+        .collect();
+
     let new_paths: HashSet<Vec<u8>> = index.entries.iter().map(|e| e.path.clone()).collect();
 
     for entry in &old_index.entries {
@@ -1737,6 +1852,13 @@ fn checkout_merged_index(
         let abs_path = work_tree.join(&path_str);
 
         if entry.stage() == 0 {
+            if let Some(prev) = old_stage0.get(&entry.path) {
+                if same_blob(prev, entry) {
+                    // Index OID unchanged — preserve local worktree modifications (t3501).
+                    written.insert(entry.path.clone());
+                    continue;
+                }
+            }
             write_entry_to_worktree(repo, &abs_path, entry)?;
             written.insert(entry.path.clone());
         } else if entry.stage() == 2 && !written.contains(&entry.path) {
