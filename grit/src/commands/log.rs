@@ -441,6 +441,14 @@ pub struct Args {
     #[arg(short = 'O', value_name = "orderfile")]
     pub order_file: Option<String>,
 
+    /// Rotate diff output to start at the named path.
+    #[arg(long = "rotate-to", value_name = "path")]
+    pub rotate_to: Option<String>,
+
+    /// Skip diff output until the named path.
+    #[arg(long = "skip-to", value_name = "path")]
+    pub skip_to: Option<String>,
+
     /// Show full object hashes in diff output.
     #[arg(long = "full-index")]
     pub full_index: bool,
@@ -6321,6 +6329,8 @@ fn write_commit_diff(
     let show_patch = log_wants_patch_hunks(args, info, git_dir)?;
     let separate = merge_diff_is_separate(args, is_merge, git_dir)?;
 
+    let log_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
     if separate {
         for (i, parent_oid) in info.parents.iter().enumerate() {
             let mut entries = compute_commit_diff_against_parent(odb, info, i)?;
@@ -6328,8 +6338,16 @@ fn write_commit_diff(
                 continue;
             }
             if let Some(ref order_path) = args.order_file {
-                entries = crate::commands::diff::apply_orderfile_entries(entries, order_path);
+                entries =
+                    crate::commands::diff::apply_orderfile_entries(entries, order_path, &log_cwd)?;
             }
+            entries = crate::commands::diff::apply_rotate_skip_log_entries(
+                odb,
+                &info.tree,
+                entries,
+                args.rotate_to.as_deref(),
+                args.skip_to.as_deref(),
+            )?;
             // First parent: the main `format_commit` was already printed; only extra headers
             // repeat the commit with `(from <parent>)` for parents 2+ (matches Git).
             if i > 0 {
@@ -6370,11 +6388,31 @@ fn write_commit_diff(
     }
 
     if let Some(ref order_path) = args.order_file {
-        entries = crate::commands::diff::apply_orderfile_entries(entries, order_path);
+        entries = crate::commands::diff::apply_orderfile_entries(entries, order_path, &log_cwd)?;
     }
 
-    let combined_entries = if merge_diff_is_combined_style(args, is_merge, git_dir)? {
+    let combined_style = merge_diff_is_combined_style(args, is_merge, git_dir)?;
+    let mut combined_entries = if combined_style {
         compute_combined_diff_entries(odb, info)?
+    } else {
+        entries.clone()
+    };
+
+    entries = crate::commands::diff::apply_rotate_skip_log_entries(
+        odb,
+        &info.tree,
+        entries,
+        args.rotate_to.as_deref(),
+        args.skip_to.as_deref(),
+    )?;
+    combined_entries = if combined_style {
+        crate::commands::diff::apply_rotate_skip_log_entries(
+            odb,
+            &info.tree,
+            combined_entries,
+            args.rotate_to.as_deref(),
+            args.skip_to.as_deref(),
+        )?
     } else {
         entries.clone()
     };

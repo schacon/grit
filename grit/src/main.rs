@@ -3381,6 +3381,17 @@ fn preprocess_diff_args(rest: &[String]) -> Vec<String> {
     let word_diff_modes = ["plain", "color", "porcelain", "none"];
     while i < rest.len() {
         let arg = &rest[i];
+        // Clap parses glued `-O../path` incorrectly (treats `--output` as a revision when the
+        // orderfile path starts with `.` / `..`). Split into `-O` and the path (matches `git diff -O`).
+        if arg.len() > 2 && arg.starts_with("-O") && !arg.starts_with("-O=") {
+            let rest_o = &arg[2..];
+            if !rest_o.is_empty() && !rest_o.starts_with('-') {
+                result.push("-O".to_owned());
+                result.push(rest_o.to_owned());
+                i += 1;
+                continue;
+            }
+        }
         if arg == "-X" {
             if i + 1 < rest.len() && !rest[i + 1].starts_with('-') {
                 result.push(format!("--dirstat={}", rest[i + 1]));

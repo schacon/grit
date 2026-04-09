@@ -345,6 +345,8 @@ fn run_show(args: ShowArgs) -> Result<()> {
         shortstat: false,
         bisect: false,
         order_file: None,
+        rotate_to: None,
+        skip_to: None,
         full_index: false,
         binary: false,
         since_as_filter: None,

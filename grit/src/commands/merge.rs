@@ -2744,6 +2744,20 @@ fn do_strategy_ours(
     let author = resolve_ident(&config, "author", now)?;
     let committer = resolve_ident(&config, "committer", now)?;
 
+    if args.no_commit {
+        fs::write(
+            repo.git_dir.join("MERGE_HEAD"),
+            format!("{}\n", merge_oid.to_hex()),
+        )?;
+        fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
+        fs::write(repo.git_dir.join("MERGE_MODE"), "no-ff\n")?;
+        if !args.quiet {
+            eprintln!("Automatic merge went well; stopped before committing as requested");
+        }
+        run_post_merge_hook(repo, false);
+        return Ok(());
+    }
+
     let commit_data = CommitData {
         tree: tree_oid,
         parents: vec![head_oid, merge_oid],
