@@ -2087,6 +2087,68 @@ pub fn run(mut args: Args) -> Result<()> {
             if args.summary {
                 write_diff_summary(&mut out, &entries, args.break_rewrites, quote_path_fully)?;
             }
+            if diff_cli_requests_unified_patch_alongside_stat(&raw_args) && !args.no_patch {
+                let patch_abbrev = if args.full_index {
+                    40
+                } else if let Some(n) = args.abbrev {
+                    n.max(4).min(40)
+                } else {
+                    7
+                };
+                for patch in &conflict_combined_patches {
+                    write!(out, "{patch}")?;
+                }
+                if let Some(ref ds) = dirstat_opts {
+                    write_dirstat(
+                        &mut out,
+                        ds,
+                        &entries,
+                        &repo.odb,
+                        wt_for_content,
+                        args.break_rewrites,
+                    )?;
+                }
+                let diff_config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+                    .unwrap_or_default();
+                let external_diff_cmd = std::env::var("GIT_EXTERNAL_DIFF")
+                    .ok()
+                    .filter(|s| !s.trim().is_empty())
+                    .or_else(|| {
+                        diff_config
+                            .get("diff.external")
+                            .filter(|s| !s.trim().is_empty())
+                    });
+                write_patch_with_prefix(
+                    &mut out,
+                    &repo,
+                    &entries,
+                    &repo.odb,
+                    &repo.git_dir,
+                    &diff_config,
+                    context_lines,
+                    use_color,
+                    word_diff,
+                    wt_for_content,
+                    suppress_blank_empty,
+                    patch_abbrev,
+                    inter_hunk_context,
+                    args.binary,
+                    args.break_rewrites,
+                    args.irreversible_delete,
+                    !args.no_textconv,
+                    &src_prefix,
+                    &dst_prefix,
+                    args.submodule.as_deref(),
+                    submodule_ignore_flags_from_diff_arg(ignore_sm),
+                    line_ignore,
+                    &diff_algo_ctx,
+                    diff_algo_cli,
+                    args.cached,
+                    args.no_ext_diff,
+                    external_diff_cmd.as_deref(),
+                    relative_prefix_for_paths.as_deref(),
+                )?;
+            }
         } else if args.raw {
             let oid_len = if args.full_index || args.no_abbrev {
                 40
@@ -3325,6 +3387,54 @@ fn apply_diff_filter(entries: Vec<DiffEntry>, filter: &str) -> Vec<DiffEntry> {
             true
         })
         .collect()
+}
+
+/// Whether the user asked for a unified patch in addition to another format (e.g. `--stat`).
+///
+/// Unlike [`diff_emit_unified_patch_from_argv`], this starts from **no** patch: plain
+/// `git diff --stat` must not append hunks, while `git diff --stat -p` must (matches Git).
+fn diff_cli_requests_unified_patch_alongside_stat(argv: &[String]) -> bool {
+    let Some(diff_pos) = argv.iter().position(|a| a == "diff") else {
+        return false;
+    };
+    let mut emit = false;
+    for arg in argv.iter().skip(diff_pos + 1) {
+        if arg == "--" {
+            break;
+        }
+        if arg == "-s" || arg == "--no-patch" {
+            emit = false;
+            continue;
+        }
+        if arg == "-p" || arg == "--patch" || arg == "-u" {
+            emit = true;
+            continue;
+        }
+        if arg == "--submodule" || arg.starts_with("--submodule=") {
+            emit = true;
+            continue;
+        }
+        if arg.starts_with("-U") || arg.starts_with("--unified") {
+            emit = true;
+            continue;
+        }
+        if arg.starts_with('-') && !arg.starts_with("--") && arg.len() > 2 {
+            const COMBINABLE: &[u8] = b"spuwqRb";
+            let bytes = arg.as_bytes();
+            let tail = &bytes[1..];
+            if !tail.is_empty() && tail.iter().all(|b| COMBINABLE.contains(b)) {
+                for &b in tail {
+                    match b {
+                        b's' => emit = false,
+                        b'p' | b'u' => emit = true,
+                        b'w' | b'b' | b'q' | b'R' => {}
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    emit
 }
 
 /// Whether to emit unified patch hunks for this `git diff` invocation.

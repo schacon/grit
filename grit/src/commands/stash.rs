@@ -18,7 +18,11 @@ use std::io::{self, BufRead, Write as IoWrite};
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::diff::{diff_index_to_tree, diff_index_to_worktree, unified_diff};
+use grit_lib::diff::{
+    count_changes, diff_index_to_tree, diff_index_to_worktree, diff_trees, empty_blob_oid,
+    unified_diff, zero_oid, DiffEntry, DiffStatus,
+};
+use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::error::Error;
 use grit_lib::index::{
     entry_from_stat, Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
@@ -351,7 +355,7 @@ pub fn run(args: Args) -> Result<()> {
         Some(StashCommand::List { args: list_args }) => do_list(list_args),
         Some(StashCommand::Show { args: show_args }) => {
             let parsed = parse_stash_show_args(&show_args)?;
-            do_show(parsed.stash_ref, parsed.mode, parsed.patience)
+            do_show(parsed)
         }
         Some(StashCommand::Pop {
             index,
@@ -551,14 +555,27 @@ fn do_branch_from_rest(rest: &[String]) -> Result<()> {
     do_branch(branch_name, stash_ref)
 }
 
+/// Parsed `git stash show` argv after dispatch.
+///
+/// When `cli_specified_format` is false, Git applies `stash.showStat` / `stash.showPatch` only
+/// (untracked-related flags alone do not disable that). Otherwise Git defaults to patch if no
+/// output format was requested and honors combined `--stat` + `-p`.
 struct ParsedStashShow {
     stash_ref: Option<String>,
-    mode: ShowMode,
+    /// True if any argument could change diff output (anything Git would pass as a revision flag),
+    /// except `-u` / `--include-untracked` / `--only-untracked` alone.
+    cli_specified_format: bool,
+    explicit_stat: bool,
+    explicit_patch: bool,
+    other_mode: Option<ShowMode>,
     patience: bool,
 }
 
 fn parse_stash_show_args(raw: &[String]) -> Result<ParsedStashShow> {
-    let mut mode = ShowMode::Stat;
+    let mut cli_specified_format = false;
+    let mut explicit_stat = false;
+    let mut explicit_patch = false;
+    let mut other_mode: Option<ShowMode> = None;
     let mut patience = false;
     let mut pos: Vec<String> = Vec::new();
     let mut i = 0usize;
@@ -570,17 +587,35 @@ fn parse_stash_show_args(raw: &[String]) -> Result<ParsedStashShow> {
         }
         if a.starts_with('-') && a.len() > 1 {
             match a.as_str() {
-                "-p" | "--patch" => mode = ShowMode::Patch,
-                "--stat" => mode = ShowMode::Stat,
-                "--name-status" => mode = ShowMode::NameStatus,
-                "--name-only" => mode = ShowMode::NameOnly,
-                "--numstat" => mode = ShowMode::Numstat,
-                "--patience" => patience = true,
+                "-p" | "--patch" => {
+                    cli_specified_format = true;
+                    explicit_patch = true;
+                }
+                "--stat" => {
+                    cli_specified_format = true;
+                    explicit_stat = true;
+                }
+                "--name-status" => {
+                    cli_specified_format = true;
+                    other_mode = Some(ShowMode::NameStatus);
+                }
+                "--name-only" => {
+                    cli_specified_format = true;
+                    other_mode = Some(ShowMode::NameOnly);
+                }
+                "--numstat" => {
+                    cli_specified_format = true;
+                    other_mode = Some(ShowMode::Numstat);
+                }
+                "--patience" => {
+                    cli_specified_format = true;
+                    patience = true;
+                }
                 "-u" | "--include-untracked" | "--only-untracked" => {
                     // Accepted for compatibility; untracked content is not shown yet.
                 }
                 _ if a.starts_with("--no-") => {
-                    // ignore for forward-compat
+                    cli_specified_format = true;
                 }
                 _ => {
                     eprintln!("usage: git stash show [-u | --include-untracked | --only-untracked] [<diff-options>] [<stash>]");
@@ -598,7 +633,10 @@ fn parse_stash_show_args(raw: &[String]) -> Result<ParsedStashShow> {
     }
     Ok(ParsedStashShow {
         stash_ref: pos.into_iter().next(),
-        mode,
+        cli_specified_format,
+        explicit_stat,
+        explicit_patch,
+        other_mode,
         patience,
     })
 }
@@ -1875,21 +1913,57 @@ enum ShowMode {
     Numstat,
 }
 
-fn do_show(stash_ref: Option<String>, mode: ShowMode, patience: bool) -> Result<()> {
-    let repo = Repository::discover(None).context("not a git repository")?;
-    let stash_oid = resolve_stash_ref(&repo, stash_ref.as_deref())?;
+fn stash_show_config_bool(config: &ConfigSet, key: &str, default: bool) -> Result<bool> {
+    match config.get_bool(key) {
+        None => Ok(default),
+        Some(Ok(b)) => Ok(b),
+        Some(Err(msg)) => bail!("bad boolean config value for '{key}': {msg}"),
+    }
+}
 
-    match mode {
-        ShowMode::Patch => {
-            if patience {
-                // Patience is accepted; diff algorithm not wired — same output as default.
-            }
-            show_stash_diff(&repo, &stash_oid, true)?;
+fn do_show(parsed: ParsedStashShow) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let stash_oid = resolve_stash_ref(&repo, parsed.stash_ref.as_deref())?;
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let cfg_show_stat = stash_show_config_bool(&config, "stash.showStat", true)?;
+    let cfg_show_patch = stash_show_config_bool(&config, "stash.showPatch", false)?;
+
+    if let Some(mode) = parsed.other_mode {
+        if parsed.patience {
+            // Patience is accepted; diff algorithm not wired — same output as default.
         }
-        ShowMode::NameStatus => show_stash_name_status(&repo, &stash_oid, true)?,
-        ShowMode::NameOnly => show_stash_name_status(&repo, &stash_oid, false)?,
-        ShowMode::Stat => show_stash_stat(&repo, &stash_oid)?,
-        ShowMode::Numstat => show_stash_numstat(&repo, &stash_oid)?,
+        match mode {
+            ShowMode::NameStatus => show_stash_name_status(&repo, &stash_oid, true)?,
+            ShowMode::NameOnly => show_stash_name_status(&repo, &stash_oid, false)?,
+            ShowMode::Numstat => show_stash_numstat(&repo, &stash_oid)?,
+            ShowMode::Stat | ShowMode::Patch => {}
+        }
+        return Ok(());
+    }
+
+    let (show_stat, show_patch) = if parsed.cli_specified_format {
+        let stat = parsed.explicit_stat;
+        let mut patch = parsed.explicit_patch;
+        if !stat && !patch {
+            patch = true;
+        }
+        (stat, patch)
+    } else {
+        if !cfg_show_stat && !cfg_show_patch {
+            return Ok(());
+        }
+        (cfg_show_stat, cfg_show_patch)
+    };
+
+    if show_stat {
+        show_stash_stat(&repo, &stash_oid, &config)?;
+    }
+    if show_patch {
+        if parsed.patience {
+            // Patience is accepted; diff algorithm not wired — same output as default.
+        }
+        show_stash_diff(&repo, &stash_oid, true)?;
     }
 
     Ok(())
@@ -1967,140 +2041,98 @@ fn show_stash_diff(repo: &Repository, stash_oid: &ObjectId, _with_hunks: bool) -
     Ok(())
 }
 
-fn show_stash_stat(repo: &Repository, stash_oid: &ObjectId) -> Result<()> {
+fn stash_stat_path_display(entry: &DiffEntry) -> String {
+    let old_path = entry.old_path.as_deref().unwrap_or("");
+    let new_path = entry.new_path.as_deref().unwrap_or("");
+    match entry.status {
+        DiffStatus::Renamed | DiffStatus::Copied => {
+            grit_lib::diff::format_rename_path(old_path, new_path)
+        }
+        _ => new_path.to_string(),
+    }
+}
+
+fn show_stash_stat(repo: &Repository, stash_oid: &ObjectId, config: &ConfigSet) -> Result<()> {
     let obj = repo.odb.read(stash_oid)?;
     let stash_commit = parse_commit(&obj.data)?;
-
     let old_tree = stash_index_tree_oid(repo, &stash_commit)?;
-    let old_entries = flatten_tree_full(&repo.odb, &old_tree, "")?;
-    let new_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
-
-    // Build maps
-    use std::collections::BTreeMap;
-    let mut old_map: BTreeMap<&str, &FlatTreeEntry> = BTreeMap::new();
-    for e in &old_entries {
-        old_map.insert(&e.path, e);
-    }
-    let mut new_map: BTreeMap<&str, &FlatTreeEntry> = BTreeMap::new();
-    for e in &new_entries {
-        new_map.insert(&e.path, e);
-    }
-
-    let mut all_paths: BTreeSet<&str> = BTreeSet::new();
-    for e in &old_entries {
-        all_paths.insert(&e.path);
-    }
-    for e in &new_entries {
-        all_paths.insert(&e.path);
-    }
-
-    struct StatEntry {
-        path: String,
-        insertions: usize,
-        deletions: usize,
-    }
-
-    let mut stats: Vec<StatEntry> = Vec::new();
-    let mut total_insertions = 0usize;
-    let mut total_deletions = 0usize;
-    let mut total_files = 0usize;
-
-    for path in &all_paths {
-        match (old_map.get(path), new_map.get(path)) {
-            (Some(o), Some(n)) if o.oid != n.oid || o.mode != n.mode => {
-                let (ins, del) = count_line_changes(&repo.odb, &o.oid, &n.oid)?;
-                total_insertions += ins;
-                total_deletions += del;
-                total_files += 1;
-                stats.push(StatEntry {
-                    path: path.to_string(),
-                    insertions: ins,
-                    deletions: del,
-                });
-            }
-            (None, Some(n)) => {
-                let blob = repo.odb.read(&n.oid)?;
-                let ins = String::from_utf8_lossy(&blob.data).lines().count();
-                total_insertions += ins;
-                total_files += 1;
-                stats.push(StatEntry {
-                    path: path.to_string(),
-                    insertions: ins,
-                    deletions: 0,
-                });
-            }
-            (Some(o), None) => {
-                let blob = repo.odb.read(&o.oid)?;
-                let del = String::from_utf8_lossy(&blob.data).lines().count();
-                total_deletions += del;
-                total_files += 1;
-                stats.push(StatEntry {
-                    path: path.to_string(),
-                    insertions: 0,
-                    deletions: del,
-                });
-            }
-            _ => {}
-        }
-    }
-
-    if stats.is_empty() {
+    let entries = diff_trees(&repo.odb, Some(&old_tree), Some(&stash_commit.tree), "")?;
+    if entries.is_empty() {
         return Ok(());
     }
 
-    // Find max path width and max changes for scaling
-    let max_path_len = stats.iter().map(|s| s.path.len()).max().unwrap_or(0);
-    let max_changes = stats
-        .iter()
-        .map(|s| s.insertions + s.deletions)
-        .max()
-        .unwrap_or(0);
+    let eff_name_width = config
+        .get("diff.statNameWidth")
+        .and_then(|v| v.parse::<usize>().ok());
+    let eff_graph_width = config
+        .get("diff.statGraphWidth")
+        .and_then(|v| v.parse::<usize>().ok());
 
-    // Scale bar to fit in terminal (max bar width ~50)
-    let max_bar_width = 50usize;
-    let scale = if max_changes > max_bar_width {
-        max_bar_width as f64 / max_changes as f64
-    } else {
-        1.0
+    let mut files: Vec<FileStatInput> = Vec::with_capacity(entries.len());
+    for entry in &entries {
+        let path_display = stash_stat_path_display(entry);
+        let old_raw = if entry.old_oid == zero_oid() {
+            Vec::new()
+        } else {
+            repo.odb
+                .read(&entry.old_oid)
+                .map(|o| o.data)
+                .unwrap_or_default()
+        };
+        let new_raw = if entry.new_oid == zero_oid() {
+            Vec::new()
+        } else {
+            repo.odb
+                .read(&entry.new_oid)
+                .map(|o| o.data)
+                .unwrap_or_default()
+        };
+        let binary = blob_is_binary(&old_raw) || blob_is_binary(&new_raw);
+        if binary {
+            let deleted = if entry.old_oid == zero_oid() {
+                0
+            } else {
+                old_raw.len()
+            };
+            let added = if entry.new_oid == zero_oid() {
+                0
+            } else {
+                new_raw.len()
+            };
+            files.push(FileStatInput {
+                path_display,
+                insertions: added,
+                deletions: deleted,
+                is_binary: true,
+            });
+        } else {
+            let old_content = String::from_utf8_lossy(&old_raw).into_owned();
+            let new_content = String::from_utf8_lossy(&new_raw).into_owned();
+            let (ins, del) = count_changes(&old_content, &new_content);
+            files.push(FileStatInput {
+                path_display,
+                insertions: ins,
+                deletions: del,
+                is_binary: false,
+            });
+        }
+    }
+
+    let opts = DiffstatOptions {
+        total_width: terminal_columns(),
+        line_prefix: "",
+        subtract_prefix_from_terminal: false,
+        stat_name_width: eff_name_width,
+        stat_graph_width: eff_graph_width,
+        stat_count: None,
+        color_add: "",
+        color_del: "",
+        color_reset: "",
+        graph_bar_slack: 0,
+        graph_prefix_budget_slack: 0,
     };
-
-    for s in &stats {
-        let changes = s.insertions + s.deletions;
-        let bar_ins = (s.insertions as f64 * scale).ceil() as usize;
-        let bar_del = (s.deletions as f64 * scale).ceil() as usize;
-        let bar = format!("{}{}", "+".repeat(bar_ins), "-".repeat(bar_del));
-        println!(
-            " {:<width$} | {:>3} {}",
-            s.path,
-            changes,
-            bar,
-            width = max_path_len,
-        );
-    }
-
-    // Summary line
-    let mut summary_parts = Vec::new();
-    summary_parts.push(format!(
-        " {} file{} changed",
-        total_files,
-        if total_files == 1 { "" } else { "s" }
-    ));
-    if total_insertions > 0 {
-        summary_parts.push(format!(
-            " {} insertion{}(+)",
-            total_insertions,
-            if total_insertions == 1 { "" } else { "s" }
-        ));
-    }
-    if total_deletions > 0 {
-        summary_parts.push(format!(
-            " {} deletion{}(-)",
-            total_deletions,
-            if total_deletions == 1 { "" } else { "s" }
-        ));
-    }
-    println!("{}", summary_parts.join(","));
-
+    let mut out = std::io::stdout().lock();
+    write_diffstat_block(&mut out, &files, &opts)?;
     Ok(())
 }
 
@@ -3317,33 +3349,42 @@ fn show_tree_diff(odb: &Odb, old: &[FlatTreeEntry], new: &[FlatTreeEntry]) -> Re
                         println!("old mode {}", format_mode(o.mode));
                         println!("new mode {}", format_mode(n.mode));
                     }
-                    println!("index {}..{}", &o.oid.to_hex()[..7], &n.oid.to_hex()[..7]);
-                    println!("--- a/{path}");
-                    println!("+++ b/{path}");
-                    show_blob_diff(odb, &o.oid, &n.oid)?;
+                    println!(
+                        "index {}..{} {}",
+                        &o.oid.to_hex()[..7],
+                        &n.oid.to_hex()[..7],
+                        format_mode(n.mode)
+                    );
+                    print!("{}", stash_unified_diff_body(odb, path, &o.oid, &n.oid)?);
                 }
             }
             (None, Some(n)) => {
                 println!("diff --git a/{path} b/{path}");
                 println!("new file mode {}", format_mode(n.mode));
-                println!("--- /dev/null");
-                println!("+++ b/{path}");
-                let blob = odb.read(&n.oid)?;
-                let text = String::from_utf8_lossy(&blob.data);
-                for line in text.lines() {
-                    println!("+{line}");
-                }
+                println!(
+                    "index {}..{} {}",
+                    &empty_blob_oid().to_hex()[..7],
+                    &n.oid.to_hex()[..7],
+                    format_mode(n.mode)
+                );
+                print!(
+                    "{}",
+                    stash_unified_diff_body(odb, path, &empty_blob_oid(), &n.oid)?
+                );
             }
             (Some(o), None) => {
                 println!("diff --git a/{path} b/{path}");
                 println!("deleted file mode {}", format_mode(o.mode));
-                println!("--- a/{path}");
-                println!("+++ /dev/null");
-                let blob = odb.read(&o.oid)?;
-                let text = String::from_utf8_lossy(&blob.data);
-                for line in text.lines() {
-                    println!("-{line}");
-                }
+                println!(
+                    "index {}..{} {}",
+                    &o.oid.to_hex()[..7],
+                    &empty_blob_oid().to_hex()[..7],
+                    format_mode(o.mode)
+                );
+                print!(
+                    "{}",
+                    stash_unified_diff_body(odb, path, &o.oid, &empty_blob_oid())?
+                );
             }
             (None, None) => unreachable!(),
         }
@@ -3352,25 +3393,21 @@ fn show_tree_diff(odb: &Odb, old: &[FlatTreeEntry], new: &[FlatTreeEntry]) -> Re
     Ok(())
 }
 
-/// Show a simple line diff between two blobs.
-fn show_blob_diff(odb: &Odb, old_oid: &ObjectId, new_oid: &ObjectId) -> Result<()> {
+/// Unified diff body (`---` / `+++` / `@@` hunks) for two blobs, matching `grit diff` formatting.
+fn stash_unified_diff_body(
+    odb: &Odb,
+    path: &str,
+    old_oid: &ObjectId,
+    new_oid: &ObjectId,
+) -> Result<String> {
     let old_blob = odb.read(old_oid)?;
     let new_blob = odb.read(new_oid)?;
+    if blob_is_binary(&old_blob.data) || blob_is_binary(&new_blob.data) {
+        return Ok(format!("Binary files a/{path} and b/{path} differ\n"));
+    }
     let old_text = String::from_utf8_lossy(&old_blob.data);
     let new_text = String::from_utf8_lossy(&new_blob.data);
-
-    use similar::TextDiff;
-    let diff = TextDiff::from_lines(&old_text as &str, &new_text as &str);
-    for change in diff.iter_all_changes() {
-        let sign = match change.tag() {
-            similar::ChangeTag::Delete => "-",
-            similar::ChangeTag::Insert => "+",
-            similar::ChangeTag::Equal => " ",
-        };
-        print!("{sign}{change}");
-    }
-
-    Ok(())
+    Ok(unified_diff(&old_text, &new_text, path, path, 3))
 }
 
 fn format_mode(mode: u32) -> String {
