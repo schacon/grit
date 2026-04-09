@@ -7,6 +7,7 @@
 - `./scripts/run-tests.sh t5514-fetch-multiple.sh`: 25/25 passing (`fetch --all` / `--multiple`, `fetch.all` / `--no-all`, `remote.*.skipFetchAll`, `--jobs` parallel fetch, tag options; harness CSV/dashboards refreshed).
 - `cargo test -p grit-lib --lib`: 121/121 passing.
 - `./scripts/run-tests.sh t5308-pack-detect-duplicates.sh`: 6/6 passing (duplicate objects in pack: default `index-pack` accepts; `--strict` rejects and leaves ODB unchanged; `cat-file --batch-check` over duplicated pack; harness CSV/dashboards refreshed).
+- `./scripts/run-tests.sh t5321-pack-large-objects.sh`: 2/2 passing (`index-pack --stdin` on fixture pack; `GIT_TEST_OE_DELTA_SIZE=2 git pack-objects` repack; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t4120-apply-popt.sh`: 12/12 passing (`git apply -p` strip count, invalid `-p` diagnostics, quoted traditional diff paths, `--stat` oversized strip, mode-only and rename with `--index`; harness CSV/dashboards refreshed).
 
 **Updated:** 2026-04-08

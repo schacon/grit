@@ -561,7 +561,7 @@ commit → check it off → move on.
 - [x] `t5405-send-pack-rewind` ████████████████████ 3/3 (0 left) — forced push to replace commit we do not have
 - [ ] `t5524-pull-msg` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git pull message generation
 - [ ] `t5542-push-http-shallow` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — push from/to a shallow clone over http
-- [ ] `t5321-pack-large-objects` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — git pack-object with 
+- [x] `t5321-pack-large-objects` ████████████████████ 2/2 (0 left) — git pack-object with large delta metadata (`GIT_TEST_OE_DELTA_SIZE` path exercised by `pack-objects` REF_DELTA reuse)
 - [ ] `t5557-http-get` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — test downloading a file by URL
 - [ ] `t5565-push-multiple` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — push to group
 - [x] `t5619-clone-local-ambiguous-transport` ████████████████████ 2/2 (0 left) — test local clone with ambiguous transport

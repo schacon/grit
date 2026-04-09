@@ -6,12 +6,12 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   281 |
+| Completed   |   282 |
 | In progress |     4 |
-| Remaining   |   484 |
+| Remaining   |   483 |
 | **Total**   |   769 |
 
-Task lines in `PLAN.md`: 281 completed (`[x]`), 4 in progress (`[~]`), 484 remaining (`[ ]`).
+Task lines in `PLAN.md`: 282 completed (`[x]`), 4 in progress (`[~]`), 483 remaining (`[ ]`).
 
 ## Recently completed
 
@@ -45,6 +45,7 @@ Task lines in `PLAN.md`: 281 completed (`[x]`), 4 in progress (`[~]`), 484 remai
 - `t4035-diff-quiet` — 23/23 tests pass (`diff-tree --stdin --quiet` suppresses raw diff while keeping commit id; `-S`/`-G` pickaxe filtering for `diff-tree`; `diff` two-path mode in/out of repo + `run_no_index` `--quiet` after whitespace normalization; harness CSV refreshed)
 - `t5334-incremental-multi-pack-index` — 16/16 tests pass (incremental MIDX chain, bitmap/rev sidecars in `multi-pack-index.d`, `midx verify`, clone with `pack.allowPackReuse`; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t13390-update-ref-namespace` — 30/30 tests pass (`update-ref`: arbitrary `refs/*` namespaces, `-d`, old-value CAS, `--no-deref`, `--stdin` create/update/delete/verify, `-m` reflog, zero-OID delete; verified release build + harness; `t1-plan.md` marked done)
+- `t5321-pack-large-objects` — 2/2 tests pass (`index-pack` ingests test pack; `GIT_TEST_OE_DELTA_SIZE=2 git pack-objects` repacks blobs with REF_DELTA; harness CSV/dashboards refreshed)
 - `t4120-apply-popt` — 12/12 tests pass (`git apply -p`: strip path components, malformed `-p` errors, traditional quoted paths, `--stat` with oversized strip, mode-only and rename patches with `--index`; harness CSV/dashboards refreshed)
 - `t5320-delta-islands` — 15/15 tests pass (`repack` delta islands: `pack.island` / `pack.islandcore`, superset-island delta rules, verify-pack ordering; harness CSV/dashboards refreshed)
 - `t4214-log-graph-octopus` — 17/17 tests pass (`git log --graph` skewed-left octopus, crossover, and colored graph lines; harness CSV/dashboards refreshed)
@@ -159,4 +160,4 @@ Task lines in `PLAN.md`: 281 completed (`[x]`), 4 in progress (`[~]`), 484 remai
 
 ## What Remains
 
-484 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+483 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
