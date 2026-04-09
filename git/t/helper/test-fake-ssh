@@ -1,0 +1,24 @@
+#!/bin/sh
+# POSIX stand-in for test-fake-ssh when the C helper is not built (t5601, t5700, …).
+set -e
+: "${TRASH_DIRECTORY:?Need TRASH_DIRECTORY}"
+out="$TRASH_DIRECTORY/ssh-output"
+# Match test-fake-ssh.c: print "ssh:" then argv[1]..argv[argc-1] (skip argv[0] = program name).
+line="ssh:"
+first=1
+for a; do
+	if [ "$first" -eq 1 ]; then
+		first=0
+		continue
+	fi
+	line="$line $a"
+done
+printf '%s\n' "$line" >>"$out"
+if [ "$#" -lt 2 ]; then
+	exit 0
+fi
+last=""
+for a; do
+	last="$a"
+done
+exec sh -c "$last"

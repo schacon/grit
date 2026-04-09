@@ -14,7 +14,8 @@ use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKin
 use grit_lib::refs;
 use grit_lib::reftable;
 use grit_lib::repo::{
-    init_bare_clone_minimal, init_repository, init_repository_separate_git_dir, Repository,
+    init_bare_clone_minimal, init_bare_with_env_worktree, init_repository,
+    init_repository_separate_git_dir, Repository,
 };
 use std::collections::{HashSet, VecDeque};
 use std::fs;
@@ -165,6 +166,14 @@ pub struct Args {
     #[arg(long)]
     pub dissociate: bool,
 
+    /// Use IPv4 addresses only (SSH transport).
+    #[arg(short = '4', action = clap::ArgAction::SetTrue)]
+    pub ipv4: bool,
+
+    /// Use IPv6 addresses only (SSH transport).
+    #[arg(short = '6', action = clap::ArgAction::SetTrue)]
+    pub ipv6: bool,
+
     /// Store the git directory at this path; work tree uses a gitfile `.git`.
     #[arg(long = "separate-git-dir", value_name = "GITDIR")]
     pub separate_git_dir: Option<PathBuf>,
@@ -199,7 +208,7 @@ fn resolved_clone_ref_storage(args: &Args) -> Result<&'static str> {
     match args.ref_format.as_deref() {
         None | Some("files") => Ok("files"),
         Some("reftable") => Ok("reftable"),
-        Some(other) => bail!("unknown ref storage format: {other}"),
+        Some(other) => bail!("fatal: unknown ref storage format '{other}'"),
     }
 }
 
@@ -402,7 +411,9 @@ pub fn run(mut args: Args) -> Result<()> {
         args.bare = true;
     }
 
-    let partial_blob_none = matches!(args.filter.as_deref(), Some("blob:none"));
+    if args.ipv4 && args.ipv6 {
+        bail!("options '-4' and '-6' cannot be used together");
+    }
 
     let deepen =
         args.depth.is_some() || args.shallow_since.is_some() || !args.shallow_exclude.is_empty();
@@ -453,8 +464,12 @@ pub fn run(mut args: Args) -> Result<()> {
         return run_ext_clone(args);
     }
 
-    // Detect SSH URL: host:/path (colon after hostname, no preceding //)
-    if is_ssh_url(&args.repository) {
+    // Directory or file literally named `foo:bar` must clone as a local path, not scp-style SSH
+    // (`t5601-clone`); `Path::new("myhost:src")` does not exist, so real SSH URLs still pass through.
+    let repo_probe = Path::new(args.repository.trim());
+    if !args.repository.contains("://") && repo_probe.exists() {
+        // Fall through to local clone below.
+    } else if is_ssh_url(&args.repository) {
         crate::protocol::check_protocol_allowed("ssh", None)?;
         return run_ssh_clone(args);
     }
@@ -491,13 +506,18 @@ pub fn run(mut args: Args) -> Result<()> {
     // Check protocol.file.allow before local clone
     crate::protocol::check_protocol_allowed("file", None)?;
 
-    // Strip file:// prefix if present
-    let repo_path_str = if let Some(stripped) = args.repository.strip_prefix("file://") {
-        stripped.to_string()
+    let is_file_url = args.repository.starts_with("file://");
+    let repo_path_str = if is_file_url {
+        let stripped = args
+            .repository
+            .strip_prefix("file://")
+            .unwrap_or(args.repository.as_str());
+        percent_decode_file_url_path(stripped)?
     } else {
         args.repository.clone()
     };
-    let source_path = PathBuf::from(&repo_path_str);
+    let path_only = repo_path_str.split('?').next().unwrap_or("").to_string();
+    let source_path = PathBuf::from(&path_only);
 
     // Open the source repository, trying .git suffix if direct path fails
     let (source, source_path) = match open_source_repo(&source_path) {
@@ -520,13 +540,24 @@ pub fn run(mut args: Args) -> Result<()> {
     if effective_reject_shallow(&args) && source_repo_is_shallow(&source.git_dir) {
         bail!("source repository is shallow, reject to clone.");
     }
-    if source_repo_is_shallow(&source.git_dir)
-        && !args.no_local
-        && !repo_path_str.starts_with("file://")
-    {
+    if source_repo_is_shallow(&source.git_dir) && !args.no_local && !is_file_url {
         eprintln!("warning: source repository is shallow, ignoring --local");
     }
     maybe_warn_shallow_options_ignored(&repo_path_str, &args);
+
+    if is_file_url && args.filter.is_some() && !uploadpack_filter_allowed(&source.git_dir) {
+        eprintln!(
+            "warning: filtering not recognized by server, ignoring --filter={}",
+            args.filter.as_deref().unwrap_or("")
+        );
+    }
+
+    let partial_blob_limit_zero = matches!(
+        args.filter.as_deref(),
+        Some("blob:limit=0") | Some("blob:size=0")
+    );
+    let partial_blob_none = matches!(args.filter.as_deref(), Some("blob:none"))
+        || (partial_blob_limit_zero && uploadpack_filter_allowed(&source.git_dir));
 
     // `repo_path_str` strips `file://`; use the original URL for transport detection.
     if args.repository.starts_with("file://")
@@ -548,21 +579,29 @@ pub fn run(mut args: Args) -> Result<()> {
     let ref_storage = resolved_clone_ref_storage(&args)?;
 
     // Determine target directory
-    let target_name = args.directory.clone().unwrap_or_else(|| {
+    let target_name = if let Some(ref d) = args.directory {
+        d.trim_end_matches('/').to_string()
+    } else {
         let base = source_path
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        // Strip .git suffix if present
-        base.strip_suffix(".git")
+        let base = base
+            .strip_suffix(".git")
             .unwrap_or(&base)
             .trim_end_matches('/')
-            .to_string()
-    });
+            .to_string();
+        if args.bare && !args.mirror {
+            format!("{base}.git")
+        } else {
+            base
+        }
+    };
 
     let target_path = PathBuf::from(&target_name);
-    if target_path.exists() {
+    let empty_dir_ok = path_is_empty_directory(&target_path);
+    if target_path.exists() && !empty_dir_ok {
         bail!(
             "destination path '{}' already exists and is not an empty directory",
             target_path.display()
@@ -578,7 +617,7 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    let remote_url_for_config = if args.repository.starts_with("file://") {
+    let remote_url_for_config = if is_file_url {
         if let Ok(abs) = source_path.canonicalize() {
             format!("file://{}", abs.display())
         } else {
@@ -589,8 +628,7 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     let use_upload_for_protocol_v1 = protocol_wire::effective_client_protocol_version() == 1
-        && (args.repository.starts_with("file://")
-            || crate::ssh_transport::is_configured_ssh_url(&args.repository));
+        && (is_file_url || crate::ssh_transport::is_configured_ssh_url(&args.repository));
 
     // Source HEAD symref / detached OID: from disk unless we will use upload-pack (advertisement).
     let (mut source_head_symref, mut source_head_oid) = read_source_head_info(&source.git_dir);
@@ -611,10 +649,14 @@ pub fn run(mut args: Args) -> Result<()> {
     let initial_branch = head_branch.as_deref().unwrap_or(initial_fallback.as_str());
 
     // Initialize the target repository
-    fs::create_dir_all(&target_path)
-        .with_context(|| format!("cannot create directory '{}'", target_path.display()))?;
+    if !empty_dir_ok {
+        fs::create_dir_all(&target_path)
+            .with_context(|| format!("cannot create directory '{}'", target_path.display()))?;
+    }
 
     let template_dir = args.template.as_ref().map(PathBuf::from);
+
+    let git_work_tree_env = std::env::var_os("GIT_WORK_TREE").filter(|v| !v.is_empty());
 
     let dest = if let Some(ref sep_git) = args.separate_git_dir {
         if sep_git.exists() && sep_git.read_dir()?.next().is_some() {
@@ -645,6 +687,24 @@ pub fn run(mut args: Args) -> Result<()> {
         })?;
         Repository::open(&target_path, None)
             .with_context(|| format!("failed to open repository '{}'", target_path.display()))?
+    } else if git_work_tree_env.is_some() {
+        let wt_raw = git_work_tree_env
+            .as_ref()
+            .map(|v| v.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let wt_path = if Path::new(&wt_raw).is_absolute() {
+            PathBuf::from(&wt_raw)
+        } else {
+            std::env::current_dir()?.join(&wt_raw)
+        };
+        init_bare_with_env_worktree(
+            &target_path,
+            &wt_path,
+            initial_branch,
+            template_dir.as_deref(),
+            ref_storage,
+        )
+        .with_context(|| format!("failed to initialize '{}'", target_path.display()))?
     } else {
         init_repository(
             &target_path,
@@ -690,35 +750,46 @@ pub fn run(mut args: Args) -> Result<()> {
                 };
 
                 if args.bare {
-                    for (refname, oid) in &remote_heads {
-                        let dst_ref = dest.git_dir.join(refname);
-                        if let Some(parent) = dst_ref.parent() {
-                            fs::create_dir_all(parent)?;
-                        }
-                        fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
-                    }
-                    if !args.no_tags {
-                        for (refname, oid) in &remote_tags {
+                    if args.mirror {
+                        copy_refs_mirror_all(&source.git_dir, &dest.git_dir)
+                            .context("copying mirror refs")?;
+                        setup_remote_mirror_fetch_and_url(
+                            &dest.git_dir,
+                            remote_url_for_config.as_str(),
+                            &remote_name,
+                        )
+                        .context("setting up mirror remote")?;
+                    } else {
+                        for (refname, oid) in &remote_heads {
                             let dst_ref = dest.git_dir.join(refname);
                             if let Some(parent) = dst_ref.parent() {
                                 fs::create_dir_all(parent)?;
                             }
                             fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
                         }
-                    }
-                    setup_origin_remote_bare_url(
-                        &dest.git_dir,
-                        remote_url_for_config.as_str(),
-                        &remote_name,
-                    )
-                    .context("setting up origin remote")?;
-                    if let Some(ref branch) = head_branch {
-                        fs::write(
-                            dest.git_dir.join("HEAD"),
-                            format!("ref: refs/heads/{branch}\n"),
-                        )?;
-                    } else if let Some(ref oid) = source_head_oid {
-                        fs::write(dest.git_dir.join("HEAD"), format!("{oid}\n"))?;
+                        if !args.no_tags {
+                            for (refname, oid) in &remote_tags {
+                                let dst_ref = dest.git_dir.join(refname);
+                                if let Some(parent) = dst_ref.parent() {
+                                    fs::create_dir_all(parent)?;
+                                }
+                                fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
+                            }
+                        }
+                        setup_origin_remote_bare_url(
+                            &dest.git_dir,
+                            remote_url_for_config.as_str(),
+                            &remote_name,
+                        )
+                        .context("setting up origin remote")?;
+                        if let Some(ref branch) = head_branch {
+                            fs::write(
+                                dest.git_dir.join("HEAD"),
+                                format!("ref: refs/heads/{branch}\n"),
+                            )?;
+                        } else if let Some(ref oid) = source_head_oid {
+                            fs::write(dest.git_dir.join("HEAD"), format!("{oid}\n"))?;
+                        }
                     }
                 } else {
                     copy_refs_from_upload_pack_lists(
@@ -852,6 +923,10 @@ pub fn run(mut args: Args) -> Result<()> {
         propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
     }
 
+    if source_repo_is_shallow(&source.git_dir) {
+        copy_shallow_file_if_present(&source.git_dir, &dest.git_dir)?;
+    }
+
     // `upload-pack` negotiation can succeed without transferring objects (e.g. advertisement
     // parse quirks). Match `git clone --no-local` by ensuring the destination has a real ODB.
     if !args.shared
@@ -869,21 +944,28 @@ pub fn run(mut args: Args) -> Result<()> {
         }
 
         if args.bare {
-            // Bare clone: copy refs directly (mirror-style), no remote tracking
-            copy_refs_direct(&source.git_dir, &dest.git_dir).context("copying refs")?;
-
-            // Set up remote config (URL only, no fetch refspec for bare)
-            setup_origin_remote_bare(&dest.git_dir, &source_path, &remote_name)
-                .context("setting up origin remote")?;
-
-            // Set HEAD to match source
-            if let Some(ref branch) = head_branch {
-                fs::write(
-                    dest.git_dir.join("HEAD"),
-                    format!("ref: refs/heads/{branch}\n"),
-                )?;
-            } else if let Some(ref oid) = source_head_oid {
-                fs::write(dest.git_dir.join("HEAD"), format!("{oid}\n"))?;
+            if args.mirror {
+                copy_refs_mirror_all(&source.git_dir, &dest.git_dir)
+                    .context("copying mirror refs")?;
+                let url = source_path
+                    .canonicalize()
+                    .unwrap_or_else(|_| source_path.clone())
+                    .to_string_lossy()
+                    .to_string();
+                setup_remote_mirror_fetch_and_url(&dest.git_dir, &url, &remote_name)
+                    .context("setting up mirror remote")?;
+            } else {
+                copy_refs_direct(&source.git_dir, &dest.git_dir).context("copying refs")?;
+                setup_origin_remote_bare(&dest.git_dir, &source_path, &remote_name)
+                    .context("setting up origin remote")?;
+                if let Some(ref branch) = head_branch {
+                    fs::write(
+                        dest.git_dir.join("HEAD"),
+                        format!("ref: refs/heads/{branch}\n"),
+                    )?;
+                } else if let Some(ref oid) = source_head_oid {
+                    fs::write(dest.git_dir.join("HEAD"), format!("{oid}\n"))?;
+                }
             }
         } else {
             // Non-bare clone: copy refs as remote-tracking refs
@@ -969,9 +1051,10 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     if partial_blob_none {
+        let filter_spec = args.filter.as_deref().unwrap_or("blob:none");
         materialize_blob_none_partial_layout(&dest)
             .context("materializing partial-clone object layout")?;
-        initialize_partial_clone_state(&source, &dest, &remote_name, "blob:none")
+        initialize_partial_clone_state(&source, &dest, &remote_name, filter_spec)
             .context("initializing partial-clone promisor state")?;
     }
 
@@ -1028,8 +1111,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     maybe_print_local_clone_progress(
-        args.progress
-            || (!args.quiet && io::stderr().is_terminal() && repo_path_str.starts_with("file://")),
+        args.progress || (!args.quiet && io::stderr().is_terminal() && is_file_url),
     );
 
     let skip_checkout_warn = !args.bare
@@ -1071,7 +1153,18 @@ pub fn run(mut args: Args) -> Result<()> {
         crate::commands::sparse_checkout::finalize_sparse_clone(&dest, !args.no_checkout)?;
     }
 
-    if !args.quiet {
+    if !args.bare {
+        if let Ok(head) = fs::read_to_string(dest.git_dir.join("HEAD")) {
+            let h = head.trim();
+            if let Some(r) = h.strip_prefix("ref: ") {
+                if let Some(b) = r.trim().strip_prefix("refs/heads/") {
+                    apply_branch_autosetuprebase_from_global(&dest.git_dir, b.trim())?;
+                }
+            }
+        }
+    }
+
+    if !args.quiet && !args.no_checkout {
         eprintln!("done.");
     }
 
@@ -1337,7 +1430,7 @@ fn run_git_clone(args: Args) -> Result<()> {
         crate::commands::sparse_checkout::finalize_sparse_clone(&dest, !args.no_checkout)?;
     }
 
-    if !args.quiet {
+    if !args.quiet && !args.no_checkout {
         eprintln!("done.");
     }
 
@@ -1599,7 +1692,7 @@ fn run_ext_clone(args: Args) -> Result<()> {
         crate::commands::sparse_checkout::finalize_sparse_clone(&dest, !args.no_checkout)?;
     }
 
-    if !args.quiet {
+    if !args.quiet && !args.no_checkout {
         eprintln!("done.");
     }
 
@@ -1924,7 +2017,7 @@ fn run_http_clone(args: Args) -> Result<()> {
         crate::commands::sparse_checkout::finalize_sparse_clone(&dest, !args.no_checkout)?;
     }
 
-    if !args.quiet {
+    if !args.quiet && !args.no_checkout {
         eprintln!("done.");
     }
 
@@ -2019,17 +2112,22 @@ fn initialize_partial_clone_state_http(
 ///
 /// Returns `false` for local paths, `file://` URLs, or URLs containing `://`.
 fn is_ssh_url(url: &str) -> bool {
-    // Skip anything with a scheme (e.g., file://, http://, ssh://)
     if url.contains("://") {
         return false;
     }
-    // Look for host:/path pattern
-    if let Some(colon_pos) = url.find(':') {
-        let host = &url[..colon_pos];
-        let path = &url[colon_pos + 1..];
-        return !host.is_empty() && !path.is_empty();
+    let colon = url.find(':');
+    let slash = url.find('/');
+    match colon {
+        None => false,
+        Some(ci) => {
+            if slash.is_some_and(|si| si < ci) {
+                return false;
+            }
+            let host = &url[..ci];
+            let path = &url[ci + 1..];
+            !host.is_empty() && !path.is_empty()
+        }
     }
-    false
 }
 
 /// Clone from an SSH URL when the remote resolves to a local repository (test
@@ -2038,9 +2136,10 @@ fn run_ssh_clone(args: Args) -> Result<()> {
     let spec = crate::ssh_transport::parse_ssh_url(&args.repository)?;
     let Some(src_git_dir) = crate::ssh_transport::try_local_git_dir(&spec) else {
         crate::ssh_transport::unresolved_ssh_clone_invoke_git_ssh(
-            &spec.host,
+            &spec,
             args.upload_pack.as_deref(),
-            &spec.path,
+            args.ipv4,
+            args.ipv6,
         )?;
         bail!(
             "ssh: could not resolve '{}' to a local repository",
@@ -2055,6 +2154,13 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         )
     })?;
 
+    crate::ssh_transport::record_resolved_git_ssh_upload_pack_for_tests(
+        &spec,
+        args.upload_pack.as_deref(),
+        args.ipv4,
+        args.ipv6,
+    )?;
+
     if effective_reject_shallow(&args) && source_repo_is_shallow(&source.git_dir) {
         bail!("source repository is shallow, reject to clone.");
     }
@@ -2066,20 +2172,29 @@ fn run_ssh_clone(args: Args) -> Result<()> {
     let ref_storage = resolved_clone_ref_storage(&args)?;
 
     let path_for_basename = PathBuf::from(&spec.path);
-    let target_name = args.directory.clone().unwrap_or_else(|| {
+    let target_name = if let Some(ref d) = args.directory {
+        d.trim_end_matches('/').to_string()
+    } else {
         let base = path_for_basename
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        base.strip_suffix(".git")
+        let base = base
+            .strip_suffix(".git")
             .unwrap_or(&base)
             .trim_end_matches('/')
-            .to_string()
-    });
+            .to_string();
+        if args.bare && !args.mirror {
+            format!("{base}.git")
+        } else {
+            base
+        }
+    };
 
     let target_path = PathBuf::from(&target_name);
-    if target_path.exists() {
+    let empty_dir_ok = path_is_empty_directory(&target_path);
+    if target_path.exists() && !empty_dir_ok {
         bail!(
             "destination path '{}' already exists and is not an empty directory",
             target_path.display()
@@ -2112,10 +2227,13 @@ fn run_ssh_clone(args: Args) -> Result<()> {
     let initial_fallback = default_head_branch_fallback();
     let initial_branch = head_branch.as_deref().unwrap_or(initial_fallback.as_str());
 
-    fs::create_dir_all(&target_path)
-        .with_context(|| format!("cannot create directory '{}'", target_path.display()))?;
+    if !empty_dir_ok {
+        fs::create_dir_all(&target_path)
+            .with_context(|| format!("cannot create directory '{}'", target_path.display()))?;
+    }
 
     let template_dir = args.template.as_ref().map(PathBuf::from);
+    let git_work_tree_env = std::env::var_os("GIT_WORK_TREE").filter(|v| !v.is_empty());
 
     let dest = if let Some(ref sep_git) = args.separate_git_dir {
         if sep_git.exists() && sep_git.read_dir()?.next().is_some() {
@@ -2146,6 +2264,24 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         })?;
         Repository::open(&target_path, None)
             .with_context(|| format!("failed to open repository '{}'", target_path.display()))?
+    } else if git_work_tree_env.is_some() {
+        let wt_raw = git_work_tree_env
+            .as_ref()
+            .map(|v| v.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let wt_path = if Path::new(&wt_raw).is_absolute() {
+            PathBuf::from(&wt_raw)
+        } else {
+            std::env::current_dir()?.join(&wt_raw)
+        };
+        init_bare_with_env_worktree(
+            &target_path,
+            &wt_path,
+            initial_branch,
+            template_dir.as_deref(),
+            ref_storage,
+        )
+        .with_context(|| format!("failed to initialize '{}'", target_path.display()))?
     } else {
         init_repository(
             &target_path,
@@ -2164,11 +2300,6 @@ fn run_ssh_clone(args: Args) -> Result<()> {
     }
 
     if use_upload_for_protocol_v1 {
-        crate::ssh_transport::record_fake_ssh_line(
-            &spec.host,
-            "git-upload-pack",
-            &crate::ssh_transport::ssh_remote_repo_path_for_display(&source.git_dir),
-        )?;
         let upload_cmd = args.upload_pack.as_deref().filter(|s| !s.trim().is_empty());
         let fetch_res = crate::fetch_transport::with_packet_trace_identity("clone", || {
             crate::fetch_transport::fetch_via_upload_pack_skipping(
@@ -2195,35 +2326,46 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                 };
 
                 if args.bare {
-                    for (refname, oid) in &remote_heads {
-                        let dst_ref = dest.git_dir.join(refname);
-                        if let Some(parent) = dst_ref.parent() {
-                            fs::create_dir_all(parent)?;
-                        }
-                        fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
-                    }
-                    if !args.no_tags {
-                        for (refname, oid) in &remote_tags {
+                    if args.mirror {
+                        copy_refs_mirror_all(&source.git_dir, &dest.git_dir)
+                            .context("copying mirror refs")?;
+                        setup_remote_mirror_fetch_and_url(
+                            &dest.git_dir,
+                            remote_url_for_config.as_str(),
+                            &remote_name,
+                        )
+                        .context("setting up mirror remote")?;
+                    } else {
+                        for (refname, oid) in &remote_heads {
                             let dst_ref = dest.git_dir.join(refname);
                             if let Some(parent) = dst_ref.parent() {
                                 fs::create_dir_all(parent)?;
                             }
                             fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
                         }
-                    }
-                    setup_origin_remote_bare_url(
-                        &dest.git_dir,
-                        remote_url_for_config.as_str(),
-                        &remote_name,
-                    )
-                    .context("setting up origin remote")?;
-                    if let Some(ref branch) = head_branch {
-                        fs::write(
-                            dest.git_dir.join("HEAD"),
-                            format!("ref: refs/heads/{branch}\n"),
-                        )?;
-                    } else if let Some(ref oid) = source_head_oid {
-                        fs::write(dest.git_dir.join("HEAD"), format!("{oid}\n"))?;
+                        if !args.no_tags {
+                            for (refname, oid) in &remote_tags {
+                                let dst_ref = dest.git_dir.join(refname);
+                                if let Some(parent) = dst_ref.parent() {
+                                    fs::create_dir_all(parent)?;
+                                }
+                                fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
+                            }
+                        }
+                        setup_origin_remote_bare_url(
+                            &dest.git_dir,
+                            remote_url_for_config.as_str(),
+                            &remote_name,
+                        )
+                        .context("setting up origin remote")?;
+                        if let Some(ref branch) = head_branch {
+                            fs::write(
+                                dest.git_dir.join("HEAD"),
+                                format!("ref: refs/heads/{branch}\n"),
+                            )?;
+                        } else if let Some(ref oid) = source_head_oid {
+                            fs::write(dest.git_dir.join("HEAD"), format!("{oid}\n"))?;
+                        }
                     }
                 } else {
                     copy_refs_from_upload_pack_lists(
@@ -2333,6 +2475,10 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
     }
 
+    if source_repo_is_shallow(&source.git_dir) {
+        copy_shallow_file_if_present(&source.git_dir, &dest.git_dir)?;
+    }
+
     if !args.shared
         && use_upload_for_protocol_v1
         && !dest.git_dir.join("objects/info/alternates").exists()
@@ -2346,16 +2492,23 @@ fn run_ssh_clone(args: Args) -> Result<()> {
 
     if !use_upload_for_protocol_v1 {
         if args.bare {
-            copy_refs_direct(&source.git_dir, &dest.git_dir).context("copying refs")?;
-            setup_origin_remote_bare_url(&dest.git_dir, remote_url, &remote_name)
-                .context("setting up origin remote")?;
-            if let Some(ref branch) = head_branch {
-                fs::write(
-                    dest.git_dir.join("HEAD"),
-                    format!("ref: refs/heads/{branch}\n"),
-                )?;
-            } else if let Some(ref oid) = source_head_oid {
-                fs::write(dest.git_dir.join("HEAD"), format!("{oid}\n"))?;
+            if args.mirror {
+                copy_refs_mirror_all(&source.git_dir, &dest.git_dir)
+                    .context("copying mirror refs")?;
+                setup_remote_mirror_fetch_and_url(&dest.git_dir, remote_url, &remote_name)
+                    .context("setting up mirror remote")?;
+            } else {
+                copy_refs_direct(&source.git_dir, &dest.git_dir).context("copying refs")?;
+                setup_origin_remote_bare_url(&dest.git_dir, remote_url, &remote_name)
+                    .context("setting up origin remote")?;
+                if let Some(ref branch) = head_branch {
+                    fs::write(
+                        dest.git_dir.join("HEAD"),
+                        format!("ref: refs/heads/{branch}\n"),
+                    )?;
+                } else if let Some(ref oid) = source_head_oid {
+                    fs::write(dest.git_dir.join("HEAD"), format!("{oid}\n"))?;
+                }
             }
         } else {
             copy_refs_as_remote(&source.git_dir, &dest.git_dir, &remote_name, args.no_tags)
@@ -2469,7 +2622,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         crate::commands::sparse_checkout::finalize_sparse_clone(&dest, !args.no_checkout)?;
     }
 
-    if !args.quiet {
+    if !args.quiet && !args.no_checkout {
         eprintln!("done.");
     }
 
@@ -2910,15 +3063,122 @@ fn remove_revision_clone_remote_config(git_dir: &Path, remote_name: &str) -> Res
     Ok(())
 }
 
+/// Percent-decode `file://` path components (Git `url_decode` for URL-shaped sources).
+fn percent_decode_file_url_path(path: &str) -> Result<String> {
+    let mut out = String::with_capacity(path.len());
+    let mut chars = path.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            let h1 = chars
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("bad % escape in file URL"))?;
+            let h2 = chars
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("bad % escape in file URL"))?;
+            let byte = u8::from_str_radix(&format!("{h1}{h2}"), 16)
+                .map_err(|_| anyhow::anyhow!("bad % escape in file URL"))?;
+            out.push(byte as char);
+        } else {
+            out.push(c);
+        }
+    }
+    Ok(out)
+}
+
+/// True when `path` names an existing empty directory (clone may use it as destination).
+fn path_is_empty_directory(path: &Path) -> bool {
+    path.is_dir()
+        && path
+            .read_dir()
+            .map(|mut d| d.next().is_none())
+            .unwrap_or(false)
+}
+
+fn uploadpack_filter_allowed(git_dir: &Path) -> bool {
+    let set = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    matches!(
+        set.get_bool("uploadpack.allowfilter")
+            .or_else(|| set.get_bool("uploadPack.allowFilter")),
+        Some(Ok(true))
+    )
+}
+
+fn setup_remote_mirror_fetch_and_url(
+    git_dir: &Path,
+    remote_url: &str,
+    remote_name: &str,
+) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    config.set(&format!("remote.{remote_name}.mirror"), "true")?;
+    config.set(&format!("remote.{remote_name}.fetch"), "+refs/*:refs/*")?;
+    config.set(&format!("remote.{remote_name}.url"), remote_url)?;
+    config.write().context("writing config")?;
+    Ok(())
+}
+
+fn apply_branch_autosetuprebase_from_global(git_dir: &Path, branch: &str) -> Result<()> {
+    let set = ConfigSet::load(None, true).unwrap_or_default();
+    let Some(mode) = set.get("branch.autosetuprebase") else {
+        return Ok(());
+    };
+    let lower = mode.to_ascii_lowercase();
+    if lower != "remote" && lower != "always" {
+        return Ok(());
+    }
+    let config_path = git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    config.set(&format!("branch.{branch}.rebase"), "true")?;
+    config.write().context("writing config")?;
+    Ok(())
+}
+
+fn copy_shallow_file_if_present(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
+    let src = src_git_dir.join("shallow");
+    if src.is_file() {
+        fs::copy(&src, dst_git_dir.join("shallow"))
+            .with_context(|| format!("copying shallow from {}", src.display()))?;
+    }
+    Ok(())
+}
+
+/// Copy every ref under `refs/` plus `HEAD` (for `git clone --mirror`).
+fn copy_refs_mirror_all(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
+    let head_src = src_git_dir.join("HEAD");
+    if head_src.is_file() {
+        let content = fs::read_to_string(&head_src).context("reading source HEAD")?;
+        fs::write(dst_git_dir.join("HEAD"), content).context("writing mirror HEAD")?;
+    }
+    let refs =
+        grit_lib::refs::list_refs(src_git_dir, "refs/").map_err(|e| anyhow::anyhow!("{e}"))?;
+    for (refname, oid) in refs {
+        clone_write_direct_ref(dst_git_dir, &refname, &oid.to_hex())?;
+    }
+    Ok(())
+}
+
 /// Open a source repository (bare or non-bare).
 fn open_source_repo(path: &Path) -> Result<Repository> {
-    // Try as-is first (might be a bare repo or .git dir)
+    if path.is_file() {
+        let work_tree = path.parent().map(Path::to_path_buf);
+        let git_dir = grit_lib::repo::resolve_dot_git(path)?;
+        return Repository::open(&git_dir, work_tree.as_deref()).map_err(Into::into);
+    }
     if let Ok(repo) = Repository::open(path, None) {
         return Ok(repo);
     }
-    // Try path/.git for non-bare repos
-    let git_dir = path.join(".git");
-    Repository::open(&git_dir, Some(path)).map_err(Into::into)
+    let dot_git = path.join(".git");
+    if dot_git.is_file() {
+        let resolved = grit_lib::repo::resolve_dot_git(&dot_git)?;
+        return Repository::open(&resolved, Some(path)).map_err(Into::into);
+    }
+    Repository::open(&dot_git, Some(path)).map_err(Into::into)
 }
 
 /// Append one absolute `objects` directory line to `objects/info/alternates` (deduped).

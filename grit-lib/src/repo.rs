@@ -2157,6 +2157,42 @@ pub fn init_repository(
     Repository::open(&git_dir, work_tree)
 }
 
+/// Initialise a **bare** repository at `git_dir` with `core.worktree` set to `work_tree`.
+///
+/// Used when `GIT_WORK_TREE` is set during `git clone`: the clone destination is the bare
+/// git directory and checked-out files go under the environment work tree (matches upstream Git).
+///
+/// # Errors
+///
+/// Returns [`Error::Io`] on filesystem failures.
+pub fn init_bare_with_env_worktree(
+    git_dir: &Path,
+    work_tree: &Path,
+    initial_branch: &str,
+    template_dir: Option<&Path>,
+    ref_storage: &str,
+) -> Result<Repository> {
+    fs::create_dir_all(git_dir)?;
+    fs::create_dir_all(work_tree)?;
+    write_fresh_git_directory(
+        git_dir,
+        true,
+        initial_branch,
+        template_dir,
+        ref_storage,
+        false,
+    )?;
+    let work_tree_abs = fs::canonicalize(work_tree).unwrap_or_else(|_| work_tree.to_path_buf());
+    let config_path = git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    config.set("core.worktree", &work_tree_abs.to_string_lossy())?;
+    config.write()?;
+    Repository::open(git_dir, Some(work_tree))
+}
+
 /// Initialise a repository whose git directory is separate from the work tree.
 ///
 /// Creates `git_dir` with the usual layout, writes `work_tree/.git` as a gitfile
