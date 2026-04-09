@@ -2,10 +2,13 @@
 //!
 //! For commits, displays the commit header (like `git log -1`) followed by the
 //! diff introduced by that commit.  For tags, shows the tag object then the
-//! tagged commit.  For trees, lists the tree contents (like `ls-tree`).  For
-//! blobs, prints the raw blob content.
+//! tagged commit.  For trees, lists top-level names (Git `ls-tree --name-only`
+//! style).  For blobs, prints the raw blob content.
+//!
+//! Like Git, `show` defaults to `--no-walk` but switches to a `rev-list` walk
+//! when revision ranges, exclusions, `-n` / `--max-count`, or `--merge` are used.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
@@ -13,6 +16,7 @@ use grit_lib::diff::{
     DiffEntry,
 };
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
+use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::merge_diff::{
     blob_oid_at_path, blob_text_for_diff, combined_diff_paths, format_combined_binary,
     format_combined_textconv_patch, format_parent_patch, is_binary_for_diff, read_blob_at_path,
@@ -21,16 +25,37 @@ use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKin
 use grit_lib::odb::Odb;
 use grit_lib::refs::{list_refs, resolve_ref};
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{resolve_revision, resolve_revision_without_index_dwim};
-use std::collections::HashMap;
+use grit_lib::rev_list::{
+    collect_revision_specs_with_stdin, merge_bases, rev_list, OrderingMode, RevListOptions,
+};
+use grit_lib::rev_parse::{
+    peel_to_tree, resolve_revision, resolve_revision_without_index_dwim, split_double_dot_range,
+};
+use std::collections::{BTreeSet, HashMap};
 use std::io::{self, Write};
+use std::path::Path;
 
 /// Arguments for `grit show`.
 #[derive(Debug, ClapArgs)]
-#[command(about = "Show various types of objects (commits, trees, blobs, tags)")]
+#[command(
+    about = "Show various types of objects (commits, trees, blobs, tags)",
+    allow_negative_numbers = true
+)]
 pub struct Args {
-    /// Object(s) to show (commit, tree, blob, or tag). Defaults to HEAD.
-    #[arg()]
+    /// Limit the number of commits shown when walking history (`-2` = two commits).
+    #[arg(short = 'n', long = "max-count", value_name = "N")]
+    pub max_count: Option<usize>,
+
+    /// Draw a text-based representation of the commit history (incompatible with `show`'s default `--no-walk`).
+    #[arg(long = "graph")]
+    pub graph: bool,
+
+    /// Show diffs relevant to resolving a merge with unmerged index entries (uses `MERGE_HEAD` and related pseudorefs).
+    #[arg(long = "merge")]
+    pub show_merge: bool,
+
+    /// Object(s) to show (commit, tree, blob, tag, or revision range). Defaults to HEAD.
+    #[arg(num_args = 0.., allow_hyphen_values = true, trailing_var_arg = true)]
     pub objects: Vec<String>,
 
     /// Show only one line per commit (short hash + subject).
@@ -234,11 +259,27 @@ pub fn run(mut args: Args) -> Result<()> {
     }
     maybe_warn_deprecated_grafts(&repo)?;
 
-    let (rev_strings_owned, pathspecs): (Vec<String>, Vec<String>) = if args.objects.is_empty() {
+    let mut raw_objects = args.objects.clone();
+    while let Some(first) = raw_objects.first() {
+        if first.len() > 1
+            && first.starts_with('-')
+            && first[1..].chars().all(|c| c.is_ascii_digit())
+        {
+            let n: usize = first[1..]
+                .parse()
+                .map_err(|_| anyhow::anyhow!("invalid -n value: {first}"))?;
+            args.max_count = Some(n);
+            raw_objects.remove(0);
+        } else {
+            break;
+        }
+    }
+
+    let (mut rev_strings_owned, pathspecs): (Vec<String>, Vec<String>) = if raw_objects.is_empty() {
         (vec!["HEAD".to_string()], Vec::new())
-    } else if let Some(i) = args.objects.iter().position(|s| s == "--") {
-        let left: Vec<String> = args.objects[..i].to_vec();
-        let right: Vec<String> = args.objects[i + 1..].to_vec();
+    } else if let Some(i) = raw_objects.iter().position(|s| s == "--") {
+        let left: Vec<String> = raw_objects[..i].to_vec();
+        let right: Vec<String> = raw_objects[i + 1..].to_vec();
         if left.is_empty() {
             (vec!["HEAD".to_string()], right)
         } else {
@@ -246,25 +287,39 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     } else {
         let mut split_at = 0usize;
-        for s in &args.objects {
-            // Do not use index DWIM here: a tracked filename like `numbers` must be a pathspec
+        for s in &raw_objects {
+            let looks_like_rev_spec = s.starts_with('^')
+                || split_double_dot_range(s).is_some()
+                || (s.contains("...") && !s.contains("...."));
+            // Do not use index DWIM alone: a tracked filename like `numbers` must be a pathspec
             // (`git show rev -- numbers`), not mis-parsed as an extra revision (t4069.15).
-            if resolve_revision_without_index_dwim(&repo, s).is_ok() {
+            if looks_like_rev_spec || resolve_revision_without_index_dwim(&repo, s).is_ok() {
                 split_at += 1;
             } else {
                 break;
             }
         }
         if split_at == 0 {
-            (vec!["HEAD".to_string()], args.objects.clone())
+            (vec!["HEAD".to_string()], raw_objects.clone())
         } else {
             (
-                args.objects[..split_at].to_vec(),
-                args.objects[split_at..].to_vec(),
+                raw_objects[..split_at].to_vec(),
+                raw_objects[split_at..].to_vec(),
             )
         }
     };
+
+    if rev_strings_owned.is_empty() {
+        rev_strings_owned.push("HEAD".to_string());
+    }
+
+    if args.graph {
+        bail!("fatal: options '--no-walk' and '--graph' cannot be used together");
+    }
+
     let rev_strings: Vec<&str> = rev_strings_owned.iter().map(|s| s.as_str()).collect();
+    let compact_multi_subject =
+        (args.quiet || args.no_patch) && args.format.as_deref() == Some("%s");
 
     let notes_map = load_notes_map(&repo);
 
@@ -278,7 +333,6 @@ pub fn run(mut args: Args) -> Result<()> {
         use crate::commands::remerge_diff::{
             remerge_diff_matches_pickaxe_or_find, RemergeDiffOptions,
         };
-        use std::collections::BTreeSet;
 
         let find_oid = if let Some(ref s) = args.find_object {
             Some(resolve_revision(&repo, s).with_context(|| format!("unknown revision: '{s}'"))?)
@@ -345,8 +399,12 @@ pub fn run(mut args: Args) -> Result<()> {
             context_lines: args.unified.unwrap_or(3),
         };
 
+        let mut remerge_shown = false;
         for oid in matched {
             let obj = repo.odb.read(&oid).context("reading object")?;
+            if remerge_shown && !compact_multi_subject {
+                writeln!(out)?;
+            }
             show_commit(
                 &mut out,
                 &repo,
@@ -356,35 +414,248 @@ pub fn run(mut args: Args) -> Result<()> {
                 &notes_map,
                 &pathspecs,
                 Some(&emit_opts),
+                None,
             )?;
+            remerge_shown = true;
         }
         return Ok(());
     }
 
+    let wants_walk = args.show_merge
+        || args.max_count.is_some()
+        || rev_strings.iter().any(|s| {
+            s.starts_with('^')
+                || split_double_dot_range(s).is_some()
+                || (s.contains("...") && !s.contains("...."))
+        });
+
+    if wants_walk {
+        let (positive_specs, negative_specs, _) =
+            collect_revision_specs_with_stdin(&rev_strings_owned, false)
+                .map_err(|e| anyhow::anyhow!("failed to parse revision arguments: {e}"))?;
+
+        let mut negative_specs = negative_specs;
+        if args.show_merge {
+            let (merge_pos, merge_neg, parent_oid) =
+                build_specs_for_show_merge(&repo).context("show --merge")?;
+            negative_specs.extend(merge_neg);
+            // Git prepends merge walk tips before user arguments.
+            let mut combined = merge_pos;
+            combined.extend(positive_specs);
+            let options = RevListOptions {
+                max_count: args.max_count,
+                ordering: OrderingMode::Topo,
+                ..RevListOptions::default()
+            };
+            let result = rev_list(&repo, &combined, &negative_specs, &options)
+                .map_err(|e| anyhow::anyhow!("rev-list failed: {e}"))?;
+            let mut shown = false;
+            // Git prints the current branch (HEAD) first, then the merge parent — reverse topo order.
+            for oid in result.commits.into_iter().rev() {
+                let obj = repo.odb.read(&oid).context("reading object")?;
+                if obj.kind != ObjectKind::Commit {
+                    continue;
+                }
+                if shown && !compact_multi_subject {
+                    writeln!(out)?;
+                }
+                show_commit(
+                    &mut out,
+                    &repo,
+                    &oid,
+                    &obj.data,
+                    &args,
+                    &notes_map,
+                    &pathspecs,
+                    None,
+                    Some(parent_oid),
+                )?;
+                shown = true;
+            }
+            return Ok(());
+        }
+
+        let symmetric = rev_strings
+            .iter()
+            .find(|s| s.contains("...") && !s.contains("....") && !s.starts_with('^'));
+        if let Some(sym_tok) = symmetric {
+            if let Some((l, r)) = sym_tok.split_once("...") {
+                let lhs = if l.is_empty() { "HEAD" } else { l };
+                let rhs = if r.is_empty() { "HEAD" } else { r };
+                let lhs_oid = resolve_revision(&repo, lhs)
+                    .with_context(|| format!("bad revision '{lhs}'"))?;
+                let rhs_oid = resolve_revision(&repo, rhs)
+                    .with_context(|| format!("bad revision '{rhs}'"))?;
+                let bases = merge_bases(&repo, lhs_oid, rhs_oid, false)
+                    .context("failed to compute merge bases for symmetric range")?;
+                let mut neg = negative_specs;
+                neg.extend(bases.iter().map(|b| b.to_hex()));
+                let pos: Vec<String> = rev_strings_owned
+                    .iter()
+                    .filter(|s| *s != sym_tok)
+                    .cloned()
+                    .chain([lhs.to_string(), rhs.to_string()])
+                    .collect();
+                let options = RevListOptions {
+                    max_count: args.max_count,
+                    left_right: true,
+                    symmetric_left: Some(lhs_oid),
+                    symmetric_right: Some(rhs_oid),
+                    ordering: OrderingMode::Topo,
+                    ..RevListOptions::default()
+                };
+                let result = rev_list(&repo, &pos, &neg, &options)
+                    .map_err(|e| anyhow::anyhow!("rev-list failed: {e}"))?;
+                let mut shown = false;
+                for oid in result.commits {
+                    let obj = repo.odb.read(&oid).context("reading object")?;
+                    if obj.kind != ObjectKind::Commit {
+                        continue;
+                    }
+                    if shown && !compact_multi_subject {
+                        writeln!(out)?;
+                    }
+                    show_commit(
+                        &mut out, &repo, &oid, &obj.data, &args, &notes_map, &pathspecs, None, None,
+                    )?;
+                    shown = true;
+                }
+                return Ok(());
+            }
+        }
+
+        let options = RevListOptions {
+            max_count: args.max_count,
+            ordering: OrderingMode::Topo,
+            ..RevListOptions::default()
+        };
+        let result = rev_list(&repo, &positive_specs, &negative_specs, &options)
+            .map_err(|e| anyhow::anyhow!("rev-list failed: {e}"))?;
+        let mut shown = false;
+        for oid in result.commits {
+            let obj = repo.odb.read(&oid).context("reading object")?;
+            if obj.kind != ObjectKind::Commit {
+                continue;
+            }
+            if shown && !compact_multi_subject {
+                writeln!(out)?;
+            }
+            show_commit(
+                &mut out, &repo, &oid, &obj.data, &args, &notes_map, &pathspecs, None, None,
+            )?;
+            shown = true;
+        }
+        return Ok(());
+    }
+
+    let mut shown = false;
     for spec in &rev_strings {
         let oid = resolve_revision(&repo, spec)
             .with_context(|| format!("unknown revision or path: '{spec}'"))?;
 
         let obj = repo.odb.read(&oid).context("reading object")?;
 
+        if shown && !compact_multi_subject {
+            writeln!(out)?;
+        }
+
         match obj.kind {
             ObjectKind::Commit => {
                 show_commit(
-                    &mut out, &repo, &oid, &obj.data, &args, &notes_map, &pathspecs, None,
+                    &mut out, &repo, &oid, &obj.data, &args, &notes_map, &pathspecs, None, None,
                 )?;
             }
             ObjectKind::Tag => {
-                show_tag(&mut out, &repo, &obj.data, &args, &notes_map)?;
+                show_tag(&mut out, &repo, spec, &obj.data, &args, &notes_map)?;
             }
             ObjectKind::Tree => {
-                show_tree(&mut out, &obj.data)?;
+                show_tree_named(&mut out, &repo, spec, oid)?;
             }
             ObjectKind::Blob => {
                 out.write_all(&obj.data)?;
             }
         }
+        shown = true;
     }
 
+    Ok(())
+}
+
+/// Build `rev-list` positive/negative specs for `git show --merge` (merge in progress).
+///
+/// Returns `(positive, negative, merge_parent_oid)` where `merge_parent_oid` is the commit
+/// named by the active pseudoref (`MERGE_HEAD`, etc.) for parent-specific diffs.
+fn build_specs_for_show_merge(repo: &Repository) -> Result<(Vec<String>, Vec<String>, ObjectId)> {
+    let head_oid = resolve_revision(repo, "HEAD").context("show --merge without HEAD?")?;
+    let (other_name, other_oid) = lookup_other_head_for_show_merge(&repo.git_dir)?;
+    let bases = merge_bases_first_vs_rest(repo, head_oid, &[other_oid])
+        .context("merge bases for show --merge")?;
+    let negative: Vec<String> = bases.iter().map(|b| b.to_hex()).collect();
+    Ok((vec!["HEAD".to_string(), other_name], negative, other_oid))
+}
+
+fn lookup_other_head_for_show_merge(git_dir: &Path) -> Result<(String, ObjectId)> {
+    const NAMES: &[&str] = &[
+        "MERGE_HEAD",
+        "CHERRY_PICK_HEAD",
+        "REVERT_HEAD",
+        "REBASE_HEAD",
+    ];
+    for name in NAMES {
+        let path = git_dir.join(name);
+        let raw = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let line = raw.lines().next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let oid: ObjectId = line
+            .parse()
+            .map_err(|_| anyhow::anyhow!("{name}: invalid object id"))?;
+        return Ok(((*name).to_string(), oid));
+    }
+    bail!(
+        "fatal: --merge requires one of the pseudorefs MERGE_HEAD, CHERRY_PICK_HEAD, REVERT_HEAD or REBASE_HEAD"
+    );
+}
+
+/// Show a tree as Git does for `git show <treeish>`: `tree <name>` then name-only listing.
+fn show_tree_named(
+    out: &mut impl Write,
+    repo: &Repository,
+    display_name: &str,
+    tree_oid: ObjectId,
+) -> Result<()> {
+    let label = if display_name.is_empty() {
+        tree_oid.to_hex()
+    } else {
+        display_name.to_string()
+    };
+    writeln!(out, "tree {label}")?;
+    writeln!(out)?;
+    let obj = repo.odb.read(&tree_oid).context("reading tree object")?;
+    let entries = parse_tree(&obj.data).context("parsing tree")?;
+    let mut names: Vec<String> = entries
+        .iter()
+        .filter_map(|e| {
+            let name = String::from_utf8_lossy(&e.name).into_owned();
+            if name.is_empty() {
+                None
+            } else {
+                Some(if e.mode == 0o040000 {
+                    format!("{name}/")
+                } else {
+                    name
+                })
+            }
+        })
+        .collect();
+    names.sort();
+    for n in names {
+        writeln!(out, "{n}")?;
+    }
     Ok(())
 }
 
@@ -440,6 +711,7 @@ fn show_commit(
     notes_map: &HashMap<ObjectId, Vec<u8>>,
     pathspecs: &[String],
     remerge_emit_opts: Option<&crate::commands::remerge_diff::RemergeDiffOptions<'_>>,
+    merge_from_parent: Option<ObjectId>,
 ) -> Result<()> {
     let odb = &repo.odb;
     let commit = parse_commit(data).context("parsing commit")?;
@@ -647,24 +919,60 @@ fn show_commit(
             .unwrap_or(7)
     };
 
-    // Show diff: compare this commit's tree against its first parent (or empty tree for root).
-    let new_tree = Some(&commit.tree);
-    let old_tree = commit.parents.first().map(|parent_oid| {
-        odb.read(parent_oid)
-            .ok()
-            .and_then(|obj| parse_commit(&obj.data).ok())
-            .map(|c| c.tree)
-    });
-
-    // old_tree is Option<Option<ObjectId>>; flatten and get a reference
-    let old_tree_oid: Option<ObjectId> = old_tree.flatten();
     let context = args.unified.unwrap_or(3);
 
-    let diff_entries =
-        diff_trees(odb, old_tree_oid.as_ref(), new_tree, "").context("computing diff")?;
-
-    // Apply rename/copy detection if -M or -C flags are set.
-    let diff_entries = apply_rename_copy_detection(odb, diff_entries, args, old_tree_oid.as_ref());
+    let (_old_tree_oid, diff_entries) = if let Some(merge_parent) = merge_from_parent {
+        if commit.parents.contains(&merge_parent) {
+            let idx = repo
+                .load_index()
+                .context("failed to read index for show --merge")?;
+            let mut unmerged: BTreeSet<String> = BTreeSet::new();
+            for e in &idx.entries {
+                if e.stage() != 0 {
+                    if let Ok(p) = String::from_utf8(e.path.clone()) {
+                        unmerged.insert(p);
+                    }
+                }
+            }
+            let parent_obj = odb.read(&merge_parent).context("reading merge parent")?;
+            let parent_commit = parse_commit(&parent_obj.data).context("parsing merge parent")?;
+            let old_t = parent_commit.tree;
+            let mut entries =
+                diff_trees(odb, Some(&old_t), Some(&commit.tree), "").context("computing diff")?;
+            entries.retain(|e| unmerged.contains(e.path()));
+            (Some(old_t), entries)
+        } else {
+            let new_tree = Some(&commit.tree);
+            let old_tree = commit.parents.first().map(|parent_oid| {
+                odb.read(parent_oid)
+                    .ok()
+                    .and_then(|obj| parse_commit(&obj.data).ok())
+                    .map(|c| c.tree)
+            });
+            let old_tree_oid = old_tree.flatten();
+            let diff_entries =
+                diff_trees(odb, old_tree_oid.as_ref(), new_tree, "").context("computing diff")?;
+            (
+                old_tree_oid,
+                apply_rename_copy_detection(odb, diff_entries, args, old_tree_oid.as_ref()),
+            )
+        }
+    } else {
+        let new_tree = Some(&commit.tree);
+        let old_tree = commit.parents.first().map(|parent_oid| {
+            odb.read(parent_oid)
+                .ok()
+                .and_then(|obj| parse_commit(&obj.data).ok())
+                .map(|c| c.tree)
+        });
+        let old_tree_oid = old_tree.flatten();
+        let diff_entries =
+            diff_trees(odb, old_tree_oid.as_ref(), new_tree, "").context("computing diff")?;
+        (
+            old_tree_oid,
+            apply_rename_copy_detection(odb, diff_entries, args, old_tree_oid.as_ref()),
+        )
+    };
 
     let is_merge = commit.parents.len() > 1;
     let default_merge_patch = is_merge && !args.diff_merges && !args.combined && !args.combined_cc;
@@ -1187,6 +1495,7 @@ pub(crate) fn write_diff_header_with_remerge(
 fn show_tag(
     out: &mut impl Write,
     repo: &Repository,
+    display_name: &str,
     data: &[u8],
     args: &Args,
     notes_map: &HashMap<ObjectId, Vec<u8>>,
@@ -1194,7 +1503,12 @@ fn show_tag(
     let odb = &repo.odb;
     let tag = parse_tag(data).context("parsing tag")?;
 
-    writeln!(out, "tag {}", tag.tag)?;
+    let tag_line_name = if display_name.is_empty() {
+        tag.tag.as_str()
+    } else {
+        display_name
+    };
+    writeln!(out, "tag {tag_line_name}")?;
     if let Some(ref tagger) = tag.tagger {
         writeln!(out, "Tagger: {}", format_ident_display(tagger))?;
         writeln!(out, "Date:   {}", format_date(tagger))?;
@@ -1220,41 +1534,21 @@ fn show_tag(
                 notes_map,
                 &[],
                 None,
+                None,
             )?;
         }
         ObjectKind::Tag => {
-            show_tag(out, repo, &tagged_obj.data, args, notes_map)?;
+            show_tag(out, repo, "", &tagged_obj.data, args, notes_map)?;
         }
         ObjectKind::Tree => {
-            show_tree(out, &tagged_obj.data)?;
+            let tree_oid = peel_to_tree(repo, tag.object).context("peeling tag to tree")?;
+            show_tree_named(out, repo, "", tree_oid)?;
         }
         ObjectKind::Blob => {
             out.write_all(&tagged_obj.data)?;
         }
     }
 
-    Ok(())
-}
-
-/// Show a tree object: list entries (like ls-tree).
-fn show_tree(out: &mut impl Write, data: &[u8]) -> Result<()> {
-    let entries = parse_tree(data).context("parsing tree")?;
-    for entry in &entries {
-        let kind = if entry.mode == 0o040000 {
-            "tree"
-        } else {
-            "blob"
-        };
-        let name = String::from_utf8_lossy(&entry.name);
-        writeln!(
-            out,
-            "{:06o} {} {}\t{}",
-            entry.mode,
-            kind,
-            entry.oid.to_hex(),
-            name
-        )?;
-    }
     Ok(())
 }
 
