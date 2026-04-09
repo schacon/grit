@@ -503,7 +503,7 @@ t2080-parallel-checkout-basics	t2	yes	11	5	6	false	ok	0
 t2081-parallel-checkout-collisions	t2	yes	6	6	0	true	ok	0
 t2082-parallel-checkout-attributes	t2	yes	5	0	5	false	ok	0
 t2100-update-cache-badpath	t2	yes	5	5	0	true	ok	0
-t2101-update-index-reupdate	t2	yes	7	4	3	false	ok	0
+t2101-update-index-reupdate	t2	yes	7	7	0	true	ok	0
 t2102-update-index-symlinks	t2	yes	3	3	0	true	ok	0
 t2103-update-index-ignore-missing	t2	yes	5	3	2	false	ok	0
 t2104-update-index-skip-worktree	t2	yes	7	7	0	true	ok	0

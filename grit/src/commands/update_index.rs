@@ -12,9 +12,11 @@ use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::diff::read_submodule_head_oid;
 use grit_lib::index::{entry_from_stat, normalize_mode, Index, IndexEntry};
-use grit_lib::objects::ObjectId;
+use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
+use grit_lib::pathspec::matches_pathspec_for_object;
 use grit_lib::repo::Repository;
+use grit_lib::state::resolve_head;
 
 /// Arguments for `grit update-index`.
 #[derive(Debug, ClapArgs)]
@@ -434,6 +436,25 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         args.files.clone()
     };
 
+    if args.again {
+        if args.null_terminated {
+            bail!("git update-index: --again with -z stdin is not supported");
+        }
+        return run_update_index_again(
+            &repo,
+            work_tree,
+            &cwd,
+            &mut index,
+            &index_path,
+            &args,
+            &paths,
+            symlinks_enabled,
+            &config,
+            &conv,
+            &attrs,
+        );
+    }
+
     let path_modes: Vec<PathMode> = if args.null_terminated {
         vec![global_path_mode(&args); paths.len()]
     } else if args.force_remove && args.add {
@@ -721,93 +742,6 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         }
     }
 
-    // --again: re-add all tracked files that have changed (rehash, update index)
-    if args.again {
-        let mut needs_update = false;
-        let entries_snapshot: Vec<Vec<u8>> = index
-            .entries
-            .iter()
-            .filter(|e| e.stage() == 0)
-            .map(|e| e.path.clone())
-            .collect();
-        for path_bytes in entries_snapshot {
-            let rel_path = String::from_utf8_lossy(&path_bytes).into_owned();
-            let abs_path = work_tree.join(&rel_path);
-            match std::fs::symlink_metadata(&abs_path) {
-                Ok(meta) => {
-                    use std::os::unix::fs::MetadataExt as _;
-                    // Check if the file has changed vs the index entry
-                    if let Some(entry) = index.get(&path_bytes, 0) {
-                        let idx_mtime = entry.mtime_sec as i64;
-                        let file_mtime = meta.mtime();
-                        let idx_size = entry.size as u64;
-                        let file_size = meta.size();
-                        // If mtime or size changed, rehash and update
-                        if idx_mtime != file_mtime || idx_size != file_size {
-                            match std::fs::read(&abs_path) {
-                                Ok(raw) => {
-                                    let mode = entry.mode;
-                                    let data = if mode == grit_lib::index::MODE_SYMLINK {
-                                        raw
-                                    } else {
-                                        let file_attrs =
-                                            crlf::get_file_attrs(&attrs, &rel_path, &config);
-                                        match crlf::convert_to_git(
-                                            &raw,
-                                            &rel_path,
-                                            &conv,
-                                            &file_attrs,
-                                        ) {
-                                            Ok(d) => d,
-                                            Err(e) => {
-                                                return Err(anyhow::anyhow!(e));
-                                            }
-                                        }
-                                    };
-                                    match repo.odb.write(grit_lib::objects::ObjectKind::Blob, &data)
-                                    {
-                                        Ok(new_oid) => {
-                                            let new_entry = entry_from_stat(
-                                                &abs_path,
-                                                &path_bytes,
-                                                new_oid,
-                                                mode,
-                                            )
-                                            .with_context(|| format!("stat '{}'", rel_path))?;
-                                            index.add_or_replace(new_entry);
-                                        }
-                                        Err(_) => {
-                                            eprintln!("{rel_path}: needs update");
-                                            needs_update = true;
-                                        }
-                                    }
-                                }
-                                Err(_) => {
-                                    eprintln!("{rel_path}: needs update");
-                                    needs_update = true;
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(_) => {
-                    if args.remove {
-                        index.entries.retain(|e| e.path != path_bytes);
-                    } else {
-                        eprintln!("{rel_path}: needs update");
-                        needs_update = true;
-                    }
-                }
-            }
-        }
-        repo.write_index_at(&index_path, &mut index)
-            .context("writing index")?;
-        if needs_update {
-            std::process::exit(1);
-        }
-        return Ok(());
-    }
-
     if args.refresh || args.really_refresh {
         // Re-stat all entries; exit 1 if any files need updating.
         let (uptodate, _) = refresh_index(
@@ -1043,6 +977,316 @@ fn refresh_index(
         }
     }
     Ok((all_uptodate, index_modified))
+}
+
+/// CWD-relative prefix for pathspec matching (Git `PATHSPEC_PREFER_CWD` / `prefix_path`).
+fn cwd_prefix_for_pathspec_str(work_tree: &Path, cwd: &Path) -> Result<String> {
+    let rel = cwd.strip_prefix(work_tree).with_context(|| {
+        format!(
+            "current directory '{}' is outside repository work tree '{}'",
+            cwd.display(),
+            work_tree.display()
+        )
+    })?;
+    if rel.as_os_str().is_empty() {
+        return Ok(String::new());
+    }
+    let mut s = rel.to_string_lossy().into_owned().replace('\\', "/");
+    while s.ends_with('/') {
+        s.pop();
+    }
+    if s.is_empty() {
+        Ok(String::new())
+    } else {
+        Ok(format!("{s}/"))
+    }
+}
+
+fn resolve_pathspec_str_for_reupdate(
+    work_tree: &Path,
+    cwd: &Path,
+    raw: &str,
+    cwd_prefix: &str,
+) -> Result<String> {
+    if raw.starts_with(":(") {
+        if let Some(resolved) = crate::pathspec::resolve_magic_pathspec(raw, cwd_prefix) {
+            return Ok(resolved);
+        }
+    }
+    if let Some(rest) = raw.strip_prefix(":/") {
+        if rest.is_empty() || rest == "*" {
+            return Ok(String::new());
+        }
+        return Ok(rest.to_string());
+    }
+    let combined = if Path::new(raw).is_absolute() {
+        PathBuf::from(raw)
+    } else {
+        cwd.join(raw)
+    };
+    let normalized = normalize_path(&combined);
+    let rel = normalized
+        .strip_prefix(work_tree)
+        .with_context(|| format!("pathspec '{raw}' is outside repository work tree"))?;
+    Ok(rel.to_string_lossy().replace('\\', "/"))
+}
+
+fn get_tree_entry_for_path(
+    odb: &Odb,
+    tree_oid: &ObjectId,
+    path: &[u8],
+) -> Result<Option<(ObjectId, u32)>> {
+    if path.is_empty() {
+        return Ok(None);
+    }
+    let mut current_oid = *tree_oid;
+    let mut start = 0usize;
+    loop {
+        let end = path[start..]
+            .iter()
+            .position(|&b| b == b'/')
+            .map(|p| start + p)
+            .unwrap_or(path.len());
+        let name = &path[start..end];
+        if name.is_empty() {
+            return Ok(None);
+        }
+        let tree_obj = odb.read(&current_oid)?;
+        if tree_obj.kind != ObjectKind::Tree {
+            return Ok(None);
+        }
+        let entries = parse_tree(&tree_obj.data)?;
+        let mut found = None;
+        for e in entries {
+            if e.name == name {
+                found = Some((e.oid, e.mode));
+                break;
+            }
+        }
+        let Some((oid, mode)) = found else {
+            return Ok(None);
+        };
+        if end >= path.len() {
+            return Ok(Some((oid, mode)));
+        }
+        if mode != grit_lib::index::MODE_TREE {
+            return Ok(None);
+        }
+        current_oid = oid;
+        start = end + 1;
+    }
+}
+
+fn index_entry_matches_head(odb: &Odb, head_tree: &ObjectId, entry: &IndexEntry) -> Result<bool> {
+    let Some((tree_oid, tree_mode)) = get_tree_entry_for_path(odb, head_tree, &entry.path)? else {
+        return Ok(false);
+    };
+    Ok(entry.mode == tree_mode && entry.oid == tree_oid)
+}
+
+fn is_missing_lstat_error(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    )
+}
+
+/// `git update-index --again` / `-g`: refresh index entries that differ from `HEAD` (see Git's `do_reupdate`).
+fn run_update_index_again(
+    repo: &Repository,
+    work_tree: &Path,
+    cwd: &Path,
+    index: &mut Index,
+    index_path: &Path,
+    args: &Args,
+    pathspec_paths: &[PathBuf],
+    symlinks_enabled: bool,
+    config: &ConfigSet,
+    conv: &crlf::ConversionConfig,
+    attrs: &[crlf::AttrRule],
+) -> Result<()> {
+    let head_state = resolve_head(&repo.git_dir).context("resolving HEAD")?;
+    let head_tree_oid: Option<ObjectId> = match head_state.oid() {
+        Some(oid) => {
+            let obj = repo.odb.read(oid).context("reading HEAD commit")?;
+            if obj.kind != ObjectKind::Commit {
+                bail!("HEAD does not point to a commit");
+            }
+            Some(parse_commit(&obj.data)?.tree)
+        }
+        None => None,
+    };
+
+    let cwd_prefix = cwd_prefix_for_pathspec_str(work_tree, cwd)?;
+    let pathspecs: Result<Vec<String>> = pathspec_paths
+        .iter()
+        .map(|p| {
+            let s = p.to_string_lossy();
+            resolve_pathspec_str_for_reupdate(work_tree, cwd, s.as_ref(), &cwd_prefix)
+        })
+        .collect();
+    let pathspecs = pathspecs?;
+
+    let mut pos = 0usize;
+    while pos < index.entries.len() {
+        let ce = &index.entries[pos];
+        if ce.stage() != 0 {
+            pos += 1;
+            continue;
+        }
+        if !pathspecs.is_empty() {
+            let path_str = String::from_utf8_lossy(&ce.path);
+            let matched = pathspecs
+                .iter()
+                .any(|spec| matches_pathspec_for_object(spec, path_str.as_ref(), ce.mode, attrs));
+            if !matched {
+                pos += 1;
+                continue;
+            }
+        }
+
+        if let Some(tree_oid) = head_tree_oid {
+            if index_entry_matches_head(&repo.odb, &tree_oid, ce)? {
+                pos += 1;
+                continue;
+            }
+        }
+
+        if ce.mode == grit_lib::index::MODE_TREE {
+            // Sparse directory placeholder — not handled; skip like unknown.
+            pos += 1;
+            continue;
+        }
+
+        if ce.skip_worktree() {
+            if args.ignore_skip_worktree_entries && args.remove {
+                let path = ce.path.clone();
+                index.remove(&path);
+                pos = 0;
+                continue;
+            }
+            pos += 1;
+            continue;
+        }
+
+        let path_bytes = ce.path.clone();
+        let rel_path = String::from_utf8_lossy(&path_bytes).into_owned();
+        let abs_path = work_tree.join(&rel_path);
+
+        if check_symlink_in_path(work_tree, Path::new(&rel_path)).is_some() {
+            bail!("'{rel_path}' is beyond a symbolic link");
+        }
+
+        let save_nr = index.entries.len();
+        match std::fs::symlink_metadata(&abs_path) {
+            Ok(meta) if meta.is_dir() => {
+                let dot_git = abs_path.join(".git");
+                if dot_git.exists() && ce.mode == grit_lib::index::MODE_GITLINK {
+                    let sub_git_dir = resolve_gitdir(&dot_git)?;
+                    let head_path = sub_git_dir.join("HEAD");
+                    let head_content = std::fs::read_to_string(&head_path)
+                        .with_context(|| format!("reading HEAD of submodule at {rel_path}"))?;
+                    let head_content = head_content.trim();
+                    let oid: ObjectId = if let Some(refname) = head_content.strip_prefix("ref: ") {
+                        let ref_path = sub_git_dir.join(refname);
+                        let ref_content = std::fs::read_to_string(&ref_path)
+                            .with_context(|| "reading ref in submodule".to_string())?;
+                        ref_content.trim().parse().with_context(|| "invalid oid")?
+                    } else {
+                        head_content.parse().with_context(|| "invalid HEAD oid")?
+                    };
+                    let new_entry = IndexEntry {
+                        ctime_sec: 0,
+                        ctime_nsec: 0,
+                        mtime_sec: 0,
+                        mtime_nsec: 0,
+                        dev: 0,
+                        ino: 0,
+                        mode: grit_lib::index::MODE_GITLINK,
+                        uid: 0,
+                        gid: 0,
+                        size: 0,
+                        oid,
+                        flags: path_bytes.len().min(0xFFF) as u16,
+                        flags_extended: None,
+                        path: path_bytes.clone(),
+                    };
+                    index.add_or_replace(new_entry);
+                } else if args.remove {
+                    index.remove(&path_bytes);
+                    pos = 0;
+                    continue;
+                } else {
+                    bail!("{rel_path}: is a directory - add files inside instead");
+                }
+            }
+            Ok(meta) => {
+                let mut mode = {
+                    use std::os::unix::fs::MetadataExt;
+                    normalize_mode(meta.mode())
+                };
+                let existing_mode = index.get(&path_bytes, 0).map(|e| e.mode);
+                if !symlinks_enabled
+                    && !meta.file_type().is_symlink()
+                    && existing_mode == Some(grit_lib::index::MODE_SYMLINK)
+                {
+                    mode = grit_lib::index::MODE_SYMLINK;
+                }
+                let data = if meta.file_type().is_symlink() {
+                    let target = std::fs::read_link(&abs_path)?;
+                    target.to_string_lossy().into_owned().into_bytes()
+                } else {
+                    let raw = std::fs::read(&abs_path)
+                        .with_context(|| format!("cannot read '{}'", abs_path.display()))?;
+                    let file_attrs = crlf::get_file_attrs(attrs, rel_path.as_ref(), config);
+                    crlf::convert_to_git(&raw, rel_path.as_ref(), conv, &file_attrs)
+                        .map_err(|msg| anyhow::anyhow!("{msg}"))?
+                };
+                let oid = match repo.odb.write(ObjectKind::Blob, &data) {
+                    Ok(oid) => oid,
+                    Err(err) => {
+                        if is_permission_denied_error(&err) {
+                            eprintln!(
+                                "error: insufficient permission for adding an object to repository database .git/objects"
+                            );
+                            eprintln!(
+                                "error: {}: failed to insert into database",
+                                abs_path.display()
+                            );
+                            eprintln!("fatal: Unable to process path {}", abs_path.display());
+                            std::process::exit(128);
+                        }
+                        return Err(anyhow::anyhow!("writing blob: {err}"));
+                    }
+                };
+                let new_entry = entry_from_stat(&abs_path, &path_bytes, oid, mode)
+                    .with_context(|| format!("stat failed for '{}'", abs_path.display()))?;
+                index.add_or_replace(new_entry);
+            }
+            Err(e) if is_missing_lstat_error(&e) => {
+                if args.remove {
+                    index.remove(&path_bytes);
+                    pos = 0;
+                    continue;
+                } else {
+                    bail!("{rel_path}: does not exist and --remove not passed");
+                }
+            }
+            Err(e) => {
+                bail!("lstat(\"{}\"): {e}", abs_path.display());
+            }
+        }
+
+        if index.entries.len() != save_nr {
+            pos = 0;
+        } else {
+            pos += 1;
+        }
+    }
+
+    repo.write_index_at(index_path, index)
+        .context("writing index")?;
+    Ok(())
 }
 
 fn read_paths_nul() -> Result<Vec<PathBuf>> {
