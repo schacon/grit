@@ -896,7 +896,7 @@ t5324-split-commit-graph	t5	yes	42	9	33	false	ok	0
 t5325-reverse-index	t5	yes	16	2	14	false	ok	0
 t5326-multi-pack-bitmaps	t5	yes	357	17	340	false	ok	0
 t5327-multi-pack-bitmaps-rev	t5	yes	314	16	298	false	ok	0
-t5328-commit-graph-64bit-time	t5	yes	0	0	0	false	ok	0
+t5328-commit-graph-64bit-time	t5	yes	6	6	0	true	ok	0
 t5329-pack-objects-cruft	t5	yes	25	1	24	false	ok	0
 t5330-no-lazy-fetch-with-commit-graph	t5	yes	4	3	1	false	ok	0
 t5331-pack-objects-stdin	t5	yes	16	1	15	false	ok	0

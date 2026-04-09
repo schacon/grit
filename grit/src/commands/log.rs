@@ -2878,6 +2878,10 @@ pub fn run(mut args: Args) -> Result<()> {
         && !args.walk_reflogs;
     let bloom_read_changed_paths = cg_read_paths;
     let bloom_changed_paths_version = cg_changed_ver;
+    if core_commit_graph {
+        CommitGraphChain::try_load(&repo.git_dir.join("objects"))
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
     let bloom_chain = if use_bloom {
         CommitGraphChain::load(&repo.git_dir.join("objects"))
     } else {

@@ -1047,6 +1047,10 @@ test_lazy_prereq ICONV '
 	iconv -f utf8 -t utf8 </dev/null
 '
 
+# Match git/t/test-lib.sh: far-future dates and 64-bit commit-graph generation overflow.
+test_lazy_prereq TIME_IS_64BIT 'test-tool date is64bit'
+test_lazy_prereq TIME_T_IS_64BIT 'test-tool date time_t-is64bit'
+
 # Filesystem aliases NFC and NFD UTF-8 path spellings (macOS / HFS+). Matches git/t/test-lib.sh.
 # Set GIT_TEST_UTF8_NFD_TO_NFC=true to force on CI where the FS is not normalization-sensitive.
 test_lazy_prereq UTF8_NFD_TO_NFC '
@@ -1197,6 +1201,12 @@ test_commit () {
 		--no-tag) tag=none; shift ;;
 		--annotate) tag=annotate; shift ;;
 		--author) author="$2"; shift 2 ;;
+		--date)
+			notick=yes
+			GIT_COMMITTER_DATE="$2"
+			GIT_AUTHOR_DATE="$2"
+			shift 2
+			;;
 		-C) indir="$2"; shift 2 ;;
 		--append) append=yes; shift ;;
 		--printf) echo=printf; shift ;;
