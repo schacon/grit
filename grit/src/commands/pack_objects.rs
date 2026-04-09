@@ -34,6 +34,10 @@ pub struct Args {
     #[arg(long)]
     pub revs: bool,
 
+    /// Omit objects the peer already has (thin pack); `^` exclusion lines mark bases.
+    #[arg(long)]
+    pub thin: bool,
+
     /// Pack all objects in the repository.
     #[arg(long)]
     pub all: bool,

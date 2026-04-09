@@ -5,8 +5,9 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::{ConfigFile, ConfigScope};
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
+use grit_lib::refs;
 use grit_lib::repo::{init_repository, init_repository_separate_git_dir, Repository};
 use std::collections::{HashSet, VecDeque};
 use std::fs;
@@ -288,7 +289,9 @@ pub fn run(args: Args) -> Result<()> {
     let source_head_branch = determine_head_branch(&source.git_dir, None)?;
     // Determine which branch to checkout (user override or source HEAD)
     let head_branch = determine_head_branch(&source.git_dir, args.branch.as_deref())?;
-    let initial_branch = head_branch.as_deref().unwrap_or("master");
+    let initial_branch = head_branch
+        .clone()
+        .unwrap_or_else(|| default_fallback_branch_name(&source.git_dir));
 
     // Initialize the target repository
     fs::create_dir_all(&target_path)
@@ -306,7 +309,7 @@ pub fn run(args: Args) -> Result<()> {
         init_repository_separate_git_dir(
             &target_path,
             sep_git,
-            initial_branch,
+            &initial_branch,
             template_dir.as_deref(),
         )
         .with_context(|| {
@@ -319,7 +322,7 @@ pub fn run(args: Args) -> Result<()> {
         init_repository(
             &target_path,
             args.bare,
-            initial_branch,
+            &initial_branch,
             template_dir.as_deref(),
         )
         .with_context(|| format!("failed to initialize '{}'", target_path.display()))?
@@ -367,7 +370,9 @@ pub fn run(args: Args) -> Result<()> {
 
         // Set up remote "origin" in config
         let refspec = if args.single_branch {
-            let branch = head_branch.as_deref().unwrap_or("master");
+            let branch = head_branch
+                .clone()
+                .unwrap_or_else(|| default_fallback_branch_name(&source.git_dir));
             format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
         } else {
             format!("+refs/heads/*:refs/remotes/{remote_name}/*")
@@ -1178,6 +1183,40 @@ fn collect_tree_blob_oids(
     Ok(())
 }
 
+/// Branch name to use when the source has no resolvable symbolic HEAD (matches `git clone` heuristics).
+fn default_fallback_branch_name(src_git_dir: &Path) -> String {
+    let branches: Vec<String> = refs::list_refs(src_git_dir, "refs/heads/")
+        .map(|v| v.into_iter().map(|(n, _)| n).collect())
+        .unwrap_or_default();
+
+    if let Ok(b) = std::env::var("GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME") {
+        if !b.is_empty() && branches.iter().any(|n| n == &format!("refs/heads/{b}")) {
+            return b;
+        }
+    }
+
+    if let Ok(set) = ConfigSet::load(Some(src_git_dir), true) {
+        if let Some(b) = set.get("init.defaultBranch") {
+            if branches.iter().any(|n| n == &format!("refs/heads/{b}")) {
+                return b;
+            }
+        }
+    }
+
+    if branches.iter().any(|n| n == "refs/heads/main") {
+        return "main".to_owned();
+    }
+    if branches.iter().any(|n| n == "refs/heads/master") {
+        return "master".to_owned();
+    }
+
+    branches
+        .iter()
+        .filter_map(|n| n.strip_prefix("refs/heads/").map(str::to_owned))
+        .min()
+        .unwrap_or_else(|| "master".to_owned())
+}
+
 /// Determine which branch HEAD should point to.
 fn determine_head_branch(src_git_dir: &Path, requested: Option<&str>) -> Result<Option<String>> {
     if let Some(branch) = requested {
@@ -1189,12 +1228,15 @@ fn determine_head_branch(src_git_dir: &Path, requested: Option<&str>) -> Result<
     if let Ok(content) = fs::read_to_string(&head_path) {
         let content = content.trim();
         if let Some(refname) = content.strip_prefix("ref: refs/heads/") {
-            return Ok(Some(refname.to_string()));
+            let branch = refname.to_string();
+            let ref_path = src_git_dir.join("refs").join("heads").join(&branch);
+            if ref_path.exists() {
+                return Ok(Some(branch));
+            }
         }
     }
 
-    // Default to master
-    Ok(Some("master".to_string()))
+    Ok(Some(default_fallback_branch_name(src_git_dir)))
 }
 
 /// Perform a basic checkout of HEAD into the working tree.

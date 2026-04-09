@@ -314,9 +314,9 @@ test_grep () {
 	shift
 	if test -n "$negate"
 	then
-		! grep "$pattern" "$@"
+		! grep -a "$pattern" "$@"
 	else
-		grep $invert "$pattern" "$@"
+		grep -a $invert "$pattern" "$@"
 	fi
 }
 
@@ -352,21 +352,47 @@ test_set_sequence_editor () {
 	export GIT_SEQUENCE_EDITOR
 }
 
+test_unconfig () {
+	config_dir=
+	if test "$1" = -C
+	then
+		shift
+		config_dir=$1
+		shift
+	fi
+	git ${config_dir:+-C "$config_dir"} config --unset-all "$@" 2>/dev/null
+	config_status=$?
+	case "$config_status" in
+	5)
+		config_status=0
+		;;
+	esac
+	return $config_status
+}
+
 test_config () {
-	local key="$1" val="$2"
-	git config "$key" "$val" &&
-	test_when_finished "git config --unset '$key'"
+	config_dir=
+	if test "$1" = -C
+	then
+		shift
+		config_dir=$1
+		shift
+	fi
+
+	is_worktree=
+	if test "$1" = --worktree
+	then
+		is_worktree=1
+		shift
+	fi
+
+	test_when_finished "test_unconfig ${config_dir:+-C '$config_dir'} ${is_worktree:+--worktree} '$1'" &&
+	git ${config_dir:+-C "$config_dir"} config ${is_worktree:+--worktree} "$@"
 }
 
 test_config_global () {
-	local key="$1" val="$2"
-	git config --global "$key" "$val" &&
-	test_when_finished "git config --global --unset '$key'"
-}
-
-test_unconfig () {
-	git config --unset-all "$@" 2>/dev/null
-	return 0
+	test_when_finished "test_unconfig --global '$1'" &&
+	git config --global "$@"
 }
 test_file_not_empty () {
 	if ! test -s "$1"

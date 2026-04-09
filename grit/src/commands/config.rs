@@ -1190,8 +1190,12 @@ fn resolve_git_dir() -> Option<PathBuf> {
                 }
             }
         }
-        // Check if cur itself is a bare repo
+        // Bare repository layout at `cur/`, or Git's `$GIT_DIR` shadow at `cur/.git/` when both exist.
         if cur.join("objects").is_dir() && cur.join("HEAD").is_file() {
+            let shadow = cur.join(".git");
+            if shadow.is_dir() && shadow.join("config").is_file() {
+                return Some(shadow);
+            }
             return Some(cur.to_path_buf());
         }
         cur = cur.parent()?;

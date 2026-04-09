@@ -18,6 +18,7 @@
 pub mod attributes;
 pub mod check_ref_format;
 pub mod config;
+pub mod connectivity;
 pub mod crlf;
 pub mod delta_encode;
 pub mod diff;

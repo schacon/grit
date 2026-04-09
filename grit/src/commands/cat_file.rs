@@ -208,7 +208,9 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     if args.exists {
-        if repo.odb.exists(&oid) {
+        // Match git: `-e` succeeds only when the object can be read from the ODB, not merely
+        // when a pack index lists the OID (connectivity / thin-pack cases differ).
+        if repo.read_replaced(&oid).is_ok() {
             return Ok(());
         }
         std::process::exit(1);

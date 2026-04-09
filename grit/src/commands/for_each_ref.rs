@@ -297,6 +297,14 @@ fn parse_args(args: Vec<String>) -> Result<Options> {
             }
             continue;
         }
+        if arg == "--" {
+            i += 1;
+            while i < args.len() {
+                opts.patterns.push(args[i].clone());
+                i += 1;
+            }
+            break;
+        }
         if arg.starts_with('-') {
             bail!(
                 "unsupported option: {arg}\nusage: git for-each-ref [--count=<count>] [--sort=<key>] [--format=<format>] [--points-at=<object>] [--merged[=<object>]] [--no-merged[=<object>]] [--contains[=<object>]] [--no-contains[=<object>]] [--exclude=<pattern>] [--stdin] [<pattern>...]"

@@ -12,7 +12,7 @@ use flate2::read::ZlibDecoder;
 use sha1::{Digest, Sha1};
 
 use crate::error::{Error, Result};
-use crate::objects::{ObjectId, ObjectKind};
+use crate::objects::{Object, ObjectId, ObjectKind};
 use crate::odb::Odb;
 
 /// Options controlling `unpack-objects` behaviour.
@@ -189,6 +189,146 @@ pub fn unpack_objects(reader: &mut dyn Read, odb: &Odb, opts: &UnpackOptions) ->
     }
 
     Ok(count)
+}
+
+/// Parse a pack byte stream and return every resolved object (after delta resolution) keyed by OID.
+///
+/// Does not write to any object database. Used for receive-pack connectivity checks before
+/// applying a push to the permanent ODB.
+///
+/// Thin-pack bases may be resolved from `odb` when they are not present in the pack.
+pub fn pack_bytes_to_object_map(data: &[u8], odb: &Odb) -> Result<HashMap<ObjectId, Object>> {
+    let rd = PackReader::new(data.to_vec());
+    build_pack_object_map(rd, odb)
+}
+
+fn build_pack_object_map(mut rd: PackReader, odb: &Odb) -> Result<HashMap<ObjectId, Object>> {
+    let sig = rd.read_exact(4)?;
+    if sig != b"PACK" {
+        return Err(Error::CorruptObject(
+            "not a pack stream: invalid signature".to_owned(),
+        ));
+    }
+    let version = rd.read_u32_be()?;
+    if version != 2 && version != 3 {
+        return Err(Error::CorruptObject(format!(
+            "unsupported pack version {version}"
+        )));
+    }
+    let nr_objects = rd.read_u32_be()? as usize;
+
+    let mut by_offset: HashMap<usize, (ObjectKind, Vec<u8>)> = HashMap::new();
+    let mut by_oid: HashMap<ObjectId, (ObjectKind, Vec<u8>)> = HashMap::new();
+    let mut pending: Vec<PendingDelta> = Vec::new();
+
+    fn base_from_pack_or_odb(
+        by_oid: &HashMap<ObjectId, (ObjectKind, Vec<u8>)>,
+        odb: &Odb,
+        id: &ObjectId,
+    ) -> Option<(ObjectKind, Vec<u8>)> {
+        if let Some(e) = by_oid.get(id) {
+            return Some(e.clone());
+        }
+        odb.read(id).ok().map(|o| (o.kind, o.data))
+    }
+
+    for _ in 0..nr_objects {
+        let obj_offset = rd.pos;
+        let (type_code, size) = rd.read_type_size()?;
+
+        match type_code {
+            1..=4 => {
+                let kind = type_code_to_kind(type_code)?;
+                let data = rd.decompress(size)?;
+                let oid = Odb::hash_object_data(kind, &data);
+                by_offset.insert(obj_offset, (kind, data.clone()));
+                by_oid.insert(oid, (kind, data));
+            }
+            6 => {
+                let neg = rd.read_ofs_neg_offset()?;
+                let base_offset = obj_offset.checked_sub(neg).ok_or_else(|| {
+                    Error::CorruptObject("ofs-delta base offset underflow".to_owned())
+                })?;
+                let delta_data = rd.decompress(size)?;
+                pending.push(PendingDelta {
+                    offset: obj_offset,
+                    base_oid: None,
+                    base_offset: Some(base_offset),
+                    delta_data,
+                });
+            }
+            7 => {
+                let base_bytes = rd.read_exact(20)?;
+                let base_oid = ObjectId::from_bytes(base_bytes)?;
+                let delta_data = rd.decompress(size)?;
+                pending.push(PendingDelta {
+                    offset: obj_offset,
+                    base_oid: Some(base_oid),
+                    base_offset: None,
+                    delta_data,
+                });
+            }
+            other => {
+                return Err(Error::CorruptObject(format!(
+                    "unknown packed-object type {other}"
+                )))
+            }
+        }
+    }
+
+    let consumed = rd.pos;
+    {
+        let mut hasher = Sha1::new();
+        hasher.update(&rd.data[..consumed]);
+        let digest = hasher.finalize();
+        let trailing = rd.read_exact(20)?;
+        if digest.as_slice() != trailing {
+            return Err(Error::CorruptObject(
+                "pack trailing checksum mismatch".to_owned(),
+            ));
+        }
+    }
+
+    let mut remaining = pending;
+    loop {
+        if remaining.is_empty() {
+            break;
+        }
+        let before = remaining.len();
+        let mut still_pending: Vec<PendingDelta> = Vec::new();
+
+        for delta in remaining {
+            let base = if let Some(base_off) = delta.base_offset {
+                by_offset.get(&base_off).cloned()
+            } else if let Some(ref base_id) = delta.base_oid {
+                base_from_pack_or_odb(&by_oid, odb, base_id)
+            } else {
+                None
+            };
+
+            if let Some((base_kind, base_data)) = base {
+                let result = apply_delta(&base_data, &delta.delta_data)?;
+                let oid = Odb::hash_object_data(base_kind, &result);
+                by_offset.insert(delta.offset, (base_kind, result.clone()));
+                by_oid.insert(oid, (base_kind, result));
+            } else {
+                still_pending.push(delta);
+            }
+        }
+
+        remaining = still_pending;
+        if remaining.len() == before {
+            return Err(Error::CorruptObject(format!(
+                "{} delta(s) could not be resolved",
+                remaining.len()
+            )));
+        }
+    }
+
+    Ok(by_oid
+        .into_iter()
+        .map(|(oid, (kind, data))| (oid, Object::new(kind, data)))
+        .collect())
 }
 
 /// Either write `data` as a loose object (if `!dry_run`) or just compute its

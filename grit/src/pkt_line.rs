@@ -22,6 +22,13 @@ pub fn write_flush(w: &mut impl Write) -> io::Result<()> {
     write!(w, "0000")
 }
 
+/// Write one pkt-line whose payload is raw bytes (no extra newline is added).
+pub fn write_pkt_line_bytes(w: &mut impl Write, payload: &[u8]) -> io::Result<()> {
+    let n = payload.len() + 4;
+    write!(w, "{:04x}", n)?;
+    w.write_all(payload)
+}
+
 /// Write a delimiter packet (`0001`).
 pub fn write_delim(w: &mut impl Write) -> io::Result<()> {
     write!(w, "0001")
