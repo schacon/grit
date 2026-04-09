@@ -350,11 +350,12 @@ test_grep () {
 	done
 	local pattern="$1"
 	shift
+	# Always pass the pattern via -e so values like "--quiet" are not parsed as grep options.
 	if test -n "$negate"
 	then
-		! grep "$pattern" "$@"
+		! grep $invert -e "$pattern" "$@"
 	else
-		grep $invert "$pattern" "$@"
+		grep $invert -e "$pattern" "$@"
 	fi
 }
 

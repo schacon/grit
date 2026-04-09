@@ -129,7 +129,10 @@ pub fn run(args: Args) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Not a valid commit: {rev}"))?;
 
     // Build a map from commit OID → ref name for all qualifying refs.
-    let ref_map = build_ref_map(&repo, args.tags, args.all, &args.match_pattern)?;
+    // `git describe --contains` considers lightweight tags too (see submodule--helper
+    // `compute_rev_name`, which runs `describe --contains` as the third attempt).
+    let use_all_tags = args.tags || args.contains;
+    let ref_map = build_ref_map(&repo, use_all_tags, args.all, &args.match_pattern)?;
 
     // --contains mode: find the nearest tag that is a descendant of the target
     if args.contains {

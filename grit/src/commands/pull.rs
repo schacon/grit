@@ -113,7 +113,8 @@ pub fn run(args: Args) -> Result<()> {
         } else {
             branch.clone()
         }
-    } else if args.remote.is_some() {
+    } else {
+        // Detached HEAD (common in submodules): use the remote's default branch (remote HEAD).
         let Some(path) = local_remote_path.as_ref() else {
             bail!("no tracking branch configured and no branch specified");
         };
@@ -123,8 +124,6 @@ pub fn run(args: Args) -> Result<()> {
             bail!("no tracking branch configured and no branch specified");
         };
         sym.strip_prefix("refs/heads/").unwrap_or(&sym).to_owned()
-    } else {
-        bail!("no tracking branch configured and no branch specified");
     };
 
     if let Some(remote_path) = local_remote_path {
