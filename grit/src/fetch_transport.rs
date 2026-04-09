@@ -1,10 +1,11 @@
-//! Local fetch over `git-upload-pack` (protocol v0) with skipping negotiation.
+//! Local fetch over `grit upload-pack` with skipping negotiation (protocol v0/v1 ref ads, or v2
+//! capability preamble with ref names merged from the remote repository when needed).
 
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -223,6 +224,40 @@ pub(crate) fn read_advertisement(
         }
     }
     Ok((out, head_symref))
+}
+
+/// When the child speaks protocol v2, [`read_advertisement`] only skips capability lines and never
+/// records ref advertisements. Merge `refs/heads/*` and `refs/tags/*` from the on-disk remote so
+/// [`collect_wants_for_upload_pack`] can request missing objects and the fetch command can update
+/// remote-tracking refs (t5506-remote-groups).
+fn merge_remote_refs_into_upload_pack_advertisement(
+    remote_repo_path: &Path,
+    advertised: &mut Vec<(String, ObjectId)>,
+) -> Result<()> {
+    // `remote_repo_path` is the repository root (bare) or work tree (non-bare); `list_refs` needs
+    // the git directory. `Repository::open` expects `.git` for normal repos.
+    let remote_git: PathBuf = {
+        let dot_git = remote_repo_path.join(".git");
+        if dot_git.is_dir() {
+            dot_git
+        } else {
+            remote_repo_path.to_path_buf()
+        }
+    };
+    if advertised.iter().any(|(n, _)| n.starts_with("refs/heads/")) {
+        return Ok(());
+    }
+    let mut by_name: HashMap<String, ObjectId> =
+        advertised.iter().map(|(n, o)| (n.clone(), *o)).collect();
+    for (n, o) in refs::list_refs(&remote_git, "refs/heads/")? {
+        by_name.insert(n, o);
+    }
+    for (n, o) in refs::list_refs(&remote_git, "refs/tags/")? {
+        by_name.insert(n, o);
+    }
+    *advertised = by_name.into_iter().collect();
+    advertised.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(())
 }
 
 pub(crate) fn collect_wants(
@@ -622,7 +657,10 @@ pub fn fetch_via_upload_pack_skipping(
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 
     // Must match `spawn_upload_pack`: the child is always protocol v0 (`GIT_PROTOCOL` cleared).
-    let (advertised, head_symref) = read_advertisement(&mut stdout)?;
+    let (mut advertised, head_symref) = read_advertisement(&mut stdout)?;
+    if !has_cli_refspecs {
+        merge_remote_refs_into_upload_pack_advertisement(remote_repo_path, &mut advertised)?;
+    }
     let wants = compute_wants(&advertised)?;
     if wants.is_empty() {
         if !has_cli_refspecs && advertised.is_empty() {
@@ -693,7 +731,9 @@ pub fn fetch_via_upload_pack_skipping(
         bail!("upload-pack exited with {}", status);
     }
 
-    if pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK" {
+    // When the client already has every wanted object, `pack-objects --thin` can stream an empty
+    // body (or only the 12-byte PACK header). That is still a successful fetch (ref updates only).
+    if !pack_buf.is_empty() && (pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK") {
         bail!("did not receive a pack file from upload-pack");
     }
 
@@ -748,7 +788,7 @@ fn fetch_upload_pack_negotiate_pack_bytes(
         bail!("upload-pack exited with {}", status);
     }
 
-    if pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK" {
+    if !pack_buf.is_empty() && (pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK") {
         bail!("did not receive a pack file from upload-pack");
     }
 
@@ -1097,7 +1137,7 @@ pub fn fetch_via_git_protocol_skipping(
         &wants,
     )?;
 
-    if pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK" {
+    if !pack_buf.is_empty() && (pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK") {
         bail!("did not receive a pack file from upload-pack");
     }
 
