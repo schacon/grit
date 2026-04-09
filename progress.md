@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   316 |
+| Completed   |   321 |
 | In progress |     5 |
-| Remaining   |   449 |
-| **Total**   |   770 |
+| Remaining   |   445 |
+| **Total**   |   771 |
 
-Task lines in `PLAN.md`: 316 completed (`[x]`), 5 in progress (`[~]`), 449 remaining (`[ ]`).
+Task lines in `PLAN.md`: 321 completed (`[x]`), 5 in progress (`[~]`), 445 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t3703-add-magic-pathspec` — 6/6 tests pass (`git add -n` with `:/` top-level pathspec from subdir, `:/<path>` prefix, missing path failure, `./` disambiguation when a file shadows magic `:(icase)` / `:/` names; harness CSV/dashboards refreshed)
 - `t4063-diff-blobs` — 18/18 tests pass (`diff`: blob↔blob and `rev:path` pairs without treating blobs as trees; `HEAD:one..HEAD:two` range split; `rev:path` vs worktree file uses tree path + modes + `write_patch_with_prefix`; raw blob OID vs existing file uses filename as old path; `rev_parse::resolve_treeish_blob_at_path` for tree walks)
 - `t5605-clone-local` — 23/23 tests pass (streaming pack unpack for 0-byte objects; local clone without `--shared` no longer writes source `alternates`; `--no-hardlinks` / `file://` copy-only objects; `--upload-pack` local-path rejection + env prefix for grit `upload-pack`; corrupt loose ref validation before ref copy; `fetch` no-op when `remote.*.url` is a bundle file; bundle clone HEAD/default-branch parity with Git for `bundle create tip` without `HEAD` line)
 - `t5609-clone-branch` — 7/7 tests pass (`clone --branch`: `read_raw_ref` for ref existence so `refs/remotes/origin/HEAD` is set when default branch is packed; reject `--branch` when `refs/heads/<name>` missing on source, including empty repos)
