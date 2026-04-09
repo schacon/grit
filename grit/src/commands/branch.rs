@@ -3,16 +3,19 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::diff::zero_oid;
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{resolve_revision, resolve_upstream_symbolic_name, symbolic_full_name};
 use grit_lib::state::{resolve_head, HeadState};
+use grit_lib::stripspace::{process as stripspace_process, Mode as StripspaceMode};
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
+use std::process::Command;
 
 /// Arguments for `grit branch`.
 #[derive(Debug, ClapArgs)]
@@ -207,6 +210,9 @@ pub fn run(args: Args) -> Result<()> {
         if args.show_current {
             modes.push("show-current");
         }
+        if args.edit_description {
+            modes.push("edit-description");
+        }
         // --list conflicts with delete/rename/copy but not with filtering
         if args.list && !modes.is_empty() {
             bail!("options are incompatible");
@@ -227,7 +233,8 @@ pub fn run(args: Args) -> Result<()> {
             || args.rename
             || args.force_rename
             || args.copy
-            || args.force_copy)
+            || args.force_copy
+            || args.edit_description)
     {
         eprintln!(
             "fatal: options such as --contains, --no-contains, --merged, and --no-merged\n\
@@ -241,6 +248,14 @@ pub fn run(args: Args) -> Result<()> {
             println!("{name}");
         }
         return Ok(());
+    }
+
+    if args.edit_description {
+        if args.start_point.is_some() {
+            eprintln!("fatal: cannot edit description of more than one branch");
+            std::process::exit(128);
+        }
+        return edit_branch_description(&repo, &head, args.name.as_deref());
     }
 
     if args.set_upstream_to.is_some() {
@@ -818,6 +833,152 @@ fn collect_ancestors(
     Ok(visited)
 }
 
+/// `git branch --edit-description`: open an editor on the branch description, then store in config.
+fn edit_branch_description(
+    repo: &Repository,
+    head: &HeadState,
+    branch_arg: Option<&str>,
+) -> Result<()> {
+    let branch_name: String = match branch_arg {
+        Some(n) => n.to_owned(),
+        None => match head {
+            HeadState::Branch { short_name, .. } => short_name.clone(),
+            HeadState::Detached { .. } => {
+                eprintln!("fatal: cannot give description to detached HEAD");
+                std::process::exit(128);
+            }
+            HeadState::Invalid => {
+                eprintln!("fatal: cannot give description to detached HEAD");
+                std::process::exit(128);
+            }
+        },
+    };
+
+    let branch_ref = format!("refs/heads/{branch_name}");
+    let ref_exists = grit_lib::refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok();
+
+    match head {
+        HeadState::Branch {
+            short_name,
+            oid: None,
+            ..
+        } if branch_arg.is_none() => {
+            eprintln!("fatal: no commit on branch '{short_name}' yet");
+            std::process::exit(1);
+        }
+        _ => {}
+    }
+
+    if branch_arg.is_some() && !ref_exists {
+        eprintln!("fatal: no branch named '{branch_name}'");
+        std::process::exit(1);
+    }
+
+    let desc_key = format!("branch.{branch_name}.description");
+    let config_path = repo.git_dir.join("config");
+    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    let mut cs = ConfigSet::new();
+    let file_cfg = ConfigFile::parse(&config_path, &content, ConfigScope::Local)?;
+    cs.merge(&file_cfg);
+    let had_description = cs.get(&desc_key).is_some();
+    let existing = cs.get(&desc_key).unwrap_or_default();
+
+    let mut initial = existing.clone();
+    if !initial.is_empty() && !initial.ends_with('\n') {
+        initial.push('\n');
+    }
+    initial.push_str(&format!(
+        "# Please edit the description for the branch\n\
+         #   {branch_name}\n\
+         # Lines starting with '#' will be stripped.\n"
+    ));
+
+    let edited = launch_editor_for_branch_description(repo, &initial)?;
+    let stripped = String::from_utf8_lossy(&stripspace_process(
+        edited.as_bytes(),
+        &StripspaceMode::StripComments("#".into()),
+    ))
+    .to_string();
+
+    if stripped.is_empty() && !had_description {
+        return Ok(());
+    }
+
+    let mut config = ConfigFile::parse(&config_path, &content, ConfigScope::Local)?;
+    if stripped.is_empty() {
+        let _ = config.unset(&desc_key);
+    } else {
+        config.set(&desc_key, stripped.trim_end_matches('\n'))?;
+    }
+    config.write()?;
+    Ok(())
+}
+
+fn is_effective_editor_value(raw: &str) -> bool {
+    let t = raw.trim();
+    !t.is_empty() && t != ":"
+}
+
+/// Same resolution order as `git commit`: skip `:` placeholders for `VISUAL` / `EDITOR`.
+fn resolve_branch_description_editor(repo: &Repository) -> String {
+    let visual_present = std::env::var("VISUAL").is_ok();
+    let editor_present = std::env::var("EDITOR").is_ok();
+
+    if let Ok(e) = std::env::var("GIT_EDITOR") {
+        if is_effective_editor_value(&e) {
+            return e;
+        }
+    }
+    if let Ok(cfg) = ConfigSet::load(Some(&repo.git_dir), true) {
+        if let Some(e) = cfg.get("core.editor") {
+            if is_effective_editor_value(&e) {
+                return e;
+            }
+        }
+    }
+    if let Ok(e) = std::env::var("VISUAL") {
+        if is_effective_editor_value(&e) {
+            return e;
+        }
+    }
+    if let Ok(e) = std::env::var("EDITOR") {
+        if is_effective_editor_value(&e) {
+            return e;
+        }
+    }
+    if visual_present || editor_present {
+        "true".to_owned()
+    } else {
+        "vi".to_owned()
+    }
+}
+
+fn launch_editor_for_branch_description(repo: &Repository, initial: &str) -> Result<String> {
+    let editor = resolve_branch_description_editor(repo);
+
+    let tmp_dir = repo.git_dir.join("tmp");
+    let _ = fs::create_dir_all(&tmp_dir);
+    let tmp_path = tmp_dir.join("EDIT_DESCRIPTION");
+    fs::write(&tmp_path, initial)?;
+
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(format!("{editor} \"$1\""))
+        .arg("sh")
+        .arg(&tmp_path)
+        .status()
+        .with_context(|| format!("failed to launch editor '{editor}'"))?;
+
+    if !status.success() {
+        let _ = fs::remove_file(&tmp_path);
+        bail!("editor exited with non-zero status");
+    }
+
+    let result = fs::read_to_string(&tmp_path)?;
+    let _ = fs::remove_file(&tmp_path);
+    Ok(result)
+}
+
 /// Set upstream tracking branch.
 fn set_upstream(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
     let upstream = args
@@ -835,6 +996,11 @@ fn set_upstream(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> 
 
     // Parse upstream as remote/branch
     let (remote, upstream_branch) = parse_upstream(repo, upstream)?;
+
+    if remote == "." && upstream_branch == branch_name {
+        eprintln!("warning: not setting branch '{branch_name}' as its own upstream");
+        return Ok(());
+    }
 
     let config_path = repo.git_dir.join("config");
     let content = fs::read_to_string(&config_path).unwrap_or_default();
@@ -894,6 +1060,8 @@ fn unset_upstream(repo: &Repository, _head: &HeadState, args: &Args) -> Result<(
 
 /// Parse an upstream spec like "origin/main" into (remote, branch).
 fn parse_upstream(repo: &Repository, upstream: &str) -> Result<(String, String)> {
+    let upstream = upstream.strip_prefix("refs/heads/").unwrap_or(upstream);
+
     // Try to find a matching remote
     let remotes_dir = repo.git_dir.join("refs/remotes");
     if let Ok(entries) = fs::read_dir(&remotes_dir) {
@@ -1345,6 +1513,15 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         );
     }
 
+    // Capture reflog bytes before `delete_ref`: that helper removes `logs/<refname>` too.
+    let reflog_dir = repo.git_dir.join("logs");
+    let old_log_path = reflog_dir.join(&old_ref);
+    let old_reflog_bytes = if old_log_path.is_file() {
+        fs::read(&old_log_path).ok()
+    } else {
+        None
+    };
+
     // Delete the old ref FIRST to avoid d/f conflicts
     // (e.g., renaming m to m/m needs to remove refs/heads/m file before
     // creating refs/heads/m/ directory, or n/n to n needs to remove refs/heads/n/
@@ -1378,16 +1555,11 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     // Also update HEAD in worktrees that have the old branch checked out
     update_worktree_heads(repo, old_name, new_name)?;
 
-    // Rename reflog: read old, remove old (with parent cleanup), write new
-    let reflog_dir = repo.git_dir.join("logs");
-    let old_log = reflog_dir.join(&old_ref);
+    // Rename reflog: migrate content captured before `delete_ref`, then append rename entry.
     let new_log = reflog_dir.join(&new_ref);
-    if old_log.is_file() {
-        let log_content = fs::read(&old_log).ok();
-        // Remove old reflog and clean up empty parent directories
-        let _ = fs::remove_file(&old_log);
+    if let Some(log_bytes) = old_reflog_bytes {
         let logs_heads_dir = reflog_dir.join("refs/heads");
-        let mut parent = old_log.parent();
+        let mut parent = old_log_path.parent();
         while let Some(p) = parent {
             if p == logs_heads_dir || !p.starts_with(&logs_heads_dir) {
                 break;
@@ -1397,7 +1569,6 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
             }
             parent = p.parent();
         }
-        // Write new reflog with existing entries + rename entry
         if let Some(parent) = new_log.parent() {
             let _ = fs::create_dir_all(parent);
         }
@@ -1406,9 +1577,7 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
             "{oid} {oid} {ident}\tBranch: renamed {old_ref} to {new_ref}\n",
             oid = old_oid
         );
-        let old_content = log_content
-            .map(|c| String::from_utf8_lossy(&c).to_string())
-            .unwrap_or_default();
+        let old_content = String::from_utf8_lossy(&log_bytes).to_string();
         let new_content = format!("{}{rename_entry}", old_content);
         let _ = fs::write(&new_log, new_content.as_bytes());
     }
@@ -1417,17 +1586,22 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     if head.branch_name() == Some(old_name) {
         let head_log = reflog_dir.join("HEAD");
         let ident = get_reflog_identity();
-        let entry = format!(
-            "{oid} {oid} {ident}\tBranch: renamed {old_ref} to {new_ref}\n",
-            oid = old_oid
-        );
+        // Match Git: two lines (old?zero, zero?old) so `git reflog` skips the middle entry
+        // and `log -g` indices align with upstream tests.
+        let zero_hex = zero_oid().to_hex();
+        let oid_hex = old_oid.to_hex();
+        let entry1 =
+            format!("{oid_hex} {zero_hex} {ident}\tBranch: renamed {old_ref} to {new_ref}\n",);
+        let entry2 =
+            format!("{zero_hex} {oid_hex} {ident}\tBranch: renamed {old_ref} to {new_ref}\n",);
         let _ = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&head_log)
             .and_then(|mut f| {
                 use std::io::Write;
-                f.write_all(entry.as_bytes())
+                f.write_all(entry1.as_bytes())?;
+                f.write_all(entry2.as_bytes())
             });
     }
 
@@ -1524,7 +1698,8 @@ fn copy_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
         src_name = &src_name_owned;
         dst_name = &dst_name_owned;
     } else {
-        bail!("usage: git branch (-c | -C) [<old-branch>] <new-branch>");
+        eprintln!("error: branch name required");
+        std::process::exit(128);
     };
 
     let src_ref = format!("refs/heads/{src_name}");
@@ -1533,14 +1708,14 @@ fn copy_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
     let src_oid = grit_lib::refs::resolve_ref(&repo.git_dir, &src_ref)
         .map_err(|_| anyhow::anyhow!("branch '{src_name}' not found."))?;
 
+    // Copying a branch to itself is a no-op (Git: `branch -c m2 m2`).
+    if src_name == dst_name {
+        return Ok(());
+    }
+
     // Check if dst already exists (unless force copy)
     if !args.force_copy && grit_lib::refs::resolve_ref(&repo.git_dir, &dst_ref).is_ok() {
         bail!("A branch named '{dst_name}' already exists.");
-    }
-
-    // Cannot copy onto itself if the result would be a d/f conflict
-    if src_name == dst_name {
-        return Ok(());
     }
 
     // Check for d/f conflict: new ref is prefix of existing refs

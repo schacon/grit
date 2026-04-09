@@ -558,7 +558,7 @@ t3102-ls-tree-wildcards	t3	yes	4	2	2	false	ok	0
 t3103-ls-tree-misc	t3	yes	10	10	0	true	ok	0
 t3104-ls-tree-format	t3	yes	19	19	0	true	ok	0
 t3105-ls-tree-output	t3	yes	60	60	0	true	ok	0
-t3200-branch	t3	yes	0	0	0	false	timeout	0
+t3200-branch	t3	yes	167	167	0	true	ok	0
 t3201-branch-contains	t3	yes	24	24	0	true	ok	0
 t3202-show-branch	t3	yes	27	4	23	false	ok	0
 t3203-branch-output	t3	yes	41	15	26	false	ok	0
