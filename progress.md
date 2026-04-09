@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   293 |
+| Completed   |   294 |
 | In progress |     4 |
-| Remaining   |   472 |
+| Remaining   |   471 |
 | **Total**   |   769 |
 
-Task lines in `PLAN.md`: 293 completed (`[x]`), 4 in progress (`[~]`), 472 remaining (`[ ]`).
+Task lines in `PLAN.md`: 294 completed (`[x]`), 4 in progress (`[~]`), 471 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t7011-skip-worktree-reading` — 15/15 tests pass (`update-index` skip-worktree no-op / `--remove` clears entry; `--remove` on missing untracked path is silent; `reset` preserves skip-worktree; `diff-index` skips worktree for skip-worktree; `commit` pathspec rejects skip-worktree)
 - `t3303-notes-subtrees` — 23/23 tests pass (`fast-import`: `data <<TERM` heredoc, `M … inline` blobs, `deleteall`; `log` notes map: concatenate duplicate commit paths like Git’s `combine_notes_concatenate`, skip identical blob payloads)
 - `t5323-pack-redundant` — 18/18 tests pass (`pack-redundant`: Git `minimize` algorithm, `--i-still-use-this` / stdin ignore / verbose + alt-odb; `clone --mirror` implies bare layout; `fsck` resolves relative `objects/info/alternates` against `objects/`)
 - `t4042-diff-textconv-caching` — 8/8 tests pass (notes-backed textconv cache per driver; Git-compatible textconv subprocess layout; `diff --no-index` textconv + `core.attributesFile`; harness `nongit` aligned with upstream; `run-tests.sh` uses per-file `timeout_prefix`)
@@ -190,4 +191,4 @@ Task lines in `PLAN.md`: 293 completed (`[x]`), 4 in progress (`[~]`), 472 remai
 
 ## What Remains
 
-472 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+471 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.

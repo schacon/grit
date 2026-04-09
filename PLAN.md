@@ -822,7 +822,7 @@ commit → check it off → move on.
 - [ ] `t7418-submodule-sparse-gitmodules` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — Test reading/writing .gitmodules when not in the working tree
 
 - [ ] `t7701-repack-unpack-unreachable` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — git repack works correctly
-- [ ] `t7011-skip-worktree-reading` ██████████░░░░░░░░░░ 8/15 (7 left) — skip-worktree bit test
+- [x] `t7011-skip-worktree-reading` — skip-worktree bit test (15/15)
 - [ ] `t7811-grep-open` ██████░░░░░░░░░░░░░░ 3/10 (7 left) — git grep --open-files-in-pager
 
 - [ ] `t7419-submodule-set-branch` ████░░░░░░░░░░░░░░░░ 2/9 (7 left) — Test submodules set-branch subcommand

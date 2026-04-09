@@ -1303,9 +1303,17 @@ fn apply_pathspec_to_index(
 
     let mut matched_paths = HashSet::new();
 
+    let reject_skip_worktree = |idx: &Index, path: &[u8]| -> Result<()> {
+        if idx.get(path, 0).is_some_and(|e| e.skip_worktree()) {
+            bail!("cannot update skip-worktree entry");
+        }
+        Ok(())
+    };
+
     for spec in pathspecs {
         let resolved = crate::pathspec::resolve_pathspec(spec, work_tree, prefix.as_deref());
         if !crate::pathspec::has_glob_chars(&resolved) {
+            reject_skip_worktree(&index, resolved.as_bytes())?;
             let abs_path = work_tree.join(&resolved);
             if let Ok(meta) = fs::symlink_metadata(&abs_path) {
                 let data = if meta.file_type().is_symlink() {
@@ -1370,6 +1378,7 @@ fn apply_pathspec_to_index(
         }
 
         for rel in matched_rels {
+            reject_skip_worktree(&index, rel.as_bytes())?;
             let abs_path = work_tree.join(&rel);
             if let Ok(meta) = fs::symlink_metadata(&abs_path) {
                 let data = if meta.file_type().is_symlink() {

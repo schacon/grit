@@ -1154,7 +1154,7 @@ t7007-show	t7	yes	18	9	9	false	ok	0
 t7008-filter-branch-null-sha1	t7	yes	6	6	0	true	ok	0
 t7008-show-stat-raw-name	t7	yes	21	21	0	true	ok	0
 t7010-setup	t7	yes	16	10	6	false	ok	0
-t7011-skip-worktree-reading	t7	yes	15	8	7	false	ok	0
+t7011-skip-worktree-reading	t7	yes	15	15	0	true	ok	0
 t7012-skip-worktree-writing	t7	yes	11	8	3	false	ok	6
 t7020-commit-encoding	t7	yes	26	26	0	true	ok	0
 t7030-verify-tag	t7	skip	16	0	0	false	ok	0
