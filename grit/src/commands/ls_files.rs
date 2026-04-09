@@ -2,14 +2,17 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::io::{self, Write};
 use std::path::Component;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::IndexEntry;
 use grit_lib::repo::Repository;
+
+use crate::explicit_exit::ExplicitExit;
 
 fn resolved_env_index_path(repo: &Repository) -> PathBuf {
     if let Ok(raw) = std::env::var("GIT_INDEX_FILE") {
@@ -216,8 +219,14 @@ pub fn run(args: Args) -> Result<()> {
         .iter()
         .map(|p| resolve_pathspec(work_tree, &cwd, p))
         .collect::<Result<Vec<_>>>()?;
+    let mut pathspec_display: Vec<String> = args
+        .pathspecs
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
     if pathspec_filter.is_empty() && !cwd_prefix.is_empty() && !args.full_name {
         pathspec_filter.push(Pathspec::Literal(cwd_prefix.clone()));
+        pathspec_display.push(".".to_string());
     }
 
     if let Some(ref treeish) = args.with_tree {
@@ -232,8 +241,10 @@ pub fn run(args: Args) -> Result<()> {
 
     pathspec_filter = expand_ls_files_globs(pathspec_filter, work_tree, &index);
 
-    // Track which pathspecs matched at least one entry (for --error-unmatch).
-    let mut matched: Vec<bool> = vec![false; pathspec_filter.len()];
+    // For `--error-unmatch`, Git matches pathspecs separately against index output vs untracked
+    // output (`-c` vs `-o`). A pathspec that only hits tracked files does not satisfy `-o`.
+    let mut matched_index: Vec<bool> = vec![false; pathspec_filter.len()];
+    let mut matched_others: Vec<bool> = vec![false; pathspec_filter.len()];
 
     // Build exclude/ignore matcher if needed (before cached loop so -i -c works).
     // Git order: standard excludes (global → info → .gitignore), plus `-X` files and `-x` patterns.
@@ -274,7 +285,7 @@ pub fn run(args: Args) -> Result<()> {
                 .iter()
                 .position(|spec| spec.matches(&entry.path));
             match idx {
-                Some(i) => matched[i] = true,
+                Some(i) => matched_index[i] = true,
                 None => continue,
             }
         }
@@ -352,12 +363,9 @@ pub fn run(args: Args) -> Result<()> {
         };
 
         if args.eol {
-            let display = if args.full_name {
-                &entry.path[..]
-            } else {
-                display_path_from_cwd(&entry.path, &cwd_prefix)
-            };
-            let name = String::from_utf8_lossy(display);
+            let display =
+                format_ls_display_path(args.full_name, &cwd, work_tree, &entry.path, &cwd_prefix)?;
+            let name = String::from_utf8_lossy(display.as_ref());
             let path_str = std::str::from_utf8(&entry.path).unwrap_or("");
 
             // Index / worktree EOL stats: match Git `convert.c` `gather_convert_stats_ascii`.
@@ -385,12 +393,9 @@ pub fn run(args: Args) -> Result<()> {
             out.write_all(&[term])?;
         } else if let Some(ref fmt) = args.format {
             // Custom format output
-            let display = if args.full_name {
-                &entry.path[..]
-            } else {
-                display_path_from_cwd(&entry.path, &cwd_prefix)
-            };
-            let name = String::from_utf8_lossy(display);
+            let display =
+                format_ls_display_path(args.full_name, &cwd, work_tree, &entry.path, &cwd_prefix)?;
+            let name = String::from_utf8_lossy(display.as_ref());
             let hex = entry.oid.to_hex();
             let line = fmt
                 .replace("%(objectmode)", &format!("{:06o}", entry.mode))
@@ -408,12 +413,9 @@ pub fn run(args: Args) -> Result<()> {
             write!(out, "{}", line)?;
             out.write_all(&[term])?;
         } else if show_stage {
-            let display = if args.full_name {
-                &entry.path[..]
-            } else {
-                display_path_from_cwd(&entry.path, &cwd_prefix)
-            };
-            let name = String::from_utf8_lossy(display);
+            let display =
+                format_ls_display_path(args.full_name, &cwd, work_tree, &entry.path, &cwd_prefix)?;
+            let name = String::from_utf8_lossy(display.as_ref());
             let qname = format_ls_path(&name, use_nul, quote_fully);
             if let Some(t) = tag {
                 write!(out, "{} ", t)?;
@@ -442,12 +444,9 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 last_dedup_path = Some(entry.path.clone());
             }
-            let display = if args.full_name {
-                &entry.path[..]
-            } else {
-                display_path_from_cwd(&entry.path, &cwd_prefix)
-            };
-            let name = String::from_utf8_lossy(display);
+            let display =
+                format_ls_display_path(args.full_name, &cwd, work_tree, &entry.path, &cwd_prefix)?;
+            let name = String::from_utf8_lossy(display.as_ref());
             let qname = format_ls_path(&name, use_nul, quote_fully);
             if let Some(t) = tag {
                 write!(out, "{} ", t)?;
@@ -488,7 +487,7 @@ pub fn run(args: Args) -> Result<()> {
                     .iter()
                     .position(|spec| spec.matches(path_bytes));
                 match idx {
-                    Some(i) => matched[i] = true,
+                    Some(_) => {}
                     None => continue,
                 }
             }
@@ -513,13 +512,17 @@ pub fn run(args: Args) -> Result<()> {
                 }
             }
 
-            // Make path relative to cwd before collecting
-            let display = if args.full_name {
-                path_bytes.clone()
-            } else {
-                display_path_from_cwd(path_bytes, &cwd_prefix).to_vec()
-            };
-            filtered_untracked.push(display.to_vec());
+            if !pathspec_filter.is_empty() {
+                for (i, spec) in pathspec_filter.iter().enumerate() {
+                    if spec.matches(path_bytes) {
+                        matched_others[i] = true;
+                    }
+                }
+            }
+
+            let display =
+                format_ls_display_path(args.full_name, &cwd, work_tree, path_bytes, &cwd_prefix)?;
+            filtered_untracked.push(display.into_owned());
         }
 
         // Collapse to directories if --directory (after making paths cwd-relative)
@@ -556,8 +559,8 @@ pub fn run(args: Args) -> Result<()> {
             // At least one path survived filtering, so pathspecs are matched.
         } else if args.no_empty_directory && !pathspec_filter.is_empty() && output_paths.is_empty()
         {
-            // All entries were empty dirs that got filtered. Reset matched.
-            for m in matched.iter_mut() {
+            // All entries were empty dirs that got filtered. Reset others matching.
+            for m in matched_others.iter_mut() {
                 *m = false;
             }
         }
@@ -588,20 +591,44 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // --error-unmatch: fail if any pathspec matched nothing.
+    // --error-unmatch: fail if any pathspec matched nothing in the active mode(s).
     if args.error_unmatch {
-        for (i, spec) in pathspec_filter.iter().enumerate() {
-            if !matched[i] {
-                let spec_str = match spec {
-                    Pathspec::Literal(v) => String::from_utf8_lossy(v).into_owned(),
-                    Pathspec::Glob(s) => s.clone(),
-                    Pathspec::Magic(s) => s.clone(),
-                };
-                anyhow::bail!(
-                    "error: pathspec '{}' did not match any file(s) known to git",
-                    spec_str
-                );
+        let show_others_err = args.others || (args.ignored && !args.cached);
+        let index_emits = args.eol
+            || args.format.is_some()
+            || args.stage
+            || args.unmerged
+            || (show_cached || args.deleted || args.modified);
+        let mut unmatched_specs: Vec<String> = Vec::new();
+        for i in 0..pathspec_filter.len() {
+            let ok_index = !index_emits || matched_index[i];
+            let ok_others = !show_others_err || matched_others[i];
+            if ok_index && ok_others {
+                continue;
             }
+            let spec_str =
+                pathspec_display
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| match &pathspec_filter[i] {
+                        Pathspec::Literal(v) => String::from_utf8_lossy(v).into_owned(),
+                        Pathspec::Glob(s) => s.clone(),
+                        Pathspec::Magic(s) => s.clone(),
+                    });
+            unmatched_specs.push(spec_str);
+        }
+        if !unmatched_specs.is_empty() {
+            let mut msg = String::new();
+            for s in &unmatched_specs {
+                msg.push_str(&format!(
+                    "error: pathspec '{s}' did not match any file(s) known to git\n"
+                ));
+            }
+            msg.push_str("Did you forget to 'git add'?");
+            return Err(anyhow::Error::new(ExplicitExit {
+                code: 1,
+                message: msg,
+            }));
         }
     }
 
@@ -953,14 +980,123 @@ fn resolve_pathspec(
     Ok(Pathspec::Literal(path_to_bytes(rel)))
 }
 
+/// Path from `cwd` to `work_tree.join(repo_rel)` using `../` segments (Git `ls-files` output).
+///
+/// Prefer logical [`Path::strip_prefix`] against the configured work tree (matches `getcwd()`).
+/// When the cwd is only inside the work tree after resolving symlinks (different path spellings),
+/// fall back to canonical paths for the diff so output stays correct (`t3005-ls-files-relative.sh`).
+fn pathdiff_from_repo_for_display(
+    cwd: &Path,
+    work_tree: &Path,
+    repo_rel: &[u8],
+) -> Result<Vec<u8>> {
+    let rel_str = std::str::from_utf8(repo_rel).unwrap_or("");
+    let target = work_tree.join(rel_str);
+    let s = if cwd.strip_prefix(work_tree).is_ok() {
+        pathdiff_relative_lexical(cwd, &target)?
+    } else if let (Ok(cwd_c), Ok(wt_c)) = (cwd.canonicalize(), work_tree.canonicalize()) {
+        if cwd_c.starts_with(&wt_c) {
+            let target_c = wt_c.join(rel_str);
+            pathdiff_relative_lexical(&cwd_c, &target_c)?
+        } else {
+            pathdiff_relative_lexical(cwd, &target)?
+        }
+    } else {
+        pathdiff_relative_lexical(cwd, &target)?
+    };
+    Ok(s.into_bytes())
+}
+
+/// Relative path from directory `from` to path `to` (forward slashes), without resolving symlinks.
+fn pathdiff_relative_lexical(from: &Path, to: &Path) -> Result<String> {
+    let from_norm = normalize_path(from);
+    let to_norm = normalize_path(to);
+    let from_parts: Vec<_> = from_norm.components().collect();
+    let to_parts: Vec<_> = to_norm.components().collect();
+    let common = from_parts
+        .iter()
+        .zip(to_parts.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut result = PathBuf::new();
+    for _ in common..from_parts.len() {
+        result.push("..");
+    }
+    for part in &to_parts[common..] {
+        result.push(part);
+    }
+    if result.as_os_str().is_empty() {
+        Ok(".".to_string())
+    } else {
+        Ok(path_to_slash(&result))
+    }
+}
+
+fn path_to_slash(path: &Path) -> String {
+    path.components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+            Component::ParentDir => Some("..".to_owned()),
+            Component::CurDir => None,
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Whether `cwd` lies inside `work_tree` (lexical prefix, or canonical when spellings differ).
+fn cwd_inside_work_tree(cwd: &Path, work_tree: &Path) -> bool {
+    let cwd_n = normalize_path(cwd);
+    let wt_n = normalize_path(work_tree);
+    if cwd_n.strip_prefix(&wt_n).is_ok() {
+        return true;
+    }
+    match (cwd.canonicalize(), work_tree.canonicalize()) {
+        (Ok(c), Ok(w)) => c.starts_with(&w),
+        _ => false,
+    }
+}
+
+/// Display path for `ls-files`: cwd-relative when cwd is inside the work tree, else prefix-stripped.
+fn format_ls_display_path<'a>(
+    full_name: bool,
+    cwd: &Path,
+    work_tree: &Path,
+    repo_rel: &'a [u8],
+    cwd_prefix: &[u8],
+) -> Result<Cow<'a, [u8]>> {
+    if full_name {
+        return Ok(Cow::Borrowed(repo_rel));
+    }
+    if cwd_inside_work_tree(cwd, work_tree) {
+        return Ok(Cow::Owned(pathdiff_from_repo_for_display(
+            cwd, work_tree, repo_rel,
+        )?));
+    }
+    Ok(Cow::Borrowed(display_path_from_cwd(repo_rel, cwd_prefix)))
+}
+
 fn cwd_prefix_bytes(work_tree: &std::path::Path, cwd: &std::path::Path) -> Result<Vec<u8>> {
-    let rel = cwd.strip_prefix(work_tree).with_context(|| {
-        format!(
+    let rel_owned: PathBuf = if let Ok(r) = cwd.strip_prefix(work_tree) {
+        r.to_path_buf()
+    } else if let (Ok(c), Ok(w)) = (cwd.canonicalize(), work_tree.canonicalize()) {
+        c.strip_prefix(&w)
+            .map(|p| p.to_path_buf())
+            .with_context(|| {
+                format!(
+                    "current directory '{}' is outside repository work tree '{}'",
+                    cwd.display(),
+                    work_tree.display()
+                )
+            })?
+    } else {
+        return Err(anyhow::anyhow!(
             "current directory '{}' is outside repository work tree '{}'",
             cwd.display(),
             work_tree.display()
-        )
-    })?;
+        ));
+    };
+    let rel = rel_owned.as_path();
     if rel.as_os_str().is_empty() {
         return Ok(Vec::new());
     }
