@@ -32,8 +32,8 @@ use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions
 use grit_lib::error::Error;
 use grit_lib::index::Index;
 use grit_lib::merge_diff::{
-    blob_text_for_diff_with_oid, combined_diff_paths, diff_textconv_active,
-    format_worktree_conflict_combined, run_textconv,
+    blob_text_for_diff_with_oid, combined_diff_paths, diff_forced_binary_by_driver,
+    diff_textconv_active, format_worktree_conflict_combined, run_textconv,
 };
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -1196,10 +1196,28 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    // `git diff <path> <path>` — compare a worktree file to another path (e.g. outside the repo).
-    // Triggered when parse_rev_and_paths found two paths and no revisions (first token exists on disk).
+    // `git diff <path> <path>` outside the repo (Git: implicit `--no-index` when either path is
+    // outside the work tree). When both paths are inside the repository, two pathspecs limit the
+    // normal index/worktree diff (t4011: `git diff file.bin link.bin`).
     if revs.is_empty() && paths.len() == 2 && !args.cached {
-        return run_diff_two_paths(&repo, &args, &paths[0], &paths[1], &src_prefix, &dst_prefix);
+        if let Some(wt) = repo.work_tree.as_ref() {
+            let outside =
+                !path_inside_work_tree(wt, &paths[0]) || !path_inside_work_tree(wt, &paths[1]);
+            if outside {
+                let d0 = strip_pathspec_cwd_prefix(&paths[0], pathspec_prefix.as_deref());
+                let d1 = strip_pathspec_cwd_prefix(&paths[1], pathspec_prefix.as_deref());
+                return run_diff_two_paths(
+                    &repo,
+                    &args,
+                    &paths[0],
+                    &paths[1],
+                    &d0,
+                    &d1,
+                    &src_prefix,
+                    &dst_prefix,
+                );
+            }
+        }
     }
 
     // Expand A...B (symmetric diff) → merge-base(A,B)..B
@@ -2412,11 +2430,16 @@ fn run_diff_blob_vs_file(
 ///
 /// This matches `git diff <in-repo-path> <other-path>` when both arguments exist on disk and are
 /// not revision specs.
+///
+/// `path_in_repo` / `path_other` are used for reading the work tree (after pathspec resolution).
+/// `display_in_repo` / `display_other` are used in `---` / `+++` labels (repo-root-relative).
 fn run_diff_two_paths(
     repo: &Repository,
     args: &Args,
     path_in_repo: &str,
     path_other: &str,
+    display_in_repo: &str,
+    display_other: &str,
     src_prefix: &str,
     dst_prefix: &str,
 ) -> Result<()> {
@@ -2483,8 +2506,8 @@ fn run_diff_two_paths(
             .unwrap_or(3)
     };
 
-    let old_label = format!("{src_prefix}{path_in_repo}");
-    let new_label = format!("{dst_prefix}{path_other}");
+    let old_label = format!("{src_prefix}{display_in_repo}");
+    let new_label = format!("{dst_prefix}{display_other}");
     let patch = unified_diff(
         text_a.as_ref(),
         text_b.as_ref(),
@@ -3675,6 +3698,37 @@ fn resolve_diff_relative_prefix(
     }
 }
 
+/// True when `rel_under_wt` resolves to a path under `wt` (matches Git `path_inside_repo` for diff).
+fn path_inside_work_tree(wt: &Path, rel_under_wt: &str) -> bool {
+    let candidate = wt.join(rel_under_wt);
+    let wt_canon = wt.canonicalize().unwrap_or_else(|_| wt.to_path_buf());
+    if let Ok(c_canon) = candidate.canonicalize() {
+        return c_canon.starts_with(&wt_canon);
+    }
+    let Some(parent) = candidate.parent() else {
+        return false;
+    };
+    if parent == Path::new("") {
+        return true;
+    }
+    parent
+        .canonicalize()
+        .map(|p| p.starts_with(&wt_canon))
+        .unwrap_or(true)
+}
+
+/// Strip the cwd-relative prefix that [`resolve_pathspec`] prepends (from [`show_prefix`]).
+///
+/// Diff headers use repo-root-relative paths plus `a/` / `b/`; labels must not duplicate the cwd
+/// segment (matches Git when running `git diff f1 f2` from a subdirectory).
+fn strip_pathspec_cwd_prefix(path: &str, cwd_prefix: Option<&str>) -> String {
+    let Some(pfx) = cwd_prefix.filter(|s| !s.is_empty()) else {
+        return path.to_owned();
+    };
+    let with_slash = format!("{pfx}/");
+    path.strip_prefix(&with_slash).unwrap_or(path).to_owned()
+}
+
 /// Map a `--relative`-stripped display path back to the repository-relative path for index I/O.
 fn repo_relative_path_for_relative_display(display: &str, prefix: Option<&str>) -> String {
     let Some(pfx) = prefix.filter(|s| !s.is_empty()) else {
@@ -4027,6 +4081,22 @@ fn read_content_raw(odb: &Odb, oid: &ObjectId) -> Vec<u8> {
     }
 }
 
+/// Read bytes from the work tree at `path` relative to `wt`.
+///
+/// For symlinks, returns the link target as UTF-8 bytes (same as blob hashing), not the
+/// dereferenced file contents (t4011: `git diff` for intent-to-add symlinks vs `*.bin` rules).
+fn read_worktree_file_raw(wt: &Path, path: &str) -> Option<Vec<u8>> {
+    let full = wt.join(path);
+    let meta = std::fs::symlink_metadata(&full).ok()?;
+    if meta.file_type().is_symlink() {
+        std::fs::read_link(&full)
+            .ok()
+            .map(|t| t.to_string_lossy().into_owned().into_bytes())
+    } else {
+        std::fs::read(&full).ok()
+    }
+}
+
 /// Read raw bytes, falling back to the working tree if the OID isn't in the ODB.
 fn read_content_raw_or_worktree(
     odb: &Odb,
@@ -4038,7 +4108,7 @@ fn read_content_raw_or_worktree(
         // Empty tree / new file side: read from the work tree when available (t1501 tree diffs).
         if let Some(wt) = work_tree {
             if path != "/dev/null" {
-                if let Ok(data) = std::fs::read(wt.join(path)) {
+                if let Some(data) = read_worktree_file_raw(wt, path) {
                     return data;
                 }
             }
@@ -4052,7 +4122,7 @@ fn read_content_raw_or_worktree(
     // Fall back to reading from working tree
     if let Some(wt) = work_tree {
         if path != "/dev/null" {
-            if let Ok(data) = std::fs::read(wt.join(path)) {
+            if let Some(data) = read_worktree_file_raw(wt, path) {
                 return data;
             }
         }
@@ -4592,7 +4662,16 @@ fn write_patch_with_prefix(
 
         let textconv_patch =
             use_textconv && diff_textconv_active(git_dir, config, path_for_attrs.as_str());
-        if !textconv_patch && (is_binary(&old_content_raw) || is_binary(&new_content_raw)) {
+        let forced_binary = diff_forced_binary_by_driver(
+            git_dir,
+            config,
+            path_for_attrs.as_str(),
+            entry.old_mode.as_str(),
+            entry.new_mode.as_str(),
+        );
+        if !textconv_patch
+            && (forced_binary || is_binary(&old_content_raw) || is_binary(&new_content_raw))
+        {
             if show_binary {
                 // --binary: output a "GIT binary patch" block
                 write_git_binary_patch(
@@ -4603,11 +4682,17 @@ fn write_patch_with_prefix(
                     new_path,
                 )?;
             } else {
-                writeln!(
-                    out,
-                    "Binary files {}{} and {}{} differ",
-                    src_prefix, old_path, dst_prefix, new_path
-                )?;
+                let bin_old = if old_path == "/dev/null" {
+                    "/dev/null".to_owned()
+                } else {
+                    format!("{src_prefix}{old_path}")
+                };
+                let bin_new = if new_path == "/dev/null" {
+                    "/dev/null".to_owned()
+                } else {
+                    format!("{dst_prefix}{new_path}")
+                };
+                writeln!(out, "Binary files {bin_old} and {bin_new} differ")?;
             }
             continue;
         }

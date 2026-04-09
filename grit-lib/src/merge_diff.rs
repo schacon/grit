@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 
 use tempfile::NamedTempFile;
 
-use crate::config::ConfigSet;
+use crate::config::{parse_bool, ConfigSet};
 use crate::crlf::{get_file_attrs, load_gitattributes, DiffAttr, FileAttrs};
 use crate::diff::{diff_trees, DiffStatus};
 use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
@@ -134,6 +134,40 @@ pub fn is_binary_for_diff(git_dir: &Path, path: &str, blob: &[u8]) -> bool {
         return true;
     }
     crate::crlf::is_binary(blob)
+}
+
+/// True when `diff.<driver>.binary` is set for this path's `diff=<driver>` attribute.
+fn diff_driver_binary_config(config: &ConfigSet, driver: &str) -> bool {
+    let key = format!("diff.{driver}.binary");
+    config
+        .get(&key)
+        .is_some_and(|v| parse_bool(v.as_str()).unwrap_or(false))
+}
+
+/// Force `Binary files ... differ` when the path's diff driver sets `binary`, except for symlinks.
+///
+/// Matches Git's `diff_filespec_is_binary` driver flag: `diff.<name>.binary` applies to paths
+/// using that driver, but symlink modes (`120000`) still emit textual symlink-target patches
+/// (t4011).
+#[must_use]
+pub fn diff_forced_binary_by_driver(
+    git_dir: &Path,
+    config: &ConfigSet,
+    path: &str,
+    old_mode: &str,
+    new_mode: &str,
+) -> bool {
+    let fa = attrs_for_repo_path(git_dir, path);
+    let DiffAttr::Driver(driver) = fa.diff_attr else {
+        return false;
+    };
+    if !diff_driver_binary_config(config, &driver) {
+        return false;
+    }
+    if old_mode == "120000" || new_mode == "120000" {
+        return false;
+    }
+    true
 }
 
 /// True when Git would wrap the textconv command with `sh -c 'cmd "$@"' -- ...`
