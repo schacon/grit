@@ -23,6 +23,7 @@ use grit_lib::promisor::{
 use grit_lib::reflog::{list_reflog_refs, read_reflog};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
+use grit_lib::shallow::load_shallow_boundaries;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io;
@@ -202,6 +203,7 @@ pub fn run(args: Args) -> Result<()> {
         HashSet::new()
     };
     let packed_ids = collect_packed_ids(&objects_dir)?;
+    let shallow_boundaries = load_shallow_boundaries(repo.git_dir.as_path());
 
     let (reachable, walked_kinds) = walk_reachable(
         &repo,
@@ -212,6 +214,7 @@ pub fn run(args: Args) -> Result<()> {
         promisor_active,
         &promisor_pack_oids,
         &promisor_expanded,
+        &shallow_boundaries,
         extra_header_policy,
         args.strict,
         &mut issues,
@@ -481,6 +484,7 @@ fn walk_reachable(
     promisor_active: bool,
     promisor_pack_oids: &HashSet<ObjectId>,
     promisor_expanded: &HashSet<ObjectId>,
+    shallow_boundaries: &HashSet<ObjectId>,
     extra_header_policy: ExtraHeaderPolicy,
     strict: bool,
     issues: &mut Vec<Issue>,
@@ -569,8 +573,11 @@ fn walk_reachable(
             ObjectKind::Commit => {
                 if let Ok(commit) = parse_commit(&obj.data) {
                     queue.push_back((commit.tree, Some(oid)));
-                    for parent in commit.parents {
-                        queue.push_back((parent, Some(oid)));
+                    // Shallow clones: do not require parent objects at boundary commits.
+                    if !shallow_boundaries.contains(&oid) {
+                        for parent in commit.parents {
+                            queue.push_back((parent, Some(oid)));
+                        }
                     }
                 }
             }

@@ -2579,7 +2579,7 @@ struct CommitGraph<'r> {
 
 impl<'r> CommitGraph<'r> {
     fn new(repo: &'r Repository, first_parent_only: bool) -> Self {
-        let shallow_boundaries = load_shallow_boundaries(&repo.git_dir);
+        let shallow_boundaries = crate::shallow::load_shallow_boundaries(&repo.git_dir);
         let graft_parents = load_graft_parents(&repo.git_dir);
         Self {
             repo,
@@ -2625,23 +2625,6 @@ impl<'r> CommitGraph<'r> {
         self.parents.insert(oid, parents);
         Ok(())
     }
-}
-
-/// Load shallow boundary commit OIDs from `.git/shallow`.
-fn load_shallow_boundaries(git_dir: &Path) -> HashSet<ObjectId> {
-    let shallow_path = git_dir.join("shallow");
-    let mut set = HashSet::new();
-    if let Ok(contents) = fs::read_to_string(&shallow_path) {
-        for line in contents.lines() {
-            let line = line.trim();
-            if !line.is_empty() {
-                if let Ok(oid) = line.parse::<ObjectId>() {
-                    set.insert(oid);
-                }
-            }
-        }
-    }
-    set
 }
 
 /// Load commit parent overrides from `.git/info/grafts`.
