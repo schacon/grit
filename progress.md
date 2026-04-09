@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   278 |
+| Completed   |   279 |
 | In progress |     4 |
-| Remaining   |   486 |
+| Remaining   |   485 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 278 completed (`[x]`), 4 in progress (`[~]`), 486 remaining (`[ ]`).
+Task lines in `PLAN.md`: 279 completed (`[x]`), 4 in progress (`[~]`), 485 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t0040-parse-options` — 94/94 tests pass (`parse-options` / `parse-options-flags` / `parse-subcommand` test-tool: Git-style argv scanning with intermingled args and `+` NODASH; selective usage append; negated-option error names; stdout/stderr flush before `process::exit`; skip global `--git-completion-helper` when nested after `test-tool`; harness `test_run_` no longer wraps bodies in `$(...)` so backticks in heredocs are not executed)
 - `t1502-rev-parse-parseopt` — 37/37 tests pass (`rev-parse --parseopt`: stdin option spec parsing, `cat <<\\EOF` help output, `--keep-dashdash` / `--stop-at-non-option` / `--stuck-long`, negated long names + synthetic `no-<name>` parse entries for ambiguity; harness CSV/dashboards refreshed)
 - `t3427-rebase-subtree` — 3/3 tests pass (`rebase -Xsubtree=…`, `--empty=ask` stops for empty pick then `--skip`, with and without `--rebase-merges --onto`; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t1508-at-combinations` — 35/35 tests pass (`@{X}` combinations: reflog, upstream, `@`/`@@{u}`, branches with `@`, `@:path`, reflog expire edge cases; harness CSV/dashboards refreshed; `PLAN.md` / `t1-plan.md` marked complete)
@@ -153,4 +154,4 @@ Task lines in `PLAN.md`: 278 completed (`[x]`), 4 in progress (`[~]`), 486 remai
 
 ## What Remains
 
-486 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+485 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.

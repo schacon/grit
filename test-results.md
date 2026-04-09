@@ -2,6 +2,7 @@
 
 **Updated:** 2026-04-09
 
+- `./scripts/run-tests.sh t0040-parse-options.sh`: 94/94 passing (`test-tool parse-options*` / `parse-subcommand`: intermingled argv + NODASH `+`, selective usage append, negated-option error names, I/O flush before exit, nested `--git-completion-helper`; harness `test_run_` no longer uses `$(printf ...)` around bodies with backticks).
 - `./scripts/run-tests.sh t4047-diff-dirstat.sh`: 41/41 passing (`diff --dirstat` / `-X` aligned with Git: changes/lines/files, cumulative, thresholds, `diff.dirstat` warnings, `--shortstat --dirstat`; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t5514-fetch-multiple.sh`: 25/25 passing (`fetch --all` / `--multiple`, `fetch.all` / `--no-all`, `remote.*.skipFetchAll`, `--jobs` parallel fetch, tag options; harness CSV/dashboards refreshed).
 - `cargo test -p grit-lib --lib`: 121/121 passing.

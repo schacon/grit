@@ -9,7 +9,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 mod alias;
@@ -2352,22 +2352,27 @@ fn run() -> Result<()> {
     }
 
     // Handle --git-completion-helper / --git-completion-helper-all
-    if rest
+    if let Some(pos) = rest
         .iter()
-        .any(|a| a == "--git-completion-helper" || a == "--git-completion-helper-all")
+        .position(|a| *a == "--git-completion-helper" || *a == "--git-completion-helper-all")
     {
-        let show_all = rest.iter().any(|a| a == "--git-completion-helper-all");
-        // Check if there's a sub-subcommand (e.g., 'config get --git-completion-helper')
-        let sub_subcmd: Option<&str> = rest
-            .iter()
-            .find(|a| !a.starts_with('-'))
-            .map(|s| s.as_str());
-        let key = if let Some(sub) = sub_subcmd {
-            format!("{}_{}", subcmd, sub)
-        } else {
-            subcmd.clone()
-        };
-        return print_completion_helper(&key, show_all);
+        // `git test-tool parse-subcommand cmd --git-completion-helper` must reach the
+        // C/Rust test-tool implementation (t0040), not the generic clap-based helper.
+        let skip_for_nested_test_tool = subcmd == "test-tool" && pos > 0;
+        if !skip_for_nested_test_tool {
+            let show_all = rest.iter().any(|a| a == "--git-completion-helper-all");
+            // Check if there's a sub-subcommand (e.g., 'config get --git-completion-helper')
+            let sub_subcmd: Option<&str> = rest
+                .iter()
+                .find(|a| !a.starts_with('-'))
+                .map(|s| s.as_str());
+            let key = if let Some(sub) = sub_subcmd {
+                format!("{}_{}", subcmd, sub)
+            } else {
+                subcmd.clone()
+            };
+            return print_completion_helper(&key, show_all);
+        }
     }
 
     alias::run_command_with_aliases(subcmd, rest, &opts)
@@ -3470,14 +3475,22 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                     let args = preprocess_test_tool_args(rest)?;
                     use grit_lib::parse_options_test_tool::ParseOptionsToolError;
                     match grit_lib::parse_options_test_tool::run_parse_options(&args) {
-                        Ok(code) => std::process::exit(code),
-                        Err(ParseOptionsToolError::Help) => std::process::exit(129),
+                        Ok(code) => {
+                            let _ = std::io::stdout().flush();
+                            std::process::exit(code);
+                        }
+                        Err(ParseOptionsToolError::Help) => {
+                            let _ = std::io::stdout().flush();
+                            std::process::exit(129);
+                        }
                         Err(ParseOptionsToolError::Fatal(s)) => {
                             eprint!("{s}");
+                            let _ = std::io::stderr().flush();
                             std::process::exit(129);
                         }
                         Err(ParseOptionsToolError::Bug(s)) => {
                             eprint!("{s}");
+                            let _ = std::io::stderr().flush();
                             std::process::exit(99);
                         }
                     }
@@ -3486,14 +3499,22 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                     let args = preprocess_test_tool_args(rest)?;
                     use grit_lib::parse_options_test_tool::ParseOptionsToolError;
                     match grit_lib::parse_options_test_tool::run_parse_options_flags(&args) {
-                        Ok(code) => std::process::exit(code),
-                        Err(ParseOptionsToolError::Help) => std::process::exit(129),
+                        Ok(code) => {
+                            let _ = std::io::stdout().flush();
+                            std::process::exit(code);
+                        }
+                        Err(ParseOptionsToolError::Help) => {
+                            let _ = std::io::stdout().flush();
+                            std::process::exit(129);
+                        }
                         Err(ParseOptionsToolError::Fatal(s)) => {
                             eprint!("{s}");
+                            let _ = std::io::stderr().flush();
                             std::process::exit(129);
                         }
                         Err(ParseOptionsToolError::Bug(s)) => {
                             eprint!("{s}");
+                            let _ = std::io::stderr().flush();
                             std::process::exit(99);
                         }
                     }
@@ -3502,14 +3523,22 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                     let args = preprocess_test_tool_args(rest)?;
                     use grit_lib::parse_options_test_tool::ParseOptionsToolError;
                     match grit_lib::parse_options_test_tool::run_parse_subcommand(&args) {
-                        Ok(code) => std::process::exit(code),
-                        Err(ParseOptionsToolError::Help) => std::process::exit(129),
+                        Ok(code) => {
+                            let _ = std::io::stdout().flush();
+                            std::process::exit(code);
+                        }
+                        Err(ParseOptionsToolError::Help) => {
+                            let _ = std::io::stdout().flush();
+                            std::process::exit(129);
+                        }
                         Err(ParseOptionsToolError::Fatal(s)) => {
                             eprint!("{s}");
+                            let _ = std::io::stderr().flush();
                             std::process::exit(129);
                         }
                         Err(ParseOptionsToolError::Bug(s)) => {
                             eprint!("{s}");
+                            let _ = std::io::stderr().flush();
                             std::process::exit(99);
                         }
                     }

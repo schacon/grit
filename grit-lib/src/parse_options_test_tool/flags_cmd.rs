@@ -32,7 +32,7 @@ pub fn run_parse_options_flags(args: &[String]) -> Result<i32, ParseOptionsToolE
             "--subcommand-optional" => test_flags |= 1 << 7,
             _ => {
                 return Err(ParseOptionsToolError::Fatal(format!(
-                    "error: unknown option `{a}`\n"
+                    "error: unknown option `{a}'\n"
                 )));
             }
         }
@@ -49,7 +49,7 @@ pub fn run_parse_options_flags(args: &[String]) -> Result<i32, ParseOptionsToolE
 
 fn parse_int_opt(s: &str) -> Result<i32, ParseOptionsToolError> {
     s.parse().map_err(|_| {
-        ParseOptionsToolError::Fatal("error: option `opt' expects a numerical value\n".to_string())
+        ParseOptionsToolError::Fatal(format!("error: option `opt' expects a numerical value\n"))
     })
 }
 
@@ -130,9 +130,7 @@ fn parse_flags_cmd_inner(argv: &[String], flags: u32) -> Result<i32, ParseOption
             if name == "opt" {
                 i += 1;
                 let v = argv.get(i).ok_or_else(|| {
-                    ParseOptionsToolError::Fatal(
-                        "error: option `opt' requires a value\n".to_string(),
-                    )
+                    ParseOptionsToolError::Fatal(format!("error: option `opt' requires a value\n"))
                 })?;
                 opt = parse_int_opt(v)?;
                 i += 1;
@@ -145,7 +143,7 @@ fn parse_flags_cmd_inner(argv: &[String], flags: u32) -> Result<i32, ParseOption
             }
             let key = name.split('=').next().unwrap_or(name);
             return Err(ParseOptionsToolError::Fatal(format!(
-                "error: unknown option `{key}`\nusage: <...> cmd [options]\n"
+                "error: unknown option `{key}'\nusage: <...> cmd [options]\n"
             )));
         }
 
@@ -155,7 +153,7 @@ fn parse_flags_cmd_inner(argv: &[String], flags: u32) -> Result<i32, ParseOption
             if rest.is_empty() {
                 i += 1;
                 let v = argv.get(i).ok_or_else(|| {
-                    ParseOptionsToolError::Fatal("error: switch `o' requires a value\n".to_string())
+                    ParseOptionsToolError::Fatal(format!("error: switch `o' requires a value\n"))
                 })?;
                 opt = parse_int_opt(v)?;
                 i += 1;
@@ -174,9 +172,9 @@ fn parse_flags_cmd_inner(argv: &[String], flags: u32) -> Result<i32, ParseOption
                 i += 1;
                 continue;
             }
-            return Err(ParseOptionsToolError::Fatal(
-                "error: unknown switch `h'\nusage: <...> cmd [options]\n".to_string(),
-            ));
+            return Err(ParseOptionsToolError::Fatal(format!(
+                "error: unknown switch `h'\nusage: <...> cmd [options]\n"
+            )));
         }
         if keep_unknown {
             out.push(arg.clone());
@@ -185,7 +183,7 @@ fn parse_flags_cmd_inner(argv: &[String], flags: u32) -> Result<i32, ParseOption
         }
         let c = body.chars().next().unwrap_or('?');
         return Err(ParseOptionsToolError::Fatal(format!(
-            "error: unknown switch `{c}`\nusage: <...> cmd [options]\n"
+            "error: unknown switch `{c}'\nusage: <...> cmd [options]\n"
         )));
     }
 
