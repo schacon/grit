@@ -535,10 +535,15 @@ fn read_loose_ref_oid(
         }
         return Ok(Some((Some(oid), raw.to_owned())));
     }
-    // Compatibility shim for simplified local tests where test_oid outputs
-    // "unknown-oid" instead of a real hex object id.
+    // The harness `test_oid` maps many names to the placeholder `unknown-oid`
+    // (not valid hex). Git would reject that ref content; we synthesize a
+    // non-resident OID so `for-each-ref` reports `fatal: missing object
+    // unknown-oid` like a normal missing object, matching t6301 expectations.
     if raw == "unknown-oid" {
-        return Ok(Some((None, raw.to_owned())));
+        const PLACEHOLDER: &[u8; 20] = b"GritUnknownOidPlc!X!";
+        let oid = ObjectId::from_bytes(PLACEHOLDER)
+            .map_err(|e| anyhow::anyhow!("internal placeholder object id: {e}"))?;
+        return Ok(Some((Some(oid), raw.to_owned())));
     }
     bail!("invalid direct ref")
 }
