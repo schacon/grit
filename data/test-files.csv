@@ -410,7 +410,7 @@ t1406-submodule-ref-store	t1	yes	15	8	7	false	ok	0
 t1407-worktree-ref-store	t1	skip	4	1	3	false	ok	0
 t1408-packed-refs	t1	yes	3	3	0	true	ok	0
 t1409-avoid-packing-refs	t1	yes	11	11	0	true	ok	0
-t1410-reflog	t1	yes	0	0	0	false	timeout	1
+t1410-reflog	t1	yes	0	0	0	false	timeout	0
 t1411-reflog-show	t1	yes	17	8	9	false	ok	0
 t1412-reflog-loop	t1	yes	3	0	3	false	ok	0
 t1413-reflog-detach	t1	yes	7	7	0	true	ok	0
@@ -1112,7 +1112,7 @@ t6412-merge-large-rename	t6	yes	10	10	0	true	ok	0
 t6413-merge-crlf	t6	yes	3	1	2	false	ok	0
 t6414-merge-rename-nocruft	t6	yes	3	1	2	false	ok	0
 t6415-merge-dir-to-symlink	t6	yes	24	10	14	false	ok	0
-t6416-recursive-corner-cases	t6	yes	40	21	16	false	ok	3
+t6416-recursive-corner-cases	t6	yes	37	21	16	false	ok	3
 t6417-merge-ours-theirs	t6	yes	7	7	0	true	ok	0
 t6418-merge-text-auto	t6	yes	11	9	2	false	ok	0
 t6419-merge-ignorecase	t6	yes	0	0	0	false	ok	0
@@ -1200,7 +1200,7 @@ t7402-submodule-rebase	t7	yes	6	6	0	true	ok	0
 t7403-submodule-sync	t7	yes	18	10	8	false	ok	0
 t7406-submodule-update	t7	yes	0	0	0	false	timeout	0
 t7407-submodule-foreach	t7	yes	23	23	0	true	ok	0
-t7408-submodule-reference	t7	yes	16	5	11	false	ok	0
+t7408-submodule-reference	t7	yes	16	16	0	true	ok	0
 t7409-submodule-detached-work-tree	t7	yes	3	3	0	true	ok	0
 t7411-submodule-config	t7	yes	20	4	16	false	ok	0
 t7412-submodule-absorbgitdirs	t7	yes	12	5	7	false	ok	0
@@ -1275,7 +1275,7 @@ t7811-grep-open	t7	yes	10	10	0	true	ok	0
 t7812-grep-icase-non-ascii	t7	yes	18	18	0	true	ok	0
 t7813-grep-icase-iso	t7	yes	2	2	0	true	ok	0
 t7814-grep-recurse-submodules	t7	yes	27	20	7	false	ok	7
-t7815-grep-binary	t7	yes	21	19	2	false	ok	1
+t7815-grep-binary	t7	yes	21	19	2	false	ok	0
 t7816-grep-binary-pattern	t7	yes	145	145	0	true	ok	0
 t7817-grep-sparse-checkout	t7	yes	8	4	4	false	ok	0
 t7818-grep-extended	t7	yes	11	11	0	true	ok	0

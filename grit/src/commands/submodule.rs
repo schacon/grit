@@ -1815,6 +1815,15 @@ fn set_submodule_core_worktree(grit_bin: &Path, modules_dir: &Path, sub_path: &P
         .status();
 }
 
+/// Called from `clone --recurse-submodules` after cloning a submodule with `--separate-git-dir`.
+pub(crate) fn set_submodule_core_worktree_after_separate_clone(
+    grit_bin: &Path,
+    modules_dir: &Path,
+    sub_path: &Path,
+) {
+    set_submodule_core_worktree(grit_bin, modules_dir, sub_path);
+}
+
 fn attach_existing_submodule_worktree(
     grit_bin: &Path,
     modules_dir: &Path,

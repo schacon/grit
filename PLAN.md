@@ -854,7 +854,7 @@ commit → check it off → move on.
 - [ ] `t7102-reset` █████████████░░░░░░░ 26/38 (12 left) — git reset
 
 - [ ] `t7110-reset-merge` ████████░░░░░░░░░░░░ 9/21 (12 left) — Tests for 
-- [ ] `t7408-submodule-reference` █████░░░░░░░░░░░░░░░ 4/16 (12 left) — test clone --reference
+- [x] `t7408-submodule-reference` ████████████████████ 16/16 (0 left) — test clone --reference
 - [x] `t7426-submodule-get-default-remote` — git submodule--helper get-default-remote (15/15)
 - [ ] `t7503-pre-commit-and-pre-merge-commit-hooks` ████████░░░░░░░░░░░░ 9/22 (13 left) — pre-commit and pre-merge-commit hooks
 - [ ] `t7504-commit-msg-hook` ██████████░░░░░░░░░░ 16/30 (14 left) — commit-msg hook
