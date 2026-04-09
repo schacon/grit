@@ -625,6 +625,7 @@ commit → check it off → move on.
 - [ ] `t5335-compact-multi-pack-index` ░░░░░░░░░░░░░░░░░░░░ 0/10 (10 left) — multi-pack-index compaction
 - [ ] `t5003-archive-zip` █████████████████░░░ 71/82 (11 left) — git archive --format=zip test
 - [x] `t5334-incremental-multi-pack-index` — incremental multi-pack-index (16/16)
+- [x] `t5609-clone-branch` — clone `--branch`: `refs/remotes/origin/HEAD` follows remote default; reject missing branch / empty upstream (7/7)
 - [ ] `t5607-clone-bundle` ██████░░░░░░░░░░░░░░ 5/16 (11 left) — some bundle related tests
 - [x] `t5403-post-checkout-hook` ████████████████████ 14/14 (0 left) — Test the post-checkout hook.
 - [ ] `t5610-clone-detached` ███░░░░░░░░░░░░░░░░░ 2/13 (11 left) — test cloning a repository with detached HEAD

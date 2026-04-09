@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   308 |
+| Completed   |   313 |
 | In progress |     5 |
-| Remaining   |   456 |
-| **Total**   |   769 |
+| Remaining   |   453 |
+| **Total**   |   771 |
 
-Task lines in `PLAN.md`: 308 completed (`[x]`), 5 in progress (`[~]`), 456 remaining (`[ ]`).
+Task lines in `PLAN.md`: 313 completed (`[x]`), 5 in progress (`[~]`), 453 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5609-clone-branch` — 7/7 tests pass (`clone --branch`: `read_raw_ref` for ref existence so `refs/remotes/origin/HEAD` is set when default branch is packed; reject `--branch` when `refs/heads/<name>` missing on source, including empty repos)
 - `t5620-backfill` — 10/10 tests pass (expanded-cone path matching: top-level dirs excluded unless in cone; `sparse-checkout` hydrates before apply + empty-index rebuild from HEAD; promisor lazy-fetch reads local ODB first; checkout skips `skip_worktree` paths)
 - `t4128-apply-root` — 12/12 tests pass (`apply --directory`: Git `normalize_path_copy` + trailing `/`; paths already stripped at parse time — do not strip again in `adjust_path`)
 - `t5318-pack-objects-revs-exclude` — 9/9 tests pass (`pack-objects --revs` resolves branch names via `rev_parse::resolve_revision` so packed refs work after `pack-refs`; `^master` exclusion and `--stdin-packs`; harness CSV/dashboards refreshed)

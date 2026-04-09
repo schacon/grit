@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-09 (t5609 / clone --branch)**
+
+- `cargo test -p grit-lib --lib`: 152 passed
+- `./scripts/run-tests.sh t5609-clone-branch.sh`: 7/7 passed
+
 **2026-04-09 (t3417 / rebase whitespace fix)**
 
 - `cargo test -p grit-lib --lib`: 147 passed

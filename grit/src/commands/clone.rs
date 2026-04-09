@@ -235,11 +235,10 @@ fn clone_write_symref(git_dir: &Path, refname: &str, target: &str) -> Result<()>
 }
 
 fn clone_ref_file_exists(git_dir: &Path, refname: &str) -> bool {
-    if grit_lib::reftable::is_reftable_repo(git_dir) {
-        grit_lib::refs::resolve_ref(git_dir, refname).is_ok()
-    } else {
-        git_dir.join(refname).is_file()
-    }
+    matches!(
+        refs::read_raw_ref(git_dir, refname),
+        Ok(refs::RawRefLookup::Exists)
+    )
 }
 
 fn clone_read_direct_ref_oid(git_dir: &Path, refname: &str) -> Result<String> {
@@ -545,6 +544,12 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let remote_name = resolve_remote_name(&args)?;
+    if let Some(branch) = args.branch.as_deref() {
+        let remote_branch = format!("refs/heads/{branch}");
+        if !clone_ref_file_exists(&source.git_dir, &remote_branch) {
+            bail!("Remote branch {branch} not found in upstream {remote_name}");
+        }
+    }
     let ref_storage = resolved_clone_ref_storage(&args)?;
 
     // Determine target directory
