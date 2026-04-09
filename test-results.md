@@ -2,6 +2,7 @@
 
 **Updated:** 2026-04-09
 
+- `./scripts/run-tests.sh t5308-pack-detect-duplicates.sh`: 6/6 passing (duplicate objects in pack: default `index-pack` accepts; `--strict` rejects and leaves ODB unchanged; `cat-file --batch-check` over duplicated pack; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t4120-apply-popt.sh`: 12/12 passing (`git apply -p` strip count, invalid `-p` diagnostics, quoted traditional diff paths, `--stat` oversized strip, mode-only and rename with `--index`; harness CSV/dashboards refreshed).
 
 **Updated:** 2026-04-08

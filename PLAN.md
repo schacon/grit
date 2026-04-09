@@ -568,7 +568,7 @@ commit → check it off → move on.
 - [ ] `t5529-push-errors` ████████████░░░░░░░░ 5/8 (3 left) — detect some push errors early (before contacting remote)
 - [ ] `t5583-push-branches` ████████████░░░░░░░░ 5/8 (3 left) — check the consisitency of behavior of --all and --branches
 - [ ] `t5536-fetch-conflicts` ███████████░░░░░░░░░ 4/7 (3 left) — fetch handles conflicting refspecs correctly
-- [ ] `t5308-pack-detect-duplicates` ██████████░░░░░░░░░░ 3/6 (3 left) — handling of duplicate objects in incoming packfiles
+- [x] `t5308-pack-detect-duplicates` ████████████████████ 6/6 (0 left) — handling of duplicate objects in incoming packfiles
 - [ ] `t5549-fetch-push-http` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — fetch/push functionality using the HTTP protocol
 - [x] `t5704-protocol-violations` ████████████████████ 3/3 — Test responses to violations of the network protocol. In most
 
