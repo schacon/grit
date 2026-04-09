@@ -2250,6 +2250,7 @@ fn do_apply(stash_ref: Option<String>, _drop_after: bool, index: bool, quiet: bo
     if !quiet {
         let status_args = super::status::Args {
             short: false,
+            long: false,
             no_short: false,
             porcelain: None,
             branch: false,

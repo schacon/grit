@@ -14,6 +14,7 @@ use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 
 mod alias;
+mod branch_tracking;
 mod commands;
 mod dotfile;
 mod explicit_exit;

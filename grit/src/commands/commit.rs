@@ -103,6 +103,14 @@ pub struct Args {
     #[arg(long = "long")]
     pub long: bool,
 
+    /// Show ahead/behind in dry-run status (default; matches `status.aheadbehind`).
+    #[arg(long = "ahead-behind", overrides_with = "no_ahead_behind")]
+    pub ahead_behind: bool,
+
+    /// Omit ahead/behind counts in dry-run status.
+    #[arg(long = "no-ahead-behind")]
+    pub no_ahead_behind: bool,
+
     /// Include staged changes when given pathspec (with -i).
     #[arg(short = 'i', long = "include")]
     pub include: bool,
@@ -626,6 +634,58 @@ pub fn run(mut args: Args) -> Result<()> {
         Vec::new()
     };
 
+    // --dry-run: show status (including tracking) even when there is nothing to commit (Git behavior).
+    if args.dry_run {
+        let mut no_ab = args.no_ahead_behind;
+        if args.ahead_behind {
+            no_ab = false;
+        } else if !args.no_ahead_behind {
+            if let Some(v) = config.get("status.aheadbehind") {
+                if matches!(
+                    v.to_ascii_lowercase().as_str(),
+                    "false" | "no" | "off" | "0"
+                ) {
+                    no_ab = true;
+                }
+            }
+        }
+        print_dry_run(
+            &repo,
+            &config,
+            &head,
+            &staged,
+            &unstaged,
+            &untracked,
+            pathspec_matched.as_ref(),
+            no_ab,
+        )?;
+        // Match Git: `commit --dry-run` exits 1 when there is nothing to commit (after printing status).
+        if !args.allow_empty
+            && !args.amend
+            && !skip_index_tree_vs_parent
+            && staged.is_empty()
+            && !parents.is_empty()
+        {
+            let parent_obj = repo.odb.read(&parents[0])?;
+            let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)?;
+            if parent_commit.tree == tree_oid {
+                if work_tree.is_some() {
+                    if !unstaged.is_empty() {
+                        println!(
+                            "no changes added to commit (use \"git add\" and/or \"git commit -a\")"
+                        );
+                    } else if !untracked.is_empty() {
+                        println!(
+                            "nothing added to commit but untracked files present (use \"git add\" to track)"
+                        );
+                    }
+                }
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
+
     if !args.allow_empty
         && !args.amend
         && !skip_index_tree_vs_parent
@@ -648,20 +708,6 @@ pub fn run(mut args: Args) -> Result<()> {
             }
             bail!("nothing to commit, working tree clean");
         }
-    }
-
-    // --dry-run: show what would be committed and exit
-    if args.dry_run {
-        print_dry_run(
-            &repo,
-            &config,
-            &head,
-            &staged,
-            &unstaged,
-            &untracked,
-            pathspec_matched.as_ref(),
-        )?;
-        return Ok(());
     }
 
     // Run pre-commit hook
@@ -1058,6 +1104,7 @@ fn print_dry_run(
     unstaged: &[DiffEntry],
     untracked: &[String],
     pathspec_matched: Option<&HashSet<Vec<u8>>>,
+    no_ahead_behind: bool,
 ) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -1086,7 +1133,7 @@ fn print_dry_run(
         repo,
         "",
         show_hints,
-        false,
+        no_ahead_behind,
         true,
         orphan_line,
     )?;

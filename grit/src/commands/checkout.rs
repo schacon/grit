@@ -33,6 +33,8 @@ use grit_lib::rev_parse::{
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::submodule_gitdir::submodule_modules_git_dir;
 
+use crate::branch_tracking::{format_tracking_info, AheadBehindMode};
+
 /// Count parallel checkout worker processes to spawn for trace2 tests (`t2080`).
 ///
 /// Returns `0` when checkout stays sequential (one worker, below threshold, or no work).
@@ -1074,6 +1076,17 @@ fn switch_branch(
                 .copied()
                 .ok_or_else(|| anyhow::anyhow!("HEAD has no commit"))?;
             run_post_checkout_hook(repo, Some(&tip), &tip, true)?;
+            QUIET.with(|q| {
+                if !q.get() {
+                    if let Ok(s) =
+                        format_tracking_info(repo, branch_name, AheadBehindMode::Full, true)
+                    {
+                        if !s.is_empty() {
+                            print!("{s}");
+                        }
+                    }
+                }
+            });
             return Ok(());
         }
     }
@@ -1166,6 +1179,15 @@ fn switch_branch(
     run_post_checkout_hook(repo, old_head_commit.as_ref(), &target_oid, true)?;
 
     checkout_eprintln!("Switched to branch '{}'", branch_name);
+    QUIET.with(|q| {
+        if !q.get() {
+            if let Ok(s) = format_tracking_info(repo, branch_name, AheadBehindMode::Full, true) {
+                if !s.is_empty() {
+                    print!("{s}");
+                }
+            }
+        }
+    });
     Ok(())
 }
 
@@ -3444,8 +3466,6 @@ fn maybe_setup_tracking(
         None => return Ok(()),
     };
 
-    let explicit_track = track_mode.is_some();
-
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let effective_mode = if let Some(mode) = track_mode {
         mode.to_string()
@@ -3455,12 +3475,9 @@ fn maybe_setup_tracking(
             "always" => "direct".to_string(),
             "inherit" => "inherit".to_string(),
             "false" | "never" => return Ok(()),
-            _ => {
-                if !explicit_track {
-                    return Ok(());
-                }
-                "direct".to_string()
-            }
+            // Default (unset / true / simple): allow automatic upstream setup from the start
+            // point (e.g. `checkout -b topic origin` tracks origin's default branch).
+            _ => "direct".to_string(),
         }
     };
 
@@ -3484,6 +3501,65 @@ fn maybe_setup_tracking(
             std::fs::write(&config_path, config_content)?;
         }
         return Ok(());
+    }
+
+    // `checkout -b topic origin` (or other remote name): track the remote's default branch
+    // (`refs/remotes/<remote>/HEAD`). Only when `start` is a single path segment — not
+    // `origin/main` (that would wrongly use `refs/remotes/origin/main/HEAD` and hit ENOTDIR).
+    if !start.contains('/') && !start.is_empty() {
+        let remote_head_sym = format!("refs/remotes/{start}/HEAD");
+        if refs::read_symbolic_ref(&repo.git_dir, &remote_head_sym)?.is_some()
+            || refs::resolve_ref(&repo.git_dir, &remote_head_sym).is_ok()
+        {
+            let merge_branch = match refs::read_symbolic_ref(&repo.git_dir, &remote_head_sym)? {
+                Some(target) => target
+                    .strip_prefix(&format!("refs/remotes/{start}/"))
+                    .map(|s| s.to_string())
+                    .filter(|b| !b.is_empty() && b != "HEAD"),
+                None => None,
+            };
+            if let Some(branch) = merge_branch {
+                let config_path = repo.git_dir.join("config");
+                let mut config_content = std::fs::read_to_string(&config_path).unwrap_or_default();
+                let section = format!(
+                    "\n[branch \"{}\"]\
+                    \n\tremote = {}\
+                    \n\tmerge = refs/heads/{}\n",
+                    branch_name, start, branch
+                );
+                config_content.push_str(&section);
+                std::fs::write(&config_path, config_content)?;
+                checkout_eprintln!("branch '{branch_name}' set up to track '{start}/{branch}'.");
+                return Ok(());
+            }
+        }
+    }
+
+    // `checkout -b topic origin/main` — track the remote-tracking ref `refs/remotes/origin/main`.
+    // Split only on the first `/` so remotes are single-segment (`origin`) and the rest is the
+    // upstream branch name (may itself contain `/`).
+    if let Some(slash) = start.find('/') {
+        let remote = &start[..slash];
+        let branch_on_remote = &start[slash + 1..];
+        if !remote.is_empty() && !branch_on_remote.is_empty() {
+            let tracking = format!("refs/remotes/{remote}/{branch_on_remote}");
+            if refs::resolve_ref(&repo.git_dir, &tracking).is_ok() {
+                let config_path = repo.git_dir.join("config");
+                let mut config_content = std::fs::read_to_string(&config_path).unwrap_or_default();
+                let section = format!(
+                    "\n[branch \"{}\"]\
+                    \n\tremote = {}\
+                    \n\tmerge = refs/heads/{}\n",
+                    branch_name, remote, branch_on_remote
+                );
+                config_content.push_str(&section);
+                std::fs::write(&config_path, config_content)?;
+                checkout_eprintln!(
+                    "branch '{branch_name}' set up to track '{remote}/{branch_on_remote}'."
+                );
+                return Ok(());
+            }
+        }
     }
 
     let start_ref = format!("refs/heads/{start}");

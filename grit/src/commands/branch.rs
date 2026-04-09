@@ -4,6 +4,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::zero_oid;
+use grit_lib::merge_base::count_symmetric_ahead_behind;
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::refs;
@@ -736,9 +737,15 @@ fn resolve_branch_tracking(repo: &Repository, branch_name: &str) -> Result<Optio
 
     let (ahead, behind) = count_ahead_behind(repo, local_oid, upstream_oid)?;
     if ahead == 0 && behind == 0 {
+        // `git branch -vv` still shows the upstream in brackets when in sync (e.g. `[origin/main]`).
+        let verbose2_inner = if track_local {
+            None
+        } else {
+            Some(short_label.clone())
+        };
         return Ok(Some(BranchTracking {
             verbose1_inner: None,
-            verbose2_inner: None,
+            verbose2_inner,
             upstream_short: short_label,
             upstream_ref_full,
         }));
@@ -753,14 +760,12 @@ fn resolve_branch_tracking(repo: &Repository, branch_name: &str) -> Result<Optio
     }
     let detail = parts.join(", ");
 
+    // `git branch -v` omits the remote prefix; `git branch -vv` includes it (e.g. `origin/main:`).
     let (verbose1_inner, verbose2_inner) = if track_local {
         (
             Some(detail.clone()),
             Some(format!("{}: {detail}", upstream_branch)),
         )
-    } else if ahead > 0 && behind == 0 {
-        let s = format!("{short_label}: {detail}");
-        (Some(s.clone()), Some(s))
     } else {
         (
             Some(detail.clone()),
@@ -782,55 +787,7 @@ fn count_ahead_behind(
     local: ObjectId,
     upstream: ObjectId,
 ) -> Result<(usize, usize)> {
-    if local == upstream {
-        return Ok((0, 0));
-    }
-
-    let local_ancestors = collect_ancestors(repo, local)?;
-    let upstream_ancestors = collect_ancestors(repo, upstream)?;
-
-    let mut ahead = 0usize;
-    let mut behind = 0usize;
-
-    for oid in &local_ancestors {
-        if !upstream_ancestors.contains(oid) {
-            ahead += 1;
-        }
-    }
-    for oid in &upstream_ancestors {
-        if !local_ancestors.contains(oid) {
-            behind += 1;
-        }
-    }
-
-    Ok((ahead, behind))
-}
-
-/// Collect all ancestor OIDs of a commit (including itself).
-fn collect_ancestors(
-    repo: &Repository,
-    start: ObjectId,
-) -> Result<std::collections::HashSet<ObjectId>> {
-    use std::collections::HashSet;
-    let mut visited = HashSet::new();
-    let mut queue = vec![start];
-
-    while let Some(oid) = queue.pop() {
-        if !visited.insert(oid) {
-            continue;
-        }
-        if let Ok(obj) = repo.odb.read(&oid) {
-            if let Ok(commit) = parse_commit(&obj.data) {
-                for parent in &commit.parents {
-                    if !visited.contains(parent) {
-                        queue.push(*parent);
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(visited)
+    Ok(count_symmetric_ahead_behind(repo, local, upstream)?)
 }
 
 /// `git branch --edit-description`: open an editor on the branch description, then store in config.
@@ -981,10 +938,15 @@ fn launch_editor_for_branch_description(repo: &Repository, initial: &str) -> Res
 
 /// Set upstream tracking branch.
 fn set_upstream(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
-    let upstream = args
+    let upstream_raw = args
         .set_upstream_to
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("upstream name required"))?;
+    let upstream = if upstream_raw.starts_with("@{-") && upstream_raw.ends_with('}') {
+        grit_lib::refs::resolve_at_n_branch(&repo.git_dir, upstream_raw)?
+    } else {
+        upstream_raw.to_string()
+    };
 
     let branch_name = match args.name.as_deref() {
         Some(n) => n.to_owned(),
@@ -995,7 +957,7 @@ fn set_upstream(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> 
     };
 
     // Parse upstream as remote/branch
-    let (remote, upstream_branch) = parse_upstream(repo, upstream)?;
+    let (remote, upstream_branch) = parse_upstream(repo, &upstream)?;
 
     if remote == "." && upstream_branch == branch_name {
         eprintln!("warning: not setting branch '{branch_name}' as its own upstream");
@@ -1230,6 +1192,19 @@ fn create_branch(
             .oid()
             .ok_or_else(|| anyhow::anyhow!("not a valid object name: 'HEAD'"))?,
     };
+
+    if let Some(sp) = start_point {
+        let local_branch_ref = format!("refs/heads/{sp}");
+        let tag_ref = format!("refs/tags/{sp}");
+        let has_local_branch =
+            grit_lib::refs::resolve_ref(&repo.git_dir, &local_branch_ref).is_ok();
+        let has_tag = grit_lib::refs::resolve_ref(&repo.git_dir, &tag_ref).is_ok();
+        if args.track.is_some() && !has_local_branch && has_tag {
+            bail!(
+                "fatal: cannot set up tracking information; starting point '{sp}' is not a branch"
+            );
+        }
+    }
 
     grit_lib::refs::write_ref(&repo.git_dir, &refname, &oid).map_err(|e| anyhow::anyhow!("{e}"))?;
 

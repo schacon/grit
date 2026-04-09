@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     detect_renames, diff_index_to_tree, diff_index_to_worktree, head_path_states,
     submodule_porcelain_flags, DiffEntry, DiffStatus,
@@ -16,6 +16,11 @@ use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::reflog;
 use grit_lib::repo::Repository;
 use grit_lib::state::{detect_in_progress, resolve_head, HeadState};
+
+use crate::branch_tracking::{
+    format_tracking_info, shorten_tracking_ref, stat_branch_pair, upstream_tracking_full_ref,
+    AheadBehindMode, TrackingStat,
+};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, Write};
@@ -30,6 +35,10 @@ pub struct Args {
     /// Give output in short format.
     #[arg(short = 's', long = "short", overrides_with = "no_short")]
     pub short: bool,
+
+    /// Long format (Git compatibility; status is long by default unless `-s` / porcelain).
+    #[arg(long = "long", hide = true)]
+    pub long: bool,
 
     /// Disable short format (override status.short=true).
     #[arg(long = "no-short", overrides_with = "short")]
@@ -257,6 +266,21 @@ pub fn run(mut args: Args) -> Result<()> {
         show_stash = false;
     }
 
+    // `status.aheadbehind` defaults true; only applies to human-readable formats (Git `commit.c`).
+    let mut effective_no_ahead_behind = args.no_ahead_behind;
+    if args.ahead_behind {
+        effective_no_ahead_behind = false;
+    } else if (args.short || args.porcelain.is_none()) && !args.no_ahead_behind {
+        if let Some(v) = config.get("status.aheadbehind") {
+            if matches!(
+                v.to_ascii_lowercase().as_str(),
+                "false" | "no" | "off" | "0"
+            ) {
+                effective_no_ahead_behind = true;
+            }
+        }
+    }
+
     // Normalize untracked-files values: "false"/"0" → "no", "true"/"1" → "normal"
     let untracked_mode = match untracked_mode_str.as_str() {
         "no" | "false" | "0" => "no",
@@ -422,6 +446,7 @@ pub fn run(mut args: Args) -> Result<()> {
         format_short(
             &mut out,
             &args,
+            effective_no_ahead_behind,
             &head,
             &repo,
             &staged,
@@ -439,6 +464,7 @@ pub fn run(mut args: Args) -> Result<()> {
             &config,
             &args,
             colopts,
+            effective_no_ahead_behind,
             &in_progress,
             &index,
             index_sparse_on_disk,
@@ -853,37 +879,6 @@ fn traditional_normal_directory_only(
     Ok(Some(format!("{rel}/")))
 }
 
-/// Resolved upstream tracking for the current branch (used by status output).
-#[derive(Debug, Clone)]
-enum UpstreamTracking {
-    /// Upstream ref is configured but the remote-tracking branch is missing.
-    Missing { display: String },
-    /// Local and upstream point at the same commit.
-    Equal { display: String },
-    /// Local is strictly ahead of upstream.
-    Ahead { display: String, count: usize },
-    /// Local is strictly behind upstream.
-    Behind { display: String, count: usize },
-    /// Branches have diverged (both ahead and behind non-zero).
-    Diverged {
-        display: String,
-        ahead: usize,
-        behind: usize,
-    },
-}
-
-impl UpstreamTracking {
-    fn display(&self) -> &str {
-        match self {
-            Self::Missing { display }
-            | Self::Equal { display }
-            | Self::Ahead { display, .. }
-            | Self::Behind { display, .. }
-            | Self::Diverged { display, .. } => display,
-        }
-    }
-}
-
 fn count_stash_entries(git_dir: &Path) -> usize {
     reflog::read_reflog(git_dir, "refs/stash")
         .map(|e| e.len())
@@ -1031,34 +1026,31 @@ fn format_porcelain_v2(
             ..
         } = head
         {
-            if let Ok(Some(tracking)) = resolve_upstream_tracking(repo, short_name) {
-                write!(out, "# branch.upstream {}{eol}", tracking.display())?;
-                match tracking {
-                    UpstreamTracking::Missing { .. } => {}
-                    UpstreamTracking::Equal { .. } => {
+            if let Some(up_ref) = upstream_tracking_full_ref(repo, short_name) {
+                let upstream_display = shorten_tracking_ref(&up_ref);
+                write!(out, "# branch.upstream {upstream_display}{eol}")?;
+                let mode = if args.no_ahead_behind {
+                    AheadBehindMode::Quick
+                } else {
+                    AheadBehindMode::Full
+                };
+                match stat_branch_pair(repo, short_name, &up_ref, mode) {
+                    Ok(TrackingStat::Gone { .. }) => {}
+                    Ok(TrackingStat::UpToDate) => {
                         write!(out, "# branch.ab +0 -0{eol}")?;
                     }
-                    UpstreamTracking::Ahead { count, .. } => {
+                    Ok(TrackingStat::Diverged { ahead, behind, .. }) => {
                         if args.no_ahead_behind {
                             write!(out, "# branch.ab +? -?{eol}")?;
-                        } else {
-                            write!(out, "# branch.ab +{count} -0{eol}")?;
-                        }
-                    }
-                    UpstreamTracking::Behind { count, .. } => {
-                        if args.no_ahead_behind {
-                            write!(out, "# branch.ab +? -?{eol}")?;
-                        } else {
-                            write!(out, "# branch.ab +0 -{count}{eol}")?;
-                        }
-                    }
-                    UpstreamTracking::Diverged { ahead, behind, .. } => {
-                        if args.no_ahead_behind {
-                            write!(out, "# branch.ab +? -?{eol}")?;
-                        } else {
+                        } else if ahead > 0 && behind > 0 {
                             write!(out, "# branch.ab +{ahead} -{behind}{eol}")?;
+                        } else if ahead > 0 {
+                            write!(out, "# branch.ab +{ahead} -0{eol}")?;
+                        } else {
+                            write!(out, "# branch.ab +0 -{behind}{eol}")?;
                         }
                     }
+                    Err(_) => {}
                 }
             }
         }
@@ -1439,6 +1431,7 @@ fn format_submodule_token(f: grit_lib::diff::SubmodulePorcelainFlags) -> String 
 fn format_short(
     out: &mut impl Write,
     args: &Args,
+    effective_no_ahead_behind: bool,
     head: &HeadState,
     repo: &Repository,
     staged: &[grit_lib::diff::DiffEntry],
@@ -1453,27 +1446,29 @@ fn format_short(
     if args.branch {
         let branch = head.branch_name().unwrap_or("HEAD (no branch)");
         write!(out, "## {branch}")?;
-        if !args.no_ahead_behind {
-            if let Some(branch_name) = head.branch_name() {
-                if let Ok(Some(tracking)) = resolve_upstream_tracking(repo, branch_name) {
-                    write!(out, "...{}", tracking.display())?;
-                    match &tracking {
-                        UpstreamTracking::Missing { .. } | UpstreamTracking::Equal { .. } => {}
-                        UpstreamTracking::Ahead { count, .. } => {
-                            write!(out, " [ahead {count}]")?;
-                        }
-                        UpstreamTracking::Behind { count, .. } => {
-                            write!(out, " [behind {count}]")?;
-                        }
-                        UpstreamTracking::Diverged { ahead, behind, .. } => {
-                            let mut parts = Vec::new();
-                            if *ahead > 0 {
-                                parts.push(format!("ahead {ahead}"));
+        if let Some(branch_name) = head.branch_name() {
+            if let Some(up_ref) = upstream_tracking_full_ref(repo, branch_name) {
+                let short = shorten_tracking_ref(&up_ref);
+                write!(out, "...{short}")?;
+                let mode = if effective_no_ahead_behind {
+                    AheadBehindMode::Quick
+                } else {
+                    AheadBehindMode::Full
+                };
+                if let Ok(stat) = stat_branch_pair(repo, branch_name, &up_ref, mode) {
+                    match stat {
+                        TrackingStat::Gone { .. } => write!(out, " [gone]")?,
+                        TrackingStat::UpToDate => {}
+                        TrackingStat::Diverged { ahead, behind, .. } => {
+                            if effective_no_ahead_behind {
+                                write!(out, " [different]")?;
+                            } else if ahead > 0 && behind > 0 {
+                                write!(out, " [ahead {ahead}, behind {behind}]")?;
+                            } else if ahead > 0 {
+                                write!(out, " [ahead {ahead}]")?;
+                            } else if behind > 0 {
+                                write!(out, " [behind {behind}]")?;
                             }
-                            if *behind > 0 {
-                                parts.push(format!("behind {behind}"));
-                            }
-                            write!(out, " [{}]", parts.join(", "))?;
                         }
                     }
                 }
@@ -1630,81 +1625,22 @@ pub(crate) fn write_status_branch_header(
             ..
         } => {
             cpw(out, cp, &format!("On branch {short_name}"))?;
-            if !no_ahead_behind {
-                if let Ok(Some(tracking)) = resolve_upstream_tracking(repo, short_name) {
-                    match &tracking {
-                        UpstreamTracking::Missing { .. } => {
-                            cpw(out, cp, "")?;
-                        }
-                        UpstreamTracking::Equal { display } => {
-                            cpw(
-                                out,
-                                cp,
-                                &format!("Your branch is up to date with '{display}'."),
-                            )?;
-                            cpw(out, cp, "")?;
-                        }
-                        UpstreamTracking::Ahead { display, count } => {
-                            cpw(
-                                out,
-                                cp,
-                                &format!(
-                                    "Your branch is ahead of '{}' by {} commit{}.",
-                                    display,
-                                    count,
-                                    if *count == 1 { "" } else { "s" }
-                                ),
-                            )?;
-                            if show_hints {
-                                cpw(
-                                    out,
-                                    cp,
-                                    "  (use \"git push\" to publish your local commits)",
-                                )?;
-                            }
-                            cpw(out, cp, "")?;
-                        }
-                        UpstreamTracking::Behind { display, count } => {
-                            cpw(
-                                out,
-                                cp,
-                                &format!(
-                                    "Your branch is behind '{}' by {} commit{}, and can be fast-forwarded.",
-                                    display,
-                                    count,
-                                    if *count == 1 { "" } else { "s" }
-                                ),
-                            )?;
-                            if show_hints {
-                                cpw(out, cp, "  (use \"git pull\" to update your local branch)")?;
-                            }
-                            cpw(out, cp, "")?;
-                        }
-                        UpstreamTracking::Diverged {
-                            display,
-                            ahead,
-                            behind,
-                        } => {
-                            cpw(
-                                out,
-                                cp,
-                                &format!("Your branch and '{display}' have diverged,"),
-                            )?;
-                            cpw(
-                                out,
-                                cp,
-                                &format!(
-                                    "and have {} and {} different commits each, respectively.",
-                                    ahead, behind
-                                ),
-                            )?;
-                            if show_hints && !omit_diverged_pull_hint {
-                                cpw(out, cp, "  (use \"git pull\" if you want to integrate the remote branch with yours)")?;
-                            }
-                            cpw(out, cp, "")?;
-                        }
-                    }
+            let ab_mode = if no_ahead_behind {
+                AheadBehindMode::Quick
+            } else {
+                AheadBehindMode::Full
+            };
+            let tracking = format_tracking_info(
+                repo,
+                short_name,
+                ab_mode,
+                show_hints && !omit_diverged_pull_hint,
+            )?;
+            if !tracking.is_empty() {
+                for line in tracking.trim_end().lines() {
+                    cpw(out, cp, line)?;
                 }
+                cpw(out, cp, "")?;
             }
         }
         HeadState::Branch {
@@ -1750,8 +1686,9 @@ fn format_long(
     head: &HeadState,
     repo: &Repository,
     config: &ConfigSet,
-    args: &Args,
+    _args: &Args,
     colopts: ColOpts,
+    effective_no_ahead_behind: bool,
     in_progress: &[grit_lib::state::InProgressOperation],
     expanded_index: &Index,
     index_sparse_on_disk: bool,
@@ -1785,7 +1722,7 @@ fn format_long(
         repo,
         cp,
         show_hints,
-        args.no_ahead_behind,
+        effective_no_ahead_behind,
         false,
         None,
     )?;
@@ -2125,124 +2062,6 @@ fn walk_for_untracked(
     }
 
     Ok(())
-}
-
-/// Resolve upstream tracking for `branch_name` (merge + remote config).
-fn resolve_upstream_tracking(
-    repo: &Repository,
-    branch_name: &str,
-) -> Result<Option<UpstreamTracking>> {
-    let config_path = repo.git_dir.join("config");
-    let config_file = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
-        Some(c) => c,
-        None => return Ok(None),
-    };
-    let mut config = ConfigSet::new();
-    config.merge(&config_file);
-
-    let merge_key = format!("branch.{branch_name}.merge");
-    let remote_key = format!("branch.{branch_name}.remote");
-
-    let merge = match config.get(&merge_key) {
-        Some(m) => m,
-        None => return Ok(None),
-    };
-    let remote = config
-        .get(&remote_key)
-        .unwrap_or_else(|| "origin".to_string());
-
-    let upstream_branch = merge.strip_prefix("refs/heads/").unwrap_or(&merge);
-    let upstream_display = if remote == "." {
-        upstream_branch.to_string()
-    } else {
-        format!("{remote}/{upstream_branch}")
-    };
-
-    let upstream_ref = if remote == "." {
-        format!("refs/heads/{upstream_branch}")
-    } else {
-        format!("refs/remotes/{remote}/{upstream_branch}")
-    };
-    let Some(upstream_oid) = resolve_ref_to_oid(&repo.git_dir, &upstream_ref) else {
-        return Ok(Some(UpstreamTracking::Missing {
-            display: upstream_display,
-        }));
-    };
-
-    let local_ref = format!("refs/heads/{branch_name}");
-    let Some(local_oid) = resolve_ref_to_oid(&repo.git_dir, &local_ref) else {
-        return Ok(None);
-    };
-
-    if local_oid == upstream_oid {
-        return Ok(Some(UpstreamTracking::Equal {
-            display: upstream_display,
-        }));
-    }
-
-    let local_ancestors = collect_ancestors_set(repo, local_oid)?;
-    let upstream_ancestors = collect_ancestors_set(repo, upstream_oid)?;
-
-    let ahead = local_ancestors
-        .iter()
-        .filter(|oid| !upstream_ancestors.contains(oid))
-        .count();
-    let behind = upstream_ancestors
-        .iter()
-        .filter(|oid| !local_ancestors.contains(oid))
-        .count();
-
-    let tracking = if ahead > 0 && behind > 0 {
-        UpstreamTracking::Diverged {
-            display: upstream_display,
-            ahead,
-            behind,
-        }
-    } else if ahead > 0 {
-        UpstreamTracking::Ahead {
-            display: upstream_display,
-            count: ahead,
-        }
-    } else if behind > 0 {
-        UpstreamTracking::Behind {
-            display: upstream_display,
-            count: behind,
-        }
-    } else {
-        UpstreamTracking::Equal {
-            display: upstream_display,
-        }
-    };
-
-    Ok(Some(tracking))
-}
-
-fn resolve_ref_to_oid(git_dir: &Path, refname: &str) -> Option<ObjectId> {
-    grit_lib::refs::resolve_ref(git_dir, refname).ok()
-}
-
-fn collect_ancestors_set(
-    repo: &Repository,
-    start: ObjectId,
-) -> Result<std::collections::HashSet<ObjectId>> {
-    use std::collections::HashSet;
-    let mut visited = HashSet::new();
-    let mut queue = vec![start];
-    while let Some(oid) = queue.pop() {
-        if !visited.insert(oid) {
-            continue;
-        }
-        if let Ok(obj) = repo.odb.read(&oid) {
-            if let Ok(commit) = parse_commit(&obj.data) {
-                for parent in &commit.parents {
-                    if !visited.contains(parent) {
-                        queue.push(*parent);
-                    }
-                }
-            }
-        }
-    }
-    Ok(visited)
 }
 
 /// Remap worktree-relative paths in diff entries using the given function.
