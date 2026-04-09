@@ -1188,7 +1188,7 @@ t7106-reset-unborn-branch	t7	yes	7	7	0	true	ok	0
 t7107-reset-pathspec-file	t7	yes	11	0	11	false	ok	0
 t7110-reset-merge	t7	yes	21	7	14	false	ok	0
 t7110-reset-modes	t7	yes	20	20	0	true	ok	0
-t7111-reset-table	t7	yes	42	33	9	false	ok	0
+t7111-reset-table	t7	yes	42	42	0	true	ok	0
 t7112-reset-submodule	t7	yes	76	3	73	false	ok	0
 t7113-post-index-change-hook	t7	yes	4	1	3	false	ok	0
 t7201-co	t7	yes	46	15	31	false	ok	0
