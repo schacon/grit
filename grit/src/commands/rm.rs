@@ -353,9 +353,8 @@ pub fn run(mut args: Args) -> Result<()> {
     if !args.dry_run && !to_remove.is_empty() {
         repo.write_index(&mut index)?;
     }
-    if !args.dry_run && !args.cached && !removed_gitlinks.is_empty() {
-        remove_submodule_config_sections(&repo.git_dir, &removed_gitlinks)?;
-    }
+    // Git keeps `submodule.<name>.*` entries in `.git/config` after `git rm` on a gitlink;
+    // `git submodule deinit` / `git config --remove-section` clear them (t7400 cleanup).
 
     Ok(())
 }
@@ -795,50 +794,4 @@ fn pathspec_matches(spec: &str, path: &str) -> bool {
         return glob_pathspec_matches(spec, path);
     }
     path == spec || path.starts_with(&format!("{spec}/"))
-}
-
-fn remove_submodule_config_sections(
-    git_dir: &Path,
-    removed_paths: &BTreeSet<String>,
-) -> Result<()> {
-    let config_path = git_dir.join("config");
-    let content = match fs::read_to_string(&config_path) {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e.into()),
-    };
-
-    let mut out = String::new();
-    let mut changed = false;
-    let mut skip_section = false;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            skip_section = parse_submodule_section_name(trimmed)
-                .is_some_and(|name| removed_paths.contains(&name));
-            if skip_section {
-                changed = true;
-                continue;
-            }
-        }
-        if skip_section {
-            changed = true;
-            continue;
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-
-    if changed {
-        fs::write(config_path, out)?;
-    }
-
-    Ok(())
-}
-
-fn parse_submodule_section_name(header: &str) -> Option<String> {
-    let trimmed = header.trim();
-    let name = trimmed.strip_prefix("[submodule \"")?.strip_suffix("\"]")?;
-    Some(name.to_string())
 }

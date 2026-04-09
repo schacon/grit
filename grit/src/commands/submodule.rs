@@ -6,7 +6,215 @@
 use crate::commands::sparse_checkout::reapply_sparse_checkout_if_configured;
 use crate::grit_exe;
 use anyhow::{bail, Context, Result};
-use clap::{Args as ClapArgs, Subcommand};
+use clap::{Args as ClapArgs, Parser, Subcommand};
+
+mod upstream_help_builtin_synopsis {
+    include!(concat!(env!("OUT_DIR"), "/upstream_help_synopsis.rs"));
+}
+
+#[derive(Parser)]
+#[command(
+    name = "git submodule",
+    disable_help_subcommand = true,
+    disable_version_flag = true
+)]
+struct SubmoduleCliWrapper {
+    #[command(flatten)]
+    inner: Args,
+}
+
+fn submodule_synopsis_variants_from_adoc(syn: &str) -> Vec<Vec<String>> {
+    let mut variants: Vec<Vec<String>> = Vec::new();
+    let mut current: Vec<String> = Vec::new();
+    for line in syn.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with("git ") && !current.is_empty() {
+            variants.push(core::mem::take(&mut current));
+        }
+        current.push(trimmed.to_owned());
+    }
+    if !current.is_empty() {
+        variants.push(current);
+    }
+    variants
+}
+
+fn print_submodule_usage_stderr() {
+    let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin("submodule") else {
+        return;
+    };
+    let pad = " ".repeat("git submodule ".len());
+    let variants = submodule_synopsis_variants_from_adoc(syn);
+    for (i, var) in variants.iter().enumerate() {
+        let Some(first) = var.first() else {
+            continue;
+        };
+        if i == 0 {
+            eprintln!("usage: {first}");
+        } else {
+            eprintln!("   or: {first}");
+        }
+        for cont in var.iter().skip(1) {
+            eprintln!("{pad}{cont}");
+        }
+    }
+}
+
+fn submodule_usage_exit(code: i32) -> ! {
+    print_submodule_usage_stderr();
+    std::process::exit(code);
+}
+
+/// Split `git submodule` leading `[--quiet|-q] [--cached]` flags (Git order). Rejects other
+/// leading options with usage on stderr and exit **1** (matches Git / t7400).
+fn split_submodule_leading_flags(rest: &[String]) -> (SubmoduleTopOpts, Vec<String>) {
+    let mut top = SubmoduleTopOpts::default();
+    let mut i = 0usize;
+    while i < rest.len() {
+        let a = rest[i].as_str();
+        match a {
+            "-h" | "--help" => break,
+            "--quiet" | "-q" => {
+                top.quiet = true;
+                i += 1;
+            }
+            "--cached" => {
+                top.cached = true;
+                i += 1;
+            }
+            _ if a.starts_with('-') => submodule_usage_exit(1),
+            _ => break,
+        }
+    }
+    (top, rest[i..].to_vec())
+}
+
+fn parse_submodule_args(inner: &[String]) -> Args {
+    if inner.len() == 1 && (inner[0] == "-h" || inner[0] == "--help") {
+        if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin("submodule") {
+            let pad = " ".repeat("git submodule ".len());
+            let variants = submodule_synopsis_variants_from_adoc(syn);
+            for (i, var) in variants.iter().enumerate() {
+                let Some(first) = var.first() else {
+                    continue;
+                };
+                if i == 0 {
+                    println!("usage: {first}");
+                } else {
+                    println!("   or: {first}");
+                }
+                for cont in var.iter().skip(1) {
+                    println!("{pad}{cont}");
+                }
+            }
+            println!();
+            std::process::exit(0);
+        }
+    }
+
+    let mut argv = vec!["git submodule".to_owned()];
+    argv.extend(inner.iter().cloned());
+    match SubmoduleCliWrapper::try_parse_from(&argv) {
+        Ok(w) => w.inner,
+        Err(e) => {
+            if matches!(
+                e.kind(),
+                clap::error::ErrorKind::DisplayHelp
+                    | clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+                    | clap::error::ErrorKind::DisplayVersion
+            ) {
+                let mut msg = e.render().to_string();
+                msg = msg.replace("Usage:", "usage:");
+                print!("{msg}");
+            } else {
+                let _ = e.print();
+            }
+            let code = match e.kind() {
+                clap::error::ErrorKind::DisplayHelp
+                | clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => 0,
+                clap::error::ErrorKind::DisplayVersion => 129,
+                _ => 129,
+            };
+            std::process::exit(code);
+        }
+    }
+}
+
+/// Entry point from `main`: handles leading `--quiet` / `--cached` like Git before clap.
+pub fn run_from_argv(rest: &[String]) -> Result<()> {
+    let (top, inner) = split_submodule_leading_flags(rest);
+    if inner.len() == 1 && (inner[0] == "--" || inner[0] == "--end-of-options") {
+        submodule_usage_exit(1);
+    }
+    let args = parse_submodule_args(&inner);
+    run_with_top_opts(top, args)
+}
+
+fn run_with_top_opts(top: SubmoduleTopOpts, args: Args) -> Result<()> {
+    if top.cached {
+        match &args.command {
+            None | Some(SubmoduleCommand::Status(_)) | Some(SubmoduleCommand::Summary(_)) => {}
+            _ => submodule_usage_exit(1),
+        }
+    }
+
+    match args.command {
+        None => run_status(&StatusArgs {
+            quiet: top.quiet,
+            recursive: false,
+            cached: top.cached,
+            paths: vec![],
+        }),
+        Some(SubmoduleCommand::Status(mut s)) => {
+            s.cached |= top.cached;
+            s.quiet |= top.quiet;
+            run_status(&s)
+        }
+        Some(SubmoduleCommand::Init(mut a)) => {
+            a.quiet |= top.quiet;
+            run_init(&a, a.quiet)
+        }
+        Some(SubmoduleCommand::Update(mut a)) => {
+            a.quiet |= top.quiet;
+            run_update(&a)
+        }
+        Some(SubmoduleCommand::Add(mut a)) => {
+            a.quiet |= top.quiet;
+            run_add(&a)
+        }
+        Some(SubmoduleCommand::Foreach(mut a)) => {
+            a.quiet |= top.quiet;
+            run_foreach(&a, a.quiet)
+        }
+        Some(SubmoduleCommand::Sync(mut a)) => {
+            a.quiet |= top.quiet;
+            run_sync(&a, a.quiet)
+        }
+        Some(SubmoduleCommand::Deinit(mut a)) => {
+            a.quiet |= top.quiet;
+            run_deinit(&a, a.quiet)
+        }
+        Some(SubmoduleCommand::Absorbgitdirs(mut a)) => {
+            a.quiet |= top.quiet;
+            run_absorbgitdirs(&a, a.quiet)
+        }
+        Some(SubmoduleCommand::Summary(mut a)) => {
+            a.quiet |= top.quiet;
+            run_summary(&a, a.quiet)
+        }
+        Some(SubmoduleCommand::SetBranch(mut a)) => {
+            a.quiet |= top.quiet;
+            run_set_branch(&a, a.quiet)
+        }
+        Some(SubmoduleCommand::SetUrl(mut a)) => {
+            a.quiet |= top.quiet;
+            run_set_url(&a, a.quiet)
+        }
+    }
+}
 use grit_lib::config::{ConfigFile, ConfigScope};
 use grit_lib::error::Error as LibError;
 use grit_lib::index::MODE_GITLINK;
@@ -41,6 +249,13 @@ fn set_separate_gitdir_worktree(grit_bin: &Path, git_dir: &Path, work_tree: &Pat
         .arg("core.worktree")
         .arg(work_tree)
         .status();
+}
+
+/// Leading options parsed before the subcommand (matches `git submodule [--quiet] [--cached] …`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SubmoduleTopOpts {
+    pub quiet: bool,
+    pub cached: bool,
 }
 
 /// Arguments for `grit submodule`.
@@ -82,9 +297,17 @@ pub enum SubmoduleCommand {
 
 #[derive(Debug, ClapArgs)]
 pub struct StatusArgs {
+    /// Operate quietly (suppress progress and informational messages).
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
     /// Recurse into nested submodules.
     #[arg(long)]
     pub recursive: bool,
+
+    /// Compare the index to `HEAD` instead of the submodule work tree.
+    #[arg(long)]
+    pub cached: bool,
 
     /// Restrict to specific submodule paths.
     #[arg(value_name = "PATH")]
@@ -93,6 +316,10 @@ pub struct StatusArgs {
 
 #[derive(Debug, ClapArgs)]
 pub struct InitArgs {
+    /// Operate quietly (suppress progress and informational messages).
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
     /// Restrict to specific submodule paths.
     #[arg(value_name = "PATH")]
     pub paths: Vec<String>,
@@ -103,6 +330,10 @@ pub struct UpdateArgs {
     /// Restrict to specific submodule paths.
     #[arg(value_name = "PATH")]
     pub paths: Vec<String>,
+
+    /// Operate quietly (suppress progress and informational messages).
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
 
     /// Initialize uninitialized submodules before updating.
     #[arg(long)]
@@ -127,6 +358,10 @@ pub struct AddArgs {
     #[arg(long)]
     pub name: Option<String>,
 
+    /// Operate quietly (suppress progress and informational messages).
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
     /// Branch to track.
     #[arg(short = 'b', long = "branch")]
     pub branch: Option<String>,
@@ -140,6 +375,10 @@ pub struct AddArgs {
 
 #[derive(Debug, ClapArgs)]
 pub struct ForeachArgs {
+    /// Operate quietly (suppress progress and informational messages).
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
     /// Recurse into nested submodules.
     #[arg(long)]
     pub recursive: bool,
@@ -151,6 +390,10 @@ pub struct ForeachArgs {
 
 #[derive(Debug, ClapArgs)]
 pub struct SyncArgs {
+    /// Operate quietly (suppress progress and informational messages).
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
     /// Recurse into nested submodules.
     #[arg(long)]
     pub recursive: bool,
@@ -162,6 +405,10 @@ pub struct SyncArgs {
 
 #[derive(Debug, ClapArgs)]
 pub struct DeinitArgs {
+    /// Operate quietly (suppress progress and informational messages).
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
     /// Remove even if the submodule working tree has local modifications.
     #[arg(long, short)]
     pub force: bool,
@@ -177,6 +424,10 @@ pub struct DeinitArgs {
 
 #[derive(Debug, ClapArgs)]
 pub struct AbsorbgitdirsArgs {
+    /// Operate quietly (suppress progress and informational messages).
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
     /// Restrict to specific submodule paths.
     #[arg(value_name = "PATH")]
     pub paths: Vec<String>,
@@ -184,6 +435,10 @@ pub struct AbsorbgitdirsArgs {
 
 #[derive(Debug, ClapArgs)]
 pub struct SummaryArgs {
+    /// Operate quietly (suppress progress and informational messages).
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
     /// Restrict to specific submodule paths.
     #[arg(value_name = "PATH")]
     pub paths: Vec<String>,
@@ -191,6 +446,10 @@ pub struct SummaryArgs {
 
 #[derive(Debug, ClapArgs)]
 pub struct SetBranchArgs {
+    /// Operate quietly (suppress progress and informational messages).
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
     /// The branch to set.
     #[arg(long, short)]
     pub branch: Option<String>,
@@ -205,6 +464,10 @@ pub struct SetBranchArgs {
 
 #[derive(Debug, ClapArgs)]
 pub struct SetUrlArgs {
+    /// Operate quietly (suppress progress and informational messages).
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
     /// Submodule path.
     pub path: String,
 
@@ -226,6 +489,7 @@ struct SubmoduleInfo {
 pub(crate) fn update_after_superproject_merge(init: bool, recursive: bool) -> Result<()> {
     run_update(&UpdateArgs {
         paths: vec![],
+        quiet: false,
         init,
         checkout: false,
         remote: false,
@@ -306,25 +570,9 @@ pub(crate) fn recursive_fetch_submodules(recursive: bool) -> Result<()> {
     Ok(())
 }
 
-/// Run the `submodule` command.
+/// Run the `submodule` command (no leading `--quiet` / `--cached`; use [`run_from_argv`] from main).
 pub fn run(args: Args) -> Result<()> {
-    match args.command {
-        None => run_status(&StatusArgs {
-            recursive: false,
-            paths: vec![],
-        }),
-        Some(SubmoduleCommand::Status(a)) => run_status(&a),
-        Some(SubmoduleCommand::Init(a)) => run_init(&a),
-        Some(SubmoduleCommand::Update(a)) => run_update(&a),
-        Some(SubmoduleCommand::Add(a)) => run_add(&a),
-        Some(SubmoduleCommand::Foreach(a)) => run_foreach(&a),
-        Some(SubmoduleCommand::Sync(a)) => run_sync(&a),
-        Some(SubmoduleCommand::Deinit(a)) => run_deinit(&a),
-        Some(SubmoduleCommand::Absorbgitdirs(a)) => run_absorbgitdirs(&a),
-        Some(SubmoduleCommand::Summary(a)) => run_summary(&a),
-        Some(SubmoduleCommand::SetBranch(a)) => run_set_branch(&a),
-        Some(SubmoduleCommand::SetUrl(a)) => run_set_url(&a),
-    }
+    run_with_top_opts(SubmoduleTopOpts::default(), args)
 }
 
 /// Built-in helper invoked as `git submodule--helper …` (matches Git's plumbing).
@@ -732,6 +980,52 @@ fn read_submodule_commit(repo: &Repository, submodule_path: &str) -> Result<Opti
     Ok(None)
 }
 
+/// Gitlink OID for `submodule_path` in `HEAD`'s tree only (ignores the index).
+fn read_gitlink_from_head_tree(repo: &Repository, submodule_path: &str) -> Result<Option<String>> {
+    let head = resolve_head(&repo.git_dir)?;
+    let commit_oid = match head.oid() {
+        Some(o) => *o,
+        None => return Ok(None),
+    };
+    let obj = repo.odb.read(&commit_oid).context("read HEAD commit")?;
+    let commit = parse_commit(&obj.data)?;
+    let mut current_tree = commit.tree;
+
+    let components: Vec<&str> = submodule_path
+        .split('/')
+        .filter(|c| !c.is_empty())
+        .collect();
+    if components.is_empty() {
+        return Ok(None);
+    }
+
+    for (i, name) in components.iter().enumerate() {
+        let tree_obj = repo.odb.read(&current_tree).context("read tree")?;
+        if tree_obj.kind != ObjectKind::Tree {
+            return Ok(None);
+        }
+        let entries = parse_tree(&tree_obj.data)?;
+        let entry = entries
+            .iter()
+            .find(|e| e.name.as_slice() == name.as_bytes());
+        let Some(entry) = entry else {
+            return Ok(None);
+        };
+        let is_last = i + 1 == components.len();
+        if is_last {
+            if entry.mode == 0o160000 {
+                return Ok(Some(entry.oid.to_hex()));
+            }
+            return Ok(None);
+        }
+        if entry.mode != 0o040000 {
+            return Ok(None);
+        }
+        current_tree = entry.oid;
+    }
+    Ok(None)
+}
+
 /// Gitlink OID for `submodule_path` in the current index (stage 0), if present.
 ///
 /// Used after `grit add <path>` when `HEAD`’s tree does not yet list the new submodule
@@ -759,6 +1053,7 @@ fn checkout_submodule_worktree(
     work_tree: &Path,
     submodule_path: &str,
     oid: &str,
+    quiet: bool,
 ) -> Result<()> {
     let sub_path = work_tree.join(submodule_path);
     let modules_dir = repo.git_dir.join("modules").join(submodule_path);
@@ -799,11 +1094,13 @@ fn checkout_submodule_worktree(
         }
     }
 
-    eprintln!(
-        "Submodule path '{}': checked out '{}'",
-        submodule_path,
-        &oid[..oid.len().min(12)]
-    );
+    if !quiet {
+        eprintln!(
+            "Submodule path '{}': checked out '{}'",
+            submodule_path,
+            &oid[..oid.len().min(12)]
+        );
+    }
     Ok(())
 }
 
@@ -818,9 +1115,27 @@ fn run_status(args: &StatusArgs) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
+    if args.quiet {
+        return Ok(());
+    }
+
     for m in selected {
         let sub_path = work_tree.join(&m.path);
         let recorded = read_submodule_commit(&repo, &m.path)?;
+
+        if args.cached {
+            let index_oid = read_gitlink_oid_from_index(&repo, &m.path)?;
+            let tree_oid = read_gitlink_from_head_tree(&repo, &m.path)?;
+            let idx = index_oid
+                .as_deref()
+                .unwrap_or("0000000000000000000000000000000000000000");
+            let tr = tree_oid
+                .as_deref()
+                .unwrap_or("0000000000000000000000000000000000000000");
+            let prefix = if idx == tr { " " } else { "+" };
+            writeln!(out, "{prefix}{idx} {}", m.path)?;
+            continue;
+        }
 
         // Check if the submodule is checked out (has a .git file/dir in its path).
         let has_checkout = sub_path.join(".git").exists();
@@ -910,7 +1225,7 @@ fn read_head_from_file(head_file: &Path) -> Option<String> {
     }
 }
 
-fn run_init(args: &InitArgs) -> Result<()> {
+fn run_init(args: &InitArgs, quiet: bool) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
     let modules = parse_gitmodules_with_repo(work_tree, Some(&repo))?;
@@ -936,10 +1251,12 @@ fn run_init(args: &InitArgs) -> Result<()> {
         let resolved_url = resolve_submodule_super_url(work_tree, &repo.git_dir, &m.url)?;
 
         config.set(&url_key, &resolved_url)?;
-        eprintln!(
-            "Submodule '{}' ({}) registered for path '{}'",
-            m.name, resolved_url, m.path
-        );
+        if !quiet {
+            eprintln!(
+                "Submodule '{}' ({}) registered for path '{}'",
+                m.name, resolved_url, m.path
+            );
+        }
     }
 
     config.write()?;
@@ -951,9 +1268,13 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
 
     if args.init {
-        run_init(&InitArgs {
-            paths: args.paths.clone(),
-        })?;
+        run_init(
+            &InitArgs {
+                quiet: false,
+                paths: args.paths.clone(),
+            },
+            args.quiet,
+        )?;
     }
 
     let modules = parse_gitmodules_with_repo(work_tree, Some(&repo))?;
@@ -987,10 +1308,12 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             let url_key = format!("submodule.{}.url", m.name);
             let has_url = config.entries.iter().any(|e| e.key == url_key);
             if !has_url {
-                eprintln!(
-                    "Skipping submodule '{}': not initialized (run 'grit submodule init')",
-                    m.path
-                );
+                if !args.quiet {
+                    eprintln!(
+                        "Skipping submodule '{}': not initialized (run 'grit submodule init')",
+                        m.path
+                    );
+                }
                 continue;
             }
         }
@@ -1141,7 +1464,14 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             bail!("failed to checkout submodule commit: No such file or directory (os error 2)");
         }
 
-        checkout_submodule_worktree(&grit_bin, &repo, work_tree, &m.path, &checkout_oid)?;
+        checkout_submodule_worktree(
+            &grit_bin,
+            &repo,
+            work_tree,
+            &m.path,
+            &checkout_oid,
+            args.quiet,
+        )?;
 
         // `checkout` must leave the submodule index matching `HEAD`; otherwise
         // `git status` inside the submodule shows spurious staged deletions
@@ -1157,11 +1487,13 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
 
         refresh_gitlink_index_stat(&repo, &m.path)?;
 
-        eprintln!(
-            "Submodule path '{}': checked out '{}'",
-            m.path,
-            &checkout_oid[..checkout_oid.len().min(12)]
-        );
+        if !args.quiet {
+            eprintln!(
+                "Submodule path '{}': checked out '{}'",
+                m.path,
+                &checkout_oid[..checkout_oid.len().min(12)]
+            );
+        }
 
         // `reset --hard` materializes every path from `HEAD`; reapply sparse-checkout so cone
         // submodules stay trimmed (matches Git; t7817 expects only `sub/B/b`).
@@ -1193,9 +1525,14 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             if parse_gitmodules(&sub_path).unwrap_or_default().is_empty() {
                 continue;
             }
-            let status = grit_subprocess(&grit_bin)
-                .args(["submodule", "update", "--init", "--recursive"])
-                .current_dir(&sub_path)
+            let mut cmd = grit_subprocess(&grit_bin);
+            cmd.arg("submodule");
+            if args.quiet {
+                cmd.arg("-q");
+            }
+            cmd.args(["update", "--init", "--recursive"])
+                .current_dir(&sub_path);
+            let status = cmd
                 .status()
                 .with_context(|| format!("nested submodule update in {}", m.path))?;
             if !status.success() {
@@ -1264,7 +1601,9 @@ fn run_add(args: &AddArgs) -> Result<()> {
         if !is_repo {
             bail!("'{}' already exists and is not a git repository", path);
         }
-        eprintln!("Adding existing repo at '{}' to the index", path);
+        if !args.quiet {
+            eprintln!("Adding existing repo at '{}' to the index", path);
+        }
     } else {
         // Clone the submodule.
         let modules_dir = repo.git_dir.join("modules").join(&path);
@@ -1366,21 +1705,23 @@ fn run_add(args: &AddArgs) -> Result<()> {
     // `clone --no-checkout` leaves an empty work tree; populate it from the staged gitlink
     // (HEAD’s tree may not include the new submodule until after commit — read the index).
     if let Some(oid) = read_gitlink_oid_from_index(&repo, &path)? {
-        checkout_submodule_worktree(&grit_bin, &repo, work_tree, &path, &oid)?;
+        checkout_submodule_worktree(&grit_bin, &repo, work_tree, &path, &oid, args.quiet)?;
     }
 
-    eprintln!("Cloning into '{}'...", path);
+    if !args.quiet {
+        eprintln!("Cloning into '{}'...", path);
+    }
     Ok(())
 }
 
-fn run_foreach(args: &ForeachArgs) -> Result<()> {
+fn run_foreach(args: &ForeachArgs, quiet: bool) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
     let modules = parse_gitmodules(work_tree)?;
 
     let cmd_str = args.command.join(" ");
 
-    run_foreach_in(work_tree, &modules, &cmd_str, args.recursive, "")
+    run_foreach_in(work_tree, &modules, &cmd_str, args.recursive, "", quiet)
 }
 
 fn run_foreach_in(
@@ -1389,6 +1730,7 @@ fn run_foreach_in(
     cmd_str: &str,
     recursive: bool,
     prefix: &str,
+    quiet: bool,
 ) -> Result<()> {
     for m in modules {
         let sub_path = work_tree.join(&m.path);
@@ -1402,7 +1744,9 @@ fn run_foreach_in(
             format!("{}/{}", prefix, m.path)
         };
 
-        eprintln!("Entering '{}'", displaypath);
+        if !quiet {
+            eprintln!("Entering '{}'", displaypath);
+        }
         let status = Command::new("sh")
             .arg("-c")
             .arg(cmd_str)
@@ -1424,7 +1768,7 @@ fn run_foreach_in(
         if recursive {
             let nested = parse_gitmodules(&sub_path).unwrap_or_default();
             if !nested.is_empty() {
-                run_foreach_in(&sub_path, &nested, cmd_str, true, &displaypath)?;
+                run_foreach_in(&sub_path, &nested, cmd_str, true, &displaypath, quiet)?;
             }
         }
     }
@@ -1697,7 +2041,7 @@ fn resolve_path_components(base_path: &str, relative: &str) -> String {
     format!("/{}", parts.join("/"))
 }
 
-fn run_sync(args: &SyncArgs) -> Result<()> {
+fn run_sync(args: &SyncArgs, quiet: bool) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
     let modules = parse_gitmodules(work_tree)?;
@@ -1722,7 +2066,9 @@ fn run_sync(args: &SyncArgs) -> Result<()> {
         // Superproject config: resolve_relative_url(url, NULL).
         let super_url = resolve_submodule_super_url(work_tree, &repo.git_dir, &m.url)?;
         config.set(&url_key, &super_url)?;
-        eprintln!("Synchronizing submodule url for '{}'", m.path);
+        if !quiet {
+            eprintln!("Synchronizing submodule url for '{}'", m.path);
+        }
 
         // Submodule working tree remote: relative_url with get_up_path (see git submodule sync).
         let sub_origin_url =
@@ -1788,7 +2134,7 @@ fn resolve_submodule_git_dir(sub_path: &Path) -> Option<PathBuf> {
     }
 }
 
-fn run_deinit(args: &DeinitArgs) -> Result<()> {
+fn run_deinit(args: &DeinitArgs, quiet: bool) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
     let modules = parse_gitmodules(work_tree)?;
@@ -1841,18 +2187,20 @@ fn run_deinit(args: &DeinitArgs) -> Result<()> {
 
         let _ = url_key; // suppress unused warning
 
-        eprintln!("Cleared directory '{}'", m.path);
-        eprintln!(
-            "Submodule '{}' ({}) unregistered for path '{}'",
-            m.name, m.url, m.path
-        );
+        if !quiet {
+            eprintln!("Cleared directory '{}'", m.path);
+            eprintln!(
+                "Submodule '{}' ({}) unregistered for path '{}'",
+                m.name, m.url, m.path
+            );
+        }
     }
 
     config.write()?;
     Ok(())
 }
 
-fn run_absorbgitdirs(args: &AbsorbgitdirsArgs) -> Result<()> {
+fn run_absorbgitdirs(args: &AbsorbgitdirsArgs, quiet: bool) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
     let modules = parse_gitmodules(work_tree)?;
@@ -1895,12 +2243,14 @@ fn run_absorbgitdirs(args: &AbsorbgitdirsArgs) -> Result<()> {
         let relative_gitdir = pathdiff_relative(&sub_path, &modules_dir);
         fs::write(&dot_git, format!("gitdir: {}\n", relative_gitdir))?;
 
-        eprintln!(
-            "Migrating git directory of '{}' from '{}' to '{}'",
-            m.path,
-            sub_path.join(".git").display(),
-            modules_dir.display()
-        );
+        if !quiet {
+            eprintln!(
+                "Migrating git directory of '{}' from '{}' to '{}'",
+                m.path,
+                sub_path.join(".git").display(),
+                modules_dir.display()
+            );
+        }
     }
 
     Ok(())
@@ -1933,7 +2283,7 @@ fn pathdiff_relative(from: &Path, to: &Path) -> String {
     result.to_string_lossy().into_owned()
 }
 
-fn run_summary(_args: &SummaryArgs) -> Result<()> {
+fn run_summary(_args: &SummaryArgs, _quiet: bool) -> Result<()> {
     // Summary is a complex feature — for now, output a basic summary.
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
@@ -1958,7 +2308,7 @@ fn run_summary(_args: &SummaryArgs) -> Result<()> {
     Ok(())
 }
 
-fn run_set_branch(args: &SetBranchArgs) -> Result<()> {
+fn run_set_branch(args: &SetBranchArgs, _quiet: bool) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
 
@@ -1988,7 +2338,7 @@ fn run_set_branch(args: &SetBranchArgs) -> Result<()> {
     Ok(())
 }
 
-fn run_set_url(args: &SetUrlArgs) -> Result<()> {
+fn run_set_url(args: &SetUrlArgs, _quiet: bool) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
 

@@ -901,7 +901,7 @@ commit → check it off → move on.
 
 - [ ] `t7502-commit-porcelain` ████░░░░░░░░░░░░░░░░ 18/82 (64 left) — git commit porcelain-ish
 - [ ] `t7900-maintenance` █░░░░░░░░░░░░░░░░░░░ 7/72 (65 left) — git maintenance builtin
-- [ ] `t7400-submodule-basic` █████░░░░░░░░░░░░░░░ 37/124 (87 left) — Basic porcelain support for submodules
+- [x] `t7400-submodule-basic` — Basic porcelain support for submodules (124/124 harness)
 
 - [ ] `t7810-grep` █████████████░░░░░░░ 175/263 (88 left) — git grep various.
 
