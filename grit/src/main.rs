@@ -37,6 +37,7 @@ mod precompose;
 pub mod protocol;
 mod protocol_wire;
 mod ssh_transport;
+mod test_tool_pack_deltas;
 mod trace_packet;
 mod transport_passthrough;
 mod wire_trace;
@@ -4758,6 +4759,10 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                     Ok(())
                 }
                 "progress" => grit_lib::test_tool_progress::run().map_err(|e| e.into()),
+                "pack-deltas" => {
+                    let args = preprocess_test_tool_args(rest)?;
+                    test_tool_pack_deltas::run(&args)
+                }
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }
