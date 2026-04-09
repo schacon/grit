@@ -786,10 +786,6 @@ fn run_line_log(repo: &Repository, args: Args, _patch_context: usize) -> Result<
     if args.raw {
         anyhow::bail!("--raw is incompatible with -L");
     }
-    if args.reverse && args.graph {
-        anyhow::bail!("options '--reverse' and '--graph' cannot be used together");
-    }
-
     let use_color = if args.no_color {
         false
     } else if let Some(ref c) = args.color {
@@ -949,9 +945,14 @@ fn run_line_log(repo: &Repository, args: Args, _patch_context: usize) -> Result<
     let show_patch = !args.suppress_diff && !args.no_patch;
 
     if args.graph {
+        let graph_order: Vec<ObjectId> = if args.reverse {
+            filtered.iter().rev().copied().collect()
+        } else {
+            filtered.clone()
+        };
         let mut nodes = Vec::new();
         let mut seen = HashSet::new();
-        for oid in &filtered {
+        for oid in &graph_order {
             if !seen.insert(*oid) {
                 continue;
             }
@@ -1299,7 +1300,7 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
         } else {
             OrderingMode::Topo
         },
-        reverse: false,
+        reverse: args.reverse,
         boundary: args.boundary,
         full_history: args.full_history,
         sparse: args.sparse,
@@ -2688,9 +2689,6 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Detect conflicting flag combinations
     if args.graph {
-        if args.reverse {
-            anyhow::bail!("options '--reverse' and '--graph' cannot be used together");
-        }
         if args.no_walk.is_some() {
             anyhow::bail!("options '--no-walk' and '--graph' cannot be used together");
         }
