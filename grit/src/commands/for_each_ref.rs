@@ -3,7 +3,10 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::error::Error as GustError;
-use grit_lib::merge_base::is_ancestor;
+use grit_lib::git_date::show::{date_mode_release, parse_date_format, show_date};
+use grit_lib::git_date::tm::atoi_bytes;
+use grit_lib::mailmap::{load_mailmap, map_contact, parse_contact, MailmapEntry};
+use grit_lib::merge_base::{ancestor_closure, is_ancestor};
 use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
 use grit_lib::refs::read_head;
 use grit_lib::repo::Repository;
@@ -22,23 +25,41 @@ pub struct Args {
     pub args: Vec<String>,
 }
 
+/// Which top-level command is driving ref listing (`for-each-ref` vs `refs list`).
+#[derive(Debug, Clone, Copy)]
+pub enum ForEachRefInvocation {
+    /// `git for-each-ref` (default).
+    ForEachRef,
+    /// `git refs list` — same options, different `usage:` line for tests and UX.
+    RefsList,
+}
+
 /// Run `grit for-each-ref`.
 pub fn run(args: Args) -> Result<()> {
+    run_with_invocation(args, ForEachRefInvocation::ForEachRef)
+}
+
+/// Run `git refs list` (alias): identical behavior to `for-each-ref` with `refs list` usage text.
+pub fn run_refs_list(args: Args) -> Result<()> {
+    run_with_invocation(args, ForEachRefInvocation::RefsList)
+}
+
+fn run_with_invocation(args: Args, inv: ForEachRefInvocation) -> Result<()> {
     if args.args.iter().any(|arg| arg == "-h" || arg == "--help") {
-        print_usage();
+        print_usage(inv);
         std::process::exit(129);
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;
-    let opts = match parse_args(args.args) {
+    let opts = match parse_args(args.args, inv) {
         Ok(opts) => opts,
         Err(err) => {
-            eprintln!(
-                "usage: git for-each-ref [--count=<count>] [--sort=<key>] [--format=<format>] [--points-at=<object>] [--merged[=<object>]] [--no-merged[=<object>]] [--contains[=<object>]] [--no-contains[=<object>]] [--exclude=<pattern>] [--stdin] [<pattern>...]"
-            );
+            eprintln!("{}", full_usage_line(inv));
             return Err(err);
         }
     };
+
+    let mailmap = load_mailmap(&repo).unwrap_or_else(|_| Vec::new());
 
     let mut patterns = opts.patterns.clone();
     if opts.stdin {
@@ -60,6 +81,10 @@ pub fn run(args: Args) -> Result<()> {
     let format = opts
         .format
         .unwrap_or_else(|| "%(objectname) %(objecttype)\t%(refname)".to_owned());
+    if let Err(msg) = validate_format_quoting(&format, opts.quote_style) {
+        eprintln!("fatal: {msg}");
+        std::process::exit(128);
+    }
     let head_branch = read_head(&repo.git_dir).ok().flatten();
     let max = opts.count.unwrap_or(usize::MAX);
     let mut printed = 0usize;
@@ -67,7 +92,14 @@ pub fn run(args: Args) -> Result<()> {
         if printed >= max {
             break;
         }
-        match expand_format(&repo, &entry, &format, &head_branch) {
+        match expand_format(
+            &repo,
+            &entry,
+            &format,
+            &head_branch,
+            &mailmap,
+            opts.quote_style,
+        ) {
             Ok(line) => {
                 println!("{line}");
                 printed += 1;
@@ -99,12 +131,22 @@ enum SortField {
     RefName,
     ObjectName,
     ObjectType,
+    Raw,
+    RawSize,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct SortKey {
     field: SortField,
     descending: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuoteStyle {
+    Shell,
+    Perl,
+    Python,
+    Tcl,
 }
 
 #[derive(Debug, Default)]
@@ -121,6 +163,7 @@ struct Options {
     no_contains: Option<Option<String>>,
     stdin: bool,
     ignore_case: bool,
+    quote_style: Option<QuoteStyle>,
 }
 
 #[derive(Debug)]
@@ -130,13 +173,25 @@ enum FormatError {
     Other(String),
 }
 
-fn print_usage() {
-    eprintln!(
-        "usage: git for-each-ref [--count=<count>] [--sort=<key>] [--format=<format>] [--points-at=<object>] [--merged[=<object>]] [--no-merged[=<object>]] [--contains[=<object>]] [--no-contains[=<object>]] [--exclude=<pattern>] [--stdin] [<pattern>...]"
-    );
+fn usage_command(inv: ForEachRefInvocation) -> &'static str {
+    match inv {
+        ForEachRefInvocation::ForEachRef => "git for-each-ref",
+        ForEachRefInvocation::RefsList => "git refs list",
+    }
 }
 
-fn parse_args(args: Vec<String>) -> Result<Options> {
+fn full_usage_line(inv: ForEachRefInvocation) -> String {
+    format!(
+        "usage: {} [--count=<count>] [--sort=<key>] [--format=<format>] [--points-at=<object>] [--merged[=<object>]] [--no-merged[=<object>]] [--contains[=<object>]] [--no-contains[=<object>]] [--exclude=<pattern>] [--stdin] [<pattern>...]",
+        usage_command(inv)
+    )
+}
+
+fn print_usage(inv: ForEachRefInvocation) {
+    eprintln!("{}", full_usage_line(inv));
+}
+
+fn parse_args(args: Vec<String>, inv: ForEachRefInvocation) -> Result<Options> {
     let mut opts = Options::default();
     let mut i = 0usize;
     while i < args.len() {
@@ -148,6 +203,26 @@ fn parse_args(args: Vec<String>) -> Result<Options> {
         }
         if arg == "--ignore-case" {
             opts.ignore_case = true;
+            i += 1;
+            continue;
+        }
+        if arg == "-s" || arg == "--shell" {
+            set_quote_style(&mut opts, QuoteStyle::Shell, inv)?;
+            i += 1;
+            continue;
+        }
+        if arg == "-p" || arg == "--perl" {
+            set_quote_style(&mut opts, QuoteStyle::Perl, inv)?;
+            i += 1;
+            continue;
+        }
+        if arg == "--python" {
+            set_quote_style(&mut opts, QuoteStyle::Python, inv)?;
+            i += 1;
+            continue;
+        }
+        if arg == "--tcl" {
+            set_quote_style(&mut opts, QuoteStyle::Tcl, inv)?;
             i += 1;
             continue;
         }
@@ -298,9 +373,7 @@ fn parse_args(args: Vec<String>) -> Result<Options> {
             continue;
         }
         if arg.starts_with('-') {
-            bail!(
-                "unsupported option: {arg}\nusage: git for-each-ref [--count=<count>] [--sort=<key>] [--format=<format>] [--points-at=<object>] [--merged[=<object>]] [--no-merged[=<object>]] [--contains[=<object>]] [--no-contains[=<object>]] [--exclude=<pattern>] [--stdin] [<pattern>...]"
-            );
+            bail!("unsupported option: {arg}\n{}", full_usage_line(inv));
         }
         opts.patterns.push(arg.clone());
         i += 1;
@@ -314,6 +387,18 @@ fn parse_args(args: Vec<String>) -> Result<Options> {
     }
 
     Ok(opts)
+}
+
+fn set_quote_style(opts: &mut Options, style: QuoteStyle, inv: ForEachRefInvocation) -> Result<()> {
+    if let Some(existing) = opts.quote_style {
+        if existing != style {
+            eprintln!("error: more than one quoting style?");
+            print_usage(inv);
+            std::process::exit(129);
+        }
+    }
+    opts.quote_style = Some(style);
+    Ok(())
 }
 
 fn parse_count(value: &str) -> Result<usize> {
@@ -336,6 +421,8 @@ fn parse_sort_key(raw: &str) -> Result<SortKey> {
         "refname" => SortField::RefName,
         "objectname" => SortField::ObjectName,
         "objecttype" => SortField::ObjectType,
+        "raw" => SortField::Raw,
+        "raw:size" => SortField::RawSize,
         _ => bail!("unsupported sort key: {raw}"),
     };
     Ok(SortKey { field, descending })
@@ -586,6 +673,28 @@ fn compare_on_key(
                     String::new()
                 }
             }
+            SortField::Raw => {
+                if let Some(oid) = entry.oid {
+                    repo.odb
+                        .read(&oid)
+                        .ok()
+                        .map(|obj| String::from_utf8_lossy(&obj.data).into_owned())
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                }
+            }
+            SortField::RawSize => {
+                if let Some(oid) = entry.oid {
+                    repo.odb
+                        .read(&oid)
+                        .ok()
+                        .map(|obj| obj.data.len().to_string())
+                        .unwrap_or_else(|| "0".to_owned())
+                } else {
+                    "0".to_owned()
+                }
+            }
         }
     };
     let mut left_val = value(left);
@@ -597,11 +706,133 @@ fn compare_on_key(
     left_val.cmp(&right_val)
 }
 
+fn validate_format_quoting(format: &str, quote: Option<QuoteStyle>) -> Result<(), String> {
+    let Some(q) = quote else {
+        return Ok(());
+    };
+    if matches!(q, QuoteStyle::Perl) {
+        return Ok(());
+    }
+    let mut rest = format;
+    while let Some(start) = rest.find('%') {
+        let after = &rest[start + 1..];
+        if after.starts_with('%') {
+            rest = &after[1..];
+            continue;
+        }
+        let Some(inner) = after.strip_prefix('(') else {
+            rest = after;
+            continue;
+        };
+        let Some(end) = inner.find(')') else {
+            return Ok(());
+        };
+        let atom = &inner[..end];
+        let body = atom.strip_prefix('*').unwrap_or(atom);
+        let (base, modifier) = body
+            .find(':')
+            .map(|p| (&body[..p], Some(&body[p + 1..])))
+            .unwrap_or((body, None));
+        if base == "raw" && modifier != Some("size") {
+            return Err("--format=raw cannot be used with --python, --shell, --tcl".to_owned());
+        }
+        rest = &inner[end + 1..];
+    }
+    Ok(())
+}
+
+fn quote_output(s: &str, style: Option<QuoteStyle>) -> String {
+    let Some(style) = style else {
+        return s.to_owned();
+    };
+    match style {
+        QuoteStyle::Shell => sq_quote_buf(s),
+        QuoteStyle::Perl => perl_quote_buf(s),
+        QuoteStyle::Python => python_quote_buf(s),
+        QuoteStyle::Tcl => tcl_quote_buf(s),
+    }
+}
+
+fn sq_quote_buf(src: &str) -> String {
+    let mut out = String::new();
+    out.push('\'');
+    let mut bytes = src.as_bytes();
+    while !bytes.is_empty() {
+        let len = bytes
+            .iter()
+            .take_while(|&&b| b != b'\'' && b != b'!')
+            .count();
+        out.push_str(std::str::from_utf8(&bytes[..len]).unwrap_or(""));
+        bytes = &bytes[len..];
+        while bytes.first() == Some(&b'\'') || bytes.first() == Some(&b'!') {
+            out.push_str("'\\");
+            out.push(char::from(bytes[0]));
+            out.push('\'');
+            bytes = &bytes[1..];
+        }
+    }
+    out.push('\'');
+    out
+}
+
+fn perl_quote_buf(src: &str) -> String {
+    let mut out = String::new();
+    out.push('\'');
+    for c in src.chars() {
+        if c == '\'' || c == '\\' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('\'');
+    out
+}
+
+fn python_quote_buf(src: &str) -> String {
+    let mut out = String::new();
+    out.push('\'');
+    for c in src.chars() {
+        if c == '\n' {
+            out.push_str("\\n");
+            continue;
+        }
+        if c == '\'' || c == '\\' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('\'');
+    out
+}
+
+fn tcl_quote_buf(src: &str) -> String {
+    let mut out = String::new();
+    out.push('"');
+    for c in src.chars() {
+        match c {
+            '[' | ']' | '{' | '}' | '$' | '\\' | '"' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '\x0c' => out.push_str("\\f"),
+            '\r' => out.push_str("\\r"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\x0b' => out.push_str("\\v"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 fn expand_format(
     repo: &Repository,
     entry: &RefEntry,
     format: &str,
     head_branch: &Option<String>,
+    mailmap: &[MailmapEntry],
+    quote_style: Option<QuoteStyle>,
 ) -> Result<String, FormatError> {
     let mut out = String::new();
     let mut rest = format;
@@ -609,19 +840,18 @@ fn expand_format(
         out.push_str(&rest[..start]);
         let after = &rest[start + 1..];
         if after.starts_with('%') {
-            // %% -> literal %
-            out.push('%');
+            let lit = quote_output("%", quote_style);
+            out.push_str(&lit);
             rest = &after[1..];
         } else if let Some(inner) = after.strip_prefix('(') {
-            // %(atom) -> expand
             let Some(end) = inner.find(')') else {
                 return Err(FormatError::Other("unterminated format atom".to_owned()));
             };
             let atom = &inner[..end];
-            out.push_str(&atom_value(repo, entry, atom, head_branch)?);
+            let expanded = atom_value(repo, entry, atom, head_branch, mailmap)?;
+            out.push_str(&quote_output(&expanded, quote_style));
             rest = &inner[end + 1..];
         } else {
-            // bare % - output literally
             out.push('%');
             rest = after;
         }
@@ -635,11 +865,12 @@ fn atom_value(
     entry: &RefEntry,
     atom: &str,
     head_branch: &Option<String>,
+    mailmap: &[MailmapEntry],
 ) -> Result<String, FormatError> {
     // Handle deref atoms: %(* objectname), %(*objecttype), etc.
     // These dereference the pointed-to object (peel tags).
     if let Some(deref_atom) = atom.strip_prefix('*') {
-        return deref_atom_value(repo, entry, deref_atom, head_branch);
+        return deref_atom_value(repo, entry, deref_atom, head_branch, mailmap);
     }
 
     // Handle atoms with modifiers (e.g. "authordate:short")
@@ -657,6 +888,7 @@ fn atom_value(
             None => Ok(entry.name.clone()),
         },
         "objectname" => match modifier {
+            None => Ok(entry.object_name.clone()),
             Some("short") => {
                 if let Some(oid) = entry.oid {
                     Ok(abbreviate_oid(&oid, 7))
@@ -665,14 +897,25 @@ fn atom_value(
                 }
             }
             Some(m) if m.starts_with("short=") => {
-                let n: usize = m["short=".len()..].parse().unwrap_or(7);
+                let arg = &m["short=".len()..];
+                let n: u64 = arg.parse().map_err(|_| {
+                    FormatError::Fatal(format!("positive value expected '{arg}' in %(objectname)"))
+                })?;
+                if n == 0 {
+                    return Err(FormatError::Fatal(format!(
+                        "positive value expected '{arg}' in %(objectname)"
+                    )));
+                }
+                let n = n as usize;
                 if let Some(oid) = entry.oid {
                     Ok(abbreviate_oid(&oid, n.max(4)))
                 } else {
                     Ok(entry.object_name.clone())
                 }
             }
-            _ => Ok(entry.object_name.clone()),
+            Some(other) => Err(FormatError::Fatal(format!(
+                "unrecognized %(objectname) argument: {other}"
+            ))),
         },
         "objecttype" => {
             let object = read_object(repo, entry)?;
@@ -718,13 +961,15 @@ fn atom_value(
                     entry.name.clone(),
                 ));
             };
-            commit_field_for_oid(repo, entry, oid, |c| match modifier {
-                Some("short") => abbreviate_oid(&c.tree, 7),
-                Some(m) if m.starts_with("short=") => {
-                    let n: usize = m["short=".len()..].parse().unwrap_or(7);
-                    abbreviate_oid(&c.tree, n.max(4))
-                }
-                _ => c.tree.to_string(),
+            commit_field_for_oid(repo, entry, oid, |c| {
+                Ok(match modifier {
+                    Some("short") => abbreviate_oid(&c.tree, 7),
+                    Some(m) if m.starts_with("short=") => {
+                        let n: usize = m["short=".len()..].parse().unwrap_or(7);
+                        abbreviate_oid(&c.tree, n.max(4))
+                    }
+                    _ => c.tree.to_string(),
+                })
             })
         }
         "parent" => {
@@ -747,7 +992,7 @@ fn atom_value(
                         _ => p.to_string(),
                     })
                     .collect();
-                parents.join(" ")
+                Ok(parents.join(" "))
             })
         }
         "numparent" => {
@@ -757,7 +1002,7 @@ fn atom_value(
                     entry.name.clone(),
                 ));
             };
-            commit_field_for_oid(repo, entry, oid, |c| c.parents.len().to_string())
+            commit_field_for_oid(repo, entry, oid, |c| Ok(c.parents.len().to_string()))
         }
         "object" => {
             let object = read_object(repo, entry)?;
@@ -787,7 +1032,19 @@ fn atom_value(
         }
         "raw" => {
             let object = read_object(repo, entry)?;
-            Ok(String::from_utf8_lossy(&object.data).into_owned())
+            match modifier {
+                Some("size") => Ok(object.data.len().to_string()),
+                Some(other) => Err(FormatError::Fatal(format!(
+                    "unrecognized %(raw) argument: {other}"
+                ))),
+                None => {
+                    let mut s = String::from_utf8_lossy(&object.data).into_owned();
+                    if object.kind != ObjectKind::Commit {
+                        s.push('\n');
+                    }
+                    Ok(s)
+                }
+            }
         }
         "upstream" => resolve_upstream(repo, entry, modifier),
         "push" => resolve_push(repo, entry, modifier),
@@ -832,7 +1089,7 @@ fn atom_value(
                     entry.name.clone(),
                 ));
             };
-            commit_field_for_oid(repo, entry, oid, |c| c.author.clone())
+            commit_field_for_oid(repo, entry, oid, |c| Ok(c.author.clone()))
         }
         "authorname" => {
             let Some(oid) = entry.oid else {
@@ -841,7 +1098,18 @@ fn atom_value(
                     entry.name.clone(),
                 ));
             };
-            commit_field_for_oid(repo, entry, oid, |c| parse_identity_name(&c.author))
+            match modifier {
+                Some("mailmap") => commit_field_for_oid(repo, entry, oid, |c| {
+                    let (n, e) = parse_contact(&c.author);
+                    Ok(map_contact(n.as_deref(), e.as_deref(), mailmap).0)
+                }),
+                None => {
+                    commit_field_for_oid(repo, entry, oid, |c| Ok(parse_identity_name(&c.author)))
+                }
+                Some(other) => Err(FormatError::Fatal(format!(
+                    "unrecognized %(authorname) argument: {other}"
+                ))),
+            }
         }
         "authoremail" => {
             let Some(oid) = entry.oid else {
@@ -850,7 +1118,10 @@ fn atom_value(
                     entry.name.clone(),
                 ));
             };
-            commit_field_for_oid(repo, entry, oid, |c| format_email(&c.author, modifier))
+            let opts = parse_email_modifiers(modifier, "authoremail")?;
+            commit_field_for_oid(repo, entry, oid, |c| {
+                Ok(format_email_with_opts(&c.author, &opts, mailmap))
+            })
         }
         "authordate" => {
             let Some(oid) = entry.oid else {
@@ -860,7 +1131,7 @@ fn atom_value(
                 ));
             };
             commit_field_for_oid(repo, entry, oid, |c| {
-                format_identity_date(&c.author, modifier)
+                format_identity_date_git(&c.author, modifier)
             })
         }
         "committer" => {
@@ -870,7 +1141,7 @@ fn atom_value(
                     entry.name.clone(),
                 ));
             };
-            commit_field_for_oid(repo, entry, oid, |c| c.committer.clone())
+            commit_field_for_oid(repo, entry, oid, |c| Ok(c.committer.clone()))
         }
         "committername" => {
             let Some(oid) = entry.oid else {
@@ -879,7 +1150,18 @@ fn atom_value(
                     entry.name.clone(),
                 ));
             };
-            commit_field_for_oid(repo, entry, oid, |c| parse_identity_name(&c.committer))
+            match modifier {
+                Some("mailmap") => commit_field_for_oid(repo, entry, oid, |c| {
+                    let (n, e) = parse_contact(&c.committer);
+                    Ok(map_contact(n.as_deref(), e.as_deref(), mailmap).0)
+                }),
+                None => commit_field_for_oid(repo, entry, oid, |c| {
+                    Ok(parse_identity_name(&c.committer))
+                }),
+                Some(other) => Err(FormatError::Fatal(format!(
+                    "unrecognized %(committername) argument: {other}"
+                ))),
+            }
         }
         "committeremail" => {
             let Some(oid) = entry.oid else {
@@ -888,7 +1170,10 @@ fn atom_value(
                     entry.name.clone(),
                 ));
             };
-            commit_field_for_oid(repo, entry, oid, |c| format_email(&c.committer, modifier))
+            let opts = parse_email_modifiers(modifier, "committeremail")?;
+            commit_field_for_oid(repo, entry, oid, |c| {
+                Ok(format_email_with_opts(&c.committer, &opts, mailmap))
+            })
         }
         "committerdate" => {
             let Some(oid) = entry.oid else {
@@ -898,53 +1183,82 @@ fn atom_value(
                 ));
             };
             commit_field_for_oid(repo, entry, oid, |c| {
-                format_identity_date(&c.committer, modifier)
+                format_identity_date_git(&c.committer, modifier)
             })
         }
         "creatordate" => {
-            // creatordate: for tags use tagger date, for commits use committer date
             let object = read_object(repo, entry)?;
             match object.kind {
                 ObjectKind::Tag => {
                     let tag = parse_tag(&object.data).map_err(|_| {
                         FormatError::Other(format!("failed to parse tag for {}", entry.name))
                     })?;
-                    Ok(tag
-                        .tagger
-                        .as_ref()
-                        .map(|t| format_identity_date(t, modifier))
-                        .unwrap_or_default())
+                    match tag.tagger.as_ref() {
+                        Some(t) => format_identity_date_git(t, modifier),
+                        None => Ok(String::new()),
+                    }
                 }
                 ObjectKind::Commit => {
                     let commit = parse_commit(&object.data).map_err(|_| {
                         FormatError::Other(format!("failed to parse commit for {}", entry.name))
                     })?;
-                    Ok(format_identity_date(&commit.committer, modifier))
+                    format_identity_date_git(&commit.committer, modifier)
                 }
                 _ => Ok(String::new()),
             }
         }
-        "taggername" => tag_field_for_oid(repo, entry, |t| {
-            t.tagger
-                .as_ref()
-                .map(|s| parse_identity_name(s))
-                .unwrap_or_default()
-        }),
-        "taggeremail" => tag_field_for_oid(repo, entry, |t| {
-            t.tagger
-                .as_ref()
-                .map(|s| format_email(s, modifier))
-                .unwrap_or_default()
-        }),
+        "taggername" => {
+            let object = read_object(repo, entry)?;
+            if object.kind != ObjectKind::Tag {
+                return Ok(String::new());
+            }
+            let tag = parse_tag(&object.data).map_err(|_| {
+                FormatError::Other(format!("failed to parse tag for {}", entry.name))
+            })?;
+            let Some(ref raw) = tag.tagger else {
+                return Ok(String::new());
+            };
+            match modifier {
+                Some("mailmap") => {
+                    let (n, e) = parse_contact(raw);
+                    Ok(map_contact(n.as_deref(), e.as_deref(), mailmap).0)
+                }
+                None => Ok(parse_identity_name(raw)),
+                Some(other) => Err(FormatError::Fatal(format!(
+                    "unrecognized %(taggername) argument: {other}"
+                ))),
+            }
+        }
+        "taggeremail" => {
+            let object = read_object(repo, entry)?;
+            if object.kind != ObjectKind::Tag {
+                return Ok(String::new());
+            }
+            let tag = parse_tag(&object.data).map_err(|_| {
+                FormatError::Other(format!("failed to parse tag for {}", entry.name))
+            })?;
+            let Some(ref raw) = tag.tagger else {
+                return Ok(String::new());
+            };
+            let opts = parse_email_modifiers(modifier, "taggeremail")?;
+            Ok(format_email_with_opts(raw, &opts, mailmap))
+        }
         "tagger" => tag_field_for_oid(repo, entry, |t| {
             t.tagger.as_ref().cloned().unwrap_or_default()
         }),
-        "taggerdate" => tag_field_for_oid(repo, entry, |t| {
-            t.tagger
-                .as_ref()
-                .map(|s| format_identity_date(s, modifier))
-                .unwrap_or_default()
-        }),
+        "taggerdate" => {
+            let object = read_object(repo, entry)?;
+            if object.kind != ObjectKind::Tag {
+                return Ok(String::new());
+            }
+            let tag = parse_tag(&object.data).map_err(|_| {
+                FormatError::Other(format!("failed to parse tag for {}", entry.name))
+            })?;
+            match tag.tagger.as_ref() {
+                Some(t) => format_identity_date_git(t, modifier),
+                None => Ok(String::new()),
+            }
+        }
         "tag" => {
             let object = read_object(repo, entry)?;
             if object.kind == ObjectKind::Tag {
@@ -960,33 +1274,66 @@ fn atom_value(
         }
         "contents" => {
             let object = read_object(repo, entry)?;
-            let body = extract_commit_message(&object.data);
-            match modifier {
-                Some("subject") => Ok(body.lines().next().unwrap_or("").to_owned()),
-                Some("body") => {
-                    let mut lines = body.lines();
-                    lines.next(); // skip subject
-                    let rest: String = lines.collect::<Vec<_>>().join("\n");
-                    let rest = rest.trim_start_matches('\n');
-                    if rest.is_empty() {
-                        Ok(String::new())
-                    } else {
-                        Ok(format!("{rest}\n"))
+            match object.kind {
+                ObjectKind::Commit => {
+                    let body = extract_commit_message(&object.data);
+                    match modifier {
+                        Some("subject") => Ok(body.lines().next().unwrap_or("").to_owned()),
+                        Some("body") => {
+                            let mut lines = body.lines();
+                            lines.next();
+                            let rest: String = lines.collect::<Vec<_>>().join("\n");
+                            let rest = rest.trim_start_matches('\n');
+                            if rest.is_empty() {
+                                Ok(String::new())
+                            } else {
+                                Ok(format!("{rest}\n"))
+                            }
+                        }
+                        Some("signature") => {
+                            if let Some(sig_start) = body.find("-----BEGIN") {
+                                Ok(body[sig_start..].to_owned())
+                            } else {
+                                Ok(String::new())
+                            }
+                        }
+                        Some("size") => Ok(body.len().to_string()),
+                        Some("") | None => Ok(body),
+                        Some(m) => Err(FormatError::Other(format!(
+                            "unsupported contents modifier: {m}"
+                        ))),
                     }
                 }
-                Some("signature") => {
-                    // Extract PGP/GPG signature if present
-                    if let Some(sig_start) = body.find("-----BEGIN") {
-                        Ok(body[sig_start..].to_owned())
-                    } else {
-                        Ok(String::new())
+                ObjectKind::Tag => {
+                    let tag = parse_tag(&object.data).map_err(|_| {
+                        FormatError::Other(format!("failed to parse tag for {}", entry.name))
+                    })?;
+                    let body = &tag.message;
+                    match modifier {
+                        Some("subject") => Ok(tag_subject_paragraph(body)),
+                        Some("body") => {
+                            let b = tag_body_after_first_para(body);
+                            if b.is_empty() {
+                                Ok(String::new())
+                            } else {
+                                Ok(format!("{b}\n"))
+                            }
+                        }
+                        Some("signature") => {
+                            if let Some(sig_start) = body.find("-----BEGIN") {
+                                Ok(body[sig_start..].to_owned())
+                            } else {
+                                Ok(String::new())
+                            }
+                        }
+                        Some("size") => Ok(body.len().to_string()),
+                        Some("") | None => Ok(body.clone()),
+                        Some(m) => Err(FormatError::Other(format!(
+                            "unsupported contents modifier: {m}"
+                        ))),
                     }
                 }
-                Some("size") => Ok(body.len().to_string()),
-                Some("") | None => Ok(body),
-                Some(m) => Err(FormatError::Other(format!(
-                    "unsupported contents modifier: {m}"
-                ))),
+                _ => Ok(String::new()),
             }
         }
         "creator" => {
@@ -1043,6 +1390,7 @@ fn deref_atom_value(
     entry: &RefEntry,
     atom: &str,
     head_branch: &Option<String>,
+    mailmap: &[MailmapEntry],
 ) -> Result<String, FormatError> {
     use grit_lib::objects::ObjectKind;
     // Read the object to check if it's a tag
@@ -1070,7 +1418,25 @@ fn deref_atom_value(
         object_name: target_oid.to_string(),
     };
     // Evaluate the atom against the dereferenced entry
-    atom_value(repo, &deref_entry, atom, head_branch)
+    atom_value(repo, &deref_entry, atom, head_branch, mailmap)
+}
+
+/// Tag subject: first paragraph with inner newlines replaced by spaces (matches Git `ref-filter`).
+fn tag_subject_paragraph(message: &str) -> String {
+    let first_para = message.split("\n\n").next().unwrap_or("");
+    first_para
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Tag body: message after the first blank-line-separated paragraph.
+fn tag_body_after_first_para(message: &str) -> String {
+    let mut paras = message.splitn(2, "\n\n");
+    let _first = paras.next().unwrap_or("");
+    paras.next().unwrap_or("").to_owned()
 }
 
 fn subject_for_oid(
@@ -1093,7 +1459,7 @@ fn subject_for_oid(
             let tag = parse_tag(&object.data).map_err(|_| {
                 FormatError::Other(format!("failed to parse tag for {}", entry.name))
             })?;
-            Ok(tag.message.lines().next().unwrap_or("").to_owned())
+            Ok(tag_subject_paragraph(&tag.message))
         }
         _ => Ok(String::new()),
     }
@@ -1122,19 +1488,13 @@ fn body_for_oid(repo: &Repository, entry: &RefEntry, oid: ObjectId) -> Result<St
             let tag = parse_tag(&object.data).map_err(|_| {
                 FormatError::Other(format!("failed to parse tag for {}", entry.name))
             })?;
-            let mut lines = tag.message.splitn(2, '\n');
-            lines.next();
-            Ok(lines
-                .next()
-                .unwrap_or("")
-                .trim_start_matches('\n')
-                .to_owned())
+            Ok(tag_body_after_first_para(&tag.message))
         }
         _ => Ok(String::new()),
     }
 }
 
-fn commit_field_for_oid<F: Fn(&grit_lib::objects::CommitData) -> String>(
+fn commit_field_for_oid<F: Fn(&grit_lib::objects::CommitData) -> Result<String, FormatError>>(
     repo: &Repository,
     entry: &RefEntry,
     oid: ObjectId,
@@ -1149,7 +1509,7 @@ fn commit_field_for_oid<F: Fn(&grit_lib::objects::CommitData) -> String>(
             let commit = parse_commit(&object.data).map_err(|_| {
                 FormatError::Other(format!("failed to parse commit for {}", entry.name))
             })?;
-            Ok(extractor(&commit))
+            extractor(&commit)
         }
         ObjectKind::Tag => {
             // Non-deref atoms on tags return empty for commit-specific fields.
@@ -1194,48 +1554,88 @@ fn parse_identity_email(raw: &str) -> String {
     String::new()
 }
 
-/// Format an email from a raw identity string with optional modifiers.
-///
-/// Supported modifiers (comma-separated): `trim`, `localpart`, `mailmap`.
-/// `trim` removes the angle brackets, `localpart` keeps only the part
-/// before `@`. `mailmap` is accepted but currently a no-op.
-fn format_email(raw: &str, modifier: Option<&str>) -> String {
-    let email_with_brackets = parse_identity_email(raw);
-    if email_with_brackets.is_empty() {
-        return String::new();
+#[derive(Debug, Default, Clone)]
+struct EmailFormatOpts {
+    trim: bool,
+    localpart: bool,
+    mailmap: bool,
+}
+
+fn parse_email_modifiers(
+    modifier: Option<&str>,
+    atom_name: &str,
+) -> Result<EmailFormatOpts, FormatError> {
+    let mut opts = EmailFormatOpts::default();
+    let mut arg = modifier.unwrap_or("");
+    if arg.is_empty() {
+        return Ok(opts);
     }
-
-    let mods: Vec<&str> = modifier
-        .unwrap_or("")
-        .split(',')
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    let do_trim = mods.contains(&"trim");
-    let do_localpart = mods.contains(&"localpart");
-
-    let email = if do_trim {
-        email_with_brackets
-            .trim_start_matches('<')
-            .trim_end_matches('>')
-            .to_owned()
-    } else {
-        email_with_brackets
-    };
-
-    if do_localpart {
-        // Strip brackets for localpart extraction — localpart always
-        // returns just the bare local part, never wrapped in angle brackets.
-        let bare = email.trim_start_matches('<').trim_end_matches('>');
-        return if let Some(at_pos) = bare.find('@') {
-            bare[..at_pos].to_owned()
+    loop {
+        let matched = if let Some(rest) = arg.strip_prefix("trim") {
+            arg = rest;
+            opts.trim = true;
+            true
+        } else if let Some(rest) = arg.strip_prefix("localpart") {
+            arg = rest;
+            opts.localpart = true;
+            true
+        } else if let Some(rest) = arg.strip_prefix("mailmap") {
+            arg = rest;
+            opts.mailmap = true;
+            true
         } else {
-            bare.to_owned()
+            false
         };
+        if !matched {
+            return Err(FormatError::Fatal(format!(
+                "unrecognized %({atom_name}) argument: {arg}"
+            )));
+        }
+        if arg.is_empty() {
+            break;
+        }
+        if let Some(rest) = arg.strip_prefix(',') {
+            arg = rest;
+        } else {
+            return Err(FormatError::Fatal(format!(
+                "unrecognized %({atom_name}) argument: {arg}"
+            )));
+        }
     }
+    Ok(opts)
+}
 
-    email
+fn copy_email_git(raw: &str, trim: bool, localpart: bool) -> String {
+    let Some(lt) = raw.find('<') else {
+        return String::new();
+    };
+    let mut start = lt;
+    if trim || localpart {
+        start = lt + 1;
+    }
+    let inner = &raw[start..];
+    let end = if localpart {
+        inner
+            .find('@')
+            .or_else(|| inner.find('>'))
+            .unwrap_or(inner.len())
+    } else if trim {
+        inner.find('>').unwrap_or(inner.len())
+    } else {
+        inner.find('>').map(|i| i + 1).unwrap_or(inner.len())
+    };
+    inner[..end].to_owned()
+}
+
+fn format_email_with_opts(raw: &str, opts: &EmailFormatOpts, mailmap: &[MailmapEntry]) -> String {
+    let line = if opts.mailmap {
+        let (name, email) = parse_contact(raw);
+        let (cn, ce) = map_contact(name.as_deref(), email.as_deref(), mailmap);
+        grit_lib::mailmap::render_contact(&cn, &ce)
+    } else {
+        raw.to_owned()
+    };
+    copy_email_git(&line, opts.trim, opts.localpart)
 }
 
 /// Parse the Unix timestamp and timezone from a raw Git identity string.
@@ -1253,148 +1653,22 @@ fn parse_identity_timestamp(raw: &str) -> Option<(i64, String)> {
     Some((epoch, tz))
 }
 
-/// Format a date from a raw identity string with an optional modifier.
-fn format_identity_date(raw: &str, modifier: Option<&str>) -> String {
-    let Some((epoch, tz)) = parse_identity_timestamp(raw) else {
-        return String::new();
+fn format_identity_date_git(raw: &str, modifier: Option<&str>) -> Result<String, FormatError> {
+    let Some((epoch_i64, tz_str)) = parse_identity_timestamp(raw) else {
+        return Ok(String::new());
     };
+    let epoch = u64::try_from(epoch_i64).unwrap_or(0);
+    let tz = atoi_bytes(tz_str.as_bytes());
 
-    // Parse tz offset into seconds
-    let tz_offset_secs = parse_tz_offset(&tz);
-    let adjusted = epoch + tz_offset_secs as i64;
-
-    match modifier {
-        Some("short") => format_epoch_short(adjusted),
-        Some("iso") | Some("iso8601") => format_epoch_iso(adjusted, &tz),
-        Some("iso-strict") | Some("iso8601-strict") => format_epoch_iso_strict(adjusted, &tz),
-        Some("unix") => epoch.to_string(),
-        Some("relative") => format_epoch_relative(epoch),
-        Some("raw") => format!("{epoch} {tz}"),
-        _ => format_epoch_default(adjusted, &tz),
-    }
-}
-
-fn parse_tz_offset(tz: &str) -> i32 {
-    if tz.len() < 5 {
-        return 0;
-    }
-    let sign = if tz.starts_with('-') { -1 } else { 1 };
-    let hours: i32 = tz[1..3].parse().unwrap_or(0);
-    let minutes: i32 = tz[3..5].parse().unwrap_or(0);
-    sign * (hours * 3600 + minutes * 60)
-}
-
-fn days_from_epoch(epoch_adjusted: i64) -> (i32, u32, u32) {
-    // Convert epoch seconds (already tz-adjusted) to Y-M-D
-    let days = (epoch_adjusted / 86400) as i32;
-    // Algorithm from http://howardhinnant.github.io/date_algorithms.html
-    let z = days + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = (z - era * 146097) as u32;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe as i32 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
-}
-
-fn format_epoch_short(epoch_adjusted: i64) -> String {
-    let (y, m, d) = days_from_epoch(epoch_adjusted);
-    format!("{y:04}-{m:02}-{d:02}")
-}
-
-fn format_epoch_iso(epoch_adjusted: i64, tz: &str) -> String {
-    let (y, m, d) = days_from_epoch(epoch_adjusted);
-    let secs_in_day = epoch_adjusted.rem_euclid(86400);
-    let hh = secs_in_day / 3600;
-    let mm = (secs_in_day % 3600) / 60;
-    let ss = secs_in_day % 60;
-    format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02}:{ss:02} {tz}")
-}
-
-fn format_epoch_iso_strict(epoch_adjusted: i64, tz: &str) -> String {
-    let (y, m, d) = days_from_epoch(epoch_adjusted);
-    let secs_in_day = epoch_adjusted.rem_euclid(86400);
-    let hh = secs_in_day / 3600;
-    let mm = (secs_in_day % 3600) / 60;
-    let ss = secs_in_day % 60;
-    let tz_display = if tz.len() >= 5 {
-        format!("{}:{}", &tz[..3], &tz[3..5])
-    } else {
-        tz.to_owned()
+    let format_spec = match modifier {
+        None | Some("") => "default",
+        Some(s) => s,
     };
-    format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}{tz_display}")
-}
-
-fn format_epoch_default(epoch_adjusted: i64, tz: &str) -> String {
-    // Git default: "Thu Jan  1 00:00:00 1970 +0000"
-    let (y, m, d) = days_from_epoch(epoch_adjusted);
-    let secs_in_day = epoch_adjusted.rem_euclid(86400);
-    let hh = secs_in_day / 3600;
-    let mm = (secs_in_day % 3600) / 60;
-    let ss = secs_in_day % 60;
-
-    let month_name = match m {
-        1 => "Jan",
-        2 => "Feb",
-        3 => "Mar",
-        4 => "Apr",
-        5 => "May",
-        6 => "Jun",
-        7 => "Jul",
-        8 => "Aug",
-        9 => "Sep",
-        10 => "Oct",
-        11 => "Nov",
-        12 => "Dec",
-        _ => "???",
-    };
-
-    // Compute day of week via Zeller-like
-    // epoch_adjusted / 86400 gives days since 1970-01-01 which was a Thursday
-    let day_index = ((epoch_adjusted / 86400) % 7 + 4 + 7) % 7; // 0=Sun
-    let day_name = match day_index {
-        0 => "Sun",
-        1 => "Mon",
-        2 => "Tue",
-        3 => "Wed",
-        4 => "Thu",
-        5 => "Fri",
-        6 => "Sat",
-        _ => "???",
-    };
-
-    format!("{day_name} {month_name} {d} {hh:02}:{mm:02}:{ss:02} {y:04} {tz}")
-}
-
-fn format_epoch_relative(epoch: i64) -> String {
-    // Very basic relative date
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-    let diff = now - epoch;
-    if diff < 60 {
-        "just now".to_owned()
-    } else if diff < 3600 {
-        let m = diff / 60;
-        format!("{m} minute{} ago", if m == 1 { "" } else { "s" })
-    } else if diff < 86400 {
-        let h = diff / 3600;
-        format!("{h} hour{} ago", if h == 1 { "" } else { "s" })
-    } else if diff < 86400 * 30 {
-        let d = diff / 86400;
-        format!("{d} day{} ago", if d == 1 { "" } else { "s" })
-    } else if diff < 86400 * 365 {
-        let m = diff / (86400 * 30);
-        format!("{m} month{} ago", if m == 1 { "" } else { "s" })
-    } else {
-        let y = diff / (86400 * 365);
-        format!("{y} year{} ago", if y == 1 { "" } else { "s" })
-    }
+    let mut mode = parse_date_format(format_spec)
+        .map_err(|_| FormatError::Fatal(format!("unknown date format {format_spec}")))?;
+    let out = show_date(epoch, tz, &mut mode);
+    date_mode_release(&mut mode);
+    Ok(out)
 }
 
 /// Resolve upstream tracking info for a branch ref.
@@ -1763,31 +2037,13 @@ fn is_zero_oid(oid: &ObjectId) -> bool {
 /// Returns (ahead, behind) where ahead = commits reachable from `oid` but not `base`,
 /// and behind = commits reachable from `base` but not `oid`.
 fn compute_ahead_behind(repo: &Repository, oid: ObjectId, base: ObjectId) -> (usize, usize) {
-    use std::collections::{HashSet, VecDeque};
-
-    fn walk_ancestors(repo: &Repository, start: ObjectId) -> HashSet<ObjectId> {
-        let mut seen = HashSet::new();
-        let mut queue = VecDeque::new();
-        queue.push_back(start);
-        while let Some(oid) = queue.pop_front() {
-            if !seen.insert(oid) {
-                continue;
-            }
-            if let Ok(obj) = repo.odb.read(&oid) {
-                if let Ok(commit) = grit_lib::objects::parse_commit(&obj.data) {
-                    for parent in commit.parents {
-                        queue.push_back(parent);
-                    }
-                }
-            }
-        }
-        seen
-    }
-
-    let oid_ancestors = walk_ancestors(repo, oid);
-    let base_ancestors = walk_ancestors(repo, base);
-
-    let ahead = oid_ancestors.difference(&base_ancestors).count();
-    let behind = base_ancestors.difference(&oid_ancestors).count();
+    let Ok(al) = ancestor_closure(repo, oid) else {
+        return (0, 0);
+    };
+    let Ok(ar) = ancestor_closure(repo, base) else {
+        return (0, 0);
+    };
+    let ahead = al.difference(&ar).count();
+    let behind = ar.difference(&al).count();
     (ahead, behind)
 }
