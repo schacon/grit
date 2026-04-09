@@ -936,7 +936,8 @@ fn format_porcelain_v2(
         let (m2, o2) = stage_mode_oid(s2);
         let (m3, o3) = stage_mode_oid(s3);
         let file_path = work_tree.join(path);
-        let (m_wt, _o_wt) = worktree_mode_oid_for_unmerged(&repo.odb, work_tree, path, &file_path);
+        let (m_wt, _o_wt) =
+            worktree_mode_oid_for_unmerged(&repo.odb, work_tree, path, &file_path, index);
         let qpath = quote_status_path(path, config, nul);
         let line = format!(
             "u {} {} {:06o} {:06o} {:06o} {:06o} {} {} {} {}",
@@ -991,6 +992,7 @@ fn worktree_mode_oid_for_unmerged(
     work_tree: &Path,
     path: &str,
     file_path: &Path,
+    index: &grit_lib::index::Index,
 ) -> (u32, ObjectId) {
     use grit_lib::config::ConfigSet;
     use grit_lib::crlf;
@@ -1006,6 +1008,7 @@ fn worktree_mode_oid_for_unmerged(
             let file_attrs = crlf::get_file_attrs(&attrs, path, &config);
             let mode = grit_lib::diff::format_mode(grit_lib::diff::mode_from_metadata(&meta));
             let mode_u = parse_mode_u32(&mode);
+            let index_entry = index.get(path.as_bytes(), 0);
             match grit_lib::diff::hash_worktree_file(
                 odb,
                 file_path,
@@ -1013,6 +1016,7 @@ fn worktree_mode_oid_for_unmerged(
                 &conv,
                 &file_attrs,
                 path,
+                index_entry,
             ) {
                 Ok(oid) => (mode_u, oid),
                 Err(_) => (mode_u, ObjectId::zero()),

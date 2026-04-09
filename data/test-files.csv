@@ -23,7 +23,7 @@ t0023-crlf-am	t0	yes	2	2	0	true	ok	0
 t0024-crlf-archive	t0	yes	3	3	0	true	ok	0
 t0025-crlf-renormalize	t0	yes	3	3	0	true	ok	0
 t0026-eol-config	t0	yes	6	6	0	true	ok	0
-t0027-auto-crlf	t0	yes	2600	1238	1362	false	ok	0
+t0027-auto-crlf	t0	yes	2600	2600	0	true	ok	0
 t0028-working-tree-encoding	t0	yes	22	0	22	false	ok	0
 t0029-core-unsetenvvars	t0	skip	2	0	0	false	ok	0
 t0030-stripspace	t0	yes	30	30	0	true	ok	0

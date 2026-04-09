@@ -56,7 +56,7 @@ commit → check it off → move on.
 - [x] `t0040-parse-options` ████████████████████ 94/94 (0 left) — our own option parser
 - [ ] `t0012-help` ██░░░░░░░░░░░░░░░░░░ 15/124 (109 left) — help
 - [ ] `t0060-path-utils` █░░░░░░░░░░░░░░░░░░░ 18/219 (201 left) — Test various path utilities
-- [ ] `t0027-auto-crlf` █████████░░░░░░░░░░░ 1238/2600 (1362 left) — CRLF conversion all combinations
+- [x] `t0027-auto-crlf` ████████████████████ 2600/2600 (0 left) — CRLF conversion all combinations
 
 ## 2. Plumbing (94 files)
 

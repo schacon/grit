@@ -632,6 +632,7 @@ pub fn diff_index_to_worktree(
                         &conv,
                         &file_attrs,
                         path_str_ref,
+                        None,
                     )?;
                     let worktree_mode = mode_from_metadata(&meta);
                     result.push(DiffEntry {
@@ -718,7 +719,15 @@ pub fn diff_index_to_worktree(
                 // contents can share the same size (e.g. `foo` vs `bar`), and rapid edits can
                 // leave timestamps looking "unchanged" relative to the index (t4015-diff-whitespace).
                 let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
-                let worktree_oid = hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, path_str_ref)?;
+                let worktree_oid = hash_worktree_file(
+                    odb,
+                    &file_path,
+                    &meta,
+                    &conv,
+                    &file_attrs,
+                    path_str_ref,
+                    Some(ie),
+                )?;
 
                 // If clean conversion disagrees with the index but raw bytes match the
                 // blob (e.g. mixed line endings committed with autocrlf off), Git reports
@@ -795,7 +804,15 @@ pub fn diff_index_to_worktree(
 
         if let Some(meta) = wt_meta {
             let file_attrs = crlf::get_file_attrs(&attrs, &path, &config);
-            let wt_oid = hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, &path)?;
+            let wt_oid = hash_worktree_file(
+                odb,
+                &file_path,
+                &meta,
+                &conv,
+                &file_attrs,
+                &path,
+                Some(base_entry),
+            )?;
             let wt_mode = mode_from_metadata(&meta);
             if wt_oid != base_entry.oid || wt_mode != base_entry.mode {
                 result.push(DiffEntry {
@@ -861,8 +878,15 @@ pub fn worktree_differs_from_index_entry(
     let conv = crlf::ConversionConfig::from_config(&config);
     let attrs = crlf::load_gitattributes(work_tree);
     let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
-    let worktree_oid =
-        hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, path_str_ref)?;
+    let worktree_oid = hash_worktree_file(
+        odb,
+        &file_path,
+        &meta,
+        &conv,
+        &file_attrs,
+        path_str_ref,
+        Some(ie),
+    )?;
 
     let mut eff_oid = worktree_oid;
     if eff_oid != ie.oid {
@@ -923,21 +947,31 @@ fn has_symlink_in_path(work_tree: &Path, rel_path: &str) -> bool {
 }
 
 pub fn hash_worktree_file(
-    _odb: &Odb,
+    odb: &Odb,
     path: &Path,
     meta: &fs::Metadata,
     conv: &crate::crlf::ConversionConfig,
     file_attrs: &crate::crlf::FileAttrs,
     rel_path: &str,
+    index_entry: Option<&IndexEntry>,
 ) -> Result<ObjectId> {
+    let prior_blob: Option<Vec<u8>> = index_entry
+        .filter(|e| e.oid != zero_oid())
+        .and_then(|e| odb.read(&e.oid).ok().map(|o| o.data));
     let data = if meta.file_type().is_symlink() {
         // For symlinks, hash the target path
         let target = fs::read_link(path)?;
         target.to_string_lossy().into_owned().into_bytes()
     } else {
         let raw = fs::read(path)?;
-        // Apply clean conversion (CRLF→LF) so hash matches index blob
-        crate::crlf::convert_to_git(&raw, rel_path, conv, file_attrs).unwrap_or(raw)
+        // Apply clean conversion (CRLF→LF) so hash matches index blob.
+        // Do not run safecrlf here: diff/commit use this for hashing and must not print warnings.
+        let opts = crate::crlf::ConvertToGitOpts {
+            index_blob: prior_blob.as_deref(),
+            renormalize: false,
+            check_safecrlf: false,
+        };
+        crate::crlf::convert_to_git_with_opts(&raw, rel_path, conv, file_attrs, opts).unwrap_or(raw)
     };
 
     Ok(Odb::hash_object_data(ObjectKind::Blob, &data))
@@ -1061,7 +1095,15 @@ pub fn diff_tree_to_worktree(
 
                 // Stat or content differs — hash the file
                 let file_attrs = crlf::get_file_attrs(&attrs, path, &config);
-                let wt_oid = hash_worktree_file(odb, &file_path, meta, &conv, &file_attrs, path)?;
+                let wt_oid = hash_worktree_file(
+                    odb,
+                    &file_path,
+                    meta,
+                    &conv,
+                    &file_attrs,
+                    path,
+                    index_entries.get(path.as_bytes()).copied(),
+                )?;
                 let wt_mode = mode_from_metadata(meta);
                 if wt_oid != te.oid || wt_mode != te.mode {
                     result.push(DiffEntry {
@@ -1092,7 +1134,15 @@ pub fn diff_tree_to_worktree(
             (None, Some(ref meta)) => {
                 // In index but not in tree, and exists in worktree
                 let file_attrs = crlf::get_file_attrs(&attrs, path, &config);
-                let wt_oid = hash_worktree_file(odb, &file_path, meta, &conv, &file_attrs, path)?;
+                let wt_oid = hash_worktree_file(
+                    odb,
+                    &file_path,
+                    meta,
+                    &conv,
+                    &file_attrs,
+                    path,
+                    index_entries.get(path.as_bytes()).copied(),
+                )?;
                 let wt_mode = mode_from_metadata(meta);
                 result.push(DiffEntry {
                     status: DiffStatus::Added,

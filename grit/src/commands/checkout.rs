@@ -3640,8 +3640,10 @@ fn write_blob_to_worktree(
         bail!("cannot checkout non-blob at '{rel_path}'");
     }
 
-    // Path-only checkout: if the work tree already matches the index blob (clean pipeline agrees),
-    // skip smudge entirely — matches Git / t0021 filter log expectations.
+    // Path-only checkout: if the work tree already matches the *smudged* blob Git would write
+    // (EOL + ident + filters), skip rewriting — matches Git / t0021 filter log expectations.
+    // Compare against smudge output, not clean: `core.eol=crlf` can change bytes without changing
+    // the index blob (t0027).
     if !full_smudge_meta && mode != MODE_SYMLINK {
         let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
         let conv = crlf::ConversionConfig::from_config(&config);
@@ -3650,8 +3652,17 @@ fn write_blob_to_worktree(
         if file_attrs.working_tree_encoding.is_none() {
             let abs_path = work_tree.join(rel_path);
             if let Ok(wt_raw) = std::fs::read(&abs_path) {
-                if let Ok(cleaned) = crlf::convert_to_git(&wt_raw, rel_path, &conv, &file_attrs) {
-                    if cleaned == obj.data {
+                let oid_hex = format!("{oid}");
+                let smudge_meta = filter_process::smudge_meta_blob_only(&oid_hex);
+                if let Ok(smudged) = crlf::convert_to_worktree(
+                    &obj.data,
+                    rel_path,
+                    &conv,
+                    &file_attrs,
+                    Some(&oid_hex),
+                    Some(&smudge_meta),
+                ) {
+                    if smudged == wt_raw {
                         return Ok(false);
                     }
                 }

@@ -55,6 +55,12 @@ fn literal_global() -> bool {
     git_env_bool("GIT_LITERAL_PATHSPECS", false)
 }
 
+/// Whether `GIT_LITERAL_PATHSPECS` is enabled (shell `*` and `?` are literal, not globs).
+#[must_use]
+pub fn literal_pathspecs_enabled() -> bool {
+    literal_global()
+}
+
 fn glob_global() -> bool {
     git_env_bool("GIT_GLOB_PATHSPECS", false)
 }
