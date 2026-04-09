@@ -5,6 +5,7 @@ use clap::Args as ClapArgs;
 use regex::{Regex, RegexBuilder};
 use std::io::{self, Write};
 use std::path::Path;
+use std::process::Command;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::index::{MODE_GITLINK, MODE_TREE};
@@ -224,6 +225,14 @@ pub struct Args {
     /// Positional arguments: [pattern] [<tree>] [-- pathspec...]
     #[arg(trailing_var_arg = true)]
     pub positional: Vec<String>,
+
+    /// Set by `main` after stripping `-O` / `--open-files-in-pager` (Git does not consume the next argv as the pager unless it is glued: `-Opager`).
+    #[arg(skip)]
+    pub open_in_pager: bool,
+
+    /// Explicit pager from `-Opager` or `--open-files-in-pager=pager`. When `None` with `open_in_pager`, resolve like Git (GIT_PAGER / config / PAGER).
+    #[arg(skip)]
+    pub open_pager_cmd: Option<String>,
 }
 
 impl Args {
@@ -262,6 +271,41 @@ impl Args {
     }
 }
 
+/// Strip `-O` / `--open-files-in-pager` from argv before clap parsing.
+///
+/// Git only takes the pager from the same argv cell as `-O` (`-Opager`). A separate token after
+/// lone `-O` is not the pager (it is usually the pattern).
+pub fn preprocess_open_in_pager_argv(argv: Vec<String>) -> (Vec<String>, bool, Option<String>) {
+    let mut open_in_pager = false;
+    let mut open_pager_cmd: Option<String> = None;
+    let mut out = Vec::with_capacity(argv.len());
+    for a in argv {
+        if a == "-O" || a == "--open-files-in-pager" {
+            open_in_pager = true;
+            continue;
+        }
+        if let Some(v) = a.strip_prefix("--open-files-in-pager=") {
+            open_in_pager = true;
+            if !v.is_empty() {
+                open_pager_cmd = Some(v.to_string());
+            }
+            continue;
+        }
+        if a.len() >= 2 {
+            let b = a.as_bytes();
+            if b[0] == b'-' && b[1] == b'O' {
+                open_in_pager = true;
+                if a.len() > 2 {
+                    open_pager_cmd = Some(a[2..].to_string());
+                }
+                continue;
+            }
+        }
+        out.push(a);
+    }
+    (out, open_in_pager, open_pager_cmd)
+}
+
 /// Run `grit grep`.
 pub fn run(mut args: Args) -> Result<()> {
     let has_attr_src = std::env::var("GIT_ATTR_SOURCE")
@@ -277,8 +321,8 @@ pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
     // Apply grep config settings
+    let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
     {
-        let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
         if let Some(ref c) = config {
             // grep.linenumber: if user didn't explicitly pass -n or --no-line-number
             if !args.line_number && !args.no_line_number {
@@ -385,11 +429,29 @@ pub fn run(mut args: Args) -> Result<()> {
         bail!("no pattern given");
     }
 
+    if args.open_in_pager && args.cached {
+        bail!("--open-files-in-pager only works on the worktree");
+    }
+    if args.open_in_pager && tree_ish.is_some() {
+        bail!("--open-files-in-pager only works on the worktree");
+    }
+
     // Determine matching mode: --all-match or --and means all patterns must match a line
     let all_match = args.all_match || args.and;
 
     // Build the regex matchers
     let matchers = build_matchers(&patterns, &args)?;
+
+    let mut open_paths: Option<Vec<String>> = if args.open_in_pager {
+        Some(Vec::new())
+    } else {
+        None
+    };
+
+    if open_paths.is_some() {
+        args.color = "never".to_string();
+        args.files_with_matches = true;
+    }
 
     let stdout = io::stdout();
     let mut out_handle = stdout.lock();
@@ -416,6 +478,7 @@ pub fn run(mut args: Args) -> Result<()> {
             &mut need_sep,
             out,
             all_match,
+            &mut open_paths,
         )?;
     } else if let Some(tree_spec) = &tree_ish {
         // Search a tree object
@@ -459,6 +522,7 @@ pub fn run(mut args: Args) -> Result<()> {
             out,
             all_match,
             &diff_attrs,
+            &mut open_paths,
         )?;
     } else if args.cached {
         // Search index blobs (--cached)
@@ -471,6 +535,7 @@ pub fn run(mut args: Args) -> Result<()> {
             &mut need_sep,
             out,
             all_match,
+            &mut open_paths,
         )?;
     } else {
         // Search working tree (tracked files from index)
@@ -483,14 +548,110 @@ pub fn run(mut args: Args) -> Result<()> {
             &mut need_sep,
             out,
             all_match,
+            &mut open_paths,
         )?;
     }
 
     if found_any {
+        if let Some(paths) = open_paths {
+            let pager_cmd = match &args.open_pager_cmd {
+                Some(s) if !s.is_empty() => s.clone(),
+                _ => resolve_git_pager(&config),
+            };
+            let work_dir = std::env::current_dir().context("cannot get current directory")?;
+            run_open_in_pager(&work_dir, &pager_cmd, &patterns, args.ignore_case, &paths)?;
+        }
         Ok(())
     } else {
         std::process::exit(1);
     }
+}
+
+/// Resolve pager like `git var GIT_PAGER`: env, then `core.pager`, then `PAGER`, then `cat`.
+fn resolve_git_pager(config: &Option<ConfigSet>) -> String {
+    std::env::var("GIT_PAGER")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            config
+                .as_ref()
+                .and_then(|c| c.get("core.pager"))
+                .filter(|s| !s.is_empty())
+        })
+        .or_else(|| std::env::var("PAGER").ok().filter(|s| !s.is_empty()))
+        .unwrap_or_else(|| "cat".to_owned())
+}
+
+/// True if the pager command must be run via `sh -c` (Git's `prepare_shell_cmd` heuristic).
+fn pager_needs_shell(pager_cmd: &str) -> bool {
+    const META: &[u8] = b"|&;<>()$`\\\"' \t\n*?[#~=%";
+    pager_cmd.as_bytes().iter().any(|b| META.contains(b))
+}
+
+/// Strip leading directory from pager argv0 when Git would (path ending in `/xxxx`).
+fn pager_executable_for_argv0(pager_cmd: &str) -> String {
+    let b = pager_cmd.as_bytes();
+    let len = b.len();
+    if len > 4 && (b[len - 5] == b'/' || b[len - 5] == b'\\') {
+        pager_cmd[len - 4..].to_owned()
+    } else {
+        pager_cmd.to_owned()
+    }
+}
+
+/// Run the pager with collected file paths, matching Git's `run_pager` + `prepare_shell_cmd`.
+fn run_open_in_pager(
+    work_dir: &Path,
+    pager_cmd: &str,
+    patterns: &[String],
+    ignore_case: bool,
+    files: &[String],
+) -> Result<()> {
+    let exec0 = pager_executable_for_argv0(pager_cmd);
+    let base = Path::new(&exec0)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&exec0);
+
+    let mut extra: Vec<String> = Vec::new();
+    if patterns.len() == 1 {
+        let pat = &patterns[0];
+        if base == "less" || base == "vi" {
+            if ignore_case && base == "less" {
+                extra.push("-I".to_string());
+            }
+            let star = if base == "less" { "*" } else { "" };
+            extra.push(format!("+/{star}{pat}"));
+        }
+    }
+
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    let status = if pager_needs_shell(pager_cmd) {
+        let script = if files.is_empty() {
+            pager_cmd.to_string()
+        } else {
+            format!("{pager_cmd} \"$@\"")
+        };
+        Command::new(&shell)
+            .current_dir(work_dir)
+            .arg("-c")
+            .arg(&script)
+            .args(extra.iter())
+            .args(files.iter())
+            .status()
+    } else {
+        Command::new(pager_cmd)
+            .current_dir(work_dir)
+            .args(extra.iter())
+            .args(files.iter())
+            .status()
+    }
+    .context("failed to run pager for --open-files-in-pager")?;
+
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+    Ok(())
 }
 
 /// Grep the index (--cached mode), optionally recursing into submodules.
@@ -504,6 +665,7 @@ fn grep_cached(
     need_sep: &mut bool,
     out: &mut (impl Write + ?Sized),
     all_match: bool,
+    open_paths: &mut Option<Vec<String>>,
 ) -> Result<bool> {
     let index = repo.load_index().context("loading index")?;
     // Load diff attrs from index (for --cached, use index attrs) or worktree
@@ -552,6 +714,7 @@ fn grep_cached(
                             need_sep,
                             out,
                             all_match,
+                            open_paths,
                         )? {
                             found_any = true;
                         }
@@ -595,6 +758,7 @@ fn grep_cached(
                         need_sep,
                         out,
                         all_match,
+                        open_paths,
                     )? {
                         found_any = true;
                     }
@@ -617,6 +781,7 @@ fn grep_cached(
                     need_sep,
                     out,
                     all_match,
+                    open_paths,
                 )? {
                     found_any = true;
                 }
@@ -657,6 +822,7 @@ fn grep_cached(
                     need_sep,
                     out,
                     all_match,
+                    open_paths,
                 )? {
                     found_any = true;
                 }
@@ -679,6 +845,7 @@ fn grep_cached(
                 need_sep,
                 out,
                 all_match,
+                open_paths,
             )? {
                 found_any = true;
             }
@@ -698,6 +865,7 @@ fn grep_worktree(
     need_sep: &mut bool,
     out: &mut (impl Write + ?Sized),
     all_match: bool,
+    open_paths: &mut Option<Vec<String>>,
 ) -> Result<bool> {
     let work_tree = repo
         .work_tree
@@ -744,6 +912,7 @@ fn grep_worktree(
                         need_sep,
                         out,
                         all_match,
+                        open_paths,
                     )? {
                         found_any = true;
                     }
@@ -793,6 +962,7 @@ fn grep_worktree(
                         need_sep,
                         out,
                         all_match,
+                        open_paths,
                     )? {
                         found_any = true;
                     }
@@ -815,6 +985,7 @@ fn grep_worktree(
                     need_sep,
                     out,
                     all_match,
+                    open_paths,
                 )? {
                     found_any = true;
                 }
@@ -863,6 +1034,7 @@ fn grep_worktree(
                         need_sep,
                         out,
                         all_match,
+                        open_paths,
                     )? {
                         found_any = true;
                     }
@@ -885,6 +1057,7 @@ fn grep_worktree(
                     need_sep,
                     out,
                     all_match,
+                    open_paths,
                 )? {
                     found_any = true;
                 }
@@ -925,6 +1098,7 @@ fn grep_worktree(
                     need_sep,
                     out,
                     all_match,
+                    open_paths,
                 )? {
                     found_any = true;
                 }
@@ -947,6 +1121,7 @@ fn grep_worktree(
                 need_sep,
                 out,
                 all_match,
+                open_paths,
             )? {
                 found_any = true;
             }
@@ -1151,6 +1326,7 @@ fn grep_filesystem(
     need_sep: &mut bool,
     out: &mut (impl Write + ?Sized),
     all_match: bool,
+    open_paths: &mut Option<Vec<String>>,
 ) -> Result<bool> {
     let mut found_any = false;
     let mut entries: Vec<_> = match std::fs::read_dir(dir) {
@@ -1187,6 +1363,7 @@ fn grep_filesystem(
                 need_sep,
                 out,
                 all_match,
+                open_paths,
             )? {
                 found_any = true;
             }
@@ -1223,6 +1400,7 @@ fn grep_filesystem(
                     need_sep,
                     out,
                     all_match,
+                    open_paths,
                 )? {
                     found_any = true;
                 }
@@ -1602,6 +1780,7 @@ fn grep_content(
     need_sep: &mut bool,
     out: &mut (impl Write + ?Sized),
     all_match: bool,
+    open_paths: &mut Option<Vec<String>>,
 ) -> Result<bool> {
     let color = args.use_color();
 
@@ -1662,7 +1841,11 @@ fn grep_content(
     // Special modes: files-with-matches, files-without-match, count
     if args.files_with_matches {
         if has_match {
-            writeln!(out, "{}", fmt_name(&display_name, color))?;
+            if let Some(paths) = open_paths {
+                paths.push(filename.to_string());
+            } else {
+                writeln!(out, "{}", fmt_name(&display_name, color))?;
+            }
         }
         return Ok(has_match);
     }
@@ -1869,6 +2052,7 @@ fn grep_tree(
     out: &mut (impl Write + ?Sized),
     all_match: bool,
     diff_attrs: &[DiffAttrRule],
+    open_paths: &mut Option<Vec<String>>,
 ) -> Result<bool> {
     let entries = parse_tree(tree_data)?;
     let mut found = false;
@@ -1935,6 +2119,7 @@ fn grep_tree(
                             out,
                             all_match,
                             &sub_diff_attrs,
+                            open_paths,
                         )? {
                             found = true;
                         }
@@ -1964,6 +2149,7 @@ fn grep_tree(
                 out,
                 all_match,
                 diff_attrs,
+                open_paths,
             )? {
                 found = true;
             }
@@ -2009,6 +2195,7 @@ fn grep_tree(
                 let content = String::from_utf8_lossy(&obj.data);
                 if grep_content(
                     &full_name, &content, matchers, args, tree_name, need_sep, out, all_match,
+                    open_paths,
                 )? {
                     found = true;
                 }
