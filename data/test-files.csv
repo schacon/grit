@@ -1125,7 +1125,7 @@ t6425-merge-rename-delete	t6	yes	1	1	0	true	ok	0
 t6426-merge-skip-unneeded-updates	t6	yes	13	13	0	true	ok	0
 t6427-diff3-conflict-markers	t6	yes	9	9	0	true	ok	0
 t6428-merge-conflicts-sparse	t6	yes	2	2	0	true	ok	0
-t6429-merge-sequence-rename-caching	t6	yes	11	9	2	false	ok	0
+t6429-merge-sequence-rename-caching	t6	yes	11	11	0	true	ok	0
 t6430-merge-recursive	t6	yes	36	24	12	false	ok	0
 t6430-merge-strategy-option	t6	yes	6	6	0	true	ok	0
 t6431-merge-criscross	t6	yes	2	2	0	true	ok	0
