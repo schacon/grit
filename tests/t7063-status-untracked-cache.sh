@@ -5,6 +5,10 @@ test_description='test untracked cache'
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
+# Upstream Git leaves cwd inside `worktree` after setup; this file relies on that.
+TEST_LIB_INHERIT_CWD=1
+export TEST_LIB_INHERIT_CWD
+
 . ./test-lib.sh
 
 # On some filesystems (e.g. FreeBSD's ext2 and ufs) directory mtime

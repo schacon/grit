@@ -1349,10 +1349,16 @@ test_atexit_handler () {
 
 test_eval_inner_ () {
 	local _eval_inner_ret
-	cd "$TRASH_DIRECTORY" || exit 1
+	if test -z "${TEST_LIB_INHERIT_CWD-}"
+	then
+		cd "$TRASH_DIRECTORY" || exit 1
+	fi
 	eval "$1"
 	_eval_inner_ret=$?
-	cd "$TRASH_DIRECTORY" || exit 1
+	if test -z "${TEST_LIB_INHERIT_CWD-}"
+	then
+		cd "$TRASH_DIRECTORY" || exit 1
+	fi
 	return "$_eval_inner_ret"
 }
 

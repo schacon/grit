@@ -31,6 +31,7 @@ pub mod delta_encode;
 pub mod diff;
 pub mod diffstat;
 pub mod error;
+mod ewah_bitmap;
 pub mod fast_export;
 pub mod fast_import;
 pub mod fetch_head;
@@ -81,6 +82,7 @@ pub mod rev_parse;
 pub mod simple_ipc;
 pub mod sparse_checkout;
 pub mod unicode_normalization;
+pub mod untracked_cache;
 #[cfg(not(unix))]
 pub mod simple_ipc {
     /// Whether simple IPC is supported on this platform.

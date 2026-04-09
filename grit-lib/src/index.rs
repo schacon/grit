@@ -28,6 +28,7 @@ use crate::objects::{parse_tree, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
 use crate::repo::Repository;
 use crate::rev_parse;
+use crate::untracked_cache;
 
 /// File mode for a regular (non-executable) file.
 pub const MODE_REGULAR: u32 = 0o100644;
@@ -42,6 +43,8 @@ pub const MODE_TREE: u32 = 0o040000;
 
 /// Git index extension signature `sdir` (sparse directory entries present).
 const INDEX_EXT_SPARSE_DIRECTORIES: u32 = u32::from_be_bytes(*b"sdir");
+/// Git index extension signature `UNTR` (untracked cache).
+const INDEX_EXT_UNTRACKED: u32 = u32::from_be_bytes(*b"UNTR");
 
 /// A single entry in the Git index.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,6 +184,8 @@ pub struct Index {
     pub entries: Vec<IndexEntry>,
     /// When true, the on-disk index includes the `sdir` extension (sparse index).
     pub sparse_directories: bool,
+    /// Optional untracked-cache extension (`UNTR`), matching Git's `istate->untracked`.
+    pub untracked_cache: Option<untracked_cache::UntrackedCache>,
 }
 
 /// Options for loading an index from disk.
@@ -241,6 +246,7 @@ impl Index {
             version,
             entries: Vec::new(),
             sparse_directories: false,
+            untracked_cache: None,
         }
     }
 
@@ -257,6 +263,7 @@ impl Index {
                 version: v,
                 entries: Vec::new(),
                 sparse_directories: false,
+                untracked_cache: None,
             };
         }
 
@@ -285,6 +292,7 @@ impl Index {
             version,
             entries: Vec::new(),
             sparse_directories: false,
+            untracked_cache: None,
         }
     }
 
@@ -299,6 +307,7 @@ impl Index {
                 version: v,
                 entries: Vec::new(),
                 sparse_directories: false,
+                untracked_cache: None,
             };
         }
 
@@ -330,6 +339,7 @@ impl Index {
             version,
             entries: Vec::new(),
             sparse_directories: false,
+            untracked_cache: None,
         }
     }
 
@@ -575,6 +585,7 @@ impl Index {
         }
 
         let mut sparse_directories = false;
+        let mut untracked_cache = None;
         while pos + 8 <= body.len() {
             let sig = u32::from_be_bytes(
                 body[pos..pos + 4]
@@ -594,6 +605,9 @@ impl Index {
             }
             if sig == INDEX_EXT_SPARSE_DIRECTORIES {
                 sparse_directories = true;
+            } else if sig == INDEX_EXT_UNTRACKED {
+                let ext_data = &body[pos..pos + ext_sz];
+                untracked_cache = untracked_cache::parse_untracked_extension(ext_data);
             }
             pos += ext_sz;
         }
@@ -605,6 +619,7 @@ impl Index {
             version,
             entries,
             sparse_directories,
+            untracked_cache,
         })
     }
 
@@ -721,12 +736,18 @@ impl Index {
             out.extend_from_slice(&INDEX_EXT_SPARSE_DIRECTORIES.to_be_bytes());
             out.extend_from_slice(&0u32.to_be_bytes());
         }
+        if let Some(uc) = &self.untracked_cache {
+            let payload = untracked_cache::write_untracked_extension(uc);
+            out.extend_from_slice(&INDEX_EXT_UNTRACKED.to_be_bytes());
+            out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+            out.extend_from_slice(&payload);
+        }
         Ok(())
     }
 
     /// Add or replace an entry (matched by path + stage).
     pub fn add_or_replace(&mut self, entry: IndexEntry) {
-        let path = &entry.path;
+        let path = entry.path.clone();
         let stage = entry.stage();
         // Binary search for the insertion point by (path, stage)
         let result = self.entries.binary_search_by(|e| {
@@ -743,6 +764,11 @@ impl Index {
             Err(pos) => {
                 // Not found — insert at sorted position
                 self.entries.insert(pos, entry);
+            }
+        }
+        if stage == 0 {
+            if let Ok(p) = std::str::from_utf8(&path) {
+                self.invalidate_untracked_cache_for_path(p);
             }
         }
     }
@@ -764,7 +790,20 @@ impl Index {
     pub fn remove(&mut self, path: &[u8]) -> bool {
         let before = self.entries.len();
         self.entries.retain(|e| e.path != path);
-        self.entries.len() < before
+        let removed = self.entries.len() < before;
+        if removed {
+            if let Ok(p) = std::str::from_utf8(path) {
+                self.invalidate_untracked_cache_for_path(p);
+            }
+        }
+        removed
+    }
+
+    /// Invalidate UNTR nodes affected by an index change (Git `untracked_cache_*_index`).
+    pub fn invalidate_untracked_cache_for_path(&mut self, path: &str) {
+        if let Some(uc) = self.untracked_cache.as_mut() {
+            untracked_cache::invalidate_path(uc, path);
+        }
     }
 
     /// Remove every index entry whose path lies strictly under `path` (all stages).
@@ -778,6 +817,10 @@ impl Index {
             return;
         }
         let plen = prefix.len();
+        let had_descendant = self.entries.iter().any(|e| {
+            let ep = e.path.as_slice();
+            ep.len() > plen && ep.starts_with(prefix) && ep[plen] == b'/'
+        });
         self.entries.retain(|e| {
             let ep = e.path.as_slice();
             if ep.len() <= plen {
@@ -789,6 +832,9 @@ impl Index {
             // Drop paths strictly under `prefix/` (keep same-length prefix matches like "d-other").
             ep[plen] != b'/'
         });
+        if had_descendant {
+            self.invalidate_untracked_cache_for_path(path);
+        }
     }
 
     /// Sort entries in Git's canonical order: by path, then by stage.

@@ -19,6 +19,7 @@ use grit_lib::rev_parse::abbreviate_object_id;
 use grit_lib::state::{
     resolve_head, split_commit_in_progress, wt_status_get_state, HeadState, WtStatusState,
 };
+use grit_lib::untracked_cache::{self, UntrackedCache, UntrackedIgnoredMode};
 
 use crate::branch_tracking::{
     format_tracking_info, shorten_tracking_ref, stat_branch_pair, upstream_tracking_full_ref,
@@ -308,6 +309,22 @@ pub fn run(mut args: Args) -> Result<()> {
     let index_sparse_on_disk = index.sparse_directories;
     let _ = index.expand_sparse_directory_placeholders(&repo.odb);
 
+    match config
+        .get("core.untrackedCache")
+        .map(|s| s.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("false") | Some("0") | Some("no") | Some("off") => {
+            index.untracked_cache = None;
+        }
+        Some("true") | Some("1") | Some("yes") | Some("on") if index.untracked_cache.is_none() => {
+            let flags = untracked_cache::dir_flags_from_config(&config);
+            let ident = untracked_cache::untracked_cache_ident(work_tree);
+            index.untracked_cache = Some(UntrackedCache::new_shell(flags, ident));
+        }
+        _ => {}
+    }
+
     // Get HEAD tree OID
     let head_tree = match head.oid() {
         Some(oid) => {
@@ -356,7 +373,48 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let (untracked, ignored_files) = if !hide_untracked {
-        collect_untracked_and_ignored(&repo, &index, work_tree, ignored_mode, show_all_untracked)?
+        let uc_mode = match ignored_mode {
+            IgnoredMode::No => UntrackedIgnoredMode::No,
+            IgnoredMode::Traditional => UntrackedIgnoredMode::Traditional,
+            IgnoredMode::Matching => UntrackedIgnoredMode::Matching,
+        };
+        let mut uc_slot = index.untracked_cache.take();
+        let trace_perf = std::env::var("GIT_TRACE2_PERF")
+            .ok()
+            .filter(|s| !s.is_empty());
+        if let Some(uc) = uc_slot.as_mut() {
+            let ident_ok = ident_matches_worktree(uc, work_tree);
+            if !ident_ok {
+                eprintln!("warning: untracked cache is disabled on this system or location");
+            } else {
+                let _ = untracked_cache::refresh_untracked_cache_for_status(
+                    &repo,
+                    &index,
+                    work_tree,
+                    &config,
+                    uc,
+                    show_all_untracked,
+                    uc_mode,
+                );
+                if let Some(ref p) = trace_perf {
+                    let _ = emit_read_directory_trace(p, Some(uc));
+                }
+            }
+        } else if let Some(ref p) = trace_perf {
+            let _ = emit_read_directory_trace(p, None);
+        }
+        index.untracked_cache = uc_slot;
+        let out = collect_untracked_and_ignored(
+            &repo,
+            &index,
+            work_tree,
+            ignored_mode,
+            show_all_untracked,
+        )?;
+        if !args.no_optional_locks {
+            let _ = repo.write_index_at(&index_path, &mut index);
+        }
+        out
     } else {
         (Vec::new(), Vec::new())
     };
@@ -2764,6 +2822,71 @@ fn remap_diff_paths(
             new_entry
         })
         .collect()
+}
+
+fn ident_matches_worktree(
+    uc: &grit_lib::untracked_cache::UntrackedCache,
+    work_tree: &Path,
+) -> bool {
+    uc.ident == untracked_cache::untracked_cache_ident(work_tree)
+}
+
+fn emit_read_directory_trace(
+    path: &str,
+    uc: Option<&grit_lib::untracked_cache::UntrackedCache>,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let now = {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default();
+        let total_secs = now.as_secs();
+        let micros = now.subsec_micros();
+        let secs_in_day = total_secs % 86400;
+        let hours = secs_in_day / 3600;
+        let mins = (secs_in_day % 3600) / 60;
+        let secs = secs_in_day % 60;
+        format!("{:02}:{:02}:{:02}.{:06}", hours, mins, secs, micros)
+    };
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    let (node, gi, di, op) = uc.map_or((0u64, 0u64, 0u64, 0u64), |u| {
+        (
+            u.dir_created,
+            u.gitignore_invalidated,
+            u.dir_invalidated,
+            u.dir_opened,
+        )
+    });
+    // Field 9 must match upstream `t7063` / `get_relevant_traces` (Git abbreviates `read_directory`).
+    writeln!(
+        file,
+        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | ....path:",
+        now, "data"
+    )?;
+    writeln!(
+        file,
+        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | ....node-creation:{}",
+        now, "data", node
+    )?;
+    writeln!(
+        file,
+        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | ....gitignore-invalidation:{}",
+        now, "data", gi
+    )?;
+    writeln!(
+        file,
+        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | ....directory-invalidation:{}",
+        now, "data", di
+    )?;
+    writeln!(
+        file,
+        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | ....opendir:{}",
+        now, "data", op
+    )?;
+    Ok(())
 }
 
 fn status_path_matches(path: &str, pathspecs: &[String]) -> bool {
