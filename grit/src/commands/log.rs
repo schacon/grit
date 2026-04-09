@@ -1116,6 +1116,19 @@ fn extract_epoch_from_ident(ident: &str) -> i64 {
     committer_timestamp_for_until_filter(ident)
 }
 
+/// Strip the timestamp trailer from a Git ident line (Git `strip_timestamp` in `grep.c`).
+///
+/// The author/committer payload is `Name <email> <epoch> <tz>`; pattern matching uses only
+/// the `Name <email>` prefix (through the closing `>`), so `--author=-0700` does not match
+/// the timezone field (t7810).
+fn ident_for_author_pattern_match(ident: &str) -> String {
+    if let Some(gt) = ident.rfind('>') {
+        ident[..=gt].to_string()
+    } else {
+        ident.to_string()
+    }
+}
+
 /// When `git log --graph <tip> --branches` is used, Git prefers `<tip>` as the leftmost
 /// branch tip when it is incomparable with the current first commit (t3451-history-reword).
 fn prefer_explicit_tip_first_in_graph_walk(
@@ -3747,15 +3760,17 @@ fn run_reflog_walk(
             continue;
         }
 
+        let author_key = ident_for_author_pattern_match(&commit_data.author);
         let author_ok =
-            author_res.is_empty() || author_res.iter().any(|re| re.is_match(&commit_data.author));
+            author_res.is_empty() || author_res.iter().any(|re| re.is_match(author_key.as_str()));
         if !author_ok {
             continue;
         }
+        let committer_key = ident_for_author_pattern_match(&commit_data.committer);
         let committer_ok = committer_res.is_empty()
             || committer_res
                 .iter()
-                .any(|re| re.is_match(&commit_data.committer));
+                .any(|re| re.is_match(committer_key.as_str()));
         if !committer_ok {
             continue;
         }
@@ -4298,16 +4313,21 @@ impl<'a> WalkCommitsIter<'a> {
             if self.merges_only && !is_merge {
                 continue;
             }
+            let author_key = ident_for_author_pattern_match(&info.author);
             let author_ok = self.author_res.is_empty()
-                || self.author_res.iter().any(|re| re.is_match(&info.author));
+                || self
+                    .author_res
+                    .iter()
+                    .any(|re| re.is_match(author_key.as_str()));
             if !author_ok {
                 continue;
             }
+            let committer_key = ident_for_author_pattern_match(&info.committer);
             let committer_ok = self.committer_res.is_empty()
                 || self
                     .committer_res
                     .iter()
-                    .any(|re| re.is_match(&info.committer));
+                    .any(|re| re.is_match(committer_key.as_str()));
             if !committer_ok {
                 continue;
             }

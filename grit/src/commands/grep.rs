@@ -19,22 +19,15 @@ use grit_lib::merge_diff::{blob_text_for_diff, blob_text_for_diff_with_oid, diff
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{discover_optional, resolve_revision, show_prefix, split_treeish_colon};
+use grit_lib::rev_parse::{discover_optional, resolve_revision, split_treeish_colon};
 use grit_lib::wildmatch::wildmatch;
 
 use crate::pathspec::resolve_pathspec;
 
-/// Strip [`show_prefix`] from a work-tree-relative path for user-facing output (t1501 `git grep`
-/// from `work/sub`).
-fn grep_output_path(repo: &Repository, full_worktree_relative: &str) -> String {
-    let Ok(cwd) = std::env::current_dir() else {
-        return full_worktree_relative.to_owned();
-    };
-    let pfx = show_prefix(repo, &cwd);
-    if !pfx.is_empty() && full_worktree_relative.starts_with(&pfx) {
-        return full_worktree_relative[pfx.len()..].to_owned();
-    }
-    full_worktree_relative.to_owned()
+/// Quoted path for stderr / binary messages: cwd-relative like match lines (t7810 subdir paths).
+fn grep_output_path(repo: &Repository, path_prefix: &str, path_str: &str, args: &Args) -> String {
+    let rel = worktree_display_rel(repo, path_prefix, path_str, args);
+    path_for_output(&rel, args)
 }
 
 /// Arguments for `grit grep`.
@@ -440,20 +433,12 @@ fn run_inner(pattern_tokens: Vec<PatternToken>, mut args: Args) -> Result<()> {
     let (first_pos_pattern, tree_ish, mut pathspecs) =
         parse_positional(&args, &repo, has_peeled_patterns)?;
     pathspecs = pathspecs_relative_to_cwd(&repo, &pathspecs);
-    let cwd = std::env::current_dir().context("cannot get current directory")?;
-    let pathspec_prefix = repo
-        .work_tree
-        .as_ref()
-        .map(|_| show_prefix(&repo, &cwd))
-        .filter(|p| !p.is_empty())
-        .map(|mut p| {
-            p.pop();
-            p
-        });
+    // `pathspecs_relative_to_cwd` already rebased user pathspecs to repo-relative paths; do not
+    // apply `show_prefix` again in `resolve_pathspec` (would double-prefix under subdirs, t7810 -f).
     pathspecs = if let Some(wt) = repo.work_tree.as_ref() {
         pathspecs
             .into_iter()
-            .map(|p| resolve_pathspec(&p, wt, pathspec_prefix.as_deref()))
+            .map(|p| resolve_pathspec(&p, wt, None))
             .collect()
     } else {
         pathspecs
@@ -876,11 +861,16 @@ fn grep_cached(
         } else {
             format!("{path_prefix}{path_str}")
         };
-        let output_path = grep_output_path(repo, &full_path);
+        let output_path = grep_output_path(repo, path_prefix, &path_str, args);
 
         // Pathspec filtering is relative to the superproject
         let is_submodule = entry.mode == MODE_GITLINK;
         if !pathspecs.is_empty() && !any_pathspec_matches(&full_path, pathspecs, is_submodule) {
+            continue;
+        }
+
+        // `git grep -L --cached` lists tracked paths without matches; skip intent-to-add (t7810).
+        if args.cached && args.files_without_match && entry.intent_to_add() {
             continue;
         }
 
@@ -1083,7 +1073,7 @@ fn grep_worktree(
         } else {
             format!("{path_prefix}{path_str}")
         };
-        let output_path = grep_output_path(repo, &full_rel);
+        let output_path = grep_output_path(repo, path_prefix, &path_str, args);
         let display_path = worktree_display_rel(repo, path_prefix, &path_str, args);
 
         // Pathspec filtering is relative to the superproject

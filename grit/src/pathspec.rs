@@ -337,8 +337,13 @@ pub fn pathdiff(cwd: &Path, work_tree: &Path) -> Option<String> {
 /// or `None` when cwd is the work tree root.
 #[must_use]
 pub fn resolve_pathspec(pathspec: &str, work_tree: &Path, prefix: Option<&str>) -> String {
+    // Git: `.` at repo root means "match the whole tree" (not an empty pathspec).
+    // An empty resolved pathspec would match nothing and breaks `grep -- . t` max-depth.
     if pathspec == "." {
-        return prefix.unwrap_or("").to_owned();
+        return match prefix {
+            Some(p) if !p.is_empty() => p.to_owned(),
+            _ => ".".to_owned(),
+        };
     }
     if pathspec.contains("../") || pathspec.starts_with("../") {
         let cwd = std::env::current_dir().unwrap_or_default();
