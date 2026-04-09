@@ -941,7 +941,7 @@ t5521-pull-options	t5	yes	22	4	18	false	ok	0
 t5522-pull-symlink	t5	yes	4	1	3	false	ok	0
 t5523-push-upstream	t5	yes	17	10	7	false	ok	0
 t5524-fmt-merge-msg	t5	yes	58	58	0	true	ok	0
-t5524-pull-msg	t5	yes	3	1	2	false	ok	0
+t5524-pull-msg	t5	yes	3	3	0	true	ok	0
 t5525-fetch-tagopt	t5	yes	5	1	4	false	ok	0
 t5526-fetch-submodules	t5	yes	56	16	40	false	ok	0
 t5527-fetch-odd-refs	t5	yes	5	5	0	true	ok	0

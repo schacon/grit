@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   308 |
+| Completed   |   309 |
 | In progress |     5 |
-| Remaining   |   456 |
+| Remaining   |   455 |
 | **Total**   |   769 |
 
-Task lines in `PLAN.md`: 308 completed (`[x]`), 5 in progress (`[~]`), 456 remaining (`[ ]`).
+Task lines in `PLAN.md`: 309 completed (`[x]`), 5 in progress (`[~]`), 455 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5524-pull-msg` — 3/3 tests pass (`git pull --no-rebase --log` merge message preserves `$` in subject lines; `--log=1` limits shortlog; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5620-backfill` — 10/10 tests pass (expanded-cone path matching: top-level dirs excluded unless in cone; `sparse-checkout` hydrates before apply + empty-index rebuild from HEAD; promisor lazy-fetch reads local ODB first; checkout skips `skip_worktree` paths)
 - `t4128-apply-root` — 12/12 tests pass (`apply --directory`: Git `normalize_path_copy` + trailing `/`; paths already stripped at parse time — do not strip again in `adjust_path`)
 - `t5318-pack-objects-revs-exclude` — 9/9 tests pass (`pack-objects --revs` resolves branch names via `rev_parse::resolve_revision` so packed refs work after `pack-refs`; `^master` exclusion and `--stdin-packs`; harness CSV/dashboards refreshed)
