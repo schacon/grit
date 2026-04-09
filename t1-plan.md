@@ -220,4 +220,4 @@
 - [ ] t1701-racy-split-index.sh
 - [ ] t1800-hook.sh
 - [ ] t1800-ls-remote.sh
-- [ ] t1900-repo-info.sh
+- [x] t1900-repo-info.sh
