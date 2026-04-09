@@ -961,7 +961,18 @@ pub fn run(mut args: Args) -> Result<()> {
                     &msg,
                     false,
                 );
-                let _ = grit_lib::reflog::mirror_branch_reflog_to_head(&repo.git_dir, refname);
+                // Append the same entry to `logs/HEAD` instead of replacing it with a copy of
+                // `logs/refs/heads/<branch>` — mirroring would drop `checkout: moving from …`
+                // lines and break `git switch -` / `@{-1}` (t3452-history-split).
+                let _ = append_reflog(
+                    &repo.git_dir,
+                    "HEAD",
+                    &old_oid,
+                    &commit_oid,
+                    &commit_data.committer,
+                    &msg,
+                    false,
+                );
             }
             _ => {
                 let _ = append_reflog(
@@ -1834,12 +1845,21 @@ fn is_effective_editor_value(raw: &str) -> bool {
     !t.is_empty() && t != ":"
 }
 
-fn resolve_commit_editor(repo: &Repository) -> String {
-    let visual_present = std::env::var("VISUAL").is_ok();
-    let editor_present = std::env::var("EDITOR").is_ok();
+fn git_editor_env_is_runnable(raw: &str) -> bool {
+    let t = raw.trim();
+    if t.contains(char::is_whitespace) {
+        return true;
+    }
+    let p = Path::new(t);
+    if p.is_absolute() || t.contains('/') {
+        return p.exists();
+    }
+    true
+}
 
+fn resolve_commit_editor(repo: &Repository) -> String {
     if let Ok(e) = std::env::var("GIT_EDITOR") {
-        if is_effective_editor_value(&e) {
+        if is_effective_editor_value(&e) && git_editor_env_is_runnable(&e) {
             return e;
         }
     }
@@ -1850,20 +1870,21 @@ fn resolve_commit_editor(repo: &Repository) -> String {
             }
         }
     }
-    // Git order: VISUAL then EDITOR. Skip `:` / empty `VISUAL` (test harness sets `VISUAL=:`).
-    if let Ok(e) = std::env::var("VISUAL") {
-        if is_effective_editor_value(&e) {
-            return e;
+    let visual = std::env::var("VISUAL").ok();
+    let editor = std::env::var("EDITOR").ok();
+    // Git order: VISUAL then EDITOR. Skip `:` / empty (harness uses `EDITOR=:` as placeholder).
+    if let Some(ref e) = visual {
+        if is_effective_editor_value(e) {
+            return e.clone();
         }
     }
-    if let Ok(e) = std::env::var("EDITOR") {
-        if is_effective_editor_value(&e) {
-            return e;
+    if let Some(ref e) = editor {
+        if is_effective_editor_value(e) {
+            return e.clone();
         }
     }
-    // Harness sets `EDITOR=:` / `VISUAL=:` as non-interactive placeholders; never launch `vi`
-    // in that case (would hang). Fall back to `true` like a no-op editor.
-    if visual_present || editor_present {
+    // Harness: `EDITOR`/`VISUAL` set but ineffective (`:`) → no-op editor. Unset → `vi` like Git.
+    if visual.is_some() || editor.is_some() {
         "true".to_owned()
     } else {
         "vi".to_owned()
@@ -1874,11 +1895,19 @@ pub(crate) fn launch_commit_editor(repo: &Repository, path: &Path) -> Result<()>
     let editor = resolve_commit_editor(repo);
     // Match Git: the editor command is run under `sh -c` with the path as `$1` (not `$@`),
     // so `test_set_editor` patterns like `EDITOR='"$FAKE_EDITOR"'` expand and receive the file.
-    let status = Command::new("sh")
-        .arg("-c")
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
         .arg(format!("{editor} \"$1\""))
         .arg("sh")
-        .arg(path)
+        .arg(path);
+    // Run from the work tree so editor scripts that use relative paths (e.g. `fake-input` in
+    // t3452-history-split) see the same cwd as `git commit`.
+    if let Some(wt) = repo.work_tree.as_ref() {
+        cmd.current_dir(wt);
+    } else {
+        cmd.current_dir(&repo.git_dir);
+    }
+    let status = cmd
         .status()
         .with_context(|| format!("failed to launch editor '{editor}'"))?;
     if !status.success() {

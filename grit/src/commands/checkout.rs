@@ -1175,7 +1175,10 @@ fn switch_branch(
         )?;
     }
 
-    // Write reflog entries before updating HEAD
+    // Update HEAD before appending the checkout reflog so `@{-1}` / `git switch -`
+    // see the branch we are leaving as the previous checkout (matches Git).
+    std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
+
     let old_oid = old_head_commit.unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
     let from_desc = match &head {
         HeadState::Branch { short_name, .. } => short_name.clone(),
@@ -1184,9 +1187,6 @@ fn switch_branch(
     };
     let msg = format!("checkout: moving from {} to {}", from_desc, branch_name);
     write_checkout_reflog(repo, &head, &old_oid, &target_oid, &msg);
-
-    // Update HEAD to point to the branch
-    std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
 
     run_post_checkout_hook(repo, old_head_commit.as_ref(), &target_oid, true)?;
 
@@ -1295,7 +1295,8 @@ fn create_and_switch_branch(
         );
     }
 
-    // Write reflog entries
+    std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
+
     let old_oid = head
         .oid()
         .copied()
@@ -1307,9 +1308,6 @@ fn create_and_switch_branch(
     };
     let msg = format!("checkout: moving from {} to {}", from_desc, name);
     write_checkout_reflog(repo, &head, &old_oid, &start_oid, &msg);
-
-    // Update HEAD to point to the new branch
-    std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
 
     if head.oid() != Some(&start_oid) || force || worktree_is_empty {
         run_post_checkout_hook(repo, old_head_commit.as_ref(), &start_oid, true)?;
@@ -1431,16 +1429,6 @@ fn force_create_and_switch_branch(
         run_post_checkout_hook(repo, old_head_commit.as_ref(), &start_oid, true)?;
     }
 
-    // Write reflog before updating refs
-    let old_oid = old_head_commit.unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
-    let from_desc = match &head {
-        HeadState::Branch { short_name, .. } => short_name.clone(),
-        HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
-        HeadState::Invalid => "unknown".to_string(),
-    };
-    let msg = format!("checkout: moving from {} to {}", from_desc, name);
-    write_checkout_reflog(repo, &head, &old_oid, &start_oid, &msg);
-
     // Create or overwrite the branch ref
     refs::write_ref(&repo.git_dir, &branch_ref, &start_oid)?;
 
@@ -1457,8 +1445,16 @@ fn force_create_and_switch_branch(
         );
     }
 
-    // Update HEAD to point to the new branch
     std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
+
+    let old_oid = old_head_commit.unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+    let from_desc = match &head {
+        HeadState::Branch { short_name, .. } => short_name.clone(),
+        HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
+        HeadState::Invalid => "unknown".to_string(),
+    };
+    let msg = format!("checkout: moving from {} to {}", from_desc, name);
+    write_checkout_reflog(repo, &head, &old_oid, &start_oid, &msg);
 
     if head.oid() != Some(&start_oid) || force {
         run_post_checkout_hook(repo, old_head_commit.as_ref(), &start_oid, true)?;
