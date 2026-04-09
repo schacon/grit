@@ -352,8 +352,7 @@ fn read_pkt_payload_raw(r: &mut impl Read) -> std::io::Result<Option<Vec<u8>>> {
     let len = usize::from_str_radix(len_str, 16)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     match len {
-        0 => Ok(Some(Vec::new())),
-        1 | 2 => Ok(Some(Vec::new())),
+        0 | 1 | 2 => Ok(None),
         n if n <= 4 => Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("invalid pkt-line length: {n}"),

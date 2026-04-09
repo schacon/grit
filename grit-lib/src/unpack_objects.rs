@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::io::{self, Read};
 
 use flate2::read::ZlibDecoder;
+use flate2::{Decompress, FlushDecompress, Status};
 use sha1::{Digest, Sha1};
 
 use crate::error::{Error, Result};
@@ -827,35 +828,64 @@ impl<'a> StreamingPackReader<'a> {
         }
 
         let mut out = vec![0u8; expected_size];
+        let mut z = Decompress::new(true);
+        let mut out_pos = 0usize;
+        let mut eof = false;
         loop {
-            let mut cursor = std::io::Cursor::new(self.pending.as_slice());
-            let mut z = ZlibDecoder::new(&mut cursor);
-            match z.read_exact(&mut out) {
-                Ok(()) => {
-                    let consumed = z.total_in() as usize;
-                    if consumed > self.pending.len() {
-                        return Err(Error::CorruptObject(
-                            "zlib total_in exceeds pending buffer".to_owned(),
-                        ));
+            if self.pending.is_empty() && !eof {
+                let n = self.inner.read(&mut scratch).map_err(Error::Io)?;
+                if n == 0 {
+                    eof = true;
+                } else {
+                    self.pending.extend_from_slice(&scratch[..n]);
+                }
+            }
+
+            let flush = if eof && self.pending.is_empty() {
+                FlushDecompress::Finish
+            } else {
+                FlushDecompress::None
+            };
+
+            let before_in = z.total_in();
+            let before_out = z.total_out();
+            let status = z
+                .decompress(self.pending.as_slice(), &mut out[out_pos..], flush)
+                .map_err(|e| Error::Zlib(e.to_string()))?;
+            let consumed = (z.total_in() - before_in) as usize;
+            if consumed > self.pending.len() {
+                return Err(Error::CorruptObject(
+                    "zlib consumed more than pending buffer".to_owned(),
+                ));
+            }
+            self.pack_hasher.update(&self.pending[..consumed]);
+            self.stream_pos += consumed;
+            self.pending.drain(..consumed);
+            out_pos += (z.total_out() - before_out) as usize;
+
+            match status {
+                Status::StreamEnd => {
+                    if out_pos != expected_size {
+                        return Err(Error::CorruptObject(format!(
+                            "decompressed size mismatch: got {out_pos}, want {expected_size}"
+                        )));
                     }
-                    self.pack_hasher.update(&self.pending[..consumed]);
-                    self.stream_pos += consumed;
-                    self.pending.drain(..consumed);
                     return Ok(out);
                 }
-                Err(e) => {
-                    let n = self.inner.read(&mut scratch).map_err(Error::Io)?;
-                    if n == 0 {
-                        return Err(if e.kind() == io::ErrorKind::UnexpectedEof {
-                            Error::CorruptObject(format!(
-                                "pack stream truncated (zlib) at offset {}",
-                                self.stream_pos
-                            ))
+                Status::Ok | Status::BufError => {
+                    if consumed == 0 && !eof {
+                        let n = self.inner.read(&mut scratch).map_err(Error::Io)?;
+                        if n == 0 {
+                            eof = true;
                         } else {
-                            Error::Zlib(e.to_string())
-                        });
+                            self.pending.extend_from_slice(&scratch[..n]);
+                        }
+                    } else if eof && self.pending.is_empty() && out_pos != expected_size {
+                        return Err(Error::CorruptObject(format!(
+                            "pack stream truncated (zlib) at offset {}",
+                            self.stream_pos
+                        )));
                     }
-                    self.pending.extend_from_slice(&scratch[..n]);
                 }
             }
         }
