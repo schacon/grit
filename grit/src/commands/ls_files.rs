@@ -803,6 +803,10 @@ impl Pathspec {
             // but not unrelated paths that merely share a prefix (`dirfoo`).
             Pathspec::Literal(spec) => {
                 let spec = spec.as_slice();
+                if spec.is_empty() {
+                    // `:/` alone — match from work tree root (all paths).
+                    return true;
+                }
                 // `cwd_prefix` uses a trailing slash (`sub/`); Git pathspecs treat that as the
                 // directory `sub`, so `sub/file` must match (see t3060 from a subdirectory).
                 let dir_prefix = spec

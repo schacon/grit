@@ -95,6 +95,9 @@ fn main() {
                 exit_code = 128 + 13;
             } else if let Some(ex) = e.downcast_ref::<crate::explicit_exit::SilentNonZeroExit>() {
                 exit_code = ex.code;
+            } else if let Some(msg) = path_error_fatal_message(&e) {
+                eprintln!("fatal: {msg}");
+                exit_code = 128;
             } else if let Some(ex) = e.downcast_ref::<crate::explicit_exit::ExplicitExit>() {
                 if !ex.message.is_empty() {
                     eprintln!("{ex}");
@@ -148,6 +151,17 @@ fn main() {
 fn verbatim_lib_error_message(err: &anyhow::Error) -> Option<String> {
     for cause in err.chain() {
         if let Some(grit_lib::error::Error::Message(msg)) =
+            cause.downcast_ref::<grit_lib::error::Error>()
+        {
+            return Some(msg.clone());
+        }
+    }
+    None
+}
+
+fn path_error_fatal_message(err: &anyhow::Error) -> Option<String> {
+    for cause in err.chain() {
+        if let Some(grit_lib::error::Error::PathError(msg)) =
             cause.downcast_ref::<grit_lib::error::Error>()
         {
             return Some(msg.clone());
@@ -3962,6 +3976,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 "lazy-init-name-hash" => run_test_tool_lazy_init_name_hash(rest),
                 "rot13-filter" => commands::test_tool_rot13_filter::run(&rest[1..]),
                 "path-utils" => run_test_tool_path_utils(&rest[1..]),
+                "subprocess" => run_test_tool_subprocess(&rest[1..]),
                 "submodule" => run_test_tool_submodule(&rest[1..]),
                 "config" => run_test_tool_config(&rest[1..]),
                 "parse-options" => {
@@ -4286,6 +4301,41 @@ fn posix_dirname(path: &str) -> String {
     } else {
         path[..d_end].to_string()
     }
+}
+
+/// `test-tool subprocess` — matches `git/t/helper/test-subprocess.c`: discover repo, optionally
+/// `setup_work_tree` (chdir + normalize `GIT_WORK_TREE`), then re-exec grit with the remaining args.
+fn run_test_tool_subprocess(rest: &[String]) -> Result<()> {
+    use std::process::Command;
+
+    let repo = match grit_lib::rev_parse::discover_optional(None)? {
+        Some(r) => r,
+        None => bail!("No git repo found"),
+    };
+
+    let mut argv = rest;
+    if argv.first().map(|s| s.as_str()) == Some("--setup-work-tree") {
+        let wt = repo
+            .work_tree
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+        std::env::set_current_dir(wt).context("cannot chdir to work tree")?;
+        std::env::set_var("GIT_DIR", &repo.git_dir);
+        std::env::set_var("GIT_WORK_TREE", ".");
+        argv = &rest[1..];
+    }
+
+    if argv.is_empty() {
+        bail!("usage: test-tool subprocess [--setup-work-tree] <command> [args...]");
+    }
+
+    let mut cmd = Command::new(crate::grit_exe::grit_executable());
+    cmd.args(argv);
+    crate::grit_exe::strip_trace2_env(&mut cmd);
+    let status = cmd
+        .status()
+        .context("test-tool subprocess: failed to spawn child")?;
+    std::process::exit(status.code().unwrap_or(1));
 }
 
 /// Handle `test-tool path-utils` — path manipulation utilities.
