@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-09 (t3452 / history split)**
+
+- `cargo test -p grit-lib --lib`: 155 passed
+- `./scripts/run-tests.sh t3452-history-split.sh`: 25/25 passed
+
 **2026-04-09 (t5609 / clone --branch)**
 
 - `cargo test -p grit-lib --lib`: 152 passed

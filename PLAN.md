@@ -346,7 +346,7 @@ commit → check it off → move on.
 - [ ] `t3418-rebase-continue` ████░░░░░░░░░░░░░░░░ 6/30 (24 left) — git rebase --continue tests
 - [x] `t3650-replay-basics` — basic git replay tests (31/31)
 - [ ] `t3426-rebase-submodule` ██░░░░░░░░░░░░░░░░░░ 4/29 (25 left) — rebase can handle submodules
-- [ ] `t3452-history-split` ░░░░░░░░░░░░░░░░░░░░ 0/25 (25 left) — tests for git-history split subcommand
+- [x] `t3452-history-split` — tests for git-history split subcommand (25/25)
 - [ ] `t3203-branch-output` ███████░░░░░░░░░░░░░ 15/41 (26 left) — git branch display tests
 - [ ] `t3415-rebase-autosquash` █░░░░░░░░░░░░░░░░░░░ 2/28 (26 left) — auto squash
 - [ ] `t3321-notes-stripspace` ░░░░░░░░░░░░░░░░░░░░ 1/27 (26 left) — Test commit notes with stripspace behavior

@@ -631,7 +631,7 @@ t3441-rebase-exec	t3	yes	3	3	0	true	ok	0
 t3442-rebase-onto-upstream	t3	yes	3	3	0	true	ok	0
 t3450-history	t3	yes	2	1	1	false	ok	0
 t3451-history-reword	t3	yes	14	11	3	false	ok	0
-t3452-history-split	t3	yes	25	0	25	false	ok	0
+t3452-history-split	t3	yes	25	25	0	true	ok	0
 t3500-cherry	t3	yes	4	4	0	true	ok	0
 t3501-revert-cherry-pick	t3	yes	21	20	1	false	ok	0
 t3502-cherry-pick-merge	t3	yes	12	12	0	true	ok	0
@@ -1193,7 +1193,7 @@ t7111-reset-table	t7	yes	42	34	8	false	ok	0
 t7112-reset-submodule	t7	yes	76	24	52	false	ok	0
 t7113-post-index-change-hook	t7	yes	4	1	3	false	ok	0
 t7201-co	t7	yes	46	17	29	false	ok	0
-t7300-clean	t7	yes	53	52	1	false	ok	2
+t7300-clean	t7	yes	53	52	1	false	ok	0
 t7301-clean-interactive	t7	yes	23	8	15	false	ok	0
 t7400-submodule-basic	t7	yes	124	51	73	false	ok	0
 t7401-submodule-summary	t7	yes	25	6	19	false	ok	0
