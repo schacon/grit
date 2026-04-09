@@ -156,6 +156,134 @@ fn resolve_ref_depth(
     Err(Error::InvalidRef(format!("ref not found: {refname}")))
 }
 
+/// Outcome of a single storage-level ref lookup (Git `refs_read_raw_ref` style).
+///
+/// This checks whether a ref **name** exists in the ref store without applying
+/// DWIM rules. A symbolic ref is considered to exist if its ref file (or
+/// reftable record) is present, even when the target is missing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawRefLookup {
+    /// A loose ref file, packed ref line, or reftable record exists for this name.
+    Exists,
+    /// No ref is recorded under this exact name.
+    NotFound,
+    /// A path component exists as a directory where a ref file was expected (e.g. `refs/heads`).
+    IsDirectory,
+}
+
+/// Return whether `refname` exists as a ref in the repository's ref storage.
+///
+/// This matches `git refs exists` / `git show-ref --exists`: no DWIM, no
+/// resolution of symbolic targets. Dispatches to the reftable backend when
+/// configured.
+///
+/// # Parameters
+///
+/// - `git_dir` — path to the git directory (worktree gitdir or bare `.git`).
+/// - `refname` — full ref name (e.g. `HEAD`, `refs/heads/main`, `CHERRY_PICK_HEAD`).
+///
+/// # Errors
+///
+/// Propagates I/O and reftable errors other than "not found".
+pub fn read_raw_ref(git_dir: &Path, refname: &str) -> Result<RawRefLookup> {
+    if crate::reftable::is_reftable_repo(git_dir) {
+        read_raw_ref_reftable(git_dir, refname)
+    } else {
+        read_raw_ref_files(git_dir, refname)
+    }
+}
+
+fn read_raw_ref_files(git_dir: &Path, refname: &str) -> Result<RawRefLookup> {
+    let common = common_dir(git_dir);
+
+    if let Some(lookup) = read_raw_ref_at(git_dir.join(refname))? {
+        return Ok(lookup);
+    }
+
+    if let Some(cdir) = common.as_ref() {
+        if *cdir != git_dir && !notes_merge_state_ref(refname) {
+            if let Some(lookup) = read_raw_ref_at(cdir.join(refname))? {
+                return Ok(lookup);
+            }
+        }
+    }
+
+    let packed_dir = common.as_deref().unwrap_or(git_dir);
+    if packed_ref_name_exists(packed_dir, refname)? {
+        return Ok(RawRefLookup::Exists);
+    }
+    if common.is_some() && common.as_deref() != Some(git_dir)
+        && packed_ref_name_exists(git_dir, refname)? {
+            return Ok(RawRefLookup::Exists);
+        }
+
+    Ok(RawRefLookup::NotFound)
+}
+
+fn read_raw_ref_at(path: PathBuf) -> Result<Option<RawRefLookup>> {
+    match fs::symlink_metadata(&path) {
+        Ok(meta) => {
+            if meta.is_dir() {
+                return Ok(Some(RawRefLookup::IsDirectory));
+            }
+            Ok(Some(RawRefLookup::Exists))
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(Error::Io(e)),
+    }
+}
+
+fn packed_ref_name_exists(git_dir: &Path, refname: &str) -> Result<bool> {
+    let packed = git_dir.join("packed-refs");
+    let content = match fs::read_to_string(&packed) {
+        Ok(c) => c,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(Error::Io(e)),
+    };
+    for line in content.lines() {
+        if line.is_empty() || line.starts_with('#') || line.starts_with('^') {
+            continue;
+        }
+        let mut parts = line.split_whitespace();
+        let _oid = parts.next();
+        if let Some(name) = parts.next() {
+            if name == refname {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn read_raw_ref_reftable(git_dir: &Path, refname: &str) -> Result<RawRefLookup> {
+    if refname == "HEAD" {
+        let head_path = git_dir.join("HEAD");
+        match fs::symlink_metadata(&head_path) {
+            Ok(meta) => {
+                if meta.is_dir() {
+                    return Ok(RawRefLookup::IsDirectory);
+                }
+                return Ok(RawRefLookup::Exists);
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(RawRefLookup::NotFound),
+            Err(e) => return Err(Error::Io(e)),
+        }
+    }
+
+    if let Some(lookup) = read_raw_ref_at(git_dir.join(refname))? {
+        return Ok(lookup);
+    }
+
+    let stack = crate::reftable::ReftableStack::open(git_dir)?;
+    match stack.lookup_ref(refname)? {
+        Some(rec) => match rec.value {
+            crate::reftable::RefValue::Deletion => Ok(RawRefLookup::NotFound),
+            _ => Ok(RawRefLookup::Exists),
+        },
+        None => Ok(RawRefLookup::NotFound),
+    }
+}
+
 /// Look up a refname in `packed-refs`.
 fn lookup_packed_ref(git_dir: &Path, refname: &str) -> Result<Option<ObjectId>> {
     let packed = git_dir.join("packed-refs");
@@ -732,4 +860,64 @@ fn collect_packed_refs(
         out.push((refname.to_string(), oid));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod read_raw_ref_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn loose_ref_file_is_exists() {
+        let dir = tempdir().unwrap();
+        let git_dir = dir.path();
+        fs::create_dir_all(git_dir.join("refs/heads")).unwrap();
+        fs::write(
+            git_dir.join("refs/heads/side"),
+            "0000000000000000000000000000000000000000\n",
+        )
+        .unwrap();
+        assert_eq!(
+            read_raw_ref(git_dir, "refs/heads/side").unwrap(),
+            RawRefLookup::Exists
+        );
+    }
+
+    #[test]
+    fn missing_ref_is_not_found() {
+        let dir = tempdir().unwrap();
+        let git_dir = dir.path();
+        fs::create_dir_all(git_dir.join("refs/heads")).unwrap();
+        assert_eq!(
+            read_raw_ref(git_dir, "refs/heads/nope").unwrap(),
+            RawRefLookup::NotFound
+        );
+    }
+
+    #[test]
+    fn directory_where_ref_expected_is_is_directory() {
+        let dir = tempdir().unwrap();
+        let git_dir = dir.path();
+        fs::create_dir_all(git_dir.join("refs/heads")).unwrap();
+        assert_eq!(
+            read_raw_ref(git_dir, "refs/heads").unwrap(),
+            RawRefLookup::IsDirectory
+        );
+    }
+
+    #[test]
+    fn packed_ref_name_is_exists() {
+        let dir = tempdir().unwrap();
+        let git_dir = dir.path();
+        fs::write(
+            git_dir.join("packed-refs"),
+            "# pack-refs with: peeled fully-peeled \n\
+             0000000000000000000000000000000000000000 refs/heads/packed\n",
+        )
+        .unwrap();
+        assert_eq!(
+            read_raw_ref(git_dir, "refs/heads/packed").unwrap(),
+            RawRefLookup::Exists
+        );
+    }
 }

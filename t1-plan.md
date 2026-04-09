@@ -197,7 +197,7 @@
 - [ ] t1450-fsck-flags.sh
 - [x] t1451-fsck-buffer.sh
 - [ ] t1461-refs-list.sh
-- [ ] t1462-refs-exists.sh
+- [x] t1462-refs-exists.sh
 - [ ] t1463-refs-optimize.sh
 - [ ] t1500-rev-parse.sh
 - [ ] t1501-work-tree.sh
