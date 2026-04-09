@@ -929,7 +929,7 @@ t5510-fetch	t5	yes	215	81	134	false	ok	0
 t5511-refspec	t5	yes	47	24	23	false	ok	0
 t5512-ls-remote	t5	yes	0	0	0	false	timeout	0
 t5513-fetch-track	t5	yes	2	2	0	true	ok	0
-t5514-fetch-multiple	t5	yes	25	4	21	false	ok	0
+t5514-fetch-multiple	t5	yes	25	25	0	true	ok	0
 t5515-fetch-merge-logic	t5	yes	65	1	64	false	ok	0
 t5516-fetch-push	t5	yes	124	10	114	false	ok	0
 t5517-push-mirror	t5	yes	13	8	5	false	ok	0
