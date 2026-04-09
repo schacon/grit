@@ -4889,6 +4889,7 @@ fn run_bundle_clone(args: Args) -> Result<()> {
             strict: false,
             dry_run: false,
             quiet: true,
+            max_input_bytes: None,
         };
         grit_lib::unpack_objects::unpack_objects(&mut &pack_data[..], &dest.odb, &opts)
             .map_err(|e| anyhow::anyhow!("unbundle failed: {e}"))?;

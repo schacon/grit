@@ -30,6 +30,11 @@ pub struct UnpackOptions {
     pub quiet: bool,
     /// Reject packs whose commits/trees/tags reference missing objects.
     pub strict: bool,
+    /// Maximum number of raw pack bytes that may be consumed (including the 20-byte trailer).
+    ///
+    /// Matches Git's `unpack-objects --max-input-size` / `receive.maxInputSize`: counts every
+    /// byte read from the pack stream after crossing the limit. `None` means no limit.
+    pub max_input_bytes: Option<u64>,
 }
 
 /// A delta that could not yet be resolved because its base was not yet known.
@@ -65,7 +70,7 @@ pub fn unpack_objects(reader: &mut dyn Read, odb: &Odb, opts: &UnpackOptions) ->
     /// and `--strict` graph walks without extra ODB reads.
     const MAX_RETAIN_BYTES: usize = 1024 * 1024;
 
-    let mut rd = StreamingPackReader::new(reader);
+    let mut rd = StreamingPackReader::new(reader, opts.max_input_bytes);
 
     // Validate magic and version.
     let sig = rd.read_exact_n(4)?;
@@ -654,23 +659,38 @@ struct StreamingPackReader<'a> {
     inner: &'a mut dyn Read,
     pack_hasher: Sha1,
     stream_pos: usize,
+    max_input_bytes: Option<u64>,
     /// Compressed (or other) bytes already read from `inner` and hashed but not yet consumed by
     /// the current parsing step.
     pending: Vec<u8>,
 }
 
 impl<'a> StreamingPackReader<'a> {
-    fn new(inner: &'a mut dyn Read) -> Self {
+    fn new(inner: &'a mut dyn Read, max_input_bytes: Option<u64>) -> Self {
         Self {
             inner,
             pack_hasher: Sha1::new(),
             stream_pos: 0,
+            max_input_bytes,
             pending: Vec::new(),
         }
     }
 
     fn stream_pos(&self) -> usize {
         self.stream_pos
+    }
+
+    fn enforce_max_input(&self) -> Result<()> {
+        if let Some(limit) = self.max_input_bytes {
+            let pos = u64::try_from(self.stream_pos)
+                .map_err(|_| Error::CorruptObject("pack stream position overflow".to_owned()))?;
+            if pos > limit {
+                return Err(Error::CorruptObject(
+                    "pack exceeds maximum allowed size".to_owned(),
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Read pack-body bytes (hashed). Used for headers and non-zlib payload reads only.
@@ -686,6 +706,7 @@ impl<'a> StreamingPackReader<'a> {
         if n > 0 {
             self.pack_hasher.update(&buf[..n]);
             self.stream_pos += n;
+            self.enforce_max_input()?;
         }
         Ok(n)
     }
@@ -800,6 +821,7 @@ impl<'a> StreamingPackReader<'a> {
                         self.pack_hasher.update(&self.pending[..consumed]);
                         self.stream_pos += consumed;
                         self.pending.drain(..consumed);
+                        self.enforce_max_input()?;
                         return Ok(Vec::new());
                     }
                     Ok(_) => {
@@ -824,62 +846,6 @@ impl<'a> StreamingPackReader<'a> {
 
         const CHUNK: usize = 64 * 1024;
         let mut scratch = [0u8; CHUNK];
-
-        // `Read::read_exact` with a zero-length buffer returns `Ok` immediately without touching
-        // the zlib stream. Empty trees/tags still have a short zlib wrapper (~8 bytes) that must be
-        // consumed so the next object header aligns (Git pack format).
-        if expected_size == 0 {
-            loop {
-                let mut cursor = std::io::Cursor::new(self.pending.as_slice());
-                let mut z = ZlibDecoder::new(&mut cursor);
-                let mut trial = Vec::new();
-                match z.read_to_end(&mut trial) {
-                    Ok(_) if trial.is_empty() => {
-                        let consumed = z.total_in() as usize;
-                        if consumed == 0 {
-                            let n = self.inner.read(&mut scratch).map_err(Error::Io)?;
-                            if n == 0 {
-                                return Err(Error::CorruptObject(format!(
-                                    "pack stream truncated (zlib) at offset {}",
-                                    self.stream_pos
-                                )));
-                            }
-                            self.pending.extend_from_slice(&scratch[..n]);
-                            continue;
-                        }
-                        if consumed > self.pending.len() {
-                            return Err(Error::CorruptObject(
-                                "zlib total_in exceeds pending buffer".to_owned(),
-                            ));
-                        }
-                        self.pack_hasher.update(&self.pending[..consumed]);
-                        self.stream_pos += consumed;
-                        self.pending.drain(..consumed);
-                        return Ok(Vec::new());
-                    }
-                    Ok(_) => {
-                        return Err(Error::CorruptObject(format!(
-                            "decompressed {} bytes but expected 0",
-                            trial.len()
-                        )));
-                    }
-                    Err(e) => {
-                        let n = self.inner.read(&mut scratch).map_err(Error::Io)?;
-                        if n == 0 {
-                            return Err(if e.kind() == io::ErrorKind::UnexpectedEof {
-                                Error::CorruptObject(format!(
-                                    "pack stream truncated (zlib) at offset {}",
-                                    self.stream_pos
-                                ))
-                            } else {
-                                Error::Zlib(e.to_string())
-                            });
-                        }
-                        self.pending.extend_from_slice(&scratch[..n]);
-                    }
-                }
-            }
-        }
 
         let mut out = vec![0u8; expected_size];
         let mut z = Decompress::new(true);
@@ -915,6 +881,7 @@ impl<'a> StreamingPackReader<'a> {
             self.pack_hasher.update(&self.pending[..consumed]);
             self.stream_pos += consumed;
             self.pending.drain(..consumed);
+            self.enforce_max_input()?;
             out_pos += (z.total_out() - before_out) as usize;
 
             match status {
@@ -959,6 +926,7 @@ impl<'a> StreamingPackReader<'a> {
             b.copy_from_slice(&self.pending[..20]);
             self.pending.drain(..20);
             self.stream_pos += 20;
+            self.enforce_max_input()?;
             return Ok(b);
         }
         let tail = self.pending.len();
@@ -970,6 +938,7 @@ impl<'a> StreamingPackReader<'a> {
             .read_exact(&mut b[tail..])
             .map_err(|e| io_to_corrupt_eof(e, self.stream_pos, "trailer"))?;
         self.stream_pos += 20;
+        self.enforce_max_input()?;
         Ok(b)
     }
 }
@@ -1328,6 +1297,7 @@ mod tests {
             dry_run: true,
             quiet: true,
             strict: false,
+            max_input_bytes: None,
         };
         let count = unpack_objects(&mut pack.as_slice(), &odb, &opts).unwrap();
         assert_eq!(count, 1);

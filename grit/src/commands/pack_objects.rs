@@ -673,6 +673,82 @@ fn write_pack_via_stdin_objects(
     Ok(())
 }
 
+/// Build a thin pack of objects reachable from `push_tips` in `local_repo` that the remote does
+/// not already have (loose or packed), matching a network push’s object set for local file pushes.
+///
+/// Returns empty bytes when there is nothing to send (remote already has all reachable objects).
+pub fn build_thin_push_pack(
+    local_repo: &Repository,
+    push_tips: &[ObjectId],
+    remote_git_dir: &Path,
+) -> Result<Vec<u8>> {
+    if push_tips.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let remote_objects = remote_git_dir.join("objects");
+    let remote_odb = Odb::new(&remote_objects);
+
+    let mut have_roots: BTreeSet<ObjectId> = BTreeSet::new();
+    collect_all_loose(&remote_odb, &mut have_roots)?;
+    let remote_pack_dir = remote_objects.join("pack");
+    if remote_pack_dir.is_dir() {
+        let indexes = grit_lib::pack::read_local_pack_indexes(&remote_objects)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        for idx in indexes {
+            for entry in idx.entries {
+                have_roots.insert(entry.oid);
+            }
+        }
+    }
+
+    let mut to_pack: BTreeSet<ObjectId> = BTreeSet::new();
+    for tip in push_tips {
+        walk_reachable(local_repo, tip, &mut to_pack)?;
+    }
+    for oid in &have_roots {
+        to_pack.remove(oid);
+    }
+
+    if to_pack.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let work_dir = local_repo
+        .work_tree
+        .as_deref()
+        .unwrap_or(&local_repo.git_dir);
+    let mut cmd = Command::new(grit_exe::grit_executable());
+    crate::grit_exe::strip_trace2_env(&mut cmd);
+    cmd.current_dir(work_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .arg("pack-objects")
+        .arg("--revs")
+        .arg("--thin")
+        .arg("--stdout")
+        .arg("-q");
+    let mut child = cmd.spawn().context("spawn pack-objects for local push")?;
+    {
+        let mut stdin = child.stdin.take().context("pack-objects stdin")?;
+        for tip in push_tips {
+            writeln!(stdin, "{}", tip.to_hex())?;
+        }
+        writeln!(stdin, "--not")?;
+        for oid in &have_roots {
+            writeln!(stdin, "{}", oid.to_hex())?;
+        }
+    }
+    let out = child
+        .wait_with_output()
+        .context("wait pack-objects for local push")?;
+    if !out.status.success() {
+        bail!("pack-objects failed with status {}", out.status);
+    }
+    Ok(out.stdout)
+}
+
 /// Apply `git pack-objects --filter=<spec>` (subset: `blob:none` for `gc.repackFilter` tests).
 fn apply_list_objects_filter(entries: &mut Vec<PackEntry>, filter: Option<&str>) {
     let Some(spec) = filter.map(str::trim).filter(|s| !s.is_empty()) else {

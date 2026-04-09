@@ -36,6 +36,7 @@ pub mod pkt_line;
 mod precompose;
 pub mod protocol;
 mod protocol_wire;
+mod receive_ingest;
 mod ssh_transport;
 mod trace_packet;
 mod transport_passthrough;

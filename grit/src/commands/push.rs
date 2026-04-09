@@ -1,14 +1,15 @@
 //! `grit push` — update remote refs and associated objects.
 //!
-//! Only **local (file://)** transports are supported.  Copies objects from
-//! the local repository to the remote and updates remote refs.
+//! Only **local (file://)** transports are supported.  Sends missing objects
+//! to the remote (thin pack + receive-style ingest) and updates remote refs.
 
+use crate::commands::pack_objects;
 use crate::protocol_wire;
 use crate::wire_trace;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{parse_bool, parse_color, ConfigFile, ConfigScope, ConfigSet};
-use grit_lib::gitmodules::{oids_from_copied_object_paths, verify_gitmodules_for_commit};
+use grit_lib::gitmodules::verify_gitmodules_for_commit;
 use grit_lib::hooks::{run_hook, run_hook_capture, HookResult};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::ObjectId;
@@ -23,6 +24,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse;
 use grit_lib::state::{resolve_head, HeadState};
 
+use std::collections::HashSet;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -1485,22 +1487,49 @@ fn push_to_url(
         fs::write(&push_opts_path, content).context("writing push options")?;
     }
 
-    // Copy objects to remote, tracking what was added for rollback
+    // Send objects to the remote like `receive-pack` (thin pack + unpack/index), tracking new
+    // files for rollback on hook failure.
     let mut copied_objects: Vec<PathBuf> = Vec::new();
     if !args.dry_run {
-        copied_objects = copy_objects_tracked(&repo.git_dir, &remote_repo.git_dir)
-            .context("copying objects to remote")?;
+        let mut push_tips: Vec<ObjectId> = Vec::new();
+        for (i, u) in updates.iter().enumerate() {
+            if pre_reject[i].is_some() {
+                continue;
+            }
+            if let Some(oid) = u.new_oid {
+                push_tips.push(oid);
+            }
+        }
+
+        let thin_pack = pack_objects::build_thin_push_pack(repo, &push_tips, &remote_repo.git_dir)
+            .context("building push pack")?;
+
+        if !thin_pack.is_empty() {
+            let pre_ingest = list_remote_object_files(&remote_repo.git_dir);
+            crate::receive_ingest::ingest_received_pack(
+                &remote_repo.git_dir,
+                &thin_pack,
+                &receive_remote_config,
+            )
+            .context("remote unpack failed")?;
+            let post_ingest = list_remote_object_files(&remote_repo.git_dir);
+            for p in post_ingest {
+                if !pre_ingest.contains(&p) {
+                    copied_objects.push(p);
+                }
+            }
+        }
+
         if push_show_object_progress(args) && !copied_objects.is_empty() {
             maybe_print_push_object_progress(true);
         }
 
-        let remote_config = ConfigSet::load_repo_local_only(&remote_repo.git_dir)?;
-        let fsck_receive = remote_config
+        let fsck_receive = receive_remote_config
             .get_bool("receive.fsckobjects")
-            .or_else(|| remote_config.get_bool("receive.fsckObjects"));
-        let fsck_transfer = remote_config
+            .or_else(|| receive_remote_config.get_bool("receive.fsckObjects"));
+        let fsck_transfer = receive_remote_config
             .get_bool("transfer.fsckobjects")
-            .or_else(|| remote_config.get_bool("transfer.fsckObjects"));
+            .or_else(|| receive_remote_config.get_bool("transfer.fsckObjects"));
         let fsck_enabled = match (fsck_receive, fsck_transfer) {
             (Some(Ok(true)), _) => true,
             (Some(Ok(false)), _) => false,
@@ -1511,15 +1540,13 @@ fn push_to_url(
         if fsck_enabled {
             let remote_objects = remote_repo.git_dir.join("objects");
             let remote_odb = grit_lib::odb::Odb::new(&remote_objects);
-            let copied_oids = oids_from_copied_object_paths(&copied_objects)
-                .context("collecting pushed object ids")?;
-            for update in &updates {
+            for (i, update) in updates.iter().enumerate() {
+                if pre_reject[i].is_some() {
+                    continue;
+                }
                 let Some(new_oid) = update.new_oid else {
                     continue;
                 };
-                if !copied_oids.contains(&new_oid) {
-                    continue;
-                }
                 if let Some(rest) = verify_gitmodules_for_commit(&remote_odb, new_oid)? {
                     for path in &copied_objects {
                         let _ = fs::remove_file(path);
@@ -2728,58 +2755,41 @@ fn maybe_print_push_object_progress(show: bool) {
 
 /// Copy all objects (loose + packs) from src to dst, skipping existing.
 /// Copy objects and return the list of newly created files (for rollback).
-fn copy_objects_tracked(src_git_dir: &Path, dst_git_dir: &Path) -> Result<Vec<PathBuf>> {
-    let src_objects = src_git_dir.join("objects");
+fn list_remote_object_files(dst_git_dir: &Path) -> HashSet<PathBuf> {
+    let mut out = HashSet::new();
     let dst_objects = dst_git_dir.join("objects");
-    let mut copied = Vec::new();
-
-    if src_objects.is_dir() {
-        for entry in fs::read_dir(&src_objects)? {
-            let entry = entry?;
+    if !dst_objects.is_dir() {
+        return out;
+    }
+    if let Ok(entries) = fs::read_dir(&dst_objects) {
+        for entry in entries.flatten() {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
-            if name_str == "info" || name_str == "pack" {
+            if name_str == "info" {
                 continue;
             }
-            if !entry.file_type()?.is_dir() || name_str.len() != 2 {
-                continue;
-            }
-            let dst_dir = dst_objects.join(&*name);
-            for inner in fs::read_dir(entry.path())? {
-                let inner = inner?;
-                if inner.file_type()?.is_file() {
-                    let dst_file = dst_dir.join(inner.file_name());
-                    if !dst_file.exists() {
-                        fs::create_dir_all(&dst_dir)?;
-                        if fs::hard_link(inner.path(), &dst_file).is_err() {
-                            fs::copy(inner.path(), &dst_file)?;
+            if name_str == "pack" {
+                if let Ok(pack_entries) = fs::read_dir(entry.path()) {
+                    for pe in pack_entries.flatten() {
+                        if pe.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                            out.insert(pe.path());
                         }
-                        copied.push(dst_file);
+                    }
+                }
+                continue;
+            }
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) && name_str.len() == 2 {
+                if let Ok(inner) = fs::read_dir(entry.path()) {
+                    for ie in inner.flatten() {
+                        if ie.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                            out.insert(ie.path());
+                        }
                     }
                 }
             }
         }
     }
-
-    let src_pack = src_objects.join("pack");
-    let dst_pack = dst_objects.join("pack");
-    if src_pack.is_dir() {
-        fs::create_dir_all(&dst_pack)?;
-        for entry in fs::read_dir(&src_pack)? {
-            let entry = entry?;
-            if entry.file_type()?.is_file() {
-                let dst_file = dst_pack.join(entry.file_name());
-                if !dst_file.exists() {
-                    if fs::hard_link(entry.path(), &dst_file).is_err() {
-                        fs::copy(entry.path(), &dst_file)?;
-                    }
-                    copied.push(dst_file);
-                }
-            }
-        }
-    }
-
-    Ok(copied)
+    out
 }
 
 /// Open a repository (bare or non-bare).

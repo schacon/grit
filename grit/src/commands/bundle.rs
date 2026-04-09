@@ -345,6 +345,7 @@ fn run_unbundle(args: UnbundleArgs) -> Result<()> {
         strict: false,
         dry_run: false,
         quiet: false,
+        max_input_bytes: None,
     };
     let count = grit_lib::unpack_objects::unpack_objects(&mut &pack_data[..], &repo.odb, &opts)
         .map_err(|e| anyhow::anyhow!("unbundle failed: {e}"))?;

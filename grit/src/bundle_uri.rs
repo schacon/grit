@@ -187,6 +187,7 @@ fn unbundle_pack_into_repo(
         strict: false,
         dry_run: false,
         quiet: true,
+        max_input_bytes: None,
     };
     let mut collected: Vec<ObjectId> = Vec::new();
     let before_ids: std::collections::HashSet<ObjectId> = list_all_loose_oids(&odb);

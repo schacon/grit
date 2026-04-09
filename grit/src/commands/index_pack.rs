@@ -100,6 +100,10 @@ pub struct Args {
     /// Thread count (accepted; grit is single-threaded).
     #[arg(long = "threads", value_name = "N")]
     pub threads: Option<u32>,
+
+    /// Reject packs whose on-disk size exceeds this limit (supports `k`/`m`/`g` suffixes; `0` = unlimited).
+    #[arg(long = "max-input-size", value_name = "SIZE")]
+    pub max_input_size: Option<String>,
 }
 
 /// A resolved pack object.
@@ -136,6 +140,13 @@ pub fn run(args: Args) -> Result<()> {
     } else {
         bail!("usage: grit index-pack [--stdin | <pack-file>]");
     };
+
+    if let Some(raw) = args.max_input_size.as_deref() {
+        let limit = parse_max_input_size_bytes(raw)?;
+        if limit > 0 && (pack_raw.len() as u64) > limit {
+            bail!("pack exceeds maximum allowed size");
+        }
+    }
 
     if args.verbose {
         trace2_region_scope("Receiving objects", || Ok(()))?;
@@ -334,6 +345,14 @@ fn big_file_threshold_bytes() -> u64 {
         .and_then(|c| c.get("core.bigfilethreshold"))
         .and_then(|s| parse_byte_suffix(&s))
         .unwrap_or(512 * 1024 * 1024)
+}
+
+fn parse_max_input_size_bytes(raw: &str) -> Result<u64> {
+    let v = grit_lib::config::parse_i64(raw.trim()).map_err(|e| anyhow::anyhow!(e))?;
+    if v < 0 {
+        bail!("max-input-size must be non-negative");
+    }
+    Ok(v as u64)
 }
 
 fn parse_byte_suffix(s: &str) -> Option<u64> {
