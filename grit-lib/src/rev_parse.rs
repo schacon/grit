@@ -110,6 +110,28 @@ pub fn show_prefix(repo: &Repository, cwd: &Path) -> String {
     out
 }
 
+/// Superproject work tree when `git_dir` lives under `.../<wt>/.git/modules/...` (nested submodule).
+///
+/// Used when the submodule's recorded path in the superproject index does not match the on-disk
+/// layout (e.g. `dir/sub` recorded but git dir is `.../modules/dir/modules/sub`), so
+/// `ls-files`-based superproject detection cannot find a gitlink.
+#[must_use]
+pub fn superproject_work_tree_from_nested_git_modules(git_dir: &Path) -> Option<PathBuf> {
+    let mut p = git_dir.to_path_buf();
+    while let Some(parent) = p.parent() {
+        if p.file_name().is_some_and(|n| n == "modules")
+            && parent.file_name().is_some_and(|n| n == ".git")
+        {
+            return parent.parent().map(PathBuf::from);
+        }
+        if parent == p {
+            break;
+        }
+        p = parent.to_path_buf();
+    }
+    None
+}
+
 /// Resolve a symbolic ref name to its full form.
 ///
 /// For `HEAD`, returns the symbolic target (e.g., `refs/heads/main`).
@@ -2982,4 +3004,25 @@ pub fn list_all_abbrev_matches(repo: &Repository, prefix: &str) -> Result<Vec<Ob
 /// Public: find all object IDs whose hex prefix matches the given string.
 pub fn list_loose_abbrev_matches(repo: &Repository, prefix: &str) -> Result<Vec<ObjectId>> {
     list_all_abbrev_matches(repo, prefix)
+}
+
+#[cfg(test)]
+mod superproject_path_tests {
+    use super::superproject_work_tree_from_nested_git_modules;
+    use std::path::PathBuf;
+
+    #[test]
+    fn nested_modules_yields_superproject_work_tree() {
+        let git_dir = PathBuf::from("/tmp/super/.git/modules/dir/modules/sub");
+        assert_eq!(
+            superproject_work_tree_from_nested_git_modules(&git_dir),
+            Some(PathBuf::from("/tmp/super"))
+        );
+    }
+
+    #[test]
+    fn non_nested_returns_none() {
+        let git_dir = PathBuf::from("/tmp/repo/.git");
+        assert!(superproject_work_tree_from_nested_git_modules(&git_dir).is_none());
+    }
 }
