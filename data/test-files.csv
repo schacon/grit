@@ -1162,7 +1162,7 @@ t7030-verify-tag	t7	skip	16	0	0	false	ok	0
 t7031-verify-tag-signed-ssh	t7	skip	14	0	0	false	ok	0
 t7040-log-formatting	t7	yes	36	36	0	true	ok	0
 t7060-status-output	t7	yes	25	25	0	true	ok	0
-t7060-wtstatus	t7	yes	17	5	12	false	ok	0
+t7060-wtstatus	t7	yes	17	17	0	true	ok	0
 t7061-status-staged	t7	yes	26	26	0	true	ok	0
 t7061-wtstatus-ignore	t7	yes	25	0	25	false	ok	0
 t7062-status-worktree	t7	yes	26	26	0	true	ok	0

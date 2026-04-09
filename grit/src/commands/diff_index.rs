@@ -170,6 +170,44 @@ pub fn run(mut args: Args) -> Result<()> {
         diff_entries
     };
 
+    let mut diff_entries = diff_entries;
+    if options.cached {
+        let unmerged_paths = collect_unmerged_index_paths(&index);
+        if !unmerged_paths.is_empty() {
+            // Git `diff-index --cached`: rename/copy detection runs on the full index↔tree diff
+            // (including `D` on unmerged paths), then unmerged paths are emitted as `U` — not as
+            // `D`/`R`. Copy detection may still attribute new blobs to an unmerged source (`-C`).
+            let unmerged_ref = &unmerged_paths;
+            diff_entries.retain(|e| {
+                if unmerged_ref.contains(e.path()) && e.status == DiffStatus::Deleted {
+                    return false;
+                }
+                true
+            });
+            for e in &mut diff_entries {
+                let src = e.old_path.as_deref();
+                if src.is_some_and(|p| unmerged_ref.contains(p)) {
+                    if options.find_copies {
+                        // Git `-C`: paths still show as copies from the unmerged source (not renames).
+                        if e.status == DiffStatus::Renamed {
+                            e.status = DiffStatus::Copied;
+                        }
+                    } else if e.status == DiffStatus::Renamed || e.status == DiffStatus::Copied {
+                        e.status = DiffStatus::Added;
+                        e.old_path = None;
+                        e.score = None;
+                        e.old_mode = "000000".to_owned();
+                        e.old_oid = zero_oid();
+                    }
+                }
+            }
+            for path in unmerged_ref {
+                diff_entries.push(diff_entry_unmerged(path));
+            }
+            diff_entries.sort_by(|a, b| a.path().cmp(b.path()));
+        }
+    }
+
     // Compute cwd-relative prefix for --relative
     let rel_prefix = if options.relative {
         if let Some(wt) = &repo.work_tree {
@@ -820,6 +858,29 @@ fn worktree_matches_index_snapshot(
     Ok(wt_snapshot == index_snapshot)
 }
 
+fn collect_unmerged_index_paths(index: &Index) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for e in &index.entries {
+        if e.stage() != 0 {
+            out.insert(String::from_utf8_lossy(&e.path).into_owned());
+        }
+    }
+    out
+}
+
+fn diff_entry_unmerged(path: &str) -> DiffEntry {
+    DiffEntry {
+        status: DiffStatus::Unmerged,
+        old_path: Some(path.to_owned()),
+        new_path: Some(path.to_owned()),
+        old_mode: "000000".to_owned(),
+        new_mode: "000000".to_owned(),
+        old_oid: zero_oid(),
+        new_oid: zero_oid(),
+        score: None,
+    }
+}
+
 fn diff_tree_vs_index(
     tree_map: &BTreeMap<String, Snapshot>,
     index_map: &BTreeMap<String, Snapshot>,
@@ -1097,6 +1158,7 @@ fn raw_change_to_diff_entry(change: &RawChange) -> DiffEntry {
         'R' => DiffStatus::Renamed,
         'C' => DiffStatus::Copied,
         'T' => DiffStatus::TypeChanged,
+        'U' => DiffStatus::Unmerged,
         _ => DiffStatus::Modified,
     };
 

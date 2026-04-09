@@ -193,6 +193,11 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.null_terminated && args.porcelain.is_none() {
         args.porcelain = Some("v1".to_string());
     }
+    if let Some(ref p) = args.porcelain {
+        if p != "v1" && p != "v2" {
+            return Err(anyhow::anyhow!("Invalid --porcelain option: {p}"));
+        }
+    }
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo
         .work_tree
@@ -403,6 +408,21 @@ pub fn run(mut args: Args) -> Result<()> {
         .into_iter()
         .filter(|entry| status_path_matches(entry.path(), &pathspecs))
         .collect();
+
+    let unmerged_paths_full = unmerged_paths_and_mask(&index);
+    let unmerged_for_display: BTreeMap<String, u8> = unmerged_paths_full
+        .into_iter()
+        .filter(|(p, _)| status_path_matches(p, &pathspecs))
+        .collect();
+    let unmerged_path_keys: BTreeSet<String> = unmerged_for_display.keys().cloned().collect();
+    let staged: Vec<grit_lib::diff::DiffEntry> = staged
+        .into_iter()
+        .filter(|e| !unmerged_path_keys.contains(e.path()))
+        .collect();
+    let unstaged: Vec<grit_lib::diff::DiffEntry> = unstaged
+        .into_iter()
+        .filter(|e| !unmerged_path_keys.contains(e.path()))
+        .collect();
     let untracked: Vec<String> = untracked
         .into_iter()
         .filter(|p| status_path_matches(p, &pathspecs))
@@ -452,6 +472,7 @@ pub fn run(mut args: Args) -> Result<()> {
             &unstaged,
             &untracked,
             &ignored_files,
+            &unmerged_for_display,
             &relativize,
             quote_path_cfg,
         )?;
@@ -471,6 +492,7 @@ pub fn run(mut args: Args) -> Result<()> {
             &unstaged_long,
             &untracked_long,
             &ignored_long,
+            &unmerged_for_display,
             hide_untracked,
         )?;
 
@@ -814,6 +836,17 @@ fn visit_untracked_directory(
         return Ok(());
     }
 
+    // Nested worktrees / `git init` subdirs: only `.git` exists under `rel`, so the full walk
+    // produced no paths (we skip `.git`). Git still reports `?? rel/` in normal untracked mode
+    // (t7060 `mdconflict/` after a sub-repo merge attempt).
+    if sub_untracked.is_empty()
+        && sub_ignored.is_empty()
+        && !rel.is_empty()
+        && !matcher.check_path(repo, Some(index), rel, true)?.0
+    {
+        untracked_out.push(format!("{rel}/"));
+    }
+
     Ok(())
 }
 
@@ -939,7 +972,7 @@ fn quote_c_style_path(name: &str) -> String {
     }
 }
 
-fn unmerged_paths_and_mask(index: &Index) -> BTreeMap<String, u8> {
+pub(crate) fn unmerged_paths_and_mask(index: &Index) -> BTreeMap<String, u8> {
     let mut by_path: BTreeMap<String, [bool; 3]> = BTreeMap::new();
     for e in &index.entries {
         let st = e.stage();
@@ -1437,13 +1470,17 @@ fn format_short(
     unstaged: &[grit_lib::diff::DiffEntry],
     untracked: &[String],
     ignored_files: &[String],
+    unmerged: &BTreeMap<String, u8>,
     relativize: &dyn Fn(&str) -> String,
     quote_path_cfg: bool,
 ) -> Result<()> {
     let terminator = if args.null_terminated { '\0' } else { '\n' };
 
     if args.branch {
-        let branch = head.branch_name().unwrap_or("HEAD (no branch)");
+        let branch = match head {
+            HeadState::Detached { .. } => "HEAD (no branch)",
+            _ => head.branch_name().unwrap_or("HEAD (no branch)"),
+        };
         write!(out, "## {branch}")?;
         if let Some(branch_name) = head.branch_name() {
             if let Some(up_ref) = upstream_tracking_full_ref(repo, branch_name) {
@@ -1476,7 +1513,7 @@ fn format_short(
         write!(out, "{terminator}")?;
     }
 
-    // Build a merged view: XY path
+    // Build a merged view: XY path (unmerged paths use two-letter codes, not staged/unstaged maps).
     let mut paths: BTreeSet<String> = BTreeSet::new();
     let mut staged_map: std::collections::HashMap<String, char> = std::collections::HashMap::new();
     let mut unstaged_map: std::collections::HashMap<String, char> =
@@ -1500,7 +1537,21 @@ fn format_short(
         paths.insert(path);
     }
 
+    for path in unmerged.keys() {
+        paths.insert(path.clone());
+    }
+
     for path in &paths {
+        if let Some(mask) = unmerged.get(path) {
+            let how = unmerged_short_xy(*mask);
+            if args.null_terminated {
+                write!(out, "{how} {}\0", relativize(path))?;
+            } else {
+                let disp = quote_status_short_path(&relativize(path), quote_path_cfg);
+                writeln!(out, "{how} {disp}")?;
+            }
+            continue;
+        }
         let x = staged_map.get(path).copied().unwrap_or(' ');
         let y = unstaged_map.get(path).copied().unwrap_or(' ');
         write!(out, "{x}{y} ")?;
@@ -1664,6 +1715,109 @@ pub(crate) fn write_status_branch_header(
     Ok(())
 }
 
+fn unmerged_long_label(mask: u8) -> &'static str {
+    match mask {
+        1 => "both deleted:",
+        2 => "added by us:",
+        3 => "deleted by them:",
+        4 => "added by them:",
+        5 => "deleted by us:",
+        6 => "both added:",
+        7 => "both modified:",
+        _ => "unmerged:",
+    }
+}
+
+fn unmerged_long_label_column_width() -> usize {
+    (1u8..=7u8)
+        .map(|m| unmerged_long_label(m).len())
+        .max()
+        .unwrap_or(16)
+        + 1
+}
+
+fn unmerged_short_xy(mask: u8) -> &'static str {
+    unmerged_v2_key(mask)
+}
+
+pub(crate) fn print_unmerged_long_section(
+    out: &mut impl Write,
+    cp: &str,
+    show_hints: bool,
+    head: &HeadState,
+    unmerged: &BTreeMap<String, u8>,
+    include_unstage_hints: bool,
+) -> Result<()> {
+    cpw(out, cp, "Unmerged paths:")?;
+    let col_w = unmerged_long_label_column_width();
+    if !show_hints {
+        for (path, mask) in unmerged {
+            let how = unmerged_long_label(*mask);
+            let pad = col_w.saturating_sub(how.len());
+            let spaces = " ".repeat(pad);
+            cpw(out, cp, &format!("\t{how}{spaces}{path}"))?;
+        }
+        cpw(out, cp, "")?;
+        return Ok(());
+    }
+
+    let mut both_deleted = false;
+    let mut del_mod_conflict = false;
+    let mut not_deleted = false;
+    for (_, mask) in unmerged {
+        match *mask {
+            0 => {}
+            1 => both_deleted = true,
+            3 | 5 => del_mod_conflict = true,
+            _ => not_deleted = true,
+        }
+    }
+
+    // Git `wt_longstatus_print_unmerged_header`: when `wt_status.whence != FROM_COMMIT`
+    // (merge, cherry-pick, rebase, …) the first hint block is skipped. `commit --dry-run`
+    // during merge uses `FROM_MERGE`, so it matches plain `status` during merge.
+    if include_unstage_hints {
+        if head.oid().is_some() {
+            cpw(
+                out,
+                cp,
+                "  (use \"git restore --staged <file>...\" to unstage)",
+            )?;
+        } else {
+            cpw(out, cp, "  (use \"git rm --cached <file>...\" to unstage)")?;
+        }
+    }
+
+    if !both_deleted {
+        if !del_mod_conflict {
+            cpw(out, cp, "  (use \"git add <file>...\" to mark resolution)")?;
+        } else {
+            cpw(
+                out,
+                cp,
+                "  (use \"git add/rm <file>...\" as appropriate to mark resolution)",
+            )?;
+        }
+    } else if !del_mod_conflict && !not_deleted {
+        cpw(out, cp, "  (use \"git rm <file>...\" to mark resolution)")?;
+    } else {
+        cpw(
+            out,
+            cp,
+            "  (use \"git add/rm <file>...\" as appropriate to mark resolution)",
+        )?;
+    }
+
+    for (path, mask) in unmerged {
+        let how = unmerged_long_label(*mask);
+        let pad = col_w.saturating_sub(how.len());
+        let spaces = " ".repeat(pad);
+        cpw(out, cp, &format!("\t{how}{spaces}{path}"))?;
+    }
+    cpw(out, cp, "")?;
+    Ok(())
+}
+
 fn cpw(out: &mut impl Write, prefix: &str, line: &str) -> Result<()> {
     if prefix.is_empty() {
         writeln!(out, "{line}")?;
@@ -1695,6 +1849,7 @@ fn format_long(
     unstaged: &[grit_lib::diff::DiffEntry],
     untracked: &[String],
     ignored_files: &[String],
+    unmerged: &BTreeMap<String, u8>,
     hide_untracked: bool,
 ) -> Result<()> {
     // Determine comment prefix
@@ -1726,11 +1881,35 @@ fn format_long(
         None,
     )?;
 
-    // In-progress operations
-    for op in in_progress {
+    // Merge in progress: Git `show_merge_in_progress` (before staged/unmerged sections).
+    let merge_active = in_progress.contains(&grit_lib::state::InProgressOperation::Merge);
+    let other_ops: Vec<_> = in_progress
+        .iter()
+        .filter(|op| **op != grit_lib::state::InProgressOperation::Merge)
+        .collect();
+
+    if merge_active {
+        if !unmerged.is_empty() {
+            cpw(out, cp, "You have unmerged paths.")?;
+            if show_hints {
+                cpw(out, cp, "  (fix conflicts and run \"git commit\")")?;
+                cpw(out, cp, "  (use \"git merge --abort\" to abort the merge)")?;
+            }
+        } else {
+            cpw(out, cp, "All conflicts fixed but you are still merging.")?;
+            if show_hints {
+                cpw(out, cp, "  (use \"git commit\" to conclude merge)")?;
+            }
+        }
+        cpw(out, cp, "")?;
+    }
+
+    for op in other_ops {
         cpw(out, cp, "")?;
         cpw(out, cp, &format!("You are currently {}.", op.description()))?;
-        cpw(out, cp, &format!("  ({})", op.hint()))?;
+        for line in op.hint().lines() {
+            cpw(out, cp, &format!("  ({line})"))?;
+        }
     }
 
     if let Some(msg) = sparse_checkout_banner(config, expanded_index, index_sparse_on_disk) {
@@ -1746,7 +1925,9 @@ fn format_long(
     if !staged.is_empty() {
         has_section = true;
         cpw(out, cp, "Changes to be committed:")?;
-        if show_hints {
+        // Git `wt_longstatus_print_cached_header`: skip unstage hints when `whence != FROM_COMMIT`
+        // (merge in progress — t7060 test 14).
+        if show_hints && !merge_active {
             if head.oid().is_some() {
                 cpw(
                     out,
@@ -1770,6 +1951,11 @@ fn format_long(
             cpw(out, cp, &format!("\t{label}:   {}", entry.display_path()))?;
         }
         cpw(out, cp, "")?;
+    }
+
+    if !unmerged.is_empty() {
+        let include_unstage = show_hints && !merge_active;
+        print_unmerged_long_section(out, cp, show_hints, head, unmerged, include_unstage)?;
     }
 
     // Unstaged changes
@@ -1856,21 +2042,32 @@ fn format_long(
         cpw(out, cp, "")?;
     }
 
-    // "Untracked files not listed" message when -uno is used
+    // Git omits this when the only changes are unmerged paths (not "committable"); t7060 tests 11/13.
     if hide_untracked {
-        if show_hints {
-            cpw(
-                out,
-                cp,
-                "Untracked files not listed (use -u option to show untracked files)",
-            )?;
-        } else {
-            cpw(out, cp, "Untracked files not listed")?;
+        let only_unmerged = !unmerged.is_empty() && staged.is_empty() && unstaged.is_empty();
+        if !only_unmerged {
+            if show_hints {
+                cpw(
+                    out,
+                    cp,
+                    "Untracked files not listed (use -u option to show untracked files)",
+                )?;
+            } else {
+                cpw(out, cp, "Untracked files not listed")?;
+            }
         }
     }
 
     // Footer messages
-    if staged.is_empty() && unstaged.is_empty() && untracked.is_empty() {
+    if !unmerged.is_empty() {
+        if staged.is_empty() {
+            cpw(
+                out,
+                cp,
+                "no changes added to commit (use \"git add\" and/or \"git commit -a\")",
+            )?;
+        }
+    } else if staged.is_empty() && unstaged.is_empty() && untracked.is_empty() {
         if hide_untracked {
             // When hiding untracked, don't say "working tree clean"
         } else if !ignored_files.is_empty() {
