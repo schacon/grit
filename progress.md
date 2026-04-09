@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   270 |
+| Completed   |   271 |
 | In progress |     4 |
-| Remaining   |   494 |
+| Remaining   |   493 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 270 completed (`[x]`), 4 in progress (`[~]`), 494 remaining (`[ ]`).
+Task lines in `PLAN.md`: 271 completed (`[x]`), 4 in progress (`[~]`), 493 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t2030-checkout-index-basic` — 27/27 tests pass (`checkout-index` flags and edge cases; `PLAN.md` entry added; harness dashboards refreshed)
 - `t1900-repo-info` — 37/37 tests pass (`git repo info`: layout/references/object keys, `--format`/`--all`/`--keys`, partial success stderr + exit 1; `SilentNonZeroExit` avoids duplicate errors; harness CSV refreshed)
 - `t6437-submodule-merge` — 22/22 tests pass (directory/submodule merge: submodule work tree preserved, conflict material relocated; `merge --abort` clears state; `test_expect_failure` → `test_expect_success` for cases now passing; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t4058-diff-duplicates` — 16/16 tests pass (duplicate-tree diff/checkout: flip `test_expect_failure` → `test_expect_success` for empty-status branch switches; behavior already matched Git)
@@ -145,4 +146,4 @@ Task lines in `PLAN.md`: 270 completed (`[x]`), 4 in progress (`[~]`), 494 remai
 
 ## What Remains
 
-494 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+493 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
