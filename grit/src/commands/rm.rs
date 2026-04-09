@@ -2,19 +2,23 @@
 //!
 //! Supports removing files from the index only (`--cached`), recursive
 //! removal (`-r`), forced removal of modified files (`-f`/`--force`),
-//! dry-run mode (`-n`/`--dry-run`), and quiet mode (`-q`/`--quiet`).
+//! dry-run mode (`-n`/`--dry-run`), quiet mode (`-q`/`--quiet`), and
+//! sparse-checkout awareness (`--sparse`).
 
 use crate::commands::cwd_pathspec;
+use crate::commands::sparse_advice::emit_sparse_path_advice;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::diff::{read_submodule_head_oid, zero_oid};
 use grit_lib::error::Error;
+use grit_lib::ignore::path_in_sparse_checkout as path_in_sparse_checkout_lines;
 use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
+use grit_lib::sparse_checkout::{parse_sparse_checkout_file, path_in_sparse_checkout_patterns};
 use grit_lib::submodule_gitdir::submodule_modules_git_dir;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
@@ -69,6 +73,10 @@ pub struct Args {
     /// Exit with zero status even if no files matched.
     #[arg(long = "ignore-unmatch")]
     pub ignore_unmatch: bool,
+
+    /// Allow removing index entries outside the sparse-checkout cone (and skip-worktree entries).
+    #[arg(long = "sparse")]
+    pub sparse: bool,
 }
 
 /// Run the `rm` command.
@@ -145,6 +153,23 @@ pub fn run(mut args: Args) -> Result<()> {
         .get_bool("advice.rmhints")
         .and_then(|r| r.ok())
         .unwrap_or(true);
+    let sparse_enabled = config
+        .get("core.sparseCheckout")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let cone_cfg = config
+        .get("core.sparseCheckoutCone")
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or(true);
+    let sparse_patterns: Vec<String> = if sparse_enabled {
+        let sc_path = repo.git_dir.join("info").join("sparse-checkout");
+        match fs::read_to_string(&sc_path) {
+            Ok(s) => parse_sparse_checkout_file(&s),
+            Err(_) => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
 
     let mut index = match repo.load_index() {
         Ok(idx) => idx,
@@ -159,6 +184,8 @@ pub fn run(mut args: Args) -> Result<()> {
     let mut to_remove: Vec<String> = Vec::new();
     // Collect errors grouped by kind so we can emit batched messages.
     let mut errors_by_kind: Vec<(RmErrorKind, Vec<String>)> = Vec::new();
+    let mut sparse_only_pathspecs: Vec<String> = Vec::new();
+    let mut matched_any_eligible = false;
 
     for pathspec in &include_specs {
         let rel = resolve_rel(pathspec, work_tree)?;
@@ -185,7 +212,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 if args.ignore_unmatch {
                     continue;
                 }
-                bail!("pathspec '{}' did not match any files", pathspec);
+                bail!("fatal: pathspec '{}' did not match any files", pathspec);
             }
         }
 
@@ -222,20 +249,44 @@ pub fn run(mut args: Args) -> Result<()> {
             if args.ignore_unmatch {
                 continue;
             }
-            bail!("pathspec '{}' did not match any files", pathspec);
+            bail!("fatal: pathspec '{}' did not match any files", pathspec);
         }
 
+        let eligible: Vec<String> = if args.sparse || !sparse_enabled {
+            matches
+        } else {
+            matches
+                .into_iter()
+                .filter(|p| {
+                    index.get(p.as_bytes(), 0).is_some_and(|e| {
+                        rm_entry_matches_sparse_worktree(e, p, &sparse_patterns, cone_cfg)
+                    })
+                })
+                .collect()
+        };
+
+        if eligible.is_empty() {
+            if args.ignore_unmatch {
+                continue;
+            }
+            sparse_only_pathspecs.push(pathspec.clone());
+            continue;
+        }
+
+        matched_any_eligible = true;
+
         // Require -r for directories (but not gitlinks, which are single entries).
+        // Wildcard pathspecs may match several files at once without `-r` (Git: `ce_path_match`).
         if !args.recursive {
             // Check if this is a gitlink entry (mode 160000)
-            let is_gitlink = matches.len() == 1
-                && matches[0] == rel
+            let is_gitlink = eligible.len() == 1
+                && eligible[0] == rel
                 && index
                     .get(rel.as_bytes(), 0)
                     .map(|e| e.mode == 0o160000)
                     .unwrap_or(false);
-            if !is_gitlink {
-                for m in &matches {
+            if !is_gitlink && !is_glob {
+                for m in &eligible {
                     if Path::new(m) != Path::new(&rel) {
                         bail!("not removing '{}' recursively without -r", pathspec);
                     }
@@ -244,13 +295,13 @@ pub fn run(mut args: Args) -> Result<()> {
                 let is_real_dir = fs::symlink_metadata(&abs_path)
                     .map(|m| m.file_type().is_dir())
                     .unwrap_or(false);
-                if is_real_dir && !matches.is_empty() {
+                if is_real_dir && !eligible.is_empty() {
                     bail!("not removing '{}' recursively without -r", pathspec);
                 }
             }
         }
 
-        for path_str in matches {
+        for path_str in eligible {
             match safety_check(
                 &repo,
                 &index,
@@ -271,6 +322,18 @@ pub fn run(mut args: Args) -> Result<()> {
                 }
             }
         }
+    }
+
+    let mut exit_for_sparse_advice = false;
+    if !sparse_only_pathspecs.is_empty() {
+        sparse_only_pathspecs.sort();
+        sparse_only_pathspecs.dedup();
+        emit_sparse_path_advice(&mut std::io::stderr(), &config, &sparse_only_pathspecs)?;
+        exit_for_sparse_advice = true;
+    }
+
+    if !matched_any_eligible && exit_for_sparse_advice {
+        std::process::exit(1);
     }
 
     if !errors_by_kind.is_empty() {
@@ -357,7 +420,34 @@ pub fn run(mut args: Args) -> Result<()> {
     // Git keeps `submodule.<name>.*` entries in `.git/config` after `git rm` on a gitlink;
     // `git submodule deinit` / `git config --remove-section` clear them (t7400 cleanup).
 
+    if exit_for_sparse_advice {
+        std::process::exit(1);
+    }
+
     Ok(())
+}
+
+/// Whether `git rm` may update this index entry without `--sparse` while sparse-checkout is on.
+///
+/// Matches Git's `builtin/rm.c`: entries with `skip-worktree` or outside the sparse definition are
+/// skipped unless `--sparse` is given.
+fn rm_entry_matches_sparse_worktree(
+    entry: &grit_lib::index::IndexEntry,
+    path: &str,
+    patterns: &[String],
+    cone_cfg: bool,
+) -> bool {
+    if entry.skip_worktree() {
+        return false;
+    }
+    let in_sparse = if patterns.is_empty() {
+        true
+    } else if cone_cfg {
+        path_in_sparse_checkout_patterns(path, patterns, true)
+    } else {
+        path_in_sparse_checkout_lines(path, patterns)
+    };
+    in_sparse
 }
 
 /// Generate error header and optional hint for a batch of failures.

@@ -1106,8 +1106,13 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String], cone_mode: bool
             continue;
         }
         let path_str = String::from_utf8_lossy(&entry.path).to_string();
-        let matches =
-            path_in_sparse_checkout(&path_str, effective_cone, cone_struct.as_ref(), &non_cone);
+        // Non-cone mode must use Git's `path_in_sparse_checkout` (parent walk + last-match),
+        // not `NonConePatterns::path_included` (sequential toggles). See t3602-rm-sparse-checkout.
+        let matches = if effective_cone {
+            path_in_sparse_checkout(&path_str, true, cone_struct.as_ref(), &non_cone)
+        } else {
+            path_in_sparse_checkout_lines(&path_str, patterns)
+        };
 
         if matches {
             if entry.skip_worktree() {

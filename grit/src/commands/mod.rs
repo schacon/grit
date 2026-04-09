@@ -132,6 +132,7 @@ pub mod show;
 pub mod show_branch;
 pub mod show_index;
 pub mod show_ref;
+pub mod sparse_advice;
 pub mod sparse_checkout;
 pub mod stage;
 pub mod stash;
