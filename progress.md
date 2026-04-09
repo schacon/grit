@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 315 completed (`[x]`), 5 in progress (`[~]`), 450 remai
 
 ## Recently completed
 
+- `t5609-clone-branch` — 7/7 tests pass (`clone --branch`: `read_raw_ref` for ref existence so `refs/remotes/origin/HEAD` is set when default branch is packed; reject `--branch` when `refs/heads/<name>` missing on source, including empty repos)
 - `t5802-connect-helper` — 8/8 tests pass (`ext::` sh -c upload-pack argv extraction; `git daemon --inetd` minimal path; streaming unpack zero-byte trees + duplicate `want` dedup; fetch NAK round + tag-following for ext/HTTP; rev-parse `tag^1` peels tags; harness CSV/dashboards refreshed)
 - `t7421-submodule-summary-add` — 5/5 tests pass (`submodule summary`: index↔commit gitlink diff, pathspecs + renamed paths, `rev-parse` first line for abbrev; `submodule update --remote`: local URL fast path updates `refs/remotes/origin/*` + copies objects, stages gitlink in super index)
 - `t3422-rebase-incompatible-options` — 52/52 tests pass (`rebase`: apply vs merge option incompatibility; `rebase.rebaseMerges` / `rebase.updateRefs` with apply options; preprocess `-C<n>` for clap; harness CSV refreshed)

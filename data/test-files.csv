@@ -1004,7 +1004,7 @@ t5605-clone-local	t5	yes	23	14	9	false	ok	0
 t5606-clone-options	t5	yes	21	20	1	false	ok	0
 t5607-clone-bundle	t5	yes	16	5	11	false	ok	0
 t5608-clone-2gb	t5	yes	0	0	0	false	ok	0
-t5609-clone-branch	t5	yes	7	5	2	false	ok	0
+t5609-clone-branch	t5	yes	7	7	0	true	ok	0
 t5610-clone-detached	t5	skip	13	2	11	false	ok	1
 t5611-clone-config	t5	yes	13	9	4	false	ok	0
 t5612-clone-refspec	t5	yes	13	3	10	false	ok	0
