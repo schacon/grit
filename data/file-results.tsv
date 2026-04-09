@@ -653,7 +653,7 @@ t5750-bundle-uri-parse	yes	13	0	13	ok	0	13	0
 t5801-remote-helpers	yes	35	5	30	ok	4	34	1
 t5802-connect-helper	yes	8	2	6	ok	2	8	0
 t5810-proto-disable-local	yes	54	46	8	ok	46	54	0
-t5811-proto-disable-git	yes	0	0	0	ok	0	0	0
+t5811-proto-disable-git	yes	26	26	0	ok	26	26	0
 t5812-proto-disable-http	yes	29	11	18	ok	11	29	0
 t5813-proto-disable-ssh	yes	81	30	51	ok	30	81	0
 t5814-proto-disable-ext	yes	27	11	16	ok	11	27	0

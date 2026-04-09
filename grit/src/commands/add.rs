@@ -147,10 +147,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let mut index = if idx_exists {
         Index::load(&index_path)?
     } else {
-        Index::new_with_config(
-            config.get("index.version").as_deref(),
-            config.get("feature.manyFiles").as_deref(),
-        )
+        Index::new_with_config(cfg_ver.as_deref(), cfg_many.as_deref())
     };
 
     let odb = &repo.odb;

@@ -227,6 +227,11 @@ fn push_to_url(
     push_all: bool,
     push_refspecs_from_config: &[String],
 ) -> Result<()> {
+    if url.starts_with("git://") {
+        crate::protocol::check_protocol_allowed("git", Some(&repo.git_dir))?;
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
+
     // Check protocol.file.allow before local push
     crate::protocol::check_protocol_allowed("file", Some(&repo.git_dir))?;
 
@@ -556,7 +561,11 @@ fn push_to_url(
             if old == new {
                 continue;
             }
-            if !args.force && !update.refspec_force && args.force_with_lease.is_none() && !is_ancestor(repo, *old, *new)? {
+            if !args.force
+                && !update.refspec_force
+                && args.force_with_lease.is_none()
+                && !is_ancestor(repo, *old, *new)?
+            {
                 bail!(
                     "Updates were rejected because the tip of your current branch is behind\n\
                      its remote counterpart. If you want to force the update, use --force.\n\

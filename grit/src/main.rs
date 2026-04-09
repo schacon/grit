@@ -13,6 +13,7 @@ mod commands;
 pub mod pathspec;
 pub mod pkt_line;
 pub mod protocol;
+mod transport_passthrough;
 
 /// Return the version string, e.g. `"2.47.0.grit"`.
 pub fn version_string() -> String {
@@ -227,7 +228,9 @@ struct GlobalOpts {
 ///
 /// We scan argv[1..] for global flags that appear before the subcommand.
 /// The first non-flag argument is the subcommand name.
-fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<String>)> {
+pub(crate) fn extract_globals(
+    args: &[String],
+) -> Result<(GlobalOpts, Option<String>, Vec<String>)> {
     let mut opts = GlobalOpts::default();
     let mut subcmd = None;
     let mut rest = Vec::new();

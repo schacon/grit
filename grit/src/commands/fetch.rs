@@ -168,6 +168,11 @@ fn fetch_remote(
             .with_context(|| format!("remote '{remote_name}' not found; no such remote"))?
     };
 
+    if url.starts_with("git://") {
+        crate::protocol::check_protocol_allowed("git", Some(git_dir))?;
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
+
     // Check protocol.file.allow before local fetch
     crate::protocol::check_protocol_allowed("file", Some(git_dir))?;
 

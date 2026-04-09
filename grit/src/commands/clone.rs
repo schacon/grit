@@ -123,10 +123,10 @@ pub fn run(args: Args) -> Result<()> {
         return run_ssh_clone(args);
     }
 
-    // Detect git:// protocol
+    // Detect git:// protocol (delegate to system git until native transport exists)
     if args.repository.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", None)?;
-        bail!("git:// protocol transport is not yet supported");
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
     }
 
     // Detect http(s):// protocol
@@ -552,7 +552,11 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<
 
         if !status.success() {
             eprintln!("warning: failed to clone submodule '{}'", path);
-            anyhow::bail!("clone of '{}' into submodule path '{}' failed", resolved_url, sub_dest.display());
+            anyhow::bail!(
+                "clone of '{}' into submodule path '{}' failed",
+                resolved_url,
+                sub_dest.display()
+            );
         }
     }
 
