@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   275 |
+| Completed   |   276 |
 | In progress |     4 |
-| Remaining   |   489 |
+| Remaining   |   488 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 275 completed (`[x]`), 4 in progress (`[~]`), 489 remaining (`[ ]`).
+Task lines in `PLAN.md`: 276 completed (`[x]`), 4 in progress (`[~]`), 488 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t1508-at-combinations` — 35/35 tests pass (`@{X}` combinations: reflog, upstream, `@`/`@@{u}`, branches with `@`, `@:path`, reflog expire edge cases; harness CSV/dashboards refreshed; `PLAN.md` / `t1-plan.md` marked complete)
 - `t5309-pack-delta-cycles` — 7/7 tests pass (`index-pack` / `--fix-thin`: REF_DELTA cycles fail when bases are missing, succeed when bases exist in ODB or as duplicate undeltified objects in-pack; thin A→B→C chain with B on disk; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t10860-switch-force-create` — 30/30 tests pass (`switch`: `-c`/`--create`, start points, `switch -`, detach/orphan, `--discard-changes`, untracked preservation; harness CSV/dashboards refreshed; `t1-plan.md` marked complete)
 - `t5900-repo-selection` — 8/8 tests pass (local `fetch`/`clone` remote path resolution: `.git` dir in worktree, bare `foo` vs `foo.git` disambiguation, non-git `foo` directory ignored, inner worktree preferred when outer is bare; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
@@ -150,4 +151,4 @@ Task lines in `PLAN.md`: 275 completed (`[x]`), 4 in progress (`[~]`), 489 remai
 
 ## What Remains
 
-489 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+488 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
