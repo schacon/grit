@@ -4,7 +4,7 @@
 //! builtins consult `alias.*` first, mirroring upstream git.
 
 use anyhow::{bail, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use grit_lib::config::{canonical_key, ConfigEntry, ConfigSet};
 
@@ -286,6 +286,63 @@ pub(crate) fn run_command_with_aliases(
     }
 }
 
+/// Returns whether `path` exists and is executable (Unix: any execute bit).
+fn is_executable_file(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .ok()
+            .is_some_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
+}
+
+/// Resolves `git-<cmd>` the same way as upstream Git: `exec_path` first, then each `PATH` directory.
+///
+/// # Parameters
+///
+/// * `cmd` — subcommand name without the `git-` prefix.
+/// * `exec_path` — optional Git exec directory (from `--exec-path` / global options).
+#[must_use]
+pub(crate) fn find_git_external_helper(cmd: &str, exec_path: Option<&Path>) -> Option<PathBuf> {
+    let ext_cmd = format!("git-{cmd}");
+    #[cfg(windows)]
+    let ext_cmd_exe = format!("git-{cmd}.exe");
+    let try_dir = |dir: &Path| -> Option<PathBuf> {
+        let p = dir.join(&ext_cmd);
+        if is_executable_file(&p) {
+            return Some(p);
+        }
+        #[cfg(windows)]
+        {
+            let p = dir.join(&ext_cmd_exe);
+            if is_executable_file(&p) {
+                return Some(p);
+            }
+        }
+        None
+    };
+    if let Some(ep) = exec_path {
+        if let Some(p) = try_dir(ep) {
+            return Some(p);
+        }
+    }
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        if exec_path.is_some_and(|ep| ep == dir.as_path()) {
+            continue;
+        }
+        if let Some(p) = try_dir(&dir) {
+            return Some(p);
+        }
+    }
+    None
+}
+
 fn try_exec_dashed(cmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<bool> {
     let ext_cmd = format!("git-{cmd}");
     let exec_path = opts.exec_path.clone().or_else(|| {
@@ -293,15 +350,12 @@ fn try_exec_dashed(cmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<bool
             .ok()
             .and_then(|e| e.parent().map(|p| p.to_path_buf()))
     });
-    if let Some(ref ep) = exec_path {
-        let ext_path = ep.join(&ext_cmd);
-        if ext_path.is_file() {
-            let status = std::process::Command::new(&ext_path)
-                .args(rest.iter())
-                .status()
-                .map_err(|e| anyhow::anyhow!("failed to run {}: {}", ext_cmd, e))?;
-            crate::exit_with_status(status);
-        }
+    if let Some(ext_path) = find_git_external_helper(cmd, exec_path.as_deref()) {
+        let status = std::process::Command::new(&ext_path)
+            .args(rest.iter())
+            .status()
+            .map_err(|e| anyhow::anyhow!("failed to run {}: {}", ext_cmd, e))?;
+        crate::exit_with_status(status);
     }
     Ok(false)
 }

@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -1389,7 +1389,7 @@ t8990-config-set-unset	t8	yes	27	27	0	true	ok	0
 t9000-init-default-branch	t9	yes	24	24	0	true	ok	0
 t9001-send-email	t9	skip	215	46	169	false	ok	1
 t9002-column	t9	yes	16	16	0	true	ok	0
-t9003-help-autocorrect	t9	yes	0	0	0	false	timeout	0
+t9003-help-autocorrect	t9	yes	10	10	0	true	ok	0
 t9010-branch-list-sort	t9	yes	26	26	0	true	ok	0
 t9020-tag-list-contains	t9	yes	28	28	0	true	ok	0
 t9030-commit-tree-parents	t9	yes	25	25	0	true	ok	0

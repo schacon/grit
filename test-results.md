@@ -1,5 +1,10 @@
 # Test Results
 
+**Updated:** 2026-04-09
+
+- `./scripts/run-tests.sh t9003-help-autocorrect.sh`: 10/10 passing (`help.autocorrect` + unknown-command flow aligned with Git; harness CSV/dashboards refreshed).
+- `cargo test -p grit-lib --lib`: 121/121 passing.
+
 **Updated:** 2026-04-08
 
 - `./scripts/run-tests.sh t13180-log-patch-stat.sh`: 35/35 passing (`grit log` oneline/graph/decorate/skip/max-count/reverse/format; harness CSV/dashboards refreshed).

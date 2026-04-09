@@ -639,6 +639,19 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         format!("{}\n", common.display()),
     )?;
 
+    // Linked worktrees need `core.worktree` in their admin `config` so discovery
+    // does not treat them as bare when the shared config has `core.bare = true`.
+    let wt_path_abs = wt_path
+        .canonicalize()
+        .unwrap_or_else(|_| wt_path.to_path_buf());
+    fs::write(
+        wt_admin.join("config"),
+        format!(
+            "[core]\n\trepositoryformatversion = 0\n\tworktree = {}\n",
+            wt_path_abs.display()
+        ),
+    )?;
+
     // Write HEAD — either branch or detached
     let detach_head = args.detach || implicit_detach;
     if detach_head {
@@ -755,6 +768,16 @@ fn setup_unborn_worktree(
     fs::write(
         wt_admin.join("commondir"),
         format!("{}\n", common.display()),
+    )?;
+    let wt_path_abs = wt_path
+        .canonicalize()
+        .unwrap_or_else(|_| wt_path.to_path_buf());
+    fs::write(
+        wt_admin.join("config"),
+        format!(
+            "[core]\n\trepositoryformatversion = 0\n\tworktree = {}\n",
+            wt_path_abs.display()
+        ),
     )?;
     fs::write(
         wt_admin.join("HEAD"),
