@@ -549,6 +549,23 @@ fn two_way_merge(
     Ok(out)
 }
 
+/// First phase of `git reset --keep`: carry the current index forward across a fast-forward
+/// from `HEAD^{tree}` to `target^{tree}` using Git's two-way merge rules (`twoway_merge`).
+///
+/// This matches `reset_index(..., KEEP)` in Git's `builtin/reset.c`, which runs before HEAD is
+/// updated and before the second `oneway_merge` phase.
+pub(crate) fn reset_keep_twoway_index(
+    repo: &Repository,
+    current_index: &Index,
+    head_tree_oid: ObjectId,
+    target_tree_oid: ObjectId,
+) -> Result<Index> {
+    let prot = PathProtection::load(&repo.git_dir);
+    let head_map = tree_to_map(tree_to_index_entries(repo, &head_tree_oid, "", prot)?);
+    let target_map = tree_to_map(tree_to_index_entries(repo, &target_tree_oid, "", prot)?);
+    two_way_merge(repo, current_index, &head_map, &target_map)
+}
+
 /// When the index matches tree A (ours), Git also requires the working tree file to match
 /// the index for cases marked "up-to-date" in `t1000-read-tree-m-3way.sh`.
 fn require_uptodate(repo: &Repository, entry: &IndexEntry) -> Result<()> {

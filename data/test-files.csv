@@ -1187,7 +1187,7 @@ t7104-reset-hard	t7	yes	3	3	0	true	ok	0
 t7105-reset-patch	t7	yes	13	6	7	false	ok	0
 t7106-reset-unborn-branch	t7	yes	7	7	0	true	ok	0
 t7107-reset-pathspec-file	t7	yes	11	1	10	false	ok	0
-t7110-reset-merge	t7	yes	21	9	12	false	ok	0
+t7110-reset-merge	t7	yes	21	21	0	true	ok	0
 t7110-reset-modes	t7	yes	20	20	0	true	ok	0
 t7111-reset-table	t7	yes	42	34	8	false	ok	0
 t7112-reset-submodule	t7	yes	76	24	52	false	ok	0

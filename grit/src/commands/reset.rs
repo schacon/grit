@@ -1061,73 +1061,65 @@ fn reset_commit(
         bail!("fatal: mixed reset is not allowed in a bare repository");
     }
 
-    // For --keep, we need to check safety before making any changes.
+    // `--keep` refuses while a merge is in progress or the index has unmerged
+    // entries (Git: `die_if_unmerged_cache` before touching the index).
     if mode == ResetMode::Keep {
+        die_if_unmerged_or_merge_head(repo)?;
         check_keep_safety(repo, &head, &target_oid)?;
     }
 
-    // `--merge` matches Git's twoway merge reset: refuse when the working tree
-    // or index is out of sync with HEAD on paths that differ between HEAD and
-    // the target (e.g. cherry-pick --abort after a local edit to an unrelated
-    // file). When HEAD already matches the target, this is a no-op check.
+    // `--merge` uses Git's one-way merge into the index: staged differences from
+    // HEAD on paths that will change are discarded, but the working tree must
+    // still match the pre-reset index on those paths (`verify_uptodate`).
     if mode == ResetMode::Merge {
-        check_keep_safety(repo, &head, &target_oid)?;
+        check_merge_reset_worktree(repo, &head, &target_oid)?;
     }
 
     // Get the old OID for reflog and ORIG_HEAD.
     let old_oid = head.oid().copied().unwrap_or_else(zero_oid);
+    let pre_reset_head_oid = head.oid().copied();
 
     // Save ORIG_HEAD before moving HEAD.
     if head.oid().is_some() {
         write_orig_head(&repo.git_dir, &old_oid)?;
     }
 
-    // Update HEAD (and the branch it points to, if on a branch).
-    update_head_ref(&repo.git_dir, &head, &target_oid)?;
-
-    // Write reflog entries.
-    write_reset_reflog(repo, &head, &old_oid, &target_oid, commit_spec);
-
-    // Clean up merge/cherry-pick state files on non-soft reset.
-    if mode != ResetMode::Soft {
-        let _ = std::fs::remove_file(repo.git_dir.join("MERGE_HEAD"));
-        let _ = std::fs::remove_file(repo.git_dir.join("MERGE_MSG"));
-        let _ = std::fs::remove_file(repo.git_dir.join("MERGE_MODE"));
-        if !extra.skip_sequencer_head_cleanup {
-            let _ = std::fs::remove_file(repo.git_dir.join("CHERRY_PICK_HEAD"));
-            let _ = std::fs::remove_file(repo.git_dir.join("REVERT_HEAD"));
-        }
-    }
-
     if mode == ResetMode::Soft {
+        update_head_ref(&repo.git_dir, &head, &target_oid)?;
+        write_reset_reflog(repo, &head, &old_oid, &target_oid, commit_spec);
         // Soft: HEAD moved, index and working tree unchanged.
         return Ok(());
     }
 
-    // Mixed / hard / keep: reset index from the commit's tree.
-    let tree_oid = commit_to_tree(repo, &target_oid)?;
-    let tree_entries = tree_to_flat_entries(repo, &tree_oid, "")?;
-
+    // Git updates the index before moving HEAD for mixed/hard/keep/merge (`reset_index` runs
+    // before `reset_refs` in builtin/reset.c).
     let index_path = repo.index_path();
     let old_index = repo
         .load_index_at(&index_path)
         .context("loading old index")?;
-    let mut new_index = Index::new();
-    new_index.entries = tree_entries;
-    new_index.sort();
-    // Git keeps cache-entry flags (assume-unchanged, skip-worktree) across mixed/hard/merge
-    // index rebuilds so sparse/skip-worktree paths stay marked (t7011).
-    preserve_index_cache_flags_from(&old_index, &mut new_index);
 
-    if mode == ResetMode::Hard || mode == ResetMode::Keep || mode == ResetMode::Merge {
-        // Hard/Keep/Merge require a working tree
-        if repo.work_tree.is_none() {
-            bail!("fatal: this operation must be run in a work tree");
+    let mut new_index = match mode {
+        ResetMode::Merge => {
+            let head_oid = pre_reset_head_oid.ok_or_else(|| {
+                anyhow::anyhow!("fatal: could not resolve HEAD for reset --merge")
+            })?;
+            build_merge_reset_index(repo, &old_index, head_oid, &target_oid)?
         }
-        if repo.work_tree.is_some() {
-            let wt = repo.work_tree.as_deref().expect("worktree checked above");
-            if mode == ResetMode::Merge || mode == ResetMode::Keep {
-                let obstruction = find_untracked_obstruction(wt, &old_index, &new_index);
+        ResetMode::Keep => {
+            let head_oid = pre_reset_head_oid
+                .ok_or_else(|| anyhow::anyhow!("fatal: could not resolve HEAD for reset --keep"))?;
+            let head_tree_oid = commit_to_tree(repo, &head_oid)?;
+            let target_tree_oid = commit_to_tree(repo, &target_oid)?;
+            let mut phase1 = crate::commands::read_tree::reset_keep_twoway_index(
+                repo,
+                &old_index,
+                head_tree_oid,
+                target_tree_oid,
+            )?;
+            preserve_index_cache_flags_from(&old_index, &mut phase1);
+            if repo.work_tree.is_some() {
+                let wt = repo.work_tree.as_deref().expect("worktree");
+                let obstruction = find_untracked_obstruction(wt, &old_index, &phase1);
                 if let Some((path, is_dir)) = obstruction {
                     if is_dir {
                         bail!("Updating '{}' would lose untracked files in it", path);
@@ -1135,13 +1127,56 @@ fn reset_commit(
                         bail!("Updating '{}' would lose untracked files.", path);
                     }
                 }
+                // Selective checkout like Git's single `unpack_trees` pass: when the twoway result
+                // keeps the same blob as the pre-reset index, do not overwrite a dirty work tree.
+                checkout_merge_reset_worktree(repo, &old_index, &mut phase1)?;
             }
-            checkout_index_to_worktree(
-                repo,
-                &old_index,
-                &mut new_index,
-                Some((&target_oid, Some(commit_spec))),
-            )?;
+            build_merge_reset_index(repo, &phase1, head_oid, &target_oid)?
+        }
+        _ => {
+            let tree_oid = commit_to_tree(repo, &target_oid)?;
+            let tree_entries = tree_to_flat_entries(repo, &tree_oid, "")?;
+            let mut idx = Index::new();
+            idx.entries = tree_entries;
+            idx.sort();
+            idx
+        }
+    };
+    // Git keeps cache-entry flags (assume-unchanged, skip-worktree) across mixed/hard/merge
+    // index rebuilds so sparse/skip-worktree paths stay marked (t7011).
+    preserve_index_cache_flags_from(&old_index, &mut new_index);
+
+    if mode == ResetMode::Hard || mode == ResetMode::Keep || mode == ResetMode::Merge {
+        if repo.work_tree.is_none() {
+            bail!("fatal: this operation must be run in a work tree");
+        }
+        if let Some(wt) = repo.work_tree.as_deref() {
+            match mode {
+                ResetMode::Merge => {
+                    let obstruction = find_untracked_obstruction(wt, &old_index, &new_index);
+                    if let Some((path, is_dir)) = obstruction {
+                        if is_dir {
+                            bail!("Updating '{}' would lose untracked files in it", path);
+                        } else {
+                            bail!("Updating '{}' would lose untracked files.", path);
+                        }
+                    }
+                    checkout_merge_reset_worktree(repo, &old_index, &mut new_index)?;
+                }
+                ResetMode::Keep => {
+                    // Working tree was synced to the twoway-merge index inside the `Keep` arm
+                    // above; Git's second `reset_index(MIXED)` only adjusts the index.
+                }
+                ResetMode::Hard => {
+                    checkout_index_to_worktree(
+                        repo,
+                        &old_index,
+                        &mut new_index,
+                        Some((&target_oid, Some(commit_spec))),
+                    )?;
+                }
+                _ => {}
+            }
         }
         if !quiet {
             print_head_message(repo, &target_oid)?;
@@ -1180,7 +1215,240 @@ fn reset_commit(
     repo.write_index_at(&index_path, &mut new_index)
         .context("writing index")?;
     crate::commands::sparse_checkout::reapply_sparse_checkout_if_configured(repo)?;
+
+    update_head_ref(&repo.git_dir, &head, &target_oid)?;
+    write_reset_reflog(repo, &head, &old_oid, &target_oid, commit_spec);
+
+    let _ = std::fs::remove_file(repo.git_dir.join("MERGE_HEAD"));
+    let _ = std::fs::remove_file(repo.git_dir.join("MERGE_MSG"));
+    let _ = std::fs::remove_file(repo.git_dir.join("MERGE_MODE"));
+    if !extra.skip_sequencer_head_cleanup {
+        let _ = std::fs::remove_file(repo.git_dir.join("CHERRY_PICK_HEAD"));
+        let _ = std::fs::remove_file(repo.git_dir.join("REVERT_HEAD"));
+    }
+
     Ok(())
+}
+
+/// Refuse `reset --keep` when a merge is in progress (Git: `die_if_unmerged_cache`).
+fn die_if_unmerged_or_merge_head(repo: &Repository) -> Result<()> {
+    if repo.git_dir.join("MERGE_HEAD").exists() {
+        bail!("Cannot do a keep reset in the middle of a merge.");
+    }
+    let index_path = repo.index_path();
+    let index = repo.load_index_at(&index_path).context("loading index")?;
+    if index.entries.iter().any(|e| e.stage() != 0) {
+        bail!("Cannot do a keep reset in the middle of a merge.");
+    }
+    Ok(())
+}
+
+/// For `reset --merge`, Git's `oneway_merge` / `merged_entry` checks run per path where the
+/// **index** (stage 0) differs from the **target tree** — not only where HEAD and target trees
+/// differ (staged edits to paths that are identical in HEAD vs target must still be validated).
+fn check_merge_reset_worktree(
+    repo: &Repository,
+    head: &HeadState,
+    target_oid: &ObjectId,
+) -> Result<()> {
+    let head_oid = match head.oid() {
+        Some(oid) => *oid,
+        None => return Ok(()),
+    };
+
+    if head_oid == *target_oid {
+        return Ok(());
+    }
+
+    let target_tree_oid = commit_to_tree(repo, target_oid)?;
+    let target_entries = tree_to_flat_entries(repo, &target_tree_oid, "")?;
+    let target_map: HashMap<Vec<u8>, &IndexEntry> =
+        target_entries.iter().map(|e| (e.path.clone(), e)).collect();
+
+    let index_path = repo.index_path();
+    let index = repo.load_index_at(&index_path).context("loading index")?;
+    let index_map: HashMap<Vec<u8>, &IndexEntry> = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| (e.path.clone(), e))
+        .collect();
+
+    let mut unmerged_paths: HashSet<Vec<u8>> = HashSet::new();
+    let mut unmerged_only_paths: HashSet<Vec<u8>> = HashSet::new();
+    for e in &index.entries {
+        if e.stage() != 0 {
+            unmerged_paths.insert(e.path.clone());
+        }
+    }
+    for p in &unmerged_paths {
+        if !index_map.contains_key(p) {
+            unmerged_only_paths.insert(p.clone());
+        }
+    }
+
+    let work_tree = match &repo.work_tree {
+        Some(p) => p.clone(),
+        None => return Ok(()),
+    };
+
+    let mut all_paths: HashSet<Vec<u8>> = HashSet::new();
+    all_paths.extend(index_map.keys().cloned());
+    all_paths.extend(target_map.keys().cloned());
+    all_paths.extend(unmerged_paths.iter().cloned());
+
+    for path in all_paths {
+        if unmerged_only_paths.contains(&path) {
+            continue;
+        }
+
+        let path_str = String::from_utf8_lossy(&path);
+        let idx_e = index_map.get(&path);
+        let tgt_e = target_map.get(&path);
+        let abs_path = work_tree.join(path_str.as_ref());
+
+        match (idx_e, tgt_e) {
+            (None, Some(_)) => {
+                if abs_path.exists() || abs_path.is_symlink() {
+                    bail!(
+                        "Entry '{}' would be overwritten by merge. Cannot merge.",
+                        path_str
+                    );
+                }
+            }
+            (Some(ie), None) => {
+                merge_reset_verify_worktree_matches_index(repo, ie, &abs_path, path_str.as_ref())?;
+            }
+            (Some(ie), Some(te)) => {
+                if ie.oid == te.oid && ie.mode == te.mode {
+                    continue;
+                }
+                merge_reset_verify_worktree_matches_index(repo, ie, &abs_path, path_str.as_ref())?;
+            }
+            (None, None) => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn merge_reset_verify_worktree_matches_index(
+    repo: &Repository,
+    idx_e: &IndexEntry,
+    abs_path: &Path,
+    path_str: &str,
+) -> Result<()> {
+    if idx_e.mode == MODE_SYMLINK {
+        if !abs_path.is_symlink() {
+            bail!("Entry '{}' not uptodate. Cannot merge.", path_str);
+        }
+        let target = std::fs::read_link(abs_path)?;
+        let obj = repo.odb.read(&idx_e.oid)?;
+        let expected = String::from_utf8_lossy(&obj.data);
+        if target.to_string_lossy() != expected.as_ref() {
+            bail!("Entry '{}' not uptodate. Cannot merge.", path_str);
+        }
+        return Ok(());
+    }
+    if !abs_path.is_file() {
+        bail!("Entry '{}' not uptodate. Cannot merge.", path_str);
+    }
+    let content = std::fs::read(abs_path)?;
+    if hash_blob_content(&content) != idx_e.oid {
+        bail!("Entry '{}' not uptodate. Cannot merge.", path_str);
+    }
+    Ok(())
+}
+
+/// Build the post-`reset --merge` index using Git's `oneway_merge` rules.
+fn build_merge_reset_index(
+    repo: &Repository,
+    old_index: &Index,
+    head_oid: ObjectId,
+    target_oid: &ObjectId,
+) -> Result<Index> {
+    if head_oid == *target_oid {
+        let has_unmerged = old_index.entries.iter().any(|e| e.stage() != 0);
+        if !has_unmerged {
+            let mut idx = Index::new();
+            for e in &old_index.entries {
+                if e.stage() == 0 {
+                    idx.entries.push(e.clone());
+                }
+            }
+            idx.sort();
+            return Ok(idx);
+        }
+    }
+
+    let head_tree_oid = commit_to_tree(repo, &head_oid)?;
+    let target_tree_oid = commit_to_tree(repo, target_oid)?;
+
+    let head_entries = tree_to_flat_entries(repo, &head_tree_oid, "")?;
+    let target_entries = tree_to_flat_entries(repo, &target_tree_oid, "")?;
+
+    let head_map: HashMap<Vec<u8>, &IndexEntry> =
+        head_entries.iter().map(|e| (e.path.clone(), e)).collect();
+    let target_map: HashMap<Vec<u8>, &IndexEntry> =
+        target_entries.iter().map(|e| (e.path.clone(), e)).collect();
+
+    let mut unique_paths: Vec<Vec<u8>> = Vec::new();
+    for e in &old_index.entries {
+        if unique_paths.last().map(|p| p != &e.path).unwrap_or(true) {
+            unique_paths.push(e.path.clone());
+        }
+    }
+
+    let old_paths_set: HashSet<Vec<u8>> = unique_paths.iter().cloned().collect();
+
+    let mut result_entries: Vec<IndexEntry> = Vec::new();
+
+    for path in &unique_paths {
+        let path_entries: Vec<&IndexEntry> = old_index
+            .entries
+            .iter()
+            .filter(|e| e.path == *path)
+            .collect();
+        let has_unmerged = path_entries.iter().any(|e| e.stage() != 0);
+
+        if has_unmerged {
+            match (head_map.get(path), target_map.get(path)) {
+                (Some(h), Some(t)) if h.oid == t.oid && h.mode == t.mode => {
+                    result_entries.push((*t).clone());
+                }
+                (_, Some(t)) => {
+                    result_entries.push((*t).clone());
+                }
+                _ => {}
+            }
+            continue;
+        }
+
+        let old0 = path_entries.iter().find(|e| e.stage() == 0).copied();
+        match (old0, target_map.get(path)) {
+            (Some(old), Some(t)) if old.oid == t.oid && old.mode == t.mode => {
+                result_entries.push(old.clone());
+            }
+            (_, Some(t)) => {
+                result_entries.push((*t).clone());
+            }
+            (Some(_), None) => {}
+            (None, None) => {}
+        }
+    }
+
+    for path in target_map.keys() {
+        if !old_paths_set.contains(path) {
+            if let Some(t) = target_map.get(path) {
+                result_entries.push((*t).clone());
+            }
+        }
+    }
+
+    let mut new_index = Index::new();
+    new_index.entries = result_entries;
+    new_index.sort();
+    Ok(new_index)
 }
 
 /// Check if `--keep` is safe: refuse if there are local uncommitted changes
@@ -1547,9 +1815,9 @@ fn tree_to_flat_entries(
     Ok(result)
 }
 
-/// Like [`checkout_index_to_worktree`] but for `reset --merge` after sequencer
-/// rollback: keep local modifications to paths whose staged (target) blob is
-/// unchanged from the pre-reset index, matching Git's twoway merge behavior.
+/// Like [`checkout_index_to_worktree`] but for `reset --merge`: preserve local edits when the
+/// new index still records the same blob/mode as `old_index` stage 0 but the work tree differs
+/// (Git `oneway_merge` stat reuse path).
 fn checkout_merge_reset_worktree(
     repo: &Repository,
     old_index: &Index,
