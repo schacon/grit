@@ -1224,7 +1224,7 @@ t7501-commit-basic	t7	yes	146	142	4	false	ok	0
 t7501-commit-basic-functionality	t7	yes	77	49	28	false	ok	0
 t7502-commit-porcelain	t7	yes	82	31	51	false	ok	0
 t7503-pre-commit-and-diff-whitespace	t7	yes	22	21	1	false	ok	0
-t7503-pre-commit-and-pre-merge-commit-hooks	t7	yes	22	11	11	false	ok	0
+t7503-pre-commit-and-pre-merge-commit-hooks	t7	yes	22	22	0	true	ok	0
 t7504-commit-msg-hook	t7	yes	29	21	8	false	ok	1
 t7505-prepare-commit-msg	t7	yes	30	29	1	false	ok	0
 t7505-prepare-commit-msg-hook	t7	yes	23	7	16	false	ok	0

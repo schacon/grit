@@ -646,6 +646,7 @@ fn build_pull_merge_args(
         file: None,
         rerere_autoupdate: false,
         no_rerere_autoupdate: false,
+        no_verify: false,
     })
 }
 
