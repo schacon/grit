@@ -1504,7 +1504,7 @@ Aborting"
                 fs::create_dir_all(parent)?;
             }
             let output = if let Some(ref config) = crlf_config {
-                let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, path, config);
+                let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, path, false, config);
                 let conv = grit_lib::crlf::ConversionConfig::from_config(config);
                 grit_lib::crlf::convert_to_worktree(content, path, &conv, &file_attrs, None, None)
                     .map_err(|e| anyhow::anyhow!("smudge filter failed for {path}: {e}"))?
@@ -3288,7 +3288,7 @@ fn resolve_path_merge_behavior(repo: &Repository, path: &str) -> PathMergeBehavi
         .as_deref()
         .map(grit_lib::crlf::load_gitattributes)
         .unwrap_or_default();
-    let file_attrs = grit_lib::crlf::get_file_attrs(&attrs, path, &config);
+    let file_attrs = grit_lib::crlf::get_file_attrs(&attrs, path, false, &config);
 
     match &file_attrs.merge {
         MergeAttr::Unset => PathMergeBehavior::BinaryNoMerge,
@@ -3328,7 +3328,7 @@ fn resolve_marker_size_for_path(
             .as_deref()
             .map(grit_lib::crlf::load_gitattributes)
             .unwrap_or_default();
-        let file_attrs = grit_lib::crlf::get_file_attrs(&attrs, path, &config);
+        let file_attrs = grit_lib::crlf::get_file_attrs(&attrs, path, false, &config);
         parse_conflict_marker_size(
             Some(&file_attrs),
             ours_label,
@@ -5829,7 +5829,7 @@ fn try_content_merge(
             .as_deref()
             .map(grit_lib::crlf::load_gitattributes)
             .unwrap_or_default();
-        grit_lib::crlf::get_file_attrs(&attrs, path_str, cfg)
+        grit_lib::crlf::get_file_attrs(&attrs, path_str, false, cfg)
     });
 
     let is_attr_binary = file_attrs
@@ -5992,7 +5992,7 @@ fn try_content_merge_add_add(
             .as_deref()
             .map(grit_lib::crlf::load_gitattributes)
             .unwrap_or_default();
-        grit_lib::crlf::get_file_attrs(&attrs, path_str, cfg)
+        grit_lib::crlf::get_file_attrs(&attrs, path_str, false, cfg)
     });
 
     let is_attr_binary = file_attrs
@@ -6885,7 +6885,8 @@ fn checkout_entries(
         } else {
             // Apply CRLF conversion if configured
             let data = if let (Some(ref config), Some(ref conv)) = (&config, &conv) {
-                let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, config);
+                let file_attrs =
+                    grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, false, config);
                 grit_lib::crlf::convert_to_worktree(
                     &obj.data,
                     &path_str,

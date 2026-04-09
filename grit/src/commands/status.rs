@@ -1379,7 +1379,7 @@ fn worktree_mode_oid_for_unmerged(
             let config = ConfigSet::load(Some(&git_dir), true).unwrap_or_else(|_| ConfigSet::new());
             let conv = crlf::ConversionConfig::from_config(&config);
             let attrs = crlf::load_gitattributes(work_tree);
-            let file_attrs = crlf::get_file_attrs(&attrs, path, &config);
+            let file_attrs = crlf::get_file_attrs(&attrs, path, false, &config);
             let mode = grit_lib::diff::format_mode(grit_lib::diff::mode_from_metadata(&meta));
             let mode_u = parse_mode_u32(&mode);
             let index_entry = index.get(path.as_bytes(), 0);

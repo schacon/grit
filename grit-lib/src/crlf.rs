@@ -208,7 +208,12 @@ impl ConversionConfig {
 /// A parsed .gitattributes rule.
 #[derive(Debug, Clone)]
 pub struct AttrRule {
+    /// Glob text used for matching (trailing directory `/` stripped; see [`AttrRule::must_be_dir`]).
     pattern: String,
+    /// When true, the source pattern ended with `/` and matches only directories (Git `PATTERN_FLAG_MUSTBEDIR`).
+    must_be_dir: bool,
+    /// When true, match only the path's final component (Git `PATTERN_FLAG_NODIR` / no `/` in the pattern body).
+    basename_only: bool,
     attrs: Vec<(String, String)>, // (name, value) where value is "set"/"unset"/specific value
 }
 
@@ -336,10 +341,18 @@ fn parse_gitattributes(content: &str, rules: &mut Vec<AttrRule>) {
         }
 
         let mut parts = line.split_whitespace();
-        let pattern = match parts.next() {
-            Some(p) => p.to_owned(),
+        let raw_pattern = match parts.next() {
+            Some(p) => p,
             None => continue,
         };
+
+        let mut pat = raw_pattern.to_owned();
+        let mut must_be_dir = false;
+        if pat.ends_with('/') && pat.len() > 1 {
+            pat.pop();
+            must_be_dir = true;
+        }
+        let basename_only = !pat.contains('/');
 
         let mut attrs = Vec::new();
         for part in parts {
@@ -356,7 +369,12 @@ fn parse_gitattributes(content: &str, rules: &mut Vec<AttrRule>) {
         }
 
         if !attrs.is_empty() {
-            rules.push(AttrRule { pattern, attrs });
+            rules.push(AttrRule {
+                pattern: pat,
+                must_be_dir,
+                basename_only,
+                attrs,
+            });
         }
     }
 }
@@ -369,12 +387,20 @@ fn config_bool_truthy(value: &str) -> bool {
 }
 
 /// Get file attributes for a given path from .gitattributes rules and config.
-pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) -> FileAttrs {
+///
+/// `is_dir` should be true when `rel_path` names a directory (Git passes a trailing `/` for
+/// directory paths in some call sites; we accept either trailing `/` or this flag from tree walks).
+pub fn get_file_attrs(
+    rules: &[AttrRule],
+    rel_path: &str,
+    is_dir: bool,
+    config: &ConfigSet,
+) -> FileAttrs {
     let mut fa = FileAttrs::default();
 
     // Walk rules; last match wins for each attribute.
     for rule in rules {
-        if pattern_matches(&rule.pattern, rel_path) {
+        if attr_rule_matches(rule, rel_path, is_dir) {
             for (name, value) in &rule.attrs {
                 match name.as_str() {
                     "text" => {
@@ -481,11 +507,18 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
 
 /// Returns whether gitattribute `attr_name` is set (last matching rule wins), for arbitrary
 /// attribute names used by pathspec `:(attr:...)`.
+///
+/// `is_dir` is whether `path` refers to a directory (see [`get_file_attrs`]).
 #[must_use]
-pub fn path_has_gitattribute(rules: &[AttrRule], path: &str, attr_name: &str) -> bool {
+pub fn path_has_gitattribute(
+    rules: &[AttrRule],
+    path: &str,
+    is_dir: bool,
+    attr_name: &str,
+) -> bool {
     let mut last: Option<&str> = None;
     for rule in rules {
-        if pattern_matches(&rule.pattern, path) {
+        if attr_rule_matches(rule, path, is_dir) {
             for (name, value) in &rule.attrs {
                 if name == attr_name {
                     last = Some(value.as_str());
@@ -499,14 +532,19 @@ pub fn path_has_gitattribute(rules: &[AttrRule], path: &str, attr_name: &str) ->
     }
 }
 
-/// Simple gitattributes pattern matching.
-fn pattern_matches(pattern: &str, path: &str) -> bool {
-    if !pattern.contains('/') {
-        // Match against basename only
-        let basename = path.rsplit('/').next().unwrap_or(path);
-        glob_matches(pattern, basename)
+/// Whether `rule` matches `rel_path` given directory vs file context (Git `path_matches`).
+#[must_use]
+pub fn attr_rule_matches(rule: &AttrRule, rel_path: &str, is_dir: bool) -> bool {
+    let path_is_dir = is_dir || rel_path.ends_with('/');
+    if rule.must_be_dir && !path_is_dir {
+        return false;
+    }
+    let path_for_glob = rel_path.trim_end_matches('/');
+    if rule.basename_only {
+        let basename = path_for_glob.rsplit('/').next().unwrap_or(path_for_glob);
+        glob_matches(rule.pattern.as_str(), basename)
     } else {
-        glob_matches(pattern, path)
+        glob_matches(rule.pattern.as_str(), path_for_glob)
     }
 }
 
@@ -726,7 +764,7 @@ pub fn convert_attr_ascii_for_ls_files(
     rel_path: &str,
     config: &ConfigSet,
 ) -> String {
-    let fa = get_file_attrs(rules, rel_path, config);
+    let fa = get_file_attrs(rules, rel_path, false, config);
     // Mirror `git_path_check_crlf` for `text` then legacy `crlf` (Git checks `text` first).
     let mut action = match fa.text {
         TextAttr::Set => 1,   // CRLF_TEXT
@@ -1545,6 +1583,20 @@ mod tests {
     fn test_is_binary() {
         assert!(is_binary(b"hello\0world"));
         assert!(!is_binary(b"hello world"));
+    }
+
+    #[test]
+    fn attr_dir_only_pattern_does_not_match_same_named_file() {
+        let rules = parse_gitattributes_content("ignored-only-if-dir/ export-ignore\n");
+        let rule = &rules[0];
+        assert!(rule.must_be_dir);
+        assert!(rule.basename_only);
+        assert!(!attr_rule_matches(
+            rule,
+            "not-ignored-dir/ignored-only-if-dir",
+            false
+        ));
+        assert!(attr_rule_matches(rule, "ignored-only-if-dir", true));
     }
 
     #[test]

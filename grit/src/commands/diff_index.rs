@@ -1827,7 +1827,7 @@ fn is_binary_driver_path(repo: &Repository, work_tree: Option<&Path>, path: &str
     let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) else {
         return false;
     };
-    let attrs = grit_lib::crlf::get_file_attrs(&rules, path, &config);
+    let attrs = grit_lib::crlf::get_file_attrs(&rules, path, false, &config);
     let grit_lib::crlf::DiffAttr::Driver(ref driver) = attrs.diff_attr else {
         return false;
     };

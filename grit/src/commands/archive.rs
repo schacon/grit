@@ -547,6 +547,31 @@ struct ArchiveEntry {
     symlink: bool,
 }
 
+/// Remove directory archive entries that have no file or symlink descendants, matching Git's
+/// archive output when `export-ignore` excludes an entire subtree (parent dirs are omitted too).
+fn prune_empty_directory_entries(entries: &mut Vec<ArchiveEntry>) {
+    use std::collections::HashSet;
+
+    let mut required_dirs: HashSet<String> = HashSet::new();
+    for e in entries.iter() {
+        if e.mode == 0o040000 {
+            continue;
+        }
+        let mut p = e.path.trim_end_matches('/');
+        while let Some((parent, _)) = p.rsplit_once('/') {
+            required_dirs.insert(format!("{parent}/"));
+            p = parent;
+        }
+    }
+
+    entries.retain(|e| {
+        if e.mode != 0o040000 {
+            return true;
+        }
+        required_dirs.contains(&e.path)
+    });
+}
+
 fn build_archive(
     repo: &Repository,
     config: &ConfigSet,
@@ -590,6 +615,8 @@ fn build_archive(
         &mut entries,
         verbose,
     )?;
+
+    prune_empty_directory_entries(&mut entries);
 
     if !prefix.is_empty() && prefix.ends_with('/') {
         entries.insert(
@@ -888,7 +915,7 @@ fn collect_entries(
 
         if is_tree {
             let dir_key = format!("{rel}/");
-            let dir_attrs = get_file_attrs(attr_rules, rel.as_str(), config);
+            let dir_attrs = get_file_attrs(attr_rules, rel.as_str(), true, config);
             if dir_attrs.export_ignore {
                 continue;
             }
@@ -911,7 +938,7 @@ fn collect_entries(
             if !pathspec_match_any(pathspecs, &rel, entry.mode, attr_rules) {
                 continue;
             }
-            let fa = get_file_attrs(attr_rules, &attr_path, config);
+            let fa = get_file_attrs(attr_rules, &attr_path, false, config);
             if fa.export_ignore {
                 continue;
             }
@@ -946,7 +973,7 @@ fn collect_entries(
             )?;
         } else {
             let blob = repo.odb.read(&entry.oid)?;
-            let fa = get_file_attrs(attr_rules, &attr_path, config);
+            let fa = get_file_attrs(attr_rules, &attr_path, false, config);
             let oid_hex = entry.oid.to_hex();
             let mut data = if is_symlink {
                 blob.data.clone()
@@ -978,6 +1005,9 @@ fn tar_mode_for_git_mode(mode: u32) -> u32 {
     let ty = mode & 0o170000;
     if ty == 0o120000 {
         return 0o777;
+    }
+    if ty == 0o040000 {
+        return 0o755;
     }
     if mode & 0o100 != 0 {
         (mode | 0o777) & !0o022
@@ -1153,12 +1183,17 @@ fn write_tar_entry(out: &mut impl Write, e: &ArchiveEntry, mtime: u64) -> Result
         }
     };
 
+    let header_mode = if is_dir || typeflag == b'5' {
+        tar_mode_for_git_mode(e.mode)
+    } else {
+        e.mode & 0o7777
+    };
     write_ustar_header(
         out,
         &name,
         &prefix,
         size,
-        e.mode & 0o7777,
+        header_mode,
         mtime,
         typeflag,
         &linkname,

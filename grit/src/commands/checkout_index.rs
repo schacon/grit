@@ -494,7 +494,7 @@ fn checkout_entry(
             let conv = crlf::ConversionConfig::from_config(&config);
             let attrs =
                 crlf::load_gitattributes_for_checkout(work_tree, &path_str, index, &repo.odb);
-            let file_attrs = crlf::get_file_attrs(&attrs, &path_str, &config);
+            let file_attrs = crlf::get_file_attrs(&attrs, &path_str, false, &config);
             let oid_hex = format!("{}", entry.oid);
             let smudge_meta = grit_lib::filter_process::smudge_meta_for_checkout(repo, &oid_hex);
             crlf::convert_to_worktree(
@@ -659,7 +659,7 @@ fn worktree_clean_blob_oid_matches(
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let conv = crlf::ConversionConfig::from_config(&config);
     let attrs = crlf::load_gitattributes_for_checkout(work_tree, path_str, index, &repo.odb);
-    let file_attrs = crlf::get_file_attrs(&attrs, path_str, &config);
+    let file_attrs = crlf::get_file_attrs(&attrs, path_str, false, &config);
     let cleaned = crlf::convert_to_git(&raw, path_str, &conv, &file_attrs).unwrap_or(raw);
     let wt_oid = Odb::hash_object_data(ObjectKind::Blob, &cleaned);
     Ok(wt_oid == *index_oid)

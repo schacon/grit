@@ -1227,7 +1227,7 @@ fn assign_ws_rules(patches: &mut [FilePatch], args: &Args) {
             .or_else(|| fp.effective_path())
             .unwrap_or("");
         let adjusted = adjust_path(path_for_attr, args.strip, args.directory.as_deref());
-        let fa = crlf::get_file_attrs(&rules, &adjusted, &config);
+        let fa = crlf::get_file_attrs(&rules, &adjusted, false, &config);
         let attr = match fa.whitespace.as_deref() {
             None => WhitespaceGitAttr::Unspecified,
             Some("unset") => WhitespaceGitAttr::False,
@@ -2655,7 +2655,7 @@ impl ApplyCrlfContext {
             &self.index,
             &self.repo.odb,
         );
-        let file_attrs = crlf::get_file_attrs(&rules, rel_path, &self.config);
+        let file_attrs = crlf::get_file_attrs(&rules, rel_path, false, &self.config);
         crlf::convert_to_git(&raw, rel_path, &self.conv, &file_attrs)
             .map_err(|e| anyhow::anyhow!("{e}"))
     }
@@ -2674,7 +2674,7 @@ impl ApplyCrlfContext {
             &self.index,
             &self.repo.odb,
         );
-        let file_attrs = crlf::get_file_attrs(&rules, rel_path, &self.config);
+        let file_attrs = crlf::get_file_attrs(&rules, rel_path, false, &self.config);
         let normalized = crlf::convert_to_git(&raw, rel_path, &self.conv, &file_attrs)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(String::from_utf8_lossy(&normalized).into_owned())
@@ -2952,7 +2952,7 @@ fn write_worktree_path(
             &ctx.index,
             &ctx.repo.odb,
         );
-        let file_attrs = crlf::get_file_attrs(&rules, rel_path, &ctx.config);
+        let file_attrs = crlf::get_file_attrs(&rules, rel_path, false, &ctx.config);
         Cow::Owned(
             crlf::convert_to_worktree(
                 content.as_bytes(),

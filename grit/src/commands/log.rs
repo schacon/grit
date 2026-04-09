@@ -4515,7 +4515,7 @@ fn validate_log_pickaxe_options(repo: &Repository, args: &Args) -> Result<()> {
 fn path_has_textconv_driver(git_dir: &Path, config: &ConfigSet, path: &str) -> bool {
     let work_tree = git_dir.parent().unwrap_or(git_dir);
     let rules = load_gitattributes(work_tree);
-    let fa = get_file_attrs(&rules, path, config);
+    let fa = get_file_attrs(&rules, path, false, config);
     if let DiffAttr::Driver(ref driver) = fa.diff_attr {
         return config.get(&format!("diff.{driver}.textconv")).is_some();
     }

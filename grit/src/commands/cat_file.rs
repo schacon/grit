@@ -1290,7 +1290,7 @@ fn cat_file_batch_blob_payload(
         Some(idx) => crlf::load_gitattributes_for_checkout(work_tree, path, idx, &repo.odb),
         None => crlf::load_gitattributes(work_tree),
     };
-    let fa = crlf::get_file_attrs(&rules, path, &config);
+    let fa = crlf::get_file_attrs(&rules, path, false, &config);
     let driver = match &fa.diff_attr {
         DiffAttr::Driver(d) => d.as_str(),
         _ => return Ok(smudged),
@@ -1709,7 +1709,7 @@ fn cat_file_emit_transformed(
             Some(idx) => crlf::load_gitattributes_for_checkout(work_tree, &path, idx, &repo.odb),
             None => crlf::load_gitattributes(work_tree),
         };
-        let fa = crlf::get_file_attrs(&rules, &path, &config);
+        let fa = crlf::get_file_attrs(&rules, &path, false, &config);
         let driver = match &fa.diff_attr {
             DiffAttr::Driver(d) => d.as_str(),
             _ => {

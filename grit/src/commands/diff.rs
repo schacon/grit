@@ -4226,7 +4226,7 @@ fn conflict_marker_size_for_path(
 ) -> usize {
     let mut size = DEFAULT_CONFLICT_MARKER_SIZE;
     if let Some(rules) = rules {
-        let fa = get_file_attrs(rules, rel_path, config);
+        let fa = get_file_attrs(rules, rel_path, false, config);
         if let Some(ref s) = fa.conflict_marker_size {
             if let Ok(n) = s.trim().parse::<i32>() {
                 if n > 0 {

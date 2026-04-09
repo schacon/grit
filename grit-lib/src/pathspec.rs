@@ -395,8 +395,11 @@ pub fn matches_pathspec_for_object(
         return false;
     }
 
+    let ctx = context_from_mode_bits(mode);
+    let is_dir_for_attr = path.ends_with('/') || ctx.is_directory || ctx.is_git_submodule;
+
     if let Some(ref attr) = magic.attr_name {
-        if !path_has_gitattribute(attr_rules, path, attr) {
+        if !path_has_gitattribute(attr_rules, path, is_dir_for_attr, attr) {
             return false;
         }
     }
@@ -410,8 +413,6 @@ pub fn matches_pathspec_for_object(
     } else {
         path
     };
-
-    let ctx = context_from_mode_bits(mode);
     if magic.literal || magic.glob || magic.icase {
         pathspec_matches_tail(pattern, path_for_match, magic)
     } else {

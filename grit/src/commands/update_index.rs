@@ -736,7 +736,7 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         } else {
             let raw = std::fs::read(&abs_path)
                 .with_context(|| format!("cannot read '{}'", abs_path.display()))?;
-            let file_attrs = crlf::get_file_attrs(&attrs, rel_str.as_ref(), &config);
+            let file_attrs = crlf::get_file_attrs(&attrs, rel_str.as_ref(), false, &config);
             crlf::convert_to_git(&raw, rel_str.as_ref(), &conv, &file_attrs)
                 .map_err(|msg| anyhow::anyhow!("{msg}"))?
         };
@@ -1284,7 +1284,7 @@ fn run_update_index_again(
                 } else {
                     let raw = std::fs::read(&abs_path)
                         .with_context(|| format!("cannot read '{}'", abs_path.display()))?;
-                    let file_attrs = crlf::get_file_attrs(attrs, rel_path.as_ref(), config);
+                    let file_attrs = crlf::get_file_attrs(attrs, rel_path.as_ref(), false, &config);
                     crlf::convert_to_git(&raw, rel_path.as_ref(), conv, &file_attrs)
                         .map_err(|msg| anyhow::anyhow!("{msg}"))?
                 };
