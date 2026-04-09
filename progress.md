@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   280 |
+| Completed   |   281 |
 | In progress |     4 |
-| Remaining   |   484 |
+| Remaining   |   483 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 280 completed (`[x]`), 4 in progress (`[~]`), 484 remaining (`[ ]`).
+Task lines in `PLAN.md`: 281 completed (`[x]`), 4 in progress (`[~]`), 483 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5618-alternate-refs` — 6/6 tests pass (`rev-list` / `log`: `--alternate-refs`, `--not --alternate-refs`, `core.alternateRefsPrefixes`, `log --source` `.alternate` marker; harness CSV/dashboards refreshed)
 - `t3650-replay-basics` — 31/31 tests pass (`replay`: `--onto` / `--advance` / `--contained`, `--ref-action` + `replay.refAction`, `--branches` with branch refnames, `--ancestry-path`, detached `HEAD` updates, reflog messages, `merge.directoryRenames=false`; `rev_parse::expand_rev_token_circ_bang` for `topic1^!`; `log` `%d` uses short decorations like Git unless `--decorate=full`)
 - `t0040-parse-options` — 94/94 tests pass (`parse-options` / `parse-options-flags` / `parse-subcommand` test-tool: Git-style argv scanning with intermingled args and `+` NODASH; selective usage append; negated-option error names; stdout/stderr flush before `process::exit`; skip global `--git-completion-helper` when nested after `test-tool`; harness `test_run_` no longer wraps bodies in `$(...)` so backticks in heredocs are not executed)
 - `t1502-rev-parse-parseopt` — 37/37 tests pass (`rev-parse --parseopt`: stdin option spec parsing, `cat <<\\EOF` help output, `--keep-dashdash` / `--stop-at-non-option` / `--stuck-long`, negated long names + synthetic `no-<name>` parse entries for ambiguity; harness CSV/dashboards refreshed)
