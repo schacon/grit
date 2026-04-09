@@ -2332,6 +2332,17 @@ fn run_diff_blob_vs_file(
         .map(|v| v == "true")
         .unwrap_or(false);
 
+    let external_diff_cmd = std::env::var("GIT_EXTERNAL_DIFF")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            diff_config
+                .get("diff.external")
+                .filter(|s| !s.trim().is_empty())
+        });
+    let relative_prefix_for_paths =
+        resolve_diff_relative_prefix(Some(wt.as_ref()), &repo.git_dir, args);
+
     let mut out: Box<dyn Write> = if let Some(ref p) = args.output_path {
         let resolved = if p.is_absolute() {
             p.clone()
@@ -2381,6 +2392,9 @@ fn run_diff_blob_vs_file(
             &diff_algo_ctx,
             diff_algo_cli,
             false,
+            args.no_ext_diff,
+            external_diff_cmd.as_deref(),
+            relative_prefix_for_paths.as_deref(),
         )?;
     }
 
