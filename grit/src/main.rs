@@ -2529,6 +2529,58 @@ fn preprocess_status_argv(rest: &[String]) -> Vec<String> {
     out
 }
 
+/// Normalize `git commit` argv for clap's `trailing_var_arg` pathspec bucket.
+///
+/// Only applies to **`-m` / `--message`**. Do not reorder `-F` / `--file` (e.g. `commit -F -`
+/// used by tests); those argv shapes must stay intact.
+///
+/// Handles:
+/// - `commit <paths>... -m <msg>` → `-m <msg> -- <paths>...`
+/// - `commit -q -m <msg>` (and similar) → `-m <msg> -q` so the message is not parsed as a pathspec
+/// - `commit -m <msg> <paths>...` → `-m <msg> -- <paths>...`
+fn preprocess_commit_argv(rest: &[String]) -> Vec<String> {
+    const M_STYLE: [&str; 2] = ["-m", "--message"];
+    let Some(i) = rest.iter().position(|a| M_STYLE.contains(&a.as_str())) else {
+        return rest.to_vec();
+    };
+    if i + 1 >= rest.len() {
+        return rest.to_vec();
+    }
+    let flag = rest[i].as_str();
+    if !matches!(flag, "-m" | "--message") {
+        return rest.to_vec();
+    }
+
+    let before = &rest[..i];
+    let msg_block = &rest[i..i + 2];
+    let after = &rest[i + 2..];
+
+    let before_is_pathspec_prefix =
+        !before.is_empty() && before.iter().all(|a| !a.starts_with('-'));
+
+    let mut out = Vec::with_capacity(rest.len() + 2);
+    out.extend_from_slice(msg_block);
+
+    if before_is_pathspec_prefix {
+        out.push("--".to_owned());
+        out.extend_from_slice(before);
+        out.extend_from_slice(after);
+        return out;
+    }
+
+    if before.is_empty() {
+        if !after.is_empty() && !after[0].starts_with('-') {
+            out.push("--".to_owned());
+        }
+        out.extend_from_slice(after);
+        return out;
+    }
+
+    out.extend_from_slice(before);
+    out.extend_from_slice(after);
+    out
+}
+
 fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T {
     if subcmd == "stash"
         && rest.len() >= 2
@@ -2545,7 +2597,12 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
     }
 
     let mut argv = vec![format!("git {subcmd}")];
-    argv.extend(rest.iter().cloned());
+    let rest_for_parse = if subcmd == "commit" {
+        preprocess_commit_argv(rest)
+    } else {
+        rest.to_vec()
+    };
+    argv.extend(rest_for_parse);
     match ArgsWrapper::<T>::try_parse_from(&argv) {
         Ok(wrapper) => wrapper.inner,
         Err(e) => {

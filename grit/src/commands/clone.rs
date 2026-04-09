@@ -2773,6 +2773,13 @@ fn guess_checkout_branch(
                 return Ok(Some(default_name));
             }
         }
+        // `GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main` leaves `HEAD` detached at the tip OID while
+        // only `refs/heads/main` exists; match that before falling back to `master`.
+        if let Some(oid) = ref_oid_hex_in_repo(src_git_dir, "refs/heads/main") {
+            if oid == *oid_hex {
+                return Ok(Some("main".to_string()));
+            }
+        }
         if let Some(oid) = ref_oid_hex_in_repo(src_git_dir, "refs/heads/master") {
             if oid == *oid_hex {
                 return Ok(Some("master".to_string()));

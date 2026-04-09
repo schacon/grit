@@ -1174,9 +1174,41 @@ fn stage_pathspec_files(
         let resolved = crate::pathspec::resolve_pathspec(spec, work_tree, prefix.as_deref());
         if !crate::pathspec::has_glob_chars(&resolved) {
             let abs_path = work_tree.join(&resolved);
-            if fs::symlink_metadata(&abs_path).is_ok() {
-                stage_pathspec_worktree_path(repo, &mut index, work_tree, &resolved)?;
-                matched_paths.insert(resolved.as_bytes().to_vec());
+            if let Ok(meta) = fs::symlink_metadata(&abs_path) {
+                let raw_path = resolved.as_bytes().to_vec();
+                if meta.is_dir()
+                    && !meta.file_type().is_symlink()
+                    && index
+                        .get(&raw_path, 0)
+                        .is_some_and(|e| e.mode == grit_lib::index::MODE_GITLINK)
+                {
+                    if let Some(oid) = grit_lib::diff::read_submodule_head_oid(&abs_path) {
+                        let entry = grit_lib::index::IndexEntry {
+                            ctime_sec: meta.ctime() as u32,
+                            ctime_nsec: meta.ctime_nsec() as u32,
+                            mtime_sec: meta.mtime() as u32,
+                            mtime_nsec: meta.mtime_nsec() as u32,
+                            dev: meta.dev() as u32,
+                            ino: meta.ino() as u32,
+                            mode: grit_lib::index::MODE_GITLINK,
+                            uid: meta.uid(),
+                            gid: meta.gid(),
+                            size: 0,
+                            oid,
+                            flags: raw_path.len().min(0xFFF) as u16,
+                            flags_extended: None,
+                            path: raw_path.clone(),
+                        };
+                        index.add_or_replace(entry);
+                        matched_paths.insert(raw_path);
+                    } else {
+                        stage_pathspec_worktree_path(repo, &mut index, work_tree, &resolved)?;
+                        matched_paths.insert(resolved.as_bytes().to_vec());
+                    }
+                } else {
+                    stage_pathspec_worktree_path(repo, &mut index, work_tree, &resolved)?;
+                    matched_paths.insert(resolved.as_bytes().to_vec());
+                }
             } else {
                 index.remove(resolved.as_bytes());
                 matched_paths.insert(resolved.as_bytes().to_vec());
@@ -1228,10 +1260,44 @@ fn stage_pathspec_files(
 
         for rel in matched_rels {
             let abs_path = work_tree.join(&rel);
-            if fs::symlink_metadata(&abs_path).is_ok() {
-                stage_pathspec_worktree_path(repo, &mut index, work_tree, &rel)?;
-                spec_matched = true;
-                matched_paths.insert(rel.as_bytes().to_vec());
+            if let Ok(meta) = fs::symlink_metadata(&abs_path) {
+                let raw_path = rel.as_bytes().to_vec();
+                if meta.is_dir()
+                    && !meta.file_type().is_symlink()
+                    && index
+                        .get(&raw_path, 0)
+                        .is_some_and(|e| e.mode == grit_lib::index::MODE_GITLINK)
+                {
+                    if let Some(oid) = grit_lib::diff::read_submodule_head_oid(&abs_path) {
+                        let entry = grit_lib::index::IndexEntry {
+                            ctime_sec: meta.ctime() as u32,
+                            ctime_nsec: meta.ctime_nsec() as u32,
+                            mtime_sec: meta.mtime() as u32,
+                            mtime_nsec: meta.mtime_nsec() as u32,
+                            dev: meta.dev() as u32,
+                            ino: meta.ino() as u32,
+                            mode: grit_lib::index::MODE_GITLINK,
+                            uid: meta.uid(),
+                            gid: meta.gid(),
+                            size: 0,
+                            oid,
+                            flags: raw_path.len().min(0xFFF) as u16,
+                            flags_extended: None,
+                            path: raw_path.clone(),
+                        };
+                        index.add_or_replace(entry);
+                        spec_matched = true;
+                        matched_paths.insert(raw_path);
+                    } else {
+                        stage_pathspec_worktree_path(repo, &mut index, work_tree, &rel)?;
+                        spec_matched = true;
+                        matched_paths.insert(rel.as_bytes().to_vec());
+                    }
+                } else {
+                    stage_pathspec_worktree_path(repo, &mut index, work_tree, &rel)?;
+                    spec_matched = true;
+                    matched_paths.insert(rel.as_bytes().to_vec());
+                }
             }
         }
 
@@ -1272,40 +1338,28 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
             // get the current commit OID instead of trying to read the
             // directory as a file.
             if *idx_mode == 0o160000 {
-                let head_path = abs_path.join(".git/HEAD");
-                if let Ok(head_content) = fs::read_to_string(&head_path) {
-                    let head_trimmed = head_content.trim();
-                    let oid_hex = if let Some(r) = head_trimmed.strip_prefix("ref: ") {
-                        let ref_path = abs_path.join(".git").join(r);
-                        match fs::read_to_string(&ref_path) {
-                            Ok(s) => s.trim().to_string(),
-                            Err(_) => continue,
-                        }
-                    } else {
-                        head_trimmed.to_string()
+                // `.git` may be a gitfile (submodule layout); resolve via the same helper as `git add`.
+                if let Some(oid) = grit_lib::diff::read_submodule_head_oid(&abs_path) {
+                    use std::os::unix::fs::MetadataExt;
+                    let meta = fs::symlink_metadata(&abs_path)?;
+                    let entry = grit_lib::index::IndexEntry {
+                        ctime_sec: meta.ctime() as u32,
+                        ctime_nsec: meta.ctime_nsec() as u32,
+                        mtime_sec: meta.mtime() as u32,
+                        mtime_nsec: meta.mtime_nsec() as u32,
+                        dev: meta.dev() as u32,
+                        ino: meta.ino() as u32,
+                        mode: 0o160000,
+                        uid: meta.uid(),
+                        gid: meta.gid(),
+                        size: 0,
+                        oid,
+                        flags: path_str.len().min(0xFFF) as u16,
+                        flags_extended: None,
+                        path: raw_path.clone(),
                     };
-                    if let Ok(oid) = oid_hex.parse::<ObjectId>() {
-                        use std::os::unix::fs::MetadataExt;
-                        let meta = fs::symlink_metadata(&abs_path)?;
-                        let entry = grit_lib::index::IndexEntry {
-                            ctime_sec: meta.ctime() as u32,
-                            ctime_nsec: meta.ctime_nsec() as u32,
-                            mtime_sec: meta.mtime() as u32,
-                            mtime_nsec: meta.mtime_nsec() as u32,
-                            dev: meta.dev() as u32,
-                            ino: meta.ino() as u32,
-                            mode: 0o160000,
-                            uid: meta.uid(),
-                            gid: meta.gid(),
-                            size: 0,
-                            oid,
-                            flags: path_str.len().min(0xFFF) as u16,
-                            flags_extended: None,
-                            path: raw_path.clone(),
-                        };
-                        index.add_or_replace(entry);
-                        changed = true;
-                    }
+                    index.add_or_replace(entry);
+                    changed = true;
                 }
                 continue;
             }
