@@ -14,7 +14,7 @@ use grit_lib::error::Error;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::index::Index;
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
-use grit_lib::refs::append_reflog;
+use grit_lib::refs::{append_reflog, list_refs};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
@@ -834,6 +834,33 @@ pub fn run(mut args: Args) -> Result<()> {
         .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
     update_head(&repo.git_dir, &head, &commit_oid)?;
 
+    let zero_oid = ObjectId::from_bytes(&[0u8; 20]).unwrap();
+    let mut amend_reattached_ref: Option<String> = None;
+
+    // `git commit --amend` with detached HEAD: if exactly one local branch still points at the
+    // pre-amend commit, move that branch to the new commit and attach HEAD (matches Git; t3428).
+    if args.amend && head.is_detached() && old_oid != zero_oid {
+        let mut branches = Vec::new();
+        if let Ok(refs) = list_refs(&repo.git_dir, "refs/heads/") {
+            for (name, tip) in refs {
+                if tip == old_oid {
+                    branches.push(name);
+                }
+            }
+        }
+        branches.sort();
+        if branches.len() == 1 {
+            let refname = branches[0].clone();
+            let ref_path = repo.git_dir.join(&refname);
+            if let Some(parent) = ref_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&ref_path, format!("{}\n", commit_oid.to_hex()))?;
+            fs::write(repo.git_dir.join("HEAD"), format!("ref: {refname}\n"))?;
+            amend_reattached_ref = Some(refname);
+        }
+    }
+
     // Write reflog entries
     {
         let msg = if head.is_unborn() {
@@ -876,6 +903,17 @@ pub fn run(mut args: Args) -> Result<()> {
                     false,
                 );
             }
+        }
+        if let Some(ref refname) = amend_reattached_ref {
+            let _ = append_reflog(
+                &repo.git_dir,
+                refname,
+                &old_oid,
+                &commit_oid,
+                &commit_data.committer,
+                &msg,
+                false,
+            );
         }
     }
 
@@ -1280,6 +1318,9 @@ fn commit_rename_settings(config: &ConfigSet) -> (Option<u32>, bool) {
 }
 
 fn commit_uses_editor(args: &Args, fixup: Option<&FixupParsed>) -> bool {
+    if args.no_edit {
+        return false;
+    }
     if args.reuse_message.is_some() && args.reedit_message.is_none() {
         return false;
     }
@@ -1904,8 +1945,9 @@ fn prepare_commit_message(
 
     if !args.message.is_empty() && fixup.map(|f| matches!(f.mode, FixupMode::Fixup)) != Some(true) {
         let msg = args.message.join("\n\n");
+        let cleaned = cleanup_edited_commit_message(&msg);
         return Ok(MessageResult {
-            message: ensure_trailing_newline(&msg),
+            message: ensure_trailing_newline(&cleaned),
             raw_bytes: None,
         });
     }
@@ -1979,6 +2021,15 @@ fn prepare_commit_message(
     }
 
     if let Some(msg) = grit_lib::state::read_merge_msg(&repo.git_dir)? {
+        let msg = if args
+            .cleanup
+            .as_deref()
+            .is_some_and(|m| m.eq_ignore_ascii_case("strip"))
+        {
+            cleanup_edited_commit_message(&msg)
+        } else {
+            msg
+        };
         return Ok(MessageResult {
             message: ensure_trailing_newline(&msg),
             raw_bytes: None,

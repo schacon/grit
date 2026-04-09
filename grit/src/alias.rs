@@ -265,21 +265,25 @@ pub(crate) fn run_command_with_aliases(
             return crate::dispatch(&cmd, &args[1..], opts);
         }
 
+        // Expand `alias.*` before `git-<cmd>` external lookup so short names like `rbs` work
+        // without a `git-rbs` helper (matches Git's handle_alias ordering; see t3428).
+        if !is_builtin(&cmd) {
+            if let Some(new_argv) = try_expand_alias(
+                &cmd,
+                &args[1..],
+                &config,
+                &mut expanded_aliases,
+                &root_alias,
+            )? {
+                args = new_argv;
+                done_alias = true;
+                continue;
+            }
+        }
+
         trace_run_command_line(&cmd, &args[1..]);
         if try_exec_dashed(&cmd, &args[1..], opts)? {
             return Ok(());
-        }
-
-        if let Some(new_argv) = try_expand_alias(
-            &cmd,
-            &args[1..],
-            &config,
-            &mut expanded_aliases,
-            &root_alias,
-        )? {
-            args = new_argv;
-            done_alias = true;
-            continue;
         }
 
         return crate::dispatch(&cmd, &args[1..], opts);

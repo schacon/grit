@@ -575,6 +575,9 @@ fn do_merge_or_rebase_after_fetch(
             whitespace: None,
             autostash: false,
             no_autostash: false,
+            signoff: false,
+            no_signoff: false,
+            keep_empty: false,
         };
         return super::rebase::run(rebase_args);
     }
