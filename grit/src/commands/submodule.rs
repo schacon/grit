@@ -203,6 +203,7 @@ fn run_with_top_opts(top: SubmoduleTopOpts, args: Args) -> Result<()> {
         }
         Some(SubmoduleCommand::Summary(mut a)) => {
             a.quiet |= top.quiet;
+            a.cached |= top.cached;
             run_summary(&a, a.quiet)
         }
         Some(SubmoduleCommand::SetBranch(mut a)) => {
@@ -216,11 +217,14 @@ fn run_with_top_opts(top: SubmoduleTopOpts, args: Args) -> Result<()> {
     }
 }
 use grit_lib::config::{ConfigFile, ConfigScope};
+use grit_lib::diff::{diff_index_to_tree, DiffEntry, DiffStatus};
 use grit_lib::error::Error as LibError;
 use grit_lib::index::MODE_GITLINK;
-use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use grit_lib::pathspec::matches_pathspec;
+use grit_lib::refs;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse;
+use grit_lib::rev_parse::{self, resolve_revision};
 use grit_lib::state::resolve_head;
 use grit_lib::submodule_gitdir::submodule_modules_git_dir;
 use std::collections::BTreeMap;
@@ -587,9 +591,25 @@ pub struct SummaryArgs {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
-    /// Restrict to specific submodule paths.
-    #[arg(value_name = "PATH")]
-    pub paths: Vec<String>,
+    /// Compare the index to the given commit instead of the submodule working tree HEAD.
+    #[arg(long)]
+    pub cached: bool,
+
+    /// Compare the index gitlink to the submodule HEAD (instead of index vs commit tree).
+    #[arg(long)]
+    pub files: bool,
+
+    /// Limit how many commits `log` shows for each submodule (`-n`; Git `--summary-limit`).
+    #[arg(short = 'n', long = "summary-limit")]
+    pub summary_limit: Option<i32>,
+
+    /// Optional commit to compare against, then pathspecs after `--`.
+    #[arg(
+        trailing_var_arg = true,
+        allow_hyphen_values = true,
+        value_name = "ARGS"
+    )]
+    pub rest: Vec<String>,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -655,6 +675,35 @@ pub(crate) fn update_after_superproject_merge(init: bool, recursive: bool) -> Re
         reference: vec![],
         no_recommend_shallow: false,
     })
+}
+
+/// Stage the given commit OID as the gitlink for `rel_path` in the superproject index.
+///
+/// Used by `submodule update --remote` so the superproject records the fetched submodule tip
+/// (matches Git; required for `git commit <path>` after `--remote`).
+fn stage_gitlink_in_super_index(
+    repo: &Repository,
+    rel_path: &str,
+    new_oid_hex: &str,
+) -> Result<()> {
+    let new_oid = ObjectId::from_hex(new_oid_hex.trim())
+        .with_context(|| format!("invalid submodule OID '{new_oid_hex}' for path '{rel_path}'"))?;
+    let index_path = repo.index_path();
+    let mut index = repo.load_index_at(&index_path)?;
+    let path_bytes = rel_path.as_bytes().to_vec();
+    let Some(entry) = index
+        .entries
+        .iter_mut()
+        .find(|e| e.stage() == 0 && e.path == path_bytes)
+    else {
+        return Ok(());
+    };
+    if entry.mode != MODE_GITLINK {
+        return Ok(());
+    }
+    entry.oid = new_oid;
+    repo.write_index_at(&index_path, &mut index)?;
+    Ok(())
 }
 
 /// Refresh cached stat data for a gitlink in the superproject index after checkout.
@@ -1515,6 +1564,105 @@ fn read_head_from_file(head_file: &Path) -> Option<String> {
 
 fn default_initial_branch_name() -> String {
     std::env::var("GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME").unwrap_or_else(|_| "main".to_string())
+}
+
+/// When `remote.origin.url` points at a local repository, emulate `git fetch origin` by copying
+/// objects and updating `refs/remotes/origin/*` without `upload-pack` (avoids protocol v2 client
+/// limitations for submodule `--remote`).
+///
+/// Returns `Ok(true)` when the fast path ran, `Ok(false)` when the URL is not a local repo path.
+fn submodule_fetch_origin_local_path(
+    sub_path: &Path,
+    local_cfg: &ConfigFile,
+    quiet: bool,
+) -> Result<bool> {
+    let Some(sub_git_dir) = resolve_submodule_git_dir(sub_path) else {
+        return Ok(false);
+    };
+    let Some(url) = config_last_value(local_cfg, "remote.origin.url") else {
+        return Ok(false);
+    };
+    let url = url.trim();
+    if url.is_empty() {
+        return Ok(false);
+    }
+    if url.starts_with("ext::") || url.starts_with("http://") || url.starts_with("https://") {
+        return Ok(false);
+    }
+    if url.starts_with("git://") {
+        return Ok(false);
+    }
+    if crate::ssh_transport::is_configured_ssh_url(url) {
+        return Ok(false);
+    }
+
+    let mut remote_path = if let Some(stripped) = url.strip_prefix("file://") {
+        PathBuf::from(stripped)
+    } else {
+        PathBuf::from(url)
+    };
+    if remote_path.is_relative() {
+        remote_path = sub_path.join(&remote_path);
+    }
+    let remote_path = remote_path.canonicalize().unwrap_or(remote_path);
+    let remote_repo = match Repository::open(&remote_path, None)
+        .or_else(|_| Repository::discover(Some(&remote_path)))
+    {
+        Ok(r) => r,
+        Err(_) => return Ok(false),
+    };
+    let remote_git = remote_repo.git_dir.as_path();
+
+    let heads = refs::list_refs(remote_git, "refs/heads/")?;
+    if heads.is_empty() {
+        return Ok(false);
+    }
+
+    if !quiet {
+        eprintln!("From {}", remote_path.display());
+    }
+
+    let mut roots: Vec<ObjectId> = Vec::new();
+    for (refname, oid) in &heads {
+        let short = refname
+            .strip_prefix("refs/heads/")
+            .unwrap_or(refname.as_str());
+        let local_ref = format!("refs/remotes/origin/{short}");
+        let old_hex = refs::resolve_ref(&sub_git_dir, &local_ref)
+            .map(|o| o.to_hex())
+            .unwrap_or_else(|_| "0".repeat(40));
+        refs::write_ref(&sub_git_dir, &local_ref, oid)?;
+        roots.push(*oid);
+        if !quiet {
+            let branch = short;
+            eprintln!(
+                "   {}..{}  {}     -> origin/{}",
+                &old_hex[..7.min(old_hex.len())],
+                &oid.to_hex()[..7],
+                branch,
+                branch
+            );
+        }
+    }
+    roots.sort_by_key(|o| o.to_hex());
+    roots.dedup();
+
+    if let Ok(head) = resolve_head(remote_git) {
+        match head {
+            grit_lib::state::HeadState::Branch { short_name, .. } => {
+                let sym = format!("refs/remotes/origin/{short_name}");
+                if refs::resolve_ref(&sub_git_dir, &sym).is_ok() {
+                    let _ =
+                        refs::write_symbolic_ref(&sub_git_dir, "refs/remotes/origin/HEAD", &sym);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    crate::commands::fetch::copy_reachable_objects(remote_git, &sub_git_dir, &roots)?;
+
+    Ok(true)
 }
 
 fn superproject_head_short_branch(repo: &Repository) -> Option<String> {
@@ -2457,26 +2605,313 @@ fn pathdiff_relative(from: &Path, to: &Path) -> String {
     result.to_string_lossy().into_owned()
 }
 
-fn run_summary(_args: &SummaryArgs, _quiet: bool) -> Result<()> {
-    // Summary is a complex feature — for now, output a basic summary.
+fn parse_mode_octal(mode: &str) -> u32 {
+    u32::from_str_radix(mode.trim(), 8).unwrap_or(0)
+}
+
+fn mode_is_gitlink(mode: &str) -> bool {
+    parse_mode_octal(mode) == MODE_GITLINK
+}
+
+fn short_oid_in_submodule(grit_bin: &Path, sub_path: &Path, committish: &str) -> Option<String> {
+    let spec = format!("{committish}^0");
+    let out = grit_subprocess(grit_bin)
+        .args(["rev-parse", "-q", "--short", &spec, "--"])
+        .current_dir(sub_path)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout);
+    let line = s.lines().next().unwrap_or("").trim();
+    if line.is_empty() {
+        None
+    } else {
+        Some(line.to_string())
+    }
+}
+
+fn submodule_rev_list_count(grit_bin: &Path, sub_path: &Path, range: &str) -> Result<i32> {
+    let out = grit_subprocess(grit_bin)
+        .args(["rev-list", "--first-parent", "--count", range, "--"])
+        .current_dir(sub_path)
+        .output()
+        .context("rev-list --count in submodule")?;
+    if !out.status.success() {
+        return Ok(-1);
+    }
+    let n = String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<i32>()
+        .unwrap_or(-1);
+    Ok(n)
+}
+
+fn submodule_log_first_parent(
+    grit_bin: &Path,
+    sub_path: &Path,
+    src_abbrev: &str,
+    dst_abbrev: &str,
+    summary_limit: i32,
+) -> Result<()> {
+    let range = format!("{src_abbrev}...{dst_abbrev}");
+    let mut cmd = grit_subprocess(grit_bin);
+    cmd.current_dir(sub_path);
+    cmd.arg("log");
+    if summary_limit > 0 {
+        cmd.arg(format!("-{summary_limit}"));
+    }
+    cmd.args(["--pretty=  %m %s", "--first-parent", &range, "--"]);
+    let st = cmd.status().context("submodule log for summary")?;
+    if !st.success() {
+        bail!("submodule log failed");
+    }
+    Ok(())
+}
+
+fn submodule_log_one(
+    grit_bin: &Path,
+    sub_path: &Path,
+    dst_abbrev: &str,
+    prefix: char,
+) -> Result<()> {
+    let pretty = format!("  {} %s", prefix);
+    let st = grit_subprocess(grit_bin)
+        .args(["log", "--pretty", &pretty, "-1", dst_abbrev, "--"])
+        .current_dir(sub_path)
+        .status()
+        .context("submodule log -1 for summary")?;
+    if !st.success() {
+        bail!("submodule log -1 failed");
+    }
+    Ok(())
+}
+
+fn resolve_summary_base_tree(repo: &Repository, commit_spec: &str) -> Result<Option<ObjectId>> {
+    match resolve_revision(repo, commit_spec) {
+        Ok(oid) => {
+            let obj = repo.odb.read(&oid).context("read summary base commit")?;
+            let commit = parse_commit(&obj.data).context("parse summary base commit")?;
+            Ok(Some(commit.tree))
+        }
+        Err(e) => {
+            if commit_spec == "HEAD" {
+                Ok(None)
+            } else {
+                return Err(e).context("could not resolve summary base revision");
+            }
+        }
+    }
+}
+
+fn summary_display_path(entry: &DiffEntry) -> &str {
+    entry.old_path.as_deref().unwrap_or_else(|| entry.path())
+}
+
+fn pathspec_selected(pathspecs: &[String], sm_path: &str) -> bool {
+    if pathspecs.is_empty() {
+        return true;
+    }
+    pathspecs.iter().any(|spec| matches_pathspec(spec, sm_path))
+}
+
+/// Working tree directory for a submodule given the path Git uses in the summary diff (often the
+/// old path after `git mv`).
+fn submodule_work_tree_for_summary(work_tree: &Path, logical_path: &str) -> PathBuf {
+    let direct = work_tree.join(logical_path);
+    if direct.join(".git").exists() {
+        return direct;
+    }
+    let Ok(modules) = parse_gitmodules(work_tree) else {
+        return direct;
+    };
+    if let Some(m) = modules
+        .iter()
+        .find(|m| m.path == logical_path || m.name == logical_path)
+    {
+        let relocated = work_tree.join(&m.path);
+        if relocated.join(".git").exists() {
+            return relocated;
+        }
+    }
+    direct
+}
+
+fn run_summary(args: &SummaryArgs, _quiet: bool) -> Result<()> {
+    if args.summary_limit == Some(0) {
+        return Ok(());
+    }
+    let summary_limit = args.summary_limit.unwrap_or(-1);
+
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
-    let modules = parse_gitmodules(work_tree)?;
+    let grit_bin = grit_exe::grit_executable();
+
+    let mut commit_spec = "HEAD";
+    let pathspecs: Vec<String> = if let Some(p) = args.rest.iter().position(|x| x.as_str() == "--")
+    {
+        let head_tokens = &args.rest[..p];
+        let tail = args.rest[p + 1..].to_vec();
+        if head_tokens.is_empty() {
+            tail
+        } else if resolve_revision(&repo, &head_tokens[0]).is_ok() {
+            commit_spec = head_tokens[0].as_str();
+            let mut ps: Vec<String> = head_tokens[1..].to_vec();
+            ps.extend(tail);
+            ps
+        } else {
+            let mut ps = head_tokens.to_vec();
+            ps.extend(tail);
+            ps
+        }
+    } else if args.rest.is_empty() {
+        vec![]
+    } else if resolve_revision(&repo, &args.rest[0]).is_ok() {
+        commit_spec = args.rest[0].as_str();
+        args.rest[1..].to_vec()
+    } else {
+        args.rest.clone()
+    };
+
+    let base_tree_oid = resolve_summary_base_tree(&repo, commit_spec)?;
+    let index = repo
+        .load_index()
+        .context("load index for submodule summary")?;
+
+    let entries: Vec<DiffEntry> = if args.files {
+        if args.cached {
+            bail!("options '--cached' and '--files' cannot be used together");
+        }
+        let mut out = Vec::new();
+        let modules = parse_gitmodules_with_repo(work_tree, Some(&repo))?;
+        for m in &modules {
+            let path_bytes = m.path.as_bytes();
+            let Some(ie) = index.get(path_bytes, 0) else {
+                continue;
+            };
+            if ie.mode != MODE_GITLINK {
+                continue;
+            }
+            let sub_path = work_tree.join(&m.path);
+            let dst_oid = if let Some(h) = grit_lib::diff::read_submodule_head_oid(&sub_path) {
+                h
+            } else {
+                ObjectId::zero()
+            };
+            if ie.oid == dst_oid {
+                continue;
+            }
+            out.push(DiffEntry {
+                status: DiffStatus::Modified,
+                old_path: Some(m.path.clone()),
+                new_path: Some(m.path.clone()),
+                old_mode: format!("{:o}", MODE_GITLINK),
+                new_mode: format!("{:o}", MODE_GITLINK),
+                old_oid: ie.oid,
+                new_oid: dst_oid,
+                score: None,
+            });
+        }
+        out.sort_by(|a, b| a.path().cmp(b.path()));
+        out
+    } else {
+        diff_index_to_tree(&repo.odb, &index, base_tree_oid.as_ref())?
+    };
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    for m in &modules {
-        let sub_path = work_tree.join(&m.path);
-        let recorded = read_submodule_commit(&repo, &m.path)?;
-        let oid = recorded.as_deref().unwrap_or("0000000");
-        let short_oid = &oid[..oid.len().min(7)];
-
-        if sub_path.exists() {
-            writeln!(out, "* {} {}:", m.path, short_oid)?;
-        } else {
-            writeln!(out, "* {} {} (not checked out):", m.path, short_oid)?;
+    for e in &entries {
+        if !mode_is_gitlink(&e.old_mode) && !mode_is_gitlink(&e.new_mode) {
+            continue;
         }
+        let sm_path = summary_display_path(e);
+        if !pathspec_selected(&pathspecs, sm_path) {
+            continue;
+        }
+
+        let sub_path = submodule_work_tree_for_summary(work_tree, sm_path);
+        if !args.cached && !sub_path.join(".git").exists() {
+            continue;
+        }
+
+        let oid_src = e.old_oid;
+        let mut oid_dst = e.new_oid;
+        if !args.cached && oid_dst.is_zero() && mode_is_gitlink(&e.new_mode) {
+            if let Some(h) = grit_lib::diff::read_submodule_head_oid(&sub_path) {
+                oid_dst = h;
+            }
+        }
+
+        let src_gitlink = mode_is_gitlink(&e.old_mode);
+        let dst_gitlink = mode_is_gitlink(&e.new_mode);
+
+        let src_hex = oid_src.to_hex();
+        let dst_hex = oid_dst.to_hex();
+        let src_abbrev = short_oid_in_submodule(&grit_bin, &sub_path, &src_hex)
+            .unwrap_or_else(|| src_hex.chars().take(7).collect());
+        let dst_abbrev = short_oid_in_submodule(&grit_bin, &sub_path, &dst_hex)
+            .unwrap_or_else(|| dst_hex.chars().take(7).collect());
+
+        if e.status == DiffStatus::TypeChanged {
+            if dst_gitlink && !src_gitlink {
+                writeln!(
+                    out,
+                    "* {} {}(blob)->{}(submodule)",
+                    sm_path, src_abbrev, dst_abbrev
+                )?;
+            } else if src_gitlink && !dst_gitlink {
+                writeln!(
+                    out,
+                    "* {} {}(submodule)->{}(blob)",
+                    sm_path, src_abbrev, dst_abbrev
+                )?;
+            } else {
+                writeln!(out, "* {} {}...{}", sm_path, src_abbrev, dst_abbrev)?;
+            }
+            writeln!(out)?;
+            continue;
+        }
+
+        let total_commits = if !src_abbrev.is_empty() && !dst_abbrev.is_empty() {
+            if src_gitlink && dst_gitlink {
+                submodule_rev_list_count(
+                    &grit_bin,
+                    &sub_path,
+                    &format!("{src_abbrev}...{dst_abbrev}"),
+                )?
+            } else {
+                submodule_rev_list_count(&grit_bin, &sub_path, &dst_abbrev)?
+            }
+        } else {
+            -1
+        };
+
+        write!(out, "* {} {}...{}", sm_path, src_abbrev, dst_abbrev)?;
+        if total_commits < 0 {
+            writeln!(out, ":")?;
+        } else {
+            writeln!(out, " ({total_commits}):")?;
+        }
+        out.flush()?;
+
+        if total_commits > 0 {
+            if src_gitlink && dst_gitlink {
+                submodule_log_first_parent(
+                    &grit_bin,
+                    &sub_path,
+                    &src_abbrev,
+                    &dst_abbrev,
+                    summary_limit,
+                )?;
+            } else if dst_gitlink {
+                submodule_log_one(&grit_bin, &sub_path, &dst_abbrev, '>')?;
+            } else {
+                submodule_log_one(&grit_bin, &sub_path, &src_abbrev, '<')?;
+            }
+        }
+        writeln!(out)?;
     }
 
     Ok(())

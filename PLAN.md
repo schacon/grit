@@ -811,7 +811,7 @@ commit → check it off → move on.
 - [ ] `t7615-diff-algo-with-mergy-operations` ████████░░░░░░░░░░░░ 3/7 (4 left) — git merge and other operations that rely on merge
 
 - [x] `t7402-submodule-rebase` — Test rebasing, stashing, etc. with submodules
-- [ ] `t7421-submodule-summary-add` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — Summary support for submodules, adding them using git submodule add
+- [x] `t7421-submodule-summary-add` — Summary support for submodules, adding them using git submodule add
 
 - [ ] `t7518-ident-corner-cases` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — corner cases in ident strings
 - [ ] `t7602-merge-octopus-many` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git merge

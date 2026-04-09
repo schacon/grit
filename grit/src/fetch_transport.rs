@@ -486,7 +486,10 @@ pub fn fetch_via_upload_pack_skipping(
             }
             return Ok((Vec::new(), Vec::new(), head_symref, None));
         }
-        // Empty repo / unborn default branch: nothing to transfer.
+        // No pack to transfer (local already has all objects), but when the remote advertised
+        // refs we must still return those heads/tags so `git fetch` can update
+        // `refs/remotes/<remote>/*` to match the remote repository (Git behavior; submodule
+        // `update --remote` depends on this).
         if !has_cli_refspecs {
             drop(stdin);
             let _ = drain_child_stdout_to_eof(&mut stdout);
