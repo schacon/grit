@@ -61,6 +61,53 @@ pub fn merge_bases_first_vs_rest(
     reduce_to_best(candidates, &mut cache)
 }
 
+/// Merge base of `HEAD` and one other commit, matching `git diff --merge-base <commit>`.
+///
+/// Returns an error when there is no merge base or more than one.
+#[must_use]
+pub fn merge_base_for_diff_index(
+    repo: &Repository,
+    head: ObjectId,
+    other: ObjectId,
+) -> std::result::Result<ObjectId, MergeBaseForDiffError> {
+    let bases = merge_bases_first_vs_rest(repo, other, &[head])
+        .map_err(|e| MergeBaseForDiffError::Other(e.to_string()))?;
+    match bases.len() {
+        0 => Err(MergeBaseForDiffError::None),
+        1 => Ok(bases[0]),
+        _ => Err(MergeBaseForDiffError::Multiple),
+    }
+}
+
+/// Merge base of two commits, matching `git diff --merge-base <a> <b>` / `diff-tree --merge-base`.
+///
+/// Returns an error when there is no merge base or more than one.
+#[must_use]
+pub fn merge_base_for_diff_two_commits(
+    repo: &Repository,
+    a: ObjectId,
+    b: ObjectId,
+) -> std::result::Result<ObjectId, MergeBaseForDiffError> {
+    let bases = merge_bases_first_vs_rest(repo, a, &[b])
+        .map_err(|e| MergeBaseForDiffError::Other(e.to_string()))?;
+    match bases.len() {
+        0 => Err(MergeBaseForDiffError::None),
+        1 => Ok(bases[0]),
+        _ => Err(MergeBaseForDiffError::Multiple),
+    }
+}
+
+/// Failure modes for [`merge_base_for_diff_index`] and [`merge_base_for_diff_two_commits`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MergeBaseForDiffError {
+    /// No common ancestor between the commits.
+    None,
+    /// More than one minimal merge base (criss-cross history).
+    Multiple,
+    /// Resolution or object read error; message is suitable for stderr.
+    Other(String),
+}
+
 /// Compute merge bases common to all supplied commits (`--octopus` mode).
 ///
 /// # Parameters

@@ -9,12 +9,13 @@ use grit_lib::diff::{
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK, MODE_TREE,
 };
-use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use grit_lib::merge_base::{merge_base_for_diff_index, MergeBaseForDiffError};
+use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pathspec::{context_from_mode_bits, matches_pathspec_with_context};
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::merge_bases;
-use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
+use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision, resolve_revision_as_commit};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
@@ -37,7 +38,36 @@ pub fn run(mut args: Args) -> Result<()> {
         crate::precompose::precompose_plumbing_argv(&mut args.args);
     }
     let options = parse_options(&args.args)?;
-    let tree_oid = resolve_tree_ish(&repo, &options.tree_ish)?;
+    let tree_oid = if options.merge_base {
+        let head_oid = resolve_revision_as_commit(&repo, "HEAD")
+            .map_err(|e| anyhow::anyhow!("unable to get HEAD: {e}"))?;
+        let other_oid =
+            resolve_revision(&repo, &options.tree_ish).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let other_oid = peel_tag_chain_to_oid(&repo, other_oid)?;
+        let obj = repo.odb.read(&other_oid)?;
+        if obj.kind != ObjectKind::Commit {
+            bail!(
+                "fatal: {} is a {}, not a commit",
+                options.tree_ish,
+                object_kind_phrase(obj.kind)
+            );
+        }
+        let mb = match merge_base_for_diff_index(&repo, head_oid, other_oid) {
+            Ok(oid) => oid,
+            Err(MergeBaseForDiffError::None) => {
+                bail!("fatal: no merge base found");
+            }
+            Err(MergeBaseForDiffError::Multiple) => {
+                bail!("fatal: multiple merge bases found");
+            }
+            Err(MergeBaseForDiffError::Other(msg)) => {
+                bail!("{msg}");
+            }
+        };
+        resolve_tree_ish_from_commit_oid(&repo, mb)?
+    } else {
+        resolve_tree_ish(&repo, &options.tree_ish)?
+    };
 
     let mut tree_map = BTreeMap::new();
     collect_tree_entries(&repo, &tree_oid, "", &mut tree_map)?;
@@ -462,6 +492,7 @@ fn normalize_ignore_space_change_line(line: &str) -> String {
 #[derive(Debug, Clone)]
 struct Options {
     tree_ish: String,
+    merge_base: bool,
     pathspecs: Vec<String>,
     cached: bool,
     match_missing: bool,
@@ -535,6 +566,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut exit_code = false;
     let mut abbrev: Option<usize> = None;
     let mut tree_ish: Option<String> = None;
+    let mut merge_base = false;
     let mut pathspecs = Vec::new();
     let mut end_of_options = false;
     let mut find_renames: Option<u32> = None;
@@ -563,6 +595,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         if !end_of_options && arg.starts_with('-') {
             match arg.as_str() {
                 "--cached" => cached = true,
+                "--merge-base" => merge_base = true,
                 "-m" => match_missing = true,
                 "--quiet" => quiet = true,
                 "--exit-code" => exit_code = true,
@@ -727,6 +760,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
 
     Ok(Options {
         tree_ish,
+        merge_base,
         pathspecs,
         cached,
         match_missing,
@@ -790,20 +824,56 @@ fn diff_context_from_env() -> Option<usize> {
 /// Returns the tree OID which can be passed directly to collect_tree_entries.
 fn resolve_tree_ish(repo: &Repository, spec: &str) -> Result<ObjectId> {
     let oid = resolve_revision(repo, spec)?;
-    // Peel commits to get their tree OID without reading the tree itself.
-    // The tree will be read later by collect_tree_entries.
+    resolve_tree_ish_from_oid(repo, oid)
+}
+
+fn resolve_tree_ish_from_commit_oid(repo: &Repository, commit_oid: ObjectId) -> Result<ObjectId> {
+    let obj = repo.odb.read(&commit_oid)?;
+    if obj.kind != ObjectKind::Commit {
+        bail!(
+            "fatal: {} is a {}, not a commit",
+            commit_oid.to_hex(),
+            obj.kind.as_str()
+        );
+    }
+    let commit = parse_commit(&obj.data)?;
+    Ok(commit.tree)
+}
+
+fn peel_tag_chain_to_oid(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
     loop {
         let obj = repo.odb.read(&oid)?;
-        match obj.kind {
-            ObjectKind::Tree => return Ok(oid),
-            ObjectKind::Commit => {
-                let commit = parse_commit(&obj.data)?;
-                // Return the tree OID directly — don't read/verify the tree
-                // object here, collect_tree_entries will do that.
-                return Ok(commit.tree);
-            }
-            _ => bail!("object '{}' does not name a tree", oid),
+        if obj.kind != ObjectKind::Tag {
+            return Ok(oid);
         }
+        let tag = parse_tag(&obj.data)?;
+        oid = tag.object;
+    }
+}
+
+fn object_kind_phrase(kind: ObjectKind) -> &'static str {
+    match kind {
+        ObjectKind::Tree => "tree",
+        ObjectKind::Blob => "blob",
+        ObjectKind::Tag => "tag",
+        ObjectKind::Commit => "commit",
+    }
+}
+
+fn resolve_tree_ish_from_oid(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
+    oid = peel_tag_chain_to_oid(repo, oid)?;
+    let obj = repo.odb.read(&oid)?;
+    match obj.kind {
+        ObjectKind::Tree => Ok(oid),
+        ObjectKind::Commit => {
+            let commit = parse_commit(&obj.data)?;
+            Ok(commit.tree)
+        }
+        _ => bail!(
+            "fatal: {} is a {}, not a commit",
+            oid.to_hex(),
+            obj.kind.as_str()
+        ),
     }
 }
 

@@ -17,11 +17,13 @@ use grit_lib::diff::{
     count_changes, detect_renames, diff_trees, diff_trees_show_tree_entries, format_raw,
     format_raw_abbrev, unified_diff, DiffEntry, DiffStatus,
 };
-use grit_lib::merge_base::merge_bases_first_vs_rest;
+use grit_lib::merge_base::{
+    merge_base_for_diff_two_commits, merge_bases_first_vs_rest, MergeBaseForDiffError,
+};
 use grit_lib::merge_diff::{
     combined_diff_paths, format_combined_textconv_patch, is_binary_for_diff,
 };
-use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pathspec::{context_from_mode_octal, matches_pathspec_with_context};
 use grit_lib::repo::{resolve_dot_git, Repository};
@@ -135,6 +137,8 @@ struct Options {
     submodule_mode: Option<String>,
     /// Object id spec for `--find-object` (resolved against the repo before the walk).
     find_object: Option<String>,
+    /// Compare merge-base(HEAD, A) vs B trees (two commits required).
+    merge_base: bool,
 }
 
 impl Default for Options {
@@ -177,6 +181,7 @@ impl Default for Options {
             pickaxe_all: false,
             submodule_mode: None,
             find_object: None,
+            merge_base: false,
         }
     }
 }
@@ -248,6 +253,7 @@ fn parse_options(repo: &Repository, argv: &[String]) -> Result<Options> {
                     opts.exit_code = true;
                 }
                 "--remerge-diff" => opts.remerge_diff = true,
+                "--merge-base" => opts.merge_base = true,
                 "--full-index" => opts.full_index = true,
                 _ if arg.starts_with("--max-depth=") => {
                     let val = &arg["--max-depth=".len()..];
@@ -436,6 +442,12 @@ pub fn run(mut args: Args) -> Result<()> {
         crate::precompose::precompose_diff_tree_argv(&mut args.args);
     }
     let opts = parse_options(&repo, &args.args)?;
+    if opts.merge_base && opts.stdin_mode {
+        bail!("fatal: options '--merge-base' and '--stdin' cannot be used together");
+    }
+    if opts.merge_base && opts.objects.len() != 2 {
+        bail!("fatal: --merge-base only works with two commits");
+    }
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -467,8 +479,24 @@ fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Res
     } else {
         (&opts.objects[0], &opts.objects[1])
     };
-    let oid1 = resolve_to_tree(repo, spec_a)?;
-    let oid2 = resolve_to_tree(repo, spec_b)?;
+    let (oid1, oid2) = if opts.merge_base {
+        let commit_a = resolve_commit_ish_for_merge_base(repo, spec_a)?;
+        let commit_b = resolve_commit_ish_for_merge_base(repo, spec_b)?;
+        let mb_oid = match merge_base_for_diff_two_commits(repo, commit_a, commit_b) {
+            Ok(oid) => oid,
+            Err(MergeBaseForDiffError::None) => bail!("fatal: no merge base found"),
+            Err(MergeBaseForDiffError::Multiple) => bail!("fatal: multiple merge bases found"),
+            Err(MergeBaseForDiffError::Other(msg)) => bail!("{msg}"),
+        };
+        let tree_mb = tree_oid_for_commit(repo, mb_oid)?;
+        let tree_second = resolve_to_tree(repo, spec_b)?;
+        (tree_mb, tree_second)
+    } else {
+        (
+            resolve_to_tree(repo, spec_a)?,
+            resolve_to_tree(repo, spec_b)?,
+        )
+    };
     let max_tree_depth = resolve_max_tree_depth(repo)?;
     let old_tree = if is_magic_empty_tree_oid(&oid1) {
         None
@@ -1786,6 +1814,54 @@ fn print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) ->
 
 // ── Small helpers ─────────────────────────────────────────────────────
 
+fn peel_tag_chain_to_oid(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
+    loop {
+        let obj = repo.odb.read(&oid)?;
+        if obj.kind != ObjectKind::Tag {
+            return Ok(oid);
+        }
+        let tag = parse_tag(&obj.data)?;
+        oid = tag.object;
+    }
+}
+
+fn object_kind_phrase(kind: ObjectKind) -> &'static str {
+    match kind {
+        ObjectKind::Tree => "tree",
+        ObjectKind::Blob => "blob",
+        ObjectKind::Tag => "tag",
+        ObjectKind::Commit => "commit",
+    }
+}
+
+fn resolve_commit_ish_for_merge_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    let oid =
+        resolve_revision(repo, spec).with_context(|| format!("unknown revision: '{spec}'"))?;
+    let peeled = peel_tag_chain_to_oid(repo, oid)?;
+    let obj = repo.odb.read(&peeled)?;
+    if obj.kind != ObjectKind::Commit {
+        bail!(
+            "fatal: {} is a {}, not a commit",
+            spec,
+            object_kind_phrase(obj.kind)
+        );
+    }
+    Ok(peeled)
+}
+
+fn tree_oid_for_commit(repo: &Repository, commit_oid: ObjectId) -> Result<ObjectId> {
+    let obj = repo.odb.read(&commit_oid)?;
+    if obj.kind != ObjectKind::Commit {
+        bail!(
+            "fatal: {} is a {}, not a commit",
+            commit_oid.to_hex(),
+            obj.kind.as_str()
+        );
+    }
+    let commit = parse_commit(&obj.data)?;
+    Ok(commit.tree)
+}
+
 /// Resolve a tree-ish (commit or tree) to a tree OID.
 fn resolve_to_tree(repo: &Repository, spec: &str) -> Result<ObjectId> {
     if spec == "4b825dc642cb6eb9a060e54bf899d69f7c6948d4"
@@ -1795,6 +1871,7 @@ fn resolve_to_tree(repo: &Repository, spec: &str) -> Result<ObjectId> {
     }
     let mut oid =
         resolve_revision(repo, spec).with_context(|| format!("unknown revision: '{spec}'"))?;
+    oid = peel_tag_chain_to_oid(repo, oid)?;
     loop {
         let obj = repo.odb.read(&oid)?;
         match obj.kind {
