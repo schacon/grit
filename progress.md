@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   253 |
+| Completed   |   254 |
 | In progress |     4 |
-| Remaining   |   511 |
+| Remaining   |   510 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 253 completed (`[x]`), 4 in progress (`[~]`), 511 remaining (`[ ]`).
+Task lines in `PLAN.md`: 254 completed (`[x]`), 4 in progress (`[~]`), 510 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5519-push-alternates` — 8/8 tests pass (push to repo with `objects/info/alternates`; objects already available via alternate not re-packed; harness CSV/dashboards refreshed)
 - `t4214-log-graph-octopus` — 17/17 tests pass (`git log --graph` skewed-left octopus, crossover, and colored graph lines; harness CSV/dashboards refreshed)
 - `t3060-ls-files-with-tree` — 8/8 tests pass (`ls-files --with-tree`: `Index::overlay_tree_on_index`, `-s/-u`/`--recurse-submodules` incompatibilities with `fatal:` + exit 128, cwd pathspec `sub/` matches `sub/file`; harness CSV refreshed)
 - `t12660-init-shared-perm` — 37/37 tests pass (default `grit init` applies Git-style group-shared chmod on `.git` tree: 775 dirs / 664 HEAD under umask 022; explicit `--shared` / `core.sharedRepository` writes config + `receive.denyNonFastforwards`; reinit without shared config leaves modes unchanged)

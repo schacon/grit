@@ -1,5 +1,9 @@
 # Test Results
 
+**Updated:** 2026-04-09
+
+- `./scripts/run-tests.sh t5519-push-alternates.sh`: 8/8 passing (push with alternate ODB; no code changes; harness CSV/dashboards refreshed).
+
 **Updated:** 2026-04-08
 
 - `./scripts/run-tests.sh t3060-ls-files-with-tree.sh`: 8/8 passing (`ls-files --with-tree`: tree overlay on index, usage incompatibilities, conflict + missing-index cases; harness CSV/dashboards refreshed).
