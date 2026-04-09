@@ -120,19 +120,24 @@ test_expect_success() {
 	fi
 	test_cleanup=:
 	test -z "$verbose" || say "expecting success of $TEST_NUMBER.$test_count '$description': $commands"
-	test_reset_cwd_to_trash
+	if test -z "${TEST_LIB_INHERIT_CWD-}"
+	then
+		test_reset_cwd_to_trash
+	fi
 	test -f "$TRASH_DIRECTORY/.test-exports" && . "$TRASH_DIRECTORY/.test-exports"
-	# Each test starts from the trash root so bodies can use stable relative paths (e.g. `cd
-	# repo`) even when a previous test left cwd inside a subdirectory.
-	cd "$TRASH_DIRECTORY" || exit 1
+	if test -z "${TEST_LIB_INHERIT_CWD-}"
+	then
+		cd "$TRASH_DIRECTORY" || exit 1
+	fi
 	test_run_ "$commands"
 	result=$?
-	# Each test case starts from the trash root; bodies often `cd` into subdirs and must not
-	# leave the harness cwd there (matches git/t/test-lib.sh: only initial cd into trash).
-	cd "$TRASH_DIRECTORY" || {
-		echo >&2 "BUG: cannot cd to TRASH_DIRECTORY=$TRASH_DIRECTORY"
-		result=1
-	}
+	if test -z "${TEST_LIB_INHERIT_CWD-}"
+	then
+		cd "$TRASH_DIRECTORY" || {
+			echo >&2 "BUG: cannot cd to TRASH_DIRECTORY=$TRASH_DIRECTORY"
+			result=1
+		}
+	fi
 	test -f "$TRASH_DIRECTORY/.test-exports" && . "$TRASH_DIRECTORY/.test-exports"
 	if test -f "$_TICK_FILE"
 	then
@@ -211,16 +216,25 @@ test_expect_failure() {
 	fi
 	test_cleanup=:
 	test -z "$verbose" || say "checking known breakage of $TEST_NUMBER.$test_count '$description': $commands"
-	test_reset_cwd_to_trash
+	if test -z "${TEST_LIB_INHERIT_CWD-}"
+	then
+		test_reset_cwd_to_trash
+	fi
 	_exports_file="$TRASH_DIRECTORY/.test-exports"
 	test -f "$_exports_file" && . "$_exports_file"
-	cd "$TRASH_DIRECTORY" || exit 1
+	if test -z "${TEST_LIB_INHERIT_CWD-}"
+	then
+		cd "$TRASH_DIRECTORY" || exit 1
+	fi
 	test_run_ "$commands" expecting_failure
 	result=$?
-	cd "$TRASH_DIRECTORY" || {
-		echo >&2 "BUG: cannot cd to TRASH_DIRECTORY=$TRASH_DIRECTORY"
-		result=1
-	}
+	if test -z "${TEST_LIB_INHERIT_CWD-}"
+	then
+		cd "$TRASH_DIRECTORY" || {
+			echo >&2 "BUG: cannot cd to TRASH_DIRECTORY=$TRASH_DIRECTORY"
+			result=1
+		}
+	fi
 	test -f "$_exports_file" && . "$_exports_file"
 	if test -f "$_TICK_FILE"
 	then

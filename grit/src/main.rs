@@ -4327,6 +4327,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 "mergesort" => run_test_tool_mergesort(rest),
                 "hexdump" => run_test_tool_hexdump(rest),
                 "chmtime" => run_test_tool_chmtime(&rest[1..]),
+                "dump-untracked-cache" => run_test_tool_dump_untracked_cache(),
                 "userdiff" => run_test_tool_userdiff(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
                 "ref-store" => run_test_tool_ref_store(rest),
@@ -4859,6 +4860,63 @@ fn run_test_tool_submodule(rest: &[String]) -> Result<()> {
         }
         other => bail!("test-tool submodule: unknown subcommand '{other}'"),
     }
+}
+
+/// `test-tool dump-untracked-cache` — matches `git/t/helper/test-dump-untracked-cache.c`.
+fn run_test_tool_dump_untracked_cache() -> Result<()> {
+    use grit_lib::index::Index;
+    use grit_lib::repo::Repository;
+    use grit_lib::untracked_cache::UntrackedCacheDir;
+
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let index = Index::load(&repo.index_path()).context("read index")?;
+    let Some(uc) = index.untracked_cache.as_ref() else {
+        println!("no untracked cache");
+        return Ok(());
+    };
+
+    println!("info/exclude {}", uc.ss_info_exclude.oid.to_hex());
+    println!("core.excludesfile {}", uc.ss_excludes_file.oid.to_hex());
+    println!("exclude_per_dir {}", uc.exclude_per_dir);
+    println!("flags {:08x}", uc.dir_flags);
+
+    fn dump(ucd: &UntrackedCacheDir, base: &mut String) {
+        let len = base.len();
+        base.push_str(&ucd.name);
+        base.push('/');
+        print!("{} {}", base, ucd.exclude_oid.to_hex());
+        if ucd.recurse {
+            print!(" recurse");
+        }
+        if ucd.check_only {
+            print!(" check_only");
+        }
+        if ucd.valid {
+            print!(" valid");
+        }
+        println!();
+
+        let mut names: Vec<_> = ucd.untracked.iter().cloned().collect();
+        names.sort();
+        for n in &names {
+            println!("{n}");
+        }
+
+        let mut dirs: Vec<_> = ucd.dirs.iter().collect();
+        dirs.sort_by(|a, b| a.name.cmp(&b.name));
+        for d in dirs {
+            dump(d, base);
+        }
+
+        base.truncate(len);
+    }
+
+    if let Some(root) = uc.root.as_ref() {
+        let mut base = String::new();
+        dump(root, &mut base);
+    }
+
+    Ok(())
 }
 
 /// Handle `test-tool chmtime` — get or set file modification times.

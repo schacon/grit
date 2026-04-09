@@ -2,6 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use std::env;
 use std::io::{self, BufRead};
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
@@ -17,6 +18,7 @@ use grit_lib::odb::Odb;
 use grit_lib::pathspec::matches_pathspec_for_object;
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
+use grit_lib::untracked_cache::{self, UntrackedCache};
 
 /// Match Git: when `--chmod` changes the index entry, update the working tree file mode so a
 /// subsequent `git add` of the same path keeps the executable bit.
@@ -182,6 +184,22 @@ pub struct Args {
     /// Ignore changes to submodule during --refresh.
     #[arg(long = "ignore-submodules")]
     pub ignore_submodules: bool,
+
+    /// Enable untracked cache extension in the index.
+    #[arg(long = "untracked-cache")]
+    pub untracked_cache: bool,
+
+    /// Disable untracked cache extension.
+    #[arg(long = "no-untracked-cache")]
+    pub no_untracked_cache: bool,
+
+    /// Test whether the filesystem supports the untracked cache (exit 0 if yes, 1 if no).
+    #[arg(long = "test-untracked-cache", hide = true)]
+    pub test_untracked_cache: bool,
+
+    /// Enable untracked cache without probing the filesystem.
+    #[arg(long = "force-untracked-cache", hide = true)]
+    pub force_untracked_cache: bool,
 
     /// Files to add/remove from the index.
     pub files: Vec<PathBuf>,
@@ -349,10 +367,26 @@ fn per_file_chmod_from_raw_argv(raw: &[String]) -> std::collections::HashMap<Pat
     map
 }
 
+fn index_path_for_update(repo: &Repository) -> Result<PathBuf> {
+    if let Ok(raw) = env::var("GIT_INDEX_FILE") {
+        if !raw.is_empty() {
+            let p = PathBuf::from(raw);
+            return Ok(if p.is_absolute() {
+                p
+            } else {
+                env::current_dir()
+                    .context("GIT_INDEX_FILE is relative; need cwd")?
+                    .join(p)
+            });
+        }
+    }
+    Ok(repo.index_path())
+}
+
 /// Run `grit update-index`.
 pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    let index_path = repo.index_path();
+    let index_path = index_path_for_update(&repo)?;
     let mut index = repo.load_index_at(&index_path).context("loading index")?;
     let symlinks_enabled = core_symlinks_enabled(&repo);
 
@@ -365,6 +399,32 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let conv = crlf::ConversionConfig::from_config(&config);
     let attrs = crlf::load_gitattributes(work_tree);
+
+    if args.test_untracked_cache {
+        // Grit always supports UNTR on POSIX; return success like Git on capable systems.
+        return Ok(());
+    }
+
+    if args.force_untracked_cache {
+        let flags = untracked_cache::dir_flags_from_config(&config);
+        let ident = untracked_cache::untracked_cache_ident(work_tree);
+        index.untracked_cache = Some(UntrackedCache::new_shell(flags, ident));
+        repo.write_index_at(&index_path, &mut index)
+            .context("writing index")?;
+        return Ok(());
+    }
+
+    if args.no_untracked_cache {
+        index.untracked_cache = None;
+        repo.write_index_at(&index_path, &mut index)
+            .context("writing index")?;
+    } else if args.untracked_cache {
+        let flags = untracked_cache::dir_flags_from_config(&config);
+        let ident = untracked_cache::untracked_cache_ident(work_tree);
+        index.untracked_cache = Some(UntrackedCache::new_shell(flags, ident));
+        repo.write_index_at(&index_path, &mut index)
+            .context("writing index")?;
+    }
 
     if args.show_index_version {
         println!("{}", index.version);
@@ -1502,7 +1562,7 @@ fn core_symlinks_enabled(repo: &Repository) -> bool {
 
 /// Non-CLI: `update-index -q --refresh` — refresh stat cache without exiting when entries are stale.
 pub fn run_refresh_quiet(repo: &Repository) -> Result<()> {
-    let index_path = repo.index_path();
+    let index_path = index_path_for_update(repo)?;
     let mut index = repo.load_index_at(&index_path).context("loading index")?;
     let work_tree = repo
         .work_tree
