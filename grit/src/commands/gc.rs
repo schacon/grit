@@ -23,7 +23,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 /// Arguments for `grit gc`.
 #[derive(Debug, ClapArgs)]
@@ -102,6 +102,7 @@ pub fn run(args: Args) -> Result<()> {
             quiet,
         };
         prune_packed_objects(&objects_dir, opts).map_err(|e| anyhow::anyhow!("{e}"))?;
+        prune_stale_tmp_objects(&objects_dir)?;
     }
 
     pack_refs::run(pack_refs::Args {
@@ -228,6 +229,36 @@ fn run_repack_for_gc(repo: &Repository, quiet: bool, gc_args: &Args) -> Result<(
     let status = cmd.status().context("failed to run grit repack for gc")?;
     if !status.success() {
         eprintln!("warning: repack returned non-zero status");
+    }
+    Ok(())
+}
+
+/// Remove stale `objects/tmp_*` files left from interrupted object writes (Git-compatible naming).
+fn prune_stale_tmp_objects(objects_dir: &Path) -> Result<()> {
+    const MAX_AGE: Duration = Duration::from_secs(14 * 24 * 3600);
+    let rd = match fs::read_dir(objects_dir) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    let now = SystemTime::now();
+    for entry in rd.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with("tmp_") {
+            continue;
+        }
+        let path = entry.path();
+        let meta = match fs::metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        if now.duration_since(modified).unwrap_or(Duration::ZERO) > MAX_AGE {
+            let _ = fs::remove_file(&path);
+        }
     }
     Ok(())
 }

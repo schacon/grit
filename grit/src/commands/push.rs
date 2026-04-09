@@ -106,6 +106,10 @@ pub struct Args {
     /// Disable --follow-tags.
     #[arg(long = "no-follow-tags")]
     pub no_follow_tags: bool,
+
+    /// Receive-pack program on the remote (shell command; uses wire protocol instead of file copy).
+    #[arg(long = "receive-pack", value_name = "RECEIVE_PACK")]
+    pub receive_pack: Option<String>,
 }
 
 /// A single ref update to perform on the remote.
@@ -263,6 +267,29 @@ fn push_to_url(
             remote_path.display()
         )
     })?;
+
+    if let Some(rp) = args.receive_pack.as_ref().filter(|s| !s.is_empty()) {
+        let send_refs = if push_all {
+            Vec::new()
+        } else if !args.refspecs.is_empty() {
+            args.refspecs.clone()
+        } else if args.mirror || args.delete || args.tags {
+            bail!(
+                "--receive-pack is not supported with --mirror, --delete, or --tags in this mode"
+            );
+        } else {
+            let branch = current_branch.context("not on a branch; specify a refspec to push")?;
+            vec![branch.to_owned()]
+        };
+        return crate::commands::send_pack::run(crate::commands::send_pack::Args {
+            receive_pack: rp.clone(),
+            all: push_all,
+            force: args.force,
+            dry_run: args.dry_run,
+            remote: remote_path.display().to_string(),
+            refs: send_refs,
+        });
+    }
 
     let remote_config = ConfigSet::load(Some(&remote_repo.git_dir), false)?;
 
@@ -1133,7 +1160,10 @@ fn read_receive_deny_delete_current(cfg: &ConfigSet) -> ReceiveDenyAction {
     let v = cfg
         .get("receive.denyDeleteCurrent")
         .or_else(|| cfg.get("receive.denydeletecurrent"));
-    parse_receive_deny_action(v.as_deref())
+    match v.as_deref().map(str::trim) {
+        None => ReceiveDenyAction::Unconfigured,
+        Some(s) => parse_receive_deny_action(Some(s)),
+    }
 }
 
 /// Enforce receive-pack rules for the non-bare remote (checked-out branch updates/deletes).

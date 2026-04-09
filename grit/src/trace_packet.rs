@@ -31,6 +31,27 @@ pub fn trace_packet_line(line: &[u8]) {
     }
 }
 
+/// Trace a pkt-line payload the same way Git does for `GIT_TRACE_PACKET` (direction `>` or `<`).
+///
+/// Non-printable bytes and newlines are escaped as `\\ooo` octal, matching `git/pkt-line.c`.
+pub fn trace_packet_git_style(program: &str, direction: char, payload: &[u8]) {
+    if trace_packet_dest().is_none() {
+        return;
+    }
+    let mut line = format!("packet: {:>12}{direction} ", program);
+    for &b in payload {
+        if b == b'\n' {
+            continue;
+        }
+        if (0x20..=0x7e).contains(&b) {
+            line.push(b as char);
+        } else {
+            line.push_str(&format!("\\{:o}", b));
+        }
+    }
+    trace_packet_line(line.as_bytes());
+}
+
 /// Emit fetch negotiation trace lines compatible with tests that grep `GIT_TRACE_PACKET`.
 ///
 /// Lines deliberately avoid the substring `" want "` (space-want-space) so harnesses can

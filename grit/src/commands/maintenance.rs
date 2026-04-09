@@ -96,6 +96,20 @@ fn run_maintenance(args: &RunArgs) -> Result<()> {
         return Ok(());
     }
 
+    if args.auto {
+        // Match Git: `maintenance run --auto` only runs tasks whose auto-condition
+        // is met (same as `git gc --auto` for the `gc` strategy).
+        let cfg = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let strategy = cfg
+            .get("maintenance.strategy")
+            .map(|s| s.to_lowercase())
+            .unwrap_or_default();
+        if strategy == "gc" || strategy.is_empty() {
+            run_task(&grit_bin, "gc", &repo)?;
+        }
+        return Ok(());
+    }
+
     // Default tasks based on schedule.
     let tasks = match args.schedule.as_deref() {
         Some("hourly") => vec!["prefetch", "loose-objects", "incremental-repack"],

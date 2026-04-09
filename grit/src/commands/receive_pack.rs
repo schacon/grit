@@ -5,14 +5,19 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
 use grit_lib::hooks::{run_hook_in_git_dir, HookResult};
+use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::ObjectId;
+use grit_lib::pack;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
-use std::fs;
+use grit_lib::state::{resolve_head, HeadState};
+use std::collections::HashSet;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
+use crate::grit_exe;
 use crate::pkt_line;
 
 /// Arguments for `grit receive-pack`.
@@ -31,6 +36,8 @@ pub fn run(args: Args) -> Result<()> {
             args.directory.display()
         )
     })?;
+
+    let remote_config = ConfigSet::load(Some(&repo.git_dir), false)?;
 
     // Phase 1: Advertise refs (pkt-line)
     let mut out = io::stdout();
@@ -61,23 +68,19 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // Phase 3: Read pack data from stdin (if any updates have new objects)
-    let mut pack_data = Vec::new();
-    let _ = stdin.read_to_end(&mut pack_data);
+    // Phase 3: Read pack data from stdin (if any updates have new objects).
+    // Side-band-64k wraps the PACK stream; strip it before indexing.
+    let mut raw_input = Vec::new();
+    let _ = stdin.read_to_end(&mut raw_input);
+    let pack_data = if raw_input.len() >= 12 && &raw_input[..4] == b"PACK" {
+        raw_input
+    } else {
+        pkt_line::decode_sideband_primary(&raw_input).unwrap_or_default()
+    };
 
-    if !pack_data.is_empty() {
-        // Write pack data to objects/pack/ if it looks like a packfile
-        if pack_data.len() > 12 && &pack_data[..4] == b"PACK" {
-            // Use SHA-1 of the pack data as the pack name
-            use sha1::{Digest, Sha1};
-            let mut hasher = Sha1::new();
-            hasher.update(&pack_data);
-            let hash = hasher.finalize();
-            let pack_dir = repo.git_dir.join("objects/pack");
-            fs::create_dir_all(&pack_dir)?;
-            let pack_path = pack_dir.join(format!("pack-{}.pack", hex::encode(hash)));
-            fs::write(&pack_path, &pack_data)?;
-        }
+    if !pack_data.is_empty() && pack_data.len() >= 12 && &pack_data[..4] == b"PACK" {
+        crate::commands::index_pack::ingest_pack_bytes(&repo, &pack_data, true)
+            .context("indexing received pack")?;
     }
 
     // Build stdin payload for receive-side hooks.
@@ -166,7 +169,38 @@ pub fn run(args: Args) -> Result<()> {
         bail!("reference-transaction hook declined the update");
     }
 
-    for (_old_hex, new_hex, refname) in &updates {
+    let deny_deletes = config_bool_any(
+        &remote_config,
+        &["receive.denyDeletes", "receive.denydeletes"],
+        false,
+    );
+    let deny_nff = config_bool_any(
+        &remote_config,
+        &["receive.denyNonFastForwards", "receive.denynonfastforwards"],
+        false,
+    );
+
+    let head_ref_for_delete = if repo.is_bare() {
+        None
+    } else {
+        match resolve_head(&repo.git_dir) {
+            Ok(HeadState::Branch { refname, .. }) => Some(refname),
+            _ => None,
+        }
+    };
+
+    for (old_hex, new_hex, refname) in &updates {
+        check_receive_update_policy(
+            &repo,
+            &remote_config,
+            refname,
+            old_hex,
+            new_hex,
+            deny_deletes,
+            deny_nff,
+            head_ref_for_delete.as_deref(),
+        )?;
+
         let old_for_update = refs::resolve_ref(&repo.git_dir, refname)
             .map(|oid| oid.to_hex())
             .unwrap_or_else(|_| zero_oid.clone());
@@ -192,7 +226,6 @@ pub fn run(args: Args) -> Result<()> {
         }
 
         if new_hex == &zero_oid {
-            // Delete ref
             refs::delete_ref(&repo.git_dir, refname)
                 .with_context(|| format!("deleting ref {refname}"))?;
             println!("ok {refname}");
@@ -233,21 +266,208 @@ pub fn run(args: Args) -> Result<()> {
         // post-receive is informational only.
     }
 
+    let auto_gc = config_bool_any(&remote_config, &["receive.autoGc", "receive.autogc"], true);
+    if auto_gc && !updates.is_empty() {
+        run_auto_maintenance_quiet(&repo.git_dir);
+    }
+
     Ok(())
 }
 
+fn read_bool_config(cfg: &ConfigSet, key: &str, default: bool) -> bool {
+    cfg.get_bool(key).unwrap_or(Ok(default)).unwrap_or(default)
+}
+
+fn config_bool_any(cfg: &ConfigSet, keys: &[&str], default: bool) -> bool {
+    for k in keys {
+        if let Some(v) = cfg.get_bool(k) {
+            return v.unwrap_or(default);
+        }
+    }
+    default
+}
+
+fn check_receive_update_policy(
+    repo: &Repository,
+    cfg: &ConfigSet,
+    refname: &str,
+    old_hex: &str,
+    new_hex: &str,
+    deny_deletes: bool,
+    deny_nff: bool,
+    head_branch: Option<&str>,
+) -> Result<()> {
+    let zero_oid = "0".repeat(40);
+    let is_delete = new_hex == zero_oid;
+    let had_old = old_hex != zero_oid;
+
+    if is_delete && had_old && deny_deletes && refname.starts_with("refs/heads/") {
+        eprintln!("error: denying ref deletion for {refname}");
+        bail!("deletion prohibited");
+    }
+
+    if is_delete && had_old {
+        if let Some(head) = head_branch {
+            if refname == head {
+                let deny = read_receive_deny_delete_current(cfg);
+                match deny {
+                    ReceiveDenyAction::Ignore => {}
+                    ReceiveDenyAction::Warn => {
+                        eprintln!("warning: deleting the current branch");
+                    }
+                    ReceiveDenyAction::Refuse | ReceiveDenyAction::UpdateInstead => {
+                        eprintln!("error: refusing to delete the current branch: {refname}");
+                        bail!("deletion of the current branch prohibited");
+                    }
+                    ReceiveDenyAction::Unconfigured => {
+                        eprintln!(
+                            "error: By default, deleting the current branch is denied, because the next\n\
+                             'git clone' won't result in any file checked out, causing confusion.\n\
+                             \n\
+                             You can set 'receive.denyDeleteCurrent' configuration variable to\n\
+                             'warn' or 'ignore' in the remote repository to allow deleting the\n\
+                             current branch, with or without a warning message.\n\
+                             \n\
+                             To squelch this message, you can set it to 'refuse'."
+                        );
+                        eprintln!("error: refusing to delete the current branch: {refname}");
+                        bail!("deletion of the current branch prohibited");
+                    }
+                }
+            }
+        }
+    }
+
+    if deny_nff && !is_delete && had_old
+        && refname.starts_with("refs/heads/") {
+            let old_oid = ObjectId::from_hex(old_hex)
+                .with_context(|| format!("invalid old oid on {refname}"))?;
+            let new_oid = ObjectId::from_hex(new_hex)
+                .with_context(|| format!("invalid new oid on {refname}"))?;
+            if old_oid != new_oid && !is_ancestor(repo, old_oid, new_oid)? {
+                eprintln!("error: denying non-fast-forward {refname} (you should pull first)");
+                bail!("non-fast-forward");
+            }
+        }
+
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum ReceiveDenyAction {
+    Unconfigured,
+    Ignore,
+    Warn,
+    Refuse,
+    UpdateInstead,
+}
+
+fn parse_receive_deny_action(value: Option<&str>) -> ReceiveDenyAction {
+    use grit_lib::config::parse_bool;
+    match value.map(str::trim) {
+        None => ReceiveDenyAction::Ignore,
+        Some(s) if s.eq_ignore_ascii_case("ignore") => ReceiveDenyAction::Ignore,
+        Some(s) if s.eq_ignore_ascii_case("warn") => ReceiveDenyAction::Warn,
+        Some(s) if s.eq_ignore_ascii_case("refuse") => ReceiveDenyAction::Refuse,
+        Some(s) if s.eq_ignore_ascii_case("updateinstead") => ReceiveDenyAction::UpdateInstead,
+        Some(s) => match parse_bool(s) {
+            Ok(true) => ReceiveDenyAction::Refuse,
+            Ok(false) => ReceiveDenyAction::Ignore,
+            Err(_) => ReceiveDenyAction::Ignore,
+        },
+    }
+}
+
+fn read_receive_deny_delete_current(cfg: &ConfigSet) -> ReceiveDenyAction {
+    let v = cfg
+        .get("receive.denyDeleteCurrent")
+        .or_else(|| cfg.get("receive.denydeletecurrent"));
+    match v.as_deref().map(str::trim) {
+        None => ReceiveDenyAction::Unconfigured,
+        Some(s) => parse_receive_deny_action(Some(s)),
+    }
+}
+
+fn run_auto_maintenance_quiet(git_dir: &Path) {
+    let maintenance_auto = ConfigSet::load(Some(git_dir), false)
+        .ok()
+        .map(|c| config_bool_any(&c, &["maintenance.auto"], true))
+        .unwrap_or(true);
+    if !maintenance_auto {
+        return;
+    }
+    let _ = std::process::Command::new(grit_exe::grit_executable())
+        .args(["maintenance", "run", "--auto"])
+        .env("GIT_DIR", git_dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
 fn write_receive_pack_advertisement(w: &mut impl Write, git_dir: &Path) -> Result<()> {
-    if let Ok(head_oid) = refs::resolve_ref(git_dir, "HEAD") {
-        let line = format!("{}\tHEAD\n", head_oid.to_hex());
+    let caps = "report-status report-status-v2 delete-refs side-band-64k quiet ofs-delta object-format=sha1";
+    let mut seen: HashSet<ObjectId> = HashSet::new();
+    let mut sent_caps = false;
+
+    if let Ok(head) = resolve_head(git_dir) {
+        let oid_opt = match &head {
+            HeadState::Branch { oid, .. } => *oid,
+            HeadState::Detached { oid } => Some(*oid),
+            HeadState::Invalid => None,
+        };
+        if let Some(oid) = oid_opt {
+            if seen.insert(oid) {
+                let line = if !sent_caps {
+                    sent_caps = true;
+                    format!("{} HEAD\0{}\n", oid.to_hex(), caps)
+                } else {
+                    format!("{} HEAD\n", oid.to_hex())
+                };
+                let len = 4 + line.len();
+                write!(w, "{:04x}{}", len, line)?;
+            }
+        }
+    }
+
+    let mut all_refs = list_all_refs(git_dir)?;
+    all_refs.sort_by(|a, b| a.0.cmp(&b.0));
+    for (refname, oid) in &all_refs {
+        if refname == "refs/heads/HEAD" {
+            continue;
+        }
+        if !seen.insert(*oid) {
+            continue;
+        }
+        let line = if !sent_caps {
+            sent_caps = true;
+            format!("{} {}\0{}\n", oid.to_hex(), refname, caps)
+        } else {
+            format!("{} {}\n", oid.to_hex(), refname)
+        };
         let len = 4 + line.len();
         write!(w, "{:04x}{}", len, line)?;
     }
 
-    let all_refs = list_all_refs(git_dir)?;
-    for (refname, oid) in &all_refs {
-        let line = format!("{}\t{}\n", oid.to_hex(), refname);
-        let len = 4 + line.len();
-        write!(w, "{:04x}{}", len, line)?;
+    let objects_dir = git_dir.join("objects");
+    if let Ok(alts) = pack::read_alternates_recursive(&objects_dir) {
+        for alt_objects in alts {
+            let Some(parent) = alt_objects.parent() else {
+                continue;
+            };
+            let alt_git_dir = parent.to_path_buf();
+            if alt_git_dir == git_dir {
+                continue;
+            }
+            let mut alt_refs = list_all_refs(&alt_git_dir).unwrap_or_default();
+            alt_refs.sort_by(|a, b| a.0.cmp(&b.0));
+            for (_refname, oid) in alt_refs {
+                if seen.insert(oid) {
+                    let line = format!("{} .have\n", oid.to_hex());
+                    let len = 4 + line.len();
+                    write!(w, "{:04x}{}", len, line)?;
+                }
+            }
+        }
     }
 
     Ok(())

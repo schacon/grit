@@ -3300,7 +3300,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "revert" => commands::revert::run(parse_cmd_args(subcmd, rest)),
         "rm" => commands::rm::run(parse_cmd_args(subcmd, rest)),
         "scalar" => commands::scalar::run(rest),
-        "send-pack" => commands::send_pack::run(parse_cmd_args(subcmd, rest)),
+        "send-pack" => commands::send_pack::run_from_argv(rest),
         "serve-v2" => commands::serve_v2::run(parse_cmd_args(subcmd, rest)),
         "sh-i18n" => commands::sh_i18n::run(parse_cmd_args(subcmd, rest)),
         "sh-setup" => commands::sh_setup::run(parse_cmd_args(subcmd, rest)),
