@@ -330,7 +330,7 @@ t12740-restore-deleted-paths	t1	yes	35	35	0	true	ok	0
 t12750-reset-mixed-paths	t1	yes	34	34	0	true	ok	0
 t12760-cherry-pick-multi-range	t1	yes	34	33	1	false	ok	0
 t12770-for-each-ref-perl-format	t1	yes	36	32	4	false	ok	0
-t12780-show-ref-head-detached	t1	yes	36	35	1	false	ok	0
+t12780-show-ref-head-detached	t1	yes	36	36	0	true	ok	0
 t12790-update-ref-stderr-msg	t1	yes	33	33	0	true	ok	0
 t12800-check-ignore-recursive	t1	yes	38	38	0	true	ok	0
 t12810-merge-file-binary-text	t1	yes	38	38	0	true	ok	0
