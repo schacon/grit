@@ -125,6 +125,10 @@ pub struct Args {
     #[arg(long = "no-ignore-whitespace")]
     pub no_ignore_whitespace: bool,
 
+    /// Attempt a three-way merge if the patch does not apply cleanly.
+    #[arg(long = "3way")]
+    pub three_way: bool,
+
     /// Include context and removed lines in the output.
     #[arg(long = "include")]
     pub include: Option<String>,
@@ -1321,6 +1325,59 @@ fn postprocess_gitlink_file_patches(patches: &mut [FilePatch]) {
             (false, false) => {}
         }
     }
+}
+
+/// `git diff` represents replacing a tracked file with a submodule as two hunks: delete the blob,
+/// then add the gitlink. Applying them separately removes the file then fails to create the empty
+/// submodule directory (`t4137-apply-submodule`). Merge into one logical patch.
+fn merge_adjacent_blob_to_gitlink_patches(patches: &mut Vec<FilePatch>) {
+    let mut i = 0usize;
+    while i + 1 < patches.len() {
+        let del = &patches[i];
+        let add = &patches[i + 1];
+        let del_path = del
+            .old_path
+            .as_deref()
+            .filter(|p| *p != "/dev/null")
+            .or(del.effective_path());
+        let add_path = add
+            .new_path
+            .as_deref()
+            .filter(|p| *p != "/dev/null")
+            .or(add.effective_path());
+        let same_path = del_path.zip(add_path).is_some_and(|(a, b)| a == b);
+        let del_blob = del.is_deleted && del.old_mode.as_deref() != Some("160000");
+        let add_gitlink = add.is_new && add.new_mode.as_deref() == Some("160000");
+        if same_path && del_blob && add_gitlink {
+            let mut merged = del.clone();
+            merged.new_path = add.new_path.clone();
+            merged.saw_new_header = add.saw_new_header;
+            merged.new_mode = Some("160000".to_string());
+            merged.is_deleted = false;
+            merged.is_new = false;
+            merged.new_oid = add.new_oid.clone();
+            merged.hunks.extend(add.hunks.clone());
+            patches[i] = merged;
+            patches.remove(i + 1);
+            continue;
+        }
+        i += 1;
+    }
+}
+
+fn subproject_commit_from_hunks(fp: &FilePatch) -> String {
+    fp.hunks
+        .iter()
+        .flat_map(|h| h.lines.iter())
+        .find_map(|l| {
+            if let HunkLine::Add(s) = l {
+                s.strip_prefix("Subproject commit ")
+                    .map(|h| h.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "0000000000000000000000000000000000000000".to_string())
 }
 
 /// Parse a `GIT binary patch` payload.
@@ -3139,6 +3196,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let mut patches = parse_patch(&input, args.strip)?;
     normalize_mismatched_diff_git_paths(&mut patches, args.strip);
     postprocess_gitlink_file_patches(&mut patches);
+    merge_adjacent_blob_to_gitlink_patches(&mut patches);
     validate_patch_headers(&patches, args.strip)?;
 
     if args.reverse {
@@ -3353,7 +3411,10 @@ fn verify_worktree_gitlink_patch(
     if fp.is_deleted && fp.old_mode.as_deref() == Some("160000") {
         return Ok(());
     }
-    if fp.is_new && fp.new_mode.as_deref() == Some("160000") {
+    let blob_to_gitlink = fp.new_mode.as_deref() == Some("160000")
+        && fp.old_mode.as_deref() != Some("160000")
+        && !fp.is_deleted;
+    if (fp.is_new && fp.new_mode.as_deref() == Some("160000")) || blob_to_gitlink {
         let Some(target) = fp.target_path() else {
             return Ok(());
         };
@@ -3420,6 +3481,14 @@ fn ensure_gitlink_placeholder_dirs(patches: &[FilePatch], args: &Args) -> Result
         };
         let adjusted = adjust_path(path_str, args.directory.as_deref());
         let path = PathBuf::from(&adjusted);
+        if path.is_dir() {
+            continue;
+        }
+        if path.is_file() || path.is_symlink() {
+            fs::remove_file(&path).with_context(|| {
+                format!("failed to remove file at submodule path {}", path.display())
+            })?;
+        }
         if !path.exists() {
             fs::create_dir_all(&path)
                 .with_context(|| format!("failed to create {}", path.display()))?;
@@ -3469,8 +3538,11 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
             }
             continue;
         }
-        // Skip submodule entries
-        if fp.old_mode.as_deref() == Some("160000") || fp.new_mode.as_deref() == Some("160000") {
+        // Skip submodule-only patches; file→submodule transitions keep a blob preimage on disk.
+        if fp.old_mode.as_deref() == Some("160000")
+            || (fp.new_mode.as_deref() == Some("160000")
+                && fp.old_mode.as_deref() == Some("160000"))
+        {
             continue;
         }
         let path_str = fp
@@ -3854,9 +3926,34 @@ fn apply_to_worktree(
             continue;
         }
 
+        if fp.new_mode.as_deref() == Some("160000")
+            && fp.old_mode.as_deref() != Some("160000")
+            && !fp.is_new
+        {
+            if path.is_file() || path.is_symlink() {
+                fs::remove_file(&path).with_context(|| {
+                    format!(
+                        "failed to remove file before submodule dir {}",
+                        path.display()
+                    )
+                })?;
+            }
+            fs::create_dir_all(&path)
+                .with_context(|| format!("failed to create {}", path.display()))?;
+            continue;
+        }
+
         if fp.is_new {
             // Submodule: create directory
             if fp.new_mode.as_deref() == Some("160000") {
+                if path.is_file() || path.is_symlink() {
+                    fs::remove_file(&path).with_context(|| {
+                        format!(
+                            "failed to remove file before submodule dir {}",
+                            path.display()
+                        )
+                    })?;
+                }
                 fs::create_dir_all(&path)?;
                 continue;
             }
@@ -4145,23 +4242,64 @@ fn apply_to_index(
             continue;
         }
 
-        // Handle submodule (gitlink) entries specially
-        if (fp.new_mode.as_deref() == Some("160000") || fp.old_mode.as_deref() == Some("160000"))
-            && fp.is_new
-        {
-            let commit_hash = fp
-                .hunks
-                .iter()
-                .flat_map(|h| h.lines.iter())
-                .find_map(|l| {
-                    if let HunkLine::Add(s) = l {
-                        s.strip_prefix("Subproject commit ")
-                            .map(|h| h.trim().to_string())
-                    } else {
-                        None
+        if fp.new_mode.as_deref() == Some("160000") && !fp.is_deleted {
+            if fp.is_new {
+                let commit_hash = subproject_commit_from_hunks(fp);
+                let oid = grit_lib::objects::ObjectId::from_hex(&commit_hash)?;
+                let mode = grit_lib::index::MODE_GITLINK;
+                let entry = grit_lib::index::IndexEntry {
+                    ctime_sec: 0,
+                    ctime_nsec: 0,
+                    mtime_sec: 0,
+                    mtime_nsec: 0,
+                    dev: 0,
+                    ino: 0,
+                    mode,
+                    uid: 0,
+                    gid: 0,
+                    size: 0,
+                    oid,
+                    flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
+                    flags_extended: None,
+                    path: target_adjusted.into_bytes(),
+                };
+                index.add_or_replace(entry);
+                continue;
+            }
+
+            let source_index = if source_adjusted != target_adjusted {
+                &original_index
+            } else {
+                &index
+            };
+            if fp.old_mode.as_deref() == Some("160000") {
+                let Some(old_ent) = source_index.get(source_adjusted.as_bytes(), 0) else {
+                    bail!("{source_adjusted} not found in index");
+                };
+                if old_ent.mode != grit_lib::index::MODE_GITLINK {
+                    bail!("{source_adjusted} not found in index");
+                }
+                if let Some(expected_oid) = fp.old_oid.as_deref() {
+                    let index_hex = old_ent.oid.to_hex();
+                    if !index_hex.starts_with(expected_oid) {
+                        bail!("patch does not apply");
                     }
-                })
-                .unwrap_or_else(|| "0000000000000000000000000000000000000000".to_string());
+                }
+            } else {
+                let Some(entry) = source_index.get(source_adjusted.as_bytes(), 0) else {
+                    bail!("{source_adjusted} not found in index");
+                };
+                if entry.mode == grit_lib::index::MODE_GITLINK {
+                    bail!("{source_adjusted} not found in index");
+                }
+                let obj = repo.odb.read(&entry.oid)?;
+                let old_content = String::from_utf8_lossy(&obj.data).into_owned();
+                if let Some(expected_oid) = fp.old_oid.as_deref() {
+                    verify_old_oid_matches_content(expected_oid, &old_content)?;
+                }
+            }
+
+            let commit_hash = subproject_commit_from_hunks(fp);
             let oid = grit_lib::objects::ObjectId::from_hex(&commit_hash)?;
             let mode = grit_lib::index::MODE_GITLINK;
             let entry = grit_lib::index::IndexEntry {
@@ -4178,8 +4316,11 @@ fn apply_to_index(
                 oid,
                 flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
                 flags_extended: None,
-                path: target_adjusted.into_bytes(),
+                path: target_adjusted.clone().into_bytes(),
             };
+            if fp.is_rename && source_adjusted != target_adjusted {
+                index.remove(source_adjusted.as_bytes());
+            }
             index.add_or_replace(entry);
             continue;
         }
