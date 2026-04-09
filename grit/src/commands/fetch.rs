@@ -745,13 +745,25 @@ fn fetch_remote(
                 )
             }
         };
-        let (heads, tags, _, _) = crate::fetch_transport::fetch_via_upload_pack_skipping(
+        let (mut heads, mut tags, _, _) = crate::fetch_transport::fetch_via_upload_pack_skipping(
             git_dir,
             &remote_path,
             upload_pack_cmd.as_deref(),
             compute_wants,
             has_cli_refspecs,
         )?;
+        // If upload-pack advertised no branch tips (or negotiation returned early) but the remote
+        // repository has `refs/heads/*` on disk, read them directly so `refs/remotes/` updates
+        // match Git's local fetch behavior (needed for submodule `origin/main` after `git fetch`).
+        let remote_repo_upload = remote_repo
+            .as_ref()
+            .expect("upload-pack path requires local remote repository");
+        if heads.is_empty() {
+            heads = refs::list_refs(&remote_repo_upload.git_dir, "refs/heads/")?;
+        }
+        if tags.is_empty() {
+            tags = refs::list_refs(&remote_repo_upload.git_dir, "refs/tags/")?;
+        }
         (heads, tags)
     } else {
         let remote_repo = remote_repo
@@ -1205,7 +1217,14 @@ fn fetch_remote(
             let for_merge = if has_merge_cfg {
                 fetch_head_is_for_merge_with_branch(git_dir, config, remote_name, refname)
             } else if refspecs.is_empty() {
-                idx == 0
+                // Without explicit fetch refspecs, tie FETCH_HEAD's for-merge line to the branch
+                // checked out locally when it exists on the remote. If HEAD is on a branch but the
+                // remote does not have that ref, no branch line is for-merge (do not use `idx==0`,
+                // since advertised order can put another branch first and break `FETCH_HEAD` tests).
+                match current_branch_from_head(git_dir) {
+                    Some(b) => refname == &format!("refs/heads/{b}"),
+                    None => idx == 0,
+                }
             } else {
                 fetch_head_is_for_merge_first_refspec_only(&refspecs, idx == 0)
             };

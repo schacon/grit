@@ -2415,8 +2415,11 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
             .map(|kv| format!("'{}'", kv))
             .collect::<Vec<_>>()
             .join(" ");
+        // Git's config reader applies the last occurrence of a key. Inherited
+        // `GIT_CONFIG_PARAMETERS` (e.g. from the test harness) must not override
+        // command-line `-c` values, so append new entries after the existing payload.
         let merged = match std::env::var("GIT_CONFIG_PARAMETERS") {
-            Ok(existing) if !existing.trim().is_empty() => format!("{extra} {existing}"),
+            Ok(existing) if !existing.trim().is_empty() => format!("{existing} {extra}"),
             _ => extra,
         };
         std::env::set_var("GIT_CONFIG_PARAMETERS", merged);
