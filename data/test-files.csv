@@ -812,7 +812,7 @@ t4139-apply-escape	t4	yes	12	7	5	false	ok	0
 t4140-apply-ita	t4	yes	7	7	0	true	ok	0
 t4141-apply-too-large	t4	yes	1	1	0	true	ok	0
 t4150-am	t4	yes	87	27	60	false	ok	0
-t4151-am-abort	t4	yes	20	5	15	false	ok	0
+t4151-am-abort	t4	yes	20	20	0	true	ok	0
 t4152-am-subjects	t4	yes	13	13	0	true	ok	0
 t4153-am-resume-override-opts	t4	yes	6	6	0	true	ok	0
 t4200-rerere	t4	yes	36	19	17	false	ok	0
