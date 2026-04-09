@@ -6,12 +6,12 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   282 |
+| Completed   |   283 |
 | In progress |     4 |
-| Remaining   |   483 |
+| Remaining   |   482 |
 | **Total**   |   769 |
 
-Task lines in `PLAN.md`: 282 completed (`[x]`), 4 in progress (`[~]`), 483 remaining (`[ ]`).
+Task lines in `PLAN.md`: 283 completed (`[x]`), 4 in progress (`[~]`), 482 remaining (`[ ]`).
 
 ## Recently completed
 
@@ -47,6 +47,7 @@ Task lines in `PLAN.md`: 282 completed (`[x]`), 4 in progress (`[~]`), 483 remai
 - `t13390-update-ref-namespace` — 30/30 tests pass (`update-ref`: arbitrary `refs/*` namespaces, `-d`, old-value CAS, `--no-deref`, `--stdin` create/update/delete/verify, `-m` reflog, zero-OID delete; verified release build + harness; `t1-plan.md` marked done)
 - `t5321-pack-large-objects` — 2/2 tests pass (`index-pack` ingests test pack; `GIT_TEST_OE_DELTA_SIZE=2 git pack-objects` repacks blobs with REF_DELTA; harness CSV/dashboards refreshed)
 - `t4120-apply-popt` — 12/12 tests pass (`git apply -p`: strip path components, malformed `-p` errors, traditional quoted paths, `--stat` with oversized strip, mode-only and rename patches with `--index`; harness CSV/dashboards refreshed)
+- `t5408-send-pack-stdin` — 10/10 tests pass (`send-pack`: `--stdin` refspec lines after argv, duplicate destination ref rejected with Git’s message, `--mirror` with refspecs exits 129 with upstream usage synopsis)
 - `t5320-delta-islands` — 15/15 tests pass (`repack` delta islands: `pack.island` / `pack.islandcore`, superset-island delta rules, verify-pack ordering; harness CSV/dashboards refreshed)
 - `t4214-log-graph-octopus` — 17/17 tests pass (`git log --graph` skewed-left octopus, crossover, and colored graph lines; harness CSV/dashboards refreshed)
 - `t3060-ls-files-with-tree` — 8/8 tests pass (`ls-files --with-tree`: `Index::overlay_tree_on_index`, `-s/-u`/`--recurse-submodules` incompatibilities with `fatal:` + exit 128, cwd pathspec `sub/` matches `sub/file`; harness CSV refreshed)
@@ -160,4 +161,4 @@ Task lines in `PLAN.md`: 282 completed (`[x]`), 4 in progress (`[~]`), 483 remai
 
 ## What Remains
 
-483 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+482 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
