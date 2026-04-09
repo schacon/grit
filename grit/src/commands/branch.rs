@@ -1,4 +1,4 @@
-//! `grit branch` — list, create, or delete branches.
+//! `grit branch` -- list, create, or delete branches.
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
