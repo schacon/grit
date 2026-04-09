@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   264 |
+| Completed   |   265 |
 | In progress |     4 |
-| Remaining   |   500 |
+| Remaining   |   499 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 264 completed (`[x]`), 4 in progress (`[~]`), 500 remaining (`[ ]`).
+Task lines in `PLAN.md`: 265 completed (`[x]`), 4 in progress (`[~]`), 499 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t1900-repo-info` — 37/37 tests pass (`git repo info`: layout/references/object keys, `--format`/`--all`/`--keys`, partial success stderr + exit 1; `SilentNonZeroExit` avoids duplicate errors; harness CSV refreshed)
 - `t7450-bad-git-dotfiles` — 50/50 tests pass (submodule name/url validation, fsck symlink and `.gitmodules` checks, nested submodule git dirs, harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5351-unpack-large-objects` — 7/7 tests pass (`GIT_ALLOC_LIMIT` + `core.bigFileThreshold` streaming unpack, dry-run, trace2 fsync batch path, skip already-packed objects; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5308-pack-detect-duplicates` — 6/6 tests pass (`index-pack` allows duplicate OIDs by default; `--strict` rejects duplicates with non-zero exit and leaves objects out of the ODB; `cat-file --batch-check` resolves OIDs in packs with duplicate runs; harness CSV/dashboards refreshed; `PLAN.md` marked complete)

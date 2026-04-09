@@ -90,6 +90,8 @@ fn main() {
             if is_broken_pipe_error(&e) {
                 // Match shell signal convention for SIGPIPE.
                 exit_code = 128 + 13;
+            } else if let Some(ex) = e.downcast_ref::<crate::explicit_exit::SilentNonZeroExit>() {
+                exit_code = ex.code;
             } else if let Some(ex) = e.downcast_ref::<crate::explicit_exit::ExplicitExit>() {
                 eprintln!("{ex}");
                 exit_code = ex.code;

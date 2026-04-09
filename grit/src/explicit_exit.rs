@@ -16,3 +16,17 @@ impl fmt::Display for ExplicitExit {
 }
 
 impl std::error::Error for ExplicitExit {}
+
+/// Exit with a non-zero code without printing anything (stderr already emitted by the command).
+#[derive(Debug)]
+pub struct SilentNonZeroExit {
+    pub code: i32,
+}
+
+impl fmt::Display for SilentNonZeroExit {
+    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Ok(())
+    }
+}
+
+impl std::error::Error for SilentNonZeroExit {}

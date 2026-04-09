@@ -1,15 +1,17 @@
 //! `grit repo` — retrieve repository information.
 //!
 //! Implements a focused subset of upstream `git repo` required by tests:
-//! `git repo structure` with `table|lines|nul` output and progress toggles.
+//! `git repo info` (see Git `builtin/repo.c`) and `git repo structure`.
 
+use crate::explicit_exit::{ExplicitExit, SilentNonZeroExit};
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use std::collections::HashSet;
-use std::io::Write;
+use std::fs;
+use std::io::{stdout, Write};
 
 /// Arguments for `grit repo`.
 #[derive(Debug, ClapArgs)]
@@ -65,11 +67,280 @@ impl RepoStructureStats {
 pub fn run(args: Args) -> Result<()> {
     match args.subcommand.as_deref() {
         Some("structure") => run_repo_structure(&args.args),
-        Some("info") => bail!("repo info is not yet implemented in grit"),
+        Some("info") => run_repo_info(&args.args),
         Some("health") => bail!("repo health is not yet implemented in grit"),
         Some("maintenance") => bail!("repo maintenance is not yet implemented in grit"),
         Some(sub) => bail!("repo subcommand '{}' is not yet implemented in grit", sub),
         None => bail!("repo: no subcommand specified"),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RepoInfoFormat {
+    Lines,
+    Nul,
+    Table,
+}
+
+/// Keys for `git repo info --all`, lexicographically ordered (matches Git `repo_info_field`).
+const REPO_INFO_FIELD_KEYS: &[&str] = &[
+    "layout.bare",
+    "layout.shallow",
+    "object.format",
+    "references.format",
+];
+
+fn run_repo_info(args: &[String]) -> Result<()> {
+    let mut format = RepoInfoFormat::Lines;
+    let mut all_keys = false;
+    let mut show_keys = false;
+    let mut positional: Vec<String> = Vec::new();
+    let mut i = 0usize;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "-z" {
+            format = RepoInfoFormat::Nul;
+            i += 1;
+            continue;
+        }
+        if arg == "--all" {
+            all_keys = true;
+            i += 1;
+            continue;
+        }
+        if arg == "--keys" {
+            show_keys = true;
+            i += 1;
+            continue;
+        }
+        if let Some(v) = arg.strip_prefix("--format=") {
+            format = parse_repo_info_format(v)?;
+            i += 1;
+            continue;
+        }
+        if arg == "--format" {
+            i += 1;
+            let Some(v) = args.get(i) else {
+                bail!("option `--format` requires a value");
+            };
+            format = parse_repo_info_format(v)?;
+            i += 1;
+            continue;
+        }
+        if arg.starts_with('-') {
+            bail!("unknown option '{arg}'");
+        }
+        positional.push(arg.clone());
+        i += 1;
+    }
+
+    if show_keys && (all_keys || !positional.is_empty()) {
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 128,
+            message: "fatal: --keys cannot be used with a <key> or --all".to_owned(),
+        }));
+    }
+
+    if show_keys {
+        if !matches!(format, RepoInfoFormat::Lines | RepoInfoFormat::Nul) {
+            return Err(anyhow::Error::new(ExplicitExit {
+                code: 128,
+                message: "fatal: --keys can only be used with --format=lines or --format=nul"
+                    .to_owned(),
+            }));
+        }
+        print_repo_info_keys(format)?;
+        return Ok(());
+    }
+
+    if !matches!(format, RepoInfoFormat::Lines | RepoInfoFormat::Nul) {
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 128,
+            message: "fatal: unsupported output format".to_owned(),
+        }));
+    }
+
+    if all_keys && !positional.is_empty() {
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 128,
+            message: "fatal: --all and <key> cannot be used together".to_owned(),
+        }));
+    }
+
+    let repo = Repository::discover(None).context("not a git repository")?;
+
+    if all_keys {
+        let mut err = false;
+        for key in REPO_INFO_FIELD_KEYS {
+            match repo_info_value(&repo, key) {
+                Some(value) => {
+                    print_repo_info_field(format, key, &value)?;
+                }
+                None => {
+                    err = true;
+                    eprintln!("error: key '{key}' not found");
+                }
+            }
+        }
+        if err {
+            return Err(anyhow::Error::new(SilentNonZeroExit { code: 1 }));
+        }
+        return Ok(());
+    }
+
+    let mut err = false;
+    for key in &positional {
+        match repo_info_value(&repo, key) {
+            Some(value) => {
+                print_repo_info_field(format, key, &value)?;
+            }
+            None => {
+                err = true;
+                eprintln!("error: key '{key}' not found");
+            }
+        }
+    }
+    if err {
+        return Err(anyhow::Error::new(SilentNonZeroExit { code: 1 }));
+    }
+    Ok(())
+}
+
+fn parse_repo_info_format(v: &str) -> Result<RepoInfoFormat> {
+    match v {
+        "lines" => Ok(RepoInfoFormat::Lines),
+        "nul" => Ok(RepoInfoFormat::Nul),
+        "table" => Ok(RepoInfoFormat::Table),
+        other => Err(anyhow::Error::new(ExplicitExit {
+            code: 128,
+            message: format!("fatal: invalid format '{other}'"),
+        })),
+    }
+}
+
+fn print_repo_info_keys(format: RepoInfoFormat) -> Result<()> {
+    let mut out = stdout().lock();
+    match format {
+        RepoInfoFormat::Lines => {
+            for key in REPO_INFO_FIELD_KEYS {
+                writeln!(out, "{key}")?;
+            }
+        }
+        RepoInfoFormat::Nul => {
+            for key in REPO_INFO_FIELD_KEYS {
+                out.write_all(key.as_bytes())?;
+                out.write_all(&[0])?;
+            }
+        }
+        RepoInfoFormat::Table => {}
+    }
+    Ok(())
+}
+
+fn repo_info_value(repo: &Repository, key: &str) -> Option<String> {
+    match key {
+        "layout.bare" => Some(if repo.is_bare() {
+            "true".to_owned()
+        } else {
+            "false".to_owned()
+        }),
+        "layout.shallow" => Some(if repo.git_dir.join("shallow").is_file() {
+            "true".to_owned()
+        } else {
+            "false".to_owned()
+        }),
+        "object.format" => Some(read_object_format_from_config(&repo.git_dir)),
+        "references.format" => Some(if grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
+            "reftable".to_owned()
+        } else {
+            "files".to_owned()
+        }),
+        _ => None,
+    }
+}
+
+/// Read `extensions.objectformat` from the repository config (default `sha1`).
+fn read_object_format_from_config(git_dir: &std::path::Path) -> String {
+    let config_path = git_dir.join("config");
+    let Ok(content) = fs::read_to_string(&config_path) else {
+        return "sha1".to_owned();
+    };
+    let mut in_extensions = false;
+    let mut object_format: Option<String> = None;
+    for line in content.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_extensions = t.eq_ignore_ascii_case("[extensions]");
+            continue;
+        }
+        if !in_extensions {
+            continue;
+        }
+        let Some((k, v)) = t.split_once('=') else {
+            continue;
+        };
+        if k.trim().eq_ignore_ascii_case("objectformat") {
+            object_format = Some(v.trim().to_lowercase());
+        }
+    }
+    object_format.unwrap_or_else(|| "sha1".to_owned())
+}
+
+fn print_repo_info_field(format: RepoInfoFormat, key: &str, value: &str) -> Result<()> {
+    match format {
+        RepoInfoFormat::Lines => {
+            let displayed = quote_c_style_repo_info_value(value);
+            println!("{key}={displayed}");
+        }
+        RepoInfoFormat::Nul => {
+            let mut out = stdout().lock();
+            out.write_all(key.as_bytes())?;
+            out.write_all(b"\n")?;
+            out.write_all(value.as_bytes())?;
+            out.write_all(&[0])?;
+        }
+        RepoInfoFormat::Table => {}
+    }
+    Ok(())
+}
+
+/// C-style quote a value when needed (matches Git `quote_c_style` for repo info lines output).
+fn quote_c_style_repo_info_value(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    let mut needs_quotes = false;
+    for ch in s.chars() {
+        match ch {
+            '"' => {
+                out.push_str("\\\"");
+                needs_quotes = true;
+            }
+            '\\' => {
+                out.push_str("\\\\");
+                needs_quotes = true;
+            }
+            '\t' => {
+                out.push_str("\\t");
+                needs_quotes = true;
+            }
+            '\n' => {
+                out.push_str("\\n");
+                needs_quotes = true;
+            }
+            '\r' => {
+                out.push_str("\\r");
+                needs_quotes = true;
+            }
+            c if c.is_control() => {
+                out.push_str(&format!("\\{:03o}", u32::from(c)));
+                needs_quotes = true;
+            }
+            c => out.push(c),
+        }
+    }
+    if needs_quotes {
+        format!("\"{out}\"")
+    } else {
+        out
     }
 }
 
