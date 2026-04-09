@@ -162,7 +162,7 @@ t1060-object-types	t1	yes	35	35	0	true	ok	0
 t10600-for-each-ref-exclude	t1	yes	35	35	0	true	ok	0
 t10610-show-ref-dereference-extra	t1	yes	40	40	0	true	ok	0
 t10620-update-ref-nul-stdin	t1	yes	30	30	0	true	ok	0
-t10630-symbolic-ref-chain-extra	t1	yes	35	34	1	false	ok	0
+t10630-symbolic-ref-chain-extra	t1	yes	35	35	0	true	ok	0
 t10640-check-ignore-negation	t1	yes	37	37	0	true	ok	0
 t10650-merge-file-zdiff3	t1	yes	32	32	0	true	ok	0
 t10660-hash-object-known-sha	t1	yes	33	33	0	true	ok	0

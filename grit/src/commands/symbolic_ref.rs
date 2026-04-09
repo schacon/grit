@@ -132,11 +132,15 @@ fn read_symbolic_ref_target(git_dir: &Path, name: &str, recurse: bool) -> Result
     match result {
         Some(target) => Ok(Some(target)),
         None => {
-            // Missing ref file, or exists as symref whose target file is missing (dangling).
+            // Distinguish: direct ref (not symbolic) vs missing ref vs symref with missing target.
             let path = git_dir.join(name);
             match read_ref_file(&path) {
+                Ok(Ref::Direct(_)) => Ok(None),
                 Ok(Ref::Symbolic(target)) => Ok(Some(target)),
-                _ => bail!("No such ref: {name}"),
+                Err(grit_lib::error::Error::Io(err)) if err.kind() == io::ErrorKind::NotFound => {
+                    bail!("No such ref: {name}");
+                }
+                Err(err) => Err(err.into()),
             }
         }
     }
