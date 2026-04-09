@@ -3,6 +3,10 @@
 //! Compares the working tree against the index.  This is the plumbing
 //! equivalent of `grit diff` (without `--cached`).
 
+use crate::commands::diff::{
+    diff_emit_unified_patch_from_plumbing_argv, parse_diff_files_format_argv,
+    resolve_dirstat_options_from_cli, write_dirstat, DiffFilesEmitKind, DiffFilesStatVariant,
+};
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
@@ -10,6 +14,7 @@ use grit_lib::diff::{
     rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat, stat_matches, unified_diff,
     zero_oid, DiffEntry, DiffStatus,
 };
+use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
 };
@@ -20,7 +25,9 @@ use grit_lib::rev_parse::abbreviate_object_id;
 #[cfg(unix)]
 use libc;
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
 use std::fs;
+use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -127,68 +134,239 @@ pub fn run(mut args: Args) -> Result<()> {
         diff_entries = grit_lib::diff::detect_renames(&repo.odb, diff_entries, threshold);
     }
 
-    if options.summary {
-        print_diff_files_summary(&diff_entries)?;
-    }
-    if !options.quiet && options.suppress_diff {
-        if (options.exit_code || options.quiet) && !diff_entries.is_empty() {
-            std::process::exit(1);
-        }
-        return Ok(());
+    let emit_patch =
+        diff_emit_unified_patch_from_plumbing_argv("diff-files", &env::args().collect::<Vec<_>>());
+    let dirstat_cli_active =
+        !options.dirstat_cli.dirstat.is_empty() || options.dirstat_cli.dirstat_by_file.is_some();
+    let (dirstat_opts, dirstat_warnings) =
+        resolve_dirstat_options_from_cli(&options.dirstat_cli, &repo.git_dir, dirstat_cli_active)?;
+    for w in &dirstat_warnings {
+        eprintln!("warning: {w}");
     }
 
-    if !options.quiet && !options.suppress_diff {
-        match options.format {
-            OutputFormat::Raw => {
-                if options.summary && !options.explicit_raw {
-                    // `git diff-files --summary` replaces default raw output unless `--raw` is given.
-                } else {
+    let use_emit_queue = !options.emit_queue.is_empty();
+
+    if !options.quiet {
+        let mut wrote_any = false;
+        let mut need_blank_before_patch = false;
+
+        if use_emit_queue {
+            let mut out = std::io::stdout().lock();
+            for kind in &options.emit_queue {
+                match kind {
+                    DiffFilesEmitKind::Raw => {
+                        if options.suppress_diff {
+                            continue;
+                        }
+                        for entry in &diff_entries {
+                            writeln!(
+                                out,
+                                "{}",
+                                render_raw_diff_entry(
+                                    entry,
+                                    &repo,
+                                    options.abbrev,
+                                    options.reverse
+                                )?
+                            )?;
+                        }
+                        wrote_any = true;
+                        need_blank_before_patch = true;
+                    }
+                    DiffFilesEmitKind::Stat => {
+                        if options.suppress_diff {
+                            continue;
+                        }
+                        if options.stat_variant == DiffFilesStatVariant::CompactSummary {
+                            print_compact_summary_from_diff_entries(
+                                &diff_entries,
+                                &repo,
+                                &work_tree,
+                            )?;
+                        } else {
+                            print_stat_from_diff_entries(&diff_entries, &repo, &work_tree)?;
+                        }
+                        wrote_any = true;
+                        need_blank_before_patch = true;
+                    }
+                    DiffFilesEmitKind::NumStat => {
+                        if options.suppress_diff {
+                            continue;
+                        }
+                        print_numstat_from_diff_entries(&diff_entries, &repo, &work_tree)?;
+                        wrote_any = true;
+                        need_blank_before_patch = true;
+                    }
+                    DiffFilesEmitKind::Shortstat => {
+                        if options.suppress_diff {
+                            continue;
+                        }
+                        write_diff_files_shortstat_line(&diff_entries, &repo, &work_tree)?;
+                        wrote_any = true;
+                        need_blank_before_patch = true;
+                    }
+                    DiffFilesEmitKind::Dirstat => {
+                        if options.suppress_diff {
+                            continue;
+                        }
+                        if let Some(ref ds) = dirstat_opts {
+                            write_dirstat(
+                                &mut out,
+                                ds,
+                                &diff_entries,
+                                &repo.odb,
+                                Some(work_tree.as_path()),
+                                options.break_rewrites,
+                            )?;
+                        }
+                        wrote_any = true;
+                        need_blank_before_patch = true;
+                    }
+                    DiffFilesEmitKind::Summary => {
+                        print_diff_files_summary(&diff_entries)?;
+                        wrote_any = true;
+                        need_blank_before_patch = true;
+                    }
+                }
+            }
+            drop(out);
+
+            let show_patch = emit_patch && !options.suppress_diff;
+            if show_patch {
+                let prefix_raw = options.patch_with_raw
+                    && !options
+                        .emit_queue
+                        .iter()
+                        .any(|k| *k == DiffFilesEmitKind::Raw);
+                let prefix_stat = options.patch_with_stat
+                    && options.stat_variant != DiffFilesStatVariant::CompactSummary
+                    && !options
+                        .emit_queue
+                        .iter()
+                        .any(|k| *k == DiffFilesEmitKind::Stat);
+                if prefix_raw {
                     for entry in &diff_entries {
                         println!(
                             "{}",
                             render_raw_diff_entry(entry, &repo, options.abbrev, options.reverse)?
                         );
                     }
+                    wrote_any = true;
+                    need_blank_before_patch = true;
                 }
-            }
-            OutputFormat::NameOnly => {
-                for entry in &diff_entries {
-                    println!("{}", entry.path());
+                if prefix_stat {
+                    print_stat_from_diff_entries(&diff_entries, &repo, &work_tree)?;
+                    wrote_any = true;
+                    need_blank_before_patch = true;
                 }
-            }
-            OutputFormat::NameStatus => {
-                for entry in &diff_entries {
-                    match (entry.status, entry.score) {
-                        (DiffStatus::Renamed, Some(s)) => {
-                            println!(
-                                "R{s:03}\t{}\t{}",
-                                entry.old_path.as_deref().unwrap_or(""),
-                                entry.new_path.as_deref().unwrap_or("")
-                            );
-                        }
-                        (DiffStatus::Copied, Some(s)) => {
-                            println!(
-                                "C{s:03}\t{}\t{}",
-                                entry.old_path.as_deref().unwrap_or(""),
-                                entry.new_path.as_deref().unwrap_or("")
-                            );
-                        }
-                        _ => {
-                            println!("{}\t{}", entry.status.letter(), entry.path());
-                        }
-                    }
+                if need_blank_before_patch && wrote_any {
+                    println!();
                 }
-            }
-            OutputFormat::Patch => {
                 for entry in &diff_entries {
                     print_patch_from_diff_entry(entry, &repo, &work_tree, options.abbrev)?;
                 }
             }
-            OutputFormat::Stat => {
-                print_stat_from_diff_entries(&diff_entries, &repo, &work_tree)?;
+        } else {
+            if options
+                .emit_queue
+                .iter()
+                .any(|k| *k == DiffFilesEmitKind::Summary)
+            {
+                print_diff_files_summary(&diff_entries)?;
+                wrote_any = true;
+                need_blank_before_patch = true;
             }
-            OutputFormat::NumStat => {
-                print_numstat_from_diff_entries(&diff_entries, &repo, &work_tree)?;
+            if !options.suppress_diff {
+                match options.format {
+                    OutputFormat::Raw => {
+                        let summary_only = options
+                            .emit_queue
+                            .iter()
+                            .any(|k| *k == DiffFilesEmitKind::Summary);
+                        if !(summary_only && !options.explicit_raw) {
+                            for entry in &diff_entries {
+                                println!(
+                                    "{}",
+                                    render_raw_diff_entry(
+                                        entry,
+                                        &repo,
+                                        options.abbrev,
+                                        options.reverse
+                                    )?
+                                );
+                            }
+                        }
+                    }
+                    OutputFormat::NameOnly => {
+                        for entry in &diff_entries {
+                            println!("{}", entry.path());
+                        }
+                    }
+                    OutputFormat::NameStatus => {
+                        for entry in &diff_entries {
+                            match (entry.status, entry.score) {
+                                (DiffStatus::Renamed, Some(s)) => {
+                                    println!(
+                                        "R{s:03}\t{}\t{}",
+                                        entry.old_path.as_deref().unwrap_or(""),
+                                        entry.new_path.as_deref().unwrap_or("")
+                                    );
+                                }
+                                (DiffStatus::Copied, Some(s)) => {
+                                    println!(
+                                        "C{s:03}\t{}\t{}",
+                                        entry.old_path.as_deref().unwrap_or(""),
+                                        entry.new_path.as_deref().unwrap_or("")
+                                    );
+                                }
+                                _ => {
+                                    println!("{}\t{}", entry.status.letter(), entry.path());
+                                }
+                            }
+                        }
+                    }
+                    OutputFormat::Patch => {
+                        if options.patch_with_raw {
+                            for entry in &diff_entries {
+                                println!(
+                                    "{}",
+                                    render_raw_diff_entry(
+                                        entry,
+                                        &repo,
+                                        options.abbrev,
+                                        options.reverse
+                                    )?
+                                );
+                            }
+                            wrote_any = true;
+                            need_blank_before_patch = true;
+                        }
+                        if options.patch_with_stat {
+                            print_stat_from_diff_entries(&diff_entries, &repo, &work_tree)?;
+                            wrote_any = true;
+                            need_blank_before_patch = true;
+                        }
+                        if need_blank_before_patch && wrote_any {
+                            println!();
+                        }
+                        for entry in &diff_entries {
+                            print_patch_from_diff_entry(entry, &repo, &work_tree, options.abbrev)?;
+                        }
+                    }
+                    OutputFormat::Stat => {
+                        print_stat_from_diff_entries(&diff_entries, &repo, &work_tree)?;
+                    }
+                    OutputFormat::NumStat => {
+                        print_numstat_from_diff_entries(&diff_entries, &repo, &work_tree)?;
+                    }
+                }
+            } else if options.format == OutputFormat::Raw && options.explicit_raw {
+                for entry in &diff_entries {
+                    println!(
+                        "{}",
+                        render_raw_diff_entry(entry, &repo, options.abbrev, options.reverse)?
+                    );
+                }
             }
         }
     }
@@ -340,6 +518,16 @@ struct Options {
     explicit_raw: bool,
     /// Suppress diff output (-s / --no-patch).
     suppress_diff: bool,
+    /// Emit `--stat` or `--compact-summary` block (`--compact-summary` wins over `--stat`).
+    stat_variant: DiffFilesStatVariant,
+    /// Prefix patch with full `--stat` block (`---` separator before hunks).
+    patch_with_stat: bool,
+    /// Prefix patch with `--raw` lines.
+    patch_with_raw: bool,
+    /// `git diff-files` output format queue (order-preserving duplicate flags).
+    emit_queue: Vec<DiffFilesEmitKind>,
+    /// Parsed `--dirstat` / `--dirstat-by-file` / `--cumulative`.
+    dirstat_cli: crate::commands::diff::DirstatCliState,
     /// Optional diff-filter specification.
     diff_filter: Option<String>,
     /// Omit submodule entries (gitlinks) from the diff.
@@ -352,8 +540,6 @@ struct Options {
     find_copies_harder: bool,
     /// Swap old/new sides (reverse diff).
     reverse: bool,
-    /// Emit condensed summary lines (renames, mode changes, rewrites with `-B`).
-    summary: bool,
     /// Detect complete rewrites (`-B` / `--break-rewrites`) for summary/raw dissimilarity.
     break_rewrites: bool,
 }
@@ -380,14 +566,27 @@ struct Change {
 // ── Option parsing ───────────────────────────────────────────────────
 
 fn parse_options(argv: &[String]) -> Result<Options> {
+    let fmt = parse_diff_files_format_argv(&env::args().collect::<Vec<_>>());
     let mut pathspecs = Vec::new();
     let mut stage: u8 = 0;
     let mut quiet = false;
     let mut exit_code = false;
     let mut abbrev: Option<usize> = None;
-    let mut format = OutputFormat::Raw;
-    let mut explicit_raw = false;
-    let mut suppress_diff = false;
+    let format = match fmt.format {
+        crate::commands::diff::DiffFilesDefaultFormat::Raw => OutputFormat::Raw,
+        crate::commands::diff::DiffFilesDefaultFormat::Patch => OutputFormat::Patch,
+        crate::commands::diff::DiffFilesDefaultFormat::Stat => OutputFormat::Stat,
+        crate::commands::diff::DiffFilesDefaultFormat::NumStat => OutputFormat::NumStat,
+        crate::commands::diff::DiffFilesDefaultFormat::NameOnly => OutputFormat::NameOnly,
+        crate::commands::diff::DiffFilesDefaultFormat::NameStatus => OutputFormat::NameStatus,
+    };
+    let explicit_raw = fmt.explicit_raw;
+    let suppress_diff = fmt.suppress_diff;
+    let stat_variant = fmt.stat_variant;
+    let patch_with_raw = fmt.patch_with_raw;
+    let patch_with_stat = fmt.patch_with_stat;
+    let emit_queue = fmt.emit_queue;
+    let dirstat_cli = fmt.dirstat_cli;
     let mut diff_filter: Option<String> = None;
     let mut ignore_submodules = false;
     let mut find_renames: Option<u32> = None;
@@ -395,7 +594,6 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut find_copies_harder = false;
     let mut c_count = 0u32;
     let mut reverse = false;
-    let mut summary = false;
     let mut break_rewrites = false;
     let mut end_of_options = false;
 
@@ -410,32 +608,6 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         if !end_of_options && arg.starts_with('-') {
             match arg.as_str() {
                 "-R" => reverse = true,
-                "--raw" => {
-                    format = OutputFormat::Raw;
-                    explicit_raw = true;
-                    suppress_diff = false;
-                }
-                "-p" | "--patch" | "-u" => {
-                    format = OutputFormat::Patch;
-                    suppress_diff = false;
-                }
-                "--stat" => {
-                    format = OutputFormat::Stat;
-                    suppress_diff = false;
-                }
-                "--numstat" => {
-                    format = OutputFormat::NumStat;
-                    suppress_diff = false;
-                }
-                "--name-only" => {
-                    format = OutputFormat::NameOnly;
-                    suppress_diff = false;
-                }
-                "--name-status" => {
-                    format = OutputFormat::NameStatus;
-                    suppress_diff = false;
-                }
-                "--summary" => summary = true,
                 "-B" | "--break-rewrites" => break_rewrites = true,
                 _ if arg.starts_with("--break-rewrites=") => break_rewrites = true,
                 _ if arg.starts_with("-B") && arg.len() > 2 => {
@@ -451,15 +623,6 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 }
                 "--exit-code" => exit_code = true,
                 "-q" | "--quiet" => quiet = true,
-                "-s" | "--no-patch" => suppress_diff = true,
-                "--patch-with-raw" => {
-                    format = OutputFormat::Patch;
-                    suppress_diff = false;
-                } // TODO: also show raw
-                "--patch-with-stat" => {
-                    format = OutputFormat::Patch;
-                    suppress_diff = false;
-                } // TODO: also show stat
                 "-0" => stage = 0,
                 "-1" => stage = 1,
                 "-2" => stage = 2,
@@ -482,7 +645,27 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 | "--full-index"
                 | "--no-ext-diff"
                 | "--no-prefix"
-                | "--no-abbrev" => {}
+                | "--no-abbrev"
+                | "-s"
+                | "--no-patch"
+                | "-p"
+                | "--patch"
+                | "-u"
+                | "--raw"
+                | "--stat"
+                | "--compact-summary"
+                | "--numstat"
+                | "--shortstat"
+                | "--name-only"
+                | "--name-status"
+                | "--summary"
+                | "--patch-with-raw"
+                | "--patch-with-stat"
+                | "--dirstat"
+                | "--dirstat-by-file"
+                | "--cumulative" => {}
+                s if s.starts_with("--dirstat=") => {}
+                s if s.starts_with("--dirstat-by-file=") => {}
                 "-M" | "--find-renames" => {
                     find_renames = Some(50);
                 }
@@ -547,6 +730,18 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 | "--glob-pathspecs"
                 | "--noglob-pathspecs"
                 | "--icase-pathspecs" => {}
+                _ if arg.starts_with('-')
+                    && !arg.starts_with("--")
+                    && arg.len() > 2
+                    && arg.as_bytes().get(1).is_some_and(|b| *b != b'-') =>
+                {
+                    const COMBINABLE: &[u8] = b"spuwqRb";
+                    let bytes = arg.as_bytes();
+                    let tail = &bytes[1..];
+                    if tail.is_empty() || !tail.iter().all(|b| COMBINABLE.contains(b)) {
+                        bail!("unsupported option: {arg}");
+                    }
+                }
                 _ if arg.starts_with("-G")
                     || arg.starts_with("-S")
                     || arg.starts_with("-O")
@@ -570,13 +765,17 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         format,
         explicit_raw,
         suppress_diff,
+        stat_variant,
+        patch_with_raw,
+        patch_with_stat,
+        emit_queue,
+        dirstat_cli,
         diff_filter,
         ignore_submodules,
         find_renames,
         find_copies,
         find_copies_harder,
         reverse,
-        summary,
         break_rewrites,
     })
 }
@@ -952,6 +1151,11 @@ fn print_patch_from_diff_entry(
     match entry.status {
         DiffStatus::Deleted => {
             header.push_str(&format!("\ndeleted file mode {}", entry.old_mode));
+            header.push_str(&format!(
+                "\nindex {}..{}",
+                abbrev_oid_for_patch(&entry.old_oid, abbrev),
+                abbrev_oid_for_patch(&zero_oid(), abbrev),
+            ));
         }
         DiffStatus::Added => {
             header.push_str(&format!("\nnew file mode {}", entry.new_mode));
@@ -962,9 +1166,10 @@ fn print_patch_from_diff_entry(
                 entry.new_oid
             };
             header.push_str(&format!(
-                "\nindex {}..{}",
+                "\nindex {}..{} {}",
                 abbrev_oid_for_patch(&entry.old_oid, abbrev),
                 abbrev_oid_for_patch(&new_for_index, abbrev),
+                entry.new_mode
             ));
         }
         DiffStatus::Renamed => {
@@ -984,6 +1189,20 @@ fn print_patch_from_diff_entry(
                 header.push_str(&format!(
                     "\nold mode {}\nnew mode {}",
                     entry.old_mode, entry.new_mode
+                ));
+            }
+            if entry.old_mode == entry.new_mode {
+                header.push_str(&format!(
+                    "\nindex {}..{} {}",
+                    abbrev_oid_for_patch(&entry.old_oid, abbrev),
+                    abbrev_oid_for_patch(&entry.new_oid, abbrev),
+                    entry.new_mode
+                ));
+            } else {
+                header.push_str(&format!(
+                    "\nindex {}..{}",
+                    abbrev_oid_for_patch(&entry.old_oid, abbrev),
+                    abbrev_oid_for_patch(&entry.new_oid, abbrev),
                 ));
             }
         }
@@ -1064,6 +1283,177 @@ fn print_numstat_from_diff_entries(
         let (ins, del) = count_changes(&old, &new);
         println!("{}\t{}\t{}", ins, del, entry.path());
     }
+    Ok(())
+}
+
+fn append_diff_files_stat_totals(summary: &mut String, total_ins: usize, total_del: usize) {
+    if total_ins > 0 {
+        summary.push_str(&format!(
+            ", {} insertion{}(+)",
+            total_ins,
+            if total_ins == 1 { "" } else { "s" }
+        ));
+    }
+    if total_del > 0 {
+        summary.push_str(&format!(
+            ", {} deletion{}(-)",
+            total_del,
+            if total_del == 1 { "" } else { "s" }
+        ));
+    }
+    if total_ins == 0 && total_del == 0 {
+        summary.push_str(", 0 insertions(+), 0 deletions(-)");
+    }
+}
+
+fn write_diff_files_shortstat_line(
+    entries: &[DiffEntry],
+    repo: &Repository,
+    work_tree: &Path,
+) -> Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let mut total_ins = 0usize;
+    let mut total_del = 0usize;
+    for entry in entries {
+        let (old, new) = load_patch_contents_for_diff_entry(entry, repo, work_tree)?;
+        let (ins, del) = count_changes(&old, &new);
+        total_ins += ins;
+        total_del += del;
+    }
+    let files = entries.len();
+    let mut line = format!(
+        " {} file{} changed",
+        files,
+        if files == 1 { "" } else { "s" }
+    );
+    append_diff_files_stat_totals(&mut line, total_ins, total_del);
+    println!("{line}");
+    Ok(())
+}
+
+fn mode_has_executable_bit(mode_str: &str) -> bool {
+    u32::from_str_radix(mode_str, 8)
+        .map(|m| m & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+fn compact_summary_path_display(entry: &DiffEntry) -> String {
+    let path = entry.path().to_owned();
+    match entry.status {
+        DiffStatus::Added => format!("{path} (new)"),
+        DiffStatus::Deleted => format!("{path} (gone)"),
+        _ => {
+            let old_x = mode_has_executable_bit(&entry.old_mode);
+            let new_x = mode_has_executable_bit(&entry.new_mode);
+            if new_x != old_x {
+                if new_x {
+                    format!("{path} (mode +x)")
+                } else {
+                    format!("{path} (mode -x)")
+                }
+            } else {
+                path
+            }
+        }
+    }
+}
+
+fn load_patch_bytes_for_diff_entry(
+    entry: &DiffEntry,
+    repo: &Repository,
+    work_tree: &Path,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    let old = if entry.status == DiffStatus::Added || entry.old_oid == zero_oid() {
+        Vec::new()
+    } else {
+        repo.odb
+            .read(&entry.old_oid)
+            .map(|o| o.data)
+            .unwrap_or_default()
+    };
+    let new = if entry.status == DiffStatus::Deleted {
+        Vec::new()
+    } else {
+        let path = entry.new_path.as_deref().unwrap_or(entry.path());
+        let abs = work_tree.join(path);
+        match fs::read(&abs) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(e.into()),
+        }
+    };
+    Ok((old, new))
+}
+
+fn print_compact_summary_from_diff_entries(
+    entries: &[DiffEntry],
+    repo: &Repository,
+    work_tree: &Path,
+) -> Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let mut files: Vec<FileStatInput> = Vec::with_capacity(entries.len());
+    let mut total_ins = 0usize;
+    let mut total_del = 0usize;
+    for entry in entries {
+        let (old_b, new_b) = load_patch_bytes_for_diff_entry(entry, repo, work_tree)?;
+        let binary =
+            grit_lib::merge_file::is_binary(&old_b) || grit_lib::merge_file::is_binary(&new_b);
+        let (ins, del) = if binary {
+            let deleted = if entry.old_oid == zero_oid() {
+                0
+            } else {
+                old_b.len()
+            };
+            let added = if entry.new_oid == zero_oid() {
+                0
+            } else {
+                new_b.len()
+            };
+            (added, deleted)
+        } else {
+            let old_s = String::from_utf8_lossy(&old_b).into_owned();
+            let new_s = String::from_utf8_lossy(&new_b).into_owned();
+            count_changes(&old_s, &new_s)
+        };
+        total_ins += ins;
+        total_del += del;
+        files.push(FileStatInput {
+            path_display: compact_summary_path_display(entry),
+            insertions: ins,
+            deletions: del,
+            is_binary: binary,
+        });
+    }
+    let cfg = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), false)
+        .unwrap_or_else(|_| grit_lib::config::ConfigSet::new());
+    let stat_name_width = cfg
+        .get("diff.statNameWidth")
+        .and_then(|v| v.parse::<usize>().ok());
+    let stat_graph_width = cfg
+        .get("diff.statGraphWidth")
+        .and_then(|v| v.parse::<usize>().ok());
+    let opts = DiffstatOptions {
+        total_width: terminal_columns(),
+        line_prefix: "",
+        subtract_prefix_from_terminal: false,
+        stat_name_width,
+        stat_graph_width,
+        stat_count: None,
+        color_add: "",
+        color_del: "",
+        color_reset: "",
+        graph_bar_slack: 0,
+        graph_prefix_budget_slack: 0,
+    };
+    write_diffstat_block(&mut std::io::stdout().lock(), &files, &opts)?;
+    let n = entries.len();
+    let mut summary = format!(" {} file{} changed", n, if n == 1 { "" } else { "s" });
+    append_diff_files_stat_totals(&mut summary, total_ins, total_del);
+    println!("{summary}");
     Ok(())
 }
 
@@ -1339,13 +1729,15 @@ fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {
     })
 }
 
-/// Return the file type category for a mode: 0=regular, 1=executable, 2=symlink, 3=submodule, 4=other
+/// Return the file type category for a mode: 0=blob (regular or executable), 2=symlink, 3=submodule, 4=other.
+///
+/// Git treats `100644` and `100755` as the same object kind for `diff-files` status (`M`, not `T`).
 fn mode_type(mode: u32) -> u32 {
-    match mode {
-        0o100644 => 0,
-        0o100755 => 1,
-        0o120000 => 2,
-        0o160000 => 3,
+    let m = canonicalize_mode(mode);
+    match m {
+        MODE_REGULAR | MODE_EXECUTABLE => 0,
+        MODE_SYMLINK => 2,
+        MODE_GITLINK => 3,
         _ => 4,
     }
 }
