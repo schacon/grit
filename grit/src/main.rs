@@ -14,6 +14,7 @@ use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 
 mod alias;
+mod branch_ref_format;
 mod branch_tracking;
 mod bundle_uri;
 mod bundle_uri_test_tool;

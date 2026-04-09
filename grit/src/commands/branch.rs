@@ -1,20 +1,25 @@
 //! `grit branch` -- list, create, or delete branches.
 
+use crate::branch_ref_format::{expand_branch_format, BranchFormatContext, BranchFormatError};
+use crate::commands::worktree_refs;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::zero_oid;
 use grit_lib::merge_base::count_symmetric_ahead_behind;
 use grit_lib::merge_base::is_ancestor;
-use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{resolve_revision, resolve_upstream_symbolic_name, symbolic_full_name};
-use grit_lib::state::{resolve_head, HeadState};
+use grit_lib::rev_parse::{
+    abbreviate_object_id, resolve_revision, resolve_upstream_symbolic_name, symbolic_full_name,
+};
+use grit_lib::state::{resolve_head, wt_status_get_state, HeadState};
 use grit_lib::stripspace::{process as stripspace_process, Mode as StripspaceMode};
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use std::process::Command;
 
@@ -58,9 +63,17 @@ pub struct Args {
     #[arg(short = 'r', long = "remotes")]
     pub remotes: bool,
 
+    /// Rejected (Git compatibility): use without `--remotes`.
+    #[arg(long = "no-remotes", hide = true)]
+    pub no_remotes_neg: bool,
+
     /// List both local and remote branches.
     #[arg(short = 'a', long = "all")]
     pub all: bool,
+
+    /// Rejected (Git compatibility): use without `--all`.
+    #[arg(long = "no-all", hide = true)]
+    pub no_all_neg: bool,
 
     /// Show verbose info (commit subject). Use twice (-vv) for tracking info.
     #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
@@ -120,13 +133,21 @@ pub struct Args {
     #[arg(long = "unset-upstream")]
     pub unset_upstream: bool,
 
-    /// Sort branches by key: refname, committerdate, -committerdate.
-    #[arg(long = "sort")]
-    pub sort: Option<String>,
+    /// Sort branches (repeat for multiple keys; e.g. `--sort=refname --sort=ahead-behind:HEAD`).
+    #[arg(long = "sort", action = clap::ArgAction::Append)]
+    pub sort: Vec<String>,
 
     /// Cancel sort keys (reset to default).
     #[arg(long = "no-sort")]
     pub no_sort: bool,
+
+    /// Case-insensitive sorting and pattern matching for listing.
+    #[arg(short = 'i', long = "ignore-case")]
+    pub ignore_case: bool,
+
+    /// Omit lines that expand to empty with `--format`.
+    #[arg(long = "omit-empty")]
+    pub omit_empty: bool,
 
     /// Custom format string (for-each-ref style atoms).
     #[arg(long = "format")]
@@ -179,6 +200,29 @@ pub fn run(args: Args) -> Result<()> {
 
     let repo = Repository::discover(None).context("not a git repository")?;
     let head = resolve_head(&repo.git_dir)?;
+
+    if args.no_remotes_neg {
+        eprintln!("error: unknown option `no-remotes'");
+        eprintln!("usage: git branch [<options>] [-r | -a] [--merged] [--no-merged]");
+        std::process::exit(129);
+    }
+    if args.no_all_neg {
+        eprintln!("error: unknown option `no-all'");
+        eprintln!("usage: git branch [<options>] [-r | -a] [--merged] [--no-merged]");
+        std::process::exit(129);
+    }
+
+    // `git branch -v <pattern>` without `--list` is not a pattern listing mode; a glob is invalid
+    // (t3203). With `--list`, globs are filtered in `list_branches`.
+    if args.verbose > 0
+        && !args.list
+        && args.name.as_deref().is_some_and(is_glob_branch_pattern)
+        && args.start_point.is_none()
+    {
+        let n = args.name.as_deref().unwrap_or("");
+        eprintln!("fatal: '{n}' is not a valid branch name");
+        std::process::exit(128);
+    }
 
     // Resolve @{-N} in branch name if present
     let mut args = args;
@@ -299,16 +343,22 @@ pub fn run(args: Args) -> Result<()> {
     list_branches(&repo, &head, &args)
 }
 
-/// Info about a branch for listing.
+/// One row in `git branch` output.
+#[derive(Clone)]
 struct BranchInfo {
+    /// Short name for default listing (`main`, `remotes/origin/foo`, or `origin/foo` for `-r`).
     name: String,
     oid: ObjectId,
     is_remote: bool,
+    /// Full ref for `%(refname)` (`refs/heads/...` / `refs/remotes/...`); absent for detached HEAD row.
+    full_refname: Option<String>,
+    /// ` -> short-target` when this ref is symbolic (local or remote).
+    symref_suffix: Option<String>,
 }
 
-fn detached_head_list_line(repo: &Repository, head: &HeadState) -> Result<String> {
+fn detached_head_description(repo: &Repository, head: &HeadState) -> Result<String> {
     let HeadState::Detached { oid } = head else {
-        bail!("detached_head_list_line: not detached");
+        bail!("detached_head_description: not detached");
     };
     let git_dir = &repo.git_dir;
     let state_dir = grit_lib::refs::common_dir(git_dir).unwrap_or_else(|| git_dir.clone());
@@ -324,11 +374,110 @@ fn detached_head_list_line(repo: &Repository, head: &HeadState) -> Result<String
         } else {
             start
         };
-        return Ok(format!("* (no branch, bisect started on {label})"));
+        return Ok(format!("(no branch, bisect started on {label})"));
     }
-    let full = oid.to_hex();
-    let abbrev: String = full.chars().take(7).collect();
-    Ok(format!("* (HEAD detached at {abbrev})"))
+    let wt = wt_status_get_state(git_dir, head, true)?;
+    if let Some(label) = wt.detached_from {
+        if wt.detached_at {
+            return Ok(format!("(HEAD detached at {label})"));
+        }
+        return Ok(format!("(HEAD detached from {label})"));
+    }
+    let abbrev: String = oid.to_hex().chars().take(7).collect();
+    Ok(format!("(HEAD detached at {abbrev})"))
+}
+
+fn shorten_symref_target(git_dir: &Path, target: &str) -> Option<String> {
+    if let Some(rest) = target.strip_prefix("refs/remotes/") {
+        return Some(rest.to_owned());
+    }
+    if let Some(rest) = target.strip_prefix("refs/heads/") {
+        return Some(rest.to_owned());
+    }
+    if let Some(rest) = target.strip_prefix("refs/tags/") {
+        return Some(rest.to_owned());
+    }
+    grit_lib::refs::resolve_ref(git_dir, target).ok()?;
+    Some(target.to_owned())
+}
+
+fn peel_to_commit_oid(repo: &Repository, mut oid: ObjectId) -> Option<ObjectId> {
+    for _ in 0..32 {
+        let obj = repo.odb.read(&oid).ok()?;
+        match obj.kind {
+            ObjectKind::Commit => return Some(oid),
+            ObjectKind::Tag => {
+                let tag = parse_tag(&obj.data).ok()?;
+                oid = tag.object;
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+fn branch_stable_key(b: &BranchInfo) -> String {
+    b.full_refname.clone().unwrap_or_else(|| b.name.clone())
+}
+
+fn push_branch_row(
+    repo: &Repository,
+    branches: &mut Vec<BranchInfo>,
+    full_ref: String,
+    oid: ObjectId,
+    is_remote: bool,
+    list_name: String,
+) {
+    let sym = refs::read_symbolic_ref(&repo.git_dir, &full_ref)
+        .ok()
+        .flatten();
+    let symref_suffix = sym
+        .as_deref()
+        .and_then(|t| shorten_symref_target(&repo.git_dir, t))
+        .map(|s| format!(" -> {s}"));
+    branches.push(BranchInfo {
+        name: list_name,
+        oid,
+        is_remote,
+        full_refname: Some(full_ref),
+        symref_suffix,
+    });
+}
+
+fn is_glob_branch_pattern(s: &str) -> bool {
+    s.contains('*') || s.contains('?') || s.contains('[')
+}
+
+fn abbrev_for_branch_verbose(repo: &Repository, oid: &ObjectId) -> String {
+    let n = ConfigSet::load(Some(&repo.git_dir), true)
+        .ok()
+        .and_then(|c| c.get("core.abbrev"))
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(7);
+    abbreviate_object_id(repo, *oid, n).unwrap_or_else(|_| {
+        let h = oid.to_hex();
+        let take = n.clamp(4, 40).min(h.len());
+        h[..take].to_owned()
+    })
+}
+
+fn version_segments(s: &str) -> Vec<&str> {
+    s.split(['.', '-']).filter(|seg| !seg.is_empty()).collect()
+}
+
+fn compare_version_refname(a: &str, b: &str) -> Ordering {
+    let seg_a = version_segments(a);
+    let seg_b = version_segments(b);
+    for (sa, sb) in seg_a.iter().zip(seg_b.iter()) {
+        let ord = match (sa.parse::<u64>(), sb.parse::<u64>()) {
+            (Ok(na), Ok(nb)) => na.cmp(&nb),
+            _ => sa.cmp(sb),
+        };
+        if ord != Ordering::Equal {
+            return ord;
+        }
+    }
+    seg_a.len().cmp(&seg_b.len())
 }
 
 /// List branches.
@@ -337,8 +486,8 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     let mut out = stdout.lock();
 
     let current_branch = head.branch_name().unwrap_or("");
+    let occupied = worktree_refs::occupied_branch_refs(repo);
 
-    // Collect branches
     let mut branches: Vec<BranchInfo> = Vec::new();
 
     if !args.remotes {
@@ -346,28 +495,12 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         {
             grit_lib::reftable::reftable_list_refs(&repo.git_dir, "refs/heads/")
                 .map_err(|e| anyhow::anyhow!("{e}"))?
-                .into_iter()
-                .map(|(name, oid)| {
-                    let short = name.strip_prefix("refs/heads/").unwrap_or(&name).to_owned();
-                    (short, oid)
-                })
-                .collect()
         } else {
-            refs::list_refs(&repo.git_dir, "refs/heads/")
-                .map_err(|e| anyhow::anyhow!("{e}"))?
-                .into_iter()
-                .map(|(name, oid)| {
-                    let short = name.strip_prefix("refs/heads/").unwrap_or(&name).to_owned();
-                    (short, oid)
-                })
-                .collect()
+            refs::list_refs(&repo.git_dir, "refs/heads/").map_err(|e| anyhow::anyhow!("{e}"))?
         };
-        for (name, oid) in local {
-            branches.push(BranchInfo {
-                name,
-                oid,
-                is_remote: false,
-            });
+        for (full, oid) in local {
+            let short = full.strip_prefix("refs/heads/").unwrap_or(&full).to_owned();
+            push_branch_row(repo, &mut branches, full, oid, false, short);
         }
     }
 
@@ -376,42 +509,23 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         {
             grit_lib::reftable::reftable_list_refs(&repo.git_dir, "refs/remotes/")
                 .map_err(|e| anyhow::anyhow!("{e}"))?
-                .into_iter()
-                .map(|(name, oid)| {
-                    let short = name
-                        .strip_prefix("refs/remotes/")
-                        .unwrap_or(&name)
-                        .to_owned();
-                    (short, oid)
-                })
-                .collect()
         } else {
-            refs::list_refs(&repo.git_dir, "refs/remotes/")
-                .map_err(|e| anyhow::anyhow!("{e}"))?
-                .into_iter()
-                .map(|(name, oid)| {
-                    let short = name
-                        .strip_prefix("refs/remotes/")
-                        .unwrap_or(&name)
-                        .to_owned();
-                    (short, oid)
-                })
-                .collect()
+            refs::list_refs(&repo.git_dir, "refs/remotes/").map_err(|e| anyhow::anyhow!("{e}"))?
         };
-        for (name, oid) in remote {
-            branches.push(BranchInfo {
-                name: if args.remotes && !args.all {
-                    name
-                } else {
-                    format!("remotes/{name}")
-                },
-                oid,
-                is_remote: true,
-            });
+        for (full, oid) in remote {
+            let short = full
+                .strip_prefix("refs/remotes/")
+                .unwrap_or(&full)
+                .to_owned();
+            let list_name = if args.remotes && !args.all {
+                short.clone()
+            } else {
+                format!("remotes/{short}")
+            };
+            push_branch_row(repo, &mut branches, full, oid, true, list_name);
         }
     }
 
-    // Apply --merged filter: with multiple `--merged`, Git unions (OR) the results.
     if !args.merged.is_empty() {
         let mut keep = HashSet::new();
         for merged_val in &args.merged {
@@ -424,14 +538,13 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
             };
             for b in &branches {
                 if is_ancestor(repo, b.oid, target_oid).unwrap_or(false) {
-                    keep.insert(b.name.clone());
+                    keep.insert(branch_stable_key(b));
                 }
             }
         }
-        branches.retain(|b| keep.contains(&b.name));
+        branches.retain(|b| keep.contains(&branch_stable_key(b)));
     }
 
-    // Apply --no-merged filters: repeated `--no-merged` intersects (AND), unlike `--merged`.
     for no_merged_val in &args.no_merged {
         let target_oid = if no_merged_val.is_empty() {
             *head
@@ -443,7 +556,6 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         branches.retain(|b| !is_ancestor(repo, b.oid, target_oid).unwrap_or(true));
     }
 
-    // Apply --contains filter: with multiple `--contains`, Git unions (OR) the results.
     if !args.contains.is_empty() {
         let contain_oids: Vec<ObjectId> = args
             .contains
@@ -457,77 +569,211 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         });
     }
 
-    // Apply --no-contains filter
     for no_contains_rev in &args.no_contains {
         let no_contains_oid = resolve_revision_must_be_commit(repo, no_contains_rev)?;
         branches.retain(|b| !is_ancestor(repo, no_contains_oid, b.oid).unwrap_or(true));
     }
 
-    // Apply pattern filter (branch --list <pattern>)
-    if let Some(ref pattern) = args.name {
-        branches.retain(|b| glob_match(pattern, &b.name));
+    if let Some(ref pat) = args.name {
+        branches.retain(|b| glob_match_case(pat, &b.name, args.ignore_case));
     }
 
-    // Sort branches
-    // Determine sort key: --no-sort resets config, --sort overrides all
-    let config_sort = if args.sort.is_none() && !args.no_sort {
-        let cfg = ConfigSet::load(Some(&repo.git_dir), true).ok();
-        cfg.and_then(|c| c.get("branch.sort"))
-    } else {
-        None
-    };
-    let sort_key_owned = args.sort.clone().or(config_sort);
-    sort_branches(repo, &mut branches, sort_key_owned.as_deref())?;
+    if let Some(ref spec) = args.points_at {
+        let points_oid = resolve_revision_must_be_commit(repo, spec)?;
+        branches.retain(|b| {
+            if let Some(ref full) = b.full_refname {
+                if let Ok(Some(target)) = refs::read_symbolic_ref(&repo.git_dir, full) {
+                    if let Ok(tip) = refs::resolve_ref(&repo.git_dir, &target) {
+                        if tip == points_oid {
+                            return false;
+                        }
+                    }
+                }
+            }
+            b.oid == points_oid || peel_to_commit_oid(repo, b.oid) == Some(points_oid)
+        });
+    }
 
-    // Custom format
+    let sort_keys: Vec<String> = if args.no_sort {
+        Vec::new()
+    } else if !args.sort.is_empty() {
+        args.sort.clone()
+    } else if let Some(cfg) = ConfigSet::load(Some(&repo.git_dir), true)
+        .ok()
+        .and_then(|c| c.get("branch.sort"))
+    {
+        vec![cfg]
+    } else {
+        Vec::new()
+    };
+
+    let list_with_pattern = args.list && args.name.is_some();
+    let need_synthetic_detached = matches!(head, HeadState::Detached { .. })
+        && !args.remotes
+        && !list_with_pattern
+        && !sort_keys.is_empty();
+    if need_synthetic_detached {
+        let oid = *head
+            .oid()
+            .ok_or_else(|| anyhow::anyhow!("detached HEAD without OID"))?;
+        branches.push(BranchInfo {
+            name: String::new(),
+            oid,
+            is_remote: false,
+            full_refname: None,
+            symref_suffix: None,
+        });
+    }
+
+    sort_branches(repo, head, &mut branches, &sort_keys, args.ignore_case)?;
+
+    if args.format.is_none() {
+        branches.retain(|b| b.full_refname.is_some());
+    }
+
     if let Some(ref fmt) = args.format {
-        for b in &branches {
-            let line = format_branch(repo, head, b, fmt)?;
-            writeln!(out, "{line}")?;
+        let stdout_tty = std::io::stdout().is_terminal();
+        let emit_fmt_color = if args.no_color {
+            false
+        } else if let Some(ref when) = args.color {
+            when != "never" && (when == "always" || stdout_tty)
+        } else {
+            stdout_tty
+        };
+        let mut rows: Vec<BranchInfo> = Vec::new();
+        if matches!(head, HeadState::Detached { .. })
+            && !args.remotes
+            && !list_with_pattern
+            && sort_keys.is_empty()
+        {
+            let oid = *head
+                .oid()
+                .ok_or_else(|| anyhow::anyhow!("detached HEAD without OID"))?;
+            rows.push(BranchInfo {
+                name: String::new(),
+                oid,
+                is_remote: false,
+                full_refname: None,
+                symref_suffix: None,
+            });
+        }
+        rows.extend(branches.iter().cloned());
+        for b in &rows {
+            match format_branch(repo, head, b, fmt, args.omit_empty, emit_fmt_color) {
+                Ok(line) => {
+                    if line.is_empty() && args.omit_empty {
+                        continue;
+                    }
+                    if emit_fmt_color && !line.is_empty() {
+                        writeln!(out, "{line}\x1b[m")?;
+                    } else {
+                        writeln!(out, "{line}")?;
+                    }
+                }
+                Err(BranchListError::FormatFatal(m)) => {
+                    eprintln!("fatal: {m}");
+                    std::process::exit(128);
+                }
+                Err(BranchListError::Other(e)) => return Err(e),
+            }
         }
         return Ok(());
     }
 
-    if matches!(head, HeadState::Detached { .. }) && !args.remotes {
-        let line = detached_head_list_line(repo, head)?;
-        writeln!(out, "{line}")?;
-    }
-
+    let stdout_tty = std::io::stdout().is_terminal();
     let use_color = if args.no_color {
         false
     } else if let Some(ref when) = args.color {
-        when != "never"
+        when != "never" && (when == "always" || stdout_tty)
     } else {
         false
     };
-    let (color_current, color_local, color_remote, color_reset) = if use_color {
+    let (color_current, color_worktree, color_local, color_remote, color_reset) = if use_color {
         let cfg = ConfigSet::load(Some(&repo.git_dir), true).ok();
         let get_color = |key: &str, default: &str| -> String {
             let val = cfg.as_ref().and_then(|c| c.get(key));
             let cs = val.as_deref().unwrap_or(default);
-            grit_lib::config::parse_color(cs).unwrap_or_else(|_| String::new())
+            grit_lib::config::parse_color(cs).unwrap_or_default()
         };
         (
             get_color("color.branch.current", "green"),
+            get_color("color.branch.worktree", "cyan"),
             get_color("color.branch.local", "normal"),
             get_color("color.branch.remote", "red"),
-            "[m".to_string(),
+            "\x1b[m".to_string(),
         )
     } else {
-        (String::new(), String::new(), String::new(), String::new())
+        (
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        )
     };
+
+    // Verbose listing: Git `calc_maxwidth` includes detached HEAD description width so the OID
+    // column lines up with `* (HEAD detached ...)`.
     let max_name_len = if args.verbose > 0 {
-        branches.iter().map(|b| b.name.len()).max().unwrap_or(0)
+        let mut m = branches.iter().map(|b| b.name.len()).max().unwrap_or(0);
+        if matches!(head, HeadState::Detached { .. }) && !args.remotes && !list_with_pattern {
+            if let Ok(desc) = detached_head_description(repo, head) {
+                m = m.max(desc.len());
+            }
+        }
+        m
     } else {
-        0
+        branches
+            .iter()
+            .map(|b| b.name.len() + b.symref_suffix.as_ref().map(|s| s.len()).unwrap_or(0))
+            .max()
+            .unwrap_or(0)
     };
+
+    if matches!(head, HeadState::Detached { .. })
+        && !args.remotes
+        && !list_with_pattern
+        && args.points_at.is_none()
+    {
+        let desc = detached_head_description(repo, head)?;
+        let prefix = "* ";
+        if use_color {
+            write!(out, "{prefix}{color_current}{desc}{color_reset}")?;
+        } else {
+            write!(out, "{prefix}{desc}")?;
+        }
+        if args.verbose > 0 {
+            let oid = head.oid().unwrap();
+            let short = abbrev_for_branch_verbose(repo, oid);
+            let subject = commit_subject(&repo.odb, oid).unwrap_or_default();
+            write!(out, " {short} {subject}")?;
+        }
+        writeln!(out)?;
+    }
 
     for b in &branches {
         let is_current = !b.is_remote && b.name == current_branch;
-        let prefix = if is_current { "* " } else { "  " };
+        let in_other_wt = b.full_refname.as_ref().is_some_and(|r| {
+            occupied.get(r).is_some_and(|p| {
+                if let Some(wt) = repo.work_tree.as_deref() {
+                    p != &wt.display().to_string()
+                } else {
+                    true
+                }
+            })
+        });
+        let prefix = if is_current {
+            "* "
+        } else if in_other_wt {
+            "+ "
+        } else {
+            "  "
+        };
         let color = if use_color {
             if is_current {
                 &color_current
+            } else if in_other_wt {
+                &color_worktree
             } else if b.is_remote {
                 &color_remote
             } else {
@@ -542,40 +788,93 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
             &color_local
         };
 
+        let sym = b.symref_suffix.as_deref().unwrap_or("");
+        // `git branch -v` omits ` -> target` for symrefs (plain `git branch` still shows them).
+        let sym_out = if args.verbose > 0 { "" } else { sym };
+        let display_name = format!("{}{}", b.name, sym_out);
+
         if args.verbose > 0 {
-            let short_oid = &b.oid.to_hex()[..7];
+            let short = abbrev_for_branch_verbose(repo, &b.oid);
             let subject = commit_subject(&repo.odb, &b.oid).unwrap_or_default();
-            let padded_name = format!("{:<width$}", b.name, width = max_name_len);
 
             if !b.is_remote {
                 let track = resolve_branch_tracking(repo, &b.name)?;
                 let v1 = track.as_ref().and_then(|t| t.verbose1_inner.as_deref());
                 let v2 = track.as_ref().and_then(|t| t.verbose2_inner.as_deref());
-                write!(out, "{prefix}{color}{padded_name}{reset} {short_oid}")?;
+                if use_color {
+                    let padded_name = format!("{:<width$}", b.name, width = max_name_len);
+                    write!(out, "{prefix}{color}{padded_name}{reset}{sym_out}")?;
+                } else {
+                    let padded_name = format!("{:<width$}", b.name, width = max_name_len);
+                    write!(out, "{prefix}{padded_name}{sym_out}")?;
+                }
+                write!(out, " {short}")?;
                 if args.verbose >= 2 {
+                    if !is_current && in_other_wt {
+                        if let Some(r) = &b.full_refname {
+                            if let Some(path) = occupied.get(r) {
+                                if use_color {
+                                    write!(out, " ({color_worktree}{path}{color_reset})")?;
+                                } else {
+                                    write!(out, " ({path})")?;
+                                }
+                            }
+                        }
+                    }
                     if let Some(i2) = v2 {
                         write!(out, " [{i2}]")?;
                     } else if let Some(i1) = v1 {
                         write!(out, " [{i1}]")?;
                     }
                 } else if args.verbose == 1 {
+                    if !is_current && in_other_wt {
+                        if let Some(r) = &b.full_refname {
+                            if let Some(path) = occupied.get(r) {
+                                if use_color {
+                                    write!(out, " ({color_worktree}{path}{color_reset})")?;
+                                } else {
+                                    write!(out, " ({path})")?;
+                                }
+                            }
+                        }
+                    }
                     if let Some(i1) = v1 {
                         write!(out, " [{i1}]")?;
                     }
                 }
                 writeln!(out, " {subject}")?;
             } else {
-                writeln!(
-                    out,
-                    "{prefix}{color}{padded_name}{reset} {short_oid} {subject}"
-                )?;
+                if use_color {
+                    let padded_name = format!("{:<width$}", b.name, width = max_name_len);
+                    writeln!(
+                        out,
+                        "{prefix}{color}{padded_name}{reset}{sym_out} {short} {subject}"
+                    )?;
+                } else {
+                    let padded_name = format!("{:<width$}", b.name, width = max_name_len);
+                    writeln!(out, "{prefix}{padded_name}{sym_out} {short} {subject}")?;
+                }
             }
+        } else if use_color {
+            writeln!(out, "{prefix}{color}{}{reset}{sym_out}", b.name)?;
         } else {
-            writeln!(out, "{prefix}{color}{}{reset}", b.name)?;
+            writeln!(out, "{prefix}{display_name}")?;
         }
     }
 
     Ok(())
+}
+
+#[derive(Debug)]
+enum BranchListError {
+    FormatFatal(String),
+    Other(anyhow::Error),
+}
+
+impl From<anyhow::Error> for BranchListError {
+    fn from(e: anyhow::Error) -> Self {
+        BranchListError::Other(e)
+    }
 }
 
 /// Resolve a revision and require the peeled object to be a commit (Git `branch --contains` rules).
@@ -596,57 +895,112 @@ fn resolve_revision_must_be_commit(repo: &Repository, spec: &str) -> Result<Obje
     std::process::exit(129);
 }
 
-/// Sort branches by the given key.
 fn sort_branches(
     repo: &Repository,
+    head: &HeadState,
     branches: &mut [BranchInfo],
-    sort_key: Option<&str>,
+    sort_keys: &[String],
+    ignore_case: bool,
 ) -> Result<()> {
-    match sort_key {
-        None | Some("refname") => {
-            branches.sort_by(|a, b| a.name.cmp(&b.name));
+    let head_oid = head.oid().copied();
+    let cmp_name = |a: &BranchInfo, b: &BranchInfo| -> Ordering {
+        if ignore_case {
+            a.name
+                .to_lowercase()
+                .cmp(&b.name.to_lowercase())
+                .then_with(|| a.name.cmp(&b.name))
+        } else {
+            a.name.cmp(&b.name)
         }
-        Some("-refname") => {
-            branches.sort_by(|a, b| b.name.cmp(&a.name));
-        }
-        Some("committerdate") => {
-            branches.sort_by(|a, b| {
-                let ta = committer_time(&repo.odb, &a.oid, &a.name, a.is_remote);
-                let tb = committer_time(&repo.odb, &b.oid, &b.name, b.is_remote);
-                ta.cmp(&tb)
-            });
-        }
-        Some("-committerdate") => {
-            branches.sort_by(|a, b| {
-                let ta = committer_time(&repo.odb, &a.oid, &a.name, a.is_remote);
-                let tb = committer_time(&repo.odb, &b.oid, &b.name, b.is_remote);
-                tb.cmp(&ta)
-            });
-        }
-        Some("authordate") => {
-            branches.sort_by(|a, b| {
-                let ta = author_time(&repo.odb, &a.oid, &a.name, a.is_remote);
-                let tb = author_time(&repo.odb, &b.oid, &b.name, b.is_remote);
-                ta.cmp(&tb)
-            });
-        }
-        Some("-authordate") => {
-            branches.sort_by(|a, b| {
-                let ta = author_time(&repo.odb, &a.oid, &a.name, a.is_remote);
-                let tb = author_time(&repo.odb, &b.oid, &b.name, b.is_remote);
-                tb.cmp(&ta)
-            });
-        }
-        Some("objecttype") | Some("-objecttype") => {
-            // All branches are commit objects, so objecttype is the same for all.
-            // Fall back to default (refname) sort as secondary.
-            branches.sort_by(|a, b| a.name.cmp(&b.name));
-        }
-        Some(other) => {
-            bail!("unsupported sort key: '{other}'");
-        }
+    };
+    if sort_keys.is_empty() {
+        branches.sort_by(|a, b| cmp_name(a, b));
+        return Ok(());
     }
+
+    // Git: the last `--sort` is the primary key; earlier keys break ties.
+    // `-key` reverses only that key's primary comparison; refname tie-break stays ascending.
+    branches.sort_by(|a, b| {
+        match (a.full_refname.is_none(), b.full_refname.is_none()) {
+            (true, false) => return Ordering::Less,
+            (false, true) => return Ordering::Greater,
+            _ => {}
+        }
+        for raw in sort_keys.iter().rev() {
+            let (desc, key) = raw
+                .strip_prefix('-')
+                .map(|k| (true, k))
+                .unwrap_or((false, raw.as_str()));
+            let mut primary = match key {
+                "refname" => cmp_name(a, b),
+                "committerdate" => {
+                    let ta = committer_time(&repo.odb, &a.oid, &a.name, a.is_remote);
+                    let tb = committer_time(&repo.odb, &b.oid, &b.name, b.is_remote);
+                    ta.cmp(&tb)
+                }
+                "authordate" => {
+                    let ta = author_time(&repo.odb, &a.oid, &a.name, a.is_remote);
+                    let tb = author_time(&repo.odb, &b.oid, &b.name, b.is_remote);
+                    ta.cmp(&tb)
+                }
+                "objectsize" => {
+                    let sa = object_size_for_sort(repo, a);
+                    let sb = object_size_for_sort(repo, b);
+                    sa.cmp(&sb)
+                }
+                "type" => {
+                    let ka = object_kind_for_sort(repo, a);
+                    let kb = object_kind_for_sort(repo, b);
+                    ka.cmp(&kb)
+                }
+                "version:refname" => compare_version_refname(&a.name, &b.name),
+                k if k.starts_with("ahead-behind:") => {
+                    let spec = &k["ahead-behind:".len()..];
+                    match (head_oid, resolve_revision(repo, spec).ok()) {
+                        (Some(h), Some(_base)) => {
+                            let ab_a =
+                                count_symmetric_ahead_behind(repo, a.oid, h).unwrap_or((0, 0));
+                            let ab_b =
+                                count_symmetric_ahead_behind(repo, b.oid, h).unwrap_or((0, 0));
+                            ab_a.0.cmp(&ab_b.0).then_with(|| ab_a.1.cmp(&ab_b.1))
+                        }
+                        _ => Ordering::Equal,
+                    }
+                }
+                other => {
+                    eprintln!("error: unknown field name: {other}");
+                    std::process::exit(129);
+                }
+            };
+            if desc {
+                primary = primary.reverse();
+            }
+            if primary != Ordering::Equal {
+                return primary;
+            }
+        }
+        cmp_name(a, b)
+    });
     Ok(())
+}
+
+fn object_size_for_sort(repo: &Repository, b: &BranchInfo) -> u64 {
+    repo.odb
+        .read(&b.oid)
+        .map(|o| o.data.len() as u64)
+        .unwrap_or(0)
+}
+
+fn object_kind_for_sort(repo: &Repository, b: &BranchInfo) -> u8 {
+    repo.odb
+        .read(&b.oid)
+        .map(|o| match o.kind {
+            ObjectKind::Commit => 0u8,
+            ObjectKind::Tag => 1,
+            ObjectKind::Tree => 2,
+            ObjectKind::Blob => 3,
+        })
+        .unwrap_or(255)
 }
 
 /// Parsed upstream / ahead-behind display for a local branch (`git branch -v` / `-vv`).
@@ -1055,68 +1409,30 @@ fn parse_upstream(repo: &Repository, upstream: &str) -> Result<(String, String)>
     bail!("cannot parse upstream '{upstream}' — expected format: remote/branch");
 }
 
-/// Format a branch using for-each-ref style format atoms.
+/// Format a branch line (`--format`); supports t3203 atoms and conditionals via [`expand_branch_format`].
 fn format_branch(
     repo: &Repository,
     head: &HeadState,
     branch: &BranchInfo,
     fmt: &str,
-) -> Result<String> {
-    let mut result = fmt.to_string();
-
-    // %(refname) — full refname
-    let full_refname = if branch.is_remote {
-        format!("refs/remotes/{}", branch.name)
+    omit_empty: bool,
+    emit_format_color: bool,
+) -> Result<String, BranchListError> {
+    let refname_display = if branch.full_refname.is_none() {
+        detached_head_description(repo, head).map_err(|e| BranchListError::Other(e.into()))?
     } else {
-        format!("refs/heads/{}", branch.name)
+        branch.full_refname.clone().unwrap()
     };
-
-    // %(refname:short)
-    result = result.replace("%(refname:short)", &branch.name);
-    // %(refname) after short to avoid double-replace
-    result = result.replace("%(refname)", &full_refname);
-
-    // %(objectname:short) before %(objectname)
-    let hex = branch.oid.to_hex();
-    let short_oid = &hex[..7];
-    result = result.replace("%(objectname:short)", short_oid);
-    result = result.replace("%(objectname)", &hex);
-
-    // %(HEAD) — * if current
-    let current_branch = head.branch_name().unwrap_or("");
-    let is_current = !branch.is_remote && branch.name == current_branch;
-    result = result.replace("%(HEAD)", if is_current { "*" } else { " " });
-
-    // %(upstream:short) before %(upstream)
-    if result.contains("%(upstream") {
-        let track = resolve_branch_tracking(repo, &branch.name)?;
-        let upstream_name = track
-            .as_ref()
-            .map(|t| t.upstream_short.as_str())
-            .unwrap_or("");
-        let upstream_full = track
-            .as_ref()
-            .map(|t| t.upstream_ref_full.as_str())
-            .unwrap_or("");
-        result = result.replace("%(upstream:short)", upstream_name);
-        result = result.replace("%(upstream)", upstream_full);
-    }
-
-    // %(subject) — commit message first line
-    let subject = commit_subject(&repo.odb, &branch.oid).unwrap_or_default();
-    result = result.replace("%(subject)", &subject);
-
-    // %(committerdate) and %(authordate) — raw signature strings
-    if result.contains("%(committerdate)") || result.contains("%(authordate)") {
-        if let Ok(obj) = repo.odb.read(&branch.oid) {
-            if let Ok(commit) = parse_commit(&obj.data) {
-                result = result.replace("%(committerdate)", &commit.committer);
-                result = result.replace("%(authordate)", &commit.author);
-            }
-        }
-    }
-
-    Ok(result)
+    let ctx = BranchFormatContext {
+        repo,
+        refname_display: &refname_display,
+        oid: branch.oid,
+        full_refname: branch.full_refname.as_deref(),
+        emit_format_color,
+    };
+    expand_branch_format(&ctx, fmt, omit_empty).map_err(|e| match e {
+        BranchFormatError::Fatal(m) => BranchListError::FormatFatal(m),
+    })
 }
 
 /// Create a new branch.
@@ -1913,6 +2229,14 @@ fn parse_signature_time(sig: &str) -> i64 {
 /// Supports `*` (match any chars) and `?` (match one char).
 fn glob_match(pattern: &str, text: &str) -> bool {
     glob_match_inner(pattern.as_bytes(), text.as_bytes())
+}
+
+fn glob_match_case(pattern: &str, text: &str, ignore_case: bool) -> bool {
+    if ignore_case {
+        glob_match(&pattern.to_lowercase(), &text.to_lowercase())
+    } else {
+        glob_match(pattern, text)
+    }
 }
 
 fn glob_match_inner(pattern: &[u8], text: &[u8]) -> bool {

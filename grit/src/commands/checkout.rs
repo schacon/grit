@@ -889,7 +889,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 // `checkout --detach` with no target: detach at current HEAD
                 match resolve_head(&repo.git_dir)? {
                     HeadState::Branch { oid: Some(oid), .. } | HeadState::Detached { oid } => {
-                        return detach_head(&repo, &oid, switch_force);
+                        return detach_head(&repo, &oid, switch_force, None);
                     }
                     _ => bail!("cannot detach HEAD on unborn branch"),
                 }
@@ -915,7 +915,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 );
             }
             if let Ok(oid) = resolve_to_commit(&repo, &prev) {
-                return detach_head(&repo, &oid, switch_force);
+                let label = detach_reflog_to_label(&repo, &prev, &oid);
+                return detach_head(&repo, &oid, switch_force, label.as_deref());
             }
             bail!("error: previous branch '{}' not found", prev);
         }
@@ -938,7 +939,7 @@ pub fn run(mut args: Args) -> Result<()> {
         }
         // Not a branch — try as a commit (detached HEAD)
         if let Ok(oid) = resolve_to_commit(&repo, &prev) {
-            return detach_head(&repo, &oid, switch_force);
+            return detach_head(&repo, &oid, switch_force, None);
         }
         bail!("error: previous branch '{}' not found", prev);
     }
@@ -984,7 +985,8 @@ pub fn run(mut args: Args) -> Result<()> {
         if full.strip_prefix("refs/remotes/").is_some() {
             let oid = refs::resolve_ref(&repo.git_dir, &full)
                 .with_context(|| format!("cannot resolve '{full}'"))?;
-            return detach_head(&repo, &oid, switch_force);
+            let label = detach_reflog_to_label_for_full_ref(&repo, &full, &oid);
+            return detach_head(&repo, &oid, switch_force, label.as_deref());
         }
         bail!("cannot checkout upstream: unsupported ref '{full}'");
     }
@@ -1036,11 +1038,10 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    // Try as a branch first
+    // Try as a branch first; if missing but a tag matches, detach at the tag (t3203).
     let branch_ref = format!("refs/heads/{target}");
+    let tag_ref = format!("refs/tags/{target}");
     if !args.detach && refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-        // Warn if a tag with the same name also exists (ambiguous ref)
-        let tag_ref = format!("refs/tags/{target}");
         if refs::resolve_ref(&repo.git_dir, &tag_ref).is_ok() {
             eprintln!("warning: refname '{}' is ambiguous.", target);
         }
@@ -1054,6 +1055,11 @@ pub fn run(mut args: Args) -> Result<()> {
             &merge_cli,
         );
     }
+    if !args.detach && refs::resolve_ref(&repo.git_dir, &tag_ref).is_ok() {
+        let commit_oid = resolve_to_commit(&repo, &target)?;
+        let label = Some(target.to_owned());
+        return detach_head(&repo, &commit_oid, switch_force, label.as_deref());
+    }
 
     // `checkout tags/<name>` — explicit tag ref (t7201 ambiguous tag vs branch).
     if !args.detach && (target.starts_with("tags/") || target.starts_with("refs/tags/")) {
@@ -1061,8 +1067,10 @@ pub fn run(mut args: Args) -> Result<()> {
             .strip_prefix("refs/tags/")
             .unwrap_or_else(|| target.strip_prefix("tags/").unwrap_or(&target));
         let tag_ref = format!("refs/tags/{tag_name}");
-        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &tag_ref) {
-            return detach_head(&repo, &oid, switch_force);
+        if let Ok(_tag_oid) = refs::resolve_ref(&repo.git_dir, &tag_ref) {
+            let commit_oid = resolve_to_commit(&repo, tag_name)?;
+            let label = Some(tag_name.to_string());
+            return detach_head(&repo, &commit_oid, switch_force, label.as_deref());
         }
     }
 
@@ -1139,7 +1147,10 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Try as a commit (detached HEAD)
     match resolve_to_commit(&repo, &target) {
-        Ok(oid) => detach_head(&repo, &oid, switch_force),
+        Ok(oid) => {
+            let label = detach_reflog_to_label(&repo, &target, &oid);
+            detach_head(&repo, &oid, switch_force, label.as_deref())
+        }
         Err(_) => {
             // Fallback: try as a pathspec (git checkout <file> without --).
             // If the target looks like a tracked file, restore it from HEAD.
@@ -2341,15 +2352,26 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
 
 /// Detach HEAD at a specific commit.
 fn detach_head_explicit(repo: &Repository, oid: &ObjectId, force: bool) -> Result<()> {
-    detach_head_inner(repo, oid, force, true)
+    detach_head_inner(repo, oid, force, true, None)
 }
 
 /// Detach HEAD at `oid` (used by `bisect` and `checkout`).
-pub(crate) fn detach_head(repo: &Repository, oid: &ObjectId, force: bool) -> Result<()> {
-    detach_head_inner(repo, oid, force, false)
+pub(crate) fn detach_head(
+    repo: &Repository,
+    oid: &ObjectId,
+    force: bool,
+    reflog_to: Option<&str>,
+) -> Result<()> {
+    detach_head_inner(repo, oid, force, false, reflog_to)
 }
 
-fn detach_head_inner(repo: &Repository, oid: &ObjectId, force: bool, explicit: bool) -> Result<()> {
+fn detach_head_inner(
+    repo: &Repository,
+    oid: &ObjectId,
+    force: bool,
+    explicit: bool,
+    reflog_to: Option<&str>,
+) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
     let old_head_commit = head.oid().copied();
 
@@ -2380,7 +2402,9 @@ fn detach_head_inner(repo: &Repository, oid: &ObjectId, force: bool, explicit: b
         HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
         HeadState::Invalid => "unknown".to_string(),
     };
-    let to_desc = oid.to_hex()[..7].to_string();
+    let to_desc = reflog_to
+        .map(str::to_owned)
+        .unwrap_or_else(|| oid.to_hex()[..7].to_string());
     let msg = format!("checkout: moving from {} to {}", from_desc, to_desc);
     write_checkout_reflog(repo, &head, &old_oid, oid, &msg);
 
@@ -4474,6 +4498,33 @@ fn maybe_setup_tracking(
 // ---------------------------------------------------------------------------
 // Tree / object helpers (local to this command)
 // ---------------------------------------------------------------------------
+
+/// Reflog "to" field for `checkout` when detaching: use tag / remote name when applicable (Git
+/// records the user's ref in `logs/HEAD`, which `git branch` uses for detached HEAD labels).
+fn detach_reflog_to_label(repo: &Repository, spec: &str, peeled: &ObjectId) -> Option<String> {
+    let tag_short = spec.strip_prefix("refs/tags/").unwrap_or(spec);
+    let tag_ref = format!("refs/tags/{tag_short}");
+    if refs::resolve_ref(&repo.git_dir, &tag_ref).is_ok()
+        && resolve_to_commit(repo, tag_short).ok().as_ref() == Some(peeled)
+    {
+        return Some(tag_short.to_owned());
+    }
+    None
+}
+
+fn detach_reflog_to_label_for_full_ref(
+    _repo: &Repository,
+    full: &str,
+    _peeled: &ObjectId,
+) -> Option<String> {
+    if let Some(s) = full.strip_prefix("refs/tags/") {
+        return Some(s.to_owned());
+    }
+    if let Some(rest) = full.strip_prefix("refs/remotes/") {
+        return Some(rest.to_owned());
+    }
+    None
+}
 
 /// Resolve a revision spec to a commit OID, peeling through tags.
 fn resolve_to_commit(repo: &Repository, spec: &str) -> Result<ObjectId> {

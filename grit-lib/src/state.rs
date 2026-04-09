@@ -336,20 +336,6 @@ fn strip_ref_for_display(full: &str) -> String {
     full.to_string()
 }
 
-fn tag_name_for_oid(git_dir: &Path, oid: ObjectId) -> Option<String> {
-    let tags = crate::refs::list_refs(git_dir, "refs/tags/").ok()?;
-    let mut names: Vec<String> = tags
-        .into_iter()
-        .filter(|(_, o)| *o == oid)
-        .map(|(name, _)| name.strip_prefix("refs/tags/").unwrap_or(&name).to_string())
-        .collect();
-    if names.is_empty() {
-        return None;
-    }
-    names.sort();
-    names.into_iter().next()
-}
-
 fn dwim_detach_label(git_dir: &Path, target: &str, noid: ObjectId) -> String {
     if target == "HEAD" {
         return abbrev_oid(&noid);
@@ -379,14 +365,14 @@ fn dwim_detach_label(git_dir: &Path, target: &str, noid: ObjectId) -> String {
             }
         }
     }
+    // `checkout … to <abbrev>` records the object name from the user's input; show that
+    // abbreviation (Git does not substitute a tag name here — see t3203 detached HEAD).
     if !target.is_empty()
         && target.chars().all(|c| c.is_ascii_hexdigit())
         && target.len() <= 40
         && noid.to_hex().starts_with(target)
     {
-        if let Some(tag) = tag_name_for_oid(git_dir, noid) {
-            return tag;
-        }
+        return target.to_owned();
     }
     abbrev_oid(&noid)
 }
