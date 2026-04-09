@@ -15,10 +15,11 @@ use crate::explicit_exit::ExplicitExit;
 use grit_lib::attributes::quote_path_for_check_attr;
 use grit_lib::config::ConfigSet;
 use grit_lib::index::{MODE_GITLINK, MODE_TREE};
-use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
+use grit_lib::merge_diff::{blob_text_for_diff, blob_text_for_diff_with_oid, diff_textconv_active};
+use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{discover_optional, resolve_revision, show_prefix};
+use grit_lib::rev_parse::{discover_optional, resolve_revision, show_prefix, split_treeish_colon};
 use grit_lib::wildmatch::wildmatch;
 
 use crate::pathspec::resolve_pathspec;
@@ -219,7 +220,7 @@ pub struct Args {
     #[arg(long = "no-index")]
     pub no_index: bool,
 
-    /// Use textconv filter (accepted but not yet implemented).
+    /// Use `diff.<driver>.textconv` when `diff=<driver>` applies (search converted bytes).
     #[arg(long = "textconv")]
     pub textconv: bool,
 
@@ -458,6 +459,21 @@ fn run_inner(pattern_tokens: Vec<PatternToken>, mut args: Args) -> Result<()> {
         pathspecs
     };
 
+    let single_rev_path =
+        (!args.no_index && !args.cached && tree_ish.is_none() && pathspecs.len() == 1)
+            .then(|| pathspecs[0].as_str())
+            .and_then(split_treeish_colon)
+            .filter(|(rev, path)| !rev.is_empty() && !path.is_empty())
+            .and_then(|(rev, path)| {
+                let spec = format!("{rev}:{path}");
+                let oid = resolve_revision(&repo, &spec)
+                    .or_else(|_| resolve_ref(&repo.git_dir, &spec))
+                    .or_else(|_| resolve_ref(&repo.git_dir, &format!("refs/heads/{spec}")))
+                    .ok()?;
+                let obj = repo.odb.read(&oid).ok()?;
+                (obj.kind == ObjectKind::Blob).then(|| (rev.to_string(), path.to_string()))
+            });
+
     let mut pattern_tokens = pattern_tokens;
     if pattern_tokens.is_empty() {
         if let Some(p) = first_pos_pattern {
@@ -517,7 +533,31 @@ fn run_inner(pattern_tokens: Vec<PatternToken>, mut args: Args) -> Result<()> {
     let mut need_sep = false;
 
     let found_any;
-    if args.no_index {
+    if let Some((rev, file_path)) = single_rev_path {
+        let diff_attrs = if let Some(ref wt) = repo.work_tree {
+            let wt_attrs = load_diff_attrs(wt);
+            if wt_attrs.is_empty() {
+                load_diff_attrs_from_index(&repo)
+            } else {
+                wt_attrs
+            }
+        } else {
+            load_diff_attrs_from_index(&repo)
+        };
+        let rev_path_label = format!("{rev}:{file_path}");
+        found_any = grep_one_blob_at_revision(
+            &repo,
+            &rev,
+            &file_path,
+            &rev_path_label,
+            &compiled,
+            &args,
+            &diff_attrs,
+            &mut need_sep,
+            out,
+            &mut open_paths,
+        )?;
+    } else if args.no_index {
         // --no-index: walk the filesystem instead of using the index
         let start_dir = std::env::current_dir().context("cannot get current directory")?;
         found_any = grep_filesystem(
@@ -707,6 +747,100 @@ fn run_open_in_pager(
     Ok(())
 }
 
+/// `git grep` with a single `rev:path` pathspec (e.g. `HEAD:a`): search one blob from that revision.
+fn grep_one_blob_at_revision(
+    repo: &Repository,
+    rev: &str,
+    file_path: &str,
+    rev_path_label: &str,
+    compiled: &CompiledGrep,
+    args: &Args,
+    diff_attrs: &[DiffAttrRule],
+    need_sep: &mut bool,
+    out: &mut (impl Write + ?Sized),
+    open_paths: &mut Option<Vec<String>>,
+) -> Result<bool> {
+    let spec = rev_path_label.to_string();
+    let blob_oid = resolve_revision(repo, &spec)
+        .or_else(|_| resolve_ref(&repo.git_dir, &spec))
+        .or_else(|_| resolve_ref(&repo.git_dir, &format!("refs/heads/{spec}")))
+        .with_context(|| format!("not a valid object: '{spec}'"))?;
+    let obj = repo
+        .odb
+        .read(&blob_oid)
+        .with_context(|| format!("object not found: {blob_oid}"))?;
+    if obj.kind != ObjectKind::Blob {
+        bail!("'{spec}' is not a blob");
+    }
+    let binary_override = check_binary_override(diff_attrs, file_path);
+    let is_binary = grep_is_binary(repo, file_path, &obj.data, args, binary_override);
+    if is_binary && args.ignore_binary {
+        return Ok(false);
+    }
+    let rel = cwd_strip_repo_rel(repo, file_path, args);
+    if is_binary && !args.text_mode {
+        if args.count || args.files_with_matches || args.files_without_match || args.quiet {
+            let content = blob_as_grep_text(
+                repo,
+                file_path,
+                &obj.data,
+                Some(&blob_oid),
+                args,
+                binary_override,
+            );
+            return grep_content(
+                &rel,
+                Some(rev),
+                &content,
+                compiled,
+                args,
+                need_sep,
+                out,
+                open_paths,
+            );
+        }
+        let content = blob_as_grep_text(
+            repo,
+            file_path,
+            &obj.data,
+            Some(&blob_oid),
+            args,
+            binary_override,
+        );
+        let has_match = compiled
+            .atoms
+            .iter()
+            .any(|r| r.as_ref().is_some_and(|re| re.is_match(&content)));
+        if has_match {
+            if !args.quiet {
+                let quoted = path_for_output(file_path, args);
+                let display = format!("{rev}:{quoted}");
+                writeln!(out, "Binary file {} matches", display)?;
+            }
+            return Ok(true);
+        }
+        return Ok(false);
+    }
+    let content = blob_as_grep_text(
+        repo,
+        file_path,
+        &obj.data,
+        Some(&blob_oid),
+        args,
+        binary_override,
+    );
+    grep_content(
+        &rel,
+        Some(rev),
+        &content,
+        compiled,
+        args,
+        need_sep,
+        out,
+        open_paths,
+    )
+}
+
 /// Grep the index (--cached mode), optionally recursing into submodules.
 /// `path_prefix` is prepended to filenames for submodule display (e.g. "submodule/").
 fn grep_cached(
@@ -791,19 +925,21 @@ fn grep_cached(
                 Ok(o) => o,
                 Err(_) => continue,
             };
-            let content_is_binary = obj.data.iter().take(8000).any(|&b| b == 0);
             let binary_override = check_binary_override(&diff_attrs, &path_str);
-            let is_binary = match binary_override {
-                BinaryOverride::ForceBinary => true,
-                BinaryOverride::ForceText => false,
-                BinaryOverride::None => content_is_binary,
-            };
+            let is_binary = grep_is_binary(repo, &path_str, &obj.data, args, binary_override);
             if is_binary && args.ignore_binary {
                 continue;
             }
             if is_binary && !args.text_mode {
                 if args.count || args.files_with_matches || args.files_without_match || args.quiet {
-                    let content = String::from_utf8_lossy(&obj.data);
+                    let content = blob_as_grep_text(
+                        repo,
+                        &path_str,
+                        &obj.data,
+                        Some(&entry.oid),
+                        args,
+                        binary_override,
+                    );
                     let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
                     if grep_content(
                         &rel, None, &content, compiled, args, need_sep, out, open_paths,
@@ -811,7 +947,14 @@ fn grep_cached(
                         found_any = true;
                     }
                 } else {
-                    let content = String::from_utf8_lossy(&obj.data);
+                    let content = blob_as_grep_text(
+                        repo,
+                        &path_str,
+                        &obj.data,
+                        Some(&entry.oid),
+                        args,
+                        binary_override,
+                    );
                     let has_match = compiled
                         .atoms
                         .iter()
@@ -822,7 +965,14 @@ fn grep_cached(
                     }
                 }
             } else {
-                let content = String::from_utf8_lossy(&obj.data);
+                let content = blob_as_grep_text(
+                    repo,
+                    &path_str,
+                    &obj.data,
+                    Some(&entry.oid),
+                    args,
+                    binary_override,
+                );
                 let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
                 if grep_content(
                     &rel, None, &content, compiled, args, need_sep, out, open_paths,
@@ -844,19 +994,21 @@ fn grep_cached(
             Ok(o) => o,
             Err(_) => continue,
         };
-        let content_is_binary = obj.data.iter().take(8000).any(|&b| b == 0);
         let binary_override = check_binary_override(&diff_attrs, &path_str);
-        let is_binary = match binary_override {
-            BinaryOverride::ForceBinary => true,
-            BinaryOverride::ForceText => false,
-            BinaryOverride::None => content_is_binary,
-        };
+        let is_binary = grep_is_binary(repo, &path_str, &obj.data, args, binary_override);
         if is_binary && args.ignore_binary {
             continue;
         }
         if is_binary && !args.text_mode {
             if args.count || args.files_with_matches || args.files_without_match || args.quiet {
-                let content = String::from_utf8_lossy(&obj.data);
+                let content = blob_as_grep_text(
+                    repo,
+                    &path_str,
+                    &obj.data,
+                    Some(&entry.oid),
+                    args,
+                    binary_override,
+                );
                 let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
                 if grep_content(
                     &rel, None, &content, compiled, args, need_sep, out, open_paths,
@@ -864,7 +1016,14 @@ fn grep_cached(
                     found_any = true;
                 }
             } else {
-                let content = String::from_utf8_lossy(&obj.data);
+                let content = blob_as_grep_text(
+                    repo,
+                    &path_str,
+                    &obj.data,
+                    Some(&entry.oid),
+                    args,
+                    binary_override,
+                );
                 let has_match = compiled
                     .atoms
                     .iter()
@@ -875,7 +1034,14 @@ fn grep_cached(
                 }
             }
         } else {
-            let content = String::from_utf8_lossy(&obj.data);
+            let content = blob_as_grep_text(
+                repo,
+                &path_str,
+                &obj.data,
+                Some(&entry.oid),
+                args,
+                binary_override,
+            );
             let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
             if grep_content(
                 &rel, None, &content, compiled, args, need_sep, out, open_paths,
@@ -976,19 +1142,15 @@ fn grep_worktree(
                 Ok(c) => c,
                 Err(_) => continue,
             };
-            let content_is_binary = content.iter().take(8000).any(|&b| b == 0);
             let binary_override = check_binary_override(&diff_attrs, &path_str);
-            let is_binary = match binary_override {
-                BinaryOverride::ForceBinary => true,
-                BinaryOverride::ForceText => false,
-                BinaryOverride::None => content_is_binary,
-            };
+            let is_binary = grep_is_binary(repo, &path_str, &content, args, binary_override);
             if is_binary && args.ignore_binary {
                 continue;
             }
             if is_binary && !args.text_mode {
                 if args.count || args.files_with_matches || args.files_without_match || args.quiet {
-                    let content_str = String::from_utf8_lossy(&content);
+                    let content_str =
+                        blob_as_grep_text(repo, &path_str, &content, None, args, binary_override);
                     let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
                     if grep_content(
                         &rel,
@@ -1003,7 +1165,8 @@ fn grep_worktree(
                         found_any = true;
                     }
                 } else {
-                    let content_str = String::from_utf8_lossy(&content);
+                    let content_str =
+                        blob_as_grep_text(repo, &path_str, &content, None, args, binary_override);
                     let has_match = compiled
                         .atoms
                         .iter()
@@ -1014,7 +1177,8 @@ fn grep_worktree(
                     }
                 }
             } else {
-                let content_str = String::from_utf8_lossy(&content);
+                let content_str =
+                    blob_as_grep_text(repo, &path_str, &content, None, args, binary_override);
                 let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
                 if grep_content(
                     &rel,
@@ -1051,19 +1215,21 @@ fn grep_worktree(
                 Ok(o) => o,
                 Err(_) => continue,
             };
-            let content_is_binary = obj.data.iter().take(8000).any(|&b| b == 0);
             let binary_override = check_binary_override(&diff_attrs, &path_str);
-            let is_binary = match binary_override {
-                BinaryOverride::ForceBinary => true,
-                BinaryOverride::ForceText => false,
-                BinaryOverride::None => content_is_binary,
-            };
+            let is_binary = grep_is_binary(repo, &path_str, &obj.data, args, binary_override);
             if is_binary && args.ignore_binary {
                 continue;
             }
             if is_binary && !args.text_mode {
                 if args.count || args.files_with_matches || args.files_without_match || args.quiet {
-                    let content_str = String::from_utf8_lossy(&obj.data);
+                    let content_str = blob_as_grep_text(
+                        repo,
+                        &path_str,
+                        &obj.data,
+                        Some(&entry.oid),
+                        args,
+                        binary_override,
+                    );
                     let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
                     if grep_content(
                         &rel,
@@ -1078,7 +1244,14 @@ fn grep_worktree(
                         found_any = true;
                     }
                 } else {
-                    let content_str = String::from_utf8_lossy(&obj.data);
+                    let content_str = blob_as_grep_text(
+                        repo,
+                        &path_str,
+                        &obj.data,
+                        Some(&entry.oid),
+                        args,
+                        binary_override,
+                    );
                     let has_match = compiled
                         .atoms
                         .iter()
@@ -1089,7 +1262,14 @@ fn grep_worktree(
                     }
                 }
             } else {
-                let content_str = String::from_utf8_lossy(&obj.data);
+                let content_str = blob_as_grep_text(
+                    repo,
+                    &path_str,
+                    &obj.data,
+                    Some(&entry.oid),
+                    args,
+                    binary_override,
+                );
                 let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
                 if grep_content(
                     &rel,
@@ -1116,13 +1296,8 @@ fn grep_worktree(
             Err(_) => continue,
         };
 
-        let content_is_binary = content.iter().take(8000).any(|&b| b == 0);
         let binary_override = check_binary_override(&diff_attrs, &path_str);
-        let is_binary = match binary_override {
-            BinaryOverride::ForceBinary => true,
-            BinaryOverride::ForceText => false,
-            BinaryOverride::None => content_is_binary,
-        };
+        let is_binary = grep_is_binary(repo, &path_str, &content, args, binary_override);
 
         if is_binary && args.ignore_binary {
             continue;
@@ -1130,7 +1305,8 @@ fn grep_worktree(
 
         if is_binary && !args.text_mode {
             if args.count || args.files_with_matches || args.files_without_match || args.quiet {
-                let content_str = String::from_utf8_lossy(&content);
+                let content_str =
+                    blob_as_grep_text(repo, &path_str, &content, None, args, binary_override);
                 let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
                 if grep_content(
                     &rel,
@@ -1145,7 +1321,8 @@ fn grep_worktree(
                     found_any = true;
                 }
             } else {
-                let content_str = String::from_utf8_lossy(&content);
+                let content_str =
+                    blob_as_grep_text(repo, &path_str, &content, None, args, binary_override);
                 let has_match = compiled
                     .atoms
                     .iter()
@@ -1156,7 +1333,8 @@ fn grep_worktree(
                 }
             }
         } else {
-            let content_str = String::from_utf8_lossy(&content);
+            let content_str =
+                blob_as_grep_text(repo, &path_str, &content, None, args, binary_override);
             let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
             if grep_content(
                 &rel,
@@ -1410,6 +1588,74 @@ fn check_binary_override(rules: &[DiffAttrRule], path: &str) -> BinaryOverride {
         }
     }
     result
+}
+
+/// True when `git grep --textconv` should run `diff.<driver>.textconv` for this path.
+///
+/// `-diff` (`ForceBinary`) disables textconv, matching Git.
+fn path_has_active_textconv(
+    repo: &Repository,
+    path_for_attrs: &str,
+    args: &Args,
+    binary_override: BinaryOverride,
+) -> bool {
+    if args.no_textconv || !args.textconv || binary_override == BinaryOverride::ForceBinary {
+        return false;
+    }
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    diff_textconv_active(repo.git_dir.as_path(), &config, path_for_attrs)
+}
+
+/// Whether grep treats blob bytes as binary (NUL heuristic, `.gitattributes`, `--textconv`).
+fn grep_is_binary(
+    repo: &Repository,
+    path_for_attrs: &str,
+    raw_bytes: &[u8],
+    args: &Args,
+    binary_override: BinaryOverride,
+) -> bool {
+    let content_is_binary = raw_bytes.iter().take(8000).any(|&b| b == 0);
+    match binary_override {
+        BinaryOverride::ForceBinary => true,
+        BinaryOverride::ForceText => false,
+        BinaryOverride::None => {
+            if !content_is_binary {
+                false
+            } else if path_has_active_textconv(repo, path_for_attrs, args, binary_override) {
+                false
+            } else {
+                true
+            }
+        }
+    }
+}
+
+/// Search text: optional textconv when `--textconv` and a driver applies.
+fn blob_as_grep_text(
+    repo: &Repository,
+    path_for_attrs: &str,
+    blob: &[u8],
+    blob_oid: Option<&ObjectId>,
+    args: &Args,
+    binary_override: BinaryOverride,
+) -> String {
+    if !path_has_active_textconv(repo, path_for_attrs, args, binary_override) {
+        return String::from_utf8_lossy(blob).into_owned();
+    }
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    if let Some(oid) = blob_oid {
+        blob_text_for_diff_with_oid(
+            &repo.odb,
+            repo.git_dir.as_path(),
+            &config,
+            path_for_attrs,
+            blob,
+            oid,
+            true,
+        )
+    } else {
+        blob_text_for_diff(repo.git_dir.as_path(), &config, path_for_attrs, blob, true)
+    }
 }
 
 /// Grep the filesystem recursively (--no-index mode).
@@ -2431,20 +2677,22 @@ fn grep_tree(
                 Err(_) => continue,
             };
 
-            let content_is_binary = obj.data.iter().take(8000).any(|&b| b == 0);
             let binary_override = check_binary_override(diff_attrs, &full_name);
-            let is_binary = match binary_override {
-                BinaryOverride::ForceBinary => true,
-                BinaryOverride::ForceText => false,
-                BinaryOverride::None => content_is_binary,
-            };
+            let is_binary = grep_is_binary(repo, &full_name, &obj.data, args, binary_override);
 
             if is_binary && args.ignore_binary {
                 continue;
             }
 
             if is_binary && !args.text_mode {
-                let content = String::from_utf8_lossy(&obj.data);
+                let content = blob_as_grep_text(
+                    repo,
+                    &full_name,
+                    &obj.data,
+                    Some(&entry.oid),
+                    args,
+                    binary_override,
+                );
                 let has_match = compiled
                     .atoms
                     .iter()
@@ -2460,7 +2708,14 @@ fn grep_tree(
                     found = true;
                 }
             } else {
-                let content = String::from_utf8_lossy(&obj.data);
+                let content = blob_as_grep_text(
+                    repo,
+                    &full_name,
+                    &obj.data,
+                    Some(&entry.oid),
+                    args,
+                    binary_override,
+                );
                 let rel = cwd_strip_repo_rel(repo, &full_name, args);
                 if grep_content(
                     &rel, tree_name, &content, compiled, args, need_sep, out, open_paths,
