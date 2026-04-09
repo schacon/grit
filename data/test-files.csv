@@ -117,7 +117,7 @@ t1016-compatObjectSorting	t1	yes	19	17	2	false	ok	0
 t10160-commit-amend-author	t1	yes	30	30	0	true	ok	0
 t10180-rm-recursive-quiet	t1	yes	34	34	0	true	ok	0
 t10190-mv-directory-rename	t1	yes	34	34	0	true	ok	0
-t1020-subdirectory	t1	yes	15	11	4	false	ok	0
+t1020-subdirectory	t1	yes	15	15	0	true	ok	0
 t10200-switch-orphan-detach	t1	yes	31	31	0	true	ok	0
 t10210-restore-staged-source	t1	yes	34	34	0	true	ok	0
 t1022-read-tree-partial-clone	t1	yes	1	1	0	true	ok	0
