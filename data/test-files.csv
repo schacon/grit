@@ -842,7 +842,7 @@ t4217-log-limit	t4	yes	3	1	2	false	ok	0
 t4218-log-no-walk	t4	yes	7	7	0	true	ok	0
 t4219-log-date-format	t4	yes	14	14	0	true	ok	0
 t4220-log-source	t4	yes	4	4	0	true	ok	0
-t4221-log-simplify-decoration	t4	yes	4	3	1	false	ok	0
+t4221-log-simplify-decoration	t4	yes	4	4	0	true	ok	0
 t4252-am-options	t4	yes	8	1	7	false	ok	0
 t4253-am-keep-cr-dos	t4	yes	7	7	0	true	ok	0
 t4254-am-corrupt	t4	yes	4	4	0	true	ok	0
