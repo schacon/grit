@@ -273,7 +273,7 @@ commit → check it off → move on.
 - [ ] `t3703-add-magic-pathspec` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — magic pathspec tests using git-add
 - [ ] `t3601-rm-pathspec-file` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — rm --pathspec-from-file
 - [ ] `t3909-stash-pathspec-file` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — stash --pathspec-from-file
-- [ ] `t3417-rebase-whitespace-fix` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — git rebase --whitespace=fix
+- [x] `t3417-rebase-whitespace-fix` ████████████████████ 4/4 (0 left) — git rebase --whitespace=fix
 
 - [ ] `t3433-rebase-across-mode-change` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — git rebase across mode change
 - [ ] `t3040-subprojects-basic` ██████████░░░░░░░░░░ 6/11 (5 left) — Basic subproject functionality

@@ -2396,6 +2396,8 @@ fn cherry_pick_for_rebase(
     let head_obj = repo.odb.read(&head_oid)?;
     let head_commit = parse_commit(&head_obj.data)?;
     let head_tree_oid = head_commit.tree;
+    let root_rebase = rb_dir.join("root").exists();
+    let ws_fix_rule = load_ws_fix_rule_from_rebase_state(git_dir);
 
     // Already at the picked commit's parent tip — nothing to replay (matches Git's noop pick).
     // Fixup/squash must still run merge + message folding even when parent == HEAD.
@@ -2406,11 +2408,45 @@ fn cherry_pick_for_rebase(
                 let mut idx = Index::new();
                 idx.entries = tree_to_index_entries(repo, &commit_tree_oid, "")?;
                 idx.sort();
+                if let Some(rule) = ws_fix_rule {
+                    apply_ws_fix_to_index(repo, &mut idx, rule)?;
+                }
                 repo.write_index(&mut idx)?;
                 if let Some(wt) = &repo.work_tree {
                     checkout_merged_index(repo, wt, &old_index, &idx)?;
                 }
-                fs::write(git_dir.join("HEAD"), format!("{}\n", commit_oid.to_hex()))?;
+                if ws_fix_rule.is_some() {
+                    let tree_oid = write_tree_from_index(&repo.odb, &idx, "")?;
+                    let now = time::OffsetDateTime::now_utc();
+                    let committer = resolve_identity(&config, "COMMITTER")?;
+                    let (message, encoding, raw_message) = if root_rebase {
+                        let msg = message_for_root_replayed_commit(repo, &commit, true);
+                        (msg, commit.encoding.clone(), None)
+                    } else {
+                        transcoded_replayed_message(&commit, &config)
+                    };
+                    let raw_msg =
+                        commit_message_after_prepare_hook(repo, git_dir, &message, "message")?;
+                    let message =
+                        apply_commit_msg_cleanup(&raw_msg, rebase_commit_msg_cleanup(&config));
+                    let commit_data = CommitData {
+                        tree: tree_oid,
+                        parents: vec![head_oid],
+                        author: commit.author.clone(),
+                        committer: format_ident(&committer, now),
+                        author_raw: commit.author_raw.clone(),
+                        committer_raw: commit.committer_raw.clone(),
+                        encoding,
+                        message,
+                        raw_message,
+                    };
+                    let commit_bytes = serialize_commit(&commit_data);
+                    let new_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
+                    fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
+                    append_rebase_rewrite_line(rb_dir, commit_oid, &new_oid)?;
+                } else {
+                    fs::write(git_dir.join("HEAD"), format!("{}\n", commit_oid.to_hex()))?;
+                }
                 return Ok(());
             }
         }
@@ -2422,7 +2458,6 @@ fn cherry_pick_for_rebase(
     }
 
     // Three-way merge: base=parent_tree, ours=HEAD_tree, theirs=commit_tree
-    let ws_fix_rule = load_ws_fix_rule_from_rebase_state(git_dir);
     let base_tree_oid = if ws_fix_rule.is_some() {
         // After an earlier replay, HEAD can differ from the picked commit's parent tree in the ODB
         // (e.g. `rebase --whitespace=fix`). Use the current tip tree as the merge base so the
@@ -2447,6 +2482,10 @@ fn cherry_pick_for_rebase(
     )?;
     let mut merged_index = merge_result.index;
 
+    if let Some(rule) = ws_fix_rule {
+        apply_ws_fix_to_index(repo, &mut merged_index, rule)?;
+    }
+
     let has_conflicts = merged_index.entries.iter().any(|e| e.stage() != 0)
         || !merge_result.conflict_files.is_empty();
 
@@ -2461,8 +2500,6 @@ fn cherry_pick_for_rebase(
             write_rebase_conflict_files(wt, &merge_result.conflict_files)?;
         }
     }
-
-    let root_rebase = rb_dir.join("root").exists();
 
     if has_conflicts {
         let _ = grit_lib::rerere::repo_rerere(repo, grit_lib::rerere::RerereAutoupdate::FromConfig);
