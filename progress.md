@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   257 |
+| Completed   |   258 |
 | In progress |     4 |
-| Remaining   |   507 |
+| Remaining   |   506 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 257 completed (`[x]`), 4 in progress (`[~]`), 507 remaining (`[ ]`).
+Task lines in `PLAN.md`: 258 completed (`[x]`), 4 in progress (`[~]`), 506 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t3507-cherry-pick-conflict` — 44/44 tests pass (cherry-pick/revert conflicts: `CHERRY_PICK_HEAD`/`REVERT_HEAD`, advice text, `MERGE_MSG` scissors, diff3 markers, sequencer cleanup, sparse-checkout, `--continue` flags; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t4216-log-bloom` — 167/167 tests pass (commit-graph changed-path Bloom filters: `read-graph` bloom chunks, `GIT_TRACE2_PERF` statistics for path-limited `log`, incompatible settings/version warnings, split chains, trace2 filter counters; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5334-incremental-multi-pack-index` — 16/16 tests pass (incremental MIDX chain, bitmap/rev sidecars in `multi-pack-index.d`, `midx verify`, clone with `pack.allowPackReuse`; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t4120-apply-popt` — 12/12 tests pass (`git apply -p`: strip path components, malformed `-p` errors, traditional quoted paths, `--stat` with oversized strip, mode-only and rename patches with `--index`; harness CSV/dashboards refreshed)

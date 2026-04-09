@@ -356,7 +356,7 @@ commit → check it off → move on.
 - [ ] `t3600-rm` ████████████░░░░░░░░ 50/82 (32 left) — Test of the various options to git rm.
 - [ ] `t3510-cherry-pick-sequence` ████████░░░░░░░░░░░░ 22/55 (33 left) — Test cherry-pick continuation features
 
-- [ ] `t3507-cherry-pick-conflict` █████░░░░░░░░░░░░░░░ 11/44 (33 left) — test cherry-pick and revert with conflicts
+- [x] `t3507-cherry-pick-conflict` — test cherry-pick and revert with conflicts (44/44)
 
 - [ ] `t3430-rebase-merges` ░░░░░░░░░░░░░░░░░░░░ 1/34 (33 left) — git rebase -i --rebase-merges
 
