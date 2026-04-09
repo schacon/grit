@@ -912,7 +912,7 @@ t5403-post-checkout-hook	t5	yes	14	11	3	false	ok	0
 t5404-tracking-branches	t5	yes	7	3	4	false	ok	0
 t5405-send-pack-rewind	t5	yes	3	1	2	false	ok	0
 t5406-remote-rejects	t5	yes	3	2	1	false	ok	0
-t5407-post-rewrite-hook	t5	yes	17	7	10	false	ok	0
+t5407-post-rewrite-hook	t5	yes	17	11	6	false	ok	0
 t5408-send-pack-stdin	t5	yes	10	6	4	false	ok	0
 t5409-colorize-remote-messages	t5	yes	11	11	0	true	ok	0
 t5410-receive-pack	t5	yes	5	4	1	false	ok	0
