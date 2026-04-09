@@ -17,14 +17,14 @@ use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::refs::{append_reflog, list_refs};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
-use grit_lib::state::{resolve_head, HeadState};
+use grit_lib::state::{detect_in_progress, resolve_head, HeadState};
 use grit_lib::write_tree::{
     write_tree_from_index, write_tree_from_index_subset, write_tree_partial_from_index,
 };
 
 use crate::ident::{resolve_email, resolve_name, IdentRole};
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -611,14 +611,14 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
 
-    let staged = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
+    let mut staged = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
     let unstaged_raw = if let Some(wt) = work_tree {
         diff_index_to_worktree(&repo.odb, &index, wt)?
     } else {
         Vec::new()
     };
     let (rename_threshold, rename_copies) = commit_rename_settings(&config);
-    let unstaged = if let Some(th) = rename_threshold {
+    let mut unstaged = if let Some(th) = rename_threshold {
         status_apply_rename_copy_detection(
             &repo.odb,
             unstaged_raw,
@@ -629,6 +629,10 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         unstaged_raw
     };
+    let unmerged_full = crate::commands::status::unmerged_paths_and_mask(&index);
+    let unmerged_keys: BTreeSet<String> = unmerged_full.keys().cloned().collect();
+    staged.retain(|e| !unmerged_keys.contains(e.path()));
+    unstaged.retain(|e| !unmerged_keys.contains(e.path()));
     let untracked = if let Some(wt) = work_tree {
         find_untracked_files(wt, &index)?
     } else {
@@ -650,6 +654,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 }
             }
         }
+        let in_progress = detect_in_progress(&repo.git_dir);
         print_dry_run(
             &repo,
             &config,
@@ -657,6 +662,8 @@ pub fn run(mut args: Args) -> Result<()> {
             &staged,
             &unstaged,
             &untracked,
+            &unmerged_full,
+            &in_progress,
             pathspec_matched.as_ref(),
             no_ab,
         )?;
@@ -1104,6 +1111,8 @@ fn print_dry_run(
     staged: &[DiffEntry],
     unstaged: &[DiffEntry],
     untracked: &[String],
+    unmerged: &BTreeMap<String, u8>,
+    in_progress: &[grit_lib::state::InProgressOperation],
     pathspec_matched: Option<&HashSet<Vec<u8>>>,
     no_ahead_behind: bool,
 ) -> Result<()> {
@@ -1138,6 +1147,23 @@ fn print_dry_run(
         true,
         orphan_line,
     )?;
+
+    let merge_active = in_progress.contains(&grit_lib::state::InProgressOperation::Merge);
+    if merge_active {
+        if !unmerged.is_empty() {
+            writeln!(out, "You have unmerged paths.")?;
+            if show_hints {
+                writeln!(out, "  (fix conflicts and run \"git commit\")")?;
+                writeln!(out, "  (use \"git merge --abort\" to abort the merge)")?;
+            }
+        } else {
+            writeln!(out, "All conflicts fixed but you are still merging.")?;
+            if show_hints {
+                writeln!(out, "  (use \"git commit\" to conclude merge)")?;
+            }
+        }
+        writeln!(out)?;
+    }
 
     let (staged_show, unstaged_show, extra_untracked) = if let Some(matched) = pathspec_matched {
         let mut staged_in = Vec::new();
@@ -1181,6 +1207,18 @@ fn print_dry_run(
         }
     }
 
+    if !unmerged.is_empty() {
+        let include_unstage = show_hints && !merge_active;
+        crate::commands::status::print_unmerged_long_section(
+            &mut out,
+            "",
+            show_hints,
+            head,
+            unmerged,
+            include_unstage,
+        )?;
+    }
+
     if !unstaged_show.is_empty() {
         writeln!(out)?;
         writeln!(out, "Changes not staged for commit:")?;
@@ -1212,6 +1250,13 @@ fn print_dry_run(
         for path in &all_untracked {
             writeln!(out, "\t{path}")?;
         }
+    }
+
+    if !unmerged.is_empty() && staged_show.is_empty() {
+        writeln!(
+            out,
+            "no changes added to commit (use \"git add\" and/or \"git commit -a\")"
+        )?;
     }
 
     Ok(())
