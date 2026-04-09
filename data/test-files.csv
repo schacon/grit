@@ -23,7 +23,7 @@ t0023-crlf-am	t0	yes	2	2	0	true	ok	0
 t0024-crlf-archive	t0	yes	3	3	0	true	ok	0
 t0025-crlf-renormalize	t0	yes	3	3	0	true	ok	0
 t0026-eol-config	t0	yes	6	6	0	true	ok	0
-t0027-auto-crlf	t0	yes	2600	1238	1362	false	ok	0
+t0027-auto-crlf	t0	yes	2600	2600	0	true	ok	0
 t0028-working-tree-encoding	t0	yes	22	0	22	false	ok	0
 t0029-core-unsetenvvars	t0	skip	2	0	0	false	ok	0
 t0030-stripspace	t0	yes	30	30	0	true	ok	0
@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
