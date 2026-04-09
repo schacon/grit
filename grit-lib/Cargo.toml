@@ -25,3 +25,4 @@ tempfile.workspace = true
 similar.workspace = true
 regex.workspace = true
 libc.workspace = true
+unicode-width.workspace = true

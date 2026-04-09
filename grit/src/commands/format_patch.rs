@@ -7,7 +7,10 @@
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
-use grit_lib::diff::{diff_trees, unified_diff, zero_oid};
+use grit_lib::diff::{count_changes, diff_trees, unified_diff, zero_oid};
+use grit_lib::diffstat::{
+    write_diffstat_block, DiffstatOptions, FileStatInput, FORMAT_PATCH_STAT_WIDTH,
+};
 use grit_lib::objects::{parse_commit, CommitData, ObjectId};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -121,6 +124,26 @@ pub struct Args {
     #[arg(long = "numbered-files")]
     pub numbered_files: bool,
 
+    /// Include diffstat in patch body (`--stat[=width[,name-width[,count]]]`).
+    #[arg(long = "stat", num_args = 0..=1, default_missing_value = "", require_equals = true)]
+    pub stat: Option<String>,
+
+    /// Limit files shown in embedded `--stat`.
+    #[arg(long = "stat-count")]
+    pub stat_count: Option<usize>,
+
+    /// Total width for embedded `--stat`.
+    #[arg(long = "stat-width")]
+    pub stat_width_cli: Option<usize>,
+
+    /// Graph width cap for embedded `--stat`.
+    #[arg(long = "stat-graph-width")]
+    pub stat_graph_width: Option<usize>,
+
+    /// Name width cap for embedded `--stat`.
+    #[arg(long = "stat-name-width")]
+    pub stat_name_width: Option<usize>,
+
     /// Limit number of patches (e.g., -1 for only the last commit).
     #[arg(short = '1', hide = true)]
     pub last_one: bool,
@@ -195,6 +218,10 @@ pub struct Args {
     /// Show full object hashes in diff output.
     #[arg(long = "full-index")]
     pub full_index: bool,
+
+    /// Graph mode for mbox output (affects embedded diffstat layout).
+    #[arg(long = "graph", hide = true)]
+    pub graph: bool,
 }
 
 /// Extra headers/options computed from args, passed into formatting functions.
@@ -209,13 +236,44 @@ struct PatchOptions {
     keep_subject: bool,
     base_commit: Option<String>,
     order_file: Option<String>,
+    stat_width: usize,
+    stat_name_width: Option<usize>,
+    stat_graph_width: Option<usize>,
+    stat_count: Option<usize>,
+    /// `format-patch --graph`: indent stat like Git's mbox graph mode.
+    format_patch_graph: bool,
 }
 
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
     // Load git configuration for format.* keys
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+
+    if let Some(ref val) = args.stat {
+        if !val.is_empty() {
+            let parts: Vec<&str> = val.split(',').collect();
+            if let Some(w) = parts.first().and_then(|s| s.parse::<usize>().ok()) {
+                if args.stat_width_cli.is_none() {
+                    args.stat_width_cli = Some(w);
+                }
+            }
+            if let Some(nw) = parts.get(1).and_then(|s| s.parse::<usize>().ok()) {
+                if args.stat_name_width.is_none() {
+                    args.stat_name_width = Some(nw);
+                }
+            }
+            if let Some(c) = parts.get(2).and_then(|s| s.parse::<usize>().ok()) {
+                if args.stat_count.is_none() {
+                    args.stat_count = Some(c);
+                }
+            }
+        }
+    }
+
+    let stat_width = args.stat_width_cli.unwrap_or(FORMAT_PATCH_STAT_WIDTH);
+    let stat_name_width = args.stat_name_width;
+    let stat_graph_width = args.stat_graph_width;
 
     // Determine the list of commits to format.
     // `-1 <rev>` should format exactly `<rev>`.
@@ -316,6 +374,11 @@ pub fn run(args: Args) -> Result<()> {
         keep_subject: args.keep_subject,
         base_commit,
         order_file: args.order_file.clone(),
+        stat_width,
+        stat_name_width,
+        stat_graph_width,
+        stat_count: args.stat_count,
+        format_patch_graph: args.graph,
     };
 
     // Ensure output directory exists
@@ -336,7 +399,7 @@ pub fn run(args: Args) -> Result<()> {
         } else {
             format!("[{prefix}] *** SUBJECT HERE ***")
         };
-        let cover = format_cover_letter(&repo, &commits, &cover_subject)?;
+        let cover = format_cover_letter(&repo, &commits, &cover_subject, &opts)?;
         if args.stdout {
             let mut out = stdout_handle.lock();
             write!(out, "{cover}")?;
@@ -530,6 +593,72 @@ fn collect_single_commit(repo: &Repository, revision: &str) -> Result<Vec<(Objec
     Ok(vec![(oid, commit)])
 }
 
+fn diffstat_for_patch_entries(
+    odb: &Odb,
+    entries: &[grit_lib::diff::DiffEntry],
+    opts: &PatchOptions,
+) -> Result<String> {
+    let mut files: Vec<FileStatInput> = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let path = entry.path().to_string();
+        let old_raw = read_blob_raw(odb, &entry.old_oid);
+        let new_raw = read_blob_raw(odb, &entry.new_oid);
+        let binary = old_raw.contains(&0) || new_raw.contains(&0);
+        if binary {
+            let deleted = if entry.old_oid == zero_oid() {
+                0
+            } else {
+                old_raw.len()
+            };
+            let added = if entry.new_oid == zero_oid() {
+                0
+            } else {
+                new_raw.len()
+            };
+            files.push(FileStatInput {
+                path_display: path,
+                insertions: added,
+                deletions: deleted,
+                is_binary: true,
+            });
+        } else {
+            let old_content = String::from_utf8_lossy(&old_raw).into_owned();
+            let new_content = String::from_utf8_lossy(&new_raw).into_owned();
+            let (ins, del) = count_changes(&old_content, &new_content);
+            files.push(FileStatInput {
+                path_display: path,
+                insertions: ins,
+                deletions: del,
+                is_binary: false,
+            });
+        }
+    }
+    let line_prefix = if opts.format_patch_graph { "|  " } else { "" };
+    let dstat_opts = DiffstatOptions {
+        total_width: opts.stat_width,
+        line_prefix,
+        subtract_prefix_from_terminal: false,
+        stat_name_width: opts.stat_name_width,
+        stat_graph_width: opts.stat_graph_width,
+        stat_count: opts.stat_count,
+        color_add: "",
+        color_del: "",
+        color_reset: "",
+        graph_bar_slack: 0,
+        graph_prefix_budget_slack: 0,
+    };
+    let mut buf = Vec::new();
+    write_diffstat_block(&mut buf, &files, &dstat_opts)?;
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+fn read_blob_raw(odb: &Odb, oid: &ObjectId) -> Vec<u8> {
+    if *oid == zero_oid() {
+        return Vec::new();
+    }
+    odb.read(oid).map(|o| o.data).unwrap_or_default()
+}
+
 /// Resolve HEAD to an ObjectId.
 fn resolve_head_oid(repo: &Repository) -> Result<ObjectId> {
     let head = grit_lib::state::resolve_head(&repo.git_dir).context("cannot resolve HEAD")?;
@@ -543,6 +672,7 @@ fn format_cover_letter(
     repo: &Repository,
     commits: &[(ObjectId, CommitData)],
     subject: &str,
+    patch_opts: &PatchOptions,
 ) -> Result<String> {
     let mut out = String::new();
 
@@ -593,55 +723,11 @@ fn format_cover_letter(
     let diff_entries = diff_trees(&repo.odb, first_parent_tree.as_ref(), Some(last_tree), "")
         .context("computing diff for cover letter")?;
 
-    let mut total_ins = 0;
-    let mut total_del = 0;
-    let mut max_path_len = 0;
-    let mut stat_lines = Vec::new();
-
-    for entry in &diff_entries {
-        let path = entry.path().to_owned();
-        if path.len() > max_path_len {
-            max_path_len = path.len();
-        }
-        let old_content = read_blob_content(&repo.odb, &entry.old_oid);
-        let new_content = read_blob_content(&repo.odb, &entry.new_oid);
-        let (ins, del) = grit_lib::diff::count_changes(&old_content, &new_content);
-        total_ins += ins;
-        total_del += del;
-        stat_lines.push(grit_lib::diff::format_stat_line(
-            &path,
-            ins,
-            del,
-            max_path_len,
-        ));
-    }
-
-    for line in &stat_lines {
-        out.push_str(line);
-        out.push('\n');
-    }
-
-    let files_changed = diff_entries.len();
-    out.push_str(&format!(
-        " {} file{} changed",
-        files_changed,
-        if files_changed == 1 { "" } else { "s" }
-    ));
-    if total_ins > 0 {
-        out.push_str(&format!(
-            ", {} insertion{}(+)",
-            total_ins,
-            if total_ins == 1 { "" } else { "s" }
-        ));
-    }
-    if total_del > 0 {
-        out.push_str(&format!(
-            ", {} deletion{}(-)",
-            total_del,
-            if total_del == 1 { "" } else { "s" }
-        ));
-    }
-    out.push('\n');
+    out.push_str(&diffstat_for_patch_entries(
+        &repo.odb,
+        &diff_entries,
+        patch_opts,
+    )?);
     out.push('\n');
 
     out.push_str("-- \n");
@@ -709,55 +795,7 @@ fn format_single_patch(
 
     // Build stat + full diff into separate string
     let mut diff_text = String::new();
-    let mut stat_lines = Vec::new();
-    let mut total_ins = 0;
-    let mut total_del = 0;
-    let mut max_path_len = 0;
-
-    for entry in &diff_entries {
-        let path = entry.path().to_owned();
-        if path.len() > max_path_len {
-            max_path_len = path.len();
-        }
-        let old_content = read_blob_content(odb, &entry.old_oid);
-        let new_content = read_blob_content(odb, &entry.new_oid);
-        let (ins, del) = grit_lib::diff::count_changes(&old_content, &new_content);
-        total_ins += ins;
-        total_del += del;
-        stat_lines.push(grit_lib::diff::format_stat_line(
-            &path,
-            ins,
-            del,
-            max_path_len,
-        ));
-    }
-
-    for line in &stat_lines {
-        diff_text.push_str(line);
-        diff_text.push('\n');
-    }
-
-    let files_changed = diff_entries.len();
-    diff_text.push_str(&format!(
-        " {} file{} changed",
-        files_changed,
-        if files_changed == 1 { "" } else { "s" }
-    ));
-    if total_ins > 0 {
-        diff_text.push_str(&format!(
-            ", {} insertion{}(+)",
-            total_ins,
-            if total_ins == 1 { "" } else { "s" }
-        ));
-    }
-    if total_del > 0 {
-        diff_text.push_str(&format!(
-            ", {} deletion{}(-)",
-            total_del,
-            if total_del == 1 { "" } else { "s" }
-        ));
-    }
-    diff_text.push('\n');
+    diff_text.push_str(&diffstat_for_patch_entries(odb, &diff_entries, opts)?);
     diff_text.push('\n');
 
     for entry in &diff_entries {
@@ -769,6 +807,10 @@ fn format_single_patch(
         let patch = unified_diff(&old_content, &new_content, old_path, new_path, 3);
         diff_text.push_str(&patch);
     }
+
+    let patch_start = diff_text.find("diff --git").unwrap_or(diff_text.len());
+    let stat_block = diff_text[..patch_start].to_string();
+    let patch_only = diff_text[patch_start..].to_string();
 
     let use_mime = opts.attach || opts.inline;
     let boundary = "------------grit-patch-boundary";
@@ -867,11 +909,7 @@ fn format_single_patch(
         }
 
         out.push_str("---\n");
-        // Stat in description part
-        for line in &stat_lines {
-            out.push_str(line);
-            out.push('\n');
-        }
+        out.push_str(&stat_block);
         out.push('\n');
 
         // Patch attachment part
@@ -885,7 +923,7 @@ fn format_single_patch(
             "Content-Disposition: {disposition}; filename=\"{filename}\"\n"
         ));
         out.push('\n');
-        out.push_str(&diff_text);
+        out.push_str(&patch_only);
         out.push_str(&format!("--{boundary}--\n"));
     } else {
         // Standard (non-MIME) patch format

@@ -19,6 +19,7 @@ use grit_lib::diff::{
     diff_index_to_worktree, diff_tree_to_worktree, diff_trees, should_break_rewrite_for_stat,
     unified_diff, zero_oid, DiffEntry, DiffStatus,
 };
+use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::error::Error;
 use grit_lib::index::Index;
 use grit_lib::merge_diff::format_worktree_conflict_combined;
@@ -29,8 +30,6 @@ use grit_lib::rev_parse::{resolve_revision, split_treeish_colon};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
-use unicode_width::UnicodeWidthStr;
-
 /// ANSI color codes for diff output.
 const RESET: &str = "\x1b[m";
 const BOLD: &str = "\x1b[1m";
@@ -464,7 +463,37 @@ pub fn run(mut args: Args) -> Result<()> {
                 "--shortstat" => args.shortstat = true,
                 "--summary" => args.summary = true,
                 "--quiet" | "-q" => args.quiet = true,
-                s if s.starts_with("--stat") => {
+                s if s.starts_with("--stat-width=") => {
+                    if let Some(v) = s.strip_prefix("--stat-width=").and_then(|x| x.parse().ok()) {
+                        args.stat_width = Some(v);
+                    }
+                    stat_enabled = true;
+                }
+                s if s.starts_with("--stat-name-width=") => {
+                    if let Some(v) = s
+                        .strip_prefix("--stat-name-width=")
+                        .and_then(|x| x.parse().ok())
+                    {
+                        args.stat_name_width = Some(v);
+                    }
+                    stat_enabled = true;
+                }
+                s if s.starts_with("--stat-graph-width=") => {
+                    if let Some(v) = s
+                        .strip_prefix("--stat-graph-width=")
+                        .and_then(|x| x.parse().ok())
+                    {
+                        args.stat_graph_width = Some(v);
+                    }
+                    stat_enabled = true;
+                }
+                s if s.starts_with("--stat-count=") => {
+                    if let Some(v) = s.strip_prefix("--stat-count=").and_then(|x| x.parse().ok()) {
+                        args.stat_count = Some(v);
+                    }
+                    stat_enabled = true;
+                }
+                s if s == "--stat" || s.starts_with("--stat=") => {
                     if s == "--stat" {
                         if args.stat.is_none() {
                             args.stat = Some(String::new());
@@ -472,13 +501,22 @@ pub fn run(mut args: Args) -> Result<()> {
                     } else if let Some(val) = s.strip_prefix("--stat=") {
                         args.stat = Some(val.to_owned());
                     }
-                    // re-parse stat
                     if let Some(ref val) = args.stat {
                         if !val.is_empty() {
                             let parts: Vec<&str> = val.split(',').collect();
                             if let Some(w) = parts.first().and_then(|s| s.parse::<usize>().ok()) {
                                 if args.stat_width.is_none() {
                                     args.stat_width = Some(w);
+                                }
+                            }
+                            if let Some(nw) = parts.get(1).and_then(|s| s.parse::<usize>().ok()) {
+                                if args.stat_name_width.is_none() {
+                                    args.stat_name_width = Some(nw);
+                                }
+                            }
+                            if let Some(c) = parts.get(2).and_then(|s| s.parse::<usize>().ok()) {
+                                if args.stat_count.is_none() {
+                                    args.stat_count = Some(c);
                                 }
                             }
                         }
@@ -1045,23 +1083,6 @@ pub fn run(mut args: Args) -> Result<()> {
             .unwrap_or(false)
     };
 
-    // Load diff.statNameWidth from config if not specified on command line
-    if args.stat_name_width.is_none() {
-        let snw_config = {
-            use grit_lib::config::ConfigSet;
-            let cfg =
-                ConfigSet::load(Some(&repo.git_dir), false).unwrap_or_else(|_| ConfigSet::new());
-            cfg.get("diff.statNameWidth")
-                .and_then(|v| v.parse::<usize>().ok())
-        };
-        if snw_config.is_some() {
-            args.stat_name_width = snw_config;
-            if !stat_enabled {
-                stat_enabled = true;
-            }
-        }
-    }
-
     // --check: check for whitespace errors
     if args.check {
         let has_errors = check_whitespace_errors(&mut out, &entries, &repo.odb, wt_for_content)?;
@@ -1121,6 +1142,9 @@ pub fn run(mut args: Args) -> Result<()> {
                 args.stat_width,
                 args.stat_name_width,
                 args.break_rewrites,
+                args.stat_graph_width,
+                args.line_prefix.as_deref().unwrap_or(""),
+                &repo.git_dir,
             )?;
             if args.summary {
                 write_diff_summary(&mut out, &entries)?;
@@ -2652,108 +2676,6 @@ fn append_stat_counts(summary: &mut String, total_ins: usize, total_del: usize) 
     }
 }
 
-/// Get the terminal width, defaulting to 80 if unavailable.
-fn terminal_width() -> usize {
-    // Try COLUMNS env var first
-    if let Ok(cols) = std::env::var("COLUMNS") {
-        if let Ok(w) = cols.parse::<usize>() {
-            if w > 0 {
-                return w;
-            }
-        }
-    }
-    // Try `stty size` which outputs "rows cols"
-    if let Ok(output) = std::process::Command::new("stty")
-        .arg("size")
-        .stdin(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::null())
-        .output()
-    {
-        let s = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = s.split_whitespace().collect();
-        if parts.len() == 2 {
-            if let Ok(w) = parts[1].parse::<usize>() {
-                if w > 0 {
-                    return w;
-                }
-            }
-        }
-    }
-    80
-}
-
-/// Format a single `--stat` line matching git's output format.
-///
-/// Git scales all bars relative to the largest change count across
-/// all files, fitting within the available bar width.
-///
-/// `max_change` is the largest (insertions + deletions) across all entries.
-/// `max_bar` is the available character width for the histogram bar.
-fn format_stat_line_git(
-    path: &str,
-    insertions: usize,
-    deletions: usize,
-    max_path_len: usize,
-    count_width: usize,
-    max_change: usize,
-    max_bar: usize,
-) -> String {
-    let total = insertions + deletions;
-    // Scale all bars relative to the largest change
-    let (plus_count, minus_count) = if max_change <= max_bar {
-        // No scaling needed — bars fit as-is
-        (insertions, deletions)
-    } else {
-        // Scale proportionally, ensuring at least 1 char for non-zero sides
-        let scale = max_bar as f64 / max_change as f64;
-        let plus = if insertions == 0 {
-            0
-        } else {
-            (insertions as f64 * scale).round().max(1.0) as usize
-        };
-        let minus = if deletions == 0 {
-            0
-        } else {
-            (deletions as f64 * scale).round().max(1.0) as usize
-        };
-        // Clamp total to max_bar
-        let sum = plus + minus;
-        if sum > max_bar {
-            // Shrink the larger side
-            if plus >= minus {
-                (max_bar.saturating_sub(minus), minus)
-            } else {
-                (plus, max_bar.saturating_sub(plus))
-            }
-        } else {
-            (plus, minus)
-        }
-    };
-    let plus = "+".repeat(plus_count);
-    let minus = "-".repeat(minus_count);
-    // Pad path to max_path_len display columns (not bytes)
-    let path_display_width = UnicodeWidthStr::width(path);
-    let padding = max_path_len.saturating_sub(path_display_width);
-    let bar = format!("{plus}{minus}");
-    if bar.is_empty() {
-        format!(
-            " {}{} | {:>cw$}",
-            path,
-            " ".repeat(padding),
-            total,
-            cw = count_width,
-        )
-    } else {
-        format!(
-            " {}{} | {:>cw$} {bar}",
-            path,
-            " ".repeat(padding),
-            total,
-            cw = count_width,
-        )
-    }
-}
-
 /// Write a stat summary for each entry, followed by a totals line.
 fn write_stat(
     out: &mut impl Write,
@@ -2764,12 +2686,14 @@ fn write_stat(
     stat_width: Option<usize>,
     stat_name_width: Option<usize>,
     break_rewrites: bool,
+    stat_graph_width: Option<usize>,
+    line_prefix: &str,
+    git_dir: &Path,
 ) -> Result<()> {
     if entries.is_empty() {
         return Ok(());
     }
 
-    // Build display paths (compact rename format for renames, with C-style quoting).
     let display_paths: Vec<String> = entries
         .iter()
         .map(|e| match e.status {
@@ -2781,129 +2705,66 @@ fn write_stat(
             _ => quote_c_style(e.path()),
         })
         .collect();
-    let max_path_len = display_paths
-        .iter()
-        .map(|p| UnicodeWidthStr::width(p.as_str()))
-        .max()
-        .unwrap_or(0);
 
-    // Collect per-file stats first so we can compute the count column width
-    let mut file_stats: Vec<(&str, usize, usize)> = Vec::new();
-    let mut total_ins = 0usize;
-    let mut total_del = 0usize;
-    let mut files_changed = 0usize;
-
-    let mut is_binary_file: Vec<bool> = Vec::new();
+    let mut files: Vec<FileStatInput> = Vec::with_capacity(entries.len());
     for (i, entry) in entries.iter().enumerate() {
         let old_raw = read_content_raw(odb, &entry.old_oid);
         let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, entry.path());
         let binary = is_binary(&old_raw) || is_binary(&new_raw);
-        is_binary_file.push(binary);
         if binary {
-            file_stats.push((&display_paths[i], 0, 0));
-            // Binary files don't count towards insertions/deletions in summary
+            let deleted = if entry.old_oid == zero_oid() {
+                0
+            } else {
+                old_raw.len()
+            };
+            let added = if entry.new_oid == zero_oid() {
+                0
+            } else {
+                new_raw.len()
+            };
+            files.push(FileStatInput {
+                path_display: display_paths[i].clone(),
+                insertions: added,
+                deletions: deleted,
+                is_binary: true,
+            });
         } else {
             let (ins, del) = stat_ins_del_for_entry(odb, entry, work_tree, break_rewrites);
-            file_stats.push((&display_paths[i], ins, del));
-            total_ins += ins;
-            total_del += del;
+            files.push(FileStatInput {
+                path_display: display_paths[i].clone(),
+                insertions: ins,
+                deletions: del,
+                is_binary: false,
+            });
         }
-        files_changed += 1;
     }
 
-    // Compute the width for the count column (like git does)
-    let max_count = file_stats.iter().map(|(_, i, d)| i + d).max().unwrap_or(0);
-    // If any binary files are present, count column must be at least 3 (len("Bin"))
-    let has_binary = is_binary_file.iter().any(|&b| b);
-    let count_width = format!("{}", max_count)
-        .len()
-        .max(if has_binary { 3 } else { 0 });
+    let total_w = stat_width.unwrap_or_else(terminal_columns);
+    let cfg = grit_lib::config::ConfigSet::load(Some(git_dir), false)
+        .unwrap_or_else(|_| grit_lib::config::ConfigSet::new());
+    let eff_name = stat_name_width.or_else(|| {
+        cfg.get("diff.statNameWidth")
+            .and_then(|s| s.parse::<usize>().ok())
+    });
+    let eff_graph = stat_graph_width.or_else(|| {
+        cfg.get("diff.statGraphWidth")
+            .and_then(|s| s.parse::<usize>().ok())
+    });
 
-    // Compute layout widths from total width, like git.
-    // Line format: " {name:<N} | {count:>C} {bar}"
-    // Total chars = 1 + N + 3 + C + 1 + bar_len = N + C + 5 + bar_len
-    // Target total = total_width - 1
-    let total_width = stat_width.unwrap_or_else(terminal_width);
-    let overhead = count_width + 5; // " " + " | " + " " before bar = 1+3+1 = 5
-    let line_budget = total_width.saturating_sub(1).saturating_sub(overhead);
-    // line_budget = name_len + bar_len
-
-    // Apply stat_name_width if set, or truncate to fit terminal width
-    let max_path_len = if let Some(nw) = stat_name_width {
-        max_path_len.min(nw)
-    } else if max_path_len > line_budget.saturating_sub(1) {
-        // Name too long for the budget — truncate, leaving at least 1 char for bar
-        line_budget.saturating_sub(1)
-    } else {
-        max_path_len
+    let opts = DiffstatOptions {
+        total_width: total_w,
+        line_prefix,
+        subtract_prefix_from_terminal: stat_width.is_none() && !line_prefix.is_empty(),
+        stat_name_width: eff_name,
+        stat_graph_width: eff_graph,
+        stat_count,
+        color_add: "",
+        color_del: "",
+        color_reset: "",
+        graph_bar_slack: 0,
+        graph_prefix_budget_slack: 0,
     };
-
-    let max_bar = line_budget.saturating_sub(max_path_len).max(10);
-
-    let display_stats: &[(&str, usize, usize)] = if let Some(limit) = stat_count {
-        if file_stats.len() > limit {
-            &file_stats[..limit]
-        } else {
-            &file_stats
-        }
-    } else {
-        &file_stats
-    };
-    for (i, (path, ins, del)) in display_stats.iter().enumerate() {
-        let (path, ins, del) = (path, ins, del);
-        // Truncate path if its display width exceeds max_path_len
-        let path_width = UnicodeWidthStr::width(*path);
-        let display_path: std::borrow::Cow<str> = if path_width > max_path_len {
-            // Git truncates with "..." prefix, keeping as much of the suffix as fits
-            let target_suffix_width = max_path_len.saturating_sub(3);
-            // Walk from the end, accumulating display width
-            let mut width_acc = 0usize;
-            let mut cut_idx = path.len();
-            for (idx, ch) in path.char_indices().rev() {
-                let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-                if width_acc + cw > target_suffix_width {
-                    break;
-                }
-                width_acc += cw;
-                cut_idx = idx;
-            }
-            let suffix = &path[cut_idx..];
-            std::borrow::Cow::Owned(format!("...{}", suffix))
-        } else {
-            std::borrow::Cow::Borrowed(*path)
-        };
-        let binary = is_binary_file.get(i).copied().unwrap_or(false);
-        let line = if binary {
-            // Binary files show "Bin" in stat
-            format!(" {:<width$} | Bin", display_path, width = max_path_len)
-        } else {
-            format_stat_line_git(
-                &display_path,
-                *ins,
-                *del,
-                max_path_len,
-                count_width,
-                max_count,
-                max_bar,
-            )
-        };
-        writeln!(out, "{line}")?;
-    }
-    if let Some(limit) = stat_count {
-        if file_stats.len() > limit {
-            writeln!(out, " ...")?;
-        }
-    }
-
-    // Summary line
-    let mut summary = format!(
-        " {} file{} changed",
-        files_changed,
-        if files_changed == 1 { "" } else { "s" }
-    );
-    append_stat_counts(&mut summary, total_ins, total_del);
-    writeln!(out, "{summary}")?;
-
+    write_diffstat_block(out, &files, &opts)?;
     Ok(())
 }
 

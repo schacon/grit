@@ -9,8 +9,10 @@ use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
-    anchored_unified_diff, detect_copies, detect_renames, diff_trees, unified_diff, DiffEntry,
+    anchored_unified_diff, detect_copies, detect_renames, diff_trees, unified_diff, zero_oid,
+    DiffEntry,
 };
+use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::merge_diff::{
     blob_oid_at_path, blob_text_for_diff, combined_diff_paths, format_combined_binary,
     format_combined_textconv_patch, format_parent_patch, is_binary_for_diff, read_blob_at_path,
@@ -59,9 +61,31 @@ pub struct Args {
     #[arg(long = "patience")]
     pub patience: bool,
 
-    /// Show a diffstat summary after the commit header.
-    #[arg(long = "stat")]
-    pub stat: bool,
+    /// Show a diffstat summary after the commit header (`--stat[=width[,name-width[,count]]]`).
+    #[arg(
+        long = "stat",
+        num_args = 0..=1,
+        default_missing_value = "",
+        require_equals = true,
+        action = clap::ArgAction::Append
+    )]
+    pub stat: Vec<String>,
+
+    /// Limit the number of files shown in `--stat` output.
+    #[arg(long = "stat-count")]
+    pub stat_count: Option<usize>,
+
+    /// Set the width of the `--stat` output.
+    #[arg(long = "stat-width")]
+    pub stat_width: Option<usize>,
+
+    /// Set the width of the graph portion of `--stat` output.
+    #[arg(long = "stat-graph-width")]
+    pub stat_graph_width: Option<usize>,
+
+    /// Set the width of the filename portion of `--stat` output.
+    #[arg(long = "stat-name-width")]
+    pub stat_name_width: Option<usize>,
 
     /// Show raw diff-tree output format.
     #[arg(long = "raw")]
@@ -185,8 +209,29 @@ pub struct Args {
 }
 
 /// Run the `show` command.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    for val in &args.stat {
+        if val.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = val.split(',').collect();
+        if let Some(w) = parts.first().and_then(|s| s.parse::<usize>().ok()) {
+            if args.stat_width.is_none() {
+                args.stat_width = Some(w);
+            }
+        }
+        if let Some(nw) = parts.get(1).and_then(|s| s.parse::<usize>().ok()) {
+            if args.stat_name_width.is_none() {
+                args.stat_name_width = Some(nw);
+            }
+        }
+        if let Some(c) = parts.get(2).and_then(|s| s.parse::<usize>().ok()) {
+            if args.stat_count.is_none() {
+                args.stat_count = Some(c);
+            }
+        }
+    }
     maybe_warn_deprecated_grafts(&repo)?;
 
     let (rev_strings_owned, pathspecs): (Vec<String>, Vec<String>) = if args.objects.is_empty() {
@@ -648,7 +693,7 @@ fn show_commit(
     // patch unless an option explicitly re-enables it.
     let show_raw = args.patch_with_raw || (args.raw && !args.numstat);
     let show_numstat = args.numstat;
-    let show_stat = args.patch_with_stat || (args.stat && !show_numstat && !show_raw);
+    let show_stat = args.patch_with_stat || (!args.stat.is_empty() && !show_numstat && !show_raw);
     let show_patch = !args.quiet
         && !args.no_patch
         && (args.patch
@@ -656,7 +701,7 @@ fn show_commit(
             || args.patch_with_raw
             || args.patch_with_stat
             || (!args.raw
-                && !args.stat
+                && args.stat.is_empty()
                 && !args.shortstat
                 && !args.summary
                 && !args.numstat
@@ -723,7 +768,16 @@ fn show_commit(
 
     // --stat: show diffstat summary
     if show_stat && !show_raw && !show_numstat {
-        write_diffstat(out, odb, &diff_entries)?;
+        write_diffstat(
+            out,
+            odb,
+            &diff_entries,
+            args.stat_width,
+            args.stat_name_width,
+            args.stat_graph_width,
+            args.stat_count,
+            &config,
+        )?;
         if !show_patch {
             return Ok(());
         }
@@ -943,118 +997,85 @@ fn write_diffstat(
     out: &mut impl Write,
     odb: &Odb,
     entries: &[grit_lib::diff::DiffEntry],
+    stat_width: Option<usize>,
+    stat_name_width: Option<usize>,
+    stat_graph_width: Option<usize>,
+    stat_count: Option<usize>,
+    config: &ConfigSet,
 ) -> Result<()> {
-    let mut stats: Vec<(String, usize, usize)> = Vec::new();
-    let mut total_ins = 0usize;
-    let mut total_del = 0usize;
+    if entries.is_empty() {
+        return Ok(());
+    }
 
+    let eff_name_width = stat_name_width.or_else(|| {
+        config
+            .get("diff.statNameWidth")
+            .and_then(|v| v.parse::<usize>().ok())
+    });
+    let eff_graph_width = stat_graph_width.or_else(|| {
+        config
+            .get("diff.statGraphWidth")
+            .and_then(|v| v.parse::<usize>().ok())
+    });
+
+    let mut files: Vec<FileStatInput> = Vec::with_capacity(entries.len());
     for entry in entries {
-        let path = entry
-            .new_path
-            .as_deref()
-            .or(entry.old_path.as_deref())
-            .unwrap_or("")
-            .to_string();
-
-        let old_content = if entry.old_oid == grit_lib::diff::zero_oid() {
-            String::new()
+        let path_display = format_rename_path(entry);
+        let old_raw = if entry.old_oid == zero_oid() {
+            Vec::new()
         } else {
-            match odb.read(&entry.old_oid) {
-                Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
-                Err(_) => String::new(),
-            }
+            odb.read(&entry.old_oid).map(|o| o.data).unwrap_or_default()
         };
-
-        let new_content = if entry.new_oid == grit_lib::diff::zero_oid() {
-            String::new()
+        let new_raw = if entry.new_oid == zero_oid() {
+            Vec::new()
         } else {
-            match odb.read(&entry.new_oid) {
-                Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
-                Err(_) => String::new(),
-            }
+            odb.read(&entry.new_oid).map(|o| o.data).unwrap_or_default()
         };
-
-        let old_lines: Vec<&str> = if old_content.is_empty() {
-            vec![]
+        let binary = old_raw.contains(&0) || new_raw.contains(&0);
+        if binary {
+            let deleted = if entry.old_oid == zero_oid() {
+                0
+            } else {
+                old_raw.len()
+            };
+            let added = if entry.new_oid == zero_oid() {
+                0
+            } else {
+                new_raw.len()
+            };
+            files.push(FileStatInput {
+                path_display,
+                insertions: added,
+                deletions: deleted,
+                is_binary: true,
+            });
         } else {
-            old_content.lines().collect()
-        };
-        let new_lines: Vec<&str> = if new_content.is_empty() {
-            vec![]
-        } else {
-            new_content.lines().collect()
-        };
-
-        // Simple line-count based insertions/deletions.
-        let ins = new_lines
-            .len()
-            .saturating_sub(old_lines.len().min(new_lines.len()));
-        let del = old_lines
-            .len()
-            .saturating_sub(new_lines.len().min(old_lines.len()));
-
-        // More accurate: count changed lines using the diff
-        let patch = unified_diff(&old_content, &new_content, &path, &path, 0);
-        let mut insertions = 0usize;
-        let mut deletions = 0usize;
-        for line in patch.lines() {
-            if line.starts_with('+') && !line.starts_with("+++") {
-                insertions += 1;
-            } else if line.starts_with('-') && !line.starts_with("---") {
-                deletions += 1;
-            }
+            let old_content = String::from_utf8_lossy(&old_raw).into_owned();
+            let new_content = String::from_utf8_lossy(&new_raw).into_owned();
+            let (ins, del) = grit_lib::diff::count_changes(&old_content, &new_content);
+            files.push(FileStatInput {
+                path_display,
+                insertions: ins,
+                deletions: del,
+                is_binary: false,
+            });
         }
-        // Use diff-based counts if available, else line-based.
-        let _ = (ins, del);
-
-        total_ins += insertions;
-        total_del += deletions;
-        stats.push((path, insertions, deletions));
     }
 
-    let max_name_len = stats.iter().map(|(p, _, _)| p.len()).max().unwrap_or(0);
-    let max_total = stats.iter().map(|(_, i, d)| i + d).max().unwrap_or(0);
-    let num_width = format!("{}", max_total).len();
-
-    for (path, ins, del) in &stats {
-        let total = ins + del;
-        let bar: String = "+".repeat(*ins).to_string() + &"-".repeat(*del);
-        writeln!(
-            out,
-            " {path:<width$} | {total:>nw$} {bar}",
-            width = max_name_len,
-            nw = num_width,
-        )?;
-    }
-
-    let files = stats.len();
-    let file_word = if files == 1 {
-        "file changed"
-    } else {
-        "files changed"
+    let opts = DiffstatOptions {
+        total_width: stat_width.unwrap_or_else(terminal_columns),
+        line_prefix: "",
+        subtract_prefix_from_terminal: false,
+        stat_name_width: eff_name_width,
+        stat_graph_width: eff_graph_width,
+        stat_count,
+        color_add: "",
+        color_del: "",
+        color_reset: "",
+        graph_bar_slack: 0,
+        graph_prefix_budget_slack: 0,
     };
-    let ins_part = if total_ins > 0 {
-        let word = if total_ins == 1 {
-            "insertion(+)"
-        } else {
-            "insertions(+)"
-        };
-        format!(", {total_ins} {word}")
-    } else {
-        String::new()
-    };
-    let del_part = if total_del > 0 {
-        let word = if total_del == 1 {
-            "deletion(-)"
-        } else {
-            "deletions(-)"
-        };
-        format!(", {total_del} {word}")
-    } else {
-        String::new()
-    };
-    writeln!(out, " {files} {file_word}{ins_part}{del_part}")?;
-
+    write_diffstat_block(out, &files, &opts)?;
     Ok(())
 }
 

@@ -5,9 +5,9 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::diff::{
-    count_changes, diff_trees, format_raw, format_stat_line, DiffEntry, DiffStatus,
-};
+use grit_lib::config::ConfigSet;
+use grit_lib::diff::{count_changes, diff_trees, format_raw, zero_oid, DiffEntry, DiffStatus};
+use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::line_log::{
     format_line_log_diff, line_log_filter_commits, parse_line_log_ranges, rewritten_first_parent,
 };
@@ -145,9 +145,32 @@ pub struct Args {
     #[arg(short = 'u', hide = true)]
     pub patch_u: bool,
 
-    /// Show diffstat per commit.
-    #[arg(long = "stat")]
-    pub stat: bool,
+    /// Show diffstat per commit (`--stat[=width[,name-width[,count]]]`).
+    /// Repeatable like Git (`log -1 --stat --stat=60`).
+    #[arg(
+        long = "stat",
+        num_args = 0..=1,
+        default_missing_value = "",
+        require_equals = true,
+        action = clap::ArgAction::Append
+    )]
+    pub stat: Vec<String>,
+
+    /// Limit the number of files shown in `--stat` output.
+    #[arg(long = "stat-count")]
+    pub stat_count: Option<usize>,
+
+    /// Set the width of the `--stat` output.
+    #[arg(long = "stat-width")]
+    pub stat_width: Option<usize>,
+
+    /// Set the width of the graph portion of `--stat` output.
+    #[arg(long = "stat-graph-width")]
+    pub stat_graph_width: Option<usize>,
+
+    /// Set the width of the filename portion of `--stat` output.
+    #[arg(long = "stat-name-width")]
+    pub stat_name_width: Option<usize>,
 
     /// List changed file names per commit.
     #[arg(long = "name-only")]
@@ -416,6 +439,42 @@ pub struct Args {
     /// Suppress diff output (line-log: show commits only).
     #[arg(short = 's')]
     pub suppress_diff: bool,
+}
+
+/// Whether log/show diff output should use ANSI colors on stdout (Git `color.diff` / `color.ui`).
+fn log_resolve_stdout_color(args: &Args, git_dir: &Path) -> bool {
+    if args.no_color {
+        return false;
+    }
+    if let Some(ref c) = args.color {
+        return c == "always" || c == "true" || c.is_empty();
+    }
+    let mut c = false;
+    if let Ok(config) = ConfigSet::load(Some(git_dir), true) {
+        if let Some(val) = config.get("color.diff") {
+            match val.as_str() {
+                "always" | "true" => c = true,
+                "auto" => {
+                    c = std::io::IsTerminal::is_terminal(&std::io::stdout())
+                        || std::env::var_os("GIT_PAGER_IN_USE").is_some()
+                }
+                _ => {}
+            }
+        }
+        if !c {
+            if let Some(val) = config.get("color.ui") {
+                match val.as_str() {
+                    "always" | "true" => c = true,
+                    "auto" => {
+                        c = std::io::IsTerminal::is_terminal(&std::io::stdout())
+                            || std::env::var_os("GIT_PAGER_IN_USE").is_some()
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    c
 }
 
 fn run_line_log(repo: &Repository, args: Args) -> Result<()> {
@@ -976,6 +1035,32 @@ fn run_graph_log(repo: &Repository, args: &Args) -> Result<()> {
     let mut graph = AsciiGraph::new();
     let line_prefix = args.line_prefix.as_deref().unwrap_or("");
     let abbrev_len = parse_abbrev(&args.abbrev);
+    let use_color = log_resolve_stdout_color(args, &repo.git_dir);
+    let show_commit_body = !args.suppress_diff
+        && !args.no_patch
+        && (args.patch
+            || args.patch_u
+            || args.patch_with_stat
+            || !args.stat.is_empty()
+            || args.name_only
+            || args.name_status
+            || args.raw
+            || args.cc);
+
+    let graph_stat_prefix: Option<String> = if show_commit_body && !args.stat.is_empty() {
+        let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let red = if use_color {
+            cfg.get("color.diff.meta")
+                .and_then(|s| grit_lib::config::parse_color(&s).ok())
+                .unwrap_or_else(|| "\x1b[31m".to_string())
+        } else {
+            String::new()
+        };
+        let reset = if use_color { "\x1b[m" } else { "" };
+        Some(format!("{line_prefix}{red}|{reset}  "))
+    } else {
+        None
+    };
 
     for node in nodes {
         let info = load_commit_info(repo, node.oid)?;
@@ -1001,6 +1086,20 @@ fn run_graph_log(repo: &Repository, args: &Args) -> Result<()> {
         while !graph.is_commit_finished() {
             let (line, _) = graph.next_line();
             writeln!(out, "{line_prefix}{line}")?;
+        }
+
+        if show_commit_body {
+            if !args.stat.is_empty() {
+                writeln!(out)?;
+            }
+            write_commit_diff(
+                &mut out,
+                repo,
+                &info,
+                args,
+                &combined_pathspecs,
+                graph_stat_prefix.as_deref(),
+            )?;
         }
     }
 
@@ -1971,6 +2070,28 @@ pub fn run(mut args: Args) -> Result<()> {
         anyhow::bail!("switch `L' requires a value");
     }
 
+    for val in &args.stat {
+        if val.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = val.split(',').collect();
+        if let Some(w) = parts.first().and_then(|s| s.parse::<usize>().ok()) {
+            if args.stat_width.is_none() {
+                args.stat_width = Some(w);
+            }
+        }
+        if let Some(nw) = parts.get(1).and_then(|s| s.parse::<usize>().ok()) {
+            if args.stat_name_width.is_none() {
+                args.stat_name_width = Some(nw);
+            }
+        }
+        if let Some(c) = parts.get(2).and_then(|s| s.parse::<usize>().ok()) {
+            if args.stat_count.is_none() {
+                args.stat_count = Some(c);
+            }
+        }
+    }
+
     let repo = Repository::discover(None).context("not a git repository")?;
     if !args.line_range.is_empty() {
         return run_line_log(&repo, args);
@@ -1978,40 +2099,7 @@ pub fn run(mut args: Args) -> Result<()> {
     validate_pathspec_scope(&repo, &args.pathspecs)?;
     let mut implied_pathspecs: Vec<String> = Vec::new();
 
-    // Determine color mode
-    let use_color = if args.no_color {
-        false
-    } else if let Some(ref c) = args.color {
-        c == "always" || c == "true" || c.is_empty()
-    } else {
-        // Check config for color.diff / color.ui
-        let mut c = false;
-        if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
-            if let Some(val) = config.get("color.diff") {
-                match val.as_str() {
-                    "always" | "true" => c = true,
-                    "auto" => {
-                        c = std::io::IsTerminal::is_terminal(&std::io::stdout())
-                            || std::env::var_os("GIT_PAGER_IN_USE").is_some()
-                    }
-                    _ => {}
-                }
-            }
-            if !c {
-                if let Some(val) = config.get("color.ui") {
-                    match val.as_str() {
-                        "always" | "true" => c = true,
-                        "auto" => {
-                            c = std::io::IsTerminal::is_terminal(&std::io::stdout())
-                                || std::env::var_os("GIT_PAGER_IN_USE").is_some()
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        c
-    };
+    let use_color = log_resolve_stdout_color(&args, &repo.git_dir);
 
     // --no-graph overrides --graph
     if args.no_graph {
@@ -2194,7 +2282,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let show_diff = args.patch
         || args.patch_u
-        || args.stat
+        || !args.stat.is_empty()
         || args.name_only
         || args.name_status
         || args.raw
@@ -2267,7 +2355,14 @@ pub fn run(mut args: Args) -> Result<()> {
             )?;
 
             if show_diff {
-                write_commit_diff(&mut out, &repo, &commit_data, &args, effective_pathspecs)?;
+                write_commit_diff(
+                    &mut out,
+                    &repo,
+                    &commit_data,
+                    &args,
+                    effective_pathspecs,
+                    None,
+                )?;
             }
             if flush_each {
                 out.flush()?;
@@ -2422,7 +2517,14 @@ pub fn run(mut args: Args) -> Result<()> {
             )?;
 
             if show_diff {
-                write_commit_diff(&mut out, &repo, commit_data, &args, &combined_pathspecs)?;
+                write_commit_diff(
+                    &mut out,
+                    &repo,
+                    commit_data,
+                    &args,
+                    &combined_pathspecs,
+                    None,
+                )?;
             }
         }
     }
@@ -2644,7 +2746,7 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
 
     let show_diff = args.patch
         || args.patch_u
-        || args.stat
+        || !args.stat.is_empty()
         || args.name_only
         || args.name_status
         || args.raw
@@ -2670,7 +2772,7 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
             false,
         )?;
         if show_diff {
-            write_commit_diff(&mut out, repo, commit_data, args, &args.pathspecs)?;
+            write_commit_diff(&mut out, repo, commit_data, args, &args.pathspecs, None)?;
         }
     }
 
@@ -4927,6 +5029,7 @@ fn write_commit_diff(
     info: &CommitInfo,
     args: &Args,
     pathspecs: &[String],
+    graph_stat_prefix: Option<&str>,
 ) -> Result<()> {
     let odb = &repo.odb;
 
@@ -4991,13 +5094,21 @@ fn write_commit_diff(
     }
 
     // Print --- separator when stat + patch are both shown
-    if args.stat {
+    if !args.stat.is_empty() {
         if has_patch {
             writeln!(out, "---")?;
         } else {
             writeln!(out)?;
         }
-        log_print_stat_summary(out, odb, &entries, has_patch)?;
+        log_print_stat_summary(
+            out,
+            odb,
+            &entries,
+            has_patch,
+            args,
+            graph_stat_prefix,
+            &repo.git_dir,
+        )?;
     }
 
     if args.name_only {
@@ -5201,40 +5312,115 @@ fn log_print_stat_summary(
     odb: &Odb,
     entries: &[DiffEntry],
     trailing_blank: bool,
+    args: &Args,
+    graph_line_prefix: Option<&str>,
+    git_dir: &Path,
 ) -> Result<()> {
-    let max_path_len = entries.iter().map(|e| e.path().len()).max().unwrap_or(0);
-    let mut total_ins = 0usize;
-    let mut total_del = 0usize;
+    let use_color = log_resolve_stdout_color(args, git_dir);
+    let cfg = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    let eff_name_width = args.stat_name_width.or_else(|| {
+        cfg.get("diff.statNameWidth")
+            .and_then(|s| s.parse::<usize>().ok())
+    });
+    let cfg_stat_graph = cfg
+        .get("diff.statGraphWidth")
+        .and_then(|s| s.parse::<usize>().ok());
+    let eff_graph_width = args.stat_graph_width.or(cfg_stat_graph);
+    let graph_bar_slack = if graph_line_prefix.is_some() {
+        if args.stat_graph_width.is_some() || cfg_stat_graph.is_some() || args.stat_width.is_some()
+        {
+            0
+        } else {
+            1
+        }
+    } else {
+        0
+    };
+    let (color_add, color_del, color_reset) = if use_color {
+        let add = cfg
+            .get("color.diff.new")
+            .and_then(|s| grit_lib::config::parse_color(&s).ok())
+            .unwrap_or_else(|| "\x1b[32m".to_string());
+        let del = cfg
+            .get("color.diff.old")
+            .and_then(|s| grit_lib::config::parse_color(&s).ok())
+            .unwrap_or_else(|| "\x1b[31m".to_string());
+        (add, del, "\x1b[m".to_string())
+    } else {
+        (String::new(), String::new(), String::new())
+    };
 
+    let line_prefix = graph_line_prefix.unwrap_or("");
+    let subtract_prefix = graph_line_prefix.is_some() && args.stat_width.is_none();
+
+    let mut files: Vec<FileStatInput> = Vec::with_capacity(entries.len());
     for entry in entries {
-        let (old_content, new_content) = log_read_blob_pair(odb, entry)?;
-        let (ins, del) = count_changes(&old_content, &new_content);
-        total_ins += ins;
-        total_del += del;
-        writeln!(
-            out,
-            "{}",
-            format_stat_line(entry.path(), ins, del, max_path_len)
-        )?;
+        let path_display = match entry.status {
+            DiffStatus::Renamed | DiffStatus::Copied => {
+                let old = entry.old_path.as_deref().unwrap_or("");
+                let new = entry.new_path.as_deref().unwrap_or("");
+                grit_lib::diff::format_rename_path(old, new)
+            }
+            _ => entry.path().to_string(),
+        };
+        let old_raw = if entry.old_oid == zero_oid() {
+            Vec::new()
+        } else {
+            odb.read(&entry.old_oid).map(|o| o.data).unwrap_or_default()
+        };
+        let new_raw = if entry.new_oid == zero_oid() {
+            Vec::new()
+        } else {
+            odb.read(&entry.new_oid).map(|o| o.data).unwrap_or_default()
+        };
+        let binary = old_raw.contains(&0) || new_raw.contains(&0);
+        if binary {
+            let deleted = if entry.old_oid == zero_oid() {
+                0
+            } else {
+                old_raw.len()
+            };
+            let added = if entry.new_oid == zero_oid() {
+                0
+            } else {
+                new_raw.len()
+            };
+            files.push(FileStatInput {
+                path_display,
+                insertions: added,
+                deletions: deleted,
+                is_binary: true,
+            });
+        } else {
+            let (old_content, new_content) = log_read_blob_pair(odb, entry)?;
+            let (ins, del) = count_changes(&old_content, &new_content);
+            files.push(FileStatInput {
+                path_display,
+                insertions: ins,
+                deletions: del,
+                is_binary: false,
+            });
+        }
     }
 
-    let n = entries.len();
-    let mut summary = format!(" {} file{} changed", n, if n == 1 { "" } else { "s" },);
-    if total_ins > 0 {
-        summary.push_str(&format!(
-            ", {} insertion{}(+)",
-            total_ins,
-            if total_ins == 1 { "" } else { "s" },
-        ));
-    }
-    if total_del > 0 {
-        summary.push_str(&format!(
-            ", {} deletion{}(-)",
-            total_del,
-            if total_del == 1 { "" } else { "s" },
-        ));
-    }
-    writeln!(out, "{summary}")?;
+    let opts = DiffstatOptions {
+        total_width: args.stat_width.unwrap_or_else(terminal_columns),
+        line_prefix,
+        subtract_prefix_from_terminal: subtract_prefix,
+        stat_name_width: eff_name_width,
+        stat_graph_width: eff_graph_width,
+        stat_count: args.stat_count,
+        color_add: color_add.as_str(),
+        color_del: color_del.as_str(),
+        color_reset: color_reset.as_str(),
+        graph_bar_slack,
+        graph_prefix_budget_slack: if graph_line_prefix.is_some() && use_color {
+            1
+        } else {
+            0
+        },
+    };
+    write_diffstat_block(out, &files, &opts)?;
     if trailing_blank {
         writeln!(out)?;
     }

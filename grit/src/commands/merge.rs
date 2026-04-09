@@ -14,7 +14,8 @@ use tempfile::NamedTempFile;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::MergeAttr;
-use grit_lib::diff::{count_changes, detect_renames, diff_trees, DiffEntry, DiffStatus};
+use grit_lib::diff::{count_changes, detect_renames, diff_trees, zero_oid, DiffEntry, DiffStatus};
+use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
@@ -5394,134 +5395,114 @@ fn print_diffstat(repo: &Repository, entries: &[DiffEntry], compact: bool) {
 
     struct StatEntry {
         path: String,
+        display_path: String,
         insertions: usize,
         deletions: usize,
+        is_binary: bool,
         is_new: bool,
         is_deleted: bool,
         new_mode: Option<u32>,
     }
 
     let mut stats: Vec<StatEntry> = Vec::new();
-    let mut total_ins = 0usize;
-    let mut total_del = 0usize;
 
     for entry in entries {
         let path = entry
             .new_path
             .as_deref()
             .or(entry.old_path.as_deref())
-            .unwrap_or("unknown");
-        let is_new = entry.old_oid == grit_lib::diff::zero_oid();
-        let is_deleted = entry.new_oid == grit_lib::diff::zero_oid();
+            .unwrap_or("unknown")
+            .to_string();
+        let is_new = entry.old_oid == zero_oid();
+        let is_deleted = entry.new_oid == zero_oid();
 
-        // Read blob contents to compute changes
-        let old_content = if !is_new {
-            repo.odb
-                .read(&entry.old_oid)
-                .ok()
-                .map(|o| String::from_utf8_lossy(&o.data).to_string())
+        let old_raw = if !is_new {
+            repo.odb.read(&entry.old_oid).ok().map(|o| o.data)
         } else {
             None
         };
-        let new_content = if !is_deleted {
-            repo.odb
-                .read(&entry.new_oid)
-                .ok()
-                .map(|o| String::from_utf8_lossy(&o.data).to_string())
+        let new_raw = if !is_deleted {
+            repo.odb.read(&entry.new_oid).ok().map(|o| o.data)
         } else {
             None
         };
 
-        let (ins, del) = count_changes(
-            old_content.as_deref().unwrap_or(""),
-            new_content.as_deref().unwrap_or(""),
-        );
-
-        total_ins += ins;
-        total_del += del;
+        let (ins, del, is_binary) = match (old_raw.as_ref(), new_raw.as_ref()) {
+            (Some(o), Some(n)) if o.contains(&0) || n.contains(&0) => {
+                let deleted = o.len();
+                let added = n.len();
+                (added, deleted, true)
+            }
+            (Some(o), None) if o.contains(&0) => (0, o.len(), true),
+            (None, Some(n)) if n.contains(&0) => (n.len(), 0, true),
+            _ => {
+                let old_content = old_raw
+                    .as_ref()
+                    .map(|b| String::from_utf8_lossy(b).into_owned())
+                    .unwrap_or_default();
+                let new_content = new_raw
+                    .as_ref()
+                    .map(|b| String::from_utf8_lossy(b).into_owned())
+                    .unwrap_or_default();
+                let (i, d) = count_changes(&old_content, &new_content);
+                (i, d, false)
+            }
+        };
 
         let mode_num = u32::from_str_radix(&entry.new_mode, 8).unwrap_or(0o100644);
+        let mut display_path = path.clone();
+        if compact {
+            if is_new {
+                display_path.push_str(" (new)");
+            } else if is_deleted {
+                display_path.push_str(" (gone)");
+            }
+        }
         stats.push(StatEntry {
-            path: path.to_owned(),
+            path,
+            display_path,
             insertions: ins,
             deletions: del,
+            is_binary,
             is_new,
             is_deleted,
             new_mode: if is_new { Some(mode_num) } else { None },
         });
     }
 
-    // Build display names with compact annotations
-    let display_names: Vec<String> = stats
+    let cfg = ConfigSet::load(Some(&repo.git_dir), false).unwrap_or_default();
+    let stat_name_width = cfg
+        .get("diff.statNameWidth")
+        .and_then(|v| v.parse::<usize>().ok());
+    let stat_graph_width = cfg
+        .get("diff.statGraphWidth")
+        .and_then(|v| v.parse::<usize>().ok());
+
+    let files: Vec<FileStatInput> = stats
         .iter()
-        .map(|s| {
-            if compact {
-                let mut name = s.path.clone();
-                if s.is_new {
-                    name.push_str(" (new)");
-                } else if s.is_deleted {
-                    name.push_str(" (gone)");
-                }
-                // Could also add mode changes here
-                name
-            } else {
-                s.path.clone()
-            }
+        .map(|s| FileStatInput {
+            path_display: s.display_path.clone(),
+            insertions: s.insertions,
+            deletions: s.deletions,
+            is_binary: s.is_binary,
         })
         .collect();
 
-    let max_path_len = display_names.iter().map(|s| s.len()).max().unwrap_or(0);
-    let max_change = stats
-        .iter()
-        .map(|s| s.insertions + s.deletions)
-        .max()
-        .unwrap_or(0);
-    let count_width = if max_change == 0 {
-        1
-    } else {
-        format!("{}", max_change).len()
+    let opts = DiffstatOptions {
+        total_width: terminal_columns(),
+        line_prefix: "",
+        subtract_prefix_from_terminal: false,
+        stat_name_width,
+        stat_graph_width,
+        stat_count: None,
+        color_add: "",
+        color_del: "",
+        color_reset: "",
+        graph_bar_slack: 0,
+        graph_prefix_budget_slack: 0,
     };
+    let _ = write_diffstat_block(&mut std::io::stdout().lock(), &files, &opts);
 
-    for (i, s) in stats.iter().enumerate() {
-        let total = s.insertions + s.deletions;
-        let plus = "+".repeat(s.insertions.min(50));
-        let minus = "-".repeat(s.deletions.min(50));
-        println!(
-            " {:<width$} | {:>cw$} {}{}",
-            display_names[i],
-            total,
-            plus,
-            minus,
-            width = max_path_len,
-            cw = count_width
-        );
-    }
-
-    // Summary line
-    let files_changed = stats.len();
-    let mut parts = Vec::new();
-    parts.push(format!(
-        "{} file{} changed",
-        files_changed,
-        if files_changed != 1 { "s" } else { "" }
-    ));
-    if total_ins > 0 {
-        parts.push(format!(
-            "{} insertion{}",
-            total_ins,
-            if total_ins != 1 { "s(+)" } else { "(+)" }
-        ));
-    }
-    if total_del > 0 {
-        parts.push(format!(
-            "{} deletion{}",
-            total_del,
-            if total_del != 1 { "s(-)" } else { "(-)" }
-        ));
-    }
-    println!(" {}", parts.join(", "));
-
-    // Show create/delete mode notices (not needed in compact mode)
     if !compact {
         for s in &stats {
             if s.is_new {
