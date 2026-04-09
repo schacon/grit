@@ -262,7 +262,7 @@ commit → check it off → move on.
 - [x] `t3305-notes-fanout` ████████████████████ 7/7 (0 left) — Test that adding/removing many notes triggers automatic fanout restructuring
 - [ ] `t3005-ls-files-relative` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — ls-files tests with relative paths
 
-- [ ] `t3427-rebase-subtree` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — git rebase tests for -Xsubtree
+- [x] `t3427-rebase-subtree` ████████████████████ 3/3 (0 left) — git rebase tests for -Xsubtree
 
 - [ ] `t3506-cherry-pick-ff` ████████████░░░░░░░░ 7/11 (4 left) — test cherry-picking with --ff option
 - [ ] `t3103-ls-tree-misc` ████████████░░░░░░░░ 6/10 (4 left) — 

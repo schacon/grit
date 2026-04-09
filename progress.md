@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   276 |
+| Completed   |   277 |
 | In progress |     4 |
-| Remaining   |   488 |
+| Remaining   |   487 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 276 completed (`[x]`), 4 in progress (`[~]`), 488 remaining (`[ ]`).
+Task lines in `PLAN.md`: 277 completed (`[x]`), 4 in progress (`[~]`), 487 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t3427-rebase-subtree` — 3/3 tests pass (`rebase -Xsubtree=…`, `--empty=ask` stops for empty pick then `--skip`, with and without `--rebase-merges --onto`; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t1508-at-combinations` — 35/35 tests pass (`@{X}` combinations: reflog, upstream, `@`/`@@{u}`, branches with `@`, `@:path`, reflog expire edge cases; harness CSV/dashboards refreshed; `PLAN.md` / `t1-plan.md` marked complete)
 - `t5309-pack-delta-cycles` — 7/7 tests pass (`index-pack` / `--fix-thin`: REF_DELTA cycles fail when bases are missing, succeed when bases exist in ODB or as duplicate undeltified objects in-pack; thin A→B→C chain with B on disk; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t10860-switch-force-create` — 30/30 tests pass (`switch`: `-c`/`--create`, start points, `switch -`, detach/orphan, `--discard-changes`, untracked preservation; harness CSV/dashboards refreshed; `t1-plan.md` marked complete)
@@ -151,4 +152,4 @@ Task lines in `PLAN.md`: 276 completed (`[x]`), 4 in progress (`[~]`), 488 remai
 
 ## What Remains
 
-488 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+487 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
