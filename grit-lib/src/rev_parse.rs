@@ -974,10 +974,9 @@ pub fn peel_to_tree(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
     }
 }
 
-/// Navigate a tree to find an object at a given path.
+/// Navigate a tree to find an object at a given path (blob, tree, or gitlink at the leaf).
 fn resolve_tree_path(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Result<ObjectId> {
-    let (oid, _) = walk_tree_to_blob_entry(repo, tree_oid, path)?;
-    Ok(oid)
+    resolve_treeish_path_to_object(repo, *tree_oid, path)
 }
 
 /// Resolved blob (non-tree) at `treeish:path` for diff plumbing.
@@ -1612,7 +1611,7 @@ fn resolve_base(
             false,
             false,
         )?;
-        return resolve_treeish_path(repo, root_oid, path);
+        return resolve_treeish_path_to_object(repo, root_oid, path);
     }
 
     if let Ok(oid) = spec.parse::<ObjectId>() {
@@ -2576,7 +2575,10 @@ pub(crate) fn split_treeish_spec(spec: &str) -> Option<(&str, &str)> {
     split_treeish_colon(spec)
 }
 
-pub(crate) fn resolve_treeish_path(
+/// Resolve `treeish:path` to the object at `path` (blob, tree, or gitlink OID at the leaf).
+///
+/// Unlike [`walk_tree_to_blob_entry`], the final path component may name a tree (Git `rev-parse`).
+pub(crate) fn resolve_treeish_path_to_object(
     repo: &Repository,
     treeish: ObjectId,
     path: &str,
@@ -2596,7 +2598,8 @@ pub(crate) fn resolve_treeish_path(
     if parts.peek().is_none() {
         return Ok(current_tree);
     }
-    while let Some(part) = parts.next() {
+    let parts_vec: Vec<&str> = parts.collect();
+    for (idx, part) in parts_vec.iter().enumerate() {
         let tree_object = repo.odb.read(&current_tree)?;
         if tree_object.kind != ObjectKind::Tree {
             return Err(Error::CorruptObject(format!(
@@ -2607,13 +2610,24 @@ pub(crate) fn resolve_treeish_path(
         let Some(entry) = entries.iter().find(|entry| entry.name == part.as_bytes()) else {
             return Err(Error::ObjectNotFound(path.to_owned()));
         };
-        if parts.peek().is_none() {
+        if idx + 1 == parts_vec.len() {
             return Ok(entry.oid);
+        }
+        if entry.mode != crate::index::MODE_TREE {
+            return Err(Error::ObjectNotFound(path.to_owned()));
         }
         current_tree = entry.oid;
     }
 
     Err(Error::ObjectNotFound(path.to_owned()))
+}
+
+pub(crate) fn resolve_treeish_path(
+    repo: &Repository,
+    treeish: ObjectId,
+    path: &str,
+) -> Result<ObjectId> {
+    resolve_treeish_path_to_object(repo, treeish, path)
 }
 
 fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Result<ObjectId> {

@@ -56,14 +56,6 @@ fn resolve_max_tree_depth(config: &ConfigSet) -> Result<usize> {
     Ok(depth)
 }
 
-fn filter_mentions_tree_depth(f: &ObjectFilter) -> bool {
-    match f {
-        ObjectFilter::TreeDepth(_) => true,
-        ObjectFilter::Combine(parts) => parts.iter().any(filter_mentions_tree_depth),
-        _ => false,
-    }
-}
-
 /// Arguments for `grit rev-list`.
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -96,7 +88,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut disk_usage_format: Option<DiskUsageFormat> = None;
     let mut show_parents = false;
     let mut not_mode = false;
-    let mut missing_explicit = false;
+    let mut _missing_explicit = false;
     let mut use_bitmap_index = false;
     let mut unpacked_only = false;
     let mut test_bitmap = false;
@@ -153,7 +145,7 @@ pub fn run(args: Args) -> Result<()> {
                     });
                 }
                 _ if arg.starts_with("--missing=") => {
-                    missing_explicit = true;
+                    _missing_explicit = true;
                     let value = arg.trim_start_matches("--missing=");
                     options.missing_action = match value {
                         "error" => MissingAction::Error,
@@ -399,8 +391,25 @@ pub fn run(args: Args) -> Result<()> {
                     let spec = arg.trim_start_matches("--filter=");
                     let filter = ObjectFilter::parse(spec).map_err(|e| anyhow::anyhow!("{e}"))?;
                     options.filter = Some(match options.filter.take() {
-                        Some(existing) => existing.merge_with(filter),
-                        None => filter,
+                        Some(existing) => {
+                            // Match Git `transform_to_combine_type` + `filter_spec_append_urlencode`:
+                            // when the second `--filter` is parsed, trace the URL-encoded first spec,
+                            // then each subsequent spec traces only itself.
+                            if options.filter_raw_specs.len() == 1 {
+                                let first = options.filter_raw_specs[0].as_str();
+                                let enc =
+                                    grit_lib::rev_list::url_encode_object_filter_subspec(first);
+                                grit_lib::rev_list::trace_combine_filter_append(&enc);
+                            }
+                            let enc = grit_lib::rev_list::url_encode_object_filter_subspec(spec);
+                            grit_lib::rev_list::trace_combine_filter_append(&enc);
+                            options.filter_raw_specs.push(spec.to_string());
+                            existing.merge_with(filter)
+                        }
+                        None => {
+                            options.filter_raw_specs.push(spec.to_string());
+                            filter
+                        }
                     });
                 }
                 _ if arg.starts_with("--default") => {
@@ -457,12 +466,6 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    // `git rev-list --objects` skips missing blobs (partial clones); only `--missing=error`
-    // should hard-fail when an object is absent.
-    if options.objects && !missing_explicit {
-        options.missing_action = MissingAction::Allow;
-    }
-
     if options.objects {
         options.use_bitmap_index = use_bitmap_index;
         options.unpacked_only = unpacked_only;
@@ -475,20 +478,6 @@ pub fn run(args: Args) -> Result<()> {
             None => resolve_max_tree_depth(&config)?,
         };
         object_depth_limit = Some(depth);
-        let depth_filter = grit_lib::rev_list::ObjectFilter::TreeDepth(depth as u64);
-        options.filter = match options.filter.take() {
-            None => Some(depth_filter),
-            Some(f) => {
-                if filter_mentions_tree_depth(&f) {
-                    Some(f)
-                } else {
-                    Some(grit_lib::rev_list::ObjectFilter::Combine(vec![
-                        depth_filter,
-                        f,
-                    ]))
-                }
-            }
-        };
     }
 
     if options.paths.is_empty() {
@@ -603,7 +592,7 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    if options.objects {
+    if options.objects && options.missing_action == MissingAction::Error {
         let max_tree_depth = object_depth_limit.unwrap_or(resolve_max_tree_depth(&config)?);
         validate_rev_list_tree_depth(&repo, &result.commits, max_tree_depth)?;
     }
@@ -861,7 +850,11 @@ fn validate_tree_depth_limit(
             max_tree_depth
         );
     }
-    let object = repo.odb.read(&tree_oid)?;
+    let object = match repo.odb.read(&tree_oid) {
+        Ok(o) => o,
+        Err(grit_lib::error::Error::ObjectNotFound(_)) => return Ok(()),
+        Err(e) => return Err(e).context("read tree for maxtreedepth validation")?,
+    };
     let entries = parse_tree(&object.data)?;
     for entry in entries {
         if entry.mode == 0o040000 {

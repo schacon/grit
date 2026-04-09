@@ -8,6 +8,7 @@
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 use crate::commit_graph_file::{BloomPrecheck, BloomWalkStatsHandle, CommitGraphChain};
@@ -15,7 +16,7 @@ use crate::config::ConfigSet;
 use crate::diff::zero_oid;
 use crate::error::{Error, Result};
 use crate::ident::{committer_unix_seconds_for_ordering, parse_signature_times};
-use crate::ignore::{parse_sparse_patterns_from_blob, path_matches_sparse_pattern_list};
+use crate::ignore::{parse_sparse_patterns_from_blob, path_in_sparse_checkout};
 use crate::index::Index;
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::pack;
@@ -65,8 +66,8 @@ pub enum ObjectFilter {
     BlobLimit(u64),
     /// `tree:<depth>` — omit trees deeper than `depth`.
     TreeDepth(u64),
-    /// `sparse:oid=<hex>` — sparse-checkout style path filter from a blob.
-    SparseOid(ObjectId),
+    /// `sparse:oid=<rev>:<path>` or raw hex — sparse-checkout style path filter from a blob.
+    SparseOid(String),
     /// `object:type=(blob|tree|commit|tag)` — keep only objects of that type.
     ObjectType(FilterObjectKind),
     /// `combine:<filter>+<filter>+…` — apply multiple filters.
@@ -76,6 +77,10 @@ pub enum ObjectFilter {
 impl ObjectFilter {
     /// Parse a `--filter=<spec>` value.
     pub fn parse(spec: &str) -> std::result::Result<Self, String> {
+        Self::parse_inner(spec.trim(), false)
+    }
+
+    fn parse_inner(spec: &str, from_combine_subfilter: bool) -> std::result::Result<Self, String> {
         if spec == "blob:none" {
             return Ok(ObjectFilter::BlobNone);
         }
@@ -85,9 +90,20 @@ impl ObjectFilter {
             return Ok(ObjectFilter::BlobLimit(bytes));
         }
         if let Some(rest) = spec.strip_prefix("tree:") {
-            let depth: u64 = rest
-                .parse()
-                .map_err(|_| format!("invalid tree depth: {rest}"))?;
+            if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
+                return Err(if from_combine_subfilter {
+                    "expected 'tree:<depth>'.".to_owned()
+                } else {
+                    format!("invalid tree depth: {rest}")
+                });
+            }
+            let depth: u64 = rest.parse().map_err(|_| {
+                if from_combine_subfilter {
+                    "expected 'tree:<depth>'.".to_owned()
+                } else {
+                    format!("invalid tree depth: {rest}")
+                }
+            })?;
             return Ok(ObjectFilter::TreeDepth(depth));
         }
         if let Some(rest) = spec.strip_prefix("object:type=") {
@@ -102,20 +118,34 @@ impl ObjectFilter {
             return Ok(ObjectFilter::ObjectType(kind));
         }
         if let Some(rest) = spec.strip_prefix("sparse:oid=") {
-            let oid = rest
-                .parse::<ObjectId>()
-                .map_err(|_| format!("invalid sparse:oid value: {rest}"))?;
-            return Ok(ObjectFilter::SparseOid(oid));
+            if rest.is_empty() {
+                return Err("invalid sparse:oid value: ".to_owned());
+            }
+            return Ok(ObjectFilter::SparseOid(rest.to_owned()));
         }
         if let Some(rest) = spec.strip_prefix("combine:") {
-            let parts = split_combine(rest);
+            if rest.is_empty() {
+                return Err("expected something after combine:".to_owned());
+            }
+            let parts = split_combine_raw_parts(rest);
+            if parts.is_empty() {
+                return Err("expected something after combine:".to_owned());
+            }
             let mut filters = Vec::new();
             for part in parts {
-                filters.push(ObjectFilter::parse(&part)?);
+                filters.push(Self::parse_from_combine_subfilter(part)?);
             }
             return Ok(ObjectFilter::Combine(filters));
         }
-        Err(format!("unsupported filter spec: {spec}"))
+        Err(format!("invalid filter-spec '{spec}'"))
+    }
+
+    fn parse_from_combine_subfilter(encoded: &str) -> std::result::Result<Self, String> {
+        if let Some(ch) = combine_subfilter_has_reserved(encoded) {
+            return Err(format!("must escape char in sub-filter-spec: '{ch}'"));
+        }
+        let decoded = url_decode(encoded);
+        Self::parse_inner(&decoded, true)
     }
 
     /// Merge another `--filter` argument (Git joins multiple filters with AND).
@@ -143,7 +173,7 @@ impl ObjectFilter {
     pub fn includes_blob(&self, size: u64) -> bool {
         match self {
             ObjectFilter::BlobNone => false,
-            ObjectFilter::BlobLimit(limit) => size <= *limit,
+            ObjectFilter::BlobLimit(limit) => size < *limit,
             // Depth is applied via [`ObjectFilter::includes_blob_under_tree`]; this stays permissive
             // for callers that only have a size (e.g. loose-object scans).
             ObjectFilter::TreeDepth(_) => true,
@@ -161,7 +191,7 @@ impl ObjectFilter {
     pub fn includes_blob_under_tree(&self, size: u64, parent_tree_depth: u64) -> bool {
         match self {
             ObjectFilter::BlobNone => false,
-            ObjectFilter::BlobLimit(limit) => size <= *limit,
+            ObjectFilter::BlobLimit(limit) => size < *limit,
             ObjectFilter::TreeDepth(max_depth) => parent_tree_depth.saturating_add(1) < *max_depth,
             ObjectFilter::SparseOid(_) => true,
             ObjectFilter::ObjectType(kind) => *kind == FilterObjectKind::Blob,
@@ -273,25 +303,80 @@ fn parse_size_suffix(s: &str) -> Option<u64> {
     Some(num * multiplier)
 }
 
-/// Split a combine filter spec on `+`, handling URL encoding.
-fn split_combine(spec: &str) -> Vec<String> {
-    let mut parts = Vec::new();
-    let mut current = String::new();
-    let chars = spec.chars().peekable();
-    for ch in chars {
-        if ch == '+' {
-            if !current.is_empty() {
-                parts.push(url_decode(&current));
-                current.clear();
-            }
-        } else {
-            current.push(ch);
+/// Raw substrings between `+` in a `combine:` value (still percent-encoded).
+fn split_combine_raw_parts(spec: &str) -> Vec<&str> {
+    spec.split('+').filter(|s| !s.is_empty()).collect()
+}
+
+/// Characters that must not appear raw inside a `combine:` sub-filter (matches Git
+/// `RESERVED_NON_WS` + whitespace; `%` is allowed because subspecs are percent-encoded).
+fn combine_subfilter_has_reserved(encoded: &str) -> Option<char> {
+    const RESERVED: &str = "~`!@#$^&*()[]{}\\;'\",<>?";
+    for ch in encoded.chars() {
+        if ch.is_control() || ch.is_whitespace() {
+            return Some(ch);
+        }
+        if RESERVED.contains(ch) {
+            return Some(ch);
         }
     }
-    if !current.is_empty() {
-        parts.push(url_decode(&current));
+    None
+}
+
+/// Expand a user filter for protocol lines (`blob:limit=1k` → `blob:limit=1024`).
+#[must_use]
+pub fn expand_object_filter_for_protocol(spec: &str) -> std::result::Result<String, String> {
+    let f = ObjectFilter::parse(spec)?;
+    match f {
+        ObjectFilter::BlobLimit(n) => Ok(format!("blob:limit={n}")),
+        _ => Ok(spec.to_owned()),
     }
-    parts
+}
+
+fn combine_filter_allow_unencoded(ch: char) -> bool {
+    if ch.is_control() || ch.is_whitespace() || ch == '%' || ch == '+' {
+        return false;
+    }
+    !"~`!@#$^&*()[]{}\\;'\",<>?".contains(ch)
+}
+
+/// Append URL-encoded `raw` for Git `filter_spec` / trace (matches `allow_unencoded` in Git).
+pub fn url_encode_object_filter_subspec(raw: &str) -> String {
+    let mut out = String::new();
+    for b in raw.as_bytes() {
+        let ch = *b as char;
+        if combine_filter_allow_unencoded(ch) {
+            out.push(ch);
+        } else {
+            out.push_str(&format!("%{:02x}", b));
+        }
+    }
+    out
+}
+
+/// Emit `Add to combine filter-spec: …` when `GIT_TRACE` is enabled (Git `list-objects-filter-options.c`).
+pub fn trace_combine_filter_append(encoded_segment: &str) {
+    let Ok(trace_val) = std::env::var("GIT_TRACE") else {
+        return;
+    };
+    if trace_val.is_empty() || trace_val == "0" || trace_val.eq_ignore_ascii_case("false") {
+        return;
+    }
+    let line = format!("Add to combine filter-spec: {encoded_segment}\n");
+    match trace_val.as_str() {
+        "1" | "true" | "2" => {
+            let _ = std::io::stderr().write_all(line.as_bytes());
+        }
+        path => {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
+                let _ = f.write_all(line.as_bytes());
+            }
+        }
+    }
 }
 
 /// Simple URL percent-decoding.
@@ -381,6 +466,8 @@ pub struct RevListOptions {
     pub sparse: bool,
     /// Object filter for `--filter=<spec>`.
     pub filter: Option<ObjectFilter>,
+    /// Raw `--filter=` argument strings in order (for `GIT_TRACE` when Git combines multiple filters).
+    pub filter_raw_specs: Vec<String>,
     /// When set with `--filter`, explicitly given revision objects are filtered too.
     pub filter_provided_objects: bool,
     /// Print omitted objects prefixed with `~`.
@@ -447,6 +534,7 @@ impl Default for RevListOptions {
             full_history: false,
             sparse: false,
             filter: None,
+            filter_raw_specs: Vec::new(),
             filter_provided_objects: false,
             filter_print_omitted: false,
             in_commit_order: false,
@@ -499,6 +587,8 @@ pub struct RevListResult {
     pub object_segments: Vec<Vec<(ObjectId, String)>>,
     /// True when `--use-bitmap-index --objects` should format trees/blobs as bare OIDs (no paths).
     pub bitmap_object_format: bool,
+    /// When a positive spec named a ref to an annotated tag of a commit, maps peeled commit → tag OID.
+    pub tip_annotated_tag_by_commit: HashMap<ObjectId, ObjectId>,
 }
 
 /// Resolve and walk revisions for the requested options.
@@ -522,10 +612,14 @@ pub fn rev_list(
 ) -> Result<RevListResult> {
     let mut graph = CommitGraph::new(repo, options.first_parent);
 
-    let (mut include, object_roots) = if options.objects {
+    let (mut include, object_roots, tip_annotated_tag_by_commit) = if options.objects {
         resolve_specs_for_objects(repo, positive_specs)?
     } else {
-        (resolve_specs(repo, positive_specs)?, Vec::new())
+        (
+            resolve_specs(repo, positive_specs)?,
+            Vec::new(),
+            HashMap::new(),
+        )
     };
     let exclude = resolve_specs(repo, negative_specs)?;
 
@@ -552,6 +646,7 @@ pub fn rev_list(
                     input: format!(":{path_str}"),
                     expected_kind: Some(ExpectedObjectKind::Blob),
                     root_path: Some(path_str),
+                    wrap_with_tag: None,
                 });
             }
         }
@@ -844,7 +939,11 @@ pub fn rev_list(
             .iter()
             .map(|&c| {
                 let user_given = !options.filter_provided_objects && commit_tips_set.contains(&c);
-                user_given || filter_shows_commit_line_when_not_user_given(options.filter.as_ref())
+                object_walk_print_commit_line(
+                    options.filter_provided_objects,
+                    options.filter.as_ref(),
+                    user_given,
+                )
             })
             .collect()
     } else {
@@ -853,6 +952,14 @@ pub fn rev_list(
 
     let sparse_lines = sparse_oid_lines_from_filter(repo, options.filter.as_ref());
     let skip_trees = skip_tree_descent_for_object_type_filter(options.filter.as_ref());
+    let walk_cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let promisor_repo = crate::promisor::repo_treats_promisor_packs(&repo.git_dir, &walk_cfg);
+    let object_walk_missing_action =
+        if options.objects && options.missing_action == MissingAction::Error && promisor_repo {
+            MissingAction::Allow
+        } else {
+            options.missing_action
+        };
     let bitmap_object_format = options.objects
         && options.use_bitmap_index
         && (options.bitmap_oid_only_objects || !object_roots.is_empty() || options.unpacked_only);
@@ -862,6 +969,9 @@ pub fn rev_list(
     } else {
         None
     };
+
+    // Git only enables provisional omit recursion (`omits` non-NULL) with `--filter-print-omitted`.
+    let collect_tree_omits = options.filter_print_omitted;
 
     // Collect reachable objects if --objects
     let (objects, omitted_objects, missing_objects, per_commit_object_counts, object_segments) =
@@ -873,13 +983,15 @@ pub fn rev_list(
                     &mut graph,
                     &ordered,
                     &object_roots,
+                    &tip_annotated_tag_by_commit,
                     options.filter.as_ref(),
                     filter_provided,
-                    options.missing_action,
+                    object_walk_missing_action,
                     sparse_lines.as_deref(),
                     skip_trees,
                     omit_object_paths,
                     packed_set.as_ref(),
+                    collect_tree_omits,
                 )?;
                 (o, om, mi, c, Vec::new())
             } else {
@@ -888,13 +1000,15 @@ pub fn rev_list(
                     &mut graph,
                     &ordered,
                     &object_roots,
+                    &tip_annotated_tag_by_commit,
                     options.filter.as_ref(),
                     filter_provided,
-                    options.missing_action,
+                    object_walk_missing_action,
                     sparse_lines.as_deref(),
                     skip_trees,
                     omit_object_paths,
                     packed_set.as_ref(),
+                    collect_tree_omits,
                 )?;
                 (o, om, mi, Vec::new(), seg)
             };
@@ -905,6 +1019,18 @@ pub fn rev_list(
         } else {
             (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new())
         };
+
+    let omitted_objects = if omitted_objects.is_empty() {
+        omitted_objects
+    } else {
+        let emitted: HashSet<ObjectId> = objects.iter().map(|(o, _)| *o).collect();
+        omitted_objects
+            .into_iter()
+            .filter(|o| !emitted.contains(o))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    };
 
     Ok(RevListResult {
         commits: ordered,
@@ -919,6 +1045,7 @@ pub fn rev_list(
         objects_print_commit,
         object_segments,
         bitmap_object_format,
+        tip_annotated_tag_by_commit,
     })
 }
 
@@ -1959,6 +2086,35 @@ struct RootObject {
     expected_kind: Option<ExpectedObjectKind>,
     /// Path within the tree for `rev:path` blob roots (for correct `--objects` names).
     root_path: Option<String>,
+    /// When the user named an annotated tag, the tag object to emit before walking [`Self::oid`].
+    wrap_with_tag: Option<ObjectId>,
+}
+
+fn object_walk_print_commit_line(
+    filter_provided_objects: bool,
+    filter: Option<&ObjectFilter>,
+    user_given_tip: bool,
+) -> bool {
+    if !filter_provided_objects {
+        return user_given_tip || filter_shows_commit_line_when_not_user_given(filter);
+    }
+    match filter {
+        Some(ObjectFilter::ObjectType(FilterObjectKind::Commit)) => {
+            user_given_tip || filter_shows_commit_line_when_not_user_given(filter)
+        }
+        Some(ObjectFilter::ObjectType(_)) => false,
+        Some(ObjectFilter::Combine(parts)) => {
+            if parts
+                .iter()
+                .all(|p| matches!(p, ObjectFilter::ObjectType(FilterObjectKind::Commit)))
+            {
+                user_given_tip || filter_shows_commit_line_when_not_user_given(filter)
+            } else {
+                false
+            }
+        }
+        _ => user_given_tip || filter_shows_commit_line_when_not_user_given(filter),
+    }
 }
 
 /// Whether `LOFS_COMMIT` would receive `LOFR_DO_SHOW` when the commit is `NOT_USER_GIVEN` (Git list-objects-filter).
@@ -1989,14 +2145,28 @@ fn skip_tree_descent_for_object_type_filter(filter: Option<&ObjectFilter>) -> bo
     }
 }
 
+fn sparse_filter_includes_path(path: &str, sparse_lines: Option<&[String]>) -> bool {
+    sparse_lines
+        .map(|lines| path_in_sparse_checkout(path, lines))
+        .unwrap_or(true)
+}
+
 fn sparse_oid_lines_from_filter(
     repo: &Repository,
     filter: Option<&ObjectFilter>,
 ) -> Option<Vec<String>> {
     let f = filter?;
     match f {
-        ObjectFilter::SparseOid(oid) => {
-            let obj = repo.odb.read(oid).ok()?;
+        ObjectFilter::SparseOid(spec) => {
+            let blob_oid = if let Ok(oid) = spec.parse::<ObjectId>() {
+                oid
+            } else if let Some((treeish, path)) = split_treeish_spec(spec) {
+                let treeish_oid = resolve_revision_for_range_end(repo, treeish).ok()?;
+                resolve_treeish_path(repo, treeish_oid, path).ok()?
+            } else {
+                return None;
+            };
+            let obj = repo.odb.read(&blob_oid).ok()?;
             if obj.kind != ObjectKind::Blob {
                 return None;
             }
@@ -2041,9 +2211,10 @@ fn resolve_specs(repo: &Repository, specs: &[String]) -> Result<Vec<ObjectId>> {
 fn resolve_specs_for_objects(
     repo: &Repository,
     specs: &[String],
-) -> Result<(Vec<ObjectId>, Vec<RootObject>)> {
+) -> Result<(Vec<ObjectId>, Vec<RootObject>, HashMap<ObjectId, ObjectId>)> {
     let mut commits = Vec::new();
     let mut roots = Vec::new();
+    let mut tip_annotated_tag_by_commit: HashMap<ObjectId, ObjectId> = HashMap::new();
 
     for spec in specs {
         if let Ok(raw_oid) = spec.parse::<ObjectId>() {
@@ -2061,11 +2232,15 @@ fn resolve_specs_for_objects(
                                 tag.object_type
                             ))
                         })?;
+                    if expected_kind == ExpectedObjectKind::Commit {
+                        tip_annotated_tag_by_commit.insert(tag.object, raw_oid);
+                    }
                     roots.push(RootObject {
                         oid: tag.object,
                         input: spec.clone(),
                         expected_kind: Some(expected_kind),
                         root_path: None,
+                        wrap_with_tag: Some(raw_oid),
                     });
                 }
                 ObjectKind::Tree | ObjectKind::Blob => roots.push(RootObject {
@@ -2073,6 +2248,7 @@ fn resolve_specs_for_objects(
                     input: spec.clone(),
                     expected_kind: None,
                     root_path: None,
+                    wrap_with_tag: None,
                 }),
             }
             continue;
@@ -2087,12 +2263,20 @@ fn resolve_specs_for_objects(
                     input: spec.clone(),
                     expected_kind: Some(ExpectedObjectKind::Blob),
                     root_path: Some(path.to_owned()),
+                    wrap_with_tag: None,
                 });
                 continue;
             }
         }
 
         let oid = resolve_revision_for_range_end(repo, spec)?;
+        if let Ok(obj) = repo.odb.read(&oid) {
+            if obj.kind == ObjectKind::Tag {
+                if let Ok(commit_oid) = peel_to_commit(repo, oid) {
+                    tip_annotated_tag_by_commit.insert(commit_oid, oid);
+                }
+            }
+        }
         match peel_to_commit(repo, oid) {
             Ok(commit_oid) => commits.push(commit_oid),
             Err(Error::CorruptObject(_)) | Err(Error::ObjectNotFound(_)) => {
@@ -2101,13 +2285,14 @@ fn resolve_specs_for_objects(
                     input: spec.clone(),
                     expected_kind: None,
                     root_path: None,
+                    wrap_with_tag: None,
                 })
             }
             Err(err) => return Err(err),
         }
     }
 
-    Ok((commits, roots))
+    Ok((commits, roots, tip_annotated_tag_by_commit))
 }
 
 /// Peel an object (possibly a tag) to the underlying commit.
@@ -2726,49 +2911,32 @@ pub fn split_symmetric_diff(token: &str) -> Option<(String, String)> {
         .map(|(l, r)| (l.to_owned(), r.to_owned()))
 }
 
-/// Tracks which tree OIDs have been traversed, matching Git list-objects behavior.
-///
-/// For `tree:<n>` filters, the same tree OID may be revisited from a shallower path; otherwise
-/// each tree is walked at most once per top-level walk.
-#[derive(Debug)]
-enum TreeWalkState {
-    Simple(HashSet<ObjectId>),
-    TreeDepth(HashMap<ObjectId, u64>),
+/// Maps each tree OID to the minimum traversal depth it was entered at (Git `list-objects` /
+/// `tree:<n>` semantics: the same tree may be revisited from a shallower path).
+#[derive(Debug, Default)]
+struct TreeWalkState {
+    seen_at_depth: HashMap<ObjectId, u64>,
 }
 
 impl TreeWalkState {
-    fn new(filter: Option<&ObjectFilter>) -> Self {
-        if filter_uses_tree_depth(filter) {
-            Self::TreeDepth(HashMap::new())
-        } else {
-            Self::Simple(HashSet::new())
-        }
+    fn new() -> Self {
+        Self::default()
     }
 
-    /// Returns `true` if this tree at `depth` should be skipped (already handled sufficiently).
+    /// Returns `true` if this tree at `depth` should be skipped (already entered at same or
+    /// shallower depth).
     fn should_skip_tree(&mut self, oid: ObjectId, depth: u64) -> bool {
-        match self {
-            TreeWalkState::Simple(set) => !set.insert(oid),
-            TreeWalkState::TreeDepth(map) => match map.get(&oid).copied() {
-                None => {
-                    map.insert(oid, depth);
-                    false
-                }
-                Some(prev) if depth >= prev => true,
-                Some(_) => {
-                    map.insert(oid, depth);
-                    false
-                }
-            },
+        match self.seen_at_depth.get(&oid).copied() {
+            None => {
+                self.seen_at_depth.insert(oid, depth);
+                false
+            }
+            Some(prev) if depth >= prev => true,
+            Some(_) => {
+                self.seen_at_depth.insert(oid, depth);
+                false
+            }
         }
-    }
-}
-
-fn filter_uses_tree_depth(filter: Option<&ObjectFilter>) -> bool {
-    match filter {
-        Some(ObjectFilter::TreeDepth(_)) => true,
-        Some(ObjectFilter::Combine(parts)) => parts.iter().any(|p| filter_uses_tree_depth(Some(p))),
-        _ => false,
     }
 }
 
@@ -2854,6 +3022,7 @@ fn collect_reachable_objects(
     graph: &mut CommitGraph<'_>,
     commits: &[ObjectId],
     object_roots: &[RootObject],
+    tip_annotated_tags: &HashMap<ObjectId, ObjectId>,
     filter: Option<&ObjectFilter>,
     filter_provided: bool,
     missing_action: MissingAction,
@@ -2861,8 +3030,12 @@ fn collect_reachable_objects(
     skip_trees_for_type_filter: bool,
     omit_object_paths: bool,
     packed_set: Option<&HashSet<ObjectId>>,
+    collect_tree_omits: bool,
 ) -> Result<(Vec<(ObjectId, String)>, Vec<ObjectId>, Vec<ObjectId>)> {
-    let mut tree_state = TreeWalkState::new(filter);
+    let mut tree_state = TreeWalkState::new();
+    let mut top_tree_omit =
+        walk_needs_top_tree_omit_set(filter, collect_tree_omits).then(HashSet::<ObjectId>::new);
+    let mut combine_states = CombineSubState::prepare_sub_states(filter, collect_tree_omits);
     let mut emitted = HashSet::new();
     let mut result = Vec::new();
     let mut omitted = Vec::new();
@@ -2887,6 +3060,11 @@ fn collect_reachable_objects(
             &mut missing,
             &mut missing_seen,
         )?;
+        if let Some(&tag_oid) = tip_annotated_tags.get(&commit_oid) {
+            if emitted.insert(tag_oid) {
+                result.push((tag_oid, "tag".to_owned()));
+            }
+        }
         collect_tree_objects_filtered(
             repo,
             commit.tree,
@@ -2907,6 +3085,9 @@ fn collect_reachable_objects(
             skip_trees_for_type_filter,
             omit_object_paths,
             packed_set,
+            collect_tree_omits,
+            &mut top_tree_omit,
+            &mut combine_states,
         )?;
     }
 
@@ -2927,6 +3108,9 @@ fn collect_reachable_objects(
             skip_trees_for_type_filter,
             omit_object_paths,
             packed_set,
+            collect_tree_omits,
+            &mut top_tree_omit,
+            &mut combine_states,
         )?;
     }
 
@@ -2943,6 +3127,7 @@ fn collect_reachable_objects_segmented(
     _graph: &mut CommitGraph<'_>,
     commits: &[ObjectId],
     object_roots: &[RootObject],
+    tip_annotated_tags: &HashMap<ObjectId, ObjectId>,
     filter: Option<&ObjectFilter>,
     filter_provided: bool,
     missing_action: MissingAction,
@@ -2950,6 +3135,7 @@ fn collect_reachable_objects_segmented(
     skip_trees_for_type_filter: bool,
     omit_object_paths: bool,
     packed_set: Option<&HashSet<ObjectId>>,
+    collect_tree_omits: bool,
 ) -> Result<(
     Vec<(ObjectId, String)>,
     Vec<ObjectId>,
@@ -2962,6 +3148,10 @@ fn collect_reachable_objects_segmented(
     let mut missing = Vec::new();
     let mut missing_seen = HashSet::new();
     let mut segments: Vec<Vec<(ObjectId, String)>> = Vec::with_capacity(commits.len() + 1);
+    let mut tree_state = TreeWalkState::new();
+    let mut top_tree_omit =
+        walk_needs_top_tree_omit_set(filter, collect_tree_omits).then(HashSet::<ObjectId>::new);
+    let mut combine_states = CombineSubState::prepare_sub_states(filter, collect_tree_omits);
 
     for &commit_oid in commits {
         let start = result.len();
@@ -2976,7 +3166,11 @@ fn collect_reachable_objects_segmented(
             }
             Err(err) => return Err(err),
         };
-        let mut tree_state = TreeWalkState::new(filter);
+        if let Some(&tag_oid) = tip_annotated_tags.get(&commit_oid) {
+            if emitted.insert(tag_oid) {
+                result.push((tag_oid, "tag".to_owned()));
+            }
+        }
         // Same as `collect_reachable_objects_in_commit_order`: Git lists objects in walk order with
         // global OID de-duplication only (`emitted`), not parent-closure subtraction.
         collect_tree_objects_filtered(
@@ -2999,17 +3193,19 @@ fn collect_reachable_objects_segmented(
             skip_trees_for_type_filter,
             omit_object_paths,
             packed_set,
+            collect_tree_omits,
+            &mut top_tree_omit,
+            &mut combine_states,
         )?;
         segments.push(result[start..].to_vec());
     }
 
     let roots_start = result.len();
-    let mut root_tree_state = TreeWalkState::new(filter);
     for root in object_roots {
         collect_root_object(
             repo,
             root,
-            &mut root_tree_state,
+            &mut tree_state,
             &mut emitted,
             &mut result,
             &mut omitted,
@@ -3022,6 +3218,9 @@ fn collect_reachable_objects_segmented(
             skip_trees_for_type_filter,
             omit_object_paths,
             packed_set,
+            collect_tree_omits,
+            &mut top_tree_omit,
+            &mut combine_states,
         )?;
     }
     segments.push(result[roots_start..].to_vec());
@@ -3029,168 +3228,300 @@ fn collect_reachable_objects_segmented(
     Ok((result, omitted, missing, segments))
 }
 
-fn collect_root_object(
-    repo: &Repository,
-    root: &RootObject,
-    tree_state: &mut TreeWalkState,
-    emitted: &mut HashSet<ObjectId>,
-    result: &mut Vec<(ObjectId, String)>,
-    omitted: &mut Vec<ObjectId>,
-    missing: &mut Vec<ObjectId>,
-    missing_seen: &mut HashSet<ObjectId>,
-    filter: Option<&ObjectFilter>,
-    filter_provided: bool,
-    missing_action: MissingAction,
-    sparse_lines: Option<&[String]>,
-    skip_trees_for_type_filter: bool,
-    omit_object_paths: bool,
-    packed_set: Option<&HashSet<ObjectId>>,
-) -> Result<()> {
-    let object = match repo.odb.read(&root.oid) {
-        Ok(object) => object,
-        Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
-            if missing_action == MissingAction::Print && missing_seen.insert(root.oid) {
-                missing.push(root.oid);
+#[derive(Clone, Copy, Debug)]
+struct ListFilterBits {
+    mark_seen: bool,
+    do_show: bool,
+    skip_tree: bool,
+}
+
+impl ListFilterBits {
+    fn merge_combine(subs: &[ListFilterBits], sub_skipping: &[bool]) -> Self {
+        let mut out = ListFilterBits {
+            mark_seen: true,
+            do_show: true,
+            skip_tree: true,
+        };
+        for (sub, skipping) in subs.iter().zip(sub_skipping.iter()) {
+            if !sub.do_show {
+                out.do_show = false;
             }
-            return Ok(());
+            if !sub.mark_seen {
+                out.mark_seen = false;
+            }
+            if !skipping {
+                out.skip_tree = false;
+            }
         }
-        Err(err) => return Err(err),
+        out
+    }
+}
+
+fn walk_needs_top_tree_omit_set(filter: Option<&ObjectFilter>, collect_omits: bool) -> bool {
+    collect_omits && matches!(filter, Some(ObjectFilter::TreeDepth(_)))
+}
+
+fn trace_skip_tree_contents(prefix: &str) {
+    let Ok(trace_val) = std::env::var("GIT_TRACE") else {
+        return;
+    };
+    if trace_val.is_empty() || trace_val == "0" || trace_val.eq_ignore_ascii_case("false") {
+        return;
+    }
+    let path = if prefix.is_empty() {
+        String::new()
+    } else {
+        format!("{prefix}/")
+    };
+    let line = format!("Skipping contents of tree {path}...\n");
+    match trace_val.as_str() {
+        "1" | "true" | "2" => {
+            let _ = std::io::stderr().write_all(line.as_bytes());
+        }
+        path_dest => {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path_dest)
+            {
+                let _ = f.write_all(line.as_bytes());
+            }
+        }
+    }
+}
+
+fn tree_depth_begin_tree(
+    tree_oid: ObjectId,
+    depth: u64,
+    exclude_depth: u64,
+    tree_state: &mut TreeWalkState,
+    tree_omit_set: &mut Option<HashSet<ObjectId>>,
+    collect_omits: bool,
+) -> ListFilterBits {
+    let include_it = depth < exclude_depth;
+    let already_seen = tree_state.should_skip_tree(tree_oid, depth);
+    if already_seen {
+        return ListFilterBits {
+            mark_seen: false,
+            do_show: false,
+            skip_tree: true,
+        };
+    }
+
+    let been_omitted = if collect_omits {
+        if let Some(omits) = tree_omit_set.as_mut() {
+            if include_it {
+                omits.remove(&tree_oid);
+                false
+            } else {
+                !omits.insert(tree_oid)
+            }
+        } else {
+            false
+        }
+    } else {
+        false
     };
 
-    if let Some(expected) = root.expected_kind {
-        if !expected.matches(object.kind) {
-            return Err(Error::CorruptObject(format!(
-                "object {} is not a {}",
-                root.input,
-                expected.as_str()
-            )));
-        }
-    }
+    let skip_tree = if include_it {
+        false
+    } else { !(collect_omits && !been_omitted) };
 
-    match object.kind {
-        ObjectKind::Commit => {
-            let commit = parse_commit(&object.data)?;
-            let parent_union = union_parent_reachable_objects(
-                repo,
-                &commit.parents,
-                missing_action,
-                missing,
-                missing_seen,
-            )?;
-            collect_tree_objects_filtered(
-                repo,
-                commit.tree,
-                "",
-                0,
-                false,
-                Some(&parent_union),
-                tree_state,
-                emitted,
-                result,
-                omitted,
-                missing,
-                missing_seen,
-                filter,
-                filter_provided,
-                missing_action,
-                sparse_lines,
-                skip_trees_for_type_filter,
-                omit_object_paths,
-                packed_set,
-            )?;
-        }
-        ObjectKind::Tree => {
-            collect_tree_objects_filtered(
-                repo,
-                root.oid,
-                "",
-                0,
-                true,
-                None,
-                tree_state,
-                emitted,
-                result,
-                omitted,
-                missing,
-                missing_seen,
-                filter,
-                filter_provided,
-                missing_action,
-                sparse_lines,
-                skip_trees_for_type_filter,
-                omit_object_paths,
-                packed_set,
-            )?;
-        }
-        ObjectKind::Blob => {
-            let path_for_sparse = root.root_path.as_deref().unwrap_or("");
-            let blob_included = match filter {
-                None => true,
-                Some(f) => {
-                    if !filter_provided {
-                        true
-                    } else {
-                        f.includes_blob_under_tree(object.data.len() as u64, 0)
-                    }
-                }
-            };
-            let blob_included = blob_included
-                && sparse_lines.is_none_or(|lines| {
-                    path_matches_sparse_pattern_list(path_for_sparse, lines) != Some(false)
-                });
-            if !blob_included {
-                omitted.push(root.oid);
-                return Ok(());
-            }
-            if packed_set.is_some_and(|p| p.contains(&root.oid)) {
-                return Ok(());
-            }
-            if !emitted.insert(root.oid) {
-                return Ok(());
-            }
-            let out_path = if omit_object_paths {
-                String::new()
+    let do_show = include_it;
+    ListFilterBits {
+        mark_seen: true,
+        do_show,
+        skip_tree,
+    }
+}
+
+fn tree_depth_blob(
+    oid: ObjectId,
+    _size: u64,
+    parent_depth: u64,
+    exclude_depth: u64,
+    tree_omit_set: &mut Option<HashSet<ObjectId>>,
+    collect_omits: bool,
+) -> ListFilterBits {
+    let include_it = parent_depth.saturating_add(1) < exclude_depth;
+    if collect_omits {
+        if let Some(omits) = tree_omit_set.as_mut() {
+            if include_it {
+                omits.remove(&oid);
             } else {
-                path_for_sparse.to_owned()
-            };
-            result.push((root.oid, out_path));
-        }
-        ObjectKind::Tag => {
-            let tag = parse_tag(&object.data)?;
-            let expected_kind =
-                ExpectedObjectKind::from_tag_type(&tag.object_type).ok_or_else(|| {
-                    Error::CorruptObject(format!(
-                        "object {} has unsupported tag type '{}'",
-                        root.input, tag.object_type
-                    ))
-                })?;
-            let nested = RootObject {
-                oid: tag.object,
-                input: root.input.clone(),
-                expected_kind: Some(expected_kind),
-                root_path: None,
-            };
-            collect_root_object(
-                repo,
-                &nested,
-                tree_state,
-                emitted,
-                result,
-                omitted,
-                missing,
-                missing_seen,
-                filter,
-                filter_provided,
-                missing_action,
-                sparse_lines,
-                skip_trees_for_type_filter,
-                omit_object_paths,
-                packed_set,
-            )?;
+                omits.insert(oid);
+            }
         }
     }
+    ListFilterBits {
+        // Omitted blobs stay not-SEEN so the same OID can be revisited from a shallower path (t6112).
+        mark_seen: include_it,
+        do_show: include_it,
+        skip_tree: false,
+    }
+}
 
-    Ok(())
+fn filter_object_bits_tree_begin(
+    f: &ObjectFilter,
+    tree_oid: ObjectId,
+    depth: u64,
+    tree_state: &mut TreeWalkState,
+    tree_omit_set: &mut Option<HashSet<ObjectId>>,
+    collect_omits: bool,
+    sub_states: Option<&mut [CombineSubState]>,
+) -> ListFilterBits {
+    match f {
+        ObjectFilter::BlobNone | ObjectFilter::BlobLimit(_) => ListFilterBits {
+            mark_seen: true,
+            do_show: true,
+            skip_tree: false,
+        },
+        ObjectFilter::TreeDepth(excl) => tree_depth_begin_tree(
+            tree_oid,
+            depth,
+            *excl,
+            tree_state,
+            tree_omit_set,
+            collect_omits,
+        ),
+        ObjectFilter::SparseOid(_) => ListFilterBits {
+            mark_seen: true,
+            do_show: true,
+            skip_tree: false,
+        },
+        ObjectFilter::ObjectType(k) => {
+            // Match Git `filter_object_type` LOFS_BEGIN_TREE: only commit/tag filters skip recursion;
+            // blob filters must walk trees to reach blobs.
+            let show = *k == FilterObjectKind::Tree;
+            let skip_tree = matches!(k, FilterObjectKind::Commit | FilterObjectKind::Tag);
+            ListFilterBits {
+                mark_seen: true,
+                do_show: show,
+                skip_tree,
+            }
+        }
+        ObjectFilter::Combine(parts) => {
+            let states = sub_states.expect("combine sub-states");
+            debug_assert_eq!(states.len(), parts.len());
+            let mut bits = Vec::with_capacity(parts.len());
+            let mut skipping = Vec::with_capacity(parts.len());
+            for (i, p) in parts.iter().enumerate() {
+                let b = filter_object_bits_tree_begin(
+                    p,
+                    tree_oid,
+                    depth,
+                    &mut states[i].tree_state,
+                    &mut states[i].tree_omit_set,
+                    collect_omits,
+                    None,
+                );
+                if b.skip_tree {
+                    states[i].is_skipping_tree = true;
+                    states[i].skip_tree_oid = Some(tree_oid);
+                } else {
+                    states[i].is_skipping_tree = false;
+                    states[i].skip_tree_oid = None;
+                }
+                bits.push(b);
+                skipping.push(states[i].is_skipping_tree);
+            }
+            ListFilterBits::merge_combine(&bits, &skipping)
+        }
+    }
+}
+
+fn filter_object_bits_blob(
+    f: &ObjectFilter,
+    oid: ObjectId,
+    size: u64,
+    parent_depth: u64,
+    tree_omit_set: &mut Option<HashSet<ObjectId>>,
+    collect_omits: bool,
+    sub_states: Option<&mut [CombineSubState]>,
+) -> ListFilterBits {
+    match f {
+        ObjectFilter::BlobNone => ListFilterBits {
+            mark_seen: true,
+            do_show: false,
+            skip_tree: false,
+        },
+        ObjectFilter::BlobLimit(limit) => {
+            let include = size < *limit;
+            ListFilterBits {
+                mark_seen: true,
+                do_show: include,
+                skip_tree: false,
+            }
+        }
+        ObjectFilter::TreeDepth(excl) => {
+            tree_depth_blob(oid, size, parent_depth, *excl, tree_omit_set, collect_omits)
+        }
+        ObjectFilter::SparseOid(_) => ListFilterBits {
+            mark_seen: true,
+            do_show: true,
+            skip_tree: false,
+        },
+        ObjectFilter::ObjectType(k) => {
+            let show = *k == FilterObjectKind::Blob;
+            ListFilterBits {
+                mark_seen: true,
+                do_show: show,
+                skip_tree: false,
+            }
+        }
+        ObjectFilter::Combine(parts) => {
+            let states = sub_states.expect("combine sub-states");
+            let mut bits = Vec::with_capacity(parts.len());
+            let mut skipping = Vec::with_capacity(parts.len());
+            for (i, p) in parts.iter().enumerate() {
+                let b = filter_object_bits_blob(
+                    p,
+                    oid,
+                    size,
+                    parent_depth,
+                    &mut states[i].tree_omit_set,
+                    collect_omits,
+                    None,
+                );
+                bits.push(b);
+                skipping.push(states[i].is_skipping_tree);
+            }
+            ListFilterBits::merge_combine(&bits, &skipping)
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CombineSubState {
+    tree_state: TreeWalkState,
+    tree_omit_set: Option<HashSet<ObjectId>>,
+    is_skipping_tree: bool,
+    skip_tree_oid: Option<ObjectId>,
+}
+
+impl CombineSubState {
+    fn new(parts_len: usize, collect_omits: bool) -> Vec<Self> {
+        (0..parts_len)
+            .map(|_| Self {
+                tree_state: TreeWalkState::new(),
+                tree_omit_set: collect_omits.then(HashSet::new),
+                is_skipping_tree: false,
+                skip_tree_oid: None,
+            })
+            .collect()
+    }
+
+    fn prepare_sub_states(
+        filter: Option<&ObjectFilter>,
+        collect_omits: bool,
+    ) -> Option<Vec<CombineSubState>> {
+        match filter {
+            Some(ObjectFilter::Combine(parts)) => {
+                Some(CombineSubState::new(parts.len(), collect_omits))
+            }
+            _ => None,
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -3214,10 +3545,10 @@ fn collect_tree_objects_filtered(
     skip_trees_for_type_filter: bool,
     omit_object_paths: bool,
     packed_set: Option<&HashSet<ObjectId>>,
+    collect_tree_omits: bool,
+    tree_omit_set: &mut Option<HashSet<ObjectId>>,
+    combine_states: &mut Option<Vec<CombineSubState>>,
 ) -> Result<()> {
-    if tree_state.should_skip_tree(tree_oid, depth) {
-        return Ok(());
-    }
     if !explicit_root {
         if let Some(pu) = parent_union {
             if pu.contains(&tree_oid) {
@@ -3240,19 +3571,51 @@ fn collect_tree_objects_filtered(
             "object {tree_oid} is not a tree"
         )));
     }
-    let tree_included = match filter {
-        None => true,
+
+    let bits = match filter {
+        None => ListFilterBits {
+            mark_seen: true,
+            do_show: true,
+            skip_tree: false,
+        },
         Some(f) => {
             if explicit_root && !filter_provided {
-                true
+                ListFilterBits {
+                    mark_seen: true,
+                    do_show: true,
+                    skip_tree: false,
+                }
             } else {
-                f.includes_tree(depth)
+                match f {
+                    ObjectFilter::Combine(_) => {
+                        let states = combine_states.as_mut().expect("combine states");
+                        filter_object_bits_tree_begin(
+                            f,
+                            tree_oid,
+                            depth,
+                            tree_state,
+                            tree_omit_set,
+                            collect_tree_omits,
+                            Some(states.as_mut_slice()),
+                        )
+                    }
+                    _ => filter_object_bits_tree_begin(
+                        f,
+                        tree_oid,
+                        depth,
+                        tree_state,
+                        tree_omit_set,
+                        collect_tree_omits,
+                        None,
+                    ),
+                }
             }
         }
     };
-    let tree_included = tree_included
-        && sparse_lines
-            .is_none_or(|lines| path_matches_sparse_pattern_list(prefix, lines) != Some(false));
+
+    // Git `filter_sparse` always shows tree objects; sparse patterns gate blobs (and inherited
+    // default_match), not whether the tree OID is listed.
+    let tree_included = bits.do_show;
     if tree_included {
         if !packed_set.is_some_and(|p| p.contains(&tree_oid)) && emitted.insert(tree_oid) {
             let out_path = if omit_object_paths {
@@ -3262,16 +3625,24 @@ fn collect_tree_objects_filtered(
             };
             result.push((tree_oid, out_path));
         }
-    } else {
+    } else if bits.mark_seen {
         omitted.push(tree_oid);
     }
+
+    if bits.skip_tree {
+        trace_skip_tree_contents(prefix);
+    }
+
     if skip_trees_for_type_filter && depth == 0 && !explicit_root {
         return Ok(());
     }
+
+    if bits.skip_tree {
+        return Ok(());
+    }
+
     let entries = parse_tree(&object.data)?;
     for entry in entries {
-        // Skip gitlink (submodule) entries — their OIDs reference commits
-        // in the submodule's object store, not the parent repo.
         if entry.mode == 0o160000 {
             continue;
         }
@@ -3324,6 +3695,9 @@ fn collect_tree_objects_filtered(
                 skip_trees_for_type_filter,
                 omit_object_paths,
                 packed_set,
+                collect_tree_omits,
+                tree_omit_set,
+                combine_states,
             )?;
         } else {
             if let Some(pu) = parent_union {
@@ -3332,24 +3706,52 @@ fn collect_tree_objects_filtered(
                 }
             }
             if child_obj.kind == ObjectKind::Blob {
-                let blob_included = match filter {
-                    None => true,
+                let sparse_blob = sparse_filter_includes_path(&path, sparse_lines);
+                let blob_bits = match filter {
+                    None => ListFilterBits {
+                        mark_seen: true,
+                        do_show: true,
+                        skip_tree: false,
+                    },
                     Some(f) => {
                         if explicit_root && !filter_provided {
-                            true
+                            ListFilterBits {
+                                mark_seen: true,
+                                do_show: true,
+                                skip_tree: false,
+                            }
                         } else {
-                            f.includes_blob_under_tree(child_obj.data.len() as u64, depth)
+                            match f {
+                                ObjectFilter::Combine(_) => {
+                                    let states = combine_states.as_mut().unwrap();
+                                    filter_object_bits_blob(
+                                        f,
+                                        entry.oid,
+                                        child_obj.data.len() as u64,
+                                        depth,
+                                        tree_omit_set,
+                                        collect_tree_omits,
+                                        Some(states.as_mut_slice()),
+                                    )
+                                }
+                                _ => filter_object_bits_blob(
+                                    f,
+                                    entry.oid,
+                                    child_obj.data.len() as u64,
+                                    depth,
+                                    tree_omit_set,
+                                    collect_tree_omits,
+                                    None,
+                                ),
+                            }
                         }
                     }
                 };
-                let blob_included = blob_included
-                    && sparse_lines.is_none_or(|lines| {
-                        path_matches_sparse_pattern_list(&path, lines) != Some(false)
-                    });
-                if blob_included {
-                    if !packed_set.is_some_and(|p| p.contains(&entry.oid))
-                        && emitted.insert(entry.oid)
-                    {
+                let blob_included = blob_bits.do_show && sparse_blob;
+                if !blob_included {
+                    omitted.push(entry.oid);
+                } else if blob_bits.mark_seen && emitted.insert(entry.oid)
+                    && !packed_set.is_some_and(|p| p.contains(&entry.oid)) {
                         let out_path = if omit_object_paths {
                             String::new()
                         } else {
@@ -3357,13 +3759,7 @@ fn collect_tree_objects_filtered(
                         };
                         result.push((entry.oid, out_path));
                     }
-                } else {
-                    omitted.push(entry.oid);
-                }
             } else {
-                // Non-blob in a blob-named slot: Git's list-objects only tolerates this when the
-                // child OID was not yet seen (lone broken tip, t6102). If the OID was already
-                // emitted (e.g. as a tree from another tip), report corruption like upstream.
                 if emitted.contains(&entry.oid) {
                     return Err(Error::CorruptObject(format!(
                         "object {} is not a blob",
@@ -3376,6 +3772,237 @@ fn collect_tree_objects_filtered(
             }
         }
     }
+
+    if let Some(f) = filter {
+        if let ObjectFilter::Combine(_) = f {
+            if let Some(states) = combine_states.as_mut() {
+                for st in states.iter_mut() {
+                    if st.is_skipping_tree && st.skip_tree_oid == Some(tree_oid) {
+                        st.is_skipping_tree = false;
+                        st.skip_tree_oid = None;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_root_object(
+    repo: &Repository,
+    root: &RootObject,
+    tree_state: &mut TreeWalkState,
+    emitted: &mut HashSet<ObjectId>,
+    result: &mut Vec<(ObjectId, String)>,
+    omitted: &mut Vec<ObjectId>,
+    missing: &mut Vec<ObjectId>,
+    missing_seen: &mut HashSet<ObjectId>,
+    filter: Option<&ObjectFilter>,
+    filter_provided: bool,
+    missing_action: MissingAction,
+    sparse_lines: Option<&[String]>,
+    skip_trees_for_type_filter: bool,
+    omit_object_paths: bool,
+    packed_set: Option<&HashSet<ObjectId>>,
+    collect_tree_omits: bool,
+    tree_omit_set: &mut Option<HashSet<ObjectId>>,
+    combine_states: &mut Option<Vec<CombineSubState>>,
+) -> Result<()> {
+    if let Some(tag_oid) = root.wrap_with_tag {
+        let show_tag = match filter {
+            None => true,
+            Some(f) => f.includes_commit_or_tag_object(ObjectKind::Tag),
+        };
+        if show_tag && emitted.insert(tag_oid) {
+            result.push((tag_oid, "tag".to_owned()));
+        }
+    }
+
+    let object = match repo.odb.read(&root.oid) {
+        Ok(object) => object,
+        Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
+            if missing_action == MissingAction::Print && missing_seen.insert(root.oid) {
+                missing.push(root.oid);
+            }
+            return Ok(());
+        }
+        Err(err) => return Err(err),
+    };
+
+    if let Some(expected) = root.expected_kind {
+        if !expected.matches(object.kind) {
+            return Err(Error::CorruptObject(format!(
+                "object {} is not a {}",
+                root.input,
+                expected.as_str()
+            )));
+        }
+    }
+
+    match object.kind {
+        ObjectKind::Commit => {
+            let commit = parse_commit(&object.data)?;
+            let parent_union = union_parent_reachable_objects(
+                repo,
+                &commit.parents,
+                missing_action,
+                missing,
+                missing_seen,
+            )?;
+            collect_tree_objects_filtered(
+                repo,
+                commit.tree,
+                "",
+                0,
+                false,
+                Some(&parent_union),
+                tree_state,
+                emitted,
+                result,
+                omitted,
+                missing,
+                missing_seen,
+                filter,
+                filter_provided,
+                missing_action,
+                sparse_lines,
+                skip_trees_for_type_filter,
+                omit_object_paths,
+                packed_set,
+                collect_tree_omits,
+                tree_omit_set,
+                combine_states,
+            )?;
+        }
+        ObjectKind::Tree => {
+            collect_tree_objects_filtered(
+                repo,
+                root.oid,
+                "",
+                0,
+                true,
+                None,
+                tree_state,
+                emitted,
+                result,
+                omitted,
+                missing,
+                missing_seen,
+                filter,
+                filter_provided,
+                missing_action,
+                sparse_lines,
+                skip_trees_for_type_filter,
+                omit_object_paths,
+                packed_set,
+                collect_tree_omits,
+                tree_omit_set,
+                combine_states,
+            )?;
+        }
+        ObjectKind::Blob => {
+            let path_for_sparse = root.root_path.as_deref().unwrap_or("");
+            let sparse_blob = sparse_filter_includes_path(path_for_sparse, sparse_lines);
+            let blob_bits = match filter {
+                None => ListFilterBits {
+                    mark_seen: true,
+                    do_show: true,
+                    skip_tree: false,
+                },
+                Some(f) => {
+                    if !filter_provided {
+                        ListFilterBits {
+                            mark_seen: true,
+                            do_show: true,
+                            skip_tree: false,
+                        }
+                    } else {
+                        match f {
+                            ObjectFilter::Combine(_) => {
+                                let states = combine_states.as_mut().expect("combine states");
+                                filter_object_bits_blob(
+                                    f,
+                                    root.oid,
+                                    object.data.len() as u64,
+                                    0,
+                                    tree_omit_set,
+                                    collect_tree_omits,
+                                    Some(states.as_mut_slice()),
+                                )
+                            }
+                            _ => filter_object_bits_blob(
+                                f,
+                                root.oid,
+                                object.data.len() as u64,
+                                0,
+                                tree_omit_set,
+                                collect_tree_omits,
+                                None,
+                            ),
+                        }
+                    }
+                }
+            };
+            let blob_included = blob_bits.do_show && sparse_blob;
+            if !blob_included {
+                if blob_bits.mark_seen {
+                    omitted.push(root.oid);
+                }
+                return Ok(());
+            }
+            if packed_set.is_some_and(|p| p.contains(&root.oid)) {
+                return Ok(());
+            }
+            if blob_bits.mark_seen && !emitted.insert(root.oid) {
+                return Ok(());
+            }
+            let out_path = if omit_object_paths {
+                String::new()
+            } else {
+                path_for_sparse.to_owned()
+            };
+            result.push((root.oid, out_path));
+        }
+        ObjectKind::Tag => {
+            let tag = parse_tag(&object.data)?;
+            let expected_kind =
+                ExpectedObjectKind::from_tag_type(&tag.object_type).ok_or_else(|| {
+                    Error::CorruptObject(format!(
+                        "object {} has unsupported tag type '{}'",
+                        root.input, tag.object_type
+                    ))
+                })?;
+            let nested = RootObject {
+                oid: tag.object,
+                input: root.input.clone(),
+                expected_kind: Some(expected_kind),
+                root_path: None,
+                wrap_with_tag: None,
+            };
+            collect_root_object(
+                repo,
+                &nested,
+                tree_state,
+                emitted,
+                result,
+                omitted,
+                missing,
+                missing_seen,
+                filter,
+                filter_provided,
+                missing_action,
+                sparse_lines,
+                skip_trees_for_type_filter,
+                omit_object_paths,
+                packed_set,
+                collect_tree_omits,
+                tree_omit_set,
+                combine_states,
+            )?;
+        }
+    }
+
     Ok(())
 }
 
@@ -3387,6 +4014,7 @@ fn collect_reachable_objects_in_commit_order(
     _graph: &mut CommitGraph<'_>,
     commits: &[ObjectId],
     object_roots: &[RootObject],
+    tip_annotated_tags: &HashMap<ObjectId, ObjectId>,
     filter: Option<&ObjectFilter>,
     filter_provided: bool,
     missing_action: MissingAction,
@@ -3394,13 +4022,17 @@ fn collect_reachable_objects_in_commit_order(
     skip_trees_for_type_filter: bool,
     omit_object_paths: bool,
     packed_set: Option<&HashSet<ObjectId>>,
+    collect_tree_omits: bool,
 ) -> Result<(
     Vec<(ObjectId, String)>,
     Vec<ObjectId>,
     Vec<ObjectId>,
     Vec<usize>,
 )> {
-    let mut tree_state = TreeWalkState::new(filter);
+    let mut tree_state = TreeWalkState::new();
+    let mut top_tree_omit =
+        walk_needs_top_tree_omit_set(filter, collect_tree_omits).then(HashSet::<ObjectId>::new);
+    let mut combine_states = CombineSubState::prepare_sub_states(filter, collect_tree_omits);
     let mut emitted = HashSet::new();
     let mut result = Vec::new();
     let mut omitted = Vec::new();
@@ -3420,6 +4052,11 @@ fn collect_reachable_objects_in_commit_order(
             Err(err) => return Err(err),
         };
         let before = result.len();
+        if let Some(&tag_oid) = tip_annotated_tags.get(&commit_oid) {
+            if emitted.insert(tag_oid) {
+                result.push((tag_oid, "tag".to_owned()));
+            }
+        }
         // Match Git `rev-list --objects`: walk each commit's tree in full traversal order and rely
         // on `emitted` for OID de-duplication. Do not subtract parent reachability here — that would
         // skip blobs that still belong after this commit's tree line (t6100-rev-list-in-order).
@@ -3443,6 +4080,9 @@ fn collect_reachable_objects_in_commit_order(
             skip_trees_for_type_filter,
             omit_object_paths,
             packed_set,
+            collect_tree_omits,
+            &mut top_tree_omit,
+            &mut combine_states,
         )?;
         counts.push(result.len() - before);
     }
@@ -3464,6 +4104,9 @@ fn collect_reachable_objects_in_commit_order(
             skip_trees_for_type_filter,
             omit_object_paths,
             packed_set,
+            collect_tree_omits,
+            &mut top_tree_omit,
+            &mut combine_states,
         )?;
     }
 

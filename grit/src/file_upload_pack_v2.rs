@@ -14,6 +14,15 @@ use crate::pkt_line;
 use crate::trace_packet::trace_packet_git;
 
 /// True when `protocol.version` from config resolves to 2 (Git `-c protocol.version=2`).
+fn uploadpack_allow_filter(git_dir: &Path) -> bool {
+    let set = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    matches!(
+        set.get_bool("uploadpack.allowfilter")
+            .or_else(|| set.get_bool("uploadPack.allowFilter")),
+        Some(Ok(true))
+    )
+}
+
 pub(crate) fn client_wants_protocol_v2() -> bool {
     let set = ConfigSet::load(None, true).unwrap_or_default();
     match set.get("protocol.version").as_deref() {
@@ -268,6 +277,7 @@ pub(crate) fn write_v2_fetch_request(
     object_format: &str,
     wants: &[ObjectId],
     sideband_all: bool,
+    filter_line: Option<&str>,
 ) -> Result<()> {
     trace_packet_git('>', "command=fetch");
     pkt_line::write_line(stdin, "command=fetch")?;
@@ -289,6 +299,11 @@ pub(crate) fn write_v2_fetch_request(
     if sideband_all {
         trace_packet_git('>', "sideband-all");
         pkt_line::write_line(stdin, "sideband-all")?;
+    }
+    if let Some(f) = filter_line {
+        let line = format!("filter {f}");
+        trace_packet_git('>', line.trim_end());
+        pkt_line::write_line(stdin, &line)?;
     }
 
     let caps = " multi_ack_detailed thin-pack ofs-delta side-band-64k no-progress";
@@ -490,6 +505,7 @@ pub(crate) fn clone_preflight_file_v2_if_needed(
     upload_pack_cmd: Option<&str>,
     request_bundle_uri: bool,
     bundle_uri_cli_override: bool,
+    filter_spec: Option<&str>,
 ) -> Result<()> {
     if !client_wants_protocol_v2() {
         return Ok(());
@@ -534,11 +550,17 @@ pub(crate) fn clone_preflight_file_v2_if_needed(
         c.strip_prefix("fetch=")
             .is_some_and(|rest| rest.split_whitespace().any(|w| w == "sideband-all"))
     });
+    let filter_line = if uploadpack_allow_filter(source_git_dir) {
+        filter_spec.and_then(|s| grit_lib::rev_list::expand_object_filter_for_protocol(s).ok())
+    } else {
+        None
+    };
     write_v2_fetch_request(
         &mut stdin,
         &default_hash,
         &wants,
         fetch_supports_sideband_all,
+        filter_line.as_deref(),
     )?;
     drop(stdin);
     drain_v2_fetch_response(&mut stdout, fetch_supports_sideband_all)?;
