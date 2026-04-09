@@ -5,6 +5,24 @@
 
 test_description='grit checkout-index --stdin'
 
+# When run as `./t9180-checkout-index-stdin.sh`, `$0` has no directory segment, so
+# test-lib.sh's default `../../target/...` lookup would miss the workspace binary.
+# The harness sets GUST_BIN; discover it here for direct runs from `tests/`.
+if test -z "$GUST_BIN"
+then
+	_here="$(cd "$(dirname "$0")" && pwd)"
+	_root="$(cd "$_here/.." && pwd)"
+	for _c in "$_root/target/release/grit" "$_root/target/debug/grit"
+	do
+		if test -x "$_c"
+		then
+			GUST_BIN="$_c"
+			export GUST_BIN
+			break
+		fi
+	done
+fi
+
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
