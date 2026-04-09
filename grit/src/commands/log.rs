@@ -1208,7 +1208,17 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
                 Err(_err) if is_likely_pathspec_during_rev_parse(stripped) => {
                     implied_pathspecs.push(stripped.to_owned())
                 }
-                Err(err) => return Err(err.into()),
+                Err(_err) => match resolve_revision_as_commit_after_precompose(repo, stripped) {
+                    Ok(_) => revision_specs.push(rev.clone()),
+                    Err(_err)
+                        if grit_lib::precompose_config::effective_core_precomposeunicode(Some(
+                            &repo.git_dir,
+                        )) && grit_lib::unicode_normalization::has_non_ascii_utf8(stripped) =>
+                    {
+                        implied_pathspecs.push(stripped.to_owned());
+                    }
+                    Err(err) => return Err(err.into()),
+                },
             }
         } else {
             match resolve_revision_as_commit(repo, rev) {
@@ -1216,7 +1226,17 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
                 Err(_err) if is_likely_pathspec_during_rev_parse(rev) => {
                     implied_pathspecs.push(rev.clone())
                 }
-                Err(err) => return Err(err.into()),
+                Err(_err) => match resolve_revision_as_commit_after_precompose(repo, rev) {
+                    Ok(_) => revision_specs.push(rev.clone()),
+                    Err(_err)
+                        if grit_lib::precompose_config::effective_core_precomposeunicode(Some(
+                            &repo.git_dir,
+                        )) && grit_lib::unicode_normalization::has_non_ascii_utf8(rev) =>
+                    {
+                        implied_pathspecs.push(rev.clone());
+                    }
+                    Err(err) => return Err(err.into()),
+                },
             }
         }
     }
@@ -2473,6 +2493,11 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;
+    if grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir)) {
+        for p in &mut args.pathspecs {
+            *p = grit_lib::unicode_normalization::precompose_utf8_path(p).into_owned();
+        }
+    }
     normalize_log_merge_diff_args(&mut args, &repo.git_dir)?;
     validate_log_pickaxe_options(&repo, &args)?;
     let patch_context = if let Some(u) = args.unified {
@@ -2667,7 +2692,17 @@ pub fn run(mut args: Args) -> Result<()> {
                     Err(_err) if is_likely_pathspec_during_rev_parse(rev) => {
                         implied_pathspecs.push(rev.clone());
                     }
-                    Err(err) => return Err(err.into()),
+                    Err(_err) => match resolve_revision_as_commit_after_precompose(&repo, rev) {
+                        Ok(oid) => oids.push(oid),
+                        Err(_err)
+                            if grit_lib::precompose_config::effective_core_precomposeunicode(
+                                Some(&repo.git_dir),
+                            ) && grit_lib::unicode_normalization::has_non_ascii_utf8(rev) =>
+                        {
+                            implied_pathspecs.push(rev.clone());
+                        }
+                        Err(err) => return Err(err.into()),
+                    },
                 }
             }
         }
@@ -6007,6 +6042,19 @@ fn resolve_revision(repo: &Repository, rev: &str) -> Result<ObjectId> {
     // @{N}, @{now}, @{upstream}, peeling, parent navigation, etc.
     grit_lib::rev_parse::resolve_revision(repo, rev)
         .map_err(|e| anyhow::anyhow!("unknown revision '{}': {}", rev, e))
+}
+
+fn resolve_revision_as_commit_after_precompose(repo: &Repository, rev: &str) -> Result<ObjectId> {
+    if !grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir))
+        || !grit_lib::unicode_normalization::has_non_ascii_utf8(rev)
+    {
+        return resolve_revision_as_commit(repo, rev).map_err(|e| e.into());
+    }
+    let nfc = grit_lib::unicode_normalization::precompose_utf8_path(rev);
+    if nfc.as_ref() == rev {
+        return resolve_revision_as_commit(repo, rev).map_err(|e| e.into());
+    }
+    resolve_revision_as_commit(repo, nfc.as_ref()).map_err(|e| e.into())
 }
 
 /// Heuristic used for rev/pathspec DWIM when no `--` separator is present.

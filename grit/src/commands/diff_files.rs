@@ -35,9 +35,12 @@ pub struct Args {
 }
 
 /// Run `grit diff-files`.
-pub fn run(args: Args) -> Result<()> {
-    let options = parse_options(&args.args)?;
+pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    if grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir)) {
+        crate::precompose::precompose_plumbing_argv(&mut args.args);
+    }
+    let options = parse_options(&args.args)?;
 
     let Some(work_tree) = repo.work_tree.clone() else {
         bail!("this operation must be run in a work tree");
@@ -1227,11 +1230,11 @@ fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {
         return true;
     }
     pathspecs.iter().any(|spec| {
-        if let Some(prefix) = spec.strip_suffix('/') {
-            path == prefix || path.starts_with(&format!("{prefix}/"))
-        } else {
-            path == spec || path.starts_with(&format!("{spec}/"))
-        }
+        grit_lib::pathspec::matches_pathspec_with_context(
+            spec,
+            path,
+            grit_lib::pathspec::PathspecMatchContext::default(),
+        )
     })
 }
 

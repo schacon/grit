@@ -31,9 +31,12 @@ pub struct Args {
 }
 
 /// Run `grit diff-index`.
-pub fn run(args: Args) -> Result<()> {
-    let options = parse_options(&args.args)?;
+pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    if grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir)) {
+        crate::precompose::precompose_plumbing_argv(&mut args.args);
+    }
+    let options = parse_options(&args.args)?;
     let tree_oid = resolve_tree_ish(&repo, &options.tree_ish)?;
 
     let mut tree_map = BTreeMap::new();

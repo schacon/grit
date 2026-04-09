@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use grit_lib::config::{parse_bool, ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::unicode_normalization::probe_filesystem_normalizes_nfd_to_nfc;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -351,6 +352,25 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
             work_tree: work_tree_abs.as_deref(),
         },
     )?;
+
+    // Git's probe_utf8_pathname_composition: if the FS aliases NFC/NFD spellings under .git,
+    // set core.precomposeunicode (unless already set in higher-priority config).
+    // `GIT_TEST_UTF8_NFD_TO_NFC` forces this for harness portability (Linux CI).
+    if !is_reinit && !bare && config.get("core.precomposeunicode").is_none() {
+        let force_probe = matches!(
+            std::env::var("GIT_TEST_UTF8_NFD_TO_NFC").ok().as_deref(),
+            Some("true") | Some("1")
+        );
+        let probe_ok =
+            force_probe || probe_filesystem_normalizes_nfd_to_nfc(&real_git_dir).unwrap_or(false);
+        if probe_ok {
+            let config_path = real_git_dir.join("config");
+            let content = fs::read_to_string(&config_path).unwrap_or_default();
+            let mut cfg = ConfigFile::parse(&config_path, &content, ConfigScope::Local)?;
+            cfg.set("core.precomposeunicode", "true")?;
+            cfg.write()?;
+        }
+    }
 
     if !is_reinit
         && !bare

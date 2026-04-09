@@ -23,6 +23,7 @@ use grit_lib::refs::{append_reflog, resolve_ref, write_ref};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision_as_commit};
 use grit_lib::state::{resolve_head, HeadState};
+use grit_lib::unicode_normalization::precompose_utf8_path;
 
 /// The zero OID for reflog entries when there is no previous value.
 fn zero_oid() -> ObjectId {
@@ -347,10 +348,15 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
 
 /// If `first` names a commit for `git reset`, return the spec to pass to rev-parse.
 fn resolve_reset_first_arg_as_commit(repo: &Repository, first: &str) -> Option<String> {
+    // Always treat `HEAD` / `@` as a tree-ish so `git reset HEAD <path>` splits into
+    // commit `HEAD` and pathspecs — not pathspecs `HEAD` and `<path>` (t3910).
+    if first == "HEAD" || first == "@" {
+        return Some("HEAD".to_owned());
+    }
     if resolve_revision_as_commit(repo, first).is_ok() {
         return Some(first.to_owned());
     }
-    if first.contains('/') || first.starts_with('.') || first == "HEAD" {
+    if first.contains('/') || first.starts_with('.') {
         return None;
     }
     let full = format!("refs/heads/{first}");
@@ -512,6 +518,17 @@ fn reset_patch(repo: &Repository, _rest: &[String]) -> Result<()> {
 /// Reset specific index entries to match the given commit's tree.
 ///
 /// HEAD is not modified.
+fn path_matches_index_or_tree_key(path_str: &str, key: &[u8], precompose_unicode: bool) -> bool {
+    if path_str.as_bytes() == key {
+        return true;
+    }
+    if !precompose_unicode {
+        return false;
+    }
+    let key_str = String::from_utf8_lossy(key);
+    precompose_utf8_path(path_str).as_ref() == precompose_utf8_path(key_str.as_ref()).as_ref()
+}
+
 fn reset_paths(
     repo: &Repository,
     commit_spec: &str,
@@ -551,24 +568,39 @@ fn reset_paths(
 
     let index_path = repo.index_path();
     let mut index = repo.load_index_at(&index_path).context("loading index")?;
+    let precompose_unicode =
+        grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir));
 
     for path_str in paths {
         let path_bytes = path_str.as_bytes().to_vec();
 
-        // A path must exist in the target tree or in the current index.
-        let in_tree = tree_map.contains_key(&path_bytes);
-        let in_index = index.entries.iter().any(|e| e.path == path_bytes);
+        let tree_key_bytes = tree_map
+            .keys()
+            .find(|k| path_matches_index_or_tree_key(path_str, k, precompose_unicode))
+            .cloned();
+        let in_tree = tree_key_bytes.is_some();
+        let index_match = index.entries.iter().find(|e| {
+            e.stage() == 0 && path_matches_index_or_tree_key(path_str, &e.path, precompose_unicode)
+        });
+        let in_index = index_match.is_some();
         if !in_tree && !in_index {
             bail!("pathspec '{path_str}' did not match any file(s) known to git");
         }
 
+        let resolved_bytes = index_match
+            .map(|e| e.path.clone())
+            .or(tree_key_bytes.clone())
+            .unwrap_or_else(|| path_bytes.clone());
+
         // Remove all stages for this path.
-        index.remove(&path_bytes);
+        index.remove(&resolved_bytes);
         // Re-add from tree if present.
-        if let Some(entry) = tree_map.get(&path_bytes) {
-            index.add_or_replace(entry.clone());
-            if entry.mode == MODE_GITLINK {
-                continue;
+        if let Some(ref tk) = tree_key_bytes {
+            if let Some(entry) = tree_map.get(tk) {
+                index.add_or_replace(entry.clone());
+                if entry.mode == MODE_GITLINK {
+                    continue;
+                }
             }
         } else if intent_to_add {
             // With -N, keep removed paths as intent-to-add entries (Git index uses null OID).
@@ -584,9 +616,9 @@ fn reset_paths(
                 gid: 0,
                 size: 0,
                 oid: zero_oid(),
-                flags: path_bytes.len().min(0xFFF) as u16,
+                flags: resolved_bytes.len().min(0xFFF) as u16,
                 flags_extended: None,
-                path: path_bytes.clone(),
+                path: resolved_bytes.clone(),
             };
             ita_entry.set_intent_to_add(true);
             if index.version < 3 {

@@ -2424,7 +2424,7 @@ pub fn parse_path_optional(s: &str) -> Option<String> {
 /// - unquoted `key=value` tokens separated by whitespace
 ///
 /// Backslash escapes are interpreted minimally inside double quotes.
-fn parse_config_parameters(raw: &str) -> Vec<String> {
+pub(crate) fn parse_config_parameters(raw: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut buf = String::new();
     let mut in_single = false;

@@ -187,9 +187,14 @@ run_one() {
   local base="${f%.sh}"
   local output summary total pass fail status ef
   local git_test_allow_sudo=
+  local utf8_nfd_to_nfc=
   local timeout_prefix=("${TIMEOUT_PREFIX[@]}")
   if [[ "$f" == "t0034-root-safe-directory.sh" ]]; then
     git_test_allow_sudo=YES
+  fi
+  # macOS NFC/NFD filesystem tests: force prereq on normal Linux CI (Git uses the same for portability).
+  if [[ "$f" == "t3910-mac-os-precompose.sh" ]]; then
+    utf8_nfd_to_nfc=1
   fi
   # t0410 can exceed any reasonable wall-clock cap on slow hosts; omit `timeout` so we still get # Tests: / TAP summary.
   if [[ "$f" == "t0410-partial-clone.sh" ]]; then
@@ -203,6 +208,7 @@ run_one() {
       env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE \
         EDITOR=: VISUAL=: LC_ALL=C LANG=C _prereq_DEFAULT_REPO_FORMAT=set \
         GRIT_TEST_LIB_SUMMARY=1 \
+        ${utf8_nfd_to_nfc:+GIT_TEST_UTF8_NFD_TO_NFC=$utf8_nfd_to_nfc} \
         GUST_BIN="$BIN" \
         GIT_TEST_BUILTIN_HASH=sha1 \
         GIT_SOURCE_DIR="$REPO/git" \

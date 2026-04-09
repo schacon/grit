@@ -17,6 +17,7 @@ use grit_lib::objects::ObjectKind;
 use grit_lib::odb::Odb;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
+use grit_lib::unicode_normalization::{precompose_utf8_path, precompose_utf8_segment};
 use grit_lib::wildmatch::wildmatch;
 use std::collections::HashSet;
 use std::fs;
@@ -217,6 +218,8 @@ pub fn run(mut args: Args) -> Result<()> {
         .get_bool("core.filemode")
         .and_then(|r| r.ok())
         .unwrap_or(true);
+    let precompose_unicode =
+        grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir));
 
     let index_path = resolved_env_index_path(&repo);
     let idx_exists = index_path.exists();
@@ -280,6 +283,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let add_cfg = AddConfig {
         core_filemode,
+        precompose_unicode,
         ignore_errors: args.ignore_errors
             || config
                 .get_bool("add.ignore-errors")
@@ -337,7 +341,7 @@ pub fn run(mut args: Args) -> Result<()> {
             let resolved =
                 crate::pathspec::resolve_pathspec(pathspec, work_tree, prefix.as_deref());
             // Expand glob patterns (e.g. "file?.t", "*.c") against the working tree.
-            let expanded = expand_glob_pathspec(&resolved, work_tree);
+            let expanded = expand_glob_pathspec(&resolved, work_tree, add_cfg.precompose_unicode);
             for resolved in &expanded {
                 match add_path(
                     odb,
@@ -412,6 +416,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
 pub(crate) struct AddConfig {
     pub core_filemode: bool,
+    pub precompose_unicode: bool,
     pub ignore_errors: bool,
     pub conv: ConversionConfig,
     pub attrs: GitAttributes,
@@ -470,9 +475,9 @@ pub(crate) fn stage_pathspecs_for_commit(
                     repo,
                     &mut ignore_matcher,
                     false,
+                    add_cfg.precompose_unicode,
                 )?;
-                for rel in rels {
-                    let file_abs = work_tree.join(&rel);
+                for (rel, file_abs) in rels {
                     stage_file(
                         odb, &mut index, work_tree, &rel, &file_abs, repo, &ctx, add_cfg,
                     )?;
@@ -504,7 +509,13 @@ pub(crate) fn stage_pathspecs_for_commit(
         let mut matched_rels: Vec<String> = Vec::new();
         if let Ok(entries) = fs::read_dir(&search_dir) {
             for entry in entries.flatten() {
-                let name_str = entry.file_name().to_string_lossy().to_string();
+                let file_name = entry.file_name();
+                let raw_name = file_name.to_string_lossy();
+                let name_str = if add_cfg.precompose_unicode {
+                    precompose_utf8_segment(raw_name.as_ref()).into_owned()
+                } else {
+                    raw_name.into_owned()
+                };
                 if name_str == ".git" {
                     continue;
                 }
@@ -729,7 +740,7 @@ fn add_all(
         _ => work_tree.to_path_buf(),
     };
 
-    let mut paths = Vec::new();
+    let mut paths: Vec<(String, PathBuf)> = Vec::new();
     walk_directory(
         &scan_root,
         work_tree,
@@ -737,20 +748,20 @@ fn add_all(
         repo,
         ignore_matcher,
         args.force,
+        add_cfg.precompose_unicode,
     )?;
 
     // Build a set of worktree paths for fast deletion detection
     let worktree_paths: std::collections::HashSet<&str> =
-        paths.iter().map(|s| s.as_str()).collect();
+        paths.iter().map(|(r, _)| r.as_str()).collect();
 
-    for rel_path in &paths {
-        let abs_path = work_tree.join(rel_path);
+    for (rel_path, abs_path) in &paths {
         if let Err(e) = stage_file(
             odb,
             index,
             work_tree,
             rel_path,
-            &abs_path,
+            abs_path,
             repo,
             &StageFileContext::from(args),
             add_cfg,
@@ -928,6 +939,49 @@ fn update_tracked(
     Ok(())
 }
 
+/// Resolve `rel` to the spelling that exists on disk when NFC/NFD differ (Linux + precompose).
+fn resolve_add_path_on_disk(
+    work_tree: &Path,
+    rel: &str,
+    precompose_unicode: bool,
+) -> (PathBuf, String) {
+    let abs = work_tree.join(rel);
+    if fs::symlink_metadata(&abs).is_ok() {
+        return (abs, rel.to_owned());
+    }
+    if !precompose_unicode {
+        return (abs, rel.to_owned());
+    }
+    let p = Path::new(rel);
+    let want_leaf = precompose_utf8_path(
+        p.file_name()
+            .map(|s| s.to_string_lossy())
+            .unwrap_or_default()
+            .as_ref(),
+    )
+    .into_owned();
+    if want_leaf.is_empty() {
+        return (abs, rel.to_owned());
+    }
+    let parent_rel = p.parent().filter(|x| !x.as_os_str().is_empty());
+    let parent_abs = parent_rel
+        .map(|pr| work_tree.join(pr))
+        .unwrap_or_else(|| work_tree.to_path_buf());
+    if let Ok(rd) = fs::read_dir(&parent_abs) {
+        for ent in rd.flatten() {
+            let n = ent.file_name().to_string_lossy().into_owned();
+            if precompose_utf8_path(&n).as_ref() == want_leaf.as_str() {
+                let new_rel = match parent_rel {
+                    Some(pr) => format!("{}/{}", pr.to_string_lossy(), n),
+                    None => n,
+                };
+                return (work_tree.join(&new_rel), new_rel);
+            }
+        }
+    }
+    (abs, rel.to_owned())
+}
+
 /// Add a single pathspec (which may be a file or directory).
 fn add_path(
     odb: &Odb,
@@ -939,7 +993,9 @@ fn add_path(
     ignore_matcher: &mut Option<IgnoreMatcher>,
     add_cfg: &AddConfig,
 ) -> std::result::Result<(), AddPathError> {
-    let abs_path = work_tree.join(path);
+    let (abs_path, path_on_disk) =
+        resolve_add_path_on_disk(work_tree, path, add_cfg.precompose_unicode);
+    let path = path_on_disk.as_str();
 
     // Refuse to add a path inside a registered submodule (gitlink).
     // Only reject when a *proper* parent directory is a gitlink;
@@ -1037,7 +1093,7 @@ fn add_path(
             .map_err(AddPathError::IoError);
         }
 
-        let mut paths = Vec::new();
+        let mut paths: Vec<(String, PathBuf)> = Vec::new();
         walk_directory(
             &abs_path,
             work_tree,
@@ -1045,15 +1101,15 @@ fn add_path(
             repo,
             ignore_matcher,
             args.force,
+            add_cfg.precompose_unicode,
         )?;
-        for rel_path in &paths {
-            let file_abs = work_tree.join(rel_path);
+        for (rel_path, file_abs) in &paths {
             if let Err(e) = stage_file(
                 odb,
                 index,
                 work_tree,
                 rel_path,
-                &file_abs,
+                file_abs,
                 repo,
                 &StageFileContext::from(args),
                 add_cfg,
@@ -1541,28 +1597,37 @@ fn is_pid_running(pid: u32) -> bool {
     }
 }
 
-/// Collect repository-relative paths under `dir` for staging (same rules as `git add <dir>`:
-/// skips `.git`, ignored paths unless `force`, records embedded repos as single paths).
+/// Collect `(index path, absolute path)` pairs under `dir` for staging.
 pub(crate) fn collect_paths_for_stage_from_directory(
     dir: &Path,
     work_tree: &Path,
     repo: &Repository,
     ignore_matcher: &mut Option<IgnoreMatcher>,
     force: bool,
-) -> Result<Vec<String>> {
+    precompose_unicode: bool,
+) -> Result<Vec<(String, PathBuf)>> {
     let mut out = Vec::new();
-    walk_directory(dir, work_tree, &mut out, repo, ignore_matcher, force)?;
+    walk_directory(
+        dir,
+        work_tree,
+        &mut out,
+        repo,
+        ignore_matcher,
+        force,
+        precompose_unicode,
+    )?;
     Ok(out)
 }
 
-/// Recursively walk a directory, collecting relative paths (skipping .git and ignored files).
+/// Recursively walk a directory, collecting index-relative paths and their on-disk paths.
 fn walk_directory(
     dir: &Path,
     work_tree: &Path,
-    out: &mut Vec<String>,
+    out: &mut Vec<(String, PathBuf)>,
     repo: &Repository,
     ignore_matcher: &mut Option<IgnoreMatcher>,
     force: bool,
+    precompose_unicode: bool,
 ) -> Result<()> {
     let entries = fs::read_dir(dir)?;
     let mut sorted: Vec<_> = entries.filter_map(|e| e.ok()).collect();
@@ -1577,10 +1642,15 @@ fn walk_directory(
             continue;
         }
 
-        let rel = path
+        let rel_fs = path
             .strip_prefix(work_tree)
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| path.to_string_lossy().to_string());
+        let rel_index = if precompose_unicode {
+            grit_lib::unicode_normalization::precompose_utf8_path(&rel_fs).into_owned()
+        } else {
+            rel_fs.clone()
+        };
 
         // Use symlink_metadata to detect symlinks *before* following them.
         // A symlink to a directory should be stored as a symlink blob,
@@ -1595,7 +1665,7 @@ fn walk_directory(
         // Check if ignored
         if !force {
             if let Some(matcher) = ignore_matcher.as_mut() {
-                if let Ok((ignored, _)) = matcher.check_path(repo, None, &rel, is_dir) {
+                if let Ok((ignored, _)) = matcher.check_path(repo, None, &rel_index, is_dir) {
                     if ignored {
                         continue;
                     }
@@ -1608,12 +1678,20 @@ fn walk_directory(
             // `git add .` does not treat an existing gitlink as deleted (the inner `.git` is
             // skipped below and would otherwise hide the whole tree from the scan).
             if path.join(".git").exists() {
-                out.push(rel);
+                out.push((rel_index, path));
                 continue;
             }
-            walk_directory(&path, work_tree, out, repo, ignore_matcher, force)?;
+            walk_directory(
+                &path,
+                work_tree,
+                out,
+                repo,
+                ignore_matcher,
+                force,
+                precompose_unicode,
+            )?;
         } else {
-            out.push(rel);
+            out.push((rel_index, path));
         }
     }
 
@@ -1677,7 +1755,11 @@ fn check_symlink_in_path(work_tree: &Path, rel_path: &Path) -> Option<PathBuf> {
 ///
 /// If the pathspec does not contain glob characters, returns it unchanged.
 /// Otherwise, matches it against files/dirs in the working tree directory.
-pub(crate) fn expand_glob_pathspec(pathspec: &str, work_tree: &Path) -> Vec<String> {
+pub(crate) fn expand_glob_pathspec(
+    pathspec: &str,
+    work_tree: &Path,
+    precompose_unicode: bool,
+) -> Vec<String> {
     if !crate::pathspec::has_glob_chars(pathspec) {
         return vec![pathspec.to_owned()];
     }
@@ -1700,15 +1782,24 @@ pub(crate) fn expand_glob_pathspec(pathspec: &str, work_tree: &Path) -> Vec<Stri
     if let Ok(entries) = fs::read_dir(&search_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if name_str == ".git" {
+            let raw = name.to_string_lossy();
+            let raw_owned = raw.into_owned();
+            let name_for_match = if precompose_unicode {
+                precompose_utf8_segment(raw_owned.as_ref()).into_owned()
+            } else {
+                raw_owned.clone()
+            };
+            if name_for_match == ".git" {
                 continue;
             }
-            if wildmatch(pattern.as_bytes(), name_str.as_bytes(), 0) {
+            if wildmatch(pattern.as_bytes(), name_for_match.as_bytes(), 0) {
+                // Use the filesystem spelling for `rel` so `open()` works on Linux when the index
+                // stores NFC but `readdir` returns NFD (t3910 `git add *` on long filenames).
+                let fs_name = raw_owned;
                 let rel = if dir_prefix.is_empty() {
-                    name_str.to_string()
+                    fs_name
                 } else {
-                    format!("{dir_prefix}/{name_str}")
+                    format!("{dir_prefix}/{fs_name}")
                 };
                 matches.push(rel);
             }

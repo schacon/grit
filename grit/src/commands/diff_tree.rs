@@ -175,8 +175,23 @@ impl Default for Options {
     }
 }
 
+/// True when `spec` resolves to a commit, tree, or annotated tag (Git `setup_revisions` tree-ish).
+fn spec_names_commit_or_tree(repo: &Repository, spec: &str) -> bool {
+    match resolve_revision(repo, spec) {
+        Ok(oid) => match repo.odb.read(&oid) {
+            Ok(obj) => match obj.kind {
+                ObjectKind::Commit | ObjectKind::Tree => true,
+                ObjectKind::Tag => true,
+                ObjectKind::Blob => false,
+            },
+            Err(_) => false,
+        },
+        Err(_) => false,
+    }
+}
+
 /// Parse the raw argument vector.
-fn parse_options(argv: &[String]) -> Result<Options> {
+fn parse_options(repo: &Repository, argv: &[String]) -> Result<Options> {
     let mut opts = Options::default();
     let mut end_of_options = false;
     let mut i = 0usize;
@@ -366,8 +381,10 @@ fn parse_options(argv: &[String]) -> Result<Options> {
             continue;
         }
 
-        // Positional: first two are tree-ish, rest are pathspecs.
+        // Positional: like Git `setup_revisions` — up to two tree-ishes, then pathspecs.
         if end_of_options || opts.objects.len() >= 2 {
+            opts.pathspecs.push(arg.clone());
+        } else if opts.objects.len() == 1 && !spec_names_commit_or_tree(repo, arg) {
             opts.pathspecs.push(arg.clone());
         } else {
             opts.objects.push(arg.clone());
@@ -394,9 +411,12 @@ fn parse_options(argv: &[String]) -> Result<Options> {
 // ── Public entry point ───────────────────────────────────────────────
 
 /// Run `grit diff-tree`.
-pub fn run(args: Args) -> Result<()> {
-    let opts = parse_options(&args.args)?;
+pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    if grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir)) {
+        crate::precompose::precompose_diff_tree_argv(&mut args.args);
+    }
+    let opts = parse_options(&repo, &args.args)?;
 
     let stdout = io::stdout();
     let mut out = stdout.lock();

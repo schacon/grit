@@ -1015,9 +1015,19 @@ pub fn run(mut args: Args) -> Result<()> {
         return run_no_index(args);
     }
 
+    let repo_opt = Repository::discover(None).ok();
+    let precompose_paths = repo_opt.as_ref().is_some_and(|r| {
+        grit_lib::precompose_config::effective_core_precomposeunicode(Some(&r.git_dir))
+    });
+    if precompose_paths {
+        for a in args.args.iter_mut() {
+            *a = grit_lib::unicode_normalization::precompose_utf8_path(a).into_owned();
+        }
+    }
+
     let raw_args: Vec<String> = std::env::args().collect();
     let has_separator = raw_args.iter().any(|a| a == "--");
-    let (mut revs, paths) = parse_rev_and_paths(&args.args, has_separator);
+    let (mut revs, paths) = parse_rev_and_paths(&args.args, has_separator, precompose_paths);
     // Options parsed by clap can remain in the `revs` bucket when `--` separates paths
     // (`git diff -D -- path`). Drop duplicates so they are not treated as revision names.
     if args.irreversible_delete {
@@ -1028,14 +1038,14 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // Outside any repository, `git diff <path> <path>` behaves like `diff --no-index` (t4035).
-    if Repository::discover(None).is_err() && revs.is_empty() && paths.len() == 2 && !args.cached {
+    if repo_opt.is_none() && revs.is_empty() && paths.len() == 2 && !args.cached {
         return run_no_index(args);
     }
 
-    let repo = Repository::discover(None).context("not a git repository")?;
-    let quote_path_fully = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
-        .unwrap_or_default()
-        .quote_path_fully();
+    let repo = repo_opt.context("not a git repository")?;
+    let diff_cfg_early = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+        .unwrap_or_else(|_| grit_lib::config::ConfigSet::new());
+    let quote_path_fully = diff_cfg_early.quote_path_fully();
 
     let patch_context = if let Some(u) = args.unified {
         u
@@ -1103,7 +1113,6 @@ pub fn run(mut args: Args) -> Result<()> {
             }
         })
         .collect();
-
     // Resolve diff prefixes from config and command-line options
     let (src_prefix, dst_prefix) = resolve_diff_prefixes(&args, &repo, args.cached);
 
@@ -3218,7 +3227,28 @@ fn write_dirstat(
     Ok(())
 }
 
-fn parse_rev_and_paths(args: &[String], has_separator: bool) -> (Vec<String>, Vec<String>) {
+/// When `core.precomposeunicode` is on, the work tree may store paths in NFC while argv uses NFD.
+fn resolve_pathspec_for_diff_classification(arg: &str, precompose_unicode: bool) -> Option<String> {
+    use std::path::Path;
+    if Path::new(arg).symlink_metadata().is_ok() {
+        return Some(arg.to_owned());
+    }
+    // With precompose, NFD argv must match NFC on-disk paths (macOS aliases them; Linux tests
+    // force the config without FS aliasing, so the NFD spelling may not exist as a path).
+    if precompose_unicode {
+        let nfc = grit_lib::unicode_normalization::precompose_utf8_path(arg);
+        if nfc.as_ref() != arg {
+            return Some(nfc.into_owned());
+        }
+    }
+    None
+}
+
+fn parse_rev_and_paths(
+    args: &[String],
+    has_separator: bool,
+    precompose_unicode: bool,
+) -> (Vec<String>, Vec<String>) {
     if let Some(sep) = args.iter().position(|a| a == "--") {
         let revs = args[..sep].to_vec();
         let paths = args[sep + 1..].to_vec();
@@ -3235,9 +3265,11 @@ fn parse_rev_and_paths(args: &[String], has_separator: bool) -> (Vec<String>, Ve
         for arg in args {
             if in_paths {
                 paths.push(arg.clone());
-            } else if std::fs::symlink_metadata(std::path::Path::new(arg)).is_ok() {
+            } else if let Some(p) =
+                resolve_pathspec_for_diff_classification(arg, precompose_unicode)
+            {
                 in_paths = true;
-                paths.push(arg.clone());
+                paths.push(p);
             } else {
                 revs.push(arg.clone());
             }
