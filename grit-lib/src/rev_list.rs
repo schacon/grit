@@ -118,6 +118,44 @@ impl ObjectFilter {
         Err(format!("unsupported filter spec: {spec}"))
     }
 
+    /// Smallest `tree:<n>` limit appearing in this filter (for AND-combined filters, the strictest
+    /// depth wins). Used to decide bitmap `--objects` line formatting.
+    pub fn min_tree_depth_limit(&self) -> Option<u64> {
+        match self {
+            ObjectFilter::TreeDepth(d) => Some(*d),
+            ObjectFilter::Combine(parts) => {
+                parts.iter().filter_map(|p| p.min_tree_depth_limit()).min()
+            }
+            _ => None,
+        }
+    }
+
+    /// True if this filter includes `sparse:oid=…` (path-shaped `--objects` output must match the
+    /// non-bitmap walk; see t6113 "filters fallback to non-bitmap traversal").
+    pub fn mentions_sparse_oid(&self) -> bool {
+        match self {
+            ObjectFilter::SparseOid(_) => true,
+            ObjectFilter::Combine(parts) => parts.iter().any(|p| p.mentions_sparse_oid()),
+            _ => false,
+        }
+    }
+
+    /// Clamp every `tree:<n>` sub-filter to at most `cap` (used with `core.maxtreedepth`).
+    ///
+    /// When `--objects` is used, Grit also applies an implicit `tree:<maxtreedepth>` cap. If the
+    /// user already specified `tree:N` via `--filter`, we must not replace it with the default
+    /// cap alone — Git effectively uses the tighter of the two limits.
+    #[must_use]
+    pub fn cap_tree_depth(&self, cap: u64) -> Self {
+        match self {
+            ObjectFilter::TreeDepth(d) => ObjectFilter::TreeDepth((*d).min(cap)),
+            ObjectFilter::Combine(parts) => {
+                ObjectFilter::Combine(parts.iter().map(|f| f.cap_tree_depth(cap)).collect())
+            }
+            _ => self.clone(),
+        }
+    }
+
     /// Merge another `--filter` argument (Git joins multiple filters with AND).
     #[must_use]
     pub fn merge_with(self, other: Self) -> Self {
@@ -395,6 +433,12 @@ pub struct RevListOptions {
     pub use_bitmap_index: bool,
     /// When set with `--objects`, list only objects not present in any pack file.
     pub unpacked_only: bool,
+    /// `core.maxtreedepth` cap applied for `--objects` walks (including the default when unset).
+    ///
+    /// Used with [`Self::use_bitmap_index`] to match Git: full-tree bitmap output uses OID-only
+    /// object lines, while a stricter user `tree:<n>` filter keeps path suffixes like the
+    /// non-bitmap walk.
+    pub objects_tree_walk_cap: Option<u64>,
     /// With `--use-bitmap-index`, emit OID-only object lines (no paths / trailing space) for filters
     /// that match Git's bitmap object formatting.
     pub bitmap_oid_only_objects: bool,
@@ -454,6 +498,7 @@ impl Default for RevListOptions {
             missing_action: MissingAction::Error,
             use_bitmap_index: false,
             unpacked_only: false,
+            objects_tree_walk_cap: None,
             bitmap_oid_only_objects: false,
             until_cutoff: None,
             since_cutoff: None,
@@ -833,16 +878,24 @@ pub fn rev_list(
         ordered.retain(|oid| !kept_set.contains(oid));
     }
 
-    if options.unpacked_only {
+    if options.unpacked_only && !options.objects {
         let packed = packed_object_set(repo);
         ordered.retain(|oid| !packed.contains(oid));
     }
 
     let commit_tips_set: HashSet<ObjectId> = object_walk_tip_commits.iter().copied().collect();
+    let packed_for_unpacked_objects =
+        (options.unpacked_only && options.objects).then(|| packed_object_set(repo));
     let objects_print_commit: Vec<bool> = if options.objects {
         ordered
             .iter()
             .map(|&c| {
+                if packed_for_unpacked_objects
+                    .as_ref()
+                    .is_some_and(|p| p.contains(&c))
+                {
+                    return false;
+                }
                 let user_given = !options.filter_provided_objects && commit_tips_set.contains(&c);
                 user_given || filter_shows_commit_line_when_not_user_given(options.filter.as_ref())
             })
@@ -853,9 +906,19 @@ pub fn rev_list(
 
     let sparse_lines = sparse_oid_lines_from_filter(repo, options.filter.as_ref());
     let skip_trees = skip_tree_descent_for_object_type_filter(options.filter.as_ref());
+    let full_tree_objects_walk = !options.unpacked_only
+        && options.filter.as_ref().is_some_and(|f| {
+            !f.mentions_sparse_oid()
+                && f.min_tree_depth_limit()
+                    .zip(options.objects_tree_walk_cap)
+                    .is_some_and(|(lim, cap)| lim >= cap)
+        });
     let bitmap_object_format = options.objects
         && options.use_bitmap_index
-        && (options.bitmap_oid_only_objects || !object_roots.is_empty() || options.unpacked_only);
+        && (options.bitmap_oid_only_objects
+            || !object_roots.is_empty()
+            || full_tree_objects_walk
+            || options.unpacked_only);
     let omit_object_paths = bitmap_object_format;
     let packed_set = if options.objects && options.unpacked_only {
         Some(packed_object_set(repo))

@@ -454,6 +454,16 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if test_bitmap {
+        if let Ok(path) = std::env::var("GIT_TRACE2_EVENT") {
+            if !path.is_empty() {
+                let _ = crate::trace2_write_json_data_line(
+                    &path,
+                    "load_midx_revindex",
+                    "source",
+                    "midx",
+                );
+            }
+        }
         return Ok(());
     }
 
@@ -476,11 +486,12 @@ pub fn run(args: Args) -> Result<()> {
         };
         object_depth_limit = Some(depth);
         let depth_filter = grit_lib::rev_list::ObjectFilter::TreeDepth(depth as u64);
+        options.objects_tree_walk_cap = Some(depth as u64);
         options.filter = match options.filter.take() {
             None => Some(depth_filter),
             Some(f) => {
                 if filter_mentions_tree_depth(&f) {
-                    Some(f)
+                    Some(f.cap_tree_depth(depth as u64))
                 } else {
                     Some(grit_lib::rev_list::ObjectFilter::Combine(vec![
                         depth_filter,
