@@ -12,6 +12,7 @@
 //! Exit codes: `--exit-code` / `--quiet` return exit code 1 if there are
 //! differences.
 
+use crate::explicit_exit::ExplicitExit;
 use crate::pathspec::resolve_pathspec;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
@@ -813,6 +814,10 @@ pub struct Args {
     #[arg(long = "line-prefix", value_name = "PREFIX")]
     pub line_prefix: Option<String>,
 
+    /// Redirect diff output to a file (default stdout).
+    #[arg(long = "output", value_name = "file")]
+    pub output_path: Option<PathBuf>,
+
     /// Disable rename detection (must not be abbreviated).
     #[arg(long = "no-renames")]
     pub no_renames: bool,
@@ -1033,9 +1038,19 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;
-    let quote_path_fully = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
-        .unwrap_or_default()
-        .quote_path_fully();
+    let diff_config_early = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    if args.order_file.is_none() {
+        if let Some(p) = diff_config_early
+            .get("diff.orderfile")
+            .or_else(|| diff_config_early.get("diff.orderFile"))
+        {
+            let t = p.trim();
+            if !t.is_empty() {
+                args.order_file = Some(t.to_owned());
+            }
+        }
+    }
+    let quote_path_fully = diff_config_early.quote_path_fully();
 
     let patch_context = if let Some(u) = args.unified {
         u
@@ -1247,7 +1262,12 @@ pub fn run(mut args: Args) -> Result<()> {
                     args.color_moved = Some("default".to_owned());
                 }
                 s if s.starts_with("-O") && s.len() > 2 => {
-                    args.order_file = Some(s[2..].to_string());
+                    let path = s[2..].to_string();
+                    if path == "/dev/null" {
+                        args.order_file = None;
+                    } else {
+                        args.order_file = Some(path);
+                    }
                 }
                 "--no-prefix" => {
                     args.no_prefix = true;
@@ -1370,6 +1390,9 @@ pub fn run(mut args: Args) -> Result<()> {
         rev_idx += 1;
     }
     revs = extra_revs;
+    if revs.len() == 3 && args.name_only && !args.cached {
+        want_combined_diff = true;
+    }
 
     let mut _symmetric = false;
     if revs.len() == 1 {
@@ -1763,10 +1786,13 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Apply orderfile sorting if specified
     let entries = if let Some(ref order_path) = args.order_file {
-        apply_orderfile(entries, order_path)
+        apply_orderfile(entries, order_path, &cwd)?
     } else {
         entries
     };
+
+    let entries =
+        apply_rotate_skip_entries(entries, args.rotate_to.as_deref(), args.skip_to.as_deref())?;
 
     // Apply -R: reverse the diff (swap old and new sides)
     let mut entries = if args.reverse {
@@ -1878,12 +1904,33 @@ pub fn run(mut args: Args) -> Result<()> {
     let use_color = match args.color.as_deref() {
         Some("always") => true,
         Some("never") => false,
-        Some("auto") | None => io::stdout().is_terminal(),
+        Some("auto") | None => {
+            if args.output_path.is_some() {
+                false
+            } else {
+                io::stdout().is_terminal()
+            }
+        }
         Some(_) => false,
     };
 
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
+    let mut out: Box<dyn Write> = if let Some(ref p) = args.output_path {
+        let resolved = if p.is_absolute() {
+            p.clone()
+        } else {
+            cwd.join(p)
+        };
+        Box::new(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&resolved)
+                .with_context(|| format!("failed to open output file {}", resolved.display()))?,
+        )
+    } else {
+        Box::new(io::stdout())
+    };
 
     let word_diff = args.word_diff.is_some() || args.color_words;
 
@@ -2839,22 +2886,23 @@ fn run_no_index_dirs(args: Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
 /// The orderfile contains one pattern per line. Files matching the first
 /// pattern come first, then files matching the second, etc. Files not
 /// matching any pattern come last in their original order.
+///
+/// `cwd` is used to resolve relative orderfile paths (matches `git diff -O`).
 /// Apply an orderfile to sort diff entries (public for use by other commands like log).
-pub fn apply_orderfile_entries(entries: Vec<DiffEntry>, order_path: &str) -> Vec<DiffEntry> {
-    apply_orderfile(entries, order_path)
+pub fn apply_orderfile_entries(
+    entries: Vec<DiffEntry>,
+    order_path: &str,
+    cwd: &Path,
+) -> Result<Vec<DiffEntry>> {
+    apply_orderfile(entries, order_path, cwd)
 }
 
-fn apply_orderfile(mut entries: Vec<DiffEntry>, order_path: &str) -> Vec<DiffEntry> {
-    let patterns: Vec<String> = match std::fs::read_to_string(order_path) {
-        Ok(content) => content
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .collect(),
-        Err(_) => return entries,
-    };
-
-    // Assign a sort key to each entry based on which pattern it matches first
+fn apply_orderfile(
+    mut entries: Vec<DiffEntry>,
+    order_path: &str,
+    cwd: &Path,
+) -> Result<Vec<DiffEntry>> {
+    let patterns = read_orderfile_patterns(order_path, cwd)?;
     let sort_key = |entry: &DiffEntry| -> usize {
         let path = entry
             .new_path
@@ -2867,11 +2915,171 @@ fn apply_orderfile(mut entries: Vec<DiffEntry>, order_path: &str) -> Vec<DiffEnt
                 return i;
             }
         }
-        patterns.len() // unmatched files go last
+        patterns.len()
     };
-
     entries.sort_by_key(|e| sort_key(e));
-    entries
+    Ok(entries)
+}
+
+fn read_orderfile_patterns(order_path: &str, cwd: &Path) -> Result<Vec<String>> {
+    let path = Path::new(order_path);
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    };
+    let _meta = std::fs::metadata(&resolved).map_err(|e| {
+        anyhow::Error::new(ExplicitExit {
+            code: 128,
+            message: format!("could not read orderfile {order_path}: {e}"),
+        })
+    })?;
+    let mut f = std::fs::File::open(&resolved).map_err(|e| {
+        anyhow::Error::new(ExplicitExit {
+            code: 128,
+            message: format!("could not read orderfile {order_path}: {e}"),
+        })
+    })?;
+    let mut content = String::new();
+    std::io::Read::read_to_string(&mut f, &mut content).map_err(|e| {
+        anyhow::Error::new(ExplicitExit {
+            code: 128,
+            message: format!("could not read orderfile {order_path}: {e}"),
+        })
+    })?;
+    Ok(content
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect())
+}
+
+/// Reorder diff entries for `git diff` `--rotate-to` / `--skip-to` (changed paths only).
+pub fn apply_rotate_skip_entries(
+    mut entries: Vec<DiffEntry>,
+    rotate_to: Option<&str>,
+    skip_to: Option<&str>,
+) -> Result<Vec<DiffEntry>> {
+    let Some(needle) = rotate_to.or(skip_to) else {
+        return Ok(entries);
+    };
+    let needle = needle.trim();
+    if needle.is_empty() {
+        return Ok(entries);
+    }
+    let idx = entries
+        .iter()
+        .position(|e| e.path() == needle)
+        .ok_or_else(|| {
+            anyhow::Error::new(ExplicitExit {
+                code: 128,
+                message: format!("fatal: No such path '{needle}' in the diff"),
+            })
+        })?;
+    if rotate_to.is_some() {
+        entries.rotate_left(idx);
+    }
+    if let Some(skip) = skip_to.filter(|s| !s.trim().is_empty()) {
+        let pos = entries
+            .iter()
+            .position(|e| e.path() == skip)
+            .ok_or_else(|| {
+                anyhow::Error::new(ExplicitExit {
+                    code: 128,
+                    message: format!("fatal: No such path '{skip}' in the diff"),
+                })
+            })?;
+        entries.drain(..pos);
+    }
+    Ok(entries)
+}
+
+/// `git log` rotate/skip: reorder using the **commit tree** path order (all blobs), then keep only
+/// paths present in `entries` — matches Git's `diff --rotate-to` with history walks.
+pub fn apply_rotate_skip_log_entries(
+    odb: &Odb,
+    commit_tree: &ObjectId,
+    entries: Vec<DiffEntry>,
+    rotate_to: Option<&str>,
+    skip_to: Option<&str>,
+) -> Result<Vec<DiffEntry>> {
+    let tree_paths = grit_lib::merge_diff::all_blob_paths_in_tree_order(odb, commit_tree);
+    apply_rotate_skip_ordered_paths(&tree_paths, entries, rotate_to, skip_to)
+}
+
+fn apply_rotate_skip_ordered_paths(
+    tree_paths: &[String],
+    entries: Vec<DiffEntry>,
+    rotate_to: Option<&str>,
+    skip_to: Option<&str>,
+) -> Result<Vec<DiffEntry>> {
+    let rotate = rotate_to.and_then(|s| {
+        let t = s.trim();
+        (!t.is_empty()).then_some(t)
+    });
+    let skip = skip_to.and_then(|s| {
+        let t = s.trim();
+        (!t.is_empty()).then_some(t)
+    });
+    if rotate.is_none() && skip.is_none() {
+        return Ok(entries);
+    }
+
+    use std::collections::HashMap;
+    let mut by_path: HashMap<String, DiffEntry> = HashMap::new();
+    for e in entries {
+        by_path.insert(e.path().to_string(), e);
+    }
+
+    // `git log --skip-to`: only list changed paths from the skip point onward (unmodified paths
+    // in the tree-order suffix are omitted). `--rotate-to` still lists every changed file in order.
+    if rotate.is_none() {
+        let Some(skip_path) = skip else {
+            return Ok(by_path.into_values().collect());
+        };
+        let idx = tree_paths
+            .iter()
+            .position(|p| p == skip_path)
+            .ok_or_else(|| {
+                anyhow::Error::new(ExplicitExit {
+                    code: 128,
+                    message: format!("fatal: No such path '{skip_path}' in the diff"),
+                })
+            })?;
+        let mut out = Vec::new();
+        for p in tree_paths.iter().skip(idx) {
+            if let Some(e) = by_path.remove(p) {
+                out.push(e);
+            }
+        }
+        return Ok(out);
+    }
+
+    let needle = rotate.expect("rotate set when reaching this branch");
+    let idx = tree_paths.iter().position(|p| p == needle).ok_or_else(|| {
+        anyhow::Error::new(ExplicitExit {
+            code: 128,
+            message: format!("fatal: No such path '{needle}' in the diff"),
+        })
+    })?;
+    let mut order: Vec<String> = tree_paths.to_vec();
+    order.rotate_left(idx);
+    if let Some(skip_path) = skip {
+        let pos = order.iter().position(|p| p == skip_path).ok_or_else(|| {
+            anyhow::Error::new(ExplicitExit {
+                code: 128,
+                message: format!("fatal: No such path '{skip_path}' in the diff"),
+            })
+        })?;
+        order.drain(..pos);
+    }
+    let mut out = Vec::new();
+    for p in order {
+        if let Some(e) = by_path.remove(&p) {
+            out.push(e);
+        }
+    }
+    Ok(out)
 }
 
 /// Check if an orderfile pattern matches a path.
