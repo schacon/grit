@@ -8,8 +8,6 @@ cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success 'write-tree after update-index --add' '
-	grit init repo &&
-	cd repo &&
 	: >should-be-empty &&
 	grit update-index --add should-be-empty &&
 	tree=$(grit write-tree) &&
@@ -21,7 +19,6 @@ test_expect_success 'write-tree after update-index --add' '
 '
 
 test_expect_success 'write-tree can write empty tree' '
-	cd repo &&
 	rm -f should-be-empty &&
 	grit update-index --remove should-be-empty &&
 	tree=$(grit write-tree) &&
@@ -30,7 +27,6 @@ test_expect_success 'write-tree can write empty tree' '
 '
 
 test_expect_success 'write-tree --prefix matches subtree oid' '
-	cd repo &&
 	mkdir -p path3/subp3 &&
 	echo "hello path0" >path0 &&
 	echo "hello path3/file3" >path3/file3 &&
@@ -48,7 +44,6 @@ test_expect_success 'write-tree --prefix matches subtree oid' '
 '
 
 test_expect_success 'write-tree fails on missing objects unless --missing-ok' '
-	cd repo &&
 	rm -f .git/index &&
 	cat >badobjects <<-\EOF &&
 	100644 blob 1111111111111111111111111111111111111111	dir/file1
@@ -60,7 +55,6 @@ test_expect_success 'write-tree fails on missing objects unless --missing-ok' '
 '
 
 test_expect_success 'write-tree from subdirectory equals top-level tree' '
-	cd repo &&
 	rm -f .git/index &&
 	echo "one" >one &&
 	mkdir -p dir &&
