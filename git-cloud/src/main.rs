@@ -1,5 +1,5 @@
 //! CLI entry for `git-cloud`: initialize harness task DB, sync from CSV, supervise cloud agents (`run`),
-//! and merge their work locally (`integrate`).
+//! merge their work locally (`integrate`), and bulk re-run harness (`rerun`).
 
 mod ansi;
 mod cursor;
@@ -70,6 +70,8 @@ enum Command {
     Update,
     /// Show task counts by status from `.git/cloud.sqlite`.
     Summary,
+    /// Run `./scripts/run-tests.sh` once with every harness file whose task is not `pending` or `running` (skips CSV `in_scope=skip`).
+    Rerun,
 }
 
 fn main() -> Result<()> {
@@ -95,10 +97,13 @@ fn main() -> Result<()> {
         Some(Command::Summary) => {
             orchestrator::summary(&repo_root)?;
         }
+        Some(Command::Rerun) => {
+            orchestrator::rerun_harness(&repo_root)?;
+        }
         None => {
             if !cli.init {
                 anyhow::bail!(
-                    "expected `--init` or a subcommand: `run`, `integrate`, `update`, `summary` (see --help)"
+                    "expected `--init` or a subcommand: `run`, `integrate`, `update`, `summary`, `rerun` (see --help)"
                 );
             }
         }

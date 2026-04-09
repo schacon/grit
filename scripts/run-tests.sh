@@ -5,6 +5,7 @@
 #   ./scripts/run-tests.sh                     # all in-scope test files
 #   ./scripts/run-tests.sh t1                  # all tests/t1*.sh (glob prefix; t1xxx family)
 #   ./scripts/run-tests.sh t3200-branch.sh     # single file
+#   ./scripts/run-tests.sh t0500 t4064 t4051   # multiple prefixes, .sh paths, or mixes (order preserved, deduped)
 #
 # Options:
 #   --timeout N    per-file timeout (default: 120)
@@ -75,10 +76,6 @@ else
   TIMEOUT_PREFIX=()
 fi
 
-if [[ ${#POS[@]} -gt 0 ]]; then
-  TARGET="${POS[0]}"
-fi
-
 if [[ ! -x "$BIN" ]]; then
   echo "ERROR: grit binary not found at $BIN"
   echo "Run: cargo build --release"
@@ -99,10 +96,11 @@ fi
 
 # Build list of files to run: skip in_scope=skip
 mapfile -t FILES < <(
-  python3 - "$CSV" "$TARGET" "$TESTS_DIR" "$FROM" <<'PY'
-import csv, os, sys, glob, re
+  python3 - "$CSV" "$TESTS_DIR" "$FROM" "${POS[@]}" <<'PY'
+import csv, os, sys, glob
 
-csv_path, target, tests_dir, from_stem = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+csv_path, tests_dir, from_stem = sys.argv[1], sys.argv[2], sys.argv[3]
+targets = sys.argv[4:]
 if from_stem.endswith(".sh"):
     from_stem = from_stem[:-3]
 
@@ -118,18 +116,55 @@ def want_file(base: str) -> bool:
             return row.get("in_scope", "yes").strip().lower() != "skip"
     return True
 
-candidates = []
-if target.endswith(".sh"):
-    base = target[:-3]
-    if want_file(base):
-        p = os.path.join(tests_dir, target)
-        if os.path.isfile(p):
-            candidates.append(target)
-elif target:
-    for p in sorted(glob.glob(os.path.join(tests_dir, target + "*.sh"))):
-        base = os.path.basename(p)[:-3]
+
+def normalize_target(raw: str) -> str:
+    s = raw.strip()
+    if not s:
+        return s
+    for prefix in ("tests/", "./tests/"):
+        if s.startswith(prefix):
+            s = s[len(prefix) :]
+            break
+    return os.path.basename(s)
+
+
+def expand_one(target):
+    out = []
+    if target.endswith(".sh"):
+        base = target[:-3]
         if want_file(base):
-            candidates.append(os.path.basename(p))
+            p = os.path.join(tests_dir, target)
+            if os.path.isfile(p):
+                out.append(target)
+        return out
+    if target:
+        for p in sorted(glob.glob(os.path.join(tests_dir, target + "*.sh"))):
+            base = os.path.basename(p)[:-3]
+            if want_file(base):
+                out.append(os.path.basename(p))
+        return out
+    return out
+
+
+candidates = []
+if targets:
+    seen = set()
+    for raw in targets:
+        t = normalize_target(raw)
+        if not t:
+            continue
+        got = expand_one(t)
+        if not got:
+            print(
+                "WARNING: no test files matched %r (skipped, typo, or missing under %s)"
+                % (raw, tests_dir),
+                file=sys.stderr,
+            )
+            continue
+        for fn in got:
+            if fn not in seen:
+                seen.add(fn)
+                candidates.append(fn)
 else:
     for row in rows:
         if row.get("in_scope", "yes").strip().lower() == "skip":

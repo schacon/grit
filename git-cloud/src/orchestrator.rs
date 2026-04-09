@@ -146,6 +146,67 @@ pub fn update_harness(repo: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Run `./scripts/run-tests.sh` once with all test stems from SQLite whose status is not `pending`
+/// or `running`. Rows with `in_scope=skip` in `data/test-files.csv` are omitted.
+pub fn rerun_harness(repo: &Path) -> Result<()> {
+    let gd = git_dir(repo);
+    if !gd.is_dir() {
+        anyhow::bail!("not a git repository: {}", repo.display());
+    }
+    let db_path = gd.join("cloud.sqlite");
+    if !db_path.is_file() {
+        anyhow::bail!(
+            "missing {} — run `git-cloud --init` first",
+            db_path.display()
+        );
+    }
+    let conn = db::open_db(&gd)?;
+    db::init_schema(&conn)?;
+    db::migrate_schema(&conn)?;
+    let stems = db::list_filenames_not_pending_or_running(&conn)?;
+    let csv_rows = harness::read_test_files_csv(repo)?;
+    let mut args: Vec<String> = Vec::new();
+    for stem in stems {
+        let Some(row) = harness::row_for_file(&csv_rows, &stem) else {
+            continue;
+        };
+        if row.in_scope == "skip" {
+            continue;
+        }
+        args.push(format!("{}.sh", stem));
+    }
+    if args.is_empty() {
+        println!(
+            "{}{}git-cloud rerun{} — no harness files to run (all tasks pending/running, or none in CSV scope){}",
+            BOLD, CYAN, RESET, RESET
+        );
+        return Ok(());
+    }
+    let script = repo.join("scripts/run-tests.sh");
+    if !script.is_file() {
+        anyhow::bail!("missing {}", script.display());
+    }
+    println!(
+        "{}{}git-cloud rerun{} — {} harness file(s) via {}{}",
+        BOLD,
+        CYAN,
+        RESET,
+        args.len(),
+        script.display(),
+        RESET
+    );
+    let status = std::process::Command::new("bash")
+        .current_dir(repo)
+        .arg(&script)
+        .args(&args)
+        .status()
+        .with_context(|| format!("run {}", script.display()))?;
+    if !status.success() {
+        anyhow::bail!("{} exited with {}", script.display(), status);
+    }
+    Ok(())
+}
+
 /// Print task counts by status from `.git/cloud.sqlite`.
 pub fn summary(repo: &Path) -> Result<()> {
     let gd = git_dir(repo);

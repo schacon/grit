@@ -393,6 +393,25 @@ pub fn list_finished_tasks(conn: &Connection) -> Result<Vec<TaskRow>> {
     Ok(out)
 }
 
+/// Stems (`tasks.filename`) whose status is neither `pending` nor `running`, sorted by filename.
+pub fn list_filenames_not_pending_or_running(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn
+        .prepare(
+            r"SELECT filename FROM tasks
+              WHERE status NOT IN ('pending', 'running')
+              ORDER BY filename",
+        )
+        .context("prepare list not pending/running")?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .context("query filenames not pending/running")?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.context("row")?);
+    }
+    Ok(out)
+}
+
 pub fn update_tests_for_file(
     conn: &Connection,
     filename: &str,

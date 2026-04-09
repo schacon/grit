@@ -330,7 +330,7 @@ t12730-switch-start-point	t1	yes	36	36	0	true	ok	0
 t12740-restore-deleted-paths	t1	yes	35	35	0	true	ok	0
 t12750-reset-mixed-paths	t1	yes	34	34	0	true	ok	0
 t12760-cherry-pick-multi-range	t1	yes	34	33	1	false	ok	0
-t12770-for-each-ref-perl-format	t1	yes	36	36	0	true	ok	0
+t12770-for-each-ref-perl-format	t1	yes	36	32	4	false	ok	0
 t12780-show-ref-head-detached	t1	yes	36	35	1	false	ok	0
 t12790-update-ref-stderr-msg	t1	yes	33	33	0	true	ok	0
 t12800-check-ignore-recursive	t1	yes	38	38	0	true	ok	0
@@ -886,7 +886,7 @@ t5315-pack-objects-compression	t5	yes	9	1	8	false	ok	0
 t5316-pack-delta-depth	t5	yes	5	3	2	false	ok	0
 t5317-pack-objects-filter-objects	t5	yes	33	19	14	false	ok	0
 t5318-commit-graph	t5	skip	85	0	0	false	ok	0
-t5318-pack-objects-revs-exclude	t5	yes	9	6	3	false	ok	0
+t5318-pack-objects-revs-exclude	t5	yes	9	4	5	false	ok	0
 t5319-multi-pack-index	t5	yes	98	20	78	false	ok	0
 t5320-delta-islands	t5	yes	15	2	13	false	ok	0
 t5321-pack-large-objects	t5	yes	2	0	2	false	ok	0
