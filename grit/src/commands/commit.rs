@@ -717,6 +717,7 @@ pub fn run(mut args: Args) -> Result<()> {
             && !skip_index_tree_vs_parent
             && staged.is_empty()
             && !parents.is_empty()
+            && parents.len() == 1
         {
             let parent_obj = repo.odb.read(&parents[0])?;
             let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)?;
@@ -743,6 +744,7 @@ pub fn run(mut args: Args) -> Result<()> {
         && !skip_index_tree_vs_parent
         && staged.is_empty()
         && !parents.is_empty()
+        && parents.len() == 1
     {
         let parent_obj = repo.odb.read(&parents[0])?;
         let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)?;
@@ -1629,7 +1631,7 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
                         flags_extended: None,
                         path: raw_path.clone(),
                     };
-                    index.add_or_replace(entry);
+                    index.stage_file(entry);
                     changed = true;
                 }
                 continue;
@@ -1643,17 +1645,22 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
                 fs::read(&abs_path)?
             };
             let oid = repo.odb.write(ObjectKind::Blob, &data)?;
-            if index
+            let has_unmerged_for_path = index
                 .entries
                 .iter()
-                .find(|e| e.path == *raw_path)
-                .is_some_and(|e| !e.intent_to_add() && e.oid == oid)
+                .any(|e| e.path == *raw_path && e.stage() != 0);
+            if !has_unmerged_for_path
+                && index
+                    .entries
+                    .iter()
+                    .find(|e| e.path == *raw_path)
+                    .is_some_and(|e| !e.intent_to_add() && e.oid == oid)
             {
                 continue;
             }
             let mode = grit_lib::index::normalize_mode(meta.mode());
             let entry = grit_lib::index::entry_from_stat(&abs_path, raw_path, oid, mode)?;
-            index.add_or_replace(entry);
+            index.stage_file(entry);
             changed = true;
         } else {
             index.remove(raw_path);

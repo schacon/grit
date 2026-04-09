@@ -1051,7 +1051,7 @@ t6009-rev-list-parent	t6	yes	15	15	0	true	ok	0
 t6010-merge-base	t6	yes	12	12	0	true	ok	0
 t6011-rev-list-with-bad-commit	t6	yes	6	3	3	false	ok	0
 t6011-rev-list-with-hierarchies	t6	yes	28	25	3	false	ok	0
-t6012-rev-list-simplify	t6	yes	42	2	40	false	ok	0
+t6012-rev-list-simplify	t6	yes	42	24	18	false	ok	0
 t6013-rev-list-reverse-parents	t6	yes	3	2	1	false	ok	0
 t6014-rev-list-all	t6	yes	4	4	0	true	ok	0
 t6015-rev-list-show-all-parents	t6	yes	38	38	0	true	ok	0
