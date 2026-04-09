@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   251 |
+| Completed   |   252 |
 | In progress |     4 |
-| Remaining   |   513 |
+| Remaining   |   512 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 251 completed (`[x]`), 4 in progress (`[~]`), 513 remaining (`[ ]`).
+Task lines in `PLAN.md`: 252 completed (`[x]`), 4 in progress (`[~]`), 512 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t3060-ls-files-with-tree` — 8/8 tests pass (`ls-files --with-tree`: `Index::overlay_tree_on_index`, `-s/-u`/`--recurse-submodules` incompatibilities with `fatal:` + exit 128, cwd pathspec `sub/` matches `sub/file`; harness CSV refreshed)
 - `t12660-init-shared-perm` — 37/37 tests pass (default `grit init` applies Git-style group-shared chmod on `.git` tree: 775 dirs / 664 HEAD under umask 022; explicit `--shared` / `core.sharedRepository` writes config + `receive.denyNonFastforwards`; reinit without shared config leaves modes unchanged)
 - `t7520-ignored-hook-warning` — 5/5 tests pass (`tests/test-lib.sh` `test_hook`: `--disable`/`--remove`, resolve hook dir via `git rev-parse --absolute-git-dir`; second hint line uses `git config set advice.ignoredHook false`)
 - `t7064-wtstatus-pv2` — 28/28 tests pass (`status --porcelain=v2`: branch headers with NUL EOL in `-z`, stash reflog count, merge/unmerged `u` lines without worktree OID column, rename `R100` token + path layout, intent-to-add mode columns, submodule `S???` tokens via `submodule_porcelain_flags`, output section order; `.test_tick` filtered from `!` lines to match upstream exclude template)
@@ -125,4 +126,4 @@ Task lines in `PLAN.md`: 251 completed (`[x]`), 4 in progress (`[~]`), 513 remai
 
 ## What Remains
 
-513 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+512 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
