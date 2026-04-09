@@ -469,7 +469,7 @@ commit → check it off → move on.
 - [ ] `t4058-diff-duplicates` ████████░░░░░░░░░░░░ 7/16 (9 left) — test tree diff when trees have duplicate entries
 - [ ] `t4008-diff-break-rewrite` ███████░░░░░░░░░░░░░ 5/14 (9 left) — Break and then rename
 
-- [ ] `t4120-apply-popt` █████░░░░░░░░░░░░░░░ 3/12 (9 left) — git apply -p handling.
+- [x] `t4120-apply-popt` ████████████████████ 12/12 (0 left) — git apply -p handling.
 - [ ] `t4067-diff-partial-clone` ░░░░░░░░░░░░░░░░░░░░ 0/9 (9 left) — behavior of diff when reading objects in a partial clone
 - [ ] `t4208-log-magic-pathspec` ██████████░░░░░░░░░░ 11/21 (10 left) — magic pathspec tests using git-log
 - [ ] `t4212-log-corrupt` ████░░░░░░░░░░░░░░░░ 3/13 (10 left) — git log with invalid commit headers

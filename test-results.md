@@ -1,5 +1,9 @@
 # Test Results
 
+**Updated:** 2026-04-09
+
+- `./scripts/run-tests.sh t4120-apply-popt.sh`: 12/12 passing (`git apply -p` strip count, invalid `-p` diagnostics, quoted traditional diff paths, `--stat` oversized strip, mode-only and rename with `--index`; harness CSV/dashboards refreshed).
+
 **Updated:** 2026-04-08
 
 - `./scripts/run-tests.sh t3060-ls-files-with-tree.sh`: 8/8 passing (`ls-files --with-tree`: tree overlay on index, usage incompatibilities, conflict + missing-index cases; harness CSV/dashboards refreshed).
