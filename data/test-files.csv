@@ -56,7 +56,7 @@ t0092-diagnose	t0	yes	4	4	0	true	ok	0
 t0095-bloom	t0	yes	11	11	0	true	ok	0
 t0100-previous	t0	yes	6	6	0	true	ok	0
 t0101-at-syntax	t0	yes	8	8	0	true	ok	0
-t0110-environment	t0	yes	31	29	2	false	ok	0
+t0110-environment	t0	yes	31	31	0	true	ok	0
 t0120-dot-git-dir	t0	yes	32	32	0	true	ok	0
 t0130-sha1-validation	t0	yes	30	30	0	true	ok	0
 t0200-gettext-basic	t0	skip	16	0	0	false	ok	0
@@ -1241,7 +1241,7 @@ t7514-interpret-trailers-options	t7	yes	10	1	9	false	ok	0
 t7515-status-symlinks	t7	yes	3	3	0	true	ok	0
 t7516-commit-races	t7	yes	2	0	2	false	ok	0
 t7517-per-repo-email	t7	yes	16	16	0	true	ok	0
-t7518-ident-corner-cases	t7	yes	5	3	2	false	ok	0
+t7518-ident-corner-cases	t7	yes	5	5	0	true	ok	0
 t7519-status-fsmonitor	t7	yes	33	14	19	false	ok	0
 t7520-ignored-hook-warning	t7	yes	5	5	0	true	ok	0
 t7521-ignored-mode	t7	yes	12	12	0	true	ok	0

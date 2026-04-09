@@ -316,16 +316,15 @@ test_expect_success 'GIT_COMMITTER_NAME with special characters' '
 # Edge: empty author name
 # ===========================================================================
 
-test_expect_success 'empty GIT_AUTHOR_NAME is accepted' '
+test_expect_success 'empty GIT_AUTHOR_NAME is rejected (matches git ident.c)' '
 	cd repo &&
 	echo "empty-author" >empty-author.txt &&
 	git add empty-author.txt &&
-	GIT_AUTHOR_NAME="" \
-	GIT_AUTHOR_EMAIL="empty@example.com" \
-	git commit -m "empty author name" &&
-	git log -n 1 --format="%ae" >actual &&
-	echo "empty@example.com" >expect &&
-	test_cmp expect actual
+	test_must_fail env GIT_AUTHOR_NAME="" \
+		GIT_AUTHOR_EMAIL="empty@example.com" \
+		git commit -m "empty author name" 2>err &&
+	test_grep "empty ident name" err &&
+	test_grep "Author identity unknown" err
 '
 
 test_done

@@ -39,6 +39,7 @@ pub mod git_date;
 pub mod gitmodules;
 pub mod hooks;
 pub mod ident;
+pub mod ident_config;
 pub mod ignore;
 pub mod index;
 pub mod index_name_hash_lazy;

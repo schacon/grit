@@ -1506,9 +1506,24 @@ fn create_cherry_pick_commit(
 }
 
 fn committer_name_email(config: &ConfigSet) -> (String, String) {
-    let name = crate::ident::read_git_identity_name_from_env("GIT_COMMITTER_NAME")
-        .or_else(|| config.get("user.name"))
-        .unwrap_or_else(|| "Unknown".to_owned());
+    let mut name = match crate::ident::read_git_identity_name_env("GIT_COMMITTER_NAME") {
+        crate::ident::GitIdentityNameEnv::Set(s) => s,
+        crate::ident::GitIdentityNameEnv::Unset => {
+            if let Some(v) = config.get("user.name") {
+                let t = v.trim();
+                if !t.is_empty() {
+                    t.to_owned()
+                } else {
+                    crate::ident::ident_default_name(config)
+                }
+            } else {
+                crate::ident::ident_default_name(config)
+            }
+        }
+    };
+    if name.trim().is_empty() {
+        name = "Unknown".to_owned();
+    }
     let email = std::env::var("GIT_COMMITTER_EMAIL")
         .ok()
         .or_else(|| config.get("user.email"))
@@ -1533,9 +1548,24 @@ fn resolve_committer_ident(config: &ConfigSet, now: time::OffsetDateTime) -> Res
 
 fn append_signoff(msg: &str, git_dir: &Path) -> Result<String> {
     let config = ConfigSet::load(Some(git_dir), true)?;
-    let name = crate::ident::read_git_identity_name_from_env("GIT_COMMITTER_NAME")
-        .or_else(|| config.get("user.name"))
-        .unwrap_or_else(|| "Unknown".to_owned());
+    let mut name = match crate::ident::read_git_identity_name_env("GIT_COMMITTER_NAME") {
+        crate::ident::GitIdentityNameEnv::Set(s) => s,
+        crate::ident::GitIdentityNameEnv::Unset => {
+            if let Some(v) = config.get("user.name") {
+                let t = v.trim();
+                if !t.is_empty() {
+                    t.to_owned()
+                } else {
+                    crate::ident::ident_default_name(&config)
+                }
+            } else {
+                crate::ident::ident_default_name(&config)
+            }
+        }
+    };
+    if name.trim().is_empty() {
+        name = "Unknown".to_owned();
+    }
     let email = std::env::var("GIT_COMMITTER_EMAIL")
         .ok()
         .or_else(|| config.get("user.email"))
