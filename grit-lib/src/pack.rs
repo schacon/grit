@@ -866,9 +866,21 @@ fn sort_pack_indexes_oldest_first(indexes: &mut [PackIndex]) {
     });
 }
 
+fn sort_pack_indexes_newest_first(indexes: &mut [PackIndex]) {
+    indexes.sort_by(|a, b| {
+        let ta = fs::metadata(&a.pack_path)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let tb = fs::metadata(&b.pack_path)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        tb.cmp(&ta).then_with(|| b.pack_path.cmp(&a.pack_path))
+    });
+}
+
 pub fn packed_delta_base_oid(objects_dir: &Path, oid: &ObjectId) -> Result<Option<ObjectId>> {
     let mut indexes = read_local_pack_indexes(objects_dir)?;
-    sort_pack_indexes_oldest_first(&mut indexes);
+    sort_pack_indexes_newest_first(&mut indexes);
     for idx in &indexes {
         let Some(entry) = idx.entries.iter().find(|e| e.oid == *oid) else {
             continue;

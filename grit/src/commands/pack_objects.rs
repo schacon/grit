@@ -86,7 +86,15 @@ pub struct Args {
     pub keep_unreachable: bool,
 
     /// Unpack unreachable objects (accepted for compat).
-    #[arg(long = "unpack-unreachable")]
+    ///
+    /// Git's flag is optional (`--unpack-unreachable[=time]`). A bare flag must not consume the
+    /// trailing `<base-name>` argument (`git repack` passes `--unpack-unreachable` before the path).
+    #[arg(
+        long = "unpack-unreachable",
+        num_args = 0..=1,
+        default_missing_value = "",
+        require_equals = true
+    )]
     pub unpack_unreachable: Option<String>,
 
     /// Window size for delta compression (accepted for compat).

@@ -261,7 +261,7 @@ pub fn run(args: Args) -> Result<()> {
                 } else {
                     String::new()
                 };
-                println!(
+                eprintln!(
                     "missing {} {}{} (referenced by {})",
                     kind,
                     oid.to_hex(),
@@ -279,7 +279,7 @@ pub fn run(args: Args) -> Result<()> {
                 } else {
                     String::new()
                 };
-                println!(
+                eprintln!(
                     "error in {} {}{}: {}",
                     kind.as_str(),
                     oid.to_hex(),
@@ -297,7 +297,7 @@ pub fn run(args: Args) -> Result<()> {
                 } else {
                     String::new()
                 };
-                println!("dangling {} {}{}", kind.as_str(), oid.to_hex(), name_suffix);
+                eprintln!("dangling {} {}{}", kind.as_str(), oid.to_hex(), name_suffix);
             }
             Issue::Unreachable { oid, kind } => {
                 let name_suffix = if name_objects {
@@ -308,7 +308,7 @@ pub fn run(args: Args) -> Result<()> {
                 } else {
                     String::new()
                 };
-                println!(
+                eprintln!(
                     "unreachable {} {}{}",
                     kind.as_str(),
                     oid.to_hex(),
@@ -316,15 +316,15 @@ pub fn run(args: Args) -> Result<()> {
                 );
             }
             Issue::InvalidReflog { refname, oid } => {
-                println!("error: {}: invalid reflog entry {}", refname, oid.to_hex());
+                eprintln!("error: {}: invalid reflog entry {}", refname, oid.to_hex());
                 has_errors = true;
             }
             Issue::HashPathMismatch { real_oid_hex, path } => {
-                println!("error: {real_oid_hex}: hash-path mismatch, found at: {path}");
+                eprintln!("error: {real_oid_hex}: hash-path mismatch, found at: {path}");
                 has_errors = true;
             }
             Issue::FsckMessage(msg) => {
-                println!("error: {msg}");
+                eprintln!("error: {msg}");
                 has_errors = true;
             }
         }
@@ -857,7 +857,7 @@ fn validate_alternate_paths_exist(objects_dir: &Path) -> Result<()> {
             base.join(line)
         };
         if !path.exists() {
-            println!("error: unable to normalize alternate object path: {}", line);
+            eprintln!("error: unable to normalize alternate object path: {}", line);
             bad = true;
         }
     }

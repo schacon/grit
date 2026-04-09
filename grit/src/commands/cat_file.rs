@@ -213,14 +213,18 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     if args.exists {
-        // Match git: `-e` succeeds only when the object can be read from the ODB, not merely
-        // when a pack index lists the OID (connectivity / thin-pack cases differ).
+        // Match git: `-e` succeeds when the object can be read from the ODB, not merely when a
+        // pack index lists the OID. Hand-crafted loose objects with non-standard type keywords
+        // still pass `-e` if the zlib payload has a valid header (t1006 broken object).
         if repo.read_replaced(&oid).is_ok() {
             return Ok(());
         }
         if promisor_hydrate::try_lazy_fetch_promisor_object(&repo, oid).is_ok()
             && repo.odb.exists(&oid)
         {
+            return Ok(());
+        }
+        if repo.odb.loose_object_plumbing_ok(&oid) {
             return Ok(());
         }
         std::process::exit(1);
@@ -712,10 +716,11 @@ fn append_packed_disk_entries(objects_dir: &Path, out: &mut Vec<(ObjectId, u64)>
 
 fn collect_all_disk_object_entries(repo: &Repository) -> Result<Vec<(ObjectId, u64)>> {
     let mut out = Vec::new();
-    for dir in object_storage_dirs_for_repo(repo)? {
-        collect_loose_disk_entries(&dir, &mut out)?;
-        append_packed_disk_entries(&dir, &mut out)?;
-    }
+    // Match upstream tests (t1006 `%(objectsize:disk)`): only count on-disk copies under this
+    // repo's `objects/` tree, not duplicate loose/pack files reachable via `info/alternates`.
+    let dir = repo.odb.objects_dir().to_path_buf();
+    collect_loose_disk_entries(&dir, &mut out)?;
+    append_packed_disk_entries(&dir, &mut out)?;
     Ok(out)
 }
 
