@@ -11,7 +11,7 @@ use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     count_changes, detect_renames, diff_trees, diff_trees_show_tree_entries, format_raw,
-    format_raw_abbrev, unified_diff, DiffEntry, DiffStatus,
+    format_raw_abbrev, unified_diff, zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::merge_diff::{
     combined_diff_paths, format_combined_textconv_patch, is_binary_for_diff,
@@ -117,6 +117,12 @@ struct Options {
     remerge_diff: bool,
     /// Swap the two tree sides (`-R`), inverting raw/patch output like Git.
     reverse: bool,
+    /// Pickaxe: only entries where `-S` string occurrence count changes between blobs.
+    pickaxe_string: Option<String>,
+    /// Pickaxe: only entries whose diff has added/removed lines matching `-G` regex.
+    pickaxe_grep: Option<String>,
+    /// Treat `-S` pattern as a regex (count regex matches per side).
+    pickaxe_regex: bool,
 }
 
 impl Default for Options {
@@ -153,6 +159,9 @@ impl Default for Options {
             quiet: false,
             remerge_diff: false,
             reverse: false,
+            pickaxe_string: None,
+            pickaxe_grep: None,
+            pickaxe_regex: false,
         }
     }
 }
@@ -303,13 +312,33 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                         }
                     }
                 }
+                _ if arg.starts_with("-S") => {
+                    if arg.len() > 2 {
+                        opts.pickaxe_string = Some(arg[2..].to_owned());
+                    } else {
+                        i += 1;
+                        let next = argv
+                            .get(i)
+                            .ok_or_else(|| anyhow::anyhow!("-S requires an argument"))?;
+                        opts.pickaxe_string = Some(next.clone());
+                    }
+                }
+                _ if arg.starts_with("-G") => {
+                    if arg.len() > 2 {
+                        opts.pickaxe_grep = Some(arg[2..].to_owned());
+                    } else {
+                        i += 1;
+                        let next = argv
+                            .get(i)
+                            .ok_or_else(|| anyhow::anyhow!("-G requires an argument"))?;
+                        opts.pickaxe_grep = Some(next.clone());
+                    }
+                }
+                "--pickaxe-regex" => opts.pickaxe_regex = true,
+                "--pickaxe-all" => {}
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("--diff-merges=")
                     || arg.starts_with("--format=")
-                    || arg.starts_with("-S")
-                    || arg.starts_with("-G")
-                    || arg.starts_with("--pickaxe-all")
-                    || arg.starts_with("--pickaxe-regex")
                     || arg.starts_with("-O")
                     || arg.starts_with("--relative") =>
                 {
@@ -403,7 +432,7 @@ fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Res
         validate_tree_depth_limit(&repo.odb, tree_oid, 0, max_tree_depth)?;
     }
     let entries = diff_with_opts(&repo.odb, old_tree, new_tree, opts)?;
-    let filtered = filter_entries(entries, opts);
+    let filtered = filter_entries(&repo.odb, entries, opts)?;
     let has_diff = !filtered.is_empty();
     if !opts.quiet {
         print_diff(out, &repo.odb, &filtered, opts, old_tree, &repo.git_dir)?;
@@ -428,7 +457,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
             if commit.parents.is_empty() {
                 if opts.root {
                     let entries = diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
-                    let filtered = filter_entries(entries, opts);
+                    let filtered = filter_entries(&repo.odb, entries, opts)?;
                     has_diff = !filtered.is_empty();
                     if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                         write_commit_header(out, &oid, &obj.data, opts)?;
@@ -497,7 +526,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 let parent_tree = commit_tree(&repo.odb, &commit.parents[0])?;
                 let entries =
                     diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
-                let filtered = filter_entries(entries, opts);
+                let filtered = filter_entries(&repo.odb, entries, opts)?;
                 has_diff = !filtered.is_empty();
                 if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                     write_commit_header(out, &oid, &obj.data, opts)?;
@@ -587,11 +616,13 @@ fn process_stdin_commit(
 ) -> Result<bool> {
     let commit = parse_commit(data).context("parsing commit")?;
 
-    // Print commit-id header (unless suppressed).
+    // Print commit-id header (unless `--no-commit-id`). `--quiet` still prints this
+    // line (only the raw/patch diff is suppressed), matching `git diff-tree`.
     if !opts.no_commit_id {
         writeln!(out, "{}", oid.to_hex())?;
     }
 
+    // `-v` shows the commit message even with `--quiet` (raw diff and commit-id line stay off).
     if opts.verbose {
         writeln!(out, "commit {}", oid.to_hex())?;
         writeln!(out)?;
@@ -633,14 +664,18 @@ fn process_stdin_commit(
         let mut buf = Vec::new();
         write_remerge_diff(&mut buf, repo, &commit.tree, &parent_oids, &ro)?;
         let hd = !buf.is_empty();
-        out.write_all(&buf)?;
+        if !opts.quiet {
+            out.write_all(&buf)?;
+        }
         hd
     } else if parent_oids.is_empty() {
         if opts.root {
             let entries = diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
-            let filtered = filter_entries(entries, opts);
+            let filtered = filter_entries(&repo.odb, entries, opts)?;
             let hd = !filtered.is_empty();
-            print_diff(out, &repo.odb, &filtered, opts, None, &repo.git_dir)?;
+            if !opts.quiet {
+                print_diff(out, &repo.odb, &filtered, opts, None, &repo.git_dir)?;
+            }
             hd
         } else {
             false
@@ -648,9 +683,11 @@ fn process_stdin_commit(
     } else {
         let parent_tree = commit_tree(&repo.odb, &parent_oids[0])?;
         let entries = diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
-        let filtered = filter_entries(entries, opts);
+        let filtered = filter_entries(&repo.odb, entries, opts)?;
         let hd = !filtered.is_empty();
-        print_diff(out, &repo.odb, &filtered, opts, None, &repo.git_dir)?;
+        if !opts.quiet {
+            print_diff(out, &repo.odb, &filtered, opts, None, &repo.git_dir)?;
+        }
         hd
     };
 
@@ -673,8 +710,9 @@ fn process_stdin_two_trees(
         .parse::<ObjectId>()
         .with_context(|| format!("invalid OID: `{oid2_str}`"))?;
 
-    // Print both tree OIDs.
-    writeln!(out, "{} {}", oid1.to_hex(), oid2.to_hex())?;
+    if !opts.quiet {
+        writeln!(out, "{} {}", oid1.to_hex(), oid2.to_hex())?;
+    }
 
     let (old_side, new_side) = if opts.reverse {
         (Some(&oid2), Some(oid1))
@@ -682,8 +720,12 @@ fn process_stdin_two_trees(
         (Some(oid1), Some(&oid2))
     };
     let entries = diff_with_opts(&repo.odb, old_side, new_side, opts)?;
-    let filtered = filter_entries(entries, opts);
-    print_diff(out, &repo.odb, &filtered, opts, None, &repo.git_dir)
+    let filtered = filter_entries(&repo.odb, entries, opts)?;
+    let has_diff = !filtered.is_empty();
+    if !opts.quiet {
+        print_diff(out, &repo.odb, &filtered, opts, None, &repo.git_dir)?;
+    }
+    Ok(has_diff)
 }
 
 // ── Diff helpers ─────────────────────────────────────────────────────
@@ -1620,13 +1662,85 @@ fn read_blob_pair(odb: &Odb, entry: &DiffEntry) -> Result<(String, String)> {
 }
 
 /// Apply all post-diff filters: pathspecs and max-depth.
-fn filter_entries(entries: Vec<DiffEntry>, opts: &Options) -> Vec<DiffEntry> {
+fn filter_entries(odb: &Odb, entries: Vec<DiffEntry>, opts: &Options) -> Result<Vec<DiffEntry>> {
     let filtered = filter_pathspecs(entries, &opts.pathspecs);
-    if let Some(depth) = opts.max_depth {
+    let filtered = if let Some(depth) = opts.max_depth {
         filter_max_depth(filtered, depth, &opts.pathspecs)
     } else {
         filtered
+    };
+    apply_pickaxe_filter(odb, filtered, opts)
+}
+
+/// Read blob bytes for pickaxe checks (empty for missing/zero OIDs).
+fn read_content_raw_for_pickaxe(odb: &Odb, oid: &ObjectId) -> Vec<u8> {
+    if *oid == zero_oid() {
+        return Vec::new();
     }
+    odb.read(oid).map(|o| o.data).unwrap_or_default()
+}
+
+/// Keep only diff entries that match `-G` / `-S` pickaxe rules (same semantics as `git diff`).
+fn apply_pickaxe_filter(
+    odb: &Odb,
+    entries: Vec<DiffEntry>,
+    opts: &Options,
+) -> Result<Vec<DiffEntry>> {
+    if let Some(ref pattern) = opts.pickaxe_grep {
+        let re = regex::Regex::new(pattern)
+            .with_context(|| format!("invalid pickaxe regex: {pattern}"))?;
+        return Ok(entries
+            .into_iter()
+            .filter(|e| {
+                let old = read_content_raw_for_pickaxe(odb, &e.old_oid);
+                let new = read_content_raw_for_pickaxe(odb, &e.new_oid);
+                let old_s = String::from_utf8_lossy(&old);
+                let new_s = String::from_utf8_lossy(&new);
+                for line in new_s.lines() {
+                    if re.is_match(line) {
+                        return true;
+                    }
+                }
+                for line in old_s.lines() {
+                    if re.is_match(line) {
+                        return true;
+                    }
+                }
+                false
+            })
+            .collect());
+    }
+    if let Some(ref needle) = opts.pickaxe_string {
+        if opts.pickaxe_regex {
+            let re = regex::Regex::new(needle)
+                .with_context(|| format!("invalid pickaxe regex: {needle}"))?;
+            return Ok(entries
+                .into_iter()
+                .filter(|e| {
+                    let old = read_content_raw_for_pickaxe(odb, &e.old_oid);
+                    let new = read_content_raw_for_pickaxe(odb, &e.new_oid);
+                    let old_s = String::from_utf8_lossy(&old);
+                    let new_s = String::from_utf8_lossy(&new);
+                    let old_count = re.find_iter(&old_s).count();
+                    let new_count = re.find_iter(&new_s).count();
+                    old_count != new_count
+                })
+                .collect());
+        }
+        return Ok(entries
+            .into_iter()
+            .filter(|e| {
+                let old = read_content_raw_for_pickaxe(odb, &e.old_oid);
+                let new = read_content_raw_for_pickaxe(odb, &e.new_oid);
+                let old_s = String::from_utf8_lossy(&old);
+                let new_s = String::from_utf8_lossy(&new);
+                let old_count = old_s.matches(needle.as_str()).count();
+                let new_count = new_s.matches(needle.as_str()).count();
+                old_count != new_count
+            })
+            .collect());
+    }
+    Ok(entries)
 }
 
 fn filter_pathspecs(entries: Vec<DiffEntry>, pathspecs: &[String]) -> Vec<DiffEntry> {
