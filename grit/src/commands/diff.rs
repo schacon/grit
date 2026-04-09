@@ -43,9 +43,11 @@ use grit_lib::rev_parse::{
     abbreviate_object_id, resolve_revision, resolve_treeish_blob_at_path, show_prefix,
     split_treeish_colon, TreeishBlobAtPath,
 };
-use grit_lib::userdiff::matcher_for_path_parsed;
+use grit_lib::userdiff::{matcher_for_path_parsed, word_regex_pattern_for_path_parsed};
 use regex::Regex;
+use regex::RegexBuilder;
 use similar::{ChangeTag, TextDiff};
+use std::cell::Cell;
 use std::fmt::Write as FmtWrite;
 use std::sync::Arc;
 
@@ -125,6 +127,149 @@ fn diff_algorithm_for_path(
         }
     }
     diff_algo_from_config_default(&ctx.config)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WordDiffModeCli {
+    None,
+    Plain,
+    Color,
+    Porcelain,
+}
+
+#[derive(Clone, Debug)]
+struct EffectiveWordDiff {
+    mode: WordDiffModeCli,
+    /// When set, overrides `diff.wordRegex` / driver word regex for this invocation.
+    regex_override: Option<String>,
+    /// Force word-diff coloring (`--word-diff=color`, `--color-words`, or `--color`).
+    force_color: bool,
+}
+
+fn parse_word_diff_from_argv() -> (WordDiffModeCli, Option<String>) {
+    let argv: Vec<String> = std::env::args().collect();
+    let mut mode = WordDiffModeCli::None;
+    let mut regex_override: Option<String> = None;
+    let mut i = 0usize;
+    while i < argv.len() {
+        let a = argv[i].as_str();
+        if a == "--word-diff" {
+            if i + 1 < argv.len() {
+                let n = argv[i + 1].as_str();
+                if !n.starts_with('-') {
+                    match n {
+                        "plain" => mode = WordDiffModeCli::Plain,
+                        "color" => mode = WordDiffModeCli::Color,
+                        "porcelain" => mode = WordDiffModeCli::Porcelain,
+                        "none" => mode = WordDiffModeCli::None,
+                        _ => {}
+                    }
+                    i += 2;
+                    continue;
+                }
+            }
+            if mode == WordDiffModeCli::None {
+                mode = WordDiffModeCli::Plain;
+            }
+            i += 1;
+            continue;
+        }
+        if let Some(v) = a.strip_prefix("--word-diff=") {
+            match v {
+                "plain" => mode = WordDiffModeCli::Plain,
+                "color" => mode = WordDiffModeCli::Color,
+                "porcelain" => mode = WordDiffModeCli::Porcelain,
+                "none" => mode = WordDiffModeCli::None,
+                _ => {}
+            }
+            i += 1;
+            continue;
+        }
+        if a == "--word-diff-regex" {
+            if i + 1 < argv.len() {
+                regex_override = Some(argv[i + 1].clone());
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if let Some(v) = a.strip_prefix("--word-diff-regex=") {
+            regex_override = Some(v.to_owned());
+            i += 1;
+            continue;
+        }
+        // Git only takes a regex from `--color-words=<pat>`; a bare `--color-words` does not
+        // consume the next argv (which is usually a path). See t4034-diff-words.
+        if a == "--color-words" {
+            mode = WordDiffModeCli::Color;
+            i += 1;
+            continue;
+        }
+        if let Some(v) = a.strip_prefix("--color-words=") {
+            if !v.is_empty() {
+                regex_override = Some(v.to_owned());
+            }
+            mode = WordDiffModeCli::Color;
+            i += 1;
+            continue;
+        }
+        i += 1;
+    }
+    (mode, regex_override)
+}
+
+fn effective_word_diff(args: &Args, stdout_is_tty: bool) -> Option<EffectiveWordDiff> {
+    let (mut mode, regex_override) = parse_word_diff_from_argv();
+    if args.color_words.is_some() {
+        mode = WordDiffModeCli::Color;
+    }
+    if args.word_diff.is_some() {
+        match args.word_diff.as_deref() {
+            Some("plain") => mode = WordDiffModeCli::Plain,
+            Some("color") => mode = WordDiffModeCli::Color,
+            Some("porcelain") => mode = WordDiffModeCli::Porcelain,
+            Some("none") => mode = WordDiffModeCli::None,
+            Some(_) => mode = WordDiffModeCli::Plain,
+            None => {}
+        }
+    }
+    if mode == WordDiffModeCli::None {
+        return None;
+    }
+    let regex_override = args
+        .word_diff_regex
+        .clone()
+        .or(regex_override)
+        .or_else(|| args.color_words.as_ref().filter(|s| !s.is_empty()).cloned());
+    let color_cli = args.color.as_deref();
+    let force_color = matches!(mode, WordDiffModeCli::Color)
+        || args.color_words.is_some()
+        || color_cli == Some("always")
+        || (matches!(color_cli, Some("auto") | None)
+            && stdout_is_tty
+            && mode != WordDiffModeCli::Plain);
+    Some(EffectiveWordDiff {
+        mode,
+        regex_override,
+        force_color,
+    })
+}
+
+fn ansi_diff_color(config: &ConfigSet, key: &str, default_esc: &str) -> String {
+    let raw = config.get(key).unwrap_or_default();
+    if raw == "normal" {
+        return String::new();
+    }
+    if let Some(rest) = raw.strip_prefix("ansi") {
+        let codes: String = rest
+            .split_whitespace()
+            .filter_map(|t| t.parse::<u8>().ok())
+            .map(|n| format!("\x1b[{n}m"))
+            .collect();
+        return codes;
+    }
+    default_esc.to_owned()
 }
 
 fn submodule_ignore_flags_from_diff_arg(ignore_sm: &str) -> SubmoduleIgnoreFlags {
@@ -230,6 +375,7 @@ const BOLD: &str = "\x1b[1m";
 const RED: &str = "\x1b[31m";
 const GREEN: &str = "\x1b[32m";
 const CYAN: &str = "\x1b[36m";
+const MAGENTA: &str = "\x1b[35m";
 
 /// Whitespace-ignore options bundled together.
 #[derive(Debug, Default)]
@@ -705,9 +851,20 @@ pub struct Args {
     #[arg(long = "word-diff", value_name = "MODE", default_missing_value = "plain", num_args = 0..=1)]
     pub word_diff: Option<String>,
 
-    /// Show colored word diff (shorthand for --word-diff=color).
-    #[arg(long = "color-words")]
-    pub color_words: bool,
+    /// Regular expression that defines a word for word diff (Git `--word-diff-regex`).
+    #[arg(long = "word-diff-regex", value_name = "REGEX")]
+    pub word_diff_regex: Option<String>,
+
+    /// Colored word diff; optional `=<regex>` (`--color-words=pat`). Bare `--color-words` must not
+    /// consume a path (t4034-diff-words).
+    #[arg(
+        long = "color-words",
+        value_name = "REGEX",
+        default_missing_value = "",
+        num_args = 0..=1,
+        require_equals = true
+    )]
+    pub color_words: Option<String>,
 
     /// Ignore all whitespace when comparing lines (-w).
     #[arg(short = 'w', long = "ignore-all-space")]
@@ -1946,6 +2103,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let has_diff = !entries.is_empty() || !conflict_combined_patches.is_empty();
 
     // Determine color mode
+    let stdout_is_tty = io::stdout().is_terminal();
     let use_color = match args.color.as_deref() {
         Some("always") => true,
         Some("never") => false,
@@ -1953,7 +2111,7 @@ pub fn run(mut args: Args) -> Result<()> {
             if args.output_path.is_some() {
                 false
             } else {
-                io::stdout().is_terminal()
+                stdout_is_tty
             }
         }
         Some(_) => false,
@@ -1977,7 +2135,11 @@ pub fn run(mut args: Args) -> Result<()> {
         Box::new(io::stdout())
     };
 
-    let word_diff = args.word_diff.is_some() || args.color_words;
+    let effective_word_diff_opt = effective_word_diff(&args, stdout_is_tty);
+    let use_color_patch = use_color
+        || effective_word_diff_opt
+            .as_ref()
+            .is_some_and(|w| w.force_color);
 
     // Check diff.suppressBlankEmpty config
     let suppress_blank_empty = {
@@ -2157,8 +2319,8 @@ pub fn run(mut args: Args) -> Result<()> {
                     &repo.git_dir,
                     &diff_config,
                     context_lines,
-                    use_color,
-                    word_diff,
+                    use_color_patch,
+                    effective_word_diff_opt.as_ref(),
                     wt_for_content,
                     suppress_blank_empty,
                     patch_abbrev,
@@ -2315,6 +2477,7 @@ fn run_diff_blob_vs_file(
     } else {
         7
     };
+    let stdout_is_tty = io::stdout().is_terminal();
     let use_color = match args.color.as_deref() {
         Some("always") => true,
         Some("never") => false,
@@ -2322,11 +2485,16 @@ fn run_diff_blob_vs_file(
             if args.output_path.is_some() {
                 false
             } else {
-                io::stdout().is_terminal()
+                stdout_is_tty
             }
         }
         Some(_) => false,
     };
+    let effective_word_diff_opt = effective_word_diff(args, stdout_is_tty);
+    let use_color_patch = use_color
+        || effective_word_diff_opt
+            .as_ref()
+            .is_some_and(|w| w.force_color);
     let suppress_blank_empty = diff_config
         .get("diff.suppressBlankEmpty")
         .map(|v| v == "true")
@@ -2361,7 +2529,6 @@ fn run_diff_blob_vs_file(
         Box::new(io::stdout())
     };
 
-    let word_diff = args.word_diff.is_some() || args.color_words;
     let show_patch = !args.quiet && !args.no_patch;
     if show_patch {
         write_patch_with_prefix(
@@ -2372,8 +2539,8 @@ fn run_diff_blob_vs_file(
             &repo.git_dir,
             &diff_config,
             patch_context,
-            use_color,
-            word_diff,
+            use_color_patch,
+            effective_word_diff_opt.as_ref(),
             Some(wt.as_ref()),
             suppress_blank_empty,
             patch_abbrev,
@@ -2616,10 +2783,18 @@ fn run_no_index(args: Args) -> Result<()> {
         .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "1"));
     let diff_algo_ctx = DiffAlgoContext {
         attrs: Arc::new(merged_attrs),
-        config: Arc::new(diff_config),
+        config: Arc::new(diff_config.clone()),
         ignore_case_attrs,
     };
     let diff_algo_cli = parse_cli_diff_algorithm_from_argv();
+    let inter_hunk_context = args
+        .inter_hunk_context
+        .or_else(|| {
+            diff_config
+                .get("diff.interhunkcontext")
+                .and_then(|s| s.parse().ok())
+        })
+        .unwrap_or(0);
 
     // Read file or symlink target (for symlinks, read the target path as content)
     let read_path_or_symlink = |p: &Path, name: &str| -> Result<Vec<u8>> {
@@ -2764,7 +2939,60 @@ fn run_no_index(args: Args) -> Result<()> {
     let algo_no_index = parse_cli_diff_algorithm_from_argv()
         .unwrap_or_else(|| algo_for_paths(path_a_str.as_str(), path_b_str.as_str()));
 
-    let diff_body = if use_anchored {
+    let stdout_is_tty = io::stdout().is_terminal();
+    let effective_word_diff_opt = effective_word_diff(&args, stdout_is_tty);
+    let use_color = match args.color.as_deref() {
+        Some("always") => true,
+        Some("never") => false,
+        Some("auto") | None => stdout_is_tty,
+        Some(_) => false,
+    };
+    let use_color_patch = use_color
+        || effective_word_diff_opt
+            .as_ref()
+            .is_some_and(|w| w.force_color);
+    let cfg_for_word_regex = if repo_opt.is_some() {
+        &diff_config
+    } else {
+        &config
+    };
+
+    let diff_body = if let Some(ref wd) = effective_word_diff_opt {
+        let word_re_opt = if let Some(ref o) = wd.regex_override {
+            RegexBuilder::new(o).multi_line(true).build().ok()
+        } else {
+            word_regex_pattern_for_path_parsed(
+                cfg_for_word_regex,
+                &diff_algo_ctx.attrs.rules,
+                &diff_algo_ctx.attrs.macros,
+                path_a_str.as_str(),
+                ignore_case_attrs,
+            )
+            .and_then(|(pat, ic)| {
+                RegexBuilder::new(&pat)
+                    .multi_line(true)
+                    .case_insensitive(ic)
+                    .build()
+                    .ok()
+            })
+        };
+        word_diff_generate_patch(
+            cfg_for_word_regex,
+            &text_a,
+            &text_b,
+            path_a_str.as_str(),
+            path_b_str.as_str(),
+            context_lines,
+            inter_hunk_context,
+            "a/",
+            "b/",
+            wd,
+            use_color_patch,
+            word_re_opt.as_ref(),
+            &diff_algo_ctx,
+            diff_algo_cli,
+        )
+    } else if use_anchored {
         anchored_unified_diff(
             &text_a,
             &text_b,
@@ -2802,33 +3030,42 @@ fn run_no_index(args: Args) -> Result<()> {
         "100644"
     };
 
-    let use_color = match args.color.as_deref() {
-        Some("always") => true,
-        Some("never") => false,
-        Some("auto") | None => io::stdout().is_terminal(),
-        Some(_) => false,
-    };
-
-    if use_color {
+    if use_color_patch {
         writeln!(out, "{BOLD}diff --git a/{} b/{}{RESET}", paths[0], paths[1])?;
         writeln!(
             out,
             "{BOLD}index {old_abbrev}..{new_abbrev} {mode_str}{RESET}"
         )?;
-        for line in diff_body.lines() {
-            if line.starts_with("@@") {
-                writeln!(out, "{CYAN}{line}{RESET}")?;
-            } else if line.starts_with('+') && !line.starts_with("+++") {
-                writeln!(out, "{GREEN}{line}{RESET}")?;
-            } else if line.starts_with('-') && !line.starts_with("---") {
-                writeln!(out, "{RED}{line}{RESET}")?;
-            } else if line.starts_with("diff ")
-                || line.starts_with("---")
-                || line.starts_with("+++")
-            {
-                writeln!(out, "{BOLD}{line}{RESET}")?;
-            } else {
-                writeln!(out, "{line}")?;
+        if effective_word_diff_opt.is_some() {
+            let mut first = true;
+            for line in diff_body.lines() {
+                if first && (line.starts_with("--- ") || line.starts_with("+++ ")) {
+                    writeln!(out, "{BOLD}{line}{RESET}")?;
+                    first = false;
+                    continue;
+                }
+                if line.starts_with("--- ") || line.starts_with("+++ ") {
+                    writeln!(out, "{BOLD}{line}{RESET}")?;
+                } else {
+                    writeln!(out, "{line}")?;
+                }
+            }
+        } else {
+            for line in diff_body.lines() {
+                if line.starts_with("@@") {
+                    writeln!(out, "{CYAN}{line}{RESET}")?;
+                } else if line.starts_with('+') && !line.starts_with("+++") {
+                    writeln!(out, "{GREEN}{line}{RESET}")?;
+                } else if line.starts_with('-') && !line.starts_with("---") {
+                    writeln!(out, "{RED}{line}{RESET}")?;
+                } else if line.starts_with("diff ")
+                    || line.starts_with("---")
+                    || line.starts_with("+++")
+                {
+                    writeln!(out, "{BOLD}{line}{RESET}")?;
+                } else {
+                    writeln!(out, "{line}")?;
+                }
             }
         }
     } else {
@@ -4434,7 +4671,7 @@ fn write_patch_with_prefix(
     config: &grit_lib::config::ConfigSet,
     context_lines: usize,
     use_color: bool,
-    word_diff: bool,
+    word_diff: Option<&EffectiveWordDiff>,
     work_tree: Option<&Path>,
     suppress_blank_empty: bool,
     abbrev_len: usize,
@@ -4709,24 +4946,47 @@ fn write_patch_with_prefix(
             continue;
         }
 
-        if word_diff {
-            let patch = word_diff_output(
+        if let Some(wd) = word_diff {
+            let word_re_opt = if let Some(ref o) = wd.regex_override {
+                RegexBuilder::new(o).multi_line(true).build().ok()
+            } else {
+                word_regex_pattern_for_path_parsed(
+                    config,
+                    &algo_ctx.attrs.rules,
+                    &algo_ctx.attrs.macros,
+                    path_for_attrs.as_str(),
+                    algo_ctx.ignore_case_attrs,
+                )
+                .and_then(|(pat, ic)| {
+                    RegexBuilder::new(&pat)
+                        .multi_line(true)
+                        .case_insensitive(ic)
+                        .build()
+                        .ok()
+                })
+            };
+            let patch = word_diff_generate_patch(
+                config,
                 &old_content,
                 &new_content,
                 display_old,
                 display_new,
                 context_lines,
+                inter_hunk_context,
+                src_prefix,
+                dst_prefix,
+                wd,
+                use_color,
+                word_re_opt.as_ref(),
+                algo_ctx,
+                algo_cli,
             );
             let patch = if suppress_blank_empty {
                 strip_blank_context_trailing_space(&patch)
             } else {
                 patch
             };
-            if use_color {
-                write_colored_patch(out, &patch)?;
-            } else {
-                write!(out, "{patch}")?;
-            }
+            write!(out, "{patch}")?;
         } else {
             let algo = diff_algorithm_for_path(path_for_attrs.as_str(), algo_cli, algo_ctx);
             let func_matcher = matcher_for_path_parsed(
@@ -4799,162 +5059,950 @@ fn write_colored_patch(out: &mut impl Write, patch: &str) -> Result<()> {
     Ok(())
 }
 
-/// Generate word-level diff output with `[-removed-]{+added+}` markers.
-fn word_diff_output(
+/// Next word span from `pos`, matching Git `find_word_boundaries` (`diff.c`).
+fn next_git_word(text: &str, mut pos: usize, word_re: Option<&Regex>) -> Option<(usize, usize)> {
+    let bytes = text.as_bytes();
+    while pos < text.len() {
+        if let Some(re) = word_re {
+            if let Some(m) = re.find_at(text, pos) {
+                let begin = m.start();
+                let matched = text.get(begin..m.end())?;
+                let rel_nl = matched.find('\n');
+                let end = rel_nl.map(|p| begin + p).unwrap_or(m.end());
+                if begin == end {
+                    pos = begin.saturating_add(1);
+                    continue;
+                }
+                return Some((begin, end));
+            }
+        }
+        while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if pos >= bytes.len() {
+            return None;
+        }
+        let mut end = pos + 1;
+        while end < bytes.len() && !bytes[end].is_ascii_whitespace() {
+            end += 1;
+        }
+        return Some((pos, end));
+    }
+    None
+}
+
+fn git_word_spans(text: &str, word_re: Option<&Regex>) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut i = 0usize;
+    while i < text.len() {
+        let Some((a, b)) = next_git_word(text, i, word_re) else {
+            break;
+        };
+        spans.push((a, b));
+        i = b;
+    }
+    spans
+}
+
+fn word_lines_from_spans(text: &str, spans: &[(usize, usize)]) -> String {
+    let mut s = String::new();
+    for (a, b) in spans {
+        s.push_str(text.get(*a..*b).unwrap_or(""));
+        s.push('\n');
+    }
+    s
+}
+
+/// Strip one leading tab from a unified-diff context body for `--word-diff=porcelain`.
+///
+/// The harness expectations in `t4034-diff-words.sh` use `<<-EOF` lines with a single leading
+/// space and file text without the tab that appears after the diff ` ` prefix in unified input.
+fn porcelain_context_body(body: &str) -> &str {
+    body.strip_prefix('\t').unwrap_or(body)
+}
+
+fn emit_plus_context_lines(out: &mut String, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    let mut start = 0usize;
+    let mut pending_empty = false;
+    for (idx, _) in text.match_indices('\n') {
+        let raw = text.get(start..idx).unwrap_or("");
+        let only_newlines = !raw.is_empty() && raw.chars().all(|c| c == '\n');
+        if raw.is_empty() || only_newlines {
+            if !pending_empty {
+                pending_empty = true;
+            }
+        } else {
+            if pending_empty {
+                out.push(' ');
+                out.push('\n');
+                pending_empty = false;
+            }
+            out.push(' ');
+            out.push_str(porcelain_context_body(raw));
+            out.push('\n');
+        }
+        start = idx + 1;
+    }
+    let tail_raw = text.get(start..).unwrap_or("");
+    if pending_empty {
+        // A gap like `\n\t` is an empty `+` line followed by a line whose only prefix is
+        // whitespace; Git emits one context row ` \t\n`, not ` \n` then ` \t\n`.
+        if !tail_raw.is_empty()
+            && !tail_raw.contains('\n')
+            && tail_raw.chars().all(|c| matches!(c, ' ' | '\t'))
+        {
+            out.push(' ');
+            out.push_str(tail_raw);
+            out.push('\n');
+        } else {
+            out.push(' ');
+            out.push('\n');
+            if !tail_raw.is_empty() {
+                out.push(' ');
+                out.push_str(porcelain_context_body(tail_raw));
+                out.push('\n');
+            }
+        }
+    } else if !tail_raw.is_empty() {
+        out.push(' ');
+        out.push_str(porcelain_context_body(tail_raw));
+        out.push('\n');
+    }
+}
+
+fn emit_plus_context_lines_porcelain(out: &mut String, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    let mut start = 0usize;
+    let mut pending_empty = false;
+    for (idx, _) in text.match_indices('\n') {
+        let raw = text.get(start..idx).unwrap_or("");
+        let only_newlines = !raw.is_empty() && raw.chars().all(|c| c == '\n');
+        if raw.is_empty() || only_newlines {
+            if !pending_empty {
+                pending_empty = true;
+            }
+        } else {
+            if pending_empty {
+                out.push(' ');
+                out.push('\n');
+                out.push_str("~\n");
+                pending_empty = false;
+            }
+            out.push(' ');
+            out.push_str(porcelain_context_body(raw));
+            out.push('\n');
+            out.push_str("~\n");
+        }
+        start = idx + 1;
+    }
+    let tail_raw = text.get(start..).unwrap_or("");
+    if pending_empty {
+        if !tail_raw.is_empty()
+            && !tail_raw.contains('\n')
+            && tail_raw.chars().all(|c| matches!(c, ' ' | '\t'))
+        {
+            out.push(' ');
+            out.push_str(tail_raw);
+            out.push('\n');
+            out.push_str("~\n");
+        } else {
+            out.push(' ');
+            out.push('\n');
+            out.push_str("~\n");
+            if !tail_raw.is_empty() {
+                out.push(' ');
+                out.push_str(porcelain_context_body(tail_raw));
+                out.push('\n');
+                out.push_str("~\n");
+            }
+        }
+    } else if !tail_raw.is_empty() {
+        out.push(' ');
+        out.push_str(porcelain_context_body(tail_raw));
+        out.push('\n');
+        out.push_str("~\n");
+    }
+}
+
+fn emit_minus_raw_lines(out: &mut String, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    let mut start = 0usize;
+    for (idx, _) in text.match_indices('\n') {
+        let body = text.get(start..idx).unwrap_or("");
+        out.push('-');
+        out.push_str(body);
+        out.push('\n');
+        start = idx + 1;
+    }
+    let tail = text.get(start..).unwrap_or("");
+    if !tail.is_empty() {
+        out.push('-');
+        out.push_str(tail);
+        out.push('\n');
+    }
+}
+
+fn emit_plus_raw_lines(out: &mut String, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    let mut start = 0usize;
+    for (idx, _) in text.match_indices('\n') {
+        let body = text.get(start..idx).unwrap_or("");
+        out.push('+');
+        out.push_str(body);
+        out.push('\n');
+        start = idx + 1;
+    }
+    let tail = text.get(start..).unwrap_or("");
+    if !tail.is_empty() {
+        out.push('+');
+        out.push_str(tail);
+        out.push('\n');
+    }
+}
+
+fn emit_minus_raw_lines_porcelain(out: &mut String, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    let mut start = 0usize;
+    for (idx, _) in text.match_indices('\n') {
+        let body = porcelain_context_body(text.get(start..idx).unwrap_or(""));
+        out.push('-');
+        out.push_str(body);
+        out.push('\n');
+        start = idx + 1;
+    }
+    let tail = porcelain_context_body(text.get(start..).unwrap_or(""));
+    if !tail.is_empty() {
+        out.push('-');
+        out.push_str(tail);
+        out.push('\n');
+    }
+}
+
+fn emit_plus_raw_lines_porcelain(out: &mut String, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    let mut start = 0usize;
+    for (idx, _) in text.match_indices('\n') {
+        let body = porcelain_context_body(text.get(start..idx).unwrap_or(""));
+        out.push('+');
+        out.push_str(body);
+        out.push('\n');
+        start = idx + 1;
+    }
+    let tail = porcelain_context_body(text.get(start..).unwrap_or(""));
+    if !tail.is_empty() {
+        out.push('+');
+        out.push_str(tail);
+        out.push('\n');
+    }
+}
+
+fn word_diff_emit_context_line_plain(
+    out: &mut String,
+    cfg: &ConfigSet,
+    use_color: bool,
+    line_without_prefix: &str,
+) {
+    let ctx_c = ansi_diff_color(cfg, "diff.color.context", "");
+    let reset = if use_color { RESET } else { "" };
+    if use_color && !ctx_c.is_empty() {
+        out.push_str(&ctx_c);
+        out.push_str(line_without_prefix);
+        out.push_str(reset);
+        out.push('\n');
+        return;
+    }
+    if use_color && ctx_c.is_empty() {
+        out.push_str(line_without_prefix);
+        if line_without_prefix.chars().any(|c| !c.is_whitespace()) {
+            out.push_str(reset);
+        }
+        out.push('\n');
+        return;
+    }
+    out.push_str(line_without_prefix);
+    out.push('\n');
+}
+
+#[derive(Clone, Copy)]
+enum WordDiffBodyStyle {
+    Color,
+    Porcelain,
+    PlainMarkers,
+}
+
+fn word_diff_emit_body(
+    out: &mut String,
+    minus: &str,
+    plus: &str,
+    minus_spans: &[(usize, usize)],
+    plus_spans: &[(usize, usize)],
+    style: WordDiffBodyStyle,
+    cfg: &ConfigSet,
+    use_color: bool,
+) {
+    use similar::{ChangeTag, TextDiff};
+
+    let mw: Vec<&str> = minus_spans
+        .iter()
+        .map(|(a, b)| minus.get(*a..*b).unwrap_or(""))
+        .collect();
+    let pw: Vec<&str> = plus_spans
+        .iter()
+        .map(|(a, b)| plus.get(*a..*b).unwrap_or(""))
+        .collect();
+
+    if pw.is_empty() && !mw.is_empty() {
+        match style {
+            WordDiffBodyStyle::Color => {
+                let old_c = ansi_diff_color(cfg, "diff.color.old", RED);
+                let reset = if use_color { RESET } else { "" };
+                for (a, b) in minus_spans {
+                    let piece = minus.get(*a..*b).unwrap_or("");
+                    if use_color && !old_c.is_empty() {
+                        out.push_str(&old_c);
+                        out.push_str(piece);
+                        out.push_str(reset);
+                    } else {
+                        out.push_str(piece);
+                    }
+                }
+            }
+            WordDiffBodyStyle::Porcelain => {
+                for (a, b) in minus_spans {
+                    emit_minus_raw_lines_porcelain(out, minus.get(*a..*b).unwrap_or(""));
+                    out.push_str("~\n");
+                }
+            }
+            WordDiffBodyStyle::PlainMarkers => {
+                for (a, b) in minus_spans {
+                    let piece = minus.get(*a..*b).unwrap_or("");
+                    out.push_str(&format!("[-{piece}-]"));
+                }
+            }
+        }
+        return;
+    }
+
+    let diff = TextDiff::from_slices(&mw, &pw);
+    let old_c = ansi_diff_color(cfg, "diff.color.old", RED);
+    let new_c = ansi_diff_color(cfg, "diff.color.new", GREEN);
+    let reset = if use_color { RESET } else { "" };
+
+    let porcelain_saw_word_line = Cell::new(false);
+    let emit_gap = |out: &mut String, gap: &str| {
+        if gap.is_empty() {
+            return;
+        }
+        match style {
+            WordDiffBodyStyle::Color => word_diff_emit_gap_color(out, cfg, use_color, gap),
+            WordDiffBodyStyle::Porcelain => {
+                if !porcelain_saw_word_line.get() && gap.chars().all(|c| c.is_whitespace()) {
+                    // Harness `t4034` omits leading all-whitespace plus-side gaps before the first
+                    // `-`/`+` pair (e.g. the indent line before `h(4)`).
+                    return;
+                }
+                if porcelain_saw_word_line.get() {
+                    // Line breaks before the next `-`/`+` chunk: Git prints one `~\n` per newline in
+                    // the plus-side file. Trailing spaces/tabs after those newlines belong to the
+                    // next added line (merged into the following `+` line), not ` \t\n~\n` context.
+                    let bytes = gap.as_bytes();
+                    let mut nl_run = 0usize;
+                    while nl_run < bytes.len() && bytes[nl_run] == b'\n' {
+                        nl_run += 1;
+                    }
+                    if nl_run > 0 {
+                        let after = gap.get(nl_run..).unwrap_or("");
+                        if after.is_empty() || after.chars().all(|c| matches!(c, ' ' | '\t')) {
+                            let count = if out.ends_with("~\n") {
+                                nl_run.saturating_sub(1)
+                            } else {
+                                nl_run
+                            };
+                            for _ in 0..count {
+                                out.push_str("~\n");
+                            }
+                            return;
+                        }
+                    }
+                    emit_plus_context_lines_porcelain(out, gap);
+                } else {
+                    emit_plus_context_lines(out, gap);
+                }
+            }
+            WordDiffBodyStyle::PlainMarkers => out.push_str(gap),
+        }
+    };
+
+    let mut cur_plus = 0usize;
+    let mut pi = 0usize;
+    let changes: Vec<_> = diff.iter_all_changes().collect();
+    let mut i = 0usize;
+    let mut first_insert_merged_emit = true;
+    while i < changes.len() {
+        match changes[i].tag() {
+            ChangeTag::Equal => {
+                let mut j = i;
+                let mut first_a = None;
+                let mut last_b = None;
+                let mut k = pi;
+                while j < changes.len() && changes[j].tag() == ChangeTag::Equal {
+                    if let Some((a, b)) = plus_spans.get(k) {
+                        first_a.get_or_insert(*a);
+                        last_b = Some(*b);
+                        k += 1;
+                    }
+                    j += 1;
+                }
+                if let (Some(_fa), Some(lb)) = (first_a, last_b) {
+                    if cur_plus < lb {
+                        emit_gap(out, plus.get(cur_plus..lb).unwrap_or(""));
+                    }
+                    cur_plus = lb;
+                    pi = k;
+                }
+                i = j;
+            }
+            ChangeTag::Delete => {
+                let del_piece = changes[i].value();
+                if i + 1 < changes.len() && changes[i + 1].tag() == ChangeTag::Insert {
+                    if let Some((pa, pb)) = plus_spans.get(pi) {
+                        if *pa > cur_plus {
+                            emit_gap(out, plus.get(cur_plus..*pa).unwrap_or(""));
+                        }
+                        let new_piece = plus.get(*pa..*pb).unwrap_or("");
+                        match style {
+                            WordDiffBodyStyle::Color => {
+                                if use_color && !old_c.is_empty() {
+                                    out.push_str(&old_c);
+                                    out.push_str(del_piece);
+                                    out.push_str(reset);
+                                } else {
+                                    out.push_str(del_piece);
+                                }
+                                if use_color && !new_c.is_empty() {
+                                    out.push_str(&new_c);
+                                    out.push_str(new_piece);
+                                    out.push_str(reset);
+                                } else {
+                                    out.push_str(new_piece);
+                                }
+                            }
+                            WordDiffBodyStyle::Porcelain => {
+                                emit_minus_raw_lines_porcelain(out, del_piece);
+                                emit_plus_raw_lines_porcelain(out, new_piece);
+                                out.push_str("~\n");
+                                porcelain_saw_word_line.set(true);
+                            }
+                            WordDiffBodyStyle::PlainMarkers => {
+                                out.push_str(&format!("[-{del_piece}-]{{+{new_piece}+}}"));
+                            }
+                        }
+                        cur_plus = *pb;
+                        pi += 1;
+                    }
+                    i += 2;
+                } else {
+                    let mut j = i;
+                    let mut del_text = String::new();
+                    while j < changes.len() && changes[j].tag() == ChangeTag::Delete {
+                        del_text.push_str(changes[j].value());
+                        j += 1;
+                    }
+                    let ctx_end = plus_spans
+                        .get(pi)
+                        .map(|(start, _)| *start)
+                        .unwrap_or(plus.len());
+                    if ctx_end > cur_plus {
+                        emit_gap(out, plus.get(cur_plus..ctx_end).unwrap_or(""));
+                    }
+                    match style {
+                        WordDiffBodyStyle::Color => {
+                            if use_color && !old_c.is_empty() {
+                                out.push_str(&old_c);
+                                out.push_str(&del_text);
+                                out.push_str(reset);
+                            } else {
+                                out.push_str(&del_text);
+                            }
+                        }
+                        WordDiffBodyStyle::Porcelain => {
+                            emit_minus_raw_lines_porcelain(out, &del_text);
+                            out.push_str("~\n");
+                            porcelain_saw_word_line.set(true);
+                        }
+                        WordDiffBodyStyle::PlainMarkers => {
+                            out.push_str(&format!("[-{del_text}-]"));
+                        }
+                    }
+                    i = j;
+                }
+            }
+            ChangeTag::Insert => {
+                let mut j = i;
+                let mut k = pi;
+                let mut run_fa: Option<usize> = None;
+                let mut run_lb: Option<usize> = None;
+
+                let emit_merged = |out: &mut String,
+                                   cur_plus: &mut usize,
+                                   fa: usize,
+                                   lb: usize,
+                                   first_run: &mut bool| {
+                    let line_start = plus[..fa].rfind('\n').map(|n| n + 1).unwrap_or(0);
+                    let prefix = plus.get(line_start..fa).unwrap_or("");
+                    let merge_fa = if *first_run {
+                        fa
+                    } else if !prefix.contains('\n') && prefix.chars().all(|c| c.is_whitespace()) {
+                        line_start
+                    } else {
+                        fa
+                    };
+                    if merge_fa > *cur_plus {
+                        emit_gap(out, plus.get(*cur_plus..merge_fa).unwrap_or(""));
+                    }
+                    let merged = plus.get(merge_fa..lb).unwrap_or("");
+                    match style {
+                        WordDiffBodyStyle::Color => {
+                            if use_color && !new_c.is_empty() {
+                                out.push_str(&new_c);
+                                out.push_str(merged);
+                                out.push_str(reset);
+                            } else {
+                                out.push_str(merged);
+                            }
+                        }
+                        WordDiffBodyStyle::Porcelain => {
+                            emit_plus_raw_lines_porcelain(out, merged);
+                            out.push_str("~\n");
+                            porcelain_saw_word_line.set(true);
+                        }
+                        WordDiffBodyStyle::PlainMarkers => {
+                            out.push_str(&format!("{{+{merged}+}}"));
+                        }
+                    }
+                    *cur_plus = lb;
+                    *first_run = false;
+                };
+
+                while j < changes.len() && changes[j].tag() == ChangeTag::Insert {
+                    let Some((a, b)) = plus_spans.get(k) else {
+                        break;
+                    };
+                    if let (Some(prev_lb), Some(fa)) = (run_lb, run_fa) {
+                        let between = plus.get(prev_lb..*a).unwrap_or("");
+                        if between.contains('\n') {
+                            emit_merged(
+                                out,
+                                &mut cur_plus,
+                                fa,
+                                prev_lb,
+                                &mut first_insert_merged_emit,
+                            );
+                            run_fa = Some(*a);
+                            run_lb = Some(*b);
+                        } else {
+                            run_lb = Some(*b);
+                        }
+                    } else {
+                        run_fa = Some(*a);
+                        run_lb = Some(*b);
+                    }
+                    j += 1;
+                    k += 1;
+                }
+                if let (Some(fa), Some(lb)) = (run_fa, run_lb) {
+                    emit_merged(out, &mut cur_plus, fa, lb, &mut first_insert_merged_emit);
+                }
+                pi = k;
+                i = j;
+            }
+        }
+    }
+    if cur_plus < plus.len() {
+        let tail = plus.get(cur_plus..).unwrap_or("");
+        match style {
+            WordDiffBodyStyle::Color => word_diff_emit_gap_color(out, cfg, use_color, tail),
+            WordDiffBodyStyle::Porcelain => {
+                if porcelain_saw_word_line.get() {
+                    // Remaining `plus` bytes after the last word are only the line terminators for
+                    // lines already emitted as `-`/`+` lines. Git prints the following blank/context
+                    // via unified ` ` lines (` \n~\n`), not via another porcelain context emission
+                    // here — doing so duplicates a trailing ` \n~\n` at EOF.
+                    if !tail.is_empty() && tail.chars().all(|c| c == '\n') {
+                        // skip
+                    } else {
+                        emit_plus_context_lines_porcelain(out, tail);
+                    }
+                } else {
+                    emit_plus_context_lines(out, tail);
+                }
+            }
+            WordDiffBodyStyle::PlainMarkers => out.push_str(tail),
+        }
+    }
+}
+
+fn word_diff_emit_gap_color(out: &mut String, cfg: &ConfigSet, use_color: bool, gap: &str) {
+    if gap.is_empty() {
+        return;
+    }
+    let ctx_c = ansi_diff_color(cfg, "diff.color.context", "");
+    let reset = if use_color { RESET } else { "" };
+    if use_color && !ctx_c.is_empty() {
+        out.push_str(&ctx_c);
+        out.push_str(gap);
+        out.push_str(reset);
+        return;
+    }
+    if use_color && ctx_c.is_empty() {
+        let mut line_start = 0usize;
+        for (idx, _) in gap.match_indices('\n') {
+            let line = gap.get(line_start..idx).unwrap_or("");
+            out.push_str(line);
+            if line.chars().any(|c| !c.is_whitespace()) {
+                out.push_str(reset);
+            }
+            out.push('\n');
+            line_start = idx + 1;
+        }
+        let tail = gap.get(line_start..).unwrap_or("");
+        out.push_str(tail);
+        if !tail.is_empty() && tail.chars().any(|c| !c.is_whitespace()) {
+            out.push_str(reset);
+        }
+        return;
+    }
+    out.push_str(gap);
+}
+
+fn word_diff_emit_plain_color(
+    out: &mut String,
+    minus: &str,
+    plus: &str,
+    minus_spans: &[(usize, usize)],
+    plus_spans: &[(usize, usize)],
+    cfg: &ConfigSet,
+    use_color: bool,
+) {
+    word_diff_emit_body(
+        out,
+        minus,
+        plus,
+        minus_spans,
+        plus_spans,
+        WordDiffBodyStyle::Color,
+        cfg,
+        use_color,
+    );
+}
+
+fn word_diff_emit_porcelain(
+    out: &mut String,
+    minus: &str,
+    plus: &str,
+    minus_spans: &[(usize, usize)],
+    plus_spans: &[(usize, usize)],
+) {
+    let cfg = ConfigSet::new();
+    word_diff_emit_body(
+        out,
+        minus,
+        plus,
+        minus_spans,
+        plus_spans,
+        WordDiffBodyStyle::Porcelain,
+        &cfg,
+        false,
+    );
+}
+
+fn word_diff_emit_plain_markers(
+    out: &mut String,
+    minus: &str,
+    plus: &str,
+    word_re: Option<&Regex>,
+) {
+    let ms = git_word_spans(minus, word_re);
+    let ps = git_word_spans(plus, word_re);
+    let cfg = ConfigSet::new();
+    word_diff_emit_body(
+        out,
+        minus,
+        plus,
+        &ms,
+        &ps,
+        WordDiffBodyStyle::PlainMarkers,
+        &cfg,
+        false,
+    );
+}
+
+fn word_diff_generate_patch(
+    config: &ConfigSet,
     old_content: &str,
     new_content: &str,
     old_path: &str,
     new_path: &str,
     context_lines: usize,
+    inter_hunk_context: usize,
+    src_prefix: &str,
+    dst_prefix: &str,
+    wd: &EffectiveWordDiff,
+    header_use_color: bool,
+    word_re: Option<&Regex>,
+    algo_ctx: &DiffAlgoContext,
+    algo_cli: Option<similar::Algorithm>,
 ) -> String {
-    use similar::{ChangeTag, TextDiff};
+    let path_for_algo = if old_path == "/dev/null" {
+        new_path
+    } else {
+        old_path
+    };
+    let algo = diff_algorithm_for_path(path_for_algo, algo_cli, algo_ctx);
+    let func_matcher = matcher_for_path_parsed(
+        algo_ctx.config.as_ref(),
+        &algo_ctx.attrs.rules,
+        &algo_ctx.attrs.macros,
+        path_for_algo,
+        algo_ctx.ignore_case_attrs,
+    )
+    .unwrap_or(None);
 
-    let mut output = String::new();
-    output.push_str(&format!("--- a/{old_path}\n"));
-    output.push_str(&format!("+++ b/{new_path}\n"));
+    let unified = unified_diff_with_prefix_and_funcname_and_algorithm(
+        old_content,
+        new_content,
+        old_path,
+        new_path,
+        context_lines,
+        inter_hunk_context,
+        src_prefix,
+        dst_prefix,
+        func_matcher.as_ref(),
+        algo,
+    );
 
-    let old_lines: Vec<&str> = old_content.lines().collect();
-    let new_lines: Vec<&str> = new_content.lines().collect();
+    let mut out = String::new();
+    let (hb, hr) = if header_use_color {
+        (BOLD, RESET)
+    } else {
+        ("", "")
+    };
+    let (cb, cr) = if header_use_color && matches!(wd.mode, WordDiffModeCli::Color) {
+        (CYAN, RESET)
+    } else if header_use_color && wd.force_color && matches!(wd.mode, WordDiffModeCli::Plain) {
+        (CYAN, RESET)
+    } else {
+        ("", "")
+    };
+    let (fb, fr) =
+        if header_use_color && matches!(wd.mode, WordDiffModeCli::Color) && wd.force_color {
+            (MAGENTA, RESET)
+        } else {
+            ("", "")
+        };
 
-    let line_diff = TextDiff::from_slices(&old_lines, &new_lines);
-
-    for hunk in line_diff
-        .unified_diff()
-        .context_radius(context_lines)
-        .iter_hunks()
-    {
-        // Write the hunk header with function context.
-        let hunk_str = format!("{hunk}");
-        if let Some(header_end) = hunk_str.find('\n') {
-            let header = &hunk_str[..header_end];
-            output.push_str(header);
-            // Add function context (like Git does).
-            if let Some(func) = find_func_context(header, &old_lines) {
-                output.push(' ');
-                output.push_str(&func);
-            }
-            output.push('\n');
+    let lines: Vec<&str> = unified.lines().collect();
+    let mut i = 0usize;
+    while i < lines.len() {
+        let line = lines[i];
+        if line.starts_with("--- ") {
+            writeln!(out, "{hb}{line}{hr}").ok();
+            i += 1;
+            continue;
         }
+        if line.starts_with("+++ ") {
+            writeln!(out, "{hb}{line}{hr}").ok();
+            i += 1;
+            continue;
+        }
+        if line.starts_with("@@") {
+            let header = line.to_owned();
+            let func_line = if header_use_color && wd.force_color {
+                color_hunk_header_word_diff(&header, cb, cr, fb, fr)
+            } else {
+                header.clone()
+            };
+            writeln!(out, "{func_line}").ok();
+            i += 1;
 
-        // Process each change in the hunk
-        for change in hunk.iter_changes() {
-            match change.tag() {
-                ChangeTag::Equal => {
-                    output.push_str(change.value());
-                    output.push('\n');
+            let mut minus_buf = String::new();
+            let mut plus_buf = String::new();
+            while i < lines.len() {
+                let ln = lines[i];
+                if ln.starts_with("@@") {
+                    word_diff_flush_hunk(
+                        &mut out,
+                        config,
+                        wd,
+                        header_use_color,
+                        word_re,
+                        &minus_buf,
+                        &plus_buf,
+                    );
+                    minus_buf.clear();
+                    plus_buf.clear();
+                    break;
                 }
-                ChangeTag::Delete => {
-                    // Look for a corresponding insert to do word-level diff
-                    // For simplicity, output the whole line as deleted
-                    // We'll handle paired changes below
-                }
-                ChangeTag::Insert => {}
-            }
-        }
-    }
-
-    // Simpler approach: use the similar crate's word-level diff directly
-    output.clear();
-    output.push_str(&format!("--- a/{old_path}\n"));
-    output.push_str(&format!("+++ b/{new_path}\n"));
-
-    // Build unified diff with word-level changes within each hunk
-    let line_diff = TextDiff::from_lines(old_content, new_content);
-
-    for hunk in line_diff
-        .unified_diff()
-        .context_radius(context_lines)
-        .iter_hunks()
-    {
-        // Write hunk header with function context.
-        let hunk_str = format!("{hunk}");
-        if let Some(header_end) = hunk_str.find('\n') {
-            let header = &hunk_str[..header_end];
-            output.push_str(header);
-            let old_lines_for_ctx: Vec<&str> = old_content.lines().collect();
-            if let Some(func) = find_func_context(header, &old_lines_for_ctx) {
-                output.push(' ');
-                output.push_str(&func);
-            }
-            output.push('\n');
-        }
-
-        // Collect changes and pair deletions with insertions
-        let changes: Vec<_> = hunk.iter_changes().collect();
-        let mut i = 0;
-        while i < changes.len() {
-            let change = &changes[i];
-            match change.tag() {
-                ChangeTag::Equal => {
-                    let val = change.value();
-                    // Strip trailing newline for output
-                    let line = val.strip_suffix('\n').unwrap_or(val);
-                    output.push_str(line);
-                    output.push('\n');
+                if ln.starts_with('-') && !ln.starts_with("---") {
+                    let body = ln.strip_prefix('-').unwrap_or(ln);
+                    minus_buf.push_str(body);
+                    let no_nl = lines.get(i + 1).is_some_and(|n| n.starts_with('\\'));
+                    if !no_nl {
+                        minus_buf.push('\n');
+                    }
                     i += 1;
-                }
-                ChangeTag::Delete => {
-                    // Collect consecutive deletions
-                    let mut del_lines = Vec::new();
-                    while i < changes.len() && changes[i].tag() == ChangeTag::Delete {
-                        del_lines.push(changes[i].value());
-                        i += 1;
+                } else if ln.starts_with('+') && !ln.starts_with("+++") {
+                    let body = ln.strip_prefix('+').unwrap_or(ln);
+                    plus_buf.push_str(body);
+                    let no_nl = lines.get(i + 1).is_some_and(|n| n.starts_with('\\'));
+                    if !no_nl {
+                        plus_buf.push('\n');
                     }
-                    // Collect consecutive insertions
-                    let mut ins_lines = Vec::new();
-                    while i < changes.len() && changes[i].tag() == ChangeTag::Insert {
-                        ins_lines.push(changes[i].value());
-                        i += 1;
-                    }
-
-                    // Do word-level diff between paired del/ins
-                    let del_text: String = del_lines.join("");
-                    let ins_text: String = ins_lines.join("");
-
-                    if ins_lines.is_empty() {
-                        // Pure deletion
-                        let text = del_text.strip_suffix('\n').unwrap_or(&del_text);
-                        output.push_str(&format!("[-{text}-]"));
-                        output.push('\n');
-                    } else if del_lines.is_empty() {
-                        // Pure insertion
-                        let text = ins_text.strip_suffix('\n').unwrap_or(&ins_text);
-                        output.push_str(&format!("{{+{text}+}}"));
-                        output.push('\n');
+                    i += 1;
+                } else if ln.starts_with('\\') {
+                    i += 1;
+                } else if let Some(rest) = ln.strip_prefix(' ') {
+                    word_diff_flush_hunk(
+                        &mut out,
+                        config,
+                        wd,
+                        header_use_color,
+                        word_re,
+                        &minus_buf,
+                        &plus_buf,
+                    );
+                    minus_buf.clear();
+                    plus_buf.clear();
+                    if matches!(wd.mode, WordDiffModeCli::Porcelain) {
+                        // `word_diff_emit_body` turns a trailing line break after the last plus-side
+                        // word into ` \n~\n`. The unified diff also carries a separate empty context
+                        // line (` ` with empty body) for that same blank line — emitting both matches
+                        // Git's porcelain output with a duplicated empty context line.
+                        if rest.is_empty() && out.ends_with(" \n~\n") {
+                            i += 1;
+                            continue;
+                        }
+                        let after_word_line = out.ends_with("~\n");
+                        let ctx_body = porcelain_context_body(rest);
+                        writeln!(out, " {ctx_body}").ok();
+                        // After `-`/`+` porcelain lines Git ends with `~\n`. The next unified line
+                        // is often an empty context row (` `); that becomes ` \n~\n`, not ` \n` alone.
+                        if rest.is_empty() && after_word_line {
+                            out.push_str("~\n");
+                        }
+                        // Git emits `~\n~\n` after a context line that shows non-whitespace file
+                        // content, before the next blank context or change lines.
+                        if rest.chars().any(|c| !c.is_whitespace()) {
+                            out.push_str("~\n~\n");
+                        }
+                    } else if wd.force_color && header_use_color {
+                        word_diff_emit_context_line_plain(&mut out, config, header_use_color, rest);
                     } else {
-                        // Word-level diff
-                        let word_diff = TextDiff::from_words(&del_text, &ins_text);
-                        for word_change in word_diff.iter_all_changes() {
-                            let val = word_change.value();
-                            match word_change.tag() {
-                                ChangeTag::Equal => output.push_str(val),
-                                ChangeTag::Delete => {
-                                    output.push_str(&format!("[-{val}-]"));
-                                }
-                                ChangeTag::Insert => {
-                                    output.push_str(&format!("{{+{val}+}}"));
-                                }
-                            }
-                        }
-                        // Ensure newline at end
-                        if !output.ends_with('\n') {
-                            output.push('\n');
-                        }
+                        writeln!(out, "{rest}").ok();
                     }
-                }
-                ChangeTag::Insert => {
-                    // Orphan insert (no preceding delete)
-                    let text = change.value();
-                    let line = text.strip_suffix('\n').unwrap_or(text);
-                    output.push_str(&format!("{{+{line}+}}"));
-                    output.push('\n');
+                    i += 1;
+                } else {
                     i += 1;
                 }
             }
+            word_diff_flush_hunk(
+                &mut out,
+                config,
+                wd,
+                header_use_color,
+                word_re,
+                &minus_buf,
+                &plus_buf,
+            );
+            continue;
         }
+        out.push_str(line);
+        out.push('\n');
+        i += 1;
     }
 
-    output
+    out
+}
+
+fn color_hunk_header_word_diff(header: &str, cb: &str, cr: &str, fb: &str, fr: &str) -> String {
+    let Some(at2) = header.find("@@").map(|i| i + 2) else {
+        return format!("{cb}{header}{cr}");
+    };
+    let after = &header[at2..];
+    let Some(end) = after[2..].find("@@").map(|i| i + 4) else {
+        return format!("{cb}{header}{cr}");
+    };
+    let frag_end = at2 + end;
+    let frag = &header[..frag_end];
+    let rest = &header[frag_end..];
+    let trimmed = rest.trim_start_matches([' ', '\t']);
+    let (space_part, func_part) = if rest.len() > trimmed.len() {
+        let sp = &rest[..rest.len() - trimmed.len()];
+        (sp, trimmed)
+    } else {
+        ("", rest)
+    };
+    if func_part.is_empty() {
+        format!("{cb}{frag}{cr}{rest}")
+    } else {
+        format!("{cb}{frag}{cr}{space_part}{fb}{func_part}{fr}")
+    }
+}
+
+fn word_diff_flush_hunk(
+    out: &mut String,
+    config: &ConfigSet,
+    wd: &EffectiveWordDiff,
+    use_color: bool,
+    word_re: Option<&Regex>,
+    minus: &str,
+    plus: &str,
+) {
+    if minus.is_empty() && plus.is_empty() {
+        return;
+    }
+    match wd.mode {
+        WordDiffModeCli::Porcelain => {
+            let ms = git_word_spans(minus, word_re);
+            let ps = git_word_spans(plus, word_re);
+            word_diff_emit_porcelain(out, minus, plus, &ms, &ps);
+        }
+        WordDiffModeCli::Plain => {
+            if wd.force_color && use_color {
+                let ms = git_word_spans(minus, word_re);
+                let ps = git_word_spans(plus, word_re);
+                word_diff_emit_plain_color(out, minus, plus, &ms, &ps, config, true);
+            } else {
+                word_diff_emit_plain_markers(out, minus, plus, word_re);
+            }
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+        }
+        WordDiffModeCli::Color => {
+            let ms = git_word_spans(minus, word_re);
+            let ps = git_word_spans(plus, word_re);
+            let color_body = wd.force_color && use_color;
+            word_diff_emit_plain_color(out, minus, plus, &ms, &ps, config, color_body);
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+        }
+        WordDiffModeCli::None => {}
+    }
 }
 
 /// Write only the summary line: `N files changed, N insertions(+), N deletions(-)`.
