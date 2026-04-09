@@ -651,7 +651,7 @@ commit → check it off → move on.
 - [x] `t5323-pack-redundant` ████████████████████ 18/18 (0 left) — Test git pack-redundant
 
 - [ ] `t5528-push-default` ████████░░░░░░░░░░░░ 14/32 (18 left) — check various push.default settings
-- [ ] `t5812-proto-disable-http` ███████░░░░░░░░░░░░░ 11/29 (18 left) — test disabling of git-over-http in clone/fetch
+- [x] `t5812-proto-disable-http` — test disabling of git-over-http in clone/fetch (29/29)
 - [ ] `t5521-pull-options` ███░░░░░░░░░░░░░░░░░ 4/22 (18 left) — pull options
 - [ ] `t5100-mailinfo` ████████████░░░░░░░░ 33/52 (19 left) — git mailinfo and git mailsplit test
 - [ ] `t5541-http-push-smart` █░░░░░░░░░░░░░░░░░░░ 2/21 (19 left) — test smart pushing over http via http-backend

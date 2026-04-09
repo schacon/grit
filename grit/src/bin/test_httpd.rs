@@ -250,6 +250,51 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
     })
 }
 
+/// Apache `RewriteRule` equivalents for redirect-based HTTP tests (t5812, t5551, …).
+///
+/// Returns `(status, Location)` when this request should be answered with a redirect.
+fn redirect_target(path: &str) -> Option<(u16, String)> {
+    const LOOP_DEEP_PREFIX: &str = "/loop-redir/x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-x-";
+
+    if let Some(rest) = path.strip_prefix("/ftp-redir/") {
+        return Some((302, format!("ftp://localhost:1000/{rest}")));
+    }
+    if let Some(rest) = path.strip_prefix("/dumb-redir/") {
+        return Some((301, format!("/dumb/{rest}")));
+    }
+    if let Some(rest) = path.strip_prefix("/smart-redir-perm/") {
+        return Some((301, format!("/smart/{rest}")));
+    }
+    if let Some(rest) = path.strip_prefix("/smart-redir-temp/") {
+        return Some((302, format!("/smart/{rest}")));
+    }
+    if let Some(rest) = path.strip_prefix("/smart-redir-auth/") {
+        return Some((301, format!("/auth/smart/{rest}")));
+    }
+    if let Some(rest) = path.strip_prefix("/smart-redir-limited/") {
+        if let Some(repo) = rest.strip_suffix("/info/refs") {
+            return Some((301, format!("/smart/{repo}/info/refs")));
+        }
+    }
+    if path.starts_with(LOOP_DEEP_PREFIX) {
+        let rest = &path[LOOP_DEEP_PREFIX.len()..];
+        return Some((302, format!("/{rest}")));
+    }
+    if let Some(rest) = path.strip_prefix("/loop-redir/") {
+        return Some((302, format!("/loop-redir/x-{rest}")));
+    }
+    None
+}
+
+fn send_redirect(stream: &mut TcpStream, status: u16, location: &str) -> Result<(), String> {
+    let reason = match status {
+        301 => "Moved Permanently",
+        302 => "Found",
+        _ => "Redirect",
+    };
+    send_response(stream, status, reason, &[("Location", location)], b"")
+}
+
 fn log_access(config: &Config, method: &str, path: &str, query: &str, status: u16) {
     use std::fs::OpenOptions;
     let line = if query.is_empty() {
@@ -303,6 +348,12 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
                 );
             }
         }
+    }
+
+    // Redirect routes (see git/t/lib-httpd/apache.conf — used by t5812-proto-disable-http, t5551, …)
+    if let Some((code, location)) = redirect_target(&req.path) {
+        log_access(config, &req.method, &req.path, &req.query, code);
+        return send_redirect(&mut stream, code, &location);
     }
 
     // Route: /auth/smart/, /auth-push/smart/, /auth-fetch/smart/
