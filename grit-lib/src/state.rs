@@ -13,7 +13,7 @@
 //! `commit`, and other porcelain commands.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::error::{Error, Result};
 use crate::objects::ObjectId;
@@ -176,8 +176,8 @@ pub fn resolve_head(git_dir: &Path) -> Result<HeadState> {
             .unwrap_or(&refname)
             .to_owned();
 
-        // Try to resolve the ref to an OID
-        let oid = resolve_ref(git_dir, &refname)?;
+        // Use the shared refs backend so linked worktrees and packed-refs behave like Git.
+        let oid = crate::refs::resolve_ref(git_dir, &refname).ok();
 
         Ok(HeadState::Branch {
             refname,
@@ -191,133 +191,6 @@ pub fn resolve_head(git_dir: &Path) -> Result<HeadState> {
             Err(_) => Ok(HeadState::Invalid),
         }
     }
-}
-
-/// Resolve a ref name to an OID by reading the refs filesystem.
-///
-/// Follows symbolic refs and packed-refs.
-///
-/// # Parameters
-///
-/// - `git_dir` — path to the `.git` directory.
-/// - `refname` — the full ref name (e.g. `refs/heads/main`).
-///
-/// # Returns
-///
-/// `Ok(Some(oid))` if the ref exists, `Ok(None)` if it doesn't (unborn),
-/// or `Err` on I/O failure.
-fn resolve_ref(git_dir: &Path, refname: &str) -> Result<Option<ObjectId>> {
-    // Dispatch to reftable backend if configured
-    if crate::reftable::is_reftable_repo(git_dir) {
-        match crate::reftable::reftable_resolve_ref(git_dir, refname) {
-            Ok(oid) => return Ok(Some(oid)),
-            Err(_) => return Ok(None),
-        }
-    }
-
-    let ref_path = git_dir.join(refname);
-
-    // Try loose ref first
-    match fs::read_to_string(&ref_path) {
-        Ok(content) => {
-            let trimmed = content.trim();
-            // Follow symbolic ref chains
-            if let Some(target) = trimmed.strip_prefix("ref: ") {
-                return resolve_ref(git_dir, target);
-            }
-            match ObjectId::from_hex(trimmed) {
-                Ok(oid) => Ok(Some(oid)),
-                Err(_) => Ok(None),
-            }
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // Try packed-refs in git_dir
-            if let Some(oid) = resolve_packed_ref(git_dir, refname)? {
-                return Ok(Some(oid));
-            }
-
-            // For worktrees, fall back to the common git directory for
-            // shared refs (branches, tags, etc.).
-            if let Some(common) = common_dir_for(git_dir) {
-                if common != git_dir {
-                    // Try loose ref in common dir
-                    let common_ref = common.join(refname);
-                    match fs::read_to_string(&common_ref) {
-                        Ok(content) => {
-                            let trimmed = content.trim();
-                            if let Some(target) = trimmed.strip_prefix("ref: ") {
-                                return resolve_ref(git_dir, target);
-                            }
-                            if let Ok(oid) = ObjectId::from_hex(trimmed) {
-                                return Ok(Some(oid));
-                            }
-                        }
-                        Err(e2) if e2.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(e2)
-                            if e2.kind() == std::io::ErrorKind::IsADirectory
-                                || e2.kind() == std::io::ErrorKind::NotADirectory
-                                || e2.raw_os_error() == Some(21)
-                                || e2.raw_os_error() == Some(20) => {}
-                        Err(e2) => return Err(Error::Io(e2)),
-                    }
-                    // Try packed-refs in common dir
-                    return resolve_packed_ref(&common, refname);
-                }
-            }
-            Ok(None)
-        }
-        Err(e)
-            if e.kind() == std::io::ErrorKind::IsADirectory
-                || e.kind() == std::io::ErrorKind::NotADirectory
-                || e.raw_os_error() == Some(21)
-                || e.raw_os_error() == Some(20) =>
-        {
-            // Directory/file conflicts in refs (e.g. HEAD points at
-            // refs/heads/outer while refs/heads/outer/inner exists) should be
-            // treated like a missing ref, not a hard I/O failure.
-            Ok(None)
-        }
-        Err(e) => Err(Error::Io(e)),
-    }
-}
-
-/// Determine the common git directory for worktree-aware ref resolution.
-fn common_dir_for(git_dir: &Path) -> Option<PathBuf> {
-    let raw = fs::read_to_string(git_dir.join("commondir")).ok()?;
-    let rel = raw.trim();
-    let path = if Path::new(rel).is_absolute() {
-        PathBuf::from(rel)
-    } else {
-        git_dir.join(rel)
-    };
-    path.canonicalize().ok()
-}
-
-/// Look up a ref in `packed-refs`.
-fn resolve_packed_ref(git_dir: &Path, refname: &str) -> Result<Option<ObjectId>> {
-    let packed_path = git_dir.join("packed-refs");
-    let content = match fs::read_to_string(&packed_path) {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(Error::Io(e)),
-    };
-
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with('^') {
-            continue;
-        }
-        // Format: "<hex-oid> <refname>"
-        if let Some((hex, name)) = line.split_once(' ') {
-            if name == refname {
-                if let Ok(oid) = ObjectId::from_hex(hex) {
-                    return Ok(Some(oid));
-                }
-            }
-        }
-    }
-
-    Ok(None)
 }
 
 /// Detect in-progress operations by checking for sentinel files.
@@ -364,7 +237,10 @@ pub fn detect_in_progress(git_dir: &Path) -> Vec<InProgressOperation> {
         ops.push(InProgressOperation::Revert);
     }
 
-    if git_dir.join("BISECT_LOG").exists() {
+    let bisect_log = crate::refs::common_dir(git_dir)
+        .unwrap_or_else(|| git_dir.to_path_buf())
+        .join("BISECT_LOG");
+    if bisect_log.exists() {
         ops.push(InProgressOperation::Bisect);
     }
 

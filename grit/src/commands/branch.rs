@@ -5,6 +5,7 @@ use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
+use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{resolve_revision, resolve_upstream_symbolic_name, symbolic_full_name};
 use grit_lib::state::{resolve_head, HeadState};
@@ -289,6 +290,31 @@ struct BranchInfo {
     is_remote: bool,
 }
 
+fn detached_head_list_line(repo: &Repository, head: &HeadState) -> Result<String> {
+    let HeadState::Detached { oid } = head else {
+        bail!("detached_head_list_line: not detached");
+    };
+    let git_dir = &repo.git_dir;
+    let state_dir = grit_lib::refs::common_dir(git_dir).unwrap_or_else(|| git_dir.clone());
+    if state_dir.join("BISECT_LOG").exists() {
+        let start = fs::read_to_string(state_dir.join("BISECT_START"))
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        let label = if start.is_empty() {
+            oid.to_hex().chars().take(7).collect::<String>()
+        } else if let Some(rest) = start.strip_prefix("refs/heads/") {
+            rest.to_owned()
+        } else {
+            start
+        };
+        return Ok(format!("* (no branch, bisect started on {label})"));
+    }
+    let full = oid.to_hex();
+    let abbrev: String = full.chars().take(7).collect();
+    Ok(format!("* (HEAD detached at {abbrev})"))
+}
+
 /// List branches.
 fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
     let stdout = io::stdout();
@@ -300,7 +326,8 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     let mut branches: Vec<BranchInfo> = Vec::new();
 
     if !args.remotes {
-        let local = if grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
+        let local: Vec<(String, ObjectId)> = if grit_lib::reftable::is_reftable_repo(&repo.git_dir)
+        {
             grit_lib::reftable::reftable_list_refs(&repo.git_dir, "refs/heads/")
                 .map_err(|e| anyhow::anyhow!("{e}"))?
                 .into_iter()
@@ -310,9 +337,14 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
                 })
                 .collect()
         } else {
-            let mut v = Vec::new();
-            collect_branches(&repo.git_dir.join("refs/heads"), "", &mut v)?;
-            v
+            refs::list_refs(&repo.git_dir, "refs/heads/")
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+                .into_iter()
+                .map(|(name, oid)| {
+                    let short = name.strip_prefix("refs/heads/").unwrap_or(&name).to_owned();
+                    (short, oid)
+                })
+                .collect()
         };
         for (name, oid) in local {
             branches.push(BranchInfo {
@@ -324,7 +356,8 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     }
 
     if args.remotes || args.all {
-        let remote = if grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
+        let remote: Vec<(String, ObjectId)> = if grit_lib::reftable::is_reftable_repo(&repo.git_dir)
+        {
             grit_lib::reftable::reftable_list_refs(&repo.git_dir, "refs/remotes/")
                 .map_err(|e| anyhow::anyhow!("{e}"))?
                 .into_iter()
@@ -337,9 +370,17 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
                 })
                 .collect()
         } else {
-            let mut v = Vec::new();
-            collect_branches(&repo.git_dir.join("refs/remotes"), "", &mut v)?;
-            v
+            refs::list_refs(&repo.git_dir, "refs/remotes/")
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+                .into_iter()
+                .map(|(name, oid)| {
+                    let short = name
+                        .strip_prefix("refs/remotes/")
+                        .unwrap_or(&name)
+                        .to_owned();
+                    (short, oid)
+                })
+                .collect()
         };
         for (name, oid) in remote {
             branches.push(BranchInfo {
@@ -429,6 +470,11 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
             writeln!(out, "{line}")?;
         }
         return Ok(());
+    }
+
+    if matches!(head, HeadState::Detached { .. }) && !args.remotes {
+        let line = detached_head_list_line(repo, head)?;
+        writeln!(out, "{line}")?;
     }
 
     let use_color = if args.no_color {

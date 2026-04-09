@@ -540,11 +540,10 @@ pub fn append_reflog(
 }
 
 fn ref_storage_dir(git_dir: &Path, refname: &str) -> PathBuf {
-    if refname == "HEAD"
-        || refname == "NOTES_MERGE_PARTIAL"
-        || refname == "NOTES_MERGE_REF"
-        || refname.starts_with("refs/bisect/")
-    {
+    // Per-worktree refs live under this worktree's git dir; shared refs (including
+    // `refs/bisect/*`) live in the common repository directory so all worktrees
+    // see the same bisection state.
+    if refname == "HEAD" || refname == "NOTES_MERGE_PARTIAL" || refname == "NOTES_MERGE_REF" {
         return git_dir.to_path_buf();
     }
     common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf())

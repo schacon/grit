@@ -614,7 +614,13 @@ pub fn run(mut args: Args) -> Result<()> {
             let prev = resolve_nth_previous_branch(&repo, n)?;
             let branch_ref = format!("refs/heads/{prev}");
             if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-                return switch_branch(&repo, &prev, &branch_ref, switch_force);
+                return switch_branch(
+                    &repo,
+                    &prev,
+                    &branch_ref,
+                    switch_force,
+                    args.ignore_other_worktrees,
+                );
             }
             if let Ok(oid) = resolve_to_commit(&repo, &prev) {
                 return detach_head(&repo, &oid, switch_force);
@@ -628,7 +634,13 @@ pub fn run(mut args: Args) -> Result<()> {
         let prev = resolve_previous_branch(&repo)?;
         let branch_ref = format!("refs/heads/{prev}");
         if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-            return switch_branch(&repo, &prev, &branch_ref, switch_force);
+            return switch_branch(
+                &repo,
+                &prev,
+                &branch_ref,
+                switch_force,
+                args.ignore_other_worktrees,
+            );
         }
         // Not a branch — try as a commit (detached HEAD)
         if let Ok(oid) = resolve_to_commit(&repo, &prev) {
@@ -666,7 +678,13 @@ pub fn run(mut args: Args) -> Result<()> {
         if refs::resolve_ref(&repo.git_dir, &tag_ref).is_ok() {
             eprintln!("warning: refname '{}' is ambiguous.", target);
         }
-        return switch_branch(&repo, &target, &branch_ref, switch_force);
+        return switch_branch(
+            &repo,
+            &target,
+            &branch_ref,
+            switch_force,
+            args.ignore_other_worktrees,
+        );
     }
 
     // DWIM: if branch doesn't exist locally, check if exactly one remote has it
@@ -710,7 +728,13 @@ pub fn run(mut args: Args) -> Result<()> {
             cfg_content.push_str(&section);
             let _ = std::fs::write(&cfg_path, cfg_content);
             eprintln!("branch '{target}' set up to track '{remote_name}/{target}'.");
-            return switch_branch(&repo, &target, &new_branch_ref, switch_force);
+            return switch_branch(
+                &repo,
+                &target,
+                &new_branch_ref,
+                switch_force,
+                args.ignore_other_worktrees,
+            );
         } else if matching.len() > 1 {
             eprintln!(
                 "hint: If you meant to check out a remote tracking branch on, e.g. 'origin',"
@@ -896,6 +920,7 @@ fn switch_branch(
     branch_name: &str,
     branch_ref: &str,
     force: bool,
+    ignore_other_worktrees: bool,
 ) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
 
@@ -940,7 +965,7 @@ fn switch_branch(
     }
 
     // Check if branch is already checked out in another worktree
-    if !force {
+    if !force && !ignore_other_worktrees {
         let common = refs::common_dir(&repo.git_dir).unwrap_or_else(|| repo.git_dir.clone());
         let worktrees_dir = common.join("worktrees");
         if worktrees_dir.is_dir() {
