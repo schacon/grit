@@ -92,6 +92,7 @@ pub mod simple_ipc {
 pub mod state;
 pub mod stripspace;
 pub mod submodule_gitdir;
+pub mod test_tool_progress;
 pub mod textconv_cache;
 pub mod tree_path_follow;
 #[cfg(unix)]
