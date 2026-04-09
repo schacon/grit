@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   266 |
+| Completed   |   267 |
 | In progress |     4 |
-| Remaining   |   498 |
+| Remaining   |   497 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 266 completed (`[x]`), 4 in progress (`[~]`), 498 remaining (`[ ]`).
+Task lines in `PLAN.md`: 267 completed (`[x]`), 4 in progress (`[~]`), 497 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5619-clone-local-ambiguous-transport` — 2/2 tests pass (malicious submodule URL resolved to bogus protocol; `submodule update --init` fails with `protocol .* is not supported` and does not expose `sensitive/secret` under `.git/modules/sub/objects`; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5514-fetch-multiple` — 25/25 tests pass (`fetch --all` / `--multiple`, `fetch.all` / `--no-all`, `skipFetchAll`, parallel `--jobs`, tags; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t7105-reset-patch` — 13/13 tests pass (`git reset -p`: interactive hunk prompts, `HEAD`/`@`/default tree, `HEAD^`/`HEAD^{tree}`, blob/unknown ref failures, pathspec `-- dir` and `HEAD^ -- dir`; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t12650-config-null-value` — 34/34 tests pass (null/implicit-true keys, empty `=`, `--bool`/`--int` including k/m/g suffixes, `config -l`, `--get-regexp` / `--name-only`; harness CSV/dashboards refreshed; `t1-plan.md` marked complete)
@@ -141,4 +142,4 @@ Task lines in `PLAN.md`: 266 completed (`[x]`), 4 in progress (`[~]`), 498 remai
 
 ## What Remains
 
-498 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+497 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
