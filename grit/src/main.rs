@@ -91,7 +91,9 @@ fn main() {
                 // Match shell signal convention for SIGPIPE.
                 exit_code = 128 + 13;
             } else if let Some(ex) = e.downcast_ref::<crate::explicit_exit::ExplicitExit>() {
-                eprintln!("{ex}");
+                if !ex.message.is_empty() {
+                    eprintln!("{ex}");
+                }
                 exit_code = ex.code;
             } else if let Some(msg) = verbatim_lib_error_message(&e) {
                 eprintln!("{msg}");
@@ -2493,6 +2495,7 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
         "ls-remote" => extract_options::<commands::ls_remote::Args>(show_all),
         "ls-tree" => extract_options::<commands::ls_tree::Args>(show_all),
         "merge" => extract_options::<commands::merge::Args>(show_all),
+        "merge-tree" => commands::merge_tree::completion_helper_options(show_all),
         "merge-base" => extract_options::<commands::merge_base::Args>(show_all),
         "multi-pack-index" => extract_options::<commands::multi_pack_index::Args>(show_all),
         "mv" => extract_options::<commands::mv::Args>(show_all),
@@ -3292,7 +3295,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "merge-file" => commands::merge_file::run(parse_cmd_args(subcmd, rest)),
         "merge-index" => commands::merge_index::run(parse_cmd_args(subcmd, rest)),
         "merge-one-file" => commands::merge_one_file::run(parse_cmd_args(subcmd, rest)),
-        "merge-tree" => commands::merge_tree::run(parse_cmd_args(subcmd, rest)),
+        "merge-tree" => commands::merge_tree::run_from_argv(rest),
         "mergetool" => commands::mergetool::run(parse_cmd_args(subcmd, rest)),
         "mktag" => commands::mktag::run(parse_cmd_args(subcmd, rest)),
         "mktree" => commands::mktree::run(parse_cmd_args(subcmd, rest)),
