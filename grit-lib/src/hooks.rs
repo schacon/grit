@@ -108,7 +108,7 @@ pub fn run_hook(
                 hook_name
             );
             eprintln!(
-                "hint: You can disable this warning with `git config advice.ignoredHook false`."
+                "hint: You can disable this warning with `git config set advice.ignoredHook false`."
             );
         }
         return HookResult::NotFound;

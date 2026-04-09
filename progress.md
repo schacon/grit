@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   250 |
+| Completed   |   251 |
 | In progress |     4 |
-| Remaining   |   514 |
+| Remaining   |   513 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 250 completed (`[x]`), 4 in progress (`[~]`), 514 remaining (`[ ]`).
+Task lines in `PLAN.md`: 251 completed (`[x]`), 4 in progress (`[~]`), 513 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t7520-ignored-hook-warning` — 5/5 tests pass (`tests/test-lib.sh` `test_hook`: `--disable`/`--remove`, resolve hook dir via `git rev-parse --absolute-git-dir`; second hint line uses `git config set advice.ignoredHook false`)
 - `t7064-wtstatus-pv2` — 28/28 tests pass (`status --porcelain=v2`: branch headers with NUL EOL in `-z`, stash reflog count, merge/unmerged `u` lines without worktree OID column, rename `R100` token + path layout, intent-to-add mode columns, submodule `S???` tokens via `submodule_porcelain_flags`, output section order; `.test_tick` filtered from `!` lines to match upstream exclude template)
 - `t10450-status-porcelain-staged` — 35/35 tests pass (harness: reset cwd to `$TRASH_DIRECTORY` before each TAP test body so scripts can rely on `cd repo` after a prior test left the shell in a subdirectory; matches upstream git test-lib behavior)
 - `t10620-update-ref-nul-stdin` — 30/30 tests pass (each case `cd`s to `$TRASH_DIRECTORY` first: harness keeps cwd between blocks unlike upstream `git/t`, so `cd repo` must not run from inside `repo/`)
@@ -123,4 +124,4 @@ Task lines in `PLAN.md`: 250 completed (`[x]`), 4 in progress (`[~]`), 514 remai
 
 ## What Remains
 
-514 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+513 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
