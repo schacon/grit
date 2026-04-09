@@ -570,12 +570,16 @@ fn fetch_remote(
     let remote_repo = if is_ext_url || is_http_url {
         None
     } else {
-        Some(open_repo(&remote_path).with_context(|| {
+        let r = open_repo(&remote_path).with_context(|| {
             format!(
                 "could not open remote repository at '{}'",
                 remote_path.display()
             )
-        })?)
+        })?;
+        if url_override.is_some() && url.starts_with("file://") {
+            r.enforce_safe_directory_git_dir()?;
+        }
+        Some(r)
     };
 
     if crate::ssh_transport::is_configured_ssh_url(&url) {

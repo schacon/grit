@@ -11,6 +11,7 @@ use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::zero_oid;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
+use grit_lib::promisor::{read_promisor_missing_oids, repo_treats_promisor_packs};
 use grit_lib::refs;
 use grit_lib::reftable;
 use grit_lib::repo::{
@@ -321,6 +322,24 @@ fn source_repo_is_shallow(git_dir: &Path) -> bool {
     git_dir.join("shallow").is_file()
 }
 
+/// When cloning without `--filter`, copy partial-clone metadata from a promisor source (t0411).
+fn inherited_partial_clone_filter_spec(source_git_dir: &Path) -> Option<String> {
+    let cfg = ConfigSet::load(Some(source_git_dir), true).unwrap_or_default();
+    if !repo_treats_promisor_packs(source_git_dir, &cfg) {
+        return None;
+    }
+    for e in cfg.entries() {
+        if !e.key.ends_with(".partialclonefilter") {
+            continue;
+        }
+        let v = e.value.as_deref()?.trim();
+        if !v.is_empty() {
+            return Some(v.to_string());
+        }
+    }
+    None
+}
+
 fn maybe_warn_shallow_options_ignored(repo_path_str: &str, args: &Args) {
     if args.no_local {
         return;
@@ -402,7 +421,7 @@ fn checkout_head_allow_unborn(repo: &Repository) -> Result<()> {
 
     let obj = repo.odb.read(&oid).context("reading HEAD commit")?;
     let commit = parse_commit(&obj.data).context("parsing HEAD commit")?;
-    checkout_tree(&repo.odb, &commit.tree, work_tree, "")?;
+    checkout_tree(repo, &commit.tree, work_tree, "")?;
     write_index_from_tree(repo, &commit.tree)?;
     Ok(())
 }
@@ -573,7 +592,8 @@ pub fn run(mut args: Args) -> Result<()> {
         Some("blob:limit=0") | Some("blob:size=0")
     );
     let partial_blob_none = matches!(args.filter.as_deref(), Some("blob:none"))
-        || (partial_blob_limit_zero && uploadpack_filter_allowed(&source.git_dir));
+        || (partial_blob_limit_zero && uploadpack_filter_allowed(&source.git_dir))
+        || inherited_partial_clone_filter_spec(&source.git_dir).as_deref() == Some("blob:none");
 
     // `repo_path_str` strips `file://`; use the original URL for transport detection.
     if args.repository.starts_with("file://")
@@ -894,7 +914,13 @@ pub fn run(mut args: Args) -> Result<()> {
                 return Err(e).context("clone via upload-pack (protocol.version=1) failed");
             }
         }
-    } else if args.no_local && !args.shared {
+    } else if !args.shared
+        && (args.no_local || source_repo_is_shallow(&source.git_dir))
+        && !use_upload_for_protocol_v1
+    {
+        // `--no-local` always negotiates via upload-pack. A shallow source (including an empty
+        // `.git/shallow` file) disables Git's local clone optimization; use upload-pack instead of
+        // copying objects / alternates (`t0411-clone-from-partial`, `t5605`).
         let upload_cmd = args.upload_pack.as_deref().filter(|s| !s.trim().is_empty());
         match crate::fetch_transport::fetch_via_upload_pack_skipping(
             &dest.git_dir,
@@ -952,8 +978,10 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // `upload-pack` negotiation can succeed without transferring objects (e.g. advertisement
     // parse quirks). Match `git clone --no-local` by ensuring the destination has a real ODB.
+    let used_upload_pack_object_transfer =
+        use_upload_for_protocol_v1 || args.no_local || source_repo_is_shallow(&source.git_dir);
     if !args.shared
-        && (use_upload_for_protocol_v1 || args.no_local)
+        && used_upload_pack_object_transfer
         && !dest.git_dir.join("objects/info/alternates").exists()
         && objects_dir_has_no_data(&dest.git_dir)
     {
@@ -1085,7 +1113,13 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // `materialize_blob_none_partial_layout` removes `objects/info/alternates`, so blobs
     // needed for the initial checkout must be copied into the clone explicitly.
-    if partial_blob_none && !args.bare && !args.no_checkout {
+    // Only for an explicit `--filter=blob:none` clone; cloning a promisor repo without `--filter`
+    // inherits metadata (`partial_blob_none`) but must not pre-hydrate (t0411-clone-from-partial).
+    if partial_blob_none
+        && matches!(args.filter.as_deref(), Some("blob:none"))
+        && !args.bare
+        && !args.no_checkout
+    {
         if grit_lib::refs::resolve_ref(&dest.git_dir, "HEAD").is_err() {
             crate::commands::promisor_hydrate::trim_promisor_marker_to_missing_local(&dest)
                 .context("trimming promisor marker")?;
@@ -1119,6 +1153,15 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
+    if partial_blob_none
+        && !matches!(args.filter.as_deref(), Some("blob:none"))
+        && !read_promisor_missing_oids(&dest.git_dir).is_empty()
+        && !crate::commands::promisor_hydrate::promisor_lazy_fetch_allowed_for_client_process()?
+    {
+        crate::commands::promisor_hydrate::warn_lazy_fetch_disabled_once();
+        bail!("lazy fetching disabled");
+    }
+
     // Handle --revision: detached HEAD at the resolved commit, no local refs,
     // and no remote.fetch (matches git clone --revision).
     if let Some(ref revision) = args.revision {
@@ -1150,7 +1193,8 @@ pub fn run(mut args: Args) -> Result<()> {
             &source.git_dir,
         );
 
-    let sparse_partial_skip = partial_blob_none && args.sparse;
+    let sparse_partial_skip =
+        partial_blob_none && matches!(args.filter.as_deref(), Some("blob:none")) && args.sparse;
 
     // Checkout working tree unless --bare or --no-checkout.
     // Sparse partial clones already materialize tip files via promisor hydration.
@@ -1970,14 +2014,18 @@ fn run_http_clone(args: Args) -> Result<()> {
         config.write().context("writing config")?;
     }
 
-    let partial_blob_none = matches!(args.filter.as_deref(), Some("blob:none"));
-    if partial_blob_none {
+    let partial_blob_none_http = matches!(args.filter.as_deref(), Some("blob:none"));
+    if partial_blob_none_http {
         materialize_blob_none_partial_layout(&dest)
             .context("materializing partial-clone object layout")?;
         initialize_partial_clone_state_http(&dest, &remote_name, "blob:none")?;
     }
 
-    if partial_blob_none && !args.bare && !args.no_checkout {
+    if partial_blob_none_http
+        && matches!(args.filter.as_deref(), Some("blob:none"))
+        && !args.bare
+        && !args.no_checkout
+    {
         if grit_lib::refs::resolve_ref(&dest.git_dir, "HEAD").is_err() {
             crate::commands::promisor_hydrate::trim_promisor_marker_to_missing_local(&dest)
                 .context("trimming promisor marker")?;
@@ -2019,7 +2067,9 @@ fn run_http_clone(args: Args) -> Result<()> {
 
     maybe_print_local_clone_progress(args.progress);
 
-    let sparse_partial_skip = partial_blob_none && args.sparse;
+    let sparse_partial_skip = partial_blob_none_http
+        && matches!(args.filter.as_deref(), Some("blob:none"))
+        && args.sparse;
 
     if !args.bare && !args.no_checkout && !sparse_partial_skip {
         if head_points_to_missing_ref(&dest) {
@@ -2185,6 +2235,14 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         args.ipv4,
         args.ipv6,
     )?;
+
+    let partial_blob_limit_zero = matches!(
+        args.filter.as_deref(),
+        Some("blob:limit=0") | Some("blob:size=0")
+    );
+    let partial_blob_none = matches!(args.filter.as_deref(), Some("blob:none"))
+        || (partial_blob_limit_zero && uploadpack_filter_allowed(&source.git_dir))
+        || inherited_partial_clone_filter_spec(&source.git_dir).as_deref() == Some("blob:none");
 
     if effective_reject_shallow(&args) && source_repo_is_shallow(&source.git_dir) {
         bail!("source repository is shallow, reject to clone.");
@@ -2470,6 +2528,26 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                 return Err(e).context("clone via upload-pack (protocol.version=1) failed");
             }
         }
+    } else if !args.shared
+        && (args.no_local || source_repo_is_shallow(&source.git_dir))
+        && !use_upload_for_protocol_v1
+    {
+        let upload_cmd = args.upload_pack.as_deref().filter(|s| !s.trim().is_empty());
+        match crate::fetch_transport::fetch_via_upload_pack_skipping(
+            &dest.git_dir,
+            &source.git_dir,
+            upload_cmd,
+            |adv| crate::fetch_transport::collect_wants(adv, &[]),
+            false,
+        ) {
+            Ok(_) => {
+                propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
+            }
+            Err(e) => {
+                let _ = fs::remove_dir_all(&target_path);
+                return Err(e).context("clone via upload-pack (--no-local) failed");
+            }
+        }
     } else if args.shared {
         write_shared_alternates(
             &source.git_dir,
@@ -2505,8 +2583,10 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         copy_shallow_file_if_present(&source.git_dir, &dest.git_dir)?;
     }
 
+    let used_upload_pack_object_transfer_ssh =
+        use_upload_for_protocol_v1 || args.no_local || source_repo_is_shallow(&source.git_dir);
     if !args.shared
-        && use_upload_for_protocol_v1
+        && used_upload_pack_object_transfer_ssh
         && !dest.git_dir.join("objects/info/alternates").exists()
         && objects_dir_has_no_data(&dest.git_dir)
     {
@@ -2605,6 +2685,60 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         };
         config.set(&format!("remote.{remote_name}.tagOpt"), "--no-tags")?;
         config.write().context("writing config")?;
+    }
+
+    if partial_blob_none {
+        materialize_blob_none_partial_layout(&dest)
+            .context("materializing partial-clone object layout")?;
+        initialize_partial_clone_state(&source, &dest, &remote_name, "blob:none")
+            .context("initializing partial-clone promisor state")?;
+    }
+
+    if partial_blob_none
+        && matches!(args.filter.as_deref(), Some("blob:none"))
+        && !args.bare
+        && !args.no_checkout
+    {
+        if grit_lib::refs::resolve_ref(&dest.git_dir, "HEAD").is_err() {
+            crate::commands::promisor_hydrate::trim_promisor_marker_to_missing_local(&dest)
+                .context("trimming promisor marker")?;
+        } else {
+            let dest_config = ConfigSet::load(Some(&dest.git_dir), true)?;
+            let promisor = crate::commands::promisor_hydrate::find_promisor_source(
+                &dest_config,
+                &dest.git_dir,
+            )?;
+            if let Some(ref p) = promisor {
+                if args.sparse {
+                    let patterns = vec!["/*".to_string(), "!/*/".to_string()];
+                    crate::commands::promisor_hydrate::hydrate_sparse_tip_blobs_from_promisor(
+                        &dest, p, &patterns, true,
+                    )
+                    .context("hydrating sparse-checkout tip blobs")?;
+                    let head_oid = grit_lib::refs::resolve_ref(&dest.git_dir, "HEAD")?;
+                    let obj = dest.odb.read(&head_oid).context("reading HEAD for index")?;
+                    let commit = parse_commit(&obj.data).context("parsing HEAD for index")?;
+                    write_index_from_tree(&dest, &commit.tree)
+                        .context("writing index for sparse clone")?;
+                } else {
+                    crate::commands::promisor_hydrate::hydrate_head_tree_blobs_from_promisor(
+                        &dest, p,
+                    )
+                    .context("hydrating HEAD tree blobs")?;
+                }
+            }
+            crate::commands::promisor_hydrate::trim_promisor_marker_to_missing_local(&dest)
+                .context("trimming promisor marker")?;
+        }
+    }
+
+    if partial_blob_none
+        && !matches!(args.filter.as_deref(), Some("blob:none"))
+        && !read_promisor_missing_oids(&dest.git_dir).is_empty()
+        && !crate::commands::promisor_hydrate::promisor_lazy_fetch_allowed_for_client_process()?
+    {
+        crate::commands::promisor_hydrate::warn_lazy_fetch_disabled_once();
+        bail!("lazy fetching disabled");
     }
 
     if let Some(ref revision) = args.revision {
@@ -4345,7 +4479,7 @@ fn checkout_head(repo: &Repository) -> Result<()> {
     let commit = parse_commit(&obj.data).context("parsing HEAD commit")?;
 
     // Checkout the tree recursively
-    let work_units = checkout_tree(&repo.odb, &commit.tree, work_tree, "")?;
+    let work_units = checkout_tree(repo, &commit.tree, work_tree, "")?;
     trace2_emit_checkout_parallel_workers(checkout_parallel_worker_spawns(repo, work_units));
 
     // Write the index
@@ -4358,13 +4492,14 @@ fn checkout_head(repo: &Repository) -> Result<()> {
 
 /// Recursively checkout a tree object into the working directory.
 fn checkout_tree(
-    odb: &grit_lib::odb::Odb,
+    repo: &Repository,
     tree_oid: &ObjectId,
     work_tree: &Path,
     prefix: &str,
 ) -> Result<usize> {
     use grit_lib::objects::parse_tree;
 
+    let odb = &repo.odb;
     let obj = odb.read(tree_oid).context("reading tree")?;
     let entries = parse_tree(&obj.data).context("parsing tree")?;
 
@@ -4392,11 +4527,19 @@ fn checkout_tree(
             continue;
         } else if is_tree {
             fs::create_dir_all(&full_path)?;
-            work_units += checkout_tree(odb, &entry.oid, work_tree, &path)?;
+            work_units += checkout_tree(repo, &entry.oid, work_tree, &path)?;
         } else {
             // Regular file or symlink
             if let Some(parent) = full_path.parent() {
                 fs::create_dir_all(parent)?;
+            }
+            if odb.read(&entry.oid).is_err() {
+                let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+                if repo_treats_promisor_packs(&repo.git_dir, &cfg) {
+                    let _ = crate::commands::promisor_hydrate::try_lazy_fetch_promisor_object(
+                        repo, entry.oid,
+                    );
+                }
             }
             let blob = odb
                 .read(&entry.oid)

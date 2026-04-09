@@ -38,6 +38,29 @@ fn peel_commit_oid_for_negotiation(repo: &Repository, oid: ObjectId) -> Result<O
     })
 }
 
+/// Split a simple upload-pack command string into leading `VAR=value` tokens (shell-style, no
+/// quotes) and the remainder. Used when rewriting `… git-upload-pack` to `grit upload-pack` so
+/// tests like `GIT_TEST_ASSUME_DIFFERENT_OWNER=true git-upload-pack` keep their environment
+/// (`t0411-clone-from-partial`, `t5605-clone-dirname`).
+pub(crate) fn parse_leading_shell_env_assignments(template: &str) -> (Vec<(String, String)>, &str) {
+    let mut env_pairs = Vec::new();
+    let mut rest = template.trim();
+    while !rest.is_empty() {
+        let Some(token) = rest.split_whitespace().next() else {
+            break;
+        };
+        let Some((key, val)) = token.split_once('=') else {
+            break;
+        };
+        if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            break;
+        }
+        env_pairs.push((key.to_string(), val.to_string()));
+        rest = rest[token.len()..].trim_start();
+    }
+    (env_pairs, rest)
+}
+
 /// Run `f` with `GIT_TRACE_PACKET` lines labeled as `identity` (`fetch`, `clone`, …).
 pub fn with_packet_trace_identity<T>(
     identity: &'static str,
@@ -287,39 +310,6 @@ pub(crate) fn collect_wants_cli(
     collect_wants(advertised, cli_refspecs)
 }
 
-/// Split leading `KEY=value` tokens (shell-style env assignments) from an upload-pack command
-/// string. The remainder is the executable / command tail.
-///
-/// Used when tests pass `--upload-pack="GIT_TEST_ASSUME_DIFFERENT_OWNER=true git-upload-pack"`;
-/// Git runs that via `sh -c`, but grit substitutes its own `upload-pack` binary and must still
-/// apply the prefix environment (`t5605`, `t0411`).
-fn upload_pack_leading_env_assignments(cmd_template: &str) -> (Vec<(String, String)>, &str) {
-    fn next_token(s: &str) -> Option<(&str, &str)> {
-        let s = s.trim_start();
-        if s.is_empty() {
-            return None;
-        }
-        let end = s.find(char::is_whitespace).unwrap_or(s.len());
-        Some((&s[..end], &s[end..]))
-    }
-
-    let mut pairs = Vec::new();
-    let mut rest = cmd_template;
-    while let Some((token, tail)) = next_token(rest) {
-        if token.contains('=') && !token.starts_with('-') {
-            if let Some((k, v)) = token.split_once('=') {
-                if !k.is_empty() {
-                    pairs.push((k.to_string(), v.to_string()));
-                    rest = tail;
-                    continue;
-                }
-            }
-        }
-        return (pairs, rest.trim_start());
-    }
-    (pairs, "")
-}
-
 /// Tests invoke `git-upload-pack`; use grit to serve grit-created object stores.
 ///
 /// `client_proto` is passed to [`protocol_wire::merge_git_protocol_env_for_child`] (use `0` when
@@ -357,10 +347,10 @@ pub(crate) fn spawn_upload_pack_with_proto(
             .with_context(|| format!("failed to spawn grit upload-pack for {}", rp));
     };
 
-    if cmd_template.contains("git-upload-pack") {
-        let (env_assignments, _) = upload_pack_leading_env_assignments(cmd_template);
+    let (leading_env, after_env) = parse_leading_shell_env_assignments(cmd_template);
+    if after_env.contains("git-upload-pack") {
         let mut c = Command::new(grit_executable());
-        for (k, v) in env_assignments {
+        for (k, v) in leading_env {
             c.env(k, v);
         }
         c.arg("upload-pack")
@@ -407,10 +397,10 @@ pub(crate) fn spawn_upload_pack(
     cmd_template: Option<&str>,
     repo_path: &Path,
 ) -> Result<std::process::Child> {
-    // Always negotiate protocol v0 here: [`read_advertisement`] and
-    // [`fetch_upload_pack_negotiate_pack_bytes_with_streams`] implement the v0 ref advertisement
-    // and want/have/done exchange only. Using the user's `protocol.version` (often 2) would leave
-    // the advertisement list empty and break refspec resolution (e.g. t5405 local fetch).
+    // Local fetch/clone uses protocol v0 pkt-line negotiation (`want`/`have`/`done`). Always
+    // spawn the server side without forcing `GIT_PROTOCOL=version=2`, even when the client
+    // defaults to `protocol.version=2` for HTTP/file v2 — otherwise `upload-pack` enters the v2
+    // path and rejects v0 `want` lines as "unknown capability" (t0411 lazy-fetch re-enable).
     spawn_upload_pack_with_proto(cmd_template, repo_path, 0)
 }
 
