@@ -137,7 +137,9 @@ fn main() -> grit_lib::error::Result<()> {
         theirs_tree,
         MergeFavor::default(),
         WhitespaceMergeOptions::default(),
-        "HEAD",
+        "parent of picked commit",
+        "picked",
+        grit_lib::merge_file::ConflictStyle::Merge,
     )?;
 
     if !merged.conflict_content.is_empty() {

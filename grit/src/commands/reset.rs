@@ -1096,6 +1096,10 @@ fn reset_commit(
         if !extra.skip_sequencer_head_cleanup {
             let _ = std::fs::remove_file(repo.git_dir.join("CHERRY_PICK_HEAD"));
             let _ = std::fs::remove_file(repo.git_dir.join("REVERT_HEAD"));
+            let seq = repo.git_dir.join("sequencer");
+            if seq.is_dir() {
+                let _ = std::fs::remove_dir_all(&seq);
+            }
         }
     }
 

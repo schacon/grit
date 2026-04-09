@@ -395,9 +395,22 @@ pub fn run(args: Args) -> Result<()> {
             }
             return Ok(());
         }
-        let oid = match resolve_revision(current, spec) {
-            Ok(oid) => oid,
-            Err(e) => return fail_verify_resolve(quiet, &e, Some(current)),
+        let oid = if matches!(spec, "REVERT_HEAD" | "CHERRY_PICK_HEAD") {
+            let path = current.git_dir.join(spec);
+            let raw = match std::fs::read_to_string(&path) {
+                Ok(s) => s,
+                Err(_) => return fail_verify(quiet, false),
+            };
+            let line = raw.lines().next().unwrap_or("").trim();
+            match line.parse::<grit_lib::objects::ObjectId>() {
+                Ok(o) => o,
+                Err(_) => return fail_verify(quiet, false),
+            }
+        } else {
+            match resolve_revision(current, spec) {
+                Ok(oid) => oid,
+                Err(e) => return fail_verify_resolve(quiet, &e, Some(current)),
+            }
         };
         if let Some(mut len) = short_len {
             if len == 0 {

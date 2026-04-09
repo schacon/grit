@@ -22,7 +22,7 @@ use tempfile::NamedTempFile;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
-use grit_lib::merge_file::MergeFavor;
+use grit_lib::merge_file::{ConflictStyle, MergeFavor};
 use grit_lib::merge_trees::{
     index_tree_oid_matches_head, merge_trees_three_way, WhitespaceMergeOptions,
 };
@@ -35,9 +35,11 @@ use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
 
+use super::merge::cleanup_message;
 use super::sequencer::{
-    rollback_is_safe, sequencer_is_pick_sequence, sequencer_is_revert_sequence,
-    strip_first_sequencer_todo_line, write_abort_safety_file,
+    append_merge_msg_conflict_footer, rollback_is_safe, sequencer_is_pick_sequence,
+    sequencer_is_revert_sequence, strip_first_sequencer_todo_line, unmerged_paths,
+    write_abort_safety_file,
 };
 
 /// Arguments for `grit revert`.
@@ -99,6 +101,10 @@ pub struct Args {
     /// Disable reference-format commit lines even if `revert.reference` is set.
     #[arg(long = "no-reference", conflicts_with = "reference")]
     pub no_reference: bool,
+
+    /// Message cleanup mode for conflict `MERGE_MSG` (matches `git revert --cleanup`).
+    #[arg(long = "cleanup", value_name = "MODE", hide = true)]
+    pub cleanup: Option<String>,
 }
 
 /// Run the `revert` command.
@@ -248,6 +254,9 @@ fn write_revert_sequencer_opts(git_dir: &Path, args: &Args) -> Result<()> {
     if args.no_reference {
         opts.push_str("\treference = false\n");
     }
+    if let Some(ref c) = args.cleanup {
+        opts.push_str(&format!("\tcleanup = {c}\n"));
+    }
     fs::write(seq_dir.join("opts"), &opts)?;
     Ok(())
 }
@@ -294,6 +303,7 @@ fn merge_revert_sequencer_opts(git_dir: &Path, args: &mut Args) {
                     args.no_reference = true;
                     args.reference = false;
                 }
+                "cleanup" => args.cleanup = Some(val.to_string()),
                 _ => {}
             }
         }
@@ -679,6 +689,8 @@ fn resolve_revert_editor(git_dir: &Path) -> String {
     }
     if std::env::var("VISUAL").is_ok() || std::env::var("EDITOR").is_ok() {
         "true".to_owned()
+    } else if !stdin().is_terminal() {
+        "true".to_owned()
     } else {
         "vi".to_owned()
     }
@@ -797,9 +809,21 @@ fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
         error_dirty_index_revert(repo, head_oid)?;
     }
 
+    let config = ConfigSet::load(Some(git_dir), true)?;
+
     let use_reference = should_use_reference_format(git_dir, args)?;
     let comment_char = comment_char_for_revert(git_dir);
     let (favor, ws_opts) = parse_strategy_options_revert(&args.strategy_option);
+    let short_oid = &commit_oid.to_hex()[..7];
+    let subject = commit.message.lines().next().unwrap_or("");
+    let label_theirs = format!("parent of {short_oid} ({subject})");
+    let label_base = format!("{short_oid} ({subject})");
+
+    let conflict_style = match config.get("merge.conflictstyle").as_deref() {
+        Some("diff3") | Some("zdiff3") => ConflictStyle::Diff3,
+        _ => ConflictStyle::Merge,
+    };
+
     let merged = merge_trees_three_way(
         repo,
         commit_tree_oid,
@@ -807,7 +831,9 @@ fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
         parent_tree_oid,
         favor,
         ws_opts,
-        "parent of reverted commit",
+        label_base.as_str(),
+        label_theirs.as_str(),
+        conflict_style,
     )?;
     let mut merged_index = merged.index;
     let conflict_map = merged.conflict_content;
@@ -837,9 +863,6 @@ fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
 
     let (title_line, body_suffix) =
         merge_commit_message_for_revert(&commit, commit_oid, use_reference, comment_char);
-    let short_oid = &commit_oid.to_hex()[..7];
-    let subject = commit.message.lines().next().unwrap_or("");
-
     let template_msg = if use_reference {
         format!("{title_line}\n\n{body_suffix}")
     } else {
@@ -847,19 +870,29 @@ fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
     };
 
     if has_conflicts {
-        let msg = template_msg.clone();
         fs::write(
             git_dir.join("REVERT_HEAD"),
             format!("{}\n", commit_oid.to_hex()),
         )?;
-        fs::write(
-            git_dir.join("CHERRY_PICK_HEAD"),
-            format!("{}\n", commit_oid.to_hex()),
-        )?;
-        fs::write(git_dir.join("MERGE_MSG"), &msg)?;
+
+        let commit_cleanup = config.get("commit.cleanup");
+        let cleanup_mode = args
+            .cleanup
+            .as_deref()
+            .or(commit_cleanup.as_deref())
+            .unwrap_or("default");
+        let scissors_body = cleanup_message(&template_msg, cleanup_mode);
+        let mut merge_msg = scissors_body;
+        if cleanup_mode.eq_ignore_ascii_case("scissors") {
+            let paths = unmerged_paths(&merged_index);
+            append_merge_msg_conflict_footer(&mut merge_msg, &paths);
+        }
+        fs::write(git_dir.join("MERGE_MSG"), &merge_msg)?;
 
         eprintln!("error: could not revert {short_oid}... {subject}");
-        if merge_conflict_advice_enabled(git_dir) {
+        if let Ok(help) = std::env::var("GIT_REVERT_HELP") {
+            eprintln!("hint: {help}");
+        } else if merge_conflict_advice_enabled(git_dir) {
             eprintln!("hint: After resolving the conflicts, mark them with");
             eprintln!("hint: \"git add/rm <pathspec>\", then run");
             eprintln!("hint: \"git revert --continue\".");
@@ -942,6 +975,7 @@ pub(crate) fn do_continue() -> Result<()> {
         edit: false,
         reference: false,
         no_reference: false,
+        cleanup: None,
     };
     merge_revert_sequencer_opts(git_dir, &mut opts);
 
@@ -1029,6 +1063,49 @@ pub(crate) fn do_continue() -> Result<()> {
         cleanup_revert_sequencer_only(git_dir);
     }
 
+    Ok(())
+}
+
+/// After a manual `git commit` finished the current revert, resume remaining `sequencer/todo` reverts.
+pub(crate) fn try_resume_revert_sequence_after_commit(repo: &Repository) -> Result<()> {
+    let git_dir = &repo.git_dir;
+    if !git_dir.join("sequencer").join("todo").exists() {
+        return Ok(());
+    }
+    if !sequencer_is_revert_sequence(git_dir) {
+        return Ok(());
+    }
+    if git_dir.join("REVERT_HEAD").exists() {
+        return Ok(());
+    }
+
+    let mut opts = Args {
+        commits: vec![],
+        no_commit: false,
+        signoff: false,
+        mainline: None,
+        r#continue: true,
+        abort: false,
+        skip: false,
+        quit: false,
+        strategy: None,
+        strategy_option: vec![],
+        no_edit: false,
+        edit: false,
+        reference: false,
+        no_reference: false,
+        cleanup: None,
+    };
+    merge_revert_sequencer_opts(git_dir, &mut opts);
+    validate_revert_sequencer_todo(repo, git_dir)?;
+
+    let remaining = load_revert_sequencer_todo(repo, git_dir);
+    if !remaining.is_empty() {
+        let specs: Vec<String> = remaining.iter().map(|o| o.to_hex()).collect();
+        run_revert_sequence(repo, &specs, &opts, None)?;
+    } else {
+        cleanup_revert_sequencer_only(git_dir);
+    }
     Ok(())
 }
 

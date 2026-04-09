@@ -309,7 +309,7 @@ fn bail_if_index_tree_differs_from_head(
 
 /// The resolve strategy does not allow *any* staged difference from HEAD (including removals),
 /// unlike recursive/ort which only care when the merge would touch those paths.
-fn bail_if_resolve_index_not_clean_vs_head(
+pub(crate) fn bail_if_resolve_index_not_clean_vs_head(
     repo: &Repository,
     head_oid: ObjectId,
     autostash: bool,
@@ -353,6 +353,59 @@ fn bail_if_resolve_index_not_clean_vs_head(
     }
     msg.push_str("Please commit your changes or stash them before you merge.\nAborting");
     bail!("{msg}");
+}
+
+/// Stage-0 index paths that differ from `HEAD^{tree}` (including staged additions/removals).
+pub(crate) fn staged_dirty_paths_vs_head(
+    repo: &Repository,
+    head_oid: ObjectId,
+) -> Result<BTreeSet<String>> {
+    let index = repo.load_index()?;
+    let head_tree = commit_tree(repo, head_oid)?;
+    let head_entries = tree_to_map(tree_to_index_entries(repo, &head_tree, "")?);
+    let mut dirty_paths: BTreeSet<String> = BTreeSet::new();
+    for e in index.entries.iter().filter(|e| e.stage() == 0) {
+        let rel = String::from_utf8_lossy(&e.path).to_string();
+        match head_entries.get(&e.path) {
+            Some(he) => {
+                if he.oid != e.oid || he.mode != e.mode {
+                    dirty_paths.insert(rel);
+                }
+            }
+            None => {
+                dirty_paths.insert(rel);
+            }
+        }
+    }
+    for path in head_entries.keys() {
+        if !index
+            .entries
+            .iter()
+            .any(|e| e.stage() == 0 && e.path == *path)
+        {
+            dirty_paths.insert(String::from_utf8_lossy(path).to_string());
+        }
+    }
+    Ok(dirty_paths)
+}
+
+/// Paths that differ between `parent_tree` and `head_tree` or between `parent_tree` and `theirs_tree`.
+///
+/// Used to detect whether local changes overlap a cherry-pick / revert three-way merge.
+pub(crate) fn merge_touched_paths(
+    repo: &Repository,
+    parent_tree: ObjectId,
+    head_tree: ObjectId,
+    theirs_tree: ObjectId,
+) -> Result<BTreeSet<String>> {
+    let mut paths = BTreeSet::new();
+    for e in diff_trees(&repo.odb, Some(&parent_tree), Some(&head_tree), "")? {
+        paths.insert(e.path().to_string());
+    }
+    for e in diff_trees(&repo.odb, Some(&parent_tree), Some(&theirs_tree), "")? {
+        paths.insert(e.path().to_string());
+    }
+    Ok(paths)
 }
 
 /// Fast-forward index: the merge target tree plus **unrelated** staged additions (paths not in
@@ -7057,8 +7110,8 @@ fn parse_date_to_git_ts(date_str: &str) -> Option<String> {
     None
 }
 
-/// Apply cleanup mode to a commit message.
-fn cleanup_message(msg: &str, mode: &str) -> String {
+/// Apply cleanup mode to a commit message (matches Git `cleanup_mode` for MERGE_MSG templates).
+pub(crate) fn cleanup_message(msg: &str, mode: &str) -> String {
     match mode {
         "verbatim" => {
             // Keep message exactly as-is
