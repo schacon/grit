@@ -538,6 +538,9 @@ pub fn diff_index_to_tree(
 ///
 /// This shows "unstaged" changes — modifications not yet staged.
 ///
+/// Entries with [`IndexEntry::assume_unchanged`] or [`IndexEntry::skip_worktree`] are treated as
+/// matching the work tree without examining the filesystem (Git `CE_VALID` / skip-worktree).
+///
 /// # Parameters
 ///
 /// - `odb` — object database (for hashing worktree files).
@@ -585,6 +588,10 @@ pub fn diff_index_to_worktree(
         // only allocate String if we need it for DiffEntry output.
         let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");
         let is_intent_to_add = ie.intent_to_add();
+
+        if ie.assume_unchanged() || ie.skip_worktree() {
+            continue;
+        }
 
         // Gitlink entries (submodules): compare checked-out HEAD to the recorded commit.
         // An uninitialized path (no `.git` in the directory) is not dirty — same as Git.
