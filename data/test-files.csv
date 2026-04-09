@@ -839,7 +839,7 @@ t4213-log-tabexpand	t4	yes	9	1	8	false	ok	0
 t4214-log-graph-octopus	t4	yes	17	1	16	false	ok	0
 t4215-log-skewed-merges	t4	yes	10	0	10	false	ok	0
 t4216-log-bloom	t4	yes	167	162	5	false	ok	0
-t4217-log-limit	t4	yes	3	1	2	false	ok	0
+t4217-log-limit	t4	yes	3	3	0	true	ok	0
 t4218-log-no-walk	t4	yes	7	7	0	true	ok	0
 t4219-log-date-format	t4	yes	14	14	0	true	ok	0
 t4220-log-source	t4	yes	4	4	0	true	ok	0
