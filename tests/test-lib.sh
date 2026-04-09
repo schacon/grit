@@ -784,18 +784,17 @@ test_unconfig () {
 }
 
 nongit () {
-	local tmpdir
-	tmpdir=$(mktemp -d) &&
+	test -d non-repo ||
+	mkdir non-repo ||
+	return 1
+
 	(
-		cd "$tmpdir" &&
-		GIT_CEILING_DIRECTORIES="$tmpdir" &&
+		GIT_CEILING_DIRECTORIES=$(pwd) &&
 		export GIT_CEILING_DIRECTORIES &&
-		"$@"
+		cd non-repo &&
+		"$@" 2>&7
 	)
-	local rc=$?
-	rm -rf "$tmpdir"
-	return $rc
-}
+} 7>&2 2>&4
 
 test_i18ngrep () {
 	test_grep "$@"
