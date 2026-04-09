@@ -235,10 +235,13 @@ fn check_submodule_name(name: &str) -> bool {
     }
     let b = name.as_bytes();
     // Git `check_submodule_name`: `goto in_component` before the loop — first component.
-    if b.len() >= 2 && b[0] == b'.' && b[1] == b'.'
-        && (b.len() == 2 || b[2] == b'/' || b[2] == b'\\') {
-            return false;
-        }
+    if b.len() >= 2
+        && b[0] == b'.'
+        && b[1] == b'.'
+        && (b.len() == 2 || b[2] == b'/' || b[2] == b'\\')
+    {
+        return false;
+    }
     let mut i = 0usize;
     while i < b.len() {
         let c = b[i];

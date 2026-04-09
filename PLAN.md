@@ -570,6 +570,7 @@ commit → check it off → move on.
 - [ ] `t5583-push-branches` ████████████░░░░░░░░ 5/8 (3 left) — check the consisitency of behavior of --all and --branches
 - [ ] `t5536-fetch-conflicts` ███████████░░░░░░░░░ 4/7 (3 left) — fetch handles conflicting refspecs correctly
 - [x] `t5308-pack-detect-duplicates` ████████████████████ 6/6 (0 left) — handling of duplicate objects in incoming packfiles
+- [x] `t5309-pack-delta-cycles` ████████████████████ 7/7 (0 left) — test index-pack handling of delta cycles in packfiles
 - [ ] `t5549-fetch-push-http` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — fetch/push functionality using the HTTP protocol
 - [x] `t5704-protocol-violations` ████████████████████ 3/3 — Test responses to violations of the network protocol. In most
 
@@ -606,7 +607,6 @@ commit → check it off → move on.
 - [ ] `t5617-clone-submodules-remote` ████░░░░░░░░░░░░░░░░ 2/9 (7 left) — Test cloning repos with submodules using remote-tracking branches
 - [ ] `t5538-push-shallow` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — push from/to a shallow clone
 - [ ] `t5539-fetch-http-shallow` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — fetch/clone from a shallow clone over http
-- [ ] `t5309-pack-delta-cycles` ░░░░░░░░░░░░░░░░░░░░ 0/7 (7 left) — test index-pack handling of delta cycles in packfiles
 - [ ] `t5810-proto-disable-local` █████████████████░░░ 46/54 (8 left) — test disabling of local paths in clone/fetch
 - [ ] `t5545-push-options` ███████░░░░░░░░░░░░░ 5/13 (8 left) — pushing to a repository using push options
 - [ ] `t5322-pack-objects-sparse` █████░░░░░░░░░░░░░░░ 3/11 (8 left) — pack-objects object selection using sparse algorithm
