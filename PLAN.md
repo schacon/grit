@@ -325,7 +325,7 @@ commit → check it off → move on.
 - [ ] `t3920-crlf-messages` ███░░░░░░░░░░░░░░░░░ 3/18 (15 left) — Test ref-filter and pretty APIs for commit and tag messages using CRLF
 - [ ] `t3001-ls-files-others-exclude` ████████░░░░░░░░░░░░ 11/27 (16 left) — git ls-files --others --exclude
 
-- [ ] `t3403-rebase-skip` ████░░░░░░░░░░░░░░░░ 4/20 (16 left) — git rebase --merge --skip tests
+- [x] `t3403-rebase-skip` — git rebase --merge --skip tests (20/20)
 - [ ] `t3308-notes-merge` ███░░░░░░░░░░░░░░░░░ 3/19 (16 left) — Test merging of notes trees
 - [ ] `t3700-add` ██████████████░░░░░░ 41/58 (17 left) — Test of git add, including the -- option.
 - [ ] `t3501-revert-cherry-pick` ███░░░░░░░░░░░░░░░░░ 4/21 (17 left) — miscellaneous basic tests for cherry-pick and revert
