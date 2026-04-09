@@ -723,7 +723,7 @@ t4041-diff-submodule-option	t4	yes	47	17	30	false	ok	0
 t4042-diff-textconv-caching	t4	yes	8	7	1	false	ok	0
 t4043-diff-rename-binary	t4	yes	3	2	1	false	ok	0
 t4044-diff-index-unique-abbrev	t4	yes	2	1	1	false	ok	0
-t4045-diff-relative	t4	yes	38	32	6	false	ok	1
+t4045-diff-relative	t4	yes	38	32	6	false	ok	0
 t4046-diff-unmerged	t4	yes	8	3	5	false	ok	0
 t4047-diff-dirstat	t4	yes	41	4	37	false	ok	0
 t4047-diff-numstat	t4	yes	26	26	0	true	ok	0
@@ -1078,7 +1078,7 @@ t6114-keep-packs	t6	yes	3	3	0	true	ok	0
 t6115-rev-list-du	t6	yes	17	17	0	true	ok	0
 t6120-describe	t6	yes	103	44	59	false	ok	0
 t6120-name-rev	t6	yes	41	41	0	true	ok	0
-t6130-pathspec-noglob	t6	yes	21	8	13	false	ok	0
+t6130-pathspec-noglob	t6	yes	21	21	0	true	ok	0
 t6131-pathspec-icase	t6	yes	9	1	8	false	ok	0
 t6132-pathspec-exclude	t6	yes	31	0	31	false	ok	0
 t6133-pathspec-rev-dwim	t6	yes	6	5	1	false	ok	0

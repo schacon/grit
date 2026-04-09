@@ -264,32 +264,12 @@ pub fn pathspecs_allow_bloom(specs: &[String]) -> bool {
 }
 
 /// True if `path` is matched by `spec` (Git pathspec syntax, including magic and globals).
+///
+/// Same as [`matches_pathspec_with_context`] with default file context (no directory-only
+/// semantics for literal `dir/` pathspecs).
 #[must_use]
 pub fn pathspec_matches(spec: &str, path: &str) -> bool {
-    let (elem_magic, raw_pattern) = parse_element_magic(spec);
-    let magic = combine_magic(elem_magic);
-
-    if magic.literal && magic.glob {
-        // Git dies; treat as non-match for robustness.
-        return false;
-    }
-
-    if magic.exclude {
-        // Exclude pathspecs are handled by higher layers; do not match positively here.
-        return false;
-    }
-
-    let pattern = strip_top_magic(raw_pattern);
-    let path_for_match = if let Some(prefix) = magic.prefix.as_deref() {
-        if !path.starts_with(prefix) {
-            return false;
-        }
-        &path[prefix.len()..]
-    } else {
-        path
-    };
-
-    pathspec_matches_tail(pattern, path_for_match, magic)
+    matches_pathspec_with_context(spec, path, PathspecMatchContext::default())
 }
 
 fn pathspec_matches_tail(pattern: &str, path: &str, magic: PathspecMagic) -> bool {
@@ -313,14 +293,10 @@ fn pathspec_matches_tail(pattern: &str, path: &str, magic: PathspecMagic) -> boo
     let path_bytes = path.as_bytes();
     let simple = simple_length(pattern);
 
-    if simple < pattern.len() {
-        if wildmatch(pattern_bytes, path_bytes, wm_flags) {
-            return true;
-        }
-    } else if ps_str_eq(pattern, path, magic.icase) {
+    // Git `match_pathspec_item`: exact / directory prefix before `git_fnmatch`.
+    if ps_str_eq(pattern, path, magic.icase) {
         return true;
     }
-
     if let Some(prefix) = pattern.strip_suffix('/') {
         if ps_str_eq(prefix, path, magic.icase) {
             return true;
@@ -329,11 +305,35 @@ fn pathspec_matches_tail(pattern: &str, path: &str, magic: PathspecMagic) -> boo
         if path_starts_with(path, &prefix_slash, magic.icase) {
             return true;
         }
-        return false;
+    } else {
+        let prefix_slash = format!("{pattern}/");
+        if path_starts_with(path, &prefix_slash, magic.icase) {
+            return true;
+        }
     }
 
-    let prefix_slash = format!("{pattern}/");
-    path == pattern || path_starts_with(path, &prefix_slash, magic.icase)
+    // Wildcard: require literal bytes up to `simple_length`, then wildmatch the tail only.
+    if simple < pattern.len() {
+        if path_bytes.len() < simple {
+            return false;
+        }
+        let path_lit = &path_bytes[..simple];
+        let pat_lit = &pattern_bytes[..simple];
+        let same = if magic.icase {
+            path_lit.eq_ignore_ascii_case(pat_lit)
+        } else {
+            path_lit == pat_lit
+        };
+        if !same {
+            return false;
+        }
+        let pat_rest = &pattern[simple..];
+        let path_rest = &path[simple..];
+        return wildmatch(pat_rest.as_bytes(), path_rest.as_bytes(), wm_flags);
+    }
+
+    ps_str_eq(pattern, path, magic.icase)
+        || path_starts_with(path, &format!("{pattern}/"), magic.icase)
 }
 
 fn ps_str_eq(a: &str, b: &str, icase: bool) -> bool {
@@ -382,7 +382,9 @@ pub fn matches_pathspec(spec: &str, path: &str) -> bool {
     matches_pathspec_with_context(spec, path, PathspecMatchContext::default())
 }
 
-/// Like [`matches_pathspec`], but uses `ctx` for trailing-`/` literal pathspecs.
+/// Like [`matches_pathspec`], but uses `ctx` for trailing-`/` literal pathspecs and for
+/// wildcard pathspecs where the pattern continues after a directory boundary (Git
+/// `matches_pathspec` + directory semantics).
 #[must_use]
 pub fn matches_pathspec_with_context(spec: &str, path: &str, ctx: PathspecMatchContext) -> bool {
     let spec_nfc: Cow<'_, str> = if pathspec_precompose_enabled() {
@@ -403,37 +405,67 @@ pub fn matches_pathspec_with_context(spec: &str, path: &str, ctx: PathspecMatchC
         return true;
     }
 
-    if trimmed.contains('*') || trimmed.contains('?') || trimmed.contains('[') {
-        let flags = if trimmed.contains("**") {
-            WM_PATHNAME
-        } else {
-            0
-        };
-        if wildmatch(trimmed.as_bytes(), path.as_bytes(), flags) {
-            return true;
-        }
-        if (ctx.is_directory || ctx.is_git_submodule)
-            && !path.is_empty()
-            && trimmed.len() > path.len()
-            && trimmed.as_bytes().get(path.len()) == Some(&b'/')
-            && trimmed.starts_with(path)
-        {
-            return true;
-        }
+    let (elem_magic, raw_pattern) = parse_element_magic(trimmed);
+    let magic = combine_magic(elem_magic);
+
+    if magic.literal && magic.glob {
+        return false;
+    }
+    if magic.exclude {
         return false;
     }
 
-    if let Some(prefix) = trimmed.strip_suffix('/') {
-        if path.starts_with(&format!("{prefix}/")) {
-            return true;
+    let pattern = strip_top_magic(raw_pattern);
+    let path_for_match = if let Some(prefix) = magic.prefix.as_deref() {
+        if !path.starts_with(prefix) {
+            return false;
         }
-        if path == prefix {
-            return ctx.is_directory || ctx.is_git_submodule;
+        &path[prefix.len()..]
+    } else {
+        path
+    };
+
+    if magic.literal {
+        if let Some(prefix) = pattern.strip_suffix('/') {
+            if path_for_match.starts_with(&format!("{prefix}/")) {
+                return true;
+            }
+            if path_for_match == prefix {
+                return ctx.is_directory || ctx.is_git_submodule;
+            }
+            return false;
         }
-        return false;
+        return path_for_match == pattern || path_for_match.starts_with(&format!("{pattern}/"));
     }
 
-    path == trimmed || path.starts_with(&format!("{trimmed}/"))
+    // No wildcards and trailing `/`: directory-only semantics (Git `matches_pathspec`).
+    if let Some(prefix) = pattern.strip_suffix('/') {
+        if simple_length(pattern) == pattern.len() {
+            if path_for_match.starts_with(&format!("{prefix}/")) {
+                return true;
+            }
+            if path_for_match == prefix {
+                return ctx.is_directory || ctx.is_git_submodule;
+            }
+            return false;
+        }
+    }
+
+    if pathspec_matches_tail(pattern, path_for_match, magic) {
+        return true;
+    }
+
+    if (ctx.is_directory || ctx.is_git_submodule)
+        && !path_for_match.is_empty()
+        && pattern.len() > path_for_match.len()
+        && pattern.as_bytes().get(path_for_match.len()) == Some(&b'/')
+        && pattern.starts_with(path_for_match)
+        && simple_length(pattern) < pattern.len()
+    {
+        return true;
+    }
+
+    false
 }
 
 /// Parse a Git mode string (e.g. `100644`, `040000`) into a [`PathspecMatchContext`].
@@ -515,6 +547,12 @@ pub fn wildmatch_flags_icase_glob(icase: bool, glob: bool) -> u32 {
 #[cfg(test)]
 mod tree_entry_pathspec_tests {
     use super::*;
+
+    #[test]
+    fn t6130_bracket_filename_matches_pathspec() {
+        assert!(matches_pathspec("f[o][o]", "f[o][o]"));
+        assert!(matches_pathspec(":(glob)f[o][o]", "f[o][o]"));
+    }
 
     #[test]
     fn literal_prefix_and_exact() {

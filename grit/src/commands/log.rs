@@ -4559,9 +4559,9 @@ fn commit_touches_paths(
     Ok(false)
 }
 
-/// Check if a file path matches a pathspec (prefix match or exact match).
+/// Check if a file path matches a pathspec (Git magic + `GIT_*_PATHSPECS` globals).
 fn path_matches(path: &str, pathspec: &str) -> bool {
-    crate::pathspec::pathspec_matches(pathspec, path)
+    grit_lib::pathspec::matches_pathspec(pathspec, path)
 }
 
 /// Extract unix timestamp from an author/committer line.
