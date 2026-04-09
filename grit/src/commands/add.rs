@@ -9,6 +9,7 @@ use grit_lib::attributes::{parse_gitattributes_file_content, validate_rules_for_
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{self, ConversionConfig, GitAttributes};
 use grit_lib::diff::stat_matches;
+use grit_lib::error::Error;
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{entry_from_metadata, normalize_mode, Index, IndexEntry};
 #[allow(unused_imports)]
@@ -17,6 +18,7 @@ use grit_lib::objects::ObjectKind;
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::wildmatch::wildmatch;
+use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
@@ -115,6 +117,37 @@ pub struct Args {
     /// NUL-terminated pathspec input (requires --pathspec-from-file).
     #[arg(long = "pathspec-file-nul")]
     pub pathspec_file_nul: bool,
+}
+
+/// Flags for [`stage_file`] shared by `git add` and `git commit <paths>`.
+pub(crate) struct StageFileContext<'a> {
+    pub dry_run: bool,
+    pub verbose: bool,
+    pub intent_to_add: bool,
+    pub chmod: Option<&'a str>,
+}
+
+impl StageFileContext<'_> {
+    /// Staging as performed by `git commit` pathspecs (no dry-run, no chmod, no intent-to-add).
+    pub fn for_commit() -> Self {
+        Self {
+            dry_run: false,
+            verbose: false,
+            intent_to_add: false,
+            chmod: None,
+        }
+    }
+}
+
+impl<'a> From<&'a Args> for StageFileContext<'a> {
+    fn from(a: &'a Args) -> Self {
+        Self {
+            dry_run: a.dry_run,
+            verbose: a.verbose,
+            intent_to_add: a.intent_to_add,
+            chmod: a.chmod.as_deref(),
+        }
+    }
 }
 
 /// Run the `add` command.
@@ -293,6 +326,7 @@ pub fn run(mut args: Args) -> Result<()> {
             work_tree,
             prefix.as_deref(),
             &args,
+            &repo,
             &add_cfg,
         )?;
     } else {
@@ -375,12 +409,144 @@ pub fn run(mut args: Args) -> Result<()> {
     Ok(())
 }
 
-struct AddConfig {
-    core_filemode: bool,
-    ignore_errors: bool,
-    conv: ConversionConfig,
-    attrs: GitAttributes,
-    config: ConfigSet,
+pub(crate) struct AddConfig {
+    pub core_filemode: bool,
+    pub ignore_errors: bool,
+    pub conv: ConversionConfig,
+    pub attrs: GitAttributes,
+    pub config: ConfigSet,
+}
+
+/// Stage pathspecs the same way `git commit <paths>` does (recursive dirs, CRLF clean, etc.).
+pub(crate) fn stage_pathspecs_for_commit(
+    repo: &Repository,
+    work_tree: &Path,
+    pathspecs: &[String],
+    add_cfg: &AddConfig,
+) -> Result<HashSet<Vec<u8>>> {
+    let index_path = resolved_env_index_path(repo);
+    let mut index = match repo.load_index_at(&index_path) {
+        Ok(idx) => idx,
+        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
+        Err(e) => return Err(e.into()),
+    };
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| work_tree.to_path_buf());
+    let prefix = crate::pathspec::pathdiff(&cwd, work_tree);
+
+    let mut ignore_matcher = Some(IgnoreMatcher::from_repository(repo)?);
+    let odb = &repo.odb;
+    let ctx = StageFileContext::for_commit();
+
+    let mut matched_paths = HashSet::new();
+
+    for spec in pathspecs {
+        let resolved = crate::pathspec::resolve_pathspec(spec, work_tree, prefix.as_deref());
+
+        if !crate::pathspec::has_glob_chars(&resolved) {
+            let abs_path = work_tree.join(&resolved);
+            let meta = match fs::symlink_metadata(&abs_path) {
+                Ok(m) => m,
+                Err(_) => {
+                    index.remove(resolved.as_bytes());
+                    matched_paths.insert(resolved.as_bytes().to_vec());
+                    continue;
+                }
+            };
+
+            let is_real_dir = !meta.file_type().is_symlink() && meta.file_type().is_dir();
+            if is_real_dir {
+                if is_nested_embedded_git_repo(&abs_path, repo) {
+                    stage_gitlink(
+                        odb, &mut index, work_tree, &resolved, &abs_path, false, false, false,
+                    )?;
+                    matched_paths.insert(resolved.as_bytes().to_vec());
+                    continue;
+                }
+                let rels = collect_paths_for_stage_from_directory(
+                    &abs_path,
+                    work_tree,
+                    repo,
+                    &mut ignore_matcher,
+                    false,
+                )?;
+                for rel in rels {
+                    let file_abs = work_tree.join(&rel);
+                    stage_file(
+                        odb, &mut index, work_tree, &rel, &file_abs, repo, &ctx, add_cfg,
+                    )?;
+                    matched_paths.insert(rel.as_bytes().to_vec());
+                }
+                continue;
+            }
+
+            stage_file(
+                odb, &mut index, work_tree, &resolved, &abs_path, repo, &ctx, add_cfg,
+            )?;
+            matched_paths.insert(resolved.as_bytes().to_vec());
+            continue;
+        }
+
+        let (dir_prefix, pattern) = if let Some(slash_pos) = resolved.rfind('/') {
+            (&resolved[..slash_pos], &resolved[slash_pos + 1..])
+        } else {
+            ("", resolved.as_str())
+        };
+
+        let search_dir = if dir_prefix.is_empty() {
+            work_tree.to_path_buf()
+        } else {
+            work_tree.join(dir_prefix)
+        };
+
+        let mut spec_matched = false;
+        let mut matched_rels: Vec<String> = Vec::new();
+        if let Ok(entries) = fs::read_dir(&search_dir) {
+            for entry in entries.flatten() {
+                let name_str = entry.file_name().to_string_lossy().to_string();
+                if name_str == ".git" {
+                    continue;
+                }
+                if !wildmatch(pattern.as_bytes(), name_str.as_bytes(), 0) {
+                    continue;
+                }
+                let rel = if dir_prefix.is_empty() {
+                    name_str.clone()
+                } else {
+                    format!("{dir_prefix}/{name_str}")
+                };
+                matched_rels.push(rel);
+            }
+        }
+        if pattern.contains('[') && fs::symlink_metadata(search_dir.join(pattern)).is_ok() {
+            let rel = if dir_prefix.is_empty() {
+                pattern.to_string()
+            } else {
+                format!("{dir_prefix}/{pattern}")
+            };
+            if !matched_rels.contains(&rel) {
+                matched_rels.push(rel);
+            }
+        }
+
+        for rel in matched_rels {
+            let abs_path = work_tree.join(&rel);
+            if fs::symlink_metadata(&abs_path).is_ok() {
+                stage_file(
+                    odb, &mut index, work_tree, &rel, &abs_path, repo, &ctx, add_cfg,
+                )?;
+                spec_matched = true;
+                matched_paths.insert(rel.as_bytes().to_vec());
+            }
+        }
+
+        if !spec_matched {
+            bail!("pathspec '{spec}' did not match any file(s) known to git");
+        }
+    }
+
+    repo.write_index_at(&index_path, &mut index)?;
+    Ok(matched_paths)
 }
 
 #[allow(dead_code)]
@@ -578,7 +744,16 @@ fn add_all(
 
     for rel_path in &paths {
         let abs_path = work_tree.join(rel_path);
-        if let Err(e) = stage_file(odb, index, work_tree, rel_path, &abs_path, args, add_cfg) {
+        if let Err(e) = stage_file(
+            odb,
+            index,
+            work_tree,
+            rel_path,
+            &abs_path,
+            repo,
+            &StageFileContext::from(args),
+            add_cfg,
+        ) {
             if add_cfg.ignore_errors {
                 eprintln!("warning: {e}");
             } else {
@@ -630,6 +805,7 @@ fn update_tracked(
     work_tree: &Path,
     prefix: Option<&str>,
     args: &Args,
+    repo: &Repository,
     add_cfg: &AddConfig,
 ) -> Result<()> {
     // If explicit pathspecs given with -u, validate that each matches a tracked file.
@@ -713,7 +889,16 @@ fn update_tracked(
                     }
                 }
             } else {
-                stage_file(odb, index, work_tree, path_str, &abs_path, args, add_cfg)?;
+                stage_file(
+                    odb,
+                    index,
+                    work_tree,
+                    path_str,
+                    &abs_path,
+                    repo,
+                    &StageFileContext::from(args),
+                    add_cfg,
+                )?;
             }
         } else {
             if args.verbose || args.dry_run {
@@ -822,12 +1007,20 @@ fn add_path(
             }
         }
 
-        // Check for embedded repository (directory with its own .git)
-        let embedded_git = abs_path.join(".git");
-        if embedded_git.exists() {
+        // Nested repository (subdirectory with its own .git, not the superproject root).
+        if is_nested_embedded_git_repo(&abs_path, repo) {
             // This is an embedded repository — stage as a gitlink (160000)
-            return stage_gitlink(odb, index, work_tree, path, &abs_path, args)
-                .map_err(AddPathError::IoError);
+            return stage_gitlink(
+                odb,
+                index,
+                work_tree,
+                path,
+                &abs_path,
+                args.dry_run,
+                args.verbose,
+                args.no_warn_embedded_repo,
+            )
+            .map_err(AddPathError::IoError);
         }
 
         let mut paths = Vec::new();
@@ -841,7 +1034,16 @@ fn add_path(
         )?;
         for rel_path in &paths {
             let file_abs = work_tree.join(rel_path);
-            if let Err(e) = stage_file(odb, index, work_tree, rel_path, &file_abs, args, add_cfg) {
+            if let Err(e) = stage_file(
+                odb,
+                index,
+                work_tree,
+                rel_path,
+                &file_abs,
+                repo,
+                &StageFileContext::from(args),
+                add_cfg,
+            ) {
                 if add_cfg.ignore_errors {
                     eprintln!("warning: {e}");
                 } else {
@@ -870,8 +1072,17 @@ fn add_path(
                 }
             }
         }
-        stage_file(odb, index, work_tree, path, &abs_path, args, add_cfg)
-            .map_err(AddPathError::IoError)?;
+        stage_file(
+            odb,
+            index,
+            work_tree,
+            path,
+            &abs_path,
+            repo,
+            &StageFileContext::from(args),
+            add_cfg,
+        )
+        .map_err(AddPathError::IoError)?;
     }
 
     Ok(())
@@ -915,7 +1126,9 @@ fn stage_gitlink(
     _work_tree: &Path,
     rel_path: &str,
     abs_path: &Path,
-    args: &Args,
+    dry_run: bool,
+    verbose: bool,
+    no_warn_embedded_repo: bool,
 ) -> Result<()> {
     let git_dir = embedded_repository_git_dir(abs_path)?;
     let embedded_head_path = git_dir.join("HEAD");
@@ -949,7 +1162,7 @@ fn stage_gitlink(
         .unwrap_or(false);
 
     // Warn about embedded repository unless suppressed
-    if !args.no_warn_embedded_repo && !already_tracked {
+    if !no_warn_embedded_repo && !already_tracked {
         eprintln!("warning: adding embedded git repository: {}", rel_path);
         eprintln!("hint: You've added another git repository inside your current repository.");
         eprintln!("hint: Clones of the outer repository will not contain the contents of");
@@ -966,7 +1179,7 @@ fn stage_gitlink(
         eprintln!("hint: See \"git help submodule\" for more information.");
     }
 
-    if args.dry_run {
+    if dry_run {
         println!("add '{}'", rel_path);
         return Ok(());
     }
@@ -993,7 +1206,7 @@ fn stage_gitlink(
     };
     index.add_or_replace(entry);
 
-    if args.verbose {
+    if verbose {
         println!("add '{}'", rel_path);
     }
 
@@ -1004,6 +1217,21 @@ fn path_is_symlink(abs_path: &Path) -> bool {
     fs::symlink_metadata(abs_path)
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false)
+}
+
+/// True when `abs_path/.git` is a **nested** repository, not this repo's own `.git` at the work tree root.
+fn is_nested_embedded_git_repo(abs_path: &Path, repo: &Repository) -> bool {
+    let embedded = abs_path.join(".git");
+    if !embedded.exists() {
+        return false;
+    }
+    let Ok(emb) = fs::canonicalize(&embedded) else {
+        return true;
+    };
+    let Ok(super_git) = fs::canonicalize(&repo.git_dir) else {
+        return true;
+    };
+    emb != super_git
 }
 
 fn remove_obstructing_parent_file_entries(index: &mut Index, rel_path: &str) {
@@ -1023,17 +1251,18 @@ fn remove_obstructing_parent_file_entries(index: &mut Index, rel_path: &str) {
 }
 
 /// Stage a single file into the index.
-fn stage_file(
+pub(crate) fn stage_file(
     odb: &Odb,
     index: &mut Index,
     _work_tree: &Path,
     rel_path: &str,
     abs_path: &Path,
-    args: &Args,
+    repo: &Repository,
+    ctx: &StageFileContext<'_>,
     add_cfg: &AddConfig,
 ) -> Result<()> {
-    if args.dry_run {
-        if args.chmod.is_some() {
+    if ctx.dry_run {
+        if ctx.chmod.is_some() {
             // Don't actually stage, just check if the file exists
             return Ok(());
         }
@@ -1058,11 +1287,23 @@ fn stage_file(
 
     // Submodule / embedded repo roots appear as directories with `.git`; `walk_directory` records
     // the directory path without recursing, so we must stage them as gitlinks here.
-    if meta.is_dir() && !meta.file_type().is_symlink() && abs_path.join(".git").exists() {
-        return stage_gitlink(odb, index, _work_tree, rel_path, abs_path, args);
+    if meta.is_dir()
+        && !meta.file_type().is_symlink()
+        && is_nested_embedded_git_repo(abs_path, repo)
+    {
+        return stage_gitlink(
+            odb,
+            index,
+            _work_tree,
+            rel_path,
+            abs_path,
+            ctx.dry_run,
+            ctx.verbose,
+            false,
+        );
     }
 
-    if args.intent_to_add {
+    if ctx.intent_to_add {
         // Don't clobber existing entries — only add the intent marker if not already staged
         if index.get(rel_path.as_bytes(), 0).is_some() {
             return Ok(());
@@ -1092,7 +1333,7 @@ fn stage_file(
         };
         entry.set_intent_to_add(true);
         index.add_or_replace(entry);
-        if args.verbose {
+        if ctx.verbose {
             println!("add '{rel_path}'");
         }
         return Ok(());
@@ -1117,7 +1358,7 @@ fn stage_file(
     };
 
     // Handle --chmod flag
-    let final_mode = if let Some(ref chmod_val) = args.chmod {
+    let final_mode = if let Some(chmod_val) = ctx.chmod {
         if is_symlink {
             let display_path = rel_path;
             eprintln!("warning: cannot chmod {} '{}'", chmod_val, display_path);
@@ -1127,7 +1368,7 @@ fn stage_file(
                 display_path
             ));
         }
-        match chmod_val.as_str() {
+        match chmod_val {
             "+x" => 0o100755,
             "-x" => 0o100644,
             other => bail!("unrecognized --chmod value: {}", other),
@@ -1137,7 +1378,7 @@ fn stage_file(
     };
 
     // Skip if index already has this file with matching stat data and no chmod override
-    if args.chmod.is_none() {
+    if ctx.chmod.is_none() {
         if let Some(existing) = index.get(rel_path.as_bytes(), 0) {
             if stat_matches(existing, &meta) && existing.mode == final_mode {
                 return Ok(());
@@ -1164,7 +1405,17 @@ fn stage_file(
         } else {
             raw
         };
-        match crlf::convert_to_git(&raw, rel_path, &add_cfg.conv, &file_attrs) {
+        let prior_blob: Option<Vec<u8>> = index
+            .get(rel_path.as_bytes(), 0)
+            .filter(|e| e.oid != ObjectId::zero())
+            .and_then(|e| odb.read(&e.oid).ok())
+            .map(|o| o.data);
+        let opts = crlf::ConvertToGitOpts {
+            index_blob: prior_blob.as_deref(),
+            renormalize: false,
+            check_safecrlf: true,
+        };
+        match crlf::convert_to_git_with_opts(&raw, rel_path, &add_cfg.conv, &file_attrs, opts) {
             Ok(converted) => converted,
             Err(msg) => bail!("{msg}"),
         }
@@ -1179,7 +1430,7 @@ fn stage_file(
                              // path — this is how `git add` resolves merge/cherry-pick conflicts.
     index.stage_file(entry);
 
-    if args.verbose {
+    if ctx.verbose {
         println!("add '{rel_path}'");
     }
 
@@ -1269,6 +1520,20 @@ fn is_pid_running(pid: u32) -> bool {
         let _ = pid;
         false
     }
+}
+
+/// Collect repository-relative paths under `dir` for staging (same rules as `git add <dir>`:
+/// skips `.git`, ignored paths unless `force`, records embedded repos as single paths).
+pub(crate) fn collect_paths_for_stage_from_directory(
+    dir: &Path,
+    work_tree: &Path,
+    repo: &Repository,
+    ignore_matcher: &mut Option<IgnoreMatcher>,
+    force: bool,
+) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    walk_directory(dir, work_tree, &mut out, repo, ignore_matcher, force)?;
+    Ok(out)
 }
 
 /// Recursively walk a directory, collecting relative paths (skipping .git and ignored files).
@@ -1393,7 +1658,7 @@ fn check_symlink_in_path(work_tree: &Path, rel_path: &Path) -> Option<PathBuf> {
 ///
 /// If the pathspec does not contain glob characters, returns it unchanged.
 /// Otherwise, matches it against files/dirs in the working tree directory.
-fn expand_glob_pathspec(pathspec: &str, work_tree: &Path) -> Vec<String> {
+pub(crate) fn expand_glob_pathspec(pathspec: &str, work_tree: &Path) -> Vec<String> {
     if !crate::pathspec::has_glob_chars(pathspec) {
         return vec![pathspec.to_owned()];
     }

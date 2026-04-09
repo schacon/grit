@@ -327,7 +327,24 @@ pub fn run(mut args: Args) -> Result<()> {
         let Some(wt) = work_tree else {
             bail!("pathspec requires a work tree");
         };
-        Some(stage_pathspec_files(&repo, wt, &args.pathspec)?)
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let core_filemode = config
+            .get_bool("core.filemode")
+            .and_then(|r| r.ok())
+            .unwrap_or(true);
+        let add_cfg = crate::commands::add::AddConfig {
+            core_filemode,
+            ignore_errors: false,
+            conv: grit_lib::crlf::ConversionConfig::from_config(&config),
+            attrs: grit_lib::crlf::load_gitattributes(wt),
+            config,
+        };
+        Some(crate::commands::add::stage_pathspecs_for_commit(
+            &repo,
+            wt,
+            &args.pathspec,
+            &add_cfg,
+        )?)
     } else {
         None
     };
@@ -979,122 +996,6 @@ fn walk_untracked(
         }
     }
     Ok(())
-}
-
-/// Stage specific files given as pathspec arguments to `commit`.
-///
-/// Returns the set of repository-relative paths that were staged (or removed) for this commit.
-fn stage_pathspec_files(
-    repo: &Repository,
-    work_tree: &Path,
-    pathspecs: &[String],
-) -> Result<HashSet<Vec<u8>>> {
-    use std::os::unix::fs::MetadataExt;
-
-    let index_path = resolved_index_path(repo);
-    let mut index = match repo.load_index_at(&index_path) {
-        Ok(idx) => idx,
-        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
-        Err(e) => return Err(e.into()),
-    };
-
-    let cwd = std::env::current_dir().unwrap_or_else(|_| work_tree.to_path_buf());
-    let prefix = crate::pathspec::pathdiff(&cwd, work_tree);
-
-    let mut matched_paths = HashSet::new();
-
-    for spec in pathspecs {
-        let resolved = crate::pathspec::resolve_pathspec(spec, work_tree, prefix.as_deref());
-        if !crate::pathspec::has_glob_chars(&resolved) {
-            let abs_path = work_tree.join(&resolved);
-            if let Ok(meta) = fs::symlink_metadata(&abs_path) {
-                let data = if meta.file_type().is_symlink() {
-                    let target = fs::read_link(&abs_path)?;
-                    target.to_string_lossy().into_owned().into_bytes()
-                } else {
-                    fs::read(&abs_path)?
-                };
-                let oid = repo.odb.write(ObjectKind::Blob, &data)?;
-                let mode = grit_lib::index::normalize_mode(meta.mode());
-                let raw_path = resolved.as_bytes().to_vec();
-                let entry = grit_lib::index::entry_from_stat(&abs_path, &raw_path, oid, mode)?;
-                index.add_or_replace(entry);
-                matched_paths.insert(raw_path);
-            } else {
-                index.remove(resolved.as_bytes());
-                matched_paths.insert(resolved.as_bytes().to_vec());
-            }
-            continue;
-        }
-
-        let (dir_prefix, pattern) = if let Some(slash_pos) = resolved.rfind('/') {
-            (&resolved[..slash_pos], &resolved[slash_pos + 1..])
-        } else {
-            ("", resolved.as_str())
-        };
-
-        let search_dir = if dir_prefix.is_empty() {
-            work_tree.to_path_buf()
-        } else {
-            work_tree.join(dir_prefix)
-        };
-
-        let mut spec_matched = false;
-        let mut matched_rels: Vec<String> = Vec::new();
-        if let Ok(entries) = fs::read_dir(&search_dir) {
-            for entry in entries.flatten() {
-                let name_str = entry.file_name().to_string_lossy().to_string();
-                if name_str == ".git" {
-                    continue;
-                }
-                if !grit_lib::wildmatch::wildmatch(pattern.as_bytes(), name_str.as_bytes(), 0) {
-                    continue;
-                }
-                let rel = if dir_prefix.is_empty() {
-                    name_str.clone()
-                } else {
-                    format!("{dir_prefix}/{name_str}")
-                };
-                matched_rels.push(rel);
-            }
-        }
-        if pattern.contains('[') && fs::symlink_metadata(search_dir.join(pattern)).is_ok() {
-            let rel = if dir_prefix.is_empty() {
-                pattern.to_string()
-            } else {
-                format!("{dir_prefix}/{pattern}")
-            };
-            if !matched_rels.contains(&rel) {
-                matched_rels.push(rel);
-            }
-        }
-
-        for rel in matched_rels {
-            let abs_path = work_tree.join(&rel);
-            if let Ok(meta) = fs::symlink_metadata(&abs_path) {
-                let data = if meta.file_type().is_symlink() {
-                    let target = fs::read_link(&abs_path)?;
-                    target.to_string_lossy().into_owned().into_bytes()
-                } else {
-                    fs::read(&abs_path)?
-                };
-                let oid = repo.odb.write(ObjectKind::Blob, &data)?;
-                let mode = grit_lib::index::normalize_mode(meta.mode());
-                let raw_path = rel.as_bytes().to_vec();
-                let entry = grit_lib::index::entry_from_stat(&abs_path, &raw_path, oid, mode)?;
-                index.add_or_replace(entry);
-                spec_matched = true;
-                matched_paths.insert(raw_path);
-            }
-        }
-
-        if !spec_matched {
-            bail!("pathspec '{spec}' did not match any file(s) known to git");
-        }
-    }
-
-    repo.write_index_at(&index_path, &mut index)?;
-    Ok(matched_paths)
 }
 
 /// Auto-stage tracked files (for `commit -a`).

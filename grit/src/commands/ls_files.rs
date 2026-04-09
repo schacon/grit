@@ -200,6 +200,8 @@ pub fn run(args: Args) -> Result<()> {
         pathspec_filter.push(Pathspec::Literal(cwd_prefix.clone()));
     }
 
+    pathspec_filter = expand_ls_files_globs(pathspec_filter, work_tree, &index);
+
     // Track which pathspecs matched at least one entry (for --error-unmatch).
     let mut matched: Vec<bool> = vec![false; pathspec_filter.len()];
 
@@ -228,6 +230,8 @@ pub fn run(args: Args) -> Result<()> {
     } else {
         None
     };
+
+    let attrs_for_eol = grit_lib::crlf::load_gitattributes(work_tree);
 
     let mut last_dedup_path: Option<Vec<u8>> = None;
     for entry in &index.entries {
@@ -323,45 +327,26 @@ pub fn run(args: Args) -> Result<()> {
             let name = String::from_utf8_lossy(display);
             let path_str = std::str::from_utf8(&entry.path).unwrap_or("");
 
-            // Determine index line endings
+            // Index / worktree EOL stats: match Git `convert.c` `gather_convert_stats_ascii`.
             let index_eol = if entry.oid != grit_lib::diff::zero_oid() {
                 if let Ok(obj) = repo.odb.read(&entry.oid) {
-                    describe_eol(&obj.data)
+                    grit_lib::crlf::gather_convert_stats_ascii(&obj.data).to_string()
                 } else {
                     "binary".to_string()
                 }
             } else {
-                "".to_string()
+                String::new()
             };
 
-            // Determine worktree line endings
             let wt_path = work_tree.join(path_str);
             let wt_eol = if let Ok(data) = std::fs::read(&wt_path) {
-                describe_eol(&data)
+                grit_lib::crlf::gather_convert_stats_ascii(&data).to_string()
             } else {
-                "".to_string()
+                String::new()
             };
 
-            // Determine attribute setting
-            let attr_str = {
-                use grit_lib::crlf;
-                let attrs = crlf::load_gitattributes(work_tree);
-                let file_attrs = crlf::get_file_attrs(&attrs, path_str, &config);
-                match file_attrs.text {
-                    crlf::TextAttr::Set => match file_attrs.eol {
-                        crlf::EolAttr::Lf => "text=auto eol=lf".to_string(),
-                        crlf::EolAttr::Crlf => "text=auto eol=crlf".to_string(),
-                        crlf::EolAttr::Unspecified => "text".to_string(),
-                    },
-                    crlf::TextAttr::Auto => match file_attrs.eol {
-                        crlf::EolAttr::Lf => "text=auto eol=lf".to_string(),
-                        crlf::EolAttr::Crlf => "text=auto eol=crlf".to_string(),
-                        crlf::EolAttr::Unspecified => "text=auto".to_string(),
-                    },
-                    crlf::TextAttr::Unset => "binary".to_string(),
-                    crlf::TextAttr::Unspecified => "".to_string(),
-                }
-            };
+            let attr_str =
+                grit_lib::crlf::convert_attr_ascii_for_ls_files(&attrs_for_eol, path_str, &config);
 
             write!(out, "i/{index_eol} w/{wt_eol} attr/{attr_str}\t{name}")?;
             out.write_all(&[term])?;
@@ -540,7 +525,21 @@ pub fn run(args: Args) -> Result<()> {
         for display in &output_paths {
             let name = String::from_utf8_lossy(display);
             let qname = format_ls_path(&name, use_nul, quote_path);
-            if args.show_tag {
+            if args.eol {
+                let path_str = String::from_utf8_lossy(display);
+                let full = work_tree.join(path_str.as_ref());
+                let wt_eol = if let Ok(data) = std::fs::read(&full) {
+                    grit_lib::crlf::gather_convert_stats_ascii(&data).to_string()
+                } else {
+                    String::new()
+                };
+                let attr_str = grit_lib::crlf::convert_attr_ascii_for_ls_files(
+                    &attrs_for_eol,
+                    path_str.as_ref(),
+                    &config,
+                );
+                write!(out, "i/ w/{wt_eol} attr/{attr_str}\t{qname}")?;
+            } else if args.show_tag {
                 write!(out, "? {qname}")?;
             } else {
                 write!(out, "{qname}")?;
@@ -670,6 +669,36 @@ enum Pathspec {
     Magic(String),
 }
 
+/// When a glob pathspec matches nothing in the index, expand it against the working tree
+/// (Git-compatible with shell-expanded argv and `expand_glob_pathspec`-style matching).
+fn expand_ls_files_globs(
+    specs: Vec<Pathspec>,
+    work_tree: &std::path::Path,
+    index: &grit_lib::index::Index,
+) -> Vec<Pathspec> {
+    let mut out = Vec::new();
+    for spec in specs {
+        match &spec {
+            Pathspec::Glob(pat) => {
+                let matches_index = index.entries.iter().any(|e| spec.matches(&e.path));
+                if matches_index {
+                    out.push(spec);
+                } else {
+                    for e in crate::commands::add::expand_glob_pathspec(pat, work_tree) {
+                        out.push(if has_glob_chars(&e) {
+                            Pathspec::Glob(e)
+                        } else {
+                            Pathspec::Literal(path_to_bytes(std::path::Path::new(&e)))
+                        });
+                    }
+                }
+            }
+            _ => out.push(spec),
+        }
+    }
+    out
+}
+
 impl Pathspec {
     fn matches(&self, path: &[u8]) -> bool {
         match self {
@@ -697,8 +726,11 @@ impl Pathspec {
     }
 }
 
-/// Check if a string contains glob meta-characters.
+/// Check if a string contains glob meta-characters (honours `GIT_LITERAL_PATHSPECS`).
 fn has_glob_chars(s: &str) -> bool {
+    if grit_lib::pathspec::literal_pathspecs_enabled() {
+        return false;
+    }
     s.contains('*') || s.contains('?') || s.contains('[')
 }
 
@@ -960,22 +992,6 @@ fn is_modified(entry: &IndexEntry, path: &std::path::Path) -> bool {
 }
 
 /// Return the status tag character for an index entry (used by `-t`).
-/// Describe the line ending style of file data.
-fn describe_eol(data: &[u8]) -> String {
-    use grit_lib::crlf;
-    if crlf::is_binary(data) {
-        return "binary".to_string();
-    }
-    let has_crlf = crlf::has_crlf(data);
-    let has_lf = crlf::has_lone_lf(data);
-    match (has_crlf, has_lf) {
-        (true, true) => "mixed".to_string(),
-        (true, false) => "crlf".to_string(),
-        (false, true) => "lf".to_string(),
-        (false, false) => "".to_string(),
-    }
-}
-
 /// Format a path for `ls-files` output: optionally C-quote per `core.quotePath`.
 fn format_ls_path(name: &str, use_nul: bool, quote_path: bool) -> String {
     if use_nul || !quote_path {

@@ -193,7 +193,8 @@ impl ConversionConfig {
                 "warn" => SafeCrlf::Warn,
                 _ => SafeCrlf::False,
             },
-            None => SafeCrlf::False,
+            // Git warns on round-trip EOL issues by default when unset.
+            None => SafeCrlf::Warn,
         };
 
         ConversionConfig {
@@ -530,6 +531,244 @@ pub fn is_binary(data: &[u8]) -> bool {
     data[..check_len].contains(&0)
 }
 
+// Git `convert.c` `CONVERT_STAT_BITS_*` / `gather_convert_stats_ascii` (for `ls-files --eol`).
+const CONVERT_STAT_BITS_TXT_LF: u32 = 0x1;
+const CONVERT_STAT_BITS_TXT_CRLF: u32 = 0x2;
+const CONVERT_STAT_BITS_BIN: u32 = 0x4;
+
+#[derive(Default, Clone)]
+struct TextStat {
+    nul: u32,
+    lonecr: u32,
+    lonelf: u32,
+    crlf: u32,
+    printable: u32,
+    nonprintable: u32,
+}
+
+fn gather_text_stat(data: &[u8]) -> TextStat {
+    let mut s = TextStat::default();
+    let mut i = 0usize;
+    while i < data.len() {
+        let c = data[i];
+        if c == b'\r' {
+            if i + 1 < data.len() && data[i + 1] == b'\n' {
+                s.crlf += 1;
+                i += 2;
+            } else {
+                s.lonecr += 1;
+                i += 1;
+            }
+            continue;
+        }
+        if c == b'\n' {
+            s.lonelf += 1;
+            i += 1;
+            continue;
+        }
+        if c == 127 {
+            s.nonprintable += 1;
+        } else if c < 32 {
+            match c {
+                b'\t' | b'\x08' | b'\x1b' | b'\x0c' => s.printable += 1,
+                0 => {
+                    s.nul += 1;
+                    s.nonprintable += 1;
+                }
+                _ => s.nonprintable += 1,
+            }
+        } else {
+            s.printable += 1;
+        }
+        i += 1;
+    }
+    s
+}
+
+fn convert_is_binary(stats: &TextStat) -> bool {
+    stats.lonecr > 0 || stats.nul > 0 || (stats.printable >> 7) < stats.nonprintable
+}
+
+fn git_text_stat(data: &[u8]) -> TextStat {
+    let mut stats = gather_text_stat(data);
+    if !data.is_empty() && data[data.len() - 1] == 0x1a {
+        stats.nonprintable = stats.nonprintable.saturating_sub(1);
+    }
+    stats
+}
+
+/// Git `will_convert_lf_to_crlf` using [`TextStat`] (same rules as [`should_convert_to_crlf`] on bytes).
+fn will_convert_lf_to_crlf_from_stats(
+    stats: &TextStat,
+    conv: &ConversionConfig,
+    attrs: &FileAttrs,
+) -> bool {
+    let has_lone_lf = stats.lonelf > 0;
+    let is_bin = convert_is_binary(stats);
+
+    match attrs.crlf_legacy {
+        CrlfLegacyAttr::Unset | CrlfLegacyAttr::Input => return false,
+        CrlfLegacyAttr::Crlf => {
+            if attrs.text == TextAttr::Unset {
+                return false;
+            }
+            return has_lone_lf;
+        }
+        CrlfLegacyAttr::Unspecified => {}
+    }
+
+    if attrs.text == TextAttr::Unset {
+        return false;
+    }
+
+    if attrs.eol != EolAttr::Unspecified {
+        if attrs.text == TextAttr::Auto && is_bin {
+            return false;
+        }
+        if attrs.eol != EolAttr::Crlf {
+            return false;
+        }
+        if attrs.text == TextAttr::Auto {
+            return auto_crlf_should_smudge_lf_to_crlf_from_stats(stats);
+        }
+        return has_lone_lf;
+    }
+
+    if attrs.text == TextAttr::Set {
+        if !output_eol_is_crlf(conv) {
+            return false;
+        }
+        return has_lone_lf;
+    }
+
+    if attrs.text == TextAttr::Auto {
+        if is_bin || !output_eol_is_crlf(conv) {
+            return false;
+        }
+        return auto_crlf_should_smudge_lf_to_crlf_from_stats(stats);
+    }
+
+    match conv.autocrlf {
+        AutoCrlf::True => {
+            if is_bin {
+                return false;
+            }
+            auto_crlf_should_smudge_lf_to_crlf_from_stats(stats)
+        }
+        AutoCrlf::Input | AutoCrlf::False => false,
+    }
+}
+
+fn auto_crlf_should_smudge_lf_to_crlf_from_stats(stats: &TextStat) -> bool {
+    if stats.lonelf == 0 {
+        return false;
+    }
+    if stats.lonecr > 0 || stats.crlf > 0 {
+        return false;
+    }
+    !convert_is_binary(stats)
+}
+
+fn gather_convert_stats(data: &[u8]) -> u32 {
+    if data.is_empty() {
+        return 0;
+    }
+    let mut stats = gather_text_stat(data);
+    if !data.is_empty() && data[data.len() - 1] == 0x1a {
+        stats.nonprintable = stats.nonprintable.saturating_sub(1);
+    }
+    let mut ret = 0u32;
+    if convert_is_binary(&stats) {
+        ret |= CONVERT_STAT_BITS_BIN;
+    }
+    if stats.crlf > 0 {
+        ret |= CONVERT_STAT_BITS_TXT_CRLF;
+    }
+    if stats.lonelf > 0 {
+        ret |= CONVERT_STAT_BITS_TXT_LF;
+    }
+    ret
+}
+
+/// Git `convert.c` `gather_convert_stats_ascii` — worktree/index blob EOL stats for `ls-files --eol`.
+#[must_use]
+pub fn gather_convert_stats_ascii(data: &[u8]) -> &'static str {
+    let convert_stats = gather_convert_stats(data);
+    if convert_stats & CONVERT_STAT_BITS_BIN != 0 {
+        return "-text";
+    }
+    match convert_stats {
+        CONVERT_STAT_BITS_TXT_LF => "lf",
+        CONVERT_STAT_BITS_TXT_CRLF => "crlf",
+        x if x == (CONVERT_STAT_BITS_TXT_LF | CONVERT_STAT_BITS_TXT_CRLF) => "mixed",
+        _ => "none",
+    }
+}
+
+/// Git `convert.c` `get_convert_attr_ascii` — ASCII summary of EOL-related attributes for
+/// `git ls-files --eol` (matches `attr_action` after attribute merge, before clean/smudge).
+#[must_use]
+pub fn convert_attr_ascii_for_ls_files(
+    rules: &[AttrRule],
+    rel_path: &str,
+    config: &ConfigSet,
+) -> String {
+    let fa = get_file_attrs(rules, rel_path, config);
+    // Mirror `git_path_check_crlf` for `text` then legacy `crlf` (Git checks `text` first).
+    let mut action = match fa.text {
+        TextAttr::Set => 1,   // CRLF_TEXT
+        TextAttr::Unset => 2, // CRLF_BINARY
+        TextAttr::Auto => 5,  // CRLF_AUTO
+        TextAttr::Unspecified => 0,
+    };
+    if action == 0 {
+        action = match fa.crlf_legacy {
+            CrlfLegacyAttr::Crlf => 1,
+            CrlfLegacyAttr::Unset => 2,
+            CrlfLegacyAttr::Input => 3, // CRLF_TEXT_INPUT
+            CrlfLegacyAttr::Unspecified => 0,
+        };
+    }
+    if action == 2 {
+        return "-text".to_string();
+    }
+    // Bare `eol=lf` / `eol=crlf` without `text` still implies text mode (`convert_attrs`).
+    if action == 0 {
+        if fa.eol == EolAttr::Unspecified {
+            return String::new();
+        }
+        action = 1; // CRLF_TEXT
+    }
+
+    // Merge `eol=` like `convert_attrs` (only when not already binary).
+    if fa.eol == EolAttr::Lf {
+        if action == 5 {
+            action = 7; // CRLF_AUTO_INPUT
+        } else {
+            action = 3; // CRLF_TEXT_INPUT
+        }
+    } else if fa.eol == EolAttr::Crlf {
+        if action == 5 {
+            action = 6; // CRLF_AUTO_CRLF
+        } else {
+            action = 4; // CRLF_TEXT_CRLF
+        }
+    }
+
+    // `attr_action` snapshot (Git assigns before splitting bare `text` / applying autocrlf).
+    let attr_action = action;
+
+    match attr_action {
+        1 => "text".to_string(),
+        3 => "text eol=lf".to_string(),
+        4 => "text eol=crlf".to_string(),
+        5 => "text=auto".to_string(),
+        6 => "text=auto eol=crlf".to_string(),
+        7 => "text=auto eol=lf".to_string(),
+        _ => String::new(),
+    }
+}
+
 /// Returns true if data contains any CRLF sequences.
 pub fn has_crlf(data: &[u8]) -> bool {
     data.windows(2).any(|w| w == b"\r\n")
@@ -580,6 +819,53 @@ pub fn is_all_lf(data: &[u8]) -> bool {
     has_lone_lf(data) && !has_crlf(data)
 }
 
+/// Git `convert.c` `has_crlf_in_index`: index blob already contains CRLF pairs (non-binary).
+#[must_use]
+pub fn has_crlf_in_index_blob(data: &[u8]) -> bool {
+    if !data.contains(&b'\r') {
+        return false;
+    }
+    let st = gather_convert_stats(data);
+    st & CONVERT_STAT_BITS_BIN == 0 && (st & CONVERT_STAT_BITS_TXT_CRLF) != 0
+}
+
+/// Whether clean conversion uses Git's `has_crlf_in_index` guard (`convert.c` only for
+/// `CRLF_AUTO`, `CRLF_AUTO_INPUT`, `CRLF_AUTO_CRLF`). Bare `eol=` without `text=auto` becomes
+/// `CRLF_TEXT_*` and must not use this guard.
+#[must_use]
+pub fn clean_uses_autocrlf_index_guard(attrs: &FileAttrs, conv: &ConversionConfig) -> bool {
+    if attrs.text == TextAttr::Unset || attrs.crlf_legacy == CrlfLegacyAttr::Unset {
+        return false;
+    }
+    if attrs.eol != EolAttr::Unspecified && attrs.text != TextAttr::Auto {
+        return false;
+    }
+    attrs.text == TextAttr::Auto
+        || (attrs.text == TextAttr::Unspecified
+            && matches!(conv.autocrlf, AutoCrlf::True | AutoCrlf::Input))
+}
+
+/// Optional inputs for [`convert_to_git_with_opts`] (Git `CONV_EOL_RENORMALIZE` / index blob).
+#[derive(Debug, Clone, Copy)]
+pub struct ConvertToGitOpts<'a> {
+    /// Stage-0 blob bytes for this path before the current add (for safer-autocrlf).
+    pub index_blob: Option<&'a [u8]>,
+    /// When true, always apply CRLF→LF when configured (merge/cherry-pick renormalize).
+    pub renormalize: bool,
+    /// When false, skip `core.safecrlf` simulation (used for internal diff/hashing — must not spam stderr).
+    pub check_safecrlf: bool,
+}
+
+impl Default for ConvertToGitOpts<'_> {
+    fn default() -> Self {
+        Self {
+            index_blob: None,
+            renormalize: false,
+            check_safecrlf: true,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Input (add / clean) direction
 // ---------------------------------------------------------------------------
@@ -597,6 +883,23 @@ pub fn convert_to_git(
     rel_path: &str,
     conv: &ConversionConfig,
     file_attrs: &FileAttrs,
+) -> Result<Vec<u8>, String> {
+    convert_to_git_with_opts(
+        data,
+        rel_path,
+        conv,
+        file_attrs,
+        ConvertToGitOpts::default(),
+    )
+}
+
+/// Like [`convert_to_git`] with Git-compatible safer-autocrlf index handling.
+pub fn convert_to_git_with_opts(
+    data: &[u8],
+    rel_path: &str,
+    conv: &ConversionConfig,
+    file_attrs: &FileAttrs,
+    opts: ConvertToGitOpts<'_>,
 ) -> Result<Vec<u8>, String> {
     let mut buf = data.to_vec();
 
@@ -634,14 +937,22 @@ pub fn convert_to_git(
     // 2. Determine if we should do CRLF→LF conversion
     let would_convert = would_convert_on_input(conv, file_attrs, &buf);
 
-    // 3. safecrlf check — always check if conversion is configured,
-    // even if no actual conversion is needed for this particular file.
-    if would_convert {
-        check_safecrlf_input(conv, &buf, rel_path)?;
+    let mut convert_crlf_into_lf = would_convert && has_crlf(&buf);
+    if convert_crlf_into_lf
+        && clean_uses_autocrlf_index_guard(file_attrs, conv)
+        && !opts.renormalize
+        && opts.index_blob.is_some_and(has_crlf_in_index_blob)
+    {
+        convert_crlf_into_lf = false;
+    }
+
+    // 3. safecrlf check — Git simulates clean then smudge (`check_global_conv_flags_eol`).
+    if would_convert && opts.check_safecrlf {
+        check_safecrlf_roundtrip(conv, file_attrs, &buf, rel_path, convert_crlf_into_lf)?;
     }
 
     // 4. Actually convert CRLF → LF if the file has CRLFs
-    if would_convert && has_crlf(&buf) {
+    if convert_crlf_into_lf {
         buf = crlf_to_lf(&buf);
     }
 
@@ -723,63 +1034,42 @@ fn eprint_safecrlf_warn_lf_to_crlf(rel_path: &str) {
     );
 }
 
-/// Check safecrlf constraints on input.
-fn check_safecrlf_input(
+/// Git `convert.c` `check_global_conv_flags_eol` after simulating clean + smudge.
+fn check_safecrlf_roundtrip(
     conv: &ConversionConfig,
+    file_attrs: &FileAttrs,
     data: &[u8],
     rel_path: &str,
+    convert_crlf_into_lf: bool,
 ) -> Result<(), String> {
     if conv.safecrlf == SafeCrlf::False {
         return Ok(());
     }
 
-    if is_binary(data) {
-        return Ok(());
+    let old_stats = git_text_stat(data);
+
+    let mut new_stats = old_stats.clone();
+    if convert_crlf_into_lf && new_stats.crlf > 0 {
+        new_stats.lonelf += new_stats.crlf;
+        new_stats.crlf = 0;
+    }
+    if will_convert_lf_to_crlf_from_stats(&new_stats, conv, file_attrs) {
+        new_stats.crlf += new_stats.lonelf;
+        new_stats.lonelf = 0;
     }
 
-    let mixed = has_crlf(data) && has_lone_lf(data);
-
-    // Mixed line endings: clean would change some lines; unsafe for both autocrlf modes.
-    if mixed {
-        if conv.autocrlf == AutoCrlf::Input {
-            let msg = format!("fatal: CRLF would be replaced by LF in {rel_path}");
-            if conv.safecrlf == SafeCrlf::True {
-                return Err(msg);
-            }
-            eprint_safecrlf_warn_crlf_to_lf(rel_path);
-            return Ok(());
-        }
-        if conv.autocrlf == AutoCrlf::True {
-            let msg = format!("fatal: LF would be replaced by CRLF in {rel_path}");
-            if conv.safecrlf == SafeCrlf::True {
-                return Err(msg);
-            }
-            eprint_safecrlf_warn_lf_to_crlf(rel_path);
-            return Ok(());
-        }
-    }
-
-    // safecrlf with autocrlf=input: reject if file is all CRLF
-    // (the conversion would be irreversible — CRLF→LF, but checkout won't
-    // add CR back because autocrlf=input only strips on input)
-    if conv.autocrlf == AutoCrlf::Input && is_all_crlf(data) {
+    if old_stats.crlf > 0 && new_stats.crlf == 0 {
         let msg = format!("fatal: CRLF would be replaced by LF in {rel_path}");
         if conv.safecrlf == SafeCrlf::True {
             return Err(msg);
         }
         eprint_safecrlf_warn_crlf_to_lf(rel_path);
-        return Ok(());
-    }
-
-    // safecrlf with autocrlf=true: reject if file is all LF
-    // (LF→LF on input, then LF→CRLF on checkout changes the file)
-    if conv.autocrlf == AutoCrlf::True && is_all_lf(data) {
+    } else if old_stats.lonelf > 0 && new_stats.lonelf == 0 {
         let msg = format!("fatal: LF would be replaced by CRLF in {rel_path}");
         if conv.safecrlf == SafeCrlf::True {
             return Err(msg);
         }
         eprint_safecrlf_warn_lf_to_crlf(rel_path);
-        return Ok(());
     }
 
     Ok(())
@@ -947,7 +1237,10 @@ fn should_convert_to_crlf(conv: &ConversionConfig, attrs: &FileAttrs, data: &[u8
 
 /// Whether the output EOL should be CRLF based on config.
 fn output_eol_is_crlf(conv: &ConversionConfig) -> bool {
-    // autocrlf=true overrides core.eol
+    // Git `text_eol_is_crlf`: autocrlf=input forces LF output before `core.eol` is consulted.
+    if conv.autocrlf == AutoCrlf::Input {
+        return false;
+    }
     if conv.autocrlf == AutoCrlf::True {
         return true;
     }
