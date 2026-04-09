@@ -216,10 +216,11 @@ fn run_with_top_opts(top: SubmoduleTopOpts, args: Args) -> Result<()> {
         }
     }
 }
-use grit_lib::config::{ConfigFile, ConfigScope};
+use grit_lib::config::{canonical_key, ConfigFile, ConfigScope};
 use grit_lib::diff::{diff_index_to_tree, DiffEntry, DiffStatus};
 use grit_lib::error::Error as LibError;
 use grit_lib::index::MODE_GITLINK;
+use grit_lib::merge_diff::blob_oid_at_path;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::pathspec::matches_pathspec;
 use grit_lib::refs;
@@ -599,6 +600,10 @@ pub struct SummaryArgs {
     #[arg(long)]
     pub files: bool,
 
+    /// Skip submodules with `submodule.<name>.ignore=all` (Git `--for-status`; used by status).
+    #[arg(long = "for-status")]
+    pub for_status: bool,
+
     /// Limit how many commits `log` shows for each submodule (`-n`; Git `--summary-limit`).
     #[arg(short = 'n', long = "summary-limit")]
     pub summary_limit: Option<i32>,
@@ -653,6 +658,8 @@ pub(crate) struct SubmoduleInfo {
     pub(crate) shallow: Option<bool>,
     pub(crate) update: Option<String>,
     pub(crate) branch: Option<String>,
+    /// `submodule.<name>.ignore` from `.gitmodules` (e.g. `all`, `dirty`), when set.
+    pub(crate) ignore: Option<String>,
 }
 
 /// Update submodule working trees to the commits recorded in the superproject index.
@@ -1091,6 +1098,7 @@ fn parse_gitmodules_with_repo(
         shallow: Option<bool>,
         update: Option<String>,
         branch: Option<String>,
+        ignore: Option<String>,
     }
     let mut modules: BTreeMap<String, ModuleFields> = BTreeMap::new();
 
@@ -1127,6 +1135,7 @@ fn parse_gitmodules_with_repo(
                 }
                 "update" => entry_val.update = entry.value.clone(),
                 "branch" => entry_val.branch = entry.value.clone(),
+                "ignore" => entry_val.ignore = entry.value.clone(),
                 _ => {}
             }
         }
@@ -1142,6 +1151,7 @@ fn parse_gitmodules_with_repo(
                 shallow: f.shallow,
                 update: f.update,
                 branch: f.branch,
+                ignore: f.ignore,
             });
         }
     }
@@ -1827,9 +1837,43 @@ fn attach_existing_submodule_worktree(
     Ok(())
 }
 
+/// Whether `.gitmodules` may be created or updated in the work tree (`git/submodule.c:is_writing_gitmodules_ok`).
+fn is_writing_gitmodules_ok(repo: &Repository, work_tree: &Path) -> bool {
+    let gm = work_tree.join(".gitmodules");
+    if gm.exists() {
+        return true;
+    }
+    let Ok(index) = repo.load_index() else {
+        return false;
+    };
+    if index.get(b".gitmodules", 0).is_some() {
+        return false;
+    }
+    let Ok(head) = resolve_head(&repo.git_dir) else {
+        return false;
+    };
+    let Some(commit_oid) = head.oid().copied() else {
+        return true;
+    };
+    let Ok(obj) = repo.odb.read(&commit_oid) else {
+        return false;
+    };
+    if obj.kind != ObjectKind::Commit {
+        return false;
+    }
+    let Ok(c) = parse_commit(&obj.data) else {
+        return false;
+    };
+    blob_oid_at_path(&repo.odb, &c.tree, ".gitmodules").is_none()
+}
+
 fn run_add(args: &AddArgs) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
+
+    if !is_writing_gitmodules_ok(&repo, work_tree) {
+        bail!("please make sure that the .gitmodules file is in the working tree");
+    }
 
     // Derive path from URL if not provided.
     let path = match &args.path {
@@ -2738,6 +2782,38 @@ fn submodule_work_tree_for_summary(work_tree: &Path, logical_path: &str) -> Path
     direct
 }
 
+/// True when `submodule.<name>.ignore` is `all` in local config or in `.gitmodules` (Git `prepare_submodule_summary`).
+fn submodule_ignore_all_for_summary(
+    local_cfg: Option<&ConfigFile>,
+    modules: &[SubmoduleInfo],
+    sm_path: &str,
+) -> bool {
+    let Some(m) = modules
+        .iter()
+        .find(|mm| mm.path == sm_path || mm.name == sm_path)
+    else {
+        return false;
+    };
+    let key = format!("submodule.{}.ignore", m.name);
+    if let Some(cfg) = local_cfg {
+        if let Ok(canon) = canonical_key(&key) {
+            if cfg
+                .entries
+                .iter()
+                .rev()
+                .find(|e| e.key == canon)
+                .and_then(|e| e.value.as_deref())
+                .is_some_and(|v| v.eq_ignore_ascii_case("all"))
+            {
+                return true;
+            }
+        }
+    }
+    m.ignore
+        .as_deref()
+        .is_some_and(|v| v.eq_ignore_ascii_case("all"))
+}
+
 fn run_summary(args: &SummaryArgs, _quiet: bool) -> Result<()> {
     if args.summary_limit == Some(0) {
         return Ok(());
@@ -2779,6 +2855,15 @@ fn run_summary(args: &SummaryArgs, _quiet: bool) -> Result<()> {
         .load_index()
         .context("load index for submodule summary")?;
 
+    let (modules_for_ignore, local_cfg_for_ignore) = if args.for_status {
+        (
+            parse_gitmodules_with_repo(work_tree, Some(&repo)).unwrap_or_default(),
+            parse_local_config(&repo.git_dir).ok(),
+        )
+    } else {
+        (Vec::new(), None)
+    };
+
     let entries: Vec<DiffEntry> = if args.files {
         if args.cached {
             bail!("options '--cached' and '--files' cannot be used together");
@@ -2816,7 +2901,50 @@ fn run_summary(args: &SummaryArgs, _quiet: bool) -> Result<()> {
         out.sort_by(|a, b| a.path().cmp(b.path()));
         out
     } else {
-        diff_index_to_tree(&repo.odb, &index, base_tree_oid.as_ref())?
+        let mut entries = diff_index_to_tree(&repo.odb, &index, base_tree_oid.as_ref())?;
+        // Git `submodule summary` uses `diff-index --ignore-submodules=dirty`: when the index
+        // gitlink matches `HEAD^{tree}` but the submodule worktree HEAD differs (e.g. after
+        // `pull` before `submodule update`), still report the range (`t7418`).
+        if !args.cached {
+            if let Some(tree_oid) = base_tree_oid.as_ref() {
+                let mut extra: Vec<DiffEntry> = Vec::new();
+                for ie in &index.entries {
+                    if ie.stage() != 0 || ie.mode != MODE_GITLINK || ie.skip_worktree() {
+                        continue;
+                    }
+                    let path_str = String::from_utf8_lossy(&ie.path).into_owned();
+                    let Some(te_oid) = blob_oid_at_path(&repo.odb, tree_oid, &path_str) else {
+                        continue;
+                    };
+                    if te_oid != ie.oid {
+                        continue;
+                    }
+                    let sub_path = submodule_work_tree_for_summary(work_tree, &path_str);
+                    if !sub_path.join(".git").exists() {
+                        continue;
+                    }
+                    let Some(sub_head) = grit_lib::diff::read_submodule_head_oid(&sub_path) else {
+                        continue;
+                    };
+                    if sub_head == ie.oid {
+                        continue;
+                    }
+                    extra.push(DiffEntry {
+                        status: DiffStatus::Modified,
+                        old_path: Some(path_str.clone()),
+                        new_path: Some(path_str),
+                        old_mode: format!("{:o}", MODE_GITLINK),
+                        new_mode: format!("{:o}", MODE_GITLINK),
+                        old_oid: ie.oid,
+                        new_oid: sub_head,
+                        score: None,
+                    });
+                }
+                entries.extend(extra);
+                entries.sort_by(|a, b| a.path().cmp(b.path()));
+            }
+        }
+        entries
     };
 
     let stdout = io::stdout();
@@ -2828,6 +2956,17 @@ fn run_summary(args: &SummaryArgs, _quiet: bool) -> Result<()> {
         }
         let sm_path = summary_display_path(e);
         if !pathspec_selected(&pathspecs, sm_path) {
+            continue;
+        }
+
+        if args.for_status
+            && e.status != DiffStatus::Added
+            && submodule_ignore_all_for_summary(
+                local_cfg_for_ignore.as_ref(),
+                &modules_for_ignore,
+                sm_path,
+            )
+        {
             continue;
         }
 

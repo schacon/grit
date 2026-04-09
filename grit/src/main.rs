@@ -4409,7 +4409,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 "rot13-filter" => commands::test_tool_rot13_filter::run(&rest[1..]),
                 "path-utils" => run_test_tool_path_utils(&rest[1..]),
                 "subprocess" => run_test_tool_subprocess(&rest[1..]),
-                "submodule" => run_test_tool_submodule(&rest[1..]),
+                "submodule" => run_test_tool_submodule(rest),
                 "config" => run_test_tool_config(&rest[1..]),
                 "parse-options" => {
                     let args = preprocess_test_tool_args(rest)?;
@@ -5009,6 +5009,11 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
 
 /// Handle `test-tool submodule` subcommands.
 fn run_test_tool_submodule(rest: &[String]) -> Result<()> {
+    let args = preprocess_test_tool_args(rest)?;
+    if args.first().map(|s| s.as_str()) != Some("submodule") {
+        bail!("internal error: test-tool submodule dispatcher");
+    }
+    let rest = &args[1..];
     let subcmd = rest.first().map(|s| s.as_str()).unwrap_or("");
     match subcmd {
         "resolve-relative-url" => {
@@ -5025,6 +5030,103 @@ fn run_test_tool_submodule(rest: &[String]) -> Result<()> {
                 .map_err(|_| anyhow::anyhow!("resolve-relative-url: invalid remote_url"))?;
             println!("{result}");
             Ok(())
+        }
+        "config-list" => {
+            let key = rest
+                .get(1)
+                .map(|s| s.as_str())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("usage: test-tool submodule config-list <key>"))?;
+            let repo =
+                grit_lib::repo::Repository::discover(None).context("not a git repository")?;
+            let work_tree = repo.work_tree.as_ref().context("bare repository")?;
+            let wanted =
+                grit_lib::config::canonical_key(key).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let (content, path_for_parse) =
+                gitmodules_file_content_for_test_tool(&repo, work_tree)?;
+            let cfg = grit_lib::config::ConfigFile::parse(
+                &path_for_parse,
+                &content,
+                grit_lib::config::ConfigScope::Local,
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            for e in &cfg.entries {
+                if e.key == wanted {
+                    if let Some(v) = &e.value {
+                        println!("{v}");
+                    }
+                }
+            }
+            Ok(())
+        }
+        "config-set" => {
+            let key = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+            let value = rest.get(2).map(|s| s.as_str()).unwrap_or("");
+            if key.is_empty() {
+                bail!("usage: test-tool submodule config-set <key> <value>");
+            }
+            let repo =
+                grit_lib::repo::Repository::discover(None).context("not a git repository")?;
+            let work_tree = repo.work_tree.as_ref().context("bare repository")?;
+            if !is_writing_gitmodules_ok_for_test_tool(&repo, work_tree) {
+                bail!("please make sure that the .gitmodules file is in the working tree");
+            }
+            let path = work_tree.join(".gitmodules");
+            let mut cfg = if path.exists() {
+                let content = std::fs::read_to_string(&path).context("reading .gitmodules")?;
+                grit_lib::config::ConfigFile::parse(
+                    &path,
+                    &content,
+                    grit_lib::config::ConfigScope::Local,
+                )?
+            } else {
+                grit_lib::config::ConfigFile::parse(
+                    &path,
+                    "",
+                    grit_lib::config::ConfigScope::Local,
+                )?
+            };
+            cfg.set(key, value).map_err(|e| anyhow::anyhow!("{e}"))?;
+            cfg.write().map_err(|e| anyhow::anyhow!("{e}"))?;
+            Ok(())
+        }
+        "config-unset" => {
+            let key = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+            if key.is_empty() {
+                bail!("usage: test-tool submodule config-unset <key>");
+            }
+            let repo =
+                grit_lib::repo::Repository::discover(None).context("not a git repository")?;
+            let work_tree = repo.work_tree.as_ref().context("bare repository")?;
+            if !is_writing_gitmodules_ok_for_test_tool(&repo, work_tree) {
+                bail!("please make sure that the .gitmodules file is in the working tree");
+            }
+            let path = work_tree.join(".gitmodules");
+            if !path.exists() {
+                return Ok(());
+            }
+            let content = std::fs::read_to_string(&path).context("reading .gitmodules")?;
+            let mut cfg = grit_lib::config::ConfigFile::parse(
+                &path,
+                &content,
+                grit_lib::config::ConfigScope::Local,
+            )?;
+            let _ = cfg.unset(key).map_err(|e| anyhow::anyhow!("{e}"))?;
+            cfg.write().map_err(|e| anyhow::anyhow!("{e}"))?;
+            Ok(())
+        }
+        "config-writeable" => {
+            if rest.len() != 1 {
+                bail!("usage: test-tool submodule config-writeable");
+            }
+            let repo =
+                grit_lib::repo::Repository::discover(None).context("not a git repository")?;
+            let work_tree = repo.work_tree.as_ref().context("bare repository")?;
+            if is_writing_gitmodules_ok_for_test_tool(&repo, work_tree) {
+                Ok(())
+            } else {
+                bail!(".gitmodules is not writable in this state");
+            }
         }
         other => bail!("test-tool submodule: unknown subcommand '{other}'"),
     }
@@ -5085,6 +5187,92 @@ fn run_test_tool_dump_untracked_cache() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// `.gitmodules` text and a path used only for parsing / round-trip (Git `config_from_gitmodules`).
+fn gitmodules_file_content_for_test_tool(
+    repo: &grit_lib::repo::Repository,
+    work_tree: &Path,
+) -> Result<(String, PathBuf)> {
+    use grit_lib::merge_diff::blob_oid_at_path;
+    use grit_lib::objects::{parse_commit, ObjectKind};
+    use grit_lib::state::resolve_head;
+
+    let path = work_tree.join(".gitmodules");
+    if path.exists() {
+        let content = std::fs::read_to_string(&path).context("reading .gitmodules")?;
+        return Ok((content, path));
+    }
+    let index = repo.load_index().context("failed to load index")?;
+    if let Some(ie) = index.get(b".gitmodules", 0) {
+        let obj = repo
+            .odb
+            .read(&ie.oid)
+            .context("failed to read .gitmodules blob from ODB")?;
+        if obj.kind != ObjectKind::Blob {
+            return Ok((String::new(), path));
+        }
+        let content = String::from_utf8(obj.data).context("failed to decode .gitmodules blob")?;
+        return Ok((content, path));
+    }
+    let head = resolve_head(&repo.git_dir).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let Some(commit_oid) = head.oid().copied() else {
+        return Ok((String::new(), path));
+    };
+    let obj = repo.odb.read(&commit_oid).context("reading HEAD commit")?;
+    if obj.kind != ObjectKind::Commit {
+        return Ok((String::new(), path));
+    }
+    let commit = parse_commit(&obj.data).context("parsing HEAD commit")?;
+    let Some(blob_oid) = blob_oid_at_path(&repo.odb, &commit.tree, ".gitmodules") else {
+        return Ok((String::new(), path));
+    };
+    let blob = repo
+        .odb
+        .read(&blob_oid)
+        .context("reading .gitmodules blob from HEAD tree")?;
+    if blob.kind != ObjectKind::Blob {
+        return Ok((String::new(), path));
+    }
+    let content = String::from_utf8(blob.data).context("failed to decode .gitmodules blob")?;
+    Ok((content, path))
+}
+
+/// Matches Git `is_writing_gitmodules_ok` (`git/submodule.c`).
+fn is_writing_gitmodules_ok_for_test_tool(
+    repo: &grit_lib::repo::Repository,
+    work_tree: &Path,
+) -> bool {
+    use grit_lib::merge_diff::blob_oid_at_path;
+    use grit_lib::objects::{parse_commit, ObjectKind};
+    use grit_lib::state::resolve_head;
+
+    let gm = work_tree.join(".gitmodules");
+    if gm.exists() {
+        return true;
+    }
+    let Ok(index) = repo.load_index() else {
+        return false;
+    };
+    if index.get(b".gitmodules", 0).is_some() {
+        return false;
+    }
+    let Ok(head) = resolve_head(&repo.git_dir) else {
+        return false;
+    };
+    let Some(commit_oid) = head.oid().copied() else {
+        return true;
+    };
+    let Ok(obj) = repo.odb.read(&commit_oid) else {
+        return false;
+    };
+    if obj.kind != ObjectKind::Commit {
+        return false;
+    }
+    let Ok(c) = parse_commit(&obj.data) else {
+        return false;
+    };
+    blob_oid_at_path(&repo.odb, &c.tree, ".gitmodules").is_none()
 }
 
 /// Handle `test-tool chmtime` — get or set file modification times.

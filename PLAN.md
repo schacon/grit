@@ -821,7 +821,7 @@ commit → check it off → move on.
 - [ ] `t7103-reset-bare` ████████████░░░░░░░░ 8/13 (5 left) — git reset in a bare repository
 - [ ] `t7603-merge-reduce-heads` ████████████░░░░░░░░ 8/13 (5 left) — git merge
 
-- [ ] `t7418-submodule-sparse-gitmodules` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — Test reading/writing .gitmodules when not in the working tree
+- [x] `t7418-submodule-sparse-gitmodules` — Test reading/writing .gitmodules when not in the working tree (9/9)
 
 - [ ] `t7701-repack-unpack-unreachable` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — git repack works correctly
 - [x] `t7011-skip-worktree-reading` — skip-worktree bit test (15/15)
