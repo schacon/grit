@@ -318,7 +318,7 @@ t12590-log-format-tformat	t1	yes	33	32	1	false	ok	0
 t12600-rev-list-not-exclude	t1	yes	32	31	1	false	ok	0
 t12610-rev-list-all-branches	t1	yes	32	30	2	false	ok	0
 t12620-rev-parse-resolve-ref	t1	yes	32	31	1	false	ok	0
-t12630-rev-parse-is-bare	t1	yes	33	32	1	false	ok	0
+t12630-rev-parse-is-bare	t1	yes	33	33	0	true	ok	0
 t12640-config-list-show-origin	t1	yes	33	33	0	true	ok	0
 t12650-config-null-value	t1	yes	34	33	1	false	ok	0
 t12660-init-shared-perm	t1	yes	37	34	3	false	ok	0

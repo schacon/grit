@@ -932,23 +932,6 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                 // Use ONLY the per-action flag (not global, to support mixed usage)
                 let use_symbolic = *rev_symbolic_full_name;
 
-                // When `HEAD` is symbolic but the branch tip does not exist yet (empty bare repo,
-                // orphan checkout), Git prints the literal `HEAD` unless `--short` is used
-                // (`rev-parse` exits 128 with no stdout for `--short HEAD` in that state; t9903).
-                if rev == "HEAD"
-                    && short_len.is_none()
-                    && !abbrev_ref
-                    && !use_symbolic
-                    && current.is_bare()
-                    && matches!(
-                        refs::read_symbolic_ref(&current.git_dir, "HEAD"),
-                        Ok(Some(ref target)) if refs::resolve_ref(&current.git_dir, target).is_err()
-                    )
-                {
-                    println!("HEAD");
-                    continue;
-                }
-
                 if abbrev_ref {
                     // --abbrev-ref: resolve to symbolic name and abbreviate
                     if let Some(full) = symbolic_full_name(current, rev) {
