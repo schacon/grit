@@ -159,8 +159,16 @@ pub fn try_local_git_dir(spec: &SshUrl) -> Option<PathBuf> {
         return resolve_git_dir_at(path);
     }
     if let Ok(trash) = std::env::var("TRASH_DIRECTORY") {
-        let joined = PathBuf::from(trash).join(&spec.host).join(&spec.path);
-        if let Some(gd) = resolve_git_dir_at(&joined) {
+        let trash_pb = PathBuf::from(trash);
+        // Test harnesses often `cd $TRASH_DIRECTORY` before running the remote command, so the
+        // scp-style path is relative to the trash dir (upstream t5507: `host:remote` → `./remote`).
+        let direct = trash_pb.join(&spec.path);
+        if let Some(gd) = resolve_git_dir_at(&direct) {
+            return Some(gd);
+        }
+        // Fallback: some wrappers nest host as a path segment under the trash directory.
+        let nested = trash_pb.join(&spec.host).join(&spec.path);
+        if let Some(gd) = resolve_git_dir_at(&nested) {
             return Some(gd);
         }
     }

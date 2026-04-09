@@ -409,8 +409,13 @@ pub fn run(args: Args) -> Result<()> {
             eprintln!("fatal: bad repository ''");
             std::process::exit(128);
         }
-        if r.contains('/') || r.starts_with('.') || std::path::Path::new(r).exists() {
-            // Path-based remote: use directly as URL
+        if r.contains('/')
+            || r.starts_with('.')
+            || std::path::Path::new(r).exists()
+            || crate::ssh_transport::is_configured_ssh_url(r)
+        {
+            // Path-based or explicit URL (including scp-style `host:path`); do not resolve as a
+            // configured remote name (matches Git: t5507-remote-environment).
             _is_path_remote = true;
             remote_name_owned = r.clone();
             urls = vec![r.clone()];
@@ -569,7 +574,9 @@ fn push_to_url(
         }
     }
 
-    let remote_config = ConfigSet::load(Some(&remote_repo.git_dir), false)?;
+    // Receive-side ref policy (denyCurrentBranch, etc.): only the remote repo's `config`, not the
+    // pushing side's `git -c` / environment (matches Git; t5507-remote-environment).
+    let receive_remote_config = ConfigSet::load_repo_local_only(&remote_repo.git_dir)?;
 
     // Build list of ref updates
     let mut updates = Vec::new();
@@ -1466,7 +1473,7 @@ fn push_to_url(
             args,
             url,
             config,
-            &remote_config,
+            &receive_remote_config,
         );
 
         match result {
