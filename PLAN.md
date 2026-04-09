@@ -882,7 +882,7 @@ commit → check it off → move on.
 - [ ] `t7507-commit-verbose` ████████░░░░░░░░░░░░ 19/45 (26 left) — verbose commit template
 - [x] `t7064-wtstatus-pv2` — git status --porcelain=v2 (28/28)
 
-- [ ] `t7450-bad-git-dotfiles` ████████░░░░░░░░░░░░ 22/50 (28 left) — check broken or malicious patterns in .git* files
+- [x] `t7450-bad-git-dotfiles` — check broken or malicious patterns in .git* files (50/50)
 
 - [ ] `t7600-merge` ████████████░░░░░░░░ 53/83 (30 left) — git merge
 
