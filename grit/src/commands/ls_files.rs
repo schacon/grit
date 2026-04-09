@@ -9,8 +9,11 @@ use std::path::Component;
 use std::path::{Path, PathBuf};
 
 use grit_lib::ignore::IgnoreMatcher;
-use grit_lib::index::IndexEntry;
-use grit_lib::repo::Repository;
+use grit_lib::index::{Index, IndexEntry};
+use grit_lib::repo::{resolve_dot_git, Repository};
+use grit_lib::submodule_config::{
+    is_submodule_active, load_submodule_registrations, submodule_name_for_path,
+};
 use grit_lib::unicode_normalization::{precompose_utf8_path, precompose_utf8_segment};
 
 use crate::explicit_exit::ExplicitExit;
@@ -200,6 +203,10 @@ pub fn run(args: Args) -> Result<()> {
         anyhow::bail!("fatal: options 'ls-files --with-tree' and '-s/-u' cannot be used together");
     }
 
+    if args.recurse_submodules && args.error_unmatch {
+        anyhow::bail!("fatal: ls-files --recurse-submodules does not support --error-unmatch");
+    }
+
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
@@ -244,7 +251,10 @@ pub fn run(args: Args) -> Result<()> {
             .with_context(|| format!("overlay tree '{treeish}' on index"))?;
     }
 
-    pathspec_filter = expand_ls_files_globs(pathspec_filter, work_tree, &index, precompose_walk);
+    if !args.recurse_submodules {
+        pathspec_filter =
+            expand_ls_files_globs(pathspec_filter, work_tree, &index, precompose_walk);
+    }
 
     // For `--error-unmatch`, Git matches pathspecs separately against index output vs untracked
     // output (`-c` vs `-o`). A pathspec that only hits tracked files does not satisfy `-o`.
@@ -279,190 +289,259 @@ pub fn run(args: Args) -> Result<()> {
 
     let attrs_for_eol = grit_lib::crlf::load_gitattributes(work_tree);
 
-    let mut last_dedup_path: Option<Vec<u8>> = None;
-    for entry in &index.entries {
-        if entry.overlay_tree_skip_output() {
-            continue;
-        }
-        // Filter by pathspec
-        if !pathspec_filter.is_empty() {
-            let idx = pathspec_filter
-                .iter()
-                .position(|spec| spec.matches(&entry.path));
-            match idx {
-                Some(i) => matched_index[i] = true,
-                None => continue,
-            }
-        }
-
-        // Unmerged: stage != 0
-        if args.unmerged && entry.stage() == 0 {
-            continue;
-        }
-        // --ignored with --cached: only show tracked files that are ignored
-        if args.ignored && show_cached && !args.others {
-            let path_str = String::from_utf8_lossy(&entry.path);
-            // Pass None for index so tracked files aren't auto-skipped
-            let excluded = if let Some(ref mut m) = matcher {
-                m.check_path(&repo, None, &path_str, false)
-                    .map(|(ig, _)| ig)
-                    .unwrap_or(false)
-            } else {
-                false
-            };
-            if !excluded {
-                continue;
-            }
-        }
-
-        // --deleted / --modified: show entries that are deleted or modified on disk.
-        // Applies to every index stage (including unmerged); matches git ls-files.c.
-        // When both -d and -m are set, show if EITHER condition is true.
-        if (args.deleted || args.modified) && !show_cached {
-            if entry.skip_worktree() {
-                continue;
-            }
-            let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
-            let is_deleted = !full.exists();
-            let is_mod = is_modified(entry, &full);
-            let dominated = if args.deleted && args.modified {
-                !is_deleted && !is_mod
-            } else if args.deleted {
-                !is_deleted
-            } else {
-                !is_mod
-            };
-            if dominated {
-                continue;
-            }
-        }
-
-        // For -d/-m with -t/-v, compute tags. Git uses "C" for modified (including
-        // unmerged conflict paths under -d/-m), not the unmerged "M" tag from -u/-s.
-        // A deleted file with both -d and -m produces TWO output lines: 'R path' and 'C path'.
-        let (tag, extra_tag) = if args.show_tag || args.show_untracked_cache_tag {
-            if args.deleted || args.modified {
-                let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
-                if !full.exists() {
-                    if args.deleted && args.modified {
-                        (Some('R'), Some('C'))
-                    } else {
-                        (Some('R'), None)
-                    }
-                } else if is_modified(entry, &full) {
-                    (Some('C'), None)
-                } else {
-                    (Some(status_tag(entry)), None)
-                }
-            } else {
-                let base_tag = status_tag(entry);
-                let adjusted_tag = if args.show_untracked_cache_tag {
-                    base_tag.to_ascii_lowercase()
-                } else {
-                    base_tag
-                };
-                (Some(adjusted_tag), None)
-            }
-        } else {
-            (None, None)
+    if args.recurse_submodules {
+        let mut last_dedup: Option<Vec<u8>> = None;
+        let recurse_params = LsFilesRecurseParams {
+            show_cached,
+            show_stage,
+            dedup_paths,
+            show_tag: args.show_tag,
+            show_untracked_cache_tag: args.show_untracked_cache_tag,
+            deleted: args.deleted,
+            modified: args.modified,
+            ignored: args.ignored,
+            others: args.others,
+            unmerged: args.unmerged,
+            eol: args.eol,
+            format: args.format.as_deref(),
+            full_name: args.full_name,
+            precompose_unicode,
+            precompose_walk,
+            quote_fully,
+            term,
+            use_nul,
+            attrs_for_eol: &attrs_for_eol,
         };
+        ls_files_recurse_submodules(
+            &repo,
+            &config,
+            &index,
+            work_tree,
+            work_tree,
+            &config,
+            &cwd,
+            &cwd_prefix,
+            "",
+            &pathspec_filter,
+            &mut matched_index,
+            &mut last_dedup,
+            &recurse_params,
+            &mut out,
+            &mut matcher,
+        )?;
+    } else {
+        let mut last_dedup_path: Option<Vec<u8>> = None;
+        for entry in &index.entries {
+            if entry.overlay_tree_skip_output() {
+                continue;
+            }
+            // Filter by pathspec
+            if !pathspec_filter.is_empty() {
+                let idx = pathspec_filter
+                    .iter()
+                    .position(|spec| spec.matches(&entry.path));
+                match idx {
+                    Some(i) => matched_index[i] = true,
+                    None => continue,
+                }
+            }
 
-        if args.eol {
-            let display =
-                format_ls_display_path(args.full_name, &cwd, work_tree, &entry.path, &cwd_prefix)?;
-            let name = String::from_utf8_lossy(display.as_ref());
-            let path_str = std::str::from_utf8(&entry.path).unwrap_or("");
-
-            // Index / worktree EOL stats: match Git `convert.c` `gather_convert_stats_ascii`.
-            let index_eol = if entry.oid != grit_lib::diff::zero_oid() {
-                if let Ok(obj) = repo.odb.read(&entry.oid) {
-                    grit_lib::crlf::gather_convert_stats_ascii(&obj.data).to_string()
+            // Unmerged: stage != 0
+            if args.unmerged && entry.stage() == 0 {
+                continue;
+            }
+            // --ignored with --cached: only show tracked files that are ignored
+            if args.ignored && show_cached && !args.others {
+                let path_str = String::from_utf8_lossy(&entry.path);
+                // Pass None for index so tracked files aren't auto-skipped
+                let excluded = if let Some(ref mut m) = matcher {
+                    m.check_path(&repo, None, &path_str, false)
+                        .map(|(ig, _)| ig)
+                        .unwrap_or(false)
                 } else {
-                    "binary".to_string()
+                    false
+                };
+                if !excluded {
+                    continue;
                 }
-            } else {
-                String::new()
-            };
+            }
 
-            let wt_path = work_tree.join(path_str);
-            let wt_eol = if let Ok(data) = std::fs::read(&wt_path) {
-                grit_lib::crlf::gather_convert_stats_ascii(&data).to_string()
-            } else {
-                String::new()
-            };
+            // --deleted / --modified: show entries that are deleted or modified on disk.
+            // Applies to every index stage (including unmerged); matches git ls-files.c.
+            // When both -d and -m are set, show if EITHER condition is true.
+            if (args.deleted || args.modified) && !show_cached {
+                if entry.skip_worktree() {
+                    continue;
+                }
+                let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
+                let is_deleted = !full.exists();
+                let is_mod = is_modified(entry, &full);
+                let dominated = if args.deleted && args.modified {
+                    !is_deleted && !is_mod
+                } else if args.deleted {
+                    !is_deleted
+                } else {
+                    !is_mod
+                };
+                if dominated {
+                    continue;
+                }
+            }
 
-            let attr_str =
-                grit_lib::crlf::convert_attr_ascii_for_ls_files(&attrs_for_eol, path_str, &config);
-
-            write!(out, "i/{index_eol} w/{wt_eol} attr/{attr_str}\t{name}")?;
-            out.write_all(&[term])?;
-        } else if let Some(ref fmt) = args.format {
-            // Custom format output
-            let display =
-                format_ls_display_path(args.full_name, &cwd, work_tree, &entry.path, &cwd_prefix)?;
-            let name = String::from_utf8_lossy(display.as_ref());
-            let hex = entry.oid.to_hex();
-            let line = fmt
-                .replace("%(objectmode)", &format!("{:06o}", entry.mode))
-                .replace("%(objectname)", &hex)
-                .replace(
-                    "%(objecttype)",
-                    if entry.mode & 0o170000 == 0o040000 {
-                        "tree"
+            // For -d/-m with -t/-v, compute tags. Git uses "C" for modified (including
+            // unmerged conflict paths under -d/-m), not the unmerged "M" tag from -u/-s.
+            // A deleted file with both -d and -m produces TWO output lines: 'R path' and 'C path'.
+            let (tag, extra_tag) = if args.show_tag || args.show_untracked_cache_tag {
+                if args.deleted || args.modified {
+                    let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
+                    if !full.exists() {
+                        if args.deleted && args.modified {
+                            (Some('R'), Some('C'))
+                        } else {
+                            (Some('R'), None)
+                        }
+                    } else if is_modified(entry, &full) {
+                        (Some('C'), None)
                     } else {
-                        "blob"
-                    },
-                )
-                .replace("%(stage)", &format!("{}", entry.stage()))
-                .replace("%(path)", &name);
-            write!(out, "{}", line)?;
-            out.write_all(&[term])?;
-        } else if show_stage {
-            let display =
-                format_ls_display_path(args.full_name, &cwd, work_tree, &entry.path, &cwd_prefix)?;
-            let name = String::from_utf8_lossy(display.as_ref());
-            let qname = format_ls_path(&name, use_nul, quote_fully);
-            if let Some(t) = tag {
-                write!(out, "{} ", t)?;
-            }
-            write!(
-                out,
-                "{:06o} {} {}\t{}",
-                entry.mode,
-                entry.oid,
-                entry.stage(),
-                qname
-            )?;
-            out.write_all(&[term])?;
-        } else if show_cached || args.deleted || args.modified {
-            // Deduplicate: skip if same path as last printed.
-            // With -t flag, don't deduplicate unmerged entries (stage != 0)
-            // since they have distinct stage info that should be visible.
-            // With -u/--unmerged, each stage must appear on its own line (t6402).
-            // Without -t/-u, deduplicate all entries including unmerged.
-            // `dedup_paths` encodes git ls-files.c: --deduplicate is ignored with -t/-s/-u.
-            if dedup_paths {
-                if let Some(ref last) = last_dedup_path {
-                    if last == &entry.path {
-                        continue;
+                        (Some(status_tag(entry)), None)
                     }
+                } else {
+                    let base_tag = status_tag(entry);
+                    let adjusted_tag = if args.show_untracked_cache_tag {
+                        base_tag.to_ascii_lowercase()
+                    } else {
+                        base_tag
+                    };
+                    (Some(adjusted_tag), None)
                 }
-                last_dedup_path = Some(entry.path.clone());
-            }
-            let display =
-                format_ls_display_path(args.full_name, &cwd, work_tree, &entry.path, &cwd_prefix)?;
-            let name = String::from_utf8_lossy(display.as_ref());
-            let qname = format_ls_path(&name, use_nul, quote_fully);
-            if let Some(t) = tag {
-                write!(out, "{} ", t)?;
-            }
-            write!(out, "{qname}")?;
-            out.write_all(&[term])?;
-            // Output extra line for deleted files with both -d and -m and -t
-            if let Some(et) = extra_tag {
-                write!(out, "{} ", et)?;
+            } else {
+                (None, None)
+            };
+
+            if args.eol {
+                let display = format_ls_display_path(
+                    args.full_name,
+                    &cwd,
+                    work_tree,
+                    &entry.path,
+                    &cwd_prefix,
+                    &config,
+                )?;
+                let name = String::from_utf8_lossy(display.as_ref());
+                let path_str = std::str::from_utf8(&entry.path).unwrap_or("");
+
+                // Index / worktree EOL stats: match Git `convert.c` `gather_convert_stats_ascii`.
+                let index_eol = if entry.oid != grit_lib::diff::zero_oid() {
+                    if let Ok(obj) = repo.odb.read(&entry.oid) {
+                        grit_lib::crlf::gather_convert_stats_ascii(&obj.data).to_string()
+                    } else {
+                        "binary".to_string()
+                    }
+                } else {
+                    String::new()
+                };
+
+                let wt_path = work_tree.join(path_str);
+                let wt_eol = if let Ok(data) = std::fs::read(&wt_path) {
+                    grit_lib::crlf::gather_convert_stats_ascii(&data).to_string()
+                } else {
+                    String::new()
+                };
+
+                let attr_str = grit_lib::crlf::convert_attr_ascii_for_ls_files(
+                    &attrs_for_eol,
+                    path_str,
+                    &config,
+                );
+
+                write!(out, "i/{index_eol} w/{wt_eol} attr/{attr_str}\t{name}")?;
+                out.write_all(&[term])?;
+            } else if let Some(ref fmt) = args.format {
+                // Custom format output
+                let display = format_ls_display_path(
+                    args.full_name,
+                    &cwd,
+                    work_tree,
+                    &entry.path,
+                    &cwd_prefix,
+                    &config,
+                )?;
+                let name = String::from_utf8_lossy(display.as_ref());
+                let hex = entry.oid.to_hex();
+                let line = fmt
+                    .replace("%(objectmode)", &format!("{:06o}", entry.mode))
+                    .replace("%(objectname)", &hex)
+                    .replace(
+                        "%(objecttype)",
+                        if entry.mode & 0o170000 == 0o040000 {
+                            "tree"
+                        } else {
+                            "blob"
+                        },
+                    )
+                    .replace("%(stage)", &format!("{}", entry.stage()))
+                    .replace("%(path)", &name);
+                write!(out, "{}", line)?;
+                out.write_all(&[term])?;
+            } else if show_stage {
+                let display = format_ls_display_path(
+                    args.full_name,
+                    &cwd,
+                    work_tree,
+                    &entry.path,
+                    &cwd_prefix,
+                    &config,
+                )?;
+                let name = String::from_utf8_lossy(display.as_ref());
+                let qname = format_ls_path(&name, use_nul, quote_fully);
+                if let Some(t) = tag {
+                    write!(out, "{} ", t)?;
+                }
+                write!(
+                    out,
+                    "{:06o} {} {}\t{}",
+                    entry.mode,
+                    entry.oid,
+                    entry.stage(),
+                    qname
+                )?;
+                out.write_all(&[term])?;
+            } else if show_cached || args.deleted || args.modified {
+                // Deduplicate: skip if same path as last printed.
+                // With -t flag, don't deduplicate unmerged entries (stage != 0)
+                // since they have distinct stage info that should be visible.
+                // With -u/--unmerged, each stage must appear on its own line (t6402).
+                // Without -t/-u, deduplicate all entries including unmerged.
+                // `dedup_paths` encodes git ls-files.c: --deduplicate is ignored with -t/-s/-u.
+                if dedup_paths {
+                    if let Some(ref last) = last_dedup_path {
+                        if last == &entry.path {
+                            continue;
+                        }
+                    }
+                    last_dedup_path = Some(entry.path.clone());
+                }
+                let display = format_ls_display_path(
+                    args.full_name,
+                    &cwd,
+                    work_tree,
+                    &entry.path,
+                    &cwd_prefix,
+                    &config,
+                )?;
+                let name = String::from_utf8_lossy(display.as_ref());
+                let qname = format_ls_path(&name, use_nul, quote_fully);
+                if let Some(t) = tag {
+                    write!(out, "{} ", t)?;
+                }
                 write!(out, "{qname}")?;
                 out.write_all(&[term])?;
+                // Output extra line for deleted files with both -d and -m and -t
+                if let Some(et) = extra_tag {
+                    write!(out, "{} ", et)?;
+                    write!(out, "{qname}")?;
+                    out.write_all(&[term])?;
+                }
             }
         }
     }
@@ -526,8 +605,14 @@ pub fn run(args: Args) -> Result<()> {
                 }
             }
 
-            let display =
-                format_ls_display_path(args.full_name, &cwd, work_tree, path_bytes, &cwd_prefix)?;
+            let display = format_ls_display_path(
+                args.full_name,
+                &cwd,
+                work_tree,
+                path_bytes,
+                &cwd_prefix,
+                &config,
+            )?;
             filtered_untracked.push(display.into_owned());
         }
 
@@ -635,6 +720,288 @@ pub fn run(args: Args) -> Result<()> {
                 code: 1,
                 message: msg,
             }));
+        }
+    }
+
+    Ok(())
+}
+
+struct LsFilesRecurseParams<'a> {
+    show_cached: bool,
+    show_stage: bool,
+    dedup_paths: bool,
+    show_tag: bool,
+    show_untracked_cache_tag: bool,
+    deleted: bool,
+    modified: bool,
+    ignored: bool,
+    others: bool,
+    unmerged: bool,
+    eol: bool,
+    format: Option<&'a str>,
+    full_name: bool,
+    precompose_unicode: bool,
+    precompose_walk: bool,
+    quote_fully: bool,
+    term: u8,
+    use_nul: bool,
+    attrs_for_eol: &'a [grit_lib::crlf::AttrRule],
+}
+
+fn ls_files_recurse_submodules(
+    repo: &Repository,
+    config: &grit_lib::config::ConfigSet,
+    index: &Index,
+    work_tree: &Path,
+    super_work_tree: &Path,
+    super_config: &grit_lib::config::ConfigSet,
+    cwd: &Path,
+    cwd_prefix: &[u8],
+    prefix: &str,
+    pathspec_filter: &[Pathspec],
+    matched_index: &mut [bool],
+    last_dedup: &mut Option<Vec<u8>>,
+    p: &LsFilesRecurseParams<'_>,
+    out: &mut dyn Write,
+    matcher: &mut Option<IgnoreMatcher>,
+) -> Result<()> {
+    let registrations = load_submodule_registrations(work_tree, Some(index), Some(&repo.odb));
+
+    for entry in &index.entries {
+        if entry.overlay_tree_skip_output() {
+            continue;
+        }
+        let path_str = std::str::from_utf8(&entry.path).unwrap_or("");
+        let super_rel = if prefix.is_empty() {
+            path_str.to_string()
+        } else {
+            format!("{prefix}/{path_str}")
+        };
+        let super_rel_bytes = super_rel.as_bytes();
+
+        let is_gitlink = entry.mode == grit_lib::index::MODE_GITLINK && entry.stage() == 0;
+        if is_gitlink {
+            // `.gitmodules` paths and `submodule.<name>.active` / `submodule.active` are relative to
+            // the **current** repository (Git `is_submodule_active(the_repository, ce->name)`).
+            let rel_path = path_str.to_string();
+            let mod_name = submodule_name_for_path(&registrations, &rel_path);
+            let active = is_submodule_active(config, mod_name, &rel_path);
+            if active {
+                let dot_git = work_tree.join(path_str).join(".git");
+                if let Ok(child_git_dir) = resolve_dot_git(&dot_git) {
+                    let child_wt = work_tree.join(path_str);
+                    if let Ok(child_repo) = Repository::open(&child_git_dir, Some(&child_wt)) {
+                        let sub_cfg =
+                            grit_lib::config::ConfigSet::load(Some(&child_repo.git_dir), true)
+                                .unwrap_or_default();
+                        let sub_idx_path = child_repo.index_path();
+                        let sub_index = child_repo
+                            .load_index_at(&sub_idx_path)
+                            .context("loading submodule index")?;
+                        ls_files_recurse_submodules(
+                            &child_repo,
+                            &sub_cfg,
+                            &sub_index,
+                            &child_wt,
+                            super_work_tree,
+                            super_config,
+                            cwd,
+                            cwd_prefix,
+                            &super_rel,
+                            pathspec_filter,
+                            matched_index,
+                            last_dedup,
+                            p,
+                            out,
+                            matcher,
+                        )?;
+                    }
+                }
+                continue;
+            }
+        }
+
+        if !pathspec_filter.is_empty() {
+            if !recurse_submodules_path_matches(pathspec_filter, &super_rel, super_rel_bytes) {
+                continue;
+            }
+            recurse_submodules_mark_pathspec_hits(
+                pathspec_filter,
+                &super_rel,
+                super_rel_bytes,
+                matched_index,
+            );
+        }
+
+        if p.unmerged && entry.stage() == 0 {
+            continue;
+        }
+        if p.ignored && p.show_cached && !p.others {
+            let excluded = if let Some(ref mut m) = matcher {
+                m.check_path(repo, None, &super_rel, false)
+                    .map(|(ig, _)| ig)
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            if !excluded {
+                continue;
+            }
+        }
+
+        if (p.deleted || p.modified) && !p.show_cached {
+            if entry.skip_worktree() {
+                continue;
+            }
+            let full = work_tree.join(path_str);
+            let is_deleted = !full.exists();
+            let is_mod = is_modified(entry, &full);
+            let dominated = if p.deleted && p.modified {
+                !is_deleted && !is_mod
+            } else if p.deleted {
+                !is_deleted
+            } else {
+                !is_mod
+            };
+            if dominated {
+                continue;
+            }
+        }
+
+        let (tag, extra_tag) = if p.show_tag || p.show_untracked_cache_tag {
+            if p.deleted || p.modified {
+                let full = work_tree.join(path_str);
+                if !full.exists() {
+                    if p.deleted && p.modified {
+                        (Some('R'), Some('C'))
+                    } else {
+                        (Some('R'), None)
+                    }
+                } else if is_modified(entry, &full) {
+                    (Some('C'), None)
+                } else {
+                    (Some(status_tag(entry)), None)
+                }
+            } else {
+                let base_tag = status_tag(entry);
+                let adjusted_tag = if p.show_untracked_cache_tag {
+                    base_tag.to_ascii_lowercase()
+                } else {
+                    base_tag
+                };
+                (Some(adjusted_tag), None)
+            }
+        } else {
+            (None, None)
+        };
+
+        if p.eol {
+            let display = format_ls_display_path(
+                p.full_name,
+                cwd,
+                super_work_tree,
+                super_rel_bytes,
+                cwd_prefix,
+                super_config,
+            )?;
+            let name = String::from_utf8_lossy(display.as_ref());
+            let index_eol = if entry.oid != grit_lib::diff::zero_oid() {
+                if let Ok(obj) = repo.odb.read(&entry.oid) {
+                    grit_lib::crlf::gather_convert_stats_ascii(&obj.data).to_string()
+                } else {
+                    "binary".to_string()
+                }
+            } else {
+                String::new()
+            };
+            let wt_path = work_tree.join(path_str);
+            let wt_eol = if let Ok(data) = std::fs::read(&wt_path) {
+                grit_lib::crlf::gather_convert_stats_ascii(&data).to_string()
+            } else {
+                String::new()
+            };
+            let attr_str =
+                grit_lib::crlf::convert_attr_ascii_for_ls_files(p.attrs_for_eol, path_str, config);
+            write!(out, "i/{index_eol} w/{wt_eol} attr/{attr_str}\t{name}")?;
+            out.write_all(&[p.term])?;
+        } else if let Some(fmt) = p.format {
+            let display = format_ls_display_path(
+                p.full_name,
+                cwd,
+                super_work_tree,
+                super_rel_bytes,
+                cwd_prefix,
+                super_config,
+            )?;
+            let name = String::from_utf8_lossy(display.as_ref());
+            let hex = entry.oid.to_hex();
+            let line = fmt
+                .replace("%(objectmode)", &format!("{:06o}", entry.mode))
+                .replace("%(objectname)", &hex)
+                .replace(
+                    "%(objecttype)",
+                    if entry.mode & 0o170000 == 0o040000 {
+                        "tree"
+                    } else {
+                        "blob"
+                    },
+                )
+                .replace("%(stage)", &format!("{}", entry.stage()))
+                .replace("%(path)", &name);
+            write!(out, "{}", line)?;
+            out.write_all(&[p.term])?;
+        } else if p.show_stage {
+            let display = format_ls_display_path(
+                p.full_name,
+                cwd,
+                super_work_tree,
+                super_rel_bytes,
+                cwd_prefix,
+                super_config,
+            )?;
+            let name = String::from_utf8_lossy(display.as_ref());
+            let qname = format_ls_path(&name, p.use_nul, p.quote_fully);
+            if let Some(t) = tag {
+                write!(out, "{} ", t)?;
+            }
+            write!(
+                out,
+                "{:06o} {} {}\t{}",
+                entry.mode,
+                entry.oid,
+                entry.stage(),
+                qname
+            )?;
+            out.write_all(&[p.term])?;
+        } else if p.show_cached || p.deleted || p.modified {
+            if p.dedup_paths {
+                if let Some(ref last) = last_dedup {
+                    if last == super_rel_bytes {
+                        continue;
+                    }
+                }
+                *last_dedup = Some(super_rel_bytes.to_vec());
+            }
+            let display = format_ls_display_path(
+                p.full_name,
+                cwd,
+                super_work_tree,
+                super_rel_bytes,
+                cwd_prefix,
+                super_config,
+            )?;
+            let name = String::from_utf8_lossy(display.as_ref());
+            let qname = format_ls_path(&name, p.use_nul, p.quote_fully);
+            if let Some(t) = tag {
+                write!(out, "{} ", t)?;
+            }
+            write!(out, "{qname}")?;
+            out.write_all(&[p.term])?;
+            if let Some(et) = extra_tag {
+                write!(out, "{} ", et)?;
+                write!(out, "{qname}")?;
+                out.write_all(&[p.term])?;
+            }
         }
     }
 
@@ -852,17 +1219,72 @@ impl Pathspec {
                         && (path.len() == dir_prefix.len() || path[dir_prefix.len()] == b'/'))
             }
             Pathspec::Glob(pattern) => {
-                // Try literal match first (for files with glob chars in names)
                 if path == pattern.as_bytes() {
                     return true;
                 }
                 let path_str = String::from_utf8_lossy(path);
-                glob_match(pattern, &path_str)
+                grit_lib::pathspec::pathspec_matches(pattern, path_str.as_ref())
             }
             Pathspec::Magic(spec) => {
                 let path_str = String::from_utf8_lossy(path);
                 crate::pathspec::pathspec_matches(spec, &path_str)
             }
+        }
+    }
+}
+
+/// Pathspec matching for `ls-files --recurse-submodules`: combines magic pathspecs (including
+/// `:(exclude)`) with plain glob/literal specs (Git applies excludes across the full argv list).
+fn recurse_submodules_path_matches(
+    pathspec_filter: &[Pathspec],
+    path: &str,
+    path_bytes: &[u8],
+) -> bool {
+    if pathspec_filter.is_empty() {
+        return true;
+    }
+    let magic_strings: Vec<String> = pathspec_filter
+        .iter()
+        .filter_map(|p| match p {
+            Pathspec::Magic(s) => Some(s.clone()),
+            _ => None,
+        })
+        .collect();
+    let has_non_magic = pathspec_filter
+        .iter()
+        .any(|p| !matches!(p, Pathspec::Magic(_)));
+
+    let magic_ok = if magic_strings.is_empty() {
+        true
+    } else {
+        grit_lib::pathspec::path_allowed_by_pathspec_list(&magic_strings, path)
+    };
+
+    let non_magic_ok = if !has_non_magic {
+        true
+    } else {
+        pathspec_filter.iter().any(|p| match p {
+            Pathspec::Magic(_) => false,
+            other => other.matches(path_bytes),
+        })
+    };
+
+    magic_ok && non_magic_ok
+}
+
+fn recurse_submodules_mark_pathspec_hits(
+    pathspec_filter: &[Pathspec],
+    path: &str,
+    path_bytes: &[u8],
+    matched_index: &mut [bool],
+) {
+    for (i, spec) in pathspec_filter.iter().enumerate() {
+        let hit = match spec {
+            Pathspec::Magic(s) => grit_lib::pathspec::pathspec_contributes_match(s, path),
+            Pathspec::Glob(_) | Pathspec::Literal(_) => spec.matches(path_bytes),
+        };
+        if hit {
+            matched_index[i] = true;
         }
     }
 }
@@ -1110,16 +1532,68 @@ fn format_ls_display_path<'a>(
     work_tree: &Path,
     repo_rel: &'a [u8],
     cwd_prefix: &[u8],
+    config: &grit_lib::config::ConfigSet,
 ) -> Result<Cow<'a, [u8]>> {
     if full_name {
         return Ok(Cow::Borrowed(repo_rel));
     }
     if cwd_inside_work_tree(cwd, work_tree) {
+        if let Some(display) = ls_files_display_through_submodule(cwd, work_tree, repo_rel, config)?
+        {
+            return Ok(Cow::Owned(display));
+        }
         return Ok(Cow::Owned(pathdiff_from_repo_for_display(
             cwd, work_tree, repo_rel,
         )?));
     }
     Ok(Cow::Borrowed(display_path_from_cwd(repo_rel, cwd_prefix)))
+}
+
+/// When the cwd is inside a subdirectory of the superproject, paths that live under an **active**
+/// submodule should be displayed relative to cwd by walking through the submodule work tree
+/// (Git `ls-files --recurse-submodules` from `b/` shows `../submodule/...`, not `submodule/...`).
+fn ls_files_display_through_submodule(
+    cwd: &Path,
+    super_work_tree: &Path,
+    repo_rel: &[u8],
+    super_config: &grit_lib::config::ConfigSet,
+) -> Result<Option<Vec<u8>>> {
+    let rel_str = std::str::from_utf8(repo_rel).unwrap_or("");
+    if rel_str.is_empty() || !rel_str.contains('/') {
+        return Ok(None);
+    }
+    let first_end = rel_str.find('/').unwrap_or(rel_str.len());
+    let first_seg = &rel_str[..first_end];
+    if first_seg.is_empty() || first_seg == ".." {
+        return Ok(None);
+    }
+    let sm_wt = super_work_tree.join(first_seg);
+    if !sm_wt.is_dir() {
+        return Ok(None);
+    }
+    let dot_git = sm_wt.join(".git");
+    let Ok(child_git_dir) = resolve_dot_git(&dot_git) else {
+        return Ok(None);
+    };
+    let Ok(child_repo) = Repository::open(&child_git_dir, Some(&sm_wt)) else {
+        return Ok(None);
+    };
+    let sub_index_path = child_repo.index_path();
+    let Ok(_sub_index) = child_repo.load_index_at(&sub_index_path) else {
+        return Ok(None);
+    };
+    let registrations = load_submodule_registrations(super_work_tree, None, None);
+    let mod_name = submodule_name_for_path(&registrations, first_seg);
+    if !is_submodule_active(super_config, mod_name, first_seg) {
+        return Ok(None);
+    }
+    let rest = rel_str[first_end + 1..].trim_start_matches('/');
+    let target = if rest.is_empty() {
+        sm_wt
+    } else {
+        sm_wt.join(rest)
+    };
+    Ok(Some(pathdiff_relative_lexical(cwd, &target)?.into_bytes()))
 }
 
 fn cwd_prefix_bytes(work_tree: &std::path::Path, cwd: &std::path::Path) -> Result<Vec<u8>> {

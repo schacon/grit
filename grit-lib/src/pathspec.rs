@@ -263,6 +263,64 @@ pub fn pathspecs_allow_bloom(specs: &[String]) -> bool {
         .all(|s| !s.is_empty() && bloom_lookup_prefix_with_cwd(s, None).is_some())
 }
 
+/// Whether `path` is included when Git applies a pathspec list with optional `:(exclude)` entries.
+///
+/// A path is rejected if any exclude pathspec matches it. When at least one non-exclude pathspec is
+/// present, the path must also match one of those positives (`OR` semantics).
+#[must_use]
+pub fn path_allowed_by_pathspec_list(specs: &[String], path: &str) -> bool {
+    let mut has_positive = false;
+    let mut positive_match = false;
+    for s in specs {
+        let (elem, raw_pattern) = parse_element_magic(s);
+        let magic = combine_magic(elem);
+        if magic.exclude {
+            if path_matches_pathspec_tail(raw_pattern, path, magic) {
+                return false;
+            }
+            continue;
+        }
+        has_positive = true;
+        if pathspec_matches(s, path) {
+            positive_match = true;
+        }
+    }
+    !has_positive || positive_match
+}
+
+/// True when `spec` is an exclude pathspec (`:(exclude)…`) that matches `path`.
+#[must_use]
+pub fn pathspec_exclude_matches(spec: &str, path: &str) -> bool {
+    let (elem, raw_pattern) = parse_element_magic(spec);
+    let magic = combine_magic(elem);
+    if !magic.exclude {
+        return false;
+    }
+    path_matches_pathspec_tail(raw_pattern, path, magic)
+}
+
+/// True when `spec` matches `path` for pathspec bookkeeping (positive match or exclude hit).
+#[must_use]
+pub fn pathspec_contributes_match(spec: &str, path: &str) -> bool {
+    pathspec_matches(spec, path) || pathspec_exclude_matches(spec, path)
+}
+
+fn path_matches_pathspec_tail(raw_pattern: &str, path: &str, magic: PathspecMagic) -> bool {
+    if magic.literal && magic.glob {
+        return false;
+    }
+    let pattern = strip_top_magic(raw_pattern);
+    let path_for_match = if let Some(prefix) = magic.prefix.as_deref() {
+        if !path.starts_with(prefix) {
+            return false;
+        }
+        &path[prefix.len()..]
+    } else {
+        path
+    };
+    pathspec_matches_tail(pattern, path_for_match, magic)
+}
+
 /// True if `path` is matched by `spec` (Git pathspec syntax, including magic and globals).
 #[must_use]
 pub fn pathspec_matches(spec: &str, path: &str) -> bool {
@@ -565,6 +623,27 @@ mod tree_entry_pathspec_tests {
                 is_git_submodule: true,
                 ..Default::default()
             }
+        ));
+    }
+}
+
+#[cfg(test)]
+mod pathspec_list_tests {
+    use super::*;
+
+    #[test]
+    fn exclude_removes_paths_matching_icase_positive() {
+        let specs = vec![
+            ":(icase)*.txt".to_string(),
+            ":(exclude)submodule/subsub/*".to_string(),
+        ];
+        assert!(path_allowed_by_pathspec_list(
+            &specs,
+            "submodule/g.txt"
+        ));
+        assert!(!path_allowed_by_pathspec_list(
+            &specs,
+            "submodule/subsub/e.txt"
         ));
     }
 }

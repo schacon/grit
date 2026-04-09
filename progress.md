@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   321 |
+| Completed   |   323 |
 | In progress |     5 |
-| Remaining   |   445 |
+| Remaining   |   443 |
 | **Total**   |   771 |
 
-Task lines in `PLAN.md`: 321 completed (`[x]`), 5 in progress (`[~]`), 445 remaining (`[ ]`).
+Task lines in `PLAN.md`: 323 completed (`[x]`), 5 in progress (`[~]`), 443 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t3007-ls-files-recurse-submodules` — 24/24 tests pass (`ls-files --recurse-submodules`: recurse active gitlinks, superproject-relative pathspecs + `:(exclude)`, cwd display through submodule, no glob expansion in recurse mode, `index.sparse` parse errors in nested repos, `config.worktree` gated on `extensions.worktreeConfig`)
 - `t4063-diff-blobs` — 18/18 tests pass (`diff`: blob↔blob and `rev:path` pairs without treating blobs as trees; `HEAD:one..HEAD:two` range split; `rev:path` vs worktree file uses tree path + modes + `write_patch_with_prefix`; raw blob OID vs existing file uses filename as old path; `rev_parse::resolve_treeish_blob_at_path` for tree walks)
 - `t5524-pull-msg` — 3/3 tests pass (`git pull --no-rebase --log` merge message preserves `$` in subject lines; `--log=1` limits shortlog; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5605-clone-local` — 23/23 tests pass (streaming pack unpack for 0-byte objects; local clone without `--shared` no longer writes source `alternates`; `--no-hardlinks` / `file://` copy-only objects; `--upload-pack` local-path rejection + env prefix for grit `upload-pack`; corrupt loose ref validation before ref copy; `fetch` no-op when `remote.*.url` is a bundle file; bundle clone HEAD/default-branch parity with Git for `bundle create tip` without `HEAD` line)

@@ -1525,10 +1525,14 @@ impl ConfigSet {
                 Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?;
             }
 
-            // Worktree config
+            // Worktree config — Git only reads `config.worktree` when
+            // `extensions.worktreeConfig` is enabled in the common repository `config`.
+            let common_dir = crate::repo::common_git_dir_for_config(gd);
             let wt_path = gd.join("config.worktree");
-            if let Ok(Some(f)) = ConfigFile::from_path(&wt_path, ConfigScope::Worktree) {
-                Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?;
+            if crate::repo::worktree_config_enabled(&common_dir) {
+                if let Ok(Some(f)) = ConfigFile::from_path(&wt_path, ConfigScope::Worktree) {
+                    Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?;
+                }
             }
         }
 
