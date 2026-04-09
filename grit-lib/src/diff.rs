@@ -2398,6 +2398,42 @@ pub fn format_stat_line_width(
     }
 }
 
+/// Normalise one line like Git's `-b` / `--ignore-space-change`.
+#[must_use]
+pub fn normalize_ignore_space_change_line(line: &str) -> String {
+    let mut result = String::with_capacity(line.len());
+    let mut in_space = false;
+    for c in line.chars() {
+        if c.is_whitespace() {
+            if !in_space {
+                result.push(' ');
+                in_space = true;
+            }
+        } else {
+            result.push(c);
+            in_space = false;
+        }
+    }
+    while result.ends_with(' ') {
+        result.pop();
+    }
+    result
+}
+
+/// Normalise text like Git's `-b` / `--ignore-space-change`: on each line, collapse runs of
+/// whitespace to a single ASCII space and trim trailing spaces.
+///
+/// Line breaks are preserved by splitting on [`str::lines`] and rejoining with `\n` (same approach
+/// as the porcelain `diff` whitespace handling in `grit`).
+#[must_use]
+pub fn normalize_ignore_space_change(content: &str) -> String {
+    content
+        .lines()
+        .map(normalize_ignore_space_change_line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Count insertions and deletions between two strings.
 ///
 /// Returns `(insertions, deletions)`.

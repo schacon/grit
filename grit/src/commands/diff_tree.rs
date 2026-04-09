@@ -15,8 +15,8 @@ use grit_lib::combined_tree_diff::{
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     count_changes, detect_copies as lib_detect_copies, detect_renames, diff_trees,
-    diff_trees_show_tree_entries, format_raw, format_raw_abbrev, unified_diff_with_prefix,
-    DiffEntry, DiffStatus,
+    diff_trees_show_tree_entries, format_raw, format_raw_abbrev,
+    normalize_ignore_space_change_line, unified_diff_with_prefix, DiffEntry, DiffStatus,
 };
 use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::merge_diff::{
@@ -141,6 +141,65 @@ struct Options {
     submodule_mode: Option<String>,
     /// Object id spec for `--find-object` (resolved against the repo before the walk).
     find_object: Option<String>,
+    /// `-w` / `--ignore-all-space` — ignore all whitespace when comparing blob content.
+    ignore_all_space: bool,
+    /// `-b` / `--ignore-space-change` — collapse whitespace runs when comparing.
+    ignore_space_change: bool,
+    /// `--ignore-space-at-eol` — strip trailing whitespace per line when comparing.
+    ignore_space_at_eol: bool,
+    /// `--ignore-blank-lines` — drop blank lines when comparing.
+    ignore_blank_lines: bool,
+}
+
+/// Whitespace comparison options for plumbing `diff-tree` (aligned with porcelain `git diff`).
+struct WhitespaceCompare {
+    ignore_all_space: bool,
+    ignore_space_change: bool,
+    ignore_space_at_eol: bool,
+    ignore_blank_lines: bool,
+}
+
+impl WhitespaceCompare {
+    fn from_opts(opts: &Options) -> Self {
+        Self {
+            ignore_all_space: opts.ignore_all_space,
+            ignore_space_change: opts.ignore_space_change,
+            ignore_space_at_eol: opts.ignore_space_at_eol,
+            ignore_blank_lines: opts.ignore_blank_lines,
+        }
+    }
+
+    fn any(&self) -> bool {
+        self.ignore_all_space
+            || self.ignore_space_change
+            || self.ignore_space_at_eol
+            || self.ignore_blank_lines
+    }
+
+    fn normalize_line(&self, line: &str) -> String {
+        let s = line.to_owned();
+        if self.ignore_all_space {
+            return s.chars().filter(|c| !c.is_whitespace()).collect();
+        }
+        if self.ignore_space_change {
+            return normalize_ignore_space_change_line(&s);
+        }
+        if self.ignore_space_at_eol {
+            return s.trim_end().to_owned();
+        }
+        s
+    }
+
+    fn normalize(&self, content: &str) -> String {
+        if !self.any() {
+            return content.to_owned();
+        }
+        let mut lines: Vec<String> = content.lines().map(|l| self.normalize_line(l)).collect();
+        if self.ignore_blank_lines {
+            lines.retain(|l| !l.trim().is_empty());
+        }
+        lines.join("\n")
+    }
 }
 
 impl Default for Options {
@@ -184,6 +243,10 @@ impl Default for Options {
             pickaxe_all: false,
             submodule_mode: None,
             find_object: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_blank_lines: false,
         }
     }
 }
@@ -402,6 +465,10 @@ fn parse_options(repo: &Repository, argv: &[String]) -> Result<Options> {
                 _ if arg.starts_with("--submodule=") => {
                     opts.submodule_mode = Some(arg["--submodule=".len()..].to_string());
                 }
+                "-w" | "--ignore-all-space" => opts.ignore_all_space = true,
+                "-b" | "--ignore-space-change" => opts.ignore_space_change = true,
+                "--ignore-space-at-eol" => opts.ignore_space_at_eol = true,
+                "--ignore-blank-lines" => opts.ignore_blank_lines = true,
                 _ => bail!("unknown option: {arg}"),
             }
             i += 1;
@@ -2017,6 +2084,39 @@ fn read_blob_pair(odb: &Odb, entry: &DiffEntry) -> Result<(String, String)> {
     Ok((old_content, new_content))
 }
 
+/// Drop modified blob pairs that are identical after whitespace rules (`-b`, `-w`, etc.).
+fn filter_whitespace_equivalent_blob_pairs(
+    odb: &Odb,
+    entries: Vec<DiffEntry>,
+    ws: &WhitespaceCompare,
+) -> Result<Vec<DiffEntry>> {
+    if !ws.any() {
+        return Ok(entries);
+    }
+    let mut out = Vec::with_capacity(entries.len());
+    for e in entries {
+        if e.status != DiffStatus::Modified {
+            out.push(e);
+            continue;
+        }
+        if e.old_mode != e.new_mode {
+            out.push(e);
+            continue;
+        }
+        let (old, new) = match read_blob_pair(odb, &e) {
+            Ok(pair) => pair,
+            Err(_) => {
+                out.push(e);
+                continue;
+            }
+        };
+        if ws.normalize(&old) != ws.normalize(&new) {
+            out.push(e);
+        }
+    }
+    Ok(out)
+}
+
 /// Apply post-diff filters: pathspecs, max-depth, and pickaxe (`-S` / `-G`).
 fn filter_entries(
     odb: &Odb,
@@ -2029,7 +2129,8 @@ fn filter_entries(
         filtered = filter_max_depth(filtered, depth, &opts.pathspecs);
     }
     let filtered = apply_pickaxe_filter(odb, filtered, opts)?;
-    apply_find_object_filter(repo, filtered, opts)
+    let filtered = apply_find_object_filter(repo, filtered, opts)?;
+    filter_whitespace_equivalent_blob_pairs(odb, filtered, &WhitespaceCompare::from_opts(opts))
 }
 
 /// Keep entries whose old or new blob OID matches `--find-object` (non-combined diffs).
