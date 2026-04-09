@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 251 completed (`[x]`), 4 in progress (`[~]`), 513 remai
 
 ## Recently completed
 
+- `t12660-init-shared-perm` — 37/37 tests pass (default `grit init` applies Git-style group-shared chmod on `.git` tree: 775 dirs / 664 HEAD under umask 022; explicit `--shared` / `core.sharedRepository` writes config + `receive.denyNonFastforwards`; reinit without shared config leaves modes unchanged)
 - `t7520-ignored-hook-warning` — 5/5 tests pass (`tests/test-lib.sh` `test_hook`: `--disable`/`--remove`, resolve hook dir via `git rev-parse --absolute-git-dir`; second hint line uses `git config set advice.ignoredHook false`)
 - `t7064-wtstatus-pv2` — 28/28 tests pass (`status --porcelain=v2`: branch headers with NUL EOL in `-z`, stash reflog count, merge/unmerged `u` lines without worktree OID column, rename `R100` token + path layout, intent-to-add mode columns, submodule `S???` tokens via `submodule_porcelain_flags`, output section order; `.test_tick` filtered from `!` lines to match upstream exclude template)
 - `t10450-status-porcelain-staged` — 35/35 tests pass (harness: reset cwd to `$TRASH_DIRECTORY` before each TAP test body so scripts can rely on `cd repo` after a prior test left the shell in a subdirectory; matches upstream git test-lib behavior)

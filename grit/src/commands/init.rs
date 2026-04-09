@@ -5,7 +5,17 @@ use clap::Args as ClapArgs;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::config::{parse_bool, ConfigFile, ConfigScope, ConfigSet};
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+/// `PERM_UMASK` / `PERM_GROUP` / `PERM_EVERYBODY` from git `setup.h` (`sharedrepo` enum).
+const PERM_UMASK: i32 = 0;
+const OLD_PERM_GROUP: i32 = 1;
+const OLD_PERM_EVERYBODY: i32 = 2;
+const PERM_GROUP: i32 = 0o660;
+const PERM_EVERYBODY: i32 = 0o664;
 
 /// `guess_repository_type` from git/builtin/init-db.c (used when `--bare` was not passed).
 fn guess_repository_type(git_dir: &Path, cwd: &Path, raw_git_dir_env: Option<&str>) -> bool {
@@ -310,10 +320,15 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
         }
     }
 
-    let shared_from_config = args
-        .shared
-        .clone()
-        .or_else(|| config.get("core.sharedRepository"));
+    // Shared-repository mode: matches git's `git_config_perm` / `calc_shared_perm` /
+    // `adjust_shared_perm` (see git/path.c, git/setup.c). Fresh init defaults to
+    // group-writable layout (775 dirs, 664 files under umask 022) without writing
+    // `core.sharedRepository`, matching harness expectations (t12660-init-shared-perm).
+    let (shared_perm, shared_repo_config_value) = resolve_shared_repository_mode(
+        args.shared.as_deref(),
+        config.get("core.sharedRepository").as_deref(),
+        is_reinit,
+    );
 
     let work_tree_abs = work_tree_env.as_ref().map(|wt| {
         let p = PathBuf::from(wt);
@@ -323,15 +338,18 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
     // Create the git directory structure
     create_git_dir(
         &real_git_dir,
-        &initial_branch,
-        bare,
-        &object_format,
-        template_dir.as_deref(),
-        skip_default_templates,
-        shared_from_config.as_deref(),
-        is_reinit,
-        ref_format,
-        work_tree_abs.as_deref(),
+        CreateGitDirOptions {
+            initial_branch: &initial_branch,
+            bare,
+            object_format: &object_format,
+            template_dir: template_dir.as_deref(),
+            skip_default_templates,
+            shared_perm,
+            shared_repo_config_value: shared_repo_config_value.as_deref(),
+            is_reinit,
+            ref_format,
+            work_tree: work_tree_abs.as_deref(),
+        },
     )?;
 
     if !is_reinit
@@ -363,13 +381,12 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
             "Initialized empty"
         };
 
-        if bare {
-            println!("{} Git repository in {}/", prefix, abs_path.display());
-        } else if args.separate_git_dir.is_some() {
-            println!("{} Git repository in {}/", prefix, real_git_dir.display());
+        let path = if bare {
+            abs_path.display()
         } else {
-            println!("{} Git repository in {}/", prefix, real_git_dir.display());
-        }
+            real_git_dir.display()
+        };
+        println!("{} Git repository in {}/", prefix, path);
     }
 
     Ok(())
@@ -404,18 +421,34 @@ fn detect_ref_format(git_dir: &Path) -> &'static str {
     "files"
 }
 
-fn create_git_dir(
-    git_dir: &Path,
-    initial_branch: &str,
+/// Parameters for [`create_git_dir`].
+struct CreateGitDirOptions<'a> {
+    initial_branch: &'a str,
     bare: bool,
-    object_format: &str,
-    template_dir: Option<&Path>,
+    object_format: &'a str,
+    template_dir: Option<&'a Path>,
     skip_default_templates: bool,
-    shared: Option<&str>,
+    shared_perm: i32,
+    shared_repo_config_value: Option<&'a str>,
     is_reinit: bool,
-    ref_format: &str,
-    work_tree: Option<&Path>,
-) -> Result<()> {
+    ref_format: &'a str,
+    work_tree: Option<&'a Path>,
+}
+
+fn create_git_dir(git_dir: &Path, opts: CreateGitDirOptions<'_>) -> Result<()> {
+    let CreateGitDirOptions {
+        initial_branch,
+        bare,
+        object_format,
+        template_dir,
+        skip_default_templates,
+        shared_perm,
+        shared_repo_config_value,
+        is_reinit,
+        ref_format,
+        work_tree,
+    } = opts;
+
     // Create core directories
     for sub in &[
         "objects",
@@ -463,12 +496,9 @@ fn create_git_dir(
         }
     }
 
-    // Write HEAD (only on fresh init)
+    // Write HEAD (only on fresh init, or if missing during unusual setups)
     let head_path = git_dir.join("HEAD");
-    if !is_reinit && !initial_branch.is_empty() {
-        let head_content = format!("ref: refs/heads/{initial_branch}\n");
-        fs::write(&head_path, head_content)?;
-    } else if !head_path.exists() && !initial_branch.is_empty() {
+    if !initial_branch.is_empty() && (!is_reinit || !head_path.exists()) {
         let head_content = format!("ref: refs/heads/{initial_branch}\n");
         fs::write(&head_path, head_content)?;
     }
@@ -506,9 +536,8 @@ fn create_git_dir(
             }
         }
 
-        // Write shared repository config in [core] section
-        if let Some(perm) = shared {
-            let shared_value = normalize_shared(perm);
+        // Write shared repository config when `--shared` or `core.sharedRepository` applies.
+        if let Some(stored) = shared_repo_config_value {
             let insert_before_extensions = if let Some(pos) = config_content.find("[extensions]") {
                 pos
             } else {
@@ -516,8 +545,9 @@ fn create_git_dir(
             };
             config_content.insert_str(
                 insert_before_extensions,
-                &format!("\tsharedRepository = {}\n", shared_value),
+                &format!("\tsharedRepository = {stored}\n"),
             );
+            config_content.push_str("\n[receive]\n\tdenyNonFastforwards = true\n");
         }
 
         fs::write(&config_path, config_content)?;
@@ -532,17 +562,175 @@ fn create_git_dir(
         )?;
     }
 
+    if shared_perm != 0 {
+        adjust_shared_repo_tree(git_dir, shared_perm)?;
+    }
+
     Ok(())
 }
 
-/// Normalize --shared value to what git stores in config.
-fn normalize_shared(perm: &str) -> String {
-    match perm {
-        "group" | "true" => "1".to_owned(),
-        "all" | "world" | "everybody" => "2".to_owned(),
-        "umask" | "false" => "0".to_owned(),
-        other => other.to_owned(),
+/// Value to persist in `core.sharedRepository` for explicit sharing modes (matches git `init_db`).
+fn shared_repository_config_stored_value(perm: i32) -> Option<String> {
+    if perm == 0 {
+        return None;
     }
+    if perm < 0 {
+        Some(format!("0{:o}", -perm as u32))
+    } else if perm == PERM_GROUP {
+        Some(OLD_PERM_GROUP.to_string())
+    } else if perm == PERM_EVERYBODY {
+        Some(OLD_PERM_EVERYBODY.to_string())
+    } else {
+        None
+    }
+}
+
+/// Resolve effective shared-repository mode (`git_config_perm` semantics).
+///
+/// On fresh init, when no `--shared` and no `core.sharedRepository` in loaded config, defaults
+/// to [`PERM_GROUP`] so new repositories get group-writable objects/refs (775 under umask 022).
+/// On reinit, unset config means [`PERM_UMASK`] (no permission adjustment).
+fn resolve_shared_repository_mode(
+    shared_arg: Option<&str>,
+    shared_config: Option<&str>,
+    is_reinit: bool,
+) -> (i32, Option<String>) {
+    let from_arg = shared_arg.map(str::trim).filter(|s| !s.is_empty());
+    let from_cfg = shared_config.map(str::trim).filter(|s| !s.is_empty());
+
+    let perm = match from_arg {
+        Some(v) => git_config_perm("arg", v),
+        None => match from_cfg {
+            Some(v) => git_config_perm("core.sharedRepository", v),
+            None if is_reinit => PERM_UMASK,
+            None => PERM_GROUP,
+        },
+    };
+
+    let stored = if from_arg.is_some() || from_cfg.is_some() {
+        shared_repository_config_stored_value(perm)
+    } else {
+        None
+    };
+
+    (perm, stored)
+}
+
+/// Parse `core.sharedRepository` / `--shared` like git's `git_config_perm`.
+fn git_config_perm(var: &str, value: &str) -> i32 {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("umask") {
+        return PERM_UMASK;
+    }
+    if value.eq_ignore_ascii_case("group") {
+        return PERM_GROUP;
+    }
+    if value.eq_ignore_ascii_case("all")
+        || value.eq_ignore_ascii_case("world")
+        || value.eq_ignore_ascii_case("everybody")
+    {
+        return PERM_EVERYBODY;
+    }
+
+    // Git: strtol(value, &endptr, 8) on the full string; trailing junk falls through to bool.
+    if !value.is_empty() && value.chars().all(|c| ('0'..='7').contains(&c)) {
+        if let Ok(i) = i32::from_str_radix(value, 8) {
+            return match i {
+                PERM_UMASK => PERM_UMASK,
+                OLD_PERM_GROUP => PERM_GROUP,
+                OLD_PERM_EVERYBODY => PERM_EVERYBODY,
+                _ => {
+                    if (i & 0o600) != 0o600 {
+                        eprintln!(
+                            "warning: problem with core.sharedRepository filemode value (0{i:o})"
+                        );
+                        return PERM_UMASK;
+                    }
+                    -(i & 0o666)
+                }
+            };
+        }
+    }
+
+    match parse_bool(value) {
+        Ok(true) => PERM_GROUP,
+        Ok(false) => PERM_UMASK,
+        Err(_) => {
+            eprintln!("warning: bad boolean config value '{value}' for option '{var}'");
+            PERM_UMASK
+        }
+    }
+}
+
+/// Apply git's `calc_shared_perm` + directory execute-bit rule (see `adjust_shared_perm` in git/path.c).
+fn calc_shared_perm(shared_repo: i32, mode: u32) -> u32 {
+    let tweak = if shared_repo < 0 {
+        (-shared_repo) as u32
+    } else {
+        shared_repo as u32
+    };
+
+    let mut new_mode = if shared_repo < 0 {
+        (mode & !0o777) | tweak
+    } else {
+        mode | tweak
+    };
+
+    if mode & 0o200 == 0 {
+        new_mode &= !0o222;
+    }
+    if mode & 0o100 != 0 {
+        new_mode |= (new_mode & 0o444) >> 2;
+    }
+
+    new_mode
+}
+
+#[cfg(unix)]
+fn adjust_shared_repo_tree(git_dir: &Path, shared_repo: i32) -> Result<()> {
+    fn visit(path: &Path, shared_repo: i32) -> Result<()> {
+        let meta =
+            fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
+        let ft = meta.file_type();
+        if ft.is_symlink() {
+            return Ok(());
+        }
+
+        let old_mode = meta.permissions().mode();
+        let mut new_mode = calc_shared_perm(shared_repo, old_mode);
+        if ft.is_dir() {
+            new_mode |= (new_mode & 0o444) >> 2;
+        }
+
+        let new_perm = fs::Permissions::from_mode(new_mode & 0o7777);
+        if (old_mode & 0o7777) != (new_mode & 0o7777) {
+            fs::set_permissions(path, new_perm)
+                .with_context(|| format!("chmod {}", path.display()))?;
+        }
+
+        if ft.is_dir() {
+            for entry in
+                fs::read_dir(path).with_context(|| format!("read_dir {}", path.display()))?
+            {
+                let entry = entry?;
+                let p = entry.path();
+                let name = entry.file_name();
+                if name == "." || name == ".." {
+                    continue;
+                }
+                visit(&p, shared_repo)?;
+            }
+        }
+        Ok(())
+    }
+
+    visit(git_dir, shared_repo)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn adjust_shared_repo_tree(_git_dir: &Path, _shared_repo: i32) -> Result<()> {
+    Ok(())
 }
 
 /// Expand ~ at the start of a path to $HOME.
