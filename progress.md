@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   321 |
+| Completed   |   322 |
 | In progress |     5 |
-| Remaining   |   445 |
+| Remaining   |   444 |
 | **Total**   |   771 |
 
-Task lines in `PLAN.md`: 321 completed (`[x]`), 5 in progress (`[~]`), 445 remaining (`[ ]`).
+Task lines in `PLAN.md`: 322 completed (`[x]`), 5 in progress (`[~]`), 444 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t3309-notes-merge-auto-resolve` — 31/31 tests pass (`notes merge`: `union` / `cat_sort_uniq` blob combine like Git; successful merge commits use two parents; `notes.mergeStrategy` config errors match upstream expectations)
 - `t4063-diff-blobs` — 18/18 tests pass (`diff`: blob↔blob and `rev:path` pairs without treating blobs as trees; `HEAD:one..HEAD:two` range split; `rev:path` vs worktree file uses tree path + modes + `write_patch_with_prefix`; raw blob OID vs existing file uses filename as old path; `rev_parse::resolve_treeish_blob_at_path` for tree walks)
 - `t5605-clone-local` — 23/23 tests pass (streaming pack unpack for 0-byte objects; local clone without `--shared` no longer writes source `alternates`; `--no-hardlinks` / `file://` copy-only objects; `--upload-pack` local-path rejection + env prefix for grit `upload-pack`; corrupt loose ref validation before ref copy; `fetch` no-op when `remote.*.url` is a bundle file; bundle clone HEAD/default-branch parity with Git for `bundle create tip` without `HEAD` line)
 - `t7418-submodule-sparse-gitmodules` — 9/9 tests pass (`read-tree -u`: gitlink checkout as empty dir, not blob read; `test-tool submodule` config-list/set/unset/writeable + harness delegation; `submodule summary --for-status`: ignore=all + index-vs-tree-out-of-sync gitlinks like `diff-index --ignore-submodules=dirty`; `submodule add`: `is_writing_gitmodules_ok` guard)

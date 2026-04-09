@@ -351,7 +351,7 @@ commit → check it off → move on.
 - [ ] `t3415-rebase-autosquash` █░░░░░░░░░░░░░░░░░░░ 2/28 (26 left) — auto squash
 - [ ] `t3321-notes-stripspace` ░░░░░░░░░░░░░░░░░░░░ 1/27 (26 left) — Test commit notes with stripspace behavior
 - [x] `t3406-rebase-message` — messages from rebase operation (32/32)
-- [ ] `t3309-notes-merge-auto-resolve` █░░░░░░░░░░░░░░░░░░░ 2/31 (29 left) — Test notes merging with auto-resolving strategies
+- [x] `t3309-notes-merge-auto-resolve` — Test notes merging with auto-resolving strategies (31/31)
 - [ ] `t3400-rebase` ████░░░░░░░░░░░░░░░░ 9/39 (30 left) — git rebase assorted tests
 
 - [ ] `t3600-rm` ████████████░░░░░░░░ 50/82 (32 left) — Test of the various options to git rm.
