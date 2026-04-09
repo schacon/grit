@@ -198,8 +198,8 @@ fn ll_diff_tree_paths(
             let e_i = tp_entries[i].get(tp_idx[i]);
             parent_neq[i] = tree_entry_pathcmp(e_i, e_imin) != std::cmp::Ordering::Equal;
         }
-        for i in 0..imin {
-            parent_neq[i] = true;
+        for ne in parent_neq.iter_mut().take(imin) {
+            *ne = true;
         }
 
         let p_min = tp_entries[imin].get(tp_idx[imin]);
@@ -207,76 +207,77 @@ fn ll_diff_tree_paths(
         let cmp = tree_entry_pathcmp(t_cur, p_min);
 
         if cmp == std::cmp::Ordering::Equal {
-            let te = t_cur.expect("cmp Equal implies t_cur");
-            let mut skip_emit = true;
-            for i in 0..nparent {
-                if parent_neq[i] {
-                    continue;
-                }
-                let Some(pe) = tp_entries[i].get(tp_idx[i]) else {
-                    skip_emit = false;
-                    break;
-                };
-                if pe.oid != te.oid || pe.mode != te.mode {
-                    skip_emit = false;
-                    break;
-                }
-            }
-
-            if !skip_emit {
-                let name = std::str::from_utf8(&te.name).unwrap_or("");
-                let full_path = if base_path.is_empty() {
-                    name.to_string()
-                } else {
-                    format!("{base_path}/{name}")
-                };
-
-                let isdir = is_tree_mode(te.mode);
-                let mut do_emit = true;
-                if isdir && should_recurse_dir(&full_path, opt) {
-                    do_emit = opt.tree_in_recursive;
+            if let Some(te) = t_cur {
+                let mut skip_emit = true;
+                for i in 0..nparent {
+                    if parent_neq[i] {
+                        continue;
+                    }
+                    let Some(pe) = tp_entries[i].get(tp_idx[i]) else {
+                        skip_emit = false;
+                        break;
+                    };
+                    if pe.oid != te.oid || pe.mode != te.mode {
+                        skip_emit = false;
+                        break;
+                    }
                 }
 
-                if do_emit {
-                    emit_combined_path(
-                        full_path.clone(),
-                        Some(te),
-                        &tp_entries,
-                        &tp_idx,
-                        &parent_neq,
-                        find_object,
-                        out,
-                    );
-                }
+                if !skip_emit {
+                    let name = std::str::from_utf8(&te.name).unwrap_or("");
+                    let full_path = if base_path.is_empty() {
+                        name.to_string()
+                    } else {
+                        format!("{base_path}/{name}")
+                    };
 
-                if isdir && should_recurse_dir(&full_path, opt) {
-                    let merge_child = te.oid;
-                    let mut child_parent_opts = vec![None; nparent];
-                    for i in 0..nparent {
-                        if parent_neq[i] {
-                            continue;
-                        }
-                        if let Some(pe) = tp_entries[i].get(tp_idx[i]) {
-                            if tree_entry_cmp(
-                                &pe.name,
-                                is_tree_mode(pe.mode),
-                                &te.name,
-                                is_tree_mode(te.mode),
-                            ) == std::cmp::Ordering::Equal
-                            {
-                                child_parent_opts[i] = Some(pe.oid);
+                    let isdir = is_tree_mode(te.mode);
+                    let mut do_emit = true;
+                    if isdir && should_recurse_dir(&full_path, opt) {
+                        do_emit = opt.tree_in_recursive;
+                    }
+
+                    if do_emit {
+                        emit_combined_path(
+                            full_path.clone(),
+                            Some(te),
+                            &tp_entries,
+                            &tp_idx,
+                            &parent_neq,
+                            find_object,
+                            out,
+                        );
+                    }
+
+                    if isdir && should_recurse_dir(&full_path, opt) {
+                        let merge_child = te.oid;
+                        let mut child_parent_opts = vec![None; nparent];
+                        for i in 0..nparent {
+                            if parent_neq[i] {
+                                continue;
+                            }
+                            if let Some(pe) = tp_entries[i].get(tp_idx[i]) {
+                                if tree_entry_cmp(
+                                    &pe.name,
+                                    is_tree_mode(pe.mode),
+                                    &te.name,
+                                    is_tree_mode(te.mode),
+                                ) == std::cmp::Ordering::Equal
+                                {
+                                    child_parent_opts[i] = Some(pe.oid);
+                                }
                             }
                         }
+                        ll_diff_tree_paths(
+                            odb,
+                            out,
+                            &full_path,
+                            opt,
+                            Some(&merge_child),
+                            &child_parent_opts,
+                            find_object,
+                        )?;
                     }
-                    ll_diff_tree_paths(
-                        odb,
-                        out,
-                        &full_path,
-                        opt,
-                        Some(&merge_child),
-                        &child_parent_opts,
-                        find_object,
-                    )?;
                 }
             }
 
@@ -287,7 +288,10 @@ fn ll_diff_tree_paths(
                 }
             }
         } else if cmp == std::cmp::Ordering::Less {
-            let te = t_cur.expect("cmp Less implies t_cur");
+            let Some(te) = t_cur else {
+                ti += 1;
+                continue;
+            };
             let name = std::str::from_utf8(&te.name).unwrap_or("");
             let full_path = if base_path.is_empty() {
                 name.to_string()
@@ -328,47 +332,48 @@ fn ll_diff_tree_paths(
         } else {
             let skip_emit_tp = (0..nparent).all(|i| parent_neq[i]);
             if !skip_emit_tp {
-                let pe = p_min.expect("cmp Greater implies p_min");
-                let name = std::str::from_utf8(&pe.name).unwrap_or("");
-                let full_path = if base_path.is_empty() {
-                    name.to_string()
-                } else {
-                    format!("{base_path}/{name}")
-                };
-                let isdir = is_tree_mode(pe.mode);
-                let mut do_emit = true;
-                if isdir && should_recurse_dir(&full_path, opt) {
-                    do_emit = opt.tree_in_recursive;
-                }
-                if do_emit {
-                    emit_combined_path(
-                        full_path.clone(),
-                        None,
-                        &tp_entries,
-                        &tp_idx,
-                        &parent_neq,
-                        find_object,
-                        out,
-                    );
-                }
-                if isdir && should_recurse_dir(&full_path, opt) {
-                    let mut child_parent_opts = vec![None; nparent];
-                    for i in 0..nparent {
-                        if !parent_neq[i] {
-                            if let Some(e) = tp_entries[i].get(tp_idx[i]) {
-                                child_parent_opts[i] = Some(e.oid);
+                if let Some(pe) = p_min {
+                    let name = std::str::from_utf8(&pe.name).unwrap_or("");
+                    let full_path = if base_path.is_empty() {
+                        name.to_string()
+                    } else {
+                        format!("{base_path}/{name}")
+                    };
+                    let isdir = is_tree_mode(pe.mode);
+                    let mut do_emit = true;
+                    if isdir && should_recurse_dir(&full_path, opt) {
+                        do_emit = opt.tree_in_recursive;
+                    }
+                    if do_emit {
+                        emit_combined_path(
+                            full_path.clone(),
+                            None,
+                            &tp_entries,
+                            &tp_idx,
+                            &parent_neq,
+                            find_object,
+                            out,
+                        );
+                    }
+                    if isdir && should_recurse_dir(&full_path, opt) {
+                        let mut child_parent_opts = vec![None; nparent];
+                        for i in 0..nparent {
+                            if !parent_neq[i] {
+                                if let Some(e) = tp_entries[i].get(tp_idx[i]) {
+                                    child_parent_opts[i] = Some(e.oid);
+                                }
                             }
                         }
+                        ll_diff_tree_paths(
+                            odb,
+                            out,
+                            &full_path,
+                            opt,
+                            None,
+                            &child_parent_opts,
+                            find_object,
+                        )?;
                     }
-                    ll_diff_tree_paths(
-                        odb,
-                        out,
-                        &full_path,
-                        opt,
-                        None,
-                        &child_parent_opts,
-                        find_object,
-                    )?;
                 }
             }
             for i in 0..nparent {

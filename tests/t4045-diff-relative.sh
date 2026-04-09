@@ -223,7 +223,7 @@ test_expect_success 'diff --relative --name-only with change in subdir' '
 	test_cmp expected out
 '
 
-test_expect_failure 'diff --relative with change in subdir' '
+test_expect_success 'diff --relative with change in subdir' '
 	git switch br3 &&
 	br1_blob=$(git rev-parse --short --verify br1:subdir/file0) &&
 	br3_blob=$(git rev-parse --short --verify br3:subdir/file0) &&

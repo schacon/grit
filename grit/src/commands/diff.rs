@@ -220,6 +220,7 @@ use std::env;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 /// ANSI color codes for diff output.
 const RESET: &str = "\x1b[m";
 const BOLD: &str = "\x1b[1m";
@@ -1698,65 +1699,8 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     // Apply --relative path prefix stripping.
-    let entries = if !args.no_relative {
-        let prefix = match &args.relative {
-            Some(Some(p)) if !p.is_empty() => {
-                // --relative=<path> — use the given prefix as a literal prefix.
-                // Git does NOT add a trailing '/' — `--relative=sub` matches `subdir/file`.
-                Some(p.clone())
-            }
-            Some(_) => {
-                // bare --relative — infer from CWD relative to work tree
-                if let Some(wt) = work_tree {
-                    if let Ok(cwd) = std::env::current_dir() {
-                        if let Ok(rel) = cwd.strip_prefix(wt) {
-                            let s = rel.to_string_lossy().to_string();
-                            if s.is_empty() {
-                                None
-                            } else {
-                                Some(format!("{s}/"))
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-            None => {
-                // Check diff.relative config
-                use grit_lib::config::ConfigSet;
-                let config = ConfigSet::load(Some(&repo.git_dir), false)
-                    .unwrap_or_else(|_| ConfigSet::new());
-                match config.get("diff.relative") {
-                    Some(val) if matches!(val.to_lowercase().as_str(), "true" | "yes" | "1") => {
-                        // Infer from CWD
-                        if let Some(wt) = work_tree {
-                            if let Ok(cwd) = std::env::current_dir() {
-                                if let Ok(rel) = cwd.strip_prefix(wt) {
-                                    let s = rel.to_string_lossy().to_string();
-                                    if s.is_empty() {
-                                        None
-                                    } else {
-                                        Some(format!("{s}/"))
-                                    }
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                }
-            }
-        };
+    let entries = {
+        let prefix = resolve_diff_relative_prefix(work_tree, &repo.git_dir, &args);
         if let Some(ref pfx) = prefix {
             entries
                 .into_iter()
@@ -1790,8 +1734,6 @@ pub fn run(mut args: Args) -> Result<()> {
         } else {
             entries
         }
-    } else {
-        entries
     };
 
     // Apply orderfile sorting if specified
@@ -1851,6 +1793,23 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
+    let dirstat_cli_active = !args.dirstat.is_empty() || args.dirstat_by_file.is_some();
+    let (dirstat_opts, dirstat_config_warnings) =
+        resolve_dirstat_options(&args, &repo.git_dir, dirstat_cli_active)?;
+    let relative_prefix_for_paths = resolve_diff_relative_prefix(work_tree, &repo.git_dir, &args);
+    let format_besides_unified_patch = args.shortstat
+        || stat_enabled
+        || args.stat_count.is_some()
+        || args.stat_width.is_some()
+        || args.stat_graph_width.is_some()
+        || args.stat_name_width.is_some()
+        || args.raw
+        || args.numstat
+        || args.name_only
+        || args.name_status
+        || (args.summary && !stat_enabled)
+        || dirstat_opts.is_some();
+
     let merge_in_progress = std::fs::metadata(repo.git_dir.join("MERGE_HEAD")).is_ok();
     let mut conflict_combined_patches: Vec<String> = Vec::new();
     if merge_in_progress && !args.cached && revs.is_empty() && work_tree.is_some() {
@@ -1872,8 +1831,12 @@ pub fn run(mut args: Args) -> Result<()> {
                 7
             };
             if let Some(wt) = work_tree {
-                for path in &conflict_paths {
-                    let key = path.as_bytes();
+                for display_path in &conflict_paths {
+                    let repo_path = repo_relative_path_for_relative_display(
+                        display_path,
+                        relative_prefix_for_paths.as_deref(),
+                    );
+                    let key = repo_path.as_bytes();
                     let Some(e1) = index.get(key, 1) else {
                         continue;
                     };
@@ -1883,13 +1846,13 @@ pub fn run(mut args: Args) -> Result<()> {
                     let Some(e3) = index.get(key, 3) else {
                         continue;
                     };
-                    let file_path = wt.join(path);
+                    let file_path = wt.join(&repo_path);
                     let wt_bytes = std::fs::read(&file_path).unwrap_or_default();
                     conflict_combined_patches.push(format_worktree_conflict_combined(
                         &repo.git_dir,
                         &config,
                         &repo.odb,
-                        path,
+                        display_path,
                         &e1.oid,
                         &e2.oid,
                         &e3.oid,
@@ -1898,13 +1861,19 @@ pub fn run(mut args: Args) -> Result<()> {
                     ));
                 }
             }
-            entries.retain(|e| {
-                if conflict_paths.iter().any(|p| p == e.path()) {
-                    e.status != DiffStatus::Unmerged && e.status != DiffStatus::Modified
-                } else {
-                    true
-                }
-            });
+            // Git keeps index↔worktree `U`/`M` lines for `--raw` / `--name-only` during conflicts;
+            // combined `diff --cc` replaces them only when unified patch is the sole format.
+            let strip_conflict_index_lines =
+                emit_unified_patch && !args.no_patch && !format_besides_unified_patch;
+            if strip_conflict_index_lines {
+                entries.retain(|e| {
+                    if conflict_paths.iter().any(|p| p == e.path()) {
+                        e.status != DiffStatus::Unmerged && e.status != DiffStatus::Modified
+                    } else {
+                        true
+                    }
+                });
+            }
         }
     }
 
@@ -1986,22 +1955,6 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // `--quiet` alone suppresses stdout, but it still must honor `--exit-code` (below). `-s` /
     // `--no-patch` suppresses the unified patch without implying `--quiet`.
-    let dirstat_cli_active = !args.dirstat.is_empty() || args.dirstat_by_file.is_some();
-    let (dirstat_opts, dirstat_config_warnings) =
-        resolve_dirstat_options(&args, &repo.git_dir, dirstat_cli_active)?;
-
-    let format_besides_unified_patch = args.shortstat
-        || stat_enabled
-        || args.stat_count.is_some()
-        || args.stat_width.is_some()
-        || args.stat_graph_width.is_some()
-        || args.stat_name_width.is_some()
-        || args.raw
-        || args.numstat
-        || args.name_only
-        || args.name_status
-        || (args.summary && !stat_enabled)
-        || dirstat_opts.is_some();
     let quiet_suppresses_stdout = args.quiet && !format_besides_unified_patch;
 
     for w in &dirstat_config_warnings {
@@ -2122,6 +2075,14 @@ pub fn run(mut args: Args) -> Result<()> {
             if show_unified {
                 let diff_config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
                     .unwrap_or_default();
+                let external_diff_cmd = std::env::var("GIT_EXTERNAL_DIFF")
+                    .ok()
+                    .filter(|s| !s.trim().is_empty())
+                    .or_else(|| {
+                        diff_config
+                            .get("diff.external")
+                            .filter(|s| !s.trim().is_empty())
+                    });
                 write_patch_with_prefix(
                     &mut out,
                     &repo,
@@ -2148,6 +2109,9 @@ pub fn run(mut args: Args) -> Result<()> {
                     &diff_algo_ctx,
                     diff_algo_cli,
                     args.cached,
+                    args.no_ext_diff,
+                    external_diff_cmd.as_deref(),
+                    relative_prefix_for_paths.as_deref(),
                 )?;
             }
         }
@@ -3453,6 +3417,102 @@ fn resolve_pathspec_for_diff_classification(arg: &str, precompose_unicode: bool)
     None
 }
 
+/// Prefix for `--relative` / `diff.relative` path stripping (trailing `/` except empty root).
+///
+/// `--no-relative` disables only the `diff.relative` config; explicit `--relative` on the CLI
+/// still applies (matches Git, t4045).
+fn resolve_diff_relative_prefix(
+    work_tree: Option<&Path>,
+    git_dir: &Path,
+    args: &Args,
+) -> Option<String> {
+    let from_cli = match &args.relative {
+        Some(Some(p)) if !p.is_empty() => Some(p.clone()),
+        Some(_) => {
+            if let Some(wt) = work_tree {
+                if let Ok(cwd) = std::env::current_dir() {
+                    if let Ok(rel) = cwd.strip_prefix(wt) {
+                        let s = rel.to_string_lossy().to_string();
+                        if s.is_empty() {
+                            None
+                        } else {
+                            Some(format!("{s}/"))
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+    if from_cli.is_some() {
+        return from_cli;
+    }
+    if args.no_relative {
+        return None;
+    }
+    let config = ConfigSet::load(Some(git_dir), false).unwrap_or_else(|_| ConfigSet::new());
+    match config.get("diff.relative") {
+        Some(val) if matches!(val.to_lowercase().as_str(), "true" | "yes" | "1") => {
+            if let Some(wt) = work_tree {
+                if let Ok(cwd) = std::env::current_dir() {
+                    if let Ok(rel) = cwd.strip_prefix(wt) {
+                        let s = rel.to_string_lossy().to_string();
+                        if s.is_empty() {
+                            None
+                        } else {
+                            Some(format!("{s}/"))
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Map a `--relative`-stripped display path back to the repository-relative path for index I/O.
+fn repo_relative_path_for_relative_display(display: &str, prefix: Option<&str>) -> String {
+    let Some(pfx) = prefix.filter(|s| !s.is_empty()) else {
+        return display.to_owned();
+    };
+    if pfx.ends_with('/') {
+        format!("{pfx}{display}")
+    } else {
+        format!("{pfx}/{display}")
+    }
+}
+
+/// Repository-relative path for attributes / worktree reads when `--relative` stripped display paths.
+fn repo_path_for_diff_entry(entry: &DiffEntry, relative_prefix: Option<&str>) -> String {
+    match relative_prefix {
+        Some(p) if !p.is_empty() => repo_relative_path_for_relative_display(entry.path(), Some(p)),
+        _ => entry.path().to_owned(),
+    }
+}
+
+/// Repo-relative path for one diff side label (`old_path` / `new_path` are display paths after `--relative`).
+fn repo_path_for_diff_side(display_path: &str, relative_prefix: Option<&str>) -> String {
+    if display_path == "/dev/null" {
+        return display_path.to_owned();
+    }
+    match relative_prefix {
+        Some(p) if !p.is_empty() => repo_relative_path_for_relative_display(display_path, Some(p)),
+        _ => display_path.to_owned(),
+    }
+}
+
 fn parse_rev_and_paths(
     args: &[String],
     has_separator: bool,
@@ -4019,6 +4079,73 @@ fn write_diff_header_with_prefix(
     Ok(())
 }
 
+/// Run `GIT_EXTERNAL_DIFF` / `diff.external` when set (Git-compatible argv: path, file, hex, mode ×2).
+///
+/// Matches Git's `prepare_shell_cmd` + `run_command` with `use_shell=1`.
+fn run_external_diff_for_patch(
+    out: &mut impl Write,
+    cmd_line: &str,
+    display_path: &str,
+    old_raw: &[u8],
+    new_raw: &[u8],
+    old_oid: &ObjectId,
+    new_oid: &ObjectId,
+    old_mode: &str,
+    new_mode: &str,
+) -> Result<()> {
+    let cmd_line = cmd_line.trim();
+    if cmd_line.is_empty() {
+        bail!("empty external diff command");
+    }
+    let old_tmp = tempfile::NamedTempFile::new().context("temp file for external diff (old)")?;
+    let new_tmp = tempfile::NamedTempFile::new().context("temp file for external diff (new)")?;
+    fs::write(old_tmp.path(), old_raw)?;
+    fs::write(new_tmp.path(), new_raw)?;
+    let old_hex = old_oid.to_hex();
+    let new_hex = new_oid.to_hex();
+    const SHELL_META: &[char] = &[
+        '|', '&', ';', '<', '>', '(', ')', '$', '`', '\\', '"', '\'', ' ', '\t', '\n', '*', '?',
+        '[', '#', '~', '=', '%',
+    ];
+    let needs_c = cmd_line.chars().any(|c| SHELL_META.contains(&c));
+    let mut cmd = Command::new("sh");
+    if needs_c {
+        let c_script = format!("{cmd_line} \"$@\"");
+        cmd.arg("-c")
+            .arg(&c_script)
+            .arg(cmd_line)
+            .arg(display_path)
+            .arg(old_tmp.path())
+            .arg(&old_hex)
+            .arg(old_mode)
+            .arg(new_tmp.path())
+            .arg(&new_hex)
+            .arg(new_mode);
+    } else {
+        cmd.arg(cmd_line)
+            .arg(display_path)
+            .arg(old_tmp.path())
+            .arg(&old_hex)
+            .arg(old_mode)
+            .arg(new_tmp.path())
+            .arg(&new_hex)
+            .arg(new_mode);
+    }
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| format!("failed to spawn external diff {cmd_line:?}"))?;
+    let mut stdout = child.stdout.take().context("external diff stdout")?;
+    io::copy(&mut stdout, out)?;
+    let status = child.wait().context("waiting for external diff")?;
+    if !status.success() {
+        bail!("external diff exited with {status}");
+    }
+    Ok(())
+}
+
 fn write_patch_with_prefix(
     out: &mut impl Write,
     repo: &Repository,
@@ -4045,10 +4172,14 @@ fn write_patch_with_prefix(
     algo_ctx: &DiffAlgoContext,
     algo_cli: Option<similar::Algorithm>,
     cached: bool,
+    no_ext_diff: bool,
+    external_diff_cmd: Option<&str>,
+    relative_prefix: Option<&str>,
 ) -> Result<()> {
     for entry in entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
         let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
+        let path_for_attrs = repo_path_for_diff_entry(entry, relative_prefix);
 
         if let Some(fmt) = submodule_fmt {
             if entry.old_mode == "160000" || entry.new_mode == "160000" {
@@ -4074,7 +4205,37 @@ fn write_patch_with_prefix(
                         work_tree,
                         true,
                         submodule_ignore,
-                        entry.path(),
+                        &path_for_attrs,
+                    )?;
+                    continue;
+                }
+            }
+        }
+
+        let old_wt_path = repo_path_for_diff_side(old_path, relative_prefix);
+        let old_content_raw = if entry.old_oid == zero_oid() {
+            read_content_raw_or_worktree(odb, &entry.old_oid, work_tree, &old_wt_path)
+        } else {
+            read_content_raw(odb, &entry.old_oid)
+        };
+        let wt_path = path_for_attrs.clone();
+        let new_content_raw =
+            read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, &wt_path);
+
+        if !no_ext_diff {
+            if let Some(ext) = external_diff_cmd.filter(|s| !s.is_empty()) {
+                if entry.status != DiffStatus::Unmerged {
+                    let display = entry.path();
+                    run_external_diff_for_patch(
+                        out,
+                        ext,
+                        display,
+                        &old_content_raw,
+                        &new_content_raw,
+                        &entry.old_oid,
+                        &entry.new_oid,
+                        &entry.old_mode,
+                        &entry.new_mode,
                     )?;
                     continue;
                 }
@@ -4133,10 +4294,6 @@ fn write_patch_with_prefix(
         }
 
         // Check for binary content
-        let old_content_raw = read_content_raw(odb, &entry.old_oid);
-        let new_content_raw =
-            read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, new_path);
-
         // `git diff --cached` for a newly staged empty file: header + index line only, no hunks
         // (t1501-work-tree `diff-TREE-cached.expected`).
         if cached && entry.status == DiffStatus::Added && new_content_raw.is_empty() {
@@ -4154,8 +4311,8 @@ fn write_patch_with_prefix(
             continue;
         }
 
-        let path_for_attrs = entry.path();
-        let textconv_patch = use_textconv && diff_textconv_active(git_dir, config, path_for_attrs);
+        let textconv_patch =
+            use_textconv && diff_textconv_active(git_dir, config, path_for_attrs.as_str());
         if !textconv_patch && (is_binary(&old_content_raw) || is_binary(&new_content_raw)) {
             if show_binary {
                 // --binary: output a "GIT binary patch" block
@@ -4183,7 +4340,7 @@ fn write_patch_with_prefix(
                 odb,
                 git_dir,
                 config,
-                path_for_attrs,
+                path_for_attrs.as_str(),
                 &old_content_raw,
                 &entry.old_oid,
                 true,
@@ -4198,7 +4355,7 @@ fn write_patch_with_prefix(
                 odb,
                 git_dir,
                 config,
-                path_for_attrs,
+                path_for_attrs.as_str(),
                 &new_content_raw,
                 &entry.new_oid,
                 true,
@@ -4292,13 +4449,12 @@ fn write_patch_with_prefix(
                 write!(out, "{patch}")?;
             }
         } else {
-            let rel_for_attrs = entry.path();
-            let algo = diff_algorithm_for_path(rel_for_attrs, algo_cli, algo_ctx);
+            let algo = diff_algorithm_for_path(path_for_attrs.as_str(), algo_cli, algo_ctx);
             let func_matcher = matcher_for_path_parsed(
                 algo_ctx.config.as_ref(),
                 &algo_ctx.attrs.rules,
                 &algo_ctx.attrs.macros,
-                rel_for_attrs,
+                path_for_attrs.as_str(),
                 algo_ctx.ignore_case_attrs,
             )
             .unwrap_or(None);
