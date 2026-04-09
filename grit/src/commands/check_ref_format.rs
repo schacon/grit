@@ -81,6 +81,9 @@ fn run_branch_mode(arg: &str) -> Result<()> {
             if n >= 1 {
                 match resolve_at_minus_for_branch(n) {
                     Some(name) => {
+                        if name == "HEAD" {
+                            std::process::exit(1);
+                        }
                         println!("{name}");
                         return Ok(());
                     }
@@ -106,6 +109,10 @@ fn run_branch_mode(arg: &str) -> Result<()> {
 
     match check_refname_format(arg, &opts) {
         Ok(_) => {
+            // Match git's `check_branch_ref`: `refs/heads/HEAD` is never a valid branch ref.
+            if arg == "HEAD" {
+                std::process::exit(1);
+            }
             println!("{arg}");
             Ok(())
         }
