@@ -243,18 +243,29 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
             }
         } else {
             let checkout_oid = if args.remote {
-                let mut fetch_cmd = grit_subprocess(&grit_bin);
-                fetch_cmd
-                    .args(["fetch", "origin"])
-                    .current_dir(&sub_path)
-                    .env_remove("GIT_DIR")
-                    .env_remove("GIT_WORK_TREE");
-                if args.quiet {
-                    fetch_cmd.arg("--quiet");
-                }
-                let fetch_status = fetch_cmd.status().context("failed to fetch in submodule")?;
-                if !fetch_status.success() {
-                    bail!("failed to fetch in submodule '{}'", m.name);
+                let nested_cfg_path = if sub_path.join(".git").is_file() {
+                    modules_dir.join("config")
+                } else {
+                    sub_path.join(".git").join("config")
+                };
+                let nested_content = fs::read_to_string(&nested_cfg_path)?;
+                let nested_cfg = ConfigFile::parse(&nested_cfg_path, &nested_content, ConfigScope::Local)?;
+                let used_local_fetch =
+                    submodule_fetch_origin_local_path(&sub_path, &nested_cfg, args.quiet)?;
+                if !used_local_fetch {
+                    let mut fetch_cmd = grit_subprocess(&grit_bin);
+                    fetch_cmd
+                        .args(["fetch", "origin"])
+                        .current_dir(&sub_path)
+                        .env_remove("GIT_DIR")
+                        .env_remove("GIT_WORK_TREE");
+                    if args.quiet {
+                        fetch_cmd.arg("--quiet");
+                    }
+                    let fetch_status = fetch_cmd.status().context("failed to fetch in submodule")?;
+                    if !fetch_status.success() {
+                        bail!("failed to fetch in submodule '{}'", m.name);
+                    }
                 }
 
                 let explicit_branch = {
@@ -394,6 +405,10 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
             }
 
             refresh_gitlink_index_stat(&repo, &m.path)?;
+
+            if args.remote {
+                stage_gitlink_in_super_index(&repo, &m.path, &checkout_oid)?;
+            }
 
             if matches!(effective.as_str(), "" | "checkout") || args.remote {
                 println!(

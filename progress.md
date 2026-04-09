@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   308 |
+| Completed   |   313 |
 | In progress |     5 |
-| Remaining   |   456 |
-| **Total**   |   769 |
+| Remaining   |   452 |
+| **Total**   |   770 |
 
-Task lines in `PLAN.md`: 308 completed (`[x]`), 5 in progress (`[~]`), 456 remaining (`[ ]`).
+Task lines in `PLAN.md`: 313 completed (`[x]`), 5 in progress (`[~]`), 452 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t7421-submodule-summary-add` — 5/5 tests pass (`submodule summary`: index↔commit gitlink diff, pathspecs + renamed paths, `rev-parse` first line for abbrev; `submodule update --remote`: local URL fast path updates `refs/remotes/origin/*` + copies objects, stages gitlink in super index)
 - `t5620-backfill` — 10/10 tests pass (expanded-cone path matching: top-level dirs excluded unless in cone; `sparse-checkout` hydrates before apply + empty-index rebuild from HEAD; promisor lazy-fetch reads local ODB first; checkout skips `skip_worktree` paths)
 - `t4128-apply-root` — 12/12 tests pass (`apply --directory`: Git `normalize_path_copy` + trailing `/`; paths already stripped at parse time — do not strip again in `adjust_path`)
 - `t5318-pack-objects-revs-exclude` — 9/9 tests pass (`pack-objects --revs` resolves branch names via `rev_parse::resolve_revision` so packed refs work after `pack-refs`; `^master` exclusion and `--stdin-packs`; harness CSV/dashboards refreshed)
@@ -196,4 +197,4 @@ Task lines in `PLAN.md`: 308 completed (`[x]`), 5 in progress (`[~]`), 456 remai
 
 ## What Remains
 
-456 task lines still open in `PLAN.md` (plus 5 in progress). See `PLAN.md` for the full prioritized list.
+452 task lines still open in `PLAN.md` (plus 5 in progress). See `PLAN.md` for the full prioritized list.

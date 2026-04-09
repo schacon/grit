@@ -1946,7 +1946,7 @@ pub fn copy_objects_for_pull(src_git_dir: &Path, dst_git_dir: &Path) -> Result<(
 ///
 /// Used for local `fetch` so the destination does not receive unrelated objects from the
 /// source object database (matching Git's behavior and keeping negotiation tests faithful).
-fn copy_reachable_objects(
+pub(crate) fn copy_reachable_objects(
     src_git_dir: &Path,
     dst_git_dir: &Path,
     roots: &[ObjectId],
