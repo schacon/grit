@@ -4219,7 +4219,14 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
             commands::index_pack::run(parse_cmd_args(subcmd, &argv))
         }
         "init" => commands::init::run(parse_cmd_args(subcmd, rest), opts.bare),
-        "interpret-trailers" => commands::interpret_trailers::run_from_argv(rest),
+        "interpret-trailers" => {
+            if rest.len() == 1 && (rest[0] == "-h" || rest[0] == "--help") {
+                if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd) {
+                    print_upstream_synopsis_and_exit(subcmd, syn, 129);
+                }
+            }
+            commands::interpret_trailers::run_from_argv(rest)
+        }
         "last-modified" => commands::last_modified::run(parse_cmd_args(subcmd, rest)),
         "log" => {
             let rest = preprocess_log_pickaxe_args(preprocess_log_args(rest));

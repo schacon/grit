@@ -89,6 +89,7 @@ BUILTINS = [
     "get-tar-commit-id",
     "hash-object",
     "index-pack",
+    "interpret-trailers",
     "ls-files",
     "ls-remote",
     "ls-tree",

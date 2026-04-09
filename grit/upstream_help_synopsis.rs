@@ -380,6 +380,9 @@ git hash-object [-t <type>] [-w] --stdin-paths [--no-filters]"#),
         "index-pack" => Some(r#"git index-pack [-v] [-o <index-file>] [--[no-]rev-index] <pack-file>
 git index-pack --stdin [--fix-thin] [--keep] [-v] [-o <index-file>]
 		  [--[no-]rev-index] [<pack-file>]"#),
+        "interpret-trailers" => Some(r#"git interpret-trailers [--in-place] [--trim-empty]
+			[(--trailer (<key>|<key-alias>)[(=|:)<value>])...]
+			[--parse] [<file>...]"#),
         "ls-files" => Some(r#"git ls-files [-z] [-t] [-v] [-f]
 		[-c|--cached] [-d|--deleted] [-o|--others] [-i|--ignored]
 		[-s|--stage] [-u|--unmerged] [-k|--killed] [-m|--modified]
