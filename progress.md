@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   262 |
+| Completed   |   263 |
 | In progress |     4 |
-| Remaining   |   502 |
+| Remaining   |   501 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 262 completed (`[x]`), 4 in progress (`[~]`), 502 remaining (`[ ]`).
+Task lines in `PLAN.md`: 263 completed (`[x]`), 4 in progress (`[~]`), 501 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t7105-reset-patch` — 13/13 tests pass (`git reset -p`: interactive hunk prompts, `HEAD`/`@`/default tree, `HEAD^`/`HEAD^{tree}`, blob/unknown ref failures, pathspec `-- dir` and `HEAD^ -- dir`; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5308-pack-detect-duplicates` — 6/6 tests pass (`index-pack` allows duplicate OIDs by default; `--strict` rejects duplicates with non-zero exit and leaves objects out of the ODB; `cat-file --batch-check` resolves OIDs in packs with duplicate runs; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t7402-submodule-rebase` — 6/6 tests pass (rebase with dirty submodule, interactive rebase, dirty file+submodule failure, stash dirty submodule, submodule gitlink conflict message; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5317-pack-objects-filter-objects` — 33/33 tests pass (`pack-objects --filter` object filtering; harness CSV/dashboards refreshed; `PLAN.md` marked complete)

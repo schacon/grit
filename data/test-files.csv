@@ -1183,7 +1183,7 @@ t7101-reset-empty-subdirs	t7	yes	10	10	0	true	ok	0
 t7102-reset	t7	yes	38	22	16	false	ok	0
 t7103-reset-bare	t7	yes	13	11	2	false	ok	0
 t7104-reset-hard	t7	yes	3	3	0	true	ok	0
-t7105-reset-patch	t7	yes	13	6	7	false	ok	0
+t7105-reset-patch	t7	yes	13	13	0	true	ok	0
 t7106-reset-unborn-branch	t7	yes	7	7	0	true	ok	0
 t7107-reset-pathspec-file	t7	yes	11	0	11	false	ok	0
 t7110-reset-merge	t7	yes	21	7	14	false	ok	0
