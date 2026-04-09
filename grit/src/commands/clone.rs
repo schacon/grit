@@ -539,6 +539,7 @@ pub fn run(mut args: Args) -> Result<()> {
         args.repository.clone()
     };
     let path_only = repo_path_str.split('?').next().unwrap_or("").to_string();
+    crate::transport_path::check_local_url_path_not_option_like(&path_only)?;
     let source_path = PathBuf::from(&path_only);
 
     // Open the source repository, trying .git suffix if direct path fails

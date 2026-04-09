@@ -526,6 +526,8 @@ fn fetch_remote(
         bail!("remote '{remote_name}' not found; no such remote");
     };
 
+    crate::transport_path::check_local_url_path_not_option_like(&url)?;
+
     let is_ext_url = url.starts_with("ext::");
     if is_ext_url {
         crate::protocol::check_protocol_allowed("ext", Some(git_dir))?;

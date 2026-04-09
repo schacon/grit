@@ -39,6 +39,7 @@ mod protocol_wire;
 mod ssh_transport;
 mod trace_packet;
 mod transport_passthrough;
+mod transport_path;
 mod wire_trace;
 
 mod upstream_help_builtin_synopsis {
