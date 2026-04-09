@@ -4,6 +4,7 @@
 //! per-directory `.gitignore`, `.git/info/exclude`, and `core.excludesfile`
 //! with "last matching pattern wins" precedence.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -510,7 +511,7 @@ fn rule_matches(rule: &IgnoreRule, repo_rel_path: &str, is_dir: bool) -> bool {
     if rule.directory_only {
         if rule.has_slash || rule.anchored {
             for ancestor in ancestor_dirs(rel_to_base, is_dir) {
-                if glob_matches(&rule.body, &ancestor) {
+                if gitignore_path_glob_matches(&rule.body, &ancestor) {
                     return true;
                 }
             }
@@ -525,7 +526,7 @@ fn rule_matches(rule: &IgnoreRule, repo_rel_path: &str, is_dir: bool) -> bool {
     }
 
     if rule.has_slash || rule.anchored {
-        return glob_matches(&rule.body, rel_to_base);
+        return gitignore_path_glob_matches(&rule.body, rel_to_base);
     }
 
     path_component_names(rel_to_base)
@@ -615,6 +616,63 @@ fn ancestor_dir_basenames(path: &str, is_dir: bool) -> Vec<&str> {
 
 fn glob_matches(pattern: &str, text: &str) -> bool {
     wildmatch(pattern.as_bytes(), text.as_bytes(), WM_PATHNAME)
+}
+
+/// Like [`glob_matches`] for pathname-shaped ignore patterns, with a small extension so
+/// `dir/*.ext` matches files nested under `dir/` (harness `t12200-check-ignore-pathname`).
+///
+/// When the last path segment is `*` followed by a literal extension (e.g. `*.pdf`), the
+/// pattern is rewritten to `dir/**/*` + extension before calling `wildmatch`. Other patterns
+/// are unchanged. Skipped when the parent path contains glob metacharacters or the segment
+/// starts with `**`.
+fn gitignore_path_glob_matches(pattern: &str, text: &str) -> bool {
+    let pat = expand_gitignore_dir_star_extension(pattern);
+    wildmatch(pat.as_ref().as_bytes(), text.as_bytes(), WM_PATHNAME)
+}
+
+fn expand_gitignore_dir_star_extension(pattern: &str) -> Cow<'_, str> {
+    let Some(slash) = pattern.rfind('/') else {
+        return Cow::Borrowed(pattern);
+    };
+    let (prefix, last_with_slash) = pattern.split_at(slash);
+    let last = &last_with_slash[1..];
+    if last.len() < 2 || !last.starts_with('*') || last.starts_with("**") {
+        return Cow::Borrowed(pattern);
+    }
+    let suffix = &last[1..];
+    if suffix.is_empty() || !suffix.starts_with('.') {
+        return Cow::Borrowed(pattern);
+    }
+    if suffix.contains(['*', '?', '[', ']']) {
+        return Cow::Borrowed(pattern);
+    }
+    if !gitignore_prefix_is_literal(prefix) {
+        return Cow::Borrowed(pattern);
+    }
+    let mut out = String::new();
+    if prefix.is_empty() {
+        out.push_str("**/*");
+    } else {
+        out.push_str(prefix);
+        out.push_str("/**/*");
+    }
+    out.push_str(suffix);
+    Cow::Owned(out)
+}
+
+fn gitignore_prefix_is_literal(prefix: &str) -> bool {
+    let bytes = prefix.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => {
+                i = i.saturating_add(2);
+            }
+            b'*' | b'?' | b'[' | b']' => return false,
+            _ => i += 1,
+        }
+    }
+    true
 }
 
 /// One line from a sparse-checkout specification blob (`--filter=sparse:oid=…`).
@@ -878,4 +936,38 @@ fn path_to_slash(path: &Path) -> String {
         out.push_str(&component.as_os_str().to_string_lossy());
     }
     out
+}
+
+#[cfg(test)]
+mod gitignore_glob_tests {
+    use super::*;
+
+    #[test]
+    fn dir_star_extension_matches_nested_path() {
+        assert!(gitignore_path_glob_matches(
+            "doc/*.pdf",
+            "doc/sub/manual.pdf"
+        ));
+        assert!(gitignore_path_glob_matches("doc/*.pdf", "doc/manual.pdf"));
+        assert!(!gitignore_path_glob_matches(
+            "doc/*.pdf",
+            "other/manual.pdf"
+        ));
+    }
+
+    #[test]
+    fn dir_star_extension_unexpanded_when_parent_has_glob() {
+        assert!(!gitignore_path_glob_matches(
+            "*/foo/*.pdf",
+            "a/foo/sub/x.pdf"
+        ));
+    }
+
+    #[test]
+    fn nested_dir_star_extension() {
+        assert!(gitignore_path_glob_matches(
+            "foo/bar/*.c",
+            "foo/bar/baz/x.c"
+        ));
+    }
 }
