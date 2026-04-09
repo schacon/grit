@@ -742,7 +742,7 @@ commit → check it off → move on.
 - [x] `t6009-rev-list-parent` ████████████████████ 15/15 (0 left) — ancestor culling and limiting by parent number
 - [x] `t6426-merge-skip-unneeded-updates` ████████████████████ 13/13 (0 left) — merge cases
 - [ ] `t6113-rev-list-bitmap-filters` █░░░░░░░░░░░░░░░░░░░ 1/14 (13 left) — rev-list combining bitmaps and filters
-- [ ] `t6436-merge-overwrite` ████░░░░░░░░░░░░░░░░ 4/18 (14 left) — git-merge
+- [x] `t6436-merge-overwrite` ████████████████████ 18/18 (0 left) — git-merge
 
 - [ ] `t6003-rev-list-topo-order` ███████████░░░░░░░░░ 21/36 (15 left) — Tests git rev-list --topo-order functionality
 - [ ] `t6601-path-walk` ░░░░░░░░░░░░░░░░░░░░ 0/15 (15 left) — direct path-walk API tests

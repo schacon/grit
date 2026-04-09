@@ -6,12 +6,12 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   284 |
+| Completed   |   285 |
 | In progress |     4 |
-| Remaining   |   481 |
+| Remaining   |   480 |
 | **Total**   |   769 |
 
-Task lines in `PLAN.md`: 284 completed (`[x]`), 4 in progress (`[~]`), 481 remaining (`[ ]`).
+Task lines in `PLAN.md`: 285 completed (`[x]`), 4 in progress (`[~]`), 480 remaining (`[ ]`).
 
 ## Recently completed
 
@@ -50,6 +50,7 @@ Task lines in `PLAN.md`: 284 completed (`[x]`), 4 in progress (`[~]`), 481 remai
 - `t5408-send-pack-stdin` — 10/10 tests pass (`send-pack`: `--stdin` refspec lines after argv, duplicate destination ref rejected with Git’s message, `--mirror` with refspecs exits 129 with upstream usage synopsis)
 - `t5617-clone-submodules-remote` — 9/9 tests pass (`clone --recurse-submodules`: `--no-remote-submodules` / `--remote-submodules` / default, `--single-branch` submodule refs, partial clone `--filter` + `--also-filter-submodules` / `clone.filterSubmodules` / `--no-also-filter-submodules`; harness CSV already reflected full pass; `PLAN.md` marked complete)
 - `t5320-delta-islands` — 15/15 tests pass (`repack` delta islands: `pack.island` / `pack.islandcore`, superset-island delta rules, verify-pack ordering; harness CSV/dashboards refreshed)
+- `t6436-merge-overwrite` — 18/18 tests pass (merge refuses to overwrite untracked/staged/removed paths, leading-path collisions, unborn-branch merge safety; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t4214-log-graph-octopus` — 17/17 tests pass (`git log --graph` skewed-left octopus, crossover, and colored graph lines; harness CSV/dashboards refreshed)
 - `t3060-ls-files-with-tree` — 8/8 tests pass (`ls-files --with-tree`: `Index::overlay_tree_on_index`, `-s/-u`/`--recurse-submodules` incompatibilities with `fatal:` + exit 128, cwd pathspec `sub/` matches `sub/file`; harness CSV refreshed)
 - `t12660-init-shared-perm` — 37/37 tests pass (default `grit init` applies Git-style group-shared chmod on `.git` tree: 775 dirs / 664 HEAD under umask 022; explicit `--shared` / `core.sharedRepository` writes config + `receive.denyNonFastforwards`; reinit without shared config leaves modes unchanged)
@@ -162,4 +163,4 @@ Task lines in `PLAN.md`: 284 completed (`[x]`), 4 in progress (`[~]`), 481 remai
 
 ## What Remains
 
-481 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+480 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
