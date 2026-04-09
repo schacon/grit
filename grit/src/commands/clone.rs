@@ -118,6 +118,10 @@ pub struct Args {
     #[arg(long = "shallow-submodules")]
     pub shallow_submodules: bool,
 
+    /// Do not use shallow submodule clones (overrides `.gitmodules` shallow recommendation).
+    #[arg(long = "no-shallow-submodules")]
+    pub no_shallow_submodules: bool,
+
     /// Use a custom upload-pack command on the remote side.
     #[arg(short = 'u', long = "upload-pack", value_name = "UPLOAD_PACK")]
     pub upload_pack: Option<String>,
@@ -428,7 +432,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let remote_name = resolve_remote_name(&args)?;
 
     // Determine target directory
-    let target_name = args.directory.unwrap_or_else(|| {
+    let target_name = args.directory.clone().unwrap_or_else(|| {
         let base = source_path
             .file_name()
             .unwrap_or_default()
@@ -928,7 +932,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // Recurse into submodules if requested
     if args.recurse_submodules && !args.bare {
         if let Some(ref wt) = dest.work_tree {
-            clone_submodules(wt, &dest, args.quiet).context("cloning submodules")?;
+            clone_submodules(wt, &dest, &args).context("cloning submodules")?;
         }
     }
 
@@ -1181,7 +1185,7 @@ fn run_git_clone(args: Args) -> Result<()> {
 
     if args.recurse_submodules && !args.bare {
         if let Some(ref wt) = dest.work_tree {
-            clone_submodules(wt, &dest, args.quiet).context("cloning submodules")?;
+            clone_submodules(wt, &dest, &args).context("cloning submodules")?;
         }
     }
 
@@ -1613,7 +1617,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
 
     if args.recurse_submodules && !args.bare {
         if let Some(ref wt) = dest.work_tree {
-            clone_submodules(wt, &dest, args.quiet).context("cloning submodules")?;
+            clone_submodules(wt, &dest, &args).context("cloning submodules")?;
         }
     }
 
@@ -1672,47 +1676,15 @@ fn collect_gitlink_paths(
     Ok(())
 }
 
-fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<()> {
+fn clone_submodules(work_tree: &Path, repo: &Repository, clone_args: &Args) -> Result<()> {
+    let quiet = clone_args.quiet;
     let gitmodules_path = work_tree.join(".gitmodules");
     if !gitmodules_path.exists() {
         return Ok(());
     }
 
-    let content = fs::read_to_string(&gitmodules_path).context("reading .gitmodules")?;
-
-    grit_lib::gitmodules::write_gitmodules_cli_option_warnings(&mut std::io::stderr(), &content)
-        .ok();
-
-    // Simple parser for .gitmodules
-    let mut submodules: Vec<(String, String)> = Vec::new(); // (path, url)
-    let mut current_path: Option<String> = None;
-    let mut current_url: Option<String> = None;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            // Flush previous
-            if let (Some(p), Some(u)) = (current_path.take(), current_url.take()) {
-                submodules.push((p, u));
-            }
-            continue;
-        }
-        if let Some(val) = trimmed
-            .strip_prefix("path = ")
-            .or_else(|| trimmed.strip_prefix("path="))
-        {
-            current_path = Some(gitmodules_config_value(val));
-        }
-        if let Some(val) = trimmed
-            .strip_prefix("url = ")
-            .or_else(|| trimmed.strip_prefix("url="))
-        {
-            current_url = Some(gitmodules_config_value(val));
-        }
-    }
-    if let (Some(p), Some(u)) = (current_path.take(), current_url.take()) {
-        submodules.push((p, u));
-    }
+    let modules =
+        crate::commands::submodule::parse_gitmodules_for_clone(work_tree).unwrap_or_default();
 
     // Relative submodule URLs resolve against the default remote's repository root (Git parity),
     // not the current work tree — so a clone into `dst/` still finds `../upstream` next to `.`.
@@ -1729,25 +1701,25 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<
     // cloning would delete the checked-out tree (`t2080` clone + verify_checkout).
     let gitlink_paths = gitlink_paths_at_head(work_tree).unwrap_or_default();
 
-    for (path, url) in &submodules {
-        if !gitlink_paths.contains(path) {
+    for sm in &modules {
+        if !gitlink_paths.contains(&sm.path) {
             continue;
         }
 
-        let sub_dest = work_tree.join(path);
+        let sub_dest = work_tree.join(&sm.path);
 
-        let resolved_url = if url.starts_with("./") || url.starts_with("../") {
+        let resolved_url = if sm.url.starts_with("./") || sm.url.starts_with("../") {
             let base = origin_repo_root
                 .as_ref()
                 .cloned()
                 .unwrap_or_else(|| work_tree.to_path_buf());
-            let joined = base.join(url);
+            let joined = base.join(&sm.url);
             fs::canonicalize(&joined)
                 .unwrap_or(joined)
                 .to_string_lossy()
                 .to_string()
         } else {
-            url.clone()
+            sm.url.clone()
         };
 
         if !quiet {
@@ -1763,23 +1735,32 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<
             }
         }
 
+        let super_shallow = repo.git_dir.join("shallow").is_file();
+        let depth = crate::commands::submodule::submodule_clone_depth_for_superproject(
+            super_shallow,
+            clone_args.shallow_submodules,
+            clone_args.no_shallow_submodules,
+            false,
+            sm.shallow,
+        );
+
         let mut cmd = std::process::Command::new(&grit_bin);
         crate::grit_exe::strip_trace2_env(&mut cmd);
-        cmd.arg("clone")
-            .arg("-c")
-            .arg("protocol.file.allow=always")
-            .arg(&resolved_url)
-            .arg(&sub_dest);
+        cmd.arg("clone").arg("-c").arg("protocol.file.allow=always");
+        if let Some(d) = depth {
+            cmd.arg("--depth").arg(d.to_string());
+        }
+        cmd.arg(&resolved_url).arg(&sub_dest);
         if quiet {
             cmd.arg("-q");
         }
 
         let status = cmd
             .status()
-            .with_context(|| format!("failed to clone submodule '{}'", path))?;
+            .with_context(|| format!("failed to clone submodule '{}'", sm.path))?;
 
         if !status.success() {
-            eprintln!("warning: failed to clone submodule '{}'", path);
+            eprintln!("warning: failed to clone submodule '{}'", sm.path);
             anyhow::bail!(
                 "clone of '{}' into submodule path '{}' failed",
                 resolved_url,
@@ -1790,28 +1771,30 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<
 
     let mut upd = std::process::Command::new(&grit_bin);
     crate::grit_exe::strip_trace2_env(&mut upd);
-    let status = upd
-        .args(["submodule", "update", "--init", "--recursive"])
-        .current_dir(work_tree)
-        .status()
-        .context("submodule update after clone")?;
+    upd.args(["submodule", "update", "--init", "--recursive"])
+        .current_dir(work_tree);
+    if clone_args.shallow_submodules {
+        upd.env(
+            crate::commands::submodule::CLONE_SHALLOW_SUBMODULES_ENV,
+            "1",
+        );
+    } else {
+        upd.env_remove(crate::commands::submodule::CLONE_SHALLOW_SUBMODULES_ENV);
+    }
+    if clone_args.no_shallow_submodules {
+        upd.env(
+            crate::commands::submodule::CLONE_NO_SHALLOW_SUBMODULES_ENV,
+            "1",
+        );
+    } else {
+        upd.env_remove(crate::commands::submodule::CLONE_NO_SHALLOW_SUBMODULES_ENV);
+    }
+    let status = upd.status().context("submodule update after clone")?;
     if !status.success() {
         bail!("submodule update failed after clone");
     }
 
     Ok(())
-}
-
-/// Strip Git config-style quoting from a `.gitmodules` value (`path = "-sub"` → `-sub`).
-fn gitmodules_config_value(raw: &str) -> String {
-    let t = raw.trim();
-    if t.len() >= 2 && t.starts_with('"') && t.ends_with('"') {
-        t[1..t.len() - 1]
-            .replace("\\\"", "\"")
-            .replace("\\\\", "\\")
-    } else {
-        t.to_string()
-    }
 }
 
 /// Extract a remote URL from config content.

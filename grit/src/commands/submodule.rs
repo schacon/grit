@@ -21,6 +21,65 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Set by `clone --recurse-submodules` when `--shallow-submodules` was used.
+pub(crate) const CLONE_SHALLOW_SUBMODULES_ENV: &str = "GRIT_CLONE_SHALLOW_SUBMODULES";
+
+/// Set by `clone --recurse-submodules` when `--no-shallow-submodules` was used.
+pub(crate) const CLONE_NO_SHALLOW_SUBMODULES_ENV: &str = "GRIT_CLONE_NO_SHALLOW_SUBMODULES";
+
+/// Parse `.gitmodules` for clone-time submodule URLs and shallow recommendations.
+pub(crate) fn parse_gitmodules_for_clone(work_tree: &Path) -> Result<Vec<SubmoduleInfo>> {
+    let gitmodules_path = work_tree.join(".gitmodules");
+    if !gitmodules_path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = fs::read_to_string(&gitmodules_path).context("reading .gitmodules")?;
+    let _ = grit_lib::gitmodules::write_gitmodules_cli_option_warnings(&mut io::stderr(), &content);
+    parse_gitmodules_with_repo(work_tree, None)
+}
+
+/// Submodule `git clone --depth N` when `Some(1)`; `None` means a non-shallow clone.
+///
+/// `super_shallow` is true when the superproject has a `.git/shallow` file (clone used `--depth` /
+/// shallow negotiation). A shallow superproject does **not** imply shallow submodules unless
+/// `--shallow-submodules` is set or `.gitmodules` recommends shallow (matches `t5614`).
+#[must_use]
+pub(crate) fn submodule_clone_depth_for_superproject(
+    super_shallow: bool,
+    shallow_submodules_cli: bool,
+    no_shallow_submodules_cli: bool,
+    no_recommend_shallow: bool,
+    gitmodules_shallow: Option<bool>,
+) -> Option<usize> {
+    if no_shallow_submodules_cli {
+        return None;
+    }
+    if shallow_submodules_cli {
+        return Some(1);
+    }
+    if !no_recommend_shallow {
+        if let Some(s) = gitmodules_shallow {
+            return if s { Some(1) } else { None };
+        }
+    }
+    if super_shallow {
+        return None;
+    }
+    None
+}
+
+fn clone_shallow_submodules_from_env() -> bool {
+    std::env::var_os(CLONE_SHALLOW_SUBMODULES_ENV)
+        .as_deref()
+        .is_some_and(|v| !v.is_empty())
+}
+
+fn clone_no_shallow_submodules_from_env() -> bool {
+    std::env::var_os(CLONE_NO_SHALLOW_SUBMODULES_ENV)
+        .as_deref()
+        .is_some_and(|v| !v.is_empty())
+}
+
 /// Spawn grit for a nested operation without inheriting the superproject's `GIT_DIR` /
 /// `GIT_WORK_TREE` (tests and detached work trees set those in the parent shell).
 fn grit_subprocess(grit_bin: &Path) -> Command {
@@ -119,6 +178,10 @@ pub struct UpdateArgs {
     /// Recurse into nested submodules.
     #[arg(long)]
     pub recursive: bool,
+
+    /// Ignore `.gitmodules` shallow recommendations (still shallow when the superproject is shallow).
+    #[arg(long = "no-recommend-shallow")]
+    pub no_recommend_shallow: bool,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -212,12 +275,14 @@ pub struct SetUrlArgs {
     pub newurl: String,
 }
 
-/// Parsed entry from .gitmodules.
+/// Parsed entry from `.gitmodules`.
 #[derive(Debug, Clone)]
-struct SubmoduleInfo {
-    name: String,
-    path: String,
-    url: String,
+pub(crate) struct SubmoduleInfo {
+    pub(crate) name: String,
+    pub(crate) path: String,
+    pub(crate) url: String,
+    /// `submodule.<name>.shallow` from `.gitmodules`, when set.
+    pub(crate) shallow: Option<bool>,
 }
 
 /// Update submodule working trees to the commits recorded in the superproject index.
@@ -230,6 +295,7 @@ pub(crate) fn update_after_superproject_merge(init: bool, recursive: bool) -> Re
         checkout: false,
         remote: false,
         recursive,
+        no_recommend_shallow: false,
     })
 }
 
@@ -627,7 +693,8 @@ fn parse_gitmodules_with_repo(
         .context("failed to parse .gitmodules")?;
 
     // Collect entries by submodule name.
-    let mut modules: BTreeMap<String, (Option<String>, Option<String>)> = BTreeMap::new();
+    let mut modules: BTreeMap<String, (Option<String>, Option<String>, Option<bool>)> =
+        BTreeMap::new();
 
     for entry in &config.entries {
         // Keys look like: submodule.<name>.path, submodule.<name>.url
@@ -640,19 +707,42 @@ fn parse_gitmodules_with_repo(
         if let Some(last_dot) = rest.rfind('.') {
             let name = &rest[..last_dot];
             let var = &rest[last_dot + 1..];
-            let entry_val = modules.entry(name.to_string()).or_insert((None, None));
+            let entry_val = modules
+                .entry(name.to_string())
+                .or_insert((None, None, None));
             match var {
                 "path" => entry_val.0 = entry.value.clone(),
                 "url" => entry_val.1 = entry.value.clone(),
+                "shallow" => {
+                    if let Some(v) = entry.value.as_deref() {
+                        let v = v.trim();
+                        if v.eq_ignore_ascii_case("true")
+                            || v == "1"
+                            || v.eq_ignore_ascii_case("yes")
+                        {
+                            entry_val.2 = Some(true);
+                        } else if v.eq_ignore_ascii_case("false")
+                            || v == "0"
+                            || v.eq_ignore_ascii_case("no")
+                        {
+                            entry_val.2 = Some(false);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
     }
 
     let mut result = Vec::new();
-    for (name, (path, url)) in modules {
+    for (name, (path, url, shallow)) in modules {
         if let (Some(path), Some(url)) = (path, url) {
-            result.push(SubmoduleInfo { name, path, url });
+            result.push(SubmoduleInfo {
+                name,
+                path,
+                url,
+                shallow,
+            });
         }
     }
 
@@ -949,6 +1039,7 @@ fn run_init(args: &InitArgs) -> Result<()> {
 fn run_update(args: &UpdateArgs) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
+    let super_shallow = repo.git_dir.join("shallow").is_file();
 
     if args.init {
         run_init(&InitArgs {
@@ -1055,11 +1146,23 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
                 let clone_src_str =
                     resolve_submodule_super_url(work_tree, &repo.git_dir, &clone_url)?;
 
-                let status = grit_subprocess(&grit_bin)
-                    .arg("clone")
+                let submodule_depth = submodule_clone_depth_for_superproject(
+                    super_shallow,
+                    clone_shallow_submodules_from_env(),
+                    clone_no_shallow_submodules_from_env(),
+                    args.no_recommend_shallow,
+                    m.shallow,
+                );
+
+                let mut cmd = grit_subprocess(&grit_bin);
+                cmd.arg("clone")
                     .arg("--no-checkout")
                     .arg("--separate-git-dir")
-                    .arg(&modules_dir)
+                    .arg(&modules_dir);
+                if let Some(d) = submodule_depth {
+                    cmd.arg("--depth").arg(d.to_string());
+                }
+                let status = cmd
                     .arg(&clone_src_str)
                     .arg(&sub_path)
                     .current_dir(work_tree)
@@ -1193,8 +1296,12 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             if parse_gitmodules(&sub_path).unwrap_or_default().is_empty() {
                 continue;
             }
-            let status = grit_subprocess(&grit_bin)
-                .args(["submodule", "update", "--init", "--recursive"])
+            let mut nested = grit_subprocess(&grit_bin);
+            nested.args(["submodule", "update", "--init", "--recursive"]);
+            if args.no_recommend_shallow {
+                nested.arg("--no-recommend-shallow");
+            }
+            let status = nested
                 .current_dir(&sub_path)
                 .status()
                 .with_context(|| format!("nested submodule update in {}", m.path))?;
