@@ -374,7 +374,7 @@ t1311-config-optional	t1	yes	3	3	0	true	ok	0
 t13120-diff-no-index-dir-file	t1	yes	37	36	1	false	ok	0
 t13130-diff-cached-delete-add	t1	yes	44	44	0	true	ok	0
 t13140-diff-tree-stat-numstat	t1	yes	32	32	0	true	ok	0
-t13150-diff-stat-insertions-deletions	t1	yes	42	40	2	false	ok	0
+t13150-diff-stat-insertions-deletions	t1	yes	42	42	0	true	ok	0
 t13180-log-patch-stat	t1	yes	35	34	1	false	ok	0
 t13190-log-format-body	t1	yes	36	36	0	true	ok	0
 t13200-rev-list-walk-options	t1	yes	35	35	0	true	ok	0
