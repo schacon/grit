@@ -11,7 +11,7 @@ This implementation is being written entirely by AI coding agents. The AGENT.md 
 | [`grit-rs`](https://crates.io/crates/grit-rs) | The `grit` binary — a drop-in CLI reimplementation of `git` with 140+ commands |
 | [`grit-lib`](https://crates.io/crates/grit-lib) | Core library: object model, diff engine, index, refs, revision walking, merge, config, and more |
 
-Runnable **library examples** (repos, object database, index, `rev-list`, cherry-pick, and more) are documented in [`grit-lib/examples/README.md`](grit-lib/examples/README.md).
+Runnable **library examples** (repos, object database, index, `rev-list`, cherry-pick, and more) are documented in [`grit-lib/examples/`](grit-lib/examples/).
 
 ## Progress
 
