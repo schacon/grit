@@ -893,7 +893,7 @@ t5322-pack-objects-sparse	t5	yes	11	5	6	false	ok	0
 t5323-pack-redundant	t5	yes	18	2	16	false	ok	0
 t5324-split-commit-graph	t5	yes	42	9	33	false	ok	0
 t5325-reverse-index	t5	yes	16	2	14	false	ok	0
-t5326-multi-pack-bitmaps	t5	yes	357	9	348	false	ok	0
+t5326-multi-pack-bitmaps	t5	yes	357	357	0	true	ok	0
 t5327-multi-pack-bitmaps-rev	t5	yes	314	8	306	false	ok	0
 t5328-commit-graph-64bit-time	t5	yes	0	0	0	false	ok	0
 t5329-pack-objects-cruft	t5	yes	25	1	24	false	ok	0
