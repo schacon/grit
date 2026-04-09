@@ -87,7 +87,7 @@
 - [ ] t11930-diff-cached-empty-tree.sh
 - [ ] t11940-diff-tree-merge-base.sh
 - [ ] t11970-status-ignored-tracked.sh
-- [ ] t12000-rev-list-topo-order.sh
+- [x] t12000-rev-list-topo-order.sh
 - [ ] t12040-config-unset-all.sh
 - [ ] t12050-config-edit-file.sh
 - [ ] t12070-branch-describe-sort.sh
