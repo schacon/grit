@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -1267,7 +1267,7 @@ t7615-diff-algo-with-mergy-operations	t7	yes	7	5	2	false	ok	0
 t7700-repack	t7	yes	47	11	36	false	ok	0
 t7701-repack-unpack-unreachable	t7	yes	9	0	9	false	ok	0
 t7702-repack-cyclic-alternate	t7	yes	2	2	0	true	ok	0
-t7703-repack-geometric	t7	yes	18	2	16	false	ok	0
+t7703-repack-geometric	t7	yes	18	4	14	false	ok	0
 t7704-repack-cruft	t7	skip	25	5	20	false	ok	0
 t7800-difftool	t7	yes	0	0	0	false	timeout	0
 t7810-grep	t7	yes	0	0	0	false	timeout	0

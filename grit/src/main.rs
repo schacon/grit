@@ -3457,6 +3457,60 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                     }
                     Err(e) => bail!("{e}"),
                 },
+                "read-midx" => {
+                    use grit_lib::midx::{
+                        format_midx_dump, midx_checksum_hex, read_midx_preferred_idx_name,
+                    };
+                    let sub = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+                    match sub {
+                        "--preferred-pack" => {
+                            let dir = rest
+                                .get(2)
+                                .map(Path::new)
+                                .context("usage: test-tool read-midx --preferred-pack <object-dir>")?;
+                            let name = read_midx_preferred_idx_name(dir)
+                                .map_err(|e| anyhow::anyhow!("{e}"))?;
+                            println!("{name}");
+                        }
+                        "--checksum" => {
+                            let dir = rest
+                                .get(2)
+                                .map(Path::new)
+                                .context("usage: test-tool read-midx --checksum <object-dir>")?;
+                            let h = midx_checksum_hex(dir).map_err(|e| anyhow::anyhow!("{e}"))?;
+                            println!("{h}");
+                        }
+                        "--show-objects" => {
+                            bail!("test-tool read-midx --show-objects is not implemented");
+                        }
+                        "--bitmap" => {
+                            let dir = rest
+                                .get(2)
+                                .map(Path::new)
+                                .context("usage: test-tool read-midx --bitmap <object-dir>")?;
+                            let pack_dir = dir.join("pack");
+                            let has = std::fs::read_dir(&pack_dir)
+                                .ok()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|e| e.ok())
+                                .any(|e| {
+                                    let n = e.file_name().to_string_lossy().to_string();
+                                    n.starts_with("multi-pack-index-") && n.ends_with(".bitmap")
+                                });
+                            if !has {
+                                bail!("no multi-pack bitmap in {}", pack_dir.display());
+                            }
+                        }
+                        "" => bail!("usage: test-tool read-midx <object-dir>"),
+                        dir => {
+                            let dump =
+                                format_midx_dump(Path::new(dir)).map_err(|e| anyhow::anyhow!("{e}"))?;
+                            print!("{dump}");
+                        }
+                    }
+                    Ok(())
+                }
                 "genrandom" => {
                     // Match `git/t/helper/test-genrandom.c`: `test-tool genrandom <seed> [<size>]`.
                     // With two args only, emit until the pipe breaks (size omitted → unbounded).

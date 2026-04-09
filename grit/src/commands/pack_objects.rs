@@ -58,6 +58,10 @@ pub struct Args {
     #[arg(long = "stdin-packs")]
     pub stdin_packs: bool,
 
+    /// With `--stdin-packs`, also add loose objects not in excluded packs (geometric repack).
+    #[arg(long = "unpacked")]
+    pub unpacked: bool,
+
     /// Use OFS_DELTA (delta-base-offset) format in pack output.
     #[arg(long = "delta-base-offset")]
     pub delta_base_offset: bool,
@@ -202,6 +206,7 @@ struct PackObjectList {
 }
 
 /// One slot in a pack file (full object or `REF_DELTA`).
+#[derive(Clone)]
 enum PackWriteEntry {
     Full(PackEntry),
     RefDelta {
@@ -230,7 +235,10 @@ pub fn run(args: Args) -> Result<()> {
     let pack_list = collect_oids(&repo, &args)?;
 
     if pack_list.oids.is_empty() {
-        if !args.stdout {
+        if args.non_empty {
+            return Ok(());
+        }
+        if !args.stdout && !args.quiet {
             eprintln!("Total 0 (delta 0), reused 0 (delta 0)");
         }
         return Ok(());
@@ -306,9 +314,10 @@ pub fn run(args: Args) -> Result<()> {
     )?;
 
     // Build pack bytes.
-    let pack_bytes = build_pack(&write_entries)?;
+    let max_pack = parse_max_pack_size_bytes(&args)?;
 
     if args.stdout {
+        let pack_bytes = build_pack(&write_entries)?;
         let stdout = io::stdout();
         let mut out = stdout.lock();
         out.write_all(&pack_bytes)?;
@@ -319,27 +328,88 @@ pub fn run(args: Args) -> Result<()> {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("no base name"))?;
 
-        // Pack hash is the trailing 20 bytes.
-        let pack_hash = hex::encode(&pack_bytes[pack_bytes.len() - 20..]);
-        let pack_path = format!("{base}-{pack_hash}.pack");
-        let idx_path = format!("{base}-{pack_hash}.idx");
+        let segments = split_write_entries_by_size(&write_entries, max_pack);
+        let mut printed_hashes = 0usize;
+        for seg in segments {
+            let pack_bytes = build_pack(&seg)?;
+            let pack_hash = hex::encode(&pack_bytes[pack_bytes.len() - 20..]);
+            let pack_path = format!("{base}-{pack_hash}.pack");
+            let idx_path = format!("{base}-{pack_hash}.idx");
 
-        std::fs::write(&pack_path, &pack_bytes)?;
+            std::fs::write(&pack_path, &pack_bytes)?;
+            let idx_bytes = build_idx_for_pack(&pack_bytes, &seg)?;
+            std::fs::write(&idx_path, &idx_bytes)?;
 
-        // Build and write idx.
-        let idx_bytes = build_idx_for_pack(&pack_bytes, &write_entries)?;
-        std::fs::write(&idx_path, &idx_bytes)?;
-
-        println!("{pack_hash}");
-        eprintln!(
-            "Total {} (delta {}), reused 0 (delta {})",
-            write_entries.len(),
-            new_deltas + reused_deltas,
-            reused_deltas
-        );
+            println!("{pack_hash}");
+            printed_hashes += 1;
+        }
+        if printed_hashes > 0 {
+            eprintln!(
+                "Total {} (delta {}), reused 0 (delta {})",
+                write_entries.len(),
+                new_deltas + reused_deltas,
+                reused_deltas
+            );
+        }
     }
 
     Ok(())
+}
+
+fn parse_max_pack_size_bytes(args: &Args) -> Result<Option<u64>> {
+    let from_extra = || {
+        for a in &args.extra {
+            if let Some(rest) = a.strip_prefix("--max-pack-size=") {
+                if let Ok(n) = rest.parse::<u64>() {
+                    return Some(n);
+                }
+            }
+        }
+        None
+    };
+    let raw = args
+        .max_pack_size
+        .as_deref()
+        .and_then(|s| s.parse::<u64>().ok())
+        .or_else(from_extra);
+    Ok(raw.filter(|&n| n > 0))
+}
+
+fn estimate_write_entry_size(e: &PackWriteEntry) -> u64 {
+    match e {
+        PackWriteEntry::Full(pe) => pe.data.len() as u64 + 64,
+        PackWriteEntry::RefDelta { delta, .. } => delta.len() as u64 + 100,
+    }
+}
+
+fn split_write_entries_by_size(
+    entries: &[PackWriteEntry],
+    max_bytes: Option<u64>,
+) -> Vec<Vec<PackWriteEntry>> {
+    let Some(limit) = max_bytes else {
+        return vec![entries.to_vec()];
+    };
+    let mut out: Vec<Vec<PackWriteEntry>> = Vec::new();
+    let mut cur: Vec<PackWriteEntry> = Vec::new();
+    let mut cur_est = 0u64;
+    for e in entries {
+        let est = estimate_write_entry_size(e);
+        if !cur.is_empty() && cur_est.saturating_add(est) > limit {
+            out.push(cur);
+            cur = Vec::new();
+            cur_est = 0;
+        }
+        cur_est = cur_est.saturating_add(est);
+        cur.push(e.clone());
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    if out.is_empty() {
+        vec![Vec::new()]
+    } else {
+        out
+    }
 }
 
 /// Effective maximum delta chain length for `pack-objects` (`--depth`), matching Git semantics:
@@ -402,6 +472,87 @@ fn blob_oid_for_tree_path(repo: &Repository, tree_oid: &ObjectId, name: &[u8]) -
         String::from_utf8_lossy(name),
         tree_oid.to_hex()
     );
+}
+
+fn collect_stdin_packs(repo: &Repository, unpacked: bool, oids: &mut BTreeSet<ObjectId>) -> Result<()> {
+    let stdin = io::stdin();
+    let local_pack = repo.odb.objects_dir().join("pack");
+    let mut include_names: Vec<String> = Vec::new();
+    let mut exclude_names: Vec<String> = Vec::new();
+    for line in stdin.lock().lines() {
+        let line = line?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix('^') {
+            exclude_names.push(rest.to_string());
+        } else {
+            include_names.push(trimmed.to_string());
+        }
+    }
+
+    let resolve_idx = |line: &str| -> Result<std::path::PathBuf> {
+        let idx = if line.contains('/') || line.contains('\\') {
+            let p = std::path::PathBuf::from(line);
+            if p.extension().is_some_and(|e| e == "pack") {
+                p.with_extension("idx")
+            } else if p.extension().is_some_and(|e| e == "idx") {
+                p
+            } else {
+                p.with_extension("idx")
+            }
+        } else {
+            let file = line.strip_suffix(".pack").unwrap_or(line);
+            local_pack.join(format!("{file}.idx"))
+        };
+        if idx.is_file() {
+            return Ok(idx);
+        }
+        let alts = grit_lib::pack::read_alternates_recursive(repo.odb.objects_dir())
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        for alt in alts {
+            let candidate = if line.contains('/') || line.contains('\\') {
+                continue;
+            } else {
+                let file = line.strip_suffix(".pack").unwrap_or(line);
+                alt.join("pack").join(format!("{file}.idx"))
+            };
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+        bail!("pack index not found for line {line}")
+    };
+
+    for name in &include_names {
+        let idx_path = resolve_idx(name)?;
+        let idx = grit_lib::pack::read_pack_index(&idx_path)
+            .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", idx_path.display()))?;
+        for entry in idx.entries {
+            oids.insert(entry.oid);
+        }
+    }
+
+    let mut excluded: BTreeSet<ObjectId> = BTreeSet::new();
+    for name in &exclude_names {
+        if let Ok(idx_path) = resolve_idx(name) {
+            if let Ok(idx) = grit_lib::pack::read_pack_index(&idx_path) {
+                for entry in idx.entries {
+                    excluded.insert(entry.oid);
+                }
+            }
+        }
+    }
+
+    oids.retain(|o| !excluded.contains(o));
+
+    if unpacked {
+        collect_all_loose(&repo.odb, oids)?;
+        oids.retain(|o| !excluded.contains(o));
+    }
+
+    Ok(())
 }
 
 /// Collect object IDs from stdin or `--all`.
@@ -482,37 +633,7 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
             thin_blob_deltas: Vec::new(),
         });
     } else if args.stdin_packs {
-        // Read pack filenames from stdin and include all objects in those packs.
-        let stdin = io::stdin();
-        let pack_dir = repo.odb.objects_dir().join("pack");
-        for line in stdin.lock().lines() {
-            let line = line?;
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            // The input can be a bare name like "pack-<hash>" or full path.
-            let idx_path = if trimmed.contains('/') || trimmed.contains('\\') {
-                std::path::PathBuf::from(trimmed)
-            } else {
-                pack_dir.join(format!("{}.idx", trimmed))
-            };
-            // If given a .pack, convert to .idx
-            let idx_path = if idx_path.extension().is_some_and(|e| e == "pack") {
-                idx_path.with_extension("idx")
-            } else {
-                idx_path
-            };
-            if idx_path.exists() {
-                let idx = grit_lib::pack::read_pack_index(&idx_path)
-                    .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", idx_path.display()))?;
-                for entry in idx.entries {
-                    oids.insert(entry.oid);
-                }
-            } else {
-                bail!("pack index not found: {}", idx_path.display());
-            }
-        }
+        collect_stdin_packs(&repo, args.unpacked, &mut oids)?;
         return Ok(PackObjectList {
             oids: oids.into_iter().collect(),
             thin_blob_deltas: Vec::new(),
