@@ -21,6 +21,7 @@ use grit_lib::pack_geometry::{
     preferred_pack_stem_after_split, GeometricPack,
 };
 use grit_lib::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
+use grit_lib::prune_packed::{prune_packed_objects, PrunePackedOptions};
 use grit_lib::repo::Repository;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -208,8 +209,26 @@ pub fn run(args: Args) -> Result<()> {
         .as_deref()
         .and_then(parse_byte_size_with_suffix);
 
+    /// Lines Git `pack-objects` prints to stdout when writing packs (40 hex chars per pack).
+    /// With `--filter-to`, the main pack and the filtered-out side pack each emit one line;
+    /// `git repack` / `finish_pack_objects_cmd` records every line.
+    fn pack_hashes_from_pack_objects_stdout(stdout: &[u8]) -> Vec<String> {
+        const SHA1_HEX: usize = 40;
+        let mut out = Vec::new();
+        for line in stdout.split(|b| *b == b'\n') {
+            let Ok(s) = std::str::from_utf8(line) else {
+                continue;
+            };
+            let s = s.trim();
+            if s.len() == SHA1_HEX && s.chars().all(|c| c.is_ascii_hexdigit()) {
+                out.push(s.to_string());
+            }
+        }
+        out
+    }
+
     let run_one_pack_objects =
-        |main_phase: bool, stdin_lines: Option<&[String]>, base: &str| -> Result<String> {
+        |main_phase: bool, stdin_lines: Option<&[String]>, base: &str| -> Result<Vec<String>> {
             let mut cmd = Command::new(&grit_bin);
             cmd.current_dir(work_dir)
                 .stdout(Stdio::piped())
@@ -320,15 +339,7 @@ pub fn run(args: Args) -> Result<()> {
                 if !output.status.success() {
                     anyhow::bail!("pack-objects failed with status {}", output.status);
                 }
-                let hash = output
-                    .stdout
-                    .split(|b| *b == b'\n')
-                    .next()
-                    .and_then(|line| std::str::from_utf8(line).ok())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("");
-                return Ok(hash.to_string());
+                return Ok(pack_hashes_from_pack_objects_stdout(&output.stdout));
             }
 
             let output = cmd.output().context("failed to run grit pack-objects")?;
@@ -336,27 +347,23 @@ pub fn run(args: Args) -> Result<()> {
                 anyhow::bail!("pack-objects failed with status {}", output.status);
             }
 
-            let hash = output
-                .stdout
-                .split(|b| *b == b'\n')
-                .next()
-                .and_then(|line| std::str::from_utf8(line).ok())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .unwrap_or("");
-            Ok(hash.to_string())
+            Ok(pack_hashes_from_pack_objects_stdout(&output.stdout))
         };
 
     if args.cruft && full_repack {
-        let main_hash = run_one_pack_objects(true, None, pack_base)?;
-        if !main_hash.is_empty() {
-            new_pack_names.push(format!("pack-{main_hash}.pack"));
+        let main_hashes = run_one_pack_objects(true, None, pack_base)?;
+        if !main_hashes.is_empty() {
+            for h in &main_hashes {
+                new_pack_names.push(format!("pack-{h}.pack"));
+            }
 
             let objects_dir = repo.git_dir.join("objects");
             let indexes_before_cruft = grit_lib::pack::read_local_pack_indexes(&objects_dir)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             let mut stdin_lines: Vec<String> = Vec::new();
-            stdin_lines.push(format!("pack-{main_hash}.pack"));
+            for h in &main_hashes {
+                stdin_lines.push(format!("pack-{h}.pack"));
+            }
             for idx in &indexes_before_cruft {
                 let name = idx
                     .pack_path
@@ -366,7 +373,7 @@ pub fn run(args: Args) -> Result<()> {
                 if !name.ends_with(".pack") {
                     continue;
                 }
-                if name == format!("pack-{main_hash}.pack") {
+                if main_hashes.iter().any(|h| name == format!("pack-{h}.pack")) {
                     continue;
                 }
                 stdin_lines.push(format!("-{name}"));
@@ -383,15 +390,15 @@ pub fn run(args: Args) -> Result<()> {
                 pack_base
             };
 
-            let cruft_hash = run_one_pack_objects(false, Some(&stdin_lines), cruft_base)?;
-            if !cruft_hash.is_empty() {
-                new_pack_names.push(format!("pack-{cruft_hash}.pack"));
+            let cruft_hashes = run_one_pack_objects(false, Some(&stdin_lines), cruft_base)?;
+            for h in cruft_hashes {
+                new_pack_names.push(format!("pack-{h}.pack"));
             }
         }
     } else {
-        let hash = run_one_pack_objects(true, None, pack_base)?;
-        if !hash.is_empty() {
-            new_pack_names.push(format!("pack-{hash}.pack"));
+        let hashes = run_one_pack_objects(true, None, pack_base)?;
+        for h in hashes {
+            new_pack_names.push(format!("pack-{h}.pack"));
         }
     }
 
@@ -479,14 +486,17 @@ pub fn run(args: Args) -> Result<()> {
             .into_iter()
             .flatten()
             {
+                // `filter-to` / `expire-to` name a pack *file* prefix; sibling `.idx` files live in
+                // the parent directory (often the repo root / trash, not `objects/`). Scan that
+                // directory for `.idx` files so superseded-pack removal sees filtered-out objects.
                 let base = work_dir.join(ft);
-                if let Some(pack_dir_parent) = base.parent() {
-                    if let Some(objects_dir) = pack_dir_parent.parent() {
-                        extra_objects_dirs.push(objects_dir.to_path_buf());
-                    }
+                if let Some(parent) = base.parent() {
+                    extra_objects_dirs.push(parent.to_path_buf());
                 }
             }
             remove_superseded_packs_after_full_repack(&pack_dir_abs, &keep, &extra_objects_dirs)?;
+            prune_packed_objects(&repo.git_dir.join("objects"), PrunePackedOptions::default())
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
         } else {
             let new_pack_name = new_pack_names.first().cloned().context("no pack written")?;
             remove_superseded_packs_incremental(&pack_dir_abs, &new_pack_name, &args.keep_pack)?;
@@ -930,6 +940,29 @@ fn remove_pack_sidecars(pack_dir: &Path, stem: &str) {
     let _ = fs::remove_file(pack_dir.join(format!("{stem}.bitmap")));
 }
 
+/// Union OIDs from every `.idx` in `dirs` (non-recursive). Used for `--filter-to` packs written
+/// next to a path prefix outside `objects/pack/`.
+fn union_oids_from_flat_pack_index_dirs(dirs: &[PathBuf]) -> Result<HashSet<ObjectId>> {
+    let mut out = HashSet::new();
+    for dir in dirs {
+        let rd = match fs::read_dir(dir) {
+            Ok(r) => r,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e.into()),
+        };
+        for entry in rd.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("idx") {
+                continue;
+            }
+            if let Ok(idx) = grit_lib::pack::read_pack_index(&path) {
+                out.extend(idx.entries.iter().map(|e| e.oid));
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// After a full repack, delete packs whose objects are entirely present in the union of the new
 /// pack and any packs we must retain (e.g. `--keep-pack`, or an older pack that still holds
 /// objects omitted by `--filter=blob:none`).
@@ -970,13 +1003,10 @@ fn remove_superseded_packs_after_full_repack(
             union_oids.extend(s.iter().copied());
         }
     }
-    for dir in extra_objects_dirs {
-        let idxs =
-            grit_lib::pack::read_local_pack_indexes(dir).map_err(|e| anyhow::anyhow!("{e}"))?;
-        for idx in idxs {
-            union_oids.extend(idx.entries.iter().map(|e| e.oid));
-        }
-    }
+    union_oids.extend(
+        union_oids_from_flat_pack_index_dirs(extra_objects_dirs)
+            .map_err(|e| anyhow::anyhow!("{e}"))?,
+    );
 
     let mut changed = true;
     while changed {
