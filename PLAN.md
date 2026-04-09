@@ -579,7 +579,7 @@ commit → check it off → move on.
 - [x] `t5351-unpack-large-objects` ████████████████████ 7/7 (0 left) — git unpack-objects with large objects
 - [ ] `t5404-tracking-branches` ████████░░░░░░░░░░░░ 3/7 (4 left) — tracking branch update checks for git push
 - [x] `t5618-alternate-refs` ████████████████████ 6/6 (0 left) — test handling of --alternate-refs traversal
-- [ ] `t5410-receive-pack` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git receive-pack
+- [x] `t5410-receive-pack` ████████████████████ 5/5 (0 left) — git receive-pack
 - [ ] `t5517-push-mirror` ████████████░░░░░░░░ 8/13 (5 left) — pushing to a mirror repository
 - [ ] `t5614-clone-submodules-shallow` ████████░░░░░░░░░░░░ 4/9 (5 left) — Test shallow cloning of repos with submodules
 - [ ] `t5200-update-server-info` ███████░░░░░░░░░░░░░ 3/8 (5 left) — Test git update-server-info

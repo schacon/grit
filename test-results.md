@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-09 (t5410 / receive-pack)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t5410-receive-pack.sh`: 5/5 passed
+
 **2026-04-09 (t4063 / diff blobs)**
 
 - `cargo test -p grit-lib --lib`: 155 passed

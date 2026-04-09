@@ -169,7 +169,9 @@ pub fn run(args: Args) -> Result<()> {
         let opts = UnpackOptions {
             dry_run: false,
             quiet: true,
-            strict: true,
+            // Thin packs may reference bases the receiver does not have; Git skips the
+            // connectivity walk with `--skip-connectivity-check` and still stores objects.
+            strict: !args.skip_connectivity_check,
         };
         if let Err(e) = unpack_objects(&mut rd, &repo.odb, &opts) {
             unpack_to_odb_err = Some(format!("{e:#}"));
