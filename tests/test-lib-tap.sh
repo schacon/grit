@@ -123,6 +123,7 @@ test_expect_success() {
 	test_reset_cwd_to_trash
 	test -f "$TRASH_DIRECTORY/.test-exports" && . "$TRASH_DIRECTORY/.test-exports"
 <<<<<<< HEAD
+<<<<<<< HEAD
 	# Each test case starts at the trash root; bodies may `cd` elsewhere (e.g. setup
 	# leaves the shell inside a subdirectory).
 ||||||| b85df347
@@ -130,6 +131,9 @@ test_expect_success() {
 	# Each test starts from the trash root so bodies can use stable relative paths (e.g. `cd
 	# repo`) even when a previous test left cwd inside a subdirectory.
 >>>>>>> origin/cursor/t9030-commit-tree-parents-0f75
+||||||| b85df347
+=======
+>>>>>>> origin/cursor/-bc-51644bbb-5aca-4b38-8190-e2ee064634a1-64eb
 	cd "$TRASH_DIRECTORY" || exit 1
 	test_run_ "$commands"
 	result=$?
