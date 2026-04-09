@@ -970,6 +970,295 @@ fn test_tool_usage() -> Result<()> {
     bail!("test-tool: unknown or invalid subcommand usage")
 }
 
+/// `test-tool online-cpus` — print the number of processors Git would consider "online"
+/// (matches `git/t/helper/test-online-cpus.c` using `std::thread::available_parallelism`).
+fn run_test_tool_online_cpus(rest: &[String]) -> Result<()> {
+    let _ = preprocess_test_tool_args(rest)?;
+    let n = std::thread::available_parallelism()
+        .map(|p| p.get())
+        .unwrap_or(1);
+    println!("{n}");
+    Ok(())
+}
+
+/// `test-tool lazy-init-name-hash` — exercise case-folding name/dir hash init (t3008, perf tests).
+fn run_test_tool_lazy_init_name_hash(rest: &[String]) -> Result<()> {
+    use anyhow::Context;
+    use std::io::Write;
+
+    let args = preprocess_test_tool_args(rest)?;
+    if args.first().map(String::as_str) != Some("lazy-init-name-hash") {
+        bail!("internal error: lazy-init-name-hash dispatcher");
+    }
+
+    let repo = grit_lib::repo::Repository::discover(None).context("not a git repository")?;
+    let index = repo.load_index().context("loading index")?;
+
+    let mut single = false;
+    let mut multi = false;
+    let mut count: usize = 1;
+    let mut dump = false;
+    let mut perf = false;
+    let mut analyze: Option<i32> = None;
+    let mut analyze_step: Option<i32> = None;
+
+    let mut i = 1usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-s" | "--single" => {
+                single = true;
+                i += 1;
+            }
+            "-m" | "--multi" => {
+                multi = true;
+                i += 1;
+            }
+            "-c" | "--count" => {
+                let v = args.get(i + 1).ok_or_else(|| {
+                    anyhow::anyhow!("test-tool lazy-init-name-hash: --count needs a value")
+                })?;
+                count = v
+                    .parse()
+                    .with_context(|| format!("invalid --count '{v}'"))?;
+                i += 2;
+            }
+            "-d" | "--dump" => {
+                dump = true;
+                i += 1;
+            }
+            "-p" | "--perf" => {
+                perf = true;
+                i += 1;
+            }
+            "-a" | "--analyze" => {
+                let v = args.get(i + 1).ok_or_else(|| {
+                    anyhow::anyhow!("test-tool lazy-init-name-hash: --analyze needs a value")
+                })?;
+                let a: i32 = v
+                    .parse()
+                    .with_context(|| format!("invalid --analyze '{v}'"))?;
+                analyze = Some(a);
+                i += 2;
+            }
+            "--step" => {
+                let v = args.get(i + 1).ok_or_else(|| {
+                    anyhow::anyhow!("test-tool lazy-init-name-hash: --step needs a value")
+                })?;
+                let s: i32 = v.parse().with_context(|| format!("invalid --step '{v}'"))?;
+                analyze_step = Some(s);
+                i += 2;
+            }
+            other => bail!("test-tool lazy-init-name-hash: unknown argument '{other}'"),
+        }
+    }
+
+    if dump {
+        if perf || analyze.is_some() {
+            bail!("test-tool lazy-init-name-hash: cannot combine dump, perf, or analyze");
+        }
+        if count > 1 {
+            bail!("test-tool lazy-init-name-hash: count not valid with dump");
+        }
+        if single && multi {
+            bail!("test-tool lazy-init-name-hash: cannot use both single and multi with dump");
+        }
+        if !single && !multi {
+            bail!("test-tool lazy-init-name-hash: dump requires either single or multi");
+        }
+        grit_lib::index_name_hash_lazy::dump_lazy_init_name_hash(&index, multi)
+            .map_err(|s| anyhow::anyhow!(s))?;
+        return Ok(());
+    }
+
+    if perf {
+        if analyze.is_some() {
+            bail!("test-tool lazy-init-name-hash: cannot combine dump, perf, or analyze");
+        }
+        if single || multi {
+            bail!("test-tool lazy-init-name-hash: cannot use single or multi with perf");
+        }
+        let avg_single = time_runs_lazy_name_hash(&index, false, count)?;
+        let avg_multi = time_runs_lazy_name_hash(&index, true, count)?;
+        if avg_multi > avg_single {
+            bail!("test-tool lazy-init-name-hash: multi is slower");
+        }
+        return Ok(());
+    }
+
+    if let Some(a) = analyze {
+        if a < 500 {
+            bail!("test-tool lazy-init-name-hash: analyze must be at least 500");
+        }
+        let step = analyze_step.unwrap_or(a);
+        if single || multi {
+            bail!("test-tool lazy-init-name-hash: cannot use single or multi with analyze");
+        }
+        analyze_runs_lazy_name_hash(&index, a, step, count)?;
+        return Ok(());
+    }
+
+    if !single && !multi {
+        bail!("test-tool lazy-init-name-hash: require either -s or -m or both");
+    }
+
+    if single {
+        time_runs_lazy_name_hash(&index, false, count)?;
+    }
+    if multi {
+        time_runs_lazy_name_hash(&index, true, count)?;
+    }
+    let _ = std::io::stdout().flush();
+    Ok(())
+}
+
+fn time_runs_lazy_name_hash(
+    index: &grit_lib::index::Index,
+    try_threaded: bool,
+    count: usize,
+) -> Result<u64> {
+    use std::io::Write;
+    let mut sum_ns: u64 = 0;
+    let mut last_nr_threads = 0usize;
+    for _ in 0..count {
+        let t0 = std::time::Instant::now();
+        let nr = grit_lib::index_name_hash_lazy::test_lazy_init_name_hash(index, try_threaded)
+            .map_err(|e| anyhow::anyhow!(e))?;
+        let t1 = std::time::Instant::now();
+        let dt = t1.duration_since(t0);
+        sum_ns += dt.as_nanos() as u64;
+        last_nr_threads = nr;
+
+        if try_threaded && nr == 0 {
+            bail!("test-tool lazy-init-name-hash: non-threaded code path used");
+        }
+
+        let read_ns = 0u64;
+        let work_ns = dt.as_nanos() as u64;
+        let nr_entries = index.entries.len();
+        if nr > 0 {
+            println!(
+                "{} {} {} multi {}",
+                (read_ns as f64) / 1e9,
+                (work_ns as f64) / 1e9,
+                nr_entries,
+                nr
+            );
+        } else {
+            println!(
+                "{} {} {} single",
+                (read_ns as f64) / 1e9,
+                (work_ns as f64) / 1e9,
+                nr_entries
+            );
+        }
+        let _ = std::io::stdout().flush();
+    }
+    if count > 1 {
+        let avg = sum_ns / count as u64;
+        println!(
+            "avg {} {}",
+            (avg as f64) / 1e9,
+            if try_threaded && last_nr_threads > 0 {
+                "multi"
+            } else {
+                "single"
+            }
+        );
+    }
+    Ok(sum_ns / count as u64)
+}
+
+fn analyze_runs_lazy_name_hash(
+    index: &grit_lib::index::Index,
+    analyze_start: i32,
+    step: i32,
+    count: usize,
+) -> Result<()> {
+    use std::io::Write;
+
+    let cache_nr_limit = index.entries.len();
+    let mut nr = analyze_start as usize;
+    let analyze_step = step as usize;
+
+    loop {
+        if nr > cache_nr_limit {
+            nr = cache_nr_limit;
+        }
+
+        let mut sum_single: u128 = 0;
+        let mut sum_multi: u128 = 0;
+        let mut nr_threads_used = 0usize;
+
+        for _ in 0..count {
+            let truncated = truncate_index_for_analyze(index, nr);
+
+            let t1s = std::time::Instant::now();
+            grit_lib::index_name_hash_lazy::test_lazy_init_name_hash(&truncated, false)
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let t2s = std::time::Instant::now();
+            sum_single += t2s.duration_since(t1s).as_nanos();
+
+            let t1m = std::time::Instant::now();
+            nr_threads_used =
+                grit_lib::index_name_hash_lazy::test_lazy_init_name_hash(&truncated, true)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+            let t2m = std::time::Instant::now();
+            sum_multi += t2m.duration_since(t1m).as_nanos();
+
+            if nr_threads_used == 0 {
+                println!(
+                    "    [size {:8}] [single {}]   non-threaded code path used",
+                    nr,
+                    (t2s.duration_since(t1s).as_nanos() as f64) / 1e9
+                );
+            } else {
+                let ds = t2s.duration_since(t1s).as_nanos() as i128;
+                let dm = t2m.duration_since(t1m).as_nanos() as i128;
+                println!(
+                    "    [size {:8}] [single {}] {} [multi {} {}]",
+                    nr,
+                    (ds as f64) / 1e9,
+                    if ds < dm { '<' } else { '>' },
+                    (dm as f64) / 1e9,
+                    nr_threads_used
+                );
+            }
+            let _ = std::io::stdout().flush();
+        }
+
+        if count > 1 {
+            let avg_single = sum_single / count as u128;
+            let avg_multi = sum_multi / count as u128;
+            if nr_threads_used == 0 {
+                println!("avg [size {:8}] [single {}]", nr, (avg_single as f64) / 1e9);
+            } else {
+                println!(
+                    "avg [size {:8}] [single {}] {} [multi {} {}]",
+                    nr,
+                    (avg_single as f64) / 1e9,
+                    if avg_single < avg_multi { '<' } else { '>' },
+                    (avg_multi as f64) / 1e9,
+                    nr_threads_used
+                );
+            }
+            let _ = std::io::stdout().flush();
+        }
+
+        if nr >= cache_nr_limit {
+            return Ok(());
+        }
+        nr = nr.saturating_add(analyze_step);
+    }
+}
+
+fn truncate_index_for_analyze(index: &grit_lib::index::Index, n: usize) -> grit_lib::index::Index {
+    let mut out = index.clone();
+    if n < out.entries.len() {
+        out.entries.truncate(n);
+    }
+    out
+}
+
 fn preprocess_test_tool_args(rest: &[String]) -> Result<Vec<String>> {
     let mut i = 0usize;
     let mut change_dir: Option<std::path::PathBuf> = None;
@@ -3436,6 +3725,8 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 "userdiff" => run_test_tool_userdiff(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
                 "ref-store" => run_test_tool_ref_store(rest),
+                "online-cpus" => run_test_tool_online_cpus(rest),
+                "lazy-init-name-hash" => run_test_tool_lazy_init_name_hash(rest),
                 "rot13-filter" => commands::test_tool_rot13_filter::run(&rest[1..]),
                 "path-utils" => run_test_tool_path_utils(&rest[1..]),
                 "submodule" => run_test_tool_submodule(&rest[1..]),
