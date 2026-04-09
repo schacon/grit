@@ -377,7 +377,16 @@ pub fn parse_commit(data: &[u8]) -> Result<CommitData> {
             // Blank line: remainder is the message body (may be non-UTF-8).
             let body = data.get(after_nl..).unwrap_or_default();
             let message = String::from_utf8_lossy(body).into_owned();
-            let raw_message = std::str::from_utf8(body).is_err().then(|| body.to_vec());
+            // Preserve the exact message tail: Git allows commits whose log ends without a
+            // final newline (`commit-tree` from a file). `serialize_commit` appends `\n` when
+            // only `message` is set, so keep raw bytes when the body is not LF-terminated.
+            let raw_message = if body.is_empty() {
+                None
+            } else if std::str::from_utf8(body).is_err() || !body.ends_with(b"\n") {
+                Some(body.to_vec())
+            } else {
+                None
+            };
             return Ok(CommitData {
                 tree: tree
                     .ok_or_else(|| Error::CorruptObject("commit missing tree header".to_owned()))?,

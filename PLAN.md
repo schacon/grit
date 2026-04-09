@@ -336,7 +336,7 @@ commit → check it off → move on.
 - [ ] `t3705-add-sparse-checkout` ██░░░░░░░░░░░░░░░░░░ 2/20 (18 left) — git add in sparse checked out working trees
 - [ ] `t3436-rebase-more-options` █░░░░░░░░░░░░░░░░░░░ 1/19 (18 left) — tests to ensure compatibility between am and interactive backends
 - [ ] `t3905-stash-include-untracked` ███████░░░░░░░░░░░░░ 12/34 (22 left) — Test git stash --include-untracked
-- [ ] `t3511-cherry-pick-x` ░░░░░░░░░░░░░░░░░░░░ 0/22 (22 left) — Test cherry-pick -x and -s
+- [x] `t3511-cherry-pick-x` ████████████████████ 22/22 (0 left) — Test cherry-pick -x and -s
 - [ ] `t3202-show-branch` ██░░░░░░░░░░░░░░░░░░ 4/27 (23 left) — test show-branch
 - [ ] `t3431-rebase-fork-point` ██░░░░░░░░░░░░░░░░░░ 3/26 (23 left) — git rebase --fork-point test
 - [ ] `t3007-ls-files-recurse-submodules` ░░░░░░░░░░░░░░░░░░░░ 1/24 (23 left) — Test ls-files recurse-submodules feature

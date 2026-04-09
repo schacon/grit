@@ -12,6 +12,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
+use grit_lib::commit_trailers::{
+    append_cherry_picked_from_line, append_signoff_trailer, finalize_cherry_pick_message,
+    format_signoff_line,
+};
 use grit_lib::config::ConfigSet;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_file::{merge, MergeFavor, MergeInput};
@@ -26,6 +30,18 @@ use grit_lib::write_tree::write_tree_from_index;
 use std::sync::OnceLock;
 
 static CHERRY_PICK_REV_OPTS: OnceLock<(Option<usize>, Option<String>)> = OnceLock::new();
+
+/// Log text used for cherry-pick message rewriting.
+///
+/// When the commit object stores a message without a trailing newline, [`CommitData::message`]
+/// omits the final incomplete line (Git's `find_commit_subject` behaviour). Prefer the raw body
+/// bytes in that case so `-x`/`-s` match Git (`t3511-cherry-pick-x`).
+fn cherry_pick_source_message(commit: &CommitData) -> String {
+    match &commit.raw_message {
+        Some(raw) if !raw.ends_with(b"\n") => String::from_utf8_lossy(raw).into_owned(),
+        _ => commit.message.clone(),
+    }
+}
 
 /// Strip Git revision-walking options from argv before clap parsing.
 ///
@@ -455,7 +471,7 @@ fn walk_first_parent_filtered(
     while let Some(c) = current {
         let obj = repo.odb.read(&c)?;
         let commit = parse_commit(&obj.data)?;
-        let author_ok = author_sub.map_or(true, |sub| commit.author.contains(sub));
+        let author_ok = author_sub.is_none_or(|sub| commit.author.contains(sub));
         if author_ok {
             matches.push(c);
             if let Some(limit) = max_count {
@@ -634,13 +650,17 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
                 "drop" => return Ok(()),
                 "keep" => { /* fall through to commit */ }
                 _ /* "stop" */ => {
-                    let mut msg = commit.message.clone();
-                    if args.append_source {
-                        let trailer =
-                            format!("\n\n(cherry picked from commit {})", commit_oid.to_hex());
-                        let trimmed = msg.trim_end().to_owned();
-                        msg = format!("{trimmed}{trailer}\n");
-                    }
+                    let config = ConfigSet::load(Some(git_dir), true)?;
+                    let (cname, cemail) = committer_name_email(&config);
+                    let msg = finalize_cherry_pick_message(
+                        &cherry_pick_source_message(&commit),
+                        args.append_source,
+                        false,
+                        &cname,
+                        &cemail,
+                        &config,
+                        &commit_oid.to_hex(),
+                    );
                     fs::write(
                         git_dir.join("CHERRY_PICK_HEAD"),
                         format!("{}\n", commit_oid.to_hex()),
@@ -671,13 +691,18 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
         &merge_result.conflict_content,
     )?;
 
-    // Build the cherry-pick message.
-    let mut msg = commit.message.clone();
-    if args.append_source {
-        let trailer = format!("\n\n(cherry picked from commit {})", commit_oid.to_hex());
-        let trimmed = msg.trim_end().to_owned();
-        msg = format!("{trimmed}{trailer}\n");
-    }
+    // Build the cherry-pick message (Git: `sequencer.c` + `commit.cleanup` when `-x`).
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    let (cname, cemail) = committer_name_email(&config);
+    let mut msg = finalize_cherry_pick_message(
+        &cherry_pick_source_message(&commit),
+        args.append_source,
+        false,
+        &cname,
+        &cemail,
+        &config,
+        &commit_oid.to_hex(),
+    );
     // Note: signoff is NOT added to MERGE_MSG here.  When there is a conflict,
     // the user may manually `git commit` to resolve it, which reads MERGE_MSG.
     // Signoff should only be added by `cherry-pick --continue` (which re-reads
@@ -711,7 +736,8 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
     // Add signoff for the non-conflict case (the conflict case skips signoff in
     // MERGE_MSG so that manual `git commit` does not unexpectedly add it).
     if args.signoff {
-        msg = append_signoff(&msg, git_dir)?;
+        let sob = format_signoff_line(&cname, &cemail);
+        append_signoff_trailer(&mut msg, &sob, &config);
     }
 
     // Create the cherry-pick commit (preserving original author).
@@ -796,17 +822,32 @@ fn do_continue(mut args: Args) -> Result<()> {
     let cp_obj = repo.odb.read(&cp_oid)?;
     let cp_commit = parse_commit(&cp_obj.data)?;
 
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    let (cname, cemail) = committer_name_email(&config);
+
     let mut msg = match fs::read_to_string(git_dir.join("MERGE_MSG")) {
         Ok(m) => m,
-        Err(_) => cp_commit.message.clone(),
+        Err(_) => finalize_cherry_pick_message(
+            &cherry_pick_source_message(&cp_commit),
+            args.append_source,
+            false,
+            &cname,
+            &cemail,
+            &config,
+            &cp_oid.to_hex(),
+        ),
     };
 
     if args.append_source {
         let trailer = format!("(cherry picked from commit {})", cp_oid.to_hex());
         if !msg.contains(&trailer) {
-            let trimmed = msg.trim_end().to_owned();
-            msg = format!("{trimmed}\n\n{trailer}\n");
+            append_cherry_picked_from_line(&mut msg, &cp_oid.to_hex(), &config);
         }
+    }
+
+    if args.signoff {
+        let sob = format_signoff_line(&cname, &cemail);
+        append_signoff_trailer(&mut msg, &sob, &config);
     }
 
     let head = resolve_head(git_dir)?;
@@ -931,12 +972,12 @@ pub(crate) fn abort_cherry_pick_or_revert() -> Result<()> {
 
 fn reset_to_head_tree(repo: &Repository, git_dir: &Path) -> Result<()> {
     let head = resolve_head(git_dir)?;
-    let old_index = load_index(&repo)?;
+    let old_index = load_index(repo)?;
     let mut new_index = Index::new();
     if let Some(head_oid) = head.oid() {
         let obj = repo.odb.read(head_oid)?;
         let commit = parse_commit(&obj.data)?;
-        new_index.entries = tree_to_index_entries(&repo, &commit.tree, "")?;
+        new_index.entries = tree_to_index_entries(repo, &commit.tree, "")?;
     }
     new_index.sort();
     repo.write_index(&mut new_index)?;
@@ -1225,7 +1266,7 @@ fn create_cherry_pick_commit(
     Ok(())
 }
 
-fn resolve_committer_ident(config: &ConfigSet, now: time::OffsetDateTime) -> Result<String> {
+fn committer_name_email(config: &ConfigSet) -> (String, String) {
     let name = std::env::var("GIT_COMMITTER_NAME")
         .ok()
         .or_else(|| config.get("user.name"))
@@ -1234,6 +1275,11 @@ fn resolve_committer_ident(config: &ConfigSet, now: time::OffsetDateTime) -> Res
         .ok()
         .or_else(|| config.get("user.email"))
         .unwrap_or_default();
+    (name, email)
+}
+
+fn resolve_committer_ident(config: &ConfigSet, now: time::OffsetDateTime) -> Result<String> {
+    let (name, email) = committer_name_email(config);
 
     let epoch = now.unix_timestamp();
     let offset = now.offset();
@@ -1245,27 +1291,6 @@ fn resolve_committer_ident(config: &ConfigSet, now: time::OffsetDateTime) -> Res
         .unwrap_or_else(|_| format!("{epoch} {hours:+03}{minutes:02}"));
 
     Ok(format!("{name} <{email}> {timestamp}"))
-}
-
-fn append_signoff(msg: &str, git_dir: &Path) -> Result<String> {
-    let config = ConfigSet::load(Some(git_dir), true)?;
-    let name = std::env::var("GIT_COMMITTER_NAME")
-        .ok()
-        .or_else(|| config.get("user.name"))
-        .unwrap_or_else(|| "Unknown".to_owned());
-    let email = std::env::var("GIT_COMMITTER_EMAIL")
-        .ok()
-        .or_else(|| config.get("user.email"))
-        .unwrap_or_default();
-
-    let signoff_line = format!("Signed-off-by: {name} <{email}>");
-
-    if msg.contains(&signoff_line) {
-        return Ok(msg.to_owned());
-    }
-
-    let trimmed = msg.trim_end();
-    Ok(format!("{trimmed}\n\n{signoff_line}\n"))
 }
 
 fn update_head(git_dir: &Path, head: &HeadState, commit_oid: &ObjectId) -> Result<()> {
