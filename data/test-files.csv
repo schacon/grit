@@ -954,7 +954,7 @@ t5532-fetch-proxy	t5	yes	5	4	1	false	ok	0
 t5533-push-cas	t5	yes	23	11	12	false	ok	0
 t5534-push-signed	t5	skip	13	0	0	false	ok	0
 t5535-fetch-push-symref	t5	yes	3	1	2	false	ok	0
-t5536-fetch-conflicts	t5	yes	7	3	4	false	ok	0
+t5536-fetch-conflicts	t5	yes	7	7	0	true	ok	0
 t5537-fetch-shallow	t5	yes	16	2	14	false	ok	0
 t5538-push-shallow	t5	yes	8	2	6	false	ok	0
 t5539-fetch-http-shallow	t5	yes	8	1	7	false	ok	0

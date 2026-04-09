@@ -260,6 +260,28 @@ fn merge_remote_refs_into_upload_pack_advertisement(
     Ok(())
 }
 
+/// Match a refspec source pattern with at most one `*` against `refname`.
+///
+/// Returns the wildcard segment when the pattern uses `*`, or `Some(refname)` for an exact match.
+pub(crate) fn match_glob_star_pattern<'a>(pattern: &str, refname: &'a str) -> Option<&'a str> {
+    if let Some(star_pos) = pattern.find('*') {
+        let prefix = &pattern[..star_pos];
+        let suffix = &pattern[star_pos + 1..];
+        if refname.starts_with(prefix)
+            && refname.ends_with(suffix)
+            && refname.len() >= prefix.len() + suffix.len()
+        {
+            Some(&refname[prefix.len()..refname.len() - suffix.len()])
+        } else {
+            None
+        }
+    } else if pattern == refname {
+        Some(refname)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn collect_wants(
     advertised: &[(String, ObjectId)],
     refspecs: &[String],
@@ -302,7 +324,15 @@ pub(crate) fn collect_wants(
             .map(|(a, _)| a)
             .unwrap_or(spec_clean);
         if src.contains('*') {
-            bail!("glob refspec in upload-pack fetch not supported");
+            for (name, oid) in advertised {
+                if name == "HEAD" {
+                    continue;
+                }
+                if match_glob_star_pattern(src, name).is_some() {
+                    push_want_unique(&mut wants, *oid);
+                }
+            }
+            continue;
         }
         let remote_ref = if src.starts_with("refs/") {
             src.to_string()

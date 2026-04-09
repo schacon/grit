@@ -246,7 +246,17 @@ fn collect_wants_from_advertised(
             .map(|(a, _)| a)
             .unwrap_or(spec_clean);
         if src.contains('*') {
-            bail!("glob refspec in HTTP fetch not supported");
+            for e in advertised {
+                if e.name == "HEAD" {
+                    continue;
+                }
+                if crate::fetch_transport::match_glob_star_pattern(src, &e.name).is_some() {
+                    if !wants.contains(&e.oid) {
+                        wants.push(e.oid);
+                    }
+                }
+            }
+            continue;
         }
         let remote_ref = if src.starts_with("refs/") {
             src.to_string()

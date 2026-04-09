@@ -568,7 +568,7 @@ commit → check it off → move on.
 - [ ] `t5701-git-serve` █████████████████░░░ 22/25 (3 left) — test protocol v2 server commands
 - [ ] `t5529-push-errors` ████████████░░░░░░░░ 5/8 (3 left) — detect some push errors early (before contacting remote)
 - [ ] `t5583-push-branches` ████████████░░░░░░░░ 5/8 (3 left) — check the consisitency of behavior of --all and --branches
-- [ ] `t5536-fetch-conflicts` ███████████░░░░░░░░░ 4/7 (3 left) — fetch handles conflicting refspecs correctly
+- [x] `t5536-fetch-conflicts` — fetch handles conflicting refspecs correctly (7/7)
 - [x] `t5308-pack-detect-duplicates` ████████████████████ 6/6 (0 left) — handling of duplicate objects in incoming packfiles
 - [x] `t5309-pack-delta-cycles` ████████████████████ 7/7 (0 left) — test index-pack handling of delta cycles in packfiles
 - [ ] `t5549-fetch-push-http` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — fetch/push functionality using the HTTP protocol
