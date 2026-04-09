@@ -1269,7 +1269,7 @@ fn run_git_clone(args: Args) -> Result<()> {
     let remote_name = resolve_remote_name(&args)?;
     let ref_storage = resolved_clone_ref_storage(&args)?;
     let url = args.repository.clone();
-    let parsed = crate::fetch_transport::parse_git_url(&url)?;
+    let parsed = crate::git_daemon_url::parse_git_url(&url)?;
     let path_tail = parsed.path.trim_start_matches('/');
     let base = Path::new(path_tail)
         .file_name()

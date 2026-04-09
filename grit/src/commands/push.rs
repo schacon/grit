@@ -651,7 +651,7 @@ fn push_to_url(
         wire_trace::trace_packet_push('<', "version 1");
     }
     if url.starts_with("git://") && protocol_wire::effective_client_protocol_version() == 1 {
-        if let Ok(parsed) = crate::fetch_transport::parse_git_url(url) {
+        if let Ok(parsed) = crate::git_daemon_url::parse_git_url(url) {
             let virtual_host = std::env::var("GIT_OVERRIDE_VIRTUAL_HOST")
                 .unwrap_or_else(|_| format!("{}:{}", parsed.host, parsed.port));
             let show = format!(

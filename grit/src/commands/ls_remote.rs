@@ -68,6 +68,10 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let repo_path_str = effective_path.to_string_lossy();
+    if repo_path_str.starts_with("git://") && crate::file_upload_pack_v2::client_wants_protocol_v2()
+    {
+        return crate::file_upload_pack_v2::ls_remote_git_v2(repo_path_str.as_ref(), &args);
+    }
     let is_file_url = repo_path_str.starts_with("file://");
     if is_file_url && crate::file_upload_pack_v2::client_wants_protocol_v2() {
         let path = PathBuf::from(

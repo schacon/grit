@@ -1025,7 +1025,7 @@ t5704-protocol-violations	t5	yes	3	3	0	true	ok	0
 t5705-session-id-in-capabilities	t5	yes	0	0	0	false	timeout	0
 t5710-promisor-remote-capability	t5	yes	22	1	21	false	ok	0
 t5730-protocol-v2-bundle-uri-file	t5	yes	8	8	0	true	ok	0
-t5731-protocol-v2-bundle-uri-git	t5	yes	8	2	6	false	ok	0
+t5731-protocol-v2-bundle-uri-git	t5	yes	8	8	0	true	ok	0
 t5732-protocol-v2-bundle-uri-http	t5	yes	9	3	6	false	ok	0
 t5750-bundle-uri-parse	t5	yes	13	13	0	true	ok	0
 t5801-remote-helpers	t5	skip	35	0	0	false	ok	1

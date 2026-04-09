@@ -25,6 +25,7 @@ mod fetch_transport;
 mod file_upload_pack_v2;
 mod git_column;
 mod git_commit_encoding;
+mod git_daemon_url;
 mod git_path;
 mod grit_exe;
 mod http_bundle_uri;
@@ -4710,6 +4711,8 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                             }
                             let pairs = if url.starts_with("file://") {
                                 crate::file_upload_pack_v2::fetch_bundle_uri_lines_file(url)
+                            } else if url.starts_with("git://") {
+                                crate::file_upload_pack_v2::fetch_bundle_uri_lines_git(url)
                             } else {
                                 crate::http_bundle_uri::fetch_bundle_uri_lines_http(url)
                             }
