@@ -56,6 +56,8 @@ pub mod fsck;
 pub mod gc;
 pub mod get_tar_commit_id;
 pub mod grep;
+pub(crate) mod grep_expr;
+pub(crate) mod grep_pattern;
 pub mod hash_object;
 pub mod help;
 pub mod history;

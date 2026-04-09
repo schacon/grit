@@ -3686,10 +3686,12 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 // Insert the winning flag back (at beginning, before positionals)
                 rest.insert(0, keep);
             }
-            let mut args: commands::grep::Args = parse_cmd_args(subcmd, &rest);
+            let (pattern_tokens, rest_for_clap) =
+                commands::grep_pattern::extract_pattern_tokens(&rest)?;
+            let mut args: commands::grep::Args = parse_cmd_args(subcmd, &rest_for_clap);
             args.open_in_pager = open_in_pager;
             args.open_pager_cmd = open_pager_cmd;
-            commands::grep::run(args)
+            commands::grep::run_with_pattern_tokens(pattern_tokens, args)
         }
         "hash-object" => commands::hash_object::run(parse_cmd_args(subcmd, rest)),
         "help" => commands::help::run(parse_cmd_args(subcmd, rest)),
