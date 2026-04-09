@@ -880,7 +880,7 @@ commit → check it off → move on.
 - [ ] `t7528-signed-commit-ssh` ████░░░░░░░░░░░░░░░░ 6/29 (23 left) — ssh signed commit tests
 - [ ] `t7700-repack` █████████░░░░░░░░░░░ 22/47 (25 left) — git repack works correctly
 - [ ] `t7061-wtstatus-ignore` ░░░░░░░░░░░░░░░░░░░░ 0/25 (25 left) — git-status ignored files
-- [ ] `t7507-commit-verbose` ████████░░░░░░░░░░░░ 19/45 (26 left) — verbose commit template
+- [x] `t7507-commit-verbose` — verbose commit template (45/45)
 - [x] `t7064-wtstatus-pv2` — git status --porcelain=v2 (28/28)
 
 - [x] `t7450-bad-git-dotfiles` — check broken or malicious patterns in .git* files (50/50)
