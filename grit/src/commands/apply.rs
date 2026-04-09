@@ -1627,7 +1627,7 @@ fn strip_components(path: &str, n: usize) -> String {
     remaining.to_string()
 }
 
-/// Strip `-p` prefix from a path the same way as [`adjust_path`] (without `--directory`).
+/// Strip `-p` prefix from a path (matches parsing-time strip, for validating headers).
 fn path_after_strip(path: &str, strip: usize) -> String {
     if path == "/dev/null" {
         return path.to_string();
@@ -1635,7 +1635,6 @@ fn path_after_strip(path: &str, strip: usize) -> String {
     strip_components(path, strip)
 }
 
-/// Apply -p and --directory transforms to a path.
 /// Create compact rename path: "dir/{old => new}" or "old => new".
 fn compact_rename_path(old: &str, new: &str) -> String {
     // Find common prefix
@@ -1688,16 +1687,29 @@ fn compact_rename_path(old: &str, new: &str) -> String {
     result
 }
 
-fn adjust_path(path: &str, strip: usize, directory: Option<&str>) -> String {
+/// Normalize `--directory` like Git (`strbuf_normalize_path` + trailing `/` when non-empty).
+fn normalize_apply_directory(raw: &str) -> Result<String> {
+    let normalized = crate::git_path::normalize_path_copy(raw)
+        .map_err(|_| anyhow::anyhow!("unable to normalize directory: '{raw}'"))?;
+    if normalized.is_empty() {
+        return Ok(String::new());
+    }
+    Ok(if normalized.ends_with('/') {
+        normalized
+    } else {
+        format!("{normalized}/")
+    })
+}
+
+/// Prepend normalized `--directory` to a path already adjusted for `-p` during parsing.
+fn adjust_path(path: &str, directory: Option<&str>) -> String {
     if path == "/dev/null" {
         return path.to_string();
     }
-    let stripped = strip_components(path, strip);
-    if let Some(dir) = directory {
-        format!("{dir}/{stripped}")
-    } else {
-        stripped
-    }
+    let Some(dir) = directory.filter(|d| !d.is_empty()) else {
+        return path.to_string();
+    };
+    format!("{dir}{path}")
 }
 
 fn symlink_prefix(path: &str, symlink_overlay: &HashMap<String, bool>) -> Option<String> {
@@ -1731,7 +1743,7 @@ fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> 
 
     for fp in patches {
         if let Some(source) = fp.source_path() {
-            let source_adjusted = adjust_path(source, args.strip, args.directory.as_deref());
+            let source_adjusted = adjust_path(source, args.directory.as_deref());
             if !source_adjusted.is_empty() {
                 if let Some(prefix) = symlink_prefix(&source_adjusted, &symlink_overlay) {
                     let allow_delete_under_replaced_dir = fp.is_deleted
@@ -1747,7 +1759,7 @@ fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> 
             }
         }
         if let Some(target) = fp.target_path() {
-            let target_adjusted = adjust_path(target, args.strip, args.directory.as_deref());
+            let target_adjusted = adjust_path(target, args.directory.as_deref());
             if !target_adjusted.is_empty() {
                 if let Some(prefix) = symlink_prefix(&target_adjusted, &symlink_overlay) {
                     let allow_delete_under_replaced_dir = fp.is_deleted
@@ -1765,11 +1777,11 @@ fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> 
 
         let source_adjusted = fp
             .source_path()
-            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .map(|p| adjust_path(p, args.directory.as_deref()))
             .unwrap_or_default();
         let target_adjusted = fp
             .target_path()
-            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .map(|p| adjust_path(p, args.directory.as_deref()))
             .unwrap_or_default();
         let target_is_existing_dir =
             !target_adjusted.is_empty() && Path::new(&target_adjusted).is_dir();
@@ -1871,7 +1883,7 @@ fn assign_ws_rules(patches: &mut [FilePatch], args: &Args) {
             .target_path()
             .or_else(|| fp.effective_path())
             .unwrap_or("");
-        let adjusted = adjust_path(path_for_attr, args.strip, args.directory.as_deref());
+        let adjusted = adjust_path(path_for_attr, args.directory.as_deref());
         let fa = crlf::get_file_attrs(&rules, &adjusted, false, &config);
         let attr = match fa.whitespace.as_deref() {
             None => WhitespaceGitAttr::Unspecified,
@@ -2951,7 +2963,7 @@ fn write_reject_file(path: &Path, patch: &FilePatch, rejected_hunks: &[Hunk]) ->
 // Stat / numstat / summary output
 // ---------------------------------------------------------------------------
 
-fn show_stat(patches: &[FilePatch], strip: usize, directory: Option<&str>) {
+fn show_stat(patches: &[FilePatch], directory: Option<&str>) {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
@@ -2963,7 +2975,7 @@ fn show_stat(patches: &[FilePatch], strip: usize, directory: Option<&str>) {
     for fp in patches {
         let path = fp
             .effective_path()
-            .map(|p| adjust_path(p, strip, directory))
+            .map(|p| adjust_path(p, directory))
             .unwrap_or_else(|| "(unknown)".to_string());
         let (add, del) = count_hunk_changes(&fp.hunks);
         if path.len() > max_path_len {
@@ -2993,28 +3005,28 @@ fn show_stat(patches: &[FilePatch], strip: usize, directory: Option<&str>) {
     );
 }
 
-fn show_numstat(patches: &[FilePatch], strip: usize, directory: Option<&str>) {
+fn show_numstat(patches: &[FilePatch], directory: Option<&str>) {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
     for fp in patches {
         let path = fp
             .effective_path()
-            .map(|p| adjust_path(p, strip, directory))
+            .map(|p| adjust_path(p, directory))
             .unwrap_or_else(|| "(unknown)".to_string());
         let (add, del) = count_hunk_changes(&fp.hunks);
         let _ = writeln!(out, "{add}\t{del}\t{path}");
     }
 }
 
-fn show_summary(patches: &[FilePatch], strip: usize, directory: Option<&str>) {
+fn show_summary(patches: &[FilePatch], directory: Option<&str>) {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
     for fp in patches {
         let path = fp
             .effective_path()
-            .map(|p| adjust_path(p, strip, directory))
+            .map(|p| adjust_path(p, directory))
             .unwrap_or_else(|| "(unknown)".to_string());
 
         if fp.is_new {
@@ -3027,7 +3039,7 @@ fn show_summary(patches: &[FilePatch], strip: usize, directory: Option<&str>) {
             let old = fp
                 .old_path
                 .as_deref()
-                .map(|p| adjust_path(p, strip, directory))
+                .map(|p| adjust_path(p, directory))
                 .unwrap_or_else(|| "(unknown)".to_string());
             let kind = if fp.is_copy { "copy" } else { "rename" };
             let pct = fp.similarity_index.unwrap_or(100);
@@ -3081,7 +3093,12 @@ fn make_stat_bar(add: usize, del: usize, max_width: usize) -> String {
 // Main run
 // ---------------------------------------------------------------------------
 
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
+    if let Some(dir) = args.directory.take() {
+        let norm = normalize_apply_directory(&dir)?;
+        args.directory = if norm.is_empty() { None } else { Some(norm) };
+    }
+
     // Validate repository format if operating on the index or doing a check that requires it
     if args.cached || args.index || args.check {
         if let Some(git_dir) = crate::commands::config::resolve_git_dir_pub() {
@@ -3141,13 +3158,13 @@ pub fn run(args: Args) -> Result<()> {
     // Info-only modes unless explicitly overridden by --apply.
     let info_only = (args.stat || args.numstat || args.summary) && !args.apply;
     if args.stat {
-        show_stat(&patches, args.strip, args.directory.as_deref());
+        show_stat(&patches, args.directory.as_deref());
     }
     if args.numstat {
-        show_numstat(&patches, args.strip, args.directory.as_deref());
+        show_numstat(&patches, args.directory.as_deref());
     }
     if args.summary {
-        show_summary(&patches, args.strip, args.directory.as_deref());
+        show_summary(&patches, args.directory.as_deref());
     }
     if info_only {
         return Ok(());
@@ -3213,7 +3230,7 @@ fn build_fake_ancestor_file(patches: &[FilePatch], args: &Args, out_path: &Path)
         if raw_old_path == "/dev/null" {
             continue;
         }
-        let adjusted = adjust_path(raw_old_path, args.strip, args.directory.as_deref());
+        let adjusted = adjust_path(raw_old_path, args.directory.as_deref());
         if adjusted.is_empty() {
             continue;
         }
@@ -3340,7 +3357,7 @@ fn verify_worktree_gitlink_patch(
         let Some(target) = fp.target_path() else {
             return Ok(());
         };
-        let adjusted = adjust_path(target, args.strip, args.directory.as_deref());
+        let adjusted = adjust_path(target, args.directory.as_deref());
         let path = work_tree.join(&adjusted);
         if path.exists() && path.is_file() {
             // Replacing a tracked regular file (or symlink) with a submodule: the work tree must
@@ -3376,7 +3393,7 @@ fn verify_worktree_gitlink_patch(
         let Some(source) = fp.source_path() else {
             return Ok(());
         };
-        let adjusted = adjust_path(source, args.strip, args.directory.as_deref());
+        let adjusted = adjust_path(source, args.directory.as_deref());
         let path = work_tree.join(&adjusted);
         if !path.exists() {
             bail!("{}: does not exist", adjusted);
@@ -3401,7 +3418,7 @@ fn ensure_gitlink_placeholder_dirs(patches: &[FilePatch], args: &Args) -> Result
         let Some(path_str) = fp.target_path() else {
             continue;
         };
-        let adjusted = adjust_path(path_str, args.strip, args.directory.as_deref());
+        let adjusted = adjust_path(path_str, args.directory.as_deref());
         let path = PathBuf::from(&adjusted);
         if !path.exists() {
             fs::create_dir_all(&path)
@@ -3436,7 +3453,7 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
     for fp in patches {
         if fp.is_new {
             if let Some(target) = fp.target_path() {
-                let adjusted = adjust_path(target, args.strip, args.directory.as_deref());
+                let adjusted = adjust_path(target, args.directory.as_deref());
                 if let Some(entry) = ctx.index.get(adjusted.as_bytes(), 0) {
                     let path = PathBuf::from(&adjusted);
                     if !path.exists() {
@@ -3459,7 +3476,7 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
         let path_str = fp
             .source_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let adjusted = adjust_path(path_str, args.strip, args.directory.as_deref());
+        let adjusted = adjust_path(path_str, args.directory.as_deref());
         let path = PathBuf::from(&adjusted);
 
         if !path.exists() {
@@ -3681,11 +3698,11 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
 
     for fp in patches {
         if let Some(source) = fp.source_path() {
-            let adjusted = adjust_path(source, args.strip, args.directory.as_deref());
+            let adjusted = adjust_path(source, args.directory.as_deref());
             record_path_existence(&adjusted, &mut current_exists, &mut initial_exists);
         }
         if let Some(target) = fp.target_path() {
-            let adjusted = adjust_path(target, args.strip, args.directory.as_deref());
+            let adjusted = adjust_path(target, args.directory.as_deref());
             record_path_existence(&adjusted, &mut current_exists, &mut initial_exists);
         }
     }
@@ -3693,11 +3710,11 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
     for fp in patches {
         let source_adjusted = fp
             .source_path()
-            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .map(|p| adjust_path(p, args.directory.as_deref()))
             .unwrap_or_default();
         let target_adjusted = fp
             .target_path()
-            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .map(|p| adjust_path(p, args.directory.as_deref()))
             .unwrap_or_default();
 
         let source_exists_now = current_exists
@@ -3798,8 +3815,8 @@ fn apply_to_worktree(
         let Some(target) = fp.target_path() else {
             continue;
         };
-        let source_adjusted = adjust_path(source, args.strip, args.directory.as_deref());
-        let target_adjusted = adjust_path(target, args.strip, args.directory.as_deref());
+        let source_adjusted = adjust_path(source, args.directory.as_deref());
+        let target_adjusted = adjust_path(target, args.directory.as_deref());
         if source_adjusted == target_adjusted || source_snapshots.contains_key(&source_adjusted) {
             continue;
         }
@@ -3818,7 +3835,7 @@ fn apply_to_worktree(
         let path_str = fp
             .target_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let path_adjusted = adjust_path(path_str, args.strip, args.directory.as_deref());
+        let path_adjusted = adjust_path(path_str, args.directory.as_deref());
         let path = PathBuf::from(&path_adjusted);
 
         if fp.is_deleted {
@@ -3862,7 +3879,7 @@ fn apply_to_worktree(
         // for rename/copy patches where target may not exist yet).
         let source_adjusted = fp
             .source_path()
-            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .map(|p| adjust_path(p, args.directory.as_deref()))
             .unwrap_or_else(|| path_adjusted.clone());
         let read_path = PathBuf::from(&source_adjusted);
         let source_contains_target =
@@ -4072,11 +4089,11 @@ fn apply_to_index(
         let target_path_str = fp
             .target_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let target_raw = adjust_path(target_path_str, args.strip, args.directory.as_deref());
+        let target_raw = adjust_path(target_path_str, args.directory.as_deref());
         let target_adjusted = format!("{cwd_prefix}{target_raw}");
         let source_adjusted = fp
             .source_path()
-            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .map(|p| adjust_path(p, args.directory.as_deref()))
             .map(|raw| format!("{cwd_prefix}{raw}"))
             .unwrap_or_else(|| target_adjusted.clone());
 
@@ -4295,7 +4312,7 @@ fn apply_intent_to_add_entries(patches: &[FilePatch], args: &Args) -> Result<()>
         let Some(target_path) = fp.target_path() else {
             continue;
         };
-        let target_raw = adjust_path(target_path, args.strip, args.directory.as_deref());
+        let target_raw = adjust_path(target_path, args.directory.as_deref());
         let target_adjusted = format!("{cwd_prefix}{target_raw}");
         if target_adjusted.is_empty() {
             continue;
@@ -4338,7 +4355,7 @@ fn check_patches(
         let path_str = fp
             .effective_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let path_adjusted = adjust_path(path_str, args.strip, args.directory.as_deref());
+        let path_adjusted = adjust_path(path_str, args.directory.as_deref());
         let path = PathBuf::from(&path_adjusted);
 
         if fp.is_deleted {
@@ -4359,11 +4376,11 @@ fn check_patches(
 
         let read_path = fp
             .source_path()
-            .map(|p| PathBuf::from(adjust_path(p, args.strip, args.directory.as_deref())))
+            .map(|p| PathBuf::from(adjust_path(p, args.directory.as_deref())))
             .unwrap_or_else(|| path.clone());
         let source_adjusted = fp
             .source_path()
-            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .map(|p| adjust_path(p, args.directory.as_deref()))
             .unwrap_or_else(|| path_adjusted.clone());
         let old_content = match &crlf_ctx {
             Some(ctx) => {

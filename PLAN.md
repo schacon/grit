@@ -474,7 +474,7 @@ commit → check it off → move on.
 - [ ] `t4067-diff-partial-clone` ░░░░░░░░░░░░░░░░░░░░ 0/9 (9 left) — behavior of diff when reading objects in a partial clone
 - [ ] `t4208-log-magic-pathspec` ██████████░░░░░░░░░░ 11/21 (10 left) — magic pathspec tests using git-log
 - [ ] `t4212-log-corrupt` ████░░░░░░░░░░░░░░░░ 3/13 (10 left) — git log with invalid commit headers
-- [ ] `t4128-apply-root` ███░░░░░░░░░░░░░░░░░ 2/12 (10 left) — apply same filename
+- [x] `t4128-apply-root` — apply same filename (`--directory` + `-p`: no double strip; normalize directory like Git)
 - [ ] `t4139-apply-escape` ███░░░░░░░░░░░░░░░░░ 2/12 (10 left) — paths written by git-apply cannot escape the working tree
 - [ ] `t4119-apply-config` █░░░░░░░░░░░░░░░░░░░ 1/11 (10 left) — git apply --whitespace=strip and configuration file.
 
