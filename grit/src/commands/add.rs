@@ -1443,8 +1443,10 @@ pub(crate) fn stage_file(
         .map_err(anyhow::Error::from)?;
     let mut entry = entry_from_metadata(&meta, rel_path.as_bytes(), oid, final_mode);
     entry.mode = final_mode; // Ensure mode override sticks
-                             // Use stage_file which also clears conflict stages (1, 2, 3) for the same
-                             // path — this is how `git add` resolves merge/cherry-pick conflicts.
+    entry.set_assume_unchanged(false);
+    entry.set_skip_worktree(false);
+    // Use stage_file which also clears conflict stages (1, 2, 3) for the same
+    // path — this is how `git add` resolves merge/cherry-pick conflicts.
     index.stage_file(entry);
 
     if ctx.verbose {

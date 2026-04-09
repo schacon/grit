@@ -34,11 +34,15 @@ pub fn run(args: Args) -> Result<()> {
     let mut all = args.all;
     let mut anonymize = args.anonymize;
     let mut maps = args.anonymize_map;
+    let mut no_data = false;
+    let mut use_done_feature = false;
 
     for a in &args.args {
         match a.as_str() {
             "--all" => all = true,
             "--anonymize" => anonymize = true,
+            "--no-data" => no_data = true,
+            "--use-done-feature" => use_done_feature = true,
             _ if a.starts_with("--anonymize-map=") => {
                 maps.push(a.trim_start_matches("--anonymize-map=").to_string());
             }
@@ -54,7 +58,8 @@ pub fn run(args: Args) -> Result<()> {
         all: true,
         anonymize,
         anonymize_maps: maps,
-        ..FastExportOptions::default()
+        no_data,
+        use_done_feature,
     };
 
     let stdout = io::stdout().lock();

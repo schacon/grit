@@ -27,6 +27,8 @@ pub struct FastExportOptions {
     pub anonymize_maps: Vec<String>,
     /// Emit `feature done` / trailing `done` (matches `git fast-import` when the feature is negotiated).
     pub use_done_feature: bool,
+    /// Omit `blob` commands and emit `M` lines with full object ids (matches `git fast-export --no-data`).
+    pub no_data: bool,
 }
 
 struct AnonState<'a> {
@@ -392,34 +394,36 @@ pub fn export_stream(
             .collect();
         depth_first_diff_sort(&mut diff_vec);
 
-        for e in &diff_vec {
-            if e.status == DiffStatus::Deleted {
-                continue;
-            }
-            let mode = u32::from_str_radix(e.new_mode.trim(), 8).unwrap_or(0);
-            if mode == MODE_TREE || mode == MODE_GITLINK {
-                continue;
-            }
-            let blob_oid = e.new_oid;
-            if marks.contains_key(&blob_oid) {
-                continue;
-            }
-            next_mark += 1;
-            marks.insert(blob_oid, next_mark);
-            writeln!(writer, "blob")?;
-            writeln!(writer, "mark :{next_mark}")?;
-            let payload = if let Some(a) = anon.as_mut() {
-                a.anonymize_blob_payload()
-            } else {
-                let o = repo.odb.read(&blob_oid)?;
-                if o.kind != ObjectKind::Blob {
-                    return Err(Error::CorruptObject("expected blob".to_owned()));
+        if !options.no_data {
+            for e in &diff_vec {
+                if e.status == DiffStatus::Deleted {
+                    continue;
                 }
-                o.data
-            };
-            writeln!(writer, "data {}", payload.len())?;
-            writer.write_all(&payload)?;
-            writeln!(writer)?;
+                let mode = u32::from_str_radix(e.new_mode.trim(), 8).unwrap_or(0);
+                if mode == MODE_TREE || mode == MODE_GITLINK {
+                    continue;
+                }
+                let blob_oid = e.new_oid;
+                if marks.contains_key(&blob_oid) {
+                    continue;
+                }
+                next_mark += 1;
+                marks.insert(blob_oid, next_mark);
+                writeln!(writer, "blob")?;
+                writeln!(writer, "mark :{next_mark}")?;
+                let payload = if let Some(a) = anon.as_mut() {
+                    a.anonymize_blob_payload()
+                } else {
+                    let o = repo.odb.read(&blob_oid)?;
+                    if o.kind != ObjectKind::Blob {
+                        return Err(Error::CorruptObject("expected blob".to_owned()));
+                    }
+                    o.data
+                };
+                writeln!(writer, "data {}", payload.len())?;
+                writer.write_all(&payload)?;
+                writeln!(writer)?;
+            }
         }
 
         let refname = ref_source_for_commit(repo, *oid, &head_branches)?;
@@ -463,8 +467,9 @@ pub fn export_stream(
         writer.write_all(msg_bytes)?;
         writeln!(writer)?;
 
-        if let Some(p) = raw_commit.parents.first() {
-            write!(writer, "from ")?;
+        for (i, p) in raw_commit.parents.iter().enumerate() {
+            let label = if i == 0 { "from" } else { "merge" };
+            write!(writer, "{label} ")?;
             if let Some(&m) = marks.get(p) {
                 writeln!(writer, ":{m}")?;
             } else {
@@ -516,6 +521,7 @@ pub fn export_stream(
                             &marks,
                             anon.as_mut(),
                             options.anonymize,
+                            options.no_data,
                         )?;
                     }
                     changed.insert(old_p.to_string());
@@ -529,6 +535,7 @@ pub fn export_stream(
                         &marks,
                         anon.as_mut(),
                         options.anonymize,
+                        options.no_data,
                     )?;
                     changed.insert(e.path().to_string());
                 }
@@ -609,6 +616,7 @@ fn fallthrough_modify(
     marks: &HashMap<ObjectId, u32>,
     mut anon: Option<&mut AnonState>,
     _anonymize: bool,
+    no_data: bool,
 ) -> Result<()> {
     let mode = u32::from_str_radix(e.new_mode.trim(), 8).unwrap_or(0);
     let path = if let Some(a) = anon.as_mut() {
@@ -619,6 +627,16 @@ fn fallthrough_modify(
     if mode == MODE_GITLINK {
         let hex = e.new_oid.to_hex();
         let oid_out = if let Some(a) = anon {
+            a.anonymize_oid_hex(&hex)
+        } else {
+            hex
+        };
+        writeln!(writer, "M {:06o} {oid_out} {path}", mode)?;
+        return Ok(());
+    }
+    if no_data {
+        let hex = e.new_oid.to_hex();
+        let oid_out = if let Some(a) = anon.as_mut() {
             a.anonymize_oid_hex(&hex)
         } else {
             hex

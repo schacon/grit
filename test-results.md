@@ -21,6 +21,7 @@
 - `./scripts/run-tests.sh t3425-rebase-topology-merges.sh`: 13/13 passing (topo-order tie-break, `log A..B` exclusions, `format-patch` for `rebase --apply`, merge todo omission, merge replay; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t12610-rev-list-all-branches.sh`: 32/32 passing (setup returns cwd to trash root for harness that persists cwd between tests).
 - `./scripts/run-tests.sh t7521-ignored-mode.sh`: 12/12 passing (`status --porcelain=v2` untracked/ignored lines; `--ignored` modes; `reset HEAD~1 --hard` argv normalization + hard checkout; harness CSV/dashboards refreshed).
+- `./scripts/run-tests.sh t6416-recursive-corner-cases.sh`: 21/40 passing (virtual merge-base order, `fast-export`/`fast-import`, `git add` fixes; remaining: modify/delete unmerged index, D/F + symlink/submodule cases).
 - `cargo test -p grit-lib --lib`: 121/121 passing.
 - `./scripts/run-tests.sh t13180-log-patch-stat.sh`: 35/35 passing (`grit log` oneline/graph/decorate/skip/max-count/reverse/format; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t10560-switch-create-detach.sh`: 28/28 passing (`switch -- <branch>` disambiguation; invalid `-c`/`-C`/`--orphan` branch names rejected like Git; harness CSV/dashboards refreshed).

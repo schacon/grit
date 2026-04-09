@@ -23,12 +23,29 @@ use crate::repo::Repository;
 use crate::rev_parse::resolve_revision;
 use crate::write_tree::write_tree_from_index;
 
+/// Options for [`import_stream`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FastImportOptions {
+    /// When true, allow updating refs that would otherwise be rejected as non-fast-forward
+    /// (Git's `feature force` / `--force`).
+    pub force: bool,
+}
+
 /// Import objects and refs from a fast-import stream read from `reader`.
 ///
 /// # Errors
 ///
 /// Returns [`Error`] variants for I/O, corrupt stream input, or missing marks/refs.
-pub fn import_stream(repo: &Repository, mut reader: impl BufRead) -> Result<()> {
+pub fn import_stream(repo: &Repository, reader: impl BufRead) -> Result<()> {
+    import_stream_with_options(repo, reader, FastImportOptions::default())
+}
+
+/// Import with explicit options (e.g. `--force`).
+pub fn import_stream_with_options(
+    repo: &Repository,
+    mut reader: impl BufRead,
+    options: FastImportOptions,
+) -> Result<()> {
     let log_refs = ConfigSet::load(Some(&repo.git_dir), true)
         .map(|c| c.effective_log_refs_config(&repo.git_dir))
         .unwrap_or_else(|_| crate::refs::effective_log_refs_config(&repo.git_dir));
@@ -40,6 +57,7 @@ pub fn import_stream(repo: &Repository, mut reader: impl BufRead) -> Result<()> 
         feature_done: false,
         stashed_line: None,
         pending_byte: None,
+        force: options.force,
         reader: &mut reader,
     };
     imp.run()
@@ -56,6 +74,7 @@ struct Importer<'a, R: BufRead> {
     stashed_line: Option<String>,
     /// Byte read while handling optional `LF` after a `data` block; must precede next line.
     pending_byte: Option<u8>,
+    force: bool,
     reader: &'a mut R,
 }
 
@@ -156,14 +175,16 @@ impl<'a, R: BufRead> Importer<'a, R> {
             if trimmed == "done" {
                 break;
             }
-            if trimmed.starts_with('#') {
-                continue;
-            }
             if let Some(rest) = trimmed.strip_prefix("feature ") {
                 let name = rest.trim();
-                if name == "done" {
+                if name == "force" {
+                    self.force = true;
+                } else if name == "done" {
                     self.feature_done = true;
                 }
+                continue;
+            }
+            if trimmed.starts_with('#') {
                 continue;
             }
             if trimmed == "blob" {
@@ -352,9 +373,12 @@ impl<'a, R: BufRead> Importer<'a, R> {
                 blob_oid: ObjectId,
                 target_commit: ObjectId,
             },
+            Rename(Vec<u8>, Vec<u8>),
+            Copy(Vec<u8>, Vec<u8>),
         }
 
         let mut from_oid: Option<ObjectId> = None;
+        let mut merge_oids: Vec<ObjectId> = Vec::new();
         let mut ops: Vec<FileChangeOp> = Vec::new();
         let mut pending_inline: Option<(u32, Vec<u8>)> = None;
         let notes_ref = refname.starts_with("refs/notes/");
@@ -388,9 +412,9 @@ impl<'a, R: BufRead> Importer<'a, R> {
                 continue;
             }
             if t.starts_with("merge ") {
-                return Err(Error::IndexError(
-                    "fast-import: merge commits not supported".to_owned(),
-                ));
+                let spec = t["merge ".len()..].trim();
+                merge_oids.push(self.resolve_commit_ish(spec)?);
+                continue;
             }
             if t == "deleteall" {
                 ops.push(FileChangeOp::DeleteAll);
@@ -472,6 +496,28 @@ impl<'a, R: BufRead> Importer<'a, R> {
                 });
                 continue;
             }
+            if let Some(rest) = t.strip_prefix("R ") {
+                let parts: Vec<&str> = rest.split_whitespace().collect();
+                if parts.len() != 2 {
+                    return Err(Error::IndexError(format!("fast-import: bad R line: {t}")));
+                }
+                ops.push(FileChangeOp::Rename(
+                    parts[0].as_bytes().to_vec(),
+                    parts[1].as_bytes().to_vec(),
+                ));
+                continue;
+            }
+            if let Some(rest) = t.strip_prefix("C ") {
+                let parts: Vec<&str> = rest.split_whitespace().collect();
+                if parts.len() != 2 {
+                    return Err(Error::IndexError(format!("fast-import: bad C line: {t}")));
+                }
+                ops.push(FileChangeOp::Copy(
+                    parts[0].as_bytes().to_vec(),
+                    parts[1].as_bytes().to_vec(),
+                ));
+                continue;
+            }
             self.stashed_line = Some(line);
             break;
         }
@@ -486,31 +532,32 @@ impl<'a, R: BufRead> Importer<'a, R> {
             .parse()
             .map_err(|_| Error::IndexError("fast-import: empty tree oid".to_owned()))?;
 
-        let (parent_tree, parents) = match from_oid {
-            Some(oid) => {
-                let obj = self.repo.odb.read(&oid)?;
-                if obj.kind != ObjectKind::Commit {
-                    return Err(Error::IndexError(format!(
-                        "fast-import: from {oid} is not a commit"
-                    )));
-                }
-                let c = parse_commit(&obj.data)?;
-                (c.tree, vec![oid])
+        let mut parents: Vec<ObjectId> = Vec::new();
+        if let Some(oid) = from_oid {
+            parents.push(oid);
+        }
+        parents.extend(merge_oids);
+
+        let (parent_tree, parents_for_commit) = if let Some(&first_parent) = parents.first() {
+            let obj = self.repo.odb.read(&first_parent)?;
+            if obj.kind != ObjectKind::Commit {
+                return Err(Error::IndexError(format!(
+                    "fast-import: parent {first_parent} is not a commit"
+                )));
             }
-            None => {
-                if let Some(tip) = self.branch_tips.get(refname).copied() {
-                    let obj = self.repo.odb.read(&tip)?;
-                    if obj.kind != ObjectKind::Commit {
-                        return Err(Error::IndexError(format!(
-                            "fast-import: branch tip {tip} is not a commit"
-                        )));
-                    }
-                    let c = parse_commit(&obj.data)?;
-                    (c.tree, vec![tip])
-                } else {
-                    (empty_tree, Vec::new())
-                }
+            let c = parse_commit(&obj.data)?;
+            (c.tree, parents)
+        } else if let Some(tip) = self.branch_tips.get(refname).copied() {
+            let obj = self.repo.odb.read(&tip)?;
+            if obj.kind != ObjectKind::Commit {
+                return Err(Error::IndexError(format!(
+                    "fast-import: branch tip {tip} is not a commit"
+                )));
             }
+            let c = parse_commit(&obj.data)?;
+            (c.tree, vec![tip])
+        } else {
+            (empty_tree, Vec::new())
         };
 
         let mut index = tree_to_index(&self.repo.odb, &parent_tree)?;
@@ -540,6 +587,28 @@ impl<'a, R: BufRead> Importer<'a, R> {
                         index.add_or_replace(index_entry(note_path, MODE_REGULAR, blob_oid));
                     }
                 }
+                FileChangeOp::Rename(src, dst) => {
+                    let Some(pos) = index.entries.iter().position(|e| e.path == src) else {
+                        return Err(Error::IndexError(format!(
+                            "fast-import: filerename source missing: {}",
+                            String::from_utf8_lossy(&src)
+                        )));
+                    };
+                    let mut ent = index.entries.remove(pos);
+                    ent.path = dst;
+                    index.add_or_replace(ent);
+                }
+                FileChangeOp::Copy(src, dst) => {
+                    let Some(ent) = index.entries.iter().find(|e| e.path == src).cloned() else {
+                        return Err(Error::IndexError(format!(
+                            "fast-import: filecopy source missing: {}",
+                            String::from_utf8_lossy(&src)
+                        )));
+                    };
+                    let mut copy_ent = ent;
+                    copy_ent.path = dst;
+                    index.add_or_replace(copy_ent);
+                }
             }
         }
 
@@ -557,7 +626,7 @@ impl<'a, R: BufRead> Importer<'a, R> {
 
         let commit = CommitData {
             tree: tree_oid,
-            parents,
+            parents: parents_for_commit,
             author,
             committer,
             author_raw: Vec::new(),
@@ -573,6 +642,19 @@ impl<'a, R: BufRead> Importer<'a, R> {
             self.marks.insert(m, commit_oid);
         }
         self.branch_tips.insert(refname.to_string(), commit_oid);
+        if !self.force {
+            if let Ok(old) = crate::refs::resolve_ref(&self.repo.git_dir, refname) {
+                if old != commit_oid {
+                    let is_ancestor =
+                        crate::merge_base::is_ancestor(self.repo, old, commit_oid).unwrap_or(false);
+                    if !is_ancestor {
+                        return Err(Error::IndexError(format!(
+                            "fast-import: refusing non-fast-forward update of {refname} (use feature force or --force)"
+                        )));
+                    }
+                }
+            }
+        }
         self.update_ref_with_reflog(refname, &commit_oid, &reflog_identity, "fast-import")?;
         Ok(())
     }
@@ -689,6 +771,19 @@ impl<'a, R: BufRead> Importer<'a, R> {
         if let Some(spec) = t.strip_prefix("from ") {
             let oid = self.resolve_commit_ish(spec.trim())?;
             self.branch_tips.insert(refname.to_string(), oid);
+            if !self.force {
+                if let Ok(old) = crate::refs::resolve_ref(&self.repo.git_dir, refname) {
+                    if old != oid {
+                        let is_ancestor =
+                            crate::merge_base::is_ancestor(self.repo, old, oid).unwrap_or(false);
+                        if !is_ancestor {
+                            return Err(Error::IndexError(format!(
+                                "fast-import: refusing non-fast-forward reset of {refname}"
+                            )));
+                        }
+                    }
+                }
+            }
             let ident = Self::fast_import_reflog_identity_from_env();
             self.update_ref_with_reflog(refname, &oid, &ident, "fast-import")?;
             return Ok(());

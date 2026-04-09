@@ -1024,11 +1024,15 @@ pub(crate) fn create_virtual_merge_base(
         return Ok(bases[0]);
     }
 
+    // Git's `repo_get_merge_bases` sorts candidates by commit date (newer first), then
+    // `merge_ort_internal` reverses the list before the pairwise loop. The effective order
+    // is therefore oldest merge base first when folding bases into a virtual ancestor
+    // (matches merge-ort.c and t6416 criss-cross expectations).
     let mut ordered_bases = bases.to_vec();
     ordered_bases.sort_by(|a, b| {
         let ta = commit_author_timestamp(repo, *a).unwrap_or(0);
         let tb = commit_author_timestamp(repo, *b).unwrap_or(0);
-        tb.cmp(&ta).then_with(|| a.cmp(b))
+        ta.cmp(&tb).then_with(|| a.cmp(b))
     });
 
     // Recursively merge bases pairwise
@@ -1059,9 +1063,9 @@ pub(crate) fn create_virtual_merge_base(
         };
 
         // Merge current and next using sub_base_oid as base.
-        // Keep `current` as ours and `next` as theirs. Combined with
-        // timestamp ordering, this matches Git's virtual merge-base
-        // conflict marker orientation for criss-cross merges.
+        // Keep `current` as ours and `next` as theirs. Merge bases are
+        // ordered oldest-first (Git sorts by date descending then reverses
+        // before this loop) so the virtual ancestor matches merge-ort.
         let base_tree = commit_tree(repo, sub_base_oid)?;
         let ours_tree = commit_tree(repo, current)?;
         let theirs_tree = commit_tree(repo, next)?;
