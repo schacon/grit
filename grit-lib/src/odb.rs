@@ -17,6 +17,7 @@
 //! let odb = Odb::new(Path::new(".git/objects"));
 //! ```
 
+use std::ffi::CString;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -37,7 +38,7 @@ use crate::pack;
 /// (`t1006-cat-file` zlib-dictionary test).
 fn read_zlib_loose_payload(mut file: fs::File) -> Result<Vec<u8>> {
     let mut hdr = [0u8; 2];
-    file.read_exact(&mut hdr).map_err(|e| Error::Io(e))?;
+    file.read_exact(&mut hdr).map_err(Error::Io)?;
     let cmf_flg = u16::from(hdr[0]) << 8 | u16::from(hdr[1]);
     let looks_like_zlib_header = cmf_flg != 0 && cmf_flg % 31 == 0;
     let preset_dictionary = looks_like_zlib_header && (hdr[1] & 0x20) != 0;
@@ -165,6 +166,45 @@ impl Odb {
         false
     }
 
+    /// Touch the loose object file or pack file containing `oid`, matching Git's
+    /// `odb_freshen_object` (updates mtime so age-based prune keeps recently re-referenced objects).
+    ///
+    /// Returns `true` if an on-disk object was found and touched.
+    #[must_use]
+    pub fn freshen_object(&self, oid: &ObjectId) -> bool {
+        const EMPTY_TREE_CANON: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+        const EMPTY_TREE_LEGACY: &str = "4b825dc642cb6eb9a060e54bf899d69f7c6948d4";
+        let hex = oid.to_hex();
+        if hex == EMPTY_TREE_CANON || hex == EMPTY_TREE_LEGACY {
+            return false;
+        }
+
+        let loose = self.object_path(oid);
+        if loose.is_file() {
+            return touch_path_mtime(&loose);
+        }
+
+        if freshen_object_in_objects_dir(&self.objects_dir, oid) {
+            return true;
+        }
+
+        if let Ok(alts) = pack::read_alternates_recursive(&self.objects_dir) {
+            for alt_dir in &alts {
+                if freshen_object_in_objects_dir(alt_dir, oid) {
+                    return true;
+                }
+            }
+        }
+
+        for alt_dir in env_alternate_dirs(self.work_tree.as_deref()) {
+            if freshen_object_in_objects_dir(&alt_dir, oid) {
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Read a loose object file at `path`, verifying the uncompressed payload hashes to `expected_oid`.
     ///
     /// Git stores loose objects under paths derived from the OID; if the file contents hash to a
@@ -283,7 +323,12 @@ impl Odb {
         let oid = hash_bytes(&store_bytes);
 
         let path = self.object_path(&oid);
-        if path.exists() || self.exists(&oid) {
+        if path.exists() {
+            let _ = self.freshen_object(&oid);
+            return Ok(oid);
+        }
+        if self.exists(&oid) {
+            let _ = self.freshen_object(&oid);
             return Ok(oid);
         }
 
@@ -322,7 +367,12 @@ impl Odb {
 
         let oid = hash_bytes(store_bytes);
         let path = self.object_path(&oid);
-        if path.exists() || self.exists(&oid) {
+        if path.exists() {
+            let _ = self.freshen_object(&oid);
+            return Ok(oid);
+        }
+        if self.exists(&oid) {
+            let _ = self.freshen_object(&oid);
             return Ok(oid);
         }
 
@@ -344,6 +394,36 @@ impl Odb {
 
         Ok(oid)
     }
+}
+
+/// Update `path`'s mtime to "now" (Git `utime(path, NULL)`), returning whether it succeeded.
+fn touch_path_mtime(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let Ok(c_path) = CString::new(path.as_os_str().as_bytes()) else {
+            return false;
+        };
+        // SAFETY: `utimes` with NULL `times` sets atime and mtime to the current time.
+        unsafe { libc::utimes(c_path.as_ptr(), std::ptr::null()) == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+fn freshen_object_in_objects_dir(objects_dir: &Path, oid: &ObjectId) -> bool {
+    let Ok(indexes) = pack::read_local_pack_indexes(objects_dir) else {
+        return false;
+    };
+    for idx in &indexes {
+        if idx.entries.iter().any(|e| e.oid == *oid) {
+            return touch_path_mtime(&idx.pack_path);
+        }
+    }
+    false
 }
 
 fn hash_object_from_parsed(obj: &Object) -> ObjectId {
