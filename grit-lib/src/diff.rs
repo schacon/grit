@@ -1953,9 +1953,14 @@ pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
 
     let old_lines: Vec<&str> = old_content.lines().collect();
 
-    let group_radius = context_lines
+    // `similar::group_diff_ops` ends a hunk when an unchanged run has length > `2 * n`.
+    // Git's xdiff merges adjacent changes while the gap between them in the old file is at most
+    // `2 * context_lines + inter_hunk_context` (see `xdl_get_hunk` in xemit.c). Match that by
+    // choosing `n` so `2 * n` equals that maximum merged gap (rounded up when the sum is odd).
+    let max_common_gap = context_lines
         .saturating_mul(2)
         .saturating_add(inter_hunk_context);
+    let group_radius = max_common_gap.div_ceil(2);
     let op_groups = group_diff_ops(diff.ops().to_vec(), group_radius);
 
     for ops in op_groups {
