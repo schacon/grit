@@ -1,11 +1,9 @@
 #!/bin/sh
-<<<<<<< HEAD
-=======
+
 #
 # Upstream: t5570-git-daemon.sh
 # Tests fetching over git protocol via git-daemon.
 #
->>>>>>> test/batch-GE
 
 test_description='test fetching over git protocol'
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
@@ -13,15 +11,6 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
 . ./test-lib.sh
 
-<<<<<<< HEAD
-. "$TEST_DIRECTORY"/lib-git-daemon.sh
-
-test_expect_success 'daemon rejects invalid --init-timeout values' '
-	for arg in "3a" "-3"
-	do
-		test_must_fail git daemon --init-timeout="$arg" 2>err &&
-		test_grep "fatal: invalid init-timeout ${SQ}$arg${SQ}, expecting a non-negative integer" err ||
-=======
 # These tests need real git (not grit wrapper) for daemon and transport
 REAL_GIT="$(command -v git 2>/dev/null || echo /usr/bin/git)"
 for _p in $(echo "$PATH" | tr ':' ' '); do
@@ -38,13 +27,11 @@ chmod +x "$TRASH_DIRECTORY/.bin/git"
 
 . "$TEST_DIRECTORY"/lib-git-daemon.sh
 
-# These tests validate daemon argument checking.
-# Older git (< 2.45) may not validate before daemonizing, so use timeout.
 test_expect_success 'daemon rejects invalid --init-timeout values' '
 	for arg in "3a" "-3"
 	do
-		test_must_fail timeout 2 git daemon --init-timeout="$arg" 2>err ||
->>>>>>> test/batch-GE
+		test_must_fail git daemon --init-timeout="$arg" 2>err &&
+		test_grep "fatal: invalid init-timeout ${SQ}$arg${SQ}, expecting a non-negative integer" err ||
 		return 1
 	done
 '
@@ -52,24 +39,16 @@ test_expect_success 'daemon rejects invalid --init-timeout values' '
 test_expect_success 'daemon rejects invalid --timeout values' '
 	for arg in "3a" "-3"
 	do
-<<<<<<< HEAD
 		test_must_fail git daemon --timeout="$arg" 2>err &&
 		test_grep "fatal: invalid timeout ${SQ}$arg${SQ}, expecting a non-negative integer" err ||
-=======
-		test_must_fail timeout 2 git daemon --timeout="$arg" 2>err ||
->>>>>>> test/batch-GE
 		return 1
 	done
 '
 
 test_expect_success 'daemon rejects invalid --max-connections values' '
-<<<<<<< HEAD
 	arg='3a' &&
 	test_must_fail git daemon --max-connections=3a 2>err &&
 	test_grep "fatal: invalid max-connections ${SQ}$arg${SQ}, expecting an integer" err
-=======
-	test_must_fail timeout 2 git daemon --max-connections=3a 2>err
->>>>>>> test/batch-GE
 '
 
 start_git_daemon
@@ -220,32 +199,18 @@ test_remote_error()
 }
 
 msg="access denied or repository not exported"
-<<<<<<< HEAD
 test_expect_success 'clone non-existent' "test_remote_error    '$msg' clone nowhere.git"
 test_expect_success 'push disabled'      "test_remote_error    '$msg' push  repo.git main"
 test_expect_success 'read access denied' "test_remote_error -x '$msg' fetch repo.git"
 test_expect_success 'not exported'       "test_remote_error -n '$msg' fetch repo.git"
-=======
-test_expect_success 'clone non-existent' "test_remote_error    '\$msg' clone nowhere.git"
-test_expect_success 'push disabled'      "test_remote_error    '\$msg' push  repo.git main"
-test_expect_success 'read access denied' "test_remote_error -x '\$msg' fetch repo.git"
-test_expect_success 'not exported'       "test_remote_error -n '\$msg' fetch repo.git"
->>>>>>> test/batch-GE
 
 stop_git_daemon
 start_git_daemon --informative-errors
 
-<<<<<<< HEAD
 test_expect_success 'clone non-existent' "test_remote_error    'no such repository'      clone nowhere.git"
 test_expect_success 'push disabled'      "test_remote_error    'service not enabled'     push  repo.git main"
 test_expect_success 'read access denied' "test_remote_error -x 'no such repository'      fetch repo.git"
 test_expect_success 'not exported'       "test_remote_error -n 'repository not exported' fetch repo.git"
-=======
-test_expect_success 'clone non-existent (informative)' "test_remote_error    'no such repository'      clone nowhere.git"
-test_expect_success 'push disabled (informative)'      "test_remote_error    'service not enabled'     push  repo.git main"
-test_expect_success 'read access denied (informative)' "test_remote_error -x 'no such repository'      fetch repo.git"
-test_expect_success 'not exported (informative)'       "test_remote_error -n 'repository not exported' fetch repo.git"
->>>>>>> test/batch-GE
 
 stop_git_daemon
 start_git_daemon --interpolated-path="$GIT_DAEMON_DOCUMENT_ROOT_PATH/%H%D"
@@ -286,9 +251,4 @@ test_expect_success FAKENC 'hostname interpolation works after LF-stripping' '
 	test_cmp expect actual
 '
 
-<<<<<<< HEAD
-=======
-# Clean up daemon
-stop_git_daemon
->>>>>>> test/batch-GE
 test_done

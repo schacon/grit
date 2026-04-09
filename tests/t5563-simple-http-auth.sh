@@ -1,12 +1,10 @@
 #!/bin/sh
-<<<<<<< HEAD
-=======
+
 #
 # Upstream: t5563-simple-http-auth.sh
 # Tests HTTP auth header and credential helper interop.
 # Requires Apache CGIPassAuth which our test-httpd doesn't support.
 #
->>>>>>> test/batch-GE
 
 test_description='test http auth header and credential helper interop'
 
@@ -16,11 +14,7 @@ test_description='test http auth header and credential helper interop'
 enable_cgipassauth
 if ! test_have_prereq CGIPASSAUTH
 then
-<<<<<<< HEAD
 	skip_all="no CGIPassAuth support"
-=======
-	skip_all="no CGIPassAuth support (test-httpd does not support custom auth)"
->>>>>>> test/batch-GE
 	test_done
 fi
 start_httpd
@@ -83,10 +77,7 @@ test_expect_success 'access using basic auth' '
 	password=secret-passwd
 	EOF
 
-<<<<<<< HEAD
 	# Basic base64(alice:secret-passwd)
-=======
->>>>>>> test/batch-GE
 	cat >"$HTTPD_ROOT_PATH/custom-auth.valid" <<-EOF &&
 	id=1 creds=Basic YWxpY2U6c2VjcmV0LXBhc3N3ZA==
 	EOF
@@ -117,7 +108,6 @@ test_expect_success 'access using basic auth' '
 
 test_expect_success 'access using basic auth via authtype' '
 	test_when_finished "per_test_cleanup" &&
-<<<<<<< HEAD
 
 	set_credential_reply get <<-EOF &&
 	capability[]=authtype
@@ -153,14 +143,10 @@ test_expect_success 'access using basic auth via authtype' '
 	protocol=http
 	host=$HTTPD_DEST
 	EOF
-=======
-	: # requires CGIPassAuth
->>>>>>> test/batch-GE
 '
 
 test_expect_success 'access using basic auth invalid credentials' '
 	test_when_finished "per_test_cleanup" &&
-<<<<<<< HEAD
 
 	set_credential_reply get <<-EOF &&
 	username=baduser
@@ -195,14 +181,10 @@ test_expect_success 'access using basic auth invalid credentials' '
 	password=wrong-passwd
 	wwwauth[]=Basic realm="example.com"
 	EOF
-=======
-	: # requires CGIPassAuth
->>>>>>> test/batch-GE
 '
 
 test_expect_success 'access using basic proactive auth' '
 	test_when_finished "per_test_cleanup" &&
-<<<<<<< HEAD
 
 	set_credential_reply get <<-EOF &&
 	username=alice
@@ -237,14 +219,10 @@ test_expect_success 'access using basic proactive auth' '
 	username=alice
 	password=secret-passwd
 	EOF
-=======
-	: # requires CGIPassAuth
->>>>>>> test/batch-GE
 '
 
 test_expect_success 'access using auto proactive auth with basic default' '
 	test_when_finished "per_test_cleanup" &&
-<<<<<<< HEAD
 
 	set_credential_reply get <<-EOF &&
 	username=alice
@@ -278,14 +256,10 @@ test_expect_success 'access using auto proactive auth with basic default' '
 	username=alice
 	password=secret-passwd
 	EOF
-=======
-	: # requires CGIPassAuth
->>>>>>> test/batch-GE
 '
 
 test_expect_success 'access using auto proactive auth with authtype from credential helper' '
 	test_when_finished "per_test_cleanup" &&
-<<<<<<< HEAD
 
 	set_credential_reply get <<-EOF &&
 	capability[]=authtype
@@ -323,14 +297,10 @@ test_expect_success 'access using auto proactive auth with authtype from credent
 	protocol=http
 	host=$HTTPD_DEST
 	EOF
-=======
-	: # requires CGIPassAuth
->>>>>>> test/batch-GE
 '
 
 test_expect_success 'access using basic auth with extra challenges' '
 	test_when_finished "per_test_cleanup" &&
-<<<<<<< HEAD
 
 	set_credential_reply get <<-EOF &&
 	username=alice
@@ -368,14 +338,10 @@ test_expect_success 'access using basic auth with extra challenges' '
 	username=alice
 	password=secret-passwd
 	EOF
-=======
-	: # requires CGIPassAuth
->>>>>>> test/batch-GE
 '
 
 test_expect_success 'access using basic auth mixed-case wwwauth header name' '
 	test_when_finished "per_test_cleanup" &&
-<<<<<<< HEAD
 
 	set_credential_reply get <<-EOF &&
 	username=alice
@@ -413,14 +379,10 @@ test_expect_success 'access using basic auth mixed-case wwwauth header name' '
 	username=alice
 	password=secret-passwd
 	EOF
-=======
-	: # requires CGIPassAuth
->>>>>>> test/batch-GE
 '
 
 test_expect_success 'access using basic auth with wwwauth header continuations' '
 	test_when_finished "per_test_cleanup" &&
-<<<<<<< HEAD
 
 	set_credential_reply get <<-EOF &&
 	username=alice
@@ -463,14 +425,10 @@ test_expect_success 'access using basic auth with wwwauth header continuations' 
 	username=alice
 	password=secret-passwd
 	EOF
-=======
-	: # requires CGIPassAuth
->>>>>>> test/batch-GE
 '
 
 test_expect_success 'access using basic auth with wwwauth header empty continuations' '
 	test_when_finished "per_test_cleanup" &&
-<<<<<<< HEAD
 
 	set_credential_reply get <<-EOF &&
 	username=alice
@@ -515,14 +473,10 @@ test_expect_success 'access using basic auth with wwwauth header empty continuat
 	username=alice
 	password=secret-passwd
 	EOF
-=======
-	: # requires CGIPassAuth
->>>>>>> test/batch-GE
 '
 
 test_expect_success 'access using basic auth with wwwauth header mixed continuations' '
 	test_when_finished "per_test_cleanup" &&
-<<<<<<< HEAD
 
 	set_credential_reply get <<-EOF &&
 	username=alice
@@ -562,14 +516,10 @@ test_expect_success 'access using basic auth with wwwauth header mixed continuat
 	username=alice
 	password=secret-passwd
 	EOF
-=======
-	: # requires CGIPassAuth
->>>>>>> test/batch-GE
 '
 
 test_expect_success 'access using bearer auth' '
 	test_when_finished "per_test_cleanup" &&
-<<<<<<< HEAD
 
 	set_credential_reply get <<-EOF &&
 	capability[]=authtype
@@ -611,14 +561,10 @@ test_expect_success 'access using bearer auth' '
 	protocol=http
 	host=$HTTPD_DEST
 	EOF
-=======
-	: # requires CGIPassAuth
->>>>>>> test/batch-GE
 '
 
 test_expect_success 'access using bearer auth with invalid credentials' '
 	test_when_finished "per_test_cleanup" &&
-<<<<<<< HEAD
 
 	set_credential_reply get <<-EOF &&
 	capability[]=authtype
@@ -663,14 +609,10 @@ test_expect_success 'access using bearer auth with invalid credentials' '
 	wwwauth[]=Bearer authorize_uri="id.example.com" p=1 q=0
 	wwwauth[]=Basic realm="example.com"
 	EOF
-=======
-	: # requires CGIPassAuth
->>>>>>> test/batch-GE
 '
 
 test_expect_success 'clone with bearer auth and probe_rpc' '
 	test_when_finished "per_test_cleanup" &&
-<<<<<<< HEAD
 	test_when_finished "rm -rf large.git" &&
 
 	# Set up a repository large enough to trigger probe_rpc
@@ -712,14 +654,10 @@ test_expect_success 'clone with bearer auth and probe_rpc' '
 	test_config_global http.postBuffer 70000 &&
 	test_config_global credential.helper test-helper &&
 	git clone "$HTTPD_URL/custom_auth/large.git" partial-auth-clone 2>clone-error
-=======
-	: # requires CGIPassAuth
->>>>>>> test/batch-GE
 '
 
 test_expect_success 'access using three-legged auth' '
 	test_when_finished "per_test_cleanup" &&
-<<<<<<< HEAD
 
 	set_credential_reply get <<-EOF &&
 	capability[]=authtype
@@ -785,9 +723,6 @@ test_expect_success 'access using three-legged auth' '
 	host=$HTTPD_DEST
 	state[]=helper:bazquux
 	EOF
-=======
-	: # requires CGIPassAuth
->>>>>>> test/batch-GE
 '
 
 test_done

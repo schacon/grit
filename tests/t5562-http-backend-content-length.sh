@@ -1,11 +1,8 @@
 #!/bin/sh
-<<<<<<< HEAD
-=======
 #
 # Upstream: t5562-http-backend-content-length.sh
 # Tests git-http-backend CONTENT_LENGTH handling (direct CGI invocation).
 #
->>>>>>> test/batch-GE
 
 test_description='test git-http-backend respects CONTENT_LENGTH'
 
@@ -17,8 +14,6 @@ then
 	test_done
 fi
 
-<<<<<<< HEAD
-=======
 # These tests need real git (not grit wrapper)
 REAL_GIT="$(command -v git 2>/dev/null || echo /usr/bin/git)"
 for _p in $(echo "$PATH" | tr ':' ' '); do
@@ -33,7 +28,6 @@ exec "$REAL_GIT" "\$@"
 EOFWRAP
 chmod +x "$TRASH_DIRECTORY/.bin/git"
 
->>>>>>> test/batch-GE
 test_lazy_prereq GZIP 'gzip --version'
 
 verify_http_result() {
@@ -69,15 +63,11 @@ test_http_env() {
 
 ssize_b100dots() {
 	# hardcoded ((size_t) SSIZE_MAX) + 1
-<<<<<<< HEAD
 	case "$(build_option sizeof-size_t)" in
 	8) echo 9223372036854775808;;
 	4) echo 2147483648;;
 	*) die "Unexpected ssize_t size: $(build_option sizeof-size_t)";;
 	esac
-=======
-	echo 9223372036854775808
->>>>>>> test/batch-GE
 }
 
 test_expect_success 'setup' '
@@ -143,11 +133,7 @@ test_expect_success GZIP 'fetch gzipped empty' '
 	! verify_http_result "200 OK"
 '
 
-<<<<<<< HEAD
 test_expect_success GZIP 'push plain' '
-=======
-test_expect_success 'push plain' '
->>>>>>> test/batch-GE
 	test_when_finished "git branch -D newbranch" &&
 	test_http_env receive push_body &&
 	verify_http_result "200 OK" &&

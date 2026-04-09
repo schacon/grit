@@ -1,20 +1,16 @@
 #!/bin/sh
-<<<<<<< HEAD
-=======
+
 #
 # Upstream: t5558-clone-bundle-uri.sh
 # Tests fetching bundles with --bundle-uri (file and HTTP).
 # Requires git >= 2.45 for refs/bundles/ support.
 #
->>>>>>> test/batch-GE
 
 test_description='test fetching bundles with --bundle-uri'
 
 . ./test-lib.sh
 . "$TEST_DIRECTORY"/lib-bundle.sh
 
-<<<<<<< HEAD
-=======
 # These tests need real git (grit doesn't support --bundle-uri yet)
 REAL_GIT="$(command -v git 2>/dev/null || echo /usr/bin/git)"
 for _p in $(echo "$PATH" | tr ':' ' '); do
@@ -46,7 +42,6 @@ test_expect_success 'check bundle-uri refs/bundles support' '
 	fi
 '
 
->>>>>>> test/batch-GE
 test_expect_success 'fail to clone from non-existent file' '
 	test_when_finished rm -rf test &&
 	git clone --bundle-uri="$(pwd)/does-not-exist" . test 2>err &&
@@ -72,10 +67,7 @@ test_expect_success 'create bundle' '
 		test_commit B &&
 		git bundle create B.bundle topic &&
 
-<<<<<<< HEAD
 		# Create a bundle with reference pointing to non-existent object.
-=======
->>>>>>> test/batch-GE
 		commit_a=$(git rev-parse A) &&
 		commit_b=$(git rev-parse B) &&
 		sed -e "/^$/q" -e "s/$commit_a /$commit_b /" \
@@ -109,10 +101,7 @@ test_expect_success 'clone with path bundle' '
 '
 
 test_expect_success 'clone with bundle that has bad header' '
-<<<<<<< HEAD
 	# Write bundle ref fails, but clone can still proceed.
-=======
->>>>>>> test/batch-GE
 	git clone --bundle-uri="clone-from/bad-header.bundle" \
 		clone-from clone-bad-header 2>err &&
 	commit_b=$(git -C clone-from rev-parse B) &&
@@ -122,10 +111,7 @@ test_expect_success 'clone with bundle that has bad header' '
 '
 
 test_expect_success 'clone with bundle that has bad object' '
-<<<<<<< HEAD
 	# Unbundle succeeds if no fsckObjects configured.
-=======
->>>>>>> test/batch-GE
 	git clone --bundle-uri="clone-from/bad-object.bundle" \
 		clone-from clone-bad-object-no-fsck &&
 	git -C clone-bad-object-no-fsck for-each-ref --format="%(refname)" >refs &&
@@ -133,10 +119,7 @@ test_expect_success 'clone with bundle that has bad object' '
 	test_write_lines refs/bundles/heads/bad >expect &&
 	test_cmp expect actual &&
 
-<<<<<<< HEAD
 	# Unbundle fails with fsckObjects set true, but clone can still proceed.
-=======
->>>>>>> test/batch-GE
 	git -c fetch.fsckObjects=true clone --bundle-uri="clone-from/bad-object.bundle" \
 		clone-from clone-bad-object-fsck 2>err &&
 	test_grep "missingEmail" err &&
@@ -165,10 +148,7 @@ test_expect_success 'create bundle with tags' '
 	git init clone-from-tags &&
 	(
 		cd clone-from-tags &&
-<<<<<<< HEAD
 		git checkout -b base &&
-=======
->>>>>>> test/batch-GE
 		git checkout -b topic &&
 
 		test_commit A &&
@@ -194,7 +174,6 @@ test_expect_success 'clone with tags bundle' '
 	test_cmp expect actual
 '
 
-<<<<<<< HEAD
 # To get interesting tests for bundle lists, we need to construct a
 # somewhat-interesting commit history.
 #
@@ -215,8 +194,6 @@ test_expect_success 'clone with tags bundle' '
 #       1
 #       |
 # (previous commits)
-=======
->>>>>>> test/batch-GE
 test_expect_success 'construct incremental bundle list' '
 	(
 		cd clone-from &&
@@ -259,12 +236,9 @@ test_expect_success 'clone bundle list (file, no heuristic)' '
 		clone-from clone-list-file 2>err &&
 	! grep "Repository lacks these prerequisite commits" err &&
 
-<<<<<<< HEAD
 	git -C clone-from for-each-ref --format="%(objectname)" >oids &&
 	git -C clone-list-file cat-file --batch-check <oids &&
 
-=======
->>>>>>> test/batch-GE
 	git -C clone-list-file for-each-ref --format="%(refname)" >refs &&
 	grep "refs/bundles/heads/" refs >actual &&
 	cat >expect <<-\EOF &&
@@ -282,10 +256,7 @@ test_expect_success 'clone bundle list (file, all mode, some failures)' '
 		version = 1
 		mode = all
 
-<<<<<<< HEAD
 	# Does not exist. Should be skipped.
-=======
->>>>>>> test/batch-GE
 	[bundle "bundle-0"]
 		uri = file://$(pwd)/clone-from/bundle-0.bundle
 
@@ -295,18 +266,12 @@ test_expect_success 'clone bundle list (file, all mode, some failures)' '
 	[bundle "bundle-2"]
 		uri = file://$(pwd)/clone-from/bundle-2.bundle
 
-<<<<<<< HEAD
 	# No bundle-3 means bundle-4 will not apply.
 
 	[bundle "bundle-4"]
 		uri = file://$(pwd)/clone-from/bundle-4.bundle
 
 	# Does not exist. Should be skipped.
-=======
-	[bundle "bundle-4"]
-		uri = file://$(pwd)/clone-from/bundle-4.bundle
-
->>>>>>> test/batch-GE
 	[bundle "bundle-5"]
 		uri = file://$(pwd)/clone-from/bundle-5.bundle
 	EOF
@@ -318,12 +283,9 @@ test_expect_success 'clone bundle list (file, all mode, some failures)' '
 	! grep "fatal" err &&
 	grep "warning: failed to download bundle from URI" err &&
 
-<<<<<<< HEAD
 	git -C clone-from for-each-ref --format="%(objectname)" >oids &&
 	git -C clone-all-some cat-file --batch-check <oids &&
 
-=======
->>>>>>> test/batch-GE
 	git -C clone-all-some for-each-ref --format="%(refname)" >refs &&
 	grep "refs/bundles/heads/" refs >actual &&
 	cat >expect <<-\EOF &&
@@ -339,17 +301,11 @@ test_expect_success 'clone bundle list (file, all mode, all failures)' '
 		version = 1
 		mode = all
 
-<<<<<<< HEAD
 	# Does not exist. Should be skipped.
 	[bundle "bundle-0"]
 		uri = file://$(pwd)/clone-from/bundle-0.bundle
 
 	# Does not exist. Should be skipped.
-=======
-	[bundle "bundle-0"]
-		uri = file://$(pwd)/clone-from/bundle-0.bundle
-
->>>>>>> test/batch-GE
 	[bundle "bundle-5"]
 		uri = file://$(pwd)/clone-from/bundle-5.bundle
 	EOF
@@ -360,12 +316,9 @@ test_expect_success 'clone bundle list (file, all mode, all failures)' '
 	! grep "fatal" err &&
 	grep "warning: failed to download bundle from URI" err &&
 
-<<<<<<< HEAD
 	git -C clone-from for-each-ref --format="%(objectname)" >oids &&
 	git -C clone-all-fail cat-file --batch-check <oids &&
 
-=======
->>>>>>> test/batch-GE
 	git -C clone-all-fail for-each-ref --format="%(refname)" >refs &&
 	! grep "refs/bundles/heads/" refs
 '
@@ -376,20 +329,14 @@ test_expect_success 'clone bundle list (file, any mode)' '
 		version = 1
 		mode = any
 
-<<<<<<< HEAD
 	# Does not exist. Should be skipped.
-=======
->>>>>>> test/batch-GE
 	[bundle "bundle-0"]
 		uri = file://$(pwd)/clone-from/bundle-0.bundle
 
 	[bundle "bundle-1"]
 		uri = file://$(pwd)/clone-from/bundle-1.bundle
 
-<<<<<<< HEAD
 	# Does not exist. Should be skipped.
-=======
->>>>>>> test/batch-GE
 	[bundle "bundle-5"]
 		uri = file://$(pwd)/clone-from/bundle-5.bundle
 	EOF
@@ -398,12 +345,9 @@ test_expect_success 'clone bundle list (file, any mode)' '
 		clone-from clone-any-file 2>err &&
 	! grep "Repository lacks these prerequisite commits" err &&
 
-<<<<<<< HEAD
 	git -C clone-from for-each-ref --format="%(objectname)" >oids &&
 	git -C clone-any-file cat-file --batch-check <oids &&
 
-=======
->>>>>>> test/batch-GE
 	git -C clone-any-file for-each-ref --format="%(refname)" >refs &&
 	grep "refs/bundles/heads/" refs >actual &&
 	cat >expect <<-\EOF &&
@@ -418,7 +362,6 @@ test_expect_success 'clone bundle list (file, any mode, all failures)' '
 		version = 1
 		mode = any
 
-<<<<<<< HEAD
 	# Does not exist. Should be skipped.
 	[bundle "bundle-0"]
 		uri = $HTTPD_URL/bundle-0.bundle
@@ -426,13 +369,6 @@ test_expect_success 'clone bundle list (file, any mode, all failures)' '
 	# Does not exist. Should be skipped.
 	[bundle "bundle-5"]
 		uri = $HTTPD_URL/bundle-5.bundle
-=======
-	[bundle "bundle-0"]
-		uri = file://$(pwd)/clone-from/bundle-0.bundle
-
-	[bundle "bundle-5"]
-		uri = file://$(pwd)/clone-from/bundle-5.bundle
->>>>>>> test/batch-GE
 	EOF
 
 	git clone --bundle-uri="file://$(pwd)/bundle-list" \
@@ -440,12 +376,9 @@ test_expect_success 'clone bundle list (file, any mode, all failures)' '
 	! grep "fatal" err &&
 	grep "warning: failed to download bundle from URI" err &&
 
-<<<<<<< HEAD
 	git -C clone-from for-each-ref --format="%(objectname)" >oids &&
 	git -C clone-any-fail cat-file --batch-check <oids &&
 
-=======
->>>>>>> test/batch-GE
 	git -C clone-any-fail for-each-ref --format="%(refname)" >refs &&
 	! grep "refs/bundles/heads/" refs
 '
@@ -459,10 +392,7 @@ test_expect_success 'negotiation: bundle with part of wanted commits' '
 	grep "refs/bundles/heads/" refs >actual &&
 	test_write_lines refs/bundles/heads/topic >expect &&
 	test_cmp expect actual &&
-<<<<<<< HEAD
 	# Ensure that refs/bundles/heads/topic are sent as "have".
-=======
->>>>>>> test/batch-GE
 	tip=$(git -C clone-from rev-parse A) &&
 	test_grep "clone> have $tip" trace-packet.txt
 '
@@ -477,10 +407,7 @@ test_expect_success 'negotiation: bundle with all wanted commits' '
 	grep "refs/bundles/heads/" refs >actual &&
 	test_write_lines refs/bundles/heads/topic >expect &&
 	test_cmp expect actual &&
-<<<<<<< HEAD
 	# We already have all needed commits so no "want" needed.
-=======
->>>>>>> test/batch-GE
 	test_grep ! "clone> want " trace-packet.txt
 '
 
@@ -574,10 +501,7 @@ test_expect_success 'negotiation: bundle list with all wanted commits' '
 	refs/bundles/heads/left
 	EOF
 	test_cmp expect actual &&
-<<<<<<< HEAD
 	# We already have all needed commits so no "want" needed.
-=======
->>>>>>> test/batch-GE
 	test_grep ! "clone> want " trace-packet.txt
 '
 
@@ -610,13 +534,9 @@ test_expect_success 'clone HTTP bundle' '
 		"$HTTPD_URL/smart/fetch.git" clone-http &&
 	git -C clone-http rev-parse refs/bundles/heads/topic >actual &&
 	git -C clone-from rev-parse topic >expect &&
-<<<<<<< HEAD
 	test_cmp expect actual &&
 
 	test_config -C clone-http log.excludedecoration refs/bundle/
-=======
-	test_cmp expect actual
->>>>>>> test/batch-GE
 '
 
 test_expect_success 'clone HTTP bundle with non-default hash' '
@@ -629,11 +549,8 @@ test_expect_success 'clone HTTP bundle with non-default hash' '
 '
 
 test_expect_success 'clone bundle list (HTTP, no heuristic)' '
-<<<<<<< HEAD
 	test_when_finished rm -f trace*.txt &&
 
-=======
->>>>>>> test/batch-GE
 	cp clone-from/bundle-*.bundle "$HTTPD_DOCUMENT_ROOT_PATH/" &&
 	cat >"$HTTPD_DOCUMENT_ROOT_PATH/bundle-list" <<-EOF &&
 	[bundle]
@@ -653,7 +570,6 @@ test_expect_success 'clone bundle list (HTTP, no heuristic)' '
 		uri = $HTTPD_URL/bundle-4.bundle
 	EOF
 
-<<<<<<< HEAD
 	GIT_TRACE2_EVENT="$(pwd)/trace-clone.txt" \
 		git clone --bundle-uri="$HTTPD_URL/bundle-list" \
 		clone-from clone-list-http  2>err &&
@@ -678,33 +594,19 @@ test_expect_success 'clone bundle list (HTTP, no heuristic)' '
 
 test_expect_success 'clone bundle list (HTTP, any mode)' '
 	cp clone-from/bundle-*.bundle "$HTTPD_DOCUMENT_ROOT_PATH/" &&
-=======
-	git clone --bundle-uri="$HTTPD_URL/bundle-list" \
-		clone-from clone-list-http 2>err &&
-	! grep "Repository lacks these prerequisite commits" err
-'
-
-test_expect_success 'clone bundle list (HTTP, any mode)' '
->>>>>>> test/batch-GE
 	cat >"$HTTPD_DOCUMENT_ROOT_PATH/bundle-list" <<-EOF &&
 	[bundle]
 		version = 1
 		mode = any
 
-<<<<<<< HEAD
 	# Does not exist. Should be skipped.
-=======
->>>>>>> test/batch-GE
 	[bundle "bundle-0"]
 		uri = $HTTPD_URL/bundle-0.bundle
 
 	[bundle "bundle-1"]
 		uri = $HTTPD_URL/bundle-1.bundle
 
-<<<<<<< HEAD
 	# Does not exist. Should be skipped.
-=======
->>>>>>> test/batch-GE
 	[bundle "bundle-5"]
 		uri = $HTTPD_URL/bundle-5.bundle
 	EOF
@@ -712,7 +614,6 @@ test_expect_success 'clone bundle list (HTTP, any mode)' '
 	git clone --bundle-uri="$HTTPD_URL/bundle-list" \
 		clone-from clone-any-http 2>err &&
 	! grep "fatal" err &&
-<<<<<<< HEAD
 	grep "warning: failed to download bundle from URI" err &&
 
 	git -C clone-from for-each-ref --format="%(objectname)" >oids &&
@@ -733,12 +634,6 @@ test_expect_success 'clone bundle list (http, creationToken)' '
 	test_when_finished rm -f trace*.txt &&
 
 	cp clone-from/bundle-*.bundle "$HTTPD_DOCUMENT_ROOT_PATH/" &&
-=======
-	grep "warning: failed to download bundle from URI" err
-'
-
-test_expect_success 'clone bundle list (http, creationToken)' '
->>>>>>> test/batch-GE
 	cat >"$HTTPD_DOCUMENT_ROOT_PATH/bundle-list" <<-EOF &&
 	[bundle]
 		version = 1
@@ -762,7 +657,6 @@ test_expect_success 'clone bundle list (http, creationToken)' '
 		creationToken = 4
 	EOF
 
-<<<<<<< HEAD
 	GIT_TRACE2_EVENT="$(pwd)/trace-clone.txt" git \
 		clone --bundle-uri="$HTTPD_URL/bundle-list" \
 		"$HTTPD_URL/smart/fetch.git" clone-list-http-2 &&
@@ -786,13 +680,6 @@ test_expect_success 'clone incomplete bundle list (http, creationToken)' '
 	test_when_finished rm -f trace*.txt &&
 
 	cp clone-from/bundle-*.bundle "$HTTPD_DOCUMENT_ROOT_PATH/" &&
-=======
-	git clone --bundle-uri="$HTTPD_URL/bundle-list" \
-		"$HTTPD_URL/smart/fetch.git" clone-list-http-2
-'
-
-test_expect_success 'clone incomplete bundle list (http, creationToken)' '
->>>>>>> test/batch-GE
 	cat >"$HTTPD_DOCUMENT_ROOT_PATH/bundle-list" <<-EOF &&
 	[bundle]
 		version = 1
@@ -804,16 +691,12 @@ test_expect_success 'clone incomplete bundle list (http, creationToken)' '
 		creationToken = 1
 	EOF
 
-<<<<<<< HEAD
 	GIT_TRACE2_EVENT=$(pwd)/trace-clone.txt \
-=======
->>>>>>> test/batch-GE
 	git clone --bundle-uri="$HTTPD_URL/bundle-list" \
 		--single-branch --branch=base --no-tags \
 		"$HTTPD_URL/smart/fetch.git" clone-token-http &&
 
 	test_cmp_config -C clone-token-http "$HTTPD_URL/bundle-list" fetch.bundleuri &&
-<<<<<<< HEAD
 	test_cmp_config -C clone-token-http 1 fetch.bundlecreationtoken &&
 
 	cat >expect <<-EOF &&
@@ -876,13 +759,6 @@ test_expect_success 'clone incomplete bundle list (http, creationToken)' '
 
 test_expect_success 'http clone with bundle.heuristic creates fetch.bundleURI' '
 	test_when_finished rm -rf fetch-http-4 trace*.txt &&
-=======
-	test_cmp_config -C clone-token-http 1 fetch.bundlecreationtoken
-'
-
-test_expect_success 'http clone with bundle.heuristic creates fetch.bundleURI' '
-	test_when_finished rm -rf fetch-http-4 &&
->>>>>>> test/batch-GE
 
 	cat >"$HTTPD_DOCUMENT_ROOT_PATH/bundle-list" <<-EOF &&
 	[bundle]
@@ -895,16 +771,12 @@ test_expect_success 'http clone with bundle.heuristic creates fetch.bundleURI' '
 		creationToken = 1
 	EOF
 
-<<<<<<< HEAD
 	GIT_TRACE2_EVENT="$(pwd)/trace-clone.txt" \
-=======
->>>>>>> test/batch-GE
 	git clone --single-branch --branch=base \
 		--bundle-uri="$HTTPD_URL/bundle-list" \
 		"$HTTPD_URL/smart/fetch.git" fetch-http-4 &&
 
 	test_cmp_config -C fetch-http-4 "$HTTPD_URL/bundle-list" fetch.bundleuri &&
-<<<<<<< HEAD
 	test_cmp_config -C fetch-http-4 1 fetch.bundlecreationtoken &&
 
 	cat >expect <<-EOF &&
@@ -1014,14 +886,6 @@ test_expect_success 'creationToken heuristic with failed downloads (clone)' '
 	test_when_finished rm -rf download-* trace*.txt &&
 
 	# Case 1: base bundle does not exist, nothing can unbundle
-=======
-	test_cmp_config -C fetch-http-4 1 fetch.bundlecreationtoken
-'
-
-test_expect_success 'creationToken heuristic with failed downloads (clone)' '
-	test_when_finished rm -rf download-* &&
-
->>>>>>> test/batch-GE
 	cat >"$HTTPD_DOCUMENT_ROOT_PATH/bundle-list" <<-EOF &&
 	[bundle]
 		version = 1
@@ -1045,15 +909,11 @@ test_expect_success 'creationToken heuristic with failed downloads (clone)' '
 		creationToken = 4
 	EOF
 
-<<<<<<< HEAD
 	GIT_TRACE2_EVENT="$(pwd)/trace-clone-1.txt" \
-=======
->>>>>>> test/batch-GE
 	git clone --single-branch --branch=base \
 		--bundle-uri="$HTTPD_URL/bundle-list" \
 		"$HTTPD_URL/smart/fetch.git" download-1 &&
 
-<<<<<<< HEAD
 	# Bundle failure does not set these configs.
 	test_must_fail git -C download-1 config fetch.bundleuri &&
 	test_must_fail git -C download-1 config fetch.bundlecreationtoken &&
@@ -1197,12 +1057,6 @@ test_expect_success 'creationToken heuristic with failed downloads (clone)' '
 #       1
 #       |
 # (previous commits)
-=======
-	test_must_fail git -C download-1 config fetch.bundleuri &&
-	test_must_fail git -C download-1 config fetch.bundlecreationtoken
-'
-
->>>>>>> test/batch-GE
 test_expect_success 'expand incremental bundle list' '
 	(
 		cd clone-from &&
@@ -1222,11 +1076,7 @@ test_expect_success 'expand incremental bundle list' '
 '
 
 test_expect_success 'creationToken heuristic with failed downloads (fetch)' '
-<<<<<<< HEAD
 	test_when_finished rm -rf download-* trace*.txt &&
-=======
-	test_when_finished rm -rf fetch-base &&
->>>>>>> test/batch-GE
 
 	cat >"$HTTPD_DOCUMENT_ROOT_PATH/bundle-list" <<-EOF &&
 	[bundle]
@@ -1251,7 +1101,6 @@ test_expect_success 'creationToken heuristic with failed downloads (fetch)' '
 		--bundle-uri="$HTTPD_URL/bundle-list" \
 		"$HTTPD_URL/smart/fetch.git" fetch-base &&
 	test_cmp_config -C fetch-base "$HTTPD_URL/bundle-list" fetch.bundleURI &&
-<<<<<<< HEAD
 	test_cmp_config -C fetch-base 3 fetch.bundleCreationToken &&
 
 	# Case 1: all bundles exist: successful unbundling of all bundles
@@ -1435,13 +1284,6 @@ test_expect_success 'creationToken heuristic with failed downloads (fetch)' '
 
 test_expect_success 'bundles are downloaded once during fetch --all' '
 	test_when_finished rm -rf download-* trace*.txt fetch-mult &&
-=======
-	test_cmp_config -C fetch-base 3 fetch.bundleCreationToken
-'
-
-test_expect_success 'bundles are downloaded once during fetch --all' '
-	test_when_finished rm -rf fetch-mult &&
->>>>>>> test/batch-GE
 
 	cat >"$HTTPD_DOCUMENT_ROOT_PATH/bundle-list" <<-EOF &&
 	[bundle]
@@ -1468,15 +1310,11 @@ test_expect_success 'bundles are downloaded once during fetch --all' '
 	git -C fetch-mult remote add dup1 "$HTTPD_URL/smart/fetch.git" &&
 	git -C fetch-mult remote add dup2 "$HTTPD_URL/smart/fetch.git" &&
 
-<<<<<<< HEAD
 	GIT_TRACE2_EVENT="$(pwd)/trace-mult.txt" \
 		git -C fetch-mult fetch --all &&
 	grep "\"child_start\".*\"git-remote-https\",\"$HTTPD_URL/bundle-list\"" \
 		trace-mult.txt >bundle-fetches &&
 	test_line_count = 1 bundle-fetches
-=======
-	git -C fetch-mult fetch --all
->>>>>>> test/batch-GE
 '
 
 test_expect_success 'bundles with space in URI are rejected' '
@@ -1500,11 +1338,8 @@ test_expect_success 'bundles with newline in target path are rejected' '
 	test_grep "error: bundle-uri: filename is malformed: " err &&
 	test_path_is_missing escape
 '
-<<<<<<< HEAD
 
 # Do not add tests here unless they use the HTTP server, as they will
 # not run unless the HTTP dependencies exist.
-=======
->>>>>>> test/batch-GE
 
 test_done
