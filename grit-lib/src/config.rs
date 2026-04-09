@@ -2593,3 +2593,86 @@ fn extract_section_header(line: &str) -> String {
     // but git doesn't really do this. Just return up to ].
     trimmed[..=end].to_owned()
 }
+
+#[cfg(test)]
+mod get_regexp_tests {
+    use super::{ConfigFile, ConfigScope, ConfigSet};
+    use std::path::Path;
+
+    fn set_from_snippet(text: &str) -> ConfigSet {
+        let path = Path::new(".git/config");
+        let file = ConfigFile::parse(path, text, ConfigScope::Local).expect("parse config snippet");
+        let mut set = ConfigSet::new();
+        set.merge(&file);
+        set
+    }
+
+    #[test]
+    fn get_regexp_matches_section_prefix_like_git_config() {
+        let text = r#"
+[user]
+    email = alice@example.com
+    name = Alice
+[core]
+    bare = false
+"#;
+        let set = set_from_snippet(text);
+        let keys: Vec<_> = set
+            .get_regexp("user")
+            .expect("valid pattern")
+            .into_iter()
+            .map(|e| e.key.as_str())
+            .collect();
+        assert!(keys.contains(&"user.email"));
+        assert!(keys.contains(&"user.name"));
+        assert!(!keys.iter().any(|k| k.starts_with("core.")));
+    }
+
+    #[test]
+    fn get_regexp_returns_all_multi_value_entries_in_order() {
+        let text = r#"
+[remote "origin"]
+    url = https://example.com/repo.git
+    fetch = +refs/heads/*:refs/remotes/origin/*
+    push = +refs/heads/main:refs/heads/main
+    push = +refs/heads/develop:refs/heads/develop
+"#;
+        let set = set_from_snippet(text);
+        let matches = set.get_regexp("remote.origin").expect("valid pattern");
+        let push_vals: Vec<_> = matches
+            .iter()
+            .filter(|e| e.key == "remote.origin.push")
+            .map(|e| e.value.as_deref().unwrap_or(""))
+            .collect();
+        assert_eq!(push_vals.len(), 2);
+        assert_eq!(push_vals[0], "+refs/heads/main:refs/heads/main");
+        assert_eq!(push_vals[1], "+refs/heads/develop:refs/heads/develop");
+    }
+
+    #[test]
+    fn get_regexp_dot_matches_any_key() {
+        let text = r#"
+[a]
+    x = 1
+[b]
+    y = 2
+"#;
+        let set = set_from_snippet(text);
+        let m = set.get_regexp(".").expect("valid pattern");
+        assert_eq!(m.len(), 2);
+    }
+
+    #[test]
+    fn get_regexp_no_match_returns_empty_vec() {
+        let set = set_from_snippet("[user]\n\tname = x\n");
+        let m = set.get_regexp("zzz").expect("valid pattern");
+        assert!(m.is_empty());
+    }
+
+    #[test]
+    fn get_regexp_invalid_pattern_is_error() {
+        let set = set_from_snippet("[user]\n\tname = x\n");
+        let err = set.get_regexp("(").expect_err("unclosed group");
+        assert!(err.contains("invalid key pattern"), "got: {err}");
+    }
+}
