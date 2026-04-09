@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   261 |
+| Completed   |   262 |
 | In progress |     4 |
-| Remaining   |   503 |
+| Remaining   |   502 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 261 completed (`[x]`), 4 in progress (`[~]`), 503 remaining (`[ ]`).
+Task lines in `PLAN.md`: 262 completed (`[x]`), 4 in progress (`[~]`), 502 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5530-upload-pack-error` — 11/11 tests pass (corrupt-object upload-pack/pack-objects errors, bad want handling, stateless EOF, fetch failure, v0/v2 ACK dedup for repeated non-commit haves; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t7402-submodule-rebase` — 6/6 tests pass (rebase with dirty submodule, interactive rebase, dirty file+submodule failure, stash dirty submodule, submodule gitlink conflict message; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5317-pack-objects-filter-objects` — 33/33 tests pass (`pack-objects --filter` object filtering; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
 - `t5603-clone-dirname` — 47/47 tests pass (clone default directory from `host:path`, `ssh://` URLs: strip trailing slashes and `.git`, redact userinfo for dirname, preserve path segments like `foo@bar` and `test:1234`; harness CSV/dashboards refreshed)

@@ -617,7 +617,7 @@ commit → check it off → move on.
 - [ ] `t5305-include-tag` ████████░░░░░░░░░░░░ 6/15 (9 left) — git pack-object --include-tag
 - [ ] `t5401-update-hooks` ██████░░░░░░░░░░░░░░ 4/13 (9 left) — Test the update hook infrastructure.
 - [x] `t5621-clone-revision` — tests for git clone --revision (12/12)
-- [ ] `t5530-upload-pack-error` ███░░░░░░░░░░░░░░░░░ 2/11 (9 left) — errors in upload-pack
+- [x] `t5530-upload-pack-error` — errors in upload-pack (11/11)
 - [ ] `t5150-request-pull` ██░░░░░░░░░░░░░░░░░░ 1/10 (9 left) — Test workflows involving pull request.
 - [x] `t5320-delta-islands` ████████████████████ 15/15 (0 left) — exercise delta islands
 - [ ] `t5611-clone-config` ████░░░░░░░░░░░░░░░░ 3/13 (10 left) — tests for git clone -c key=value
