@@ -359,15 +359,27 @@ pub fn run(mut args: Args) -> Result<()> {
     let show_all_untracked = untracked_mode == "all";
     let hide_untracked = untracked_mode == "no";
 
+    // User pathspecs (after stripping `--`), used for porcelain header rules below.
+    let user_pathspecs: Vec<String> = args
+        .pathspec
+        .iter()
+        .filter(|s| s.as_str() != "--")
+        .cloned()
+        .collect();
+
     // Porcelain v1: Git omits the `##` branch line when `--untracked-files=no` (e.g.
     // `status --porcelain -uno`). Grit still defaults to showing `##` for plain `--porcelain`
     // so clean repos and mixed outputs match our status tests (t12570). `-b` / `--branch`
     // always forces the header.
+    //
+    // With pathspecs, Git also omits the `##` line (only matching entries are shown; t6435,
+    // t7107). Empty `user_pathspecs` after `--` alone means the full tree — keep the header.
     if explicit_porcelain
         && args.porcelain.as_deref() == Some("v1")
         && !args.no_branch
         && !args.branch
         && !hide_untracked
+        && user_pathspecs.is_empty()
     {
         args.branch = true;
     }
@@ -465,12 +477,7 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     };
 
-    let pathspecs: Vec<String> = args
-        .pathspec
-        .iter()
-        .filter(|spec| spec.as_str() != "--")
-        .cloned()
-        .collect();
+    let pathspecs = user_pathspecs;
     let staged: Vec<grit_lib::diff::DiffEntry> = staged
         .into_iter()
         .filter(|entry| status_path_matches(entry.path(), &pathspecs))
