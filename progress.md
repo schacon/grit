@@ -6,12 +6,12 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   292 |
+| Completed   |   293 |
 | In progress |     4 |
-| Remaining   |   473 |
+| Remaining   |   472 |
 | **Total**   |   769 |
 
-Task lines in `PLAN.md`: 292 completed (`[x]`), 4 in progress (`[~]`), 473 remaining (`[ ]`).
+Task lines in `PLAN.md`: 293 completed (`[x]`), 4 in progress (`[~]`), 472 remaining (`[ ]`).
 
 ## Recently completed
 
@@ -80,6 +80,7 @@ Task lines in `PLAN.md`: 292 completed (`[x]`), 4 in progress (`[~]`), 473 remai
 - `t12820-diff-no-index-symlink` — 41/41 tests pass (symlink add/modify/delete, `diff`/`diff --cached`/`diff-tree`, stat/numstat/name output, multi-symlink and file↔symlink replacements; harness CSV/dashboards refreshed)
 - `t7521-ignored-mode` — 12/12 tests pass (`status --porcelain=v2`: `?`/`!` lines; `--ignored=traditional|matching|no`; `--untracked-files` normal/all with ignored-directory collapsing; `reset HEAD~1 --hard` parses trailing `--hard` and treats `HEAD~1` as commit-ish; checkout removal uses symlink metadata + sorted drops)
 - `t3451-history-reword` — 14/14 tests pass (`history reword`: editor template + per-ref replay updates, dry-run `update` lines, merge-in-history error; `log --branches` tip ordering; `show` `%B` + newline handling; `status --porcelain` without spurious `##`; graph padding for two-parent merges; harness `test_commit_message` shim in test file; CSV/dashboards refreshed)
+- `t5402-post-merge-hook` — 7/7 tests pass (`merge`: `post-merge` hook after successful fast-forward and squash merges with `0`/`1` squash flag; fast-forward allows index already matching merge tip while work tree still reflects `HEAD`; hook spawn uses absolute executable path so `GIT_DIR=clone/.git` from a parent cwd works; `Repository` discovery with `GIT_DIR` only keeps cwd as work tree root per Git)
 - `t7817-grep-sparse-checkout` — 8/8 tests pass (non-cone sparse: `path_in_sparse_checkout` parent walk + last-match-wins; `sparse-checkout init` preserves cone mode and seeds `/*` + `!/*/` when recreating file; `disable` keeps pattern file so re-init reapplies `!b`; submodule `reset --hard` + sparse reapply; `grep` worktree: skip-worktree when absent, CE_VALID vs skip-worktree, unmerged paths grep worktree once; `grep_cached` per-stage for `--cached`)
 - `t7417-submodule-path-url` — 5/5 tests pass (`.gitmodules` dash paths: `mv` updates path + index blob; `escape_value` quotes leading `-`; receive-side `transfer.fsckObjects` via repo-local config only; clone `--recurse-submodules` resolves relative URLs from `origin` repo root + quoted path parsing + `GIT_QUIET` quiet mode)
 - `t13180-log-patch-stat` — 35/35 tests pass (`grit log` display: oneline, graph, decorate, skip/max-count/reverse, `%H`/`%h`, `--first-parent`, `--no-decorate`; harness CSV refreshed)
@@ -179,4 +180,4 @@ Task lines in `PLAN.md`: 292 completed (`[x]`), 4 in progress (`[~]`), 473 remai
 
 ## What Remains
 
-473 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
+472 task lines still open in `PLAN.md` (plus 4 in progress). See `PLAN.md` for the full prioritized list.
