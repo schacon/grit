@@ -18,10 +18,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{peel_to_commit_for_merge_base, resolve_revision};
 use grit_lib::unpack_objects::{unpack_objects, UnpackOptions};
 
-use crate::file_upload_pack_v2::{
-    read_pkt_lines_until_flush, read_v2_capability_block, skip_v2_section_until_boundary,
-    write_v2_fetch_request,
-};
+use crate::file_upload_pack_v2::{read_pkt_lines_until_flush, skip_v2_section_until_boundary};
 use crate::grit_exe::grit_executable;
 use crate::pkt_line;
 use crate::protocol_wire;
@@ -624,13 +621,8 @@ pub fn fetch_via_upload_pack_skipping(
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 
-    let client_proto = protocol_wire::effective_client_protocol_version();
-    let (advertised, head_symref) = if client_proto == 2 {
-        read_v2_capability_block(&mut stdout).context("read upload-pack v2 capabilities")?;
-        v2_ls_refs_for_fetch(&mut stdin, &mut stdout)?
-    } else {
-        read_advertisement(&mut stdout)?
-    };
+    // Must match `spawn_upload_pack`: the child is always protocol v0 (`GIT_PROTOCOL` cleared).
+    let (advertised, head_symref) = read_advertisement(&mut stdout)?;
     let wants = compute_wants(&advertised)?;
     if wants.is_empty() {
         if !has_cli_refspecs && advertised.is_empty() {
@@ -688,22 +680,13 @@ pub fn fetch_via_upload_pack_skipping(
         .find(|(n, _)| n == "HEAD")
         .map(|(_, o)| *o);
 
-    let pack_buf = if client_proto == 2 {
-        let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
-        write_v2_fetch_request(&mut stdin, &default_hash, &wants, true)?;
-        drop(stdin);
-        let mut buf = Vec::new();
-        read_v2_fetch_pack_response(&mut stdout, &mut buf)?;
-        buf
-    } else {
-        fetch_upload_pack_negotiate_pack_bytes_with_streams(
-            local_git_dir,
-            &advertised,
-            &mut stdin,
-            &mut stdout,
-            &wants,
-        )?
-    };
+    let pack_buf = fetch_upload_pack_negotiate_pack_bytes_with_streams(
+        local_git_dir,
+        &advertised,
+        &mut stdin,
+        &mut stdout,
+        &wants,
+    )?;
 
     let status = child.wait()?;
     if !status.success() {
@@ -751,29 +734,14 @@ fn fetch_upload_pack_negotiate_pack_bytes(
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 
-    let client_proto = protocol_wire::effective_client_protocol_version();
-    let (advertised, _head_symref) = if client_proto == 2 {
-        read_v2_capability_block(&mut stdout).context("read upload-pack v2 capabilities")?;
-        v2_ls_refs_for_fetch(&mut stdin, &mut stdout)?
-    } else {
-        read_advertisement(&mut stdout)?
-    };
-    let pack_buf = if client_proto == 2 {
-        let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
-        write_v2_fetch_request(&mut stdin, &default_hash, wants, true)?;
-        drop(stdin);
-        let mut buf = Vec::new();
-        read_v2_fetch_pack_response(&mut stdout, &mut buf)?;
-        buf
-    } else {
-        fetch_upload_pack_negotiate_pack_bytes_with_streams(
-            local_git_dir,
-            &advertised,
-            &mut stdin,
-            &mut stdout,
-            wants,
-        )?
-    };
+    let (advertised, _head_symref) = read_advertisement(&mut stdout)?;
+    let pack_buf = fetch_upload_pack_negotiate_pack_bytes_with_streams(
+        local_git_dir,
+        &advertised,
+        &mut stdin,
+        &mut stdout,
+        wants,
+    )?;
 
     let status = child.wait()?;
     if !status.success() {
