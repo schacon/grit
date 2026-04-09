@@ -1543,9 +1543,13 @@ fn resolve_base(
         Ok(None) => {}
     }
 
-    // Short hex-like token that is also a branch name (e.g. `b1`, `dead`): prefer the branch
-    // tip over abbreviated object-id resolution so `git rebase b1 b2` uses the branch (t9903).
+    // Hex-like tokens may name refs (e.g. tag `1.2` / `2.2`) — resolve those before treating the
+    // string as an abbreviated object id (t5334 incremental MIDX).
     if is_hex_prefix(spec) && spec.len() < 40 {
+        let tag_ref = format!("refs/tags/{spec}");
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &tag_ref) {
+            return Ok(oid);
+        }
         let branch_ref = format!("refs/heads/{spec}");
         if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &branch_ref) {
             return Ok(oid);

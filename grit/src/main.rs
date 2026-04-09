@@ -4204,7 +4204,16 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "mergetool" => commands::mergetool::run(parse_cmd_args(subcmd, rest)),
         "mktag" => commands::mktag::run(parse_cmd_args(subcmd, rest)),
         "mktree" => commands::mktree::run(parse_cmd_args(subcmd, rest)),
-        "multi-pack-index" => commands::multi_pack_index::run(parse_cmd_args(subcmd, rest)),
+        "multi-pack-index" => {
+            let needs_manual = rest
+                .iter()
+                .any(|s| s == "--object-dir" || s.starts_with("--object-dir="));
+            if needs_manual {
+                commands::multi_pack_index::run_from_argv(rest)
+            } else {
+                commands::multi_pack_index::run(parse_cmd_args(subcmd, rest))
+            }
+        }
         "mv" => commands::mv::run(parse_cmd_args(subcmd, rest)),
         "name-rev" => commands::name_rev::run(parse_cmd_args(subcmd, rest)),
         "notes" => commands::notes::run(parse_cmd_args(subcmd, rest)),
@@ -4469,7 +4478,8 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                                 .map(Path::new)
                                 .context("usage: test-tool read-midx --bitmap <object-dir>")?;
                             let pack_dir = dir.join("pack");
-                            let has = std::fs::read_dir(&pack_dir)
+                            let midx_d = pack_dir.join("multi-pack-index.d");
+                            let has_root = std::fs::read_dir(&pack_dir)
                                 .ok()
                                 .into_iter()
                                 .flatten()
@@ -4478,7 +4488,16 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                                     let n = e.file_name().to_string_lossy().to_string();
                                     n.starts_with("multi-pack-index-") && n.ends_with(".bitmap")
                                 });
-                            if !has {
+                            let has_split = std::fs::read_dir(&midx_d)
+                                .ok()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|e| e.ok())
+                                .any(|e| {
+                                    let n = e.file_name().to_string_lossy().to_string();
+                                    n.starts_with("multi-pack-index-") && n.ends_with(".bitmap")
+                                });
+                            if !has_root && !has_split {
                                 bail!("no multi-pack bitmap in {}", pack_dir.display());
                             }
                         }
