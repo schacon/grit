@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::IndexEntry;
 use grit_lib::repo::Repository;
+use grit_lib::unicode_normalization::{precompose_utf8_path, precompose_utf8_segment};
 
 use crate::explicit_exit::ExplicitExit;
 
@@ -172,6 +173,10 @@ pub fn run(args: Args) -> Result<()> {
     };
     let cwd_prefix = cwd_prefix_bytes(work_tree, &cwd)?;
     let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let precompose_unicode =
+        grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir));
+    let precompose_walk = precompose_unicode
+        && grit_lib::precompose_config::filesystem_nfd_nfc_aliases(&repo.git_dir);
     let quote_fully = config.quote_path_fully();
     let index_path = resolved_env_index_path(&repo);
     let mut index = if args.sparse {
@@ -217,7 +222,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut pathspec_filter: Vec<Pathspec> = args
         .pathspecs
         .iter()
-        .map(|p| resolve_pathspec(work_tree, &cwd, p))
+        .map(|p| resolve_pathspec(work_tree, &cwd, p, precompose_unicode))
         .collect::<Result<Vec<_>>>()?;
     let mut pathspec_display: Vec<String> = args
         .pathspecs
@@ -239,7 +244,7 @@ pub fn run(args: Args) -> Result<()> {
             .with_context(|| format!("overlay tree '{treeish}' on index"))?;
     }
 
-    pathspec_filter = expand_ls_files_globs(pathspec_filter, work_tree, &index);
+    pathspec_filter = expand_ls_files_globs(pathspec_filter, work_tree, &index, precompose_walk);
 
     // For `--error-unmatch`, Git matches pathspecs separately against index output vs untracked
     // output (`-c` vs `-o`). A pathspec that only hits tracked files does not satisfy `-o`.
@@ -477,6 +482,7 @@ pub fn run(args: Args) -> Result<()> {
             &mut untracked,
             true,
             args.directory,
+            precompose_walk,
         )?;
         untracked.sort();
 
@@ -671,8 +677,14 @@ fn walk_worktree(
     out: &mut Vec<Vec<u8>>,
     is_root: bool,
     emit_empty_directories: bool,
+    precompose_unicode: bool,
 ) -> Result<bool> {
-    let rel_bytes = path_to_bytes(dir.strip_prefix(root).unwrap_or(dir));
+    let mut rel_bytes = path_to_bytes(dir.strip_prefix(root).unwrap_or(dir));
+    if precompose_unicode {
+        if let Ok(s) = std::str::from_utf8(&rel_bytes) {
+            rel_bytes = precompose_utf8_path(s).into_owned().into_bytes();
+        }
+    }
 
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -684,9 +696,19 @@ fn walk_worktree(
         let entry = entry?;
         let path = entry.path();
         let rel = path.strip_prefix(root).unwrap_or(&path);
-        let rel_bytes = path_to_bytes(rel);
+        let mut rel_bytes = path_to_bytes(rel);
+        if precompose_unicode {
+            if let Ok(s) = std::str::from_utf8(&rel_bytes) {
+                rel_bytes = precompose_utf8_path(s).into_owned().into_bytes();
+            }
+        }
         let name = entry.file_name();
-        let name_str = name.to_string_lossy();
+        let raw_name = name.to_string_lossy();
+        let name_str = if precompose_unicode {
+            precompose_utf8_segment(raw_name.as_ref()).into_owned()
+        } else {
+            raw_name.into_owned()
+        };
 
         // Skip .git directory
         if name_str == ".git" {
@@ -730,7 +752,15 @@ fn walk_worktree(
                 }
                 continue;
             }
-            if walk_worktree(root, &path, indexed, out, false, emit_empty_directories)? {
+            if walk_worktree(
+                root,
+                &path,
+                indexed,
+                out,
+                false,
+                emit_empty_directories,
+                precompose_unicode,
+            )? {
                 added = true;
             }
         }
@@ -772,6 +802,7 @@ fn expand_ls_files_globs(
     specs: Vec<Pathspec>,
     work_tree: &std::path::Path,
     index: &grit_lib::index::Index,
+    precompose_walk: bool,
 ) -> Vec<Pathspec> {
     let mut out = Vec::new();
     for spec in specs {
@@ -781,7 +812,9 @@ fn expand_ls_files_globs(
                 if matches_index {
                     out.push(spec);
                 } else {
-                    for e in crate::commands::add::expand_glob_pathspec(pat, work_tree) {
+                    for e in
+                        crate::commands::add::expand_glob_pathspec(pat, work_tree, precompose_walk)
+                    {
                         out.push(if has_glob_chars(&e) {
                             Pathspec::Glob(e)
                         } else {
@@ -940,19 +973,25 @@ fn resolve_pathspec(
     work_tree: &std::path::Path,
     cwd: &std::path::Path,
     pathspec: &std::path::Path,
+    precompose_unicode: bool,
 ) -> Result<Pathspec> {
     if pathspec.as_os_str().is_empty() || pathspec == std::path::Path::new(".") {
         return Ok(Pathspec::Literal(cwd_prefix_bytes(work_tree, cwd)?));
     }
-    let pathspec_str = pathspec.to_string_lossy();
-    if pathspec_str.starts_with(":(") {
+    let raw_lossy = pathspec.to_string_lossy().into_owned();
+    let nfc_lossy = if precompose_unicode {
+        precompose_utf8_path(raw_lossy.as_ref()).into_owned()
+    } else {
+        raw_lossy.clone()
+    };
+    if nfc_lossy.starts_with(":(") {
         let prefix = String::from_utf8_lossy(&cwd_prefix_bytes(work_tree, cwd)?).into_owned();
-        if let Some(resolved) = crate::pathspec::resolve_magic_pathspec(&pathspec_str, &prefix) {
+        if let Some(resolved) = crate::pathspec::resolve_magic_pathspec(&nfc_lossy, &prefix) {
             return Ok(Pathspec::Magic(resolved));
         }
     }
     // Handle magic pathspec ":/<pattern>" — match from the root of the work tree.
-    if let Some(rest) = pathspec_str.strip_prefix(":/") {
+    if let Some(rest) = nfc_lossy.strip_prefix(":/") {
         if rest.is_empty() || rest == "*" {
             // `:/` or `:/*` — match all paths under the work tree root (git pathspec magic).
             return Ok(Pathspec::Glob("*".to_string()));
@@ -962,17 +1001,20 @@ fn resolve_pathspec(
         }
         return Ok(Pathspec::Literal(rest.as_bytes().to_vec()));
     }
-    if has_glob_chars(&pathspec_str) {
+    if has_glob_chars(&nfc_lossy) {
         // For glob pathspecs, prepend the cwd prefix (relative to work_tree)
         let prefix = cwd_prefix_bytes(work_tree, cwd)?;
         let prefix_str = String::from_utf8_lossy(&prefix).into_owned();
-        let pattern = format!("{}{}", prefix_str, pathspec_str);
+        let pattern = format!("{}{}", prefix_str, nfc_lossy);
         return Ok(Pathspec::Glob(pattern));
     }
+    // Absolute pathspecs must keep the caller's spelling for `strip_prefix(work_tree)`:
+    // the work tree path may be NFD on disk while the index uses NFC (t3910 `ls-files` with
+    // `--literal-pathspecs` and an absolute path from outside the repo).
     let combined = if pathspec.is_absolute() {
         pathspec.to_path_buf()
     } else {
-        cwd.join(pathspec)
+        cwd.join(std::path::Path::new(nfc_lossy.as_str()))
     };
     let normalized = normalize_path(&combined);
     let rel = normalized.strip_prefix(work_tree).with_context(|| {

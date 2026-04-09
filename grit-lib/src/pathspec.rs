@@ -5,8 +5,12 @@
 //! `GIT_ICASE_PATHSPECS`. The `grit` binary sets these from CLI flags such as
 //! `--literal-pathspecs` before dispatching subcommands.
 
+use std::borrow::Cow;
+
 use crate::crlf::path_has_gitattribute;
 use crate::crlf::AttrRule;
+use crate::precompose_config::pathspec_precompose_enabled;
+use crate::unicode_normalization::precompose_utf8_path;
 use crate::wildmatch::{wildmatch, WM_CASEFOLD, WM_PATHNAME};
 
 /// Returns the length of the leading literal segment before the first glob metacharacter,
@@ -381,6 +385,19 @@ pub fn matches_pathspec(spec: &str, path: &str) -> bool {
 /// Like [`matches_pathspec`], but uses `ctx` for trailing-`/` literal pathspecs.
 #[must_use]
 pub fn matches_pathspec_with_context(spec: &str, path: &str, ctx: PathspecMatchContext) -> bool {
+    let spec_nfc: Cow<'_, str> = if pathspec_precompose_enabled() {
+        precompose_utf8_path(spec)
+    } else {
+        Cow::Borrowed(spec)
+    };
+    let path_nfc: Cow<'_, str> = if pathspec_precompose_enabled() {
+        precompose_utf8_path(path)
+    } else {
+        Cow::Borrowed(path)
+    };
+    let spec = spec_nfc.as_ref();
+    let path = path_nfc.as_ref();
+
     let trimmed = spec.strip_prefix("./").unwrap_or(spec);
     if trimmed == "." || trimmed.is_empty() {
         return true;

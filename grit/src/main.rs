@@ -32,6 +32,7 @@ mod ident;
 mod pack_objects_upload;
 pub mod pathspec;
 pub mod pkt_line;
+mod precompose;
 pub mod protocol;
 mod protocol_wire;
 mod ssh_transport;
@@ -2840,6 +2841,8 @@ fn run() -> Result<()> {
     // Apply those directory changes after global `-C` but before running the subcommand.
     let mut rest = rest;
     strip_subcommand_leading_change_dir(&mut rest)?;
+
+    precompose::precompose_dispatch_argv(&subcmd, &mut rest);
 
     // GIT_TRACE: write built-in trace line (after global options are processed)
     if let Ok(trace_val) = std::env::var("GIT_TRACE") {

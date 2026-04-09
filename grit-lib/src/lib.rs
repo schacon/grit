@@ -65,6 +65,7 @@ pub mod pack_name_hash;
 pub mod parse_options_test_tool;
 pub mod patch_ids;
 pub mod pathspec;
+pub mod precompose_config;
 pub mod promisor;
 pub mod prune_packed;
 pub mod push_submodules;
@@ -79,6 +80,7 @@ pub mod rev_parse;
 #[cfg(unix)]
 pub mod simple_ipc;
 pub mod sparse_checkout;
+pub mod unicode_normalization;
 #[cfg(not(unix))]
 pub mod simple_ipc {
     /// Whether simple IPC is supported on this platform.

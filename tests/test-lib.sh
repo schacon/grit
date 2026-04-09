@@ -1047,6 +1047,19 @@ test_lazy_prereq ICONV '
 	iconv -f utf8 -t utf8 </dev/null
 '
 
+# Filesystem aliases NFC and NFD UTF-8 path spellings (macOS / HFS+). Matches git/t/test-lib.sh.
+# Set GIT_TEST_UTF8_NFD_TO_NFC=true to force on CI where the FS is not normalization-sensitive.
+test_lazy_prereq UTF8_NFD_TO_NFC '
+	test "$GIT_TEST_UTF8_NFD_TO_NFC" = true ||
+	test "$GIT_TEST_UTF8_NFD_TO_NFC" = 1 ||
+	(
+		auml=$(printf "\303\244") &&
+		aumlcdiar=$(printf "\141\314\210") &&
+		>"$auml" &&
+		test -f "$aumlcdiar"
+	)
+'
+
 # write_script FILE [INTERPRETER] — write a script from stdin
 write_script () {
 	{

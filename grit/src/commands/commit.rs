@@ -425,6 +425,12 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let repo = Repository::discover(None).context("not a git repository")?;
 
+    if grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir)) {
+        for ps in &mut args.pathspec {
+            *ps = grit_lib::unicode_normalization::precompose_utf8_path(ps).into_owned();
+        }
+    }
+
     let reset_author_allowed = args.amend
         || args.reuse_message.is_some()
         || args.reedit_message.is_some()
@@ -455,8 +461,11 @@ pub fn run(mut args: Args) -> Result<()> {
                 .get_bool("core.filemode")
                 .and_then(|r| r.ok())
                 .unwrap_or(true);
+            let precompose_unicode =
+                grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir));
             let add_cfg = crate::commands::add::AddConfig {
                 core_filemode,
+                precompose_unicode,
                 ignore_errors: false,
                 conv: grit_lib::crlf::ConversionConfig::from_config(&config),
                 attrs: grit_lib::crlf::load_gitattributes(wt),

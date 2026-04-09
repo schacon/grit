@@ -335,6 +335,12 @@ pub fn run(mut args: Args) -> Result<()> {
         args.rest.extend(pathspecs);
     }
 
+    if grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir)) {
+        for r in &mut args.rest {
+            *r = grit_lib::unicode_normalization::precompose_utf8_path(r).into_owned();
+        }
+    }
+
     // Post-process rest: extract -b/-B/--new-branch/--force-new-branch that
     // appeared after a positional arg (e.g. `checkout <rev> -b <branch>`).
     // Also accept `git switch` spellings: -c/--create and -C/--force-create

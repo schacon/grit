@@ -136,6 +136,21 @@ pub fn pathspec_matches(spec: &str, path: &str) -> bool {
         path
     };
 
+    let (pattern, path): (std::borrow::Cow<'_, str>, std::borrow::Cow<'_, str>) =
+        if grit_lib::precompose_config::pathspec_precompose_enabled() {
+            (
+                grit_lib::unicode_normalization::precompose_utf8_path(pattern),
+                grit_lib::unicode_normalization::precompose_utf8_path(path),
+            )
+        } else {
+            (
+                std::borrow::Cow::Borrowed(pattern),
+                std::borrow::Cow::Borrowed(path),
+            )
+        };
+    let pattern = pattern.as_ref();
+    let path = path.as_ref();
+
     if pattern.is_empty() {
         return true;
     }

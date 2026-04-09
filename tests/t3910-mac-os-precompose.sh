@@ -81,7 +81,7 @@ test_expect_success "git diff f.Adiar" '
 	git diff f.$Adiarnfd >expect &&
 	git diff f.$Adiarnfc >actual &&
 	test_cmp expect actual &&
-	git reset HEAD f.Adiarnfc &&
+	git reset HEAD f.$Adiarnfc &&
 	rm f.$Adiarnfc expect actual
 '
 # This will test nfd2nfc in git diff-files
@@ -92,7 +92,7 @@ test_expect_success "git diff-files f.Adiar" '
 	git diff-files f.$Adiarnfd >expect &&
 	git diff-files f.$Adiarnfc >actual &&
 	test_cmp expect actual &&
-	git reset HEAD f.Adiarnfc &&
+	git reset HEAD f.$Adiarnfc &&
 	rm f.$Adiarnfc expect actual
 '
 # This will test nfd2nfc in git diff-index
@@ -103,7 +103,7 @@ test_expect_success "git diff-index f.Adiar" '
 	git diff-index HEAD f.$Adiarnfd >expect &&
 	git diff-index HEAD f.$Adiarnfc >actual &&
 	test_cmp expect actual &&
-	git reset HEAD f.Adiarnfc &&
+	git reset HEAD f.$Adiarnfc &&
 	rm f.$Adiarnfc expect actual
 '
 # This will test nfd2nfc in readdir()
@@ -171,7 +171,7 @@ test_expect_success "git checkout file nfd" '
 '
 # Make it possible to checkout links with their NFD names
 test_expect_success "git checkout link nfd" '
-	rm l.* &&
+	rm -f l.* &&
 	git checkout l.$Odiarnfd
 '
 test_expect_success "setup case mac2" '
@@ -207,7 +207,7 @@ test_expect_success "Add long precomposed filename" '
 	git commit -m "Long filename"
 '
 
-test_expect_failure 'handle existing decomposed filenames' '
+test_expect_success 'handle existing decomposed filenames' '
 	echo content >"verbatim.$Adiarnfd" &&
 	git -c core.precomposeunicode=false add "verbatim.$Adiarnfd" &&
 	git commit -m "existing decomposed file" &&
