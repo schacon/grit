@@ -583,16 +583,18 @@ fn print_entry(
         } else {
             "      -".to_string()
         };
+        let path_disp = grit_lib::quote_path::quote_path_for_tree_listing(name, quote_fully);
         write!(
             out,
-            "{:06o} {kind_str} {} {size_str}\t{name}",
+            "{:06o} {kind_str} {} {size_str}\t{path_disp}",
             entry.mode,
             ls_tree_object_name(repo, entry, args)?
         )?;
     } else {
+        let path_disp = grit_lib::quote_path::quote_path_for_tree_listing(name, quote_fully);
         write!(
             out,
-            "{:06o} {kind_str} {}\t{name}",
+            "{:06o} {kind_str} {}\t{path_disp}",
             entry.mode,
             ls_tree_object_name(repo, entry, args)?
         )?;

@@ -2715,9 +2715,16 @@ fn preprocess_commit_argv(rest: &[String]) -> Vec<String> {
 }
 
 /// Strip leading `-C <dir>` pairs from `rest` and `chdir` for each (Git allows `-C` after the subcommand).
+///
+/// Do not confuse this with `diff-tree -C` / `diff-index -C` (find copies): the next token there is
+/// another flag (e.g. `--find-copies-harder`), not a directory path.
 fn strip_subcommand_leading_change_dir(rest: &mut Vec<String>) -> Result<()> {
     while rest.len() >= 2 && rest[0] == "-C" {
-        let new_dir = PathBuf::from(&rest[1]);
+        let next = rest[1].as_str();
+        if next.starts_with('-') {
+            break;
+        }
+        let new_dir = PathBuf::from(next);
         if !new_dir.as_os_str().is_empty() {
             std::env::set_current_dir(&new_dir)?;
         }
