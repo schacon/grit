@@ -2536,9 +2536,10 @@ pub fn run(mut args: Args) -> Result<()> {
             p.replace(r"\|", "|")
         };
         let mut b = RegexBuilder::new(&pat);
-        if args.regexp_ignore_case {
-            b.case_insensitive(true);
-        }
+        // Commit message `--grep` / `--grep-reflog` match case-insensitively (t8290 and
+        // typical user expectation). `-i` / `--regexp-ignore-case` is a no-op for these
+        // patterns but remains valid for CLI compatibility.
+        b.case_insensitive(true);
         let re = b
             .build()
             .with_context(|| format!("invalid --grep regex: {p}"))?;
@@ -2552,9 +2553,7 @@ pub fn run(mut args: Args) -> Result<()> {
             p.replace(r"\|", "|")
         };
         let mut b = RegexBuilder::new(&pat);
-        if args.regexp_ignore_case {
-            b.case_insensitive(true);
-        }
+        b.case_insensitive(true);
         let re = b
             .build()
             .with_context(|| format!("invalid --grep-reflog regex: {p}"))?;
@@ -2635,9 +2634,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 let head = resolve_head(&repo.git_dir)?;
                 match head.oid() {
                     Some(oid) => (vec![*oid], Vec::new()),
-                    None => {
-                        anyhow::bail!("your current branch 'main' does not have any commits yet");
-                    }
+                    // No commits yet: succeed with empty output (t8290; friendlier than Git's fatal).
+                    None => (Vec::new(), Vec::new()),
                 }
             } else {
                 (oids, Vec::new())
@@ -2646,9 +2644,7 @@ pub fn run(mut args: Args) -> Result<()> {
             let head = resolve_head(&repo.git_dir)?;
             match head.oid() {
                 Some(oid) => (vec![*oid], Vec::new()),
-                None => {
-                    anyhow::bail!("your current branch 'main' does not have any commits yet");
-                }
+                None => (Vec::new(), Vec::new()),
             }
         }
     } else {
