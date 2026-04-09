@@ -18,6 +18,10 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{peel_to_commit_for_merge_base, resolve_revision};
 use grit_lib::unpack_objects::{unpack_objects, UnpackOptions};
 
+use crate::file_upload_pack_v2::{
+    read_pkt_lines_until_flush, read_v2_capability_block, skip_v2_section_until_boundary,
+    write_v2_fetch_request,
+};
 use crate::grit_exe::grit_executable;
 use crate::pkt_line;
 use crate::protocol_wire;
@@ -74,6 +78,71 @@ fn trace_packet_fetch(direction: char, payload: &str) {
         return;
     }
     wire_trace::trace_packet_line_ident(identity, direction, payload);
+}
+
+/// Protocol v2 ends the initial advertisement at a flush with no ref lines. Run `ls-refs` to
+/// obtain the same ref list v0 would have advertised (heads, tags, `HEAD`), matching Git's
+/// `fetch-pack` and fixing fetches that would otherwise see an empty ref map (e.g. t5525).
+fn v2_ls_refs_for_fetch(
+    stdin: &mut impl Write,
+    stdout: &mut impl Read,
+) -> Result<(Vec<(String, ObjectId)>, Option<String>)> {
+    let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
+    let agent = format!("agent=git/{}-", crate::version_string());
+
+    trace_packet_fetch('>', "command=ls-refs");
+    pkt_line::write_line(stdin, "command=ls-refs")?;
+    trace_packet_fetch('>', agent.trim_end());
+    pkt_line::write_line(stdin, &agent)?;
+    let of = format!("object-format={default_hash}");
+    trace_packet_fetch('>', &of);
+    pkt_line::write_line(stdin, &of)?;
+    pkt_line::write_delim(stdin)?;
+    trace_packet_fetch('>', "0001");
+    trace_packet_fetch('>', "symrefs");
+    pkt_line::write_line(stdin, "symrefs")?;
+    trace_packet_fetch('>', "peel");
+    pkt_line::write_line(stdin, "peel")?;
+    trace_packet_fetch('>', "ref-prefix HEAD");
+    pkt_line::write_line(stdin, "ref-prefix HEAD")?;
+    trace_packet_fetch('>', "ref-prefix refs/heads/");
+    pkt_line::write_line(stdin, "ref-prefix refs/heads/")?;
+    trace_packet_fetch('>', "ref-prefix refs/tags/");
+    pkt_line::write_line(stdin, "ref-prefix refs/tags/")?;
+    pkt_line::write_flush(stdin)?;
+    trace_packet_fetch('>', "0000");
+    stdin.flush().context("flush ls-refs request")?;
+
+    let mut buf = Vec::new();
+    read_pkt_lines_until_flush(stdout, &mut buf, 512 * 1024).context("read ls-refs response")?;
+
+    let mut cursor = std::io::Cursor::new(&buf);
+    let mut advertised: Vec<(String, ObjectId)> = Vec::new();
+    let mut head_symref: Option<String> = None;
+
+    loop {
+        let pkt = match pkt_line::read_packet(&mut cursor)? {
+            None => break,
+            Some(pkt_line::Packet::Flush) => break,
+            Some(pkt_line::Packet::Data(line)) => line,
+            Some(other) => bail!("unexpected ls-refs packet in fetch: {other:?}"),
+        };
+        let (name, oid, _peeled, symref_target) =
+            crate::commands::ls_remote::parse_ls_refs_v2_line(&pkt)?;
+        if name.contains("^{") {
+            continue;
+        }
+        if name == "HEAD" {
+            if let Some(t) = symref_target {
+                head_symref = Some(t);
+            }
+            advertised.push((name, oid));
+        } else if name.starts_with("refs/heads/") || name.starts_with("refs/tags/") {
+            advertised.push((name, oid));
+        }
+    }
+
+    Ok((advertised, head_symref))
 }
 
 fn parse_ref_advertisement_line(line: &str) -> Option<(ObjectId, String, &str)> {
@@ -456,6 +525,30 @@ fn read_sideband_pack_until_done(r: &mut impl Read, out: &mut Vec<u8>) -> Result
     Ok(())
 }
 
+/// Read a protocol v2 `fetch` response: skip non-pack sections, demux side-band-64k pack data.
+fn read_v2_fetch_pack_response(stdout: &mut impl Read, out: &mut Vec<u8>) -> Result<()> {
+    loop {
+        let hdr = match pkt_line::read_packet(stdout)? {
+            Some(pkt_line::Packet::Data(s)) => s,
+            Some(pkt_line::Packet::Flush) => return Ok(()),
+            None => return Ok(()),
+            Some(other) => bail!("unexpected v2 fetch response: {other:?}"),
+        };
+        trace_packet_fetch('<', hdr.trim_end());
+        match hdr.as_str() {
+            "acknowledgments" | "wanted-refs" | "shallow-info" | "packfile-uris" => {
+                skip_v2_section_until_boundary(stdout)?;
+            }
+            "packfile" => {
+                read_sideband_pack_until_done(stdout, out)?;
+                let _ = pkt_line::read_packet(stdout)?;
+                return Ok(());
+            }
+            other => bail!("unexpected v2 fetch section: {other}"),
+        }
+    }
+}
+
 /// Fetch via `upload-pack` using explicit object IDs (e.g. lazy promisor fetch).
 ///
 /// Negotiates using the same skipping strategy as [`fetch_via_upload_pack_skipping`], but the
@@ -497,7 +590,13 @@ pub fn fetch_via_upload_pack_skipping(
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 
-    let (advertised, head_symref) = read_advertisement(&mut stdout)?;
+    let client_proto = protocol_wire::effective_client_protocol_version();
+    let (advertised, head_symref) = if client_proto == 2 {
+        read_v2_capability_block(&mut stdout).context("read upload-pack v2 capabilities")?;
+        v2_ls_refs_for_fetch(&mut stdin, &mut stdout)?
+    } else {
+        read_advertisement(&mut stdout)?
+    };
     let wants = compute_wants(&advertised)?;
     if wants.is_empty() {
         if !has_cli_refspecs && advertised.is_empty() {
@@ -555,13 +654,22 @@ pub fn fetch_via_upload_pack_skipping(
         .find(|(n, _)| n == "HEAD")
         .map(|(_, o)| *o);
 
-    let pack_buf = fetch_upload_pack_negotiate_pack_bytes_with_streams(
-        local_git_dir,
-        &advertised,
-        &mut stdin,
-        &mut stdout,
-        &wants,
-    )?;
+    let pack_buf = if client_proto == 2 {
+        let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
+        write_v2_fetch_request(&mut stdin, &default_hash, &wants, true)?;
+        drop(stdin);
+        let mut buf = Vec::new();
+        read_v2_fetch_pack_response(&mut stdout, &mut buf)?;
+        buf
+    } else {
+        fetch_upload_pack_negotiate_pack_bytes_with_streams(
+            local_git_dir,
+            &advertised,
+            &mut stdin,
+            &mut stdout,
+            &wants,
+        )?
+    };
 
     let status = child.wait()?;
     if !status.success() {
@@ -609,14 +717,29 @@ fn fetch_upload_pack_negotiate_pack_bytes(
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 
-    let (advertised, _head_symref) = read_advertisement(&mut stdout)?;
-    let pack_buf = fetch_upload_pack_negotiate_pack_bytes_with_streams(
-        local_git_dir,
-        &advertised,
-        &mut stdin,
-        &mut stdout,
-        wants,
-    )?;
+    let client_proto = protocol_wire::effective_client_protocol_version();
+    let (advertised, _head_symref) = if client_proto == 2 {
+        read_v2_capability_block(&mut stdout).context("read upload-pack v2 capabilities")?;
+        v2_ls_refs_for_fetch(&mut stdin, &mut stdout)?
+    } else {
+        read_advertisement(&mut stdout)?
+    };
+    let pack_buf = if client_proto == 2 {
+        let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
+        write_v2_fetch_request(&mut stdin, &default_hash, wants, true)?;
+        drop(stdin);
+        let mut buf = Vec::new();
+        read_v2_fetch_pack_response(&mut stdout, &mut buf)?;
+        buf
+    } else {
+        fetch_upload_pack_negotiate_pack_bytes_with_streams(
+            local_git_dir,
+            &advertised,
+            &mut stdin,
+            &mut stdout,
+            wants,
+        )?
+    };
 
     let status = child.wait()?;
     if !status.success() {

@@ -852,7 +852,7 @@ fn fetch_remote(
                     &tags,
                 )?);
             }
-            if !args.no_tags {
+            if should_fetch_tags {
                 merged.extend(tags.iter().map(|(_, o)| *o));
             }
             merged.sort_by_key(|o| o.to_hex());
