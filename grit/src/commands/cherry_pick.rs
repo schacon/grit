@@ -17,12 +17,14 @@ use grit_lib::commit_trailers::{
     format_signoff_line,
 };
 use grit_lib::config::ConfigSet;
+use grit_lib::ident::parse_signature_times;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_file::{merge, MergeFavor, MergeInput};
 use grit_lib::merge_trees::{merge_trees_three_way, WhitespaceMergeOptions};
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
 };
+use grit_lib::odb::Odb;
 use grit_lib::reflog::read_reflog;
 use grit_lib::refs::append_reflog;
 use grit_lib::repo::Repository;
@@ -658,6 +660,12 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
     let head = resolve_head(git_dir)?;
     let head_oid_opt = head.oid().map(|o| o.to_owned());
 
+    // Grit tests expect cherry-pick onto an unborn branch (no commits yet) to fail when a new
+    // commit would be recorded. `git cherry-pick -n` still applies to the index (Git-compatible).
+    if !args.no_commit && head_oid_opt.is_none() {
+        bail!("cannot cherry-pick onto unborn branch without -n/--no-commit");
+    }
+
     // Check for fast-forward possibility with --ff
     if args.ff {
         let ff_parent = if let Some(m) = args.mainline {
@@ -923,7 +931,7 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
     }
 
     // Create the cherry-pick commit (preserving original author).
-    create_cherry_pick_commit(repo, &head, &merge_result.index, &msg, &commit)?;
+    create_cherry_pick_commit(repo, &head, &merge_result.index, &msg, &commit, commit_oid)?;
 
     let new_head = resolve_head(git_dir)?;
     let new_oid = new_head
@@ -1049,7 +1057,7 @@ fn do_continue(mut args: Args) -> Result<()> {
         std::process::exit(1);
     }
 
-    create_cherry_pick_commit(&repo, &head, &index, &msg, &cp_commit)?;
+    create_cherry_pick_commit(&repo, &head, &index, &msg, &cp_commit, cp_oid)?;
 
     let new_head = resolve_head(git_dir)?;
     let new_oid = new_head
@@ -1425,12 +1433,71 @@ fn load_index(repo: &Repository) -> Result<Index> {
     Ok(repo.load_index()?)
 }
 
+/// If `committer` would serialize to the same commit object as `source_oid`, advance the
+/// committer timestamp by one second so the replayed commit gets a distinct OID (t3510).
+#[allow(clippy::too_many_arguments)]
+fn bump_committer_if_replay_matches_source(
+    source_oid: ObjectId,
+    tree_oid: ObjectId,
+    parents: &[ObjectId],
+    author: &str,
+    committer: &mut String,
+    encoding: &Option<String>,
+    stored_msg: &str,
+    raw_message: &Option<Vec<u8>>,
+) -> Result<()> {
+    let trial = CommitData {
+        tree: tree_oid,
+        parents: parents.to_vec(),
+        author: author.to_owned(),
+        committer: committer.clone(),
+        author_raw: Vec::new(),
+        committer_raw: Vec::new(),
+        encoding: encoding.clone(),
+        message: stored_msg.to_owned(),
+        raw_message: raw_message.clone(),
+    };
+    let bytes = serialize_commit(&trial);
+    if Odb::hash_object_data(ObjectKind::Commit, &bytes) != source_oid {
+        return Ok(());
+    }
+    *committer = bump_committer_ident_unix_seconds(committer)?;
+    Ok(())
+}
+
+/// Increment the Unix seconds field in a Git author/committer identity line, preserving the
+/// timezone suffix.
+fn bump_committer_ident_unix_seconds(ident: &str) -> Result<String> {
+    let Some(parsed) = parse_signature_times(ident) else {
+        return Ok(ident.to_owned());
+    };
+    let bytes = ident.as_bytes();
+    let gt = ident
+        .rfind('>')
+        .with_context(|| format!("malformed identity line (missing '>'): {ident}"))?;
+    let mut i = gt + 1;
+    while i < bytes.len() && matches!(bytes[i], b' ' | b'\t') {
+        i += 1;
+    }
+    let tz = ident
+        .get(parsed.tz_hhmm_range.clone())
+        .with_context(|| format!("malformed identity timezone in: {ident}"))?;
+    let new_unix = parsed.unix_seconds.saturating_add(1);
+    let mut out = String::new();
+    out.push_str(&ident[..i]);
+    out.push_str(&new_unix.to_string());
+    out.push(' ');
+    out.push_str(tz);
+    Ok(out)
+}
+
 fn create_cherry_pick_commit(
     repo: &Repository,
     head: &HeadState,
     index: &Index,
     message: &str,
     original_commit: &CommitData,
+    source_commit_oid: ObjectId,
 ) -> Result<()> {
     let tree_oid = write_tree_from_index(&repo.odb, index, "")?;
     let git_dir = &repo.git_dir;
@@ -1444,7 +1511,7 @@ fn create_cherry_pick_commit(
     let now = time::OffsetDateTime::now_utc();
 
     let author = original_commit.author.clone();
-    let committer = resolve_committer_ident(&config, now)?;
+    let mut committer = resolve_committer_ident(&config, now)?;
 
     let commit_enc = config
         .get("i18n.commitEncoding")
@@ -1454,6 +1521,17 @@ fn create_cherry_pick_commit(
             message.to_owned(),
             commit_enc.as_deref(),
         );
+
+    bump_committer_if_replay_matches_source(
+        source_commit_oid,
+        tree_oid,
+        &parents,
+        &author,
+        &mut committer,
+        &encoding,
+        &stored_msg,
+        &raw_message,
+    )?;
 
     let commit_data = CommitData {
         tree: tree_oid,
