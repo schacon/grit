@@ -166,7 +166,9 @@ impl ConePatterns {
                 (false, line)
             };
 
-            if negated && rest == "/*/" {
+            // Git `dir.c:add_pattern_to_hashsets`: `!/*` (negative + root "all") clears full_cone;
+            // `/*` sets full_cone. These are cone-mode structural lines, not globs.
+            if negated && rest == "/*" {
                 full_cone = false;
                 continue;
             }
@@ -401,6 +403,170 @@ pub fn path_in_sparse_checkout(
         }
     }
     non_cone.path_included(path)
+}
+
+/// Apply sparse-checkout rules to `index`: stage-0 entries get `skip-worktree` when excluded.
+///
+/// Matches Git's sparse-checkout application used after building a new index from a tree
+/// (`read-tree`, branch checkout, fast-forward merge). When `core.sparseCheckout` is false or
+/// the sparse-checkout file is missing, this is a no-op.
+///
+/// # Parameters
+///
+/// - `git_dir` — repository git directory (reads `config` and `info/sparse-checkout`).
+/// - `index` — index to update in place; bumped to version 3 when any entry is marked skip-worktree.
+pub fn apply_sparse_checkout_skip_worktree(
+    git_dir: &std::path::Path,
+    index: &mut crate::index::Index,
+) {
+    let config = crate::config::ConfigSet::load(Some(git_dir), true)
+        .unwrap_or_else(|_| crate::config::ConfigSet::new());
+    let sparse_enabled = config
+        .get("core.sparsecheckout")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    if !sparse_enabled {
+        return;
+    }
+
+    let cone_config = config
+        .get("core.sparsecheckoutcone")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(true);
+
+    let mut warnings = Vec::new();
+    let (_cone_ok, _cone_loaded, non_cone) =
+        load_sparse_checkout_with_warnings(git_dir, cone_config, &mut warnings);
+    for line in warnings {
+        eprintln!("{line}");
+    }
+
+    let sparse_path = git_dir.join("info").join("sparse-checkout");
+    let file_content = std::fs::read_to_string(&sparse_path).unwrap_or_default();
+    let cone_struct = if cone_config {
+        ConePatterns::try_parse(&file_content)
+    } else {
+        None
+    };
+    let effective_cone = cone_config && cone_struct.is_some();
+
+    let mut any_skip = false;
+    for entry in &mut index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&entry.path);
+        let included = path_in_sparse_checkout(
+            path_str.as_ref(),
+            effective_cone,
+            cone_struct.as_ref(),
+            &non_cone,
+        );
+        entry.set_skip_worktree(!included);
+        if !included {
+            any_skip = true;
+        }
+    }
+
+    if any_skip && index.version < 3 {
+        index.version = 3;
+    }
+}
+
+/// Longest common prefix of `path1` and `path2` that ends at a `/` (Git `max_common_dir_prefix`).
+fn max_common_dir_prefix(path1: &str, path2: &str) -> usize {
+    let b1 = path1.as_bytes();
+    let b2 = path2.as_bytes();
+    let mut common_prefix = 0usize;
+    let mut i = 0usize;
+    while i < b1.len() && i < b2.len() {
+        if b1[i] != b2[i] {
+            break;
+        }
+        if b1[i] == b'/' {
+            common_prefix = i + 1;
+        }
+        i += 1;
+    }
+    common_prefix
+}
+
+struct PathFoundData {
+    /// Cached path prefix that does not exist, always ending with `/` when non-empty.
+    dir: String,
+}
+
+/// Whether `path` names an existing file or symlink (Git `path_found` in `sparse-index.c`).
+fn path_found(path: &str, data: &mut PathFoundData) -> bool {
+    let pb = path.as_bytes();
+    let db = data.dir.as_bytes();
+    if !db.is_empty() && pb.len() >= db.len() && pb[..db.len()] == *db {
+        return false;
+    }
+
+    if std::fs::symlink_metadata(std::path::Path::new(path)).is_ok() {
+        return true;
+    }
+
+    let common_prefix = max_common_dir_prefix(path, &data.dir);
+    data.dir.truncate(common_prefix);
+
+    loop {
+        let rest = &path[data.dir.len()..];
+        if let Some(rel_slash) = rest.find('/') {
+            data.dir.push_str(&rest[..=rel_slash]);
+            if std::fs::symlink_metadata(std::path::Path::new(&data.dir)).is_err() {
+                return false;
+            }
+        } else {
+            data.dir.push_str(rest);
+            data.dir.push('/');
+            break;
+        }
+    }
+    false
+}
+
+/// Clear `skip-worktree` on index entries whose paths exist in the work tree when sparse checkout
+/// is enabled, unless `sparse.expectFilesOutsideOfPatterns` is true.
+///
+/// Matches Git's `clear_skip_worktree_from_present_files` (`sparse-index.c`) for a full
+/// (non-sparse-index) in-memory index.
+pub fn clear_skip_worktree_from_present_files(
+    git_dir: &std::path::Path,
+    work_tree: &std::path::Path,
+    index: &mut crate::index::Index,
+) {
+    let config = crate::config::ConfigSet::load(Some(git_dir), true)
+        .unwrap_or_else(|_| crate::config::ConfigSet::new());
+    let sparse_enabled = config
+        .get("core.sparsecheckout")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !sparse_enabled {
+        return;
+    }
+    if config
+        .get_bool("sparse.expectfilesoutsideofpatterns")
+        .and_then(|r| r.ok())
+        .unwrap_or(false)
+    {
+        return;
+    }
+
+    let mut found = PathFoundData { dir: String::new() };
+    for entry in &mut index.entries {
+        if entry.stage() != 0 || !entry.skip_worktree() {
+            continue;
+        }
+        let rel = String::from_utf8_lossy(&entry.path);
+        let abs = work_tree.join(rel.as_ref());
+        let abs_str = abs.to_string_lossy().into_owned();
+        if path_found(&abs_str, &mut found) {
+            entry.set_skip_worktree(false);
+        }
+    }
 }
 
 /// Mutable cone sparse state (Git `pattern_list` hashmaps) for building `sparse-checkout` files.

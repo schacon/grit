@@ -1370,6 +1370,33 @@ fn resolve_base(
         );
     }
 
+    // `FETCH_HEAD`: first tab-separated line that is not `not-for-merge` (Git `read_ref` behavior).
+    if spec == "FETCH_HEAD" {
+        let path = repo.git_dir.join("FETCH_HEAD");
+        let content = std::fs::read_to_string(&path)
+            .map_err(|_| Error::ObjectNotFound("FETCH_HEAD".to_owned()))?;
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let mut parts = line.split('\t');
+            let Some(oid_hex) = parts.next() else {
+                continue;
+            };
+            let not_for_merge = parts.next().is_some_and(|v| v == "not-for-merge");
+            if not_for_merge {
+                continue;
+            }
+            if oid_hex.len() == 40 && oid_hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return oid_hex
+                    .parse::<ObjectId>()
+                    .map_err(|_| Error::InvalidRef("invalid FETCH_HEAD object id".to_owned()));
+            }
+        }
+        return Err(Error::ObjectNotFound("FETCH_HEAD".to_owned()));
+    }
+
     // `@{-N}` must run before reflog parsing so `@{-1}@{1}` is not misread as `@{-1}` + `@{1}`.
     if spec.starts_with("@{-") {
         if let Some(close) = spec[3..].find('}') {

@@ -30,6 +30,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{
     abbreviate_object_id, resolve_revision, resolve_upstream_symbolic_name, upstream_suffix_info,
 };
+use grit_lib::sparse_checkout::apply_sparse_checkout_skip_worktree;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::submodule_gitdir::submodule_modules_git_dir;
 
@@ -1030,6 +1031,14 @@ fn run_post_checkout_hook(
     Ok(())
 }
 
+fn sparse_checkout_config_enabled(git_dir: &std::path::Path) -> bool {
+    ConfigSet::load(Some(git_dir), true)
+        .unwrap_or_default()
+        .get("core.sparsecheckout")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 /// Switch HEAD to an existing branch, updating the working tree and index.
 fn switch_branch(
     repo: &Repository,
@@ -1062,7 +1071,8 @@ fn switch_branch(
                 .load_index()
                 .map(|idx| idx.entries.is_empty())
                 .unwrap_or(true);
-            if index_empty || !index_matches_flat_tree(repo, &target_tree)? {
+            let sparse_on = sparse_checkout_config_enabled(&repo.git_dir);
+            if sparse_on || index_empty || !index_matches_flat_tree(repo, &target_tree)? {
                 switch_to_tree(
                     repo,
                     &head,
@@ -1148,9 +1158,11 @@ fn switch_branch(
 
     // If target commit is the same as current HEAD, just re-attach
     // without touching the working tree or index (preserves dirty state).
-    // But with -f, always rebuild.
+    // But with -f, always rebuild. With sparse checkout, re-run so edits to
+    // `info/sparse-checkout` take effect (t1090).
     let already_at_target = head.oid() == Some(&target_oid);
-    if !already_at_target || force {
+    let sparse_on = sparse_checkout_config_enabled(&repo.git_dir);
+    if !already_at_target || force || sparse_on {
         let target_tree = commit_to_tree(repo, &target_oid)?;
 
         // Update working tree and index
@@ -1878,6 +1890,8 @@ fn switch_to_tree(
         }
         new_index.sort();
     }
+
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut new_index);
 
     // Perform the actual working tree update.
     // When force, write all entries even if OID matches (to restore dirty files).
@@ -3804,6 +3818,18 @@ fn checkout_index_to_worktree(
         .map(|e| (e.path.as_slice(), e))
         .collect();
 
+    let sparse_checkout = ConfigSet::load(Some(&repo.git_dir), true)
+        .unwrap_or_default()
+        .get("core.sparsecheckout")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let new_map: HashMap<&[u8], &IndexEntry> = new_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| (e.path.as_slice(), e))
+        .collect();
+
     // Remove paths that are no longer present in the new index.
     for old_path in old_stage0.difference(&new_stage0) {
         if let Some(old_entry) = old_map.get(old_path.as_slice()) {
@@ -3850,9 +3876,60 @@ fn checkout_index_to_worktree(
         remove_empty_parent_dirs(work_tree, &abs);
     }
 
+    // Sparse checkout: paths still in the index but newly excluded must disappear from the work tree.
+    if sparse_checkout {
+        for old_path in old_stage0.intersection(&new_stage0) {
+            if new_map
+                .get(old_path.as_slice())
+                .is_some_and(|e| e.skip_worktree())
+            {
+                if let Some(old_entry) = old_map.get(old_path.as_slice()) {
+                    if old_entry.mode == MODE_GITLINK
+                        && !git_dir_is_nested_modules_repo(&repo.git_dir)
+                    {
+                        continue;
+                    }
+                }
+                let rel = String::from_utf8_lossy(old_path).into_owned();
+                let abs = work_tree.join(&rel);
+                let path_through_symlink = {
+                    let mut p = work_tree.to_path_buf();
+                    let mut through_sym = false;
+                    for component in std::path::Path::new(&rel).components() {
+                        p.push(component);
+                        if let Ok(meta) = std::fs::symlink_metadata(&p) {
+                            if meta.file_type().is_symlink() && p != abs {
+                                through_sym = true;
+                                break;
+                            }
+                        }
+                    }
+                    through_sym
+                };
+                if path_through_symlink {
+                    continue;
+                }
+                if abs.is_file() || abs.is_symlink() {
+                    let _ = std::fs::remove_file(&abs);
+                } else if abs.is_dir() {
+                    let is_populated_submodule = old_map
+                        .get(old_path.as_slice())
+                        .is_some_and(|e| e.mode == MODE_GITLINK && abs.join(".git").exists());
+                    if !is_populated_submodule {
+                        let _ = std::fs::remove_dir_all(&abs);
+                    }
+                }
+                remove_empty_parent_dirs(work_tree, &abs);
+            }
+        }
+    }
+
     // Write new/modified entries
     for entry in &new_index.entries {
         if entry.stage() != 0 {
+            continue;
+        }
+        if entry.skip_worktree() {
             continue;
         }
 

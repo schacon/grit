@@ -11,6 +11,7 @@ use grit_lib::config::ConfigSet;
 use grit_lib::merge_base;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
+use grit_lib::promisor::{read_promisor_missing_oids, write_promisor_marker};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
@@ -1424,6 +1425,37 @@ fn fetch_remote(
             }
         }
     }
+    if fetch_head_entries.is_empty() {
+        // `upload-pack` may return an empty advertised head list while the remote still has
+        // branches on disk. Always fall back to reading `refs/heads/` from the opened remote
+        // so `git fetch && git checkout FETCH_HEAD` works (t1090 partial clone + sparse).
+        if let Some(rr) = remote_repo.as_ref() {
+            let heads = refs::list_refs(&rr.git_dir, "refs/heads/")?;
+            for (idx, (refname, oid)) in heads.iter().enumerate() {
+                let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+                fetch_head_entries.push(fetch_head_branch_line(
+                    oid,
+                    branch,
+                    &display_url,
+                    idx == 0,
+                ));
+            }
+        } else {
+            for (idx, (refname, advertised_oid)) in remote_heads.iter().enumerate() {
+                if !refname.starts_with("refs/heads/") {
+                    continue;
+                }
+                let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+                fetch_head_entries.push(fetch_head_branch_line(
+                    advertised_oid,
+                    branch,
+                    &display_url,
+                    idx == 0,
+                ));
+            }
+        }
+    }
+
     if !fetch_head_entries.is_empty() {
         sort_fetch_head_lines(&mut fetch_head_entries, &fetch_head_refspecs);
         let fetch_head_path = git_dir.join("FETCH_HEAD");
@@ -1432,7 +1464,8 @@ fn fetch_remote(
     }
 
     if args.filter.as_deref() == Some("blob:none") {
-        apply_blob_none_filter(git_dir, &remote_heads).context("applying blob:none filter")?;
+        apply_blob_none_filter(git_dir, remote_repo.as_ref(), &remote_heads)
+            .context("applying blob:none filter")?;
     }
 
     // Write machine-readable output if --output is given
@@ -1462,14 +1495,29 @@ fn fetch_remote(
     Ok(())
 }
 
-fn apply_blob_none_filter(git_dir: &Path, remote_heads: &[(String, ObjectId)]) -> Result<()> {
+fn apply_blob_none_filter(
+    git_dir: &Path,
+    remote_repo: Option<&Repository>,
+    remote_heads: &[(String, ObjectId)],
+) -> Result<()> {
+    let heads: Vec<(String, ObjectId)> = if !remote_heads.is_empty() {
+        remote_heads.to_vec()
+    } else if let Some(rr) = remote_repo {
+        refs::list_refs(&rr.git_dir, "refs/heads/")?
+    } else {
+        Vec::new()
+    };
+    if heads.is_empty() {
+        return Ok(());
+    }
+
     let patterns = load_sparse_patterns(git_dir)?;
     let odb = grit_lib::odb::Odb::new(&git_dir.join("objects"));
     let mut seen_trees = HashSet::new();
     let mut all_blobs = HashSet::new();
     let mut keep_blobs = HashSet::new();
 
-    for (_, commit_oid) in remote_heads {
+    for (_, commit_oid) in &heads {
         let commit_obj = match odb.read(commit_oid) {
             Ok(obj) => obj,
             Err(_) => continue,
@@ -1492,10 +1540,8 @@ fn apply_blob_none_filter(git_dir: &Path, remote_heads: &[(String, ObjectId)]) -
         )?;
     }
 
-    for oid in all_blobs.drain() {
-        if keep_blobs.contains(&oid) {
-            continue;
-        }
+    let removed: Vec<ObjectId> = all_blobs.difference(&keep_blobs).copied().collect();
+    for oid in &removed {
         let hex = oid.to_hex();
         if hex.len() < 3 {
             continue;
@@ -1508,6 +1554,15 @@ fn apply_blob_none_filter(git_dir: &Path, remote_heads: &[(String, ObjectId)]) -
             let _ = fs::remove_file(loose_path);
         }
     }
+
+    // Blobs may still live in promisor packs; record excluded OIDs so `rev-list --missing=print`
+    // matches Git partial-clone + sparse expectations (t1090).
+    let mut marker_set: HashSet<ObjectId> =
+        read_promisor_missing_oids(git_dir).into_iter().collect();
+    for oid in removed {
+        marker_set.insert(oid);
+    }
+    write_promisor_marker(git_dir, &marker_set)?;
 
     Ok(())
 }

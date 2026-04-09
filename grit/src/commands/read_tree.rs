@@ -14,7 +14,7 @@ use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
-use grit_lib::sparse_checkout::{load_sparse_checkout_with_warnings, path_in_sparse_checkout};
+use grit_lib::sparse_checkout::apply_sparse_checkout_skip_worktree;
 
 /// Arguments for `grit read-tree`.
 #[derive(Debug, ClapArgs)]
@@ -817,59 +817,7 @@ fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {
 
 /// Check if `core.sparseCheckout` is enabled and apply skip-worktree bits.
 fn apply_sparse_checkout(git_dir: &Path, index: &mut Index) -> Result<()> {
-    let config = ConfigSet::load(Some(git_dir), true).unwrap_or_else(|_| ConfigSet::new());
-    let sparse_enabled = config
-        .get("core.sparsecheckout")
-        .map(|v| v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-
-    if !sparse_enabled {
-        return Ok(());
-    }
-
-    let cone_config = config
-        .get("core.sparsecheckoutcone")
-        .map(|v| v.eq_ignore_ascii_case("true"))
-        .unwrap_or(true);
-
-    let mut warnings = Vec::new();
-    let (_cone_ok, _cone_loaded, non_cone) =
-        load_sparse_checkout_with_warnings(git_dir, cone_config, &mut warnings);
-    for line in warnings {
-        eprintln!("{line}");
-    }
-
-    let sparse_path = git_dir.join("info").join("sparse-checkout");
-    let file_content = std::fs::read_to_string(&sparse_path).unwrap_or_default();
-    let cone_struct = if cone_config {
-        grit_lib::sparse_checkout::ConePatterns::try_parse(&file_content)
-    } else {
-        None
-    };
-    let effective_cone = cone_config && cone_struct.is_some();
-
-    let mut any_skip = false;
-    for entry in &mut index.entries {
-        if entry.stage() != 0 {
-            continue;
-        }
-        let path_str = String::from_utf8_lossy(&entry.path);
-        let included = path_in_sparse_checkout(
-            path_str.as_ref(),
-            effective_cone,
-            cone_struct.as_ref(),
-            &non_cone,
-        );
-        entry.set_skip_worktree(!included);
-        if !included {
-            any_skip = true;
-        }
-    }
-
-    if any_skip && index.version < 3 {
-        index.version = 3;
-    }
-
+    apply_sparse_checkout_skip_worktree(git_dir, index);
     Ok(())
 }
 
