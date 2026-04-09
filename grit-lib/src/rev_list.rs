@@ -2856,7 +2856,7 @@ fn collect_reachable_objects(
 /// the next commit, with global de-duplication of emitted object OIDs across the full walk.
 fn collect_reachable_objects_segmented(
     repo: &Repository,
-    graph: &mut CommitGraph<'_>,
+    _graph: &mut CommitGraph<'_>,
     commits: &[ObjectId],
     object_roots: &[RootObject],
     filter: Option<&ObjectFilter>,
@@ -2893,21 +2893,15 @@ fn collect_reachable_objects_segmented(
             Err(err) => return Err(err),
         };
         let mut tree_state = TreeWalkState::new(filter);
-        let parents = graph.parents_of(commit_oid)?;
-        let parent_union = union_parent_reachable_objects(
-            repo,
-            &parents,
-            missing_action,
-            &mut missing,
-            &mut missing_seen,
-        )?;
+        // Same as `collect_reachable_objects_in_commit_order`: Git lists objects in walk order with
+        // global OID de-duplication only (`emitted`), not parent-closure subtraction.
         collect_tree_objects_filtered(
             repo,
             commit.tree,
             "",
             0,
             false,
-            Some(&parent_union),
+            None,
             &mut tree_state,
             &mut emitted,
             &mut result,
@@ -3298,7 +3292,7 @@ fn collect_tree_objects_filtered(
 /// Returns (objects, omitted, per_commit_counts).
 fn collect_reachable_objects_in_commit_order(
     repo: &Repository,
-    graph: &mut CommitGraph<'_>,
+    _graph: &mut CommitGraph<'_>,
     commits: &[ObjectId],
     object_roots: &[RootObject],
     filter: Option<&ObjectFilter>,
@@ -3334,21 +3328,16 @@ fn collect_reachable_objects_in_commit_order(
             Err(err) => return Err(err),
         };
         let before = result.len();
-        let parents = graph.parents_of(commit_oid)?;
-        let parent_union = union_parent_reachable_objects(
-            repo,
-            &parents,
-            missing_action,
-            &mut missing,
-            &mut missing_seen,
-        )?;
+        // Match Git `rev-list --objects`: walk each commit's tree in full traversal order and rely
+        // on `emitted` for OID de-duplication. Do not subtract parent reachability here — that would
+        // skip blobs that still belong after this commit's tree line (t6100-rev-list-in-order).
         collect_tree_objects_filtered(
             repo,
             commit.tree,
             "",
             0,
             false,
-            Some(&parent_union),
+            None,
             &mut tree_state,
             &mut emitted,
             &mut result,
