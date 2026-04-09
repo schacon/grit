@@ -193,6 +193,100 @@ fn should_recurse_fetch_submodules(config: &ConfigSet, args: &Args) -> bool {
         .unwrap_or(false)
 }
 
+/// Build the upload-pack `want` list for a configured (non-CLI) fetch: only refs matched by
+/// `refspecs`, optionally following annotated tags that point at each matched branch tip, and
+/// omitting objects already present in the local ODB (so incremental fetches do not re-want old
+/// tags — matches Git's t5503 expectations).
+fn collect_wants_for_upload_pack(
+    local_git_dir: &Path,
+    remote_git_dir: &Path,
+    advertised: &[(String, ObjectId)],
+    refspecs: &[FetchRefspec],
+    should_fetch_tags: bool,
+    remote_name: &str,
+) -> Result<Vec<ObjectId>> {
+    let local_odb = Odb::new(&local_git_dir.join("objects"));
+    let remote_odb = Odb::new(&remote_git_dir.join("objects"));
+    let remote_repo = open_repo(remote_git_dir)?;
+    let mut wants: Vec<ObjectId> = Vec::new();
+    let local_tag_tips: HashSet<ObjectId> = refs::list_refs(local_git_dir, "refs/tags/")?
+        .into_iter()
+        .map(|(_, oid)| oid)
+        .collect();
+
+    let effective_refspecs: Vec<FetchRefspec> = if refspecs.is_empty() {
+        vec![FetchRefspec {
+            src: "refs/heads/*".to_owned(),
+            dst: format!("refs/remotes/{remote_name}/*"),
+            force: true,
+            negative: false,
+        }]
+    } else {
+        refspecs.to_vec()
+    };
+
+    for (refname, oid) in advertised {
+        if !refname.starts_with("refs/heads/") {
+            continue;
+        }
+        let Some(local_ref) = map_ref_through_refspecs(refname, &effective_refspecs) else {
+            continue;
+        };
+        let tip_oid = refs::resolve_ref(remote_git_dir, refname)
+            .ok()
+            .unwrap_or(*oid);
+        let local_tracking_oid = read_loose_ref_chain(local_git_dir, &local_ref)
+            .or_else(|| refs::resolve_ref(local_git_dir, &local_ref).ok());
+        if local_tracking_oid.as_ref() == Some(&tip_oid) {
+            continue;
+        }
+        // Always request the branch tip OID when the remote-tracking ref lags, even if the object
+        // already exists locally (e.g. via a prior pack). Upstream `fetch-pack` emits matching
+        // `want` lines and tag-following depends on the correct tip (t5503-tagfollow).
+        crate::fetch_transport::push_want_unique(&mut wants, tip_oid);
+        if should_fetch_tags
+            && remote_odb
+                .read(&tip_oid)
+                .map(|o| o.kind == ObjectKind::Commit)
+                .unwrap_or(false)
+        {
+            let tag_refs = refs::list_refs(remote_git_dir, "refs/tags/")?;
+            for (tag_refname, tag_ref_oid) in tag_refs {
+                if local_tag_tips.contains(&tag_ref_oid) {
+                    continue;
+                }
+                if local_odb.exists(&tag_ref_oid) {
+                    continue;
+                }
+                let Ok(tag_obj) = remote_odb.read(&tag_ref_oid) else {
+                    continue;
+                };
+                if tag_obj.kind != ObjectKind::Tag {
+                    continue;
+                }
+                let Ok(tag) = parse_tag(&tag_obj.data) else {
+                    continue;
+                };
+                if !merge_base::is_ancestor(&remote_repo, tag.object, tip_oid).unwrap_or(false) {
+                    continue;
+                }
+                if let Some(old_tip) = local_tracking_oid {
+                    if tag.object == old_tip {
+                        continue;
+                    }
+                    if merge_base::is_ancestor(&remote_repo, tag.object, old_tip).unwrap_or(false) {
+                        continue;
+                    }
+                }
+                crate::fetch_transport::push_want_unique(&mut wants, tag_ref_oid);
+            }
+        }
+    }
+
+    wants.dedup();
+    Ok(wants)
+}
+
 /// Fetch from a single remote.
 ///
 /// If `url_override` is Some, use it directly as the remote URL instead of
@@ -273,28 +367,60 @@ fn fetch_remote(
         Vec::new() // we'll handle CLI refspecs specially below
     };
 
-    // Enumerate remote refs (or receive them from upload-pack transport)
-    let use_skipping = config
-        .get("fetch.negotiationalgorithm")
-        .map(|v| v.eq_ignore_ascii_case("skipping"))
-        .unwrap_or(false);
+    let should_fetch_tags = if args.tags {
+        true
+    } else if args.no_tags {
+        false
+    } else {
+        let tagopt_key = format!("remote.{remote_name}.tagopt");
+        match config.get(&tagopt_key).as_deref() {
+            Some("--no-tags") => false,
+            Some("--tags") => true,
+            _ => true,
+        }
+    };
 
+    // Enumerate remote refs (or receive them from upload-pack transport).
     let upload_pack_cmd = args.upload_pack.clone().or_else(|| {
         let key = format!("remote.{remote_name}.uploadpack");
         config.get(&key)
     });
 
-    // Local fetch with skipping negotiator uses the upload-pack protocol (matches Git's tests).
-    let use_upload_pack_negotiation =
-        use_skipping && !crate::ssh_transport::is_configured_ssh_url(&url);
+    // Local (non-SSH) remotes use the upload-pack protocol like upstream Git. This keeps
+    // `GIT_TRACE_PACKET` lines (`upload-pack< want …`) and tag-following wants aligned with
+    // tests such as t5503-tagfollow, and avoids duplicating fetch semantics in a second path.
+    let use_upload_pack_negotiation = !crate::ssh_transport::is_configured_ssh_url(&url);
 
     let (remote_heads, remote_tags) = if use_upload_pack_negotiation {
         crate::protocol::check_protocol_allowed("file", Some(git_dir))?;
+        let cli_owned = cli_refspecs.to_vec();
+        let refspec_owned = refspecs.clone();
+        let local_git = git_dir.to_path_buf();
+        let remote_gd = remote_repo.git_dir.clone();
+        let remote_nm = remote_name.to_owned();
+        // Ref listing and ODB paths need the remote git dir (`…/.git`), not the work tree URL
+        // (`..`) that `upload-pack` is spawned with.
+        let compute_wants =
+            move |_rp: &Path, adv: &[(String, ObjectId)]| -> Result<Vec<ObjectId>> {
+                if !cli_owned.is_empty() {
+                    crate::fetch_transport::collect_wants_cli(&remote_gd, adv, &cli_owned)
+                } else {
+                    collect_wants_for_upload_pack(
+                        &local_git,
+                        &remote_gd,
+                        adv,
+                        &refspec_owned,
+                        should_fetch_tags,
+                        &remote_nm,
+                    )
+                }
+            };
         crate::fetch_transport::fetch_via_upload_pack_skipping(
             git_dir,
             &remote_path,
+            &remote_repo.git_dir,
             upload_pack_cmd.as_deref(),
-            cli_refspecs,
+            compute_wants,
         )?
     } else {
         let heads = refs::list_refs(&remote_repo.git_dir, "refs/heads/")?;
@@ -342,9 +468,10 @@ fn fetch_remote(
     // Collect FETCH_HEAD entries
     let mut fetch_head_entries: Vec<String> = Vec::new();
 
-    // Upload-pack negotiation already honored CLI refspecs via `collect_wants`; the object-less
-    // `refs::resolve_ref` path below would fail for tag-only names like `to_fetch`.
-    if !cli_refspecs.is_empty() && !use_upload_pack_negotiation {
+    // Command-line refspecs (including OID sources like `git fetch origin $B:refs/heads/main`)
+    // must update local refs after upload-pack negotiation as well as after the SSH/copy-object
+    // path. `collect_wants_cli` only drives the pack request; ref writes happen here.
+    if !cli_refspecs.is_empty() {
         // Collect negative refspecs first (^pattern)
         let negative_patterns: Vec<&str> = cli_refspecs
             .iter()
@@ -528,21 +655,38 @@ fn fetch_remote(
                 continue;
             }
 
-            // Normalize source: if it doesn't start with refs/, assume refs/heads/
-            let remote_ref = if src.starts_with("refs/") {
-                src.clone()
+            // Resolve source: full OID, ref name, or short branch/tag (match `collect_wants_cli`).
+            let remote_oid = if let Ok(oid) = ObjectId::from_hex(src.as_str()) {
+                oid
             } else {
-                format!("refs/heads/{src}")
+                let remote_ref = if src.starts_with("refs/") {
+                    src.clone()
+                } else {
+                    format!("refs/heads/{src}")
+                };
+                match refs::resolve_ref(&remote_repo.git_dir, &remote_ref) {
+                    Ok(oid) => oid,
+                    Err(_) if !src.starts_with("refs/") => {
+                        let tag_ref = format!("refs/tags/{src}");
+                        refs::resolve_ref(&remote_repo.git_dir, &tag_ref)
+                            .with_context(|| format!("couldn't find remote ref '{}'", src))?
+                    }
+                    Err(e) => {
+                        bail!("couldn't find remote ref '{src}': {e}");
+                    }
+                }
             };
 
-            // Resolve the remote ref
-            let remote_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref)
-                .with_context(|| format!("couldn't find remote ref '{}'", src))?;
-
-            // Build FETCH_HEAD entry
-            let branch = remote_ref
-                .strip_prefix("refs/heads/")
-                .unwrap_or(&remote_ref);
+            // Build FETCH_HEAD entry (label matches Git's FETCH_HEAD for refspec fetches).
+            let branch = if ObjectId::from_hex(src.as_str()).is_ok() {
+                src.as_str()
+            } else if let Some(rest) = src.strip_prefix("refs/heads/") {
+                rest
+            } else if let Some(rest) = src.strip_prefix("refs/tags/") {
+                rest
+            } else {
+                src.as_str()
+            };
             fetch_head_entries.push(format!("{}\tbranch '{}' of {url}", remote_oid, branch,));
 
             // If a destination is specified, write the ref there
@@ -673,7 +817,7 @@ fn fetch_remote(
         }
 
         // Standard path: update remote-tracking refs from remote heads
-        for (refname, remote_oid) in &remote_heads {
+        for (refname, advertised_oid) in &remote_heads {
             // refname is like "refs/heads/main"
             let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
 
@@ -686,6 +830,9 @@ fn fetch_remote(
                     None => continue, // ref not matched by any refspec, skip
                 }
             };
+            let remote_oid = refs::resolve_ref(&remote_repo.git_dir, refname)
+                .ok()
+                .unwrap_or(*advertised_oid);
             updated_refs.push(local_ref.clone());
 
             // Build FETCH_HEAD entry
@@ -698,7 +845,7 @@ fn fetch_remote(
 
             let old_oid = read_ref_oid(git_dir, &local_ref);
 
-            if old_oid.as_ref() == Some(remote_oid) {
+            if old_oid.as_ref() == Some(&remote_oid) {
                 // Already up to date
                 continue;
             }
@@ -708,13 +855,13 @@ fn fetch_remote(
                 has_updates = true;
             }
 
-            refs::write_ref(git_dir, &local_ref, remote_oid)
+            refs::write_ref(git_dir, &local_ref, &remote_oid)
                 .with_context(|| format!("updating ref {local_ref}"))?;
             let _ = append_fetch_reflog(
                 git_dir,
                 &local_ref,
                 old_oid.as_ref(),
-                remote_oid,
+                &remote_oid,
                 &url,
                 branch,
             );
@@ -728,26 +875,11 @@ fn fetch_remote(
                 let flag = if old_oid.is_none() { "*" } else { " " };
                 println!("{flag} {old_hex} {remote_oid} {local_ref}");
             } else if !args.quiet {
-                print_update(&old_oid, remote_oid, branch, remote_name);
+                print_update(&old_oid, &remote_oid, branch, remote_name);
             }
         }
     }
 
-    // Determine whether to fetch tags:
-    // CLI --tags/--no-tags override, then remote.<name>.tagopt, then default (fetch tags)
-    let should_fetch_tags = if args.tags {
-        true
-    } else if args.no_tags {
-        false
-    } else {
-        // Check remote.<name>.tagopt config
-        let tagopt_key = format!("remote.{remote_name}.tagopt");
-        match config.get(&tagopt_key).as_deref() {
-            Some("--no-tags") => false,
-            Some("--tags") => true,
-            _ => true, // default: fetch tags
-        }
-    };
     if should_fetch_tags {
         for (refname, remote_oid) in &remote_tags {
             let old_oid = read_ref_oid(git_dir, refname);
@@ -1104,6 +1236,28 @@ fn determine_remote_head(remote_git_dir: &Path) -> Option<String> {
 /// Read a ref to get its OID, returning None if it doesn't exist.
 fn read_ref_oid(git_dir: &Path, refname: &str) -> Option<ObjectId> {
     refs::resolve_ref(git_dir, refname).ok()
+}
+
+/// Resolve a ref by reading only loose files under `git_dir` (symbolic chain).
+///
+/// `refs::resolve_ref` can still fail in some harness states even when the ref file exists;
+/// upload-pack want computation must match on-disk refs (t5503-tagfollow).
+fn read_loose_ref_chain(git_dir: &Path, refname: &str) -> Option<ObjectId> {
+    let mut name = refname.to_string();
+    for _ in 0..20 {
+        let path = git_dir.join(&name);
+        let content = fs::read_to_string(&path).ok()?;
+        let line = content.trim_end_matches(['\n', '\r']);
+        if let Some(target) = line.strip_prefix("ref: ") {
+            name = target.trim().to_string();
+            continue;
+        }
+        if line.len() == 40 && line.chars().all(|c| c.is_ascii_hexdigit()) {
+            return line.parse().ok();
+        }
+        return None;
+    }
+    None
 }
 
 fn zero_oid() -> ObjectId {
@@ -1497,6 +1651,7 @@ fn write_shallow_info(
 }
 
 /// A parsed refspec (e.g. "+refs/heads/*:refs/remotes/origin/*").
+#[derive(Clone)]
 struct FetchRefspec {
     /// Source pattern (remote side), e.g. "refs/heads/*".
     src: String,
