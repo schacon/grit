@@ -872,6 +872,8 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
         .filter(|e| e.stage() == 0)
         .map(|e| e.path.clone())
         .collect();
+    let new_all_paths: HashSet<Vec<u8>> =
+        new_index.entries.iter().map(|e| e.path.clone()).collect();
     let old_stage0 = stage0_index_map(old_index);
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let conv = crlf::ConversionConfig::from_config(&config);
@@ -893,6 +895,28 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
             let _ = std::fs::remove_dir_all(&abs);
         }
         remove_empty_parent_dirs(&work_tree, &abs);
+    }
+
+    // Paths that only existed as unmerged stages in the old index (no stage 0) are invisible to
+    // the stage-0 diff above; remove their worktree files when they drop out of the index
+    // entirely (matches `git read-tree -u --reset` / `reset --hard`, t1005).
+    let old_unmerged_paths: HashSet<Vec<u8>> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() != 0)
+        .map(|e| e.path.clone())
+        .collect();
+    for path in &old_unmerged_paths {
+        if !new_all_paths.contains(path) {
+            let rel = String::from_utf8_lossy(path).into_owned();
+            let abs = work_tree.join(&rel);
+            if abs.is_file() || abs.is_symlink() {
+                let _ = std::fs::remove_file(&abs);
+            } else if abs.is_dir() {
+                let _ = std::fs::remove_dir_all(&abs);
+            }
+            remove_empty_parent_dirs(&work_tree, &abs);
+        }
     }
 
     // Remove files that now have skip-worktree set

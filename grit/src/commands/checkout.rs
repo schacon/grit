@@ -2274,6 +2274,8 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
         None => bail!("this operation must be run in a work tree"),
     };
 
+    let old_index = repo.load_index().unwrap_or_else(|_| Index::new());
+
     // Build index from the target tree and force-write all entries
     let new_entries = tree_to_flat_entries(repo, &target_tree, "")?;
     let mut new_index = Index::new();
@@ -2285,6 +2287,10 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
         .iter()
         .filter(|e| e.stage() == 0 && e.mode != 0o160000)
         .count();
+
+    // Remove paths gone from the index (including unmerged-only conflict remnants) then match
+    // `force_reset_to_tree` / Git's `checkout -f` (t1005).
+    checkout_index_to_worktree(repo, &old_index, &new_index, &work_tree, true)?;
 
     // Write every entry to the worktree (force overwrite)
     for entry in &new_index.entries {
@@ -4715,6 +4721,54 @@ fn checkout_index_to_worktree(
             }
         }
         remove_empty_parent_dirs(work_tree, &abs);
+    }
+
+    // Paths that only had unmerged index entries (no stage 0) are not in `old_stage0`, so the
+    // removal loop above misses them. Drop their worktree files when they are gone from the new
+    // index (t1005-read-tree-reset, `checkout -f`).
+    let new_all_paths: std::collections::HashSet<Vec<u8>> =
+        new_index.entries.iter().map(|e| e.path.clone()).collect();
+    let old_unmerged_paths: std::collections::HashSet<Vec<u8>> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() != 0)
+        .map(|e| e.path.clone())
+        .collect();
+    for path in &old_unmerged_paths {
+        if !new_all_paths.contains(path) {
+            let rel = String::from_utf8_lossy(path).into_owned();
+            let abs = work_tree.join(&rel);
+            let path_through_symlink = {
+                let mut p = work_tree.to_path_buf();
+                let mut through_sym = false;
+                for component in std::path::Path::new(&rel).components() {
+                    p.push(component);
+                    if let Ok(meta) = std::fs::symlink_metadata(&p) {
+                        if meta.file_type().is_symlink() && p != abs {
+                            through_sym = true;
+                            break;
+                        }
+                    }
+                }
+                through_sym
+            };
+            if path_through_symlink {
+                continue;
+            }
+            if abs.is_file() || abs.is_symlink() {
+                let _ = std::fs::remove_file(&abs);
+            } else if abs.is_dir() {
+                let is_populated_submodule = old_index
+                    .entries
+                    .iter()
+                    .filter(|e| e.path == *path)
+                    .any(|e| e.mode == MODE_GITLINK && abs.join(".git").exists());
+                if !is_populated_submodule {
+                    let _ = std::fs::remove_dir_all(&abs);
+                }
+            }
+            remove_empty_parent_dirs(work_tree, &abs);
+        }
     }
 
     // Sparse checkout: paths still in the index but newly excluded must disappear from the work tree.
