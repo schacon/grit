@@ -1433,14 +1433,15 @@ fn remote_symbolic_head_branch(remote_git_dir: &Path) -> Option<String> {
 /// Branch used for "default" FETCH_HEAD for-merge when the current branch has no `branch.*.merge`:
 /// `init.defaultBranch` when present and valid, else [`remote_symbolic_head_branch`].
 fn remote_default_branch_for_fetch_merge(remote_git_dir: &Path) -> Option<String> {
-    let default_branch_cfg = ConfigSet::read_early_config(remote_git_dir, "init.defaultBranch")
-        .ok()
-        .flatten()
-        .or_else(|| {
-            ConfigSet::read_early_config(remote_git_dir, "init.defaultbranch")
-                .ok()
-                .flatten()
-        });
+    let default_branch_cfg =
+        ConfigSet::read_early_config(Some(remote_git_dir), "init.defaultBranch")
+            .ok()
+            .and_then(|v| v.last().cloned())
+            .or_else(|| {
+                ConfigSet::read_early_config(Some(remote_git_dir), "init.defaultbranch")
+                    .ok()
+                    .and_then(|v| v.last().cloned())
+            });
     if let Some(db) = default_branch_cfg {
         let db = db.trim();
         if !db.is_empty() && refs::resolve_ref(remote_git_dir, &format!("refs/heads/{db}")).is_ok()
