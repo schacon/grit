@@ -1722,15 +1722,12 @@ fn try_resolve_at_minus(repo: &Repository, spec: &str) -> Result<Option<ObjectId
         if let Some(rest) = msg.strip_prefix("checkout: moving from ") {
             count += 1;
             if count == n {
-                // Extract the "from" branch name
                 if let Some(to_pos) = rest.find(" to ") {
                     let from_branch = &rest[..to_pos];
-                    // Try to resolve the branch name
                     let ref_name = format!("refs/heads/{from_branch}");
                     if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &ref_name) {
                         return Ok(Some(oid));
                     }
-                    // Try as-is (might be a detached HEAD SHA)
                     if let Ok(oid) = from_branch.parse::<ObjectId>() {
                         if repo.odb.exists(&oid) {
                             return Ok(Some(oid));
@@ -1847,22 +1844,43 @@ fn resolve_reflog_oid(
 ) -> Result<ObjectId> {
     let entries = read_reflog(&repo.git_dir, refname)?;
     let display = reflog_display_name(refname_raw, refname);
-    if entries.is_empty() {
-        return Err(Error::Message(format!(
-            "fatal: log for '{display}' is empty"
-        )));
-    }
     match index_or_date {
         ReflogSelector::Index(index) => {
-            let reversed_idx = entries.len().checked_sub(1 + index).ok_or_else(|| {
-                Error::Message(format!(
-                    "fatal: log for '{display}' only has {} entries",
-                    entries.len()
-                ))
-            })?;
-            Ok(entries[reversed_idx].new_oid)
+            let len = entries.len();
+            if index == 0 {
+                if len == 0 {
+                    return refs::resolve_ref(&repo.git_dir, refname).map_err(|_| {
+                        Error::Message(format!("fatal: log for '{display}' is empty"))
+                    });
+                }
+                return Ok(entries[len - 1].new_oid);
+            }
+            if len == 0 {
+                return Err(Error::Message(format!(
+                    "fatal: log for '{display}' is empty"
+                )));
+            }
+            if index > len {
+                return Err(Error::Message(format!(
+                    "fatal: log for '{display}' only has {len} entries"
+                )));
+            }
+            if index == len {
+                if len == 1 {
+                    return Ok(entries[0].old_oid);
+                }
+                return Err(Error::Message(format!(
+                    "fatal: log for '{display}' only has {len} entries"
+                )));
+            }
+            Ok(entries[len - 1 - index].new_oid)
         }
         ReflogSelector::Date(target_ts) => {
+            if entries.is_empty() {
+                return Err(Error::Message(format!(
+                    "fatal: log for '{display}' is empty"
+                )));
+            }
             for entry in entries.iter().rev() {
                 let ts = parse_reflog_entry_timestamp(entry);
                 if let Some(t) = ts {
