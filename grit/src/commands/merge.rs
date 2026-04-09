@@ -1149,9 +1149,12 @@ pub(crate) fn create_virtual_merge_base(
         let ours_tree = commit_tree(repo, current)?;
         let theirs_tree = commit_tree(repo, next)?;
 
-        let base_entries = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
-        let ours_entries = tree_to_map(tree_to_index_entries(repo, &ours_tree, "")?);
-        let theirs_entries = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
+        let base_entries =
+            tree_to_map_for_merge(repo, tree_to_index_entries(repo, &base_tree, "")?);
+        let ours_entries =
+            tree_to_map_for_merge(repo, tree_to_index_entries(repo, &ours_tree, "")?);
+        let theirs_entries =
+            tree_to_map_for_merge(repo, tree_to_index_entries(repo, &theirs_tree, "")?);
 
         // Create a dummy head state for merge_trees.
         // When constructing a virtual base, Git labels the two temporary
@@ -1467,9 +1470,11 @@ fn do_real_merge(
     let theirs_tree = commit_tree(repo, merge_oid)?;
 
     // Flatten trees to path→entry maps
-    let mut base_entries = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
-    let ours_entries = tree_to_map(tree_to_index_entries(repo, &ours_tree, "")?);
-    let mut theirs_entries = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
+    let mut base_entries =
+        tree_to_map_for_merge(repo, tree_to_index_entries(repo, &base_tree, "")?);
+    let ours_entries = tree_to_map_for_merge(repo, tree_to_index_entries(repo, &ours_tree, "")?);
+    let mut theirs_entries =
+        tree_to_map_for_merge(repo, tree_to_index_entries(repo, &theirs_tree, "")?);
     apply_subtree_shift(
         subtree_shift,
         &ours_entries,
@@ -2406,9 +2411,11 @@ fn do_octopus_merge(
             let base_tree = commit_tree(repo, base_oid)?;
             let theirs_tree = commit_tree(repo, *merge_oid)?;
 
-            let base_entries = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
-            let ours_entries = tree_to_map(sim_entries.clone());
-            let theirs_entries = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
+            let base_entries =
+                tree_to_map_for_merge(repo, tree_to_index_entries(repo, &base_tree, "")?);
+            let ours_entries = tree_to_map_for_merge(repo, sim_entries.clone());
+            let theirs_entries =
+                tree_to_map_for_merge(repo, tree_to_index_entries(repo, &theirs_tree, "")?);
 
             let base_label_prefix = if bases.is_empty() {
                 "empty tree".to_string()
@@ -2497,9 +2504,11 @@ fn do_octopus_merge(
         let base_tree = commit_tree(repo, base_oid)?;
         let theirs_tree = commit_tree(repo, *merge_oid)?;
 
-        let base_entries = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
-        let ours_entries = tree_to_map(current_tree_entries);
-        let theirs_entries = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
+        let base_entries =
+            tree_to_map_for_merge(repo, tree_to_index_entries(repo, &base_tree, "")?);
+        let ours_entries = tree_to_map_for_merge(repo, current_tree_entries);
+        let theirs_entries =
+            tree_to_map_for_merge(repo, tree_to_index_entries(repo, &theirs_tree, "")?);
 
         let base_label_prefix = if bases.is_empty() {
             "empty tree".to_string()
@@ -5570,9 +5579,10 @@ pub(crate) fn merge_tree_write_tree_core(
     let ours_tree = commit_tree(repo, branch1_oid)?;
     let theirs_tree = commit_tree(repo, branch2_oid)?;
 
-    let base_entries = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
-    let ours_entries = tree_to_map(tree_to_index_entries(repo, &ours_tree, "")?);
-    let theirs_entries = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
+    let base_entries = tree_to_map_for_merge(repo, tree_to_index_entries(repo, &base_tree, "")?);
+    let ours_entries = tree_to_map_for_merge(repo, tree_to_index_entries(repo, &ours_tree, "")?);
+    let theirs_entries =
+        tree_to_map_for_merge(repo, tree_to_index_entries(repo, &theirs_tree, "")?);
 
     let head = HeadState::Detached { oid: branch1_oid };
     let forced_labels = Some((our_branch_spec.to_string(), their_branch_spec.to_string()));
@@ -5657,9 +5667,10 @@ pub(crate) fn remerge_merge_tree(
     let ours_tree = commit_tree(repo, parent1)?;
     let theirs_tree = commit_tree(repo, parent2)?;
 
-    let base_entries = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
-    let ours_entries = tree_to_map(tree_to_index_entries(repo, &ours_tree, "")?);
-    let theirs_entries = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
+    let base_entries = tree_to_map_for_merge(repo, tree_to_index_entries(repo, &base_tree, "")?);
+    let ours_entries = tree_to_map_for_merge(repo, tree_to_index_entries(repo, &ours_tree, "")?);
+    let theirs_entries =
+        tree_to_map_for_merge(repo, tree_to_index_entries(repo, &theirs_tree, "")?);
 
     let p1_l = commit_remerge_marker_label(repo, &parent1);
     let p2_l = commit_remerge_marker_label(repo, &parent2);
@@ -6639,6 +6650,56 @@ fn tree_to_map(entries: Vec<IndexEntry>) -> HashMap<Vec<u8>, IndexEntry> {
     let mut out = HashMap::new();
     for e in entries {
         out.insert(e.path.clone(), e);
+    }
+    out
+}
+
+fn core_ignorecase(repo: &Repository) -> bool {
+    ConfigSet::load(Some(&repo.git_dir), true)
+        .ok()
+        .and_then(|c| c.get_bool("core.ignorecase"))
+        .and_then(std::result::Result::ok)
+        .unwrap_or(false)
+}
+
+/// Lowercase each `/`-separated path component (ASCII) for `core.ignorecase` path identity.
+fn path_ascii_lowercase_components(path: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(path.len());
+    let mut start = 0;
+    for (i, &b) in path.iter().enumerate() {
+        if b == b'/' {
+            for &c in &path[start..i] {
+                out.push(c.to_ascii_lowercase());
+            }
+            out.push(b'/');
+            start = i + 1;
+        }
+    }
+    for &c in &path[start..] {
+        out.push(c.to_ascii_lowercase());
+    }
+    out
+}
+
+/// Flatten a tree to a path → entry map for merge machinery.
+///
+/// When `core.ignorecase` is true, paths are normalized to a canonical spelling (ASCII
+/// lowercased per component) so `TestCase` and `testcase` occupy one slot, matching Git on
+/// case-insensitive filesystems (t6419).
+fn tree_to_map_for_merge(
+    repo: &Repository,
+    entries: Vec<IndexEntry>,
+) -> HashMap<Vec<u8>, IndexEntry> {
+    if !core_ignorecase(repo) {
+        return tree_to_map(entries);
+    }
+    let mut out = HashMap::new();
+    for mut e in entries {
+        let key = path_ascii_lowercase_components(&e.path);
+        let plen = key.len().min(0xFFF) as u16;
+        e.path = key.clone();
+        e.flags = (e.flags & !0xFFF) | plen;
+        out.entry(key).or_insert(e);
     }
     out
 }
