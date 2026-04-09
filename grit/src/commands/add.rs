@@ -900,7 +900,7 @@ fn update_tracked(
                     );
                     let current = index.get(raw_path, 0);
                     if current.map(|e| e.oid != oid).unwrap_or(false) {
-                        eprintln!("add '{path_str}'");
+                        println!("add '{path_str}'");
                     }
                 }
             } else {
@@ -917,7 +917,7 @@ fn update_tracked(
             }
         } else {
             if args.verbose || args.dry_run {
-                eprintln!("remove '{path_str}'");
+                println!("remove '{path_str}'");
             }
             if !args.dry_run {
                 index.remove(raw_path);
@@ -1287,7 +1287,7 @@ pub(crate) fn stage_file(
             // Don't actually stage, just check if the file exists
             return Ok(());
         }
-        eprintln!("add '{rel_path}'");
+        println!("add '{rel_path}'");
         return Ok(());
     }
 

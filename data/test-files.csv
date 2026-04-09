@@ -512,7 +512,7 @@ t2105-update-index-gitfile	t2	yes	4	4	0	true	ok	0
 t2106-update-index-assume-unchanged	t2	yes	2	2	0	true	ok	0
 t2107-update-index-basic	t2	yes	10	10	0	true	ok	0
 t2108-update-index-refresh-racy	t2	yes	6	0	6	false	ok	0
-t2200-add-update	t2	yes	19	18	1	false	ok	0
+t2200-add-update	t2	yes	19	19	0	true	ok	0
 t2201-add-update-typechange	t2	yes	6	2	4	false	ok	0
 t2202-add-addremove	t2	yes	3	3	0	true	ok	0
 t2203-add-intent	t2	yes	19	14	5	false	ok	0
