@@ -97,6 +97,10 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let ignore_case = config
+        .get_bool("core.ignorecase")
+        .and_then(|r| r.ok())
+        .unwrap_or(false);
     let sparse_enabled = config
         .get("core.sparseCheckout")
         .map(|v| v.eq_ignore_ascii_case("true"))
@@ -434,7 +438,23 @@ pub fn run(args: Args) -> Result<()> {
             bail!("{msg}");
         }
 
-        if dst_abs.exists()
+        if src_rel == dst_rel {
+            let msg = format!(
+                "source and destination are the same, source='{src_rel}', destination='{dst_rel}'"
+            );
+            if args.skip_errors {
+                continue;
+            }
+            bail!("{msg}");
+        }
+
+        // Git `builtin/mv.c`: on case-insensitive filesystems (`core.ignorecase`), a path that
+        // only differs by case from the source is not a separate destination — `exists()` would
+        // still be true for the same inode.
+        let dst_fs_collides =
+            dst_abs.exists() && !(ignore_case && src_rel.eq_ignore_ascii_case(&dst_rel));
+
+        if dst_fs_collides
             && !(args.force && (dst_abs.is_file() || dst_abs.is_symlink()) && !dst_abs.is_dir())
         {
             if !args.force {
