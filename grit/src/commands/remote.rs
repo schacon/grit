@@ -44,6 +44,9 @@ pub enum RemoteSubcommand {
     /// Configure the set of tracked branches for a remote.
     #[command(name = "set-branches")]
     SetBranches(SetBranchesArgs),
+    /// Set or delete the default branch the remote's `HEAD` points at (`refs/remotes/<name>/HEAD`).
+    #[command(name = "set-head")]
+    SetHead(SetHeadArgs),
     /// Remove stale remote-tracking branches.
     Prune(PruneArgs),
     /// Fetch updates from remote(s).
@@ -119,6 +122,15 @@ pub struct SetBranchesArgs {
     pub branches: Vec<String>,
 }
 
+/// Arguments for `grit remote set-head <remote> <branch>`.
+#[derive(Debug, ClapArgs)]
+pub struct SetHeadArgs {
+    /// Name of the remote.
+    pub remote: String,
+    /// Branch name on the remote (e.g. `main`); becomes a symref to `refs/remotes/<remote>/<branch>`.
+    pub branch: String,
+}
+
 /// Arguments for `grit remote prune`.
 #[derive(Debug, ClapArgs)]
 pub struct PruneArgs {
@@ -144,6 +156,7 @@ pub fn run(args: Args) -> Result<()> {
         Some(RemoteSubcommand::SetUrl(set_url_args)) => cmd_set_url(set_url_args),
         Some(RemoteSubcommand::Show(show_args)) => cmd_show(show_args),
         Some(RemoteSubcommand::SetBranches(sb_args)) => cmd_set_branches(sb_args),
+        Some(RemoteSubcommand::SetHead(sh_args)) => cmd_set_head(sh_args),
         Some(RemoteSubcommand::Prune(prune_args)) => cmd_prune(prune_args),
         Some(RemoteSubcommand::Update(update_args)) => cmd_update(update_args),
         None => cmd_list(args.verbose),
@@ -429,6 +442,30 @@ fn cmd_set_branches(args: SetBranchesArgs) -> Result<()> {
     }
 
     config_file.write().context("writing config")?;
+    Ok(())
+}
+
+fn cmd_set_head(args: SetHeadArgs) -> Result<()> {
+    let git_dir = resolve_git_dir()?;
+    let config = load_local_config(&git_dir)?;
+    let remotes = collect_remotes(&config);
+    if !remotes.contains_key(&args.remote) {
+        bail!("No such remote '{}'", args.remote);
+    }
+
+    let branch = args.branch.trim();
+    let short = branch.strip_prefix("refs/heads/").unwrap_or(branch).trim();
+    if short.is_empty() {
+        bail!("branch name required");
+    }
+    let target = format!("refs/remotes/{}/{}", args.remote, short);
+    refs::resolve_ref(&git_dir, &target)
+        .with_context(|| format!("unknown remote ref '{}'", target))?;
+
+    let head_ref = format!("refs/remotes/{}/HEAD", args.remote);
+    refs::write_symbolic_ref(&git_dir, &head_ref, &target)
+        .with_context(|| format!("could not update {}", head_ref))?;
+    println!("{head_ref} -> {target}");
     Ok(())
 }
 

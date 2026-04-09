@@ -925,7 +925,7 @@ t5505-remote	t5	yes	0	0	0	false	timeout	1
 t5506-remote-groups	t5	yes	9	9	0	true	ok	0
 t5507-remote-environment	t5	yes	5	3	2	false	ok	0
 t5509-fetch-push-namespaces	t5	yes	15	4	11	false	ok	0
-t5510-fetch	t5	yes	215	81	134	false	ok	0
+t5510-fetch	t5	yes	215	93	122	false	ok	0
 t5511-refspec	t5	yes	47	24	23	false	ok	0
 t5512-ls-remote	t5	yes	0	0	0	false	timeout	0
 t5513-fetch-track	t5	yes	2	2	0	true	ok	0
