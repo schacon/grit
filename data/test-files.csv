@@ -1226,7 +1226,7 @@ t7503-pre-commit-and-diff-whitespace	t7	yes	0	0	0	false	timeout	0
 t7503-pre-commit-and-pre-merge-commit-hooks	t7	yes	22	6	16	false	ok	0
 t7504-commit-msg-hook	t7	yes	29	22	7	false	ok	1
 t7505-prepare-commit-msg	t7	yes	30	30	0	true	ok	0
-t7505-prepare-commit-msg-hook	t7	yes	23	7	16	false	ok	0
+t7505-prepare-commit-msg-hook	t7	yes	23	23	0	true	ok	0
 t7506-status-submodule	t7	yes	40	6	34	false	ok	0
 t7507-commit-verbose	t7	yes	45	19	26	false	ok	0
 t7508-status	t7	yes	126	39	87	false	ok	0

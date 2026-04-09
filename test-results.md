@@ -1,5 +1,10 @@
 # Test Results
 
+**Updated:** 2026-04-09
+
+- `./scripts/run-tests.sh t7505-prepare-commit-msg-hook.sh`: 23/23 passing (prepare-commit-msg hook coverage; harness CSV/dashboards refreshed).
+- `cargo test -p grit-lib --lib`: 121/121 passing.
+
 **Updated:** 2026-04-08
 
 - `./scripts/run-tests.sh t3060-ls-files-with-tree.sh`: 8/8 passing (`ls-files --with-tree`: tree overlay on index, usage incompatibilities, conflict + missing-index cases; harness CSV/dashboards refreshed).

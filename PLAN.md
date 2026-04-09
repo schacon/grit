@@ -865,7 +865,7 @@ commit → check it off → move on.
 - [ ] `t7425-submodule-gitdir-path-extension` █████░░░░░░░░░░░░░░░ 6/23 (17 left) — submodulePathConfig extension works as expected
 - [ ] `t7422-submodule-output` █░░░░░░░░░░░░░░░░░░░ 1/18 (17 left) — submodule --cached, --quiet etc. output
 - [ ] `t7301-clean-interactive` ████░░░░░░░░░░░░░░░░ 5/23 (18 left) — git clean -i basic tests
-- [ ] `t7505-prepare-commit-msg-hook` ████░░░░░░░░░░░░░░░░ 5/23 (18 left) — prepare-commit-msg hook
+- [x] `t7505-prepare-commit-msg-hook` — prepare-commit-msg hook (23/23)
 - [ ] `t7411-submodule-config` ██░░░░░░░░░░░░░░░░░░ 2/20 (18 left) — Test submodules config cache infrastructure
 
 - [ ] `t7519-status-fsmonitor` ████████░░░░░░░░░░░░ 14/33 (19 left) — git status with file system watcher

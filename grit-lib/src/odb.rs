@@ -541,8 +541,6 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
-    use flate2::read::ZlibDecoder;
-    use std::io::Read;
     use tempfile::TempDir;
 
     #[test]
