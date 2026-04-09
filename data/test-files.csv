@@ -1000,7 +1000,7 @@ t5601-clone	t5	yes	115	71	44	false	ok	0
 t5602-clone-remote-exec	t5	yes	3	3	0	true	ok	0
 t5603-clone-dirname	t5	yes	47	1	46	false	ok	0
 t5604-clone-reference	t5	yes	34	22	12	false	ok	0
-t5605-clone-local	t5	yes	23	14	9	false	ok	0
+t5605-clone-local	t5	yes	23	23	0	true	ok	0
 t5606-clone-options	t5	yes	21	20	1	false	ok	0
 t5607-clone-bundle	t5	yes	16	5	11	false	ok	0
 t5608-clone-2gb	t5	yes	0	0	0	false	ok	0

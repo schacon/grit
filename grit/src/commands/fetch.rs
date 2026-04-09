@@ -561,6 +561,12 @@ fn fetch_remote(
         }
     }
 
+    // `git clone` from a bundle records the bundle path as `remote.origin.url`. A no-op `fetch`
+    // must succeed (`t5605` bundle clone + fetch).
+    if !is_ext_url && !is_http_url && remote_path_is_git_bundle_file(&remote_path) {
+        return Ok(());
+    }
+
     let remote_repo = if is_ext_url || is_http_url {
         None
     } else {
@@ -2797,6 +2803,20 @@ fn collect_remote_names(config: &ConfigSet) -> Vec<String> {
         }
     }
     names
+}
+
+/// True when `path` is a regular file starting with the v2 git bundle header.
+fn remote_path_is_git_bundle_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    if let Ok(mut f) = fs::File::open(path) {
+        let mut buf = [0u8; 20];
+        if let Ok(n) = std::io::Read::read(&mut f, &mut buf) {
+            return buf[..n].starts_with(b"# v2 git bundle");
+        }
+    }
+    false
 }
 
 /// Open a repository (bare or non-bare).

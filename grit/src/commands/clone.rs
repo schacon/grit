@@ -138,6 +138,10 @@ pub struct Args {
     #[arg(long = "no-local")]
     pub no_local: bool,
 
+    /// Copy object files instead of hardlinking when populating the new ODB (local clone path).
+    #[arg(long = "no-hardlinks", action = clap::ArgAction::SetTrue)]
+    pub no_hardlinks: bool,
+
     /// Partial clone filter spec (accepted but currently a no-op).
     #[arg(long = "filter", value_name = "FILTER-SPEC")]
     pub filter: Option<String>,
@@ -536,6 +540,19 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     };
 
+    // Git refuses `--upload-pack` on the local fast path (no remote helper to run).
+    // `--no-local` still spawns upload-pack, so the custom command must be honored (`t5605`).
+    if !args.no_local
+        && args
+            .upload_pack
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
+        && !args.repository.starts_with("file://")
+        && !crate::ssh_transport::is_configured_ssh_url(&args.repository)
+    {
+        bail!("could not read from remote repository");
+    }
+
     if effective_reject_shallow(&args) && source_repo_is_shallow(&source.git_dir) {
         bail!("source repository is shallow, reject to clone.");
     }
@@ -904,7 +921,9 @@ pub fn run(mut args: Args) -> Result<()> {
         .context("setting up alternates")?;
         propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
     } else {
-        copy_objects(&source.git_dir, &dest.git_dir).context("copying objects")?;
+        let try_hardlink_objects = !args.no_hardlinks && !args.repository.starts_with("file://");
+        copy_objects(&source.git_dir, &dest.git_dir, try_hardlink_objects)
+            .context("copying objects")?;
         merge_alternates_from_source_objects(&source.git_dir, &dest.git_dir.join("objects"))
             .context("merging source alternates")?;
         append_reference_alternates(
@@ -913,13 +932,12 @@ pub fn run(mut args: Args) -> Result<()> {
             &args.reference_if_able,
         )
         .context("adding --reference alternates")?;
-        // For local clones, borrow objects from the source via alternates (like `git clone --local`).
-        // When `--reference` / `--reference-if-able` is used, Git only records those alternates
-        // (plus merged lines from the source's own `alternates` file); the loose/pack copy from the
-        // source already materializes objects locally (`t7408-submodule-reference`).
+        // `--shared` (-s) borrows objects via `info/alternates`. A plain local clone (including
+        // `git clone -l` without `-s`) materializes objects in the destination and must not leave a
+        // lone `alternates` file — `t5605` checks `find objects -links 1`.
         let alt_dir = dest.git_dir.join("objects/info");
         let _ = fs::create_dir_all(&alt_dir);
-        if args.reference.is_empty() && args.reference_if_able.is_empty() {
+        if args.shared && args.reference.is_empty() && args.reference_if_able.is_empty() {
             let source_objects = source.git_dir.join("objects");
             if let Ok(abs) = source_objects.canonicalize() {
                 add_alternate_objects_line(&alt_dir, &abs)?;
@@ -939,7 +957,7 @@ pub fn run(mut args: Args) -> Result<()> {
         && !dest.git_dir.join("objects/info/alternates").exists()
         && objects_dir_has_no_data(&dest.git_dir)
     {
-        copy_objects(&source.git_dir, &dest.git_dir)
+        copy_objects(&source.git_dir, &dest.git_dir, false)
             .context("copying objects after empty fetch")?;
     }
 
@@ -947,6 +965,8 @@ pub fn run(mut args: Args) -> Result<()> {
         if crate::trace_packet::trace_packet_dest().is_some() {
             crate::trace_packet::trace_packet_line(b"clone> packfile negotiation complete");
         }
+
+        assert_source_refs_valid_for_clone(&source.git_dir).context("invalid source ref")?;
 
         if args.bare {
             if args.mirror {
@@ -2460,7 +2480,8 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         .context("setting up alternates")?;
         propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
     } else {
-        copy_objects(&source.git_dir, &dest.git_dir).context("copying objects")?;
+        copy_objects(&source.git_dir, &dest.git_dir, !args.no_hardlinks)
+            .context("copying objects")?;
         merge_alternates_from_source_objects(&source.git_dir, &dest.git_dir.join("objects"))
             .context("merging source alternates")?;
         append_reference_alternates(
@@ -2471,7 +2492,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         .context("adding --reference alternates")?;
         let alt_dir = dest.git_dir.join("objects/info");
         let _ = fs::create_dir_all(&alt_dir);
-        if args.reference.is_empty() && args.reference_if_able.is_empty() {
+        if args.shared && args.reference.is_empty() && args.reference_if_able.is_empty() {
             let source_objects = source.git_dir.join("objects");
             if let Ok(abs) = source_objects.canonicalize() {
                 add_alternate_objects_line(&alt_dir, &abs)?;
@@ -2489,13 +2510,14 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         && !dest.git_dir.join("objects/info/alternates").exists()
         && objects_dir_has_no_data(&dest.git_dir)
     {
-        copy_objects(&source.git_dir, &dest.git_dir)
+        copy_objects(&source.git_dir, &dest.git_dir, false)
             .context("copying objects after empty fetch")?;
     }
 
     let remote_url = args.repository.as_str();
 
     if !use_upload_for_protocol_v1 {
+        assert_source_refs_valid_for_clone(&source.git_dir).context("invalid source ref")?;
         if args.bare {
             if args.mirror {
                 copy_refs_mirror_all(&source.git_dir, &dest.git_dir)
@@ -3403,13 +3425,17 @@ fn objects_dir_has_no_data(git_dir: &Path) -> bool {
 }
 
 /// Copy all objects (loose + packs) from source to destination.
-fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
+///
+/// When `try_hardlink` is true, use hard links for pack and loose object files when possible
+/// (local clone fast path). When false, always copy bytes (e.g. `--no-hardlinks`, post-fetch
+/// materialization).
+fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path, try_hardlink: bool) -> Result<()> {
     let src_objects = src_git_dir.join("objects");
     let dst_objects = dst_git_dir.join("objects");
 
     // Copy loose objects
     if src_objects.is_dir() {
-        copy_dir_contents(&src_objects, &dst_objects, &["info", "pack"])?;
+        copy_dir_contents(&src_objects, &dst_objects, &["info", "pack"], try_hardlink)?;
     }
 
     // Copy pack files
@@ -3422,10 +3448,10 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
             let src_file = entry.path();
             if src_file.is_file() {
                 let dst_file = dst_pack.join(entry.file_name());
-                // Try hardlink first, fall back to copy
-                if fs::hard_link(&src_file, &dst_file).is_err() {
-                    fs::copy(&src_file, &dst_file)?;
+                if try_hardlink && fs::hard_link(&src_file, &dst_file).is_ok() {
+                    continue;
                 }
+                fs::copy(&src_file, &dst_file)?;
             }
         }
     }
@@ -3448,7 +3474,7 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
 }
 
 /// Copy directory contents recursively, skipping named subdirectories.
-fn copy_dir_contents(src: &Path, dst: &Path, skip_dirs: &[&str]) -> Result<()> {
+fn copy_dir_contents(src: &Path, dst: &Path, skip_dirs: &[&str], try_hardlink: bool) -> Result<()> {
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -3465,14 +3491,75 @@ fn copy_dir_contents(src: &Path, dst: &Path, skip_dirs: &[&str]) -> Result<()> {
                 let inner = inner?;
                 if inner.file_type()?.is_file() {
                     let dst_file = dst_dir.join(inner.file_name());
-                    // Try hardlink, fall back to copy
-                    if fs::hard_link(inner.path(), &dst_file).is_err() {
-                        fs::copy(inner.path(), &dst_file)?;
+                    if try_hardlink && fs::hard_link(inner.path(), &dst_file).is_ok() {
+                        continue;
                     }
+                    fs::copy(inner.path(), &dst_file)?;
                 }
             }
         }
     }
+    Ok(())
+}
+
+/// Fail early when the source has obviously corrupt ref files under `refs/heads` or `refs/tags`,
+/// matching Git's clone error for invalid loose refs (`t5605` REFFILES case).
+fn assert_source_refs_valid_for_clone(git_dir: &Path) -> Result<()> {
+    if grit_lib::reftable::is_reftable_repo(git_dir) {
+        return Ok(());
+    }
+
+    fn walk_loose_refs(dir: &Path) -> Result<()> {
+        let read = match fs::read_dir(dir) {
+            Ok(r) => r,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        for entry in read {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                walk_loose_refs(&path)?;
+            } else if path.is_file() {
+                let content = fs::read_to_string(&path)?;
+                let trimmed = content.trim();
+                if trimmed.starts_with("ref: ") {
+                    continue;
+                }
+                if trimmed.len() != 40 || !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+                    bail!("has neither a valid OID nor a target");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    walk_loose_refs(&git_dir.join("refs/heads"))?;
+    walk_loose_refs(&git_dir.join("refs/tags"))?;
+
+    let packed_refs = git_dir.join("packed-refs");
+    if packed_refs.is_file() {
+        let content = fs::read_to_string(&packed_refs)?;
+        for line in content.lines() {
+            if line.is_empty() || line.starts_with('#') || line.starts_with('^') {
+                continue;
+            }
+            let mut parts = line.split_whitespace();
+            let Some(oid) = parts.next() else {
+                continue;
+            };
+            let Some(refname) = parts.next() else {
+                continue;
+            };
+            if !(refname.starts_with("refs/heads/") || refname.starts_with("refs/tags/")) {
+                continue;
+            }
+            if oid.len() != 40 || !oid.chars().all(|c| c.is_ascii_hexdigit()) {
+                bail!("has neither a valid OID nor a target");
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -4523,12 +4610,14 @@ fn run_bundle_clone(args: Args) -> Result<()> {
 
     // Determine target directory
     let target_name = args.directory.clone().unwrap_or_else(|| {
-        let base = bundle_path
-            .file_stem()
+        let fname = bundle_path
+            .file_name()
             .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        base
+            .to_string_lossy();
+        fname
+            .strip_suffix(".bundle")
+            .unwrap_or(fname.as_ref())
+            .to_string()
     });
     let target_path = PathBuf::from(&target_name);
     if target_path.exists() {
@@ -4542,40 +4631,90 @@ fn run_bundle_clone(args: Args) -> Result<()> {
         eprintln!("Cloning into '{}'...", target_name);
     }
 
-    // Figure out default branch from refs
-    let head_branch = refs
-        .iter()
-        .find(|(r, _)| r == "HEAD")
-        .and_then(|(_, head_oid)| {
-            refs.iter()
-                .find(|(r, oid)| r.starts_with("refs/heads/") && oid == head_oid)
-                .map(|(r, _)| r.strip_prefix("refs/heads/").unwrap_or(r).to_string())
-        })
-        .or_else(|| {
-            // If no HEAD, pick the first (or only) branch ref
-            let branches: Vec<_> = refs
+    // Figure out default branch from refs. When the bundle records `HEAD` but no `refs/heads/*`
+    // points at the same object (orphan HEAD), Git initializes the default branch unborn — the
+    // clone must not create `refs/heads/<tip>` for a branch that only exists as a remote-tracking
+    // ref (`t5605` b5.bundle).
+    let has_bundle_head_line = refs.iter().any(|(r, _)| r == "HEAD");
+    let head_oid_in_bundle = refs.iter().find(|(r, _)| r == "HEAD").map(|(_, oid)| *oid);
+    let branches_matching_head: Vec<&str> = if let Some(h) = head_oid_in_bundle {
+        refs.iter()
+            .filter(|(r, oid)| r.starts_with("refs/heads/") && *oid == h)
+            .map(|(r, _)| r.strip_prefix("refs/heads/").unwrap_or(r))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let fallback_branch = default_head_branch_fallback();
+
+    let head_branch_no_head_line = {
+        let branches: Vec<_> = refs
+            .iter()
+            .filter(|(r, _)| r.starts_with("refs/heads/"))
+            .collect();
+        if branches.len() == 1 {
+            branches[0]
+                .0
+                .strip_prefix("refs/heads/")
+                .unwrap_or(&branches[0].0)
+                .to_string()
+        } else if branches.is_empty() {
+            fallback_branch.clone()
+        } else {
+            branches
                 .iter()
-                .filter(|(r, _)| r.starts_with("refs/heads/"))
-                .collect();
-            if branches.len() == 1 {
-                Some(
-                    branches[0]
-                        .0
-                        .strip_prefix("refs/heads/")
-                        .unwrap_or(&branches[0].0)
-                        .to_string(),
-                )
+                .find(|(r, _)| r.ends_with("/main"))
+                .or_else(|| branches.iter().find(|(r, _)| r.ends_with("/master")))
+                .or(branches.first())
+                .map(|(r, _)| r.strip_prefix("refs/heads/").unwrap_or(r).to_string())
+                .unwrap_or_else(|| fallback_branch.clone())
+        }
+    };
+
+    // When the bundle includes `HEAD`, the new repo's initial branch name follows
+    // `init.defaultBranch`. When `HEAD` is absent (`git bundle create b5.bundle not-main`), Git
+    // still does the same if the only listed branch is not that default (`t5605`).
+    let head_branch = if has_bundle_head_line {
+        fallback_branch.clone()
+    } else {
+        let branches: Vec<_> = refs
+            .iter()
+            .filter(|(r, _)| r.starts_with("refs/heads/"))
+            .collect();
+        if branches.len() == 1 {
+            let sole = branches[0]
+                .0
+                .strip_prefix("refs/heads/")
+                .unwrap_or(&branches[0].0);
+            if sole == fallback_branch.as_str() {
+                sole.to_string()
             } else {
-                // Prefer main, then master, then first
-                branches
-                    .iter()
-                    .find(|(r, _)| r.ends_with("/main"))
-                    .or_else(|| branches.iter().find(|(r, _)| r.ends_with("/master")))
-                    .or(branches.first())
-                    .map(|(r, _)| r.strip_prefix("refs/heads/").unwrap_or(r).to_string())
+                fallback_branch.clone()
             }
-        })
-        .unwrap_or_else(|| "master".to_string());
+        } else {
+            head_branch_no_head_line.clone()
+        }
+    };
+
+    let orphan_bundle_head = if has_bundle_head_line {
+        head_oid_in_bundle.is_some()
+            && (branches_matching_head.is_empty()
+                || !branches_matching_head
+                    .iter()
+                    .any(|b| *b == fallback_branch.as_str()))
+    } else {
+        let branches: Vec<_> = refs
+            .iter()
+            .filter(|(r, _)| r.starts_with("refs/heads/"))
+            .collect();
+        branches.len() == 1
+            && branches[0]
+                .0
+                .strip_prefix("refs/heads/")
+                .unwrap_or(&branches[0].0)
+                != fallback_branch.as_str()
+    };
 
     let ref_storage = resolved_clone_ref_storage(&args)?;
 
@@ -4612,13 +4751,15 @@ fn run_bundle_clone(args: Args) -> Result<()> {
         }
     }
 
-    // Set HEAD to point to the default branch
-    if let Some((_, oid)) = refs
-        .iter()
-        .find(|(r, _)| r == &format!("refs/heads/{}", head_branch))
-    {
-        let branch_ref_name = format!("refs/heads/{head_branch}");
-        clone_write_direct_ref(&dest.git_dir, &branch_ref_name, &oid.to_hex())?;
+    // Create the local branch only when the bundle lists that branch under `refs/heads/`.
+    if !orphan_bundle_head {
+        if let Some((_, oid)) = refs
+            .iter()
+            .find(|(r, _)| r == &format!("refs/heads/{head_branch}"))
+        {
+            let branch_ref_name = format!("refs/heads/{head_branch}");
+            clone_write_direct_ref(&dest.git_dir, &branch_ref_name, &oid.to_hex())?;
+        }
     }
 
     // Set up origin remote config
@@ -4628,7 +4769,14 @@ fn run_bundle_clone(args: Args) -> Result<()> {
 
     // Checkout if not bare
     if !args.bare {
-        checkout_head(&dest)?;
+        if orphan_bundle_head && !args.quiet {
+            eprintln!("warning: remote HEAD refers to nonexistent ref, unable to checkout");
+        }
+        if orphan_bundle_head {
+            checkout_head_allow_unborn(&dest)?;
+        } else {
+            checkout_head(&dest)?;
+        }
         run_post_checkout_after_clone(&dest)?;
     }
 
