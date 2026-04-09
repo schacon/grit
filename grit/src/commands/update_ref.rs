@@ -57,7 +57,7 @@ pub struct Args {
 }
 
 /// Run `grit update-ref`.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
     if args.null_terminated && !args.stdin {
         bail!("-z requires --stdin");
     }
@@ -75,8 +75,11 @@ pub fn run(args: Args) -> Result<()> {
     let target_refname = effective_refname(&repo, refname, args.no_deref)?;
 
     if args.delete {
+        // `git update-ref -d <ref> [<old>]` — the optional old OID is the first "value"
+        // positional; clap maps it to `new_value`. Prefer explicit `--` old if given.
+        let old_from_positional = args.new_value.take();
         let expected =
-            parse_old_expectation(args.old_value.as_deref().or(args.new_value.as_deref()))?;
+            parse_old_expectation(args.old_value.as_deref().or(old_from_positional.as_deref()))?;
         if let Some(exp) = expected {
             verify_expected_old(&repo, &target_refname, exp)?;
         }

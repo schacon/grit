@@ -6,6 +6,14 @@ test_description='git mktag: tag object verify test'
 
 . ./test-lib.sh
 
+# `$(test_oid deadbeef)` and similar placeholders come from upstream oid-info;
+# load them so object lines use valid 40-hex OIDs (matches git/t/t3800-mktag.sh).
+if test -n "${GIT_SOURCE_DIR-}" && test -f "$GIT_SOURCE_DIR/t/oid-info/oid"
+then
+	cat "$GIT_SOURCE_DIR/t/oid-info/hash-info" "$GIT_SOURCE_DIR/t/oid-info/oid" |
+		test_oid_cache
+fi
+
 ###########################################################
 # check the tag.sig file, expecting verify_tag() to fail,
 # and checking that the error message matches the pattern

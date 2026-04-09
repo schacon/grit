@@ -7,7 +7,9 @@ use grit_lib::git_date::show::{date_mode_release, parse_date_format, show_date};
 use grit_lib::git_date::tm::atoi_bytes;
 use grit_lib::mailmap::{load_mailmap, map_contact, parse_contact, MailmapEntry};
 use grit_lib::merge_base::{ancestor_closure, is_ancestor};
-use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
+use grit_lib::objects::{
+    parse_commit, parse_tag, tag_header_field, tag_object_line_oid, ObjectId, ObjectKind,
+};
 use grit_lib::refs::read_head;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
@@ -16,6 +18,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
+use std::str::FromStr;
 
 /// Arguments for `grit for-each-ref`.
 #[derive(Debug, ClapArgs)]
@@ -672,8 +675,7 @@ fn compare_on_key(
             SortField::ObjectName => entry.object_name.clone(),
             SortField::ObjectType => {
                 if let Some(oid) = entry.oid {
-                    repo.odb
-                        .read(&oid)
+                    repo.read_replaced(&oid)
                         .ok()
                         .map(|obj| obj.kind.to_string())
                         .unwrap_or_default()
@@ -683,8 +685,7 @@ fn compare_on_key(
             }
             SortField::Raw => {
                 if let Some(oid) = entry.oid {
-                    repo.odb
-                        .read(&oid)
+                    repo.read_replaced(&oid)
                         .ok()
                         .map(|obj| String::from_utf8_lossy(&obj.data).into_owned())
                         .unwrap_or_default()
@@ -694,8 +695,7 @@ fn compare_on_key(
             }
             SortField::RawSize => {
                 if let Some(oid) = entry.oid {
-                    repo.odb
-                        .read(&oid)
+                    repo.read_replaced(&oid)
                         .ok()
                         .map(|obj| obj.data.len().to_string())
                         .unwrap_or_else(|| "0".to_owned())
@@ -1015,12 +1015,7 @@ fn atom_value(
         "object" => {
             let object = read_object(repo, entry)?;
             if object.kind == ObjectKind::Tag {
-                let data = String::from_utf8_lossy(&object.data);
-                if let Some(line) = data.lines().find(|l| l.starts_with("object ")) {
-                    Ok(line["object ".len()..].trim().to_owned())
-                } else {
-                    Ok(String::new())
-                }
+                Ok(tag_header_field(&object.data, b"object ").unwrap_or_default())
             } else {
                 Ok(String::new())
             }
@@ -1028,12 +1023,7 @@ fn atom_value(
         "type" => {
             let object = read_object(repo, entry)?;
             if object.kind == ObjectKind::Tag {
-                let data = String::from_utf8_lossy(&object.data);
-                if let Some(line) = data.lines().find(|l| l.starts_with("type ")) {
-                    Ok(line["type ".len()..].trim().to_owned())
-                } else {
-                    Ok(String::new())
-                }
+                Ok(tag_header_field(&object.data, b"type ").unwrap_or_default())
             } else {
                 Ok(String::new())
             }
@@ -1270,12 +1260,7 @@ fn atom_value(
         "tag" => {
             let object = read_object(repo, entry)?;
             if object.kind == ObjectKind::Tag {
-                let data = String::from_utf8_lossy(&object.data);
-                if let Some(line) = data.lines().find(|l| l.starts_with("tag ")) {
-                    Ok(line["tag ".len()..].trim().to_owned())
-                } else {
-                    Ok(String::new())
-                }
+                Ok(tag_header_field(&object.data, b"tag ").unwrap_or_default())
             } else {
                 Ok(String::new())
             }
@@ -1406,18 +1391,29 @@ fn deref_atom_value(
     if object.kind != ObjectKind::Tag {
         return Ok(String::new());
     }
-    // Parse the tag to find the target object
-    let text = std::str::from_utf8(&object.data)
-        .map_err(|_| FormatError::Other(format!("tag {} has invalid UTF-8", entry.object_name)))?;
-    let target_oid_str = text
-        .lines()
-        .find_map(|line| line.strip_prefix("object "))
-        .ok_or_else(|| {
-            FormatError::Other(format!("tag {} has no object header", entry.object_name))
-        })?;
-    let target_oid: grit_lib::objects::ObjectId = target_oid_str.trim().parse().map_err(|_| {
-        FormatError::Other(format!("tag {} has invalid object id", entry.object_name))
+    let tag = parse_tag(&object.data).map_err(|_| {
+        FormatError::Fatal(format!(
+            "parse_object_buffer failed on {} for {}",
+            entry.object_name, entry.name
+        ))
     })?;
+    let target_oid = tag.object;
+    let expected_kind = ObjectKind::from_str(&tag.object_type).map_err(|_| {
+        FormatError::Fatal(format!(
+            "parse_object_buffer failed on {} for {}",
+            entry.object_name, entry.name
+        ))
+    })?;
+
+    let target_obj = repo
+        .read_replaced(&target_oid)
+        .map_err(|_| FormatError::Fatal(format!("could not read tagged object '{target_oid}'")))?;
+    if target_obj.kind != expected_kind {
+        return Err(FormatError::Fatal(format!(
+            "object '{target_oid}' tagged as '{expected_kind}', but is a '{}' type",
+            target_obj.kind
+        )));
+    }
 
     // Create a synthetic entry for the target object
     let deref_entry = RefEntry {
@@ -1453,8 +1449,7 @@ fn subject_for_oid(
     oid: ObjectId,
 ) -> Result<String, FormatError> {
     let object = repo
-        .odb
-        .read(&oid)
+        .read_replaced(&oid)
         .map_err(|_| FormatError::MissingObject(oid.to_string(), entry.name.clone()))?;
     match object.kind {
         ObjectKind::Commit => {
@@ -1475,8 +1470,7 @@ fn subject_for_oid(
 
 fn body_for_oid(repo: &Repository, entry: &RefEntry, oid: ObjectId) -> Result<String, FormatError> {
     let object = repo
-        .odb
-        .read(&oid)
+        .read_replaced(&oid)
         .map_err(|_| FormatError::MissingObject(oid.to_string(), entry.name.clone()))?;
     match object.kind {
         ObjectKind::Commit => {
@@ -1509,8 +1503,7 @@ fn commit_field_for_oid<F: Fn(&grit_lib::objects::CommitData) -> Result<String, 
     extractor: F,
 ) -> Result<String, FormatError> {
     let object = repo
-        .odb
-        .read(&oid)
+        .read_replaced(&oid)
         .map_err(|_| FormatError::MissingObject(oid.to_string(), entry.name.clone()))?;
     match object.kind {
         ObjectKind::Commit => {
@@ -1842,8 +1835,7 @@ fn read_object(
             entry.name.clone(),
         ));
     };
-    repo.odb
-        .read(&oid)
+    repo.read_replaced(&oid)
         .map_err(|_| FormatError::MissingObject(entry.object_name.clone(), entry.name.clone()))
 }
 
@@ -1950,7 +1942,7 @@ fn peel_to_non_tag(
     mut oid: ObjectId,
 ) -> std::result::Result<ObjectId, GustError> {
     loop {
-        let object = repo.odb.read(&oid)?;
+        let object = repo.read_replaced(&oid)?;
         if object.kind != ObjectKind::Tag {
             return Ok(oid);
         }
@@ -1960,7 +1952,7 @@ fn peel_to_non_tag(
 
 fn peel_to_commit(repo: &Repository, oid: ObjectId) -> std::result::Result<ObjectId, GustError> {
     let peeled = peel_to_non_tag(repo, oid)?;
-    let object = repo.odb.read(&peeled)?;
+    let object = repo.read_replaced(&peeled)?;
     if object.kind == ObjectKind::Commit {
         Ok(peeled)
     } else {
@@ -1971,17 +1963,8 @@ fn peel_to_commit(repo: &Repository, oid: ObjectId) -> std::result::Result<Objec
 }
 
 fn parse_tag_target(data: &[u8]) -> std::result::Result<ObjectId, GustError> {
-    let text = std::str::from_utf8(data)
-        .map_err(|_| GustError::CorruptObject("invalid tag object".to_owned()))?;
-    let Some(line) = text.lines().find(|line| line.starts_with("object ")) else {
-        return Err(GustError::CorruptObject(
-            "tag missing object header".to_owned(),
-        ));
-    };
-    line.trim_start_matches("object ")
-        .trim()
-        .parse::<ObjectId>()
-        .map_err(|_| GustError::CorruptObject("invalid tag target".to_owned()))
+    tag_object_line_oid(data)
+        .ok_or_else(|| GustError::CorruptObject("tag missing object header".to_owned()))
 }
 
 fn ref_matches_patterns(refname: &str, patterns: &[String], ignore_case: bool) -> bool {
