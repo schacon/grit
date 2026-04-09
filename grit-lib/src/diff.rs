@@ -581,6 +581,11 @@ pub fn diff_index_to_worktree(
             }
             continue;
         }
+        if ie.skip_worktree() {
+            // Sparse checkout: paths outside the cone are not expected to exist on disk.
+            // Git's status omits them from the index↔worktree diff (wt-status.c).
+            continue;
+        }
         // Use str slice directly to avoid allocation for path joining;
         // only allocate String if we need it for DiffEntry output.
         let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");

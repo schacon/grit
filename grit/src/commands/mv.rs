@@ -16,8 +16,9 @@ use grit_lib::sparse_checkout::{
 };
 use std::collections::HashSet;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
+
+use crate::commands::sparse_advice::{emit_dirty_sparse_advice, emit_sparse_path_advice};
 
 /// Arguments for `grit mv`.
 #[derive(Debug, ClapArgs)]
@@ -620,77 +621,6 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn emit_sparse_path_advice(w: &mut impl Write, config: &ConfigSet, paths: &[String]) -> Result<()> {
-    if paths.is_empty() {
-        return Ok(());
-    }
-    if !advice_update_sparse_path_enabled(config) {
-        return Ok(());
-    }
-    writeln!(
-        w,
-        "The following paths and/or pathspecs matched paths that exist\n\
-outside of your sparse-checkout definition, so will not be\n\
-updated in the index:"
-    )?;
-    for p in paths {
-        writeln!(w, "{p}")?;
-    }
-    writeln!(
-        w,
-        "hint: If you intend to update such entries, try one of the following:\n\
-hint: * Use the --sparse option.\n\
-hint: * Disable or modify the sparsity rules.\n\
-hint: Disable this message with \"git config set advice.updateSparsePath false\""
-    )?;
-    Ok(())
-}
-
-fn emit_dirty_sparse_advice(
-    w: &mut impl Write,
-    config: &ConfigSet,
-    paths: &[String],
-) -> Result<()> {
-    if paths.is_empty() {
-        return Ok(());
-    }
-    if !advice_update_sparse_path_enabled(config) {
-        return Ok(());
-    }
-    writeln!(
-        w,
-        "The following paths have been moved outside the\n\
-sparse-checkout definition but are not sparse due to local\n\
-modifications."
-    )?;
-    for p in paths {
-        writeln!(w, "{p}")?;
-    }
-    writeln!(
-        w,
-        "hint: To correct the sparsity of these paths, do the following:\n\
-hint: * Use \"git add --sparse <paths>\" to update the index\n\
-hint: * Use \"git sparse-checkout reapply\" to apply the sparsity rules\n\
-hint: Disable this message with \"git config set advice.updateSparsePath false\""
-    )?;
-    Ok(())
-}
-
-fn advice_update_sparse_path_enabled(config: &ConfigSet) -> bool {
-    if let Ok(v) = std::env::var("GIT_ADVICE") {
-        if v == "0" || v.eq_ignore_ascii_case("false") {
-            return false;
-        }
-        if v == "1" || v.eq_ignore_ascii_case("true") {
-            return true;
-        }
-    }
-    config
-        .get_bool("advice.updateSparsePath")
-        .and_then(|r| r.ok())
-        .unwrap_or(true)
 }
 
 fn empty_dir_has_sparse_contents(name: &str, index: &Index) -> bool {

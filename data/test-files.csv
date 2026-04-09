@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -649,7 +649,7 @@ t3513-revert-submodule	t3	yes	14	1	13	false	ok	0
 t3514-cherry-pick-revert-gpg	t3	skip	2	0	0	false	ok	0
 t3600-rm	t3	yes	82	54	28	false	ok	0
 t3601-rm-pathspec-file	t3	yes	5	2	3	false	ok	0
-t3602-rm-sparse-checkout	t3	yes	13	2	11	false	ok	0
+t3602-rm-sparse-checkout	t3	yes	13	13	0	true	ok	0
 t3650-replay-basics	t3	yes	0	0	0	false	timeout	0
 t3700-add	t3	yes	58	42	16	false	ok	0
 t3700-add-pathspec-file	t3	yes	24	24	0	true	ok	0

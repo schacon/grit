@@ -174,13 +174,6 @@ pub fn run(mut args: Args) -> Result<()> {
         args.branch = false;
     }
 
-    // Unlike upstream Git v1 porcelain, grit always prints the `##` line when the user
-    // passes `--porcelain` explicitly. `-z` alone only implies porcelain for path lines;
-    // it does not add the branch header (matches Git unless `-b` is used).
-    if explicit_porcelain && args.porcelain.as_deref() == Some("v1") && !args.no_branch {
-        args.branch = true;
-    }
-
     // Normalize untracked-files values: "false"/"0" → "no", "true"/"1" → "normal"
     let untracked_mode = match untracked_mode_str.as_str() {
         "no" | "false" | "0" => "no",
@@ -231,6 +224,20 @@ pub fn run(mut args: Args) -> Result<()> {
     // Untracked and ignored files
     let show_all_untracked = untracked_mode == "all";
     let hide_untracked = untracked_mode == "no";
+
+    // Porcelain v1: Git omits the `##` branch line when `--untracked-files=no` (e.g.
+    // `status --porcelain -uno`). Grit still defaults to showing `##` for plain `--porcelain`
+    // so clean repos and mixed outputs match our status tests (t12570). `-b` / `--branch`
+    // always forces the header.
+    if explicit_porcelain
+        && args.porcelain.as_deref() == Some("v1")
+        && !args.no_branch
+        && !args.branch
+        && !hide_untracked
+    {
+        args.branch = true;
+    }
+
     let (untracked, ignored_files) = if !hide_untracked {
         collect_untracked_and_ignored(&repo, &index, work_tree, args.ignored, show_all_untracked)?
     } else if args.ignored {
