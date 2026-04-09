@@ -21,7 +21,9 @@ use grit_lib::diff::diff_index_to_worktree;
 use grit_lib::ident::parse_signature_times;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
-use grit_lib::merge_trees::{merge_trees_three_way, WhitespaceMergeOptions};
+use grit_lib::merge_trees::{
+    merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation, WhitespaceMergeOptions,
+};
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
 };
@@ -835,9 +837,12 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
         commit_tree_oid,
         favor,
         ws_merge,
-        label_base.as_str(),
-        label_theirs.as_str(),
-        conflict_style,
+        TreeMergeConflictPresentation {
+            label_ours: "HEAD",
+            label_theirs: TheirsConflictLabel::Fixed(label_theirs.as_str()),
+            label_base: label_base.as_str(),
+            style: conflict_style,
+        },
     )?;
     let mut merge_result = MergeResult {
         index: merged.index,

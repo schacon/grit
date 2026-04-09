@@ -3464,7 +3464,7 @@ fn resolve_marker_size_for_path(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn execute_custom_merge_driver(
+pub(crate) fn execute_custom_merge_driver(
     command_template: &str,
     path: &str,
     base_content: &[u8],

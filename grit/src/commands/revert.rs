@@ -24,7 +24,8 @@ use grit_lib::config::ConfigSet;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_file::{ConflictStyle, MergeFavor};
 use grit_lib::merge_trees::{
-    index_tree_oid_matches_head, merge_trees_three_way, WhitespaceMergeOptions,
+    index_tree_oid_matches_head, merge_trees_three_way, TheirsConflictLabel,
+    TreeMergeConflictPresentation, WhitespaceMergeOptions,
 };
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
@@ -831,9 +832,12 @@ fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
         parent_tree_oid,
         favor,
         ws_opts,
-        label_base.as_str(),
-        label_theirs.as_str(),
-        conflict_style,
+        TreeMergeConflictPresentation {
+            label_ours: "HEAD",
+            label_theirs: TheirsConflictLabel::Fixed(label_theirs.as_str()),
+            label_base: label_base.as_str(),
+            style: conflict_style,
+        },
     )?;
     let mut merged_index = merged.index;
     let conflict_map = merged.conflict_content;
