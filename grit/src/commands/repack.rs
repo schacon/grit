@@ -12,7 +12,9 @@ use crate::trace2_emit_git_subcommand_argv;
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
-use grit_lib::midx::{write_multi_pack_index_with_options, WriteMultiPackIndexOptions};
+use grit_lib::midx::{
+    clear_pack_midx_state, write_multi_pack_index_with_options, WriteMultiPackIndexOptions,
+};
 use grit_lib::objects::ObjectId;
 use grit_lib::pack_geometry::{
     collect_geometry_packs, collect_promisor_geometry_packs, compute_geometry_split,
@@ -192,6 +194,9 @@ pub fn run(args: Args) -> Result<()> {
     let pack_dir_abs = repo.git_dir.join("objects").join("pack");
 
     let full_repack = args.all || args.repack_all_unpack || args.cruft;
+    if full_repack {
+        clear_pack_midx_state(&pack_dir_abs).map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
     let loosen_unreachable = args.repack_all_unpack && !args.cruft;
 
     let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
@@ -617,6 +622,7 @@ fn run_geometric(
                     &WriteMultiPackIndexOptions {
                         preferred_pack_idx: pref_idx,
                         write_bitmap_placeholders: bitmap_placeholders,
+                        ..Default::default()
                     },
                 )
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -640,6 +646,7 @@ fn run_geometric(
             &WriteMultiPackIndexOptions {
                 preferred_pack_idx: pref_idx,
                 write_bitmap_placeholders: bitmap,
+                ..Default::default()
             },
         )
         .map_err(|e| anyhow::anyhow!("{e}"))?;

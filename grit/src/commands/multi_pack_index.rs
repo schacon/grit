@@ -1,16 +1,15 @@
 //! `grit multi-pack-index` — manage multi-pack index files.
 //!
-//! [`verify`](MpiCommand::Verify) checks the `objects/pack/multi-pack-index` header
-//! (signature and version). [`write`](MpiCommand::Write) builds a new MIDX from all
-//! `pack-*.idx` files via [`grit_lib::midx::write_multi_pack_index`]. [`repack`](MpiCommand::Repack)
-//! runs `grit repack -d` then writes the MIDX. [`compact`](MpiCommand::Compact) rewrites the
-//! MIDX from current packs (Git’s layered compaction is not implemented).
+//! [`verify`](MpiCommand::Verify) checks active MIDX layer(s) (root file or chain in
+//! `multi-pack-index.d`). [`write`](MpiCommand::Write) builds a new MIDX from pack indexes,
+//! including incremental split layout when `--incremental` is set.
 
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
-use grit_lib::midx::write_multi_pack_index;
+use grit_lib::midx::{write_multi_pack_index_with_options, WriteMultiPackIndexOptions};
 use grit_lib::repo::Repository;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::grit_exe;
@@ -40,9 +39,12 @@ pub struct VerifyArgs {}
 
 #[derive(Debug, ClapArgs)]
 pub struct WriteArgs {
-    /// Write an incremental MIDX (accepted for compat).
+    /// Write an incremental MIDX layer (split layout under `multi-pack-index.d`).
     #[arg(long)]
     pub incremental: bool,
+    /// Write placeholder bitmap sidecar (compat with Git `--bitmap`).
+    #[arg(long)]
+    pub bitmap: bool,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -60,18 +62,108 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     match args.command {
         MpiCommand::Verify(_) => cmd_verify(&repo),
-        MpiCommand::Write(_) => cmd_write(&repo),
+        MpiCommand::Write(w) => cmd_write(&repo, &w),
         MpiCommand::Repack(a) => cmd_repack(&repo, &a),
         MpiCommand::Compact(_) => cmd_compact(&repo),
     }
 }
 
-fn pack_dir(repo: &Repository) -> std::path::PathBuf {
-    repo.git_dir.join("objects").join("pack")
+/// Parse argv when clap would reject unknown global flags (e.g. `--object-dir` before `write`).
+pub fn run_from_argv(argv: &[String]) -> Result<()> {
+    let mut object_dir: Option<PathBuf> = None;
+    let mut rest: Vec<String> = Vec::new();
+    let mut i = 0usize;
+    while i < argv.len() {
+        let a = argv[i].as_str();
+        if a == "--object-dir" {
+            let Some(val) = argv.get(i + 1) else {
+                bail!("--object-dir requires a path");
+            };
+            object_dir = Some(PathBuf::from(val));
+            i += 2;
+            continue;
+        }
+        if let Some(val) = a.strip_prefix("--object-dir=") {
+            object_dir = Some(PathBuf::from(val));
+            i += 1;
+            continue;
+        }
+        rest.push(argv[i].clone());
+        i += 1;
+    }
+
+    if let Some(dir) = object_dir {
+        std::env::set_var("GIT_OBJECT_DIRECTORY", dir);
+    }
+
+    let sub = rest.first().map(|s| s.as_str()).unwrap_or("");
+    let repo = Repository::discover(None).context("not a git repository")?;
+    match sub {
+        "write" => {
+            let mut incremental = false;
+            let mut bitmap = false;
+            for a in rest.iter().skip(1) {
+                match a.as_str() {
+                    "--incremental" => incremental = true,
+                    "--bitmap" => bitmap = true,
+                    other => bail!("unsupported multi-pack-index write option: {other}"),
+                }
+            }
+            cmd_write(
+                &repo,
+                &WriteArgs {
+                    incremental,
+                    bitmap,
+                },
+            )
+        }
+        "verify" => cmd_verify(&repo),
+        "repack" => {
+            let mut no_progress = false;
+            for a in rest.iter().skip(1) {
+                if a == "--no-progress" {
+                    no_progress = true;
+                } else {
+                    bail!("unsupported multi-pack-index repack option: {a}");
+                }
+            }
+            cmd_repack(&repo, &RepackArgs { no_progress })
+        }
+        "compact" => {
+            if rest.len() > 1 {
+                bail!("unsupported multi-pack-index compact arguments");
+            }
+            cmd_compact(&repo)
+        }
+        other => bail!("unsupported multi-pack-index subcommand: {other}"),
+    }
 }
 
-fn cmd_write(repo: &Repository) -> Result<()> {
-    write_multi_pack_index(&pack_dir(repo)).map_err(|e| anyhow::anyhow!("{e}"))
+fn objects_dir_for_repo(repo: &Repository) -> PathBuf {
+    if let Ok(rel) = std::env::var("GIT_OBJECT_DIRECTORY") {
+        let base = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
+        base.join(rel)
+    } else {
+        repo.git_dir.join("objects")
+    }
+}
+
+fn pack_dir(repo: &Repository) -> PathBuf {
+    objects_dir_for_repo(repo).join("pack")
+}
+
+fn cmd_write(repo: &Repository, args: &WriteArgs) -> Result<()> {
+    let write_rev = std::env::var("GIT_TEST_MIDX_WRITE_REV").ok().as_deref() == Some("1");
+    write_multi_pack_index_with_options(
+        &pack_dir(repo),
+        &WriteMultiPackIndexOptions {
+            preferred_pack_idx: None,
+            write_bitmap_placeholders: args.bitmap,
+            incremental: args.incremental,
+            write_rev_placeholder: write_rev,
+        },
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 fn cmd_repack(repo: &Repository, args: &RepackArgs) -> Result<()> {
@@ -87,25 +179,51 @@ fn cmd_repack(repo: &Repository, args: &RepackArgs) -> Result<()> {
     if !status.success() {
         bail!("repack failed with status {status}");
     }
-    write_multi_pack_index(&pack_dir(repo)).map_err(|e| anyhow::anyhow!("{e}"))
+    write_multi_pack_index_with_options(&pack_dir(repo), &WriteMultiPackIndexOptions::default())
+        .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 fn cmd_compact(repo: &Repository) -> Result<()> {
-    write_multi_pack_index(&pack_dir(repo)).map_err(|e| anyhow::anyhow!("{e}"))
+    write_multi_pack_index_with_options(&pack_dir(repo), &WriteMultiPackIndexOptions::default())
+        .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
-fn midx_path(repo: &Repository) -> std::path::PathBuf {
-    repo.git_dir
-        .join("objects")
-        .join("pack")
-        .join("multi-pack-index")
+fn midx_chain_path(pack_dir: &Path) -> PathBuf {
+    pack_dir
+        .join("multi-pack-index.d")
+        .join("multi-pack-index-chain")
 }
 
 fn cmd_verify(repo: &Repository) -> Result<()> {
-    let path = midx_path(repo);
-    let data = fs::read(&path).with_context(|| format!("could not read {}", path.display()))?;
-    verify_midx_header_bytes(&data).with_context(|| format!("{}", path.display()))?;
-    Ok(())
+    let pd = pack_dir(repo);
+    let root = pd.join("multi-pack-index");
+    let chain = midx_chain_path(&pd);
+    if root.exists() {
+        let data = fs::read(&root).with_context(|| format!("could not read {}", root.display()))?;
+        verify_midx_header_bytes(&data).with_context(|| format!("{}", root.display()))?;
+        return Ok(());
+    }
+    if chain.exists() {
+        let contents = fs::read_to_string(&chain)
+            .with_context(|| format!("could not read {}", chain.display()))?;
+        let midx_d = pd.join("multi-pack-index.d");
+        for line in contents.lines() {
+            let h = line.trim();
+            if h.is_empty() {
+                continue;
+            }
+            let path = midx_d.join(format!("multi-pack-index-{h}.midx"));
+            let data =
+                fs::read(&path).with_context(|| format!("could not read {}", path.display()))?;
+            verify_midx_header_bytes(&data).with_context(|| format!("{}", path.display()))?;
+        }
+        return Ok(());
+    }
+    bail!(
+        "no multi-pack-index at {} or chain at {}",
+        root.display(),
+        chain.display()
+    );
 }
 
 /// Validates the leading bytes of a multi-pack-index file.

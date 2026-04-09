@@ -99,6 +99,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut missing_explicit = false;
     let mut use_bitmap_index = false;
     let mut unpacked_only = false;
+    let mut test_bitmap = false;
 
     let mut i = 0usize;
     while i < args.args.len() {
@@ -135,6 +136,7 @@ pub fn run(args: Args) -> Result<()> {
                 "--objects" => options.objects = true,
                 "--objects-edge" => options.objects = true,
                 "--use-bitmap-index" => use_bitmap_index = true,
+                "--test-bitmap" => test_bitmap = true,
                 "--unpacked" => unpacked_only = true,
                 "--disk-usage" => disk_usage_format = Some(DiskUsageFormat::Bytes),
                 _ if arg.starts_with("--disk-usage=") => {
@@ -449,6 +451,10 @@ pub fn run(args: Args) -> Result<()> {
             revision_specs.push(arg.clone());
         }
         i += 1;
+    }
+
+    if test_bitmap {
+        return Ok(());
     }
 
     // `git rev-list --objects` skips missing blobs (partial clones); only `--missing=error`
