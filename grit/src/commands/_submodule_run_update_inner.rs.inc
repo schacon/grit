@@ -148,8 +148,7 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
                     let _ = fs::remove_dir_all(&sub_path);
                 }
 
-                let clone_src_str =
-                    resolve_submodule_super_url(work_tree, &repo.git_dir, &clone_url)?;
+                let clone_src_str = submodule_clone_argument(work_tree, &clone_url)?;
 
                 let mut clone_cmd = grit_subprocess(&grit_bin);
                 clone_cmd

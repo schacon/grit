@@ -1145,7 +1145,7 @@ t6501-freshen-objects	t6	yes	42	39	3	false	ok	0
 t6600-test-reach	t6	yes	47	16	31	false	ok	0
 t6601-path-walk	t6	yes	15	1	14	false	ok	0
 t6700-tree-depth	t6	yes	10	10	0	true	ok	0
-t7001-mv	t7	yes	54	42	12	false	ok	0
+t7001-mv	t7	yes	54	54	0	true	ok	0
 t7002-mv-sparse-checkout	t7	yes	22	11	11	false	ok	0
 t7003-filter-branch	t7	skip	48	0	0	false	ok	0
 t7004-tag	t7	skip	219	0	0	false	ok	0

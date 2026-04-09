@@ -1736,7 +1736,7 @@ fn init_in_repo(repo: &Repository, args: &InitArgs, quiet: bool) -> Result<()> {
                 }
             }
 
-            let resolved_url = resolve_submodule_super_url(work_tree, &repo.git_dir, &m.url)?;
+            let resolved_url = submodule_clone_argument(work_tree, &m.url)?;
             config.set(&url_key, &resolved_url)?;
             let reg_path = submodule_display_path_from_cwd(&work_tree.join(&m.path));
             if !quiet {
@@ -1913,27 +1913,15 @@ fn run_add(args: &AddArgs) -> Result<()> {
             fs::create_dir_all(parent)?;
         }
 
-        // Relative submodule URLs: from the superproject root for normal repos, and from the
-        // parent of this work tree when this repo lives under `.git/modules/<name>/` (nested
-        // submodule), matching Git.
-        let url_base = if repo
-            .git_dir
-            .parent()
-            .and_then(|p| p.file_name())
-            .is_some_and(|n| n == "modules")
-        {
-            work_tree
-                .parent()
-                .ok_or_else(|| anyhow::anyhow!("cannot resolve nested submodule clone URL"))?
-        } else {
-            work_tree
-        };
+        // Relative submodule URLs: resolve from the process working directory (matches `git clone`
+        // and t7001 `cd sub_nested && git submodule add ../sub_nested_nested`).
+        let cwd = std::env::current_dir().context("current directory for submodule URL")?;
         let clone_source = if args.url.starts_with("./") || args.url.starts_with("../") {
-            url_base.join(&args.url).canonicalize().with_context(|| {
+            cwd.join(&args.url).canonicalize().with_context(|| {
                 format!(
                     "cannot resolve relative submodule URL '{}' from '{}'",
                     args.url,
-                    url_base.display()
+                    cwd.display()
                 )
             })?
         } else {
@@ -2169,6 +2157,28 @@ fn resolve_submodule_super_url(
         base = canonicalize_local_remote_url_base(&super_wt, &super_git, &base);
     }
     git_relative_url(&base, raw_url, None)
+}
+
+/// Argument for `git clone` when `submodule update` materializes a submodule.
+///
+/// Relative URLs are joined to **`work_tree`** of the repository performing the update (top-level
+/// or nested after `Repository::discover(Some(sub_path))`), so `../peer` inside a nested submodule
+/// resolves beside that submodule's directory (t7001 nested submodules).
+fn submodule_clone_argument(work_tree: &Path, raw_url: &str) -> Result<String> {
+    if raw_url.starts_with("./") || raw_url.starts_with("../") {
+        let joined = work_tree.join(raw_url);
+        return joined
+            .canonicalize()
+            .map(|p| p.to_string_lossy().into_owned())
+            .with_context(|| {
+                format!(
+                    "cannot resolve submodule URL '{}' from {}",
+                    raw_url,
+                    work_tree.display()
+                )
+            });
+    }
+    Ok(raw_url.to_string())
 }
 
 /// URL written to a checked-out submodule's `remote.<name>.url` (Git `sync`: `get_up_path` + `relative_url`).

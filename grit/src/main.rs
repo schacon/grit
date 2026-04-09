@@ -2687,7 +2687,7 @@ fn preprocess_status_argv(rest: &[String]) -> Vec<String> {
         !matches!(n, "v1" | "v2" | "1" | "2")
     }
 
-    let mut out = Vec::with_capacity(rest.len() + 1);
+    let mut out = Vec::with_capacity(rest.len() + 2);
     let mut i = 0usize;
     while i < rest.len() {
         let arg = rest[i].as_str();
@@ -2699,6 +2699,123 @@ fn preprocess_status_argv(rest: &[String]) -> Vec<String> {
         } else {
             out.push(rest[i].clone());
         }
+        i += 1;
+    }
+
+    if out.iter().any(|a| a == "--") {
+        return out;
+    }
+
+    // `git status -s path` — insert `--` before pathspecs so clap does not reject the path.
+    let mut i = 0usize;
+    while i < out.len() {
+        let arg = out[i].as_str();
+        if arg == "--" {
+            return out;
+        }
+        if !arg.starts_with('-') {
+            out.insert(i, "--".to_owned());
+            return out;
+        }
+
+        const NO_VAL: &[&str] = &[
+            "-s",
+            "--short",
+            "--long",
+            "--no-short",
+            "-b",
+            "--branch",
+            "--no-branch",
+            "-z",
+            "--no-ahead-behind",
+            "--ahead-behind",
+            "--no-column",
+            "--no-renames",
+            "--no-optional-locks",
+            "--show-stash",
+            "--no-show-stash",
+            "--no-find-renames",
+        ];
+        if NO_VAL.contains(&arg) {
+            i += 1;
+            continue;
+        }
+
+        if arg == "-v" || arg == "--verbose" {
+            i += 1;
+            while i < out.len() && out[i] == "-v" {
+                i += 1;
+            }
+            continue;
+        }
+
+        if arg == "-M" || arg == "--find-renames" {
+            i += 1;
+            if i < out.len() && !out[i].starts_with('-') {
+                i += 1;
+            }
+            continue;
+        }
+
+        if arg.starts_with("--porcelain=") {
+            i += 1;
+            continue;
+        }
+
+        if arg == "-u" || arg.starts_with("--untracked-files") {
+            if arg.contains('=') && !arg.ends_with('=') {
+                i += 1;
+                continue;
+            }
+            i += 1;
+            if i < out.len() && !out[i].starts_with('-') {
+                let mode = out[i].as_str();
+                if matches!(mode, "no" | "normal" | "all" | "hidden") {
+                    i += 1;
+                }
+            }
+            continue;
+        }
+
+        if arg == "--ignored" || arg.starts_with("--ignored=") {
+            if arg.contains('=') {
+                i += 1;
+                continue;
+            }
+            i += 1;
+            if i < out.len() && !out[i].starts_with('-') {
+                let mode = out[i].as_str();
+                if matches!(mode, "no" | "traditional" | "matching") {
+                    i += 1;
+                }
+            }
+            continue;
+        }
+
+        if arg == "--column" || arg.starts_with("--column=") {
+            if arg.contains('=') {
+                i += 1;
+                continue;
+            }
+            i += 1;
+            if i < out.len() && !out[i].starts_with('-') {
+                i += 1;
+            }
+            continue;
+        }
+
+        if arg == "--ignore-submodules" || arg.starts_with("--ignore-submodules=") {
+            if arg.contains('=') {
+                i += 1;
+                continue;
+            }
+            i += 1;
+            if i < out.len() && !out[i].starts_with('-') {
+                i += 1;
+            }
+            continue;
+        }
+
         i += 1;
     }
     out
