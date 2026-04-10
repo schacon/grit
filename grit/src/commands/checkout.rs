@@ -20,7 +20,7 @@ use grit_lib::crlf::{self, MergeAttr};
 use grit_lib::diff::read_submodule_head_oid;
 use grit_lib::diff::{diff_index_to_worktree, zero_oid};
 use grit_lib::filter_process;
-use grit_lib::hooks::{run_hook, HookResult};
+use grit_lib::hooks::{run_hook, run_reference_transaction_committed_for_head_update, HookResult};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::merge_trees::{
@@ -1282,6 +1282,13 @@ fn run_post_checkout_hook(
     new_oid: &ObjectId,
     is_branch_checkout: bool,
 ) -> Result<()> {
+    let head = resolve_head(&repo.git_dir)?;
+    let _ = run_reference_transaction_committed_for_head_update(
+        repo,
+        &head,
+        old_oid.copied(),
+        *new_oid,
+    );
     let z = zero_oid();
     let old_hex = old_oid.unwrap_or(&z).to_hex();
     let new_hex = new_oid.to_hex();

@@ -9,7 +9,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{parse_bool, parse_color, ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::gitmodules::{oids_from_copied_object_paths, verify_gitmodules_for_commit};
-use grit_lib::hooks::{run_hook, run_hook_capture, HookResult};
+use grit_lib::hooks::{run_hook, run_hook_capture, run_hook_with_env, HookResult};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::ObjectId;
 use grit_lib::push_submodules::{
@@ -1968,6 +1968,26 @@ fn push_to_url(
         }
     }
 
+    if !args.dry_run && !applied_updates.is_empty() {
+        let post_update_owned: Vec<String> = applied_updates
+            .iter()
+            .map(|(u, _)| u.remote_ref.clone())
+            .collect();
+        let post_update_args: Vec<&str> = post_update_owned.iter().map(|s| s.as_str()).collect();
+        let (_, hook_output) = grit_lib::hooks::run_hook_in_git_dir(
+            &remote_repo,
+            "post-update",
+            &post_update_args,
+            None,
+            &push_option_env_refs,
+        );
+        if !hook_output.is_empty() {
+            let output_str = String::from_utf8_lossy(&hook_output);
+            let color_remote = RemoteMessageColorStyle::from_config(config);
+            colorize_remote_output(&output_str, &color_remote);
+        }
+    }
+
     // Set upstream tracking if requested (`--dry-run` only prints what Git would do).
     if args.set_upstream {
         use std::collections::BTreeMap;
@@ -2060,6 +2080,54 @@ fn read_receive_deny_delete_current(cfg: &ConfigSet) -> ReceiveDenyAction {
 ///
 /// Returns `Err(short_reason)` when the ref must be rejected (matches Git's parenthetical in
 /// `! [remote rejected] ... (reason)`).
+/// `receive.denyCurrentBranch = updateInstead`: run `push-to-checkout` then sync work tree when
+/// the hook is missing (Git's `push_to_deploy` uses `read-tree -u -m`).
+fn update_instead_for_checked_out_branch(
+    remote_repo: &Repository,
+    new_oid: &ObjectId,
+    pushing_config: &ConfigSet,
+) -> Result<()> {
+    let work_tree = remote_repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("updateInstead requires a work tree"))?;
+    let wt_env = work_tree
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("invalid UTF-8 in work tree path for push-to-checkout"))?;
+    let style = RemoteMessageColorStyle::from_config(pushing_config);
+    let (hook_res, hook_out) = run_hook_with_env(
+        remote_repo,
+        "push-to-checkout",
+        &[&new_oid.to_hex()],
+        None,
+        &[("GIT_WORK_TREE", wt_env)],
+    );
+    if !hook_out.is_empty() {
+        let output_str = String::from_utf8_lossy(&hook_out);
+        colorize_remote_output(&output_str, &style);
+    }
+    match hook_res {
+        HookResult::Failed(_) => {
+            bail!("push-to-checkout hook declined");
+        }
+        HookResult::Success => Ok(()),
+        HookResult::NotFound => {
+            let grit_bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("grit"));
+            let status = Command::new(&grit_bin)
+                .env("GIT_DIR", &remote_repo.git_dir)
+                .env("GIT_WORK_TREE", wt_env)
+                .current_dir(work_tree)
+                .args(["read-tree", "-u", "-m", &new_oid.to_hex()])
+                .status()
+                .context("spawning read-tree for updateInstead")?;
+            if !status.success() {
+                bail!("could not update working tree to new HEAD (read-tree failed)");
+            }
+            Ok(())
+        }
+    }
+}
+
 fn check_receive_pack_policy(
     remote_repo: &Repository,
     remote_config: &ConfigSet,
@@ -2120,7 +2188,7 @@ fn check_receive_pack_policy(
                 return Err("branch is currently checked out".to_owned());
             }
             ReceiveDenyAction::UpdateInstead => {
-                return Err("denyCurrentBranch = updateInstead is not supported".to_owned());
+                // Allowed: `apply_ref_update` runs `push-to-checkout` and updates the worktree.
             }
         }
     } else {
@@ -2253,6 +2321,21 @@ fn apply_ref_update(
     match (&update.new_oid, &update.old_oid) {
         (Some(new_oid), old_oid_opt) => {
             if !args.dry_run {
+                if !remote_repo.is_bare() {
+                    let head = resolve_head(&remote_repo.git_dir)?;
+                    if let HeadState::Branch { ref refname, .. } = head {
+                        if refname == &update.remote_ref
+                            && read_receive_deny_current(remote_config)
+                                == ReceiveDenyAction::UpdateInstead
+                        {
+                            update_instead_for_checked_out_branch(
+                                remote_repo,
+                                new_oid,
+                                pushing_config,
+                            )?;
+                        }
+                    }
+                }
                 refs::write_ref(&remote_repo.git_dir, &update.remote_ref, new_oid)
                     .with_context(|| format!("updating remote ref {}", update.remote_ref))?;
                 update_remote_tracking_ref(repo, remote_name, &update.remote_ref, Some(*new_oid))?;

@@ -16,6 +16,7 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 
 use grit_lib::config::{parse_bool, ConfigSet};
+use grit_lib::hooks::{run_hook, run_reference_transaction_committed_for_head_update, HookResult};
 use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::refs::{delete_ref, write_ref};
@@ -814,18 +815,14 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
             if !opts.no_verify {
                 let msg_path = git_dir.join("MERGE_MSG");
                 fs::write(&msg_path, &patch.message)?;
-                if !run_hook(
-                    git_dir,
-                    "applypatch-msg",
-                    &[msg_path.to_str().unwrap_or("")],
-                )? {
+                if !run_am_hook(repo, "applypatch-msg", &[msg_path.to_str().unwrap_or("")])? {
                     let _ = fs::remove_file(&msg_path);
                     bail!("applypatch-msg hook rejected the patch");
                 }
             }
 
             // Run pre-applypatch hook
-            if !opts.no_verify && !run_hook(git_dir, "pre-applypatch", &[])? {
+            if !opts.no_verify && !run_am_hook(repo, "pre-applypatch", &[])? {
                 bail!("pre-applypatch hook rejected the patch");
             }
 
@@ -835,7 +832,7 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
 
             // Run post-applypatch hook
             if !opts.no_verify {
-                let _ = run_hook(git_dir, "post-applypatch", &[]);
+                let _ = run_am_hook(repo, "post-applypatch", &[]);
             }
 
             let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
@@ -849,11 +846,7 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
     if !opts.no_verify {
         let msg_path = git_dir.join("MERGE_MSG");
         fs::write(&msg_path, &patch.message)?;
-        if !run_hook(
-            git_dir,
-            "applypatch-msg",
-            &[msg_path.to_str().unwrap_or("")],
-        )? {
+        if !run_am_hook(repo, "applypatch-msg", &[msg_path.to_str().unwrap_or("")])? {
             let _ = fs::remove_file(&msg_path);
             bail!("applypatch-msg hook rejected the patch");
         }
@@ -908,7 +901,7 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
     }
 
     // Run pre-applypatch hook
-    if !opts.no_verify && !run_hook(git_dir, "pre-applypatch", &[])? {
+    if !opts.no_verify && !run_am_hook(repo, "pre-applypatch", &[])? {
         bail!("pre-applypatch hook rejected the patch");
     }
 
@@ -916,7 +909,7 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
 
     // Run post-applypatch hook (failure doesn't abort)
     if !opts.no_verify {
-        let _ = run_hook(git_dir, "post-applypatch", &[]);
+        let _ = run_am_hook(repo, "post-applypatch", &[]);
     }
 
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
@@ -1731,8 +1724,15 @@ variable i18n.commitEncoding to the encoding your project uses.\n"
     let commit_bytes = serialize_commit(&commit_data);
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
 
+    let old_head_commit = head.oid().copied();
     // Update HEAD
     update_head(git_dir, &head, &commit_oid)?;
+    let _ = run_reference_transaction_committed_for_head_update(
+        repo,
+        &head,
+        old_head_commit,
+        commit_oid,
+    );
 
     Ok(())
 }
@@ -2082,33 +2082,11 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
 
 // ── Hooks ───────────────────────────────────────────────────────────
 
-fn run_hook(git_dir: &Path, hook_name: &str, args: &[&str]) -> Result<bool> {
-    let hook_path = git_dir.join("hooks").join(hook_name);
-    if !hook_path.exists() {
-        return Ok(true); // No hook = success
-    }
-
-    // Determine the work tree (parent of git_dir, unless it's a bare repo)
-    let work_dir = git_dir.parent().unwrap_or(git_dir);
-
-    // Build the command - use sh to handle scripts without shebangs
-    let mut cmd = std::process::Command::new(&hook_path);
-    cmd.args(args).env("GIT_DIR", git_dir).current_dir(work_dir);
-
-    let status = cmd
-        .status()
-        .or_else(|_| {
-            // If direct execution fails, try via /bin/sh
-            std::process::Command::new("/bin/sh")
-                .arg(&hook_path)
-                .args(args)
-                .env("GIT_DIR", git_dir)
-                .current_dir(work_dir)
-                .status()
-        })
-        .with_context(|| format!("failed to execute hook {}", hook_name))?;
-
-    Ok(status.success())
+fn run_am_hook(repo: &Repository, hook_name: &str, args: &[&str]) -> Result<bool> {
+    Ok(matches!(
+        run_hook(repo, hook_name, args, None),
+        HookResult::Success | HookResult::NotFound
+    ))
 }
 
 // ── Cleanup ─────────────────────────────────────────────────────────

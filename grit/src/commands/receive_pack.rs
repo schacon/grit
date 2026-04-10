@@ -653,6 +653,28 @@ fn run_hooks_and_update_refs(
         // post-receive is informational only.
     }
 
+    let post_update_arg_strings: Vec<String> = updates
+        .iter()
+        .map(|(_, _, refname)| refname.clone())
+        .collect();
+    if !post_update_arg_strings.is_empty() {
+        let post_update_args: Vec<&str> =
+            post_update_arg_strings.iter().map(|s| s.as_str()).collect();
+        let (post_update_result, post_update_output) = run_hook_in_git_dir(
+            repo,
+            "post-update",
+            &post_update_args,
+            None,
+            &push_option_env,
+        );
+        if !post_update_output.is_empty() {
+            let _ = io::stderr().write_all(&post_update_output);
+        }
+        if let HookResult::Failed(_code) = post_update_result {
+            // post-update failures are ignored (matches receive-pack).
+        }
+    }
+
     let auto_gc = config_bool_any(&remote_config, &["receive.autoGc", "receive.autogc"], true);
     if auto_gc && !updates.is_empty() {
         run_auto_maintenance_quiet(&repo.git_dir);

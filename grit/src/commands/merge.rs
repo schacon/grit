@@ -16,7 +16,7 @@ use grit_lib::config::ConfigSet;
 use grit_lib::crlf::MergeAttr;
 use grit_lib::diff::{count_changes, detect_renames, diff_trees, zero_oid, DiffEntry, DiffStatus};
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
-use grit_lib::hooks::run_hook;
+use grit_lib::hooks::{run_hook, run_reference_transaction_committed_for_head_update, HookResult};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
@@ -66,6 +66,27 @@ fn run_post_merge_hook(repo: &Repository, squash: bool) {
     let _ = run_hook(repo, "post-merge", &[flag], None);
 }
 
+fn run_pre_merge_commit_hook(repo: &Repository) -> Result<()> {
+    if let HookResult::Failed(code) = run_hook(repo, "pre-merge-commit", &[], None) {
+        bail!("pre-merge-commit hook exited with status {code}");
+    }
+    Ok(())
+}
+
+/// Update `HEAD` (and branch ref when on a branch) then run `reference-transaction` with phase
+/// `committed` (t1800 client hook ordering).
+fn merge_update_head(
+    repo: &Repository,
+    head: &HeadState,
+    old_head_commit: Option<ObjectId>,
+    new_oid: ObjectId,
+) -> Result<()> {
+    update_head(&repo.git_dir, head, &new_oid)?;
+    let _ =
+        run_reference_transaction_committed_for_head_update(repo, head, old_head_commit, new_oid);
+    Ok(())
+}
+
 /// Arguments for `grit merge`.
 #[derive(Debug, Clone, ClapArgs)]
 #[command(about = "Join two or more development histories together")]
@@ -93,6 +114,10 @@ pub struct Args {
     /// Squash merge: stage changes but don't commit.
     #[arg(long = "squash")]
     pub squash: bool,
+
+    /// Skip the pre-merge-commit hook (Git `--no-verify` / `-n`).
+    #[arg(long = "no-verify", short = 'n')]
+    pub no_verify: bool,
 
     /// Abort in-progress merge.
     #[arg(long = "abort")]
@@ -981,7 +1006,7 @@ fn merge_unborn(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> 
         bail!("Can merge only exactly one commit into empty head");
     }
     let merge_oid = resolve_merge_target(repo, &args.commits[0])?;
-    update_head(&repo.git_dir, head, &merge_oid)?;
+    merge_update_head(repo, head, head.oid().copied(), merge_oid)?;
     // Update index and working tree
     let commit_obj = repo.odb.read(&merge_oid)?;
     let commit = parse_commit(&commit_obj.data)?;
@@ -1050,7 +1075,7 @@ Aborting"
         bail_if_merge_would_overwrite_local_changes(repo, &old_entries, &new_index, false)?;
     }
 
-    update_head(&repo.git_dir, head, &merge_oid)?;
+    merge_update_head(repo, head, Some(head_oid), merge_oid)?;
 
     if let Some(ref wt) = repo.work_tree {
         // Remove files that existed in old HEAD but not in new
@@ -1685,6 +1710,10 @@ Aborting"
         return Ok(());
     }
 
+    if !args.no_verify {
+        run_pre_merge_commit_hook(repo)?;
+    }
+
     // Create merge commit
     let tree_oid = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
@@ -1749,7 +1778,7 @@ Aborting"
 
     let commit_bytes = serialize_commit(&commit_data);
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
-    update_head(&repo.git_dir, head, &commit_oid)?;
+    merge_update_head(repo, head, Some(head_oid), commit_oid)?;
 
     if args.autostash && !autostash_entries.is_empty() {
         apply_autostash_entries(repo, &autostash_entries)?;
@@ -2597,6 +2626,10 @@ fn do_octopus_merge(
         return Ok(());
     }
 
+    if !args.no_verify {
+        run_pre_merge_commit_hook(repo)?;
+    }
+
     let tree_oid = write_tree_from_index(&repo.odb, &final_index, "")?;
     let msg = build_octopus_merge_message(head, &merge_names, args.message.as_deref(), repo);
 
@@ -2626,7 +2659,7 @@ fn do_octopus_merge(
 
     let commit_bytes = serialize_commit(&commit_data);
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
-    update_head(&repo.git_dir, head, &commit_oid)?;
+    merge_update_head(repo, head, Some(head_oid), commit_oid)?;
 
     if !args.quiet {
         let short = &commit_oid.to_hex()[..7];
@@ -2811,6 +2844,10 @@ fn do_strategy_ours(
         return Ok(());
     }
 
+    if !args.no_verify {
+        run_pre_merge_commit_hook(repo)?;
+    }
+
     let commit_data = CommitData {
         tree: tree_oid,
         parents: vec![head_oid, merge_oid],
@@ -2825,7 +2862,7 @@ fn do_strategy_ours(
 
     let commit_bytes = serialize_commit(&commit_data);
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
-    update_head(&repo.git_dir, head, &commit_oid)?;
+    merge_update_head(repo, head, Some(head_oid), commit_oid)?;
 
     if !args.quiet {
         let short = &commit_oid.to_hex()[..7];
@@ -2861,6 +2898,10 @@ fn do_strategy_theirs(
     let author = resolve_ident(&config, "author", now)?;
     let committer = resolve_ident(&config, "committer", now)?;
 
+    if !args.no_verify {
+        run_pre_merge_commit_hook(repo)?;
+    }
+
     let commit_data = CommitData {
         tree: tree_oid,
         parents: vec![head_oid, merge_oid],
@@ -2875,7 +2916,7 @@ fn do_strategy_theirs(
 
     let commit_bytes = serialize_commit(&commit_data);
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
-    update_head(&repo.git_dir, head, &commit_oid)?;
+    merge_update_head(repo, head, Some(head_oid), commit_oid)?;
 
     // Update index and working tree to match theirs
     let entries = tree_to_index_entries(repo, &tree_oid, "")?;
@@ -3252,6 +3293,8 @@ fn merge_continue(message: Option<String>) -> Result<()> {
     let author = resolve_ident(&config, "author", now)?;
     let committer = resolve_ident(&config, "committer", now)?;
 
+    run_pre_merge_commit_hook(&repo)?;
+
     let mut parents = vec![head_oid];
     parents.extend(merge_heads);
 
@@ -3269,7 +3312,7 @@ fn merge_continue(message: Option<String>) -> Result<()> {
 
     let commit_bytes = serialize_commit(&commit_data);
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
-    update_head(git_dir, &head, &commit_oid)?;
+    merge_update_head(&repo, &head, Some(head_oid), commit_oid)?;
 
     // Clean up
     let _ = fs::remove_file(git_dir.join("MERGE_HEAD"));

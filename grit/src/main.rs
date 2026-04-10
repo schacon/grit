@@ -4217,7 +4217,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "hash-object" => commands::hash_object::run(parse_cmd_args(subcmd, rest)),
         "help" => commands::help::run(parse_cmd_args(subcmd, rest)),
         "history" => commands::history::run_from_argv(rest),
-        "hook" => commands::hook::run(parse_cmd_args(subcmd, rest)),
+        "hook" => commands::hook::run_from_argv(rest),
         "http-backend" => commands::http_backend::run(parse_cmd_args(subcmd, rest)),
         "http-fetch" => commands::http_fetch::run(parse_cmd_args(subcmd, rest)),
         "http-push" => commands::http_push::run(parse_cmd_args(subcmd, rest)),

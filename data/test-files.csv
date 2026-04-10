@@ -456,7 +456,7 @@ t1600-index	t1	yes	7	7	0	true	ok	0
 t1601-index-bogus	t1	yes	4	4	0	true	ok	0
 t1700-split-index	t1	yes	29	3	26	false	ok	0
 t1701-racy-split-index	t1	yes	31	1	30	false	ok	0
-t1800-hook	t1	yes	44	11	33	false	ok	0
+t1800-hook	t1	yes	44	44	0	true	ok	0
 t1800-ls-remote	t1	yes	24	22	2	false	ok	0
 t1900-repo-info	t1	yes	37	37	0	true	ok	0
 t1901-repo-structure	t1	yes	4	4	0	true	ok	0
