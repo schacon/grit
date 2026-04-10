@@ -404,11 +404,23 @@ pub fn run(mut args: Args) -> Result<()> {
         None => None,
     };
 
+    // User pathspecs (after stripping `--`).
+    let user_pathspecs: Vec<String> = args
+        .pathspec
+        .iter()
+        .filter(|s| s.as_str() != "--")
+        .cloned()
+        .collect();
+
     // Resolve rename detection settings for status.
     let status_rename_threshold = resolve_status_rename_threshold(&args, &config);
 
-    // Diff: staged (index vs HEAD tree)
+    // Diff: staged (index vs HEAD tree), narrowed to pathspecs before rename detection.
     let staged_raw = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
+    let staged_raw: Vec<grit_lib::diff::DiffEntry> = staged_raw
+        .into_iter()
+        .filter(|entry| status_path_matches(entry.path(), &user_pathspecs))
+        .collect();
     // Detect renames among staged entries when enabled.
     let staged = if let Some(threshold) = status_rename_threshold {
         detect_renames(&repo.odb, staged_raw.clone(), threshold)
@@ -416,7 +428,7 @@ pub fn run(mut args: Args) -> Result<()> {
         staged_raw.clone()
     };
 
-    // Diff: unstaged (worktree vs index), with optional rename detection.
+    // Diff: unstaged (worktree vs index), narrowed before rename detection.
     let unstaged_raw = diff_index_to_worktree_with_options(
         &repo.odb,
         &index,
@@ -425,6 +437,10 @@ pub fn run(mut args: Args) -> Result<()> {
             index_mtime: Some(index_mtime),
         },
     )?;
+    let unstaged_raw: Vec<grit_lib::diff::DiffEntry> = unstaged_raw
+        .into_iter()
+        .filter(|entry| status_path_matches(entry.path(), &user_pathspecs))
+        .collect();
     let unstaged = if let Some(threshold) = status_rename_threshold {
         detect_renames(&repo.odb, unstaged_raw.clone(), threshold)
     } else {
@@ -434,14 +450,6 @@ pub fn run(mut args: Args) -> Result<()> {
     // Untracked and ignored files
     let show_all_untracked = untracked_mode == "all";
     let hide_untracked = untracked_mode == "no";
-
-    // User pathspecs (after stripping `--`), used for porcelain header rules below.
-    let user_pathspecs: Vec<String> = args
-        .pathspec
-        .iter()
-        .filter(|s| s.as_str() != "--")
-        .cloned()
-        .collect();
 
     // Porcelain v1: Git omits the `##` branch line when `--untracked-files=no` (e.g.
     // `status --porcelain -uno`). Default `##` when running from the work tree root or when
@@ -486,7 +494,12 @@ pub fn run(mut args: Args) -> Result<()> {
                 )
                 .is_ok();
                 if refresh_ok && ignored_mode == IgnoredMode::No {
-                    untracked_from_cache = Some(untracked_cache::collect_untracked_from_cache(uc));
+                    untracked_from_cache = Some(
+                        untracked_cache::collect_untracked_from_cache(uc)
+                            .into_iter()
+                            .filter(|p| status_path_matches(p, &user_pathspecs))
+                            .collect(),
+                    );
                 }
                 if let Some(ref p) = trace_perf {
                     let _ = emit_read_directory_trace(p, Some(uc));
@@ -505,6 +518,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 work_tree,
                 ignored_mode,
                 show_all_untracked,
+                &user_pathspecs,
             )?
         }
     } else {
@@ -559,14 +573,8 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     let pathspecs = user_pathspecs;
-    let staged: Vec<grit_lib::diff::DiffEntry> = staged
-        .into_iter()
-        .filter(|entry| status_path_matches(entry.path(), &pathspecs))
-        .collect();
-    let unstaged: Vec<grit_lib::diff::DiffEntry> = unstaged
-        .into_iter()
-        .filter(|entry| status_path_matches(entry.path(), &pathspecs))
-        .collect();
+    let staged: Vec<grit_lib::diff::DiffEntry> = staged;
+    let unstaged: Vec<grit_lib::diff::DiffEntry> = unstaged;
     let untracked: Vec<String> = untracked
         .into_iter()
         .filter(|p| status_path_matches(p, &pathspecs))
@@ -788,6 +796,7 @@ fn collect_untracked_and_ignored(
     work_tree: &Path,
     ignored_mode: IgnoredMode,
     show_all: bool,
+    pathspecs: &[String],
 ) -> Result<(Vec<String>, Vec<String>)> {
     let tracked: BTreeSet<String> = index
         .entries
@@ -817,6 +826,7 @@ fn collect_untracked_and_ignored(
         show_all,
         "",
         work_tree,
+        pathspecs,
         &mut untracked,
         &mut ignored,
     )?;
@@ -837,6 +847,7 @@ fn visit_untracked_node(
     show_all: bool,
     rel: &str,
     abs: &Path,
+    pathspecs: &[String],
     untracked_out: &mut Vec<String>,
     ignored_out: &mut Vec<String>,
 ) -> Result<()> {
@@ -869,6 +880,9 @@ fn visit_untracked_node(
         }
 
         if is_dir {
+            if !pathspec_may_match_directory(&child_rel, pathspecs) {
+                continue;
+            }
             visit_untracked_directory(
                 repo,
                 index,
@@ -880,10 +894,14 @@ fn visit_untracked_node(
                 show_all,
                 &child_rel,
                 &path,
+                pathspecs,
                 untracked_out,
                 ignored_out,
             )?;
         } else {
+            if !status_path_matches(&child_rel, pathspecs) {
+                continue;
+            }
             let (is_ign, _) = matcher.check_path(repo, Some(index), &child_rel, false)?;
             if is_ign {
                 if ignored_mode != IgnoredMode::No {
@@ -909,6 +927,7 @@ fn visit_untracked_directory(
     show_all: bool,
     rel: &str,
     abs: &Path,
+    pathspecs: &[String],
     untracked_out: &mut Vec<String>,
     ignored_out: &mut Vec<String>,
 ) -> Result<()> {
@@ -924,6 +943,7 @@ fn visit_untracked_directory(
             show_all,
             rel,
             abs,
+            pathspecs,
             untracked_out,
             ignored_out,
         )?;
@@ -943,7 +963,7 @@ fn visit_untracked_directory(
 
     if ignored_mode == IgnoredMode::Traditional && !show_all {
         if let Some(dir_line) = traditional_normal_directory_only(
-            repo, index, work_tree, tracked, gitlinks, matcher, rel, abs,
+            repo, index, work_tree, tracked, gitlinks, matcher, rel, abs, pathspecs,
         )? {
             ignored_out.push(dir_line);
             return Ok(());
@@ -963,6 +983,7 @@ fn visit_untracked_directory(
         true,
         rel,
         abs,
+        pathspecs,
         &mut sub_untracked,
         &mut sub_ignored,
     )?;
@@ -1014,6 +1035,7 @@ fn traditional_normal_directory_only(
     matcher: &mut IgnoreMatcher,
     rel: &str,
     abs: &Path,
+    pathspecs: &[String],
 ) -> Result<Option<String>> {
     let mut any_file = false;
     let mut stack = vec![abs.to_path_buf()];
@@ -1034,6 +1056,12 @@ fn traditional_normal_directory_only(
                 .strip_prefix(work_tree)
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| name.clone());
+            if !pathspec_may_match_directory(&rel_child, pathspecs)
+                && !(entry.file_type().map(|ft| ft.is_file()).unwrap_or(false)
+                    && status_path_matches(&rel_child, pathspecs))
+            {
+                continue;
+            }
             if tracked.contains(&rel_child) {
                 return Ok(None);
             }
@@ -3257,4 +3285,30 @@ fn status_path_matches(path: &str, pathspecs: &[String]) -> bool {
         crate::pathspec::pathspec_matches(spec, path)
             || crate::pathspec::pathspec_matches(spec, normalized)
     })
+}
+
+fn pathspec_may_match_directory(rel_dir: &str, pathspecs: &[String]) -> bool {
+    if pathspecs.is_empty() {
+        return true;
+    }
+    let rel_dir = rel_dir.trim_end_matches('/');
+    if rel_dir.is_empty() {
+        return true;
+    }
+    pathspecs.iter().any(|spec| {
+        if crate::pathspec::has_glob_chars(spec) {
+            return true;
+        }
+        let spec_norm = spec.trim_end_matches('/');
+        spec_norm == rel_dir
+            || spec_norm.starts_with(&format!("{rel_dir}/"))
+            || rel_dir.starts_with(&format!("{spec_norm}/"))
+            || crate::pathspec::pathspec_matches(spec, rel_dir)
+    })
+}
+
+fn status_pathspecs_contain_glob(pathspecs: &[String]) -> bool {
+    pathspecs
+        .iter()
+        .any(|s| crate::pathspec::has_glob_chars(s.as_str()))
 }

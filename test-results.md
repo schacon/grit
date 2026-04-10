@@ -39,6 +39,15 @@
 - `cargo test -p grit-lib --lib`: 160 passed
 - `./scripts/run-tests.sh t4122-apply-symlink-inside.sh`: 7/7 passed
 
+**2026-04-10 (status perf phases 3/4 slice)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh t7508-status.sh`: 48/126
+- `./scripts/run-tests.sh t7060-wtstatus.sh`: 10/17
+- `./scripts/run-tests.sh t7063-status-untracked-cache.sh`: 12/58
+- `./scripts/run-tests.sh t7519-status-fsmonitor.sh`: 12/33
+
 **2026-04-10 (t8008 / blame formats)**
 
 - `cargo test -p grit-lib --lib`: 160 passed
