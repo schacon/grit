@@ -13,13 +13,14 @@ use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     anchored_unified_diff, detect_copies, detect_renames, diff_trees, unified_diff, zero_oid,
-    DiffEntry,
+    DiffEntry, DiffStatus,
 };
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::merge_diff::{
-    blob_oid_at_path, blob_text_for_diff, combined_diff_paths, format_combined_binary,
-    format_combined_textconv_patch, format_parent_patch, is_binary_for_diff, read_blob_at_path,
+    blob_oid_at_path, blob_text_for_diff, blob_text_for_diff_with_oid, combined_diff_paths,
+    diff_textconv_active, format_combined_binary, format_combined_textconv_patch,
+    format_parent_patch, is_binary_for_diff, read_blob_at_path,
 };
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -30,6 +31,7 @@ use grit_lib::rev_list::{
 };
 use grit_lib::rev_parse::{
     peel_to_tree, resolve_revision, resolve_revision_without_index_dwim, split_double_dot_range,
+    split_treeish_colon,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::io::{self, Write};
@@ -200,6 +202,10 @@ pub struct Args {
     #[arg(long = "no-textconv")]
     pub no_textconv: bool,
 
+    /// Run `diff.<driver>.textconv` for `rev:path` blob output (Git default is raw blob).
+    #[arg(long = "textconv", hide = true)]
+    pub textconv: bool,
+
     /// Show binary diff in git binary format.
     #[arg(long = "binary")]
     pub binary: bool,
@@ -290,7 +296,8 @@ pub fn run(mut args: Args) -> Result<()> {
         for s in &raw_objects {
             let looks_like_rev_spec = s.starts_with('^')
                 || split_double_dot_range(s).is_some()
-                || (s.contains("...") && !s.contains("...."));
+                || (s.contains("...") && !s.contains("...."))
+                || split_treeish_colon(s).is_some_and(|(b, a)| !b.is_empty() && !a.is_empty());
             // Do not use index DWIM alone: a tracked filename like `numbers` must be a pathspec
             // (`git show rev -- numbers`), not mis-parsed as an extra revision (t4069.15).
             if looks_like_rev_spec || resolve_revision_without_index_dwim(&repo, s).is_ok() {
@@ -572,6 +579,25 @@ pub fn run(mut args: Args) -> Result<()> {
                 show_tree_named(&mut out, &repo, spec, oid)?;
             }
             ObjectKind::Blob => {
+                if args.textconv && !args.no_textconv {
+                    if let Some((_rev, path_after)) = split_treeish_colon(spec) {
+                        if !path_after.is_empty() {
+                            let config =
+                                ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+                            let text = blob_text_for_diff_with_oid(
+                                &repo.odb,
+                                repo.git_dir.as_path(),
+                                &config,
+                                path_after,
+                                &obj.data,
+                                &oid,
+                                true,
+                            );
+                            out.write_all(text.as_bytes())?;
+                            continue;
+                        }
+                    }
+                }
                 out.write_all(&obj.data)?;
             }
         }
@@ -699,6 +725,40 @@ fn write_formatted_line(out: &mut impl Write, formatted: &str) -> Result<()> {
         writeln!(out, "{formatted}")?;
     }
     Ok(())
+}
+
+/// Git porcelain (`show`, `log -p`) splits a blob↔symlink type change into a delete hunk plus an add
+/// hunk so textconv applies only to the deleted regular file (t4030-diff-textconv).
+fn expand_typechange_entries_for_porcelain(entries: Vec<DiffEntry>) -> Vec<DiffEntry> {
+    let mut out = Vec::with_capacity(entries.len() + 4);
+    for e in entries {
+        if e.status == DiffStatus::TypeChanged {
+            let path = e.path().to_string();
+            out.push(DiffEntry {
+                status: DiffStatus::Deleted,
+                old_path: Some(path.clone()),
+                new_path: None,
+                old_mode: e.old_mode.clone(),
+                new_mode: "000000".to_owned(),
+                old_oid: e.old_oid,
+                new_oid: zero_oid(),
+                score: None,
+            });
+            out.push(DiffEntry {
+                status: DiffStatus::Added,
+                old_path: None,
+                new_path: Some(path),
+                old_mode: "000000".to_owned(),
+                new_mode: e.new_mode.clone(),
+                old_oid: zero_oid(),
+                new_oid: e.new_oid,
+                score: None,
+            });
+        } else {
+            out.push(e);
+        }
+    }
+    out
 }
 
 /// Show a commit object: header + diff.
@@ -952,9 +1012,11 @@ fn show_commit(
             let old_tree_oid = old_tree.flatten();
             let diff_entries =
                 diff_trees(odb, old_tree_oid.as_ref(), new_tree, "").context("computing diff")?;
+            let diff_entries =
+                apply_rename_copy_detection(odb, diff_entries, args, old_tree_oid.as_ref());
             (
                 old_tree_oid,
-                apply_rename_copy_detection(odb, diff_entries, args, old_tree_oid.as_ref()),
+                expand_typechange_entries_for_porcelain(diff_entries),
             )
         }
     } else {
@@ -968,9 +1030,11 @@ fn show_commit(
         let old_tree_oid = old_tree.flatten();
         let diff_entries =
             diff_trees(odb, old_tree_oid.as_ref(), new_tree, "").context("computing diff")?;
+        let diff_entries =
+            apply_rename_copy_detection(odb, diff_entries, args, old_tree_oid.as_ref());
         (
             old_tree_oid,
-            apply_rename_copy_detection(odb, diff_entries, args, old_tree_oid.as_ref()),
+            expand_typechange_entries_for_porcelain(diff_entries),
         )
     };
 
@@ -1241,17 +1305,45 @@ fn show_commit(
         };
 
         let path_for_attrs = entry.path();
-        if is_binary_for_diff(git_dir, path_for_attrs, &old_raw)
-            || is_binary_for_diff(git_dir, path_for_attrs, &new_raw)
+        let textconv_patch = use_textconv && diff_textconv_active(git_dir, &config, path_for_attrs);
+        if !textconv_patch
+            && (is_binary_for_diff(git_dir, path_for_attrs, &old_raw)
+                || is_binary_for_diff(git_dir, path_for_attrs, &new_raw))
         {
             writeln!(out, "Binary files a/{new_path} and b/{new_path} differ")?;
             continue;
         }
 
-        let old_content =
-            blob_text_for_diff(git_dir, &config, path_for_attrs, &old_raw, use_textconv);
-        let new_content =
-            blob_text_for_diff(git_dir, &config, path_for_attrs, &new_raw, use_textconv);
+        let old_content = if entry.old_oid == grit_lib::diff::zero_oid() {
+            String::new()
+        } else if use_textconv {
+            blob_text_for_diff_with_oid(
+                odb,
+                git_dir,
+                &config,
+                path_for_attrs,
+                &old_raw,
+                &entry.old_oid,
+                true,
+            )
+        } else {
+            blob_text_for_diff(git_dir, &config, path_for_attrs, &old_raw, false)
+        };
+        let new_content = if entry.new_oid == grit_lib::diff::zero_oid() {
+            String::new()
+        } else if use_textconv {
+            blob_text_for_diff_with_oid(
+                odb,
+                git_dir,
+                &config,
+                path_for_attrs,
+                &new_raw,
+                &entry.new_oid,
+                true,
+            )
+        } else {
+            blob_text_for_diff(git_dir, &config, path_for_attrs, &new_raw, false)
+        };
 
         let patch = if !args.anchored.is_empty() {
             let line_algo = if args.patience {

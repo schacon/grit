@@ -7,11 +7,12 @@
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
-use grit_lib::diff::{count_changes, diff_trees, unified_diff, zero_oid};
+use grit_lib::diff::{count_changes, diff_trees, unified_diff, zero_oid, DiffStatus};
 use grit_lib::diffstat::{
     write_diffstat_block, DiffstatOptions, FileStatInput, FORMAT_PATCH_STAT_WIDTH,
 };
 use grit_lib::merge_base::merge_bases_first_vs_rest;
+use grit_lib::merge_diff::{blob_text_for_diff_with_oid, diff_textconv_active, is_binary_for_diff};
 use grit_lib::objects::{parse_commit, CommitData, ObjectId};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -152,6 +153,10 @@ pub struct Args {
     /// Include binary diffs (accepted for compatibility).
     #[arg(long = "binary")]
     pub binary: bool,
+
+    /// Do not run textconv in the patch body (emit `Binary files differ` like plumbing).
+    #[arg(long = "no-binary")]
+    pub no_binary: bool,
 
     /// Do not use a/b/ prefix in diff output.
     #[arg(long = "no-prefix")]
@@ -518,12 +523,14 @@ pub fn run(mut args: Args) -> Result<()> {
         let include_base = is_last_patch(idx);
         let patch = format_single_patch(
             &repo.odb,
+            repo.git_dir.as_path(),
             oid,
             commit,
             &subject,
             &opts,
             include_base,
             &log_output_encoding,
+            args.no_binary,
         )?;
 
         if args.stdout {
@@ -958,12 +965,14 @@ fn extract_email(ident: &str) -> Option<&str> {
 /// Format a single commit as an email-style patch.
 fn format_single_patch(
     odb: &Odb,
+    git_dir: &std::path::Path,
     oid: &ObjectId,
     commit: &CommitData,
     subject: &str,
     opts: &PatchOptions,
     include_base: bool,
     log_output_encoding: &str,
+    no_binary: bool,
 ) -> Result<String> {
     let mut out = String::new();
     let charset_label = rfc2047_charset_label(log_output_encoding);
@@ -991,6 +1000,7 @@ fn format_single_patch(
     } else {
         diff_entries_raw
     };
+    let config = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
 
     // Build stat + full diff into separate string
     let mut diff_text = String::new();
@@ -1001,8 +1011,56 @@ fn format_single_patch(
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
         let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
         write_diff_header_to_string(&mut diff_text, entry);
-        let old_content = read_blob_content(odb, &entry.old_oid);
-        let new_content = read_blob_content(odb, &entry.new_oid);
+        let path_for_attrs = entry.path();
+        let use_textconv = !no_binary;
+        let textconv_patch = use_textconv && diff_textconv_active(git_dir, &config, path_for_attrs);
+        let old_raw = read_blob_bytes(odb, &entry.old_oid);
+        let new_raw = read_blob_bytes(odb, &entry.new_oid);
+        if !textconv_patch
+            && (is_binary_for_diff(git_dir, path_for_attrs, &old_raw)
+                || is_binary_for_diff(git_dir, path_for_attrs, &new_raw))
+        {
+            if entry.status == DiffStatus::Deleted {
+                diff_text.push_str(&format!("Binary files a/{old_path} and /dev/null differ\n"));
+            } else if entry.status == DiffStatus::Added {
+                diff_text.push_str(&format!("Binary files /dev/null and b/{new_path} differ\n"));
+            } else {
+                diff_text.push_str(&format!(
+                    "Binary files a/{old_path} and b/{new_path} differ\n"
+                ));
+            }
+            continue;
+        }
+        let old_content = if entry.old_oid == zero_oid() {
+            String::new()
+        } else if use_textconv {
+            blob_text_for_diff_with_oid(
+                odb,
+                git_dir,
+                &config,
+                path_for_attrs,
+                &old_raw,
+                &entry.old_oid,
+                true,
+            )
+        } else {
+            read_blob_content(odb, &entry.old_oid)
+        };
+        let new_content = if entry.new_oid == zero_oid() {
+            String::new()
+        } else if use_textconv {
+            blob_text_for_diff_with_oid(
+                odb,
+                git_dir,
+                &config,
+                path_for_attrs,
+                &new_raw,
+                &entry.new_oid,
+                true,
+            )
+        } else {
+            read_blob_content(odb, &entry.new_oid)
+        };
         let patch = unified_diff(&old_content, &new_content, old_path, new_path, 3);
         diff_text.push_str(&patch);
     }
@@ -1174,6 +1232,13 @@ fn format_single_patch(
     out.push('\n');
 
     Ok(out)
+}
+
+fn read_blob_bytes(odb: &Odb, oid: &ObjectId) -> Vec<u8> {
+    if *oid == zero_oid() {
+        return Vec::new();
+    }
+    odb.read(oid).map(|o| o.data).unwrap_or_default()
 }
 
 /// Read blob content as UTF-8 string (empty for zero OID).
