@@ -246,6 +246,7 @@ run_one() {
       unset -f git grit 2>/dev/null || true &&
       env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_SEQUENCE_EDITOR \
         -u GIT_AUTHOR_DATE -u GIT_COMMITTER_DATE -u test_tick \
+        -u GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME \
         EDITOR=: VISUAL=: LC_ALL=C LANG=C _prereq_DEFAULT_REPO_FORMAT=set \
         GRIT_TEST_LIB_SUMMARY=1 \
         ${utf8_nfd_to_nfc:+GIT_TEST_UTF8_NFD_TO_NFC=$utf8_nfd_to_nfc} \
