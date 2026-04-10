@@ -549,7 +549,7 @@ fn no_index_blob_abbrev(data: &[u8]) -> String {
 }
 
 /// Arguments for `grit diff`.
-#[derive(Debug, ClapArgs)]
+#[derive(Debug, Default, ClapArgs)]
 #[command(about = "Show changes between commits, commit and working tree, etc.")]
 pub struct Args {
     /// Show staged changes (index vs HEAD). Alias: --staged.
@@ -990,6 +990,93 @@ fn write_no_index_index_lines(
         let _ = writeln!(out, "old mode {mode_a}");
         let _ = writeln!(out, "new mode {mode_b}");
     }
+}
+
+/// Build the unstaged patch Git writes for `git add -e` (index vs work tree, 7 context lines).
+///
+/// Matches `edit_patch` in Git's `builtin/add.c`: `run_diff_files` with `context = 7`, patch format,
+/// no color, and submodule dirty paths ignored like `ignore_dirty_submodules`.
+pub(crate) fn unstaged_patch_for_add_edit(
+    repo: &Repository,
+    pathspecs: &[String],
+) -> Result<String> {
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+
+    let index = match repo.load_index() {
+        Ok(idx) => idx,
+        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
+        Err(e) => return Err(e.into()),
+    };
+
+    let entries = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
+
+    let cwd = repo.effective_pathspec_cwd();
+    let mut pathspec_prefix_buf = show_prefix(repo, &cwd);
+    if !pathspec_prefix_buf.is_empty() {
+        pathspec_prefix_buf.pop();
+    }
+    let pathspec_prefix = (!pathspec_prefix_buf.is_empty()).then_some(pathspec_prefix_buf.as_str());
+    let resolved_specs: Vec<String> = pathspecs
+        .iter()
+        .map(|p| resolve_pathspec(p, work_tree, pathspec_prefix.as_deref()))
+        .collect();
+    let entries = filter_by_paths(entries, &resolved_specs);
+
+    let ignore_sm = "dirty";
+
+    let diff_config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let merged_attrs = load_gitattributes_for_diff(repo)?;
+    let merged_attrs = Arc::new(merged_attrs);
+    let ignore_case_attrs = diff_config
+        .get("core.ignorecase")
+        .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "1"));
+    let diff_algo_ctx = DiffAlgoContext {
+        attrs: Arc::clone(&merged_attrs),
+        config: Arc::new(diff_config.clone()),
+        ignore_case_attrs,
+    };
+    let diff_algo_cli = parse_cli_diff_algorithm_from_argv();
+
+    let mut diff_args = Args::default();
+    diff_args.color = Some("never".to_owned());
+    let (src_prefix, dst_prefix) = resolve_diff_prefixes(&diff_args, repo, false);
+    let relative_prefix = resolve_diff_relative_prefix(Some(work_tree), &repo.git_dir, &diff_args);
+
+    let mut out = Vec::new();
+    write_patch_with_prefix(
+        &mut out,
+        repo,
+        &entries,
+        &repo.odb,
+        &repo.git_dir,
+        &diff_config,
+        7,
+        false,
+        false,
+        Some(work_tree),
+        false,
+        7,
+        0,
+        false,
+        false,
+        false,
+        true,
+        &src_prefix,
+        &dst_prefix,
+        None,
+        submodule_ignore_flags_from_diff_arg(ignore_sm),
+        None,
+        &diff_algo_ctx,
+        diff_algo_cli,
+        false,
+        true,
+        None,
+        relative_prefix.as_deref(),
+    )?;
+    Ok(String::from_utf8(out).context("diff patch was not valid UTF-8")?)
 }
 
 /// Run the `diff` command.
