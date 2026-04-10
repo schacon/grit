@@ -1838,6 +1838,7 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
                             flags: path_str.len().min(0xFFF) as u16,
                             flags_extended: None,
                             path: raw_path.clone(),
+                            base_index_pos: 0,
                         };
                         index.add_or_replace(entry);
                         changed = true;
@@ -1898,6 +1899,7 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
                         flags: path_str.len().min(0xFFF) as u16,
                         flags_extended: None,
                         path: raw_path.clone(),
+                        base_index_pos: 0,
                     };
                     index.add_or_replace(entry);
                     changed = true;

@@ -48,6 +48,8 @@ const INDEX_EXT_SPARSE_DIRECTORIES: u32 = u32::from_be_bytes(*b"sdir");
 const INDEX_EXT_UNTRACKED: u32 = u32::from_be_bytes(*b"UNTR");
 /// Git index extension signature `REUC` (resolve undo).
 const INDEX_EXT_RESOLVE_UNDO: u32 = u32::from_be_bytes(*b"REUC");
+/// Git index extension signature `link` (split index).
+const INDEX_EXT_LINK: u32 = u32::from_be_bytes(*b"link");
 
 /// A single entry in the Git index.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +82,8 @@ pub struct IndexEntry {
     pub flags_extended: Option<u16>,
     /// Path relative to the repository root.  May contain `/` separators.
     pub path: Vec<u8>,
+    /// Split index: position in shared base (1-based), or 0 if not from shared index.
+    pub base_index_pos: u32,
 }
 
 impl IndexEntry {
@@ -191,6 +195,8 @@ pub struct Index {
     pub untracked_cache: Option<untracked_cache::UntrackedCache>,
     /// Optional `REUC` resolve-undo extension (paths that were unmerged before a resolution).
     pub resolve_undo: Option<BTreeMap<Vec<u8>, ResolveUndoRecord>>,
+    /// Split index `link` extension (bitmaps cleared after load merge).
+    pub(crate) split_link: Option<crate::split_index::SplitIndexLink>,
 }
 
 /// Options for loading an index from disk.
@@ -253,6 +259,7 @@ impl Index {
             sparse_directories: false,
             untracked_cache: None,
             resolve_undo: None,
+            split_link: None,
         }
     }
 
@@ -271,6 +278,7 @@ impl Index {
                 sparse_directories: false,
                 untracked_cache: None,
                 resolve_undo: None,
+                split_link: None,
             };
         }
 
@@ -301,6 +309,7 @@ impl Index {
             sparse_directories: false,
             untracked_cache: None,
             resolve_undo: None,
+            split_link: None,
         }
     }
 
@@ -317,6 +326,7 @@ impl Index {
                 sparse_directories: false,
                 untracked_cache: None,
                 resolve_undo: None,
+                split_link: None,
             };
         }
 
@@ -350,6 +360,7 @@ impl Index {
             sparse_directories: false,
             untracked_cache: None,
             resolve_undo: None,
+            split_link: None,
         }
     }
 
@@ -525,6 +536,7 @@ impl Index {
                 flags: path_with_slash.len().min(0xFFF) as u16,
                 flags_extended: Some(0),
                 path: path_with_slash,
+                base_index_pos: 0,
             };
             placeholder.set_skip_worktree(true);
             self.add_or_replace(placeholder);
@@ -597,6 +609,7 @@ impl Index {
         let mut sparse_directories = false;
         let mut untracked_cache = None;
         let mut resolve_undo = None;
+        let mut split_link = None;
         while pos + 8 <= body.len() {
             let sig = u32::from_be_bytes(
                 body[pos..pos + 4]
@@ -622,6 +635,9 @@ impl Index {
             } else if sig == INDEX_EXT_RESOLVE_UNDO {
                 let ext_data = &body[pos..pos + ext_sz];
                 resolve_undo = Some(resolve_undo::parse_resolve_undo_payload(ext_data)?);
+            } else if sig == INDEX_EXT_LINK {
+                let ext_data = &body[pos..pos + ext_sz];
+                split_link = Some(crate::split_index::parse_link_extension(ext_data)?);
             }
             pos += ext_sz;
         }
@@ -635,6 +651,7 @@ impl Index {
             sparse_directories,
             untracked_cache,
             resolve_undo,
+            split_link,
         })
     }
 
@@ -644,15 +661,22 @@ impl Index {
     ///
     /// Returns [`Error::Io`] on filesystem errors.
     pub fn write(&self, path: &Path) -> Result<()> {
+        let git_dir = path.parent();
+        let config = git_dir.and_then(|d| ConfigSet::load(Some(d), true).ok());
+        let skip_hash = index_skip_hash_for_write(config.as_ref());
+        self.write_to_path(path, skip_hash)
+    }
+
+    /// Write this index to `path` with an explicit trailing-checksum policy.
+    ///
+    /// When `skip_hash` is true, the trailing SHA-1 is written as all zeros (Git `index.skipHash`).
+    pub fn write_to_path(&self, path: &Path, skip_hash: bool) -> Result<()> {
         let mut sorted = self.clone();
         sorted.sort();
 
         let mut body = Vec::new();
         sorted.serialize_into(&mut body)?;
 
-        let git_dir = path.parent();
-        let config = git_dir.and_then(|d| ConfigSet::load(Some(d), true).ok());
-        let skip_hash = index_skip_hash_for_write(config.as_ref());
         let checksum: [u8; 20] = if skip_hash {
             [0u8; 20]
         } else {
@@ -721,7 +745,7 @@ impl Index {
     /// Serialise the index body (without trailing checksum) into `out`.
     ///
     /// Callers must have sorted entries when using format 4 (path compression depends on order).
-    fn serialize_into(&self, out: &mut Vec<u8>) -> Result<()> {
+    pub(crate) fn serialize_into(&self, out: &mut Vec<u8>) -> Result<()> {
         let has_extended_flags = self.entries.iter().any(|e| e.flags_extended.is_some());
         let write_version = if self.version >= 4 {
             4
@@ -765,6 +789,24 @@ impl Index {
                 out.extend_from_slice(&payload);
             }
         }
+        if let Some(sl) = &self.split_link {
+            use crate::ewah_bitmap::EwahBitmap;
+            let del = sl
+                .delete_bitmap
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(EwahBitmap::new);
+            let rep = sl
+                .replace_bitmap
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(EwahBitmap::new);
+            let payload =
+                crate::split_index::serialize_link_extension_payload(&sl.base_oid, &del, &rep);
+            out.extend_from_slice(&INDEX_EXT_LINK.to_be_bytes());
+            out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+            out.extend_from_slice(&payload);
+        }
         Ok(())
     }
 
@@ -781,8 +823,10 @@ impl Index {
         });
         match result {
             Ok(pos) => {
-                // Exact match — replace in place
-                self.entries[pos] = entry;
+                // Preserve split-index row binding across refresh/replace (Git `ce->index`).
+                let mut e = entry;
+                e.base_index_pos = self.entries[pos].base_index_pos;
+                self.entries[pos] = e;
             }
             Err(pos) => {
                 // Not found — insert at sorted position
@@ -850,6 +894,7 @@ impl Index {
                 flags: path.len().min(0xFFF) as u16 | ((stage as u16) << 12),
                 flags_extended: None,
                 path: path.to_vec(),
+                base_index_pos: 0,
             };
             self.add_or_replace(entry);
         }
@@ -939,6 +984,12 @@ impl Index {
     pub fn sort(&mut self) {
         self.entries
             .sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.stage().cmp(&b.stage())));
+    }
+
+    /// OID of the shared index when this index uses split-index mode (`link` extension).
+    #[must_use]
+    pub fn split_index_base_oid(&self) -> Option<ObjectId> {
+        self.split_link.as_ref().map(|l| l.base_oid)
     }
 
     /// Find an entry by path and stage (0 for normal entries).
@@ -1114,6 +1165,7 @@ fn synthetic_stage1_index_entry(mode: u32, path: &[u8], oid: ObjectId) -> IndexE
         flags,
         flags_extended: None,
         path: path.to_vec(),
+        base_index_pos: 0,
     }
 }
 
@@ -1129,7 +1181,7 @@ fn config_truthy(raw: Option<&str>) -> bool {
 ///
 /// Mirrors Git `prepare_repo_settings`: `feature.manyFiles` enables skip-hash unless
 /// `index.skipHash` / `index.skiphash` is explicitly false; otherwise honor true `index.skipHash`.
-fn index_skip_hash_for_write(config: Option<&ConfigSet>) -> bool {
+pub(crate) fn index_skip_hash_for_write(config: Option<&ConfigSet>) -> bool {
     let Some(config) = config else {
         return false;
     };
@@ -1287,6 +1339,7 @@ fn walk_sparse_aware(
                 flags: path_len,
                 flags_extended: Some(0),
                 path,
+                base_index_pos: 0,
             };
             e.set_skip_worktree(true);
             out.push(e);
@@ -1331,6 +1384,7 @@ fn flatten_tree_blobs(odb: &Odb, tree_oid: &ObjectId, prefix: &[u8]) -> Result<V
                 flags: path_len,
                 flags_extended: Some(0),
                 path,
+                base_index_pos: 0,
             };
             e.set_skip_worktree(true);
             out.push(e);
@@ -1523,6 +1577,7 @@ fn parse_entry(data: &[u8], version: u32, prev_path: &[u8]) -> Result<(IndexEntr
             flags,
             flags_extended,
             path,
+            base_index_pos: 0,
         },
         pos,
     ))
@@ -1707,6 +1762,7 @@ pub fn entry_from_metadata(
         flags: rel_path.len().min(0xFFF) as u16,
         flags_extended: None,
         path: rel_path.to_vec(),
+        base_index_pos: 0,
     }
 }
 
@@ -1767,6 +1823,7 @@ mod tests {
             flags: path.len().min(0xFFF) as u16,
             flags_extended: None,
             path: path.as_bytes().to_vec(),
+            base_index_pos: 0,
         }
     }
 

@@ -30,6 +30,7 @@ fn main() -> grit_lib::error::Result<()> {
         flags: 1,
         flags_extended: None,
         path,
+        base_index_pos: 0,
     };
     let mut index = Index::new();
     index.add_or_replace(entry);

@@ -60,7 +60,7 @@ fn min_sz(a: usize, b: usize) -> usize {
 }
 
 /// In-memory EWAH bitmap matching Git's layout.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct EwahBitmap {
     buffer: Vec<Eword>,
     buffer_size: usize,

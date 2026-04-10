@@ -27,6 +27,7 @@ url = "2.5"
 base64 = "0.22"
 icu_normalizer = "2.0.0"
 shell-words = "1.1"
+filetime = "0.2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

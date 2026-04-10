@@ -1340,6 +1340,21 @@ fn postprocess_gitlink_file_patches(patches: &mut [FilePatch]) {
     }
 }
 
+fn subproject_commit_from_hunks(fp: &FilePatch) -> String {
+    fp.hunks
+        .iter()
+        .flat_map(|h| h.lines.iter())
+        .find_map(|l| {
+            if let HunkLine::Add(s) = l {
+                s.strip_prefix("Subproject commit ")
+                    .map(|h| h.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "0000000000000000000000000000000000000000".to_string())
+}
+
 /// Parse a `GIT binary patch` payload.
 fn parse_binary_patch(lines: &[&str], mut i: usize) -> Result<(BinaryPatchPayload, usize)> {
     let (forward_compressed, forward_declared_size) = parse_binary_literal(lines, &mut i)?;
@@ -3999,6 +4014,7 @@ fn build_fake_ancestor_file(patches: &[FilePatch], args: &Args, out_path: &Path)
             flags: ((adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
             flags_extended: None,
             path: adjusted.into_bytes(),
+            base_index_pos: 0,
         };
         fake.add_or_replace(entry);
     }
@@ -4959,6 +4975,7 @@ fn apply_to_index(
                 flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
                 flags_extended: None,
                 path: target_adjusted.clone().into_bytes(),
+                base_index_pos: 0,
             };
             if fp.is_rename && source_adjusted != target_adjusted {
                 index.remove(source_adjusted.as_bytes());
@@ -4967,23 +4984,65 @@ fn apply_to_index(
             continue;
         }
 
-        // Handle submodule (gitlink) entries specially
-        if (fp.new_mode.as_deref() == Some("160000") || fp.old_mode.as_deref() == Some("160000"))
-            && fp.is_new
-        {
-            let commit_hash = fp
-                .hunks
-                .iter()
-                .flat_map(|h| h.lines.iter())
-                .find_map(|l| {
-                    if let HunkLine::Add(s) = l {
-                        s.strip_prefix("Subproject commit ")
-                            .map(|h| h.trim().to_string())
-                    } else {
-                        None
+        if fp.new_mode.as_deref() == Some("160000") && !fp.is_deleted {
+            if fp.is_new {
+                let commit_hash = subproject_commit_from_hunks(fp);
+                let oid = grit_lib::objects::ObjectId::from_hex(&commit_hash)?;
+                let mode = grit_lib::index::MODE_GITLINK;
+                let entry = grit_lib::index::IndexEntry {
+                    ctime_sec: 0,
+                    ctime_nsec: 0,
+                    mtime_sec: 0,
+                    mtime_nsec: 0,
+                    dev: 0,
+                    ino: 0,
+                    mode,
+                    uid: 0,
+                    gid: 0,
+                    size: 0,
+                    oid,
+                    flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
+                    flags_extended: None,
+                    path: target_adjusted.into_bytes(),
+                    base_index_pos: 0,
+                };
+                index.add_or_replace(entry);
+                continue;
+            }
+
+            let source_index = if source_adjusted != target_adjusted {
+                &original_index
+            } else {
+                &index
+            };
+            if fp.old_mode.as_deref() == Some("160000") {
+                let Some(old_ent) = source_index.get(source_adjusted.as_bytes(), 0) else {
+                    bail!("{source_adjusted} not found in index");
+                };
+                if old_ent.mode != grit_lib::index::MODE_GITLINK {
+                    bail!("{source_adjusted} not found in index");
+                }
+                if let Some(expected_oid) = fp.old_oid.as_deref() {
+                    let index_hex = old_ent.oid.to_hex();
+                    if !index_hex.starts_with(expected_oid) {
+                        bail!("patch does not apply");
                     }
-                })
-                .unwrap_or_else(|| "0000000000000000000000000000000000000000".to_string());
+                }
+            } else {
+                let Some(entry) = source_index.get(source_adjusted.as_bytes(), 0) else {
+                    bail!("{source_adjusted} not found in index");
+                };
+                if entry.mode == grit_lib::index::MODE_GITLINK {
+                    bail!("{source_adjusted} not found in index");
+                }
+                let obj = repo.odb.read(&entry.oid)?;
+                let old_content = String::from_utf8_lossy(&obj.data).into_owned();
+                if let Some(expected_oid) = fp.old_oid.as_deref() {
+                    verify_old_oid_matches_content(expected_oid, &old_content)?;
+                }
+            }
+
+            let commit_hash = subproject_commit_from_hunks(fp);
             let oid = grit_lib::objects::ObjectId::from_hex(&commit_hash)?;
             let mode = grit_lib::index::MODE_GITLINK;
             let entry = grit_lib::index::IndexEntry {
@@ -5000,8 +5059,12 @@ fn apply_to_index(
                 oid,
                 flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
                 flags_extended: None,
-                path: target_adjusted.into_bytes(),
+                path: target_adjusted.clone().into_bytes(),
+                base_index_pos: 0,
             };
+            if fp.is_rename && source_adjusted != target_adjusted {
+                index.remove(source_adjusted.as_bytes());
+            }
             index.add_or_replace(entry);
             continue;
         }
@@ -5079,6 +5142,7 @@ fn apply_to_index(
             flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
             flags_extended: None,
             path: target_adjusted.clone().into_bytes(),
+            base_index_pos: 0,
         };
 
         if fp.is_rename && source_adjusted != target_adjusted {
@@ -5158,6 +5222,7 @@ fn apply_intent_to_add_entries(patches: &[FilePatch], args: &Args) -> Result<()>
             flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
             flags_extended: None,
             path: target_adjusted.into_bytes(),
+            base_index_pos: 0,
         };
         entry.set_intent_to_add(true);
         index.add_or_replace(entry);

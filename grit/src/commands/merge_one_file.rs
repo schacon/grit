@@ -81,6 +81,7 @@ fn make_stage0_entry(path: &[u8], oid: ObjectId, mode: u32, size: u32) -> IndexE
         flags: path.len().min(0x0FFF) as u16,
         flags_extended: None,
         path: path.to_vec(),
+        base_index_pos: 0,
     }
 }
 

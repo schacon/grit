@@ -69,6 +69,7 @@ fn main() -> grit_lib::error::Result<()> {
         flags: 7,
         flags_extended: None,
         path: b"base.txt".to_vec(),
+        base_index_pos: 0,
     });
     repo.write_index(&mut index)?;
     let index = repo.load_index()?;
@@ -94,6 +95,7 @@ fn main() -> grit_lib::error::Result<()> {
         flags: 7,
         flags_extended: None,
         path: b"base.txt".to_vec(),
+        base_index_pos: 0,
     });
     index.add_or_replace(IndexEntry {
         ctime_sec: 0,
@@ -110,6 +112,7 @@ fn main() -> grit_lib::error::Result<()> {
         flags: 9,
         flags_extended: None,
         path: b"picked.txt".to_vec(),
+        base_index_pos: 0,
     });
     repo.write_index(&mut index)?;
     let index = repo.load_index()?;

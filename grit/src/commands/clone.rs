@@ -4881,6 +4881,7 @@ fn add_tree_to_index(
                 flags: path.len().min(0xFFF) as u16,
                 flags_extended: None,
                 path: path.as_bytes().to_vec(),
+                base_index_pos: 0,
             });
         } else {
             // Get file stat info from the working tree if available
@@ -4927,6 +4928,7 @@ fn add_tree_to_index(
                 flags: path.len().min(0xFFF) as u16,
                 flags_extended: None,
                 path: path.as_bytes().to_vec(),
+                base_index_pos: 0,
             });
         }
     }

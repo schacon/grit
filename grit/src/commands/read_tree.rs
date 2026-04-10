@@ -426,6 +426,7 @@ fn tree_to_index_entries(
                 flags: path_bytes.len().min(0xFFF) as u16,
                 flags_extended: None,
                 path: path_bytes,
+                base_index_pos: 0,
             });
         }
     }

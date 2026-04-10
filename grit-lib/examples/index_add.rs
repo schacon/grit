@@ -28,6 +28,7 @@ fn main() -> grit_lib::error::Result<()> {
         flags: (path.len().min(0xfff)) as u16,
         flags_extended: None,
         path,
+        base_index_pos: 0,
     };
 
     let mut index = Index::new();

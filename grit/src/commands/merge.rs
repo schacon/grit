@@ -6397,6 +6397,7 @@ fn merge_trees(
                         flags: path.len().min(0xFFF) as u16,
                         flags_extended: None,
                         path: path.to_vec(),
+                        base_index_pos: 0,
                     };
                     if try_merge_gitlink_entries(
                         repo,
@@ -7894,6 +7895,7 @@ fn tree_to_index_entries(
                 flags: path_bytes.len().min(0xFFF) as u16,
                 flags_extended: None,
                 path: path_bytes,
+                base_index_pos: 0,
             });
         }
     }

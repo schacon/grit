@@ -30,6 +30,7 @@ use crate::objects::parse_commit;
 use crate::odb::Odb;
 use crate::rev_parse::is_inside_work_tree;
 use crate::sparse_checkout::effective_cone_mode_for_sparse_file;
+use crate::split_index::{write_index_file_split, WriteSplitIndexRequest};
 use crate::state::resolve_head;
 use crate::worktree_cwd::cwd_relative_under_work_tree;
 
@@ -55,7 +56,7 @@ fn export_git_prefix_env(repo: &Repository) {
             }
         }
     }
-    let _ = env::set_var(GIT_PREFIX_ENV, new_s);
+    env::set_var(GIT_PREFIX_ENV, new_s);
 }
 
 fn read_sparse_checkout_patterns(git_dir: &Path) -> Vec<String> {
@@ -428,6 +429,7 @@ impl Repository {
     /// (e.g. `GIT_INDEX_FILE` or a worktree-specific index).
     pub fn load_index_at(&self, path: &std::path::Path) -> Result<Index> {
         let mut idx = Index::load_expand_sparse_optional(path, &self.odb)?;
+        crate::split_index::resolve_split_index_if_needed(&mut idx, &self.git_dir, path)?;
         if let Some(ref wt) = self.work_tree {
             crate::sparse_checkout::clear_skip_worktree_from_present_files(
                 &self.git_dir,
@@ -446,8 +448,20 @@ impl Repository {
 
     /// Like [`Repository::write_index`], but writes to an explicit index file path.
     pub fn write_index_at(&self, path: &std::path::Path, index: &mut Index) -> Result<()> {
+        self.write_index_at_split(path, index, WriteSplitIndexRequest::default())
+    }
+
+    /// Write the index to `path`, optionally emitting a split index (shared base + `link` extension).
+    pub fn write_index_at_split(
+        &self,
+        path: &std::path::Path,
+        index: &mut Index,
+        split: WriteSplitIndexRequest,
+    ) -> Result<()> {
         self.finalize_sparse_index_if_needed(index)?;
-        index.write(path)
+        let cfg = ConfigSet::load(Some(&self.git_dir), true).unwrap_or_default();
+        let skip_hash = crate::index::index_skip_hash_for_write(Some(&cfg));
+        write_index_file_split(path, &self.git_dir, index, &cfg, split, skip_hash)
     }
 
     fn finalize_sparse_index_if_needed(&self, index: &mut Index) -> Result<()> {

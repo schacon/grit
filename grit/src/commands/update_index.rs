@@ -17,6 +17,7 @@ use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pathspec::matches_pathspec_for_object;
 use grit_lib::repo::Repository;
+use grit_lib::split_index::WriteSplitIndexRequest;
 use grit_lib::state::resolve_head;
 use grit_lib::untracked_cache::{self, UntrackedCache};
 
@@ -227,6 +228,14 @@ pub struct Args {
     #[arg(long = "force-untracked-cache", hide = true)]
     pub force_untracked_cache: bool,
 
+    /// Record index in split shared-base form (`link` extension + `sharedindex.<sha1>`).
+    #[arg(long = "split-index")]
+    pub split_index: bool,
+
+    /// Write a unified index (disable split-index for this write).
+    #[arg(long = "no-split-index")]
+    pub no_split_index: bool,
+
     /// Files to add/remove from the index.
     pub files: Vec<PathBuf>,
 }
@@ -426,6 +435,18 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
     let conv = crlf::ConversionConfig::from_config(&config);
     let attrs = crlf::load_gitattributes(work_tree);
 
+    let split_write = if args.no_split_index {
+        WriteSplitIndexRequest {
+            explicit: Some(false),
+        }
+    } else if args.split_index {
+        WriteSplitIndexRequest {
+            explicit: Some(true),
+        }
+    } else {
+        WriteSplitIndexRequest::default()
+    };
+
     if args.test_untracked_cache {
         // Grit always supports UNTR on POSIX; return success like Git on capable systems.
         return Ok(());
@@ -435,20 +456,20 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         let flags = untracked_cache::dir_flags_from_config(&config);
         let ident = untracked_cache::untracked_cache_ident(work_tree);
         index.untracked_cache = Some(UntrackedCache::new_shell(flags, ident));
-        repo.write_index_at(&index_path, &mut index)
+        repo.write_index_at_split(&index_path, &mut index, split_write)
             .context("writing index")?;
         return Ok(());
     }
 
     if args.no_untracked_cache {
         index.untracked_cache = None;
-        repo.write_index_at(&index_path, &mut index)
+        repo.write_index_at_split(&index_path, &mut index, split_write)
             .context("writing index")?;
     } else if args.untracked_cache {
         let flags = untracked_cache::dir_flags_from_config(&config);
         let ident = untracked_cache::untracked_cache_ident(work_tree);
         index.untracked_cache = Some(UntrackedCache::new_shell(flags, ident));
-        repo.write_index_at(&index_path, &mut index)
+        repo.write_index_at_split(&index_path, &mut index, split_write)
             .context("writing index")?;
     }
 
@@ -463,18 +484,18 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
             println!("index-version: was {old_ver}, set to {ver}");
         }
         index.version = ver;
-        repo.write_index_at(&index_path, &mut index)
+        repo.write_index_at_split(&index_path, &mut index, split_write)
             .context("writing index")?;
         return Ok(());
     }
 
     if args.index_info {
-        return run_index_info(&repo, &mut index, &index_path);
+        return run_index_info(&repo, &mut index, &index_path, split_write);
     }
 
     if args.clear_resolve_undo {
         index.clear_resolve_undo();
-        repo.write_index_at(&index_path, &mut index)
+        repo.write_index_at_split(&index_path, &mut index, split_write)
             .context("writing index")?;
         return Ok(());
     }
@@ -568,6 +589,7 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
                 flags: path_bytes.len().min(0xFFF) as u16,
                 flags_extended: None,
                 path: path_bytes,
+                base_index_pos: 0,
             };
             if args.verbose {
                 let path_str = String::from_utf8_lossy(&entry.path).into_owned();
@@ -596,7 +618,7 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
             let rel_bytes = path_to_bytes(&rel_path)?;
             let _ = index.unmerge_path_from_resolve_undo(&rel_bytes);
         }
-        repo.write_index_at(&index_path, &mut index)
+        repo.write_index_at_split(&index_path, &mut index, split_write)
             .context("writing index")?;
         return Ok(());
     }
@@ -617,6 +639,7 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
             &config,
             &conv,
             &attrs,
+            split_write,
         );
     }
 
@@ -838,6 +861,7 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
                     flags: rel_bytes.len().min(0xFFF) as u16,
                     flags_extended: None,
                     path: rel_bytes.to_vec(),
+                    base_index_pos: 0,
                 };
                 index.stage_file(entry);
             }
@@ -936,7 +960,7 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         let need_write =
             index_modified || has_racy_timestamp(&index, index_mtime_sec, index_mtime_nsec);
         if need_write {
-            repo.write_index_at(&index_path, &mut index)
+            repo.write_index_at_split(&index_path, &mut index, split_write)
                 .context("writing index")?;
         }
         // -q (quiet) suppresses the error exit; otherwise exit 1 if files need updating
@@ -946,7 +970,7 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         return Ok(());
     }
 
-    repo.write_index_at(&index_path, &mut index)
+    repo.write_index_at_split(&index_path, &mut index, split_write)
         .context("writing index")?;
     Ok(())
 }
@@ -956,6 +980,7 @@ fn run_index_info(
     repo: &grit_lib::repo::Repository,
     index: &mut Index,
     index_path: &std::path::Path,
+    split_write: WriteSplitIndexRequest,
 ) -> Result<()> {
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
@@ -1027,6 +1052,7 @@ fn run_index_info(
             flags,
             flags_extended: None,
             path,
+            base_index_pos: 0,
         };
         if stage == 0 {
             index.stage_file(entry);
@@ -1035,7 +1061,7 @@ fn run_index_info(
         }
     }
 
-    repo.write_index_at(index_path, index)
+    repo.write_index_at_split(index_path, index, split_write)
         .context("writing index")?;
     Ok(())
 }
@@ -1291,6 +1317,7 @@ fn run_update_index_again(
     config: &ConfigSet,
     conv: &crlf::ConversionConfig,
     attrs: &[crlf::AttrRule],
+    split_write: WriteSplitIndexRequest,
 ) -> Result<()> {
     let head_state = resolve_head(&repo.git_dir).context("resolving HEAD")?;
     let head_tree_oid: Option<ObjectId> = match head_state.oid() {
@@ -1397,6 +1424,7 @@ fn run_update_index_again(
                         flags: path_bytes.len().min(0xFFF) as u16,
                         flags_extended: None,
                         path: path_bytes.clone(),
+                        base_index_pos: 0,
                     };
                     index.stage_file(new_entry);
                 } else if args.remove {
@@ -1471,7 +1499,7 @@ fn run_update_index_again(
         }
     }
 
-    repo.write_index_at(index_path, index)
+    repo.write_index_at_split(index_path, index, split_write)
         .context("writing index")?;
     Ok(())
 }
@@ -1608,7 +1636,7 @@ pub fn run_refresh_quiet(repo: &Repository) -> Result<()> {
     let (_uptodate, index_modified) =
         refresh_index(&mut index, work_tree, &repo.odb, false, false, false)?;
     if index_modified || has_racy_timestamp(&index, index_mtime_sec, index_mtime_nsec) {
-        repo.write_index_at(&index_path, &mut index)
+        repo.write_index_at_split(&index_path, &mut index, WriteSplitIndexRequest::default())
             .context("writing index")?;
     }
     Ok(())

@@ -965,6 +965,7 @@ fn index_entry(path: Vec<u8>, mode: u32, oid: ObjectId) -> IndexEntry {
         flags: path_len,
         flags_extended: Some(0),
         path,
+        base_index_pos: 0,
     }
 }
 

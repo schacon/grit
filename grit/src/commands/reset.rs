@@ -1069,6 +1069,7 @@ fn reset_patch(repo: &Repository, rest: &[String]) -> Result<()> {
             flags: path_bytes.len().min(0xFFF) as u16,
             flags_extended: None,
             path: path_bytes,
+            base_index_pos: 0,
         };
         index.add_or_replace(entry);
     }
@@ -1248,6 +1249,7 @@ fn reset_paths(
                 flags: resolved_bytes.len().min(0xFFF) as u16,
                 flags_extended: None,
                 path: resolved_bytes.clone(),
+                base_index_pos: 0,
             };
             ita_entry.set_intent_to_add(true);
             if index.version < 3 {
@@ -1463,6 +1465,7 @@ fn reset_commit(
                 flags: old_e.path.len().min(0xFFF) as u16,
                 flags_extended: None,
                 path: old_e.path.clone(),
+                base_index_pos: 0,
             };
             ita.set_intent_to_add(true);
             if new_index.version < 3 {
@@ -2244,6 +2247,7 @@ fn tree_to_flat_entries(
                 flags: path_bytes.len().min(0xFFF) as u16,
                 flags_extended: None,
                 path: path_bytes,
+                base_index_pos: 0,
             });
         }
     }
