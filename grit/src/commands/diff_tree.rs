@@ -25,7 +25,8 @@ use grit_lib::merge_base::{
     merge_base_for_diff_two_commits, merge_bases_first_vs_rest, MergeBaseForDiffError,
 };
 use grit_lib::merge_diff::{
-    combined_merge_parent_blob_paths, format_combined_textconv_patch, is_binary_for_diff,
+    combined_diff_paths, combined_merge_parent_blob_paths, format_combined_textconv_patch,
+    is_binary_for_diff,
 };
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -693,7 +694,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                         // machine output is only diff records (matches harness expectations).
                         let omit_commit_id_line = opts.pretty.is_none() && !opts.stdin_mode;
                         if !omit_commit_id_line {
-                            write_commit_header(out, &oid, &obj.data, opts)?;
+                            write_commit_header(out, &oid, &obj.data, opts, None)?;
                         }
                         print_diff(out, repo, &filtered, opts, None)?;
                     }
@@ -717,16 +718,10 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 let hd = !buf.is_empty();
                 has_diff = hd;
                 if !opts.quiet && (hd || opts.pretty.is_some()) {
-                    write_commit_header(out, &oid, &obj.data, opts)?;
+                    write_commit_header(out, &oid, &obj.data, opts, None)?;
                     out.write_all(&buf)?;
                 }
-            } else if commit.parents.len() > 1
-                && opts.combined_patch
-                && matches!(
-                    opts.format,
-                    OutputFormat::NameStatus | OutputFormat::NameOnly | OutputFormat::Raw
-                )
-            {
+            } else if commit.parents.len() > 1 && opts.combined_patch {
                 let find_oid = if let Some(ref spec) = opts.find_object {
                     Some(
                         resolve_revision(repo, spec)
@@ -739,120 +734,60 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     recursive: true,
                     tree_in_recursive: opts.show_trees || find_oid.is_some(),
                 };
-                let paths = combined_diff_paths_filtered(
+                let mut paths = combined_diff_paths_filtered(
                     &repo.odb,
                     &commit.tree,
                     &commit.parents,
                     &walk,
                     find_oid.as_ref(),
                 )?;
+                paths = filter_combined_paths_intersection(
+                    &repo.odb,
+                    &commit.tree,
+                    &commit.parents,
+                    paths,
+                );
+                if !opts.pathspecs.is_empty() {
+                    paths.retain(|p| combined_path_matches_pathspecs(p, &opts.pathspecs));
+                }
                 has_diff = !paths.is_empty();
                 if !opts.quiet && (has_diff || opts.pretty.is_some()) {
-                    write_commit_header(out, &oid, &obj.data, opts)?;
+                    write_commit_header(out, &oid, &obj.data, opts, None)?;
                     if has_diff {
-                        match opts.format {
-                            OutputFormat::Raw => {
-                                for p in &paths {
-                                    if opts.nul_terminated {
-                                        write_combined_raw_z(
-                                            out,
-                                            Some(&oid.to_hex()),
-                                            p,
-                                            opts.abbrev,
-                                        )?;
-                                    } else {
-                                        writeln!(
-                                            out,
-                                            "{}",
-                                            format_combined_raw_line(p, opts.abbrev)
-                                        )?;
-                                    }
-                                }
-                            }
-                            _ => print_combined_paths(out, &paths, opts)?,
-                        }
-                    }
-                }
-            } else if commit.parents.len() > 1
-                && opts.combined_patch
-                && opts.format == OutputFormat::Patch
-            {
-                let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-                let quote_fully = config.quote_path_fully();
-                let abbrev_len = if opts.full_index {
-                    40usize
-                } else {
-                    opts.abbrev.unwrap_or(7)
-                };
-                let ws = CombinedDiffWsOptions {
-                    ignore_all_space: opts.ignore_all_space,
-                    ignore_space_change: opts.ignore_space_change,
-                    ignore_space_at_eol: opts.ignore_space_at_eol,
-                    ignore_cr_at_eol: opts.ignore_cr_at_eol,
-                };
-                let rename_thresh = opts.find_renames.unwrap_or(50);
-                let find_oid = if let Some(ref spec) = opts.find_object {
-                    Some(
-                        resolve_revision(repo, spec)
-                            .with_context(|| format!("unable to resolve '{spec}'"))?,
-                    )
-                } else {
-                    None
-                };
-                let walk = CombinedTreeDiffOptions {
-                    recursive: true,
-                    tree_in_recursive: opts.show_trees || find_oid.is_some(),
-                };
-                let paths = combined_diff_paths_filtered(
-                    &repo.odb,
-                    &commit.tree,
-                    &commit.parents,
-                    &walk,
-                    find_oid.as_ref(),
-                )?;
-                has_diff = !paths.is_empty();
-                if !opts.quiet && (has_diff || opts.pretty.is_some()) {
-                    write_commit_header(out, &oid, &obj.data, opts)?;
-                    let mut parent_trees = Vec::with_capacity(commit.parents.len());
-                    for p in &commit.parents {
-                        parent_trees.push(commit_tree(&repo.odb, p)?);
-                    }
-                    if parent_trees.len() >= 2 {
-                        for p in paths {
-                            let parent_blob_paths =
-                                if opts.combined_all_paths && opts.find_renames.is_some() {
-                                    combined_merge_parent_blob_paths(
-                                        &repo.odb,
-                                        &p.path,
-                                        &parent_trees,
-                                        rename_thresh,
-                                    )
-                                } else {
-                                    None
-                                };
-                            let ps_ref = parent_blob_paths.as_deref();
-                            if let Some(patch) = format_combined_textconv_patch(
-                                &repo.git_dir,
-                                &config,
-                                &repo.odb,
-                                &p.path,
-                                &parent_trees,
+                        if matches!(
+                            opts.format,
+                            OutputFormat::NameStatus | OutputFormat::NameOnly
+                        ) {
+                            print_combined_paths(out, &paths, opts)?;
+                        } else {
+                            print_combined_merge_output(
+                                out,
+                                repo,
+                                &paths,
+                                opts,
+                                &commit.parents,
                                 &commit.tree,
-                                abbrev_len,
-                                opts.context_lines,
-                                opts.combined_use_cc_word,
-                                false,
-                                ws,
-                                opts.combined_all_paths,
-                                ps_ref,
-                                &p.parents,
-                                quote_fully,
-                            ) {
-                                write!(out, "{patch}")?;
-                            }
+                                Some(&oid),
+                            )?;
                         }
                     }
                 }
+            } else if commit.parents.len() > 1 && opts.show_merges {
+                let mut any_diff = false;
+                for parent_oid in &commit.parents {
+                    let parent_tree = commit_tree(&repo.odb, parent_oid)?;
+                    let entries =
+                        diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
+                    let filtered = filter_entries(&repo.odb, &repo, entries, opts)?;
+                    any_diff |= !filtered.is_empty();
+                    if !opts.quiet {
+                        write_commit_header(out, &oid, &obj.data, opts, Some(parent_oid))?;
+                        print_diff(out, repo, &filtered, opts, Some(&parent_tree))?;
+                    }
+                }
+                has_diff = any_diff;
+            } else if commit.parents.len() > 1 {
+                // Merge commit without `-m` / `-c` / `--cc`: no diff output (matches `git diff-tree`).
             } else {
                 let parent_tree = commit_tree(&repo.odb, &commit.parents[0])?;
                 let entries =
@@ -866,7 +801,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     return Ok(has_diff);
                 }
                 if !opts.quiet && (has_diff || opts.pretty.is_some()) {
-                    write_commit_header(out, &oid, &obj.data, opts)?;
+                    write_commit_header(out, &oid, &obj.data, opts, None)?;
                     print_diff(out, repo, &filtered, opts, Some(&parent_tree))?;
                 }
             }
@@ -1503,6 +1438,202 @@ fn print_submodule_log_for_entry(
                 }
             }
         }
+    }
+
+    Ok(())
+}
+
+/// Build normal [`DiffEntry`] list for first-parent vs merge tree on combined-diff paths only.
+fn combined_paths_to_first_parent_entries(
+    _odb: &Odb,
+    paths: &[CombinedDiffPath],
+) -> Result<Vec<DiffEntry>> {
+    let zero = grit_lib::diff::zero_oid();
+    let mut out = Vec::with_capacity(paths.len());
+    for p in paths {
+        let p0 = p.parents.first();
+        let (old_mode, old_oid, new_mode, new_oid, status) = match p0 {
+            None => continue,
+            Some(side) if side.status == CombinedParentStatus::Added => (
+                "000000".to_string(),
+                zero,
+                format!("{:06o}", p.merge_mode),
+                p.merge_oid,
+                DiffStatus::Added,
+            ),
+            Some(side) if p.merge_mode == 0 || p.merge_oid == zero => (
+                format!("{:06o}", side.mode),
+                side.oid,
+                "000000".to_string(),
+                zero,
+                DiffStatus::Deleted,
+            ),
+            Some(side) => {
+                let st = if side.oid != p.merge_oid || side.mode != p.merge_mode {
+                    let ot = side.mode & 0o170000;
+                    let nt = p.merge_mode & 0o170000;
+                    if ot != nt {
+                        DiffStatus::TypeChanged
+                    } else {
+                        DiffStatus::Modified
+                    }
+                } else {
+                    continue;
+                };
+                (
+                    format!("{:06o}", side.mode),
+                    side.oid,
+                    format!("{:06o}", p.merge_mode),
+                    p.merge_oid,
+                    st,
+                )
+            }
+        };
+        out.push(DiffEntry {
+            status,
+            old_path: Some(p.path.clone()),
+            new_path: Some(p.path.clone()),
+            old_mode,
+            new_mode,
+            old_oid,
+            new_oid,
+            score: None,
+        });
+    }
+    Ok(out)
+}
+
+/// Print combined `--summary` lines (create/delete/mode) using first-parent vs merge semantics.
+fn write_combined_summary(out: &mut impl Write, paths: &[CombinedDiffPath]) -> Result<()> {
+    for p in paths {
+        let p0 = match p.parents.first() {
+            Some(s) => s,
+            None => continue,
+        };
+        if p0.status == CombinedParentStatus::Added {
+            writeln!(out, " create mode {:06o} {}", p.merge_mode, p.path)?;
+            continue;
+        }
+        if p.merge_mode == 0 || p.merge_oid == grit_lib::diff::zero_oid() {
+            writeln!(out, " delete mode {:06o} {}", p0.mode, p.path)?;
+            continue;
+        }
+        if p0.mode != p.merge_mode && p0.oid == p.merge_oid {
+            writeln!(
+                out,
+                " mode change {:06o} => {:06o} {}",
+                p0.mode, p.merge_mode, p.path
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Stat / raw / patch / summary for `-c` / `--cc` merge commits (matches `diff_tree_combined` order).
+fn print_combined_merge_output(
+    out: &mut impl Write,
+    repo: &Repository,
+    paths: &[CombinedDiffPath],
+    opts: &Options,
+    parent_commits: &[ObjectId],
+    merge_tree: &ObjectId,
+    commit_oid: Option<&ObjectId>,
+) -> Result<()> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let odb = &repo.odb;
+    let abbrev_len = if opts.full_index {
+        Some(40usize)
+    } else {
+        opts.abbrev
+    };
+    let want_stat = opts.format == OutputFormat::Stat
+        || (opts.format == OutputFormat::Patch && opts.patch_with_stat);
+    let want_raw = opts.format == OutputFormat::Raw
+        || (opts.format == OutputFormat::Patch && opts.patch_with_raw);
+    let want_patch = opts.format == OutputFormat::Patch;
+    let quote_fully = ConfigSet::load(Some(&repo.git_dir), true)
+        .unwrap_or_default()
+        .quote_path_fully();
+
+    let stat_entries = if want_stat {
+        combined_paths_to_first_parent_entries(odb, paths)?
+    } else {
+        Vec::new()
+    };
+
+    if want_stat && !stat_entries.is_empty() {
+        print_stat_summary(out, odb, &stat_entries, quote_fully)?;
+    }
+
+    if want_raw {
+        let hex_storage = commit_oid.map(|o| o.to_hex());
+        let commit_hex = hex_storage.as_deref();
+        for p in paths {
+            if opts.nul_terminated {
+                write_combined_raw_z(out, commit_hex, p, abbrev_len)?;
+            } else {
+                writeln!(out, "{}", format_combined_raw_line(p, abbrev_len))?;
+            }
+        }
+    }
+
+    let need_patch_sep = (want_stat && !stat_entries.is_empty()) || want_raw;
+    if want_patch {
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let patch_abbrev = if opts.full_index {
+            40usize
+        } else {
+            opts.abbrev.unwrap_or(7)
+        };
+        let ws = CombinedDiffWsOptions {
+            ignore_all_space: opts.ignore_all_space,
+            ignore_space_change: opts.ignore_space_change,
+            ignore_space_at_eol: opts.ignore_space_at_eol,
+            ignore_cr_at_eol: opts.ignore_cr_at_eol,
+        };
+        let rename_thresh = opts.find_renames.unwrap_or(50);
+        let mut parent_trees = Vec::with_capacity(parent_commits.len());
+        for p in parent_commits {
+            parent_trees.push(commit_tree(odb, p)?);
+        }
+        if parent_trees.len() >= 2 {
+            if need_patch_sep {
+                writeln!(out)?;
+            }
+            for p in paths {
+                let parent_blob_paths = if opts.combined_all_paths && opts.find_renames.is_some() {
+                    combined_merge_parent_blob_paths(odb, &p.path, &parent_trees, rename_thresh)
+                } else {
+                    None
+                };
+                let ps_ref = parent_blob_paths.as_deref();
+                if let Some(patch) = format_combined_textconv_patch(
+                    &repo.git_dir,
+                    &config,
+                    odb,
+                    &p.path,
+                    &parent_trees,
+                    merge_tree,
+                    patch_abbrev,
+                    opts.context_lines,
+                    opts.combined_use_cc_word,
+                    false,
+                    ws,
+                    opts.combined_all_paths,
+                    ps_ref,
+                    &p.parents,
+                    quote_fully,
+                ) {
+                    write!(out, "{patch}")?;
+                }
+            }
+        }
+    }
+
+    if opts.summary {
+        write_combined_summary(out, paths)?;
     }
 
     Ok(())
@@ -2274,17 +2405,25 @@ fn validate_tree_depth_limit(
 /// Retrieve the tree OID from a commit OID.
 /// Write a commit header line. If `pretty` is set, write a full "medium" format
 /// header; otherwise just write the OID.
+///
+/// `from_parent` is set when `-m` compares the merge result against each parent; Git prints
+/// `commit <id> (from <parent>)` in that case for `--pretty` and adjusts the oneline format.
 fn write_commit_header(
     out: &mut impl Write,
     oid: &ObjectId,
     commit_data: &[u8],
     opts: &Options,
+    from_parent: Option<&ObjectId>,
 ) -> Result<bool> {
     if let Some(ref pretty_fmt) = opts.pretty {
         let commit = parse_commit(commit_data).context("parsing commit for pretty")?;
         if pretty_fmt == "oneline" {
             let first_line = commit.message.lines().next().unwrap_or("");
-            writeln!(out, "{oid} {first_line}")?;
+            if let Some(p) = from_parent {
+                writeln!(out, "{} (from {}) {first_line}", oid.to_hex(), p.to_hex())?;
+            } else {
+                writeln!(out, "{oid} {first_line}")?;
+            }
             return Ok(false);
         }
         if let Some(template) = pretty_fmt
@@ -2298,7 +2437,21 @@ fn write_commit_header(
                 return Ok(false);
             }
         }
-        writeln!(out, "commit {oid}")?;
+        if let Some(p) = from_parent {
+            writeln!(out, "commit {} (from {})", oid.to_hex(), p.to_hex())?;
+        } else {
+            writeln!(out, "commit {oid}")?;
+        }
+        if commit.parents.len() > 1 {
+            let mut merge_line = String::new();
+            for (i, parent) in commit.parents.iter().enumerate() {
+                if i > 0 {
+                    merge_line.push(' ');
+                }
+                merge_line.push_str(&parent.to_hex());
+            }
+            writeln!(out, "Merge: {merge_line}")?;
+        }
         // Parse author line: "Name <email> timestamp tz"
         let author = &commit.author;
         if let Some(date_start) = author.rfind('>') {
@@ -2581,6 +2734,32 @@ fn apply_pickaxe_filter(
     }
 
     Ok(entries)
+}
+
+/// Keep only paths in the combined-diff intersection set Git uses (`D(A,P1) ∩ D(A,P2) ∩ …`).
+fn filter_combined_paths_intersection(
+    odb: &Odb,
+    merge_tree: &ObjectId,
+    parents: &[ObjectId],
+    paths: Vec<CombinedDiffPath>,
+) -> Vec<CombinedDiffPath> {
+    let allowed: std::collections::HashSet<String> = combined_diff_paths(odb, merge_tree, parents)
+        .into_iter()
+        .collect();
+    paths
+        .into_iter()
+        .filter(|p| allowed.contains(&p.path))
+        .collect()
+}
+
+fn combined_path_matches_pathspecs(path: &CombinedDiffPath, pathspecs: &[String]) -> bool {
+    if pathspecs.is_empty() {
+        return true;
+    }
+    let ctx = context_from_mode_octal(&format!("{:06o}", path.merge_mode));
+    pathspecs
+        .iter()
+        .any(|spec| matches_pathspec_with_context(spec, &path.path, ctx))
 }
 
 fn filter_pathspecs(entries: Vec<DiffEntry>, pathspecs: &[String]) -> Vec<DiffEntry> {
