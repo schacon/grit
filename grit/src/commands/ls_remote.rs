@@ -1,10 +1,8 @@
-//! `grit ls-remote` — list references from a local repository path.
-//!
-//! Only the **local path** transport is supported.  Network URLs are not
-//! handled in v1.
+//! `grit ls-remote` — list references from local or HTTP(S) repositories.
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
 use grit_lib::ls_remote::{ls_remote, Options, RefEntry};
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
@@ -61,13 +59,17 @@ pub struct Args {
 pub fn run(args: Args) -> Result<()> {
     // If the repository argument is a configured remote name, resolve its URL
     let effective_path = resolve_remote_or_path(&args.repository);
+    let repo_path_str = effective_path.to_string_lossy().to_string();
+
+    if repo_path_str.starts_with("http://") || repo_path_str.starts_with("https://") {
+        return run_http_ls_remote(&repo_path_str, &args);
+    }
 
     // Check if the path is a bundle file
     if is_bundle_file(&effective_path) {
         return run_bundle_ls_remote(&effective_path, &args);
     }
 
-    let repo_path_str = effective_path.to_string_lossy();
     let is_file_url = repo_path_str.starts_with("file://");
     if is_file_url && crate::file_upload_pack_v2::client_wants_protocol_v2() {
         let path = PathBuf::from(
@@ -114,6 +116,75 @@ pub fn run(args: Args) -> Result<()> {
         println!("{}\t{}", entry.oid, entry.name);
     }
 
+    Ok(())
+}
+
+fn run_http_ls_remote(repo_url: &str, args: &Args) -> Result<()> {
+    let proto = if repo_url.starts_with("https://") {
+        "https"
+    } else {
+        "http"
+    };
+    crate::protocol::check_protocol_allowed(proto, None)?;
+
+    let config = ConfigSet::load(None, true).unwrap_or_default();
+    let client = crate::http_client::HttpClientContext::from_config_set(&config)?;
+    let advertised = crate::http_smart::http_ls_refs(repo_url, &client)?;
+    if advertised.is_empty() {
+        return Ok(());
+    }
+
+    let head_symref_target = if args.symref {
+        crate::http_smart::remote_default_branch_from_advertised(&advertised)
+            .map(|b| format!("refs/heads/{b}"))
+    } else {
+        None
+    };
+
+    let mut entries: Vec<RefEntry> = Vec::new();
+    for e in advertised {
+        if args.heads && e.name != "HEAD" && !e.name.starts_with("refs/heads/") {
+            continue;
+        }
+        if args.tags && !e.name.starts_with("refs/tags/") {
+            continue;
+        }
+        if args.refs_only && e.name == "HEAD" {
+            continue;
+        }
+        if !grit_lib::ls_remote::ref_matches_ls_remote_patterns(&e.name, &args.patterns) {
+            continue;
+        }
+        let symref_target = if args.symref && e.name == "HEAD" {
+            head_symref_target.clone()
+        } else {
+            None
+        };
+        entries.push(RefEntry {
+            name: e.name,
+            oid: e.oid,
+            symref_target,
+        });
+    }
+
+    if entries.is_empty() || args.quiet {
+        return Ok(());
+    }
+
+    entries.sort_by(|a, b| {
+        let rank = |n: &str| if n == "HEAD" { 0 } else { 1 };
+        match rank(&a.name).cmp(&rank(&b.name)) {
+            std::cmp::Ordering::Equal => a.name.cmp(&b.name),
+            o => o,
+        }
+    });
+
+    for entry in &entries {
+        if let Some(target) = &entry.symref_target {
+            println!("ref: {target}\t{}", entry.name);
+        }
+        println!("{}\t{}", entry.oid, entry.name);
+    }
     Ok(())
 }
 

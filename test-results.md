@@ -1,5 +1,21 @@
 # Test results
 
+**2026-04-10 (fetch-plan Phase E.2: ls-remote over HTTP)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- Manual HTTP ls-remote parity check (local `test-httpd`):
+  - Created temp source+mirror repo under `/tmp/grit-lsremote-http-test`.
+  - Started `target/release/test-httpd` and served `/smart/repo.git`.
+  - Compared:
+    - `grit -c protocol.version=2 ls-remote http://127.0.0.1:<port>/smart/repo.git`
+    - `git  -c protocol.version=2 ls-remote http://127.0.0.1:<port>/smart/repo.git`
+  - `diff -u` output is empty (matching refs output).
+- Regression checkpoint:
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: 0/0
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: 9/24
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: 13/37
+
 **2026-04-10 (fetch HTTP refetch parity / Phase C.4)**
 
 - `cargo check -p grit-rs`: pass
