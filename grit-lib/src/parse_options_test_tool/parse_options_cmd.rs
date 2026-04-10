@@ -13,6 +13,8 @@ pub type ParseOptionsStatus = i32;
 pub enum ParseOptionsToolError {
     /// `-h` / `--help`: help already printed to stdout, exit 129, empty stderr.
     Help,
+    /// Callback returned an error without printing (Git `parse_options` exit 1, empty stderr).
+    Silent,
     Fatal(String),
     Bug(String),
 }
@@ -21,6 +23,7 @@ impl std::fmt::Display for ParseOptionsToolError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ParseOptionsToolError::Help => f.write_str("(help)"),
+            ParseOptionsToolError::Silent => f.write_str("(silent)"),
             ParseOptionsToolError::Fatal(s) | ParseOptionsToolError::Bug(s) => f.write_str(s),
         }
     }
@@ -205,10 +208,7 @@ fn format_opt_display(name: &'static str, arg: Option<&str>, unset: bool) -> Str
 }
 
 fn usage_append() -> String {
-    let mut s = String::new();
-    s.push('\n');
-    s.push_str(PARSE_OPTIONS_HELP);
-    s
+    PARSE_OPTIONS_HELP.to_string()
 }
 
 /// Git's `usage_with_options` is attached only for some parse errors; t0040 expects a bare line
@@ -231,6 +231,7 @@ fn map_parse_fatal(e: ParseOptionsToolError) -> ParseOptionsToolError {
         ParseOptionsToolError::Fatal(m) => {
             ParseOptionsToolError::Fatal(append_usage_if_unknown(&m))
         }
+        ParseOptionsToolError::Silent => ParseOptionsToolError::Silent,
         o => o,
     }
 }
@@ -315,24 +316,6 @@ pub fn run_parse_options(args: &[String]) -> Result<ParseOptionsStatus, ParseOpt
                 i += 1;
                 rest.extend(argv[i..].iter().cloned());
                 return st.dump(&st.expect.clone(), &rest);
-            }
-            // -NUM (OPTION_NUMBER): entire argv is `-` followed by decimal digits
-            let tail = &arg[1..];
-            if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) {
-                let n: i32 = -tail.parse::<i32>().map_err(|_| {
-                    ParseOptionsToolError::Fatal("error: invalid number\n".to_string())
-                })?;
-                st.touch_integer(
-                    n,
-                    OptMeta {
-                        name: "NUM",
-                        is_cmdmode: false,
-                    },
-                    None,
-                    false,
-                )?;
-                i += 1;
-                continue;
             }
             i = match parse_short(&mut st, argv, i, prefix, disallow_abbrev) {
                 Ok(n) => n,
@@ -507,12 +490,11 @@ fn long_exact(
             hit = true;
         }
         "length" => {
-            let v = take_val(eq_val, argv, i, "length")?;
             if u {
-                return Err(ParseOptionsToolError::Fatal(
-                    "error: option `no-length' isn't available\n".to_string(),
-                ));
+                no_eq(eq_val.as_deref(), "no-length", u)?;
+                return Err(ParseOptionsToolError::Silent);
             }
+            let v = take_val(eq_val, argv, i, "length")?;
             st.length_cb_called = true;
             st.length_cb_arg = Some(v.clone());
             st.length_cb_unset = false;
@@ -547,10 +529,11 @@ fn long_exact(
             hit = true;
         }
         "list" => {
-            let v = take_val(eq_val, argv, i, "list")?;
             if u {
+                no_eq(eq_val.as_deref(), "list", u)?;
                 st.list.clear();
             } else {
+                let v = take_val(eq_val, argv, i, "list")?;
                 st.list.push(v);
             }
             hit = true;
@@ -591,10 +574,8 @@ fn long_exact(
             no_eq(eq_val.as_deref(), "quiet", u)?;
             if u {
                 st.quiet = 0;
-            } else if st.quiet <= 0 {
-                st.quiet -= 1;
             } else {
-                st.quiet = -1;
+                st.quiet = st.quiet.saturating_add(1);
             }
             hit = true;
         }
@@ -846,20 +827,246 @@ fn set_u16(st: &mut PoState, raw: &str) -> Result<(), ParseOptionsToolError> {
     }
 }
 
-/// Mirrors `check_typos` in `parse-options.c` for single-dash typos (`-boolean`, …).
-fn check_typos(full_suffix: &str) -> Result<(), ParseOptionsToolError> {
-    if full_suffix.len() < 3 {
+/// Git `starts_with(long_name, arg)` for typo detection: byte prefix of `long_name`.
+fn long_name_starts_with_user_typos(user: &str, long_name: &str) -> bool {
+    long_name
+        .as_bytes()
+        .get(..user.len())
+        .is_some_and(|pfx| pfx == user.as_bytes())
+}
+
+/// Git `check_typos(arg + 1, …)` for a short-option cluster: `cluster` is the full argv suffix
+/// after `-` (e.g. `boolean` for `-boolean`), not the unconsumed tail.
+fn check_typos_short_cluster(cluster: &str) -> Result<(), ParseOptionsToolError> {
+    if cluster.len() < 3 {
         return Ok(());
     }
-    if full_suffix.starts_with("no-") {
+    if cluster.starts_with("no-") {
         return Err(ParseOptionsToolError::Fatal(format!(
-            "error: did you mean `--{full_suffix}` (with two dashes)?\n"
+            "error: did you mean `--{cluster}` (with two dashes)?\n"
         )));
     }
     for ln in LONG_NAMES {
-        if ln.starts_with(full_suffix) {
+        if long_name_starts_with_user_typos(cluster, ln) {
             return Err(ParseOptionsToolError::Fatal(format!(
-                "error: did you mean `--{full_suffix}` (with two dashes)?\n"
+                "error: did you mean `--{cluster}` (with two dashes)?\n"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// One step of Git `parse_short_opt`: explicit short options win; otherwise a digit run is
+/// `OPTION_NUMBER`.
+fn parse_short_opt_step(
+    st: &mut PoState,
+    full_suffix: &str,
+    o: &mut usize,
+    local_i: &mut usize,
+    argv: &[String],
+    prefix: &str,
+) -> Result<(), ParseOptionsToolError> {
+    let Some(first) = full_suffix[*o..].chars().next() else {
+        return Ok(());
+    };
+    let flen = first.len_utf8();
+
+    match first {
+        'h' => {
+            print!("{PARSE_OPTIONS_HELP}");
+            return Err(ParseOptionsToolError::Help);
+        }
+        's' => {
+            let v = if *o + flen < full_suffix.len() {
+                full_suffix[*o + flen..].to_string()
+            } else if *local_i + 1 < argv.len() {
+                *local_i += 1;
+                argv[*local_i].clone()
+            } else {
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `s' requires a value\n".to_string(),
+                ));
+            };
+            *o = full_suffix.len();
+            st.string = Some(v);
+        }
+        'b' => {
+            st.boolean = st.boolean.saturating_add(1);
+            *o += flen;
+        }
+        'i' => {
+            let tail = &full_suffix[*o + flen..];
+            let v = if !tail.is_empty() {
+                tail.to_string()
+            } else if *local_i + 1 < argv.len() {
+                *local_i += 1;
+                argv[*local_i].clone()
+            } else {
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `i' requires a value\n".to_string(),
+                ));
+            };
+            set_int(st, &v, "integer")?;
+            *o = full_suffix.len();
+        }
+        'j' => {
+            let tail = &full_suffix[*o + flen..];
+            let v = if !tail.is_empty() {
+                tail.to_string()
+            } else if *local_i + 1 < argv.len() {
+                *local_i += 1;
+                argv[*local_i].clone()
+            } else {
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `j' requires a value\n".to_string(),
+                ));
+            };
+            set_int(st, &v, "j")?;
+            *o = full_suffix.len();
+        }
+        'u' => {
+            let tail = &full_suffix[*o + flen..];
+            let v = if !tail.is_empty() {
+                tail.to_string()
+            } else if *local_i + 1 < argv.len() {
+                *local_i += 1;
+                argv[*local_i].clone()
+            } else {
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `u' requires a value\n".to_string(),
+                ));
+            };
+            set_unsigned(st, &v)?;
+            *o = full_suffix.len();
+        }
+        'v' => {
+            st.verbose = if st.verbose < 0 { 1 } else { st.verbose + 1 };
+            *o += flen;
+        }
+        'n' => {
+            st.dry_run = 1;
+            *o += flen;
+        }
+        'q' => {
+            st.quiet = st.quiet.saturating_add(1);
+            *o += flen;
+        }
+        'D' => {
+            st.boolean = 1;
+            *o += flen;
+        }
+        'B' => {
+            st.boolean = 1;
+            *o += flen;
+        }
+        '4' => {
+            st.boolean |= 4;
+            *o += flen;
+        }
+        'L' => {
+            let v = if *o + flen < full_suffix.len() {
+                full_suffix[*o + flen..].to_string()
+            } else if *local_i + 1 < argv.len() {
+                *local_i += 1;
+                argv[*local_i].clone()
+            } else {
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `L' requires a value\n".to_string(),
+                ));
+            };
+            *o = full_suffix.len();
+            st.length_cb_called = true;
+            st.length_cb_arg = Some(v.clone());
+            st.length_cb_unset = false;
+            st.touch_integer(v.len() as i32, opt("length", false), None, false)?;
+        }
+        'F' => {
+            let v = if *o + flen < full_suffix.len() {
+                full_suffix[*o + flen..].to_string()
+            } else if *local_i + 1 < argv.len() {
+                *local_i += 1;
+                argv[*local_i].clone()
+            } else {
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `F' requires a value\n".to_string(),
+                ));
+            };
+            *o = full_suffix.len();
+            st.file = Some(format!("{prefix}{v}"));
+        }
+        'A' => {
+            let v = if *o + flen < full_suffix.len() {
+                full_suffix[*o + flen..].to_string()
+            } else if *local_i + 1 < argv.len() {
+                *local_i += 1;
+                argv[*local_i].clone()
+            } else {
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `A' requires a value\n".to_string(),
+                ));
+            };
+            *o = full_suffix.len();
+            st.string = Some(v);
+        }
+        'Z' => {
+            let v = if *o + flen < full_suffix.len() {
+                full_suffix[*o + flen..].to_string()
+            } else if *local_i + 1 < argv.len() {
+                *local_i += 1;
+                argv[*local_i].clone()
+            } else {
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `Z' requires a value\n".to_string(),
+                ));
+            };
+            *o = full_suffix.len();
+            st.string = Some(v);
+        }
+        'o' => {
+            let v = if *o + flen < full_suffix.len() {
+                full_suffix[*o + flen..].to_string()
+            } else if *local_i + 1 < argv.len() {
+                *local_i += 1;
+                argv[*local_i].clone()
+            } else {
+                return Err(ParseOptionsToolError::Fatal(
+                    "error: switch `o' requires a value\n".to_string(),
+                ));
+            };
+            *o = full_suffix.len();
+            st.string = Some(v);
+        }
+        '+' => {
+            st.boolean = st.boolean.saturating_add(1);
+            *o += flen;
+        }
+        c if c.is_ascii_digit() => {
+            let start = *o;
+            let mut end = start;
+            while end < full_suffix.len() && full_suffix.as_bytes()[end].is_ascii_digit() {
+                end += 1;
+            }
+            let digits = &full_suffix[start..end];
+            let n: i32 = digits
+                .parse()
+                .map_err(|_| ParseOptionsToolError::Fatal("error: invalid number\n".to_string()))?;
+            st.touch_integer(
+                n,
+                OptMeta {
+                    name: "NUM",
+                    is_cmdmode: false,
+                },
+                None,
+                false,
+            )?;
+            *o = end;
+        }
+        _ => {
+            if *o == 0 {
+                check_typos_short_cluster(full_suffix)?;
+            }
+            return Err(ParseOptionsToolError::Fatal(format!(
+                "error: unknown switch `{first}'\n"
             )));
         }
     }
@@ -884,230 +1091,14 @@ fn parse_short(
     let mut o = 0usize;
     let mut local_i = i;
 
-    // First short option (Git calls `check_typos(arg+1)` when remainder after first match)
-    let first = full_suffix.chars().next().unwrap();
-    let flen = first.len_utf8();
-    match first {
-        'h' => {
-            print!("{PARSE_OPTIONS_HELP}");
-            return Err(ParseOptionsToolError::Help);
-        }
-        's' => {
-            let v = if full_suffix.len() > flen {
-                full_suffix[flen..].to_string()
-            } else if local_i + 1 < argv.len() {
-                local_i += 1;
-                argv[local_i].clone()
-            } else {
-                return Err(ParseOptionsToolError::Fatal(
-                    "error: switch `s' requires a value\n".to_string(),
-                ));
-            };
-            o = full_suffix.len();
-            st.string = Some(v);
-        }
-        'b' => {
-            st.boolean = st.boolean.saturating_add(1);
-            o += flen;
-        }
-        'i' => {
-            let tail = &full_suffix[flen..];
-            let v = if !tail.is_empty() {
-                tail.to_string()
-            } else if local_i + 1 < argv.len() {
-                local_i += 1;
-                argv[local_i].clone()
-            } else {
-                return Err(ParseOptionsToolError::Fatal(
-                    "error: switch `i' requires a value\n".to_string(),
-                ));
-            };
-            set_int(st, &v, "integer")?;
-            o = full_suffix.len();
-        }
-        'j' => {
-            let tail = &full_suffix[flen..];
-            let v = if !tail.is_empty() {
-                tail.to_string()
-            } else if local_i + 1 < argv.len() {
-                local_i += 1;
-                argv[local_i].clone()
-            } else {
-                return Err(ParseOptionsToolError::Fatal(
-                    "error: switch `j' requires a value\n".to_string(),
-                ));
-            };
-            set_int(st, &v, "j")?;
-            o = full_suffix.len();
-        }
-        'u' => {
-            let tail = &full_suffix[flen..];
-            let v = if !tail.is_empty() {
-                tail.to_string()
-            } else if local_i + 1 < argv.len() {
-                local_i += 1;
-                argv[local_i].clone()
-            } else {
-                return Err(ParseOptionsToolError::Fatal(
-                    "error: switch `u' requires a value\n".to_string(),
-                ));
-            };
-            set_unsigned(st, &v)?;
-            o = full_suffix.len();
-        }
-        'v' => {
-            st.verbose = if st.verbose < 0 { 1 } else { st.verbose + 1 };
-            o += flen;
-        }
-        'n' => {
-            st.dry_run = 1;
-            o += flen;
-        }
-        'q' => {
-            if st.quiet <= 0 {
-                st.quiet -= 1;
-            } else {
-                st.quiet = -1;
-            }
-            o += flen;
-        }
-        'D' => {
-            st.boolean = 1;
-            o += flen;
-        }
-        'B' => {
-            st.boolean = 1;
-            o += flen;
-        }
-        '4' => {
-            st.boolean |= 4;
-            o += flen;
-        }
-        'L' => {
-            let v = if full_suffix.len() > flen {
-                full_suffix[flen..].to_string()
-            } else if local_i + 1 < argv.len() {
-                local_i += 1;
-                argv[local_i].clone()
-            } else {
-                return Err(ParseOptionsToolError::Fatal(
-                    "error: switch `L' requires a value\n".to_string(),
-                ));
-            };
-            o = full_suffix.len();
-            st.length_cb_called = true;
-            st.length_cb_arg = Some(v.clone());
-            st.length_cb_unset = false;
-            st.touch_integer(v.len() as i32, opt("length", false), None, false)?;
-        }
-        'F' => {
-            let v = if full_suffix.len() > flen {
-                full_suffix[flen..].to_string()
-            } else if local_i + 1 < argv.len() {
-                local_i += 1;
-                argv[local_i].clone()
-            } else {
-                return Err(ParseOptionsToolError::Fatal(
-                    "error: switch `F' requires a value\n".to_string(),
-                ));
-            };
-            o = full_suffix.len();
-            st.file = Some(format!("{prefix}{v}"));
-        }
-        'A' => {
-            let v = if full_suffix.len() > flen {
-                full_suffix[flen..].to_string()
-            } else if local_i + 1 < argv.len() {
-                local_i += 1;
-                argv[local_i].clone()
-            } else {
-                return Err(ParseOptionsToolError::Fatal(
-                    "error: switch `A' requires a value\n".to_string(),
-                ));
-            };
-            o = full_suffix.len();
-            st.string = Some(v);
-        }
-        'Z' => {
-            let v = if full_suffix.len() > flen {
-                full_suffix[flen..].to_string()
-            } else if local_i + 1 < argv.len() {
-                local_i += 1;
-                argv[local_i].clone()
-            } else {
-                return Err(ParseOptionsToolError::Fatal(
-                    "error: switch `Z' requires a value\n".to_string(),
-                ));
-            };
-            o = full_suffix.len();
-            st.string = Some(v);
-        }
-        'o' => {
-            let v = if full_suffix.len() > flen {
-                full_suffix[flen..].to_string()
-            } else if local_i + 1 < argv.len() {
-                local_i += 1;
-                argv[local_i].clone()
-            } else {
-                return Err(ParseOptionsToolError::Fatal(
-                    "error: switch `o' requires a value\n".to_string(),
-                ));
-            };
-            o = full_suffix.len();
-            st.string = Some(v);
-        }
-        '+' => {
-            st.boolean = st.boolean.saturating_add(1);
-            o += flen;
-        }
-        _ => {
-            return Err(ParseOptionsToolError::Fatal(format!(
-                "error: unknown switch `{first}'\n"
-            )));
-        }
-    }
-
+    parse_short_opt_step(st, full_suffix, &mut o, &mut local_i, argv, prefix)?;
     if o < full_suffix.len() {
-        check_typos(full_suffix)?;
+        check_typos_short_cluster(full_suffix)?;
     }
-
     while o < full_suffix.len() {
-        let c = full_suffix[o..].chars().next().unwrap();
-        let clen = c.len_utf8();
-        match c {
-            'b' => {
-                st.boolean = st.boolean.saturating_add(1);
-                o += clen;
-            }
-            'v' => {
-                st.verbose = if st.verbose < 0 { 1 } else { st.verbose + 1 };
-                o += clen;
-            }
-            'n' => {
-                st.dry_run = 1;
-                o += clen;
-            }
-            'q' => {
-                if st.quiet <= 0 {
-                    st.quiet -= 1;
-                } else {
-                    st.quiet = -1;
-                }
-                o += clen;
-            }
-            '4' => {
-                st.boolean |= 4;
-                o += clen;
-            }
-            '+' => {
-                st.boolean = st.boolean.saturating_add(1);
-                o += clen;
-            }
-            _ => {
-                return Err(ParseOptionsToolError::Fatal(format!(
-                    "error: unknown switch `{c}'\n"
-                )));
-            }
+        parse_short_opt_step(st, full_suffix, &mut o, &mut local_i, argv, prefix)?;
+        if o < full_suffix.len() {
+            check_typos_short_cluster(full_suffix)?;
         }
     }
 

@@ -5072,6 +5072,10 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                             let _ = std::io::stdout().flush();
                             std::process::exit(129);
                         }
+                        Err(ParseOptionsToolError::Silent) => {
+                            let _ = std::io::stderr().flush();
+                            std::process::exit(1);
+                        }
                         Err(ParseOptionsToolError::Fatal(s)) => {
                             eprint!("{s}");
                             let _ = std::io::stderr().flush();
@@ -5096,6 +5100,10 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                             let _ = std::io::stdout().flush();
                             std::process::exit(129);
                         }
+                        Err(ParseOptionsToolError::Silent) => {
+                            let _ = std::io::stderr().flush();
+                            std::process::exit(1);
+                        }
                         Err(ParseOptionsToolError::Fatal(s)) => {
                             eprint!("{s}");
                             let _ = std::io::stderr().flush();
@@ -5119,6 +5127,10 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                         Err(ParseOptionsToolError::Help) => {
                             let _ = std::io::stdout().flush();
                             std::process::exit(129);
+                        }
+                        Err(ParseOptionsToolError::Silent) => {
+                            let _ = std::io::stderr().flush();
+                            std::process::exit(1);
                         }
                         Err(ParseOptionsToolError::Fatal(s)) => {
                             eprint!("{s}");
