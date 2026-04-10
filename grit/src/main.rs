@@ -10,6 +10,7 @@
 use anyhow::{bail, Context, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
 use std::collections::{BTreeSet, HashSet};
+use std::fs;
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -5852,21 +5853,146 @@ fn run_test_tool_chmtime(rest: &[String]) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum TestToolConfigParseKeyErr {
+    InvalidKey,
+    NoSectionOrName,
+}
+
+/// Match `git_config_parse_key` enough for `test-tool config get` (t1308).
+fn test_tool_git_config_parse_key(
+    key: &str,
+) -> std::result::Result<String, TestToolConfigParseKeyErr> {
+    let Some(last_dot) = key.rfind('.') else {
+        return Err(TestToolConfigParseKeyErr::NoSectionOrName);
+    };
+    if last_dot == 0 {
+        return Err(TestToolConfigParseKeyErr::NoSectionOrName);
+    }
+    if last_dot == key.len() - 1 {
+        return Err(TestToolConfigParseKeyErr::NoSectionOrName);
+    }
+
+    let baselen = last_dot;
+    let mut dot_seen = false;
+    let mut out: Vec<u8> = Vec::with_capacity(key.len());
+
+    for (i, c) in key.bytes().enumerate() {
+        if c == b'.' {
+            dot_seen = true;
+        }
+        if !dot_seen || i > baselen {
+            let is_first_var = i == baselen + 1;
+            let ok = c.is_ascii_alphanumeric() || c == b'-';
+            if !ok || (is_first_var && !c.is_ascii_alphabetic()) {
+                return Err(TestToolConfigParseKeyErr::InvalidKey);
+            }
+            out.push(c.to_ascii_lowercase());
+        } else if c == b'\n' {
+            return Err(TestToolConfigParseKeyErr::InvalidKey);
+        } else {
+            out.push(c.to_ascii_lowercase());
+        }
+    }
+
+    String::from_utf8(out).map_err(|_| TestToolConfigParseKeyErr::InvalidKey)
+}
+
+fn test_tool_config_display_name(path: &std::path::Path) -> String {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if let Ok(stripped) = path.strip_prefix(&cwd) {
+        let s = stripped.to_string_lossy();
+        if s.is_empty() {
+            return ".".to_string();
+        }
+        return s.into_owned();
+    }
+    git_path::real_path_resolving(&path.display().to_string())
+        .display()
+        .to_string()
+}
+
+fn test_tool_config_origin_type(entry: &grit_lib::config::ConfigEntry) -> &'static str {
+    if matches!(entry.scope, grit_lib::config::ConfigScope::Command) {
+        return "command line";
+    }
+    "file"
+}
+
+fn test_tool_config_iterate_name(entry: &grit_lib::config::ConfigEntry) -> String {
+    match &entry.file {
+        None => String::new(),
+        Some(p) => {
+            if p.to_string_lossy() == ":GIT_CONFIG_PARAMETERS" {
+                return String::new();
+            }
+            grit_lib::config::config_file_display_for_error(p)
+        }
+    }
+}
+
+fn test_tool_config_fatal_bad_numeric(
+    name: &str,
+    value: &str,
+    entry: &grit_lib::config::ConfigEntry,
+) -> ! {
+    let v = if value.is_empty() { "''" } else { value };
+    let msg = if matches!(entry.scope, grit_lib::config::ConfigScope::Command) && entry.line == 0 {
+        format!("fatal: bad numeric config value '{v}' for '{name}': invalid unit")
+    } else if let Some(path) = &entry.file {
+        let disp = test_tool_config_display_name(path);
+        format!("fatal: bad numeric config value '{v}' for '{name}' in file {disp}: invalid unit")
+    } else {
+        format!("fatal: bad numeric config value '{v}' for '{name}': invalid unit")
+    };
+    eprintln!("{msg}");
+    std::process::exit(128);
+}
+
+fn test_tool_config_fatal_missing_string(name: &str, entry: &grit_lib::config::ConfigEntry) -> ! {
+    let msg = match &entry.file {
+        Some(path) => {
+            let disp = test_tool_config_display_name(path);
+            format!(
+                "fatal: missing value for '{name}' in file {disp} at line {}",
+                entry.line
+            )
+        }
+        None => format!("fatal: missing value for '{name}'"),
+    };
+    eprintln!("{msg}");
+    std::process::exit(128);
+}
+
+fn test_tool_parse_git_bool_strict(value: &str) -> std::result::Result<bool, ()> {
+    match value.to_ascii_lowercase().as_str() {
+        "true" | "yes" | "on" => Ok(true),
+        "false" | "no" | "off" => Ok(false),
+        "" => Ok(false),
+        _ => {
+            let Ok(n) = value.parse::<i64>() else {
+                return Err(());
+            };
+            Ok(n != 0)
+        }
+    }
+}
+
 /// Handle `test-tool config` — config API test helper.
 fn run_test_tool_config(rest: &[String]) -> Result<()> {
+    use grit_lib::config::{canonical_key, ConfigFile};
+    use grit_lib::config::{parse_git_config_int_strict, ConfigScope, ConfigSet, IncludeContext};
+
     let subcmd = rest.first().map(|s| s.as_str()).unwrap_or("");
-    let key = rest.get(1).map(|s| s.as_str()).unwrap_or("");
 
-    // Load config from current git repo
-    let repo = grit_lib::repo::Repository::discover(None).ok();
-    let git_dir = repo.as_ref().map(|r| r.git_dir.as_path());
-    let cfg = grit_lib::config::ConfigSet::load(git_dir, true).unwrap_or_default();
-
-    match subcmd {
-        "read_early_config" => match grit_lib::config::ConfigSet::read_early_config(git_dir, key) {
+    if subcmd == "read_early_config" {
+        let key = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+        let repo = grit_lib::repo::Repository::discover(None).ok();
+        let git_dir = repo.as_ref().map(|r| r.git_dir.as_path());
+        return match ConfigSet::read_early_config(git_dir, key) {
             Ok(values) => {
                 if values.is_empty() {
-                    std::process::exit(0);
+                    return Ok(());
                 }
                 for v in values {
                     println!("{v}");
@@ -5874,53 +6000,320 @@ fn run_test_tool_config(rest: &[String]) -> Result<()> {
                 Ok(())
             }
             Err(e) => Err(anyhow::anyhow!("{}", e)),
-        },
-        "get_value" | "get" => match cfg.get(key) {
-            Some(val) => {
-                println!("{val}");
-                Ok(())
+        };
+    }
+
+    let repo = grit_lib::repo::Repository::discover(None).ok();
+    let git_dir = repo.as_ref().map(|r| r.git_dir.as_path());
+
+    match subcmd {
+        "get" => {
+            let key = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+            let cfg = ConfigSet::load(git_dir, true).unwrap_or_default();
+            match test_tool_git_config_parse_key(key) {
+                Err(TestToolConfigParseKeyErr::InvalidKey) => {
+                    println!("Key \"{key}\" is invalid");
+                    std::process::exit(1);
+                }
+                Err(TestToolConfigParseKeyErr::NoSectionOrName) => {
+                    println!("Key \"{key}\" has no section");
+                    std::process::exit(1);
+                }
+                Ok(_) => {
+                    if cfg.get(key).is_some() {
+                        return Ok(());
+                    }
+                    println!("Value not found for \"{key}\"");
+                    std::process::exit(1);
+                }
             }
-            None => {
-                eprintln!("fatal: config {} not found", key);
-                std::process::exit(1);
-            }
-        },
-        "get_value_multi" | "get_all" => {
-            // Get all values for a key
-            let values = cfg.get_all(key);
-            if values.is_empty() {
-                eprintln!("fatal: config {} not found", key);
-                std::process::exit(1);
-            }
-            for v in values {
-                println!("{v}");
+        }
+        "get_value" => {
+            let key = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+            let cfg = match ConfigSet::load(git_dir, true) {
+                Ok(c) => c,
+                Err(e) => {
+                    let es = e.to_string();
+                    if es.starts_with("fatal: bad config line ") {
+                        eprintln!("{es}");
+                        std::process::exit(128);
+                    }
+                    return Err(anyhow::anyhow!("{}", e));
+                }
+            };
+            match cfg.get_last_entry(key) {
+                Some(entry) => match &entry.value {
+                    None => println!("(NULL)"),
+                    Some(s) => println!("{s}"),
+                },
+                None => {
+                    println!("Value not found for \"{key}\"");
+                    std::process::exit(1);
+                }
             }
             Ok(())
         }
-        "get_int" => match cfg.get(key) {
-            Some(val) => match val.parse::<i64>() {
-                Ok(n) => {
-                    println!("{n}");
-                    Ok(())
+        "get_value_multi" => {
+            let key = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+            let cfg = if let Some(p) = rest.get(2) {
+                let path = Path::new(p);
+                let mut set = ConfigSet::new();
+                let ctx = IncludeContext::default();
+                let file = match ConfigFile::from_path(path, ConfigScope::Local) {
+                    Ok(Some(f)) => f,
+                    Ok(None) => {
+                        println!("Value not found for \"{key}\"");
+                        std::process::exit(1);
+                    }
+                    Err(e) => return Err(anyhow::anyhow!("{}", e)),
+                };
+                set.merge_file_with_includes(&file, true, &ctx)?;
+                set
+            } else {
+                match ConfigSet::load(git_dir, true) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let es = e.to_string();
+                        if es.starts_with("fatal: bad config line ") {
+                            eprintln!("{es}");
+                            std::process::exit(128);
+                        }
+                        return Err(anyhow::anyhow!("{}", e));
+                    }
                 }
-                Err(_) => bail!("bad numeric config value '{}'", val),
-            },
-            None => {
-                eprintln!("fatal: config {} not found", key);
+            };
+            let raw = cfg.get_all_raw(key);
+            if raw.is_empty() {
+                println!("Value not found for \"{key}\"");
                 std::process::exit(1);
             }
-        },
-        "get_bool" => match cfg.get_bool(key) {
-            Some(Ok(b)) => {
-                println!("{}", if b { "true" } else { "false" });
-                Ok(())
+            for v in raw {
+                match v {
+                    None => println!("(NULL)"),
+                    Some(s) => println!("{s}"),
+                }
             }
-            Some(Err(e)) => bail!("bad boolean config value: {}", e),
-            None => {
-                eprintln!("fatal: config {} not found", key);
+            Ok(())
+        }
+        "get_string" => {
+            let key = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+            let cfg = match ConfigSet::load(git_dir, true) {
+                Ok(c) => c,
+                Err(e) => return Err(anyhow::anyhow!("{}", e)),
+            };
+            let Some(entry) = cfg.get_last_entry(key) else {
+                println!("Value not found for \"{key}\"");
                 std::process::exit(1);
+            };
+            match &entry.value {
+                None => test_tool_config_fatal_missing_string(key, &entry),
+                Some(s) => println!("{s}"),
             }
-        },
+            Ok(())
+        }
+        "get_int" => {
+            let key = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+            let cfg = match ConfigSet::load(git_dir, true) {
+                Ok(c) => c,
+                Err(e) => return Err(anyhow::anyhow!("{}", e)),
+            };
+            let Some(entry) = cfg.get_last_entry(key) else {
+                println!("Value not found for \"{key}\"");
+                std::process::exit(1);
+            };
+            let value_src = entry.value.as_deref().unwrap_or("");
+            match parse_git_config_int_strict(value_src) {
+                Ok(n) => {
+                    let n32 = i32::try_from(n).unwrap_or(i32::MAX);
+                    println!("{n32}");
+                }
+                Err(_) => test_tool_config_fatal_bad_numeric(key, value_src, &entry),
+            }
+            Ok(())
+        }
+        "git_config_int" => {
+            let key = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+            let cfg = match ConfigSet::load(git_dir, true) {
+                Ok(c) => c,
+                Err(e) => return Err(anyhow::anyhow!("{}", e)),
+            };
+            let canon = canonical_key(key).unwrap_or_default();
+            for entry in cfg.entries() {
+                if entry.key != canon {
+                    continue;
+                }
+                let value_src = entry.value.as_deref().unwrap_or("");
+                match parse_git_config_int_strict(value_src) {
+                    Ok(n) => {
+                        let n32 = i32::try_from(n).unwrap_or(i32::MAX);
+                        println!("{n32}");
+                    }
+                    Err(_) => test_tool_config_fatal_bad_numeric(key, value_src, entry),
+                }
+            }
+            Ok(())
+        }
+        "get_bool" => {
+            let key = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+            let cfg = match ConfigSet::load(git_dir, true) {
+                Ok(c) => c,
+                Err(e) => return Err(anyhow::anyhow!("{}", e)),
+            };
+            let Some(entry) = cfg.get_last_entry(key) else {
+                println!("Value not found for \"{key}\"");
+                std::process::exit(1);
+            };
+            if entry.value.is_none() {
+                println!("1");
+                return Ok(());
+            }
+            let value_src = entry.value.as_deref().unwrap_or("");
+            match test_tool_parse_git_bool_strict(value_src) {
+                Ok(b) => println!("{}", i32::from(b)),
+                Err(_) => {
+                    eprintln!("fatal: bad boolean config value '{value_src}' for '{key}'");
+                    std::process::exit(128);
+                }
+            }
+            Ok(())
+        }
+        "configset_get_value" | "configset_get_value_multi" => {
+            let key = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+            let paths: Vec<&Path> = rest.iter().skip(2).map(|s| Path::new(s.as_str())).collect();
+            if paths.is_empty() {
+                bail!("test-tool config {subcmd}: expected key and at least one file");
+            }
+            let mut set = ConfigSet::new();
+            let ctx = IncludeContext::default();
+            for path in &paths {
+                let err_line = format!(
+                    "Error (-1) reading configuration file {}.",
+                    grit_lib::config::config_file_display_for_error(path)
+                );
+                if !path.exists() {
+                    eprintln!("{err_line}");
+                    std::process::exit(2);
+                }
+                if path.is_dir() {
+                    eprintln!(
+                        "warning: unable to access '{}': Is a directory",
+                        path.display()
+                    );
+                    eprintln!("{err_line}");
+                    std::process::exit(2);
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    match fs::metadata(path) {
+                        Ok(m) if m.is_file() => {
+                            let mode = m.permissions().mode();
+                            if mode & 0o444 == 0 {
+                                eprintln!(
+                                    "warning: unable to access '{}': Permission denied",
+                                    path.display()
+                                );
+                                eprintln!("{err_line}");
+                                std::process::exit(2);
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            eprintln!("warning: unable to access '{}': {e}", path.display());
+                            eprintln!("{err_line}");
+                            std::process::exit(2);
+                        }
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = fs::metadata(path);
+                }
+                let file = match ConfigFile::from_path(path, ConfigScope::Local) {
+                    Ok(Some(f)) => f,
+                    Ok(None) => {
+                        println!("Error (-1) reading configuration file {}.", path.display());
+                        std::process::exit(2);
+                    }
+                    Err(e) => {
+                        let es = e.to_string();
+                        if let Some(rest) = es.strip_prefix("bad config line ") {
+                            if let Some((line_part, tail)) = rest.split_once(" in file ") {
+                                if let Ok(line) = line_part.parse::<usize>() {
+                                    let p = std::path::Path::new(tail);
+                                    eprintln!(
+                                        "fatal: bad config line {line} in file {}",
+                                        p.display()
+                                    );
+                                    std::process::exit(128);
+                                }
+                            }
+                        }
+                        return Err(anyhow::anyhow!("{}", e));
+                    }
+                };
+                set.merge_file_with_includes(&file, true, &ctx)?;
+            }
+            if subcmd == "configset_get_value" {
+                let raw = set.get_all_raw(key);
+                let Some(last) = raw.last() else {
+                    println!("Value not found for \"{key}\"");
+                    std::process::exit(1);
+                };
+                match last {
+                    None => println!("(NULL)"),
+                    Some(s) => println!("{s}"),
+                }
+            } else {
+                let raw = set.get_all_raw(key);
+                if raw.is_empty() {
+                    println!("Value not found for \"{key}\"");
+                    std::process::exit(1);
+                }
+                for v in raw {
+                    match v {
+                        None => println!("(NULL)"),
+                        Some(s) => println!("{s}"),
+                    }
+                }
+            }
+            Ok(())
+        }
+        "iterate" => {
+            // Upstream t1308 expects only the standard user/repo/command layers; skip system
+            // `/etc/gitconfig` so host-wide entries (e.g. git-lfs) do not appear in output.
+            std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
+            let cfg = match ConfigSet::load(git_dir, true) {
+                Ok(c) => c,
+                Err(e) => return Err(anyhow::anyhow!("{}", e)),
+            };
+            let mut first = true;
+            for entry in cfg.entries() {
+                if !first {
+                    println!();
+                }
+                first = false;
+                let value_str = match &entry.value {
+                    None => "(null)".to_string(),
+                    Some(s) => s.clone(),
+                };
+                println!("key={}", entry.key);
+                println!("value={value_str}");
+                println!("origin={}", test_tool_config_origin_type(entry));
+                println!("name={}", test_tool_config_iterate_name(entry));
+                let lno = if matches!(entry.scope, grit_lib::config::ConfigScope::Command) {
+                    -1
+                } else {
+                    i32::try_from(entry.line).unwrap_or(-1)
+                };
+                println!("lno={lno}");
+                println!("scope={}", entry.scope);
+            }
+            Ok(())
+        }
+        "get_all" => {
+            bail!("test-tool config get_all is not used by the harness; use get_value_multi");
+        }
         _ => bail!("test-tool config: unknown subcommand '{subcmd}'"),
     }
 }

@@ -562,6 +562,14 @@ pub fn run(args: Args) -> Result<()> {
             cmd_get(&args, &get_args, git_dir.as_deref(), None)
         }
         2 => {
+            if !args.global
+                && !args.system
+                && !args.worktree
+                && args.file.is_none()
+                && git_dir.is_none()
+            {
+                bail!("not in a git directory");
+            }
             // Legacy set: `git config key value`
             // or `git config --replace-all key value`
             let set_args = SetArgs {
@@ -589,6 +597,14 @@ pub fn run(args: Args) -> Result<()> {
                     Some(&args.positional[2]),
                 )
             } else {
+                if !args.global
+                    && !args.system
+                    && !args.worktree
+                    && args.file.is_none()
+                    && git_dir.is_none()
+                {
+                    bail!("not in a git directory");
+                }
                 // `git config key value value-pattern` (legacy with value-pattern)
                 let set_args = SetArgs {
                     key: args.positional[0].clone(),
@@ -1293,40 +1309,10 @@ fn resolve_git_dir() -> Option<PathBuf> {
         }
         return Some(p);
     }
-    // Walk up from cwd looking for .git
-    let cwd = discovery_start_dir()?;
-    let mut cur = cwd.as_path();
-    loop {
-        let dot_git = cur.join(".git");
-        if dot_git.is_dir() {
-            return Some(dot_git);
-        }
-        if dot_git.is_file() {
-            // gitfile
-            if let Ok(content) = std::fs::read_to_string(&dot_git) {
-                for line in content.lines() {
-                    if let Some(rest) = line.strip_prefix("gitdir:") {
-                        let path = rest.trim();
-                        let resolved = if Path::new(path).is_absolute() {
-                            PathBuf::from(path)
-                        } else {
-                            cur.join(path)
-                        };
-                        return Some(resolved);
-                    }
-                }
-            }
-        }
-        // Bare repository layout at `cur/`, or Git's `$GIT_DIR` shadow at `cur/.git/` when both exist.
-        if cur.join("objects").is_dir() && cur.join("HEAD").is_file() {
-            let shadow = cur.join(".git");
-            if shadow.is_dir() && shadow.join("config").is_file() {
-                return Some(shadow);
-            }
-            return Some(cur.to_path_buf());
-        }
-        cur = cur.parent()?;
-    }
+    // Use library discovery so `GIT_CEILING_DIRECTORIES` (t1308 `nongit`) matches Git.
+    grit_lib::repo::Repository::discover(None)
+        .ok()
+        .map(|r| r.git_dir)
 }
 
 /// Determine which config file to write to based on flags.
