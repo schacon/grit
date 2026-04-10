@@ -249,7 +249,7 @@ fn write_symbolic_ref(git_dir: &Path, name: &str, target: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let lock_path = path.with_extension("lock");
+    let lock_path = grit_lib::refs::lock_path_for_ref(&path);
     fs::write(&lock_path, format!("ref: {target}\n"))?;
     fs::rename(lock_path, path)?;
     Ok(())

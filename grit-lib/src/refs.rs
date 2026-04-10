@@ -13,7 +13,7 @@
 //! When `extensions.refStorage = reftable`, the reftable backend is used
 //! instead.  The public API is the same; dispatch is handled internally.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -223,6 +223,14 @@ fn read_raw_ref_files(git_dir: &Path, refname: &str) -> Result<RawRefLookup> {
     Ok(RawRefLookup::NotFound)
 }
 
+/// Lock file path for a loose ref file (`<refpath>.lock`), matching Git's naming for nested refs.
+#[must_use]
+pub fn lock_path_for_ref(path: &Path) -> PathBuf {
+    let mut s = path.as_os_str().to_owned();
+    s.push(".lock");
+    PathBuf::from(s)
+}
+
 fn read_raw_ref_at(path: PathBuf) -> Result<Option<RawRefLookup>> {
     match fs::symlink_metadata(&path) {
         Ok(meta) => {
@@ -234,6 +242,37 @@ fn read_raw_ref_at(path: PathBuf) -> Result<Option<RawRefLookup>> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(Error::Io(e)),
     }
+}
+
+fn packed_ref_with_prefix(git_dir: &Path, prefix_with_slash: &str) -> Result<Option<String>> {
+    let packed = git_dir.join("packed-refs");
+    let content = match fs::read_to_string(&packed) {
+        Ok(c) => c,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(Error::Io(e)),
+    };
+    let mut best: Option<String> = None;
+    for line in content.lines() {
+        if line.is_empty() || line.starts_with('#') || line.starts_with('^') {
+            continue;
+        }
+        let mut parts = line.split_whitespace();
+        let _oid = parts.next();
+        let Some(name) = parts.next() else {
+            continue;
+        };
+        let name = name.trim();
+        if name.starts_with(prefix_with_slash) {
+            let take = match &best {
+                None => true,
+                Some(b) => name < b.as_str(),
+            };
+            if take {
+                best = Some(name.to_owned());
+            }
+        }
+    }
+    Ok(best)
 }
 
 fn packed_ref_name_exists(git_dir: &Path, refname: &str) -> Result<bool> {
@@ -256,6 +295,208 @@ fn packed_ref_name_exists(git_dir: &Path, refname: &str) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+/// Why a reference name cannot be created (Git `refs_verify_refname_available` style).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefnameUnavailable {
+    /// An ancestor ref already exists in the store (e.g. `refs/foo` blocks `refs/foo/bar`).
+    AncestorExists {
+        /// Existing ref that blocks creation.
+        blocking: String,
+        /// Ref the caller tried to create.
+        new_ref: String,
+    },
+    /// A descendant ref already exists (e.g. `refs/foo/bar` blocks `refs/foo`).
+    DescendantExists {
+        /// Existing ref under `new_ref/`.
+        blocking: String,
+        /// Ref the caller tried to create.
+        new_ref: String,
+    },
+    /// Two refnames in the same batch are mutually incompatible (parent vs child).
+    SameBatch {
+        /// Ref being validated (Git prints this first).
+        refname: String,
+        /// Other ref in the batch (parent dirname or descendant name).
+        other: String,
+    },
+}
+
+impl RefnameUnavailable {
+    /// Suffix after `cannot lock ref '<display_ref>': ` for stderr (no trailing newline).
+    #[must_use]
+    pub fn lock_message_suffix(&self) -> String {
+        match self {
+            RefnameUnavailable::AncestorExists { blocking, new_ref } => {
+                format!("'{blocking}' exists; cannot create '{new_ref}'")
+            }
+            RefnameUnavailable::DescendantExists { blocking, new_ref } => {
+                format!("'{blocking}' exists; cannot create '{new_ref}'")
+            }
+            RefnameUnavailable::SameBatch { refname, other } => {
+                format!("cannot process '{refname}' and '{other}' at the same time")
+            }
+        }
+    }
+}
+
+fn find_descendant_in_sorted_extras(
+    dirname_with_slash: &str,
+    extras: &BTreeSet<String>,
+) -> Option<String> {
+    let start = extras
+        .range(dirname_with_slash.to_string()..)
+        .next()
+        .cloned()?;
+    if start.starts_with(dirname_with_slash) {
+        Some(start)
+    } else {
+        None
+    }
+}
+
+/// Verify that `refname` can be created without directory/file conflicts with the ref store
+/// and with other refnames queued in the same transaction (`extras`).
+///
+/// `skip` names are ignored when checking the filesystem (updates that delete or replace
+/// those refs in the same batch). Matches Git's `refs_verify_refname_available`.
+///
+/// # Parameters
+///
+/// - `git_dir` — repository git directory.
+/// - `refname` — full ref name to create.
+/// - `extras` — other refnames touched in the same stdin batch / transaction (sorted set).
+/// - `skip` — refnames that may be deleted or updated away in the same batch.
+pub fn verify_refname_available_for_create(
+    git_dir: &Path,
+    refname: &str,
+    extras: &BTreeSet<String>,
+    skip: &HashSet<String>,
+) -> std::result::Result<(), RefnameUnavailable> {
+    // `Repository::git_dir` may be a relative path (e.g. `.git`); resolve so lookups match the
+    // on-disk ref store regardless of process cwd (test harness runs from `trash/.git/...`).
+    let git_dir = fs::canonicalize(git_dir).unwrap_or_else(|_| git_dir.to_path_buf());
+    let mut seen_dirnames: HashSet<String> = HashSet::new();
+    let segments: Vec<&str> = refname.split('/').filter(|s| !s.is_empty()).collect();
+    if segments.len() <= 1 {
+        // No slash-separated parent prefixes (e.g. `HEAD`).
+    } else {
+        let mut dirname = String::new();
+        for part in &segments[..segments.len() - 1] {
+            if !dirname.is_empty() {
+                dirname.push('/');
+            }
+            dirname.push_str(part);
+
+            if !seen_dirnames.insert(dirname.clone()) {
+                continue;
+            }
+
+            if skip.contains(&dirname) {
+                continue;
+            }
+
+            match read_raw_ref(&git_dir, &dirname) {
+                Ok(RawRefLookup::Exists) => {
+                    return Err(RefnameUnavailable::AncestorExists {
+                        blocking: dirname.clone(),
+                        new_ref: refname.to_owned(),
+                    });
+                }
+                // A directory at `refs/prefix` is normal when storing `refs/prefix/child`; only a
+                // real ref (loose file or packed line) blocks creating `refs/prefix/...`.
+                Ok(RawRefLookup::NotFound | RawRefLookup::IsDirectory) => {}
+                Err(_) => {}
+            }
+
+            if extras.contains(&dirname) {
+                return Err(RefnameUnavailable::SameBatch {
+                    refname: refname.to_owned(),
+                    other: dirname.clone(),
+                });
+            }
+        }
+    }
+
+    let mut leaf_dir = String::with_capacity(refname.len() + 1);
+    leaf_dir.push_str(refname);
+    leaf_dir.push('/');
+
+    let under = list_refs(&git_dir, &leaf_dir).unwrap_or_default();
+    if under.is_empty() {
+        let packed_dir = common_dir(&git_dir).unwrap_or_else(|| git_dir.clone());
+        if let Ok(Some(name)) = packed_ref_with_prefix(&packed_dir, &leaf_dir) {
+            if !skip.contains(&name) {
+                return Err(RefnameUnavailable::DescendantExists {
+                    blocking: name,
+                    new_ref: refname.to_owned(),
+                });
+            }
+        }
+        if packed_dir != git_dir {
+            if let Ok(Some(name)) = packed_ref_with_prefix(&git_dir, &leaf_dir) {
+                if !skip.contains(&name) {
+                    return Err(RefnameUnavailable::DescendantExists {
+                        blocking: name,
+                        new_ref: refname.to_owned(),
+                    });
+                }
+            }
+        }
+    }
+    if under.is_empty()
+        && fs::symlink_metadata(git_dir.join(refname))
+            .map(|m| m.is_dir())
+            .unwrap_or(false)
+    {
+        let mut blocking: Option<String> = None;
+        let dir_path = git_dir.join(refname);
+        if let Ok(read) = fs::read_dir(&dir_path) {
+            for entry in read.flatten() {
+                let path = entry.path();
+                let Ok(meta) = fs::metadata(&path) else {
+                    continue;
+                };
+                if !meta.is_file() {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let full = format!("{refname}/{name}");
+                blocking = Some(full);
+                break;
+            }
+        }
+        if let Some(b) = blocking {
+            if !skip.contains(&b) {
+                return Err(RefnameUnavailable::DescendantExists {
+                    blocking: b,
+                    new_ref: refname.to_owned(),
+                });
+            }
+        }
+    }
+
+    for (existing, _) in under {
+        if skip.contains(&existing) {
+            continue;
+        }
+        return Err(RefnameUnavailable::DescendantExists {
+            blocking: existing,
+            new_ref: refname.to_owned(),
+        });
+    }
+
+    if let Some(extra) = find_descendant_in_sorted_extras(&leaf_dir, extras) {
+        if !skip.contains(&extra) {
+            return Err(RefnameUnavailable::SameBatch {
+                refname: refname.to_owned(),
+                other: extra,
+            });
+        }
+    }
+
+    Ok(())
 }
 
 fn read_raw_ref_reftable(git_dir: &Path, refname: &str) -> Result<RawRefLookup> {
@@ -337,7 +578,7 @@ pub fn write_symbolic_ref(git_dir: &Path, refname: &str, target: &str) -> Result
         fs::create_dir_all(parent)?;
     }
     let content = format!("ref: {target}\n");
-    let lock = path.with_extension("lock");
+    let lock = lock_path_for_ref(&path);
     fs::write(&lock, &content)?;
     fs::rename(&lock, &path)?;
     Ok(())
@@ -353,8 +594,7 @@ pub fn write_ref(git_dir: &Path, refname: &str, oid: &ObjectId) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     let content = format!("{oid}\n");
-    // Write via lock file for atomicity
-    let lock = path.with_extension("lock");
+    let lock = lock_path_for_ref(&path);
     fs::write(&lock, &content)?;
     fs::rename(&lock, &path)?;
     Ok(())
@@ -501,7 +741,11 @@ pub fn read_symbolic_ref(git_dir: &Path, refname: &str) -> Result<Option<String>
     match read_ref_file(&path) {
         Ok(Ref::Symbolic(target)) => Ok(Some(target)),
         Ok(Ref::Direct(_)) => Ok(None),
-        Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {
+        Err(Error::Io(ref e))
+            if e.kind() == io::ErrorKind::NotFound
+                || e.kind() == io::ErrorKind::NotADirectory
+                || e.kind() == io::ErrorKind::IsADirectory =>
+        {
             if !notes_merge_state_ref(refname) {
                 if let Some(common) = common_dir(git_dir) {
                     if common != git_dir {
@@ -510,6 +754,8 @@ pub fn read_symbolic_ref(git_dir: &Path, refname: &str) -> Result<Option<String>
                             Ok(Ref::Symbolic(target)) => return Ok(Some(target)),
                             Ok(Ref::Direct(_)) => return Ok(None),
                             Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {}
+                            Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotADirectory => {}
+                            Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::IsADirectory => {}
                             Err(e) => return Err(e),
                         }
                     }
@@ -894,6 +1140,139 @@ fn collect_packed_refs_into_map(
         out.insert(refname.to_string(), oid);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod refname_available_tests {
+    use super::*;
+    use std::collections::{BTreeSet, HashSet};
+    use tempfile::tempdir;
+
+    #[test]
+    fn loose_parent_blocks_child_create() {
+        let dir = tempdir().unwrap();
+        let git_dir = dir.path();
+        fs::create_dir_all(git_dir.join("refs/1l")).unwrap();
+        fs::write(
+            git_dir.join("refs/1l/c"),
+            "67bf698f3ab735e92fb011a99cff3497c44d30c1\n",
+        )
+        .unwrap();
+        assert_eq!(
+            read_raw_ref(git_dir, "refs/1l/c").unwrap(),
+            RawRefLookup::Exists
+        );
+        let extras = BTreeSet::from([
+            "refs/1l/b".to_string(),
+            "refs/1l/c/x".to_string(),
+            "refs/1l/d".to_string(),
+        ]);
+        let skip = HashSet::new();
+        let err = verify_refname_available_for_create(git_dir, "refs/1l/c/x", &extras, &skip)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            RefnameUnavailable::AncestorExists { ref blocking, .. } if blocking == "refs/1l/c"
+        ));
+    }
+
+    #[test]
+    fn verify_sees_loose_ref_after_canonical_git_dir() {
+        let dir = tempdir().unwrap();
+        let git_dir = dir.path().join(".git");
+        fs::create_dir_all(git_dir.join("refs/1l")).unwrap();
+        fs::write(
+            git_dir.join("refs/1l/c"),
+            "67bf698f3ab735e92fb011a99cff3497c44d30c1\n",
+        )
+        .unwrap();
+        let skip = HashSet::new();
+        let extras = BTreeSet::new();
+        let err = verify_refname_available_for_create(&git_dir, "refs/1l/c/x", &extras, &skip)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            RefnameUnavailable::AncestorExists { ref blocking, .. } if blocking == "refs/1l/c"
+        ));
+    }
+
+    #[test]
+    fn list_refs_finds_sibling_under_parent_directory() {
+        let dir = tempdir().unwrap();
+        let git_dir = dir.path();
+        fs::create_dir_all(git_dir.join("refs/ns/p")).unwrap();
+        fs::write(
+            git_dir.join("refs/ns/p/x"),
+            "67bf698f3ab735e92fb011a99cff3497c44d30c1\n",
+        )
+        .unwrap();
+        let listed = list_refs(git_dir, "refs/ns/p/").unwrap();
+        assert!(
+            listed.iter().any(|(n, _)| n == "refs/ns/p/x"),
+            "got {listed:?}"
+        );
+    }
+
+    #[test]
+    fn verify_blocks_parent_when_child_ref_exists() {
+        let dir = tempdir().unwrap();
+        let git_dir = dir.path();
+        fs::create_dir_all(git_dir.join("refs/ns/p")).unwrap();
+        fs::write(
+            git_dir.join("refs/ns/p/x"),
+            "67bf698f3ab735e92fb011a99cff3497c44d30c1\n",
+        )
+        .unwrap();
+        let extras = BTreeSet::from(["refs/ns/p".to_string()]);
+        let skip = HashSet::new();
+        let err =
+            verify_refname_available_for_create(git_dir, "refs/ns/p", &extras, &skip).unwrap_err();
+        assert!(matches!(
+            err,
+            RefnameUnavailable::DescendantExists { ref blocking, .. }
+                if blocking == "refs/ns/p/x"
+        ));
+    }
+
+    #[test]
+    fn verify_blocks_parent_git_style_nested_path() {
+        let dir = tempdir().unwrap();
+        let git_dir = dir.path();
+        fs::create_dir_all(git_dir.join("refs/3l/c")).unwrap();
+        fs::write(
+            git_dir.join("refs/3l/c/x"),
+            "67bf698f3ab735e92fb011a99cff3497c44d30c1\n",
+        )
+        .unwrap();
+        let extras = BTreeSet::from(["refs/3l/c".to_string()]);
+        let skip = HashSet::new();
+        let err =
+            verify_refname_available_for_create(git_dir, "refs/3l/c", &extras, &skip).unwrap_err();
+        assert!(matches!(
+            err,
+            RefnameUnavailable::DescendantExists { ref blocking, .. }
+                if blocking == "refs/3l/c/x"
+        ));
+    }
+
+    #[test]
+    fn intermediate_directory_does_not_block_nested_create() {
+        let dir = tempdir().unwrap();
+        let git_dir = dir.path();
+        fs::create_dir_all(git_dir.join("refs/ns")).unwrap();
+        fs::write(
+            git_dir.join("refs/ns/existing"),
+            "67bf698f3ab735e92fb011a99cff3497c44d30c1\n",
+        )
+        .unwrap();
+        assert_eq!(
+            read_raw_ref(git_dir, "refs/ns").unwrap(),
+            RawRefLookup::IsDirectory
+        );
+        let extras = BTreeSet::from(["refs/ns/newchild".to_string()]);
+        let skip = HashSet::new();
+        verify_refname_available_for_create(git_dir, "refs/ns/newchild", &extras, &skip).unwrap();
+    }
 }
 
 #[cfg(test)]
