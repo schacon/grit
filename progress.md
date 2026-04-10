@@ -6,12 +6,12 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   331 |
+| Completed   |   332 |
 | In progress |     5 |
-| Remaining   |   435 |
+| Remaining   |   434 |
 | **Total**   |   771 |
 
-Task lines in `PLAN.md`: 331 completed (`[x]`), 5 in progress (`[~]`), 435 remaining (`[ ]`).
+Task lines in `PLAN.md`: 332 completed (`[x]`), 5 in progress (`[~]`), 434 remaining (`[ ]`).
 
 ## In progress
 
@@ -19,6 +19,7 @@ Task lines in `PLAN.md`: 331 completed (`[x]`), 5 in progress (`[~]`), 435 remai
 
 ## Recently completed
 
+- `t3438-rebase-broken-files` — 9/9 tests pass (`rebase-merge/author-script` written on conflict; strict parse on `rebase --continue`; apply backend preflight for writable `.git/rebased-patches`)
 - `t3405-rebase-malformed` — 5/5 tests pass (`rebase -i` reword: strip `#` lines like `git commit` after editor, abort on whitespace-only message; harness CSV refreshed)
 - `t5611-clone-config` — 13/13 harness tests pass (`clone -c` / `git -c` effective during local ref copy + checkout: merged config with `GIT_CONFIG_PARAMETERS`; custom `remote.*.fetch` + default refspec ordering in `.git/config`; CRLF smudge on clone checkout; `ConfigSet::merge_set` + public `parse_config_parameters`)
 - `t5315-pack-objects-compression` — 9/9 tests pass (`pack-objects` honors `core.compression` / `pack.compression` for zlib deflate level via `ConfigSet::pack_objects_zlib_level`; harness CSV/dashboards refreshed)
@@ -247,4 +248,4 @@ Task lines in `PLAN.md`: 331 completed (`[x]`), 5 in progress (`[~]`), 435 remai
 
 ## What Remains
 
-436 task lines still open in `PLAN.md` (plus 5 in progress). See `PLAN.md` for the full prioritized list.
+434 task lines still open in `PLAN.md` (plus 5 in progress). See `PLAN.md` for the full prioritized list.
