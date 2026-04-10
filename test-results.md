@@ -1,5 +1,16 @@
 # Test results
 
+**2026-04-10 (status perf phase2 / t7063 full parity completion)**  
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `bash tests/t7063-status-untracked-cache.sh -v`: **58/58** (all passing)
+- `bash tests/t7519-status-fsmonitor.sh -v`: **33/33** (all passing, no regression)
+- `bash tests/t7065-status-rename.sh -v`: **28/28** (no regression)
+- `bash tests/t7508-status.sh -v`: **94/126** (stable vs prior baseline)
+- `bash tests/t7060-wtstatus.sh -v`: **12/17** (stable vs prior baseline)
+
 **2026-04-10 (status perf phase2 / UNTR invalidation + check_only reuse parity)**  
 
 - `cargo fmt`: passed
