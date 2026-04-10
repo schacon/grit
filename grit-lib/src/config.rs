@@ -1463,6 +1463,61 @@ impl ConfigSet {
         self.get(key).map(|v| parse_i64(&v))
     }
 
+    /// Zlib deflate level for `git pack-objects` (Git's `pack_compression_level`).
+    ///
+    /// Entries are applied in [`Self::entries`] order. `core.compression` sets the pack level
+    /// until a `pack.compression` appears (Git `pack_compression_seen`). `core.loosecompression`
+    /// is ignored here — it only affects loose-object zlib, not packs.
+    ///
+    /// `-1` means zlib default (level 6). Valid values are `-1` or `0..=9`.
+    pub fn pack_objects_zlib_level(&self) -> Result<i32> {
+        const Z_DEFAULT_COMPRESSION: i32 = 6;
+        const Z_BEST_COMPRESSION: i32 = 9;
+
+        let parse_compression = |raw: &str| -> Result<i32> {
+            let v = parse_git_config_int_strict(raw.trim()).map_err(|_| {
+                Error::ConfigError(format!("bad numeric config value '{raw}' for compression"))
+            })?;
+            if v == -1 {
+                return Ok(Z_DEFAULT_COMPRESSION);
+            }
+            if v < 0 || v > i64::from(Z_BEST_COMPRESSION) {
+                return Err(Error::ConfigError(format!(
+                    "bad zlib compression level {v}"
+                )));
+            }
+            Ok(v as i32)
+        };
+
+        // `core.loosecompression` affects loose objects only (Git `zlib_compression_level`), not pack.
+        let mut pack_level = Z_DEFAULT_COMPRESSION;
+        let mut pack_compression_seen = false;
+
+        for e in self.entries() {
+            match e.key.as_str() {
+                "core.compression" => {
+                    let Some(val) = e.value.as_deref() else {
+                        continue;
+                    };
+                    let level = parse_compression(val)?;
+                    if !pack_compression_seen {
+                        pack_level = level;
+                    }
+                }
+                "pack.compression" => {
+                    let Some(val) = e.value.as_deref() else {
+                        continue;
+                    };
+                    pack_level = parse_compression(val)?;
+                    pack_compression_seen = true;
+                }
+                _ => {}
+            }
+        }
+
+        Ok(pack_level)
+    }
+
     /// Get all entries matching a key pattern (regex).
     ///
     /// Used by `git config --get-regexp`. Returns an error if the pattern
@@ -2876,5 +2931,77 @@ mod get_regexp_tests {
         let set = set_from_snippet("[user]\n\tname = x\n");
         let err = set.get_regexp("(").expect_err("unclosed group");
         assert!(err.contains("invalid key pattern"), "got: {err}");
+    }
+}
+
+#[cfg(test)]
+mod pack_compression_tests {
+    use super::{ConfigFile, ConfigScope, ConfigSet};
+    use std::path::Path;
+
+    fn set_from_snippet(text: &str) -> ConfigSet {
+        let path = Path::new(".git/config");
+        let file = ConfigFile::parse(path, text, ConfigScope::Local).expect("parse config snippet");
+        let mut set = ConfigSet::new();
+        set.merge(&file);
+        set
+    }
+
+    #[test]
+    fn pack_objects_zlib_level_defaults_to_six() {
+        let set = ConfigSet::new();
+        assert_eq!(set.pack_objects_zlib_level().unwrap(), 6);
+    }
+
+    #[test]
+    fn pack_objects_zlib_level_core_compression() {
+        let set = set_from_snippet("[core]\n\tcompression = 0\n");
+        assert_eq!(set.pack_objects_zlib_level().unwrap(), 0);
+        let set = set_from_snippet("[core]\n\tcompression = 9\n");
+        assert_eq!(set.pack_objects_zlib_level().unwrap(), 9);
+    }
+
+    #[test]
+    fn pack_objects_zlib_level_pack_overrides_core() {
+        let set = set_from_snippet("[core]\n\tcompression = 9\n[pack]\n\tcompression = 0\n");
+        assert_eq!(set.pack_objects_zlib_level().unwrap(), 0);
+        let set = set_from_snippet("[core]\n\tcompression = 0\n[pack]\n\tcompression = 9\n");
+        assert_eq!(set.pack_objects_zlib_level().unwrap(), 9);
+    }
+
+    #[test]
+    fn pack_objects_zlib_level_later_core_does_not_override_earlier_pack() {
+        let mut set = ConfigSet::new();
+        set.merge(
+            &ConfigFile::parse(
+                Path::new("a"),
+                "[pack]\n\tcompression = 9\n",
+                ConfigScope::Local,
+            )
+            .unwrap(),
+        );
+        set.merge(
+            &ConfigFile::parse(
+                Path::new("b"),
+                "[core]\n\tcompression = 0\n",
+                ConfigScope::Local,
+            )
+            .unwrap(),
+        );
+        assert_eq!(set.pack_objects_zlib_level().unwrap(), 9);
+    }
+
+    #[test]
+    fn pack_objects_zlib_level_loosecompression_does_not_block_core_pack_level() {
+        let set = set_from_snippet("[core]\n\tloosecompression = 1\n\tcompression = 0\n");
+        assert_eq!(set.pack_objects_zlib_level().unwrap(), 0);
+    }
+
+    #[test]
+    fn pack_objects_zlib_level_pack_wins_after_loose_and_core() {
+        let set = set_from_snippet(
+            "[core]\n\tloosecompression = 1\n\tcompression = 0\n[pack]\n\tcompression = 9\n",
+        );
+        assert_eq!(set.pack_objects_zlib_level().unwrap(), 9);
     }
 }

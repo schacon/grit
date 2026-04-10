@@ -399,8 +399,14 @@ pub fn run(args: Args) -> Result<()> {
         &pack_list.thin_blob_deltas,
     )?;
 
+    let config = ConfigSet::load(Some(&repo.git_dir), true).context("read repository config")?;
+    let pack_zlib_level = config
+        .pack_objects_zlib_level()
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let zlib_compression = Compression::new(pack_zlib_level as u32);
+
     // Build pack bytes.
-    let pack_bytes = build_pack(&write_entries)?;
+    let pack_bytes = build_pack(&write_entries, zlib_compression)?;
 
     if args.stdout {
         let stdout = io::stdout();
@@ -1431,7 +1437,7 @@ fn encode_pack_object_header(buf: &mut Vec<u8>, type_code: u8, payload_len: usiz
 }
 
 /// Build a PACK v2 byte stream (full objects and optional `REF_DELTA` blobs).
-fn build_pack(entries: &[PackWriteEntry]) -> Result<Vec<u8>> {
+fn build_pack(entries: &[PackWriteEntry], zlib: Compression) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
     buf.extend_from_slice(b"PACK");
     buf.extend_from_slice(&2u32.to_be_bytes());
@@ -1447,7 +1453,7 @@ fn build_pack(entries: &[PackWriteEntry]) -> Result<Vec<u8>> {
                     ObjectKind::Tag => 4,
                 };
                 encode_pack_object_header(&mut buf, type_code, pe.data.len());
-                let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+                let mut enc = ZlibEncoder::new(Vec::new(), zlib);
                 enc.write_all(&pe.data)?;
                 let compressed = enc.finish()?;
                 buf.extend_from_slice(&compressed);
@@ -1457,7 +1463,7 @@ fn build_pack(entries: &[PackWriteEntry]) -> Result<Vec<u8>> {
             } => {
                 encode_pack_object_header(&mut buf, 7, delta.len());
                 buf.extend_from_slice(base_oid.as_bytes());
-                let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+                let mut enc = ZlibEncoder::new(Vec::new(), zlib);
                 enc.write_all(delta)?;
                 let compressed = enc.finish()?;
                 buf.extend_from_slice(&compressed);
