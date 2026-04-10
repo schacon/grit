@@ -352,16 +352,34 @@ pub fn run(mut args: Args) -> Result<()> {
         } else {
             prefix.as_deref()
         };
-        add_all(
-            odb,
-            &mut index,
-            work_tree,
-            effective_prefix,
-            &args,
-            &repo,
-            &mut ignore_matcher,
-            &add_cfg,
-        )?;
+        if args.all
+            && !args.pathspec.is_empty()
+            && !is_root_pathspec
+            && !args.pathspec.iter().any(|p| p == ".")
+        {
+            add_all_for_pathspecs(
+                odb,
+                &mut index,
+                work_tree,
+                prefix.as_deref(),
+                &args.pathspec,
+                &args,
+                &repo,
+                &mut ignore_matcher,
+                &add_cfg,
+            )?;
+        } else {
+            add_all(
+                odb,
+                &mut index,
+                work_tree,
+                effective_prefix,
+                &args,
+                &repo,
+                &mut ignore_matcher,
+                &add_cfg,
+            )?;
+        }
     } else if args.update {
         update_tracked(
             odb,
@@ -829,7 +847,7 @@ fn add_all(
         .iter()
         .filter(|ie| {
             if let Some(pb) = prefix_bytes {
-                if !ie.path.starts_with(pb) {
+                if !index_path_under_prefix(&ie.path, pb) {
                     return false;
                 }
             }
@@ -846,6 +864,140 @@ fn add_all(
         .collect();
 
     for path in removed {
+        if args.verbose {
+            let path_str = String::from_utf8_lossy(&path);
+            eprintln!("remove '{path_str}'");
+        }
+        if !args.dry_run {
+            index.remove(&path);
+        }
+    }
+
+    Ok(())
+}
+
+/// True when `path` (index UTF-8 path) is exactly `prefix` or under `prefix/` (path component boundary).
+fn index_path_under_prefix(path: &[u8], prefix: &[u8]) -> bool {
+    if path == prefix {
+        return true;
+    }
+    path.len() > prefix.len() && path.starts_with(prefix) && path[prefix.len()] == b'/'
+}
+
+fn path_matches_any_resolved_spec(path: &str, specs: &[String]) -> bool {
+    specs
+        .iter()
+        .any(|s| path == s.as_str() || path.starts_with(&format!("{s}/")))
+}
+
+/// `git add -A <pathspec>...` — stage updates only under the given pathspecs and record deletions
+/// there (not the whole tree). Matches Git when path arguments are present with `-A`.
+fn add_all_for_pathspecs(
+    odb: &Odb,
+    index: &mut Index,
+    work_tree: &Path,
+    cwd_prefix: Option<&str>,
+    pathspecs: &[String],
+    args: &Args,
+    repo: &Repository,
+    ignore_matcher: &mut Option<IgnoreMatcher>,
+    add_cfg: &AddConfig,
+) -> Result<()> {
+    let mut resolved_specs: Vec<String> = Vec::new();
+
+    for ps in pathspecs {
+        let resolved = crate::pathspec::resolve_pathspec(ps, work_tree, cwd_prefix);
+        let expanded = expand_glob_pathspec(&resolved, work_tree, add_cfg.precompose_unicode);
+        for r in expanded {
+            resolved_specs.push(r);
+        }
+    }
+
+    resolved_specs.sort();
+    resolved_specs.dedup();
+
+    let mut had_ignored = false;
+    let mut had_errors = false;
+    let mut any_staged = false;
+    for r in &resolved_specs {
+        match add_path(
+            odb,
+            index,
+            work_tree,
+            r,
+            args,
+            repo,
+            ignore_matcher,
+            add_cfg,
+        ) {
+            Ok(()) => {
+                any_staged = true;
+            }
+            Err(AddPathError::Ignored(msg)) => {
+                eprintln!("{msg}");
+                had_ignored = true;
+                had_errors = true;
+            }
+            Err(AddPathError::IoError(e)) => {
+                if add_cfg.ignore_errors {
+                    eprintln!("warning: {e}");
+                    had_errors = true;
+                } else {
+                    return Err(e);
+                }
+            }
+            Err(AddPathError::Other(e)) => {
+                let s = e.to_string();
+                if pathspecs.len() > 1
+                    && (s.contains("did not match any files")
+                        || s.contains("did not match any file"))
+                {
+                    continue;
+                }
+                if add_cfg.ignore_errors {
+                    eprintln!("warning: {e}");
+                    had_errors = true;
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    if !any_staged && !had_ignored && !had_errors {
+        bail!(
+            "pathspec '{}' did not match any file(s) known to git",
+            pathspecs.join(" ")
+        );
+    }
+
+    if had_ignored {
+        bail!("some ignored files could not be added");
+    }
+    if had_errors && !add_cfg.ignore_errors {
+        bail!("adding files failed");
+    }
+
+    let to_remove: Vec<Vec<u8>> = index
+        .entries
+        .iter()
+        .filter(|ie| {
+            if ie.stage() != 0 {
+                return false;
+            }
+            if ie.skip_worktree() {
+                return false;
+            }
+            let path_str = std::str::from_utf8(&ie.path).unwrap_or("");
+            if !path_matches_any_resolved_spec(path_str, &resolved_specs) {
+                return false;
+            }
+            fs::symlink_metadata(work_tree.join(path_str)).is_err()
+        })
+        .map(|ie| ie.path.clone())
+        .collect();
+
+    for path in to_remove {
         if args.verbose {
             let path_str = String::from_utf8_lossy(&path);
             eprintln!("remove '{path_str}'");

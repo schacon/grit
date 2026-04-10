@@ -799,6 +799,13 @@ impl Index {
         removed
     }
 
+    /// Remove every index entry for `path` (all merge stages), like `remove_file_from_index`.
+    ///
+    /// Returns whether any entry was removed.
+    pub fn remove_path_all_stages(&mut self, path: &[u8]) -> bool {
+        self.remove(path)
+    }
+
     /// Invalidate UNTR nodes affected by an index change (Git `untracked_cache_*_index`).
     pub fn invalidate_untracked_cache_for_path(&mut self, path: &str) {
         if let Some(uc) = self.untracked_cache.as_mut() {

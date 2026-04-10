@@ -998,7 +998,7 @@ fn resolve_submodule_chain(
 // ── .gitmodules parsing ──────────────────────────────────────────────
 
 /// Parse `.gitmodules` into a list of submodule entries.
-fn parse_gitmodules(work_tree: &Path) -> Result<Vec<SubmoduleInfo>> {
+pub(crate) fn parse_gitmodules(work_tree: &Path) -> Result<Vec<SubmoduleInfo>> {
     parse_gitmodules_with_repo(work_tree, None)
 }
 
