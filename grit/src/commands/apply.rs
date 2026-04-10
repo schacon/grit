@@ -1283,6 +1283,21 @@ fn parse_patch(input: &str, strip: usize) -> Result<Vec<FilePatch>> {
                 i = next_i;
             }
 
+            // Without `---` / `+++`, paths stay as `a/...` / `b/...` from `diff --git`. Strip `-p`
+            // the same way `find_name_tab_terminated` would (t4122: header-only new file entries).
+            if !fp.saw_old_header {
+                if let Some(ref p) = fp.old_path {
+                    if p != "/dev/null" {
+                        fp.old_path = Some(path_after_strip(p, p_strip));
+                    }
+                }
+                if let Some(ref p) = fp.new_path {
+                    if p != "/dev/null" {
+                        fp.new_path = Some(path_after_strip(p, p_strip));
+                    }
+                }
+            }
+
             sanitize_file_patch_headers(&mut fp);
             patches.push(fp);
         } else if lines[i].starts_with("--- ")
