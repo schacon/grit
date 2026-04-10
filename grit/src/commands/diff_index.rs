@@ -48,6 +48,12 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let index_path = effective_index_path(&repo)?;
     let index = repo.load_index_at(&index_path).context("loading index")?;
+    let assume_unchanged_paths: BTreeSet<Vec<u8>> = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0 && e.assume_unchanged())
+        .map(|e| e.path.clone())
+        .collect();
     let mut index_map = BTreeMap::new();
     for entry in &index.entries {
         if entry.stage() != 0 {
@@ -317,6 +323,7 @@ pub fn run(mut args: Args) -> Result<()> {
                         &repo,
                         options.abbrev,
                         !options.cached,
+                        &assume_unchanged_paths,
                     )?;
                 } else {
                     let line = render_raw_diff_entry(
@@ -325,6 +332,7 @@ pub fn run(mut args: Args) -> Result<()> {
                         options.abbrev,
                         !options.cached,
                         quote_fully,
+                        &assume_unchanged_paths,
                     )?;
                     writeln!(out, "{line}")?;
                 }
@@ -967,6 +975,12 @@ fn diff_tree_vs_worktree(
             continue;
         }
         let path = change.path.as_str();
+        if let Some(ie) = index_entries.get(path.as_bytes()) {
+            // `CE_VALID`: do not use the work tree to refresh the new side; keep the index blob.
+            if ie.assume_unchanged() {
+                continue;
+            }
+        }
         if worktree_matches_index_snapshot(repo, work_tree, path, index_snapshot, &index_entries)? {
             continue;
         }
@@ -1005,9 +1019,10 @@ fn diff_tree_vs_worktree(
 
         let abs = work_tree.join(path);
 
-        // Git `diff-lib.c:do_oneway_diff`: do not examine the work tree for skip-worktree entries.
+        // Git `diff-lib.c:do_oneway_diff`: do not examine the work tree for skip-worktree or
+        // assume-unchanged entries.
         if let Some(ie) = index_entries.get(path.as_bytes()) {
-            if ie.skip_worktree() {
+            if ie.skip_worktree() || ie.assume_unchanged() {
                 continue;
             }
         }
@@ -1285,30 +1300,39 @@ fn write_raw_diff_entry_z(
     repo: &Repository,
     abbrev: Option<usize>,
     diff_index_uncached: bool,
+    assume_unchanged_paths: &BTreeSet<Vec<u8>>,
 ) -> Result<()> {
     let width = abbrev.unwrap_or(40).clamp(4, 40);
 
-    let (old_oid_disp, new_oid_disp) = if diff_index_uncached && entry.status == DiffStatus::Added {
-        ("0".repeat(width), "0".repeat(width))
-    } else {
-        let old_oid = if entry.old_oid == zero_oid() {
-            "0".repeat(width)
+    let use_index_oid_for_added = diff_index_uncached
+        && entry.status == DiffStatus::Added
+        && entry
+            .new_path
+            .as_ref()
+            .is_some_and(|p| assume_unchanged_paths.contains(p.as_bytes()));
+
+    let (old_oid_disp, new_oid_disp) =
+        if diff_index_uncached && entry.status == DiffStatus::Added && !use_index_oid_for_added {
+            ("0".repeat(width), "0".repeat(width))
         } else {
-            match abbrev {
-                Some(min_len) => abbreviate_object_id(repo, entry.old_oid, min_len)?,
-                None => entry.old_oid.to_hex(),
-            }
+            let old_oid = if entry.old_oid == zero_oid() {
+                "0".repeat(width)
+            } else {
+                match abbrev {
+                    Some(min_len) => abbreviate_object_id(repo, entry.old_oid, min_len)?,
+                    None => entry.old_oid.to_hex(),
+                }
+            };
+            let new_oid = if entry.new_oid == zero_oid() {
+                "0".repeat(width)
+            } else {
+                match abbrev {
+                    Some(min_len) => abbreviate_object_id(repo, entry.new_oid, min_len)?,
+                    None => entry.new_oid.to_hex(),
+                }
+            };
+            (old_oid, new_oid)
         };
-        let new_oid = if entry.new_oid == zero_oid() {
-            "0".repeat(width)
-        } else {
-            match abbrev {
-                Some(min_len) => abbreviate_object_id(repo, entry.new_oid, min_len)?,
-                None => entry.new_oid.to_hex(),
-            }
-        };
-        (old_oid, new_oid)
-    };
 
     let status_str = match (entry.status, entry.score) {
         (DiffStatus::Renamed, Some(s)) => format!("R{s:03}"),
@@ -1345,32 +1369,41 @@ fn render_raw_diff_entry(
     abbrev: Option<usize>,
     diff_index_uncached: bool,
     quote_fully: bool,
+    assume_unchanged_paths: &BTreeSet<Vec<u8>>,
 ) -> Result<String> {
     let width = abbrev.unwrap_or(40).clamp(4, 40);
 
+    let use_index_oid_for_added = diff_index_uncached
+        && entry.status == DiffStatus::Added
+        && entry
+            .new_path
+            .as_ref()
+            .is_some_and(|p| assume_unchanged_paths.contains(p.as_bytes()));
+
     // `diff-index` uncached raw lines for newly added paths use all-zero object ids on both sides
     // (t1501-work-tree; matches the harness expectations for tree vs index additions).
-    let (old_oid_disp, new_oid_disp) = if diff_index_uncached && entry.status == DiffStatus::Added {
-        ("0".repeat(width), "0".repeat(width))
-    } else {
-        let old_oid = if entry.old_oid == zero_oid() {
-            "0".repeat(width)
+    let (old_oid_disp, new_oid_disp) =
+        if diff_index_uncached && entry.status == DiffStatus::Added && !use_index_oid_for_added {
+            ("0".repeat(width), "0".repeat(width))
         } else {
-            match abbrev {
-                Some(min_len) => abbreviate_object_id(repo, entry.old_oid, min_len)?,
-                None => entry.old_oid.to_hex(),
-            }
+            let old_oid = if entry.old_oid == zero_oid() {
+                "0".repeat(width)
+            } else {
+                match abbrev {
+                    Some(min_len) => abbreviate_object_id(repo, entry.old_oid, min_len)?,
+                    None => entry.old_oid.to_hex(),
+                }
+            };
+            let new_oid = if entry.new_oid == zero_oid() {
+                "0".repeat(width)
+            } else {
+                match abbrev {
+                    Some(min_len) => abbreviate_object_id(repo, entry.new_oid, min_len)?,
+                    None => entry.new_oid.to_hex(),
+                }
+            };
+            (old_oid, new_oid)
         };
-        let new_oid = if entry.new_oid == zero_oid() {
-            "0".repeat(width)
-        } else {
-            match abbrev {
-                Some(min_len) => abbreviate_object_id(repo, entry.new_oid, min_len)?,
-                None => entry.new_oid.to_hex(),
-            }
-        };
-        (old_oid, new_oid)
-    };
 
     let status_str = match (entry.status, entry.score) {
         (DiffStatus::Renamed, Some(s)) => format!("R{:03}", s),
