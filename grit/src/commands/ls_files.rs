@@ -861,7 +861,7 @@ impl Pathspec {
             }
             Pathspec::Magic(spec) => {
                 let path_str = String::from_utf8_lossy(path);
-                crate::pathspec::pathspec_matches(spec, &path_str)
+                grit_lib::pathspec::pathspec_matches(spec, &path_str)
             }
         }
     }

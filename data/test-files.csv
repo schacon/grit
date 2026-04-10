@@ -666,7 +666,7 @@ t3902-quoted	t3	yes	13	12	1	false	ok	0
 t3902-quoted-ls-tree	t3	yes	8	8	0	true	ok	0
 t3903-stash	t3	yes	142	86	56	false	ok	0
 t3904-stash-patch	t3	yes	10	10	0	true	ok	0
-t3905-stash-include-untracked	t3	yes	34	13	21	false	ok	0
+t3905-stash-include-untracked	t3	yes	34	34	0	true	ok	0
 t3906-stash-submodule	t3	yes	8	5	3	false	ok	0
 t3907-stash-show-config	t3	yes	10	1	9	false	ok	0
 t3908-stash-in-worktree	t3	yes	2	1	1	false	ok	0
