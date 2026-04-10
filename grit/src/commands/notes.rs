@@ -986,6 +986,17 @@ fn notes_merge_worktree_path(repo: &Repository) -> std::path::PathBuf {
     notes_merge_git_dir(repo).join(NOTES_MERGE_WORKTREE)
 }
 
+/// True when `NOTES_MERGE_WORKTREE` exists and is not empty (matches Git `is_empty_dir`).
+fn notes_merge_worktree_nonempty(worktree: &std::path::Path) -> bool {
+    if !worktree.is_dir() {
+        return false;
+    }
+    let Ok(entries) = fs::read_dir(worktree) else {
+        return false;
+    };
+    entries.flatten().next().is_some()
+}
+
 fn parse_notes_merge_strategy_value(s: &str) -> Option<NotesMergeStrategy> {
     match s {
         "manual" => Some(NotesMergeStrategy::Manual),
@@ -1280,6 +1291,13 @@ fn merge_one_note_change(
     let path = worktree.join(&obj_hex);
     match strategy {
         NotesMergeStrategy::Manual => {
+            if !*has_worktree && notes_merge_worktree_nonempty(worktree) {
+                bail!(
+                    "You have not concluded your previous notes merge (.git/NOTES_MERGE_* exists).\n\
+Please, use 'git notes merge --commit' or 'git notes merge --abort' to commit/abort the \
+previous merge before you start a new notes merge."
+                );
+            }
             if !commit_msg.contains("Conflicts:") {
                 commit_msg.push_str("\n\nConflicts:\n");
             }
