@@ -25,7 +25,7 @@ use grit_lib::reflog::{list_reflog_refs, read_reflog};
 use grit_lib::refs;
 use grit_lib::refs_fsck::{format_refs_fsck_line, refs_fsck, RefsFsckSeverity};
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::shallow_boundary_oids;
+use grit_lib::shallow::load_shallow_boundaries;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io;
@@ -235,7 +235,7 @@ pub fn run(args: Args) -> Result<()> {
         HashSet::new()
     };
     let packed_ids = collect_packed_ids(&objects_dir)?;
-    let shallow_boundaries = shallow_boundary_oids(&repo.git_dir);
+    let shallow_boundaries = load_shallow_boundaries(repo.git_dir.as_path());
 
     let (reachable, walked_kinds) = walk_reachable(
         &repo,

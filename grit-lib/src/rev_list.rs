@@ -2901,7 +2901,7 @@ impl<'r> CommitGraph<'r> {
         missing_commit_tips: HashSet<ObjectId>,
         tolerate_missing_parent_commits: bool,
     ) -> Self {
-        let shallow_boundaries = shallow_boundary_oids(&repo.git_dir);
+        let shallow_boundaries = crate::shallow::load_shallow_boundaries(&repo.git_dir);
         let graft_parents = load_graft_parents(repo.git_dir.as_path());
         Self {
             repo,
@@ -2990,19 +2990,7 @@ impl<'r> CommitGraph<'r> {
 /// not be traversed for connectivity checks (`git fsck`, `pack-objects` reachability, etc.).
 #[must_use]
 pub fn shallow_boundary_oids(git_dir: &Path) -> HashSet<ObjectId> {
-    let shallow_path = git_dir.join("shallow");
-    let mut set = HashSet::new();
-    if let Ok(contents) = fs::read_to_string(&shallow_path) {
-        for line in contents.lines() {
-            let line = line.trim();
-            if !line.is_empty() {
-                if let Ok(oid) = line.parse::<ObjectId>() {
-                    set.insert(oid);
-                }
-            }
-        }
-    }
-    set
+    crate::shallow::load_shallow_boundaries(git_dir)
 }
 
 /// Shallow boundary commits on paths from `wants` when the server repository is shallow.
