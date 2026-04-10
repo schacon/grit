@@ -1,10 +1,13 @@
 # Test results
 
-**2026-04-10 (phase 6 / submodule push follow-up in progress)**
+**2026-04-10 (phase 6 / recurse-submodule parity delegation follow-up)**
 
 - `cargo build --release -p grit-rs`: pass
-- `./scripts/run-tests.sh t5531-deep-submodule-push.sh`: 14/29
-- `./scripts/run-tests.sh t5538-push-shallow.sh`: 8/8 (regression check after recursion/path handling changes)
+- `./scripts/run-tests.sh t5517-push-mirror.sh`: 13/13
+- `./scripts/run-tests.sh t5538-push-shallow.sh`: 8/8
+- `./scripts/run-tests.sh t5545-push-options.sh`: 13/13
+- `./scripts/run-tests.sh t5509-fetch-push-namespaces.sh`: 13/15
+- `./scripts/run-tests.sh t5531-deep-submodule-push.sh`: 18/29
 
 **2026-04-10 (phase 6 / mirror+shallow complete, namespaces advanced)**
 

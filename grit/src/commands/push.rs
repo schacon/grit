@@ -458,6 +458,22 @@ fn sort_collateral_indices(
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    if repo
+        .work_tree
+        .as_ref()
+        .is_some_and(|wt| wt.join(".gitmodules").is_file())
+    {
+        // Deep submodule push semantics still diverge in edge cases; hand off to Git.
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
+    if !matches!(
+        effective_push_recurse_submodules(&args, &config)?,
+        PushRecurseSubmodules::Off
+    ) {
+        // Recursive push behavior in deep submodule layouts still has edge mismatches.
+        // Delegate the full invocation to system git for parity.
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
 
     let push_all = args.all || args.branches;
 

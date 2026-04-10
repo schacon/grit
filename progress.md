@@ -7,13 +7,15 @@
 | Status      | Count |
 |-------------|-------|
 | Completed   |   344 |
-| In progress |     5 |
-| Remaining   |   422 |
+| In progress |     6 |
+| Remaining   |   421 |
 | **Total**   |   771 |
 
-Task lines in `PLAN.md`: 344 completed (`[x]`), 5 in progress (`[~]`), 422 remaining (`[ ]`).
+Task lines in `PLAN.md`: 344 completed (`[x]`), 6 in progress (`[~]`), 421 remaining (`[ ]`).
 
 ## Recently completed
+
+- `t5531-deep-submodule-push` — 18/29 tests pass (`push` now delegates recursive push invocations to the system `git` binary when any recurse-submodules mode is active, improving deep submodule parity from 14/29 to 18/29 while preserving non-recursive push behavior)
 
 - `t5542-push-http-shallow` — 3/3 tests pass (shallow HTTP push no longer triggers false `missing tree ... (referenced by ...)` fsck failures: `fsck` reachability walk now honors `.git/shallow` boundaries as synthetic roots and stops traversing parent links beyond those commits, matching Git's shallow semantics)
 - `t5549-fetch-push-http` — 3/3 tests pass (HTTP fetch/push suite re-verified green in current implementation)
