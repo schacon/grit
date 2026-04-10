@@ -5,12 +5,12 @@
 
 use anyhow::{bail, Result};
 use clap::Args as ClapArgs;
-use grit_lib::pack::show_index_entries;
+use grit_lib::pack::{oid_bytes_to_hex, show_index_entries};
 
 /// Arguments for `grit show-index`.
 #[derive(Debug, ClapArgs)]
 pub struct Args {
-    /// Hash algorithm (only `sha1` is supported; accepted for compatibility).
+    /// Hash algorithm for OID width (`sha1` = 20 bytes, `sha256` = 32).
     #[arg(long = "object-format")]
     pub object_format: Option<String>,
 }
@@ -22,20 +22,21 @@ pub struct Args {
 /// - Version 1: `<offset> <oid>`
 /// - Version 2: `<offset> <oid> (<crc32>)`
 pub fn run(args: Args) -> Result<()> {
-    if let Some(fmt) = &args.object_format {
-        if fmt != "sha1" {
-            bail!("unsupported object format: {fmt}");
-        }
-    }
+    let hash_size = match args.object_format.as_deref() {
+        None | Some("sha1") => 20usize,
+        Some("sha256") => 32usize,
+        Some(fmt) => bail!("unsupported object format: {fmt}"),
+    };
 
     let mut stdin = std::io::stdin();
-    let entries = show_index_entries(&mut stdin, 20)?;
+    let entries = show_index_entries(&mut stdin, hash_size)?;
 
     for entry in entries {
+        let oid_hex = oid_bytes_to_hex(&entry.oid);
         if let Some(crc) = entry.crc32 {
-            println!("{} {} ({:08x})", entry.offset, entry.oid, crc);
+            println!("{} {} ({:08x})", entry.offset, oid_hex, crc);
         } else {
-            println!("{} {}", entry.offset, entry.oid);
+            println!("{} {}", entry.offset, oid_hex);
         }
     }
 

@@ -515,7 +515,11 @@ fn read_object(repo: &Repository, oid: &ObjectId) -> Result<grit_lib::objects::O
     let indexes = grit_lib::pack::read_local_pack_indexes(repo.odb.objects_dir())
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     for idx in &indexes {
-        if let Some(entry) = idx.entries.iter().find(|e| e.oid == *oid) {
+        if let Some(entry) = idx
+            .entries
+            .iter()
+            .find(|e| grit_lib::pack::pack_index_entry_matches_sha1_oid(e, oid))
+        {
             let pack_bytes = fs::read(&idx.pack_path)?;
             return read_from_pack(&pack_bytes, entry.offset, &indexes);
         }
@@ -607,7 +611,11 @@ fn read_from_pack(
 
             let mut base_obj = None;
             for idx in indexes {
-                if let Some(e) = idx.entries.iter().find(|e| e.oid == base_oid) {
+                if let Some(e) = idx
+                    .entries
+                    .iter()
+                    .find(|e| grit_lib::pack::pack_index_entry_matches_sha1_oid(e, &base_oid))
+                {
                     let pb = fs::read(&idx.pack_path)?;
                     base_obj = Some(read_from_pack(&pb, e.offset, indexes)?);
                     break;

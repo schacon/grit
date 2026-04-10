@@ -10,13 +10,14 @@ use flate2::Compression;
 use grit_lib::config::ConfigSet;
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use sha1::{Digest, Sha1};
+use sha2::{Digest as Sha2Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use grit_lib::odb::Odb;
-use grit_lib::pack::verify_pack_and_collect;
+use grit_lib::pack::{read_pack_index, verify_pack_and_collect};
 use grit_lib::unpack_objects::{apply_delta, strict_verify_packed_references};
 
 /// Merge `git index-pack --strict RULE` / `--fsck-objects RULE` into `--strict=RULE` so the pack
@@ -177,6 +178,7 @@ pub fn run(args: Args) -> Result<()> {
             .as_deref()
             .is_some_and(|s| s == "missingEmail=ignore");
 
+    let check_collisions = true;
     let (resolved, by_oid) = if args.verbose {
         trace2_region_scope("Resolving deltas", || {
             parse_and_resolve(
@@ -184,6 +186,7 @@ pub fn run(args: Args) -> Result<()> {
                 args.fix_thin,
                 collision_odb,
                 strict_on || fsck_on,
+                check_collisions,
                 fsck_ignore_missing_email,
             )
         })?
@@ -193,6 +196,7 @@ pub fn run(args: Args) -> Result<()> {
             args.fix_thin,
             collision_odb,
             strict_on || fsck_on,
+            check_collisions,
             fsck_ignore_missing_email,
         )?
     };
@@ -232,13 +236,9 @@ pub fn run(args: Args) -> Result<()> {
             idx_out = o.clone();
         }
         fs::write(&pack_out, &pack_bytes)?;
-        if let Some(ref reason) = args.keep {
-            let keep_name = pack_out
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|n| format!("{n}.{reason}"))
-                .unwrap_or_else(|| format!("pack-{pack_hash}.pack.{reason}"));
-            fs::write(pack_dir.join(keep_name), b"")?;
+        if args.keep.is_some() {
+            // Match Git: `index-pack --keep` creates `pack-<hash>.keep` beside the pack (t5300).
+            fs::write(pack_dir.join(format!("pack-{pack_hash}.keep")), b"")?;
         }
         (pack_out, idx_out)
     } else {
@@ -296,8 +296,14 @@ pub(crate) fn ingest_pack_bytes(
     }
     let pack_end = pack_bytes.len() - 20;
     let mut pack_data = pack_bytes[..pack_end].to_vec();
-    let (resolved, _by_oid) =
-        parse_and_resolve(&mut pack_data, fix_thin, Some(&repo.odb), false, false)?;
+    let (resolved, _by_oid) = parse_and_resolve(
+        &mut pack_data,
+        fix_thin,
+        Some(&repo.odb),
+        false,
+        true,
+        false,
+    )?;
     let mut h = Sha1::new();
     h.update(&pack_data);
     pack_data.extend_from_slice(h.finalize().as_slice());
@@ -448,6 +454,7 @@ fn parse_and_resolve(
     fix_thin: bool,
     collision_odb: Option<&Odb>,
     check_collision_and_fsck: bool,
+    check_sha1_collisions: bool,
     fsck_ignore_missing_email: bool,
 ) -> Result<(
     Vec<ResolvedObject>,
@@ -521,10 +528,12 @@ fn parse_and_resolve(
             1..=4 => {
                 let kind = type_code_to_kind(*type_code)?;
                 let oid = Odb::hash_object_data(kind, data);
-                if check_collision_and_fsck {
+                if check_collision_and_fsck || check_sha1_collisions {
                     if let Some(odb) = collision_odb {
                         check_sha1_collision_with_odb(odb, kind, data, &oid)?;
                     }
+                }
+                if check_collision_and_fsck {
                     if kind == ObjectKind::Commit {
                         validate_commit_fsck(data, fsck_ignore_missing_email)?;
                     }
@@ -581,10 +590,12 @@ fn parse_and_resolve(
                 bases_to_add.dedup();
                 for bo in bases_to_add {
                     let obj = o.read(&bo)?;
-                    if check_collision_and_fsck {
+                    if check_collision_and_fsck || check_sha1_collisions {
                         if let Some(codb) = collision_odb {
                             check_sha1_collision_with_odb(codb, obj.kind, &obj.data, &bo)?;
                         }
+                    }
+                    if check_collision_and_fsck {
                         if obj.kind == ObjectKind::Commit {
                             validate_commit_fsck(&obj.data, fsck_ignore_missing_email)?;
                         }
@@ -636,10 +647,12 @@ fn parse_and_resolve(
                 let result_data = apply_delta(&base_data, &delta_data)
                     .map_err(|e| anyhow::anyhow!("delta apply failed: {e}"))?;
                 let oid = Odb::hash_object_data(base_kind, &result_data);
-                if check_collision_and_fsck {
+                if check_collision_and_fsck || check_sha1_collisions {
                     if let Some(odb) = collision_odb {
                         check_sha1_collision_with_odb(odb, base_kind, &result_data, &oid)?;
                     }
+                }
+                if check_collision_and_fsck {
                     if base_kind == ObjectKind::Commit {
                         validate_commit_fsck(&result_data, fsck_ignore_missing_email)?;
                     }
@@ -864,6 +877,81 @@ fn build_idx_v2(entries: &[ResolvedObject], pack_bytes: &[u8]) -> Result<Vec<u8>
     Ok(buf)
 }
 
+fn reject_sha256_idx_without_flag(idx_path: &std::path::Path, args: &Args) -> Result<()> {
+    if args.object_format.as_deref() == Some("sha256") {
+        return Ok(());
+    }
+    if let Ok(repo) = grit_lib::repo::Repository::discover(None) {
+        let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        if cfg
+            .get("extensions.objectformat")
+            .or_else(|| cfg.get("extensions.objectFormat"))
+            .is_some_and(|v| v.eq_ignore_ascii_case("sha256"))
+        {
+            return Ok(());
+        }
+    }
+    let idx = read_pack_index(idx_path)?;
+    if idx.hash_bytes == 32 {
+        bail!("wrong index v2 file size in {}", idx_path.display());
+    }
+    Ok(())
+}
+
+fn infer_pack_trailer_bytes(pack_bytes: &[u8]) -> Result<usize> {
+    if pack_bytes.len() < 12 + 20 {
+        bail!("pack too small");
+    }
+    for &hb in &[20usize, 32] {
+        if pack_bytes.len() < 12 + hb {
+            continue;
+        }
+        let end = pack_bytes.len() - hb;
+        let ok = match hb {
+            20 => {
+                let mut h = Sha1::new();
+                h.update(&pack_bytes[..end]);
+                h.finalize().as_slice() == &pack_bytes[end..]
+            }
+            32 => {
+                let mut h = Sha256::new();
+                Sha2Digest::update(&mut h, &pack_bytes[..end]);
+                h.finalize().as_slice() == &pack_bytes[end..]
+            }
+            _ => false,
+        };
+        if ok {
+            return Ok(hb);
+        }
+    }
+    bail!("pack trailing checksum mismatch");
+}
+
+fn verify_pack_trailer(pack_bytes: &[u8], hash_bytes: usize) -> Result<()> {
+    if pack_bytes.len() < 12 + hash_bytes {
+        bail!("pack too small");
+    }
+    let end = pack_bytes.len() - hash_bytes;
+    match hash_bytes {
+        20 => {
+            let mut h = Sha1::new();
+            h.update(&pack_bytes[..end]);
+            if h.finalize().as_slice() != &pack_bytes[end..] {
+                bail!("pack trailing checksum mismatch");
+            }
+        }
+        32 => {
+            let mut h = Sha256::new();
+            Sha2Digest::update(&mut h, &pack_bytes[..end]);
+            if h.finalize().as_slice() != &pack_bytes[end..] {
+                bail!("pack trailing checksum mismatch");
+            }
+        }
+        _ => bail!("unsupported pack hash width {hash_bytes}"),
+    }
+    Ok(())
+}
+
 /// Verify an existing pack file and its index.
 fn run_verify(args: &Args) -> Result<()> {
     let pack_path = args
@@ -874,11 +962,42 @@ fn run_verify(args: &Args) -> Result<()> {
     let stat_only = args.verify_stat_only;
     let show_stat = stat_only || args.verify_stat;
 
+    let pack_bytes = fs::read(pack_path).with_context(|| format!("cannot read {pack_path}"))?;
+
+    if pack_bytes.len() < 12 + 20 {
+        bail!("pack too small");
+    }
+    if &pack_bytes[0..4] != b"PACK" {
+        bail!("not a pack file: invalid signature");
+    }
+    let version = u32::from_be_bytes(pack_bytes[4..8].try_into()?);
+    if version != 2 && version != 3 {
+        bail!("unsupported pack version {version}");
+    }
+
+    let mut idx_path = PathBuf::from(pack_path);
+    idx_path.set_extension("idx");
+
+    let hash_bytes = if args.object_format.as_deref() == Some("sha256") {
+        32
+    } else if args.object_format.as_deref() == Some("sha1") {
+        20
+    } else if idx_path.exists() {
+        read_pack_index(&idx_path)
+            .with_context(|| format!("cannot read {}", idx_path.display()))?
+            .hash_bytes
+    } else {
+        infer_pack_trailer_bytes(&pack_bytes)?
+    };
+
+    reject_sha256_idx_without_flag(&idx_path, args)?;
+
+    verify_pack_trailer(&pack_bytes, hash_bytes)?;
+
+    let records = verify_pack_and_collect(&idx_path)
+        .with_context(|| format!("verify failed for {}", idx_path.display()))?;
+
     if stat_only {
-        let mut idx_path = PathBuf::from(pack_path);
-        idx_path.set_extension("idx");
-        let records = verify_pack_and_collect(&idx_path)
-            .with_context(|| format!("verify failed for {}", idx_path.display()))?;
         let mut hist: BTreeMap<u64, usize> = BTreeMap::new();
         for rec in &records {
             let depth = rec.depth.unwrap_or(0);
@@ -891,62 +1010,7 @@ fn run_verify(args: &Args) -> Result<()> {
         return Ok(());
     }
 
-    let pack_bytes = fs::read(pack_path).with_context(|| format!("cannot read {pack_path}"))?;
-
-    // Validate pack header.
-    if pack_bytes.len() < 12 + 20 {
-        bail!("pack too small");
-    }
-    if &pack_bytes[0..4] != b"PACK" {
-        bail!("not a pack file: invalid signature");
-    }
-    let version = u32::from_be_bytes(pack_bytes[4..8].try_into()?);
-    if version != 2 && version != 3 {
-        bail!("unsupported pack version {version}");
-    }
-    // Verify trailing checksum.
-    let pack_end = pack_bytes.len() - 20;
-    {
-        let mut h = Sha1::new();
-        h.update(&pack_bytes[..pack_end]);
-        let digest = h.finalize();
-        if digest.as_slice() != &pack_bytes[pack_end..pack_end + 20] {
-            bail!("pack trailing checksum mismatch");
-        }
-    }
-
-    // Parse all objects to verify they can be resolved.
-    let mut body = pack_bytes[..pack_end].to_vec();
-    let (resolved, _) = parse_and_resolve(&mut body, false, None, false, false)?;
-
-    // Verify each object's OID matches its content.
-    for obj in &resolved {
-        // OID was computed during resolution, so if we got here, it's valid.
-        let _ = obj;
-    }
-
-    // Check if .idx file exists and verify it.
-    let mut idx_path = PathBuf::from(pack_path);
-    idx_path.set_extension("idx");
-    if idx_path.exists() {
-        let existing_idx = fs::read(&idx_path)?;
-        let expected_idx = build_idx_v2(&resolved, &pack_bytes)?;
-        if existing_idx != expected_idx {
-            // Check at least that the pack checksum in the idx matches.
-            if existing_idx.len() >= 40 {
-                let idx_pack_checksum =
-                    &existing_idx[existing_idx.len() - 40..existing_idx.len() - 20];
-                let pack_checksum = &pack_bytes[pack_bytes.len() - 20..];
-                if idx_pack_checksum != pack_checksum {
-                    bail!("pack checksum in index does not match pack file");
-                }
-            }
-        }
-    }
-
     if show_stat {
-        let records = verify_pack_and_collect(&idx_path)
-            .with_context(|| format!("verify-stat failed for {}", idx_path.display()))?;
         let mut hist: BTreeMap<u64, usize> = BTreeMap::new();
         for rec in &records {
             let depth = rec.depth.unwrap_or(0);
@@ -957,8 +1021,9 @@ fn run_verify(args: &Args) -> Result<()> {
         }
     }
 
-    // Print pack checksum and status.
-    let pack_checksum = &pack_bytes[pack_bytes.len() - 20..];
+    let idx_meta = read_pack_index(&idx_path)
+        .with_context(|| format!("cannot read {}", idx_path.display()))?;
+    let pack_checksum = &pack_bytes[pack_bytes.len() - idx_meta.hash_bytes..];
     let pack_hex = hex::encode(pack_checksum);
     eprintln!("{}: ok", pack_path);
     println!("{pack_hex}");

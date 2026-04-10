@@ -304,6 +304,12 @@ pub(crate) fn collect_wants(
         if src.contains('*') {
             bail!("glob refspec in upload-pack fetch not supported");
         }
+        if src.len() == 40 && src.chars().all(|c| c.is_ascii_hexdigit()) {
+            if let Ok(oid) = ObjectId::from_hex(src) {
+                wants.push(oid);
+                continue;
+            }
+        }
         let remote_ref = if src.starts_with("refs/") {
             src.to_string()
         } else {

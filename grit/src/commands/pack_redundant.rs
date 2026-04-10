@@ -78,7 +78,16 @@ pub fn run(args: Args) -> Result<()> {
         .drain(..)
         .map(|idx| {
             let all_objects_size = idx.entries.len();
-            let remaining: BTreeSet<ObjectId> = idx.entries.iter().map(|e| e.oid).collect();
+            let remaining: BTreeSet<ObjectId> = idx
+                .entries
+                .iter()
+                .filter_map(|e| {
+                    if e.oid.len() != 20 {
+                        return None;
+                    }
+                    grit_lib::objects::ObjectId::from_bytes(&e.oid).ok()
+                })
+                .collect();
             PackState {
                 idx_path: idx.idx_path,
                 pack_path: idx.pack_path,
@@ -91,7 +100,17 @@ pub fn run(args: Args) -> Result<()> {
 
     let alt_remaining: Vec<BTreeSet<ObjectId>> = alt_indexes
         .into_iter()
-        .map(|idx| idx.entries.iter().map(|e| e.oid).collect())
+        .map(|idx| {
+            idx.entries
+                .iter()
+                .filter_map(|e| {
+                    if e.oid.len() != 20 {
+                        return None;
+                    }
+                    grit_lib::objects::ObjectId::from_bytes(&e.oid).ok()
+                })
+                .collect()
+        })
         .collect();
 
     // Union of objects in local packs, minus objects only in alt odb (matches load_all_objects).

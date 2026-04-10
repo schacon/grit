@@ -298,7 +298,13 @@ fn build_midx_bytes(
             Error::CorruptObject("too many pack files for multi-pack-index".to_owned())
         })?;
         for e in &idx.entries {
-            let replace = match best.get(&e.oid) {
+            if e.oid.len() != 20 {
+                continue;
+            }
+            let Ok(oid) = ObjectId::from_bytes(&e.oid) else {
+                continue;
+            };
+            let replace = match best.get(&oid) {
                 None => true,
                 Some((old_pack, _)) => match preferred_idx {
                     Some(pref) => {
@@ -316,7 +322,7 @@ fn build_midx_bytes(
                 },
             };
             if replace {
-                best.insert(e.oid, (pack_id, e.offset));
+                best.insert(oid, (pack_id, e.offset));
             }
         }
     }
@@ -708,10 +714,16 @@ pub fn write_multi_pack_index_with_options(
             Error::CorruptObject("too many pack files for multi-pack-index".to_owned())
         })?;
         for e in &idx.entries {
-            if opts.incremental && base_oids.contains(&e.oid) {
+            if e.oid.len() != 20 {
                 continue;
             }
-            let replace = match best.get(&e.oid) {
+            let Ok(oid) = ObjectId::from_bytes(&e.oid) else {
+                continue;
+            };
+            if opts.incremental && base_oids.contains(&oid) {
+                continue;
+            }
+            let replace = match best.get(&oid) {
                 None => true,
                 Some((old_pack, _)) => match preferred_idx {
                     Some(pref) => {
@@ -729,7 +741,7 @@ pub fn write_multi_pack_index_with_options(
                 },
             };
             if replace {
-                best.insert(e.oid, (pack_id, e.offset));
+                best.insert(oid, (pack_id, e.offset));
             }
         }
     }

@@ -12,6 +12,7 @@ anyhow = "1"
 thiserror = "2"
 clap = { version = "4", features = ["derive", "env"] }
 sha1 = "0.10"
+sha2 = "0.10"
 flate2 = "1"
 time = { version = "0.3", features = ["formatting", "parsing"] }
 hex = "0.4"

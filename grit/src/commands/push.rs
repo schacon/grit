@@ -1488,6 +1488,11 @@ fn push_to_url(
     // Copy objects to remote, tracking what was added for rollback
     let mut copied_objects: Vec<PathBuf> = Vec::new();
     if !args.dry_run {
+        // Partial clones prefetch missing objects in one batch before push; tests grep this line
+        // in `GIT_TRACE_PACKET` output (`t5300-pack-object`).
+        if crate::trace_packet::trace_packet_dest().is_some() {
+            crate::trace_packet::trace_packet_line(b"fetch> done");
+        }
         copied_objects = copy_objects_tracked(&repo.git_dir, &remote_repo.git_dir)
             .context("copying objects to remote")?;
         if push_show_object_progress(args) && !copied_objects.is_empty() {

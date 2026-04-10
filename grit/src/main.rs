@@ -713,7 +713,11 @@ fn run_test_tool_find_pack(rest: &[String]) -> Result<()> {
 
     let mut packs: Vec<String> = Vec::new();
     for idx in indexes {
-        if idx.entries.iter().any(|entry| entry.oid == oid) {
+        if idx
+            .entries
+            .iter()
+            .any(|entry| grit_lib::pack::pack_index_entry_matches_sha1_oid(entry, &oid))
+        {
             if let Some(name) = idx.pack_path.file_name().and_then(|s| s.to_str()) {
                 packs.push(format!(".git/objects/pack/{name}"));
             }
