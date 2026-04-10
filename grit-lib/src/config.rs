@@ -1434,8 +1434,18 @@ impl ConfigSet {
 
     /// Get a boolean value, interpreting `true`/`yes`/`on`/`1` as true and
     /// `false`/`no`/`off`/`0` as false.
+    ///
+    /// `pack.allowPackReuse` may be `single` or `multi` (Git enum, not a bool). Those values are
+    /// treated as unset for boolean lookup so `get_bool` does not error during broad config scans.
     pub fn get_bool(&self, key: &str) -> Option<std::result::Result<bool, String>> {
-        self.get(key).map(|v| parse_bool(&v))
+        let v = self.get(key)?;
+        if canonical_key(key).ok().as_deref() == Some("pack.allowpackreuse") {
+            let lower = v.trim().to_ascii_lowercase();
+            if lower == "single" || lower == "multi" {
+                return None;
+            }
+        }
+        Some(parse_bool(&v))
     }
 
     /// Whether pathnames in human-readable output should fully C-quote non-ASCII bytes as octal.
@@ -2436,7 +2446,7 @@ pub fn parse_path_optional(s: &str) -> Option<String> {
 /// - unquoted `key=value` tokens separated by whitespace
 ///
 /// Backslash escapes are interpreted minimally inside double quotes.
-pub(crate) fn parse_config_parameters(raw: &str) -> Vec<String> {
+pub fn parse_config_parameters(raw: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut buf = String::new();
     let mut in_single = false;

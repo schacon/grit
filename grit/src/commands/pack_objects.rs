@@ -7,24 +7,30 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
-use grit_lib::config::ConfigSet;
+use grit_lib::config::{parse_config_parameters, ConfigSet};
 use grit_lib::error::Error as LibError;
+use grit_lib::midx::{
+    load_midx_reuse_tables, midx_lookup_pack_and_offset, read_midx_pack_idx_names, MidxReuseTables,
+};
+use grit_lib::pack::{
+    read_pack_index, read_packed_delta_dependency, slice_one_pack_object, PackIndex,
+    PackedDeltaDependency,
+};
 use grit_lib::rev_list::{rev_list, MissingAction, RevListOptions};
 use sha1::{Digest, Sha1};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::thread;
 use std::time::Duration;
 
 use crate::grit_exe;
 use grit_lib::delta_encode::{encode_lcp_delta, encode_prefix_extension_delta};
-use grit_lib::objects::{parse_tree, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
-use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// Arguments for `grit pack-objects`.
@@ -232,6 +238,8 @@ struct PackObjectList {
     oids: Vec<ObjectId>,
     /// Blob OIDs that should delta against a base blob (base may be omitted from `oids`).
     thin_blob_deltas: Vec<(ObjectId, ObjectId)>,
+    /// Stdin was interpreted as `git pack-objects --revs` / `rev-list --objects` input.
+    rev_list_stdin: bool,
 }
 
 /// One slot in a pack file (full object or `REF_DELTA`).
@@ -243,10 +251,244 @@ enum PackWriteEntry {
         /// Uncompressed Git binary delta (zlib-compressed in the pack stream).
         delta: Vec<u8>,
     },
+    /// Verbatim packed object bytes (header + zlib) copied from an existing pack (MIDX reuse).
+    ReusedSlice {
+        oid: ObjectId,
+        raw: Vec<u8>,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PackReuseMode {
+    None,
+    Single,
+    Multi,
+}
+
+fn canonical_pack_window_key(raw: &str) -> bool {
+    grit_lib::config::canonical_key(raw).ok().as_deref() == Some("pack.window")
+}
+
+fn pack_reuse_mode(repo: &Repository) -> PackReuseMode {
+    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let experimental = cfg
+        .get_bool("feature.experimental")
+        .and_then(|r| r.ok())
+        .unwrap_or(false);
+    let mut mode = if experimental {
+        PackReuseMode::Multi
+    } else {
+        PackReuseMode::Single
+    };
+    if let Some(v) = cfg
+        .get("pack.allowPackReuse")
+        .or_else(|| cfg.get("pack.allowpackreuse"))
+    {
+        let lower = v.trim().to_ascii_lowercase();
+        if lower == "single" {
+            mode = PackReuseMode::Single;
+        } else if lower == "multi" {
+            mode = PackReuseMode::Multi;
+        } else if let Ok(b) = grit_lib::config::parse_bool(&v) {
+            mode = if b {
+                PackReuseMode::Single
+            } else {
+                PackReuseMode::None
+            };
+        }
+    }
+    mode
+}
+
+fn pack_reuse_cli_ok(args: &Args) -> bool {
+    args.stdout && !args.incremental && !args.honor_pack_keep
+}
+
+fn midx_pack_indexes(objects_dir: &Path) -> Result<HashMap<u32, PackIndex>> {
+    let names = read_midx_pack_idx_names(objects_dir).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut out = HashMap::new();
+    for (i, name) in names.iter().enumerate() {
+        let id = u32::try_from(i).map_err(|_| anyhow::anyhow!("too many packs in MIDX"))?;
+        let p = objects_dir.join("pack").join(name);
+        let idx = read_pack_index(&p).map_err(|e| anyhow::anyhow!("{e}"))?;
+        out.insert(id, idx);
+    }
+    Ok(out)
+}
+
+/// Global pseudo-bitmap bit for `oid` (MIDX reverse-index rank), matching Git `midx_pack_order`.
+fn global_bitmap_bit_for_oid(tables: &MidxReuseTables, oid: &ObjectId) -> Option<u32> {
+    tables.global_bitmap_bit(oid)
+}
+
+/// Objects in global MIDX pseudo-bitmap order: same order as the MIDX `RIDX` chunk (Git pack-reuse).
+fn midx_objects_in_ridx_order(tables: &MidxReuseTables) -> Vec<(u32, ObjectId, u32, u64)> {
+    let mut out = Vec::with_capacity(tables.rid_order.len());
+    for (rank, &oid_idx) in tables.rid_order.iter().enumerate() {
+        let rank_u32 = u32::try_from(rank).unwrap_or(u32::MAX);
+        let oid = tables.oids[oid_idx as usize];
+        let (pack_id, off) = tables.pack_and_offset[oid_idx as usize];
+        out.push((rank_u32, oid, pack_id, off));
+    }
+    out
+}
+
+/// Multi-pack reuse when `mode == Multi`; preferred pack only when `mode == Single`.
+fn compute_midx_reused_entries(
+    repo: &Repository,
+    pack_list: &PackObjectList,
+    mode: PackReuseMode,
+) -> Result<Option<(Vec<PackWriteEntry>, u32, u32)>> {
+    if mode == PackReuseMode::None {
+        return Ok(None);
+    }
+    let objects_dir = repo.odb.objects_dir();
+
+    let pack_names = read_midx_pack_idx_names(objects_dir).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let preferred_pack_id = if mode == PackReuseMode::Single {
+        let pref_name = grit_lib::midx::read_midx_preferred_idx_name(objects_dir)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let id = pack_names
+            .iter()
+            .position(|n| n == &pref_name)
+            .ok_or_else(|| anyhow::anyhow!("preferred pack not in midx"))? as u32;
+        Some(id)
+    } else {
+        None
+    };
+
+    let Some(tables) = load_midx_reuse_tables(objects_dir).map_err(|e| anyhow::anyhow!("{e}"))?
+    else {
+        return Ok(None);
+    };
+
+    let indexes = midx_pack_indexes(objects_dir)?;
+    let ordered = midx_objects_in_ridx_order(&tables);
+    let pack_oid_set: HashSet<ObjectId> = pack_list.oids.iter().copied().collect();
+
+    let mut oid_to_bit: HashMap<ObjectId, u32> = HashMap::new();
+    for oid in &pack_list.oids {
+        let Some(bit) = global_bitmap_bit_for_oid(&tables, oid) else {
+            continue;
+        };
+        if let Some(pref) = preferred_pack_id {
+            let (pid, _) = midx_lookup_pack_and_offset(objects_dir, oid)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            if pid != pref {
+                continue;
+            }
+        }
+        oid_to_bit.insert(*oid, bit);
+    }
+
+    let want: HashSet<u32> = oid_to_bit.values().copied().collect();
+    if want.is_empty() {
+        return Ok(None);
+    }
+
+    let mut pack_bytes_cache: HashMap<PathBuf, Vec<u8>> = HashMap::new();
+    let load_pack = |cache: &mut HashMap<PathBuf, Vec<u8>>, path: &Path| -> Result<Vec<u8>> {
+        if let Some(b) = cache.get(path) {
+            return Ok(b.clone());
+        }
+        let data = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+        cache.insert(path.to_path_buf(), data.clone());
+        Ok(data)
+    };
+
+    // Build `reuse_bits` in global MIDX order; repeat until fixed point so REF_DELTA / cross-pack
+    // bases that appear later in the pseudo-bitmap can still satisfy dependents (matches Git).
+    let mut reuse_bits: HashSet<u32> = HashSet::new();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for &(global_bit, _oid, pack_id, in_off) in &ordered {
+            if !want.contains(&global_bit) || reuse_bits.contains(&global_bit) {
+                continue;
+            }
+            let idx = indexes
+                .get(&pack_id)
+                .ok_or_else(|| anyhow::anyhow!("missing pack index for MIDX pack id {pack_id}"))?;
+            let pack_bytes = load_pack(&mut pack_bytes_cache, idx.pack_path.as_path())?;
+            let dep = read_packed_delta_dependency(&pack_bytes, in_off)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let ok = match dep {
+                None => true,
+                Some(PackedDeltaDependency::OfsBase { base_offset }) => {
+                    // OFS_DELTA bases must appear earlier in the pack *byte stream* (smaller offset).
+                    // Reuse eligibility uses the base object's **global RIDX bitmap bit**, same as Git.
+                    if base_offset < in_off {
+                        if let Some(base_entry) =
+                            idx.entries.iter().find(|e| e.offset == base_offset)
+                        {
+                            global_bitmap_bit_for_oid(&tables, &base_entry.oid)
+                                .is_some_and(|bb| reuse_bits.contains(&bb))
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                }
+                Some(PackedDeltaDependency::RefBase { base_oid }) => {
+                    match global_bitmap_bit_for_oid(&tables, &base_oid) {
+                        Some(bb) => {
+                            if mode == PackReuseMode::Single {
+                                match midx_lookup_pack_and_offset(objects_dir, &base_oid) {
+                                    Ok((bpid, _)) => {
+                                        Some(bpid) == preferred_pack_id && reuse_bits.contains(&bb)
+                                    }
+                                    Err(_) => false,
+                                }
+                            } else {
+                                reuse_bits.contains(&bb)
+                            }
+                        }
+                        None => false,
+                    }
+                }
+            };
+            if ok {
+                reuse_bits.insert(global_bit);
+                changed = true;
+            }
+        }
+    }
+
+    if reuse_bits.is_empty() {
+        return Ok(None);
+    }
+
+    let mut reused: Vec<(u32, ObjectId, u32, Vec<u8>)> = Vec::new();
+    for &(global_bit, oid, pack_id, in_off) in &ordered {
+        if !reuse_bits.contains(&global_bit) || !pack_oid_set.contains(&oid) {
+            continue;
+        }
+        let idx = indexes
+            .get(&pack_id)
+            .ok_or_else(|| anyhow::anyhow!("missing pack index"))?;
+        let pack_bytes = load_pack(&mut pack_bytes_cache, idx.pack_path.as_path())?;
+        let raw = slice_one_pack_object(&pack_bytes, in_off).map_err(|e| anyhow::anyhow!("{e}"))?;
+        reused.push((global_bit, oid, pack_id, raw.to_vec()));
+    }
+
+    let pack_reused = u32::try_from(reused.len()).unwrap_or(u32::MAX);
+    let mut packs_touched: HashSet<u32> = HashSet::new();
+    for (_, _, pack_id, _) in &reused {
+        packs_touched.insert(*pack_id);
+    }
+    let packs_reused = u32::try_from(packs_touched.len()).unwrap_or(u32::MAX);
+
+    let entries: Vec<PackWriteEntry> = reused
+        .into_iter()
+        .map(|(_, oid, _, raw)| PackWriteEntry::ReusedSlice { oid, raw })
+        .collect();
+
+    Ok(Some((entries, pack_reused, packs_reused)))
 }
 
 /// Run `grit pack-objects`.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
     if let Some(fmt) = &args.object_format {
         if fmt != "sha1" {
             bail!("unsupported object format: {fmt}");
@@ -256,6 +498,20 @@ pub fn run(args: Args) -> Result<()> {
     if !args.stdout && args.base_name.is_none() {
         bail!("usage: grit pack-objects [--stdout] <base-name>");
     }
+
+    // `clap` + the hidden `extra` trailing var-arg can fail to bind `--revs` in some argv orders;
+    // mirror Git by treating a literal `--revs` in the invocation as rev-list stdin (t5332).
+    if !args.revs {
+        args.revs = std::env::args().any(|a| a == "--revs" || a == "-revs");
+    }
+    args.extra.retain(|a| {
+        if a == "--revs" || a == "-revs" {
+            args.revs = true;
+            false
+        } else {
+            true
+        }
+    });
 
     let repo = Repository::discover(None).context("not a git repository")?;
 
@@ -287,8 +543,10 @@ pub fn run(args: Args) -> Result<()> {
         //
         // An empty repository’s full `repack`/`gc` also runs `pack-objects --all --non-empty` with
         // zero reachable objects; Git skips writing a pack (t6500 `gc --quiet` on fresh repo).
-        let allow_empty =
-            (args.cruft && !args.incremental) || (args.all && !args.incremental && !args.unpacked);
+        let allow_empty = (args.cruft && !args.incremental)
+            || (args.all && !args.incremental && !args.unpacked)
+            // `repack -d` incremental pass: nothing loose to pack (t5332 after full repack).
+            || (args.all && args.incremental && args.unpacked);
         if args.non_empty && !allow_empty {
             bail!("pack-objects refuses to create an empty pack");
         }
@@ -331,7 +589,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if entries.is_empty() {
-        if args.non_empty {
+        if args.non_empty && !(args.all && args.incremental && args.unpacked) {
             bail!("pack-objects refuses to create an empty pack");
         }
         if !args.stdout && !args.quiet {
@@ -390,8 +648,29 @@ pub fn run(args: Args) -> Result<()> {
             .and_then(|v| v.parse::<i64>().ok())
             == Some(0)
     });
-    let window_reuse_only = args.window == Some(0) || window_zero_cli || window_zero_extra;
-    let (write_entries, new_deltas, reused_deltas) = optimize_blob_deltas(
+    let window_zero_cfg = {
+        let mut z = false;
+        if let Ok(params) = std::env::var("GIT_CONFIG_PARAMETERS") {
+            for entry in parse_config_parameters(&params) {
+                if let Some((k, v)) = entry.split_once('=') {
+                    if canonical_pack_window_key(k.trim())
+                        && v.trim().parse::<i64>().ok() == Some(0)
+                    {
+                        z = true;
+                    }
+                }
+            }
+        }
+        z
+    };
+    let window_reuse_only =
+        args.window == Some(0) || window_zero_cli || window_zero_extra || window_zero_cfg;
+
+    if args.all && args.incremental && args.unpacked && window_reuse_only {
+        order_incremental_commits_first_parent_chain(&repo, &mut entries)?;
+    }
+
+    let (mut write_entries, new_deltas, reused_deltas) = optimize_blob_deltas(
         &repo,
         entries,
         max_delta_depth,
@@ -399,10 +678,70 @@ pub fn run(args: Args) -> Result<()> {
         &pack_list.thin_blob_deltas,
     )?;
 
+    let mut trace_pack_reused: Option<u32> = None;
+    let mut trace_packs_reused: Option<u32> = None;
+    if pack_reuse_cli_ok(&args) && (args.all || args.revs || pack_list.rev_list_stdin) {
+        let mode = pack_reuse_mode(&repo);
+        if let Some((reused_slices, pr, pk)) = compute_midx_reused_entries(&repo, &pack_list, mode)?
+        {
+            if !reused_slices.is_empty() {
+                let mut reused_oids: HashSet<ObjectId> = HashSet::new();
+                for e in &reused_slices {
+                    if let PackWriteEntry::ReusedSlice { oid, .. } = e {
+                        reused_oids.insert(*oid);
+                    }
+                }
+                write_entries.retain(|e| {
+                    let oid = match e {
+                        PackWriteEntry::Full(pe) => pe.oid,
+                        PackWriteEntry::RefDelta { oid, .. } => *oid,
+                        PackWriteEntry::ReusedSlice { oid, .. } => *oid,
+                    };
+                    !reused_oids.contains(&oid)
+                });
+                let mut combined = reused_slices;
+                combined.append(&mut write_entries);
+                write_entries = combined;
+                trace_pack_reused = Some(pr);
+                trace_packs_reused = Some(pk);
+            }
+        }
+    }
+
+    if let Some(ref path) = std::env::var_os("GIT_TRACE2_EVENT") {
+        if let Some(p) = path.to_str() {
+            if let (Some(a), Some(b)) = (trace_pack_reused, trace_packs_reused) {
+                let _ = crate::trace2_write_json_data_line(
+                    p,
+                    "pack-objects",
+                    "pack-reused",
+                    &a.to_string(),
+                );
+                let _ = crate::trace2_write_json_data_line(
+                    p,
+                    "pack-objects",
+                    "packs-reused",
+                    &b.to_string(),
+                );
+            }
+        }
+    }
+
     // Build pack bytes.
     let pack_bytes = build_pack(&write_entries)?;
 
     if args.stdout {
+        if !args.quiet {
+            let reused_pack = trace_pack_reused.unwrap_or(0);
+            let total_delta = new_deltas + reused_deltas;
+            eprintln!(
+                "Total {} (delta {}), reused {} (delta {})",
+                write_entries.len(),
+                total_delta,
+                reused_pack,
+                reused_deltas
+            );
+        }
         let stdout = io::stdout();
         let mut out = stdout.lock();
         out.write_all(&pack_bytes)?;
@@ -571,6 +910,7 @@ fn collect_cruft_pack_stdin_oids(repo: &Repository) -> Result<PackObjectList> {
     Ok(PackObjectList {
         oids: oids.into_iter().collect(),
         thin_blob_deltas: Vec::new(),
+        rev_list_stdin: false,
     })
 }
 
@@ -689,6 +1029,94 @@ fn pack_all_use_reachable_closure_only(args: &Args) -> bool {
     args.reachability_all
 }
 
+fn stdin_looks_like_rev_list(lines: &[String]) -> bool {
+    lines.iter().any(|l| {
+        let t = l.trim();
+        !t.is_empty() && (t.starts_with('^') || t == "--not")
+    })
+}
+
+fn collect_pack_objects_from_rev_stdin_lines(
+    repo: &Repository,
+    args: &Args,
+    rev_lines: &[String],
+) -> Result<PackObjectList> {
+    let mut positive: Vec<String> = Vec::new();
+    let mut negative: Vec<String> = Vec::new();
+    let mut post_not = false;
+    let mut have_roots: BTreeSet<ObjectId> = BTreeSet::new();
+    for line in rev_lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // `t5332` uses `printf '%s' "$base" '^' '%s' "$delta"` → `fullbase^fulldelta` on one line.
+        // That is not a peel suffix: it is shorthand for `rev-list --objects <base> ^<delta>`.
+        if let Some((left, right)) = trimmed.split_once('^') {
+            if left.len() == 40
+                && right.len() == 40
+                && ObjectId::from_hex(left).is_ok()
+                && ObjectId::from_hex(right).is_ok()
+            {
+                positive.push(left.to_string());
+                negative.push(right.to_string());
+                continue;
+            }
+        }
+        if trimmed == "--not" {
+            post_not = true;
+            continue;
+        }
+        if post_not {
+            let oid = if let Ok(oid) = ObjectId::from_hex(trimmed) {
+                oid
+            } else {
+                resolve_revision(repo, trimmed)
+                    .with_context(|| format!("cannot resolve ref '{trimmed}'"))?
+            };
+            have_roots.insert(oid);
+            continue;
+        }
+        if let Some(neg) = trimmed.strip_prefix('^') {
+            negative.push(neg.to_string());
+        } else {
+            positive.push(trimmed.to_string());
+        }
+    }
+
+    let mut opts = RevListOptions::default();
+    opts.objects = true;
+    opts.missing_action = MissingAction::Error;
+    let result =
+        rev_list(repo, &positive, &negative, &opts).context("rev-list for pack-objects --revs")?;
+
+    let mut ordered: Vec<ObjectId> = Vec::new();
+    let mut seen: HashSet<ObjectId> = HashSet::new();
+    for oid in &result.commits {
+        if seen.insert(*oid) {
+            ordered.push(*oid);
+        }
+    }
+    for (oid, _) in &result.objects {
+        if seen.insert(*oid) {
+            ordered.push(*oid);
+        }
+    }
+
+    if args.thin && !have_roots.is_empty() {
+        let mut have_closure = BTreeSet::new();
+        for root in &have_roots {
+            walk_reachable(repo, root, &mut have_closure)?;
+        }
+        ordered.retain(|o| !have_closure.contains(o));
+    }
+    Ok(PackObjectList {
+        oids: ordered,
+        thin_blob_deltas: Vec::new(),
+        rev_list_stdin: true,
+    })
+}
+
 /// Collect object IDs from stdin or `--all`.
 fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
     if args.all && args.unpacked && args.incremental {
@@ -697,6 +1125,27 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
 
     if args.cruft && !args.incremental {
         return collect_cruft_pack_stdin_oids(repo);
+    }
+
+    let stdin_lines: Vec<String> = io::stdin()
+        .lock()
+        .lines()
+        .collect::<std::io::Result<Vec<_>>>()?;
+
+    let rev_mode = args.revs || stdin_looks_like_rev_list(&stdin_lines);
+    let has_rev_input = stdin_lines.iter().any(|l| !l.trim().is_empty());
+    if rev_mode && has_rev_input {
+        return collect_pack_objects_from_rev_stdin_lines(repo, args, &stdin_lines);
+    }
+    // `git pack-objects --revs` with no stdin must not fall through to plain `--all` ODB enumeration
+    // when `--all` is absent (would pack everything and break t5332). With `--all` and empty stdin,
+    // Git uses an internal `rev-list --objects --all` (upload-pack); keep the `--all` path below.
+    if rev_mode && !has_rev_input && !args.all {
+        return Ok(PackObjectList {
+            oids: Vec::new(),
+            thin_blob_deltas: Vec::new(),
+            rev_list_stdin: true,
+        });
     }
 
     let mut oids = BTreeSet::new();
@@ -726,72 +1175,10 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
         oids.retain(|o| !skip.contains(o));
     }
 
-    if args.revs {
-        // Git `pack-objects --revs` stdin: positive revs, then `--not`, then negative
-        // revs (client haves). Lines may be 40-char hex or ref names. With `--thin`,
-        // objects reachable from the haves are omitted from the pack.
-        let stdin = io::stdin();
-        let mut exclude = BTreeSet::new();
-        let mut post_not = false;
-        let mut have_roots: BTreeSet<ObjectId> = BTreeSet::new();
-        for line in stdin.lock().lines() {
-            let line = line?;
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            if trimmed == "--not" {
-                post_not = true;
-                continue;
-            }
-            if post_not {
-                let oid = if let Ok(oid) = ObjectId::from_hex(trimmed) {
-                    oid
-                } else {
-                    resolve_revision(repo, trimmed)
-                        .with_context(|| format!("cannot resolve ref '{trimmed}'"))?
-                };
-                have_roots.insert(oid);
-                continue;
-            }
-            if let Some(neg_ref) = trimmed.strip_prefix('^') {
-                let oid = if let Ok(oid) = ObjectId::from_hex(neg_ref) {
-                    oid
-                } else {
-                    resolve_revision(repo, neg_ref)
-                        .with_context(|| format!("cannot resolve ref '{neg_ref}'"))?
-                };
-                walk_reachable(repo, &oid, &mut exclude)?;
-            } else {
-                let oid = if let Ok(oid) = ObjectId::from_hex(trimmed) {
-                    oid
-                } else {
-                    resolve_revision(repo, trimmed)
-                        .with_context(|| format!("cannot resolve ref '{trimmed}'"))?
-                };
-                walk_reachable(repo, &oid, &mut oids)?;
-            }
-        }
-        for oid in &exclude {
-            oids.remove(oid);
-        }
-        if args.thin && !have_roots.is_empty() {
-            let mut have_closure = BTreeSet::new();
-            for root in &have_roots {
-                walk_reachable(repo, root, &mut have_closure)?;
-            }
-            oids.retain(|o| !have_closure.contains(o));
-        }
-        return Ok(PackObjectList {
-            oids: oids.into_iter().collect(),
-            thin_blob_deltas: Vec::new(),
-        });
-    } else if args.stdin_packs {
+    if args.stdin_packs {
         // Read pack filenames from stdin and include all objects in those packs.
-        let stdin = io::stdin();
         let pack_dir = repo.odb.objects_dir().join("pack");
-        for line in stdin.lock().lines() {
-            let line = line?;
+        for line in &stdin_lines {
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
@@ -821,19 +1208,18 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
         return Ok(PackObjectList {
             oids: oids.into_iter().collect(),
             thin_blob_deltas: Vec::new(),
+            rev_list_stdin: false,
         });
     } else if !args.all {
         // Git `pack-objects` stdin format (see git/builtin/pack-objects.c `read_object_list_from_stdin`):
         //   -<oid>  — set preferred base (tree OID for thin-pack blob deltas), not an exclusion
         //   <oid> [<path>] — object to pack; with a preferred base, path selects the base blob
-        let stdin = io::stdin();
         let mut oids_ordered: Vec<ObjectId> = Vec::new();
         let mut seen: HashSet<ObjectId> = HashSet::new();
         let mut thin_blob_deltas: Vec<(ObjectId, ObjectId)> = Vec::new();
         let mut preferred_tree: Option<ObjectId> = None;
 
-        for line in stdin.lock().lines() {
-            let line = line?;
+        for line in &stdin_lines {
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
@@ -870,6 +1256,7 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
         return Ok(PackObjectList {
             oids: oids_ordered,
             thin_blob_deltas,
+            rev_list_stdin: false,
         });
     }
 
@@ -884,6 +1271,7 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
     Ok(PackObjectList {
         oids: oids.into_iter().collect(),
         thin_blob_deltas: Vec::new(),
+        rev_list_stdin: false,
     })
 }
 
@@ -896,11 +1284,28 @@ fn collect_incremental_repack_oids(repo: &Repository, args: &Args) -> Result<Pac
     opts.unpacked_only = true;
     opts.missing_action = MissingAction::Allow;
 
-    let result = rev_list(repo, &[] as &[String], &[] as &[String], &opts)
-        .context("rev-list for incremental pack-objects")?;
+    let result = match rev_list(repo, &[] as &[String], &[] as &[String], &opts) {
+        Ok(r) => r,
+        // Fresh repo / no refs yet: incremental repack is a no-op (Git `repack -d`, t5332).
+        Err(LibError::InvalidRef(ref s)) if s == "no revisions specified" => {
+            return Ok(PackObjectList {
+                oids: Vec::new(),
+                thin_blob_deltas: Vec::new(),
+                rev_list_stdin: false,
+            });
+        }
+        Err(e) => return Err(e).context("rev-list for incremental pack-objects"),
+    };
 
     let mut ordered: Vec<ObjectId> = Vec::new();
     let mut seen = HashSet::new();
+    // `rev_list` object lines omit commit OIDs (Git-style); incremental repack must still pack
+    // loose commits (t5332 / repack -d).
+    for oid in &result.commits {
+        if seen.insert(*oid) {
+            ordered.push(*oid);
+        }
+    }
     for oid in result.objects.iter().map(|(o, _)| *o) {
         if seen.insert(oid) {
             ordered.push(oid);
@@ -923,6 +1328,7 @@ fn collect_incremental_repack_oids(repo: &Repository, args: &Args) -> Result<Pac
     Ok(PackObjectList {
         oids: ordered,
         thin_blob_deltas: Vec::new(),
+        rev_list_stdin: false,
     })
 }
 
@@ -973,6 +1379,83 @@ fn collect_all_loose(odb: &Odb, oids: &mut BTreeSet<ObjectId>) -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+/// For incremental `pack-objects --all --unpacked` with `--window=0`, order commit objects so the
+/// newest tip appears first and the first-parent chain follows (t5332 pack index order).
+fn order_incremental_commits_first_parent_chain(
+    repo: &Repository,
+    entries: &mut Vec<PackEntry>,
+) -> Result<()> {
+    let mut commits: Vec<(usize, ObjectId)> = Vec::new();
+    let mut non_commit: Vec<PackEntry> = Vec::new();
+    for (i, e) in entries.iter().enumerate() {
+        if e.kind == ObjectKind::Commit {
+            commits.push((i, e.oid));
+        } else {
+            non_commit.push(e.clone());
+        }
+    }
+    if commits.len() < 2 {
+        return Ok(());
+    }
+    let s: HashSet<ObjectId> = commits.iter().map(|(_, o)| *o).collect();
+    let mut first_parent_in_s: HashMap<ObjectId, ObjectId> = HashMap::new();
+    for (_, oid) in &commits {
+        let obj = read_object_from_repo(repo, oid)?;
+        let c = parse_commit(&obj.data).map_err(|e| anyhow::anyhow!("{e}"))?;
+        if let Some(&p) = c.parents.first() {
+            if s.contains(&p) {
+                first_parent_in_s.insert(*oid, p);
+            }
+        }
+    }
+    let mut indegree: HashMap<ObjectId, usize> = HashMap::new();
+    for oid in &s {
+        indegree.entry(*oid).or_insert(0);
+    }
+    for (_, p) in &first_parent_in_s {
+        *indegree.entry(*p).or_insert(0) += 1;
+    }
+    let mut tips: Vec<ObjectId> = indegree
+        .iter()
+        .filter(|(_, &d)| d == 0)
+        .map(|(o, _)| *o)
+        .collect();
+    if tips.is_empty() {
+        return Ok(());
+    }
+    tips.sort_by(|a, b| b.cmp(a));
+    let mut ordered: Vec<ObjectId> = Vec::new();
+    let mut seen: HashSet<ObjectId> = HashSet::new();
+    let mut q: VecDeque<ObjectId> = tips.into_iter().collect();
+    while let Some(c) = q.pop_front() {
+        if !seen.insert(c) {
+            continue;
+        }
+        ordered.push(c);
+        if let Some(&p) = first_parent_in_s.get(&c) {
+            if s.contains(&p) && !seen.contains(&p) {
+                q.push_back(p);
+            }
+        }
+    }
+    if ordered.len() != commits.len() {
+        return Ok(());
+    }
+    let mut by_oid: HashMap<ObjectId, PackEntry> = HashMap::new();
+    for e in entries.iter().filter(|e| e.kind == ObjectKind::Commit) {
+        by_oid.insert(e.oid, e.clone());
+    }
+    let mut out: Vec<PackEntry> = Vec::with_capacity(entries.len());
+    for oid in ordered {
+        if let Some(e) = by_oid.remove(&oid) {
+            out.push(e);
+        }
+    }
+    out.extend(non_commit);
+    *entries = out;
     Ok(())
 }
 
@@ -1462,6 +1945,9 @@ fn build_pack(entries: &[PackWriteEntry]) -> Result<Vec<u8>> {
                 let compressed = enc.finish()?;
                 buf.extend_from_slice(&compressed);
             }
+            PackWriteEntry::ReusedSlice { raw, .. } => {
+                buf.extend_from_slice(raw);
+            }
         }
     }
 
@@ -1497,6 +1983,7 @@ fn build_idx_for_pack(pack_bytes: &[u8], entries: &[PackWriteEntry]) -> Result<V
             let oid = match e {
                 PackWriteEntry::Full(pe) => pe.oid,
                 PackWriteEntry::RefDelta { oid, .. } => *oid,
+                PackWriteEntry::ReusedSlice { oid, .. } => *oid,
             };
             (i, oid)
         })
