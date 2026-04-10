@@ -16,7 +16,11 @@ use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
+use crate::fetch_transport::parse_leading_shell_env_assignments;
+use crate::grit_exe::{grit_executable, strip_trace2_env};
 use crate::pkt_line::{read_packet, write_flush, Packet};
+use crate::protocol_wire;
+use crate::trace2_transfer;
 
 /// Upstream `git send-pack` usage synopsis (exit 129 when options are incompatible).
 const SEND_PACK_USAGE: &str = "usage: git send-pack [--mirror] [--dry-run] [--force]\n\
@@ -134,7 +138,7 @@ pub fn run(args: Args) -> Result<()> {
 
         for spec in &refspecs {
             let (src, dst) = parse_refspec(spec);
-            let local_ref = normalize_ref(&src);
+            let local_ref = resolve_push_src_refname(&src);
             let remote_ref = normalize_ref(&dst);
 
             let local_oid = refs::resolve_ref(&repo.git_dir, &local_ref)
@@ -195,7 +199,12 @@ pub fn run(args: Args) -> Result<()> {
 
     // Raw pack bytes after the command flush (do not negotiate side-band-64k for the pack:
     // `git receive-pack` reads the pack from stdin without demuxing client→server sideband).
-    let caps = "report-status report-status-v2 quiet object-format=sha1";
+    let mut caps = "report-status report-status-v2 quiet object-format=sha1".to_owned();
+    if trace2_transfer::transfer_advertise_sid_enabled(&repo.git_dir) {
+        let sid = trace2_transfer::trace2_session_id_wire_once();
+        caps.push_str(" session-id=");
+        caps.push_str(&sid);
+    }
     let mut first_cmd = true;
     for update in &updates {
         let old_hex = update
@@ -312,7 +321,18 @@ fn shell_single_quote(s: &str) -> String {
 }
 
 fn spawn_receive_pack(receive_cmd: &str, remote_path: &Path) -> Result<Child> {
+    let remote_path = remote_path
+        .canonicalize()
+        .unwrap_or_else(|_| remote_path.to_path_buf());
     let remote_str = remote_path.to_string_lossy();
+    let client_proto = protocol_wire::effective_client_protocol_version();
+    let apply_proto = |c: &mut Command| {
+        if client_proto == 0 {
+            c.env_remove("GIT_PROTOCOL");
+        } else {
+            protocol_wire::merge_git_protocol_env_for_child(c, client_proto);
+        }
+    };
     if receive_cmd.contains('|')
         || receive_cmd.contains('>')
         || receive_cmd.contains('<')
@@ -323,7 +343,10 @@ fn spawn_receive_pack(receive_cmd: &str, remote_path: &Path) -> Result<Child> {
             receive_cmd.trim_end(),
             shell_single_quote(&remote_str)
         );
-        return Command::new("sh")
+        let mut c = Command::new("sh");
+        strip_trace2_env(&mut c);
+        apply_proto(&mut c);
+        return c
             .arg("-c")
             .arg(&script)
             .stdin(Stdio::piped())
@@ -333,14 +356,32 @@ fn spawn_receive_pack(receive_cmd: &str, remote_path: &Path) -> Result<Child> {
             .context("spawn receive-pack shell");
     }
 
+    let (leading_env, after_env) = parse_leading_shell_env_assignments(receive_cmd);
+    if after_env.contains("git-receive-pack") {
+        let mut cmd = Command::new(grit_executable());
+        strip_trace2_env(&mut cmd);
+        for (k, v) in leading_env {
+            cmd.env(k, v);
+        }
+        cmd.arg("receive-pack")
+            .arg(remote_str.as_ref())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        apply_proto(&mut cmd);
+        return cmd.spawn().context("spawn grit receive-pack");
+    }
+
     let words: Vec<&str> = receive_cmd.split_whitespace().collect();
     if words.is_empty() {
         bail!("empty receive-pack command");
     }
     let mut cmd = Command::new(words[0]);
+    strip_trace2_env(&mut cmd);
     for w in &words[1..] {
         cmd.arg(w);
     }
+    apply_proto(&mut cmd);
     cmd.arg(remote_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -352,12 +393,22 @@ fn read_advertisement(r: &mut impl Read) -> Result<(HashSet<ObjectId>, bool, Vec
     let mut haves = HashSet::new();
     let mut advertised = Vec::new();
     let mut server_sideband = false;
+    let mut saw_version_1 = false;
+    let mut first_data = true;
+    let mut server_sid_done = false;
     loop {
         match read_packet(r)? {
             None => break,
             Some(Packet::Flush) => break,
             Some(Packet::Delim) | Some(Packet::ResponseEnd) => break,
             Some(Packet::Data(line)) => {
+                if first_data {
+                    first_data = false;
+                    let t = line.trim_end_matches('\n');
+                    if t.starts_with("version 1") {
+                        saw_version_1 = true;
+                    }
+                }
                 if let Some(oid) = parse_dot_have_line(&line) {
                     haves.insert(oid);
                 }
@@ -368,10 +419,17 @@ fn read_advertisement(r: &mut impl Read) -> Result<(HashSet<ObjectId>, bool, Vec
                     if caps.contains("side-band-64k") || caps.contains("side-band") {
                         server_sideband = true;
                     }
+                    if !server_sid_done {
+                        if let Some(sid) = trace2_transfer::extract_session_id_feature(caps) {
+                            trace2_transfer::emit_server_sid(sid);
+                            server_sid_done = true;
+                        }
+                    }
                 }
             }
         }
     }
+    trace2_transfer::emit_negotiated_version_client_fetch(saw_version_1);
     Ok((haves, server_sideband, advertised))
 }
 
@@ -447,6 +505,15 @@ fn normalize_ref(name: &str) -> String {
         name.to_owned()
     } else {
         format!("refs/heads/{name}")
+    }
+}
+
+/// Map a refspec source to the ref name passed to [`refs::resolve_ref`] (`HEAD` stays `HEAD`).
+fn resolve_push_src_refname(src: &str) -> String {
+    if src == "HEAD" || src.starts_with("refs/") {
+        src.to_owned()
+    } else {
+        normalize_ref(src)
     }
 }
 

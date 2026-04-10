@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use crate::commands::serve_v2::{serve_loop, ServerCaps};
 use crate::pkt_line;
 use crate::protocol_wire;
+use crate::trace2_transfer;
 
 /// Arguments for `grit upload-pack`.
 #[derive(Debug, ClapArgs)]
@@ -53,6 +54,8 @@ pub fn run(args: Args) -> Result<()> {
         )
     })?;
     repo.enforce_safe_directory_git_dir()?;
+
+    trace2_transfer::emit_negotiated_version_from_git_protocol_env();
 
     let server_proto = protocol_wire::server_protocol_version_from_git_protocol_env();
     if server_proto == 2 {
@@ -89,7 +92,6 @@ pub fn run(args: Args) -> Result<()> {
     let mut stdin = io::stdin();
     let mut wants: Vec<ObjectId> = Vec::new();
     let mut multi_ack_detailed = false;
-
     loop {
         match pkt_line::read_packet(&mut stdin)? {
             None => break,
@@ -101,6 +103,11 @@ pub fn run(args: Args) -> Result<()> {
                     if wants.is_empty() && features.contains("multi_ack_detailed") {
                         multi_ack_detailed = true;
                     }
+                    if wants.is_empty() {
+                        if let Some(sid) = trace2_transfer::extract_session_id_feature(features) {
+                            trace2_transfer::emit_client_sid(sid);
+                        }
+                    }
                     if let Ok(oid) = ObjectId::from_hex(hex) {
                         wants.push(oid);
                     }
@@ -109,7 +116,6 @@ pub fn run(args: Args) -> Result<()> {
             _ => {}
         }
     }
-
     if wants.is_empty() {
         return Ok(());
     }
@@ -244,7 +250,7 @@ fn write_ref_advertisement(w: &mut impl Write, git_dir: &Path) -> Result<()> {
         .map(|s| s.to_ascii_lowercase())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "sha1".to_owned());
-    let caps = format!(
+    let mut caps = format!(
         "multi_ack thin-pack side-band side-band-64k ofs-delta shallow deepen-since deepen-not \
          deepen-relative no-progress include-tag multi_ack_detailed allow-tip-sha1-in-want \
          allow-reachable-sha1-in-want no-done symref=HEAD:{} filter object-format={object_format} \
@@ -255,6 +261,11 @@ fn write_ref_advertisement(w: &mut impl Write, git_dir: &Path) -> Result<()> {
             .unwrap_or_else(|| "refs/heads/main".to_owned()),
         version,
     );
+    if trace2_transfer::transfer_advertise_sid_enabled(git_dir) {
+        let sid = trace2_transfer::trace2_session_id_wire_once();
+        caps.push_str(" session-id=");
+        caps.push_str(&sid);
+    }
 
     let mut first = true;
     if let Ok(head_oid) = refs::resolve_ref(git_dir, "HEAD") {

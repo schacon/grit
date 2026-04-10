@@ -73,19 +73,14 @@ fn strip_protocol_version_entries(s: &str) -> String {
         .join(":")
 }
 
-/// When spawning `upload-pack` / `receive-pack`, merge `GIT_PROTOCOL` so the server negotiates v1/v2.
-///
-/// Any existing `version=N` entries are removed before appending `version={client_wants}` so a
-/// parent process cannot pin v2 when the child explicitly uses `protocol.version=1` (e.g.
-/// `submodule update --remote` local fetch).
-pub fn merge_git_protocol_env_for_child(cmd: &mut Command, client_wants: u8) {
+fn merged_git_protocol_value(client_wants: u8, existing: Option<String>) -> Option<String> {
     if client_wants == 0 {
-        return;
+        return None;
     }
     let entry = format!("version={client_wants}");
-    let merged = match std::env::var("GIT_PROTOCOL") {
-        Ok(existing) if !existing.is_empty() => {
-            let base = strip_protocol_version_entries(existing.trim());
+    Some(match existing {
+        Some(ref e) if !e.is_empty() => {
+            let base = strip_protocol_version_entries(e.trim());
             if base.is_empty() {
                 entry
             } else {
@@ -93,6 +88,18 @@ pub fn merge_git_protocol_env_for_child(cmd: &mut Command, client_wants: u8) {
             }
         }
         _ => entry,
-    };
-    cmd.env("GIT_PROTOCOL", merged);
+    })
+}
+
+/// When spawning `upload-pack` / `receive-pack`, merge `GIT_PROTOCOL` so the server negotiates v1/v2.
+///
+/// Any existing `version=N` entries are removed before appending `version={client_wants}` so a
+/// parent process cannot pin v2 when the child explicitly uses `protocol.version=1` (e.g.
+/// `submodule update --remote` local fetch).
+pub fn merge_git_protocol_env_for_child(cmd: &mut Command, client_wants: u8) {
+    if let Some(merged) =
+        merged_git_protocol_value(client_wants, std::env::var("GIT_PROTOCOL").ok())
+    {
+        cmd.env("GIT_PROTOCOL", merged);
+    }
 }

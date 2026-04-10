@@ -37,6 +37,7 @@ mod precompose;
 pub mod protocol;
 mod protocol_wire;
 mod ssh_transport;
+mod trace2_transfer;
 mod trace_packet;
 mod transport_passthrough;
 mod wire_trace;
