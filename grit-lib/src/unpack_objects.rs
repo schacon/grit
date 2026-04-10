@@ -518,7 +518,9 @@ fn write_or_hash(kind: ObjectKind, data: &[u8], odb: &Odb, dry_run: bool) -> Res
     if dry_run {
         Ok(Odb::hash_object_data(kind, data))
     } else {
-        odb.write(kind, data)
+        // Always materialize into this ODB: objects reachable only via alternates must still be
+        // written locally (matches git unpack-objects; t5519-push-alternates).
+        odb.write_local(kind, data)
     }
 }
 
