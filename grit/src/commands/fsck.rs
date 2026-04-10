@@ -15,6 +15,7 @@ use grit_lib::error::Error as LibError;
 use grit_lib::fsck_standalone::{fsck_object, fsck_tag_mktag_trailer};
 use grit_lib::gitmodules;
 use grit_lib::ident::fsck_commit_idents;
+use grit_lib::index::MODE_GITLINK;
 use grit_lib::objects::{parse_commit, parse_tree, tag_object_line_oid, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pack::{read_local_pack_indexes, read_pack_index};
@@ -667,6 +668,9 @@ fn walk_reachable(
             ObjectKind::Tree => {
                 if let Ok(entries) = parse_tree(&obj.data) {
                     for entry in entries {
+                        if entry.mode == MODE_GITLINK {
+                            continue;
+                        }
                         queue.push_back((entry.oid, Some(oid)));
                     }
                 }
@@ -971,6 +975,9 @@ fn find_referenced_set(
             ObjectKind::Tree => {
                 if let Ok(entries) = parse_tree(&obj.data) {
                     for entry in entries {
+                        if entry.mode == MODE_GITLINK {
+                            continue;
+                        }
                         referenced.insert(entry.oid);
                     }
                 }
