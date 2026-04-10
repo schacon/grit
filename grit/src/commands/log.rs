@@ -26,7 +26,9 @@ use grit_lib::line_log::{
     format_line_log_diff, line_log_filter_commits, parse_line_log_ranges, rewritten_first_parent,
 };
 use grit_lib::merge_base::is_ancestor;
-use grit_lib::merge_diff::{blob_text_for_diff, is_binary_for_diff};
+use grit_lib::merge_diff::{
+    blob_text_for_diff, blob_text_for_diff_with_oid, diff_textconv_active, is_binary_for_diff,
+};
 use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::reflog::read_reflog;
@@ -4897,6 +4899,24 @@ fn validate_log_pickaxe_options(repo: &Repository, args: &Args) -> Result<()> {
     Ok(())
 }
 
+/// First executable token of `diff.<driver>.textconv`, matching Git's shell concatenation for
+/// values like `"/abs/cwd"/hexdump` (t4030-diff-textconv).
+fn pickaxe_textconv_cmd_first_token(cmd_line: &str) -> Option<String> {
+    let s = cmd_line.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if let Some(rest) = s.strip_prefix('"') {
+        let end = rest.find('"')?;
+        let prefix = &rest[..end];
+        let tail = rest[end + 1..].trim_start();
+        let suffix = tail.split_whitespace().next().unwrap_or("");
+        return Some(format!("{prefix}{suffix}"));
+    }
+    let first = s.split_whitespace().next()?;
+    Some(first.trim_matches(|c| c == '"' || c == '\'').to_string())
+}
+
 fn path_has_textconv_driver(git_dir: &Path, config: &ConfigSet, path: &str) -> bool {
     let work_tree = git_dir.parent().unwrap_or(git_dir);
     let rules = load_gitattributes(work_tree);
@@ -4927,11 +4947,11 @@ fn validate_pickaxe_textconv_drivers(git_dir: &Path, work_tree: Option<&Path>) -
         if cmd_line.ends_with('<') {
             cmd_line = cmd_line.trim_end_matches('<').trim_end().to_string();
         }
-        let Some(first_word) = cmd_line.split_whitespace().next() else {
+        let Some(first_word) = pickaxe_textconv_cmd_first_token(&cmd_line) else {
             continue;
         };
         if first_word.starts_with('/') || first_word.contains('/') {
-            if !Path::new(first_word).is_file() {
+            if !Path::new(&first_word).is_file() {
                 return Err(anyhow::Error::new(ExplicitExit {
                     code: 128,
                     message: format!(
@@ -6840,8 +6860,9 @@ fn write_commit_diff_body(
     }
 
     if show_patch {
+        let config = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
         for entry in list_patch {
-            log_write_patch_entry(out, odb, entry, args, patch_context)?;
+            log_write_patch_entry(out, odb, git_dir, &config, entry, args, patch_context)?;
         }
     }
 
@@ -6852,6 +6873,8 @@ fn write_commit_diff_body(
 fn log_write_patch_entry(
     out: &mut impl Write,
     odb: &Odb,
+    git_dir: &std::path::Path,
+    config: &ConfigSet,
     entry: &DiffEntry,
     args: &Args,
     context_lines: usize,
@@ -6929,7 +6952,57 @@ fn log_write_patch_entry(
         DiffStatus::Unmerged => {}
     }
 
-    let (old_content, new_content) = log_read_blob_pair(odb, entry)?;
+    let path_for_attrs = entry.path();
+    let use_textconv = !args.no_textconv;
+    let textconv_patch = use_textconv && diff_textconv_active(git_dir, config, path_for_attrs);
+    let old_raw = read_blob_bytes(odb, &entry.old_oid);
+    let new_raw = read_blob_bytes(odb, &entry.new_oid);
+    if !textconv_patch
+        && (is_binary_for_diff(git_dir, path_for_attrs, &old_raw)
+            || is_binary_for_diff(git_dir, path_for_attrs, &new_raw))
+    {
+        let (src_pfx, dst_pfx) = if args.no_prefix {
+            ("", "")
+        } else {
+            ("a/", "b/")
+        };
+        writeln!(
+            out,
+            "Binary files {src_pfx}{old_path} and {dst_pfx}{new_path} differ"
+        )?;
+        return Ok(());
+    }
+
+    let old_content = if entry.old_oid == zero_oid() {
+        String::new()
+    } else if use_textconv {
+        blob_text_for_diff_with_oid(
+            odb,
+            git_dir,
+            config,
+            path_for_attrs,
+            &old_raw,
+            &entry.old_oid,
+            true,
+        )
+    } else {
+        String::from_utf8_lossy(&old_raw).into_owned()
+    };
+    let new_content = if entry.new_oid == zero_oid() {
+        String::new()
+    } else if use_textconv {
+        blob_text_for_diff_with_oid(
+            odb,
+            git_dir,
+            config,
+            path_for_attrs,
+            &new_raw,
+            &entry.new_oid,
+            true,
+        )
+    } else {
+        String::from_utf8_lossy(&new_raw).into_owned()
+    };
     let display_old = if entry.status == DiffStatus::Added {
         "/dev/null"
     } else {
