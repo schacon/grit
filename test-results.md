@@ -1,5 +1,14 @@
 # Test results
 
+**2026-04-10 (phase 6 / t5516 aliased ref consistency on push)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo clippy --fix --allow-dirty -p grit-rs`: pass (reverted unrelated formatting-only edits before commit)
+- `cargo test -p grit-lib --lib`: pass
+- `cargo build --release -p grit-rs`: pass
+- `./scripts/run-tests.sh t5516-fetch-push.sh`: **60/124** (up from 59/124; `push into aliased refs (inconsistent)` now fails correctly with `refusing inconsistent update ...`)
+
 **2026-04-10 (phase 6 / t5516 fetch url.insteadOf parity)**  
 
 - `cargo fmt`: pass

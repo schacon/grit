@@ -188,6 +188,56 @@ struct RefUpdate {
     pre_push_local_name: Option<String>,
 }
 
+fn reject_or_drop_aliased_remote_updates(
+    remote_git_dir: &Path,
+    updates: &mut Vec<RefUpdate>,
+) -> Result<()> {
+    use std::collections::{HashMap, HashSet};
+
+    let mut by_ref: HashMap<String, usize> = HashMap::new();
+    for (idx, update) in updates.iter().enumerate() {
+        by_ref.entry(update.remote_ref.clone()).or_insert(idx);
+    }
+
+    let mut skip: HashSet<usize> = HashSet::new();
+    for (idx, update) in updates.iter().enumerate() {
+        let Some(target_ref_raw) = refs::read_symbolic_ref(remote_git_dir, &update.remote_ref)?
+        else {
+            continue;
+        };
+
+        let target_ref = normalize_ref(&target_ref_raw);
+        let Some(&target_idx) = by_ref.get(&target_ref) else {
+            continue;
+        };
+
+        if updates[idx].old_oid != updates[target_idx].old_oid
+            || updates[idx].new_oid != updates[target_idx].new_oid
+        {
+            bail!(
+                "refusing inconsistent update between symref '{}' and its target '{}'",
+                update.remote_ref,
+                updates[target_idx].remote_ref
+            );
+        }
+
+        // Keep only the target update. Updating both refs would rewrite the symbolic ref
+        // into a direct ref in file-backed stores.
+        skip.insert(idx);
+    }
+
+    if !skip.is_empty() {
+        let mut kept = Vec::with_capacity(updates.len().saturating_sub(skip.len()));
+        for (idx, update) in updates.drain(..).enumerate() {
+            if !skip.contains(&idx) {
+                kept.push(update);
+            }
+        }
+        *updates = kept;
+    }
+    Ok(())
+}
+
 fn pre_push_hook_local_display(u: &RefUpdate) -> &str {
     u.pre_push_local_name
         .as_deref()
@@ -1354,6 +1404,8 @@ fn push_to_url(
             }
         }
     }
+
+    reject_or_drop_aliased_remote_updates(&remote_repo.git_dir, &mut updates)?;
 
     if recurse_mode == PushRecurseSubmodules::Only {
         return Ok(());
