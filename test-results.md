@@ -14,6 +14,12 @@
   - HTTP v0/v1 stateless fetch now retries once without `have` lines when initial response yields no pack while
     wanted objects are missing locally.
   - Side-band parser improvements retained for PACK boundary handling and pre-pack flush tolerance.
+- Extended matrix checkpoint after this increment:
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: 10/10
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: 21/37 (improved from 13/37)
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: 1/16 (improved from 0/16)
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: 10/16 (improved from 0/16)
+  - `./scripts/run-tests.sh t5510-fetch.sh`: 23/215 (improved from 16/215)
 
 **2026-04-10 (fetch HTTP v1 setup + sideband parsing hardening)**
 
