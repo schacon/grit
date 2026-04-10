@@ -647,8 +647,12 @@ fn collect_changes(
                 WorktreeStatus::Modified(wt_mode, wt_oid) => {
                     let idx_canonical = canonicalize_mode(*idx_mode);
                     let content_matches = wt_oid == *idx_oid && wt_mode == idx_canonical;
+                    let stat_agrees = fs::symlink_metadata(&abs)
+                        .map(|m| stat_matches(idx_entry, &m))
+                        .unwrap_or(false);
                     if content_matches
                         && index_stat_is_trusted(idx_entry)
+                        && stat_agrees
                         && !idx_entry.intent_to_add()
                     {
                         continue;

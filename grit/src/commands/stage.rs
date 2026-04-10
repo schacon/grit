@@ -58,6 +58,7 @@ pub fn run(args: Args) -> Result<()> {
         renormalize: false,
         refresh: false,
         ignore_errors: false,
+        no_ignore_errors: false,
         ignore_missing: false,
         no_warn_embedded_repo: false,
         pathspec_from_file: None,

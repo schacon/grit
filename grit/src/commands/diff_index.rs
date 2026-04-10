@@ -1072,7 +1072,28 @@ fn diff_tree_vs_worktree(
         // Stat differs — must read and hash the file
         match read_worktree_snapshot_from_meta(repo, &abs, &meta)? {
             Some(worktree_snapshot) => {
-                if worktree_snapshot != *index_snapshot {
+                if worktree_snapshot == *index_snapshot {
+                    // Index stat cache is stale (e.g. after `read-tree` zeroed stat fields) while
+                    // tree, index OID, and work tree content still agree — Git reports `M` with a
+                    // zero OID on the work-tree side (`t3700-add.sh` refresh tests).
+                    if let Some(ts) = tree_snap {
+                        if ts == *index_snapshot {
+                            let wt_placeholder = Snapshot {
+                                mode: worktree_snapshot.mode,
+                                oid: zero_oid(),
+                            };
+                            merged.insert(
+                                path.clone(),
+                                RawChange {
+                                    path: path.clone(),
+                                    status: 'M',
+                                    old: Some(ts),
+                                    new: Some(wt_placeholder),
+                                },
+                            );
+                        }
+                    }
+                } else if worktree_snapshot != *index_snapshot {
                     if tree_snap.is_none() {
                         // Staged add only in the index: refresh the `new` snapshot from the work
                         // tree (e.g. `chmod` after `git add`) while keeping status `A` so rename

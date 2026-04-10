@@ -3,6 +3,7 @@
 //! Stages files from the working tree into the index so they will be
 //! included in the next commit.
 
+use crate::explicit_exit::SilentNonZeroExit;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::attributes::{parse_gitattributes_file_content, validate_rules_for_add};
@@ -19,11 +20,124 @@ use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::unicode_normalization::{precompose_utf8_path, precompose_utf8_segment};
 use grit_lib::wildmatch::wildmatch;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+
+/// Error when a nested repository has no checked-out commit (empty `HEAD` / unborn branch).
+#[derive(Debug)]
+struct EmbeddedRepoNoCommitError(String);
+
+impl std::fmt::Display for EmbeddedRepoNoCommitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let base = self.0.trim_end_matches('/');
+        write!(f, "'{base}/' does not have a commit checked out")
+    }
+}
+
+impl std::error::Error for EmbeddedRepoNoCommitError {}
+
+/// Read `extensions.objectformat` from a repository `config` (default `sha1`).
+fn read_object_format_from_git_dir(git_dir: &Path) -> String {
+    let config_path = git_dir.join("config");
+    let Ok(content) = fs::read_to_string(&config_path) else {
+        return "sha1".to_owned();
+    };
+    let mut in_extensions = false;
+    let mut object_format: Option<String> = None;
+    for line in content.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_extensions = t.eq_ignore_ascii_case("[extensions]");
+            continue;
+        }
+        if !in_extensions {
+            continue;
+        }
+        let Some((k, v)) = t.split_once('=') else {
+            continue;
+        };
+        if k.trim().eq_ignore_ascii_case("objectformat") {
+            object_format = Some(v.trim().to_lowercase());
+        }
+    }
+    object_format.unwrap_or_else(|| "sha1".to_owned())
+}
+
+thread_local! {
+    static DRY_RUN_STDOUT_LINES: RefCell<Vec<String>> = RefCell::new(Vec::new());
+    static DRY_RUN_CAPTURE_MULTISPEC: Cell<bool> = Cell::new(false);
+    static EMBEDDED_REPO_FULL_HINT_EMITTED: Cell<bool> = Cell::new(false);
+}
+
+fn dry_run_stdout_begin_multispec_capture() {
+    DRY_RUN_CAPTURE_MULTISPEC.set(true);
+    DRY_RUN_STDOUT_LINES.with(|v| v.borrow_mut().clear());
+}
+
+fn dry_run_stdout_push_line(line: String) {
+    if DRY_RUN_CAPTURE_MULTISPEC.get() {
+        DRY_RUN_STDOUT_LINES.with(|v| v.borrow_mut().push(line));
+    } else {
+        println!("{line}");
+    }
+}
+
+fn dry_run_stdout_finish_multispec_capture() {
+    if !DRY_RUN_CAPTURE_MULTISPEC.get() {
+        return;
+    }
+    DRY_RUN_CAPTURE_MULTISPEC.set(false);
+    DRY_RUN_STDOUT_LINES.with(|v| {
+        let mut lines = std::mem::take(&mut *v.borrow_mut());
+        lines.sort();
+        for line in lines {
+            println!("{line}");
+        }
+    });
+}
+
+fn dry_run_stdout_abort_multispec_capture() {
+    if !DRY_RUN_CAPTURE_MULTISPEC.get() {
+        return;
+    }
+    DRY_RUN_CAPTURE_MULTISPEC.set(false);
+    DRY_RUN_STDOUT_LINES.with(|v| {
+        v.borrow_mut().clear();
+    });
+}
+
+fn finish_dry_stdout_before_exit() {
+    dry_run_stdout_finish_multispec_capture();
+}
+
+struct DryRunMultispecStdoutGuard(bool);
+
+impl DryRunMultispecStdoutGuard {
+    fn maybe_begin(dry_run: bool, pathspec_count: usize) -> Self {
+        if dry_run && pathspec_count > 1 {
+            dry_run_stdout_begin_multispec_capture();
+            Self(true)
+        } else {
+            Self(false)
+        }
+    }
+}
+
+impl Drop for DryRunMultispecStdoutGuard {
+    fn drop(&mut self) {
+        if self.0 {
+            dry_run_stdout_finish_multispec_capture();
+        }
+    }
+}
+
+fn error_is_chmod_on_non_regular(e: &anyhow::Error) -> bool {
+    format!("{e:#}").contains("cannot chmod")
+}
 
 fn resolved_env_index_path(repo: &Repository) -> PathBuf {
     if let Ok(raw) = std::env::var("GIT_INDEX_FILE") {
@@ -103,6 +217,10 @@ pub struct Args {
     /// Continue adding files when some cannot be added.
     #[arg(long = "ignore-errors")]
     pub ignore_errors: bool,
+
+    /// Force failing paths to abort even when `add.ignore-errors` is set in config.
+    #[arg(long = "no-ignore-errors")]
+    pub no_ignore_errors: bool,
 
     /// Suppress warning for non-existent pathspecs (with --refresh).
     #[arg(long = "ignore-missing")]
@@ -243,6 +361,9 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
+    let _dry_stdout_guard =
+        DryRunMultispecStdoutGuard::maybe_begin(args.dry_run, args.pathspec.len());
+
     // "git add" with no pathspecs and no flags: give advice
     if args.pathspec.is_empty()
         && !args.all
@@ -284,11 +405,12 @@ pub fn run(mut args: Args) -> Result<()> {
     let add_cfg = AddConfig {
         core_filemode,
         precompose_unicode,
-        ignore_errors: args.ignore_errors
+        ignore_errors: (args.ignore_errors
             || config
                 .get_bool("add.ignore-errors")
                 .and_then(|r| r.ok())
-                .unwrap_or(false),
+                .unwrap_or(false))
+            && !args.no_ignore_errors,
         conv,
         attrs,
         config: config.clone(),
@@ -308,13 +430,15 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let is_root_pathspec = args.pathspec.iter().any(|p| p == ":/");
+    let mut silent_exit_after_write: Option<i32> = None;
+    let mut deferred_chmod: Option<anyhow::Error> = None;
     if args.all || args.pathspec.iter().any(|p| p == ".") || is_root_pathspec {
         let effective_prefix = if is_root_pathspec {
             None
         } else {
             prefix.as_deref()
         };
-        add_all(
+        let (need_exit1, chmod_e) = add_all(
             odb,
             &mut index,
             work_tree,
@@ -324,6 +448,10 @@ pub fn run(mut args: Args) -> Result<()> {
             &mut ignore_matcher,
             &add_cfg,
         )?;
+        if need_exit1 {
+            silent_exit_after_write = Some(1);
+        }
+        deferred_chmod = chmod_e;
     } else if args.update {
         update_tracked(
             odb,
@@ -337,6 +465,7 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         let mut had_errors = false;
         let mut had_ignored = false;
+        let mut chmod_deferred: Option<anyhow::Error> = None;
         for pathspec in &args.pathspec {
             let resolved =
                 crate::pathspec::resolve_pathspec(pathspec, work_tree, prefix.as_deref());
@@ -356,12 +485,27 @@ pub fn run(mut args: Args) -> Result<()> {
                     Ok(()) => {}
                     Err(AddPathError::Ignored(msg)) => {
                         eprintln!("{msg}");
-                        had_ignored = true;
                         had_errors = true;
+                        if !(args.dry_run && args.ignore_missing) {
+                            had_ignored = true;
+                        }
+                    }
+                    Err(AddPathError::DryRunFatalPathspec { message }) => {
+                        println!("{message}");
+                        return Err(anyhow::Error::new(SilentNonZeroExit { code: 128 }));
+                    }
+                    Err(AddPathError::EmbeddedNoCommit { rel_path }) => {
+                        eprintln!("error: '{rel_path}' does not have a commit checked out");
+                        eprintln!("error: unable to index file '{rel_path}'");
+                        eprintln!("fatal: adding files failed");
+                        std::process::exit(128);
                     }
                     Err(AddPathError::IoError(e)) => {
                         if add_cfg.ignore_errors {
                             eprintln!("warning: {e}");
+                            had_errors = true;
+                        } else if args.chmod.is_some() && error_is_chmod_on_non_regular(&e) {
+                            chmod_deferred = chmod_deferred.or(Some(e));
                             had_errors = true;
                         } else {
                             if is_unwritable_odb_error(&e) {
@@ -380,6 +524,9 @@ pub fn run(mut args: Args) -> Result<()> {
                         if add_cfg.ignore_errors {
                             eprintln!("warning: {e}");
                             had_errors = true;
+                        } else if args.chmod.is_some() && error_is_chmod_on_non_regular(&e) {
+                            chmod_deferred = chmod_deferred.or(Some(e));
+                            had_errors = true;
                         } else {
                             return Err(e);
                         }
@@ -387,6 +534,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 }
             } // end expanded loop
         }
+
+        deferred_chmod = chmod_deferred;
 
         if had_ignored {
             if !args.dry_run {
@@ -398,17 +547,30 @@ pub fn run(mut args: Args) -> Result<()> {
             if !args.dry_run {
                 write_index_or_lock_err(&repo, &mut index, &index_path)?;
             }
-            if !add_cfg.ignore_errors {
+            if add_cfg.ignore_errors {
+                finish_dry_stdout_before_exit();
+                return Err(anyhow::Error::new(SilentNonZeroExit { code: 1 }));
+            }
+            if args.dry_run && args.ignore_missing {
+                finish_dry_stdout_before_exit();
+                return Err(anyhow::Error::new(SilentNonZeroExit { code: 1 }));
+            }
+            if deferred_chmod.is_none() {
                 bail!("adding files failed");
-            } else {
-                // With --ignore-errors, still exit non-zero if there were errors
-                std::process::exit(1);
             }
         }
     }
 
     if !args.dry_run {
         write_index_or_lock_err(&repo, &mut index, &index_path)?;
+    }
+
+    if let Some(e) = deferred_chmod {
+        return Err(e);
+    }
+
+    if let Some(code) = silent_exit_after_write {
+        return Err(anyhow::Error::new(SilentNonZeroExit { code }));
     }
 
     Ok(())
@@ -464,7 +626,7 @@ pub(crate) fn stage_pathspecs_for_commit(
             if is_real_dir {
                 if is_nested_embedded_git_repo(&abs_path, repo) {
                     stage_gitlink(
-                        odb, &mut index, work_tree, &resolved, &abs_path, false, false, false,
+                        odb, &mut index, repo, &resolved, &abs_path, false, false, false,
                     )?;
                     matched_paths.insert(resolved.as_bytes().to_vec());
                     continue;
@@ -565,6 +727,14 @@ pub(crate) fn stage_pathspecs_for_commit(
 enum AddPathError {
     Ignored(String),
     IoError(anyhow::Error),
+    /// Nested `.git` with no resolvable HEAD commit (matches Git's add error shape).
+    EmbeddedNoCommit {
+        rel_path: String,
+    },
+    /// `git add --dry-run`: missing pathspec — print `fatal: ...` on stdout and exit 128.
+    DryRunFatalPathspec {
+        message: String,
+    },
     Other(anyhow::Error),
 }
 
@@ -607,32 +777,31 @@ fn run_refresh(
         }
     } else {
         for pathspec in &args.pathspec {
-            let resolved = crate::pathspec::resolve_pathspec(pathspec, work_tree, prefix);
-            let found = index.entries.iter_mut().any(|ie| {
-                let path_str = String::from_utf8_lossy(&ie.path);
-                if path_str == resolved || path_str.starts_with(&format!("{resolved}/")) {
-                    let abs_path = work_tree.join(path_str.as_ref());
-                    if let Ok(meta) = fs::symlink_metadata(&abs_path) {
-                        ie.ctime_sec = meta.ctime() as u32;
-                        ie.ctime_nsec = meta.ctime_nsec() as u32;
-                        ie.mtime_sec = meta.mtime() as u32;
-                        ie.mtime_nsec = meta.mtime_nsec() as u32;
-                        ie.dev = meta.dev() as u32;
-                        ie.ino = meta.ino() as u32;
-                        ie.uid = meta.uid();
-                        ie.gid = meta.gid();
-                        ie.size = meta.len() as u32;
-                    }
-                    true
-                } else {
-                    false
+            let mut found = false;
+            for ie in &mut index.entries {
+                if ie.stage() != 0 {
+                    continue;
                 }
-            });
+                let path_str = String::from_utf8_lossy(&ie.path);
+                if !crate::pathspec::pathspec_matches(pathspec, path_str.as_ref()) {
+                    continue;
+                }
+                found = true;
+                let abs_path = work_tree.join(path_str.as_ref());
+                if let Ok(meta) = fs::symlink_metadata(&abs_path) {
+                    ie.ctime_sec = meta.ctime() as u32;
+                    ie.ctime_nsec = meta.ctime_nsec() as u32;
+                    ie.mtime_sec = meta.mtime() as u32;
+                    ie.mtime_nsec = meta.mtime_nsec() as u32;
+                    ie.dev = meta.dev() as u32;
+                    ie.ino = meta.ino() as u32;
+                    ie.uid = meta.uid();
+                    ie.gid = meta.gid();
+                    ie.size = meta.len() as u32;
+                }
+            }
             if !found && !args.ignore_missing {
-                eprintln!(
-                    "fatal: pathspec '{}' did not match any file(s) known to git",
-                    pathspec
-                );
+                eprintln!("fatal: pathspec '{}' did not match any files", pathspec);
                 std::process::exit(128);
             }
         }
@@ -734,7 +903,7 @@ fn add_all(
     repo: &Repository,
     ignore_matcher: &mut Option<IgnoreMatcher>,
     add_cfg: &AddConfig,
-) -> Result<()> {
+) -> Result<(bool, Option<anyhow::Error>)> {
     let scan_root = match prefix {
         Some(p) if !p.is_empty() => work_tree.join(p),
         _ => work_tree.to_path_buf(),
@@ -751,28 +920,38 @@ fn add_all(
         add_cfg.precompose_unicode,
     )?;
 
+    let mut chmod_err: Option<anyhow::Error> = None;
+    if !args.dry_run {
+        let mut ignored_some = false;
+        for (rel_path, abs_path) in &paths {
+            if let Err(e) = stage_file(
+                odb,
+                index,
+                work_tree,
+                rel_path,
+                abs_path,
+                repo,
+                &StageFileContext::from(args),
+                add_cfg,
+            ) {
+                if add_cfg.ignore_errors {
+                    eprintln!("warning: {e}");
+                    ignored_some = true;
+                } else if args.chmod.is_some() && error_is_chmod_on_non_regular(&e) {
+                    chmod_err = chmod_err.or(Some(e));
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+        if add_cfg.ignore_errors && ignored_some {
+            return Ok((true, chmod_err));
+        }
+    }
+
     // Build a set of worktree paths for fast deletion detection
     let worktree_paths: std::collections::HashSet<&str> =
         paths.iter().map(|(r, _)| r.as_str()).collect();
-
-    for (rel_path, abs_path) in &paths {
-        if let Err(e) = stage_file(
-            odb,
-            index,
-            work_tree,
-            rel_path,
-            abs_path,
-            repo,
-            &StageFileContext::from(args),
-            add_cfg,
-        ) {
-            if add_cfg.ignore_errors {
-                eprintln!("warning: {e}");
-            } else {
-                return Err(e);
-            }
-        }
-    }
 
     // Handle deletions: index entries whose files are not in the worktree scan
     let prefix_bytes = prefix.map(|p| p.as_bytes());
@@ -807,7 +986,22 @@ fn add_all(
         }
     }
 
-    Ok(())
+    if args.dry_run {
+        for (rel_path, abs_path) in &paths {
+            stage_file(
+                odb,
+                index,
+                work_tree,
+                rel_path,
+                abs_path,
+                repo,
+                &StageFileContext::from(args),
+                add_cfg,
+            )?;
+        }
+    }
+
+    Ok((false, chmod_err))
 }
 
 /// Update only already-tracked files.
@@ -897,7 +1091,7 @@ fn update_tracked(
             let is_embedded_repo = abs_path.join(".git").exists();
             if is_plain_directory && !is_embedded_repo {
                 if args.verbose || args.dry_run {
-                    println!("remove '{path_str}'");
+                    dry_run_stdout_push_line(format!("remove '{path_str}'"));
                 }
                 if !args.dry_run {
                     index.remove(raw_path);
@@ -911,7 +1105,7 @@ fn update_tracked(
                     );
                     let current = index.get(raw_path, 0);
                     if current.map(|e| e.oid != oid).unwrap_or(false) {
-                        println!("add '{path_str}'");
+                        dry_run_stdout_push_line(format!("add '{path_str}'"));
                     }
                 }
             } else {
@@ -928,7 +1122,7 @@ fn update_tracked(
             }
         } else {
             if args.verbose || args.dry_run {
-                println!("remove '{path_str}'");
+                dry_run_stdout_push_line(format!("remove '{path_str}'"));
             }
             if !args.dry_run {
                 index.remove(raw_path);
@@ -1047,6 +1241,30 @@ fn add_path(
                 path
             )));
         }
+        if args.dry_run && args.ignore_missing {
+            if !args.force {
+                if let Some(ref mut matcher) = ignore_matcher {
+                    let (is_ignored, _) = matcher
+                        .check_path(repo, Some(&*index), path, false)
+                        .map_err(|e| AddPathError::Other(e.into()))?;
+                    if is_ignored {
+                        return Err(AddPathError::Ignored(format!(
+                            "The following paths are ignored by one of your .gitignore files:\n\
+                             {path}\n\
+                             hint: Use -f if you really want to add them.\n\
+                             hint: Disable this message with \"git config set advice.addIgnoredFile false\""
+                        )));
+                    }
+                }
+            }
+            return Ok(());
+        }
+        if args.dry_run && DRY_RUN_CAPTURE_MULTISPEC.get() {
+            dry_run_stdout_abort_multispec_capture();
+            return Err(AddPathError::DryRunFatalPathspec {
+                message: format!("fatal: pathspec '{path}' did not match any files"),
+            });
+        }
         return Err(AddPathError::Other(anyhow::anyhow!(
             "pathspec '{}' did not match any files",
             path
@@ -1072,7 +1290,8 @@ fn add_path(
                     return Err(AddPathError::Ignored(format!(
                         "The following paths are ignored by one of your .gitignore files:\n\
                          {path}\n\
-                         Use -f if you really want to add them."
+                         hint: Use -f if you really want to add them.\n\
+                         hint: Disable this message with \"git config set advice.addIgnoredFile false\""
                     )));
                 }
             }
@@ -1083,14 +1302,22 @@ fn add_path(
             return stage_gitlink(
                 odb,
                 index,
-                work_tree,
+                repo,
                 path,
                 &abs_path,
                 args.dry_run,
                 args.verbose,
                 args.no_warn_embedded_repo,
             )
-            .map_err(AddPathError::IoError);
+            .map_err(|e| {
+                if e.downcast_ref::<EmbeddedRepoNoCommitError>().is_some() {
+                    AddPathError::EmbeddedNoCommit {
+                        rel_path: format!("{}/", path.trim_end_matches('/')),
+                    }
+                } else {
+                    AddPathError::IoError(e)
+                }
+            });
         }
 
         let mut paths: Vec<(String, PathBuf)> = Vec::new();
@@ -1137,7 +1364,8 @@ fn add_path(
                     return Err(AddPathError::Ignored(format!(
                         "The following paths are ignored by one of your .gitignore files:\n\
                          {path}\n\
-                         Use -f if you really want to add them."
+                         hint: Use -f if you really want to add them.\n\
+                         hint: Disable this message with \"git config set advice.addIgnoredFile false\""
                     )));
                 }
             }
@@ -1193,7 +1421,7 @@ fn embedded_repository_git_dir(worktree: &Path) -> Result<PathBuf> {
 fn stage_gitlink(
     _odb: &Odb,
     index: &mut Index,
-    _work_tree: &Path,
+    repo: &Repository,
     rel_path: &str,
     abs_path: &Path,
     dry_run: bool,
@@ -1201,10 +1429,19 @@ fn stage_gitlink(
     no_warn_embedded_repo: bool,
 ) -> Result<()> {
     let git_dir = embedded_repository_git_dir(abs_path)?;
+    let super_fmt = read_object_format_from_git_dir(&repo.git_dir);
+    let embedded_fmt = read_object_format_from_git_dir(&git_dir);
+    if super_fmt != embedded_fmt {
+        bail!("cannot add a submodule of a different hash algorithm");
+    }
+
     let embedded_head_path = git_dir.join("HEAD");
     let head_content = fs::read_to_string(&embedded_head_path)
         .with_context(|| format!("cannot read HEAD of embedded repo '{}'", rel_path))?;
     let head_trimmed = head_content.trim();
+    if head_trimmed.is_empty() {
+        return Err(EmbeddedRepoNoCommitError(rel_path.to_owned()).into());
+    }
 
     // Resolve HEAD: prefer `refs::resolve_ref` (packed-refs, worktrees). If `HEAD` is a stale
     // symref to `refs/heads/master` while only `main` exists (common with
@@ -1223,8 +1460,7 @@ fn stage_gitlink(
                         }
                     }
                 }
-                found
-                    .ok_or_else(|| anyhow!("cannot resolve HEAD in embedded repo '{}'", rel_path))?
+                found.ok_or_else(|| EmbeddedRepoNoCommitError(rel_path.to_owned()))?
             }
         }
     } else {
@@ -1238,26 +1474,32 @@ fn stage_gitlink(
         .map(|e| e.mode == 0o160000)
         .unwrap_or(false);
 
-    // Warn about embedded repository unless suppressed
+    // Warn about embedded repository unless suppressed (Git prints the full hint block once).
     if !no_warn_embedded_repo && !already_tracked {
         eprintln!("warning: adding embedded git repository: {}", rel_path);
-        eprintln!("hint: You've added another git repository inside your current repository.");
-        eprintln!("hint: Clones of the outer repository will not contain the contents of");
-        eprintln!("hint: the embedded repository and will not know how to obtain it.");
-        eprintln!("hint: If you meant to add a submodule, use:");
-        eprintln!("hint: ");
-        eprintln!("hint: \tgit submodule add <url> {}", rel_path);
-        eprintln!("hint: ");
-        eprintln!("hint: If you added this path by mistake, you can remove it from the");
-        eprintln!("hint: index with:");
-        eprintln!("hint: ");
-        eprintln!("hint: \tgit rm --cached {}", rel_path);
-        eprintln!("hint: ");
-        eprintln!("hint: See \"git help submodule\" for more information.");
+        if !EMBEDDED_REPO_FULL_HINT_EMITTED.get() {
+            EMBEDDED_REPO_FULL_HINT_EMITTED.set(true);
+            eprintln!("hint: You've added another git repository inside your current repository.");
+            eprintln!("hint: Clones of the outer repository will not contain the contents of");
+            eprintln!("hint: the embedded repository and will not know how to obtain it.");
+            eprintln!("hint: If you meant to add a submodule, use:");
+            eprintln!("hint:");
+            eprintln!("hint: \tgit submodule add <url> {}", rel_path);
+            eprintln!("hint:");
+            eprintln!("hint: If you added this path by mistake, you can remove it from the");
+            eprintln!("hint: index with:");
+            eprintln!("hint:");
+            eprintln!("hint: \tgit rm --cached {}", rel_path);
+            eprintln!("hint:");
+            eprintln!("hint: See \"git help submodule\" for more information.");
+            eprintln!(
+                "hint: Disable this message with \"git config set advice.addEmbeddedRepo false\""
+            );
+        }
     }
 
     if dry_run {
-        println!("add '{}'", rel_path);
+        dry_run_stdout_push_line(format!("add '{rel_path}'"));
         return Ok(());
     }
 
@@ -1284,7 +1526,7 @@ fn stage_gitlink(
     index.add_or_replace(entry);
 
     if verbose {
-        println!("add '{}'", rel_path);
+        println!("add '{rel_path}'");
     }
 
     Ok(())
@@ -1339,11 +1581,15 @@ pub(crate) fn stage_file(
     add_cfg: &AddConfig,
 ) -> Result<()> {
     if ctx.dry_run {
-        if ctx.chmod.is_some() {
-            // Don't actually stage, just check if the file exists
+        if let Some(chmod_val) = ctx.chmod {
+            let meta = fs::symlink_metadata(abs_path)?;
+            if meta.file_type().is_symlink() {
+                eprintln!("warning: cannot chmod {} '{}'", chmod_val, rel_path);
+                return Err(anyhow::anyhow!("cannot chmod {} '{}'", chmod_val, rel_path));
+            }
             return Ok(());
         }
-        println!("add '{rel_path}'");
+        dry_run_stdout_push_line(format!("add '{rel_path}'"));
         return Ok(());
     }
 
@@ -1371,7 +1617,7 @@ pub(crate) fn stage_file(
         return stage_gitlink(
             odb,
             index,
-            _work_tree,
+            repo,
             rel_path,
             abs_path,
             ctx.dry_run,
@@ -1414,7 +1660,7 @@ pub(crate) fn stage_file(
         entry.set_intent_to_add(true);
         index.add_or_replace(entry);
         if ctx.verbose {
-            println!("add '{rel_path}'");
+            dry_run_stdout_push_line(format!("add '{rel_path}'"));
         }
         return Ok(());
     }
@@ -1509,7 +1755,7 @@ pub(crate) fn stage_file(
     index.stage_file(entry);
 
     if ctx.verbose {
-        println!("add '{rel_path}'");
+        dry_run_stdout_push_line(format!("add '{rel_path}'"));
     }
 
     Ok(())
@@ -1754,6 +2000,24 @@ fn check_symlink_in_path(work_tree: &Path, rel_path: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Strip Git pathspec backslash escapes so the result matches the on-disk filename (`fo\\[ou\\]bar` → `fo[ou]bar`).
+fn unescape_pathspec_literal(pathspec: &str) -> String {
+    let b = pathspec.as_bytes();
+    let mut out = String::with_capacity(pathspec.len());
+    let mut i = 0usize;
+    while i < b.len() {
+        if b[i] == b'\\' && i + 1 < b.len() && matches!(b[i + 1], b'[' | b']' | b'*' | b'?' | b'\\')
+        {
+            out.push(char::from(b[i + 1]));
+            i += 2;
+        } else {
+            out.push(char::from(b[i]));
+            i += 1;
+        }
+    }
+    out
+}
+
 /// Expand a pathspec containing glob characters against the working tree.
 ///
 /// If the pathspec does not contain glob characters, returns it unchanged.
@@ -1763,6 +2027,13 @@ pub(crate) fn expand_glob_pathspec(
     work_tree: &Path,
     precompose_unicode: bool,
 ) -> Vec<String> {
+    // Prefer an exact on-disk spelling first. Upstream shell tests often use single-quoted bodies
+    // where `touch fo\\[ou\\]bar` creates a filename that literally contains backslashes before `[`
+    // (t3700-add.sh), not the unescaped `fo[ou]bar` form.
+    if fs::symlink_metadata(work_tree.join(pathspec)).is_ok() {
+        return vec![pathspec.to_owned()];
+    }
+
     if !crate::pathspec::has_glob_chars(pathspec) {
         return vec![pathspec.to_owned()];
     }
@@ -1780,6 +2051,8 @@ pub(crate) fn expand_glob_pathspec(
     } else {
         work_tree.join(dir_prefix)
     };
+
+    let pattern_fs = unescape_pathspec_literal(pattern);
 
     let mut matches = Vec::new();
     if let Ok(entries) = fs::read_dir(&search_dir) {
@@ -1811,11 +2084,11 @@ pub(crate) fn expand_glob_pathspec(
 
     // Git pathspec: a bracket pattern like `[abc]` matches one character class member *and*
     // the literal filename `[abc]` when present (wildmatch alone does not match that literal).
-    if pattern.contains('[') && fs::symlink_metadata(search_dir.join(pattern)).is_ok() {
+    if pattern.contains('[') && fs::symlink_metadata(search_dir.join(&pattern_fs)).is_ok() {
         let rel = if dir_prefix.is_empty() {
-            pattern.to_string()
+            pattern_fs.clone()
         } else {
-            format!("{dir_prefix}/{pattern}")
+            format!("{dir_prefix}/{pattern_fs}")
         };
         if !matches.contains(&rel) {
             matches.push(rel);
