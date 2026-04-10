@@ -1608,7 +1608,7 @@ fn fetch_remote(
                 }
             }
         }
-        let mut prune_updated_refs = updated_refs.clone();
+        let prune_updated_refs = updated_refs.clone();
 
         // Standard path: update remote-tracking refs from remote heads
         let has_merge_cfg = branch_has_merge_config_for_remote(git_dir, config, remote_name);
