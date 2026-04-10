@@ -63,6 +63,14 @@ pub(crate) fn agent_header() -> String {
 
 fn http_get(client: &crate::http_client::HttpClientContext, url: &str) -> Result<Vec<u8>> {
     trace2_child_start_git_remote_https(url);
+    client.get_with_git_protocol(url, Some("version=2"))
+}
+
+fn http_get_discovery(
+    client: &crate::http_client::HttpClientContext,
+    url: &str,
+) -> Result<Vec<u8>> {
+    trace2_child_start_git_remote_https(url);
     client.get(url)
 }
 
@@ -74,7 +82,19 @@ fn http_post(
     body: &[u8],
 ) -> Result<Vec<u8>> {
     trace2_child_start_git_remote_https(url);
-    client.post(url, content_type, accept, body)
+    client.post_with_git_protocol(url, content_type, accept, body, Some("version=2"))
+}
+
+fn http_post_discovery(
+    client: &crate::http_client::HttpClientContext,
+    url: &str,
+    content_type: &str,
+    accept: &str,
+    body: &[u8],
+    git_protocol_header: Option<&str>,
+) -> Result<Vec<u8>> {
+    trace2_child_start_git_remote_https(url);
+    client.post_with_git_protocol(url, content_type, accept, body, git_protocol_header)
 }
 
 fn read_v2_caps(body: &[u8]) -> Result<Vec<String>> {
@@ -97,6 +117,89 @@ fn read_v2_caps(body: &[u8]) -> Result<Vec<String>> {
         }
     }
     Ok(caps)
+}
+
+fn parse_v0_v1_advertisement(
+    body: &[u8],
+) -> Result<(Vec<LsRefEntry>, std::collections::HashSet<String>)> {
+    let mut cur = Cursor::new(body);
+    let mut refs = Vec::new();
+    let mut caps = std::collections::HashSet::new();
+    let mut first_ref_line = true;
+    loop {
+        match pkt_line::read_packet(&mut cur)? {
+            None => break,
+            Some(pkt_line::Packet::Flush) => break,
+            Some(pkt_line::Packet::Data(line)) => {
+                let line = line.trim_end_matches('\n');
+                if line.starts_with("version ") {
+                    continue;
+                }
+                let (payload, cap_part) = match line.split_once('\0') {
+                    Some((p, c)) => (p.trim(), Some(c)),
+                    None => (line.trim(), None),
+                };
+                let (oid_hex, refname) = payload
+                    .split_once('\t')
+                    .or_else(|| payload.split_once(' '))
+                    .ok_or_else(|| anyhow::anyhow!("malformed v0/v1 advertisement: {line}"))?;
+                let oid = ObjectId::from_hex(oid_hex.trim())
+                    .with_context(|| format!("bad oid in v0/v1 advertisement: {oid_hex}"))?;
+                let refname = refname.trim();
+                if refname.is_empty() {
+                    continue;
+                }
+                if first_ref_line {
+                    if let Some(raw_caps) = cap_part {
+                        for cap in raw_caps.split_whitespace() {
+                            caps.insert(cap.to_string());
+                        }
+                    }
+                    first_ref_line = false;
+                }
+                refs.push(LsRefEntry {
+                    name: refname.to_string(),
+                    oid,
+                });
+            }
+            Some(other) => bail!("unexpected packet in v0/v1 advertisement: {other:?}"),
+        }
+    }
+    Ok((refs, caps))
+}
+
+enum HttpDiscovery {
+    V2 {
+        caps: Vec<String>,
+        object_format: String,
+    },
+    V0V1 {
+        advertised: Vec<LsRefEntry>,
+        caps: std::collections::HashSet<String>,
+    },
+}
+
+fn discover_http_protocol(pkt_body: &[u8]) -> Result<HttpDiscovery> {
+    let mut cur = Cursor::new(pkt_body);
+    let first = match pkt_line::read_packet(&mut cur)? {
+        None => bail!("empty smart-http advertisement"),
+        Some(pkt_line::Packet::Data(s)) => s,
+        Some(other) => bail!("unexpected first advertisement packet: {other:?}"),
+    };
+    if first == "version 2" {
+        let caps = read_v2_caps(pkt_body)?;
+        let object_format = caps
+            .iter()
+            .find_map(|c| c.strip_prefix("object-format="))
+            .unwrap_or("sha1")
+            .to_string();
+        return Ok(HttpDiscovery::V2 {
+            caps,
+            object_format,
+        });
+    }
+    let (advertised, caps) = parse_v0_v1_advertisement(pkt_body)?;
+    Ok(HttpDiscovery::V0V1 { advertised, caps })
 }
 
 fn cap_lines_for_client_request(caps: &[String]) -> Vec<String> {
@@ -141,12 +244,13 @@ pub fn http_ls_refs(
 
     let body = http_get(client, &refs_url)?;
     let pkt_body = strip_v0_service_advertisement_if_present(&body)?;
-    let caps = read_v2_caps(pkt_body)?;
-
-    let object_format = caps
-        .iter()
-        .find_map(|c| c.strip_prefix("object-format="))
-        .unwrap_or("sha1");
+    let (caps, object_format) = match discover_http_protocol(pkt_body)? {
+        HttpDiscovery::V2 {
+            caps,
+            object_format,
+        } => (caps, object_format),
+        HttpDiscovery::V0V1 { advertised, .. } => return Ok(advertised),
+    };
 
     let mut req = Vec::new();
     pkt_line::write_line_to_vec(&mut req, "command=ls-refs")?;
@@ -241,6 +345,106 @@ fn collect_wants_from_advertised(
     Ok(wants)
 }
 
+fn build_fetch_caps_v0(caps: &std::collections::HashSet<String>) -> String {
+    let mut enabled = Vec::new();
+    for want in [
+        "multi_ack_detailed",
+        "side-band-64k",
+        "thin-pack",
+        "no-progress",
+        "include-tag",
+        "ofs-delta",
+    ] {
+        if caps.contains(want) {
+            enabled.push(want);
+        }
+    }
+    if enabled.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", enabled.join(" "))
+    }
+}
+
+fn fetch_pack_v0_v1_stateless_http(
+    local_git_dir: &Path,
+    base: &str,
+    advertised: &[LsRefEntry],
+    refspecs: &[String],
+    caps: &std::collections::HashSet<String>,
+    filter_active: bool,
+    client: &crate::http_client::HttpClientContext,
+) -> Result<(Vec<LsRefEntry>, Vec<LsRefEntry>, Vec<LsRefEntry>)> {
+    let wants = collect_wants_from_advertised(advertised, refspecs)?;
+    if wants.is_empty() {
+        bail!("nothing to fetch (empty want list)");
+    }
+
+    let remote_heads: Vec<_> = advertised
+        .iter()
+        .filter(|e| e.name.starts_with("refs/heads/"))
+        .cloned()
+        .collect();
+    let remote_tags: Vec<_> = advertised
+        .iter()
+        .filter(|e| e.name.starts_with("refs/tags/"))
+        .cloned()
+        .collect();
+    let all_advertised = advertised.to_vec();
+
+    let fetch_caps = build_fetch_caps_v0(caps);
+    let mut req = Vec::new();
+    let first = wants[0];
+    pkt_line::write_line_to_vec(&mut req, &format!("want {}{}", first.to_hex(), fetch_caps))?;
+    for w in wants.iter().skip(1) {
+        pkt_line::write_line_to_vec(&mut req, &format!("want {}", w.to_hex()))?;
+    }
+    pkt_line::write_line_to_vec(&mut req, "done")?;
+    pkt_line::write_flush(&mut req)?;
+
+    let post_url = format!("{base}/{SERVICE}");
+    let resp = http_post(
+        client,
+        &post_url,
+        &format!("application/x-{SERVICE}-request"),
+        &format!("application/x-{SERVICE}-result"),
+        &req,
+    )?;
+
+    let mut cur = Cursor::new(resp.as_slice());
+    let mut first_pkt = None::<String>;
+    if let Some(pkt_line::Packet::Data(line)) = pkt_line::read_packet(&mut cur)? {
+        let line = line.trim_end_matches('\n').to_string();
+        if line.starts_with("ERR ") {
+            bail!("remote upload-pack error: {}", line.trim_start_matches("ERR "));
+        }
+        first_pkt = Some(line);
+    }
+    let mut pack_buf = Vec::new();
+    if caps.contains("side-band-64k") {
+        read_sideband_pack_until_done(&mut cur, &mut pack_buf)?;
+    } else {
+        let pos = cur.position() as usize;
+        if pos < resp.len() {
+            pack_buf.extend_from_slice(&resp[pos..]);
+        }
+    }
+
+    if !pack_buf.is_empty() {
+        if pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK" {
+            bail!("did not receive a pack file from HTTP v0/v1 fetch");
+        }
+        crate::fetch_transport::unpack_upload_pack_bytes(local_git_dir, &pack_buf, filter_active)?;
+    } else if let Some(line) = first_pkt {
+        let normalized = line.trim();
+        if normalized != "NAK" && !normalized.starts_with("ACK ") {
+            bail!("unexpected v0/v1 fetch response: {normalized}");
+        }
+    }
+
+    Ok((remote_heads, remote_tags, all_advertised))
+}
+
 fn trace_clone_negotiation_line(line: &str) {
     crate::trace_packet::trace_packet_line(line.as_bytes());
 }
@@ -291,12 +495,24 @@ pub fn http_fetch_pack(
 
     let body = http_get(client, &refs_url)?;
     let pkt_body = strip_v0_service_advertisement_if_present(&body)?;
-    let caps = read_v2_caps(pkt_body)?;
-
-    let object_format = caps
-        .iter()
-        .find_map(|c| c.strip_prefix("object-format="))
-        .unwrap_or("sha1");
+    let discovery = discover_http_protocol(pkt_body)?;
+    let (caps, object_format) = match discovery {
+        HttpDiscovery::V2 {
+            caps,
+            object_format,
+        } => (caps, object_format),
+        HttpDiscovery::V0V1 { advertised, caps } => {
+            return fetch_pack_v0_v1_stateless_http(
+                local_git_dir,
+                base,
+                &advertised,
+                refspecs,
+                &caps,
+                filter_active,
+                client,
+            )
+        }
+    };
 
     let advertised = {
         let mut req = Vec::new();
