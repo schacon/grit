@@ -33,6 +33,14 @@ use std::process::{Command, Stdio};
 #[derive(Debug, ClapArgs)]
 #[command(about = "Update remote refs along with associated objects")]
 pub struct Args {
+    /// Disable IPv4 transport (accepted for compatibility; local transport unaffected).
+    #[arg(long = "no-ipv4", hide = true)]
+    pub no_ipv4: bool,
+
+    /// Disable IPv6 transport (accepted for compatibility; local transport unaffected).
+    #[arg(long = "no-ipv6", hide = true)]
+    pub no_ipv6: bool,
+
     /// Remote name or URL (defaults to "origin").
     #[arg(value_name = "REMOTE")]
     pub remote: Option<String>,
@@ -456,6 +464,12 @@ fn sort_collateral_indices(
 }
 
 pub fn run(args: Args) -> Result<()> {
+    if args.no_ipv4 {
+        bail!("unknown option `no-ipv4'");
+    }
+    if args.no_ipv6 {
+        bail!("unknown option `no-ipv6'");
+    }
     let repo = Repository::discover(None).context("not a git repository")?;
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     if repo

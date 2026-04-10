@@ -1,5 +1,13 @@
 # Test results
 
+**2026-04-10 (phase 6 / t5516 no-ipv option parse parity)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo clippy --fix --allow-dirty -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: pass
+- `./scripts/run-tests.sh t5516-fetch-push.sh`: **58/124** (up from 54/124 after matching git-style unknown-option handling for `push/fetch --no-ipv4|--no-ipv6`)
+
 **2026-04-10 (phase 6 / embedded-gitlink checkout preservation fix)**
 
 - `cargo build --release -p grit-rs`: pass

@@ -291,6 +291,8 @@ pub fn run(args: Args) -> Result<()> {
         upload_pack: None,
         recurse_submodules: fetch_recurse,
         no_recurse_submodules: args.no_recurse_submodules,
+        no_ipv4: false,
+        no_ipv6: false,
     };
     super::fetch::run(fetch_args)?;
 

@@ -146,6 +146,14 @@ pub struct Args {
     /// Disable submodule recursion (overrides config).
     #[arg(long = "no-recurse-submodules")]
     pub no_recurse_submodules: bool,
+
+    /// Rejected for parity with git's global-only parser.
+    #[arg(long = "no-ipv4", hide = true)]
+    pub no_ipv4: bool,
+
+    /// Rejected for parity with git's global-only parser.
+    #[arg(long = "no-ipv6", hide = true)]
+    pub no_ipv6: bool,
 }
 
 pub fn run(mut args: Args) -> Result<()> {
