@@ -1307,7 +1307,7 @@ t8030-write-tree-extra	t8	yes	25	25	0	true	ok	0
 t8040-mktag-extra	t8	yes	34	34	0	true	ok	0
 t8050-update-index-modes	t8	yes	31	27	4	false	ok	0
 t8060-symbolic-ref-extra	t8	yes	33	32	1	false	ok	0
-t8070-for-each-ref-sort	t8	yes	30	29	1	false	ok	0
+t8070-for-each-ref-sort	t8	yes	30	30	0	true	ok	0
 t8080-config-types	t8	yes	30	30	0	true	ok	0
 t8090-init-templates	t8	yes	28	28	0	true	ok	0
 t8100-tag-format	t8	yes	29	29	0	true	ok	0
