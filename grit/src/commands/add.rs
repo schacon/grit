@@ -897,7 +897,7 @@ fn update_tracked(
             let is_embedded_repo = abs_path.join(".git").exists();
             if is_plain_directory && !is_embedded_repo {
                 if args.verbose || args.dry_run {
-                    println!("remove '{path_str}'");
+                    eprintln!("remove '{path_str}'");
                 }
                 if !args.dry_run {
                     index.remove(raw_path);
@@ -911,7 +911,7 @@ fn update_tracked(
                     );
                     let current = index.get(raw_path, 0);
                     if current.map(|e| e.oid != oid).unwrap_or(false) {
-                        println!("add '{path_str}'");
+                        eprintln!("add '{path_str}'");
                     }
                 }
             } else {
@@ -928,7 +928,7 @@ fn update_tracked(
             }
         } else {
             if args.verbose || args.dry_run {
-                println!("remove '{path_str}'");
+                eprintln!("remove '{path_str}'");
             }
             if !args.dry_run {
                 index.remove(raw_path);
@@ -1257,7 +1257,7 @@ fn stage_gitlink(
     }
 
     if dry_run {
-        println!("add '{}'", rel_path);
+        eprintln!("add '{}'", rel_path);
         return Ok(());
     }
 
@@ -1284,7 +1284,7 @@ fn stage_gitlink(
     index.add_or_replace(entry);
 
     if verbose {
-        println!("add '{}'", rel_path);
+        eprintln!("add '{}'", rel_path);
     }
 
     Ok(())
@@ -1343,7 +1343,7 @@ pub(crate) fn stage_file(
             // Don't actually stage, just check if the file exists
             return Ok(());
         }
-        println!("add '{rel_path}'");
+        eprintln!("add '{rel_path}'");
         return Ok(());
     }
 
@@ -1414,7 +1414,7 @@ pub(crate) fn stage_file(
         entry.set_intent_to_add(true);
         index.add_or_replace(entry);
         if ctx.verbose {
-            println!("add '{rel_path}'");
+            eprintln!("add '{rel_path}'");
         }
         return Ok(());
     }
@@ -1509,7 +1509,7 @@ pub(crate) fn stage_file(
     index.stage_file(entry);
 
     if ctx.verbose {
-        println!("add '{rel_path}'");
+        eprintln!("add '{rel_path}'");
     }
 
     Ok(())

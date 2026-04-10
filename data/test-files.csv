@@ -1503,7 +1503,7 @@ t9305-fast-import-signatures	t9	skip	16	0	0	false	ok	0
 t9306-fast-import-signed-tags	t9	skip	10	0	0	false	ok	0
 t9310-tag-sort-version	t9	yes	27	27	0	true	ok	0
 t9320-commit-allow-empty	t9	yes	24	24	0	true	ok	0
-t9330-add-update-all	t9	yes	26	24	2	false	ok	0
+t9330-add-update-all	t9	yes	26	26	0	true	ok	0
 t9350-fast-export	t9	skip	73	0	0	false	ok	1
 t9351-fast-export-anonymize	t9	yes	17	13	4	false	ok	0
 t9400-for-each-ref-contains	t9	yes	25	25	0	true	ok	0
