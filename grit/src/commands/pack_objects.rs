@@ -16,7 +16,7 @@ use grit_lib::pack::{
     read_pack_index, read_packed_delta_dependency, slice_one_pack_object, PackIndex,
     PackedDeltaDependency,
 };
-use grit_lib::rev_list::{rev_list, MissingAction, RevListOptions};
+use grit_lib::rev_list::{rev_list, shallow_boundary_oids, MissingAction, RevListOptions};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::{self, BufRead, IsTerminal, Write};
@@ -57,7 +57,7 @@ pub struct Args {
     #[arg(long = "shallow-file", allow_hyphen_values = true)]
     pub shallow_file: Option<String>,
 
-    /// Shallow pack (accepted for compatibility; no-op in grit).
+    /// Shallow pack: `--shallow <oid>` stdin lines cut parent chains at those commits (upload-pack).
     #[arg(long)]
     pub shallow: bool,
 
@@ -1172,6 +1172,7 @@ fn collect_pack_objects_from_rev_stdin_lines(
     args: &Args,
     rev_lines: &[String],
 ) -> Result<PackObjectList> {
+    let mut shallow_grafts: HashSet<ObjectId> = shallow_boundary_oids(&repo.git_dir);
     let mut positive: Vec<String> = Vec::new();
     let mut negative: Vec<String> = Vec::new();
     let mut post_not = false;
@@ -1180,6 +1181,14 @@ fn collect_pack_objects_from_rev_stdin_lines(
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
+        }
+        if args.shallow {
+            if let Some(hex) = trimmed.strip_prefix("--shallow ") {
+                let oid = ObjectId::from_hex(hex.trim())
+                    .map_err(|e| anyhow::anyhow!("invalid --shallow oid: {e}"))?;
+                shallow_grafts.insert(oid);
+                continue;
+            }
         }
         // `t5332` uses `printf '%s' "$base" '^' '%s' "$delta"` → `fullbase^fulldelta` on one line.
         // That is not a peel suffix: it is shorthand for `rev-list --objects <base> ^<delta>`.
@@ -1220,7 +1229,7 @@ fn collect_pack_objects_from_rev_stdin_lines(
     for neg in &negative {
         let oid =
             resolve_revision(repo, neg).with_context(|| format!("cannot resolve ref '{neg}'"))?;
-        walk_reachable(repo, &oid, &mut exclude)?;
+        walk_reachable(repo, &oid, &mut exclude, &shallow_grafts)?;
     }
     for pos in &positive {
         let oid =
@@ -1229,7 +1238,9 @@ fn collect_pack_objects_from_rev_stdin_lines(
         // Upload-pack may `want` a raw tree/blob OID (lazy fetch). Pack only that object, not the
         // subtree/closure (`t0410` tree fetch without blobs). Commits/tags use a full walk.
         match obj.kind {
-            ObjectKind::Commit | ObjectKind::Tag => walk_reachable(repo, &oid, &mut oids)?,
+            ObjectKind::Commit | ObjectKind::Tag => {
+                walk_reachable(repo, &oid, &mut oids, &shallow_grafts)?;
+            }
             ObjectKind::Tree | ObjectKind::Blob => {
                 oids.insert(oid);
             }
@@ -1244,7 +1255,7 @@ fn collect_pack_objects_from_rev_stdin_lines(
     if args.thin && !have_roots.is_empty() {
         let mut have_closure = BTreeSet::new();
         for root in &have_roots {
-            walk_reachable(repo, root, &mut have_closure)?;
+            walk_reachable(repo, root, &mut have_closure, &shallow_grafts)?;
         }
         ordered.retain(|o| !have_closure.contains(o));
     }
@@ -1708,7 +1719,12 @@ fn order_incremental_commits_first_parent_chain(
 }
 
 /// Walk reachable objects from a commit/tree/tag/blob OID.
-fn walk_reachable(repo: &Repository, oid: &ObjectId, oids: &mut BTreeSet<ObjectId>) -> Result<()> {
+fn walk_reachable(
+    repo: &Repository,
+    oid: &ObjectId,
+    oids: &mut BTreeSet<ObjectId>,
+    shallow_grafts: &HashSet<ObjectId>,
+) -> Result<()> {
     if !oids.insert(*oid) {
         return Ok(()); // already visited
     }
@@ -1720,11 +1736,13 @@ fn walk_reachable(repo: &Repository, oid: &ObjectId, oids: &mut BTreeSet<ObjectI
                 for line in text.lines() {
                     if let Some(tree_hex) = line.strip_prefix("tree ") {
                         if let Ok(tree_oid) = ObjectId::from_hex(tree_hex.trim()) {
-                            walk_reachable(repo, &tree_oid, oids)?;
+                            walk_reachable(repo, &tree_oid, oids, shallow_grafts)?;
                         }
                     } else if let Some(parent_hex) = line.strip_prefix("parent ") {
-                        if let Ok(parent_oid) = ObjectId::from_hex(parent_hex.trim()) {
-                            walk_reachable(repo, &parent_oid, oids)?;
+                        if !shallow_grafts.contains(oid) {
+                            if let Ok(parent_oid) = ObjectId::from_hex(parent_hex.trim()) {
+                                walk_reachable(repo, &parent_oid, oids, shallow_grafts)?;
+                            }
                         }
                     } else if line.is_empty() {
                         break; // end of headers
@@ -1740,7 +1758,7 @@ fn walk_reachable(repo: &Repository, oid: &ObjectId, oids: &mut BTreeSet<ObjectI
                 if entry.mode == 0o160000 {
                     continue;
                 }
-                walk_reachable(repo, &entry.oid, oids)?;
+                walk_reachable(repo, &entry.oid, oids, shallow_grafts)?;
             }
         }
         ObjectKind::Tag => {
@@ -1749,7 +1767,7 @@ fn walk_reachable(repo: &Repository, oid: &ObjectId, oids: &mut BTreeSet<ObjectI
                 if let Some(first_line) = text.lines().next() {
                     if let Some(obj_hex) = first_line.strip_prefix("object ") {
                         if let Ok(target_oid) = ObjectId::from_hex(obj_hex.trim()) {
-                            walk_reachable(repo, &target_oid, oids)?;
+                            walk_reachable(repo, &target_oid, oids, shallow_grafts)?;
                         }
                     }
                 }

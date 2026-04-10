@@ -12,9 +12,14 @@ use grit_lib::merge_base;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
+use grit_lib::rev_list::{
+    shallow_boundary_oids, shallow_grafts_for_upload_pack_deepen,
+    shallow_grafts_for_upload_pack_rev_list,
+};
+use grit_lib::rev_parse;
 use grit_lib::state::resolve_head;
 use grit_lib::state::HeadState;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -34,6 +39,16 @@ pub struct Args {
     /// Only advertise refs and capabilities, then exit.
     #[arg(long)]
     pub advertise_refs: bool,
+}
+
+fn next_upload_pack_packet(
+    stdin: &mut impl io::Read,
+    pending: &mut VecDeque<pkt_line::Packet>,
+) -> io::Result<Option<pkt_line::Packet>> {
+    if let Some(p) = pending.pop_front() {
+        return Ok(Some(p));
+    }
+    pkt_line::read_packet(stdin)
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -90,18 +105,64 @@ pub fn run(args: Args) -> Result<()> {
     out.flush()?;
 
     let mut stdin = io::stdin();
+    let mut pending: VecDeque<pkt_line::Packet> = VecDeque::new();
     let mut wants: Vec<ObjectId> = Vec::new();
     let mut multi_ack_detailed = false;
+    let mut no_done = false;
+    let mut parsed_first_want_caps = false;
+    let mut client_shallow: Vec<ObjectId> = Vec::new();
+    let mut deepen: Option<usize> = None;
+    let mut deepen_since: Option<i64> = None;
+    let mut deepen_not: Vec<ObjectId> = Vec::new();
+    let mut use_thin_pack_cli = false;
+
     loop {
-        match pkt_line::read_packet(&mut stdin)? {
+        match next_upload_pack_packet(&mut stdin, &mut pending)? {
             None => break,
-            Some(pkt_line::Packet::Flush) => break,
+            Some(pkt_line::Packet::Flush) => {
+                // Stateless HTTP may send two flush packets after the want list; consume extras so
+                // the first negotiation round is not mistaken for stray input (t5539).
+                loop {
+                    match pkt_line::read_packet(&mut stdin)? {
+                        None => break,
+                        Some(pkt_line::Packet::Flush) => continue,
+                        Some(other) => {
+                            pending.push_back(other);
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
             Some(pkt_line::Packet::Data(line)) => {
-                if let Some(rest) = line.strip_prefix("want ") {
-                    let hex = rest.split_whitespace().next().unwrap_or(rest);
-                    let features = rest.strip_prefix(hex).unwrap_or("").trim();
-                    if wants.is_empty() && features.contains("multi_ack_detailed") {
-                        multi_ack_detailed = true;
+                // One pkt-line payload may concatenate many commands without `\n` (stateless HTTP).
+                let mut pos = 0usize;
+                while pos < line.len() {
+                    let Some(idx) = line[pos..].find("want ") else {
+                        break;
+                    };
+                    let start = pos + idx;
+                    let after_want = &line[start + "want ".len()..];
+                    let hex = after_want.split_whitespace().next().unwrap_or("");
+                    if hex.len() != 40 {
+                        pos = start + "want ".len();
+                        continue;
+                    }
+                    let after_oid = &after_want[hex.len()..];
+                    let next_want = after_oid.find("want ").unwrap_or(after_oid.len());
+                    let segment = &after_oid[..next_want];
+                    let features = segment.trim();
+                    if !parsed_first_want_caps {
+                        parsed_first_want_caps = true;
+                        if features.contains("multi_ack_detailed") {
+                            multi_ack_detailed = true;
+                        }
+                        if features.contains("no-done") {
+                            no_done = true;
+                        }
+                    }
+                    if features.contains("thin-pack") {
+                        use_thin_pack_cli = true;
                     }
                     if wants.is_empty() {
                         if let Some(sid) = trace2_transfer::extract_session_id_feature(features) {
@@ -111,7 +172,16 @@ pub fn run(args: Args) -> Result<()> {
                     if let Ok(oid) = ObjectId::from_hex(hex) {
                         wants.push(oid);
                     }
+                    pos = start + "want ".len() + hex.len() + next_want;
                 }
+                scan_shallow_deepen_in_payload(
+                    &line,
+                    &repo,
+                    &mut client_shallow,
+                    &mut deepen,
+                    &mut deepen_since,
+                    &mut deepen_not,
+                );
             }
             _ => {}
         }
@@ -132,14 +202,52 @@ pub fn run(args: Args) -> Result<()> {
 
     let want_set: HashSet<ObjectId> = want_unique.iter().copied().collect();
 
+    let server_shallow: Vec<ObjectId> = shallow_boundary_oids(&repo.git_dir).into_iter().collect();
+    let mut pack_shallow_grafts: Vec<ObjectId> = Vec::new();
+    if let Some(d) = deepen {
+        pack_shallow_grafts =
+            shallow_grafts_for_upload_pack_deepen(&repo, &want_unique, &client_shallow, d);
+        for oid in &pack_shallow_grafts {
+            pkt_line::write_line(&mut out, &format!("shallow {}", oid.to_hex()))?;
+        }
+        pkt_line::write_flush(&mut out)?;
+        out.flush()?;
+    } else if deepen_since.is_some() || !deepen_not.is_empty() {
+        pack_shallow_grafts = shallow_grafts_for_upload_pack_rev_list(
+            &repo,
+            &want_unique,
+            &client_shallow,
+            deepen_since,
+            &deepen_not,
+        )?;
+        for oid in &pack_shallow_grafts {
+            pkt_line::write_line(&mut out, &format!("shallow {}", oid.to_hex()))?;
+        }
+        pkt_line::write_flush(&mut out)?;
+        out.flush()?;
+    }
+
+    let mut stdin_shallow: Vec<ObjectId> = server_shallow;
+    for oid in &pack_shallow_grafts {
+        if !stdin_shallow.contains(oid) {
+            stdin_shallow.push(*oid);
+        }
+    }
+    let shallow_pack = !stdin_shallow.is_empty();
+
     let mut got_common = false;
     let mut got_other = false;
     let mut last_hex = String::new();
     let mut client_known: HashSet<ObjectId> = HashSet::new();
     let mut client_have_commits: Vec<ObjectId> = Vec::new();
+    // After we respond to `deepen`, fetch-pack replays the full initial want/shallow/deepen
+    // pkt-lines (stateless RPC) before the first real `have` round. Skip until negotiation starts.
+    let mut skip_until_have = deepen.is_some() || deepen_since.is_some() || !deepen_not.is_empty();
+    let mut sent_ready = false;
+    let mut ended_with_no_done_ack = false;
 
-    loop {
-        match pkt_line::read_packet(&mut stdin)? {
+    'negotiation: loop {
+        match next_upload_pack_packet(&mut stdin, &mut pending)? {
             None => break,
             Some(pkt_line::Packet::Flush) => {
                 if multi_ack_detailed
@@ -148,6 +256,7 @@ pub fn run(args: Args) -> Result<()> {
                     && ok_to_give_up(&repo, &want_set, &client_known)
                 {
                     pkt_line::write_line(&mut out, &format!("ACK {last_hex} ready"))?;
+                    sent_ready = true;
                 }
                 if got_common || multi_ack_detailed {
                     pkt_line::write_line(&mut out, "NAK")?;
@@ -155,46 +264,132 @@ pub fn run(args: Args) -> Result<()> {
                 got_common = false;
                 got_other = false;
                 out.flush()?;
+                if no_done && sent_ready && !last_hex.is_empty() {
+                    pkt_line::write_line(&mut out, &format!("ACK {last_hex}"))?;
+                    out.flush()?;
+                    ended_with_no_done_ack = true;
+                    break 'negotiation;
+                }
             }
             Some(pkt_line::Packet::Data(line)) => {
-                if line == "done" {
-                    if !last_hex.is_empty() && multi_ack_detailed {
-                        pkt_line::write_line(&mut out, &format!("ACK {last_hex}"))?;
-                    } else if got_common {
-                        pkt_line::write_line(&mut out, &format!("ACK {last_hex}"))?;
-                    } else {
-                        pkt_line::write_line(&mut out, "NAK")?;
-                    }
-                    out.flush()?;
-                    break;
-                }
-                if let Some(hex) = line.strip_prefix("have ").map(str::trim) {
-                    if let Ok(oid) = ObjectId::from_hex(hex) {
-                        if repo.odb.read(&oid).is_err() {
-                            got_other = true;
-                            if multi_ack_detailed && ok_to_give_up(&repo, &want_set, &client_known)
-                            {
-                                pkt_line::write_line(
-                                    &mut out,
-                                    &format!("ACK {} continue", oid.to_hex()),
-                                )?;
-                            }
+                let mut saw_done = false;
+                let mut pos = 0usize;
+                let bytes = line.as_bytes();
+                while pos < bytes.len() {
+                    if skip_until_have {
+                        if bytes[pos..].starts_with(b"have ") {
+                            skip_until_have = false;
+                        } else if pos + 4 <= bytes.len()
+                            && &bytes[pos..pos + 4] == b"done"
+                            && (pos + 4 == bytes.len() || bytes[pos + 4] <= b' ')
+                        {
+                            skip_until_have = false;
+                        } else if bytes[pos..].starts_with(b"want ") {
+                            pos = skip_past_want_segment(&line, pos);
+                            continue;
+                        } else if bytes[pos..].starts_with(b"shallow ") {
+                            pos = skip_past_shallow_oid(&line, pos);
+                            continue;
+                        } else if bytes[pos..].starts_with(b"deepen-since ") {
+                            pos = skip_to_next_negotiation_cmd(&line, pos + b"deepen-since ".len());
+                            continue;
+                        } else if bytes[pos..].starts_with(b"deepen-not ") {
+                            pos = skip_to_next_negotiation_cmd(&line, pos + b"deepen-not ".len());
+                            continue;
+                        } else if bytes[pos..].starts_with(b"deepen ") {
+                            pos = skip_to_next_negotiation_cmd(&line, pos + b"deepen ".len());
+                            continue;
+                        } else if bytes[pos..].starts_with(b"filter ") {
+                            pos = skip_to_next_negotiation_cmd(&line, pos + b"filter ".len());
+                            continue;
                         } else {
-                            got_common = true;
-                            last_hex = oid.to_hex();
-                            client_have_commits.push(oid);
-                            merge_ancestors_into(&repo, oid, &mut client_known)?;
-                            if multi_ack_detailed {
-                                pkt_line::write_line(&mut out, &format!("ACK {last_hex} common"))?;
-                            } else {
-                                pkt_line::write_line(&mut out, &format!("ACK {last_hex}"))?;
-                            }
+                            skip_until_have = false;
                         }
                     }
-                    out.flush()?;
+
+                    if pos + 4 <= bytes.len()
+                        && &bytes[pos..pos + 4] == b"done"
+                        && (pos + 4 == bytes.len() || bytes[pos + 4] <= b' ')
+                    {
+                        if !last_hex.is_empty() && multi_ack_detailed {
+                            pkt_line::write_line(&mut out, &format!("ACK {last_hex}"))?;
+                        } else if got_common {
+                            pkt_line::write_line(&mut out, &format!("ACK {last_hex}"))?;
+                        } else {
+                            pkt_line::write_line(&mut out, "NAK")?;
+                        }
+                        out.flush()?;
+                        saw_done = true;
+                        break;
+                    }
+
+                    if bytes[pos..].starts_with(b"have ") {
+                        let hstart = pos + b"have ".len();
+                        let rest = &line[hstart..];
+                        let n = rest
+                            .find(|c: char| !c.is_ascii_hexdigit())
+                            .unwrap_or(rest.len());
+                        if n == 40 {
+                            if let Ok(oid) = ObjectId::from_hex(&rest[..40]) {
+                                if repo.odb.read(&oid).is_err() {
+                                    got_other = true;
+                                    if multi_ack_detailed
+                                        && ok_to_give_up(&repo, &want_set, &client_known)
+                                    {
+                                        let hx = oid.to_hex();
+                                        pkt_line::write_line(&mut out, &format!("ACK {hx} ready"))?;
+                                        last_hex = hx;
+                                        sent_ready = true;
+                                    }
+                                } else {
+                                    got_common = true;
+                                    last_hex = oid.to_hex();
+                                    client_have_commits.push(oid);
+                                    merge_ancestors_into(&repo, oid, &mut client_known)?;
+                                    if multi_ack_detailed {
+                                        pkt_line::write_line(
+                                            &mut out,
+                                            &format!("ACK {last_hex} common"),
+                                        )?;
+                                    } else {
+                                        pkt_line::write_line(&mut out, &format!("ACK {last_hex}"))?;
+                                    }
+                                }
+                            }
+                            out.flush()?;
+                            pos = hstart + 40;
+                            continue;
+                        }
+                    }
+
+                    pos += 1;
+                }
+                if saw_done {
+                    break 'negotiation;
                 }
             }
             _ => {}
+        }
+    }
+
+    if deepen.is_some()
+        || deepen_since.is_some()
+        || !deepen_not.is_empty()
+        || ended_with_no_done_ack
+    {
+        match next_upload_pack_packet(&mut stdin, &mut pending)? {
+            None => {}
+            Some(pkt_line::Packet::Flush) => {}
+            Some(other) => pending.push_back(other),
+        }
+        loop {
+            match next_upload_pack_packet(&mut stdin, &mut pending)? {
+                None => break,
+                Some(pkt_line::Packet::Flush) => break,
+                Some(pkt_line::Packet::Data(_))
+                | Some(pkt_line::Packet::Delim)
+                | Some(pkt_line::Packet::ResponseEnd) => {}
+            }
         }
     }
 
@@ -211,15 +406,22 @@ pub fn run(args: Args) -> Result<()> {
         // Thin packs subtract the full closure of `have` commits. That is only safe when every
         // `want` is a commit OID; blob/tree lazy-fetch wants must use a self-contained pack
         // (t0410 partial-clone explicit wants).
-        let thin =
-            !client_have_commits.is_empty() && wants_include_only_commits(&repo, &want_unique);
-        let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(&repo.git_dir, thin)?;
+        let thin = use_thin_pack_cli
+            && !client_have_commits.is_empty()
+            && wants_include_only_commits(&repo, &want_unique);
+        let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(
+            &repo.git_dir,
+            thin,
+            shallow_pack,
+        )?;
         {
             let mut pin = child.stdin.take().context("pack-objects stdin")?;
             crate::pack_objects_upload::write_pack_objects_revs_stdin(
                 &mut pin,
                 &want_unique,
                 &client_have_commits,
+                &stdin_shallow,
+                shallow_pack,
             )?;
         }
         crate::pack_objects_upload::drain_pack_objects_child(child, &mut out, true)?;
@@ -243,24 +445,198 @@ fn wants_include_only_commits(repo: &Repository, wants: &[ObjectId]) -> bool {
     true
 }
 
+fn negotiation_cmd_start(line: &str, from: usize) -> Option<usize> {
+    let s = &line[from..];
+    const NEEDLES: &[&str] = &[
+        "want ",
+        "have ",
+        "shallow ",
+        "deepen-since ",
+        "deepen-not ",
+        "deepen ",
+        "filter ",
+        "done",
+    ];
+    let mut best: Option<usize> = None;
+    for n in NEEDLES {
+        if let Some(i) = s.find(n) {
+            let abs = from + i;
+            best = Some(best.map(|b| b.min(abs)).unwrap_or(abs));
+        }
+    }
+    best
+}
+
+fn skip_to_next_negotiation_cmd(line: &str, pos: usize) -> usize {
+    negotiation_cmd_start(line, pos).unwrap_or(line.len())
+}
+
+fn skip_past_want_segment(line: &str, pos: usize) -> usize {
+    let start = pos;
+    if !line[pos..].starts_with("want ") {
+        return (start + 1).min(line.len());
+    }
+    let after = pos + "want ".len();
+    let rest = &line[after..];
+    let n = rest
+        .find(|c: char| !c.is_ascii_hexdigit())
+        .unwrap_or(rest.len());
+    if n != 40 {
+        return (start + 1).min(line.len());
+    }
+    let after_oid = after + 40;
+    line[after_oid..]
+        .find("want ")
+        .map(|i| after_oid + i)
+        .unwrap_or(line.len())
+}
+
+fn skip_past_shallow_oid(line: &str, pos: usize) -> usize {
+    if !line[pos..].starts_with("shallow ") {
+        return (pos + 1).min(line.len());
+    }
+    let after = pos + "shallow ".len();
+    let rest = &line[after..];
+    let n = rest
+        .find(|c: char| !c.is_ascii_hexdigit())
+        .unwrap_or(rest.len());
+    if n == 40 {
+        after + 40
+    } else {
+        (pos + 1).min(line.len())
+    }
+}
+
+fn scan_shallow_deepen_in_payload(
+    line: &str,
+    repo: &Repository,
+    client_shallow: &mut Vec<ObjectId>,
+    deepen: &mut Option<usize>,
+    deepen_since: &mut Option<i64>,
+    deepen_not: &mut Vec<ObjectId>,
+) {
+    for sub in line.split('\n') {
+        let sub = sub.trim();
+        if sub.is_empty() {
+            continue;
+        }
+        if let Some(hex) = sub.strip_prefix("shallow ") {
+            let hex = hex.split_whitespace().next().unwrap_or("");
+            if hex.len() == 40 {
+                if let Ok(oid) = ObjectId::from_hex(hex) {
+                    if !client_shallow.contains(&oid) {
+                        client_shallow.push(oid);
+                    }
+                }
+            }
+            continue;
+        }
+        if let Some(rest) = sub.strip_prefix("deepen ") {
+            let arg = rest.split_whitespace().next().unwrap_or("");
+            if let Ok(d) = arg.parse::<usize>() {
+                if d > 0 {
+                    *deepen = Some(d);
+                    *deepen_since = None;
+                    deepen_not.clear();
+                }
+            }
+            continue;
+        }
+        if let Some(rest) = sub.strip_prefix("deepen-since ") {
+            let arg = rest.split_whitespace().next().unwrap_or("");
+            if let Ok(ts) = arg.parse::<i64>() {
+                if ts > 0 {
+                    *deepen_since = Some(ts);
+                    *deepen = None;
+                }
+            }
+            continue;
+        }
+        if let Some(rest) = sub.strip_prefix("deepen-not ") {
+            let refname = rest.split_whitespace().next().unwrap_or("");
+            if refname.is_empty() {
+                continue;
+            }
+            *deepen = None;
+            if let Ok(oid) = rev_parse::resolve_revision_without_index_dwim(repo, refname) {
+                if !deepen_not.contains(&oid) {
+                    deepen_not.push(oid);
+                }
+            }
+            continue;
+        }
+    }
+}
+
 fn merge_ancestors_into(
     repo: &Repository,
     tip: ObjectId,
     into: &mut HashSet<ObjectId>,
 ) -> Result<()> {
-    let anc = merge_base::ancestor_closure(repo, tip)?;
-    into.extend(anc);
+    let boundaries = shallow_boundary_oids(&repo.git_dir);
+    // Best-effort: negotiation must not abort if a `have` points at a commit whose parent chain
+    // hits a missing object (server shallow edge, replace ref, or corrupt tip). Git skips bad
+    // links rather than killing upload-pack before ACK lines (t5539).
+    if let Ok(anc) = ancestor_closure_respecting_shallow(repo, tip, &boundaries) {
+        into.extend(anc);
+    }
     Ok(())
 }
 
+fn ancestor_closure_respecting_shallow(
+    repo: &Repository,
+    tip: ObjectId,
+    shallow_boundaries: &HashSet<ObjectId>,
+) -> Result<HashSet<ObjectId>> {
+    use grit_lib::objects::{parse_commit, ObjectKind};
+
+    let mut visited = HashSet::new();
+    let mut q = VecDeque::new();
+    q.push_back(tip);
+    while let Some(oid) = q.pop_front() {
+        if !visited.insert(oid) {
+            continue;
+        }
+        if shallow_boundaries.contains(&oid) {
+            continue;
+        }
+        let obj = repo.odb.read(&oid).map_err(|e| anyhow::anyhow!("{e}"))?;
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = parse_commit(&obj.data).map_err(|e| anyhow::anyhow!("{e}"))?;
+        for p in commit.parents {
+            q.push_back(p);
+        }
+    }
+    Ok(visited)
+}
+
 fn ok_to_give_up(
-    _repo: &Repository,
+    repo: &Repository,
     wants: &HashSet<ObjectId>,
     client_known: &HashSet<ObjectId>,
 ) -> bool {
-    // Match `upload-pack.c` `ok_to_give_up`: we can stop when the client already has every wanted
-    // commit (not merely an ancestor of each want).
-    !client_known.is_empty() && wants.iter().all(|w| client_known.contains(w))
+    if client_known.is_empty() {
+        return false;
+    }
+    for w in wants {
+        let mut covered = false;
+        for &h in client_known {
+            if h == *w {
+                covered = true;
+                break;
+            }
+            if merge_base::is_ancestor(repo, h, *w).unwrap_or(false) {
+                covered = true;
+                break;
+            }
+        }
+        if !covered {
+            return false;
+        }
+    }
+    true
 }
 
 fn write_ref_advertisement(w: &mut impl Write, git_dir: &Path) -> Result<()> {

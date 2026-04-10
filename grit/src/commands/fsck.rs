@@ -25,6 +25,7 @@ use grit_lib::reflog::{list_reflog_refs, read_reflog};
 use grit_lib::refs;
 use grit_lib::refs_fsck::{format_refs_fsck_line, refs_fsck, RefsFsckSeverity};
 use grit_lib::repo::Repository;
+use grit_lib::rev_list::shallow_boundary_oids;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io;
@@ -234,6 +235,7 @@ pub fn run(args: Args) -> Result<()> {
         HashSet::new()
     };
     let packed_ids = collect_packed_ids(&objects_dir)?;
+    let shallow_boundaries = shallow_boundary_oids(&repo.git_dir);
 
     let (reachable, walked_kinds) = walk_reachable(
         &repo,
@@ -244,6 +246,7 @@ pub fn run(args: Args) -> Result<()> {
         promisor_active,
         &promisor_pack_oids,
         &promisor_expanded,
+        &shallow_boundaries,
         extra_header_policy,
         args.strict,
         &mut issues,
@@ -287,7 +290,8 @@ pub fn run(args: Args) -> Result<()> {
 
         if show_dangling && !show_unreachable {
             // Find dangling: unreachable objects not referenced by other unreachable objects.
-            let referenced_by_unreachable = find_referenced_set(&odb, &unreachable_oids);
+            let referenced_by_unreachable =
+                find_referenced_set(&odb, &unreachable_oids, &shallow_boundaries);
             for oid in &unreachable_oids {
                 if !referenced_by_unreachable.contains(oid) {
                     let kind = read_object_kind(&odb, oid);
@@ -537,6 +541,7 @@ fn walk_reachable(
     promisor_active: bool,
     promisor_pack_oids: &HashSet<ObjectId>,
     promisor_expanded: &HashSet<ObjectId>,
+    shallow_boundaries: &HashSet<ObjectId>,
     extra_header_policy: ExtraHeaderPolicy,
     strict: bool,
     issues: &mut Vec<Issue>,
@@ -647,8 +652,12 @@ fn walk_reachable(
             ObjectKind::Commit => {
                 if let Ok(commit) = parse_commit(&obj.data) {
                     queue.push_back((commit.tree, Some(oid)));
-                    for parent in commit.parents {
-                        queue.push_back((parent, Some(oid)));
+                    // Shallow repositories omit parent chains at boundary commits; do not require
+                    // those parents (or their trees) to exist — matches `git fsck` (t5539).
+                    if !shallow_boundaries.contains(&oid) {
+                        for parent in commit.parents {
+                            queue.push_back((parent, Some(oid)));
+                        }
                     }
                 }
             }
@@ -934,7 +943,11 @@ fn read_object_kind(odb: &Odb, oid: &ObjectId) -> ObjectKind {
 }
 
 /// Find all OIDs referenced by a set of objects (for dangling detection).
-fn find_referenced_set(odb: &Odb, oids: &BTreeSet<ObjectId>) -> HashSet<ObjectId> {
+fn find_referenced_set(
+    odb: &Odb,
+    oids: &BTreeSet<ObjectId>,
+    shallow_boundaries: &HashSet<ObjectId>,
+) -> HashSet<ObjectId> {
     let mut referenced = HashSet::new();
     for oid in oids {
         let obj = match odb.read(oid) {
@@ -945,8 +958,10 @@ fn find_referenced_set(odb: &Odb, oids: &BTreeSet<ObjectId>) -> HashSet<ObjectId
             ObjectKind::Commit => {
                 if let Ok(commit) = parse_commit(&obj.data) {
                     referenced.insert(commit.tree);
-                    for parent in commit.parents {
-                        referenced.insert(parent);
+                    if !shallow_boundaries.contains(oid) {
+                        for parent in commit.parents {
+                            referenced.insert(parent);
+                        }
                     }
                 }
             }

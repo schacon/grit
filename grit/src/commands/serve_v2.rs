@@ -11,7 +11,8 @@ use grit_lib::merge_base;
 use grit_lib::objects::{self, ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
-use std::collections::HashSet;
+use grit_lib::rev_list::{shallow_borders_reachable_from_wants, shallow_boundary_oids};
+use std::collections::{HashSet, VecDeque};
 use std::io::{self, Read, Write};
 use std::path::Path;
 
@@ -342,6 +343,7 @@ fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()
 
     let mut wants: Vec<ObjectId> = Vec::new();
     let mut have_oids: Vec<ObjectId> = Vec::new();
+    let mut client_shallow: Vec<ObjectId> = Vec::new();
     let mut wait_for_done = false;
     let mut seen_done = false;
 
@@ -368,8 +370,21 @@ fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()
                     have_oids.push(oid);
                 }
             }
-            s if s.starts_with("shallow ")
-                || s.starts_with("deepen ")
+            s if s.starts_with("shallow ") => {
+                let hex = s
+                    .strip_prefix("shallow ")
+                    .unwrap_or("")
+                    .trim()
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("");
+                if let Ok(oid) = ObjectId::from_hex(hex) {
+                    if !client_shallow.contains(&oid) {
+                        client_shallow.push(oid);
+                    }
+                }
+            }
+            s if s.starts_with("deepen ")
                 || s.starts_with("deepen-since ")
                 || s.starts_with("deepen-not ") => {}
             s if s.starts_with("want-ref ") => {}
@@ -407,15 +422,42 @@ fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()
         return Ok(());
     }
 
+    let server_shallow: Vec<ObjectId> = shallow_boundary_oids(&repo.git_dir).into_iter().collect();
+    let server_repo_shallow = !server_shallow.is_empty();
+    if server_repo_shallow || !client_shallow.is_empty() {
+        pkt_line::write_line(out, "shallow-info")?;
+        if server_repo_shallow {
+            for oid in shallow_borders_reachable_from_wants(&repo, &wants) {
+                pkt_line::write_line(out, &format!("shallow {}", oid.to_hex()))?;
+            }
+        }
+        pkt_line::write_delim(out)?;
+    }
+
+    let mut stdin_shallow = server_shallow;
+    for oid in &client_shallow {
+        if !stdin_shallow.contains(oid) {
+            stdin_shallow.push(*oid);
+        }
+    }
+    let shallow_pack = !stdin_shallow.is_empty();
+
     pkt_line::write_line(out, "packfile")?;
     let thin = !have_oids.is_empty();
-    let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(git_dir, thin)?;
+    let mut child =
+        crate::pack_objects_upload::spawn_pack_objects_upload(git_dir, thin, shallow_pack)?;
     {
         let mut pin = child
             .stdin
             .take()
             .ok_or_else(|| anyhow::anyhow!("pack-objects stdin"))?;
-        crate::pack_objects_upload::write_pack_objects_revs_stdin(&mut pin, &wants, &have_commits)?;
+        crate::pack_objects_upload::write_pack_objects_revs_stdin(
+            &mut pin,
+            &wants,
+            &have_commits,
+            &stdin_shallow,
+            shallow_pack,
+        )?;
     }
     // Protocol v2 fetch streams the pack inside side-band-64k (matches `git upload-pack`).
     crate::pack_objects_upload::drain_pack_objects_child(child, out, true)?;
@@ -449,9 +491,37 @@ fn merge_ancestors_into_v2(
     tip: ObjectId,
     into: &mut HashSet<ObjectId>,
 ) -> anyhow::Result<()> {
-    let anc = merge_base::ancestor_closure(repo, tip)?;
+    let boundaries = shallow_boundary_oids(&repo.git_dir);
+    let anc = ancestor_closure_respecting_shallow_v2(repo, tip, &boundaries)?;
     into.extend(anc);
     Ok(())
+}
+
+fn ancestor_closure_respecting_shallow_v2(
+    repo: &Repository,
+    tip: ObjectId,
+    shallow_boundaries: &HashSet<ObjectId>,
+) -> anyhow::Result<HashSet<ObjectId>> {
+    let mut visited = HashSet::new();
+    let mut q = VecDeque::new();
+    q.push_back(tip);
+    while let Some(oid) = q.pop_front() {
+        if !visited.insert(oid) {
+            continue;
+        }
+        if shallow_boundaries.contains(&oid) {
+            continue;
+        }
+        let obj = repo.odb.read(&oid).map_err(|e| anyhow::anyhow!("{e}"))?;
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = objects::parse_commit(&obj.data).map_err(|e| anyhow::anyhow!("{e}"))?;
+        for p in commit.parents {
+            q.push_back(p);
+        }
+    }
+    Ok(visited)
 }
 
 /// Handle the `object-info` command.
