@@ -1,4 +1,5 @@
 //! Regenerate `git <cmd> -h` synopsis snippets from vendored `git/Documentation/*.adoc` for t0450.
+//! Also install `git-sh-setup` and `git-sh-i18n` next to the `grit` binary (Git exec-path layout).
 //!
 //! When building from a published crate tarball (`cargo package`), the workspace `scripts/` and
 //! `git/Documentation` trees are not present; we copy the bundled `upstream_help_synopsis.rs`
@@ -6,7 +7,9 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use std::path::PathBuf;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
@@ -37,7 +40,7 @@ fn main() {
         println!("cargo:rerun-if-changed={}", script.display());
         println!("cargo:rerun-if-changed={}", docs_dir.display());
     } else {
-        std::fs::copy(&bundled, &dst).unwrap_or_else(|e| {
+        fs::copy(&bundled, &dst).unwrap_or_else(|e| {
             panic!(
                 "copy bundled {} to {}: {e} (expected when building from crates.io tarball)",
                 bundled.display(),
@@ -46,4 +49,53 @@ fn main() {
         });
         println!("cargo:rerun-if-changed={}", bundled.display());
     }
+
+    install_shell_libs(&manifest_dir);
+}
+
+/// Writes `git-sh-setup` and `git-sh-i18n` into `target/<profile>/` (same directory as `grit`).
+fn install_shell_libs(manifest_dir: &Path) {
+    let profile = std::env::var("PROFILE").unwrap_or_default();
+    let target_dir = manifest_dir.join("../target").join(&profile);
+    if !target_dir.is_dir() {
+        return;
+    }
+
+    let git_sh_i18n_src = manifest_dir.join("../git/git-sh-i18n.sh");
+    let git_sh_setup_src = manifest_dir.join("../git/git-sh-setup.sh");
+    if !git_sh_i18n_src.is_file() || !git_sh_setup_src.is_file() {
+        return;
+    }
+
+    let shell_path = "/bin/sh";
+    let diff = "diff";
+    let pager_env = "LESS=FRX LV=-c";
+    let local_edir = "/usr/local/share/locale";
+
+    let i18n = fs::read_to_string(&git_sh_i18n_src).unwrap_or_else(|e| {
+        panic!("read {}: {e}", git_sh_i18n_src.display());
+    });
+    let i18n_out = i18n
+        .replace("@LOCALEDIR@", local_edir)
+        .replace("@USE_GETTEXT_SCHEME@", "");
+    let i18n_dst = target_dir.join("git-sh-i18n");
+    fs::write(&i18n_dst, i18n_out).unwrap_or_else(|e| panic!("write {}: {e}", i18n_dst.display()));
+
+    let setup = fs::read_to_string(&git_sh_setup_src).unwrap_or_else(|e| {
+        panic!("read {}: {e}", git_sh_setup_src.display());
+    });
+    let setup_out = setup
+        .replace("# @BROKEN_PATH_FIX@", "")
+        .replace("@PAGER_ENV@", pager_env)
+        .replace("@DIFF@", diff)
+        .replace("#! /bin/sh", &format!("#!{shell_path}"))
+        .replace("#!/bin/sh", &format!("#!{shell_path}"));
+    let setup_dst = target_dir.join("git-sh-setup");
+    let mut f = fs::File::create(&setup_dst)
+        .unwrap_or_else(|e| panic!("create {}: {e}", setup_dst.display()));
+    f.write_all(setup_out.as_bytes())
+        .unwrap_or_else(|e| panic!("write {}: {e}", setup_dst.display()));
+
+    println!("cargo:rerun-if-changed={}", git_sh_i18n_src.display());
+    println!("cargo:rerun-if-changed={}", git_sh_setup_src.display());
 }

@@ -126,6 +126,7 @@ pub mod send_pack;
 pub mod sequencer;
 pub mod serve_v2;
 pub mod sh_i18n;
+pub mod sh_i18n_envsubst;
 pub mod sh_setup;
 pub mod shell;
 pub mod shortlog;

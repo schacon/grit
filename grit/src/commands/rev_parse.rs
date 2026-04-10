@@ -603,9 +603,22 @@ pub fn run(args: Args) -> Result<()> {
                     // Inside the git directory (e.g. `.git/hooks`): Git prints an absolute path.
                     println!("{}", git_dir.display());
                 } else if let Ok(rel) = git_dir.strip_prefix(&cwd) {
-                    println!("{}", rel.display());
+                    let rel_s = rel.display().to_string();
+                    if rel_s.contains("..") {
+                        println!("{}", git_dir.display());
+                    } else {
+                        println!("{rel_s}");
+                    }
                 } else {
-                    println!("{}", to_relative_path(git_dir, &cwd));
+                    let rel_s = to_relative_path(git_dir, &cwd);
+                    // `current_dir()` is often the real path while POSIX `cd` uses the logical cwd
+                    // when the work tree was reached via symlinks (t2300). Relative paths with `..`
+                    // then point at the wrong place; Git prints an absolute `--git-dir` instead.
+                    if rel_s.starts_with("..") || rel_s.contains("/..") {
+                        println!("{}", git_dir.display());
+                    } else {
+                        println!("{rel_s}");
+                    }
                 }
             }
             Action::ShowSharedIndexPath => {
