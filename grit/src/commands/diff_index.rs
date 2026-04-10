@@ -1159,6 +1159,13 @@ fn read_worktree_snapshot_from_meta(
         return Ok(Some(Snapshot { mode, oid }));
     }
 
+    // Directory where the index expects a file (e.g. submodule checkout at `path/` while index
+    // still records a blob from a parent commit). Treat as mismatch without reading the path as a
+    // file (`EISDIR`); matches Git and unblocks `merge` pre-checks (`t6437`).
+    if metadata.is_dir() {
+        return Ok(None);
+    }
+
     Ok(None)
 }
 
@@ -2379,6 +2386,9 @@ fn read_worktree_path_raw(path: &Path) -> Vec<u8> {
         return fs::read_link(path)
             .map(|target| target.as_os_str().as_bytes().to_vec())
             .unwrap_or_default();
+    }
+    if meta.is_dir() {
+        return Vec::new();
     }
     fs::read(path).unwrap_or_default()
 }

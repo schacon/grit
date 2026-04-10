@@ -21,6 +21,7 @@ use std::ffi::CString;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
@@ -57,11 +58,23 @@ fn read_zlib_loose_payload(mut file: fs::File) -> Result<Vec<u8>> {
 }
 
 /// A loose-object database rooted at a given `objects/` directory.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Odb {
     objects_dir: PathBuf,
     /// Work tree root for resolving relative alternate env paths.
     work_tree: Option<PathBuf>,
+    /// Embedded submodule object stores registered for this read pass (Git `register_all_submodule_sources`).
+    submodule_alternate_dirs: Arc<Mutex<Vec<PathBuf>>>,
+}
+
+impl std::fmt::Debug for Odb {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Odb")
+            .field("objects_dir", &self.objects_dir)
+            .field("work_tree", &self.work_tree)
+            .field("submodule_alternate_dirs", &"<mutex>")
+            .finish()
+    }
 }
 
 impl Odb {
@@ -74,6 +87,7 @@ impl Odb {
         Self {
             objects_dir: objects_dir.to_path_buf(),
             work_tree: None,
+            submodule_alternate_dirs: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -83,6 +97,41 @@ impl Odb {
         Self {
             objects_dir: objects_dir.to_path_buf(),
             work_tree: Some(work_tree.to_path_buf()),
+            submodule_alternate_dirs: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Register `<submodule-git-dir>/objects` for every stage-0 gitlink in `index` that has a
+    /// checkout under `work_tree`, so reads can resolve submodule commits stored only in the
+    /// nested repository (matches Git's `odb_add_submodule_source_by_path` / `register_all_submodule_sources`).
+    pub fn register_submodule_object_directories_from_index(
+        &self,
+        work_tree: &Path,
+        index: &crate::index::Index,
+    ) {
+        use crate::diff::submodule_embedded_git_dir;
+
+        let Ok(mut dirs) = self.submodule_alternate_dirs.lock() else {
+            return;
+        };
+        dirs.clear();
+        for e in &index.entries {
+            if e.stage() != 0 || e.mode != crate::index::MODE_GITLINK {
+                continue;
+            }
+            let path_str = String::from_utf8_lossy(&e.path);
+            let abs = work_tree.join(path_str.as_ref());
+            let Some(sub_git) = submodule_embedded_git_dir(&abs) else {
+                continue;
+            };
+            let objects = sub_git.join("objects");
+            if !objects.is_dir() {
+                continue;
+            }
+            let canon = objects.canonicalize().unwrap_or(objects);
+            if !dirs.iter().any(|p| p == &canon) {
+                dirs.push(canon);
+            }
         }
     }
 
@@ -145,6 +194,13 @@ impl Odb {
                 return true;
             }
         }
+        if let Ok(guard) = self.submodule_alternate_dirs.lock() {
+            for alt_dir in guard.iter() {
+                if self.exists_in_dir(alt_dir, oid) {
+                    return true;
+                }
+            }
+        }
         false
     }
 
@@ -199,6 +255,14 @@ impl Odb {
         for alt_dir in env_alternate_dirs(self.work_tree.as_deref()) {
             if freshen_object_in_objects_dir(&alt_dir, oid) {
                 return true;
+            }
+        }
+
+        if let Ok(guard) = self.submodule_alternate_dirs.lock() {
+            for alt_dir in guard.iter() {
+                if freshen_object_in_objects_dir(alt_dir, oid) {
+                    return true;
+                }
             }
         }
 
@@ -279,6 +343,14 @@ impl Odb {
         for alt_dir in env_alternate_dirs(self.work_tree.as_deref()) {
             if let Ok(obj) = Self::read_from_dir(&alt_dir, oid) {
                 return Ok(obj);
+            }
+        }
+
+        if let Ok(guard) = self.submodule_alternate_dirs.lock() {
+            for alt_dir in guard.iter() {
+                if let Ok(obj) = Self::read_from_dir(alt_dir, oid) {
+                    return Ok(obj);
+                }
             }
         }
 

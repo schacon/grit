@@ -1026,8 +1026,14 @@ pub fn peel_to_tree(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
 }
 
 /// Navigate a tree to find an object at a given path.
+///
+/// Returns the leaf OID for blobs, symlinks, and **gitlinks** (matches `git rev-parse treeish:path`).
+/// Trees at the leaf still error (`'path' is a tree, not a blob`).
 fn resolve_tree_path(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Result<ObjectId> {
-    let (oid, _) = walk_tree_to_blob_entry(repo, tree_oid, path)?;
+    let (oid, mode) = walk_tree_to_leaf_entry(repo, tree_oid, path)?;
+    if mode == crate::index::MODE_TREE {
+        return Err(Error::InvalidRef(format!("'{path}' is a tree, not a blob")));
+    }
     Ok(oid)
 }
 
@@ -1100,11 +1106,46 @@ pub fn resolve_treeish_blob_at_path(repo: &Repository, spec: &str) -> Result<Tre
     })
 }
 
-/// Walk from `tree_oid` to the leaf named by `path` and return OID + mode string.
+/// Walk from `tree_oid` to the leaf named by `path` and return its OID and mode.
 ///
-/// Used for `rev:path` resolution ([`resolve_tree_path`]): the leaf may be a blob, symlink,
-/// or gitlink (submodule). Callers that need a blob only (e.g. [`resolve_treeish_blob_at_path`])
-/// must reject mode `160000` after this returns.
+/// Unlike [`walk_tree_to_blob_entry`], allows gitlinks and trees at the leaf (for `rev-parse
+/// treeish:path` and similar).
+fn walk_tree_to_leaf_entry(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+    path: &str,
+) -> Result<(ObjectId, u32)> {
+    let obj = repo.odb.read(tree_oid)?;
+    let entries = crate::objects::parse_tree(&obj.data)?;
+    let components: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
+    if components.is_empty() {
+        return Err(Error::InvalidRef(format!(
+            "path '{path}' does not name an entry in tree {tree_oid}"
+        )));
+    }
+
+    let first = components[0];
+    let rest: Vec<&str> = components[1..].to_vec();
+    for entry in entries {
+        let name = String::from_utf8_lossy(&entry.name);
+        if name == first {
+            if rest.is_empty() {
+                return Ok((entry.oid, entry.mode));
+            }
+            if entry.mode != crate::index::MODE_TREE {
+                return Err(Error::ObjectNotFound(path.to_owned()));
+            }
+            return walk_tree_to_leaf_entry(repo, &entry.oid, &rest.join("/"));
+        }
+    }
+    Err(Error::ObjectNotFound(format!(
+        "path '{path}' not found in tree {tree_oid}"
+    )))
+}
+
+/// Walk from `tree_oid` to the leaf named by `path` and return OID + mode string for a blob or symlink.
+///
+/// Errors when the leaf is a tree or gitlink. Used by [`resolve_treeish_blob_at_path`] and similar.
 fn walk_tree_to_blob_entry(
     repo: &Repository,
     tree_oid: &ObjectId,
@@ -1127,6 +1168,11 @@ fn walk_tree_to_blob_entry(
             if rest.is_empty() {
                 if entry.mode == crate::index::MODE_TREE {
                     return Err(Error::InvalidRef(format!("'{path}' is a tree, not a blob")));
+                }
+                if entry.mode == crate::index::MODE_GITLINK {
+                    return Err(Error::InvalidRef(format!(
+                        "'{path}' is a gitlink, not a blob"
+                    )));
                 }
                 return Ok((entry.oid, entry.mode_str()));
             }

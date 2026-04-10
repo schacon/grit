@@ -1432,47 +1432,54 @@ fn emit_submodule_status_lines(
             }
         }
 
-        let (prefix, display_oid, suffix) = if !sub_path.exists() || !has_checkout {
-            let oid = recorded
-                .as_deref()
-                .unwrap_or("0000000000000000000000000000000000000000");
-            ("-", oid.to_owned(), String::new())
-        } else {
-            let index_oid = read_gitlink_oid_from_index(super_repo, gitlink_path)?
-                .unwrap_or_else(|| "0000000000000000000000000000000000000000".to_owned());
-
-            let head_file = sub_path.join(".git");
-            let sub_head = if head_file.exists() {
-                read_submodule_head(&sub_path)
+        let (prefix, display_oid, suffix) =
+            if super_index_has_unmerged_stage(super_repo, gitlink_path) {
+                (
+                    "U",
+                    "0000000000000000000000000000000000000000".to_owned(),
+                    String::new(),
+                )
+            } else if !sub_path.exists() || !has_checkout {
+                let oid = recorded
+                    .as_deref()
+                    .unwrap_or("0000000000000000000000000000000000000000");
+                ("-", oid.to_owned(), String::new())
             } else {
-                // gitfile indirection: check .git/modules/<name>/HEAD
-                let modules_head =
-                    submodule_modules_git_dir(&super_repo.git_dir, &m.name).join("HEAD");
-                if modules_head.exists() {
-                    read_head_from_file(&modules_head)
+                let index_oid = read_gitlink_oid_from_index(super_repo, gitlink_path)?
+                    .unwrap_or_else(|| "0000000000000000000000000000000000000000".to_owned());
+
+                let head_file = sub_path.join(".git");
+                let sub_head = if head_file.exists() {
+                    read_submodule_head(&sub_path)
                 } else {
-                    None
-                }
+                    // gitfile indirection: check .git/modules/<name>/HEAD
+                    let modules_head =
+                        submodule_modules_git_dir(&super_repo.git_dir, &m.name).join("HEAD");
+                    if modules_head.exists() {
+                        read_head_from_file(&modules_head)
+                    } else {
+                        None
+                    }
+                };
+                let head_oid = sub_head.unwrap_or_default();
+
+                // Match `git submodule--helper status`: `diff-files` marks the submodule dirty when
+                // the checked-out commit differs from the index gitlink.
+                let dirty = !head_oid.is_empty() && head_oid != index_oid;
+
+                let (p, oid_for_line, oid_for_describe) = if !dirty {
+                    (" ", index_oid.clone(), index_oid.clone())
+                } else if args.cached {
+                    ("+", index_oid.clone(), index_oid.clone())
+                } else {
+                    ("+", head_oid.clone(), head_oid.clone())
+                };
+
+                let suf = submodule_describe_rev_name(&sub_path, &oid_for_describe)
+                    .map(|n| format!(" ({n})"))
+                    .unwrap_or_default();
+                (p, oid_for_line, suf)
             };
-            let head_oid = sub_head.unwrap_or_default();
-
-            // Match `git submodule--helper status`: `diff-files` marks the submodule dirty when
-            // the checked-out commit differs from the index gitlink.
-            let dirty = !head_oid.is_empty() && head_oid != index_oid;
-
-            let (p, oid_for_line, oid_for_describe) = if !dirty {
-                (" ", index_oid.clone(), index_oid.clone())
-            } else if args.cached {
-                ("+", index_oid.clone(), index_oid.clone())
-            } else {
-                ("+", head_oid.clone(), head_oid.clone())
-            };
-
-            let suf = submodule_describe_rev_name(&sub_path, &oid_for_describe)
-                .map(|n| format!(" ({n})"))
-                .unwrap_or_default();
-            (p, oid_for_line, suf)
-        };
 
         let display_path =
             rev_parse::to_relative_path(&top_work_tree.join(&path_in_super), invocation_cwd)
@@ -1510,6 +1517,10 @@ fn emit_submodule_status_lines(
 fn run_status(args: &StatusArgs) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
+    if let Ok(index) = repo.load_index() {
+        repo.odb
+            .register_submodule_object_directories_from_index(work_tree, &index);
+    }
     let modules = parse_gitmodules_with_repo(work_tree, Some(&repo))?;
 
     let cwd = std::env::current_dir().context("failed to read current directory")?;
