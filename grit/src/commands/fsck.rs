@@ -23,6 +23,7 @@ use grit_lib::promisor::{
 };
 use grit_lib::reflog::{list_reflog_refs, read_reflog};
 use grit_lib::refs;
+use grit_lib::refs_fsck::{format_refs_fsck_line, refs_fsck, RefsFsckSeverity};
 use grit_lib::repo::Repository;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
@@ -91,6 +92,14 @@ pub struct Args {
     /// Enable stricter checking (Git compatibility; accepted for scripts like t3800).
     #[arg(long)]
     pub strict: bool,
+
+    /// Check reference database consistency (`git refs verify` rules).
+    #[arg(long = "references", overrides_with = "no_references")]
+    pub references: bool,
+
+    /// Skip reference database checks.
+    #[arg(long = "no-references", overrides_with = "references")]
+    pub no_references: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -201,6 +210,7 @@ pub fn run(args: Args) -> Result<()> {
     let connectivity_only = args.connectivity_only;
     let lost_found = args.lost_found;
     let name_objects = args.name_objects;
+    let check_references = !args.no_references;
 
     let mut issues: Vec<Issue> = Vec::new();
     let mut has_errors = false;
@@ -363,7 +373,17 @@ pub fn run(args: Args) -> Result<()> {
         std::collections::HashMap::new()
     };
 
-    // 6. Report issues.
+    // 6. Reference database (same as `git refs verify`).
+    if check_references && !grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
+        for line in refs_fsck(&repo, &odb, &config, false)? {
+            eprintln!("{}", format_refs_fsck_line(&line));
+            if line.severity == RefsFsckSeverity::Error {
+                has_errors = true;
+            }
+        }
+    }
+
+    // 7. Report issues.
     for issue in &issues {
         match issue {
             Issue::Missing {

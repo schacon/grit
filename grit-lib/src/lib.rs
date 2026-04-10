@@ -74,6 +74,7 @@ pub mod push_submodules;
 pub mod quote_path;
 pub mod reflog;
 pub mod refs;
+pub mod refs_fsck;
 pub mod reftable;
 pub mod repo;
 pub mod rerere;
