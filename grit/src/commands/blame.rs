@@ -2249,7 +2249,7 @@ pub fn run(mut args: Args) -> Result<()> {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let oid = resolve_revision(&repo, line)
+            let oid = resolve_revision_without_index_dwim(&repo, line)
                 .map_err(|_| anyhow::anyhow!("invalid object name: {line}"))?;
             if let Some(oid) = peel_to_commit_oid(&odb, oid)? {
                 ignore_revs.insert(oid);
@@ -2258,8 +2258,8 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     for rev_str in &args.ignore_rev {
-        let oid = resolve_revision(&repo, rev_str)
-            .with_context(|| format!("cannot find revision {rev_str} to ignore"))?;
+        let oid = resolve_revision_without_index_dwim(&repo, rev_str)
+            .map_err(|_| anyhow::anyhow!("cannot find revision {rev_str} to ignore"))?;
         let oid = peel_to_commit_oid(&odb, oid)?
             .ok_or_else(|| anyhow::anyhow!("cannot find revision {rev_str} to ignore"))?;
         ignore_revs.insert(oid);

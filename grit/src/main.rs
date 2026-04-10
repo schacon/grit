@@ -2739,6 +2739,152 @@ fn preprocess_status_argv(rest: &[String]) -> Vec<String> {
     out
 }
 
+/// Git's `blame` accepts options after the pathspec (e.g. `git blame file --ignore-rev X`).
+/// Clap stops at the first positional (`args`), so trailing flags would be left in `args` and
+/// mis-parsed as revisions. Move any trailing option block before the pathspec tokens.
+fn preprocess_blame_argv(rest: &[String]) -> Vec<String> {
+    fn opt_value_in_token(flag_len: usize, token: &str) -> Option<&str> {
+        let rest = token.get(flag_len..)?;
+        if rest.is_empty() {
+            None
+        } else {
+            Some(rest)
+        }
+    }
+
+    fn consume_blame_option(slice: &[String], i: &mut usize) -> bool {
+        let Some(cur) = slice.get(*i) else {
+            return false;
+        };
+        let t = cur.as_str();
+
+        if let Some((name, val)) = t.split_once('=') {
+            return matches!(
+                name,
+                "--ignore-rev"
+                    | "--ignore-revs-file"
+                    | "--abbrev"
+                    | "--diff-algorithm"
+                    | "--contents"
+                    | "--encoding"
+                    | "--find-copies"
+                    | "--find-renames"
+            ) && !val.is_empty()
+                && {
+                    *i += 1;
+                    true
+                };
+        }
+
+        match t {
+            "-h" | "--help" | "-l" | "-s" | "-p" | "--porcelain" | "--line-porcelain"
+            | "--color-lines" | "--color-by-age" | "-f" | "--show-name" | "--no-abbrev"
+            | "--root" | "--reverse" | "--first-parent" | "--minimal" | "--textconv"
+            | "--no-textconv" | "--progress" | "--incremental" => {
+                *i += 1;
+                true
+            }
+            "-e" | "--show-email" => {
+                *i += 1;
+                true
+            }
+            "-L" => {
+                if slice.len() <= *i + 1 {
+                    return false;
+                }
+                *i += 2;
+                true
+            }
+            tt if tt.starts_with("-L") => {
+                if opt_value_in_token(2, tt).is_some() {
+                    *i += 1;
+                    true
+                } else {
+                    false
+                }
+            }
+            "--ignore-rev" | "--ignore-revs-file" | "--abbrev" | "--diff-algorithm"
+            | "--contents" | "--encoding" => {
+                if slice.len() <= *i + 1 {
+                    return false;
+                }
+                *i += 2;
+                true
+            }
+            tt if tt == "-M" || tt.starts_with("-M") => {
+                if tt == "-M" {
+                    if slice.len() > *i + 1 {
+                        *i += 2;
+                        return true;
+                    }
+                }
+                *i += 1;
+                true
+            }
+            tt if tt == "-C" || tt.starts_with("-C") => {
+                if tt == "-C" {
+                    if slice.len() > *i + 1 {
+                        *i += 2;
+                        return true;
+                    }
+                }
+                *i += 1;
+                true
+            }
+            "--find-renames" | "--find-copies" => {
+                if slice.len() > *i + 1 {
+                    *i += 2;
+                } else {
+                    *i += 1;
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn slice_is_only_blame_options(slice: &[String]) -> bool {
+        let mut i = 0usize;
+        while i < slice.len() {
+            if !consume_blame_option(slice, &mut i) {
+                return false;
+            }
+        }
+        true
+    }
+
+    let Some(j) = (0..rest.len()).find(|&j| {
+        !rest[j].is_empty() && rest[j].starts_with('-') && slice_is_only_blame_options(&rest[j..])
+    }) else {
+        return rest.to_vec();
+    };
+
+    if j == 0 {
+        return rest.to_vec();
+    }
+
+    let prefix = &rest[..j];
+    let suffix = &rest[j..];
+
+    let mut k = 0usize;
+    while k < prefix.len() {
+        if !consume_blame_option(prefix, &mut k) {
+            break;
+        }
+    }
+    let leading_opts = &prefix[..k];
+    let path_tail = &prefix[k..];
+
+    let mut out = Vec::with_capacity(rest.len() + 1);
+    out.extend_from_slice(leading_opts);
+    out.extend_from_slice(suffix);
+    if !path_tail.is_empty() {
+        out.push("--".to_owned());
+        out.extend_from_slice(path_tail);
+    }
+    out
+}
+
 /// Normalize `git commit` argv for clap's `trailing_var_arg` pathspec bucket.
 ///
 /// Only applies to **`-m` / `--message`**. Do not reorder `-F` / `--file` (e.g. `commit -F -`
@@ -4171,12 +4317,12 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
     match subcmd {
         "add" => commands::add::run(parse_cmd_args(subcmd, rest)),
         "am" => commands::am::run(parse_cmd_args(subcmd, rest)),
-        "annotate" => commands::annotate::run(parse_cmd_args(subcmd, rest)),
+        "annotate" => commands::annotate::run(parse_cmd_args(subcmd, &preprocess_blame_argv(rest))),
         "apply" => commands::apply::run(parse_cmd_args(subcmd, rest)),
         "archive" => commands::archive::run_from_argv(rest),
         "backfill" => commands::backfill::run(parse_cmd_args(subcmd, rest)),
         "bisect" => commands::bisect::run(parse_cmd_args(subcmd, rest)),
-        "blame" => commands::blame::run(parse_cmd_args(subcmd, rest)),
+        "blame" => commands::blame::run(parse_cmd_args(subcmd, &preprocess_blame_argv(rest))),
         "branch" => commands::branch::run(parse_cmd_args(subcmd, rest)),
         "bugreport" => commands::bugreport::run(parse_cmd_args(subcmd, rest)),
         "bundle" => commands::bundle::run(parse_cmd_args(subcmd, rest)),
