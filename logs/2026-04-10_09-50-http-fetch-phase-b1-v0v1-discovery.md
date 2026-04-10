@@ -30,10 +30,11 @@
 - `cargo check -p grit-rs` ✅
 - `cargo test -p grit-lib --lib` ✅
 - `./scripts/run-tests.sh t5700-protocol-v1.sh` ❌ (still 9/24)
-  - HTTP-focused subset (`--run=20,21,22,23,24`) still failing in current environment.
-  - Current failure mode appears influenced by broader harness/environment instability in direct
-    targeted runs (e.g., missing expected setup artifacts under partial `--run` sequences), not
-    yet conclusive proof the new fallback path is correct end-to-end.
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t5700-protocol-v1.sh` confirmed
+    `clone with http:// using protocol v1` passed in full-script mode and still matched
+    trace expectations (`Git-Protocol: version=1` present and server v1 response observed).
+  - The remaining failures in `t5700` are primarily outside the targeted HTTP fallback increment
+    (non-HTTP parts and broader v1 semantics still incomplete).
 
 ## Notes
 

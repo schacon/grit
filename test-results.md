@@ -1,5 +1,14 @@
 # Test results
 
+**2026-04-10 (fetch HTTP v0/v1 discovery fallback / Phase B.1)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `./scripts/run-tests.sh t5700-protocol-v1.sh`: 9/24
+  - HTTP-focused subset (`--run=20,21,22,23,24`) still failing in this environment.
+  - Added fallback plumbing for non-v2 smart advertisements in `http_smart`; full parity still
+    requires additional protocol work in later phases.
+
 **2026-04-10 (fetch HTTP transport / protocol header control)**
 
 - `cargo check -p grit-rs`: pass
