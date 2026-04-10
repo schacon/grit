@@ -316,6 +316,33 @@ pub(crate) fn collect_wants(
     advertised: &[(String, ObjectId)],
     refspecs: &[String],
 ) -> Result<Vec<ObjectId>> {
+    fn refspec_src(spec: &str) -> &str {
+        let spec_clean = spec.strip_prefix('+').unwrap_or(spec);
+        spec_clean
+            .split_once(':')
+            .map(|(a, _)| a)
+            .unwrap_or(spec_clean)
+    }
+
+    fn refspec_pattern_matches(pattern: &str, refname: &str) -> bool {
+        let Some(star) = pattern.find('*') else {
+            return pattern == refname;
+        };
+        let prefix = &pattern[..star];
+        let suffix = &pattern[star + 1..];
+        refname.len() >= prefix.len() + suffix.len()
+            && refname.starts_with(prefix)
+            && refname.ends_with(suffix)
+    }
+
+    fn normalize_non_oid_src(src: &str) -> String {
+        if src.starts_with("refs/") {
+            src.to_string()
+        } else {
+            format!("refs/heads/{src}")
+        }
+    }
+
     if refspecs.is_empty() {
         let mut wants = Vec::new();
         for (name, oid) in advertised {
@@ -343,29 +370,42 @@ pub(crate) fn collect_wants(
         wants.dedup();
         return Ok(wants);
     }
+
+    let negative_patterns: Vec<String> = refspecs
+        .iter()
+        .filter_map(|spec| spec.strip_prefix('^'))
+        .map(refspec_src)
+        .filter(|src| !src.is_empty())
+        .map(normalize_non_oid_src)
+        .collect();
+
+    let is_excluded = |refname: &str| -> bool {
+        negative_patterns
+            .iter()
+            .any(|pat| refspec_pattern_matches(pat, refname))
+    };
+
     let mut wants = Vec::new();
     for spec in refspecs {
         if spec.starts_with('^') {
             continue;
         }
-        let spec_clean = spec.strip_prefix('+').unwrap_or(spec);
-        let src = spec_clean
-            .split_once(':')
-            .map(|(a, _)| a)
-            .unwrap_or(spec_clean);
+        let src = refspec_src(spec);
         if src.contains('*') {
-            bail!("glob refspec in upload-pack fetch not supported");
+            let pattern = normalize_non_oid_src(src);
+            for (name, oid) in advertised {
+                if refspec_pattern_matches(&pattern, name) && !is_excluded(name) {
+                    wants.push(*oid);
+                }
+            }
+            continue;
         }
         let oid = if src.len() == 40 && src.chars().all(|c| c.is_ascii_hexdigit()) {
             ObjectId::from_hex(src)
                 .with_context(|| format!("invalid object id in refspec: {src}"))?
         } else {
-            let remote_ref = if src.starts_with("refs/") {
-                src.to_string()
-            } else {
-                format!("refs/heads/{src}")
-            };
-            advertised
+            let remote_ref = normalize_non_oid_src(src);
+            let resolved = advertised
                 .iter()
                 .find(|(n, _)| n == &remote_ref)
                 .map(|(_, o)| *o)
@@ -376,10 +416,17 @@ pub(crate) fn collect_wants(
                         .find(|(n, _)| n == &tag_ref)
                         .map(|(_, o)| *o)
                 })
-                .with_context(|| format!("could not find remote ref '{remote_ref}'"))?
+                .with_context(|| format!("could not find remote ref '{remote_ref}'"))?;
+            if is_excluded(&remote_ref) {
+                continue;
+            }
+            resolved
         };
         wants.push(oid);
     }
+    wants.retain(|o| *o != zero_oid());
+    wants.sort_by_key(|o| o.to_hex());
+    wants.dedup();
     Ok(wants)
 }
 

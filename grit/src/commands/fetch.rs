@@ -2568,6 +2568,37 @@ fn prune_stale_refs(
     Ok(())
 }
 
+/// Compute prune destination prefixes from positive CLI refspecs that specify an explicit
+/// destination (`src:dst`), matching Git's behavior of limiting `--prune` scope to configured
+/// mapping namespaces when command-line refspecs are used.
+fn prune_prefixes_from_cli_refspecs(cli_refspecs: &[String]) -> Vec<String> {
+    let mut prefixes = Vec::new();
+    for spec in cli_refspecs {
+        if spec.starts_with('^') {
+            continue;
+        }
+        let spec_clean = spec.strip_prefix('+').unwrap_or(spec.as_str());
+        let Some((_src, dst_raw)) = spec_clean.split_once(':') else {
+            continue;
+        };
+        if dst_raw.is_empty() {
+            continue;
+        }
+        let dst = normalize_fetch_refspec_dst(dst_raw);
+        let prefix = if let Some(pos) = dst.find('*') {
+            dst[..pos].to_owned()
+        } else {
+            dst
+        };
+        if !prefix.is_empty() {
+            prefixes.push(prefix);
+        }
+    }
+    prefixes.sort();
+    prefixes.dedup();
+    prefixes
+}
+
 /// Write shallow graft information when --depth / --deepen is used.
 ///
 /// For local transport we approximate shallowness by listing the commit(s) at
