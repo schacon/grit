@@ -1,5 +1,20 @@
 # Test results
 
+**2026-04-10 (fetch HTTP v1 retry loop + protocol-v1 checkpoint)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `GUST_BIN=/workspace/target/release/grit bash tests/t5702-protocol-v2.sh --run=83,84,85`: 85/85 passed
+- `./scripts/run-tests.sh t5700-protocol-v1.sh`: 14/24 (improved from prior 9/24 baseline in this environment)
+- Focused repro:
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t5700-protocol-v1.sh --run=19,20,22`
+  - Passed: 19,20
+  - Remaining failure: 22
+- Code changes in this increment:
+  - HTTP v0/v1 stateless fetch now retries once without `have` lines when initial response yields no pack while
+    wanted objects are missing locally.
+  - Side-band parser improvements retained for PACK boundary handling and pre-pack flush tolerance.
+
 **2026-04-10 (fetch HTTP v1 setup + sideband parsing hardening)**
 
 - `cargo check -p grit-rs`: pass

@@ -701,6 +701,12 @@ fn fetch_pack_v0_v1_stateless_http(
     pkt_line::write_line_to_vec(&mut req, "done")?;
     pkt_line::write_flush(&mut req)?;
 
+    let wants_missing_locally = {
+        let repo = Repository::open(local_git_dir, None)
+            .with_context(|| format!("open {}", local_git_dir.display()))?;
+        wants.iter().any(|oid| repo.odb.read(oid).is_err())
+    };
+
     let post_url = format!("{base}/{SERVICE}");
     let resp = http_post(
         client,
@@ -733,6 +739,70 @@ fn fetch_pack_v0_v1_stateless_http(
         if pos < resp.len() {
             pack_buf.extend_from_slice(&resp[pos..]);
         }
+    }
+
+    if pack_buf.is_empty() && wants_missing_locally {
+        // Some protocol-v1 stateless endpoints answer the first round with ACK/NAK only when
+        // haves are present. Retry once without have-lines to force a full transfer.
+        let mut retry_req = Vec::new();
+        let first = wants[0];
+        pkt_line::write_line_to_vec(
+            &mut retry_req,
+            &format!("want {}{}", first.to_hex(), fetch_caps),
+        )?;
+        for w in wants.iter().skip(1) {
+            pkt_line::write_line_to_vec(&mut retry_req, &format!("want {}", w.to_hex()))?;
+        }
+        append_fetch_request_extensions_v0_v1(&mut retry_req, caps, options)?;
+        pkt_line::write_line_to_vec(&mut retry_req, "done")?;
+        pkt_line::write_flush(&mut retry_req)?;
+
+        let retry_resp = http_post(
+            client,
+            &post_url,
+            &format!("application/x-{SERVICE}-request"),
+            &format!("application/x-{SERVICE}-result"),
+            &retry_req,
+        )?;
+        let mut retry_cur = Cursor::new(retry_resp.as_slice());
+        let mut retry_first_pkt = None::<String>;
+        let mut retry_pack = Vec::new();
+        if caps.contains("side-band-64k") {
+            read_sideband_pack_until_done(&mut retry_cur, &mut retry_pack)?;
+        } else {
+            if let Some(pkt_line::Packet::Data(line)) = pkt_line::read_packet(&mut retry_cur)? {
+                let line = line.trim_end_matches('\n').to_string();
+                if line.starts_with("ERR ") {
+                    bail!(
+                        "remote upload-pack error: {}",
+                        line.trim_start_matches("ERR ")
+                    );
+                }
+                retry_first_pkt = Some(line);
+            }
+            let pos = retry_cur.position() as usize;
+            if pos < retry_resp.len() {
+                retry_pack.extend_from_slice(&retry_resp[pos..]);
+            }
+        }
+        if !retry_pack.is_empty() {
+            if retry_pack.len() < 12 || &retry_pack[0..4] != b"PACK" {
+                bail!("did not receive a pack file from HTTP v0/v1 fetch");
+            }
+            crate::fetch_transport::unpack_upload_pack_bytes(
+                local_git_dir,
+                &retry_pack,
+                filter_active,
+            )?;
+            return Ok((remote_heads, remote_tags, all_advertised));
+        }
+        if let Some(line) = retry_first_pkt {
+            let normalized = line.trim();
+            if normalized != "NAK" && !normalized.starts_with("ACK ") {
+                bail!("unexpected v0/v1 fetch response: {normalized}");
+            }
+        }
+        bail!("did not receive a pack file from HTTP v0/v1 fetch");
     }
 
     if !pack_buf.is_empty() {

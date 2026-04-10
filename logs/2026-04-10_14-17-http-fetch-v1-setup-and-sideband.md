@@ -29,8 +29,11 @@
 - `cargo check -p grit-rs`
 - `cargo test -p grit-lib --lib`
 - Focused protocol suites:
-  - `GUST_BIN=/workspace/target/release/grit bash tests/t5702-protocol-v2.sh --run=83,84,85`
-    - Result: all passed (85/85 overall in that run)
+- `GUST_BIN=/workspace/target/release/grit bash tests/t5702-protocol-v2.sh --run=83,84,85`
+  - Result: all passed (85/85 overall in that run)
+  - Note: this required building debug `test-httpd` (`cargo build -p grit-rs --bin test-httpd`) so
+    `tests/lib-httpd.sh` could locate the binary at `target/debug/test-httpd`; otherwise the suite
+    can fail before command behavior is exercised.
   - `GUST_BIN=/workspace/target/release/grit bash tests/t5700-protocol-v1.sh --run=19,20,22`
     - Result:
       - 19 passed
