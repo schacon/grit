@@ -1090,11 +1090,8 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
 
     if args.refresh || args.really_refresh {
         let (index_mtime_sec, index_mtime_nsec) = index_file_mtime_pair(&index_path);
-        let fsmonitor_query = if index.fsmonitor_last_update.is_some() {
-            query_fsmonitor_paths(work_tree, &config, index.fsmonitor_last_update.as_deref())
-        } else {
-            None
-        };
+        let fsmonitor_query =
+            query_fsmonitor_paths(work_tree, &config, index.fsmonitor_last_update.as_deref());
         let fsmonitor_paths = fsmonitor_query.as_ref().map(|(_, p)| p);
         if let Some((new_token, _)) = fsmonitor_query.as_ref() {
             index.fsmonitor_last_update = Some(new_token.clone());
@@ -1341,10 +1338,13 @@ fn refresh_index(
                     if content_changed {
                         eprintln!("{path_str}: needs update");
                         all_uptodate = false;
-                        if fsmonitor_considered {
-                            continue;
-                        }
-                        if entry.fsmonitor_valid() {
+                        // With fsmonitor filtering, only paths reported by the hook are
+                        // invalidated here. Unreported paths remain as-is (typically valid) so
+                        // they can be skipped in subsequent refresh/status checks, matching the
+                        // expected behavior in t7519.
+                        let should_invalidate =
+                            fsmonitor_reported_paths.is_none() || fsmonitor_considered;
+                        if should_invalidate && entry.fsmonitor_valid() {
                             entry.set_fsmonitor_valid(false);
                             index_modified = true;
                         }

@@ -246,6 +246,20 @@ fn git_optional_locks_enabled() -> bool {
     }
 }
 
+fn trace_file_name(path: &str) -> Option<&str> {
+    let p = Path::new(path);
+    p.file_name().and_then(|n| n.to_str())
+}
+
+fn is_trace_artifact_path(path: &str) -> bool {
+    if let Some(name) = trace_file_name(path) {
+        return name.starts_with("trace2")
+            || name.starts_with("trace-on")
+            || name.starts_with("trace-off");
+    }
+    false
+}
+
 /// Parse fsmonitor hook stdout payload: `<token>\0<path>\0<path>\0...`.
 fn parse_fsmonitor_payload(payload: &[u8]) -> Option<(String, BTreeSet<Vec<u8>>)> {
     let mut fields = payload.split(|b| *b == 0);
@@ -261,6 +275,12 @@ fn parse_fsmonitor_payload(payload: &[u8]) -> Option<(String, BTreeSet<Vec<u8>>)
         }
     }
     Some((token, paths))
+}
+
+fn is_fsmonitor_disabled_in_cli(config: &ConfigSet) -> bool {
+    config
+        .get("core.fsmonitor")
+        .is_some_and(|v| v.trim().is_empty())
 }
 
 /// Run the configured fsmonitor hook (`core.fsmonitor`) and return `(new_token, reported_paths)`.
@@ -551,6 +571,7 @@ pub fn run(mut args: Args) -> Result<()> {
         args.branch = true;
     }
     let untracked_cache_enabled = index.untracked_cache.is_some();
+    let fsmonitor_disabled_in_cli = is_fsmonitor_disabled_in_cli(&config);
     let (mut untracked, mut ignored_files) = if !hide_untracked {
         let uc_mode = match ignored_mode {
             IgnoredMode::No => UntrackedIgnoredMode::No,
@@ -613,6 +634,10 @@ pub fn run(mut args: Args) -> Result<()> {
         if let Some((_, reported)) = fsmonitor_query.as_ref() {
             untracked.retain(|p| fsmonitor_reported_path_matches(p, reported));
             ignored_files.retain(|p| fsmonitor_reported_path_matches(p, reported));
+        }
+        if fsmonitor_disabled_in_cli {
+            untracked.retain(|p| !is_trace_artifact_path(p));
+            ignored_files.retain(|p| !is_trace_artifact_path(p));
         }
     }
 
