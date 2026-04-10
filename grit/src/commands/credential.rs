@@ -176,7 +176,9 @@ fn invoke_helper(
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .map_err(|e| anyhow::anyhow!("failed to run built-in credential helper '{subcmd}': {e}"))?
+            .map_err(|e| {
+                anyhow::anyhow!("failed to run built-in credential helper '{subcmd}': {e}")
+            })?
     } else {
         let helper_program = if first_word.contains('/') {
             first_word.to_string()
@@ -194,7 +196,9 @@ fn invoke_helper(
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .map_err(|e| anyhow::anyhow!("failed to run credential helper '{helper_program}': {e}"))?
+            .map_err(|e| {
+                anyhow::anyhow!("failed to run credential helper '{helper_program}': {e}")
+            })?
     };
 
     // Write credential fields to helper's stdin, followed by blank line.

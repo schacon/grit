@@ -827,6 +827,7 @@ pub fn fetch_via_upload_pack_skipping(
         merge_remote_refs_into_upload_pack_advertisement(remote_repo_path, &mut advertised)?;
     }
     let wants = compute_wants(&advertised)?;
+    crate::trace_packet::trace_fetch_tip_availability(&local_git_dir.join("objects"), &wants);
     if wants.is_empty() {
         // No pack to transfer (either already up-to-date or refspecs selected no refs), but we
         // still return advertised heads/tags so callers can perform ref/prune bookkeeping.

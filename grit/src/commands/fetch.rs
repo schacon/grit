@@ -1300,7 +1300,12 @@ fn fetch_remote(
         .chain(remote_tags.iter())
         .map(|(_, oid)| *oid)
         .collect();
-    crate::trace_packet::trace_fetch_tip_availability(&git_dir.join("objects"), &tip_oids);
+    let trace_tips: Vec<ObjectId> = if regular_negotiation_tips.is_empty() {
+        tip_oids.clone()
+    } else {
+        regular_negotiation_tips.clone()
+    };
+    crate::trace_packet::trace_fetch_tip_availability(&git_dir.join("objects"), &trace_tips);
 
     // Handle --depth / --deepen: write shallow graft info
     let effective_depth = args.depth.or(args.deepen);

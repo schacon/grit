@@ -523,19 +523,21 @@ fn merge_trees_at(
         }
 
         if same_entry(&triple[0], &triple[1])
-            && !is_null_oid(&triple[2].oid) && !is_tree_mode(triple[2].mode) {
-                resolve(
-                    records,
-                    repo,
-                    macros,
-                    rules,
-                    odb,
-                    Some(&triple[1]),
-                    &triple[2],
-                    path,
-                )?;
-                continue;
-            }
+            && !is_null_oid(&triple[2].oid)
+            && !is_tree_mode(triple[2].mode)
+        {
+            resolve(
+                records,
+                repo,
+                macros,
+                rules,
+                odb,
+                Some(&triple[1]),
+                &triple[2],
+                path,
+            )?;
+            continue;
+        }
 
         if same_entry(&triple[0], &triple[2]) || both_empty(&triple[0], &triple[2]) {
             resolve(records, repo, macros, rules, odb, None, &triple[1], path)?;
