@@ -1252,6 +1252,7 @@ fn fetch_remote(
     // Track which remote-tracking refs we updated (for prune)
     let mut updated_refs: Vec<String> = Vec::new();
     let mut pending_atomic_ref_ops: Vec<PendingRefOp> = Vec::new();
+    let mut pending_atomic_noop_head_hook: Option<(String, String, String)> = None;
     let mut has_updates = false;
 
     let remote_symbolic_head_branch = remote_repo
@@ -2097,21 +2098,16 @@ fn fetch_remote(
                         FollowRemoteHead::Create | FollowRemoteHead::Warn => head_missing,
                         FollowRemoteHead::Always => true,
                     };
-                    let previous_for_hook = previous.clone();
                     if should_write {
                         refs::write_symbolic_ref(git_dir, &remote_head_ref, &mapped_default_ref)
                             .with_context(|| format!("updating symbolic ref {remote_head_ref}"))?;
                         updated_refs.push(remote_head_ref.clone());
                     } else if args.atomic {
-                        let old_value =
-                            hook_old_value_remote_head_from_previous(&previous_for_hook);
-                        let repo_for_symref_hook = repository_for_ref_hooks(git_dir)?;
-                        run_prepare_only_symref_hook(
-                            &repo_for_symref_hook,
-                            &remote_head_ref,
-                            &old_value,
-                            &mapped_default_ref,
-                        )?;
+                        pending_atomic_noop_head_hook = Some((
+                            remote_head_ref.clone(),
+                            "0".repeat(40),
+                            mapped_default_ref.clone(),
+                        ));
                     }
                     maybe_warn_follow_remote_head(
                         &follow,
@@ -2161,6 +2157,17 @@ fn fetch_remote(
             if let Err(err) = apply_pending_ref_ops_atomic(git_dir, &pending_atomic_ref_ops) {
                 fetch_head_entries.clear();
                 return Err(err);
+            }
+            if let Some((remote_head_ref, old_value, mapped_default_ref)) =
+                pending_atomic_noop_head_hook.take()
+            {
+                let repo_for_symref_hook = repository_for_ref_hooks(git_dir)?;
+                run_prepare_only_symref_hook(
+                    &repo_for_symref_hook,
+                    &remote_head_ref,
+                    &old_value,
+                    &mapped_default_ref,
+                )?;
             }
         }
         let fetch_head_path = git_dir.join("FETCH_HEAD");
@@ -2727,14 +2734,6 @@ fn pending_writes_ref(ops: &[PendingRefOp], refname: &str) -> bool {
             } if r == refname && *new_oid != zero_oid()
         )
     })
-}
-
-fn hook_old_value_remote_head_from_previous(previous: &RemoteHeadPrevious) -> String {
-    match previous {
-        RemoteHeadPrevious::Symref(target) => format!("ref:{target}"),
-        RemoteHeadPrevious::DetachedOid(oid) => oid.to_hex(),
-        RemoteHeadPrevious::Missing => "0".repeat(40),
-    }
 }
 
 fn repository_for_ref_hooks(git_dir: &Path) -> Result<Repository> {
