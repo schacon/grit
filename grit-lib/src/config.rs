@@ -1363,6 +1363,11 @@ impl ConfigSet {
         self.entries.extend(file.entries.iter().cloned());
     }
 
+    /// Merge another [`ConfigSet`] into this set (entries appended in order).
+    pub fn merge_set(&mut self, other: &ConfigSet) {
+        self.entries.extend(other.entries.iter().cloned());
+    }
+
     /// Add a command-line override (`-c key=value`).
     pub fn add_command_override(&mut self, key: &str, value: &str) -> Result<()> {
         let canon = canonical_key(key)?;
@@ -2424,7 +2429,7 @@ pub fn parse_path_optional(s: &str) -> Option<String> {
 /// - unquoted `key=value` tokens separated by whitespace
 ///
 /// Backslash escapes are interpreted minimally inside double quotes.
-pub(crate) fn parse_config_parameters(raw: &str) -> Vec<String> {
+pub fn parse_config_parameters(raw: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut buf = String::new();
     let mut in_single = false;

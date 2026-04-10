@@ -8,8 +8,11 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::crlf;
 use grit_lib::diff::zero_oid;
+use grit_lib::filter_process;
 use grit_lib::hooks::{run_hook, HookResult};
+use grit_lib::index::MODE_SYMLINK;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::promisor::{read_promisor_missing_oids, repo_treats_promisor_packs};
 use grit_lib::refs;
@@ -27,6 +30,7 @@ use std::process::Command;
 use crate::commands::checkout::{
     checkout_parallel_worker_spawns, trace2_emit_checkout_parallel_workers,
 };
+use crate::commands::fetch::{collect_refspecs, default_fetch_refspecs, map_ref_through_refspecs};
 use crate::commands::submodule::set_submodule_core_worktree_after_separate_clone;
 
 /// Arguments for `grit clone`.
@@ -307,6 +311,88 @@ fn resolve_remote_name(args: &Args) -> Result<String> {
     Ok("origin".to_owned())
 }
 
+/// Effective configuration for clone operations before the destination `.git/config` exists.
+///
+/// Merges the usual cascade (system/global/`GIT_CONFIG_PARAMETERS` from `git -c …`) with
+/// `clone -c` entries so keys like `core.autocrlf` and `remote.<name>.fetch` apply during ref copy
+/// and checkout (`t5611-clone-config`).
+fn clone_effective_config_pre_local(dest_git_dir: &Path, clone_c_entries: &[String]) -> ConfigSet {
+    let mut set = ConfigSet::load(None, true).unwrap_or_default();
+    let local_path = dest_git_dir.join("config");
+    if let Ok(Some(f)) = ConfigFile::from_path(&local_path, ConfigScope::Local) {
+        set.merge(&f);
+    }
+    for entry in clone_c_entries {
+        if let Some((key, value)) = entry.split_once('=') {
+            let _ = set.add_command_override(key.trim(), value.trim());
+        } else {
+            let _ = set.add_command_override(entry.trim(), "true");
+        }
+    }
+    set
+}
+
+/// Fetch refspecs used while mapping source refs during a local clone, matching Git: configured
+/// `remote.<name>.fetch` lines plus the default `refs/heads/*` mapping when no positive refspec is
+/// set.
+fn clone_context_fetch_refspecs(
+    dest_git_dir: &Path,
+    remote_name: &str,
+    clone_c_entries: &[String],
+) -> Vec<String> {
+    let key = format!("remote.{remote_name}.fetch");
+    let cfg = clone_effective_config_pre_local(dest_git_dir, clone_c_entries);
+    let specs = collect_refspecs(&cfg, &key);
+    let has_positive = specs.iter().any(|s| !s.negative);
+    let mut out: Vec<String> = Vec::new();
+    if has_positive {
+        for s in specs {
+            if s.negative {
+                continue;
+            }
+            let mut line = String::new();
+            if s.force {
+                line.push('+');
+            }
+            line.push_str(&s.src);
+            line.push(':');
+            line.push_str(&s.dst);
+            out.push(line);
+        }
+    }
+    let default = default_fetch_refspecs(remote_name);
+    for s in default {
+        if s.negative {
+            continue;
+        }
+        let mut line = String::new();
+        if s.force {
+            line.push('+');
+        }
+        line.push_str(&s.src);
+        line.push(':');
+        line.push_str(&s.dst);
+        out.push(line);
+    }
+    out
+}
+
+/// Append the default `remote.<name>.fetch` line after `clone -c` entries are written (Git ordering).
+fn append_remote_default_fetch_line(
+    git_dir: &Path,
+    remote_name: &str,
+    default_refspec: &str,
+) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    config.add_value(&format!("remote.{remote_name}.fetch"), default_refspec)?;
+    config.write().context("writing config")?;
+    Ok(())
+}
+
 fn effective_reject_shallow(args: &Args) -> bool {
     if args.no_reject_shallow {
         return false;
@@ -421,7 +507,7 @@ fn checkout_head_allow_unborn(repo: &Repository) -> Result<()> {
 
     let obj = repo.odb.read(&oid).context("reading HEAD commit")?;
     let commit = parse_commit(&obj.data).context("parsing HEAD commit")?;
-    checkout_tree(repo, &commit.tree, work_tree, "")?;
+    checkout_tree(repo, &commit.tree, work_tree, "", true)?;
     write_index_from_tree(repo, &commit.tree)?;
     Ok(())
 }
@@ -841,17 +927,10 @@ pub fn run(mut args: Args) -> Result<()> {
                         &remote_tags,
                         args.no_tags,
                     )?;
-                    let refspec = if args.single_branch {
-                        let branch = head_branch.as_deref().unwrap_or(initial_fallback.as_str());
-                        format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
-                    } else {
-                        format!("+refs/heads/*:refs/remotes/{remote_name}/*")
-                    };
-                    setup_origin_remote_url(
+                    setup_origin_remote_bare_url(
                         &dest.git_dir,
                         remote_url_for_config.as_str(),
                         &remote_name,
-                        &refspec,
                     )
                     .context("setting up origin remote")?;
 
@@ -1032,17 +1111,16 @@ pub fn run(mut args: Args) -> Result<()> {
             }
         } else {
             // Non-bare clone: copy refs as remote-tracking refs
-            copy_refs_as_remote(&source.git_dir, &dest.git_dir, &remote_name, args.no_tags)
-                .context("copying refs")?;
+            copy_refs_as_remote(
+                &source.git_dir,
+                &dest.git_dir,
+                &remote_name,
+                args.no_tags,
+                &args.config,
+            )
+            .context("copying refs")?;
 
-            // Set up remote "origin" in config
-            let refspec = if args.single_branch {
-                let branch = head_branch.as_deref().unwrap_or(initial_fallback.as_str());
-                format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
-            } else {
-                format!("+refs/heads/*:refs/remotes/{remote_name}/*")
-            };
-            setup_origin_remote(&dest.git_dir, &source_path, &remote_name, &refspec)
+            setup_origin_remote_bare(&dest.git_dir, &source_path, &remote_name)
                 .context("setting up origin remote")?;
 
             setup_remote_tracking_head(
@@ -1096,6 +1174,16 @@ pub fn run(mut args: Args) -> Result<()> {
     // Apply -c config values
     if !args.config.is_empty() {
         apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
+    }
+
+    if !args.bare {
+        let default_refspec = if args.single_branch {
+            let branch = head_branch.as_deref().unwrap_or(initial_fallback.as_str());
+            format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
+        } else {
+            format!("+refs/heads/*:refs/remotes/{remote_name}/*")
+        };
+        append_remote_default_fetch_line(&dest.git_dir, &remote_name, &default_refspec)?;
     }
 
     apply_submodule_reference_config_for_recursive_clone(&dest.git_dir, &args)?;
@@ -1395,13 +1483,7 @@ fn run_git_clone(args: Args) -> Result<()> {
                     &remote_tags,
                     args.no_tags,
                 )?;
-                let refspec = if args.single_branch {
-                    let branch = head_branch.as_deref().unwrap_or(initial_fallback.as_str());
-                    format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
-                } else {
-                    format!("+refs/heads/*:refs/remotes/{remote_name}/*")
-                };
-                setup_origin_remote_url(&dest.git_dir, url.as_str(), &remote_name, &refspec)
+                setup_origin_remote_bare_url(&dest.git_dir, url.as_str(), &remote_name)
                     .context("setting up origin remote")?;
 
                 setup_remote_tracking_head_from_advertisement(
@@ -1458,6 +1540,16 @@ fn run_git_clone(args: Args) -> Result<()> {
 
     if !args.config.is_empty() {
         apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
+    }
+
+    if !args.bare {
+        let default_refspec = if args.single_branch {
+            let branch = head_branch.as_deref().unwrap_or(initial_fallback.as_str());
+            format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
+        } else {
+            format!("+refs/heads/*:refs/remotes/{remote_name}/*")
+        };
+        append_remote_default_fetch_line(&dest.git_dir, &remote_name, &default_refspec)?;
     }
 
     apply_submodule_reference_config_for_recursive_clone(&dest.git_dir, &args)?;
@@ -1657,13 +1749,7 @@ fn run_ext_clone(args: Args) -> Result<()> {
                     &remote_tags,
                     args.no_tags,
                 )?;
-                let refspec = if args.single_branch {
-                    let branch = head_branch.as_deref().unwrap_or(initial_fallback.as_str());
-                    format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
-                } else {
-                    format!("+refs/heads/*:refs/remotes/{remote_name}/*")
-                };
-                setup_origin_remote_url(&dest.git_dir, url.as_str(), &remote_name, &refspec)
+                setup_origin_remote_bare_url(&dest.git_dir, url.as_str(), &remote_name)
                     .context("setting up origin remote")?;
 
                 setup_remote_tracking_head_from_advertisement(
@@ -1720,6 +1806,16 @@ fn run_ext_clone(args: Args) -> Result<()> {
 
     if !args.config.is_empty() {
         apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
+    }
+
+    if !args.bare {
+        let default_refspec = if args.single_branch {
+            let branch = head_branch.as_deref().unwrap_or(initial_fallback.as_str());
+            format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
+        } else {
+            format!("+refs/heads/*:refs/remotes/{remote_name}/*")
+        };
+        append_remote_default_fetch_line(&dest.git_dir, &remote_name, &default_refspec)?;
     }
 
     apply_submodule_reference_config_for_recursive_clone(&dest.git_dir, &args)?;
@@ -1946,13 +2042,7 @@ fn run_http_clone(args: Args) -> Result<()> {
             }
         }
 
-        let refspec = if args.single_branch {
-            let branch = args.branch.as_deref().unwrap_or(initial_fallback.as_str());
-            format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
-        } else {
-            format!("+refs/heads/*:refs/remotes/{remote_name}/*")
-        };
-        setup_origin_remote_url(&dest.git_dir, &repo_url, &remote_name, &refspec)?;
+        setup_origin_remote_bare_url(&dest.git_dir, &repo_url, &remote_name)?;
 
         let default_branch = args
             .branch
@@ -2010,6 +2100,16 @@ fn run_http_clone(args: Args) -> Result<()> {
 
     if !args.config.is_empty() {
         apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
+    }
+
+    if !args.bare {
+        let default_refspec = if args.single_branch {
+            let branch = args.branch.as_deref().unwrap_or(initial_fallback.as_str());
+            format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
+        } else {
+            format!("+refs/heads/*:refs/remotes/{remote_name}/*")
+        };
+        append_remote_default_fetch_line(&dest.git_dir, &remote_name, &default_refspec)?;
     }
 
     apply_sticky_recursive_clone(&dest.git_dir, args.recurse_submodules)?;
@@ -2468,17 +2568,10 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                         &remote_tags,
                         args.no_tags,
                     )?;
-                    let refspec = if args.single_branch {
-                        let branch = head_branch.as_deref().unwrap_or(initial_fallback.as_str());
-                        format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
-                    } else {
-                        format!("+refs/heads/*:refs/remotes/{remote_name}/*")
-                    };
-                    setup_origin_remote_url(
+                    setup_origin_remote_bare_url(
                         &dest.git_dir,
                         remote_url_for_config.as_str(),
                         &remote_name,
-                        &refspec,
                     )
                     .context("setting up origin remote")?;
 
@@ -2634,15 +2727,15 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                 }
             }
         } else {
-            copy_refs_as_remote(&source.git_dir, &dest.git_dir, &remote_name, args.no_tags)
-                .context("copying refs")?;
-            let refspec = if args.single_branch {
-                let branch = head_branch.as_deref().unwrap_or(initial_fallback.as_str());
-                format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
-            } else {
-                format!("+refs/heads/*:refs/remotes/{remote_name}/*")
-            };
-            setup_origin_remote_url(&dest.git_dir, remote_url, &remote_name, &refspec)
+            copy_refs_as_remote(
+                &source.git_dir,
+                &dest.git_dir,
+                &remote_name,
+                args.no_tags,
+                &args.config,
+            )
+            .context("copying refs")?;
+            setup_origin_remote_bare_url(&dest.git_dir, remote_url, &remote_name)
                 .context("setting up origin remote")?;
 
             setup_remote_tracking_head(
@@ -2687,6 +2780,16 @@ fn run_ssh_clone(args: Args) -> Result<()> {
 
     if !args.config.is_empty() {
         apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
+    }
+
+    if !args.bare {
+        let default_refspec = if args.single_branch {
+            let branch = head_branch.as_deref().unwrap_or(initial_fallback.as_str());
+            format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
+        } else {
+            format!("+refs/heads/*:refs/remotes/{remote_name}/*")
+        };
+        append_remote_default_fetch_line(&dest.git_dir, &remote_name, &default_refspec)?;
     }
 
     apply_submodule_reference_config_for_recursive_clone(&dest.git_dir, &args)?;
@@ -3774,50 +3877,36 @@ fn copy_refs_as_remote(
     dst_git_dir: &Path,
     remote_name: &str,
     no_tags: bool,
+    clone_c_entries: &[String],
 ) -> Result<()> {
-    // Use the library ref-listing API which handles both files and reftable
-    let heads = grit_lib::refs::list_refs(src_git_dir, "refs/heads/")
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    for (refname, oid) in &heads {
-        let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
-        let dst_name = format!("refs/remotes/{remote_name}/{branch}");
-        clone_write_direct_ref(dst_git_dir, &dst_name, &oid.to_hex())?;
+    let fetch_cli: Vec<String> =
+        clone_context_fetch_refspecs(dst_git_dir, remote_name, clone_c_entries)
+            .into_iter()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
+            .collect();
+    let fetch_key = format!("remote.{remote_name}.fetch");
+    let mut tmp_cfg = ConfigSet::new();
+    for line in &fetch_cli {
+        let _ = tmp_cfg.add_command_override(&fetch_key, line);
+    }
+    let mut fetch_specs = collect_refspecs(&tmp_cfg, &fetch_key);
+    if fetch_specs.is_empty() {
+        fetch_specs = default_fetch_refspecs(remote_name);
     }
 
-    if !no_tags {
-        let tags = grit_lib::refs::list_refs(src_git_dir, "refs/tags/")
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        for (refname, oid) in &tags {
-            clone_write_direct_ref(dst_git_dir, refname, &oid.to_hex())?;
+    // Map every source ref through configured fetch refspecs (plus the default heads mapping).
+    // Custom refspecs may pull in namespaces outside `refs/heads/` (e.g. `refs/grab/*`, `t5611`).
+    let all_refs =
+        grit_lib::refs::list_refs(src_git_dir, "refs/").map_err(|e| anyhow::anyhow!("{e}"))?;
+    for (refname, oid) in &all_refs {
+        if no_tags && refname.starts_with("refs/tags/") {
+            continue;
         }
-    }
-
-    // Also handle packed-refs if present (files backend only)
-    if !grit_lib::reftable::is_reftable_repo(src_git_dir) {
-        let packed_refs = src_git_dir.join("packed-refs");
-        if packed_refs.is_file() {
-            let content = fs::read_to_string(&packed_refs)?;
-            for line in content.lines() {
-                if line.is_empty() || line.starts_with('#') || line.starts_with('^') {
-                    continue;
-                }
-                let mut parts = line.split_whitespace();
-                let Some(oid) = parts.next() else { continue };
-                let Some(refname) = parts.next() else {
-                    continue;
-                };
-
-                if let Some(branch) = refname.strip_prefix("refs/heads/") {
-                    let dst_name = format!("refs/remotes/{remote_name}/{branch}");
-                    if !clone_ref_file_exists(dst_git_dir, &dst_name) {
-                        clone_write_direct_ref(dst_git_dir, &dst_name, oid)?;
-                    }
-                } else if !no_tags && refname.starts_with("refs/tags/") {
-                    if !clone_ref_file_exists(dst_git_dir, refname) {
-                        clone_write_direct_ref(dst_git_dir, refname, oid)?;
-                    }
-                }
-            }
+        if let Some(dst_name) = map_ref_through_refspecs(refname, &fetch_specs) {
+            clone_write_direct_ref(dst_git_dir, &dst_name, &oid.to_hex())?;
+        } else if refname.starts_with("refs/tags/") {
+            clone_write_direct_ref(dst_git_dir, refname, &oid.to_hex())?;
         }
     }
 
@@ -4495,7 +4584,7 @@ fn checkout_head(repo: &Repository) -> Result<()> {
     let commit = parse_commit(&obj.data).context("parsing HEAD commit")?;
 
     // Checkout the tree recursively
-    let work_units = checkout_tree(repo, &commit.tree, work_tree, "")?;
+    let work_units = checkout_tree(repo, &commit.tree, work_tree, "", true)?;
     trace2_emit_checkout_parallel_workers(checkout_parallel_worker_spawns(repo, work_units));
 
     // Write the index
@@ -4512,7 +4601,9 @@ fn checkout_tree(
     tree_oid: &ObjectId,
     work_tree: &Path,
     prefix: &str,
+    smudge_worktree: bool,
 ) -> Result<usize> {
+    use grit_lib::index::Index;
     use grit_lib::objects::parse_tree;
 
     let odb = &repo.odb;
@@ -4543,7 +4634,7 @@ fn checkout_tree(
             continue;
         } else if is_tree {
             fs::create_dir_all(&full_path)?;
-            work_units += checkout_tree(repo, &entry.oid, work_tree, &path)?;
+            work_units += checkout_tree(repo, &entry.oid, work_tree, &path, smudge_worktree)?;
         } else {
             // Regular file or symlink
             if let Some(parent) = full_path.parent() {
@@ -4561,7 +4652,6 @@ fn checkout_tree(
                 .read(&entry.oid)
                 .with_context(|| format!("reading blob for {path}"))?;
 
-            use grit_lib::index::MODE_SYMLINK;
             if entry.mode == MODE_SYMLINK {
                 #[cfg(unix)]
                 {
@@ -4582,7 +4672,28 @@ fn checkout_tree(
                     fs::write(&full_path, &blob.data)?;
                 }
             } else {
-                fs::write(&full_path, &blob.data)?;
+                let bytes = if smudge_worktree {
+                    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+                    let conv = crlf::ConversionConfig::from_config(&config);
+                    let idx = Index::new();
+                    let attrs =
+                        crlf::load_gitattributes_for_checkout(work_tree, path.as_str(), &idx, odb);
+                    let file_attrs = crlf::get_file_attrs(&attrs, path.as_str(), false, &config);
+                    let oid_hex = entry.oid.to_hex();
+                    let smudge_meta = filter_process::smudge_meta_blob_only(&oid_hex);
+                    crlf::convert_to_worktree(
+                        &blob.data,
+                        path.as_str(),
+                        &conv,
+                        &file_attrs,
+                        Some(&oid_hex),
+                        Some(&smudge_meta),
+                    )
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+                } else {
+                    blob.data.clone()
+                };
+                fs::write(&full_path, &bytes)?;
                 // Set executable bit if mode is 100755
                 #[cfg(unix)]
                 if entry.mode == 0o100755 {
