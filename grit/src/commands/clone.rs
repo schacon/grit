@@ -10,6 +10,7 @@ use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
 use grit_lib::config::{global_config_paths_pub, ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::zero_oid;
 use grit_lib::hooks::{run_hook, HookResult};
+use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::promisor::{read_promisor_missing_oids, repo_treats_promisor_packs};
 use grit_lib::refs;
@@ -1039,8 +1040,12 @@ pub fn run(mut args: Args) -> Result<()> {
                     .context("setting up mirror remote")?;
             } else {
                 copy_refs_direct(&source.git_dir, &dest.git_dir).context("copying refs")?;
-                setup_origin_remote_bare(&dest.git_dir, &source_path, &remote_name)
-                    .context("setting up origin remote")?;
+                setup_origin_remote_bare_url(
+                    &dest.git_dir,
+                    remote_url_for_config.as_str(),
+                    &remote_name,
+                )
+                .context("setting up origin remote")?;
                 if let Some(ref branch) = head_branch {
                     fs::write(
                         dest.git_dir.join("HEAD"),
@@ -1062,9 +1067,13 @@ pub fn run(mut args: Args) -> Result<()> {
             } else {
                 format!("+refs/heads/*:refs/remotes/{remote_name}/*")
             };
-            setup_origin_remote(&dest.git_dir, &source_path, &remote_name, &refspec)
-                .context("setting up origin remote")?;
-
+            setup_origin_remote_url(
+                &dest.git_dir,
+                remote_url_for_config.as_str(),
+                &remote_name,
+                &refspec,
+            )
+            .context("setting up origin remote")?;
             setup_remote_tracking_head(
                 &dest.git_dir,
                 &remote_name,
@@ -1206,6 +1215,9 @@ pub fn run(mut args: Args) -> Result<()> {
     if let Some(depth) = args.depth {
         if depth > 0 {
             write_shallow_boundary(&dest, depth)?;
+            if is_file_url && !args.no_tags {
+                prune_shallow_tags_not_reachable_from_boundaries(&source.git_dir, &dest.git_dir)?;
+            }
         }
     }
 
@@ -3967,6 +3979,8 @@ fn copy_refs_as_remote(
     remote_name: &str,
     no_tags: bool,
 ) -> Result<()> {
+    let dst_odb = grit_lib::odb::Odb::new(&dst_git_dir.join("objects"));
+
     // Use the library ref-listing API which handles both files and reftable
     let heads = grit_lib::refs::list_refs(src_git_dir, "refs/heads/")
         .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -3980,6 +3994,9 @@ fn copy_refs_as_remote(
         let tags = grit_lib::refs::list_refs(src_git_dir, "refs/tags/")
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         for (refname, oid) in &tags {
+            if !dst_odb.exists(oid) {
+                continue;
+            }
             clone_write_direct_ref(dst_git_dir, refname, &oid.to_hex())?;
         }
     }
@@ -4005,6 +4022,12 @@ fn copy_refs_as_remote(
                         clone_write_direct_ref(dst_git_dir, &dst_name, oid)?;
                     }
                 } else if !no_tags && refname.starts_with("refs/tags/") {
+                    let Ok(oid_parsed) = oid.parse::<grit_lib::objects::ObjectId>() else {
+                        continue;
+                    };
+                    if !dst_odb.exists(&oid_parsed) {
+                        continue;
+                    }
                     if !clone_ref_file_exists(dst_git_dir, refname) {
                         clone_write_direct_ref(dst_git_dir, refname, oid)?;
                     }
@@ -4013,6 +4036,57 @@ fn copy_refs_as_remote(
         }
     }
 
+    Ok(())
+}
+
+/// In shallow clones, keep only tags reachable from the shallow boundary commits.
+///
+/// Git's `clone --depth=<n>` does not copy arbitrary old tags that point to commits
+/// outside the shallow slice. Prune such tags after ref copy so follow-up pushes
+/// produce the same object enumeration counts as Git.
+fn prune_shallow_tags_not_reachable_from_boundaries(
+    src_git_dir: &Path,
+    dst_git_dir: &Path,
+) -> Result<()> {
+    let shallow_path = dst_git_dir.join("shallow");
+    let Ok(contents) = fs::read_to_string(&shallow_path) else {
+        return Ok(());
+    };
+    let boundaries: Vec<ObjectId> = contents
+        .lines()
+        .filter_map(|line| line.trim().parse::<ObjectId>().ok())
+        .collect();
+    if boundaries.is_empty() {
+        return Ok(());
+    }
+
+    let src_repo = Repository::open(src_git_dir, None)
+        .or_else(|_| Repository::open(src_git_dir, src_git_dir.parent()))
+        .with_context(|| format!("opening source repository at {}", src_git_dir.display()))?;
+    let dst_repo = Repository::open(dst_git_dir, None)
+        .or_else(|_| Repository::open(dst_git_dir, dst_git_dir.parent()))
+        .with_context(|| {
+            format!(
+                "opening destination repository at {}",
+                dst_git_dir.display()
+            )
+        })?;
+    let tags = refs::list_refs(dst_git_dir, "refs/tags/").unwrap_or_default();
+    for (refname, tag_oid) in tags {
+        let target_oid = match dst_repo.odb.read(&tag_oid) {
+            Ok(obj) if obj.kind == ObjectKind::Tag => {
+                parse_tag(&obj.data).map(|t| t.object).unwrap_or(tag_oid)
+            }
+            _ => tag_oid,
+        };
+        let keep = boundaries.iter().any(|boundary| {
+            *boundary == target_oid
+                || is_ancestor(&src_repo, *boundary, target_oid).unwrap_or(false)
+        });
+        if !keep {
+            let _ = refs::delete_ref(dst_git_dir, &refname);
+        }
+    }
     Ok(())
 }
 

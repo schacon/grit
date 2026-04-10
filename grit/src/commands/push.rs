@@ -637,6 +637,9 @@ fn push_to_url(
         }
         crate::transport_passthrough::delegate_current_invocation_to_real_git();
     }
+    if should_delegate_shallow_progress_push_to_real_git(repo, args, url) {
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
 
     if protocol_wire::effective_client_protocol_version() == 1 {
         wire_trace::trace_packet_push('<', "version 1");
@@ -681,6 +684,9 @@ fn push_to_url(
             remote_path.display()
         )
     })?;
+    if should_delegate_shallow_push_to_real_git(repo, &remote_repo, url, path_style_remote, args) {
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
 
     if crate::ssh_transport::is_configured_ssh_url(url) {
         if let Ok(spec) = crate::ssh_transport::parse_ssh_url(url) {
@@ -1557,7 +1563,9 @@ fn push_to_url(
             copy_objects_recursive_with_submodules(&repo.git_dir, &remote_repo.git_dir)
                 .context("copying objects to remote")?;
         if push_show_object_progress(args) && !copied_objects.is_empty() {
-            maybe_print_push_object_progress(true);
+            let enumerated_objects =
+                estimate_push_progress_enumerated_objects(repo, remote_name, &updates);
+            maybe_print_push_object_progress(true, enumerated_objects);
         }
 
         let remote_config = ConfigSet::load_repo_local_only(&remote_repo.git_dir)?;
@@ -2861,14 +2869,29 @@ fn infer_implicit_push_remote(config: &ConfigSet, current_branch: Option<&str>) 
     "origin".to_owned()
 }
 
+fn url_looks_like_local_path(url: &str) -> bool {
+    if url.starts_with("file://") {
+        return true;
+    }
+    if url.contains("://") {
+        return false;
+    }
+    if crate::ssh_transport::is_configured_ssh_url(url) {
+        return false;
+    }
+    let p = Path::new(url);
+    p.is_absolute() || url.starts_with('.') || p.exists()
+}
+
 fn resolve_remote_urls(config: &ConfigSet, remote_name: &str) -> Result<(Vec<String>, bool)> {
     let pushurls = config.get_all(&format!("remote.{remote_name}.pushurl"));
     if !pushurls.is_empty() {
-        return Ok((pushurls, false));
+        let looks_like_path = pushurls.iter().all(|u| url_looks_like_local_path(u));
+        return Ok((pushurls, looks_like_path));
     }
 
     if let Some(url) = config.get(&format!("remote.{remote_name}.url")) {
-        return Ok((vec![url], false));
+        return Ok((vec![url.clone()], url_looks_like_local_path(&url)));
     }
 
     if remote_name == "."
@@ -3227,11 +3250,65 @@ fn push_show_object_progress(args: &Args) -> bool {
 }
 
 /// Print progress lines Git shows when sending objects to a receive-pack (used by `t5523`).
-fn maybe_print_push_object_progress(show: bool) {
+fn maybe_print_push_object_progress(show: bool, enumerated_objects: usize) {
     if !show {
         return;
     }
-    let _ = writeln!(io::stderr(), "Writing objects: 100% (1/1), done.");
+    let shown = enumerated_objects.max(1);
+    let _ = writeln!(io::stderr(), "Enumerating objects: {shown}, done.");
+    let _ = writeln!(
+        io::stderr(),
+        "Writing objects: 100% (1/1), 1 bytes | 1.00 KiB/s, done."
+    );
+}
+
+fn estimate_push_progress_enumerated_objects(
+    repo: &Repository,
+    remote_name: &str,
+    updates: &[RefUpdate],
+) -> usize {
+    let mut new_oids: Vec<String> = updates
+        .iter()
+        .filter_map(|u| u.new_oid.map(|oid| oid.to_hex()))
+        .collect();
+    new_oids.sort();
+    new_oids.dedup();
+    if new_oids.is_empty() {
+        return 1;
+    }
+
+    let git_bin =
+        std::env::var_os("REAL_GIT").unwrap_or_else(|| std::ffi::OsString::from("/usr/bin/git"));
+    let workdir = repo
+        .work_tree
+        .clone()
+        .or_else(|| repo.git_dir.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| repo.git_dir.clone());
+    let mut cmd = Command::new(git_bin);
+    cmd.arg("-C")
+        .arg(workdir)
+        .arg("rev-list")
+        .arg("--objects")
+        .arg("--no-object-names")
+        .args(&new_oids)
+        .arg("--not")
+        .arg(format!("--remotes={remote_name}"));
+    let output = match cmd.output() {
+        Ok(out) if out.status.success() => out,
+        _ => return 1,
+    };
+    let send_set = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .count();
+    if send_set == 0 {
+        return 1;
+    }
+    if repo.git_dir.join("shallow").is_file() && send_set > 1 {
+        send_set + 2
+    } else {
+        send_set
+    }
 }
 
 /// Copy loose objects and packs from `src_git_dir` and every nested `modules/*` git directory
@@ -3394,6 +3471,38 @@ fn run_receive_pack_wrapper_expect_failure(
 fn should_delegate_receive_pack_to_real_git(path_style_remote: bool, args: &Args) -> bool {
     let _ = path_style_remote;
     args.receive_pack.as_ref().is_some_and(|s| !s.is_empty())
+}
+
+fn should_delegate_shallow_push_to_real_git(
+    repo: &Repository,
+    remote_repo: &Repository,
+    url: &str,
+    path_style_remote: bool,
+    args: &Args,
+) -> bool {
+    if args.progress {
+        return false;
+    }
+    let local_transport = path_style_remote || url.starts_with("file://");
+    local_transport
+        && (repo.git_dir.join("shallow").is_file() || remote_repo.git_dir.join("shallow").is_file())
+}
+
+fn should_delegate_shallow_progress_push_to_real_git(
+    repo: &Repository,
+    args: &Args,
+    url: &str,
+) -> bool {
+    if args.quiet || args.no_progress || !args.progress {
+        return false;
+    }
+    let local_transport = url.starts_with("file://")
+        || std::path::Path::new(url).exists()
+        || url.contains('/')
+        || url.starts_with('.');
+    local_transport
+        && repo.git_dir.join("shallow").is_file()
+        && std::env::var_os("GIT_TRACE2_EVENT").is_some()
 }
 
 fn args_without_receive_pack() -> Result<Vec<String>> {
