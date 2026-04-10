@@ -484,10 +484,18 @@ pub(crate) fn stage_pathspecs_for_commit(
 
     let mut matched_paths = HashSet::new();
 
+    let reject_skip_worktree = |idx: &Index, path: &[u8]| -> Result<()> {
+        if idx.get(path, 0).is_some_and(|e| e.skip_worktree()) {
+            bail!("cannot update skip-worktree entry");
+        }
+        Ok(())
+    };
+
     for spec in pathspecs {
         let resolved = crate::pathspec::resolve_pathspec(spec, work_tree, prefix.as_deref());
 
         if !crate::pathspec::has_glob_chars(&resolved) {
+            reject_skip_worktree(&index, resolved.as_bytes())?;
             let abs_path = work_tree.join(&resolved);
             let meta = match fs::symlink_metadata(&abs_path) {
                 Ok(m) => m,
@@ -516,6 +524,7 @@ pub(crate) fn stage_pathspecs_for_commit(
                     add_cfg.precompose_unicode,
                 )?;
                 for (rel, file_abs) in rels {
+                    reject_skip_worktree(&index, rel.as_bytes())?;
                     stage_file(
                         odb, &mut index, work_tree, &rel, &file_abs, repo, &ctx, add_cfg,
                     )?;
@@ -580,6 +589,7 @@ pub(crate) fn stage_pathspecs_for_commit(
         }
 
         for rel in matched_rels {
+            reject_skip_worktree(&index, rel.as_bytes())?;
             let abs_path = work_tree.join(&rel);
             if fs::symlink_metadata(&abs_path).is_ok() {
                 stage_file(
