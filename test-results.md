@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-10 (t3405 / rebase malformed messages)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t3405-rebase-malformed.sh`: 5/5 passed
+
 **2026-04-10 (t3416 / rebase --onto A...B and --keep-base)**
 
 - `cargo test -p grit-lib --lib`: 160 passed
