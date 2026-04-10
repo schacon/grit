@@ -11,6 +11,7 @@ use grit_lib::diff::{
     DiffStatus,
 };
 use grit_lib::error::Error;
+use grit_lib::git_date::parse::parse_date;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::index::Index;
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
@@ -3216,6 +3217,11 @@ pub fn parse_date_to_git_timestamp(date_str: &str) -> Option<String> {
                 return Some(format!("{} {}", ep_parts[0], ep_parts[1]));
             }
         }
+    }
+
+    // Loose Git dates without explicit zone (e.g. `2022-02-01 00:00` from GIT_COMMITTER_DATE).
+    if let Ok(canonical) = parse_date(trimmed) {
+        return Some(canonical);
     }
 
     None
