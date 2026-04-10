@@ -47,7 +47,17 @@ pub fn combined_diff_paths(odb: &Odb, commit_tree: &ObjectId, parents: &[ObjectI
     if common.is_empty() {
         return Vec::new();
     }
-    paths_in_tree_order(odb, commit_tree, "", &common)
+    let mut ordered = paths_in_tree_order(odb, commit_tree, "", &common);
+    // Paths removed from the merge result are not present in `commit_tree`, so a merge-tree walk
+    // alone would miss them. Git still lists them in combined diff when every parent changed
+    // (`t4057-diff-combined-paths` merge + `git rm` amend).
+    if ordered.len() < common.len() {
+        let seen: std::collections::HashSet<String> = ordered.iter().cloned().collect();
+        let mut rest: Vec<String> = common.difference(&seen).cloned().collect();
+        rest.sort();
+        ordered.extend(rest);
+    }
+    ordered
 }
 
 /// All blob paths in `tree_oid`, depth-first in Git tree entry order (for `diff` / `log`
