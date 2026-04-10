@@ -22,6 +22,7 @@ use grit_lib::diff::{diff_index_to_worktree, zero_oid};
 use grit_lib::filter_process;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
+use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::merge_trees::{
     merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation,
@@ -543,7 +544,9 @@ pub fn run(mut args: Args) -> Result<()> {
     // After peeling `-f` / `--force` from `rest` (e.g. `switch --discard-changes` → `-f`).
     let branch_merge_wanted = effective_branch_merge_wants_real_merge(&merge_cli, args.merge);
     let path_merge_wanted = effective_path_checkout_merge(&merge_cli, args.merge);
-    let switch_force = args.force || branch_merge_wanted;
+    // `-m` / `--merge` must not be passed through as `force`: it triggered `switch_to_tree(..., force=true)`
+    // inside `merge_branch_working_tree`, skipping the three-way merge (`checkout -m`, t7102-reset).
+    let switch_force = args.force;
 
     // `git switch -C branch -q` / `checkout -b x -q` pass `-q` as a trailing (or middle) positional.
     // Remove every `-q` / `--quiet` from `rest` so they are never parsed as a start-point or path.
@@ -1476,10 +1479,9 @@ fn merge_branch_working_tree(
     };
 
     let new_tree_oid = commit_to_tree(repo, new_commit_oid)?;
-    match switch_to_tree(repo, head, &new_tree_oid, false, recurse_submodules) {
-        Ok(()) => return Ok(()),
-        Err(_) => {}
-    }
+    // `checkout -m` / branch merge checkout must always run the three-way merge path.
+    // A clean `switch_to_tree` here would skip recording unmerged index stages (Git still
+    // leaves conflict stages for `checkout -m` when the working tree differs — t7102-reset).
 
     let old_tree_oid = commit_to_tree(repo, &old_oid)?;
     if index_has_staged_changes_vs_tree(repo, &index_before, &old_tree_oid)? {
@@ -1532,11 +1534,17 @@ fn merge_branch_working_tree(
     let work_tree_oid = write_tree_from_index(&repo.odb, &index_for_work_tree, "")
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    // Match Git `merge_ort_nonrecursive`: base = old branch, head = destination (`new`), merge =
-    // local work tree. In `merge_trees_three_way` that is `(base, ours, theirs) = (old, new, work)`.
+    // `checkout -m` matches Git: three-way merge with **merge base** of the two branch tips,
+    // `ours` = destination branch tree, `theirs` = working tree tree (from refreshed index).
+    let base_commit_oid = merge_bases_first_vs_rest(repo, old_oid, &[*new_commit_oid])
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("could not find merge base for checkout merge"))?;
+    let base_tree_oid = commit_to_tree(repo, &base_commit_oid)?;
     let merged = merge_trees_three_way(
         repo,
-        old_tree_oid,
+        base_tree_oid,
         new_tree_oid,
         work_tree_oid,
         MergeFavor::None,
@@ -1545,7 +1553,18 @@ fn merge_branch_working_tree(
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    switch_to_tree(repo, head, &new_tree_oid, true, recurse_submodules)?;
+    // Materialize the destination tree in the work tree **without** writing the index yet.
+    // `switch_to_tree` always persists a clean index from `new_tree_oid`, which would erase
+    // unmerged stages we are about to write (`checkout -m` / t7102-reset).
+    let target_entries = tree_to_flat_entries(repo, &new_tree_oid, "")?;
+    let mut dest_index = Index::new();
+    dest_index.entries = target_entries;
+    dest_index.sort();
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut dest_index);
+    checkout_index_to_worktree(repo, &index_before, &dest_index, work_tree, true)?;
+    if recurse_submodules {
+        recurse_submodules_after_checkout(repo)?;
+    }
 
     let mut merged_index = merged.index;
     // Compare against the pre-merge index (still reflects the branch we came from), not the
@@ -1739,6 +1758,7 @@ fn switch_branch(
             label_theirs: TheirsConflictLabel::Fixed("local"),
             label_base: old_label.as_str(),
             style,
+            checkout_merge: true,
         };
 
         if branch_merge && !already_at_target {

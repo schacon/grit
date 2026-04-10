@@ -13,6 +13,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{HashMap, HashSet};
+use std::io::Write as _;
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
@@ -126,12 +127,17 @@ pub struct Args {
     pub patch: bool,
 
     /// Remaining positional arguments: `[<commit>] [--] [<path>…]`.
-    #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub rest: Vec<String>,
 
     /// When true, `reset --merge` does not remove `CHERRY_PICK_HEAD` / `REVERT_HEAD` (sequencer abort).
     #[arg(skip)]
     pub skip_sequencer_head_cleanup: bool,
+
+    /// Set when the raw argv contained `--` / `--end-of-options` before clap parsing (clap may drop
+    /// `--` from `rest` with `trailing_var_arg`; needed for `git reset -- <path>` — t7102-reset).
+    #[arg(skip)]
+    pub raw_argv_had_path_separator: bool,
 }
 
 /// Pre-validate raw arguments before clap parsing, catching Git-specific
@@ -226,17 +232,39 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // Split positional args into (commit_spec, paths).
-    let (commit_spec, paths) = split_commit_and_paths(&repo, &args.rest);
+    let (commit_spec, paths, mut paths_explicit) = split_commit_and_paths(&repo, &args.rest);
+    paths_explicit |= args.raw_argv_had_path_separator;
 
     if !paths.is_empty() {
         // Pathspec reset: only update index entries, HEAD stays put.
         if mode != ResetMode::Mixed {
             bail!("Cannot do --{} reset with paths.", mode.name());
         }
+        if !paths_explicit
+            && paths.len() == 1
+            && commit_spec == "HEAD"
+            && args.rest.len() == 1
+            && reset_single_token_is_ambiguous_index_blob(&repo, &paths[0])
+        {
+            bail!(
+                "fatal: ambiguous argument '{}': unknown revision or path not in the working tree.\n\
+Use '--' to separate paths from revisions, like this:\n\
+'git <command> [<revision>...] -- [<file>...]'",
+                paths[0]
+            );
+        }
         return reset_paths(&repo, &commit_spec, &paths, args.quiet, args.intent_to_add);
     }
 
-    reset_commit(&repo, &commit_spec, mode, args.quiet, &mut args)
+    reset_commit(
+        &repo,
+        &commit_spec,
+        mode,
+        args.quiet,
+        args.refresh,
+        args.no_refresh,
+        &mut args,
+    )
 }
 
 /// Parse the reset mode from the flag combination.
@@ -252,15 +280,18 @@ fn parse_mode(args: &Args) -> Result<ResetMode> {
     }
 }
 
-/// Split positional arguments into `(commit_spec, paths)`.
+/// Split positional arguments into `(commit_spec, paths, paths_explicit)`.
+///
+/// `paths_explicit` is true when paths were separated from the revision by `--` (or
+/// `--end-of-options`), matching Git's disambiguation rules (`t7102-reset`).
 ///
 /// Handles the `--` end-of-options separator explicitly (clap passes it
 /// through when `trailing_var_arg` is in use).  If the first argument
 /// resolves as a commit-ish it is used as the commit spec and the rest are
 /// paths; otherwise `"HEAD"` is assumed and all arguments are paths.
-fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<String>) {
+fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<String>, bool) {
     if rest.is_empty() {
-        return ("HEAD".to_owned(), vec![]);
+        return ("HEAD".to_owned(), vec![], false);
     }
 
     // Skip reset mode / misc flags that can appear in the trailing var-arg slice
@@ -290,7 +321,7 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
     }
     let rest = if i > 0 { &rest[i..] } else { rest };
     if rest.is_empty() {
-        return ("HEAD".to_owned(), vec![]);
+        return ("HEAD".to_owned(), vec![], false);
     }
 
     // Detect an explicit `--` or `--end-of-options` separator.
@@ -305,7 +336,7 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
             rest[0].clone()
         };
         let paths = rest[sep + 1..].to_vec();
-        return (commit_spec, paths);
+        return (commit_spec, paths, true);
     }
 
     let first = &rest[0];
@@ -344,13 +375,45 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
             })
             .cloned()
             .collect();
-        (spec, paths)
+        (spec, paths, false)
     } else {
-        ("HEAD".to_owned(), rest.to_vec())
+        ("HEAD".to_owned(), rest.to_vec(), false)
     }
 }
 
-/// If `first` names a commit for `git reset`, return the spec to pass to rev-parse.
+/// `git reset <single>` when the token resolves to a staged blob OID (index DWIM) but the path is
+/// missing from the work tree must fail unless `--` was used (`t7102-reset` disambiguation).
+fn reset_single_token_is_ambiguous_index_blob(repo: &Repository, token: &str) -> bool {
+    if token == "HEAD" || token == "@" {
+        return false;
+    }
+    if resolve_revision_as_commit(repo, token).is_ok() {
+        return false;
+    }
+    if !token.contains('/') && !token.starts_with('.') {
+        let full = format!("refs/heads/{token}");
+        if resolve_ref(&repo.git_dir, &full).is_ok()
+            && resolve_revision_as_commit(repo, &full).is_ok()
+        {
+            return false;
+        }
+    }
+    let Ok(oid) = resolve_revision(repo, token) else {
+        return false;
+    };
+    let Ok(obj) = repo.odb.read(&oid) else {
+        return false;
+    };
+    if obj.kind != ObjectKind::Blob {
+        return false;
+    }
+    let Some(wt) = repo.work_tree.as_deref() else {
+        return false;
+    };
+    !wt.join(token).symlink_metadata().is_ok()
+}
+
+/// If `first` names a tree-ish for `git reset` (commit, tag, `HEAD^^{tree}`, …), return the spec.
 fn resolve_reset_first_arg_as_commit(repo: &Repository, first: &str) -> Option<String> {
     // Always treat `HEAD` / `@` as a tree-ish so `git reset HEAD <path>` splits into
     // commit `HEAD` and pathspecs — not pathspecs `HEAD` and `<path>` (t3910).
@@ -359,6 +422,13 @@ fn resolve_reset_first_arg_as_commit(repo: &Repository, first: &str) -> Option<S
     }
     if resolve_revision_as_commit(repo, first).is_ok() {
         return Some(first.to_owned());
+    }
+    // `HEAD^^{tree}` and similar peel to a tree but not a commit — still a valid reset treeish
+    // (`t7102-reset`).
+    if let Ok(oid) = resolve_revision(repo, first) {
+        if tree_oid_for_treeish(repo, oid).is_ok() {
+            return Some(first.to_owned());
+        }
     }
     if first.contains('/') || first.starts_with('.') {
         return None;
@@ -866,6 +936,28 @@ fn reset_patch(repo: &Repository, rest: &[String]) -> Result<()> {
 /// Reset specific index entries to match the given commit's tree.
 ///
 /// HEAD is not modified.
+fn cwd_prefix_relative_to_worktree(work_tree: &Path, cwd: &Path) -> Result<String> {
+    let rel = cwd.strip_prefix(work_tree).with_context(|| {
+        format!(
+            "current directory '{}' is outside repository work tree '{}'",
+            cwd.display(),
+            work_tree.display()
+        )
+    })?;
+    if rel.as_os_str().is_empty() {
+        return Ok(String::new());
+    }
+    let mut s = rel.to_string_lossy().into_owned().replace('\\', "/");
+    while s.ends_with('/') {
+        s.pop();
+    }
+    if s.is_empty() {
+        Ok(String::new())
+    } else {
+        Ok(format!("{s}/"))
+    }
+}
+
 fn path_matches_index_or_tree_key(path_str: &str, key: &[u8], precompose_unicode: bool) -> bool {
     if path_str.as_bytes() == key {
         return true;
@@ -887,23 +979,25 @@ fn reset_paths(
     if repo.work_tree.is_none() {
         bail!("fatal: mixed reset is not allowed in a bare repository");
     }
-    // On an unborn branch, the tree is empty (no commit exists yet).
+    // On an unborn branch, the tree is empty (no commit exists yet). Otherwise accept any
+    // tree-ish (`HEAD^^{tree}`) like Git (`t7102-reset`).
     let tree_entries = match resolve_to_commit(repo, commit_spec) {
         Ok(commit_oid) => {
             let tree_oid = commit_to_tree(repo, &commit_oid)?;
             tree_to_flat_entries(repo, &tree_oid, "")?
         }
-        Err(_) => {
-            // Check if HEAD is unborn
+        Err(commit_err) => {
             let head = resolve_head(&repo.git_dir)?;
             if head.oid().is_none() && commit_spec == "HEAD" {
-                Vec::new() // empty tree
+                Vec::new()
             } else {
-                bail!(
-                    "unknown revision: '{}': object not found: {}",
-                    commit_spec,
-                    commit_spec
-                );
+                match resolve_revision(repo, commit_spec) {
+                    Ok(oid) => {
+                        let tree_oid = tree_oid_for_treeish(repo, oid)?;
+                        tree_to_flat_entries(repo, &tree_oid, "")?
+                    }
+                    Err(_) => return Err(commit_err),
+                }
             }
         }
     };
@@ -918,21 +1012,59 @@ fn reset_paths(
     let mut index = repo.load_index_at(&index_path).context("loading index")?;
     let precompose_unicode =
         grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir));
+    let work_tree = repo.work_tree.as_deref().expect("work tree checked above");
+    let cwd = std::env::current_dir().context("resolving cwd")?;
+    let cwd_prefix = cwd_prefix_relative_to_worktree(work_tree, &cwd)?;
+    let prefix_opt = (!cwd_prefix.is_empty()).then_some(cwd_prefix.as_str());
 
-    for path_str in paths {
+    let mut expanded_paths: Vec<String> = Vec::new();
+    for raw in paths {
+        let resolved = crate::pathspec::resolve_pathspec(raw, work_tree, prefix_opt);
+        if raw == "." && resolved.is_empty() {
+            let mut seen: HashSet<Vec<u8>> = HashSet::new();
+            for k in tree_map.keys() {
+                seen.insert(k.clone());
+            }
+            for e in &index.entries {
+                if e.stage() == 0 {
+                    seen.insert(e.path.clone());
+                }
+            }
+            for k in seen {
+                expanded_paths.push(String::from_utf8_lossy(&k).into_owned());
+            }
+            continue;
+        }
+        if resolved.is_empty() {
+            bail!("pathspec '{raw}' did not match any file(s) known to git");
+        }
+        expanded_paths.push(resolved);
+    }
+
+    for path_str in expanded_paths {
         let path_bytes = path_str.as_bytes().to_vec();
 
         let tree_key_bytes = tree_map
             .keys()
-            .find(|k| path_matches_index_or_tree_key(path_str, k, precompose_unicode))
+            .find(|k| path_matches_index_or_tree_key(&path_str, k, precompose_unicode))
             .cloned();
         let in_tree = tree_key_bytes.is_some();
         let index_match = index.entries.iter().find(|e| {
-            e.stage() == 0 && path_matches_index_or_tree_key(path_str, &e.path, precompose_unicode)
+            e.stage() == 0 && path_matches_index_or_tree_key(&path_str, &e.path, precompose_unicode)
         });
         let in_index = index_match.is_some();
         if !in_tree && !in_index {
             bail!("pathspec '{path_str}' did not match any file(s) known to git");
+        }
+
+        if !intent_to_add {
+            if let (Some(tk), Some(ie)) = (&tree_key_bytes, index_match) {
+                if let Some(te) = tree_map.get(tk) {
+                    if te.oid == ie.oid && te.mode == ie.mode {
+                        continue;
+                    }
+                }
+            }
         }
 
         let resolved_bytes = index_match
@@ -986,12 +1118,56 @@ fn reset_paths(
     Ok(())
 }
 
+fn mixed_reset_should_refresh_index(no_refresh: bool, refresh: bool, repo: &Repository) -> bool {
+    if no_refresh {
+        return false;
+    }
+    if refresh {
+        return true;
+    }
+    let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
+    match config.as_ref().and_then(|c| c.get("reset.refresh")) {
+        Some(v) => {
+            let t = v.trim();
+            !(t.eq_ignore_ascii_case("false") || t == "0" || t.eq_ignore_ascii_case("no"))
+        }
+        None => true,
+    }
+}
+
+fn refresh_stage0_index_stats_from_worktree(index: &mut Index, work_tree: &Path) {
+    for ie in &mut index.entries {
+        if ie.stage() != 0 {
+            continue;
+        }
+        if ie.mode == MODE_GITLINK || ie.mode == 0o040000 {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&ie.path);
+        let abs = work_tree.join(path_str.as_ref());
+        if let Ok(meta) = std::fs::symlink_metadata(&abs) {
+            use std::os::unix::fs::MetadataExt as _;
+            ie.ctime_sec = meta.ctime() as u32;
+            ie.ctime_nsec = meta.ctime_nsec() as u32;
+            ie.mtime_sec = meta.mtime() as u32;
+            ie.mtime_nsec = meta.mtime_nsec() as u32;
+            ie.dev = meta.dev() as u32;
+            ie.ino = meta.ino() as u32;
+            ie.uid = meta.uid();
+            ie.gid = meta.gid();
+            ie.size = meta.len() as u32;
+        }
+    }
+}
+
 /// Reset HEAD (and optionally index + working tree) to the given commit.
 fn reset_commit(
     repo: &Repository,
     commit_spec: &str,
     mode: ResetMode,
     quiet: bool,
+    refresh: bool,
+    no_refresh: bool,
     extra: &mut Args,
 ) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
@@ -1122,6 +1298,53 @@ fn reset_commit(
     // Git keeps cache-entry flags (assume-unchanged, skip-worktree) across mixed/hard/merge
     // index rebuilds so sparse/skip-worktree paths stay marked (t7011).
     preserve_index_cache_flags_from(&old_index, &mut new_index);
+
+    if mode == ResetMode::Mixed && extra.intent_to_add {
+        let new_paths: HashSet<Vec<u8>> =
+            new_index.entries.iter().map(|e| e.path.clone()).collect();
+        for old_e in &old_index.entries {
+            if old_e.stage() != 0 {
+                continue;
+            }
+            if new_paths.contains(&old_e.path) {
+                continue;
+            }
+            let empty_oid = repo
+                .odb
+                .write(ObjectKind::Blob, b"")
+                .context("writing empty blob for intent-to-add")?;
+            let mut ita = IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: 0o100644,
+                uid: 0,
+                gid: 0,
+                size: 0,
+                oid: empty_oid,
+                flags: old_e.path.len().min(0xFFF) as u16,
+                flags_extended: None,
+                path: old_e.path.clone(),
+            };
+            ita.set_intent_to_add(true);
+            if new_index.version < 3 {
+                new_index.version = 3;
+            }
+            new_index.add_or_replace(ita);
+        }
+        new_index.sort();
+    }
+
+    if mode == ResetMode::Mixed {
+        if let Some(wt) = repo.work_tree.as_deref() {
+            if mixed_reset_should_refresh_index(no_refresh, refresh, repo) {
+                refresh_stage0_index_stats_from_worktree(&mut new_index, wt);
+            }
+        }
+    }
 
     if mode == ResetMode::Hard || mode == ResetMode::Keep || mode == ResetMode::Merge {
         // Hard/Keep/Merge require a working tree
@@ -1393,6 +1616,9 @@ fn print_unstaged_changes(repo: &Repository, new_index: &Index) -> Result<()> {
         if entry.stage() != 0 {
             continue;
         }
+        if entry.skip_worktree() {
+            continue;
+        }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let abs_path = work_tree.join(&path_str);
 
@@ -1465,7 +1691,34 @@ fn print_head_message(repo: &Repository, oid: &ObjectId) -> Result<()> {
     let subject = commit.message.lines().next().unwrap_or("").trim();
     let abbrev =
         abbreviate_object_id(repo, *oid, 7).unwrap_or_else(|_| oid.to_hex()[..7].to_owned());
-    println!("HEAD is now at {abbrev} {subject}");
+    let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
+    let log_enc = config
+        .as_ref()
+        .and_then(|c| c.get("i18n.logOutputEncoding"))
+        .unwrap_or_else(|| "UTF-8".to_owned());
+    let enc_trim = log_enc.trim();
+    let is_utf8_out =
+        enc_trim.eq_ignore_ascii_case("utf-8") || enc_trim.eq_ignore_ascii_case("utf8");
+    let mut line = format!("HEAD is now at {abbrev} ");
+    if is_utf8_out {
+        line.push_str(subject);
+        line.push('\n');
+        std::io::stdout()
+            .write_all(line.as_bytes())
+            .context("writing reset message")?;
+    } else {
+        let subject_bytes = grit_lib::commit_encoding::reencode_utf8_to_label(enc_trim, subject)
+            .unwrap_or_else(|| subject.as_bytes().to_vec());
+        std::io::stdout()
+            .write_all(line.as_bytes())
+            .context("writing reset message")?;
+        std::io::stdout()
+            .write_all(&subject_bytes)
+            .context("writing reset message")?;
+        std::io::stdout()
+            .write_all(b"\n")
+            .context("writing reset message")?;
+    }
     Ok(())
 }
 

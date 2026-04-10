@@ -620,6 +620,14 @@ pub fn resolve_revision_for_range_end(repo: &Repository, spec: &str) -> Result<O
     resolve_revision_impl(repo, spec, true, true, true, false, false, false)
 }
 
+/// Resolve a single revision for `git rev-parse --verify` (no index path DWIM).
+///
+/// Git's `--verify` mode must reject tokens that only match an index entry when the path is
+/// missing from the work tree (`t7102-reset` disambiguation).
+pub fn resolve_revision_for_verify(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    resolve_revision_impl(repo, spec, false, true, true, false, false, false)
+}
+
 /// First argument to `commit-tree`: ambiguous short hex uses tree-ish rules (blob vs tree).
 pub fn resolve_revision_for_commit_tree_tree(repo: &Repository, spec: &str) -> Result<ObjectId> {
     resolve_revision_impl(repo, spec, true, false, true, false, true, false)

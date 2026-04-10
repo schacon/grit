@@ -22,7 +22,8 @@ use grit_lib::ident::parse_signature_times;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::merge_trees::{
-    merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation, WhitespaceMergeOptions,
+    merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation,
+    WhitespaceMergeOptions,
 };
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
@@ -842,6 +843,7 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
             label_theirs: TheirsConflictLabel::Fixed(label_theirs.as_str()),
             label_base: label_base.as_str(),
             style: conflict_style,
+            checkout_merge: false,
         },
     )?;
     let mut merge_result = MergeResult {
@@ -1342,6 +1344,7 @@ pub(crate) fn abort_cherry_pick_or_revert() -> Result<()> {
             patch: false,
             rest: vec![stored_oid.to_hex()],
             skip_sequencer_head_cleanup: true,
+            raw_argv_had_path_separator: false,
         })?;
         cleanup_cherry_pick_state(git_dir);
         cleanup_sequencer_state(git_dir);
@@ -1362,6 +1365,7 @@ pub(crate) fn abort_cherry_pick_or_revert() -> Result<()> {
         patch: false,
         rest: vec!["HEAD".to_owned()],
         skip_sequencer_head_cleanup: true,
+        raw_argv_had_path_separator: false,
     })?;
     cleanup_cherry_pick_state(git_dir);
     let _ = fs::remove_file(git_dir.join("REVERT_HEAD"));

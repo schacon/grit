@@ -142,6 +142,7 @@ fn main() -> grit_lib::error::Result<()> {
             label_theirs: grit_lib::merge_trees::TheirsConflictLabel::Fixed("picked"),
             label_base: "parent of picked commit",
             style: grit_lib::merge_file::ConflictStyle::Merge,
+            checkout_merge: false,
         },
     )?;
 

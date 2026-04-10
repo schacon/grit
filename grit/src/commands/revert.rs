@@ -837,6 +837,7 @@ fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
             label_theirs: TheirsConflictLabel::Fixed(label_theirs.as_str()),
             label_base: label_base.as_str(),
             style: conflict_style,
+            checkout_merge: false,
         },
     )?;
     let mut merged_index = merged.index;
