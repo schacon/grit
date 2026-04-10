@@ -299,7 +299,7 @@ commit → check it off → move on.
 - [ ] `t3104-ls-tree-format` ██████████░░░░░░░░░░ 10/19 (9 left) — ls-tree --format
 - [ ] `t3204-branch-name-interpretation` ████████░░░░░░░░░░░░ 7/16 (9 left) — interpreting exotic branch name arguments
 
-- [ ] `t3000-ls-files-others` ████████░░░░░░░░░░░░ 6/15 (9 left) — basic tests for ls-files --others
+- [x] `t3000-ls-files-others` — basic tests for ls-files --others (15/15)
 
 - [ ] `t3508-cherry-pick-many-commits` ███████░░░░░░░░░░░░░ 5/14 (9 left) — test cherry-picking many commits
 - [x] `t3704-add-pathspec-file` ████████████████████ 11/11 (0 left) — add --pathspec-from-file

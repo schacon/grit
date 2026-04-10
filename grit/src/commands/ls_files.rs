@@ -482,7 +482,13 @@ pub fn run(args: Args) -> Result<()> {
             &mut untracked,
             true,
             args.directory,
+            args.no_empty_directory,
             precompose_walk,
+            if pathspec_filter.is_empty() {
+                None
+            } else {
+                Some(pathspec_filter.as_slice())
+            },
         )?;
         untracked.sort();
 
@@ -528,7 +534,11 @@ pub fn run(args: Args) -> Result<()> {
 
             let display =
                 format_ls_display_path(args.full_name, &cwd, work_tree, path_bytes, &cwd_prefix)?;
-            filtered_untracked.push(display.into_owned());
+            let mut display = display.into_owned();
+            if path_bytes.ends_with(b"/") && !display.ends_with(b"/") {
+                display.push(b'/');
+            }
+            filtered_untracked.push(display);
         }
 
         // Collapse to directories if --directory (after making paths cwd-relative)
@@ -662,6 +672,84 @@ fn dot_git_marks_git_repository(dot_git: &std::path::Path) -> bool {
     false
 }
 
+/// Whether traversal must recurse into `dir_rel` (no trailing `/`) instead of
+/// emitting `dir_rel/` as a single `--directory` line (Git
+/// `MATCHED_RECURSIVELY_LEADING_PATHSPEC` in `treat_directory`).
+fn pathspec_requires_recurse_into_dir(dir_rel: &[u8], specs: &[Pathspec]) -> bool {
+    if dir_rel.is_empty() {
+        return false;
+    }
+    for spec in specs {
+        match spec {
+            Pathspec::Literal(spec_bytes) => {
+                if literal_pathspec_recurses_into_dir(dir_rel, spec_bytes.as_slice()) {
+                    return true;
+                }
+            }
+            Pathspec::Glob(pattern) => {
+                let pb = pattern.as_bytes();
+                let nw = simple_glob_prefix(pb).len();
+                if nw == pb.len() {
+                    if literal_pathspec_recurses_into_dir(dir_rel, pb) {
+                        return true;
+                    }
+                } else if nw < pb.len() {
+                    // Wildcards in pattern: Git recurses when still under the literal prefix
+                    // (see `match_pathspec_item` glob case in `dir.c`).
+                    let lit = pb[..nw].strip_suffix(b"/").unwrap_or(&pb[..nw]);
+                    if lit.is_empty() {
+                        return true;
+                    }
+                    if dir_rel == lit {
+                        return true;
+                    }
+                    if dir_rel.len() > lit.len()
+                        && dir_rel.starts_with(lit)
+                        && dir_rel.get(lit.len()) == Some(&b'/')
+                    {
+                        return true;
+                    }
+                }
+            }
+            Pathspec::Magic(_) => {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn literal_pathspec_recurses_into_dir(dir_rel: &[u8], spec: &[u8]) -> bool {
+    if !spec.starts_with(dir_rel) {
+        return false;
+    }
+    if spec.len() <= dir_rel.len() {
+        return false;
+    }
+    if spec.get(dir_rel.len()) != Some(&b'/') {
+        return false;
+    }
+    // Git `match_pathspec_item` with `DO_MATCH_LEADING_PATHSPEC`: recurse only when the
+    // pathspec extends *past* `dir_rel/` (not when it is exactly `dir/`).
+    spec.len() > dir_rel.len() + 1
+}
+
+/// Length of the pattern's literal prefix before the first glob metacharacter.
+fn simple_glob_prefix(pat: &[u8]) -> &[u8] {
+    if grit_lib::pathspec::literal_pathspecs_enabled() {
+        return pat;
+    }
+    let mut i = 0;
+    while i < pat.len() {
+        match pat[i] {
+            b'*' | b'?' | b'[' => break,
+            b'\\' if i + 1 < pat.len() => i += 2,
+            _ => i += 1,
+        }
+    }
+    &pat[..i]
+}
+
 /// Walk the worktree and collect paths of untracked files.
 ///
 /// Returns whether any path was recorded under `dir` (files, nested repo markers, or when
@@ -670,6 +758,9 @@ fn dot_git_marks_git_repository(dot_git: &std::path::Path) -> bool {
 ///
 /// `emit_empty_directories` matches Git: plain `ls-files --others` does not list empty
 /// untracked directories; `--directory` adds `name/` markers for empty dirs (used by completion).
+///
+/// When `pathspecs` is set, directory boundaries follow Git `dir.c` `treat_directory`:
+/// untracked dirs are emitted as `name/` unless a pathspec can still match deeper paths inside.
 fn walk_worktree(
     root: &std::path::Path,
     dir: &std::path::Path,
@@ -677,7 +768,9 @@ fn walk_worktree(
     out: &mut Vec<Vec<u8>>,
     is_root: bool,
     emit_empty_directories: bool,
+    hide_empty_directories: bool,
     precompose_unicode: bool,
+    pathspecs: Option<&[Pathspec]>,
 ) -> Result<bool> {
     let mut rel_bytes = path_to_bytes(dir.strip_prefix(root).unwrap_or(dir));
     if precompose_unicode {
@@ -752,6 +845,19 @@ fn walk_worktree(
                 }
                 continue;
             }
+            let prefix_slash: Vec<u8> = [rel_bytes.as_slice(), b"/"].concat();
+            let has_tracked_under = indexed.iter().any(|t| t.starts_with(&prefix_slash));
+            let must_recurse = !emit_empty_directories
+                || hide_empty_directories
+                || has_tracked_under
+                || pathspecs.is_some_and(|ps| pathspec_requires_recurse_into_dir(&rel_bytes, ps));
+            if emit_empty_directories && !must_recurse {
+                let mut dir_entry = rel_bytes.clone();
+                dir_entry.push(b'/');
+                out.push(dir_entry);
+                added = true;
+                continue;
+            }
             if walk_worktree(
                 root,
                 &path,
@@ -759,7 +865,9 @@ fn walk_worktree(
                 out,
                 false,
                 emit_empty_directories,
+                hide_empty_directories,
                 precompose_unicode,
+                pathspecs,
             )? {
                 added = true;
             }
@@ -1202,22 +1310,99 @@ fn path_to_bytes(path: &std::path::Path) -> Vec<u8> {
     path.as_os_str().as_bytes().to_vec()
 }
 
-/// Collapse file paths into unique top-level directory entries.
-/// E.g., ["dir/a", "dir/b", "file"] → ["dir/", "file"]
+/// Collapse paths for `ls-files --directory`: group by top-level segment, then
+/// collapse untracked files under the same immediate subdirectory to `top/sub/`.
 fn collapse_to_directories(paths: &[Vec<u8>]) -> Vec<Vec<u8>> {
-    let mut dirs = BTreeSet::new();
-    let mut result = Vec::new();
+    use std::collections::BTreeMap;
+
+    #[derive(Default)]
+    struct TopBucket {
+        /// Files directly under `top/` (single path component, no further `/`).
+        direct: Vec<Vec<u8>>,
+        /// Deeper paths `top/sub/...`
+        subs: BTreeMap<Vec<u8>, Subdir>,
+    }
+
+    #[derive(Default)]
+    struct Subdir {
+        files: Vec<Vec<u8>>,
+        empty_dir: bool,
+    }
+
+    let mut tops: BTreeMap<Vec<u8>, TopBucket> = BTreeMap::new();
+    let mut root_level_dirs: Vec<Vec<u8>> = Vec::new();
+
     for p in paths {
-        if let Some(pos) = p.iter().position(|&b| b == b'/') {
-            let dir = p[..=pos].to_vec();
-            if dirs.insert(dir.clone()) {
-                result.push(dir);
+        if p.ends_with(b"/") && !p[..p.len() - 1].contains(&b'/') {
+            root_level_dirs.push(p.clone());
+            continue;
+        }
+        let Some(pos) = p.iter().position(|&b| b == b'/') else {
+            tops.entry(p.clone()).or_default();
+            continue;
+        };
+        let top = p[..pos].to_vec();
+        let tail = &p[pos + 1..];
+        let b = tops.entry(top).or_default();
+
+        if tail.is_empty() {
+            continue;
+        }
+        if tail.ends_with(b"/") && !tail[..tail.len() - 1].contains(&b'/') {
+            let name = tail[..tail.len() - 1].to_vec();
+            b.subs.entry(name).or_default().empty_dir = true;
+            continue;
+        }
+        if let Some(sp) = tail.iter().position(|&b| b == b'/') {
+            let sub = tail[..sp].to_vec();
+            let file = tail[sp + 1..].to_vec();
+            let e = b.subs.entry(sub).or_default();
+            if !file.is_empty() {
+                e.files.push(file);
             }
         } else {
-            result.push(p.clone());
+            b.direct.push(tail.to_vec());
         }
     }
-    result
+
+    let mut out = Vec::new();
+    out.extend(root_level_dirs);
+    for (top, b) in tops {
+        if b.subs.is_empty() && b.direct.is_empty() {
+            out.push(top);
+            continue;
+        }
+        if b.subs.is_empty() {
+            // Only `top/file` paths: always collapse to `top/` (matches Git).
+            let mut line = top;
+            line.push(b'/');
+            out.push(line);
+            continue;
+        }
+        if !b.direct.is_empty() {
+            let mut line = top.clone();
+            line.push(b'/');
+            out.push(line);
+        }
+        for (sub, info) in b.subs {
+            let mut prefix = top.clone();
+            prefix.push(b'/');
+            prefix.extend_from_slice(&sub);
+            if info.files.is_empty() {
+                prefix.push(b'/');
+                out.push(prefix);
+            } else if info.files.len() == 1 {
+                prefix.push(b'/');
+                prefix.extend_from_slice(&info.files[0]);
+                out.push(prefix);
+            } else {
+                prefix.push(b'/');
+                out.push(prefix);
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 /// Check whether an index entry's file has been modified on disk.

@@ -530,7 +530,7 @@ t2406-worktree-repair	t2	skip	24	0	0	false	ok	0
 t2407-worktree-heads	t2	skip	12	7	5	false	ok	0
 t2500-untracked-overwriting	t2	yes	8	2	6	false	ok	2
 t2501-cwd-empty	t2	yes	24	4	20	false	ok	0
-t3000-ls-files-others	t3	yes	15	6	9	false	ok	0
+t3000-ls-files-others	t3	yes	15	15	0	true	ok	0
 t3001-ls-files-others-exclude	t3	yes	27	10	17	false	ok	0
 t3002-ls-files-dashpath	t3	yes	6	6	0	true	ok	0
 t3003-ls-files-exclude	t3	yes	7	7	0	true	ok	0
