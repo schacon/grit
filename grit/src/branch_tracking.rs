@@ -50,7 +50,12 @@ pub fn upstream_tracking_full_ref(repo: &Repository, branch_short: &str) -> Opti
     let remote = config.get(&format!("branch.{branch_short}.remote"))?;
     let merge = config.get(&format!("branch.{branch_short}.merge"))?;
     if remote == "." {
-        Some(merge)
+        let m = merge.trim();
+        if m.starts_with("refs/") {
+            Some(m.to_owned())
+        } else {
+            Some(format!("refs/heads/{m}"))
+        }
     } else {
         let mb = merge.strip_prefix("refs/heads/").unwrap_or(&merge);
         Some(format!("refs/remotes/{remote}/{mb}"))

@@ -32,7 +32,8 @@ use grit_lib::odb::Odb;
 use grit_lib::refs::{self, append_reflog};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{
-    abbreviate_object_id, resolve_revision, resolve_upstream_symbolic_name, upstream_suffix_info,
+    abbreviate_object_id, resolve_revision, resolve_revision_for_checkout_guess,
+    resolve_upstream_symbolic_name, upstream_suffix_info,
 };
 use grit_lib::sparse_checkout::apply_sparse_checkout_skip_worktree;
 use grit_lib::state::{resolve_head, HeadState};
@@ -40,6 +41,9 @@ use grit_lib::submodule_gitdir::submodule_modules_git_dir;
 use grit_lib::write_tree::write_tree_from_index;
 
 use crate::branch_tracking::{format_tracking_info, AheadBehindMode};
+use crate::commands::fetch::{
+    collect_remote_names, map_ref_through_refspecs, remote_fetch_refspecs,
+};
 use crate::commands::merge::execute_custom_merge_driver;
 
 /// Count parallel checkout worker processes to spawn for trace2 tests (`t2080`).
@@ -544,6 +548,13 @@ pub fn run(mut args: Args) -> Result<()> {
     let path_merge_wanted = effective_path_checkout_merge(&merge_cli, args.merge);
     let switch_force = args.force || branch_merge_wanted;
 
+    let checkout_config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let checkout_guess_effective = !args.no_guess
+        && checkout_config
+            .get("checkout.guess")
+            .map(|v| v != "false")
+            .unwrap_or(true);
+
     // `git switch -C branch -q` / `checkout -b x -q` pass `-q` as a trailing (or middle) positional.
     // Remove every `-q` / `--quiet` from `rest` so they are never parsed as a start-point or path.
     {
@@ -711,6 +722,13 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     if args.patch {
+        if let Some(ref spec) = target {
+            if resolve_to_commit(&repo, spec, true).is_err() {
+                let mut p = paths;
+                p.insert(0, spec.clone());
+                return checkout_patch(&repo, None, &p);
+            }
+        }
         return checkout_patch(&repo, target.as_deref(), &paths);
     }
 
@@ -913,7 +931,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     &merge_cli,
                 );
             }
-            if let Ok(oid) = resolve_to_commit(&repo, &prev) {
+            if let Ok(oid) = resolve_to_commit(&repo, &prev, true) {
                 return detach_head(&repo, &oid, switch_force);
             }
             bail!("error: previous branch '{}' not found", prev);
@@ -936,7 +954,7 @@ pub fn run(mut args: Args) -> Result<()> {
             );
         }
         // Not a branch — try as a commit (detached HEAD)
-        if let Ok(oid) = resolve_to_commit(&repo, &prev) {
+        if let Ok(oid) = resolve_to_commit(&repo, &prev, true) {
             return detach_head(&repo, &oid, switch_force);
         }
         bail!("error: previous branch '{}' not found", prev);
@@ -957,7 +975,7 @@ pub fn run(mut args: Args) -> Result<()> {
         if !paths.is_empty() || args.rest.len() > 1 {
             bail!("--detach does not take a path argument");
         }
-        match resolve_to_commit(&repo, &target) {
+        match resolve_to_commit(&repo, &target, true) {
             Ok(oid) => return detach_head_explicit(&repo, &oid, switch_force),
             Err(e) => bail!("cannot detach HEAD at '{}': {}", target, e),
         }
@@ -1065,47 +1083,42 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    // DWIM: if branch doesn't exist locally, check if exactly one remote has it
-    // Skip if --no-guess or checkout.guess=false
-    let dwim_enabled = !args.no_guess && {
-        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-        config
-            .get("checkout.guess")
-            .map(|v| v != "false")
-            .unwrap_or(true)
-    };
-    if !args.detach && dwim_enabled {
-        let remote_prefix = "refs/remotes/";
-        let all_remote_refs = refs::list_refs(&repo.git_dir, remote_prefix).unwrap_or_default();
-        let matching: Vec<(String, ObjectId)> = all_remote_refs
-            .into_iter()
-            .filter(|(r, _)| {
-                // refs/remotes/<remote>/<branch>
-                let parts: Vec<&str> = r.trim_start_matches(remote_prefix).splitn(2, '/').collect();
-                parts.len() == 2 && parts[1] == target
-            })
-            .collect();
-        if matching.len() == 1 {
-            let remote_ref = &matching[0].0;
-            let oid = matching[0].1;
-            // Extract remote name from refs/remotes/<remote>/<branch>
-            let remote_part = remote_ref.trim_start_matches(remote_prefix);
-            let remote_name = remote_part.split('/').next().unwrap_or("");
-            // Create the local branch tracking the remote
+    // DWIM: create a local branch from a remote-tracking ref (Git `unique_tracking_name`).
+    // Skip if --no-guess, checkout.guess=false, or the name looks like a glob.
+    let dwim_ok = checkout_guess_effective;
+    if !args.detach && dwim_ok && !checkout_dwim_disabled_for_name(&target) {
+        let matches =
+            collect_dwim_remote_tracking_matches(&repo.git_dir, &checkout_config, &target)?;
+        let match_count = matches.len();
+        let chosen = if match_count == 1 {
+            matches.into_iter().next()
+        } else if match_count > 1 {
+            resolve_dwim_tracking_for_checkout(&checkout_config, matches)
+        } else {
+            None
+        };
+        if let Some((tracking_ref, remote_name)) = chosen {
+            let oid = refs::resolve_ref(&repo.git_dir, &tracking_ref)
+                .with_context(|| format!("cannot resolve '{tracking_ref}'"))?;
+            let could_be_paths = !has_separator && checkout_arg_exists_as_path(&repo, &target);
+            if could_be_paths {
+                bail!(
+                    "'{target}' could be both a local file and a tracking branch.\n\
+Please use -- (and optionally --no-guess) to disambiguate"
+                );
+            }
             let new_branch_ref = format!("refs/heads/{target}");
             refs::write_ref(&repo.git_dir, &new_branch_ref, &oid)?;
-            // Set up tracking configuration
             let cfg_path = repo.git_dir.join("config");
             let mut cfg_content = std::fs::read_to_string(&cfg_path).unwrap_or_default();
             let section = format!(
-                "\n[branch \"{}\"]\
-\n\tremote = {}\
-\n\tmerge = refs/heads/{}\n",
-                target, remote_name, target
+                "\n[branch \"{target}\"]\
+\n\tremote = {remote_name}\
+\n\tmerge = refs/heads/{target}\n"
             );
             cfg_content.push_str(&section);
             let _ = std::fs::write(&cfg_path, cfg_content);
-            eprintln!("branch '{target}' set up to track '{remote_name}/{target}'.");
+            checkout_eprintln!("branch '{target}' set up to track '{remote_name}/{target}'.");
             return switch_branch(
                 &repo,
                 &target,
@@ -1115,29 +1128,30 @@ pub fn run(mut args: Args) -> Result<()> {
                 branch_merge_wanted,
                 &merge_cli,
             );
-        } else if matching.len() > 1 {
-            eprintln!(
-                "hint: If you meant to check out a remote tracking branch on, e.g. 'origin',"
-            );
-            eprintln!("hint: try again with the --track option:");
-            eprintln!("hint:");
-            for (r, _) in &matching {
-                let remote_part = r.trim_start_matches(remote_prefix);
-                let mut parts = remote_part.splitn(2, '/');
-                let rname = parts.next().unwrap_or("");
-                let bname = parts.next().unwrap_or("");
-                eprintln!("hint:     git checkout --track {rname}/{bname}");
+        }
+        if match_count > 1 {
+            if advice_checkout_ambiguous_remote_enabled(&checkout_config) {
+                checkout_eprintln!(
+                    "hint: If you meant to check out a remote tracking branch on, e.g. 'origin',"
+                );
+                checkout_eprintln!(
+                    "hint: you can do so by fully qualifying the name with the --track option:"
+                );
+                checkout_eprintln!("hint:");
+                checkout_eprintln!("hint:     git checkout --track origin/<name>");
+                checkout_eprintln!("hint:");
+                checkout_eprintln!(
+                    "hint: If you'd like to always have checkouts of an ambiguous <name> prefer"
+                );
+                checkout_eprintln!("hint: one remote, e.g. the 'origin' remote, consider setting");
+                checkout_eprintln!("hint: checkout.defaultRemote=origin in your config.");
             }
-            eprintln!("hint:");
-            bail!(
-                "'{target}' matched multiple (\'{}\') remote tracking branches",
-                matching.len()
-            );
+            bail!("'{target}' matched multiple ({match_count}) remote tracking branches");
         }
     }
 
     // Try as a commit (detached HEAD)
-    match resolve_to_commit(&repo, &target) {
+    match resolve_to_commit(&repo, &target, checkout_guess_effective) {
         Ok(oid) => detach_head(&repo, &oid, switch_force),
         Err(_) => {
             // Fallback: try as a pathspec (git checkout <file> without --).
@@ -1263,6 +1277,67 @@ fn split_target_and_paths(
     } else {
         (Some(rest[0].clone()), rest[1..].to_vec())
     }
+}
+
+/// True when `name` contains wildcard characters that disable DWIM (`git/dir.c` `no_wildcard`).
+fn checkout_dwim_disabled_for_name(name: &str) -> bool {
+    name.chars().any(|c| matches!(c, '*' | '?' | '[' | '\\'))
+}
+
+/// Whether `advice.checkoutAmbiguousRemoteBranchName` should print hints (Git default: on).
+fn advice_checkout_ambiguous_remote_enabled(config: &ConfigSet) -> bool {
+    config.get_bool("advice.checkoutAmbiguousRemoteBranchName") != Some(Ok(false))
+}
+
+/// `git checkout` DWIM: map `refs/heads/<branch>` through each remote's fetch refspecs and collect
+/// existing local tracking refs (matches Git `unique_tracking_name` / `remote_find_tracking`).
+fn collect_dwim_remote_tracking_matches(
+    git_dir: &Path,
+    config: &ConfigSet,
+    branch_short: &str,
+) -> Result<Vec<(String, String)>> {
+    let src = format!("refs/heads/{branch_short}");
+    let mut out = Vec::new();
+    for remote in collect_remote_names(config) {
+        let specs = remote_fetch_refspecs(config, &remote);
+        let Some(dst) = map_ref_through_refspecs(&src, &specs) else {
+            continue;
+        };
+        if refs::resolve_ref(git_dir, &dst).is_ok() {
+            out.push((dst, remote));
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
+}
+
+fn resolve_dwim_tracking_for_checkout(
+    config: &ConfigSet,
+    matches: Vec<(String, String)>,
+) -> Option<(String, String)> {
+    match matches.len() {
+        0 => None,
+        1 => Some(matches.into_iter().next().expect("len checked")),
+        _ => {
+            let default_remote = config
+                .get("checkout.defaultRemote")
+                .or_else(|| config.get("checkout.defaultremote"));
+            let Some(pref) = default_remote else {
+                return None;
+            };
+            matches.into_iter().find(|(_, remote)| remote == &pref)
+        }
+    }
+}
+
+fn checkout_arg_exists_as_path(repo: &Repository, arg: &str) -> bool {
+    let Some(wt) = repo.work_tree.as_deref() else {
+        return false;
+    };
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let rel = resolve_pathspec(arg, wt, &cwd);
+    let abs = wt.join(&rel);
+    abs.exists() || abs.is_symlink()
 }
 
 // ---------------------------------------------------------------------------
@@ -1885,7 +1960,7 @@ fn create_and_switch_branch(
             {
                 reject_ambiguous_short_ref(repo, s)?;
             }
-            resolve_to_commit(repo, s)?
+            resolve_to_commit(repo, s, true)?
         }
         None => {
             match head.oid() {
@@ -2036,7 +2111,7 @@ fn force_create_and_switch_branch(
 
     // Resolve start point (default: HEAD)
     let start_oid = match start {
-        Some(s) => resolve_to_commit(repo, s)?,
+        Some(s) => resolve_to_commit(repo, s, true)?,
         None => {
             let head = resolve_head(&repo.git_dir)?;
             match head.oid() {
@@ -2200,7 +2275,7 @@ fn create_orphan_branch(
     }
 
     if let Some(start) = start_point {
-        let start_oid = resolve_to_commit(repo, start)
+        let start_oid = resolve_to_commit(repo, start, true)
             .with_context(|| format!("invalid start point '{start}'"))?;
         let tree_oid = commit_to_tree(repo, &start_oid)?;
         let work_tree = repo
@@ -3535,7 +3610,7 @@ checking out of the index."
         }
         Some(source_spec) => {
             // checkout <commit> -- <paths>: restore from a specific commit's tree
-            let source_oid = resolve_to_commit(repo, source_spec)?;
+            let source_oid = resolve_to_commit(repo, source_spec, true)?;
             let tree_oid = commit_to_tree(repo, &source_oid)?;
 
             let index_path = repo.index_path();
@@ -3936,7 +4011,7 @@ pub(crate) fn checkout_patch(
         }
         Some(source_spec) => {
             // Diff working tree against a specific commit's tree
-            let source_oid = resolve_to_commit(repo, source_spec)?;
+            let source_oid = resolve_to_commit(repo, source_spec, true)?;
             let tree_oid = commit_to_tree(repo, &source_oid)?;
             let flat = tree_to_flat_entries(repo, &tree_oid, "")?;
 
@@ -4526,9 +4601,9 @@ fn maybe_setup_tracking(
 // ---------------------------------------------------------------------------
 
 /// Resolve a revision spec to a commit OID, peeling through tags.
-fn resolve_to_commit(repo: &Repository, spec: &str) -> Result<ObjectId> {
-    let oid =
-        resolve_revision(repo, spec).with_context(|| format!("unknown revision: '{spec}'"))?;
+fn resolve_to_commit(repo: &Repository, spec: &str, remote_branch_guess: bool) -> Result<ObjectId> {
+    let oid = resolve_revision_for_checkout_guess(repo, spec, remote_branch_guess)
+        .with_context(|| format!("unknown revision: '{spec}'"))?;
     peel_to_commit(repo, oid)
 }
 

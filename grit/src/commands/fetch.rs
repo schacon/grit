@@ -2860,8 +2860,9 @@ fn for_each_ref_file(
     Ok(())
 }
 
-/// Collect all configured remote names.
-fn collect_remote_names(config: &ConfigSet) -> Vec<String> {
+/// Collect all configured remote names (`remote.<name>.url` entries).
+#[must_use]
+pub fn collect_remote_names(config: &ConfigSet) -> Vec<String> {
     let mut names = Vec::new();
     for entry in config.entries() {
         let parts: Vec<&str> = entry.key.splitn(3, '.').collect();

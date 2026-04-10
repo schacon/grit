@@ -259,7 +259,11 @@ fn resolve_upstream_full_ref_name(repo: &Repository, base: &str, is_push: bool) 
         )));
     };
     if remote == "." {
-        return Ok(merge);
+        let m = merge.trim();
+        if m.starts_with("refs/") {
+            return Ok(m.to_owned());
+        }
+        return Ok(format!("refs/heads/{m}"));
     }
     let merge_branch = merge
         .strip_prefix("refs/heads/")
@@ -606,28 +610,48 @@ pub fn split_triple_dot_range(spec: &str) -> Option<(&str, &str)> {
 /// Like [`resolve_revision`], but does not treat a bare filename as an index path
 /// (matches `git rev-parse` / plumbing, where `file.txt` stays ambiguous).
 pub fn resolve_revision_without_index_dwim(repo: &Repository, spec: &str) -> Result<ObjectId> {
-    resolve_revision_impl(repo, spec, false, false, true, false, false, false)
+    resolve_revision_impl(repo, spec, false, false, true, false, false, false, true)
 }
 
 /// Resolve a revision string to an object ID.
 pub fn resolve_revision(repo: &Repository, spec: &str) -> Result<ObjectId> {
-    resolve_revision_impl(repo, spec, true, false, true, false, false, false)
+    resolve_revision_impl(repo, spec, true, false, true, false, false, false, true)
+}
+
+/// Like [`resolve_revision`], but can disable remote-tracking DWIM used by `git checkout`
+/// when `--no-guess` / `checkout.guess=false` (t2024).
+pub fn resolve_revision_for_checkout_guess(
+    repo: &Repository,
+    spec: &str,
+    remote_branch_guess: bool,
+) -> Result<ObjectId> {
+    resolve_revision_impl(
+        repo,
+        spec,
+        true,
+        false,
+        true,
+        false,
+        false,
+        false,
+        remote_branch_guess,
+    )
 }
 
 /// Resolve `spec` when it appears as the end of a revision range (`A..B`, `A...B`, etc.):
 /// abbreviated hex and `core.disambiguate` prefer a commit (porcelain range parsing).
 pub fn resolve_revision_for_range_end(repo: &Repository, spec: &str) -> Result<ObjectId> {
-    resolve_revision_impl(repo, spec, true, true, true, false, false, false)
+    resolve_revision_impl(repo, spec, true, true, true, false, false, false, true)
 }
 
 /// First argument to `commit-tree`: ambiguous short hex uses tree-ish rules (blob vs tree).
 pub fn resolve_revision_for_commit_tree_tree(repo: &Repository, spec: &str) -> Result<ObjectId> {
-    resolve_revision_impl(repo, spec, true, false, true, false, true, false)
+    resolve_revision_impl(repo, spec, true, false, true, false, true, false, true)
 }
 
 /// Old blob OID from a patch `index <old>..<new>` line (`git apply --build-fake-ancestor`).
 pub fn resolve_revision_for_patch_old_blob(repo: &Repository, spec: &str) -> Result<ObjectId> {
-    resolve_revision_impl(repo, spec, true, false, true, false, false, true)
+    resolve_revision_impl(repo, spec, true, false, true, false, false, true, true)
 }
 
 /// When `spec` uses two-dot range syntax (`A..B`, `..B`, `A..`), returns the commits to
@@ -712,6 +736,7 @@ fn resolve_revision_impl(
     treeish_colon_lhs: bool,
     implicit_tree_abbrev: bool,
     implicit_blob_abbrev: bool,
+    remote_branch_name_guess: bool,
 ) -> Result<ObjectId> {
     // Handle `:/message` early — it can contain any characters so must
     // not be confused with peel/nav syntax.
@@ -749,6 +774,7 @@ fn resolve_revision_impl(
                         false,
                         false,
                         false,
+                        remote_branch_name_guess,
                     )?
                 } else {
                     resolve_revision_impl(
@@ -760,6 +786,7 @@ fn resolve_revision_impl(
                         false,
                         false,
                         false,
+                        remote_branch_name_guess,
                     )?
                 },
             )?;
@@ -775,6 +802,7 @@ fn resolve_revision_impl(
                         false,
                         false,
                         false,
+                        remote_branch_name_guess,
                     )?
                 } else {
                     resolve_revision_impl(
@@ -786,6 +814,7 @@ fn resolve_revision_impl(
                         false,
                         false,
                         false,
+                        remote_branch_name_guess,
                     )?
                 },
             )?;
@@ -812,6 +841,7 @@ fn resolve_revision_impl(
                 true,
                 false,
                 false,
+                remote_branch_name_guess,
             ) {
                 Ok(o) => o,
                 Err(Error::ObjectNotFound(s)) if s == before => {
@@ -865,6 +895,7 @@ fn resolve_revision_impl(
         peel_for_hex,
         implicit_tree_abbrev,
         implicit_blob_abbrev,
+        remote_branch_name_guess,
     )?;
     for step in nav_steps {
         oid = apply_nav_step(repo, oid, step).map_err(|e| {
@@ -1002,20 +1033,21 @@ pub fn resolve_treeish_blob_at_path(repo: &Repository, spec: &str) -> Result<Tre
         .filter(|(_, path)| !path.is_empty())
         .ok_or_else(|| Error::InvalidRef(format!("'{spec}' is not a treeish:path revision")))?;
 
-    let rev_oid = match resolve_revision_impl(repo, before, true, false, true, true, false, false) {
-        Ok(o) => o,
-        Err(Error::ObjectNotFound(s)) if s == before => {
-            return Err(Error::Message(format!(
-                "fatal: invalid object name '{before}'."
-            )));
-        }
-        Err(Error::Message(msg)) if msg.contains("ambiguous argument") => {
-            return Err(Error::Message(format!(
-                "fatal: invalid object name '{before}'."
-            )));
-        }
-        Err(e) => return Err(e),
-    };
+    let rev_oid =
+        match resolve_revision_impl(repo, before, true, false, true, true, false, false, true) {
+            Ok(o) => o,
+            Err(Error::ObjectNotFound(s)) if s == before => {
+                return Err(Error::Message(format!(
+                    "fatal: invalid object name '{before}'."
+                )));
+            }
+            Err(Error::Message(msg)) if msg.contains("ambiguous argument") => {
+                return Err(Error::Message(format!(
+                    "fatal: invalid object name '{before}'."
+                )));
+            }
+            Err(e) => return Err(e),
+        };
 
     let tree_oid = peel_to_tree(repo, rev_oid)?;
     let clean_path = match normalize_colon_path_for_tree(repo, after) {
@@ -1459,6 +1491,7 @@ fn resolve_base(
     peel_for_disambig: Option<&str>,
     implicit_tree_abbrev: bool,
     implicit_blob_abbrev: bool,
+    remote_branch_name_guess: bool,
 ) -> Result<ObjectId> {
     // Standalone `@` is an alias for `HEAD` in revision parsing.
     if spec == "@" {
@@ -1471,6 +1504,7 @@ fn resolve_base(
             peel_for_disambig,
             implicit_tree_abbrev,
             implicit_blob_abbrev,
+            remote_branch_name_guess,
         );
     }
 
@@ -1524,6 +1558,7 @@ fn resolve_base(
                             peel_for_disambig,
                             implicit_tree_abbrev,
                             implicit_blob_abbrev,
+                            remote_branch_name_guess,
                         );
                     }
                 }
@@ -1602,20 +1637,6 @@ fn resolve_base(
         }
     }
 
-    if let Some((treeish, path)) = split_treeish_spec(spec) {
-        let root_oid = resolve_revision_impl(
-            repo,
-            treeish,
-            index_dwim,
-            commit_only_hex,
-            use_disambiguate_config,
-            false,
-            false,
-            false,
-        )?;
-        return resolve_treeish_path(repo, root_oid, path);
-    }
-
     if let Ok(oid) = spec.parse::<ObjectId>() {
         // A full 40-hex OID is always accepted, even if the object
         // doesn't exist in the ODB (matches git behavior).
@@ -1673,6 +1694,13 @@ fn resolve_base(
 
     if let Ok(oid) = refs::resolve_ref(&repo.git_dir, spec) {
         return Ok(oid);
+    }
+    // `remotes/<remote>/<ref>` is a common shorthand for `refs/remotes/<remote>/<ref>` (t2024).
+    if let Some(rest) = spec.strip_prefix("remotes/") {
+        let full = format!("refs/remotes/{rest}");
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &full) {
+            return Ok(oid);
+        }
     }
     // Remote name alone (`origin`, `upstream`): resolve like Git via
     // `refs/remotes/<name>/HEAD` (symref to the default remote-tracking branch).
@@ -1732,7 +1760,12 @@ fn resolve_base(
     }
 
     // DWIM: `checkout B2` when only `refs/remotes/origin/B2` exists (common after `fetch`).
-    if !spec.contains('/') && spec != "HEAD" && spec != "FETCH_HEAD" && spec != "MERGE_HEAD" {
+    if remote_branch_name_guess
+        && !spec.contains('/')
+        && spec != "HEAD"
+        && spec != "FETCH_HEAD"
+        && spec != "MERGE_HEAD"
+    {
         const REMOTES: &str = "refs/remotes/";
         if let Ok(remote_refs) = refs::list_refs(&repo.git_dir, REMOTES) {
             let matches: Vec<ObjectId> = remote_refs
