@@ -9,9 +9,8 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{
     abbreviate_object_id, abbreviate_ref_name, ambiguous_object_hint_lines, discover_optional,
     is_inside_git_dir, is_inside_work_tree, list_all_abbrev_matches, parse_peel_suffix,
-    peel_to_commit_for_merge_base, resolve_revision, resolve_revision_for_range_end,
-    resolve_revision_without_index_dwim, show_prefix, split_double_dot_range,
-    split_triple_dot_range, symbolic_full_name, to_relative_path,
+    peel_to_commit_for_merge_base, resolve_revision, resolve_revision_for_range_end, show_prefix,
+    split_double_dot_range, split_triple_dot_range, symbolic_full_name, to_relative_path,
 };
 use std::env;
 
@@ -1026,7 +1025,7 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                     if no_revs {
                         continue;
                     }
-                    match resolve_revision_without_index_dwim(current, &rewritten) {
+                    match resolve_revision(current, &rewritten) {
                         Ok(oid) => {
                             if let Some(len) = short_len {
                                 println!("{}", abbreviate_object_id(current, oid, len)?);
@@ -1043,7 +1042,7 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                     }
                     continue;
                 }
-                match resolve_revision_without_index_dwim(current, &rewritten) {
+                match resolve_revision(current, &rewritten) {
                     Ok(oid) => {
                         if no_revs {
                             // --no-revs: skip resolved revisions

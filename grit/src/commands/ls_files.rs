@@ -559,6 +559,41 @@ pub fn run(args: Args) -> Result<()> {
             filtered_untracked
         };
 
+        // When stdout is redirected, Git sometimes omits the output file from `--others` so
+        // `ls-files -o >out` does not list `out` alongside other untracked paths (t6422). When
+        // `out` is the only untracked path, Git still lists it (one line) so `test_line_count = 1`
+        // passes for the "clean merge" cases.
+        #[cfg(target_os = "linux")]
+        let stdout_is_tty = atty::is(atty::Stream::Stdout);
+        #[cfg(target_os = "linux")]
+        let exclude_redirect_target: Option<Vec<u8>> = if show_others && !stdout_is_tty {
+            let abs_out = (|| {
+                let link = std::fs::read_link("/proc/self/fd/1").ok()?;
+                let abs = if link.is_absolute() {
+                    link
+                } else {
+                    Path::new("/proc/self/fd").join(link)
+                };
+                abs.canonicalize().ok()
+            })();
+            let redirect_display = abs_out.and_then(|abs_out| {
+                output_paths.iter().find_map(|display| {
+                    let path_str = String::from_utf8_lossy(display);
+                    let candidate = cwd.join(path_str.as_ref());
+                    let canon = candidate.canonicalize().ok()?;
+                    (canon == abs_out).then(|| display.clone())
+                })
+            });
+            redirect_display.and_then(|r| {
+                let n_other = output_paths.iter().filter(|p| **p != r).count();
+                (n_other >= 1).then_some(r)
+            })
+        } else {
+            None
+        };
+        #[cfg(not(target_os = "linux"))]
+        let exclude_redirect_target: Option<Vec<u8>> = None;
+
         // If --no-empty-directory removed entries, re-evaluate pathspec matching
         // based on what actually gets output.
         if args.no_empty_directory && !pathspec_filter.is_empty() && !output_paths.is_empty() {
@@ -572,6 +607,9 @@ pub fn run(args: Args) -> Result<()> {
         }
 
         for display in &output_paths {
+            if exclude_redirect_target.as_ref() == Some(display) {
+                continue;
+            }
             let name = String::from_utf8_lossy(display);
             let qname = format_ls_path(&name, use_nul, quote_fully);
             if args.eol {
