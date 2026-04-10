@@ -850,7 +850,7 @@ t4254-am-corrupt	t4	yes	4	1	3	false	ok	0
 t4255-am-submodule	t4	yes	33	1	32	false	ok	0
 t4256-am-format-flowed	t4	yes	2	2	0	true	ok	0
 t4257-am-interactive	t4	yes	4	4	0	true	ok	0
-t4258-am-quoted-cr	t4	yes	4	3	1	false	ok	0
+t4258-am-quoted-cr	t4	yes	4	4	0	true	ok	0
 t4300-merge-tree	t4	yes	22	1	21	false	ok	0
 t4301-merge-tree-write-tree	t4	yes	46	22	24	false	ok	0
 t5000-tar-tree	t5	yes	0	0	0	false	timeout	0
