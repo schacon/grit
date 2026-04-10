@@ -125,6 +125,10 @@ pub struct Args {
     #[arg(long)]
     pub eol: bool,
 
+    /// Show resolve-undo information from the index.
+    #[arg(long = "resolve-undo")]
+    pub resolve_undo: bool,
+
     /// Show paths relative to repository root.
     #[arg(long = "full-name")]
     pub full_name: bool,
@@ -191,13 +195,20 @@ pub fn run(args: Args) -> Result<()> {
             || args.unmerged
             || args.killed
             || args.modified
-            || args.with_tree.is_some())
+            || args.with_tree.is_some()
+            || args.resolve_undo)
     {
         anyhow::bail!("fatal: ls-files --recurse-submodules unsupported mode");
     }
 
     if args.with_tree.is_some() && (args.unmerged || args.stage) {
         anyhow::bail!("fatal: options 'ls-files --with-tree' and '-s/-u' cannot be used together");
+    }
+
+    if args.resolve_undo && args.format.is_some() {
+        anyhow::bail!(
+            "fatal: --format cannot be used with -s, -o, -k, -t, --resolve-undo, --deduplicate, --eol"
+        );
     }
 
     let stdout = io::stdout();
@@ -214,7 +225,8 @@ pub fn run(args: Args) -> Result<()> {
             && !args.others
             && !args.ignored
             && !args.unmerged
-            && !args.killed);
+            && !args.killed
+            && !args.resolve_undo);
     let show_stage = args.stage || args.unmerged;
     // Match git ls-files.c: --deduplicate is ignored with -t/-s/-u (show_tag/show_stage).
     let dedup_paths = args.deduplicate && !args.show_tag && !show_stage;
@@ -278,6 +290,12 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     let attrs_for_eol = grit_lib::crlf::load_gitattributes(work_tree);
+
+    let tag_resolve_undo = if args.show_tag || args.stage {
+        "U "
+    } else {
+        ""
+    };
 
     let mut last_dedup_path: Option<Vec<u8>> = None;
     for entry in &index.entries {
@@ -467,6 +485,47 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    if args.resolve_undo {
+        if let Some(ru_map) = &index.resolve_undo {
+            for (path_bytes, ru) in ru_map {
+                if !pathspec_filter.is_empty() {
+                    let idx = pathspec_filter
+                        .iter()
+                        .position(|spec| spec.matches(path_bytes.as_slice()));
+                    match idx {
+                        Some(i) => matched_index[i] = true,
+                        None => continue,
+                    }
+                }
+                let display = format_ls_display_path(
+                    args.full_name,
+                    &cwd,
+                    work_tree,
+                    path_bytes,
+                    &cwd_prefix,
+                )?;
+                let name = String::from_utf8_lossy(display.as_ref());
+                let qname = format_ls_path(&name, use_nul, quote_fully);
+                for stage in 1u8..=3u8 {
+                    let i = (stage - 1) as usize;
+                    if ru.modes[i] == 0 {
+                        continue;
+                    }
+                    write!(
+                        out,
+                        "{}{:06o} {} {}\t{}",
+                        tag_resolve_undo,
+                        ru.modes[i],
+                        ru.oids[i].to_hex(),
+                        stage,
+                        qname
+                    )?;
+                    out.write_all(&[term])?;
+                }
+            }
+        }
+    }
+
     // --others: list untracked files
     // --ignored: show only ignored untracked files (implies --others)
     // --ignored implies --others only when --cached is not explicitly set
@@ -604,6 +663,7 @@ pub fn run(args: Args) -> Result<()> {
             || args.format.is_some()
             || args.stage
             || args.unmerged
+            || args.resolve_undo
             || (show_cached || args.deleted || args.modified);
         let mut unmatched_specs: Vec<String> = Vec::new();
         for i in 0..pathspec_filter.len() {

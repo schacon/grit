@@ -543,7 +543,9 @@ pub fn run(mut args: Args) -> Result<()> {
     // After peeling `-f` / `--force` from `rest` (e.g. `switch --discard-changes` → `-f`).
     let branch_merge_wanted = effective_branch_merge_wants_real_merge(&merge_cli, args.merge);
     let path_merge_wanted = effective_path_checkout_merge(&merge_cli, args.merge);
-    let switch_force = args.force || branch_merge_wanted;
+    // Branch-merge (`-m`) uses `merge_branch_working_tree`; it must not imply `force` for
+    // `switch_to_tree` (Git only treats `-f` as force; t2030 resolve-undo / gc rely on this).
+    let switch_force = args.force;
 
     // `git switch -C branch -q` / `checkout -b x -q` pass `-q` as a trailing (or middle) positional.
     // Remove every `-q` / `--quiet` from `rest` so they are never parsed as a start-point or path.
@@ -1576,6 +1578,7 @@ fn merge_branch_working_tree(
             entry.size = meta.size() as u32;
         }
     }
+    merged_index.clear_resolve_undo();
     repo.write_index_at(&index_path, &mut merged_index)
         .context("writing index after merge checkout")?;
 
@@ -2231,6 +2234,7 @@ fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> 
     let mut new_index = Index::new();
     new_index.entries = new_entries;
     new_index.sort();
+    new_index.clear_resolve_undo();
 
     let work_units = new_index
         .entries
@@ -2252,6 +2256,7 @@ fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> 
         )?;
     }
 
+    new_index.clear_resolve_undo();
     repo.write_index(&mut new_index).context("writing index")?;
 
     trace2_emit_checkout_parallel_workers(checkout_parallel_worker_spawns(repo, work_units));
@@ -2279,6 +2284,7 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
     let mut new_index = Index::new();
     new_index.entries = new_entries;
     new_index.sort();
+    new_index.clear_resolve_undo();
 
     let work_units = new_index
         .entries
@@ -2318,6 +2324,7 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
 
     // Write the new index
     let index_path = repo.index_path();
+    new_index.clear_resolve_undo();
     repo.write_index_at(&index_path, &mut new_index)
         .context("writing index")?;
 
@@ -2449,6 +2456,8 @@ fn switch_to_tree(
     let mut new_index = Index::new();
     new_index.entries = new_entries;
     new_index.sort();
+    // Match Git `resolve_undo_clear_index` on branch/tree checkout.
+    new_index.clear_resolve_undo();
 
     let work_units = new_index
         .entries
@@ -2551,6 +2560,7 @@ fn switch_to_tree(
     }
 
     // Write the new index
+    new_index.clear_resolve_undo();
     repo.write_index_at(&index_path, &mut new_index)
         .context("writing index")?;
 
@@ -3189,14 +3199,16 @@ fn reject_ambiguous_short_ref(repo: &Repository, name: &str) -> Result<()> {
 }
 
 fn unmerge_paths_in_index(index: &mut Index, rel: &str) {
-    let paths: HashSet<Vec<u8>> = index
-        .entries
-        .iter()
-        .filter(|e| e.stage() != 0 && index_path_matches_spec(rel, &e.path))
-        .map(|e| e.path.clone())
+    let Some(map) = index.resolve_undo.as_ref() else {
+        return;
+    };
+    let keys: Vec<Vec<u8>> = map
+        .keys()
+        .filter(|p| index_path_matches_spec(rel, p))
+        .cloned()
         .collect();
-    for p in paths {
-        index.entries.retain(|e| e.path != p);
+    for p in keys {
+        let _ = index.unmerge_path_from_resolve_undo(&p);
     }
 }
 

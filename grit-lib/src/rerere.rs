@@ -666,7 +666,9 @@ pub fn repo_rerere(repo: &Repository, autoupdate: RerereAutoupdate) -> Result<()
 
     fs::create_dir_all(rr_root(&repo.git_dir))?;
 
-    let conflicts = all_rerere_conflict_paths(&index);
+    // Match Git `do_plain_rerere` first loop: `handle_file` reads the working tree and hashes
+    // conflict markers (same path as `find_conflict` three-way conflicts).
+    let conflicts = find_three_way_conflicts(&index);
     for path in &conflicts {
         let file_path = wt.join(path);
         let work_content = if file_path.exists() {
@@ -726,30 +728,49 @@ pub fn repo_rerere(repo: &Repository, autoupdate: RerereAutoupdate) -> Result<()
 
         let hex = id.hex.clone();
         let mut replayed = false;
-        for v in list_complete_variants(&repo.git_dir, &hex) {
-            let vid = RerereId {
-                hex: hex.clone(),
-                variant: v,
-            };
-            let pre = match fs::read(preimage_path(&repo.git_dir, &vid)) {
-                Ok(b) => b,
-                Err(_) => continue,
-            };
-            let post = match fs::read(postimage_path(&repo.git_dir, &vid)) {
-                Ok(b) => b,
-                Err(_) => continue,
-            };
-            if let Some(res) = try_replay_merge(repo, &path, work_content.as_bytes(), &pre, &post) {
-                fs::write(&file_path, &res)?;
-                touch_postimage(&repo.git_dir, &vid);
-                if id.variant != v {
-                    remove_variant(&repo.git_dir, &id);
+        let synth_bytes: Option<Vec<u8>> =
+            synthesize_conflict_from_index(repo, &index, path.as_str())?.map(|s| s.into_bytes());
+        let work_bytes = work_content.as_bytes();
+        let mut cur_candidates: Vec<&[u8]> = vec![work_bytes];
+        if let Some(ref s) = synth_bytes {
+            if s.as_slice() != work_bytes {
+                cur_candidates.push(s.as_slice());
+            }
+        }
+        // Prefer the working tree; fall back to the in-core conflict from index stages when
+        // marker labels differ but the rerere conflict id still matches.
+        let mut try_cur = |cur: &[u8]| -> bool {
+            for v in list_complete_variants(&repo.git_dir, &hex) {
+                let vid = RerereId {
+                    hex: hex.clone(),
+                    variant: v,
+                };
+                let pre = match fs::read(preimage_path(&repo.git_dir, &vid)) {
+                    Ok(b) => b,
+                    Err(_) => continue,
+                };
+                let post = match fs::read(postimage_path(&repo.git_dir, &vid)) {
+                    Ok(b) => b,
+                    Err(_) => continue,
+                };
+                if let Some(res) = try_replay_merge(repo, &path, cur, &pre, &post) {
+                    let _ = fs::write(&file_path, &res);
+                    touch_postimage(&repo.git_dir, &vid);
+                    if id.variant != v {
+                        remove_variant(&repo.git_dir, &id);
+                    }
+                    if autoupdate_on {
+                        to_stage.push(path.clone());
+                    } else {
+                        eprintln!("Resolved '{path}' using previous resolution.");
+                    }
+                    return true;
                 }
-                if autoupdate_on {
-                    to_stage.push(path.clone());
-                } else {
-                    eprintln!("Resolved '{path}' using previous resolution.");
-                }
+            }
+            false
+        };
+        for cur in cur_candidates {
+            if try_cur(cur) {
                 replayed = true;
                 break;
             }

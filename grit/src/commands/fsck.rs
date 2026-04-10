@@ -28,6 +28,22 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+fn resolved_index_path_for_fsck(repo: &Repository) -> PathBuf {
+    if let Ok(raw) = std::env::var("GIT_INDEX_FILE") {
+        if !raw.is_empty() {
+            let p = PathBuf::from(raw);
+            return if p.is_absolute() {
+                p
+            } else if let Ok(cwd) = std::env::current_dir() {
+                cwd.join(p)
+            } else {
+                p
+            };
+        }
+    }
+    repo.index_path()
+}
+
 /// Arguments for `grit fsck`.
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -493,6 +509,26 @@ fn walk_reachable(
     // Seed from HEAD.
     if let Ok(head_oid) = refs::resolve_ref(&repo.git_dir, "HEAD") {
         queue.push_back((head_oid, None));
+    }
+
+    // Objects referenced only from the index (e.g. unmerged stages, resolve-undo) must be
+    // reachable for `git fsck --unreachable` (t2030).
+    let index_path = resolved_index_path_for_fsck(repo);
+    if let Ok(idx) = repo.load_index_at(&index_path) {
+        for e in &idx.entries {
+            if !e.oid.is_zero() {
+                queue.push_back((e.oid, None));
+            }
+        }
+        if let Some(ru) = &idx.resolve_undo {
+            for rec in ru.values() {
+                for i in 0..3 {
+                    if rec.modes[i] != 0 && !rec.oids[i].is_zero() {
+                        queue.push_back((rec.oids[i], None));
+                    }
+                }
+            }
+        }
     }
 
     // Seed from all refs.
