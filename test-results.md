@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-10 (t5528 / push.default)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t5528-push-default.sh`: 31/32 passed (1 `test_expect_failure`)
+
 **2026-04-10 (t5327 / multi-pack bitmaps .rev)**
 
 - `cargo test -p grit-lib --lib`: 160 passed

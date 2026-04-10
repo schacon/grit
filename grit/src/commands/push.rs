@@ -410,7 +410,7 @@ pub fn run(args: Args) -> Result<()> {
     // use it directly as the URL instead of looking it up in config.
     let remote_name_owned: String;
     let urls: Vec<String>;
-    let _is_path_remote: bool;
+    let path_style_remote: bool;
 
     if let Some(ref r) = args.remote {
         if r.is_empty() {
@@ -424,43 +424,20 @@ pub fn run(args: Args) -> Result<()> {
         {
             // Path-based or explicit URL (including scp-style `host:path`); do not resolve as a
             // configured remote name (matches Git: t5507-remote-environment).
-            _is_path_remote = true;
+            path_style_remote = true;
             remote_name_owned = r.clone();
             urls = vec![r.clone()];
         } else {
-            _is_path_remote = false;
             remote_name_owned = r.clone();
-            // Check pushurl first (may be multi-valued), then url
-            let pushurls = config.get_all(&format!("remote.{}.pushurl", remote_name_owned));
-            if !pushurls.is_empty() {
-                urls = pushurls;
-            } else {
-                let url_key = format!("remote.{}.url", remote_name_owned);
-                let u = config
-                    .get(&url_key)
-                    .with_context(|| format!("remote '{}' not found", remote_name_owned))?;
-                urls = vec![u];
-            }
+            let (u, ps) = resolve_push_remote_urls(&config, &remote_name_owned)?;
+            urls = u;
+            path_style_remote = ps;
         }
     } else {
-        _is_path_remote = false;
-        remote_name_owned = if let Some(ref branch) = current_branch {
-            config
-                .get(&format!("branch.{branch}.remote"))
-                .unwrap_or_else(|| "origin".to_owned())
-        } else {
-            "origin".to_owned()
-        };
-        let pushurls = config.get_all(&format!("remote.{}.pushurl", remote_name_owned));
-        if !pushurls.is_empty() {
-            urls = pushurls;
-        } else {
-            let url_key = format!("remote.{}.url", remote_name_owned);
-            let u = config
-                .get(&url_key)
-                .with_context(|| format!("remote '{}' not found", remote_name_owned))?;
-            urls = vec![u];
-        }
+        remote_name_owned = default_push_remote_name(&config, current_branch.as_deref());
+        let (u, ps) = resolve_push_remote_urls(&config, &remote_name_owned)?;
+        urls = u;
+        path_style_remote = ps;
     };
     let remote_name = remote_name_owned.as_str();
 
@@ -471,12 +448,6 @@ pub fn run(args: Args) -> Result<()> {
         } else {
             Vec::new()
         };
-
-    // Push to each URL
-    let path_style_remote = args
-        .remote
-        .as_ref()
-        .is_some_and(|r| r.contains('/') || r.starts_with('.') || std::path::Path::new(r).exists());
 
     for url in &urls {
         push_to_url(
@@ -623,6 +594,9 @@ fn push_to_url(
     // Local commit OIDs that would be advertised as push tips (including refs already up to date
     // on the remote). Submodule recursion runs on this set, matching Git transport behavior.
     let mut submodule_tips: Vec<ObjectId> = Vec::new();
+    // When `push.autoSetupRemote` is set and `push.default` simple/unresolved needs it, set
+    // `branch.<name>.remote` + `merge` after a successful push (Git `TRANSPORT_PUSH_AUTO_UPSTREAM`).
+    let mut push_auto_upstream: Option<(String, String)> = None;
 
     if args.mirror {
         // Mirror: push all local refs to remote, and delete remote refs
@@ -678,7 +652,9 @@ fn push_to_url(
             &mut submodule_tips,
             &negs,
             refspec_force,
+            true,
         )?;
+        ensure_matching_push_has_common_refs(repo, &remote_repo, &updates)?;
     } else if push_all {
         // Push all branches (refs/heads/*)
         let mut local_branches = refs::list_refs(&repo.git_dir, "refs/heads/")?;
@@ -893,7 +869,9 @@ fn push_to_url(
                     &mut submodule_tips,
                     &negs,
                     refspec_force,
+                    true,
                 )?;
+                ensure_matching_push_has_common_refs(repo, &remote_repo, &updates)?;
                 i = j;
                 continue;
             }
@@ -968,32 +946,53 @@ fn push_to_url(
             i += 1;
         }
     } else {
-        // Default: push current branch (honors push.default upstream vs current/simple).
+        // Default refspecs: match Git's `setup_default_push_refspecs` (push.default).
         let branch = current_branch.context("not on a branch; specify a refspec to push")?;
+        let mode = push_default_mode(config);
 
-        let (local_ref, remote_ref) =
-            default_push_refs_for_current_branch(repo, config, remote_name, branch)?;
+        if mode == "matching" {
+            collect_matching_push_updates(
+                repo,
+                &remote_repo,
+                remote_name,
+                args,
+                &mut updates,
+                &mut submodule_tips,
+                &[],
+                false,
+                true,
+            )?;
+            ensure_matching_push_has_common_refs(repo, &remote_repo, &updates)?;
+        } else if mode == "nothing" {
+            bail!("You didn't specify any refspecs to push, and push.default is \"nothing\".");
+        } else {
+            let (local_ref, remote_ref, auto_upstream) =
+                default_push_refs_for_current_branch(config, remote_name, branch, &mode)?;
+            if let Some(p) = auto_upstream {
+                push_auto_upstream = Some(p);
+            }
 
-        let local_oid = refs::resolve_ref(&repo.git_dir, &local_ref)
-            .with_context(|| format!("branch '{branch}' has no commits"))?;
-        let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
+            let local_oid = refs::resolve_ref(&repo.git_dir, &local_ref)
+                .with_context(|| format!("branch '{branch}' has no commits"))?;
+            let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
 
-        let expected_oid = resolve_force_with_lease_expect(
-            &args.force_with_lease,
-            &repo.git_dir,
-            remote_name,
-            branch,
-        );
+            let expected_oid = resolve_force_with_lease_expect(
+                &args.force_with_lease,
+                &repo.git_dir,
+                remote_name,
+                branch,
+            );
 
-        updates.push(RefUpdate {
-            local_ref: Some(local_ref),
-            remote_ref,
-            old_oid,
-            new_oid: Some(local_oid),
-            expected_oid,
-            refspec_force: false,
-            pre_push_local_name: None,
-        });
+            updates.push(RefUpdate {
+                local_ref: Some(local_ref),
+                remote_ref,
+                old_oid,
+                new_oid: Some(local_oid),
+                expected_oid,
+                refspec_force: false,
+                pre_push_local_name: None,
+            });
+        }
     }
 
     // Push tags if requested
@@ -2079,6 +2078,27 @@ fn push_to_url(
         }
     }
 
+    if !args.dry_run && !args.set_upstream {
+        if let Some((branch_name, merge_ref)) = &push_auto_upstream {
+            let wanted_local = format!("refs/heads/{branch_name}");
+            let applied = applied_updates.iter().any(|(u, _)| {
+                u.local_ref.as_deref() == Some(wanted_local.as_str())
+                    && u.remote_ref.starts_with("refs/heads/")
+            });
+            if applied {
+                set_upstream_config(&repo.git_dir, branch_name, remote_name, merge_ref)?;
+                let track_short = merge_ref
+                    .strip_prefix("refs/heads/")
+                    .unwrap_or(merge_ref.as_str());
+                if !args.quiet {
+                    eprintln!(
+                        "branch '{branch_name}' set up to track '{remote_name}/{track_short}'."
+                    );
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -2320,6 +2340,29 @@ enum ApplyRefResult {
     RemoteRejected(String),
 }
 
+/// After a matching-style push (`:` or `push.default matching`), error when no branch names
+/// overlap with the remote (Git send-pack "No refs in common" path).
+fn ensure_matching_push_has_common_refs(
+    repo: &Repository,
+    remote_repo: &Repository,
+    updates: &[RefUpdate],
+) -> Result<()> {
+    if !updates.is_empty() {
+        return Ok(());
+    }
+    let local_branches = refs::list_refs(&repo.git_dir, "refs/heads/")?;
+    let any_remote_overlap = local_branches
+        .iter()
+        .any(|(refname, _)| refs::resolve_ref(&remote_repo.git_dir, refname).is_ok());
+    if !any_remote_overlap {
+        bail!(
+            "No refs in common and none specified; doing nothing.\n\
+             Perhaps you should specify a branch."
+        );
+    }
+    Ok(())
+}
+
 /// Matching refspec `:` — push every `refs/heads/*` whose tip differs from the remote.
 fn collect_matching_push_updates(
     repo: &Repository,
@@ -2330,6 +2373,7 @@ fn collect_matching_push_updates(
     submodule_tips: &mut Vec<ObjectId>,
     negative_patterns: &[String],
     refspec_force: bool,
+    require_remote_branch: bool,
 ) -> Result<()> {
     let local_branches = refs::list_refs(&repo.git_dir, "refs/heads/")?;
     for (refname, local_oid) in &local_branches {
@@ -2340,6 +2384,10 @@ fn collect_matching_push_updates(
             continue;
         }
         let old_oid = refs::resolve_ref(&remote_repo.git_dir, refname).ok();
+        // `push :` (matching refspec): only branches that exist on both sides (Git send-pack).
+        if require_remote_branch && old_oid.is_none() {
+            continue;
+        }
         if old_oid.as_ref() == Some(local_oid) {
             submodule_tips.push(*local_oid);
             continue;
@@ -2769,6 +2817,95 @@ fn normalize_ref(name: &str) -> String {
     }
 }
 
+/// True when `remote.<name>` has at least one push URL or fetch URL (Git's `valid_remote`).
+fn remote_has_usable_url(config: &ConfigSet, name: &str) -> bool {
+    !config.get_all(&format!("remote.{name}.pushurl")).is_empty()
+        || config.get(&format!("remote.{name}.url")).is_some()
+}
+
+/// Distinct remote names that have a non-empty `url` or `pushurl` entry.
+fn collect_remotes_with_url(config: &ConfigSet) -> Vec<String> {
+    use std::collections::HashSet;
+    let mut seen = HashSet::new();
+    for e in config.entries() {
+        let parts: Vec<&str> = e.key.splitn(3, '.').collect();
+        if parts.len() != 3 || parts[0] != "remote" {
+            continue;
+        }
+        let var = parts[2];
+        if (var == "url" || var == "pushurl") && e.value.as_ref().is_some_and(|v| !v.is_empty()) {
+            seen.insert(parts[1].to_owned());
+        }
+    }
+    seen.into_iter().collect()
+}
+
+/// Default remote for `git push` with no remote argument.
+///
+/// Follows Git's `pushremote_for_branch` / `remotes_pushremote_for_branch` and
+/// `remotes_remote_for_branch`: branch push remote, then `remote.pushDefault`, then branch remote
+/// only if that remote is configured with a URL (stale `branch.*.remote` after `git remote remove`
+/// is ignored), then the sole remote-with-URL if exactly one exists, else `origin`.
+fn default_push_remote_name(config: &ConfigSet, current_branch: Option<&str>) -> String {
+    let Some(branch) = current_branch else {
+        return "origin".to_owned();
+    };
+
+    if let Some(pr) = config
+        .get(&format!("branch.{branch}.pushremote"))
+        .or_else(|| config.get(&format!("branch.{branch}.pushRemote")))
+    {
+        if remote_has_usable_url(config, &pr) {
+            return pr;
+        }
+    }
+
+    if let Some(pd) = config
+        .get("remote.pushdefault")
+        .or_else(|| config.get("remote.pushDefault"))
+    {
+        if remote_has_usable_url(config, &pd) {
+            return pd;
+        }
+    }
+
+    if let Some(br) = config.get(&format!("branch.{branch}.remote")) {
+        if br != "." {
+            return br;
+        }
+    }
+
+    let with_url = collect_remotes_with_url(config);
+    if with_url.len() == 1 {
+        return with_url
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "origin".to_owned());
+    }
+
+    "origin".to_owned()
+}
+
+/// Resolve URL list for a push remote name and whether it is a path/URL alias (no `remote.<name>`).
+fn resolve_push_remote_urls(config: &ConfigSet, remote_name: &str) -> Result<(Vec<String>, bool)> {
+    let pushurls = config.get_all(&format!("remote.{remote_name}.pushurl"));
+    if !pushurls.is_empty() {
+        return Ok((pushurls, false));
+    }
+    let url_key = format!("remote.{remote_name}.url");
+    if let Some(u) = config.get(&url_key) {
+        return Ok((vec![u], false));
+    }
+    if remote_name.contains('/')
+        || remote_name.starts_with('.')
+        || std::path::Path::new(remote_name).exists()
+        || crate::ssh_transport::is_configured_ssh_url(remote_name)
+    {
+        return Ok((vec![remote_name.to_owned()], true));
+    }
+    bail!("remote '{}' not found", remote_name)
+}
+
 fn push_default_mode(config: &ConfigSet) -> String {
     config
         .get("push.default")
@@ -2776,38 +2913,106 @@ fn push_default_mode(config: &ConfigSet) -> String {
         .unwrap_or_else(|| "simple".to_owned())
 }
 
+fn branch_fetch_remote_name(config: &ConfigSet, branch: &str) -> Option<String> {
+    config
+        .get(&format!("branch.{branch}.remote"))
+        .filter(|r| r != ".")
+}
+
+fn push_auto_setup_remote_enabled(config: &ConfigSet) -> bool {
+    config
+        .get_bool("push.autosetupremote")
+        .or_else(|| config.get_bool("push.autoSetupRemote"))
+        .and_then(|r| r.ok())
+        .unwrap_or(false)
+}
+
+/// Default refspec for `git push` with no refspecs (Git `setup_default_push_refspecs`).
+///
+/// Returns `(local_ref, remote_ref, post_push_upstream)` where `post_push_upstream` is
+/// `Some((branch, merge_ref))` when `push.autoSetupRemote` should set tracking after a successful
+/// push (simple / default mode, same remote, no merge configured).
 fn default_push_refs_for_current_branch(
-    _repo: &Repository,
     config: &ConfigSet,
-    remote_name: &str,
+    push_remote_name: &str,
     branch: &str,
-) -> Result<(String, String)> {
+    mode: &str,
+) -> Result<(String, String, Option<(String, String)>)> {
     let local_ref = format!("refs/heads/{branch}");
-    match push_default_mode(config).as_str() {
+    let fetch_remote =
+        branch_fetch_remote_name(config, branch).unwrap_or_else(|| push_remote_name.to_owned());
+    let same_remote = push_remote_name == fetch_remote;
+
+    match mode {
         "upstream" => {
-            let track_remote = config
-                .get(&format!("branch.{branch}.remote"))
-                .filter(|r| r != ".")
-                .with_context(|| {
-                    format!(
-                        "The current branch {branch} has no upstream branch.\n\
-                         To push the current branch and set the remote as upstream, use\n\n\
-                            git push --set-upstream {remote_name} {branch}\n"
-                    )
-                })?;
-            if track_remote != remote_name {
+            let track_remote = branch_fetch_remote_name(config, branch).with_context(|| {
+                format!(
+                    "The current branch {branch} has no upstream branch.\n\
+                     To push the current branch and set the remote as upstream, use\n\n\
+                        git push --set-upstream {push_remote_name} {branch}\n"
+                )
+            })?;
+            if track_remote != push_remote_name {
                 bail!(
-                    "You are pushing to remote '{remote_name}', which is not the upstream of\n\
+                    "You are pushing to remote '{push_remote_name}', which is not the upstream of\n\
                      your current branch '{branch}', without telling me what to push\n\
                      to update which remote branch."
                 );
             }
-            let merge = config
-                .get(&format!("branch.{branch}.merge"))
-                .with_context(|| format!("branch '{branch}' has no configured merge ref"))?;
-            Ok((local_ref, merge))
+            let merge_opt = config.get(&format!("branch.{branch}.merge"));
+            if merge_opt.is_none() {
+                if push_auto_setup_remote_enabled(config) {
+                    let merge_ref = local_ref.clone();
+                    return Ok((
+                        local_ref.clone(),
+                        local_ref,
+                        Some((branch.to_owned(), merge_ref)),
+                    ));
+                }
+                bail!("branch '{branch}' has no configured merge ref");
+            }
+            let merge = normalize_ref(&merge_opt.unwrap());
+            Ok((local_ref, merge, None))
         }
-        _ => Ok((local_ref.clone(), local_ref)),
+        "current" => Ok((local_ref.clone(), local_ref, None)),
+        "simple" | _ => {
+            if !same_remote {
+                return Ok((local_ref.clone(), local_ref, None));
+            }
+
+            let merge_opt = config.get(&format!("branch.{branch}.merge"));
+            if merge_opt.is_none() {
+                if push_auto_setup_remote_enabled(config) {
+                    let merge_ref = local_ref.clone();
+                    return Ok((
+                        local_ref.clone(),
+                        local_ref,
+                        Some((branch.to_owned(), merge_ref)),
+                    ));
+                }
+                bail!(
+                    "The current branch {branch} has no upstream branch.\n\
+                     To push the current branch and set the remote as upstream, use\n\n\
+                        git push --set-upstream {push_remote_name} {branch}\n\
+                     \n\
+                     To have this happen automatically for branches without a tracking\n\
+                     upstream, see 'push.autoSetupRemote' in 'git help config'."
+                );
+            }
+            let merge = normalize_ref(&merge_opt.unwrap());
+            if merge != local_ref {
+                let short_upstream = merge.strip_prefix("refs/heads/").unwrap_or(merge.as_str());
+                bail!(
+                    "The upstream branch of your current branch does not match\n\
+                     the name of your current branch.  To push to the upstream branch\n\
+                     on the remote, use\n\n\
+                        git push {push_remote_name} HEAD:{short_upstream}\n\n\
+                     To push to the branch of the same name on the remote, use\n\n\
+                        git push {push_remote_name} HEAD\n"
+                );
+            }
+            Ok((local_ref.clone(), local_ref, None))
+        }
     }
 }
 

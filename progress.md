@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 330 completed (`[x]`), 5 in progress (`[~]`), 436 remai
 
 ## Recently completed
 
+- `t5528-push-default` — 31/32 tests pass (`push`: Git-compatible default remote (`branch.*.remote` path aliases, stale remote cleanup, `remote.pushDefault`, sole-remote fallback); `resolve_push_remote_urls`; `push.default` matching/nothing/simple/upstream/current + `push.autoSetupRemote` post-push upstream; matching `:` only updates refs present on remote; "No refs in common" when no overlapping branch names; 1 intentional `test_expect_failure` for matching on new branch)
 - `t3452-history-split` — 25/25 tests pass (`history split`; `refs list --include-root-refs`; commit editor + reflog fixes; checkout `switch -`; `log --graph --branches` ordering)
 - `t5327-multi-pack-bitmaps-rev` — 314/314 tests pass (MIDX `.rev` + bitmap harness: fast-import symbolic HEAD, rev-list bitmap/trace, clone/fetch partial + bare layout, `multi-pack-index write` flags, `pack-objects` reachability/progress/REF_DELTA bases, `test-tool read-midx --show-objects`)
 - `t7514-commit-patch` — 3/3 tests pass (`commit -p` / `commit -i`: interactive index↔worktree hunks, `GIT_EDITOR` for `e`, EOF-after-edit stages like Git; `--dry-run -p` without writing index; `-a`/`-i`/`-o` conflicts with `-p` like Git; `edit_bytes_tempfile` respects `GIT_EDITOR` / non-tty)
