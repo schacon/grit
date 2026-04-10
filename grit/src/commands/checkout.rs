@@ -12,8 +12,9 @@ use crate::grit_exe;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{HashMap, HashSet};
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
 use grit_lib::config::ConfigSet;
@@ -22,7 +23,9 @@ use grit_lib::diff::read_submodule_head_oid;
 use grit_lib::diff::{diff_index_to_worktree, zero_oid};
 use grit_lib::filter_process::{self, DelayedProcessCheckout};
 use grit_lib::hooks::{run_hook, HookResult};
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
+use grit_lib::index::{
+    entry_from_stat, normalize_mode, Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK,
+};
 use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::merge_trees::{
@@ -34,7 +37,7 @@ use grit_lib::odb::Odb;
 use grit_lib::refs::{self, append_reflog};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{
-    abbreviate_object_id, resolve_revision, resolve_revision_without_index_dwim,
+    abbreviate_object_id, peel_to_tree, resolve_revision, resolve_revision_without_index_dwim,
     resolve_upstream_symbolic_name, upstream_suffix_info,
 };
 use grit_lib::sparse_checkout::apply_sparse_checkout_skip_worktree;
@@ -736,7 +739,34 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     if args.patch {
-        return checkout_patch(&repo, target.as_deref(), &paths);
+        let mut patch_target = target.clone();
+        let mut patch_paths = paths.clone();
+        // `checkout -p [<tree-ish>] [<pathspec>...]` — if the first token is not a revision,
+        // Git treats it as a pathspec (no fatal "unknown revision"). If it resolves as both,
+        // require `--` (same as non-patch checkout).
+        if let Some(ref t) = patch_target {
+            if patch_paths.is_empty() && !has_separator {
+                let is_rev = resolve_revision(&repo, t).is_ok()
+                    || refs::resolve_ref(&repo.git_dir, &format!("refs/heads/{t}")).is_ok();
+                let cwd = std::env::current_dir().unwrap_or_default();
+                let wt = repo.work_tree.as_deref();
+                let is_path = wt.is_some_and(|w| {
+                    let rel = resolve_pathspec(t, w, &cwd);
+                    w.join(rel).exists()
+                });
+                if is_rev && is_path {
+                    bail!(
+                        "fatal: ambiguous argument '{}': both revision and filename\nUse '--' to separate paths from revisions, like this:\n'git <command> [<revision>...] -- [<file>...]'",
+                        t
+                    );
+                }
+                if !is_rev && is_path {
+                    patch_paths.push(t.clone());
+                    patch_target = None;
+                }
+            }
+        }
+        return checkout_patch(&repo, patch_target.as_deref(), &patch_paths);
     }
 
     // Case: checkout --orphan <name> [<start_point>]
@@ -3996,9 +4026,108 @@ checking out of the index."
 // Interactive patch mode
 // ---------------------------------------------------------------------------
 
+/// Run `grit apply` with a unified diff on stdin. Returns whether apply/check succeeded.
+fn run_grit_apply_stdin(
+    repo: &Repository,
+    work_tree: &Path,
+    patch: &str,
+    cached: bool,
+    reverse: bool,
+    check: bool,
+) -> Result<bool> {
+    let mut cmd = Command::new(grit_exe::grit_executable());
+    cmd.current_dir(work_tree);
+    cmd.env("GIT_DIR", &repo.git_dir);
+    grit_exe::strip_trace2_env(&mut cmd);
+    cmd.arg("apply");
+    if check {
+        cmd.arg("--check");
+    }
+    if cached {
+        cmd.arg("--cached");
+    }
+    if reverse {
+        cmd.arg("-R");
+    }
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let mut child = cmd.spawn().context("spawn grit apply")?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(patch.as_bytes())
+            .context("write patch to grit apply stdin")?;
+    }
+    let status = child.wait().context("wait grit apply")?;
+    Ok(status.success())
+}
+
+/// `checkout -p HEAD` / `@`: match Git's `apply_for_checkout` (add-patch.c) — verify with
+/// `apply --check` / `apply --cached --check`, then apply, or prompt when the index rejects
+/// the hunk while the worktree still accepts it.
+fn apply_checkout_head_mode(
+    repo: &Repository,
+    index: &mut Index,
+    index_path: &Path,
+    work_tree: &Path,
+    path: &str,
+    hunk_texts: &[String],
+    accepted: &[bool],
+    reader: &mut dyn BufRead,
+) -> Result<()> {
+    if !accepted.iter().any(|&a| a) {
+        return Ok(());
+    }
+
+    let mut patch = String::new();
+    patch.push_str(&format!("diff --git a/{path} b/{path}\n"));
+    patch.push_str(&format!("--- a/{path}\n+++ b/{path}\n"));
+    for (i, ht) in hunk_texts.iter().enumerate() {
+        if accepted.get(i).copied().unwrap_or(false) {
+            patch.push_str(ht);
+        }
+    }
+
+    const REVERSE: bool = true;
+    let idx_ok = run_grit_apply_stdin(repo, work_tree, &patch, true, REVERSE, true)?;
+    let wt_ok = run_grit_apply_stdin(repo, work_tree, &patch, false, REVERSE, true)?;
+
+    if idx_ok && wt_ok {
+        run_grit_apply_stdin(repo, work_tree, &patch, true, REVERSE, false)?;
+        *index = repo
+            .load_index_at(index_path)
+            .context("reload index after grit apply --cached")?;
+        run_grit_apply_stdin(repo, work_tree, &patch, false, REVERSE, false)?;
+        return Ok(());
+    }
+
+    if !idx_ok {
+        eprintln!("The selected hunks do not apply to the index!");
+        print!("Apply them to the worktree anyway? ");
+        std::io::stdout().flush().ok();
+        let mut line = String::new();
+        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+            return Ok(());
+        }
+        let yes = matches!(
+            line.trim().chars().next().map(|c| c.to_ascii_lowercase()),
+            Some('y')
+        );
+        if yes {
+            let _ = run_grit_apply_stdin(repo, work_tree, &patch, false, REVERSE, false)?;
+        } else {
+            eprintln!("Nothing was applied.");
+        }
+    } else {
+        print!("{patch}");
+    }
+
+    Ok(())
+}
+
 /// Interactive patch-mode checkout (`checkout -p`).
 ///
-/// Shows each hunk of difference between the source (index or commit) and the
+/// Shows each hunk of difference between the source tree (or index) and the
 /// working tree, prompting the user to accept (y), reject (n), quit (q),
 /// accept-all-in-file (a), or skip-rest-of-file (d) for each hunk.
 pub(crate) fn checkout_patch(
@@ -4009,6 +4138,16 @@ pub(crate) fn checkout_patch(
     use similar::TextDiff;
     use std::io::{self, BufRead, Write};
 
+    #[derive(Clone, Copy)]
+    enum PatchMode {
+        /// Default: diff index vs worktree; apply to worktree only.
+        IndexWorktree,
+        /// `HEAD` / `@`: diff `HEAD^{tree}` vs worktree+index; apply to both when staged differs.
+        HeadTree,
+        /// Named tree-ish: diff that tree vs worktree+index; apply to both when staged differs.
+        OtherTree,
+    }
+
     let work_tree = repo
         .work_tree
         .as_deref()
@@ -4016,20 +4155,30 @@ pub(crate) fn checkout_patch(
 
     let cwd = std::env::current_dir().context("resolving cwd")?;
     let index_path = repo.index_path();
-    let index = repo.load_index_at(&index_path).context("loading index")?;
+    let mut index = repo.load_index_at(&index_path).context("loading index")?;
 
-    // Determine which files to consider
     let filter_paths: Vec<String> = paths
         .iter()
         .map(|p| resolve_pathspec(p, work_tree, &cwd))
         .collect();
 
-    // Build list of (rel_path, source_content) pairs for modified files
-    let mut file_diffs: Vec<(String, Vec<u8>, Vec<u8>)> = Vec::new(); // (path, source_bytes, worktree_bytes)
+    let (patch_mode, source_tree_oid) = match source {
+        None => (PatchMode::IndexWorktree, None),
+        Some("HEAD" | "@") => {
+            let oid = resolve_treeish_to_tree_oid(repo, "HEAD")?;
+            (PatchMode::HeadTree, Some(oid))
+        }
+        Some(spec) => {
+            let oid = resolve_treeish_to_tree_oid(repo, spec)?;
+            (PatchMode::OtherTree, Some(oid))
+        }
+    };
 
-    match source {
-        None => {
-            // Diff working tree against index
+    let mut file_diffs: Vec<(String, Vec<u8>, Vec<u8>, Vec<u8>, u32)> = Vec::new();
+    // (path, source_bytes, staged_bytes, worktree_bytes, index_mode)
+
+    match patch_mode {
+        PatchMode::IndexWorktree => {
             for ie in &index.entries {
                 if ie.stage() != 0 {
                     continue;
@@ -4046,10 +4195,15 @@ pub(crate) fn checkout_patch(
 
                 let abs_path = work_tree.join(&path_str);
                 if !abs_path.exists() {
-                    // Deleted file — treat as empty worktree content
                     let obj = repo.odb.read(&ie.oid)?;
                     if obj.kind == ObjectKind::Blob {
-                        file_diffs.push((path_str, obj.data.clone(), Vec::new()));
+                        file_diffs.push((
+                            path_str,
+                            obj.data.clone(),
+                            obj.data.clone(),
+                            Vec::new(),
+                            ie.mode,
+                        ));
                     }
                     continue;
                 }
@@ -4062,14 +4216,19 @@ pub(crate) fn checkout_patch(
                 }
 
                 if worktree_data != obj.data {
-                    file_diffs.push((path_str, obj.data.clone(), worktree_data));
+                    file_diffs.push((
+                        path_str,
+                        obj.data.clone(),
+                        obj.data.clone(),
+                        worktree_data,
+                        ie.mode,
+                    ));
                 }
             }
         }
-        Some(source_spec) => {
-            // Diff working tree against a specific commit's tree
-            let source_oid = resolve_to_commit(repo, source_spec)?;
-            let tree_oid = commit_to_tree(repo, &source_oid)?;
+        PatchMode::HeadTree | PatchMode::OtherTree => {
+            let tree_oid = source_tree_oid
+                .ok_or_else(|| anyhow::anyhow!("internal: missing source tree for checkout -p"))?;
             let flat = tree_to_flat_entries(repo, &tree_oid, "")?;
 
             for flat_entry in &flat {
@@ -4094,8 +4253,26 @@ pub(crate) fn checkout_patch(
                     continue;
                 }
 
-                if worktree_data != obj.data {
-                    file_diffs.push((path_str, obj.data.clone(), worktree_data));
+                let staged_data = index
+                    .get(flat_entry.path.as_slice(), 0)
+                    .and_then(|e| {
+                        if e.mode == MODE_SYMLINK {
+                            return None;
+                        }
+                        repo.odb
+                            .read(&e.oid)
+                            .ok()
+                            .and_then(|o| (o.kind == ObjectKind::Blob).then_some(o.data))
+                    })
+                    .unwrap_or_else(Vec::new);
+
+                let tree_blob = obj.data.clone();
+                if worktree_data != tree_blob || staged_data != tree_blob {
+                    let mode = index
+                        .get(flat_entry.path.as_slice(), 0)
+                        .map(|e| e.mode)
+                        .unwrap_or(flat_entry.mode);
+                    file_diffs.push((path_str, tree_blob, staged_data, worktree_data, mode));
                 }
             }
         }
@@ -4105,19 +4282,16 @@ pub(crate) fn checkout_patch(
         return Ok(());
     }
 
-    // Sort for deterministic order
     file_diffs.sort_by(|a, b| a.0.cmp(&b.0));
 
     let stdin = io::stdin();
     let mut reader = stdin.lock();
-    let mut stdout = io::stderr();
+    let mut out = io::stdout();
 
-    for (path, source_data, worktree_data) in &file_diffs {
+    for (path, source_data, staged_data, worktree_data, index_mode) in &file_diffs {
         let source_str = String::from_utf8_lossy(source_data);
         let worktree_str = String::from_utf8_lossy(worktree_data);
 
-        // The diff shows what changed FROM source TO worktree.
-        // "Accepting" a hunk means reverting the worktree back to source.
         let text_diff = TextDiff::from_lines(source_str.as_ref(), worktree_str.as_ref());
         let hunks: Vec<_> = text_diff
             .unified_diff()
@@ -4128,6 +4302,21 @@ pub(crate) fn checkout_patch(
         if hunks.is_empty() {
             continue;
         }
+
+        let hunk_texts: Vec<String> = hunks.iter().map(|h| format!("{h}")).collect();
+
+        let update_index = matches!(patch_mode, PatchMode::HeadTree | PatchMode::OtherTree)
+            && staged_data != source_data;
+
+        // `checkout -p HEAD` / `@` always uses Git's `patch_mode_checkout_head` prompts and
+        // `apply --cached` + `apply` verification, even when the index already matches HEAD.
+        let prompt = match patch_mode {
+            PatchMode::HeadTree => "Discard this hunk from index and worktree [y,n,q,a,d,?]? ",
+            PatchMode::OtherTree if update_index => {
+                "Apply this hunk to index and worktree [y,n,q,a,d,?]? "
+            }
+            _ => "Discard this hunk from worktree [y,n,q,a,d,?]? ",
+        };
 
         let mut accept_all = false;
         let mut skip_file = false;
@@ -4142,16 +4331,14 @@ pub(crate) fn checkout_patch(
                 continue;
             }
 
-            // Display the hunk
-            writeln!(stdout, "diff --git a/{path} b/{path}").ok();
-            write!(stdout, "--- a/{path}\n+++ b/{path}\n").ok();
-            write!(stdout, "{hunk}").ok();
-            write!(stdout, "Discard this hunk from worktree [y,n,q,a,d,?]? ").ok();
-            stdout.flush().ok();
+            writeln!(out, "diff --git a/{path} b/{path}").ok();
+            write!(out, "--- a/{path}\n+++ b/{path}\n").ok();
+            write!(out, "{hunk}").ok();
+            write!(out, "{prompt}").ok();
+            out.flush().ok();
 
             let mut line = String::new();
             if reader.read_line(&mut line).unwrap_or(0) == 0 {
-                // EOF — keep remaining changes
                 break;
             }
             let answer = line.trim();
@@ -4159,7 +4346,7 @@ pub(crate) fn checkout_patch(
                 "y" | "Y" => {
                     accepted_hunks[i] = true;
                 }
-                "n" | "N" => { /* keep this hunk (don't revert) */ }
+                "n" | "N" => {}
                 "a" | "A" => {
                     accepted_hunks[i] = true;
                     accept_all = true;
@@ -4168,32 +4355,66 @@ pub(crate) fn checkout_patch(
                     skip_file = true;
                 }
                 "q" | "Q" => {
-                    // Apply what we've accepted so far, then return
-                    apply_accepted_hunks(
-                        repo,
-                        work_tree,
-                        path,
-                        source_data,
-                        worktree_data,
-                        &accepted_hunks,
-                    )?;
+                    if matches!(patch_mode, PatchMode::HeadTree) {
+                        apply_checkout_head_mode(
+                            repo,
+                            &mut index,
+                            &index_path,
+                            work_tree,
+                            path,
+                            &hunk_texts,
+                            &accepted_hunks,
+                            &mut reader,
+                        )?;
+                    } else {
+                        apply_accepted_hunks(
+                            repo,
+                            &mut index,
+                            work_tree,
+                            path,
+                            source_data,
+                            staged_data,
+                            worktree_data,
+                            *index_mode,
+                            update_index,
+                            &accepted_hunks,
+                        )?;
+                        repo.write_index(&mut index)?;
+                    }
                     return Ok(());
                 }
-                _ => { /* Unrecognized — treat as 'n' */ }
+                _ => {}
             }
         }
 
-        // Apply accepted hunks for this file
-        apply_accepted_hunks(
-            repo,
-            work_tree,
-            path,
-            source_data,
-            worktree_data,
-            &accepted_hunks,
-        )?;
+        if matches!(patch_mode, PatchMode::HeadTree) {
+            apply_checkout_head_mode(
+                repo,
+                &mut index,
+                &index_path,
+                work_tree,
+                path,
+                &hunk_texts,
+                &accepted_hunks,
+                &mut reader,
+            )?;
+        } else {
+            apply_accepted_hunks(
+                repo,
+                &mut index,
+                work_tree,
+                path,
+                source_data,
+                staged_data,
+                worktree_data,
+                *index_mode,
+                update_index,
+                &accepted_hunks,
+            )?;
+        }
     }
 
+    repo.write_index(&mut index)?;
     Ok(())
 }
 
@@ -4373,38 +4594,77 @@ pub(crate) fn blend_line_diff_by_hunk_ranges(
 }
 
 /// Apply per-hunk revert decisions: for each accepted hunk, use `source_data`; otherwise keep
-/// `worktree_data`. Used by `checkout -p` and `stash -p` (same semantics as Git's add--interactive).
+/// `worktree_data`. Used by `checkout -p` (and shared blend helpers for stash).
+///
+/// When `update_index` is true, accepted hunks also update the index blob (from blended staged +
+/// worktree sides); otherwise only the worktree file is written.
 pub(crate) fn apply_accepted_hunks(
-    _repo: &Repository,
+    repo: &Repository,
+    index: &mut Index,
     work_tree: &std::path::Path,
     path: &str,
     source_data: &[u8],
+    staged_data: &[u8],
     worktree_data: &[u8],
+    index_mode: u32,
+    update_index: bool,
     accepted: &[bool],
 ) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
     if !accepted.iter().any(|&a| a) {
         return Ok(());
     }
 
     let abs_path = work_tree.join(path);
+    let path_bytes = path.as_bytes();
 
-    if accepted.iter().all(|&a| a) {
-        if source_data.is_empty() {
-            let _ = std::fs::remove_file(&abs_path);
-        } else {
-            if let Some(parent) = abs_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(&abs_path, source_data)?;
+    let wt_out = if accepted.iter().all(|&a| a) {
+        source_data.to_vec()
+    } else {
+        blend_line_diff_by_hunks(source_data, worktree_data, accepted).into_bytes()
+    };
+
+    if wt_out.is_empty() {
+        let _ = std::fs::remove_file(&abs_path);
+    } else {
+        if let Some(parent) = abs_path.parent() {
+            std::fs::create_dir_all(parent)?;
         }
-        return Ok(());
+        std::fs::write(&abs_path, &wt_out)?;
     }
 
-    let output = blend_line_diff_by_hunks(source_data, worktree_data, accepted);
-    if let Some(parent) = abs_path.parent() {
-        std::fs::create_dir_all(parent)?;
+    if update_index {
+        let idx_out = if accepted.iter().all(|&a| a) {
+            source_data.to_vec()
+        } else {
+            blend_line_diff_by_hunks(source_data, staged_data, accepted).into_bytes()
+        };
+
+        if idx_out.is_empty() {
+            index.remove(path_bytes);
+        } else {
+            let oid = repo
+                .odb
+                .write(ObjectKind::Blob, &idx_out)
+                .with_context(|| format!("writing blob for index entry {path}"))?;
+            let meta = std::fs::symlink_metadata(&abs_path)
+                .with_context(|| format!("stat for index update '{path}'"))?;
+            let entry = entry_from_stat(
+                &abs_path,
+                path_bytes,
+                oid,
+                if index_mode == MODE_SYMLINK {
+                    MODE_SYMLINK
+                } else {
+                    normalize_mode(meta.mode())
+                },
+            )
+            .with_context(|| format!("building index entry for '{path}'"))?;
+            index.add_or_replace(entry);
+        }
     }
-    std::fs::write(&abs_path, output.as_bytes())?;
+
     Ok(())
 }
 
@@ -4665,6 +4925,13 @@ fn resolve_to_commit(repo: &Repository, spec: &str) -> Result<ObjectId> {
     let oid = resolve_revision_without_index_dwim(repo, spec)
         .with_context(|| format!("unknown revision: '{spec}'"))?;
     peel_to_commit(repo, oid)
+}
+
+/// Resolve `spec` to a root tree OID (commit → tree, tag → peel, tree → identity).
+fn resolve_treeish_to_tree_oid(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    let oid =
+        resolve_revision(repo, spec).with_context(|| format!("unknown revision: '{spec}'"))?;
+    peel_to_tree(repo, oid).with_context(|| format!("'{spec}' is not a valid tree-ish"))
 }
 
 /// Peel an OID to a commit (follows tag chains).
