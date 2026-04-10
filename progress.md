@@ -6,12 +6,12 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   342 |
+| Completed   |   344 |
 | In progress |     5 |
-| Remaining   |   424 |
+| Remaining   |   422 |
 | **Total**   |   771 |
 
-Task lines in `PLAN.md`: 342 completed (`[x]`), 5 in progress (`[~]`), 424 remaining (`[ ]`).
+Task lines in `PLAN.md`: 344 completed (`[x]`), 5 in progress (`[~]`), 422 remaining (`[ ]`).
 
 ## Recently completed
 
@@ -19,6 +19,8 @@ Task lines in `PLAN.md`: 342 completed (`[x]`), 5 in progress (`[~]`), 424 remai
 - `t5549-fetch-push-http` — 3/3 tests pass (HTTP fetch/push suite re-verified green in current implementation)
 - `t5543-atomic-push` — 13/13 tests pass (`push --atomic`: mirror rollback/report ordering parity for hook rejections, non-fast-forward parenthetical now reports `non-fast-forward`, and `--receive-pack=<wrapper>` path-style failure-path handling delegates through real `git push` while preserving grit-side reporting semantics)
 - `t5545-push-options` — 13/13 tests pass (`push`: config-backed `push.pushOption` defaults now feed hook/env propagation and remote push-options checks; recursive submodule push now forwards effective options; `submodule add` now reattaches checkout from detached HEAD to the remote default branch when possible so nested on-demand pushes update `main` like Git)
+- `t5517-push-mirror` — 13/13 tests pass (`push --mirror`: `remote.<name>.mirror` + `--mirror` behavior now forces updates/deletes and rejects mirror+refspec combinations like Git)
+- `t5538-push-shallow` — 8/8 tests pass (`push` shallow parity: progress/object counting behavior restored with trace2 path-walk coverage for config-driven path-walk pushes)
 - `t5533-push-cas` — 23/23 tests pass (`push`: `--force-if-includes`, `push.useForceIfIncludes`, explicit `<ref>:<expect>` disable behavior, reflog-aware includes checks, forced-update output markers for CAS-driven rewrites, and proper lease interactions with `--force` / delete / multi-ref pushes)
 - `t5528-push-default` — 31/32 harness tests pass (remaining line is upstream-marked `test_expect_failure`); `push` now honors `branch.<name>.pushRemote`, `remote.pushDefault`, single-remote fallback, `push.default` semantics (`nothing`/`current`/`upstream`/`simple`/`matching`), `push.autoSetupRemote`, and matching-mode no-common-ref rejection text; also removed `add`’s temporary auto-root-commit behavior that was causing false-positive `HEAD` state in push suites
 - `t5705-session-id-in-capabilities` — 17/17 tests pass (trace2 `transfer` `negotiated-version` / `server-sid` / `client-sid`; `transfer.advertiseSID` on upload-pack, receive-pack, and protocol v2; local fetch v2 handshake + stdin close; `send_pack` `HEAD:dst` + `git-receive-pack` → grit; strip trace2 env + quoted env paths in upload-pack spawn; harness CSV refreshed)
@@ -230,4 +232,4 @@ Task lines in `PLAN.md`: 342 completed (`[x]`), 5 in progress (`[~]`), 424 remai
 
 ## What Remains
 
-431 task lines still open in `PLAN.md` (plus 5 in progress). See `PLAN.md` for the full prioritized list.
+429 task lines still open in `PLAN.md` (plus 5 in progress). See `PLAN.md` for the full prioritized list.

@@ -2266,6 +2266,7 @@ pub(crate) struct GlobalOpts {
     git_dir: Option<PathBuf>,
     work_tree: Option<PathBuf>,
     change_dir: Option<PathBuf>,
+    namespace: Option<String>,
     config_overrides: Vec<String>,
     attr_source: Option<String>,
     bare: bool,
@@ -2348,6 +2349,21 @@ pub(crate) fn extract_globals(
             i += 1;
             if i < items.len() {
                 opts.work_tree = Some(PathBuf::from(&items[i]));
+            }
+            i += 1;
+            continue;
+        }
+
+        // --namespace=<name> or --namespace <name>
+        if let Some(val) = arg.strip_prefix("--namespace=") {
+            opts.namespace = Some(val.to_owned());
+            i += 1;
+            continue;
+        }
+        if arg == "--namespace" {
+            i += 1;
+            if i < items.len() {
+                opts.namespace = Some(items[i].clone());
             }
             i += 1;
             continue;
@@ -2482,6 +2498,9 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
     }
     if let Some(wt) = &opts.work_tree {
         std::env::set_var("GIT_WORK_TREE", wt);
+    }
+    if let Some(namespace) = &opts.namespace {
+        std::env::set_var("GIT_NAMESPACE", namespace);
     }
     if !opts.config_overrides.is_empty() {
         let extra: String = opts

@@ -580,7 +580,7 @@ commit → check it off → move on.
 - [ ] `t5404-tracking-branches` ████████░░░░░░░░░░░░ 3/7 (4 left) — tracking branch update checks for git push
 - [x] `t5618-alternate-refs` ████████████████████ 6/6 (0 left) — test handling of --alternate-refs traversal
 - [ ] `t5410-receive-pack` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git receive-pack
-- [ ] `t5517-push-mirror` ████████████░░░░░░░░ 8/13 (5 left) — pushing to a mirror repository
+- [x] `t5517-push-mirror` ████████████████████ 13/13 (0 left) — pushing to a mirror repository (mirror semantics now honor implicit force updates/deletes and `remote.<name>.mirror`)
 - [ ] `t5614-clone-submodules-shallow` ████████░░░░░░░░░░░░ 4/9 (5 left) — Test shallow cloning of repos with submodules
 - [ ] `t5200-update-server-info` ███████░░░░░░░░░░░░░ 3/8 (5 left) — Test git update-server-info
 - [ ] `t5564-http-proxy` ███████░░░░░░░░░░░░░ 3/8 (5 left) — test fetching through http proxy
@@ -605,7 +605,7 @@ commit → check it off → move on.
 - [x] `t5571-pre-push-hook` — pre-push hook stdin/argv and push.default upstream (11/11 harness)
 - [ ] `t5313-pack-bounds-checks` ████░░░░░░░░░░░░░░░░ 2/9 (7 left) — bounds-checking of access to mmapped on-disk file formats
 - [x] `t5617-clone-submodules-remote` — Test cloning repos with submodules using remote-tracking branches (9/9 harness)
-- [ ] `t5538-push-shallow` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — push from/to a shallow clone
+- [x] `t5538-push-shallow` ████████████████████ 8/8 (0 left) — push from/to a shallow clone (object/progress parity and trace2 path-walk coverage)
 - [ ] `t5539-fetch-http-shallow` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — fetch/clone from a shallow clone over http
 - [ ] `t5810-proto-disable-local` █████████████████░░░ 46/54 (8 left) — test disabling of local paths in clone/fetch
 - [x] `t5545-push-options` ████████████████████ 13/13 (0 left) — pushing to a repository using push options (CLI + config `push.pushOption`, recursive submodule push-option propagation, detached-submodule `HEAD` handling after `submodule add`)
@@ -634,7 +634,7 @@ commit → check it off → move on.
 - [ ] `t5560-http-backend-noserver` ██░░░░░░░░░░░░░░░░░░ 2/14 (12 left) — test git-http-backend-noserver
 - [ ] `t5612-clone-refspec` █░░░░░░░░░░░░░░░░░░░ 1/13 (12 left) — test refspec written by clone-command
 - [ ] `t5537-fetch-shallow` ███░░░░░░░░░░░░░░░░░ 3/16 (13 left) — fetch/clone from a shallow clone
-- [ ] `t5509-fetch-push-namespaces` ██░░░░░░░░░░░░░░░░░░ 2/15 (13 left) — fetch/push involving ref namespaces
+- [ ] `t5509-fetch-push-namespaces` █████████████████░░░ 13/15 (2 left) — fetch/push involving ref namespaces
 - [ ] `t5332-multi-pack-reuse` █░░░░░░░░░░░░░░░░░░░ 1/14 (13 left) — pack-objects multi-pack reuse
 - [ ] `t5574-fetch-output` █░░░░░░░░░░░░░░░░░░░ 1/14 (13 left) — git fetch output format
 - [x] `t5750-bundle-uri-parse` ████████████████████ 13/13 (0 left) — Test bundle-uri bundle_uri_parse_line()

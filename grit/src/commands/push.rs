@@ -631,6 +631,9 @@ fn push_to_url(
     push_refspecs_from_config: &[String],
     path_style_remote: bool,
 ) -> Result<()> {
+    if url.starts_with("ext::") {
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
     if let Some(receive_pack) = args.receive_pack.as_ref().filter(|s| !s.is_empty()) {
         if args.atomic {
             return run_push_with_receive_pack_wrapper(receive_pack, args.porcelain, url);

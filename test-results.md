@@ -1,5 +1,12 @@
 # Test results
 
+**2026-04-10 (phase 6 / mirror+shallow complete, namespaces advanced)**
+
+- `cargo build --release -p grit-rs`: pass
+- `./scripts/run-tests.sh t5517-push-mirror.sh`: 13/13
+- `./scripts/run-tests.sh t5538-push-shallow.sh`: 8/8
+- `./scripts/run-tests.sh t5509-fetch-push-namespaces.sh`: 13/15 (remaining: `transfer.hideRefs` namespace-stripping semantics in cases 6 and 10)
+
 **2026-04-10 (phase 5 / HTTP shallow push + fsck parity)**
 
 - `cargo build --release -p grit-rs`: pass

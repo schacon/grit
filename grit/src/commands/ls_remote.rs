@@ -61,6 +61,9 @@ pub struct Args {
 pub fn run(args: Args) -> Result<()> {
     // If the repository argument is a configured remote name, resolve its URL
     let effective_path = resolve_remote_or_path(&args.repository);
+    if effective_path.to_string_lossy().starts_with("ext::") {
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
 
     // Check if the path is a bundle file
     if is_bundle_file(&effective_path) {
