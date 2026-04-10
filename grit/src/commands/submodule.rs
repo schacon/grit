@@ -745,46 +745,6 @@ fn refresh_gitlink_index_stat(repo: &Repository, rel_path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Run `grit fetch` in each initialized submodule (and nested submodules when `recursive`).
-pub(crate) fn recursive_fetch_submodules(recursive: bool) -> Result<()> {
-    let repo = Repository::discover(None).context("not a git repository")?;
-    let work_tree = repo.work_tree.as_ref().context("bare repository")?;
-    let modules = parse_gitmodules_with_repo(work_tree, Some(&repo))?;
-    let grit_bin = grit_exe::grit_executable();
-
-    fn fetch_one(
-        grit_bin: &std::path::Path,
-        sub_path: &std::path::Path,
-        recursive: bool,
-    ) -> Result<()> {
-        if !sub_path.join(".git").exists() {
-            return Ok(());
-        }
-        let status = std::process::Command::new(grit_bin)
-            .args(["fetch", "origin"])
-            .current_dir(sub_path)
-            .status()
-            .context("submodule fetch")?;
-        if !status.success() {
-            bail!("submodule fetch failed in {}", sub_path.display());
-        }
-        if recursive {
-            let sub_repo = Repository::discover(Some(sub_path)).context("open submodule repo")?;
-            let sub_wt = sub_repo.work_tree.as_ref().context("bare submodule")?;
-            let nested = parse_gitmodules_with_repo(sub_wt, Some(&sub_repo)).unwrap_or_default();
-            for m in nested {
-                fetch_one(grit_bin, &sub_wt.join(&m.path), true)?;
-            }
-        }
-        Ok(())
-    }
-
-    for m in modules {
-        fetch_one(&grit_bin, &work_tree.join(&m.path), recursive)?;
-    }
-    Ok(())
-}
-
 /// Run the `submodule` command (no leading `--quiet` / `--cached`; use [`run_from_argv`] from main).
 pub fn run(args: Args) -> Result<()> {
     run_with_top_opts(SubmoduleTopOpts::default(), args)
@@ -918,7 +878,7 @@ fn default_remote_for_config(config: &ConfigFile, head_branch: Option<&str>) -> 
     "origin".to_string()
 }
 
-fn get_default_remote_for_path(path: &str) -> Result<String> {
+pub(crate) fn get_default_remote_for_path(path: &str) -> Result<String> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let path_buf = Path::new(path);
     let abs_sub = if path_buf.is_absolute() {
@@ -965,16 +925,25 @@ fn resolve_submodule_chain(
     let mut parent_wt = top_work.to_path_buf();
     let mut parent_git = top_repo.git_dir.clone();
 
-    for (idx, seg) in components.iter().enumerate() {
-        let is_last = idx + 1 == components.len();
+    let mut idx = 0usize;
+    while idx < components.len() {
         let parent_repo = Repository::open(&parent_git, Some(&parent_wt))
             .context("open repository for submodule walk")?;
         let modules = parse_gitmodules_with_repo(&parent_wt, Some(&parent_repo))?;
-        let Some(sm) = modules.iter().find(|m| m.path == *seg) else {
+        let mut sm_match: Option<SubmoduleInfo> = None;
+        for len in (1..=components.len() - idx).rev() {
+            let rel: String = components[idx..idx + len].join("/");
+            if let Some(sm) = modules.iter().find(|m| m.path == rel) {
+                sm_match = Some(sm.clone());
+                break;
+            }
+        }
+        let Some(sm) = sm_match else {
             return submodule_path_not_handle_error(sub_rel);
         };
+        let is_last = idx + sm.path.split('/').count() == components.len();
 
-        let seg_work = parent_wt.join(seg);
+        let seg_work = parent_wt.join(&sm.path);
         if !seg_work.join(".git").exists() {
             return submodule_path_not_handle_error(display_path);
         }
@@ -983,11 +952,12 @@ fn resolve_submodule_chain(
         };
 
         if is_last {
-            return Ok((git_dir, seg_work, parent_wt, parent_git, sm.clone()));
+            return Ok((git_dir, seg_work, parent_wt, parent_git, sm));
         }
 
         parent_wt = seg_work;
         parent_git = git_dir;
+        idx += sm.path.split('/').filter(|s| !s.is_empty()).count();
     }
 
     Err(anyhow::anyhow!(

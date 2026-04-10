@@ -37,6 +37,7 @@ pub mod fast_export;
 pub mod fast_import;
 pub mod fetch_head;
 pub mod fetch_negotiator;
+pub mod fetch_submodules;
 pub mod filter_process;
 pub mod fmt_merge_msg;
 pub mod fsck_standalone;
