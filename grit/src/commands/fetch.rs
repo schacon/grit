@@ -8,6 +8,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{parse_bool, ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::error::Error as GritError;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::merge_base;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
@@ -71,6 +72,9 @@ pub struct Args {
     /// Disable pruning remote-tracking refs.
     #[arg(long = "no-prune")]
     pub no_prune: bool,
+    /// Force update local refs (allow non-fast-forward updates).
+    #[arg(short = 'f', long = "force")]
+    pub force: bool,
 
     /// Remove local tags that no longer exist on the remote (implies --prune).
     #[arg(long)]
@@ -156,6 +160,9 @@ pub struct Args {
     /// Restrict negotiation to commits reachable from these tips.
     #[arg(long = "negotiation-tip", value_name = "COMMIT|GLOB")]
     pub negotiation_tip: Vec<String>,
+    /// Set upstream tracking information for fetched branches.
+    #[arg(long = "set-upstream")]
+    pub set_upstream: bool,
 
     /// Allow updating the current branch head (normally refused).
     #[arg(long)]
@@ -463,6 +470,44 @@ fn parse_protocol_version(value: &str) -> Option<u8> {
     }
 }
 
+fn parse_oid_prefix(repo: &Repository, value: &str) -> Result<Option<ObjectId>> {
+    if value.len() < 4 || value.len() > 40 || !value.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Ok(None);
+    }
+    let needle = value.to_ascii_lowercase();
+    let mut matches: Vec<ObjectId> = Vec::new();
+    let mut push_if_match = |oid: ObjectId| {
+        let hex = oid.to_hex();
+        if hex.starts_with(&needle) && !matches.contains(&oid) {
+            matches.push(oid);
+        }
+    };
+
+    for (name, oid) in refs::list_refs(&repo.git_dir, "refs/").unwrap_or_default() {
+        push_if_match(oid);
+        if let Ok(resolved) = resolve_revision(repo, &name) {
+            push_if_match(resolved);
+        }
+    }
+    if let Ok(head_oid) = refs::resolve_ref(&repo.git_dir, "HEAD") {
+        push_if_match(head_oid);
+    }
+    for pseudo in ["HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] {
+        if let Ok(oid) = resolve_revision(repo, pseudo) {
+            push_if_match(oid);
+        }
+    }
+    if let Ok(entries) = refs::list_refs(&repo.git_dir, "refs/tags/") {
+        for (_, oid) in entries {
+            push_if_match(oid);
+        }
+    }
+    if matches.len() > 1 {
+        bail!("short object ID {value} is ambiguous");
+    }
+    Ok(matches.into_iter().next())
+}
+
 fn resolve_negotiation_tip_oids(git_dir: &Path, tips: &[String]) -> Result<Vec<ObjectId>> {
     let repo = Repository::open(git_dir, None)
         .with_context(|| format!("open repository {}", git_dir.display()))?;
@@ -675,6 +720,7 @@ fn fetch_remote(
     url_override: Option<&str>,
     args: &Args,
 ) -> Result<()> {
+    let is_bare_repo = git_dir.join("objects").is_dir() && git_dir.join("HEAD").is_file();
     if !args.negotiate_only && args.unshallow {
         let shallow_path = git_dir.join("shallow");
         if shallow_path.exists() {
@@ -1048,6 +1094,8 @@ fn fetch_remote(
         refetch: args.refetch,
     };
 
+    let remote_head_advertised_oid: Option<ObjectId>;
+    let remote_head_symbolic_branch_from_transport: Option<String>;
     let (remote_heads, remote_tags, remote_advertised) = if is_ext_url {
         let local_git_for_ext = git_dir.to_path_buf();
         let refspec_owned_ext = refspecs.clone();
@@ -1060,7 +1108,7 @@ fn fetch_remote(
             cli_refspecs_owned.clone()
         };
         let remote_gd_ext = ext_upload_pack_git_dir.clone();
-        let (heads, tags, _, _) = crate::fetch_transport::with_packet_trace_identity(
+        let (heads, tags, head_symref, head_oid) = crate::fetch_transport::with_packet_trace_identity(
             "fetch",
             || {
                 crate::ext_transport::fetch_via_ext_skipping(
@@ -1093,10 +1141,15 @@ fn fetch_remote(
                 )
             },
         )?;
+        remote_head_advertised_oid = head_oid;
+        remote_head_symbolic_branch_from_transport = head_symref
+            .as_deref()
+            .and_then(|s| s.strip_prefix("refs/heads/"))
+            .map(ToOwned::to_owned);
         (heads, tags, Vec::new())
     } else if url.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", Some(git_dir))?;
-        let (heads, tags, _, _) =
+        let (heads, tags, head_symref, head_oid) =
             crate::fetch_transport::with_packet_trace_identity("fetch", || {
                 crate::fetch_transport::fetch_via_git_protocol_skipping(
                     git_dir,
@@ -1105,6 +1158,11 @@ fn fetch_remote(
                     filter_active,
                 )
             })?;
+        remote_head_advertised_oid = head_oid;
+        remote_head_symbolic_branch_from_transport = head_symref
+            .as_deref()
+            .and_then(|s| s.strip_prefix("refs/heads/"))
+            .map(ToOwned::to_owned);
         (heads, tags, Vec::new())
     } else if is_http_url {
         // Match Git `fetch.c`: apply `fetch.bundleURI` before the transport fetch so bundle
@@ -1119,6 +1177,8 @@ fn fetch_remote(
             &http_fetch_options,
             &http_ctx,
         )?;
+        remote_head_advertised_oid = adv.iter().find(|e| e.name == "HEAD").map(|e| e.oid);
+        remote_head_symbolic_branch_from_transport = None;
         let adv: Vec<(String, ObjectId)> = adv.into_iter().map(|e| (e.name, e.oid)).collect();
         let heads: Vec<(String, ObjectId)> = heads.into_iter().map(|e| (e.name, e.oid)).collect();
         let tags: Vec<(String, ObjectId)> = tags.into_iter().map(|e| (e.name, e.oid)).collect();
@@ -1152,7 +1212,8 @@ fn fetch_remote(
                 )
             }
         };
-        let (mut heads, mut tags, _, _) = crate::fetch_transport::fetch_via_upload_pack_skipping(
+        let (mut heads, mut tags, head_symref, head_oid) =
+            crate::fetch_transport::fetch_via_upload_pack_skipping(
             git_dir,
             &remote_path,
             upload_pack_cmd.as_deref(),
@@ -1161,6 +1222,11 @@ fn fetch_remote(
             include_head_ref_prefix,
             filter_active,
         )?;
+        remote_head_advertised_oid = head_oid;
+        remote_head_symbolic_branch_from_transport = head_symref
+            .as_deref()
+            .and_then(|s| s.strip_prefix("refs/heads/"))
+            .map(ToOwned::to_owned);
         // If upload-pack advertised no branch tips (or negotiation returned early) but the remote
         // repository has `refs/heads/*` on disk, read them directly so `refs/remotes/` updates
         // match Git's local fetch behavior (needed for submodule `origin/main` after `git fetch`).
@@ -1207,6 +1273,9 @@ fn fetch_remote(
             merged.dedup();
             merged
         };
+        remote_head_advertised_oid = refs::resolve_ref(&remote_repo.git_dir, "HEAD").ok();
+        remote_head_symbolic_branch_from_transport =
+            remote_symbolic_head_branch(&remote_repo.git_dir);
         if args.refetch {
             copy_objects(&remote_repo.git_dir, git_dir, true)
                 .context("copying objects from remote")?;
@@ -1251,13 +1320,15 @@ fn fetch_remote(
 
     // Track which remote-tracking refs we updated (for prune)
     let mut updated_refs: Vec<String> = Vec::new();
+    let mut ref_update_failures: Vec<String> = Vec::new();
+    let mut tag_clobber_failures: Vec<String> = Vec::new();
     let mut pending_atomic_ref_ops: Vec<PendingRefOp> = Vec::new();
     let mut pending_atomic_noop_head_hook: Option<(String, String, String)> = None;
     let mut has_updates = false;
 
-    let remote_symbolic_head_branch = remote_repo
-        .as_ref()
-        .and_then(|r| remote_symbolic_head_branch(&r.git_dir));
+    let remote_symbolic_head_branch = remote_head_symbolic_branch_from_transport
+        .clone()
+        .or_else(|| remote_repo.as_ref().and_then(|r| remote_symbolic_head_branch(&r.git_dir)));
     let _remote_default_branch_fetch = remote_repo
         .as_ref()
         .and_then(|r| remote_default_branch_for_fetch_merge(&r.git_dir));
@@ -1423,7 +1494,7 @@ fn fetch_remote(
                         // Check fast-forward for wildcard updates too; `--atomic` expects any
                         // non-fast-forward to abort the entire fetch.
                         if let Some(ref old) = old_oid {
-                            if old != remote_oid && !force {
+                            if old != remote_oid && !(force || args.force) {
                                 let is_ff = merge_base::is_ancestor(&ff_repo, *old, *remote_oid)
                                     .unwrap_or(false);
                                 if !is_ff {
@@ -1442,7 +1513,10 @@ fn fetch_remote(
 
                         // Refuse to update a ref that's checked out in a worktree (unless
                         // `--update-head-ok`, matching Git's fetch safety valve).
-                        if local_ref.starts_with("refs/heads/") && !args.update_head_ok {
+                        if local_ref.starts_with("refs/heads/")
+                            && !args.update_head_ok
+                            && !is_bare_repo
+                        {
                             if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
                                 bail!(
                                     "refusing to fetch into branch '{}' checked out at '{}'",
@@ -1453,7 +1527,7 @@ fn fetch_remote(
                         }
                         // Check fast-forward: reject non-ff updates unless forced.
                         if let Some(ref old) = old_oid {
-                            if old != remote_oid && !force {
+                            if old != remote_oid && !(force || args.force) {
                                 let is_ff = merge_base::is_ancestor(&ff_repo, *old, *remote_oid)
                                     .unwrap_or(false);
                                 if !is_ff {
@@ -1471,6 +1545,7 @@ fn fetch_remote(
                             &local_ref,
                             old_oid,
                             *remote_oid,
+                            &mut ref_update_failures,
                         )?;
 
                         if !args.quiet {
@@ -1510,6 +1585,16 @@ fn fetch_remote(
             let (remote_oid, resolved_remote_ref): (ObjectId, Option<String>) =
                 if let Ok(oid) = ObjectId::from_hex(src.as_str()) {
                     (oid, None)
+                } else if src == "HEAD" {
+                    let head_oid = remote_head_advertised_oid
+                        .or_else(|| find_remote_ref_oid("HEAD"))
+                        .or_else(|| {
+                            remote_symbolic_head_branch
+                                .as_deref()
+                                .and_then(|b| find_remote_ref_oid(&format!("refs/heads/{b}")))
+                        })
+                        .with_context(|| "couldn't find remote ref 'HEAD'".to_string())?;
+                    (head_oid, Some("HEAD".to_string()))
                 } else {
                     let remote_ref = if src.starts_with("refs/") {
                         src.clone()
@@ -1545,6 +1630,29 @@ fn fetch_remote(
                 &display_url,
                 dst.is_empty(),
             ));
+            if args.set_upstream {
+                if let Some(remote_ref_name) = resolved_remote_ref.as_deref() {
+                    if remote_ref_name.starts_with("refs/heads/") {
+                        let local_branch = if !dst.is_empty() {
+                            normalize_fetch_refspec_dst(&dst)
+                                .strip_prefix("refs/heads/")
+                                .map(ToOwned::to_owned)
+                        } else {
+                            remote_ref_name
+                                .strip_prefix("refs/heads/")
+                                .map(ToOwned::to_owned)
+                        };
+                        if let Some(local_branch) = local_branch {
+                            set_fetch_upstream_config(
+                                git_dir,
+                                &local_branch,
+                                remote_name,
+                                remote_ref_name,
+                            )?;
+                        }
+                    }
+                }
+            }
 
             // If a destination is specified, write the ref there
             if !dst.is_empty() {
@@ -1555,7 +1663,7 @@ fn fetch_remote(
 
                 // Check fast-forward: reject non-ff updates unless forced
                 if let Some(ref old) = old_oid {
-                    if old != &remote_oid && !force {
+                    if old != &remote_oid && !(force || args.force) {
                         let is_ff =
                             merge_base::is_ancestor(&ff_repo, *old, remote_oid).unwrap_or(false);
                         if !is_ff {
@@ -1572,7 +1680,10 @@ fn fetch_remote(
                     }
 
                     // Check if branch is checked out in a worktree before updating.
-                    if local_ref.starts_with("refs/heads/") && !args.update_head_ok {
+                    if local_ref.starts_with("refs/heads/")
+                        && !args.update_head_ok
+                        && !is_bare_repo
+                    {
                         if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
                             bail!(
                                 "refusing to fetch into branch '{}' checked out at '{}'",
@@ -1588,6 +1699,7 @@ fn fetch_remote(
                         &local_ref,
                         old_oid,
                         remote_oid,
+                        &mut ref_update_failures,
                     )?;
 
                     if !args.quiet {
@@ -1621,7 +1733,10 @@ fn fetch_remote(
                             has_updates = true;
                         }
 
-                        if local_ref.starts_with("refs/heads/") && !args.update_head_ok {
+                        if local_ref.starts_with("refs/heads/")
+                            && !args.update_head_ok
+                            && !is_bare_repo
+                        {
                             if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
                                 bail!(
                                     "refusing to fetch into branch '{}' checked out at '{}'",
@@ -1637,6 +1752,7 @@ fn fetch_remote(
                             &local_ref,
                             old_oid,
                             remote_oid,
+                            &mut ref_update_failures,
                         )?;
                     }
                 }
@@ -1793,6 +1909,7 @@ fn fetch_remote(
                 &local_ref,
                 old_oid,
                 remote_oid,
+                &mut ref_update_failures,
             )?;
             if !args.atomic {
                 let _ = append_fetch_reflog(
@@ -1883,6 +2000,15 @@ fn fetch_remote(
                 has_updates = true;
             }
 
+            if let Some(old) = old_oid {
+                if old != *remote_oid && !should_force_tag_update(config, remote_name, args) {
+                    let tag_name = refname.strip_prefix("refs/tags/").unwrap_or(refname);
+                    eprintln!(" ! [rejected]        {tag_name}  (would clobber existing tag)");
+                    tag_clobber_failures.push(tag_name.to_owned());
+                    continue;
+                }
+            }
+
             apply_single_ref_update(
                 args,
                 git_dir,
@@ -1890,6 +2016,7 @@ fn fetch_remote(
                 refname,
                 old_oid,
                 *remote_oid,
+                &mut ref_update_failures,
             )?;
             if !args.atomic {
                 let _ =
@@ -1979,6 +2106,7 @@ fn fetch_remote(
                     &mut pending_atomic_ref_ops,
                     local_tag_ref,
                     Some(*_oid),
+                    &mut ref_update_failures,
                 )?;
                 if !args.quiet {
                     let tag_name = local_tag_ref
@@ -2049,6 +2177,7 @@ fn fetch_remote(
                         &updated_refs,
                         rn,
                         args.quiet,
+                        &mut ref_update_failures,
                     )?;
                 }
             } else {
@@ -2065,6 +2194,7 @@ fn fetch_remote(
                         &updated_refs,
                         remote_hint,
                         args.quiet,
+                        &mut ref_update_failures,
                     )?;
                 }
             }
@@ -2197,6 +2327,14 @@ fn fetch_remote(
             eprintln!("would write to .git/FETCH_HEAD");
         }
     }
+    if !tag_clobber_failures.is_empty() {
+        bail!("some local refs could not be updated");
+    }
+    if !args.atomic && !ref_update_failures.is_empty() {
+        eprintln!("error: some local refs could not be updated; try running");
+        eprintln!(" 'git remote prune {remote_name}' to remove any old, conflicting branches");
+        bail!("some local refs could not be updated");
+    }
 
     if args.filter.as_deref() == Some("blob:none") {
         apply_blob_none_filter(git_dir, remote_repo.as_ref(), &remote_heads)
@@ -2314,6 +2452,23 @@ fn apply_partial_clone_fetch_config(
     config_file
         .write()
         .context("writing promisor config after fetch")?;
+    Ok(())
+}
+
+fn set_fetch_upstream_config(
+    git_dir: &Path,
+    local_branch: &str,
+    remote_name: &str,
+    remote_ref: &str,
+) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let mut config_file = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    config_file.set(&format!("branch.{local_branch}.remote"), remote_name)?;
+    config_file.set(&format!("branch.{local_branch}.merge"), remote_ref)?;
+    config_file.write()?;
     Ok(())
 }
 
@@ -2691,6 +2846,7 @@ fn apply_single_ref_update(
     refname: &str,
     old_oid: Option<ObjectId>,
     new_oid: ObjectId,
+    ref_update_failures: &mut Vec<String>,
 ) -> Result<()> {
     if args.atomic {
         pending_atomic_ref_ops.push(PendingRefOp::Write {
@@ -2699,8 +2855,10 @@ fn apply_single_ref_update(
             new_oid,
         });
     } else {
-        refs::write_ref(git_dir, refname, &new_oid)
-            .with_context(|| format!("updating ref {refname}"))?;
+        if let Err(err) = refs::write_ref(git_dir, refname, &new_oid) {
+            ref_update_failures.push(refname.to_owned());
+            print_ref_update_error(git_dir, refname, &err);
+        }
     }
     Ok(())
 }
@@ -2711,6 +2869,7 @@ fn apply_single_ref_delete(
     pending_atomic_ref_ops: &mut Vec<PendingRefOp>,
     refname: &str,
     old_oid: Option<ObjectId>,
+    ref_update_failures: &mut Vec<String>,
 ) -> Result<()> {
     if args.atomic {
         pending_atomic_ref_ops.push(PendingRefOp::Delete {
@@ -2718,9 +2877,29 @@ fn apply_single_ref_delete(
             old_oid,
         });
     } else {
-        refs::delete_ref(git_dir, refname).with_context(|| format!("pruning {refname}"))?;
+        if let Err(err) = refs::delete_ref(git_dir, refname) {
+            ref_update_failures.push(refname.to_owned());
+            eprintln!("error: deleting ref {refname}: {err}");
+        }
     }
     Ok(())
+}
+
+fn print_ref_update_error(git_dir: &Path, refname: &str, err: &GritError) {
+    if let GritError::Io(io_err) = err {
+        if io_err.kind() == std::io::ErrorKind::AlreadyExists
+            || io_err.raw_os_error() == Some(libc::EEXIST)
+        {
+            let lock_path = git_dir.join(refname).with_extension("lock");
+            eprintln!(
+                "error: cannot lock ref '{}': Unable to create '{}': File exists.",
+                refname,
+                lock_path.display()
+            );
+            return;
+        }
+    }
+    eprintln!("error: updating ref {refname}: {err}");
 }
 
 fn pending_writes_ref(ops: &[PendingRefOp], refname: &str) -> bool {
@@ -3087,12 +3266,20 @@ fn prune_stale_refs(
     current_refs: &[String],
     remote_name: &str,
     quiet: bool,
+    ref_update_failures: &mut Vec<String>,
 ) -> Result<()> {
     let existing = refs::list_refs(git_dir, prefix)?;
     for (refname, oid) in &existing {
         if !current_refs.contains(refname) {
-            apply_single_ref_delete(args, git_dir, pending_atomic_ref_ops, refname, Some(*oid))
-                .with_context(|| format!("pruning {refname}"))?;
+            apply_single_ref_delete(
+                args,
+                git_dir,
+                pending_atomic_ref_ops,
+                refname,
+                Some(*oid),
+                ref_update_failures,
+            )
+            .with_context(|| format!("pruning {refname}"))?;
             if !quiet {
                 // Show short name: "origin/branch" instead of "refs/remotes/origin/branch"
                 let short = refname.strip_prefix("refs/remotes/").unwrap_or(refname);
@@ -3232,6 +3419,17 @@ fn parse_follow_remote_head(config: &ConfigSet, remote_name: &str) -> FollowRemo
         mode: FollowRemoteHead::Create,
         no_warn_branch: None,
     }
+}
+
+fn should_force_tag_update(config: &ConfigSet, remote_name: &str, args: &Args) -> bool {
+    if args.force {
+        return true;
+    }
+    let key = format!("remote.{remote_name}.tagOpt");
+    config
+        .get(&key)
+        .map(|v| v.trim() == "--force")
+        .unwrap_or(false)
 }
 
 fn trace_ls_refs_head_prefix() {
@@ -4241,6 +4439,17 @@ fn resolve_git_dir() -> Result<PathBuf> {
             None => bail!("not a git repository (or any of the parent directories): .git"),
         };
     }
+}
+
+fn repository_is_bare(git_dir: &Path) -> bool {
+    if git_dir.file_name().is_some_and(|name| name == ".git") {
+        return false;
+    }
+    let cfg = ConfigSet::load(Some(git_dir), true).ok();
+    cfg.and_then(|c| c.get("core.bare"))
+        .as_deref()
+        .and_then(|v| parse_bool(v).ok())
+        .unwrap_or_else(|| git_dir.join("HEAD").is_file() && git_dir.join("objects").is_dir())
 }
 
 /// Check if a branch ref is checked out in any worktree, return the worktree path.
