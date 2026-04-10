@@ -640,7 +640,7 @@ commit → check it off → move on.
 - [x] `t5750-bundle-uri-parse` ████████████████████ 13/13 (0 left) — Test bundle-uri bundle_uri_parse_line()
 - [ ] `t5303-pack-corruption-resilience` ████████████░░░░░░░░ 22/36 (14 left) — resilience to pack corruptions with redundant objects
 - [ ] `t5604-clone-reference` ███████████░░░░░░░░░ 20/34 (14 left) — test clone --reference
-- [ ] `t5533-push-cas` ███████░░░░░░░░░░░░░ 9/23 (14 left) — compare & swap push force/delete safety
+- [x] `t5533-push-cas` ████████████████████ 23/23 (0 left) — compare & swap push force/delete safety (`--force-if-includes`, `push.useForceIfIncludes`, lease/includes interactions)
 - [ ] `t5407-post-rewrite-hook` ███░░░░░░░░░░░░░░░░░ 3/17 (14 left) — Test the post-rewrite hook.
 - [x] `t5705-session-id-in-capabilities` — session ID in capabilities (17/17)
 - [ ] `t5814-proto-disable-ext` ████████░░░░░░░░░░░░ 11/27 (16 left) — test disabling of remote-helper paths in clone/fetch

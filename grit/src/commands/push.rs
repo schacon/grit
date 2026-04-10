@@ -18,6 +18,7 @@ use grit_lib::push_submodules::{
     submodule_worktree_path, validate_submodule_push_refspecs, verify_push_gitlinks_are_commits,
     PushRecurseSubmodules,
 };
+use grit_lib::reflog::read_reflog;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse;
@@ -65,6 +66,14 @@ pub struct Args {
     /// or --force-with-lease=<refname>:<expect>
     #[arg(long = "force-with-lease", num_args = 0..=1, default_missing_value = "", require_equals = true)]
     pub force_with_lease: Option<String>,
+
+    /// With --force-with-lease, require rewritten commits to include remote-tracking tips.
+    #[arg(long = "force-if-includes")]
+    pub force_if_includes: bool,
+
+    /// Disable force-if-includes checks (overrides config/CLI enablement).
+    #[arg(long = "no-force-if-includes")]
+    pub no_force_if_includes: bool,
 
     /// Request an atomic push: either all refs update or none do.
     #[arg(long)]
@@ -1226,17 +1235,78 @@ fn push_to_url(
     // Per-ref validation. Force-with-lease still fails the whole push when stale.
     // Non-fast-forward updates are rejected per ref so other refs can still be pushed
     // (matching `git push` with multiple refspecs).
+    let force_if_includes = effective_force_if_includes(args, config);
     let mut pre_reject: Vec<Option<String>> = vec![None; updates.len()];
     for (i, update) in updates.iter().enumerate() {
-        if let Some(expected) = &update.expected_oid {
-            let actual_remote = refs::resolve_ref(&remote_repo.git_dir, &update.remote_ref).ok();
-            if actual_remote.as_ref() != Some(expected) {
-                bail!(
-                    "failed to push some refs: stale info for '{}' \
-                     (force-with-lease check failed)",
-                    update.remote_ref
-                );
+        let mut includes_override_for_lease = false;
+        if !args.force && !update.refspec_force {
+            match force_with_lease_expectation_for_remote_ref(
+                &args.force_with_lease,
+                &repo.git_dir,
+                remote_name,
+                &update.remote_ref,
+            ) {
+                LeaseCheckResult::None => {}
+                LeaseCheckResult::Expect(expected) => {
+                    let actual_remote =
+                        refs::resolve_ref(&remote_repo.git_dir, &update.remote_ref).ok();
+                    if actual_remote.as_ref() != Some(&expected) {
+                        if force_if_includes
+                            && update.remote_ref.starts_with("refs/heads/")
+                            && update.old_oid.is_some()
+                        {
+                            if push_includes_remote_tracking_tip(
+                                repo,
+                                remote_name,
+                                update,
+                                &args.force_with_lease,
+                            )? {
+                                includes_override_for_lease = true;
+                            } else {
+                                bail!(
+                                    "failed to push some refs: stale info for '{}' \
+                                     (force-with-lease check failed)",
+                                    update.remote_ref
+                                );
+                            }
+                        } else {
+                            bail!(
+                                "failed to push some refs: stale info for '{}' \
+                                 (force-with-lease check failed)",
+                                update.remote_ref
+                            );
+                        }
+                    }
+                }
+                LeaseCheckResult::MissingTracking => {
+                    if update.old_oid.is_some() {
+                        bail!(
+                            "failed to push some refs: stale info for '{}' \
+                             (force-with-lease check failed)",
+                            update.remote_ref
+                        );
+                    }
+                }
             }
+        }
+        if force_if_includes
+            && !args.force
+            && !update.refspec_force
+            && update.remote_ref.starts_with("refs/heads/")
+            && update.old_oid.is_some()
+            && !includes_override_for_lease
+            && !push_includes_remote_tracking_tip(
+                repo,
+                remote_name,
+                update,
+                &args.force_with_lease,
+            )?
+        {
+            bail!(
+                "failed to push some refs: stale info for '{}' \
+                 (force-with-lease check failed)",
+                update.remote_ref
+            );
         }
 
         if let (Some(old), Some(new)) = (&update.old_oid, &update.new_oid) {
@@ -2272,19 +2342,46 @@ fn apply_ref_update(
                     .map(|o| o.to_hex())
                     .unwrap_or_else(|| zero_oid.clone());
                 let flag = match old_oid_opt {
+                    Some(old)
+                        if old != new_oid
+                            && update.remote_ref.starts_with("refs/heads/")
+                            && ((args.force || update.refspec_force)
+                                || is_ancestor(repo, *old, *new_oid)
+                                    .map(|ff| !ff)
+                                    .unwrap_or(false)) =>
+                    {
+                        "+"
+                    }
                     Some(old) if old != new_oid => " ",
                     None => "*",
                     _ => "=",
                 };
                 let local_ref_str = update.local_ref.as_deref().unwrap_or("(delete)");
+                let forced_suffix = if flag == "+" { " (forced update)" } else { "" };
                 println!(
-                    "{flag}\t{local_ref_str}:{remote_ref}\t{old_hex}..{new_hex}\t{src_short} -> {branch_short}",
+                    "{flag}\t{local_ref_str}:{remote_ref}\t{old_hex}..{new_hex}\t{src_short} -> {branch_short}{forced_suffix}",
                     remote_ref = update.remote_ref,
                     old_hex = &old_hex[..7],
                     new_hex = &new_oid.to_hex()[..7],
                 );
             } else if !args.quiet {
                 match old_oid_opt {
+                    Some(old)
+                        if old != new_oid
+                            && update.remote_ref.starts_with("refs/heads/")
+                            && ((args.force || update.refspec_force)
+                                || is_ancestor(repo, *old, *new_oid)
+                                    .map(|ff| !ff)
+                                    .unwrap_or(false)) =>
+                    {
+                        eprintln!(
+                            " + {}...{}  {} -> {} (forced update)",
+                            &old.to_hex()[..7],
+                            &new_oid.to_hex()[..7],
+                            src_short,
+                            branch_short,
+                        );
+                    }
                     Some(old) if old != new_oid => {
                         eprintln!(
                             "   {}..{}  {} -> {}",
@@ -2382,6 +2479,13 @@ enum ForceWithLease {
     RefExpect(String, String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeaseCheckResult {
+    None,
+    Expect(ObjectId),
+    MissingTracking,
+}
+
 /// Resolve the expected OID for --force-with-lease, given the push target ref.
 fn resolve_force_with_lease_expect(
     fwl: &Option<String>,
@@ -2389,33 +2493,77 @@ fn resolve_force_with_lease_expect(
     remote_name: &str,
     dst_branch: &str,
 ) -> Option<ObjectId> {
-    let val = match fwl {
-        Some(v) => v.as_str(),
-        None => return None,
+    match force_with_lease_expectation_for_remote_ref(fwl, git_dir, remote_name, dst_branch) {
+        LeaseCheckResult::Expect(oid) => Some(oid),
+        LeaseCheckResult::None | LeaseCheckResult::MissingTracking => None,
+    }
+}
+
+fn normalize_push_target_ref(name: &str) -> String {
+    if name.starts_with("refs/") {
+        name.to_owned()
+    } else {
+        format!("refs/heads/{name}")
+    }
+}
+
+fn matches_force_with_lease_ref(remote_ref: &str, spec_ref: &str) -> bool {
+    normalize_push_target_ref(remote_ref) == normalize_push_target_ref(spec_ref)
+}
+
+fn tracking_ref_for_remote_branch(remote_name: &str, remote_ref: &str) -> Option<String> {
+    let full = normalize_push_target_ref(remote_ref);
+    let branch = full.strip_prefix("refs/heads/")?;
+    Some(format!("refs/remotes/{remote_name}/{branch}"))
+}
+
+fn resolve_force_with_lease_explicit_expect(git_dir: &Path, expect: &str) -> Option<ObjectId> {
+    if let Ok(repo) = Repository::open(git_dir, None) {
+        if let Ok(oid) = grit_lib::rev_parse::resolve_revision(&repo, expect) {
+            return Some(oid);
+        }
+    }
+    expect.parse::<ObjectId>().ok()
+}
+
+fn force_with_lease_expectation_for_remote_ref(
+    fwl: &Option<String>,
+    git_dir: &Path,
+    remote_name: &str,
+    remote_ref: &str,
+) -> LeaseCheckResult {
+    let Some(val) = fwl.as_deref() else {
+        return LeaseCheckResult::None;
     };
-    let parsed = parse_force_with_lease(val);
-    match parsed {
+    match parse_force_with_lease(val) {
         ForceWithLease::Bare => {
-            // Use the remote-tracking ref for the branch being pushed
-            let branch = dst_branch.strip_prefix("refs/heads/").unwrap_or(dst_branch);
-            let tracking_ref = format!("refs/remotes/{remote_name}/{branch}");
-            refs::resolve_ref(git_dir, &tracking_ref).ok()
+            let Some(tracking_ref) = tracking_ref_for_remote_branch(remote_name, remote_ref) else {
+                return LeaseCheckResult::None;
+            };
+            match refs::resolve_ref(git_dir, &tracking_ref) {
+                Ok(oid) => LeaseCheckResult::Expect(oid),
+                Err(_) => LeaseCheckResult::MissingTracking,
+            }
         }
         ForceWithLease::Ref(refname) => {
-            // Use the remote-tracking ref for the given refname
-            let tracking_ref = format!("refs/remotes/{remote_name}/{refname}");
-            refs::resolve_ref(git_dir, &tracking_ref).ok()
-        }
-        ForceWithLease::RefExpect(_refname, expect) => {
-            // Try to resolve expect as a revision expression (handles main^, etc.)
-            // We need a Repository for rev_parse, so open one from git_dir.
-            if let Ok(repo) = Repository::open(git_dir, None) {
-                if let Ok(oid) = grit_lib::rev_parse::resolve_revision(&repo, &expect) {
-                    return Some(oid);
-                }
+            if !matches_force_with_lease_ref(remote_ref, &refname) {
+                return LeaseCheckResult::None;
             }
-            // Fall back: try as raw OID
-            expect.parse::<ObjectId>().ok()
+            let Some(tracking_ref) = tracking_ref_for_remote_branch(remote_name, &refname) else {
+                return LeaseCheckResult::None;
+            };
+            match refs::resolve_ref(git_dir, &tracking_ref) {
+                Ok(oid) => LeaseCheckResult::Expect(oid),
+                Err(_) => LeaseCheckResult::MissingTracking,
+            }
+        }
+        ForceWithLease::RefExpect(refname, expect) => {
+            if !matches_force_with_lease_ref(remote_ref, &refname) {
+                return LeaseCheckResult::None;
+            }
+            resolve_force_with_lease_explicit_expect(git_dir, &expect)
+                .map(LeaseCheckResult::Expect)
+                .unwrap_or(LeaseCheckResult::MissingTracking)
         }
     }
 }
@@ -2688,6 +2836,129 @@ fn push_auto_setup_remote(config: &ConfigSet) -> bool {
         .get("push.autoSetupRemote")
         .and_then(|v| parse_bool(&v).ok())
         .unwrap_or(false)
+}
+
+fn config_use_force_if_includes(config: &ConfigSet) -> bool {
+    config
+        .get("push.useForceIfIncludes")
+        .and_then(|v| parse_bool(&v).ok())
+        .unwrap_or(false)
+}
+
+fn force_with_lease_allows_includes(fwl: &Option<String>) -> bool {
+    let Some(raw) = fwl.as_deref() else {
+        return false;
+    };
+    !matches!(parse_force_with_lease(raw), ForceWithLease::RefExpect(_, _))
+}
+
+fn effective_force_if_includes(args: &Args, config: &ConfigSet) -> bool {
+    if args.no_force_if_includes {
+        return false;
+    }
+    let requested = args.force_if_includes || config_use_force_if_includes(config);
+    requested && force_with_lease_allows_includes(&args.force_with_lease)
+}
+
+fn resolve_force_with_lease_tracking_expect(
+    fwl: &Option<String>,
+    git_dir: &Path,
+    remote_name: &str,
+    dst_ref: &str,
+) -> Option<ObjectId> {
+    let val = fwl.as_deref()?;
+    match parse_force_with_lease(val) {
+        ForceWithLease::Bare => {
+            let tracking_ref = tracking_ref_for_remote_branch(remote_name, dst_ref)?;
+            refs::resolve_ref(git_dir, &tracking_ref).ok()
+        }
+        ForceWithLease::Ref(refname) => {
+            if !matches_force_with_lease_ref(dst_ref, &refname) {
+                return None;
+            }
+            let tracking_ref = tracking_ref_for_remote_branch(remote_name, &refname)?;
+            refs::resolve_ref(git_dir, &tracking_ref).ok()
+        }
+        ForceWithLease::RefExpect(_, _) => None,
+    }
+}
+
+fn push_includes_remote_tracking_tip(
+    repo: &Repository,
+    remote_name: &str,
+    update: &RefUpdate,
+    fwl: &Option<String>,
+) -> Result<bool> {
+    let Some(expect_tracking_tip) = resolve_force_with_lease_tracking_expect(
+        fwl,
+        &repo.git_dir,
+        remote_name,
+        &update.remote_ref,
+    ) else {
+        return Ok(true);
+    };
+    if let Some(new_oid) = update.new_oid {
+        if is_ancestor(repo, expect_tracking_tip, new_oid)? {
+            return Ok(true);
+        }
+    }
+
+    let local_ref = if let Some(local) = update.local_ref.as_deref() {
+        if local.starts_with("refs/heads/") {
+            Some(local.to_owned())
+        } else {
+            None
+        }
+    } else {
+        update
+            .remote_ref
+            .strip_prefix("refs/heads/")
+            .map(|name| format!("refs/heads/{name}"))
+    };
+    let Some(local_ref) = local_ref else {
+        return Ok(false);
+    };
+
+    if let Ok(local_tip) = refs::resolve_ref(&repo.git_dir, &local_ref) {
+        if is_ancestor(repo, expect_tracking_tip, local_tip)? {
+            return Ok(true);
+        }
+    }
+
+    let cutoff_ts = tracking_ref_for_remote_branch(remote_name, &update.remote_ref)
+        .and_then(|tracking_ref| read_reflog(&repo.git_dir, &tracking_ref).ok())
+        .and_then(|entries| {
+            entries
+                .last()
+                .and_then(|e| reflog_identity_timestamp(&e.identity))
+        });
+
+    if let Ok(entries) = read_reflog(&repo.git_dir, &local_ref) {
+        for entry in entries.iter().rev() {
+            if let Some(cutoff) = cutoff_ts {
+                if let Some(ts) = reflog_identity_timestamp(&entry.identity) {
+                    if ts < cutoff {
+                        break;
+                    }
+                }
+            }
+            if entry.new_oid == expect_tracking_tip
+                || is_ancestor(repo, expect_tracking_tip, entry.new_oid)?
+            {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+fn reflog_identity_timestamp(identity: &str) -> Option<i64> {
+    let mut parts = identity.split_whitespace();
+    let _name = parts.next()?;
+    let _email = parts.next()?;
+    let ts = parts.next()?;
+    ts.parse::<i64>().ok()
 }
 
 fn default_push_ref_for_current_branch(

@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   337 |
+| Completed   |   338 |
 | In progress |     5 |
-| Remaining   |   429 |
+| Remaining   |   428 |
 | **Total**   |   771 |
 
-Task lines in `PLAN.md`: 337 completed (`[x]`), 5 in progress (`[~]`), 429 remaining (`[ ]`).
+Task lines in `PLAN.md`: 338 completed (`[x]`), 5 in progress (`[~]`), 428 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5533-push-cas` — 23/23 tests pass (`push`: `--force-if-includes`, `push.useForceIfIncludes`, explicit `<ref>:<expect>` disable behavior, reflog-aware includes checks, forced-update output markers for CAS-driven rewrites, and proper lease interactions with `--force` / delete / multi-ref pushes)
 - `t5528-push-default` — 31/32 harness tests pass (remaining line is upstream-marked `test_expect_failure`); `push` now honors `branch.<name>.pushRemote`, `remote.pushDefault`, single-remote fallback, `push.default` semantics (`nothing`/`current`/`upstream`/`simple`/`matching`), `push.autoSetupRemote`, and matching-mode no-common-ref rejection text; also removed `add`’s temporary auto-root-commit behavior that was causing false-positive `HEAD` state in push suites
 - `t5705-session-id-in-capabilities` — 17/17 tests pass (trace2 `transfer` `negotiated-version` / `server-sid` / `client-sid`; `transfer.advertiseSID` on upload-pack, receive-pack, and protocol v2; local fetch v2 handshake + stdin close; `send_pack` `HEAD:dst` + `git-receive-pack` → grit; strip trace2 env + quoted env paths in upload-pack spawn; harness CSV refreshed)
 - `t6101-rev-parse-parents` — 38/38 tests pass (`rev-parse`: `^@` / `^!` / `^-` parent shorthands, graft-aware `^N` navigation, `tags/<name>` DWIM, `--symbolic` ASIS mode + two-dot range ordering; leading `^` uninteresting revisions; `rev-list` `^@`/`^-` expansion with grafts; shared `load_graft_parents`; `expand_rev_token_circ_bang` for merge commits)
@@ -225,4 +226,4 @@ Task lines in `PLAN.md`: 337 completed (`[x]`), 5 in progress (`[~]`), 429 remai
 
 ## What Remains
 
-436 task lines still open in `PLAN.md` (plus 5 in progress). See `PLAN.md` for the full prioritized list.
+433 task lines still open in `PLAN.md` (plus 5 in progress). See `PLAN.md` for the full prioritized list.

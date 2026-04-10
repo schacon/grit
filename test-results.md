@@ -1,5 +1,11 @@
 # Test results
 
+**2026-04-10 (t5533 / push CAS + force-if-includes)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `./scripts/run-tests.sh t5533-push-cas.sh`: 23/23
+
 **2026-04-10 (t5528 / push.default semantics)**
 
 - `cargo check -p grit-rs`: pass
