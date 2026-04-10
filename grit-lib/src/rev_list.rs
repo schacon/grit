@@ -738,14 +738,8 @@ pub fn rev_list(
 
     let mut ordered = match options.ordering {
         OrderingMode::Default | OrderingMode::DateOrderWalk | OrderingMode::AuthorDateWalk => {
-            let tips: Vec<ObjectId> = include
-                .iter()
-                .copied()
-                .filter(|oid| included.contains(oid))
-                .collect();
             date_order_walk(
                 &mut graph,
-                &tips,
                 &included,
                 options.ordering == OrderingMode::AuthorDateWalk,
             )?
@@ -2133,12 +2127,21 @@ impl ExpectedObjectKind {
     }
 }
 
+/// Non-commit root from revision arguments (`tag`, `rev:path`, raw tree/blob OID), for object walks.
+#[derive(Clone, Debug)]
+pub struct ObjectWalkRoot {
+    /// Object id of the peeled non-commit (tree or blob) or tag target.
+    pub oid: ObjectId,
+    pub input: String,
+    /// Path within the tree for `rev:path` blob roots.
+    pub root_path: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 struct RootObject {
     oid: ObjectId,
     input: String,
     expected_kind: Option<ExpectedObjectKind>,
-    /// Path within the tree for `rev:path` blob roots (for correct `--objects` names).
     root_path: Option<String>,
     /// When the user named an annotated tag, the tag object to emit before walking [`Self::oid`].
     wrap_with_tag: Option<ObjectId>,
@@ -2266,6 +2269,32 @@ fn resolve_specs(repo: &Repository, specs: &[String]) -> Result<Vec<ObjectId>> {
         out.push(commit_oid);
     }
     Ok(out)
+}
+
+/// Resolve revision strings to commit tips and non-commit roots (tags, trees, blobs, `rev:path`).
+///
+/// Used by `test-tool path-walk` and similar object walks that mirror `git` revision parsing.
+/// Resolve revision strings to commit OIDs (for negative specs / exclusions).
+pub fn resolve_revision_commits(repo: &Repository, specs: &[String]) -> Result<Vec<ObjectId>> {
+    resolve_specs(repo, specs)
+}
+
+pub fn resolve_object_walk_roots(
+    repo: &Repository,
+    specs: &[String],
+) -> Result<(Vec<ObjectId>, Vec<ObjectWalkRoot>)> {
+    let (commits, roots, _tip_annotated_tag_by_commit) = resolve_specs_for_objects(repo, specs)?;
+    Ok((
+        commits,
+        roots
+            .into_iter()
+            .map(|r| ObjectWalkRoot {
+                oid: r.oid,
+                input: r.input,
+                root_path: r.root_path,
+            })
+            .collect(),
+    ))
 }
 
 fn resolve_specs_for_objects(
@@ -2396,7 +2425,10 @@ fn reflog_commit_tips(repo: &Repository) -> Result<Vec<ObjectId>> {
     Ok(out)
 }
 
-fn walk_closure(graph: &mut CommitGraph<'_>, starts: &[ObjectId]) -> Result<HashSet<ObjectId>> {
+pub(crate) fn walk_closure(
+    graph: &mut CommitGraph<'_>,
+    starts: &[ObjectId],
+) -> Result<HashSet<ObjectId>> {
     let (seen, _) = walk_closure_ordered(graph, starts)?;
     Ok(seen)
 }
@@ -2425,7 +2457,7 @@ fn walk_closure_first_parent_only(
 }
 
 /// BFS walk that returns both the set and the discovery order.
-fn walk_closure_ordered(
+pub(crate) fn walk_closure_ordered(
     graph: &mut CommitGraph<'_>,
     starts: &[ObjectId],
 ) -> Result<(HashSet<ObjectId>, Vec<ObjectId>)> {
@@ -2453,9 +2485,8 @@ fn walk_closure_ordered(
 ///
 /// This matches `git rev-list` behavior (and differs from sorting the whole set by
 /// date, which can surface ancestors before descendants when dates are skewed).
-fn date_order_walk(
+pub(crate) fn date_order_walk(
     graph: &mut CommitGraph<'_>,
-    tips: &[ObjectId],
     selected: &HashSet<ObjectId>,
     author_dates: bool,
 ) -> Result<Vec<ObjectId>> {
@@ -2471,12 +2502,17 @@ fn date_order_walk(
         }
     }
 
+    // Match Git `commit_list_insert_by_date` / `get_revision_1`: only commits with no selected
+    // child are initially pending. Seeding every `tip` that happens to appear in `tips` is wrong
+    // when `tips` is the full selected set (path-walk): inner commits would be popped before
+    // descendants. Seeding only `tips` is also wrong when a source commit is not a ref tip
+    // (`rev-list`): start from every selected commit whose in-degree from selected is zero.
     let mut heap = BinaryHeap::new();
-    for &tip in tips {
-        if selected.contains(&tip) {
+    for &oid in selected {
+        if unfinished_children.get(&oid).copied().unwrap_or(0) == 0 {
             heap.push(CommitDateKey {
-                oid: tip,
-                date: graph.sort_key(tip, author_dates),
+                oid,
+                date: graph.sort_key(oid, author_dates),
             });
         }
     }
@@ -3119,7 +3155,7 @@ pub fn tag_targets(git_dir: &Path) -> Result<HashSet<ObjectId>> {
         .collect())
 }
 
-struct CommitGraph<'r> {
+pub(crate) struct CommitGraph<'r> {
     repo: &'r Repository,
     first_parent_only: bool,
     parents: HashMap<ObjectId, Vec<ObjectId>>,
@@ -3130,7 +3166,7 @@ struct CommitGraph<'r> {
 }
 
 impl<'r> CommitGraph<'r> {
-    fn new(repo: &'r Repository, first_parent_only: bool) -> Self {
+    pub(crate) fn new(repo: &'r Repository, first_parent_only: bool) -> Self {
         let shallow_boundaries = load_shallow_boundaries(&repo.git_dir);
         let graft_parents = load_graft_parents(&repo.git_dir);
         Self {
@@ -3144,7 +3180,7 @@ impl<'r> CommitGraph<'r> {
         }
     }
 
-    fn parents_of(&mut self, oid: ObjectId) -> Result<Vec<ObjectId>> {
+    pub(crate) fn parents_of(&mut self, oid: ObjectId) -> Result<Vec<ObjectId>> {
         self.populate(oid)?;
         Ok(self.parents.get(&oid).cloned().unwrap_or_default())
     }

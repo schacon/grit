@@ -653,6 +653,7 @@ pub(crate) fn write_index_file_split(
             untracked_cache: None,
             resolve_undo: None,
             split_link: None,
+            cache_tree_root: None,
         };
         let tmp = match tempfile::NamedTempFile::new_in(git_dir) {
             Ok(t) => t,
@@ -774,6 +775,7 @@ pub(crate) fn write_index_file_split(
         untracked_cache: index.untracked_cache.clone(),
         resolve_undo: None,
         split_link: Some(link),
+        cache_tree_root: index.cache_tree_root,
     };
 
     out_index.write_to_path(path, skip_hash)?;
