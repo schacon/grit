@@ -37,6 +37,7 @@ use grit_lib::whitespace_rule::{fix_blob_bytes, parse_whitespace_rule, WS_DEFAUL
 use grit_lib::write_tree::write_tree_from_index;
 
 use super::checkout::check_dirty_worktree;
+use super::commit::cleanup_edited_commit_message;
 use super::stash;
 use crate::ident::{resolve_email, resolve_name, IdentRole};
 
@@ -1771,6 +1772,18 @@ fn run_commit_editor_for_reword(
     fs::read_to_string(&editmsg).context("read COMMIT_EDITMSG after editor")
 }
 
+/// Post-`COMMIT_EDITMSG` handling for `reword`: strip `#` comment lines like `git commit`, then
+/// apply [`rebase_commit_msg_cleanup`]. Whitespace-only messages abort the rebase, matching Git's
+/// sequencer (`t3405-rebase-malformed`).
+fn message_from_reword_editor(raw: &str, msg_cleanup: &str) -> Result<String> {
+    let stripped = cleanup_edited_commit_message(raw);
+    if stripped.trim().is_empty() {
+        eprintln!("Aborting commit due to empty commit message.");
+        bail!("empty commit message");
+    }
+    Ok(apply_commit_msg_cleanup(&stripped, msg_cleanup))
+}
+
 fn worktree_matches_head(repo: &Repository, git_dir: &Path) -> Result<bool> {
     let Some(wt) = repo.work_tree.as_deref() else {
         return Ok(true);
@@ -3193,7 +3206,7 @@ fn cherry_pick_for_rebase(
                 };
                 let after_editor = run_commit_editor_for_reword(repo, git_dir, &template)?;
                 let cleaned =
-                    apply_commit_msg_cleanup(&after_editor, rebase_commit_msg_cleanup(&config));
+                    message_from_reword_editor(&after_editor, rebase_commit_msg_cleanup(&config))?;
                 let (message, encoding, raw_message) =
                     finalize_message_for_commit_encoding(cleaned, &config);
                 let now = time::OffsetDateTime::now_utc();
@@ -3393,7 +3406,8 @@ fn cherry_pick_for_rebase(
             unicode
         };
         let after_editor = run_commit_editor_for_reword(repo, git_dir, &template)?;
-        let cleaned = apply_commit_msg_cleanup(&after_editor, rebase_commit_msg_cleanup(&config));
+        let cleaned =
+            message_from_reword_editor(&after_editor, rebase_commit_msg_cleanup(&config))?;
         finalize_message_for_commit_encoding(cleaned, &config)
     } else {
         let (msg_base, _enc_base, _raw_base) = if root_rebase {
@@ -3917,7 +3931,8 @@ fn do_continue() -> Result<()> {
             }
         };
         let after_editor = run_commit_editor_for_reword(&repo, git_dir, &template)?;
-        let cleaned = apply_commit_msg_cleanup(&after_editor, rebase_commit_msg_cleanup(&config));
+        let cleaned =
+            message_from_reword_editor(&after_editor, rebase_commit_msg_cleanup(&config))?;
         let (message, encoding, raw_message) =
             finalize_message_for_commit_encoding(cleaned, &config);
         let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
