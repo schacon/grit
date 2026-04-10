@@ -10,7 +10,7 @@ use grit_lib::combined_tree_diff::{combined_diff_paths_filtered, CombinedTreeDif
 use grit_lib::commit_graph_file::{
     BloomPrecheck, BloomWalkStats, BloomWalkStatsHandle, CommitGraphChain,
 };
-use grit_lib::config::ConfigSet;
+use grit_lib::config::{parse_bool, ConfigSet};
 use grit_lib::crlf::{get_file_attrs, load_gitattributes, DiffAttr};
 use grit_lib::diff::{
     count_changes, diff_trees, diff_trees_show_tree_entries, format_raw,
@@ -25,6 +25,7 @@ use grit_lib::ident::{
 use grit_lib::line_log::{
     format_line_log_diff, line_log_filter_commits, parse_line_log_ranges, rewritten_first_parent,
 };
+use grit_lib::mailmap::{load_mailmap_table, MailmapTable};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::merge_diff::{
     blob_text_for_diff, blob_text_for_diff_with_oid, diff_textconv_active, is_binary_for_diff,
@@ -78,6 +79,14 @@ pub struct Args {
         default_missing_value = "medium"
     )]
     pub pretty: Option<String>,
+
+    /// Use `.mailmap` when showing author/committer (default: `log.mailmap`).
+    #[arg(long = "use-mailmap", alias = "mailmap")]
+    pub use_mailmap: bool,
+
+    /// Disable mailmap for log output.
+    #[arg(long = "no-use-mailmap")]
+    pub no_use_mailmap: bool,
 
     /// Show in reverse order.
     #[arg(long = "reverse")]
@@ -817,7 +826,64 @@ fn log_resolve_stdout_color(args: &Args, git_dir: &Path) -> bool {
     c
 }
 
-fn run_line_log(repo: &Repository, args: Args, _patch_context: usize) -> Result<()> {
+fn effective_use_mailmap(args: &Args, cfg: &ConfigSet) -> bool {
+    if args.no_use_mailmap {
+        return false;
+    }
+    if args.use_mailmap {
+        return true;
+    }
+    cfg.get("log.mailmap")
+        .map(|v| parse_bool(&v).unwrap_or(true))
+        .unwrap_or(true)
+}
+
+/// Rebuild a signature line with a new `Name <email>` prefix, preserving the timestamp tail.
+fn ident_with_mapped_contact(raw: &str, new_name: &str, new_email: &str) -> String {
+    let Some(gt) = raw.rfind('>') else {
+        if new_email.is_empty() {
+            return new_name.to_string();
+        }
+        return format!("{new_name} <{new_email}>");
+    };
+    let tail = raw.get(gt + 1..).unwrap_or("");
+    format!("{new_name} <{new_email}>{tail}")
+}
+
+fn ident_for_mailmap_match(mailmap: &MailmapTable, raw: &str) -> String {
+    if mailmap.is_empty() {
+        return raw.to_string();
+    }
+    let name = extract_name(raw);
+    let email = extract_email(raw);
+    let (n, e) = mailmap.map_user(name, email);
+    ident_with_mapped_contact(raw, &n, &e)
+}
+
+fn ident_matches_header_patterns(
+    patterns: &[Regex],
+    raw: &str,
+    mailmap: &MailmapTable,
+    use_mailmap: bool,
+) -> bool {
+    if patterns.is_empty() {
+        return true;
+    }
+    let haystack = if use_mailmap && !mailmap.is_empty() {
+        ident_for_mailmap_match(mailmap, raw)
+    } else {
+        raw.to_string()
+    };
+    patterns.iter().any(|re| re.is_match(&haystack))
+}
+
+fn run_line_log(
+    repo: &Repository,
+    args: Args,
+    _patch_context: usize,
+    use_mailmap: bool,
+    mailmap: &MailmapTable,
+) -> Result<()> {
     if !args.pathspecs.is_empty() {
         anyhow::bail!("-L<range>:<file> cannot be used with pathspec");
     }
@@ -908,6 +974,8 @@ fn run_line_log(repo: &Repository, args: Args, _patch_context: usize) -> Result<
         &[],
         false,
         false,
+        mailmap,
+        use_mailmap,
         args.no_merges,
         args.merges,
         &[][..],
@@ -1049,6 +1117,8 @@ fn run_line_log(repo: &Repository, args: Args, _patch_context: usize) -> Result<
                         &node,
                         &info,
                         &args,
+                        use_mailmap,
+                        mailmap,
                         decorations.as_ref(),
                         abbrev_len,
                         &parent_line,
@@ -1131,6 +1201,8 @@ fn run_line_log(repo: &Repository, args: Args, _patch_context: usize) -> Result<
             oid,
             &info,
             &args,
+            use_mailmap,
+            &mailmap,
             decorations.as_ref(),
             use_color,
             &mut notes_cache,
@@ -1515,6 +1587,8 @@ fn run_rev_list_log(
     committer_res: &[Regex],
     grep_res: &[Regex],
     use_color: bool,
+    use_mailmap: bool,
+    mailmap: &MailmapTable,
 ) -> Result<()> {
     let mut implied_pathspecs: Vec<String> = Vec::new();
     let mut revision_specs = Vec::new();
@@ -1730,6 +1804,8 @@ fn run_rev_list_log(
             &oid,
             &info,
             args,
+            use_mailmap,
+            mailmap,
             decoration_map_for_display.as_ref(),
             use_color,
             &mut notes_cache,
@@ -1748,6 +1824,8 @@ fn run_rev_list_log(
                 &oid,
                 &info,
                 args,
+                use_mailmap,
+                mailmap,
                 &combined_pathspecs,
                 None,
                 decoration_map_for_display.as_ref(),
@@ -1762,7 +1840,13 @@ fn run_rev_list_log(
     Ok(())
 }
 
-fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result<()> {
+fn run_graph_log(
+    repo: &Repository,
+    args: &Args,
+    patch_context: usize,
+    use_mailmap: bool,
+    mailmap: &MailmapTable,
+) -> Result<()> {
     let mut implied_pathspecs: Vec<String> = Vec::new();
     let mut revision_specs = Vec::new();
     for rev in &args.revisions {
@@ -1931,6 +2015,50 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
         }
     }
 
+    let mut author_res_graph: Vec<Regex> = Vec::new();
+    for p in &args.authors {
+        let pat = if args.fixed_strings {
+            regex::escape(p)
+        } else {
+            p.clone()
+        };
+        let re = RegexBuilder::new(&pat)
+            .case_insensitive(true)
+            .build()
+            .with_context(|| format!("invalid --author regex: {p}"))?;
+        author_res_graph.push(re);
+    }
+    let mut committer_res_graph: Vec<Regex> = Vec::new();
+    for p in &args.committers {
+        let pat = if args.fixed_strings {
+            regex::escape(p)
+        } else {
+            p.clone()
+        };
+        let re = RegexBuilder::new(&pat)
+            .case_insensitive(true)
+            .build()
+            .with_context(|| format!("invalid --committer regex: {p}"))?;
+        committer_res_graph.push(re);
+    }
+    if !author_res_graph.is_empty() || !committer_res_graph.is_empty() {
+        result.commits.retain(|oid| {
+            let Ok(obj) = repo.odb.read(oid) else {
+                return false;
+            };
+            let Ok(c) = parse_commit(&obj.data) else {
+                return false;
+            };
+            ident_matches_header_patterns(&author_res_graph, &c.author, mailmap, use_mailmap)
+                && ident_matches_header_patterns(
+                    &committer_res_graph,
+                    &c.committer,
+                    mailmap,
+                    use_mailmap,
+                )
+        });
+    }
+
     let included: HashSet<ObjectId> = result.commits.iter().copied().collect();
     let ordered_boundaries = if args.boundary {
         order_boundary_commits_for_graph(
@@ -2066,6 +2194,8 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
                         &node,
                         &info,
                         args,
+                        use_mailmap,
+                        mailmap,
                         decorations.as_ref(),
                         abbrev_len,
                         &node.parents,
@@ -2078,6 +2208,8 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
                         &node.oid,
                         &info,
                         args,
+                        use_mailmap,
+                        mailmap,
                         decorations.as_ref(),
                         use_color,
                         &mut notes_cache,
@@ -2118,6 +2250,8 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
                 &node.oid,
                 &info,
                 args,
+                use_mailmap,
+                mailmap,
                 &combined_pathspecs,
                 graph_stat_prefix.as_deref(),
                 decorations.as_ref(),
@@ -2496,6 +2630,8 @@ fn render_graph_commit_text(
     node: &GraphCommitNode,
     info: &CommitInfo,
     args: &Args,
+    use_mailmap: bool,
+    mailmap: &MailmapTable,
     decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
     abbrev_len: usize,
     parent_line: &[ObjectId],
@@ -2532,6 +2668,8 @@ fn render_graph_commit_text(
                 None,
                 parent_line,
                 None,
+                mailmap,
+                use_mailmap,
             );
         }
         if fmt.contains('%') {
@@ -2546,6 +2684,8 @@ fn render_graph_commit_text(
                 None,
                 parent_line,
                 None,
+                mailmap,
+                use_mailmap,
             );
         }
     }
@@ -3218,23 +3358,25 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
+    let cfg = ConfigSet::load(Some(&repo.git_dir), true).context("loading git config")?;
     let patch_context = if let Some(u) = args.unified {
         u
     } else {
-        let cfg = ConfigSet::load(Some(&repo.git_dir), true).context("loading git config")?;
         grit_lib::config::resolve_diff_context_lines(&cfg)
             .map_err(|m| anyhow::anyhow!(m))?
             .unwrap_or(3)
     };
+    let use_mailmap = effective_use_mailmap(&args, &cfg);
+    let mailmap = load_mailmap_table(&repo).unwrap_or_default();
     if !args.line_range.is_empty() {
-        return run_line_log(&repo, args, patch_context);
+        return run_line_log(&repo, args, patch_context, use_mailmap, &mailmap);
     }
     if args
         .revisions
         .iter()
         .any(|r| r != "--" && is_symmetric_diff(r))
     {
-        return run_symmetric_log(&repo, &args, patch_context);
+        return run_symmetric_log(&repo, &args, patch_context, use_mailmap, &mailmap);
     }
     validate_pathspec_scope(&repo, &args.pathspecs)?;
     let mut implied_pathspecs: Vec<String> = Vec::new();
@@ -3339,16 +3481,18 @@ pub fn run(mut args: Args) -> Result<()> {
             &committer_res,
             &grep_res,
             &grep_reflog_res,
+            use_mailmap,
+            &mailmap,
         );
     }
 
     // Handle --no-walk: show given commits without walking parents
     if args.no_walk.is_some() {
-        return run_no_walk(&repo, &args, patch_context);
+        return run_no_walk(&repo, &args, patch_context, use_mailmap, &mailmap);
     }
 
     if args.graph {
-        return run_graph_log(&repo, &args, patch_context);
+        return run_graph_log(&repo, &args, patch_context, use_mailmap, &mailmap);
     }
 
     let effective_for_rev_list = resolve_effective_pathspecs(&repo, &args.pathspecs)?;
@@ -3384,6 +3528,8 @@ pub fn run(mut args: Args) -> Result<()> {
             &committer_res,
             &grep_res,
             use_color,
+            use_mailmap,
+            &mailmap,
         );
     }
 
@@ -3653,6 +3799,8 @@ pub fn run(mut args: Args) -> Result<()> {
             &grep_res,
             args.all_match,
             args.invert_grep,
+            &mailmap,
+            use_mailmap,
             args.no_merges,
             args.merges,
             effective_pathspecs,
@@ -3713,6 +3861,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 &oid,
                 &commit_data,
                 &args,
+                use_mailmap,
+                &mailmap,
                 decoration_map_for_display.as_ref(),
                 use_color,
                 &mut notes_cache,
@@ -3731,6 +3881,8 @@ pub fn run(mut args: Args) -> Result<()> {
                     &oid,
                     &commit_data,
                     &args,
+                    use_mailmap,
+                    &mailmap,
                     effective_pathspecs,
                     None,
                     decoration_map_for_display.as_ref(),
@@ -3758,6 +3910,8 @@ pub fn run(mut args: Args) -> Result<()> {
             &grep_res,
             args.all_match,
             args.invert_grep,
+            &mailmap,
+            use_mailmap,
             args.no_merges,
             args.merges,
             effective_pathspecs,
@@ -3907,6 +4061,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 oid,
                 commit_data,
                 &args,
+                use_mailmap,
+                &mailmap,
                 decoration_map_for_display.as_ref(),
                 use_color,
                 &mut notes_cache,
@@ -3925,6 +4081,8 @@ pub fn run(mut args: Args) -> Result<()> {
                     oid,
                     commit_data,
                     &args,
+                    use_mailmap,
+                    &mailmap,
                     &combined_pathspecs,
                     None,
                     decoration_map_for_display.as_ref(),
@@ -4091,7 +4249,13 @@ fn normalize_path(path: &Path) -> PathBuf {
 }
 
 /// Run `--no-walk` mode: show the given commits without walking their parents.
-pub fn run_no_walk(repo: &Repository, args: &Args, patch_context: usize) -> Result<()> {
+pub fn run_no_walk(
+    repo: &Repository,
+    args: &Args,
+    patch_context: usize,
+    use_mailmap: bool,
+    mailmap: &MailmapTable,
+) -> Result<()> {
     let mut oids = Vec::new();
     if args.revisions.is_empty() {
         let head = resolve_head(&repo.git_dir)?;
@@ -4180,6 +4344,8 @@ pub fn run_no_walk(repo: &Repository, args: &Args, patch_context: usize) -> Resu
             oid,
             commit_data,
             args,
+            use_mailmap,
+            mailmap,
             decorations.as_ref(),
             false,
             &mut notes_cache,
@@ -4197,6 +4363,8 @@ pub fn run_no_walk(repo: &Repository, args: &Args, patch_context: usize) -> Resu
                 oid,
                 commit_data,
                 args,
+                use_mailmap,
+                &mailmap,
                 &args.pathspecs,
                 None,
                 decorations.as_ref(),
@@ -4348,6 +4516,8 @@ fn run_reflog_walk(
     committer_res: &[Regex],
     grep_res: &[Regex],
     grep_reflog_res: &[Regex],
+    use_mailmap: bool,
+    mailmap: &MailmapTable,
 ) -> Result<()> {
     // Determine which ref to walk
     let refname = if args.revisions.is_empty() {
@@ -4522,14 +4692,16 @@ fn run_reflog_walk(
         }
 
         let author_ok =
-            author_res.is_empty() || author_res.iter().any(|re| re.is_match(&commit_data.author));
+            ident_matches_header_patterns(author_res, &commit_data.author, mailmap, use_mailmap);
         if !author_ok {
             continue;
         }
-        let committer_ok = committer_res.is_empty()
-            || committer_res
-                .iter()
-                .any(|re| re.is_match(&commit_data.committer));
+        let committer_ok = ident_matches_header_patterns(
+            committer_res,
+            &commit_data.committer,
+            mailmap,
+            use_mailmap,
+        );
         if !committer_ok {
             continue;
         }
@@ -4598,11 +4770,14 @@ fn run_reflog_walk(
                     };
                     writeln!(out, "Reflog: {} ({})", selector, ident_display)?;
                     writeln!(out, "Reflog message: {}", entry.message)?;
-                    writeln!(
-                        out,
-                        "Author: {}",
-                        format_ident_for_header(&commit_data.author)
-                    )?;
+                    let author_name = if use_mailmap && !mailmap.is_empty() {
+                        let n = extract_name(&commit_data.author);
+                        let e = extract_email(&commit_data.author);
+                        mailmap.map_user(n, e).0
+                    } else {
+                        extract_name(&commit_data.author)
+                    };
+                    writeln!(out, "Author: {author_name}")?;
                     writeln!(out)?;
                     for line in commit_data.message.lines().take(1) {
                         writeln!(out, "    {line}")?;
@@ -4613,7 +4788,7 @@ fn run_reflog_walk(
                     writeln!(
                         out,
                         "Author: {}",
-                        format_ident_for_header(&commit_data.author)
+                        format_ident_for_header_mailmap(mailmap, &commit_data.author, use_mailmap)
                     )?;
                     let date = format_date_for_header(&commit_data.author);
                     writeln!(out, "Date:   {}", date)?;
@@ -4628,12 +4803,16 @@ fn run_reflog_walk(
                     writeln!(
                         out,
                         "Author: {}",
-                        format_ident_for_header(&commit_data.author)
+                        format_ident_for_header_mailmap(mailmap, &commit_data.author, use_mailmap)
                     )?;
                     writeln!(
                         out,
                         "Commit: {}",
-                        format_ident_for_header(&commit_data.committer)
+                        format_ident_for_header_mailmap(
+                            mailmap,
+                            &commit_data.committer,
+                            use_mailmap
+                        )
                     )?;
                     writeln!(out)?;
                     for line in commit_data.message.lines() {
@@ -4646,7 +4825,7 @@ fn run_reflog_walk(
                     writeln!(
                         out,
                         "Author:     {}",
-                        format_ident_for_header(&commit_data.author)
+                        format_ident_for_header_mailmap(mailmap, &commit_data.author, use_mailmap)
                     )?;
                     writeln!(
                         out,
@@ -4656,7 +4835,11 @@ fn run_reflog_walk(
                     writeln!(
                         out,
                         "Commit:     {}",
-                        format_ident_for_header(&commit_data.committer)
+                        format_ident_for_header_mailmap(
+                            mailmap,
+                            &commit_data.committer,
+                            use_mailmap
+                        )
                     )?;
                     writeln!(
                         out,
@@ -4678,7 +4861,7 @@ fn run_reflog_walk(
                     writeln!(
                         out,
                         "From: {}",
-                        format_ident_for_header(&commit_data.author)
+                        format_ident_for_header_mailmap(mailmap, &commit_data.author, use_mailmap)
                     )?;
                     let date = format_date_for_header(&commit_data.author);
                     writeln!(out, "Date: {}", date)?;
@@ -4720,6 +4903,8 @@ fn run_reflog_walk(
                         &percent_gd,
                         &entry.message,
                         &entry.identity,
+                        mailmap,
+                        use_mailmap,
                     );
                     writeln!(out, "{}", line)?;
                 }
@@ -4752,7 +4937,7 @@ fn run_reflog_walk(
             writeln!(
                 out,
                 "Author: {}",
-                format_ident_for_header(&commit_data.author)
+                format_ident_for_header_mailmap(mailmap, &commit_data.author, use_mailmap)
             )?;
             let date = format_date_for_header(&commit_data.author);
             writeln!(out, "Date:   {}", date)?;
@@ -4786,6 +4971,8 @@ fn run_reflog_walk(
                 &entry.new_oid,
                 &info,
                 args,
+                use_mailmap,
+                mailmap,
                 &args.pathspecs,
                 None,
                 None,
@@ -4814,6 +5001,8 @@ fn apply_reflog_format_string(
     percent_gd: &str,
     reflog_msg: &str,
     reflog_identity: &str,
+    mailmap: &MailmapTable,
+    use_mailmap: bool,
 ) -> String {
     let hex = oid.to_hex();
     let short = &hex[..7.min(hex.len())];
@@ -4890,9 +5079,42 @@ fn apply_reflog_format_string(
                             chars.next();
                             result.push_str(&extract_name(&commit.author));
                         }
+                        Some('N') => {
+                            chars.next();
+                            let mapped = if use_mailmap && !mailmap.is_empty() {
+                                let n = extract_name(&commit.author);
+                                let e = extract_email(&commit.author);
+                                mailmap.map_user(n, e).0
+                            } else {
+                                extract_name(&commit.author)
+                            };
+                            result.push_str(&mapped);
+                        }
                         Some('e') => {
                             chars.next();
                             result.push_str(&extract_email(&commit.author));
+                        }
+                        Some('E') => {
+                            chars.next();
+                            let mapped = if use_mailmap && !mailmap.is_empty() {
+                                let n = extract_name(&commit.author);
+                                let e = extract_email(&commit.author);
+                                mailmap.map_user(n, e).1
+                            } else {
+                                extract_email(&commit.author)
+                            };
+                            result.push_str(&mapped);
+                        }
+                        Some('l') => {
+                            chars.next();
+                            let email = if use_mailmap && !mailmap.is_empty() {
+                                let n = extract_name(&commit.author);
+                                let e = extract_email(&commit.author);
+                                mailmap.map_user(n, e).1
+                            } else {
+                                extract_email(&commit.author)
+                            };
+                            result.push_str(&local_part_of_email(&email));
                         }
                         _ => {
                             result.push_str("%a");
@@ -4906,9 +5128,42 @@ fn apply_reflog_format_string(
                             chars.next();
                             result.push_str(&extract_name(&commit.committer));
                         }
+                        Some('N') => {
+                            chars.next();
+                            let mapped = if use_mailmap && !mailmap.is_empty() {
+                                let n = extract_name(&commit.committer);
+                                let e = extract_email(&commit.committer);
+                                mailmap.map_user(n, e).0
+                            } else {
+                                extract_name(&commit.committer)
+                            };
+                            result.push_str(&mapped);
+                        }
                         Some('e') => {
                             chars.next();
                             result.push_str(&extract_email(&commit.committer));
+                        }
+                        Some('E') => {
+                            chars.next();
+                            let mapped = if use_mailmap && !mailmap.is_empty() {
+                                let n = extract_name(&commit.committer);
+                                let e = extract_email(&commit.committer);
+                                mailmap.map_user(n, e).1
+                            } else {
+                                extract_email(&commit.committer)
+                            };
+                            result.push_str(&mapped);
+                        }
+                        Some('l') => {
+                            chars.next();
+                            let email = if use_mailmap && !mailmap.is_empty() {
+                                let n = extract_name(&commit.committer);
+                                let e = extract_email(&commit.committer);
+                                mailmap.map_user(n, e).1
+                            } else {
+                                extract_email(&commit.committer)
+                            };
+                            result.push_str(&local_part_of_email(&email));
                         }
                         _ => {
                             result.push_str("%c");
@@ -4934,6 +5189,24 @@ fn format_ident_for_header(ident: &str) -> String {
         name
     } else {
         format!("{name} <{email}>")
+    }
+}
+
+fn format_ident_for_header_mailmap(
+    mailmap: &MailmapTable,
+    ident: &str,
+    use_mailmap: bool,
+) -> String {
+    if !use_mailmap || mailmap.is_empty() {
+        return format_ident_for_header(ident);
+    }
+    let name = extract_name(ident);
+    let email = extract_email(ident);
+    let (n, e) = mailmap.map_user(name, email);
+    if e.is_empty() {
+        n
+    } else {
+        format!("{n} <{e}>")
     }
 }
 
@@ -4978,6 +5251,8 @@ struct WalkCommitsIter<'a> {
     grep_res: &'a [Regex],
     all_match_grep: bool,
     invert_grep: bool,
+    mailmap: &'a MailmapTable,
+    use_mailmap: bool,
     no_merges: bool,
     merges_only: bool,
     pathspecs: &'a [String],
@@ -4997,6 +5272,8 @@ impl<'a> WalkCommitsIter<'a> {
         grep_res: &'a [Regex],
         all_match_grep: bool,
         invert_grep: bool,
+        mailmap: &'a MailmapTable,
+        use_mailmap: bool,
         no_merges: bool,
         merges_only: bool,
         pathspecs: &'a [String],
@@ -5045,6 +5322,8 @@ impl<'a> WalkCommitsIter<'a> {
             grep_res,
             all_match_grep,
             invert_grep,
+            mailmap,
+            use_mailmap,
             no_merges,
             merges_only,
             pathspecs,
@@ -5134,16 +5413,21 @@ impl<'a> WalkCommitsIter<'a> {
             if self.merges_only && !is_merge {
                 continue;
             }
-            let author_ok = self.author_res.is_empty()
-                || self.author_res.iter().any(|re| re.is_match(&info.author));
+            let author_ok = ident_matches_header_patterns(
+                self.author_res,
+                &info.author,
+                self.mailmap,
+                self.use_mailmap,
+            );
             if !author_ok {
                 continue;
             }
-            let committer_ok = self.committer_res.is_empty()
-                || self
-                    .committer_res
-                    .iter()
-                    .any(|re| re.is_match(&info.committer));
+            let committer_ok = ident_matches_header_patterns(
+                self.committer_res,
+                &info.committer,
+                self.mailmap,
+                self.use_mailmap,
+            );
             if !committer_ok {
                 continue;
             }
@@ -5233,6 +5517,8 @@ fn walk_commits(
     grep_res: &[Regex],
     all_match_grep: bool,
     invert_grep: bool,
+    mailmap: &MailmapTable,
+    use_mailmap: bool,
     no_merges: bool,
     merges_only: bool,
     pathspecs: &[String],
@@ -5261,6 +5547,8 @@ fn walk_commits(
         grep_res,
         all_match_grep,
         invert_grep,
+        mailmap,
+        use_mailmap,
         no_merges,
         merges_only,
         pathspecs,
@@ -6193,7 +6481,13 @@ fn commit_passes_post_walk_filters(
     Ok(true)
 }
 
-fn run_symmetric_log(repo: &Repository, args: &Args, _patch_context: usize) -> Result<()> {
+fn run_symmetric_log(
+    repo: &Repository,
+    args: &Args,
+    _patch_context: usize,
+    use_mailmap: bool,
+    mailmap: &MailmapTable,
+) -> Result<()> {
     let mut lhs: Option<String> = None;
     let mut rhs: Option<String> = None;
     for rev in &args.revisions {
@@ -6272,6 +6566,8 @@ fn run_symmetric_log(repo: &Repository, args: &Args, _patch_context: usize) -> R
             oid,
             &info,
             args,
+            use_mailmap,
+            &mailmap,
             None,
             false,
             &mut notes_cache,
@@ -6297,6 +6593,8 @@ fn format_commit(
     oid: &ObjectId,
     info: &CommitInfo,
     args: &Args,
+    use_mailmap: bool,
+    mailmap: &MailmapTable,
     decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
     use_color: bool,
     notes_cache: &mut NotesMapCache<'_>,
@@ -6356,6 +6654,8 @@ fn format_commit(
                 note_bytes,
                 display_parents,
                 log_marker,
+                mailmap,
+                use_mailmap,
             );
             if is_tformat {
                 if args.null_terminator {
@@ -6401,7 +6701,7 @@ fn format_commit(
                     .collect();
                 writeln!(out, "Merge: {}", parent_abbrevs.join(" "))?;
             }
-            let author_name = extract_name(&info.author);
+            let author_name = format_ident_display_mailmap(mailmap, &info.author, use_mailmap);
             writeln!(out, "Author: {author_name}")?;
             writeln!(out)?;
             for line in info.message.lines().take(1) {
@@ -6426,7 +6726,11 @@ fn format_commit(
                     .collect();
                 writeln!(out, "Merge: {}", parent_abbrevs.join(" "))?;
             }
-            writeln!(out, "Author: {}", format_ident_display(&info.author))?;
+            writeln!(
+                out,
+                "Author: {}",
+                format_ident_display_mailmap(mailmap, &info.author, use_mailmap)
+            )?;
             writeln!(
                 out,
                 "Date:   {}",
@@ -6451,8 +6755,16 @@ fn format_commit(
                     .collect();
                 writeln!(out, "Merge: {}", parent_abbrevs.join(" "))?;
             }
-            writeln!(out, "Author: {}", format_ident_display(&info.author))?;
-            writeln!(out, "Commit: {}", format_ident_display(&info.committer))?;
+            writeln!(
+                out,
+                "Author: {}",
+                format_ident_display_mailmap(mailmap, &info.author, use_mailmap)
+            )?;
+            writeln!(
+                out,
+                "Commit: {}",
+                format_ident_display_mailmap(mailmap, &info.committer, use_mailmap)
+            )?;
             writeln!(out)?;
             for line in info.message.lines() {
                 writeln!(out, "    {line}")?;
@@ -6472,13 +6784,21 @@ fn format_commit(
                     .collect();
                 writeln!(out, "Merge: {}", parent_abbrevs.join(" "))?;
             }
-            writeln!(out, "Author:     {}", format_ident_display(&info.author))?;
+            writeln!(
+                out,
+                "Author:     {}",
+                format_ident_display_mailmap(mailmap, &info.author, use_mailmap)
+            )?;
             writeln!(
                 out,
                 "AuthorDate: {}",
                 format_author_date_internal(&info.author, date_format, true)
             )?;
-            writeln!(out, "Commit:     {}", format_ident_display(&info.committer))?;
+            writeln!(
+                out,
+                "Commit:     {}",
+                format_ident_display_mailmap(mailmap, &info.committer, use_mailmap)
+            )?;
             writeln!(
                 out,
                 "CommitDate: {}",
@@ -6514,6 +6834,8 @@ fn format_commit(
                 note_bytes,
                 display_parents,
                 log_marker,
+                mailmap,
+                use_mailmap,
             );
             writeln!(out, "{formatted}")?;
         }
@@ -6534,6 +6856,8 @@ fn apply_format_string(
     notes_raw: Option<&[u8]>,
     display_parents: &[ObjectId],
     log_marker: Option<char>,
+    mailmap: &MailmapTable,
+    use_mailmap: bool,
 ) -> String {
     let hex = oid.to_hex();
 
@@ -6767,7 +7091,14 @@ fn apply_format_string(
                         }
                         Some('N') => {
                             chars.next();
-                            result.push_str(&extract_name(&info.author));
+                            let mapped = if use_mailmap && !mailmap.is_empty() {
+                                let n = extract_name(&info.author);
+                                let e = extract_email(&info.author);
+                                mailmap.map_user(n, e).0
+                            } else {
+                                extract_name(&info.author)
+                            };
+                            result.push_str(&mapped);
                         }
                         Some('e') => {
                             chars.next();
@@ -6775,11 +7106,25 @@ fn apply_format_string(
                         }
                         Some('E') => {
                             chars.next();
-                            result.push_str(&extract_email(&info.author));
+                            let mapped = if use_mailmap && !mailmap.is_empty() {
+                                let n = extract_name(&info.author);
+                                let e = extract_email(&info.author);
+                                mailmap.map_user(n, e).1
+                            } else {
+                                extract_email(&info.author)
+                            };
+                            result.push_str(&mapped);
                         }
                         Some('l') => {
                             chars.next();
-                            result.push_str(&extract_email_local(&info.author));
+                            let email = if use_mailmap && !mailmap.is_empty() {
+                                let n = extract_name(&info.author);
+                                let e = extract_email(&info.author);
+                                mailmap.map_user(n, e).1
+                            } else {
+                                extract_email(&info.author)
+                            };
+                            result.push_str(&local_part_of_email(&email));
                         }
                         Some('d') => {
                             chars.next();
@@ -6822,7 +7167,14 @@ fn apply_format_string(
                         }
                         Some('N') => {
                             chars.next();
-                            result.push_str(&extract_name(&info.committer));
+                            let mapped = if use_mailmap && !mailmap.is_empty() {
+                                let n = extract_name(&info.committer);
+                                let e = extract_email(&info.committer);
+                                mailmap.map_user(n, e).0
+                            } else {
+                                extract_name(&info.committer)
+                            };
+                            result.push_str(&mapped);
                         }
                         Some('e') => {
                             chars.next();
@@ -6830,11 +7182,25 @@ fn apply_format_string(
                         }
                         Some('E') => {
                             chars.next();
-                            result.push_str(&extract_email(&info.committer));
+                            let mapped = if use_mailmap && !mailmap.is_empty() {
+                                let n = extract_name(&info.committer);
+                                let e = extract_email(&info.committer);
+                                mailmap.map_user(n, e).1
+                            } else {
+                                extract_email(&info.committer)
+                            };
+                            result.push_str(&mapped);
                         }
                         Some('l') => {
                             chars.next();
-                            result.push_str(&extract_email_local(&info.committer));
+                            let email = if use_mailmap && !mailmap.is_empty() {
+                                let n = extract_name(&info.committer);
+                                let e = extract_email(&info.committer);
+                                mailmap.map_user(n, e).1
+                            } else {
+                                extract_email(&info.committer)
+                            };
+                            result.push_str(&local_part_of_email(&email));
                         }
                         Some('d') => {
                             chars.next();
@@ -7176,11 +7542,14 @@ fn format_ansi_color_spec(spec: &str) -> String {
 
 /// Extract the local part (before @) of the email from a Git ident string.
 fn extract_email_local(ident: &str) -> String {
-    let email = extract_email(ident);
+    local_part_of_email(&extract_email(ident))
+}
+
+fn local_part_of_email(email: &str) -> String {
     if let Some(at) = email.find('@') {
         email[..at].to_owned()
     } else {
-        email
+        email.to_owned()
     }
 }
 
@@ -7189,6 +7558,16 @@ fn format_ident_display(ident: &str) -> String {
     let name = extract_name(ident);
     let email = extract_email(ident);
     format!("{name} <{email}>")
+}
+
+fn format_ident_display_mailmap(mailmap: &MailmapTable, ident: &str, use_mailmap: bool) -> String {
+    if !use_mailmap || mailmap.is_empty() {
+        return format_ident_display(ident);
+    }
+    let name = extract_name(ident);
+    let email = extract_email(ident);
+    let (n, e) = mailmap.map_user(name, email);
+    format!("{n} <{e}>")
 }
 
 /// Format the date from an ident string for display, with optional date mode.
@@ -7624,6 +8003,8 @@ fn write_commit_diff(
     commit_oid: &ObjectId,
     info: &CommitInfo,
     args: &Args,
+    use_mailmap: bool,
+    mailmap: &MailmapTable,
     pathspecs: &[String],
     graph_stat_prefix: Option<&str>,
     decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
@@ -7691,6 +8072,8 @@ fn write_commit_diff(
                     commit_oid,
                     info,
                     args,
+                    use_mailmap,
+                    mailmap,
                     decorations,
                     use_color,
                     notes_cache,

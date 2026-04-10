@@ -258,6 +258,8 @@ fn run_show(args: ShowArgs) -> Result<()> {
         oneline,
         format,
         pretty: None,
+        use_mailmap: false,
+        no_use_mailmap: false,
         reverse: false,
         first_parent: false,
         root: false,

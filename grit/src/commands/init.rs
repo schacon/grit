@@ -28,6 +28,9 @@ fn guess_repository_type(git_dir: &Path, cwd: &Path, raw_git_dir_env: Option<&st
     if git_dir == Path::new(".git") {
         return false;
     }
+    // Any nested `.git` directory (e.g. `repo/sub/.git`) is a non-bare work tree, even when the
+    // init target directory is named the same as the current working directory (t4203 `init space`
+    // from `trash/space/`).
     if git_dir.file_name() == Some(std::ffi::OsStr::new(".git")) {
         return false;
     }

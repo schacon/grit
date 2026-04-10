@@ -821,7 +821,7 @@ t4201-log-graph	t4	yes	23	23	0	true	ok	0
 t4201-shortlog	t4	yes	32	3	29	false	ok	0
 t4202-log	t4	skip	145	0	0	false	ok	0
 t4203-log-diff-filter	t4	yes	7	7	0	true	ok	0
-t4203-mailmap	t4	yes	74	21	53	false	ok	0
+t4203-mailmap	t4	yes	74	74	0	true	ok	0
 t4204-log-follow	t4	yes	5	5	0	true	ok	0
 t4204-patch-id	t4	yes	26	26	0	true	ok	0
 t4205-log-pretty-formats	t4	yes	123	54	69	false	ok	2

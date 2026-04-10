@@ -9,6 +9,7 @@ use grit_lib::crlf::{
     load_gitattributes_from_index, ConversionConfig, GitAttributes,
 };
 use grit_lib::git_date::approx::approxidate_careful;
+use grit_lib::mailmap::load_mailmap_table;
 use grit_lib::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -359,6 +360,45 @@ impl BlameMetaEncoding {
                 commit_encoding::reencode_utf8_to_label(label, &line)
                     .ok_or_else(|| anyhow::anyhow!("unsupported blame output encoding: {label}"))
             }
+        }
+    }
+
+    /// Author name bytes after optional mailmap (UTF-8 canonical name from map).
+    fn author_name_bytes_mailmapped(
+        &self,
+        commit: &CommitData,
+        mailmap: &grit_lib::mailmap::MailmapTable,
+    ) -> Result<Vec<u8>> {
+        if mailmap.is_empty() {
+            return self.author_name_bytes(commit);
+        }
+        let ai = parse_author_field(&commit.author);
+        let (n, _) = mailmap.map_user(ai.name, ai.email);
+        match self {
+            Self::Utf8 => Ok(n.into_bytes()),
+            Self::Raw => self.author_name_bytes(commit),
+            Self::Reencode(label) => commit_encoding::reencode_utf8_to_label(label, &n)
+                .ok_or_else(|| anyhow::anyhow!("unsupported blame output encoding: {label}")),
+        }
+    }
+
+    /// `author-mail` bytes after optional mailmap.
+    fn author_mail_bytes_mailmapped(
+        &self,
+        commit: &CommitData,
+        mailmap: &grit_lib::mailmap::MailmapTable,
+    ) -> Result<Vec<u8>> {
+        if mailmap.is_empty() {
+            return self.author_mail_bytes(commit);
+        }
+        let ai = parse_author_field(&commit.author);
+        let (_, e) = mailmap.map_user(ai.name, ai.email);
+        let line = format!("<{e}>");
+        match self {
+            Self::Utf8 => Ok(line.into_bytes()),
+            Self::Raw => self.author_mail_bytes(commit),
+            Self::Reencode(label) => commit_encoding::reencode_utf8_to_label(label, &line)
+                .ok_or_else(|| anyhow::anyhow!("unsupported blame output encoding: {label}")),
         }
     }
 
@@ -2467,6 +2507,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let meta_enc = BlameMetaEncoding::from_config_and_cli(&config, args.encoding.as_deref())?;
+    let mailmap = load_mailmap_table(&repo).unwrap_or_default();
 
     if args.porcelain || args.line_porcelain || args.incremental {
         write_porcelain(
@@ -2477,17 +2518,26 @@ pub fn run(mut args: Args) -> Result<()> {
             args.line_porcelain,
             args.incremental,
             &meta_enc,
+            &mailmap,
             mark_unblamable,
             mark_ignored,
         )?;
     } else if args.annotate_output {
-        write_annotate(&mut out, &blame_lines, &commits, &args, &file_path)?;
+        write_annotate(
+            &mut out,
+            &blame_lines,
+            &commits,
+            &args,
+            &mailmap,
+            &file_path,
+        )?;
     } else {
         write_default(
             &mut out,
             &blame_lines,
             &commits,
             &args,
+            &mailmap,
             &blame_color_style,
             &file_path,
             mark_unblamable,
@@ -3415,6 +3465,7 @@ fn write_porcelain(
     line_porcelain: bool,
     incremental: bool,
     meta_enc: &BlameMetaEncoding,
+    mailmap: &grit_lib::mailmap::MailmapTable,
     mark_unblamable: bool,
     mark_ignored: bool,
 ) -> Result<()> {
@@ -3457,10 +3508,10 @@ fn write_porcelain(
             let committer = parse_author_field(&commit.committer);
 
             out.write_all(b"author ")?;
-            out.write_all(&meta_enc.author_name_bytes(commit)?)?;
+            out.write_all(&meta_enc.author_name_bytes_mailmapped(commit, mailmap)?)?;
             out.write_all(b"\n")?;
             out.write_all(b"author-mail ")?;
-            out.write_all(&meta_enc.author_mail_bytes(commit)?)?;
+            out.write_all(&meta_enc.author_mail_bytes_mailmapped(commit, mailmap)?)?;
             out.write_all(b"\n")?;
             writeln!(out, "author-time {}", author.timestamp)?;
             writeln!(out, "author-tz {}", author.tz)?;
@@ -3505,13 +3556,14 @@ fn write_annotate(
     lines: &[BlameLine],
     commits: &HashMap<ObjectId, CommitData>,
     args: &Args,
+    mailmap: &grit_lib::mailmap::MailmapTable,
     _file_path: &str,
 ) -> Result<()> {
     let zero = grit_lib::diff::zero_oid();
 
     let mut author_field_width: usize = 10;
     for bl in lines {
-        let w = annotate_author_field_width(bl, commits, args);
+        let w = annotate_author_field_width(bl, commits, args, mailmap);
         author_field_width = author_field_width.max(w);
     }
 
@@ -3522,7 +3574,7 @@ fn write_annotate(
             bl.oid.to_hex()[..8].to_string()
         };
 
-        let (author_display, ts) = annotate_author_and_time(bl, commits, args);
+        let (author_display, ts) = annotate_author_and_time(bl, commits, args, mailmap);
         let author_padded = format!("{author_display:>author_field_width$}");
 
         writeln!(
@@ -3539,8 +3591,9 @@ fn annotate_author_field_width(
     bl: &BlameLine,
     commits: &HashMap<ObjectId, CommitData>,
     args: &Args,
+    mailmap: &grit_lib::mailmap::MailmapTable,
 ) -> usize {
-    let (name, _ts) = annotate_author_and_time(bl, commits, args);
+    let (name, _ts) = annotate_author_and_time(bl, commits, args, mailmap);
     name.chars().count().max(1)
 }
 
@@ -3548,6 +3601,7 @@ fn annotate_author_and_time(
     bl: &BlameLine,
     commits: &HashMap<ObjectId, CommitData>,
     args: &Args,
+    mailmap: &grit_lib::mailmap::MailmapTable,
 ) -> (String, String) {
     let zero = grit_lib::diff::zero_oid();
     if bl.external_contents {
@@ -3561,11 +3615,12 @@ fn annotate_author_and_time(
     }
     let commit = &commits[&bl.oid];
     let ai = parse_author_field(&commit.author);
-    let who = if args.email {
-        format!("<{}>", ai.email)
+    let (n, e) = if !mailmap.is_empty() {
+        mailmap.map_user(ai.name, ai.email)
     } else {
-        ai.name.clone()
+        (ai.name, ai.email)
     };
+    let who = if args.email { format!("<{e}>") } else { n };
     let ts = format_time(ai.timestamp, &ai.tz);
     (who, ts)
 }
@@ -3586,6 +3641,7 @@ fn write_default(
     lines: &[BlameLine],
     commits: &HashMap<ObjectId, CommitData>,
     args: &Args,
+    mailmap: &grit_lib::mailmap::MailmapTable,
     color_style: &BlameColorStyle,
     file_path: &str,
     mark_unblamable: bool,
@@ -3671,11 +3727,12 @@ fn write_default(
         } else {
             let commit = &commits[&bl.oid];
             let ai = parse_author_field(&commit.author);
-            let who = if args.email {
-                format!("<{}>", ai.email)
+            let (n, e) = if !mailmap.is_empty() {
+                mailmap.map_user(ai.name, ai.email)
             } else {
-                ai.name.clone()
+                (ai.name, ai.email)
             };
+            let who = if args.email { format!("<{e}>") } else { n };
             let ts = format_time(ai.timestamp, &ai.tz);
 
             writeln!(

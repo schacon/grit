@@ -10,7 +10,8 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::mailmap::{
-    load_mailmap_raw, map_contact, parse_contact, parse_mailmap, read_mailmap_blob, render_contact,
+    load_mailmap_into, map_contact_table, parse_contact, read_mailmap_blob, read_mailmap_string,
+    render_contact, MailmapTable,
 };
 use grit_lib::repo::Repository;
 use std::fs;
@@ -60,7 +61,8 @@ fn read_optional_mailmap_file(path: &Path) -> Result<String> {
 /// Run the `check-mailmap` command.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None)?;
-    let mut mailmap_content = load_mailmap_raw(&repo)?;
+    let mut mailmap = MailmapTable::default();
+    load_mailmap_into(&repo, &mut mailmap)?;
 
     let base_dir = repo
         .work_tree
@@ -69,21 +71,14 @@ pub fn run(args: Args) -> Result<()> {
         .to_path_buf();
 
     if let Some(ref file) = args.mailmap_file {
-        mailmap_content.push_str(&read_optional_mailmap_file(&resolve_mailmap_path(
-            &base_dir, file,
-        ))?);
-        if !mailmap_content.ends_with('\n') && !mailmap_content.is_empty() {
-            mailmap_content.push('\n');
-        }
+        read_mailmap_string(
+            &mut mailmap,
+            &read_optional_mailmap_file(&resolve_mailmap_path(&base_dir, file))?,
+        );
     }
     if let Some(ref blob) = args.mailmap_blob {
-        mailmap_content.push_str(&read_mailmap_blob(&repo, blob)?);
-        if !mailmap_content.ends_with('\n') && !mailmap_content.is_empty() {
-            mailmap_content.push('\n');
-        }
+        read_mailmap_string(&mut mailmap, &read_mailmap_blob(&repo, blob)?);
     }
-
-    let mailmap = parse_mailmap(&mailmap_content);
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -94,7 +89,7 @@ pub fn run(args: Args) -> Result<()> {
 
     for contact in &args.contacts {
         let (name, email) = parse_contact(contact);
-        let (cn, ce) = map_contact(name.as_deref(), email.as_deref(), &mailmap);
+        let (cn, ce) = map_contact_table(name.as_deref(), email.as_deref(), &mailmap);
         writeln!(out, "{}", render_contact(&cn, &ce))?;
     }
 
@@ -107,7 +102,7 @@ pub fn run(args: Args) -> Result<()> {
                 continue;
             }
             let (name, email) = parse_contact(line);
-            let (cn, ce) = map_contact(name.as_deref(), email.as_deref(), &mailmap);
+            let (cn, ce) = map_contact_table(name.as_deref(), email.as_deref(), &mailmap);
             writeln!(out, "{}", render_contact(&cn, &ce))?;
         }
     }

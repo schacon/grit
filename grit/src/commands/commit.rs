@@ -15,13 +15,16 @@ use grit_lib::git_date::parse::parse_date;
 use grit_lib::hooks::{run_hook, run_reference_transaction_committed_for_head_update, HookResult};
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{Index, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
-use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
+use grit_lib::mailmap::load_mailmap_table;
+use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::reflog::read_reflog;
 use grit_lib::refs::{append_reflog, list_refs, write_ref};
 use grit_lib::repo::Repository;
+use grit_lib::rev_list::{rev_list, RevListOptions};
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::shared_repo::refresh_repository_shared_tree;
 use grit_lib::state::{detect_in_progress, resolve_head, HeadState};
+use regex::RegexBuilder;
 
 use crate::commands::cherry_pick::try_resume_pick_sequence_after_commit;
 use crate::commands::revert::try_resume_revert_sequence_after_commit;
@@ -3701,18 +3704,69 @@ fn parse_force_author_parameter(author: &str) -> Result<(String, String)> {
     if gt <= lt {
         bail!("malformed --author parameter");
     }
-    let name = author[..lt].trim_end();
+    // Git trims both ends of the name (`split_ident_line`); leading spaces must not be stored.
+    let name = author[..lt].trim();
     let email = author[lt + 1..gt].trim();
     if name.is_empty() {
         bail!("empty ident name (for <author>) not allowed");
     }
-    if email.is_empty() {
-        bail!("malformed --author parameter");
-    }
+    // Git accepts an empty email in `Name <>` (see split_ident_line / t4203 empty-syntax tests).
     if lt > 0 && author.as_bytes()[lt - 1] != b' ' {
         bail!("malformed --author parameter");
     }
     Ok((name.to_string(), email.to_string()))
+}
+
+/// Resolve `git commit --author=nick` when `nick` is not `Name <email>` (Git `find_author_by_nickname`).
+fn find_author_by_nickname(repo: &Repository, nick: &str) -> Result<String> {
+    let mailmap = load_mailmap_table(repo)?;
+    let pat = regex::escape(nick);
+    let re = RegexBuilder::new(&pat)
+        .case_insensitive(true)
+        .build()
+        .map_err(|e| anyhow::anyhow!("invalid author nickname pattern: {e}"))?;
+
+    let mut tips: Vec<String> = list_refs(&repo.git_dir, "refs/")?
+        .into_iter()
+        .map(|(_, oid)| oid.to_hex())
+        .collect();
+    if tips.is_empty() {
+        let head = resolve_head(&repo.git_dir)?;
+        if let Some(oid) = head.oid() {
+            tips.push(oid.to_hex());
+        }
+    }
+    if tips.is_empty() {
+        bail!(
+            "--author '{}' is not 'Name <email>' and matches no existing author",
+            nick
+        );
+    }
+
+    let opts = RevListOptions {
+        all_refs: false,
+        first_parent: false,
+        ordering: grit_lib::rev_list::OrderingMode::Topo,
+        ..RevListOptions::default()
+    };
+    let result = rev_list(repo, &tips, &[], &opts)
+        .map_err(|_| anyhow::anyhow!("revision walk setup failed"))?;
+
+    for oid in result.commits {
+        let obj = repo.odb.read(&oid)?;
+        let commit = parse_commit(&obj.data)?;
+        let (name, email, _) = split_stored_author_line(&commit.author)?;
+        let (mn, me) = mailmap.map_user(name, email);
+        let mapped_line = format!("{mn} <{me}>");
+        if re.is_match(&mapped_line) {
+            return Ok(mapped_line);
+        }
+    }
+
+    bail!(
+        "--author '{}' is not 'Name <email>' and matches no existing author",
+        nick
+    );
 }
 
 /// Split a stored author line (`name <email> <epoch> <tz>`) into name, email, and optional date tail.
@@ -3804,7 +3858,12 @@ fn resolve_author(
     now: OffsetDateTime,
 ) -> Result<String> {
     if let Some(ref author) = args.author {
-        let (name, email) = parse_force_author_parameter(author)?;
+        let author = if author.contains('>') {
+            author.clone()
+        } else {
+            find_author_by_nickname(repo, author)?
+        };
+        let (name, email) = parse_force_author_parameter(&author)?;
         validate_ident_name(&name, "author")?;
         let date_str = args
             .date

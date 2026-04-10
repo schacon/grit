@@ -5,6 +5,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::mailmap::{load_mailmap_table, read_mailmap_string, MailmapTable};
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -52,26 +53,35 @@ pub fn run(args: Args) -> Result<()> {
     let stdin = io::stdin();
     let use_stdin = !stdin.is_terminal() && args.revisions.is_empty();
 
+    let mailmap = match Repository::discover(None) {
+        Ok(repo) => load_mailmap_table(&repo)?,
+        Err(_) => {
+            let mut t = MailmapTable::default();
+            if let Ok(body) = std::fs::read_to_string(".mailmap") {
+                read_mailmap_string(&mut t, &body);
+            }
+            t
+        }
+    };
+
     let (entries, from_stdin) = if use_stdin {
-        (collect_from_stdin(&stdin, &args)?, true)
+        (collect_from_stdin(&stdin, &args, &mailmap)?, true)
     } else {
-        (collect_from_repo(&args)?, false)
+        (collect_from_repo(&args, &mailmap)?, false)
     };
 
     let mut grouped = group_entries(entries, from_stdin);
 
-    // Sort
     if args.numbered {
-        // By count descending, then alphabetical for ties
         grouped.sort_by(|a, b| {
             b.commits
                 .len()
                 .cmp(&a.commits.len())
-                .then_with(|| a.key.to_lowercase().cmp(&b.key.to_lowercase()))
+                .then_with(|| a.key.cmp(&b.key))
         });
     } else {
-        // Alphabetical by key (case-insensitive)
-        grouped.sort_by(|a, b| a.key.to_lowercase().cmp(&b.key.to_lowercase()));
+        // Git keeps groups in `string_list` order: sorted by mapped ident string (`strcmp`).
+        grouped.sort_by(|a, b| a.key.cmp(&b.key));
     }
 
     let stdout = io::stdout();
@@ -90,12 +100,15 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
     }
+    if !args.summary && !grouped.is_empty() {
+        writeln!(out)?;
+    }
 
     Ok(())
 }
 
 /// Collect commits from the repository by walking the commit graph.
-fn collect_from_repo(args: &Args) -> Result<Vec<(String, String)>> {
+fn collect_from_repo(args: &Args, mailmap: &MailmapTable) -> Result<Vec<(String, String)>> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
     // Pre-process revisions: expand --glob and --glob=<pattern>
@@ -148,7 +161,7 @@ fn collect_from_repo(args: &Args) -> Result<Vec<(String, String)>> {
             "committer" => committer,
             _ => author,
         };
-        let key = format_key(ident, args.email);
+        let key = format_key(ident, args.email, mailmap);
         let desc = format_description(message, args.format.as_deref());
         result.push((key, desc));
     }
@@ -161,7 +174,11 @@ fn collect_from_repo(args: &Args) -> Result<Vec<(String, String)>> {
 /// Supports two input formats:
 /// 1. `git log --format=raw` — lines starting with "commit ", "author ", etc.
 /// 2. Default `git log` output — "commit <hash>", "Author: ...", blank line, indented message
-fn collect_from_stdin(stdin: &io::Stdin, args: &Args) -> Result<Vec<(String, String)>> {
+fn collect_from_stdin(
+    stdin: &io::Stdin,
+    args: &Args,
+    mailmap: &MailmapTable,
+) -> Result<Vec<(String, String)>> {
     let reader = stdin.lock();
     let mut result = Vec::new();
 
@@ -183,7 +200,7 @@ fn collect_from_stdin(stdin: &io::Stdin, args: &Args) -> Result<Vec<(String, Str
                     "committer" => &current_committer,
                     _ => &current_author,
                 };
-                let key = format_key(ident, args.email);
+                let key = format_key(ident, args.email, mailmap);
                 let desc = format_description(current_message.trim(), args.format.as_deref());
                 result.push((key, desc));
             }
@@ -262,7 +279,7 @@ fn collect_from_stdin(stdin: &io::Stdin, args: &Args) -> Result<Vec<(String, Str
             "committer" => &current_committer,
             _ => &current_author,
         };
-        let key = format_key(ident, args.email);
+        let key = format_key(ident, args.email, mailmap);
         let desc = format_description(current_message.trim(), args.format.as_deref());
         result.push((key, desc));
     }
@@ -296,11 +313,11 @@ fn group_entries(entries: Vec<(String, String)>, reverse_within: bool) -> Vec<Sh
         .collect()
 }
 
-/// Format the grouping key from an ident string.
-fn format_key(ident: &str, show_email: bool) -> String {
+fn format_key(ident: &str, show_email: bool, mailmap: &MailmapTable) -> String {
     let name = extract_name(ident);
+    let email = extract_email(ident);
+    let (name, email) = mailmap.map_user(name, email);
     if show_email {
-        let email = extract_email(ident);
         if email.is_empty() {
             name
         } else {
