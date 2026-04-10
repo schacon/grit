@@ -8,6 +8,7 @@
 //! Like Git, `show` defaults to `--no-walk` but switches to a `rev-list` walk
 //! when revision ranges, exclusions, `-n` / `--max-count`, or `--merge` are used.
 
+use crate::commands::log::show_notes_display_enabled;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::combined_diff_patch::CombinedDiffWsOptions;
@@ -69,9 +70,18 @@ pub struct Args {
     #[arg(long = "oneline")]
     pub oneline: bool,
 
-    /// Pretty-print format.
-    #[arg(long = "format", alias = "pretty")]
+    /// Pretty-print format (`git show --format=...`).
+    #[arg(long = "format", value_name = "FORMAT")]
     pub format: Option<String>,
+
+    /// Pretty-print format (`git show --pretty` defaults to `medium` like C Git).
+    #[arg(
+        long = "pretty",
+        value_name = "FORMAT",
+        num_args = 0..=1,
+        default_missing_value = "medium"
+    )]
+    pub pretty: Option<String>,
 
     /// Suppress diff output (show only the commit header).
     #[arg(short = 'q', long = "quiet")]
@@ -301,6 +311,9 @@ pub fn run(mut args: Args) -> Result<()> {
         args.indent_heuristic || argv_ind,
         args.no_indent_heuristic || argv_no,
     );
+    if args.format.is_none() {
+        args.format = args.pretty.clone();
+    }
 
     let mut raw_objects = args.objects.clone();
     while let Some(first) = raw_objects.first() {
@@ -917,7 +930,8 @@ fn show_commit(
             } else {
                 &fmt[8..]
             };
-            let formatted = apply_format_string(template, oid, &commit);
+            let note_bytes = notes_map.get(oid).map(|v| v.as_slice());
+            let formatted = apply_format_string(template, oid, &commit, note_bytes);
             write_formatted_line(out, &formatted)?;
         }
         Some("short") => {
@@ -971,12 +985,16 @@ fn show_commit(
             for line in commit.message.lines() {
                 writeln!(out, "    {line}")?;
             }
-            if let Some(note_data) = notes_map.get(oid) {
-                let note_text = String::from_utf8_lossy(note_data);
-                writeln!(out)?;
-                writeln!(out, "Notes:")?;
-                for line in note_text.lines() {
-                    writeln!(out, "    {line}")?;
+            if show_notes_display_enabled() {
+                if let Some(note_data) = notes_map.get(oid) {
+                    let note_text = String::from_utf8_lossy(note_data);
+                    writeln!(out)?;
+                    writeln!(out, "Notes:")?;
+                    for line in note_text.lines() {
+                        writeln!(out, "    {line}")?;
+                    }
+                } else {
+                    writeln!(out)?;
                 }
             } else {
                 writeln!(out)?;
@@ -1012,7 +1030,8 @@ fn show_commit(
             // Already handled above — unreachable
         }
         Some(other) => {
-            let formatted = apply_format_string(other, oid, &commit);
+            let note_bytes = notes_map.get(oid).map(|v| v.as_slice());
+            let formatted = apply_format_string(other, oid, &commit, note_bytes);
             write_formatted_line(out, &formatted)?;
         }
     }
@@ -1826,13 +1845,14 @@ pub(crate) fn format_commit_placeholder(
     oid: &ObjectId,
     commit: &grit_lib::objects::CommitData,
 ) -> String {
-    apply_format_string(template, oid, commit)
+    apply_format_string(template, oid, commit, None)
 }
 
 fn apply_format_string(
     template: &str,
     oid: &ObjectId,
     commit: &grit_lib::objects::CommitData,
+    notes_raw: Option<&[u8]>,
 ) -> String {
     let info = CommitInfo {
         tree: commit.tree,
@@ -1951,6 +1971,12 @@ fn apply_format_string(
                 Some('n') => {
                     chars.next();
                     result.push('\n');
+                }
+                Some('N') => {
+                    chars.next();
+                    if let Some(raw) = notes_raw {
+                        result.push_str(&String::from_utf8_lossy(raw));
+                    }
                 }
                 Some('D') => {
                     chars.next();

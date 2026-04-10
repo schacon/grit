@@ -16,6 +16,8 @@ use grit_lib::merge_diff::{blob_text_for_diff_with_oid, diff_textconv_active, is
 use grit_lib::objects::{parse_commit, CommitData, ObjectId};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
+
+use crate::commands::log::append_format_patch_notes;
 use grit_lib::rev_list::{rev_list, split_symmetric_diff, OrderingMode, RevListOptions};
 use grit_lib::rev_parse::{resolve_revision, resolve_revision_for_range_end};
 use std::collections::HashSet;
@@ -522,6 +524,7 @@ pub fn run(mut args: Args) -> Result<()> {
         // Format the patch — append base-commit info to last patch
         let include_base = is_last_patch(idx);
         let patch = format_single_patch(
+            &repo,
             &repo.odb,
             repo.git_dir.as_path(),
             oid,
@@ -964,6 +967,7 @@ fn extract_email(ident: &str) -> Option<&str> {
 
 /// Format a single commit as an email-style patch.
 fn format_single_patch(
+    repo: &Repository,
     odb: &Odb,
     git_dir: &std::path::Path,
     oid: &ObjectId,
@@ -1162,6 +1166,8 @@ fn format_single_patch(
         .collect::<Vec<_>>()
         .join("\n");
     let body = body.trim_start_matches('\n');
+    let body_owned = append_format_patch_notes(repo, oid, body);
+    let body = body_owned.as_str();
 
     if use_mime {
         // MIME multipart: description part, then patch as attachment
