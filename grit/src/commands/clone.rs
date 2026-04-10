@@ -792,6 +792,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 false,
                 true,
                 pack_filter_active,
+                None,
             )
         });
         match fetch_res {
@@ -949,6 +950,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 false,
                 true,
                 pack_filter_active,
+                None,
             )
         }) {
             Ok(_) => {
@@ -2479,6 +2481,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                 false,
                 true,
                 pack_filter_active,
+                None,
             )
         });
         match fetch_res {
@@ -2629,6 +2632,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
             false,
             true,
             pack_filter_active,
+            None,
         ) {
             Ok(_) => {
                 propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;

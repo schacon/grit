@@ -395,6 +395,7 @@ pub fn fetch_via_ext_skipping(
         &mut stdin,
         &mut stdout,
         &wants,
+        None,
     )?;
     drop(stdin);
 

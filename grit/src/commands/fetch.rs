@@ -857,6 +857,11 @@ fn fetch_remote(
         }
         return Ok(());
     }
+    let regular_negotiation_tips = if args.negotiation_tip.is_empty() {
+        Vec::new()
+    } else {
+        resolve_negotiation_tip_oids(git_dir, &args.negotiation_tip)?
+    };
 
     if crate::ssh_transport::is_configured_ssh_url(&url) {
         if remote_repo.is_some() {
@@ -1108,9 +1113,8 @@ fn fetch_remote(
             cli_refspecs_owned.clone()
         };
         let remote_gd_ext = ext_upload_pack_git_dir.clone();
-        let (heads, tags, head_symref, head_oid) = crate::fetch_transport::with_packet_trace_identity(
-            "fetch",
-            || {
+        let (heads, tags, head_symref, head_oid) =
+            crate::fetch_transport::with_packet_trace_identity("fetch", || {
                 crate::ext_transport::fetch_via_ext_skipping(
                     git_dir,
                     &url,
@@ -1139,8 +1143,7 @@ fn fetch_remote(
                     },
                     filter_active,
                 )
-            },
-        )?;
+            })?;
         remote_head_advertised_oid = head_oid;
         remote_head_symbolic_branch_from_transport = head_symref
             .as_deref()
@@ -1214,14 +1217,19 @@ fn fetch_remote(
         };
         let (mut heads, mut tags, head_symref, head_oid) =
             crate::fetch_transport::fetch_via_upload_pack_skipping(
-            git_dir,
-            &remote_path,
-            upload_pack_cmd.as_deref(),
-            compute_wants,
-            has_cli_refspecs,
-            include_head_ref_prefix,
-            filter_active,
-        )?;
+                git_dir,
+                &remote_path,
+                upload_pack_cmd.as_deref(),
+                compute_wants,
+                has_cli_refspecs,
+                include_head_ref_prefix,
+                filter_active,
+                if regular_negotiation_tips.is_empty() {
+                    None
+                } else {
+                    Some(regular_negotiation_tips.as_slice())
+                },
+            )?;
         remote_head_advertised_oid = head_oid;
         remote_head_symbolic_branch_from_transport = head_symref
             .as_deref()
@@ -1326,9 +1334,14 @@ fn fetch_remote(
     let mut pending_atomic_noop_head_hook: Option<(String, String, String)> = None;
     let mut has_updates = false;
 
-    let remote_symbolic_head_branch = remote_head_symbolic_branch_from_transport
-        .clone()
-        .or_else(|| remote_repo.as_ref().and_then(|r| remote_symbolic_head_branch(&r.git_dir)));
+    let remote_symbolic_head_branch =
+        remote_head_symbolic_branch_from_transport
+            .clone()
+            .or_else(|| {
+                remote_repo
+                    .as_ref()
+                    .and_then(|r| remote_symbolic_head_branch(&r.git_dir))
+            });
     let _remote_default_branch_fetch = remote_repo
         .as_ref()
         .and_then(|r| remote_default_branch_for_fetch_merge(&r.git_dir));
@@ -1680,9 +1693,7 @@ fn fetch_remote(
                     }
 
                     // Check if branch is checked out in a worktree before updating.
-                    if local_ref.starts_with("refs/heads/")
-                        && !args.update_head_ok
-                        && !is_bare_repo
+                    if local_ref.starts_with("refs/heads/") && !args.update_head_ok && !is_bare_repo
                     {
                         if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
                             bail!(

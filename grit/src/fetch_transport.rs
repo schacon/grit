@@ -406,6 +406,27 @@ pub(crate) fn collect_wants(
         let oid = if src.len() == 40 && src.chars().all(|c| c.is_ascii_hexdigit()) {
             ObjectId::from_hex(src)
                 .with_context(|| format!("invalid object id in refspec: {src}"))?
+        } else if src == "HEAD" {
+            let resolved = advertised
+                .iter()
+                .find(|(n, _)| n == "HEAD")
+                .map(|(_, o)| *o)
+                .or_else(|| {
+                    advertised.iter().find_map(|(n, o)| {
+                        n.strip_prefix("refs/heads/").and_then(|short| {
+                            if short == "main" || short == "master" {
+                                Some(*o)
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                })
+                .with_context(|| "could not find remote ref 'HEAD'")?;
+            if is_excluded("HEAD") {
+                continue;
+            }
+            resolved
         } else {
             let remote_ref = normalize_non_oid_src(src);
             let resolved = advertised
@@ -769,6 +790,7 @@ pub fn fetch_via_upload_pack_skipping(
     has_cli_refspecs: bool,
     include_head_ref_prefix: bool,
     filter_active: bool,
+    negotiation_tip_oids: Option<&[ObjectId]>,
 ) -> Result<(
     Vec<(String, ObjectId)>,
     Vec<(String, ObjectId)>,
@@ -873,6 +895,7 @@ pub fn fetch_via_upload_pack_skipping(
             &mut stdin,
             &mut stdout,
             &wants,
+            negotiation_tip_oids,
         )?;
         drop(stdin);
         buf
@@ -965,6 +988,7 @@ fn fetch_upload_pack_negotiate_pack_bytes(
         &mut stdin,
         &mut stdout,
         wants,
+        None,
     )?;
     drop(stdin);
 
@@ -988,6 +1012,7 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     stdin: &mut impl Write,
     stdout: &mut impl Read,
     wants: &[ObjectId],
+    negotiation_tip_oids: Option<&[ObjectId]>,
 ) -> Result<Vec<u8>> {
     let local_repo = Repository::open(local_git_dir, None)
         .with_context(|| format!("open local repository {}", local_git_dir.display()))?;
@@ -1060,6 +1085,16 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     }
 
     let mut tips: Vec<ObjectId> = Vec::new();
+    let mut tip_filter: Option<HashSet<ObjectId>> = None;
+    if let Some(tips) = negotiation_tip_oids {
+        let mut set = HashSet::new();
+        for tip in tips {
+            let peeled = peel_commit_oid_for_negotiation(negotiator.repo(), *tip)?;
+            set.insert(peeled);
+        }
+        tip_filter = Some(set);
+    }
+
     for prefix in ["refs/heads/", "refs/tags/"] {
         if let Ok(entries) = refs::list_refs(local_git_dir, prefix) {
             for (name, oid) in entries {
@@ -1071,19 +1106,39 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
                 if negotiator.repo().odb.read(&tip).is_err() {
                     continue;
                 }
-                tips.push(peel_commit_oid_for_negotiation(negotiator.repo(), tip)?);
+                let peeled = peel_commit_oid_for_negotiation(negotiator.repo(), tip)?;
+                if tip_filter
+                    .as_ref()
+                    .is_some_and(|filter| !filter.contains(&peeled))
+                {
+                    continue;
+                }
+                tips.push(peeled);
             }
         }
     }
     if let Ok(h) = refs::resolve_ref(local_git_dir, "HEAD") {
         if negotiator.repo().odb.read(&h).is_ok() {
-            tips.push(peel_commit_oid_for_negotiation(negotiator.repo(), h)?);
+            let peeled = peel_commit_oid_for_negotiation(negotiator.repo(), h)?;
+            if !tip_filter
+                .as_ref()
+                .is_some_and(|filter| !filter.contains(&peeled))
+            {
+                tips.push(peeled);
+            }
         }
     }
     for sym in ["HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] {
         if let Ok(oid) = resolve_revision(negotiator.repo(), sym) {
             if negotiator.repo().odb.read(&oid).is_ok() {
-                tips.push(peel_commit_oid_for_negotiation(negotiator.repo(), oid)?);
+                let peeled = peel_commit_oid_for_negotiation(negotiator.repo(), oid)?;
+                if tip_filter
+                    .as_ref()
+                    .is_some_and(|filter| !filter.contains(&peeled))
+                {
+                    continue;
+                }
+                tips.push(peeled);
             }
         }
     }
@@ -1345,6 +1400,7 @@ pub fn fetch_via_git_protocol_skipping(
         &mut stream_w,
         &mut stream,
         &wants,
+        None,
     )?;
 
     if !pack_buf.is_empty() && (pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK") {
