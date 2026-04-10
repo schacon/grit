@@ -34,7 +34,8 @@ use grit_lib::refs::{append_reflog, list_refs, resolve_ref, write_ref};
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, split_revision_token, OrderingMode, RevListOptions};
 use grit_lib::rev_parse::{
-    abbreviate_object_id, resolve_revision, resolve_revision_without_index_dwim,
+    abbreviate_object_id, peel_to_commit_for_merge_base, resolve_revision,
+    resolve_revision_for_range_end, resolve_revision_without_index_dwim, split_triple_dot_range,
     upstream_suffix_info,
 };
 use grit_lib::state::{resolve_head, HeadState};
@@ -328,6 +329,10 @@ pub fn run(mut args: Args) -> Result<()> {
             .parse()
             .map_err(|_| anyhow::anyhow!("invalid {INTERNAL_REBASE_PICK_ENV}"))?;
         return run_internal_rebase_pick_line(line_idx);
+    }
+
+    if args.keep_base > 0 && args.onto.is_some() {
+        bail!("options '--keep-base' and '--onto' cannot be used together");
     }
 
     let mut upstream_explicit = args.upstream.is_some();
@@ -2396,56 +2401,66 @@ Use '--' to separate paths from revisions, like this:\n\
         }
     }
 
-    let (upstream_spec, upstream_oid, upstream_tip_oid, onto_oid, onto_name_for_state) =
-        if args.root {
-            let (onto, onto_label) = if let Some(ref onto_spec) = args.onto {
-                let oid = resolve_revision_without_index_dwim(&repo, onto_spec)
-                    .with_context(|| format!("bad revision '{onto_spec}'"))?;
-                (oid, onto_spec.clone())
-            } else {
-                let oid = create_squash_onto_root_commit(
-                    &repo,
-                    git_dir,
-                    args.reset_author_date,
-                    args.committer_date_is_author_date,
-                )?;
-                (oid, oid.to_hex())
-            };
-            ("--root".to_owned(), onto, onto, onto, onto_label)
+    let (upstream_spec, upstream_oid, upstream_tip_oid, onto_oid, onto_name_for_state) = if args
+        .root
+    {
+        let (onto, onto_label) = if let Some(ref onto_spec) = args.onto {
+            let oid = resolve_revision_without_index_dwim(&repo, onto_spec)
+                .with_context(|| format!("bad revision '{onto_spec}'"))?;
+            (oid, onto_spec.clone())
         } else {
-            let upstream_spec = upstream_spec_str.clone();
-            let up_oid = resolve_revision_without_index_dwim(&repo, &upstream_spec)
-                .with_context(|| format!("bad revision '{upstream_spec}'"))?;
-            let upstream_tip_oid = up_oid;
+            let oid = create_squash_onto_root_commit(
+                &repo,
+                git_dir,
+                args.reset_author_date,
+                args.committer_date_is_author_date,
+            )?;
+            (oid, oid.to_hex())
+        };
+        ("--root".to_owned(), onto, onto, onto, onto_label)
+    } else {
+        let upstream_spec = upstream_spec_str.clone();
+        let up_oid = resolve_revision_without_index_dwim(&repo, &upstream_spec)
+            .with_context(|| format!("bad revision '{upstream_spec}'"))?;
+        let upstream_tip_oid = up_oid;
 
-            let mut effective_upstream_for_range = up_oid;
-            if let Some(ref fp_spec) = fork_point_reflog_spec {
-                let fp_oid = fork_point(&repo, fp_spec, up_oid, head_oid_early)
-                    .with_context(|| format!("fork-point resolution failed for '{fp_spec}'"))?;
-                effective_upstream_for_range = fp_oid;
-            }
+        let mut effective_upstream_for_range = up_oid;
+        if let Some(ref fp_spec) = fork_point_reflog_spec {
+            let fp_oid = fork_point(&repo, fp_spec, up_oid, head_oid_early)
+                .with_context(|| format!("fork-point resolution failed for '{fp_spec}'"))?;
+            effective_upstream_for_range = fp_oid;
+        }
 
-            let (onto, onto_label) = if let Some(ref onto_spec) = args.onto {
+        let (onto, onto_label) = if let Some(ref onto_spec) = args.onto {
+            if split_triple_dot_range(onto_spec).is_some() {
+                let oid =
+                    merge_base_from_triple_dot_onto(&repo, onto_spec, false, onto_spec.as_str())?;
+                (oid, onto_spec.clone())
+            } else {
                 let oid = resolve_revision_without_index_dwim(&repo, onto_spec)
                     .with_context(|| format!("bad revision '{onto_spec}'"))?;
                 (oid, onto_spec.clone())
-            } else if args.keep_base > 0 {
-                // Replay onto merge-base(upstream-tip, HEAD). Fork-point only narrows which commits
-                // are replayed, not this base (t3431 `--fork-point --keep-base` → onto B).
-                let oid = find_merge_base(&repo, upstream_tip_oid, head_oid_early)
-                    .unwrap_or(upstream_tip_oid);
-                (oid, upstream_spec.clone())
-            } else {
-                (up_oid, upstream_spec.clone())
-            };
-            (
-                upstream_spec,
-                effective_upstream_for_range,
-                upstream_tip_oid,
-                onto,
-                onto_label,
-            )
+            }
+        } else if args.keep_base > 0 {
+            let branch_name = head_state
+                .branch_name()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "HEAD".to_string());
+            let onto_spec = format!("{upstream_spec}...{branch_name}");
+            let oid =
+                merge_base_from_triple_dot_onto(&repo, &onto_spec, true, upstream_spec.as_str())?;
+            (oid, onto_spec)
+        } else {
+            (up_oid, upstream_spec.clone())
         };
+        (
+            upstream_spec,
+            effective_upstream_for_range,
+            upstream_tip_oid,
+            onto,
+            onto_label,
+        )
+    };
     let head = head_state;
     let head_oid = head_oid_early;
 
@@ -2527,12 +2542,18 @@ Use '--' to separate paths from revisions, like this:\n\
     } else {
         args.keep_base > 0
     };
-    let filter_cherry_equivalents = !reapply_cherry_picks && !args.interactive;
-    // `--keep-base` commit selection: default (config fork-point only) still uses the upstream
-    // *tip* for the replay list so `rebase --keep-base` includes commits like C (t3431.4). Explicit
-    // `--fork-point --keep-base` uses the fork-point commit so only F..G replay onto B (t3431.12).
+    // Interactive rebase normally skips this filter (todo lists all commits); `--keep-base` with
+    // `--no-reapply-cherry-picks` must still omit patch-id duplicates like the merge backend.
+    let filter_cherry_equivalents =
+        !reapply_cherry_picks && (!args.interactive || args.keep_base > 0);
+    // `--keep-base` commit selection: when reapplying cherry-picks, Git uses `onto` as upstream for
+    // commit collection (`options.upstream = options.onto`). Otherwise default fork-point behavior
+    // still uses the upstream *tip* for the replay list (t3431.4); explicit `--fork-point
+    // --keep-base` uses the fork-point commit (t3431.12).
     let commits_upstream = if args.keep_base > 0 {
-        if fork_point_effective && args.fork_point {
+        if reapply_cherry_picks {
+            onto_oid
+        } else if fork_point_effective && args.fork_point {
             upstream_oid
         } else {
             upstream_tip_oid
@@ -2935,12 +2956,40 @@ fn fast_forward_rebase(
     Ok(())
 }
 
-/// Find the merge-base of two commits.  Returns `None` when there is no
-/// common ancestor.
-fn find_merge_base(repo: &Repository, a: ObjectId, b: ObjectId) -> Option<ObjectId> {
-    grit_lib::merge_base::merge_bases_first_vs_rest(repo, a, &[b])
-        .ok()
-        .and_then(|bases| bases.into_iter().next())
+/// Resolve `A...B` in an `--onto` or synthesized `--keep-base` onto name to a single merge base.
+///
+/// When `keep_base` is true, Git reports `'<upstream>': need exactly one merge base with branch`;
+/// otherwise `'<onto>': need exactly one merge base`.
+fn merge_base_from_triple_dot_onto(
+    repo: &Repository,
+    onto_spec: &str,
+    keep_base: bool,
+    upstream_label: &str,
+) -> Result<ObjectId> {
+    let Some((left_raw, right_raw)) = split_triple_dot_range(onto_spec) else {
+        bail!("internal: expected symmetric-diff revision in onto spec");
+    };
+    let left_tip = if left_raw.is_empty() {
+        resolve_revision_for_range_end(repo, "HEAD")?
+    } else {
+        resolve_revision_for_range_end(repo, left_raw)?
+    };
+    let right_tip = if right_raw.is_empty() {
+        resolve_revision_for_range_end(repo, "HEAD")?
+    } else {
+        resolve_revision_for_range_end(repo, right_raw)?
+    };
+    let left_c = peel_to_commit_for_merge_base(repo, left_tip)?;
+    let right_c = peel_to_commit_for_merge_base(repo, right_tip)?;
+    let bases = merge_bases_first_vs_rest(repo, left_c, &[right_c])?;
+    if bases.len() != 1 {
+        if keep_base {
+            bail!("'{upstream_label}': need exactly one merge base with branch");
+        } else {
+            bail!("'{onto_spec}': need exactly one merge base");
+        }
+    }
+    Ok(bases[0])
 }
 
 /// Commits to replay for a non-interactive rebase, oldest-first.

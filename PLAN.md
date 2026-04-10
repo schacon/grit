@@ -308,7 +308,7 @@ commit → check it off → move on.
 - [ ] `t3907-stash-show-config` ██░░░░░░░░░░░░░░░░░░ 1/10 (9 left) — Test git stash show configuration.
 - [ ] `t3413-rebase-hook` ██████░░░░░░░░░░░░░░ 5/15 (10 left) — git rebase with its hook(s)
 - [x] `t3303-notes-subtrees` — Test commit notes organized in subtrees (23/23)
-- [ ] `t3416-rebase-onto-threedots` ███████░░░░░░░░░░░░░ 7/18 (11 left) — git rebase --onto A...B
+- [x] `t3416-rebase-onto-threedots` — git rebase --onto A...B / --keep-base (18/18)
 - [ ] `t3402-rebase-merge` ███░░░░░░░░░░░░░░░░░ 2/13 (11 left) — git rebase --merge test
 - [ ] `t3602-rm-sparse-checkout` ███░░░░░░░░░░░░░░░░░ 2/13 (11 left) — git rm in sparse checked out working trees
 - [ ] `t3013-ls-files-format` ████████░░░░░░░░░░░░ 8/20 (12 left) — git ls-files --format test

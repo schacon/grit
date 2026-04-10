@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-10 (t3416 / rebase --onto A...B and --keep-base)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t3416-rebase-onto-threedots.sh`: 18/18 passed
+
 **2026-04-10 (t5581 / GIT_CURL_VERBOSE)**
 
 - `cargo test -p grit-lib --lib`: 160 passed
