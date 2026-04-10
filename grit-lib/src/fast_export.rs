@@ -222,6 +222,23 @@ fn parse_anonymize_maps(entries: &[String]) -> Result<HashMap<String, String>> {
     Ok(out)
 }
 
+/// Ref tips used to assign each exported commit a `commit <ref>` line (Git `revision_sources`).
+///
+/// Includes `refs/heads/*` and peeled `refs/tags/*` so tagged-only commits (e.g. `git tag E` with no
+/// branch) still get a valid source ref. Without tags, `fast-export --all` can fail with
+/// `no ref source for commit` when the walk reaches a commit reachable only via tags.
+fn revision_source_tips(repo: &Repository) -> Result<Vec<(String, ObjectId)>> {
+    let mut tips = refs::list_refs(&repo.git_dir, "refs/heads/")?;
+    for (name, oid) in refs::list_refs(&repo.git_dir, "refs/tags/")? {
+        let tip = match peel_tag_to_commit_oid(repo, oid) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        tips.push((name, tip));
+    }
+    Ok(tips)
+}
+
 fn ref_source_for_commit(
     repo: &Repository,
     oid: ObjectId,
@@ -343,7 +360,7 @@ pub fn export_stream(
         ));
     }
 
-    let head_branches: Vec<(String, ObjectId)> = refs::list_refs(&repo.git_dir, "refs/heads/")?;
+    let head_branches = revision_source_tips(repo)?;
 
     let opts = RevListOptions {
         all_refs: true,
