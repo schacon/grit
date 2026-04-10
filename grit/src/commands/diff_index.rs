@@ -1341,8 +1341,22 @@ fn diff_tree_vs_worktree(
             if sub_head.is_none() {
                 continue;
             }
-            if sub_head.as_ref() != Some(&index_snapshot.oid) {
+            let tree_snap = tree_map.get(path).copied();
+            let tree_matches_index = tree_snap.is_some_and(|t| t == *index_snapshot);
+            let head_differs_from_index = sub_head.as_ref() != Some(&index_snapshot.oid);
+            let dirty = submodule_dirty_flags(
+                work_tree,
+                path,
+                &index_snapshot.oid,
+                submodule_ignore.ignore_untracked,
+                submodule_ignore.ignore_dirty,
+            );
+            let report_dirty_aligned = tree_matches_index
+                && !head_differs_from_index
+                && (dirty.modified || dirty.untracked);
+            if head_differs_from_index || report_dirty_aligned {
                 let old = tree_map.get(path).copied().or(Some(*index_snapshot));
+                let new_oid = zero_oid();
                 merged.insert(
                     path.clone(),
                     RawChange {
@@ -1351,7 +1365,7 @@ fn diff_tree_vs_worktree(
                         old,
                         new: Some(Snapshot {
                             mode: MODE_GITLINK,
-                            oid: sub_head.unwrap_or_else(zero_oid),
+                            oid: new_oid,
                         }),
                     },
                 );

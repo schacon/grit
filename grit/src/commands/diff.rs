@@ -35,20 +35,20 @@ use grit_lib::diff::{
 };
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::error::Error;
-use grit_lib::index::Index;
+use grit_lib::index::{Index, MODE_GITLINK};
 use grit_lib::merge_base::{
     merge_base_for_diff_index, merge_base_for_diff_two_commits, MergeBaseForDiffError,
 };
 use grit_lib::merge_diff::{
     blob_text_for_diff_with_oid, combined_diff_paths, combined_merge_parent_blob_paths,
-    diff_textconv_active, format_combined_textconv_patch, format_worktree_conflict_combined,
-    run_textconv,
+    diff_textconv_active, format_combined_textconv_patch,
+    format_gitlink_unmerged_conflict_combined, format_worktree_conflict_combined, run_textconv,
 };
 use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::quote_path::{format_diff_path_with_prefix, quote_c_style};
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::is_symmetric_diff;
+use grit_lib::rev_list::{is_symmetric_diff, rev_list, RevListOptions};
 use grit_lib::rev_parse::{
     abbreviate_object_id, resolve_revision, resolve_revision_as_commit,
     resolve_treeish_blob_at_path, show_prefix, split_treeish_colon, TreeishBlobAtPath,
@@ -59,11 +59,13 @@ use regex::Regex;
 use regex::RegexBuilder;
 use similar::{group_diff_ops, udiff::UnifiedDiffHunk, ChangeTag, TextDiff};
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
 use std::sync::Arc;
 
 use crate::commands::diff_index::{write_patch_entry, SubmoduleIgnoreFlags, SubmodulePatchFormat};
 use crate::commands::promisor_hydrate::{prefetch_promisor_for_diff_entries, PromisorDiffPrefetch};
+use grit_lib::config::{canonical_key, ConfigFile, ConfigScope};
 
 /// Shared gitattributes + config for per-path diff algorithm selection (`diff.<driver>.algorithm`).
 #[derive(Clone)]
@@ -342,6 +344,288 @@ fn submodule_ignore_flags_from_diff_arg(ignore_sm: &str) -> SubmoduleIgnoreFlags
             ignore_dirty: false,
         },
     }
+}
+
+/// Submodule HEAD OID for patch output when raw diff used a null new side (`git diff <tree>`).
+fn submodule_head_oid_for_gitlink_patch(entry: &DiffEntry, work_tree: Option<&Path>) -> ObjectId {
+    if entry.old_mode != "160000" || entry.new_mode != "160000" {
+        return entry.new_oid;
+    }
+    if entry.new_oid != zero_oid() {
+        return entry.new_oid;
+    }
+    work_tree
+        .and_then(|wt| grit_lib::diff::read_submodule_head_oid(&wt.join(entry.path())))
+        .unwrap_or_else(zero_oid)
+}
+
+/// Suffix for `+Subproject commit …` when the submodule checkout has local changes.
+fn submodule_path_to_name_map(work_tree: &Path, cfg: &ConfigSet) -> HashMap<String, String> {
+    let mut out: HashMap<String, String> = HashMap::new();
+    let gm = work_tree.join(".gitmodules");
+    if let Ok(text) = fs::read_to_string(&gm) {
+        if let Ok(file) = ConfigFile::parse(&gm, &text, ConfigScope::Local) {
+            for e in &file.entries {
+                let Some(rest) = e.key.strip_prefix("submodule.") else {
+                    continue;
+                };
+                let Some(name) = rest.strip_suffix(".path") else {
+                    continue;
+                };
+                if let Some(p) = e.value.as_deref() {
+                    let key = p.trim().replace('\\', "/");
+                    if !key.is_empty() {
+                        out.insert(key, name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    for e in cfg.entries() {
+        let Some(rest) = e.key.strip_prefix("submodule.") else {
+            continue;
+        };
+        let Some(name) = rest.strip_suffix(".path") else {
+            continue;
+        };
+        if let Some(p) = e.value.as_deref() {
+            let key = p.trim().replace('\\', "/");
+            if !key.is_empty() {
+                out.insert(key, name.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// `submodule.<name>.ignore` from `.gitmodules` (not part of merged [`ConfigSet`]).
+fn gitmodules_submodule_name_to_ignore(work_tree: &Path) -> HashMap<String, String> {
+    let mut out: HashMap<String, String> = HashMap::new();
+    let gm = work_tree.join(".gitmodules");
+    let Ok(text) = fs::read_to_string(&gm) else {
+        return out;
+    };
+    let Ok(file) = ConfigFile::parse(&gm, &text, ConfigScope::Local) else {
+        return out;
+    };
+    for e in &file.entries {
+        let Some(rest) = e.key.strip_prefix("submodule.") else {
+            continue;
+        };
+        let Some(name) = rest.strip_suffix(".ignore") else {
+            continue;
+        };
+        if let Some(v) = e.value.as_deref() {
+            out.insert(name.to_string(), v.trim().to_ascii_lowercase());
+        }
+    }
+    out
+}
+
+fn submodule_named_ignore_from_repo_config(
+    submodule_name: &str,
+    cfg: &ConfigSet,
+) -> Option<String> {
+    let key = format!("submodule.{submodule_name}.ignore");
+    let key_canon = canonical_key(&key).ok()?;
+    cfg.entries()
+        .iter()
+        .rev()
+        .find(|e| e.key == key_canon)
+        .and_then(|e| e.value.as_deref())
+        .map(|s| s.trim().to_ascii_lowercase())
+}
+
+/// Per-path submodule ignore: repo `submodule.<name>.ignore`, then `.gitmodules`, then `diff.ignoreSubmodules`.
+///
+/// When the path is not registered in `.gitmodules` / config (embedded submodule), only
+/// `diff.ignoreSubmodules` applies — matches Git (t4027 `test_config diff.ignoreSubmodules none`).
+fn submodule_effective_ignore_token(
+    path: &str,
+    path_to_name: &HashMap<String, String>,
+    gm_name_ignore: &HashMap<String, String>,
+    cfg: &ConfigSet,
+) -> Option<String> {
+    if let Some(name) = path_to_name.get(path) {
+        if let Some(v) = submodule_named_ignore_from_repo_config(name, cfg)
+            .or_else(|| gm_name_ignore.get(name).cloned())
+        {
+            return Some(v);
+        }
+    }
+    cfg.get("diff.ignoreSubmodules")
+        .map(|s| s.trim().to_ascii_lowercase())
+}
+
+fn ignore_submodules_cli_all(cli: Option<&str>) -> bool {
+    cli.is_some_and(|c| c.eq_ignore_ascii_case("all"))
+}
+
+fn ignore_submodules_cli_dirty(cli: Option<&str>) -> bool {
+    cli.is_some_and(|c| c.eq_ignore_ascii_case("dirty"))
+}
+
+/// Drop gitlink entries entirely (`--ignore-submodules=all` or effective policy `all`).
+fn gitlink_suppressed_ignore_all(
+    entry: &DiffEntry,
+    cli: Option<&str>,
+    path_to_name: &HashMap<String, String>,
+    gm_name_ignore: &HashMap<String, String>,
+    cfg: &ConfigSet,
+) -> bool {
+    if entry.old_mode != "160000" && entry.new_mode != "160000" {
+        return false;
+    }
+    if ignore_submodules_cli_all(cli) {
+        return true;
+    }
+    if cli.is_some() {
+        return false;
+    }
+    submodule_effective_ignore_token(entry.path(), path_to_name, gm_name_ignore, cfg).as_deref()
+        == Some("all")
+}
+
+/// Drop same-OID gitlink noise (dirty worktree and/or policy `dirty`, or default untracked-only).
+fn gitlink_same_oid_suppressed(
+    entry: &DiffEntry,
+    cli: Option<&str>,
+    path_to_name: &HashMap<String, String>,
+    gm_name_ignore: &HashMap<String, String>,
+    cfg: &ConfigSet,
+    work_tree: Option<&Path>,
+) -> bool {
+    if entry.old_mode != "160000" || entry.new_mode != "160000" || entry.old_oid != entry.new_oid {
+        return false;
+    }
+    if ignore_submodules_cli_dirty(cli) {
+        return true;
+    }
+    if cli.is_some() {
+        return false;
+    }
+    let path = entry.path();
+    let token = submodule_effective_ignore_token(path, path_to_name, gm_name_ignore, cfg);
+    if token.as_deref() == Some("none") {
+        return false;
+    }
+    if token.as_deref() == Some("dirty") {
+        return true;
+    }
+    let Some(wt) = work_tree else {
+        return false;
+    };
+    let flags = grit_lib::diff::submodule_porcelain_flags(wt, path, entry.old_oid);
+    if token.as_deref() == Some("untracked") {
+        return !flags.modified && flags.untracked;
+    }
+    !flags.modified && flags.untracked
+}
+
+fn submodule_gitlink_patch_plus_suffix(
+    entry: &DiffEntry,
+    work_tree: Option<&Path>,
+    submodule_ignore: SubmoduleIgnoreFlags,
+    ignore_submodules_cli: Option<&str>,
+    diff_cfg: &grit_lib::config::ConfigSet,
+    path_to_name: &HashMap<String, String>,
+    gm_name_ignore: &HashMap<String, String>,
+) -> String {
+    if entry.old_mode != "160000" || entry.new_mode != "160000" {
+        return String::new();
+    }
+    let Some(wt) = work_tree else {
+        return String::new();
+    };
+    let path = entry.path();
+    let flags = grit_lib::diff::submodule_porcelain_flags(wt, path, entry.old_oid);
+    let eff = submodule_effective_ignore_token(path, path_to_name, gm_name_ignore, diff_cfg);
+    let cli_none = ignore_submodules_cli.is_some_and(|s| s.eq_ignore_ascii_case("none"));
+    let count_untracked =
+        !submodule_ignore.ignore_untracked && (cli_none || eff.as_deref() == Some("none"));
+    let dirty_for_suffix =
+        (flags.modified && !submodule_ignore.ignore_dirty) || (flags.untracked && count_untracked);
+    if dirty_for_suffix {
+        "-dirty".to_owned()
+    } else {
+        String::new()
+    }
+}
+
+fn write_submodule_log_lines(
+    out: &mut impl Write,
+    repo: &Repository,
+    entry: &DiffEntry,
+    work_tree: Option<&Path>,
+) -> Result<()> {
+    let z = zero_oid();
+    if entry.old_oid == z {
+        return Ok(());
+    }
+    let new_oid =
+        if entry.new_oid == z && (entry.old_mode == "160000" || entry.new_mode == "160000") {
+            submodule_head_oid_for_gitlink_patch(entry, work_tree)
+        } else {
+            entry.new_oid
+        };
+    if new_oid == z {
+        return Ok(());
+    }
+    let old_a = abbreviate_object_id(repo, entry.old_oid, 7)?;
+    let new_a = abbreviate_object_id(repo, new_oid, 7)?;
+    writeln!(out, "Submodule {} {}..{}:", entry.path(), old_a, new_a)?;
+    let Some(wt) = repo.work_tree.as_deref() else {
+        return Ok(());
+    };
+    let sub_path = wt.join(entry.path());
+    let Ok(sub_repo) = Repository::discover(Some(&sub_path)) else {
+        return Ok(());
+    };
+    let mut opts = RevListOptions::default();
+    opts.first_parent = true;
+    let Ok(res) = rev_list(
+        &sub_repo,
+        &[new_oid.to_hex()],
+        &[entry.old_oid.to_hex()],
+        &opts,
+    ) else {
+        return Ok(());
+    };
+    for oid in res.commits.iter().rev() {
+        let Ok(obj) = sub_repo.odb.read(oid) else {
+            continue;
+        };
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let Ok(c) = parse_commit(&obj.data) else {
+            continue;
+        };
+        let subject = submodule_commit_subject_line(&c);
+        writeln!(out, "  > {subject}")?;
+    }
+    Ok(())
+}
+
+fn submodule_commit_subject_line(c: &grit_lib::objects::CommitData) -> String {
+    let enc = c.encoding.as_deref().unwrap_or("UTF-8");
+    let is_latin1 = enc.eq_ignore_ascii_case("ISO8859-1")
+        || enc.eq_ignore_ascii_case("ISO-8859-1")
+        || enc.eq_ignore_ascii_case("LATIN1")
+        || enc.eq_ignore_ascii_case("ISO-8859-15");
+    if let Some(raw) = c.raw_message.as_deref() {
+        let line = raw.split(|b| *b == b'\n').next().unwrap_or(raw);
+        if is_latin1 {
+            return line
+                .iter()
+                .map(|&b| b as char)
+                .collect::<String>()
+                .trim()
+                .to_owned();
+        }
+        return String::from_utf8_lossy(line).trim().to_string();
+    }
+    c.message.lines().next().unwrap_or("").trim().to_owned()
 }
 
 use std::env;
@@ -1298,6 +1582,8 @@ pub(crate) fn unstaged_patch_for_add_edit(
     let (src_prefix, dst_prefix) = resolve_diff_prefixes(&diff_args, repo, false);
     let relative_prefix = resolve_diff_relative_prefix(Some(work_tree), &repo.git_dir, &diff_args);
 
+    let empty_sm: HashMap<String, String> = HashMap::new();
+    let empty_gm: HashMap<String, String> = HashMap::new();
     let mut out = Vec::new();
     write_patch_with_prefix(
         &mut out,
@@ -1322,6 +1608,10 @@ pub(crate) fn unstaged_patch_for_add_edit(
         diff_config.quote_path_fully(),
         None,
         submodule_ignore_flags_from_diff_arg(ignore_sm),
+        Some(ignore_sm),
+        &diff_config,
+        &empty_sm,
+        &empty_gm,
         None,
         &diff_algo_ctx,
         diff_algo_cli,
@@ -2236,19 +2526,34 @@ pub fn run(mut args: Args) -> Result<()> {
         entries
     };
 
-    // `--ignore-submodules=all` hides gitlink paths entirely. `dirty` / `untracked` still show
-    // when the superproject records a different submodule commit (tree-to-tree / index gitlink
-    // updates); they only suppress "submodule working tree dirty" noise elsewhere (matches Git;
-    // see `t4137-apply-submodule.sh`).
-    let ignore_sm = args.ignore_submodules.as_deref().unwrap_or("none");
-    let entries = if ignore_sm == "all" {
-        entries
-            .into_iter()
-            .filter(|e| e.old_mode != "160000" && e.new_mode != "160000")
-            .collect()
-    } else {
-        entries
-    };
+    // Submodule ignore: `--ignore-submodules`, `diff.ignoreSubmodules`, and `submodule.*.ignore`
+    // (matches Git combined ordering for t4027).
+    let ignore_sm = args.ignore_submodules.as_deref();
+    let path_to_sm_name = work_tree
+        .map(|wt| submodule_path_to_name_map(wt, &diff_config))
+        .unwrap_or_default();
+    let gm_sub_ignore = work_tree
+        .map(gitmodules_submodule_name_to_ignore)
+        .unwrap_or_default();
+    let entries: Vec<DiffEntry> = entries
+        .into_iter()
+        .filter(|e| {
+            !(gitlink_suppressed_ignore_all(
+                e,
+                ignore_sm,
+                &path_to_sm_name,
+                &gm_sub_ignore,
+                &diff_config,
+            ) || gitlink_same_oid_suppressed(
+                e,
+                ignore_sm,
+                &path_to_sm_name,
+                &gm_sub_ignore,
+                &diff_config,
+                work_tree,
+            ))
+        })
+        .collect();
 
     let entries = if let Some(ref df) = args.diff_filter {
         if df.is_empty() {
@@ -2438,9 +2743,10 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    let merge_in_progress = std::fs::metadata(repo.git_dir.join("MERGE_HEAD")).is_ok();
     let mut conflict_combined_patches: Vec<String> = Vec::new();
-    if merge_in_progress && !args.cached && revs.is_empty() && work_tree.is_some() {
+    // Combined `diff --cc` for unmerged paths: required for conflicted index entries even when
+    // `MERGE_HEAD` is absent (e.g. t4027 `update-index --index-info` submodule conflict).
+    if !args.cached && revs.is_empty() && work_tree.is_some() {
         let mut conflict_paths: Vec<String> = entries
             .iter()
             .filter(|e| e.status == DiffStatus::Unmerged)
@@ -2471,22 +2777,52 @@ pub fn run(mut args: Args) -> Result<()> {
                     let Some(e3) = index.get(key, 3) else {
                         continue;
                     };
+                    let e1 = index.get(key, 1);
                     // Two-way merges (add/add, etc.) omit stage 1; `format_worktree_conflict_combined`
                     // still needs three OIDs — Git uses the null OID for the missing base.
-                    let e1_oid = index.get(key, 1).map(|e| e.oid).unwrap_or_else(zero_oid);
+                    let e1_oid = e1.map(|e| e.oid).unwrap_or_else(zero_oid);
                     let file_path = wt.join(&repo_path);
-                    let wt_bytes = std::fs::read(&file_path).unwrap_or_default();
-                    conflict_combined_patches.push(format_worktree_conflict_combined(
-                        &repo.git_dir,
-                        &config,
-                        &repo.odb,
-                        display_path,
-                        &e1_oid,
-                        &e2.oid,
-                        &e3.oid,
-                        &wt_bytes,
-                        patch_abbrev,
-                    ));
+                    let wt_bytes = match std::fs::symlink_metadata(&file_path) {
+                        Ok(m) if m.is_dir() => Vec::new(),
+                        _ => std::fs::read(&file_path).unwrap_or_default(),
+                    };
+                    let patch = if e1.is_some_and(|e| {
+                        e.mode == MODE_GITLINK && e2.mode == MODE_GITLINK && e3.mode == MODE_GITLINK
+                    }) {
+                        let result_line = if wt_bytes.is_empty() {
+                            if file_path.join(".git").exists() {
+                                resolve_revision(&repo, "HEAD")
+                                    .map(|oid| format!("Subproject commit {}", oid.to_hex()))
+                                    .unwrap_or_else(|_| {
+                                        format!("Subproject commit {}", zero_oid().to_hex())
+                                    })
+                            } else {
+                                format!("Subproject commit {}", zero_oid().to_hex())
+                            }
+                        } else {
+                            String::from_utf8_lossy(&wt_bytes).into_owned()
+                        };
+                        format_gitlink_unmerged_conflict_combined(
+                            display_path,
+                            &e2.oid,
+                            &e3.oid,
+                            &result_line,
+                            patch_abbrev,
+                        )
+                    } else {
+                        format_worktree_conflict_combined(
+                            &repo.git_dir,
+                            &config,
+                            &repo.odb,
+                            display_path,
+                            &e1_oid,
+                            &e2.oid,
+                            &e3.oid,
+                            &wt_bytes,
+                            patch_abbrev,
+                        )
+                    };
+                    conflict_combined_patches.push(patch);
                 }
             }
             // Git keeps index↔worktree `U`/`M` lines for `--raw` / `--name-only` during conflicts;
@@ -2494,13 +2830,7 @@ pub fn run(mut args: Args) -> Result<()> {
             let strip_conflict_index_lines =
                 emit_unified_patch && !args.no_patch && !format_besides_unified_patch;
             if strip_conflict_index_lines {
-                entries.retain(|e| {
-                    if conflict_paths.iter().any(|p| p == e.path()) {
-                        e.status != DiffStatus::Unmerged && e.status != DiffStatus::Modified
-                    } else {
-                        true
-                    }
-                });
+                entries.retain(|e| !conflict_paths.iter().any(|p| p == e.path()));
             }
         }
     }
@@ -2730,7 +3060,11 @@ pub fn run(mut args: Args) -> Result<()> {
                     &dst_prefix,
                     quote_path_fully,
                     args.submodule.as_deref(),
-                    submodule_ignore_flags_from_diff_arg(ignore_sm),
+                    submodule_ignore_flags_from_diff_arg(ignore_sm.unwrap_or("none")),
+                    ignore_sm,
+                    &diff_config,
+                    &path_to_sm_name,
+                    &gm_sub_ignore,
                     line_ignore,
                     &diff_algo_ctx,
                     diff_algo_cli,
@@ -2927,6 +3261,8 @@ fn run_diff_blob_vs_file(
 
     let show_patch = !args.quiet && !args.no_patch;
     if show_patch {
+        let empty_sm: HashMap<String, String> = HashMap::new();
+        let empty_gm: HashMap<String, String> = HashMap::new();
         write_patch_with_prefix(
             &mut out,
             repo,
@@ -2952,6 +3288,10 @@ fn run_diff_blob_vs_file(
             submodule_ignore_flags_from_diff_arg(
                 args.ignore_submodules.as_deref().unwrap_or("none"),
             ),
+            args.ignore_submodules.as_deref(),
+            &diff_config,
+            &empty_sm,
+            &empty_gm,
             None,
             &diff_algo_ctx,
             diff_algo_cli,
@@ -4794,6 +5134,12 @@ fn read_content_raw_or_worktree(
         if let Some(wt) = work_tree {
             if path != "/dev/null" {
                 let p = wt.join(path);
+                if std::fs::symlink_metadata(&p)
+                    .map(|m| m.is_dir())
+                    .unwrap_or(false)
+                {
+                    return Vec::new();
+                }
                 if let Ok(meta) = std::fs::symlink_metadata(&p) {
                     if meta.file_type().is_symlink() {
                         if let Ok(target) = std::fs::read_link(&p) {
@@ -4817,6 +5163,12 @@ fn read_content_raw_or_worktree(
     if let Some(wt) = work_tree {
         if path != "/dev/null" {
             let p = wt.join(path);
+            if std::fs::symlink_metadata(&p)
+                .map(|m| m.is_dir())
+                .unwrap_or(false)
+            {
+                return Vec::new();
+            }
             if let Ok(meta) = std::fs::symlink_metadata(&p) {
                 if meta.file_type().is_symlink() {
                     if let Ok(target) = std::fs::read_link(&p) {
@@ -5016,6 +5368,7 @@ fn write_diff_header_with_abbrev(
         "a/",
         "b/",
         quote_path_fully,
+        None,
     )
 }
 
@@ -5027,6 +5380,7 @@ fn write_diff_header_with_prefix(
     src_prefix: &str,
     dst_prefix: &str,
     quote_path_fully: bool,
+    work_tree: Option<&Path>,
 ) -> Result<()> {
     let old_path = entry
         .old_path
@@ -5060,6 +5414,14 @@ fn write_diff_header_with_prefix(
         hex[..len].to_owned()
     };
 
+    let new_oid_for_index_line = || -> ObjectId {
+        if entry.old_mode == "160000" && entry.new_mode == "160000" && entry.new_oid == zero_oid() {
+            submodule_head_oid_for_gitlink_patch(entry, work_tree)
+        } else {
+            entry.new_oid
+        }
+    };
+
     match entry.status {
         DiffStatus::Added => {
             writeln!(out, "{b}new file mode {}{r}", entry.new_mode)?;
@@ -5067,7 +5429,7 @@ fn write_diff_header_with_prefix(
                 if entry.old_oid == zero_oid() && entry.new_oid == empty_blob_oid() {
                     empty_blob_oid()
                 } else {
-                    entry.new_oid
+                    new_oid_for_index_line()
                 };
             writeln!(
                 out,
@@ -5082,7 +5444,7 @@ fn write_diff_header_with_prefix(
                 out,
                 "{b}index {}..{}{r}",
                 abbr(&entry.old_oid),
-                abbr(&entry.new_oid)
+                abbr(&new_oid_for_index_line())
             )?;
         }
         DiffStatus::Modified => {
@@ -5102,7 +5464,7 @@ fn write_diff_header_with_prefix(
                     out,
                     "{b}index {}..{} {}{r}",
                     abbr(&entry.old_oid),
-                    abbr(&entry.new_oid),
+                    abbr(&new_oid_for_index_line()),
                     entry.old_mode
                 )?;
             } else {
@@ -5110,7 +5472,7 @@ fn write_diff_header_with_prefix(
                     out,
                     "{b}index {}..{}{r}",
                     abbr(&entry.old_oid),
-                    abbr(&entry.new_oid)
+                    abbr(&new_oid_for_index_line())
                 )?;
             }
         }
@@ -5282,6 +5644,7 @@ fn write_typechange_blob_symlink_split_patch(
         src_prefix,
         dst_prefix,
         quote_path_fully,
+        None,
     )?;
     write_blob_to_blob_patch_fragment(
         out,
@@ -5319,6 +5682,7 @@ fn write_typechange_blob_symlink_split_patch(
         src_prefix,
         dst_prefix,
         quote_path_fully,
+        None,
     )?;
     write_blob_to_blob_patch_fragment(
         out,
@@ -5378,6 +5742,7 @@ fn write_typechange_symlink_blob_split_patch(
         src_prefix,
         dst_prefix,
         quote_path_fully,
+        None,
     )?;
     write_blob_to_blob_patch_fragment(
         out,
@@ -5415,6 +5780,7 @@ fn write_typechange_symlink_blob_split_patch(
         src_prefix,
         dst_prefix,
         quote_path_fully,
+        None,
     )?;
     write_blob_to_blob_patch_fragment(
         out,
@@ -5515,6 +5881,10 @@ fn write_patch_with_prefix(
     quote_path_fully: bool,
     submodule_fmt: Option<&str>,
     submodule_ignore: SubmoduleIgnoreFlags,
+    ignore_submodules_cli: Option<&str>,
+    diff_cfg: &grit_lib::config::ConfigSet,
+    path_to_sm_name: &HashMap<String, String>,
+    gm_sub_ignore: &HashMap<String, String>,
     line_ignore: Option<&[Regex]>,
     algo_ctx: &DiffAlgoContext,
     algo_cli: Option<CliDiffAlgo>,
@@ -5532,18 +5902,29 @@ fn write_patch_with_prefix(
         if let Some(fmt) = submodule_fmt {
             if entry.old_mode == "160000" || entry.new_mode == "160000" {
                 if fmt == "log" {
-                    write_patch_entry(
-                        out,
-                        repo,
-                        odb,
-                        entry,
-                        context_lines,
-                        work_tree,
-                        SubmodulePatchFormat::Log,
-                        submodule_ignore,
-                        &path_for_attrs,
-                        indent_heuristic,
-                    )?;
+                    if entry.old_mode == "160000"
+                        && entry.new_mode == "160000"
+                        && matches!(
+                            entry.status,
+                            DiffStatus::Modified | DiffStatus::Renamed | DiffStatus::Copied
+                        )
+                        && entry.old_oid != entry.new_oid
+                    {
+                        write_submodule_log_lines(out, repo, entry, work_tree)?;
+                    } else {
+                        write_patch_entry(
+                            out,
+                            repo,
+                            odb,
+                            entry,
+                            context_lines,
+                            work_tree,
+                            SubmodulePatchFormat::Log,
+                            submodule_ignore,
+                            &path_for_attrs,
+                            indent_heuristic,
+                        )?;
+                    }
                     continue;
                 }
                 if fmt == "diff" {
@@ -5684,6 +6065,7 @@ fn write_patch_with_prefix(
             src_prefix,
             dst_prefix,
             quote_path_fully,
+            work_tree,
         )?;
 
         // Submodule gitlink (mode 160000): emit `Subproject commit` hunks like Git — the ODB
@@ -5718,7 +6100,17 @@ fn write_patch_with_prefix(
                     if entry.old_mode == "160000" && entry.new_mode == "160000" {
                         writeln!(out, "@@ -1 +1 @@")?;
                         writeln!(out, "-Subproject commit {}", entry.old_oid.to_hex())?;
-                        writeln!(out, "+Subproject commit {}", entry.new_oid.to_hex())?;
+                        let plus_oid = submodule_head_oid_for_gitlink_patch(entry, work_tree);
+                        let plus_suffix = submodule_gitlink_patch_plus_suffix(
+                            entry,
+                            work_tree,
+                            submodule_ignore,
+                            ignore_submodules_cli,
+                            diff_cfg,
+                            path_to_sm_name,
+                            gm_sub_ignore,
+                        );
+                        writeln!(out, "+Subproject commit {}{plus_suffix}", plus_oid.to_hex())?;
                     } else if entry.old_mode == "160000" {
                         writeln!(out, "@@ -1 +0,0 @@")?;
                         writeln!(out, "-Subproject commit {}", entry.old_oid.to_hex())?;
@@ -7299,16 +7691,21 @@ fn write_raw(out: &mut impl Write, entries: &[DiffEntry], abbrev_len: usize) -> 
                 writeln!(out, ":{old_mode} {new_mode} {old_oid} {new_oid} {status}{score:03}\t{old_path}\t{new_path}")?;
             }
             DiffStatus::Modified => {
+                let zero_new = (old_mode == "160000"
+                    && new_mode == "160000"
+                    && entry.old_oid == entry.new_oid)
+                    .then(|| "0".repeat(abbrev_len));
+                let rn = zero_new.as_deref().unwrap_or(new_oid);
                 if let Some(pct) = entry.score {
                     writeln!(
                         out,
-                        ":{old_mode} {new_mode} {old_oid} {new_oid} {status}{pct:03}\t{}",
+                        ":{old_mode} {new_mode} {old_oid} {rn} {status}{pct:03}\t{}",
                         entry.path()
                     )?;
                 } else {
                     writeln!(
                         out,
-                        ":{old_mode} {new_mode} {old_oid} {new_oid} {status}\t{}",
+                        ":{old_mode} {new_mode} {old_oid} {rn} {status}\t{}",
                         entry.path()
                     )?;
                 }

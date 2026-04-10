@@ -705,7 +705,7 @@ t4023-diff-rename-typechange	t4	yes	4	0	4	false	ok	0
 t4024-diff-optimize-common	t4	yes	2	2	0	true	ok	0
 t4025-hunk-header	t4	yes	2	1	1	false	ok	0
 t4026-color	t4	yes	34	34	0	true	ok	0
-t4027-diff-submodule	t4	yes	20	6	14	false	ok	0
+t4027-diff-submodule	t4	yes	20	20	0	true	ok	0
 t4028-format-patch-mime-headers	t4	yes	3	3	0	true	ok	0
 t4029-diff-trailing-space	t4	yes	1	1	0	true	ok	0
 t4030-diff-textconv	t4	yes	19	19	0	true	ok	0

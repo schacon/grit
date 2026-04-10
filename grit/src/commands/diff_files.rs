@@ -9,8 +9,8 @@ use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     count_changes, detect_copies, empty_blob_oid, format_stat_line,
     parse_indent_heuristic_cli_flags, resolve_indent_heuristic,
-    rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat, stat_matches, unified_diff,
-    zero_oid, DiffEntry, DiffStatus,
+    rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat, stat_matches,
+    submodule_porcelain_flags, unified_diff, zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
@@ -658,7 +658,7 @@ fn collect_changes(
         // Use stat info to skip unchanged files (avoid hashing).
         for (path, (idx_mode, idx_oid, idx_entry)) in &stage0 {
             let abs = work_tree.join(path);
-            match read_worktree_info_fast(repo, &abs, idx_entry)? {
+            match read_worktree_info_fast(repo, work_tree, &abs, idx_entry)? {
                 WorktreeStatus::Unchanged => { /* skip — stat says identical */ }
                 WorktreeStatus::Modified(wt_mode, wt_oid) => {
                     let idx_canonical = canonicalize_mode(*idx_mode);
@@ -1178,6 +1178,7 @@ fn path_component_is_not_directory(err: &std::io::Error) -> bool {
 
 fn read_worktree_info_fast(
     repo: &Repository,
+    super_worktree: &Path,
     abs_path: &Path,
     index_entry: &IndexEntry,
 ) -> Result<WorktreeStatus> {
@@ -1272,6 +1273,14 @@ fn read_worktree_info_fast(
         if dot_git.exists() {
             // Treat as a submodule (mode 160000)
             let sub_oid = read_submodule_head(abs_path).unwrap_or(index_entry.oid);
+            if sub_oid == index_entry.oid {
+                let path_str = std::str::from_utf8(&index_entry.path).unwrap_or("");
+                let flags = submodule_porcelain_flags(super_worktree, path_str, index_entry.oid);
+                if flags.modified || flags.untracked {
+                    return Ok(WorktreeStatus::Modified(0o160000, zero_oid()));
+                }
+                return Ok(WorktreeStatus::Unchanged);
+            }
             return Ok(WorktreeStatus::Modified(0o160000, sub_oid));
         }
         if canonicalize_mode(index_entry.mode) == MODE_GITLINK {

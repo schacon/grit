@@ -667,6 +667,25 @@ test_oid () {
 				return
 			fi
 		fi
+		# Upstream git/t/oid-info (ff_1, deadbeef, …) when the per-test cache was not primed.
+		if test -n "${GIT_SOURCE_DIR-}" && test -f "$GIT_SOURCE_DIR/t/oid-info/oid"
+		then
+			oid=$(awk -v k="$1" -v a="$effective" '
+				$1 == k {
+					for (i = 2; i <= NF; i++) {
+						if ($i ~ "^" a ":") {
+							print substr($i, length(a) + 2)
+							exit
+						}
+					}
+				}
+			' FS='[[:space:]]+' "$GIT_SOURCE_DIR/t/oid-info/oid")
+			if test -n "$oid"
+			then
+				echo "$oid"
+				return
+			fi
+		fi
 		case "$1" in
 		empty_blob)
 			if test "$effective" = sha256
