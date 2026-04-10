@@ -227,7 +227,7 @@ use grit_lib::pathspec::matches_pathspec;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{self, resolve_revision};
-use grit_lib::state::resolve_head;
+use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::submodule_gitdir::{
     die_path_inside_submodule_when_disabled, ensure_submodule_gitdir_config,
     path_inside_registered_submodule, path_inside_registered_submodule_name,
@@ -1399,6 +1399,11 @@ fn checkout_submodule_worktree(
         }
     }
 
+    // `git submodule add` in Git leaves the submodule on the remote default branch (usually
+    // `main`), not detached. We check out by object ID above to guarantee worktree population
+    // after `clone --no-checkout`; if that object matches the default branch tip, reattach HEAD.
+    let _ = attach_submodule_head_to_default_branch(&modules_dir, oid);
+
     if !quiet {
         eprintln!(
             "Submodule path '{}': checked out '{}'",
@@ -1406,6 +1411,59 @@ fn checkout_submodule_worktree(
             &oid[..oid.len().min(12)]
         );
     }
+    Ok(())
+}
+
+fn attach_submodule_head_to_default_branch(
+    sub_git_dir: &Path,
+    checked_out_oid: &str,
+) -> Result<()> {
+    let detached_oid = match resolve_head(sub_git_dir)? {
+        HeadState::Detached { oid } => oid,
+        _ => return Ok(()),
+    };
+    let expected_oid = ObjectId::from_hex(checked_out_oid.trim())
+        .with_context(|| format!("invalid submodule checkout oid '{checked_out_oid}'"))?;
+    if detached_oid != expected_oid {
+        return Ok(());
+    }
+
+    let Some(remote_head) = refs::read_symbolic_ref(sub_git_dir, "refs/remotes/origin/HEAD")?
+    else {
+        return Ok(());
+    };
+    let Some(branch_name) = remote_head.strip_prefix("refs/remotes/origin/") else {
+        return Ok(());
+    };
+
+    let local_branch = format!("refs/heads/{branch_name}");
+    if refs::resolve_ref(sub_git_dir, &local_branch).is_err() {
+        let remote_branch = format!("refs/remotes/origin/{branch_name}");
+        let remote_tip = match refs::resolve_ref(sub_git_dir, &remote_branch) {
+            Ok(oid) => oid,
+            Err(_) => return Ok(()),
+        };
+        refs::write_ref(sub_git_dir, &local_branch, &remote_tip)?;
+    }
+    if refs::resolve_ref(sub_git_dir, &local_branch).ok() != Some(detached_oid) {
+        return Ok(());
+    }
+
+    refs::write_symbolic_ref(sub_git_dir, "HEAD", &local_branch)?;
+
+    let config_path = sub_git_dir.join("config");
+    let mut config = if config_path.exists() {
+        let content = fs::read_to_string(&config_path)?;
+        ConfigFile::parse(&config_path, &content, ConfigScope::Local)?
+    } else {
+        ConfigFile::parse(&config_path, "", ConfigScope::Local)?
+    };
+    config.set(&format!("branch.{branch_name}.remote"), "origin")?;
+    config.set(
+        &format!("branch.{branch_name}.merge"),
+        &format!("refs/heads/{branch_name}"),
+    )?;
+    config.write()?;
     Ok(())
 }
 

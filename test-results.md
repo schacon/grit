@@ -1,5 +1,14 @@
 # Test results
 
+**2026-04-10 (t5545 / push options parity incl. submodules)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo clippy --fix --allow-dirty -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `./scripts/run-tests.sh t5528-push-default.sh`: 31/32 (`1` expected upstream `test_expect_failure`)
+- `./scripts/run-tests.sh t5533-push-cas.sh`: 23/23
+- `./scripts/run-tests.sh t5545-push-options.sh`: 13/13
+
 **2026-04-10 (t5533 / push CAS + force-if-includes)**
 
 - `cargo check -p grit-rs`: pass

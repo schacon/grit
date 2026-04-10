@@ -527,13 +527,17 @@ pub fn validate_submodule_push_refspecs(
         match matches {
             1 => {}
             _ => {
-                if src == "HEAD" && !detached && head_branch == superproject_head_branch {
-                    // Allowed: submodule on same branch as superproject.
-                } else {
-                    return Err(crate::error::Error::Message(format!(
-                        "src refspec '{src}' must name a ref"
-                    )));
+                if src == "HEAD" {
+                    if detached || head_branch == superproject_head_branch {
+                        // Allowed:
+                        // - detached HEAD in the submodule (`HEAD:<dst>` push of current commit)
+                        // - symbolic HEAD on the same branch as the superproject.
+                        continue;
+                    }
                 }
+                return Err(crate::error::Error::Message(format!(
+                    "src refspec '{src}' must name a ref"
+                )));
             }
         }
         let _ = force;

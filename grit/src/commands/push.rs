@@ -494,9 +494,50 @@ fn submodule_push_refspecs(
         return push_refspecs_from_config.to_vec();
     }
     if let Some(b) = current_branch {
-        return vec![b.to_owned()];
+        return vec![format!("HEAD:{b}")];
     }
     Vec::new()
+}
+
+fn rewrite_submodule_refspecs_for_detached_head(
+    refspecs: &[String],
+    superproject_head_branch: &str,
+    submodule_head_is_detached: bool,
+) -> Vec<String> {
+    if !submodule_head_is_detached {
+        return refspecs.to_vec();
+    }
+
+    refspecs
+        .iter()
+        .map(|spec| {
+            if spec.starts_with('^') || spec == ":" || spec == "+:" || spec.contains('*') {
+                return spec.clone();
+            }
+
+            let (force, rest) = spec
+                .strip_prefix('+')
+                .map(|s| ("+", s))
+                .unwrap_or(("", spec.as_str()));
+            let (src, dst_opt) = rest
+                .split_once(':')
+                .map(|(a, b)| (a, Some(b)))
+                .unwrap_or((rest, None));
+
+            if src.is_empty() || src == "HEAD" {
+                return spec.clone();
+            }
+
+            let src_matches_super_branch = src == superproject_head_branch
+                || src == format!("refs/heads/{superproject_head_branch}");
+            if !src_matches_super_branch {
+                return spec.clone();
+            }
+
+            let dst = dst_opt.unwrap_or(src);
+            format!("{force}HEAD:{dst}")
+        })
+        .collect()
 }
 
 fn push_to_url(
@@ -591,6 +632,7 @@ fn push_to_url(
     // Receive-side ref policy (denyCurrentBranch, etc.): only the remote repo's `config`, not the
     // pushing side's `git -c` / environment (matches Git; t5507-remote-environment).
     let receive_remote_config = ConfigSet::load_repo_local_only(&remote_repo.git_dir)?;
+    let effective_push_options = resolved_push_options(args, config)?;
 
     // Build list of ref updates
     let mut updates = Vec::new();
@@ -1134,11 +1176,18 @@ fn push_to_url(
                 {
                     continue;
                 }
+                let detached =
+                    !matches!(resolve_head(&sub_repo.git_dir)?, HeadState::Branch { .. });
+                let sub_refspecs_effective = rewrite_submodule_refspecs_for_detached_head(
+                    &sub_refspecs,
+                    &super_head_branch,
+                    detached,
+                );
                 if !path_style_remote {
                     validate_submodule_push_refspecs(
                         &sub_repo.git_dir,
                         &super_head_branch,
-                        &sub_refspecs,
+                        &sub_refspecs_effective,
                     )
                     .map_err(|e| anyhow::Error::msg(e.to_string()))?;
                 }
@@ -1148,14 +1197,14 @@ fn push_to_url(
                 let remote_specs = if path_style_remote {
                     None
                 } else {
-                    Some((remote_name, sub_refspecs.as_slice()))
+                    Some((remote_name, sub_refspecs_effective.as_slice()))
                 };
                 run_nested_submodule_push(
                     &wd,
                     remote_specs,
                     args.dry_run,
                     args.quiet,
-                    &args.push_option,
+                    &effective_push_options,
                     nested_only,
                 )?;
             }
@@ -1434,9 +1483,9 @@ fn push_to_url(
     }
 
     // Write push options file for the remote (local transport simulation)
-    if !args.push_option.is_empty() {
+    if !effective_push_options.is_empty() {
         let push_opts_path = remote_repo.git_dir.join("push_options");
-        let content = args.push_option.join("\n") + "\n";
+        let content = effective_push_options.join("\n") + "\n";
         fs::write(&push_opts_path, content).context("writing push options")?;
     }
 
@@ -1514,7 +1563,7 @@ fn push_to_url(
     }
 
     // Check receive.advertisePushOptions on the remote
-    if !args.push_option.is_empty() {
+    if !effective_push_options.is_empty() {
         let remote_config = ConfigSet::load(Some(&remote_repo.git_dir), false)?;
         if let Some(val) = remote_config.get("receive.advertisepushoptions") {
             if val == "false" || val == "0" {
@@ -1524,12 +1573,12 @@ fn push_to_url(
     }
 
     // Build push option env vars for hooks
-    let push_option_env: Vec<(String, String)> = if !args.push_option.is_empty() {
+    let push_option_env: Vec<(String, String)> = if !effective_push_options.is_empty() {
         let mut env = vec![(
             "GIT_PUSH_OPTION_COUNT".to_owned(),
-            args.push_option.len().to_string(),
+            effective_push_options.len().to_string(),
         )];
-        for (i, opt) in args.push_option.iter().enumerate() {
+        for (i, opt) in effective_push_options.iter().enumerate() {
             env.push((format!("GIT_PUSH_OPTION_{i}"), opt.clone()));
         }
         env
@@ -2843,6 +2892,33 @@ fn config_use_force_if_includes(config: &ConfigSet) -> bool {
         .get("push.useForceIfIncludes")
         .and_then(|v| parse_bool(&v).ok())
         .unwrap_or(false)
+}
+
+fn configured_push_options(config: &ConfigSet) -> Result<Vec<String>> {
+    let mut options = Vec::new();
+    for entry in config
+        .entries()
+        .iter()
+        .filter(|e| e.key == "push.pushoption")
+    {
+        match &entry.value {
+            None => {
+                bail!("invalid value for push.pushOption");
+            }
+            Some(value) if value.is_empty() => {
+                options.clear();
+            }
+            Some(value) => options.push(value.clone()),
+        }
+    }
+    Ok(options)
+}
+
+fn resolved_push_options(args: &Args, config: &ConfigSet) -> Result<Vec<String>> {
+    if !args.push_option.is_empty() {
+        return Ok(args.push_option.clone());
+    }
+    configured_push_options(config)
 }
 
 fn force_with_lease_allows_includes(fwl: &Option<String>) -> bool {
