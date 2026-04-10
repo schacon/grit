@@ -12,9 +12,6 @@ use grit_lib::crlf::{self, ConversionConfig, GitAttributes};
 use grit_lib::error::Error;
 use grit_lib::ignore::{path_in_sparse_checkout as path_in_sparse_checkout_lines, IgnoreMatcher};
 use grit_lib::index::{entry_from_metadata, normalize_mode, Index, IndexEntry};
-#[allow(unused_imports)]
-use grit_lib::objects::serialize_commit;
-use grit_lib::objects::CommitData;
 use grit_lib::objects::ObjectId;
 use grit_lib::objects::ObjectKind;
 use grit_lib::odb::Odb;
@@ -24,10 +21,9 @@ use grit_lib::sparse_checkout::{
     effective_cone_mode_for_sparse_file, parse_sparse_checkout_file,
     path_in_sparse_checkout_patterns,
 };
-use grit_lib::state::{resolve_head, HeadState};
+use grit_lib::state::resolve_head;
 use grit_lib::unicode_normalization::{precompose_utf8_path, precompose_utf8_segment};
 use grit_lib::wildmatch::wildmatch;
-use grit_lib::write_tree::write_tree_from_index;
 use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
@@ -37,81 +33,6 @@ use std::path::{Path, PathBuf};
 use crate::commands::apply;
 use crate::commands::commit::launch_commit_editor;
 use crate::commands::diff::unstaged_patch_for_add_edit;
-
-/// When `HEAD` is unborn and the index is non-empty, create the root commit so commands like
-/// `git worktree add` can resolve `HEAD` (t6403-merge-file).
-fn maybe_create_initial_commit_after_add(repo: &Repository, index: &Index) -> Result<()> {
-    let head = resolve_head(&repo.git_dir)?;
-    if !head.is_unborn() || index.entries.is_empty() {
-        return Ok(());
-    }
-    let tree_oid = write_tree_from_index(&repo.odb, index, "")?;
-    let empty_tree =
-        ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904").map_err(|e| anyhow!(e))?;
-    if tree_oid == empty_tree {
-        return Ok(());
-    }
-    let Some((author, committer)) = harness_author_committer_from_env() else {
-        return Ok(());
-    };
-    let commit_data = CommitData {
-        tree: tree_oid,
-        parents: Vec::new(),
-        author,
-        committer,
-        author_raw: Vec::new(),
-        committer_raw: Vec::new(),
-        encoding: None,
-        message: "initial commit\n".to_owned(),
-        raw_message: None,
-    };
-    let commit_oid = repo
-        .odb
-        .write(ObjectKind::Commit, &serialize_commit(&commit_data))?;
-    write_head_to_initial_commit(&repo.git_dir, &head, &commit_oid)?;
-    Ok(())
-}
-
-fn harness_author_committer_from_env() -> Option<(String, String)> {
-    let author_name = std::env::var("GIT_AUTHOR_NAME").ok()?;
-    let author_email = std::env::var("GIT_AUTHOR_EMAIL").ok()?;
-    let author_date = std::env::var("GIT_AUTHOR_DATE").unwrap_or_else(|_| "0 +0000".to_owned());
-    let committer_name =
-        std::env::var("GIT_COMMITTER_NAME").unwrap_or_else(|_| author_name.clone());
-    let committer_email =
-        std::env::var("GIT_COMMITTER_EMAIL").unwrap_or_else(|_| author_email.clone());
-    let committer_date =
-        std::env::var("GIT_COMMITTER_DATE").unwrap_or_else(|_| author_date.clone());
-    Some((
-        format!("{author_name} <{author_email}> {author_date}"),
-        format!("{committer_name} <{committer_email}> {committer_date}"),
-    ))
-}
-
-fn write_head_to_initial_commit(
-    git_dir: &Path,
-    head: &HeadState,
-    commit_oid: &ObjectId,
-) -> Result<()> {
-    match head {
-        HeadState::Branch { refname, .. } => {
-            if grit_lib::reftable::is_reftable_repo(git_dir) {
-                grit_lib::reftable::reftable_write_ref(git_dir, refname, commit_oid, None, None)
-                    .map_err(|e| anyhow!("{e}"))?;
-            } else {
-                let ref_path = git_dir.join(refname);
-                if let Some(parent) = ref_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(&ref_path, format!("{}\n", commit_oid.to_hex()))?;
-            }
-        }
-        HeadState::Detached { .. } | HeadState::Invalid => {
-            fs::write(git_dir.join("HEAD"), format!("{}\n", commit_oid.to_hex()))?;
-        }
-    }
-    Ok(())
-}
 
 /// Error marker when adding a **new** path that lies outside the sparse-checkout definition.
 #[derive(Debug, Clone)]
@@ -698,7 +619,6 @@ pub fn run(mut args: Args) -> Result<()> {
 
     if !args.dry_run {
         write_index_or_lock_err(&repo, &mut index, &index_path)?;
-        maybe_create_initial_commit_after_add(&repo, &index)?;
     }
 
     if exit_for_sparse_advice {

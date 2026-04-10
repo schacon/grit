@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   330 |
+| Completed   |   337 |
 | In progress |     5 |
-| Remaining   |   436 |
+| Remaining   |   429 |
 | **Total**   |   771 |
 
-Task lines in `PLAN.md`: 330 completed (`[x]`), 5 in progress (`[~]`), 436 remaining (`[ ]`).
+Task lines in `PLAN.md`: 337 completed (`[x]`), 5 in progress (`[~]`), 429 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5528-push-default` — 31/32 harness tests pass (remaining line is upstream-marked `test_expect_failure`); `push` now honors `branch.<name>.pushRemote`, `remote.pushDefault`, single-remote fallback, `push.default` semantics (`nothing`/`current`/`upstream`/`simple`/`matching`), `push.autoSetupRemote`, and matching-mode no-common-ref rejection text; also removed `add`’s temporary auto-root-commit behavior that was causing false-positive `HEAD` state in push suites
 - `t5705-session-id-in-capabilities` — 17/17 tests pass (trace2 `transfer` `negotiated-version` / `server-sid` / `client-sid`; `transfer.advertiseSID` on upload-pack, receive-pack, and protocol v2; local fetch v2 handshake + stdin close; `send_pack` `HEAD:dst` + `git-receive-pack` → grit; strip trace2 env + quoted env paths in upload-pack spawn; harness CSV refreshed)
 - `t6101-rev-parse-parents` — 38/38 tests pass (`rev-parse`: `^@` / `^!` / `^-` parent shorthands, graft-aware `^N` navigation, `tags/<name>` DWIM, `--symbolic` ASIS mode + two-dot range ordering; leading `^` uninteresting revisions; `rev-list` `^@`/`^-` expansion with grafts; shared `load_graft_parents`; `expand_rev_token_circ_bang` for merge commits)
 - `t2030-unresolve-info` — 9/14 harness tests pass (index `REUC`, `ls-files --resolve-undo`, `update-index --unresolve` / `--clear-resolve-undo`, checkout/fsck/reset/merge wiring; rerere + final gc/fsck block still failing)

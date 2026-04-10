@@ -1,5 +1,12 @@
 # Test results
 
+**2026-04-10 (t5528 / push.default semantics)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `./tests/t5528-push-default.sh -v`: 31/32 pass (`1` expected upstream `test_expect_failure`)
+- `./scripts/run-tests.sh t5528-push-default.sh`: 31/32
+
 **2026-04-10 (t5705 / session ID in capabilities)**
 
 - `cargo test -p grit-lib --lib`: 160 passed
