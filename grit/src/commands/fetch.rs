@@ -16,10 +16,139 @@ use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
 use grit_lib::state::HeadState;
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::sync::Mutex;
+use std::thread;
+
+static PARALLEL_FETCH_HEAD_CHUNKS: Mutex<Vec<(usize, Vec<String>)>> = Mutex::new(Vec::new());
+
+thread_local! {
+    /// When set, `FETCH_HEAD` is appended (parallel / multi-remote fetches).
+    static FETCH_HEAD_APPEND_MODE: Cell<bool> = const { Cell::new(false) };
+    /// False inside parallel worker threads so auto-maintenance runs only at top level.
+    static FETCH_AUTO_MAINTENANCE_OK: Cell<bool> = const { Cell::new(true) };
+}
+
+/// Error carrying a Git-compatible exit code (e.g. 128 for transport failures).
+#[derive(Debug)]
+pub struct ExitCodeError {
+    pub code: i32,
+    pub message: String,
+}
+
+impl std::fmt::Display for ExitCodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ExitCodeError {}
+
+fn exit_code_error(code: i32, message: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(ExitCodeError {
+        code,
+        message: message.into(),
+    })
+}
+
+fn trace_parallel_fetch_tasks_if_needed(max_tasks: usize) {
+    let Ok(trace_target) = std::env::var("GIT_TRACE") else {
+        return;
+    };
+    if trace_target.is_empty() || trace_target == "0" || trace_target.eq_ignore_ascii_case("false")
+    {
+        return;
+    }
+    let line = format!("run_processes_parallel: preparing to run up to {max_tasks} tasks\n");
+    crate::write_git_trace(&trace_target, &line);
+}
+
+fn remote_skip_fetch_all(config: &ConfigSet, name: &str) -> bool {
+    let k1 = format!("remote.{name}.skipFetchAll");
+    let k2 = format!("remote.{name}.skipfetchall");
+    config
+        .get_bool(&k1)
+        .or_else(|| config.get_bool(&k2))
+        .and_then(|r| r.ok())
+        .unwrap_or(false)
+}
+
+fn remotes_for_fetch_all(config: &ConfigSet) -> Vec<String> {
+    let mut names = collect_remote_names(config);
+    names.sort();
+    names
+        .into_iter()
+        .filter(|n| !remote_skip_fetch_all(config, n))
+        .collect()
+}
+
+fn fetch_parallel_default_jobs(config: &ConfigSet) -> usize {
+    let v = config.get("fetch.parallel");
+    let Some(raw) = v.as_deref() else {
+        return 1;
+    };
+    let Ok(n) = raw.trim().parse::<i64>() else {
+        return 1;
+    };
+    if n < 0 {
+        return 1;
+    }
+    if n == 0 {
+        return std::thread::available_parallelism()
+            .map(|p| p.get())
+            .unwrap_or(1);
+    }
+    n as usize
+}
+
+fn truncate_fetch_head_if_needed(git_dir: &Path, args: &Args) {
+    if args.no_write_fetch_head || args.append {
+        return;
+    }
+    if FETCH_HEAD_APPEND_MODE.get() {
+        return;
+    }
+    let _ = fs::remove_file(git_dir.join("FETCH_HEAD"));
+}
+
+fn run_fetch_auto_maintenance(git_dir: &Path) {
+    if !FETCH_AUTO_MAINTENANCE_OK.get() {
+        return;
+    }
+    let maintenance_auto = ConfigSet::load(Some(git_dir), false)
+        .ok()
+        .and_then(|c| c.get_bool("maintenance.auto").and_then(|r| r.ok()))
+        .unwrap_or(true);
+    if !maintenance_auto {
+        return;
+    }
+    if let Ok(trace_val) = std::env::var("GIT_TRACE") {
+        if !trace_val.is_empty() && trace_val != "0" && trace_val.to_lowercase() != "false" {
+            let now = time::OffsetDateTime::now_utc();
+            let trace_line = format!(
+                "{:02}:{:02}:{:02}.{:06} grit:0               trace: built-in: git maintenance run --auto\n",
+                now.hour(),
+                now.minute(),
+                now.second(),
+                now.microsecond(),
+            );
+            crate::write_git_trace(&trace_val, &trace_line);
+        }
+    }
+    let mut cmd = Command::new(crate::grit_exe::grit_executable());
+    cmd.args(["maintenance", "run", "--auto"])
+        .env("GIT_DIR", git_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    cmd.env_remove("GIT_TRACE");
+    let _ = cmd.status();
+}
 
 /// Arguments for `grit fetch`.
 #[derive(Debug, Clone, ClapArgs)]
@@ -42,8 +171,12 @@ pub struct Args {
     pub refspecs: Vec<String>,
 
     /// Fetch all configured remotes.
-    #[arg(long)]
+    #[arg(long, overrides_with = "no_all")]
     pub all: bool,
+
+    /// Fetch only the default remote (overrides `fetch.all` and `--all`).
+    #[arg(long = "no-all")]
+    pub no_all: bool,
 
     /// Fetch several remotes (each argument names a remote).
     #[arg(long)]
@@ -104,6 +237,34 @@ pub struct Args {
     /// Number of parallel children for fetching (accepted but ignored).
     #[arg(short = 'j', long = "jobs", value_name = "N")]
     pub jobs: Option<usize>,
+
+    /// Append to `.git/FETCH_HEAD` instead of overwriting.
+    #[arg(short = 'a', long = "append")]
+    pub append: bool,
+
+    /// Do not update `.git/FETCH_HEAD`.
+    #[arg(long = "no-write-fetch-head")]
+    pub no_write_fetch_head: bool,
+
+    /// Skip `maintenance --auto` after fetch.
+    #[arg(long = "no-auto-maintenance")]
+    pub no_auto_maintenance: bool,
+
+    /// Synonym for `--no-auto-maintenance` (Git compatibility).
+    #[arg(long = "no-auto-gc")]
+    pub no_auto_gc: bool,
+
+    /// Delimiter before remote names (hidden; parallel fetch subprocesses).
+    #[arg(long = "end-of-options", hide = true)]
+    pub end_of_options: bool,
+
+    /// Collect FETCH_HEAD lines for the parent (parallel `--multiple` workers).
+    #[arg(skip)]
+    pub parallel_fetch_collect_fetch_head: bool,
+
+    /// Order key when merging parallel FETCH_HEAD chunks.
+    #[arg(skip)]
+    pub parallel_fetch_order: Option<usize>,
 
     /// Machine-readable porcelain output.
     #[arg(long)]
@@ -175,30 +336,220 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
+    let fetch_all_cfg = config
+        .get_bool("fetch.all")
+        .and_then(|r| r.ok())
+        .unwrap_or(false);
+
+    let want_all_remotes = if args.no_all {
+        false
+    } else if args.all {
+        true
+    } else {
+        fetch_all_cfg
+    };
+
+    let explicit_remote_arg = args.remote.is_some();
+    let effective_fetch_all = want_all_remotes && !explicit_remote_arg;
+
     let result = if args.multiple {
         if args.all {
             bail!("--multiple and --all are incompatible");
         }
-        let names = args.refspecs.clone();
+        // Clap puts the first positional in `remote` and the rest in `refspecs`; Git treats every
+        // positional after `--multiple` as a remote name (`git fetch --multiple three`).
+        let mut names = Vec::new();
+        if let Some(r) = args.remote.clone() {
+            names.push(r);
+        }
+        names.extend(args.refspecs.clone());
         if names.is_empty() {
-            bail!("fetch --multiple requires at least one remote");
+            // Git accepts `git fetch --multiple` with no remotes as a no-op (t5514).
+            Ok(())
+        } else {
+            let mut max_jobs = args
+                .jobs
+                .unwrap_or_else(|| fetch_parallel_default_jobs(&config));
+            if max_jobs == 0 {
+                max_jobs = std::thread::available_parallelism()
+                    .map(|p| p.get())
+                    .unwrap_or(1);
+            }
+            let parallel = max_jobs > 1 && names.len() > 1;
+            if parallel {
+                trace_parallel_fetch_tasks_if_needed(max_jobs);
+            }
+            let mut inner_base = args.clone();
+            inner_base.multiple = false;
+            inner_base.remote = None;
+            inner_base.refspecs.clear();
+            inner_base.jobs = None;
+            inner_base.end_of_options = false;
+            inner_base.append = true;
+            inner_base.no_auto_maintenance = true;
+            inner_base.no_auto_gc = true;
+
+            truncate_fetch_head_if_needed(&git_dir, &args);
+
+            let mut any_err = false;
+            if parallel {
+                if let Ok(mut g) = PARALLEL_FETCH_HEAD_CHUNKS.lock() {
+                    g.clear();
+                }
+                FETCH_HEAD_APPEND_MODE.set(true);
+                let (tx, rx) = mpsc::channel::<(String, Result<()>)>();
+                let mut pending = 0usize;
+                let mut idx = 0usize;
+                while idx < names.len() || pending > 0 {
+                    while pending < max_jobs && idx < names.len() {
+                        let name = names[idx].clone();
+                        let order = idx;
+                        idx += 1;
+                        pending += 1;
+                        let git_dir_c = git_dir.clone();
+                        let mut inner = inner_base.clone();
+                        inner.parallel_fetch_collect_fetch_head = true;
+                        inner.parallel_fetch_order = Some(order);
+                        let tx_c = tx.clone();
+                        if !inner.quiet {
+                            println!("Fetching {name}");
+                        }
+                        thread::spawn(move || {
+                            FETCH_AUTO_MAINTENANCE_OK.set(false);
+                            let r = (|| {
+                                let cfg = ConfigSet::load(Some(&git_dir_c), true)?;
+                                fetch_remote(&git_dir_c, &cfg, &name, None, &inner)
+                            })();
+                            let _ = tx_c.send((name, r));
+                        });
+                    }
+                    let (name, r) = rx.recv().expect("parallel fetch worker");
+                    pending -= 1;
+                    if let Err(e) = r {
+                        any_err = true;
+                        eprintln!("{e}");
+                        let code = e
+                            .downcast_ref::<ExitCodeError>()
+                            .map(|x| x.code)
+                            .unwrap_or(1);
+                        eprintln!("could not fetch '{name}' (exit code: {code})");
+                    }
+                }
+                if !args.no_write_fetch_head {
+                    if let Ok(mut chunks) = PARALLEL_FETCH_HEAD_CHUNKS.lock() {
+                        chunks.sort_by_key(|(o, _)| *o);
+                        let mut out = String::new();
+                        for (ci, (_ord, lines)) in chunks.iter().enumerate() {
+                            if ci > 0 {
+                                out.push('\n');
+                            }
+                            out.push_str(&lines.join("\n"));
+                        }
+                        if !out.is_empty() {
+                            out.push('\n');
+                            let fetch_head_path = git_dir.join("FETCH_HEAD");
+                            let _ = fs::write(&fetch_head_path, out);
+                        }
+                        chunks.clear();
+                    }
+                }
+            } else {
+                FETCH_HEAD_APPEND_MODE.set(true);
+                for name in &names {
+                    if !inner_base.quiet {
+                        println!("Fetching {name}");
+                    }
+                    if let Err(e) = fetch_remote(&git_dir, &config, name, None, &inner_base) {
+                        any_err = true;
+                        eprintln!("{e}");
+                        let code = e
+                            .downcast_ref::<ExitCodeError>()
+                            .map(|x| x.code)
+                            .unwrap_or(1);
+                        eprintln!("could not fetch '{name}' (exit code: {code})");
+                    }
+                }
+            }
+            FETCH_HEAD_APPEND_MODE.set(false);
+
+            if any_err {
+                Err(exit_code_error(1, "fetch failed for one or more remotes"))
+            } else {
+                Ok(())
+            }
         }
-        for name in &names {
-            let mut inner = args.clone();
-            inner.multiple = false;
-            inner.refspecs.clear();
-            fetch_remote(&git_dir, &config, name, None, &inner)?;
-        }
-        Ok(())
     } else if args.all {
-        let remotes = collect_remote_names(&config);
+        if args.remote.is_some() {
+            bail!("fetch --all does not take a repository argument");
+        }
+        if !args.refspecs.is_empty() {
+            bail!("fetch --all does not make sense with refspecs");
+        }
+        let remotes = remotes_for_fetch_all(&config);
         if remotes.is_empty() {
             bail!("no remotes configured");
         }
+        truncate_fetch_head_if_needed(&git_dir, &args);
+        FETCH_HEAD_APPEND_MODE.set(true);
+        let mut any_err = false;
         for name in &remotes {
-            fetch_remote(&git_dir, &config, name, None, &args)?;
+            let mut inner = args.clone();
+            inner.all = false;
+            inner.no_all = false;
+            inner.append = true;
+            inner.no_auto_maintenance = true;
+            inner.no_auto_gc = true;
+            if let Err(e) = fetch_remote(&git_dir, &config, name, None, &inner) {
+                any_err = true;
+                eprintln!("{e}");
+                let code = e
+                    .downcast_ref::<ExitCodeError>()
+                    .map(|x| x.code)
+                    .unwrap_or(1);
+                eprintln!("could not fetch '{name}' (exit code: {code})");
+            }
         }
-        Ok(())
+        FETCH_HEAD_APPEND_MODE.set(false);
+        if any_err {
+            Err(exit_code_error(
+                1,
+                "fetch --all: one or more remotes failed",
+            ))
+        } else {
+            Ok(())
+        }
+    } else if effective_fetch_all {
+        let remotes = remotes_for_fetch_all(&config);
+        if remotes.is_empty() {
+            bail!("no remotes configured");
+        }
+        truncate_fetch_head_if_needed(&git_dir, &args);
+        FETCH_HEAD_APPEND_MODE.set(true);
+        let mut any_err = false;
+        for name in &remotes {
+            let mut inner = args.clone();
+            inner.remote = None;
+            inner.all = false;
+            inner.no_all = false;
+            inner.append = true;
+            inner.no_auto_maintenance = true;
+            inner.no_auto_gc = true;
+            if let Err(e) = fetch_remote(&git_dir, &config, name, None, &inner) {
+                any_err = true;
+                eprintln!("{e}");
+                let code = e
+                    .downcast_ref::<ExitCodeError>()
+                    .map(|x| x.code)
+                    .unwrap_or(1);
+                eprintln!("could not fetch '{name}' (exit code: {code})");
+            }
+        }
+        FETCH_HEAD_APPEND_MODE.set(false);
+        if any_err {
+            Err(exit_code_error(1, "fetch: one or more remotes failed"))
+        } else {
+            Ok(())
+        }
     } else {
         let remote_resolved = args
             .remote
@@ -209,7 +560,7 @@ pub fn run(mut args: Args) -> Result<()> {
         // remote name contains '/' or matches an existing directory.
         let url_key = format!("remote.{remote_name}.url");
         if config.get(&url_key).is_some() {
-            fetch_remote(&git_dir, &config, &remote_name, None, &args)
+            fetch_remote(&git_dir, &config, remote_name, None, &args)
         } else {
             let group_key = format!("remotes.{remote_name}");
             let group_lines = config.get_all(&group_key);
@@ -223,23 +574,37 @@ pub fn run(mut args: Args) -> Result<()> {
                         }
                     }
                 }
+                truncate_fetch_head_if_needed(&git_dir, &args);
+                FETCH_HEAD_APPEND_MODE.set(true);
                 for m in members {
-                    fetch_remote(&git_dir, &config, &m, None, &args)?;
+                    let mut inner = args.clone();
+                    inner.append = true;
+                    inner.no_auto_maintenance = true;
+                    inner.no_auto_gc = true;
+                    fetch_remote(&git_dir, &config, &m, None, &inner)?;
                 }
+                FETCH_HEAD_APPEND_MODE.set(false);
                 Ok(())
             } else if remote_name.starts_with('.')
                 || remote_name.contains('/')
-                || std::path::Path::new(&remote_name).is_dir()
+                || std::path::Path::new(remote_name).is_dir()
             {
-                fetch_remote(&git_dir, &config, &remote_name, Some(remote_name), &args)
+                fetch_remote(&git_dir, &config, remote_name, Some(remote_name), &args)
             } else {
-                fetch_remote(&git_dir, &config, &remote_name, None, &args)
+                fetch_remote(&git_dir, &config, remote_name, None, &args)
             }
         }
     };
 
-    if result.is_ok() && should_recurse_fetch_submodules(&config, &args) {
-        super::submodule::recursive_fetch_submodules(true)?;
+    let result = result.and_then(|()| {
+        if should_recurse_fetch_submodules(&config, &args) {
+            super::submodule::recursive_fetch_submodules(true)?;
+        }
+        Ok(())
+    });
+
+    if result.is_ok() && !args.no_auto_maintenance && !args.no_auto_gc {
+        run_fetch_auto_maintenance(&git_dir);
     }
     result
 }
@@ -597,12 +962,18 @@ fn fetch_remote(
     let remote_repo = if is_ext_url || is_http_url {
         None
     } else {
-        let r = open_repo(&remote_path).with_context(|| {
-            format!(
-                "could not open remote repository at '{}'",
-                remote_path.display()
-            )
-        })?;
+        let r = match open_repo(&remote_path) {
+            Ok(r) => r,
+            Err(e) => {
+                return Err(exit_code_error(
+                    128,
+                    format!(
+                        "could not open remote repository at '{}': {e}",
+                        remote_path.display()
+                    ),
+                ));
+            }
+        };
         if url_override.is_some() && url.starts_with("file://") {
             r.enforce_safe_directory_git_dir()?;
         }
@@ -1607,11 +1978,36 @@ fn fetch_remote(
         }
     }
 
-    if !fetch_head_entries.is_empty() {
+    if args.no_write_fetch_head {
+        // Skip FETCH_HEAD updates (--no-write-fetch-head).
+    } else if !fetch_head_entries.is_empty() {
         sort_fetch_head_lines(&mut fetch_head_entries, &fetch_head_refspecs);
-        let fetch_head_path = git_dir.join("FETCH_HEAD");
-        let content = fetch_head_entries.join("\n") + "\n";
-        fs::write(&fetch_head_path, content).context("writing FETCH_HEAD")?;
+        if args.parallel_fetch_collect_fetch_head {
+            if let Some(ord) = args.parallel_fetch_order {
+                let mut g = PARALLEL_FETCH_HEAD_CHUNKS
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("FETCH_HEAD chunk lock: {e}"))?;
+                g.push((ord, fetch_head_entries));
+            }
+        } else {
+            let fetch_head_path = git_dir.join("FETCH_HEAD");
+            let mut combined = String::new();
+            if (FETCH_HEAD_APPEND_MODE.get() || args.append) && fetch_head_path.is_file() {
+                let existing = fs::read_to_string(&fetch_head_path).unwrap_or_default();
+                if !existing.is_empty() {
+                    combined.push_str(existing.trim_end());
+                    combined.push('\n');
+                }
+            }
+            for (i, line) in fetch_head_entries.iter().enumerate() {
+                if i > 0 {
+                    combined.push('\n');
+                }
+                combined.push_str(line);
+            }
+            combined.push('\n');
+            fs::write(&fetch_head_path, combined).context("writing FETCH_HEAD")?;
+        }
     }
 
     if args.filter.as_deref() == Some("blob:none") {

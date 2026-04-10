@@ -399,12 +399,27 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
                 .collect()
         };
         for (name, oid) in remote {
-            branches.push(BranchInfo {
-                name: if args.remotes && !args.all {
-                    name
+            let list_name = if args.remotes && !args.all {
+                if name.ends_with("/HEAD") {
+                    let full = format!("refs/remotes/{name}");
+                    match refs::read_symbolic_ref(&repo.git_dir, &full) {
+                        Ok(Some(target)) => {
+                            let tail = target
+                                .strip_prefix("refs/remotes/")
+                                .unwrap_or(&target)
+                                .to_owned();
+                            format!("{name} -> {tail}")
+                        }
+                        Ok(None) | Err(_) => name,
+                    }
                 } else {
-                    format!("remotes/{name}")
-                },
+                    name
+                }
+            } else {
+                format!("remotes/{name}")
+            };
+            branches.push(BranchInfo {
+                name: list_name,
                 oid,
                 is_remote: true,
             });
