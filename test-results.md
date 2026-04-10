@@ -6,15 +6,16 @@
 - `cargo check -p grit-rs`: pass
 - `cargo test -p grit-lib --lib`: 166 passed
 - `cargo build --release -p grit-rs`: pass
-- `./scripts/run-tests.sh t5510-fetch.sh`: **208/215**
+- `./scripts/run-tests.sh t5510-fetch.sh`: **209/215**
   - improved from 195/215 at this turn start.
   - newly fixed in this iteration:
     - bundle option/header/list-heads parity (`43`, `44`, `47`, `56`)
     - bundle path fetch behavior (`48`)
     - fetch.writeCommitGraph + submodule variant (`74`, `75`)
     - prune output URL parity (`188`)
+    - branchname D/F conflict resolved by `--prune` (`189`)
 - Remaining failures in `t5510-fetch.sh`:
-  - `187`, `189`, `190`, `192`, `193`, `194`, `196`
+  - `187`, `190`, `192`, `193`, `194`, `196`
 - Key code changes:
   - `bundle create` now supports `--version=3` header behavior and prerequisite subject lines.
   - `bundle create` object selection for `-<n>` now excludes parent-commit tree payload for unchanged objects.

@@ -34,9 +34,9 @@
 - `cargo test -p grit-lib --lib` ✅
 - `cargo build --release -p grit-rs` ✅
 - `./scripts/run-tests.sh t5510-fetch.sh`:
-  - progressed through this iteration to **208/215**.
+  - progressed through this iteration to **209/215**.
 
 ### Current remaining t5510 failures
 
-- `187`, `189`, `190`, `192`, `193`, `194`, `196`
+- `187`, `190`, `192`, `193`, `194`, `196`
 

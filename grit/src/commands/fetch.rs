@@ -2003,6 +2003,55 @@ fn fetch_remote(
                 continue;
             }
 
+            if should_prune && local_ref.starts_with("refs/remotes/") {
+                let local_ref_path = git_dir.join(&local_ref);
+                if local_ref_path.is_dir() {
+                    let conflict_prefix = format!("{local_ref}/");
+                    let stale_refs = refs::list_refs(git_dir, &conflict_prefix)?;
+                    if !stale_refs.is_empty() && !has_updates && !args.quiet {
+                        eprintln!("From {from_display_url}");
+                        has_updates = true;
+                    }
+                    for (stale_ref, stale_oid) in stale_refs {
+                        apply_single_ref_delete(
+                            args,
+                            git_dir,
+                            &mut pending_atomic_ref_ops,
+                            &stale_ref,
+                            Some(stale_oid),
+                            &mut ref_update_failures,
+                        )?;
+                        if !args.quiet {
+                            let short = stale_ref
+                                .strip_prefix("refs/remotes/")
+                                .or_else(|| stale_ref.strip_prefix("refs/heads/"))
+                                .or_else(|| stale_ref.strip_prefix("refs/tags/"))
+                                .unwrap_or(&stale_ref);
+                            eprintln!(" - [deleted]         (none)     -> {short}");
+                        }
+                    }
+                    // If we removed all child refs, clear now-empty directories so the
+                    // incoming flat ref can be created (D/F conflict during `--prune`).
+                    let mut dir = local_ref_path.clone();
+                    while dir.starts_with(git_dir) && dir.is_dir() {
+                        let is_empty = fs::read_dir(&dir)
+                            .ok()
+                            .map(|mut it| it.next().is_none())
+                            .unwrap_or(false);
+                        if !is_empty {
+                            break;
+                        }
+                        if fs::remove_dir(&dir).is_err() {
+                            break;
+                        }
+                        let Some(parent) = dir.parent() else {
+                            break;
+                        };
+                        dir = parent.to_path_buf();
+                    }
+                }
+            }
+
             if !has_updates && !args.quiet {
                 eprintln!("From {from_display_url}");
                 has_updates = true;
