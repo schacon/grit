@@ -118,9 +118,39 @@ case "$1" in
     done
     ;;
   sha1)
-    sha1sum | cut -d' ' -f1 ;;
+    shift
+    # Matches git's test-hash `cmd_hash_impl`: optional buffer size in MB (ignored here) or `-b` for
+    # raw digest bytes on stdout (used by lib-pack.sh `pack_trailer` for pack checksums).
+    if [ "$1" = "-b" ]; then
+      shift
+      python3 -c 'import hashlib,sys
+h = hashlib.sha1()
+for chunk in iter(lambda: sys.stdin.buffer.read(65536), b""):
+    h.update(chunk)
+sys.stdout.buffer.write(h.digest())'
+    elif [ -n "$1" ]; then
+      shift
+      sha1sum | cut -d" " -f1
+    else
+      sha1sum | cut -d" " -f1
+    fi
+    ;;
   sha256)
-    sha256sum | cut -d' ' -f1 ;;
+    shift
+    if [ "$1" = "-b" ]; then
+      shift
+      python3 -c 'import hashlib,sys
+h = hashlib.sha256()
+for chunk in iter(lambda: sys.stdin.buffer.read(65536), b""):
+    h.update(chunk)
+sys.stdout.buffer.write(h.digest())'
+    elif [ -n "$1" ]; then
+      shift
+      sha256sum | cut -d" " -f1
+    else
+      sha256sum | cut -d" " -f1
+    fi
+    ;;
   genrandom)
     shift
     exec "$SCRIPT_DIR/grit" test-tool genrandom "$@" ;;
