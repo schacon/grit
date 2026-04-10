@@ -670,6 +670,104 @@ fn has_tracked_under(
         })
 }
 
+fn has_hidden_untracked_file_or_dir(
+    repo: &Repository,
+    index: &Index,
+    tracked: &BTreeSet<String>,
+    gitlinks: &BTreeSet<String>,
+    matcher: &mut IgnoreMatcher,
+    rel: &str,
+    abs: &Path,
+    uc: &mut UntrackedCache,
+) -> Result<bool> {
+    let entries = match fs::read_dir(abs) {
+        Ok(e) => {
+            uc.dir_opened += 1;
+            e
+        }
+        Err(_) => return Ok(false),
+    };
+    let mut sorted: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+    sorted.sort_by_key(|e| e.file_name());
+    for entry in sorted {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == ".git" {
+            continue;
+        }
+        let path = entry.path();
+        let child_rel = relative_path(rel, &name);
+        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+        if is_dir && gitlinks.contains(&child_rel) {
+            continue;
+        }
+        if tracked.contains(&child_rel) {
+            continue;
+        }
+        if is_dir {
+            if has_hidden_untracked_file_or_dir(
+                repo, index, tracked, gitlinks, matcher, &child_rel, &path, uc,
+            )? {
+                return Ok(true);
+            }
+        } else {
+            let (is_ign, _) = matcher.check_path(repo, Some(index), &child_rel, false)?;
+            if !is_ign && name.starts_with('.') {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn has_ignored_entry_or_dir(
+    repo: &Repository,
+    index: &Index,
+    tracked: &BTreeSet<String>,
+    gitlinks: &BTreeSet<String>,
+    matcher: &mut IgnoreMatcher,
+    rel: &str,
+    abs: &Path,
+    uc: &mut UntrackedCache,
+) -> Result<bool> {
+    if matcher.check_path(repo, Some(index), rel, true)?.0 {
+        return Ok(true);
+    }
+    let entries = match fs::read_dir(abs) {
+        Ok(e) => e,
+        Err(_) => return Ok(false),
+    };
+    let mut sorted: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+    sorted.sort_by_key(|e| e.file_name());
+    for entry in sorted {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == ".git" {
+            continue;
+        }
+        let path = entry.path();
+        let child_rel = relative_path(rel, &name);
+        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+        if is_dir && gitlinks.contains(&child_rel) {
+            continue;
+        }
+        if tracked.contains(&child_rel) {
+            continue;
+        }
+        if is_dir {
+            if has_ignored_entry_or_dir(
+                repo, index, tracked, gitlinks, matcher, &child_rel, &path, uc,
+            )? {
+                return Ok(true);
+            }
+        } else {
+            let (is_ign, _) = matcher.check_path(repo, Some(index), &child_rel, false)?;
+            if is_ign {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 fn relative_path(parent: &str, name: &str) -> String {
     if parent.is_empty() {
         name.to_string()
@@ -1044,7 +1142,9 @@ fn read_directory_recursive(
     let meta = fs::symlink_metadata(abs).map_err(Error::Io)?;
     ucd.stat_data = stat_data_from_meta(&meta);
     if use_disk {
-        ucd.exclude_oid = parent_exclude_oid;
+        if rel.is_empty() || !ucd.untracked.is_empty() || ucd.dirs.iter().any(|d| d.recurse) {
+            ucd.exclude_oid = parent_exclude_oid;
+        }
     }
     ucd.valid = true;
     // Match Git's in-memory read_directory behavior: `check_only` directories are kept in
@@ -1198,14 +1298,29 @@ fn visit_untracked_directory_uc(
     }
 
     if sub_untracked.is_empty() && !sub_ignored.is_empty() {
-        if let Some(child) = parent_ucd
+        let has_hidden = has_hidden_untracked_file_or_dir(
+            repo, index, tracked, gitlinks, matcher, rel, abs, uc,
+        )?;
+        if has_hidden {
+            let child = lookup_or_create_child(parent_ucd, &name, uc);
+            child.recurse = true;
+            child.check_only = true;
+            child.valid = true;
+            child.untracked.clear();
+            child.dirs.clear();
+            child.exclude_oid = ObjectId::zero();
+            if let Ok(meta) = fs::symlink_metadata(abs) {
+                child.stat_data = stat_data_from_meta(&meta);
+            }
+        } else if let Some(child) = parent_ucd
             .dirs
             .iter_mut()
             .find(|d| d.name == name && d.check_only)
         {
-            // Keep existing collapsed check-only placeholders present in the cache tree
-            // even when the directory becomes fully ignored after exclude updates.
+            // Keep existing placeholders reusable, but do not create new ones for
+            // newly fully-ignored directories (t7063 sparse keep/true cache shape).
             child.recurse = true;
+            child.check_only = true;
             child.valid = true;
             child.untracked.clear();
             child.dirs.clear();
@@ -1218,6 +1333,19 @@ fn visit_untracked_directory_uc(
     }
 
     if sub_untracked.is_empty() && sub_ignored.is_empty() {
+        if has_ignored_entry_or_dir(repo, index, tracked, gitlinks, matcher, rel, abs, uc)? {
+            let child = lookup_or_create_child(parent_ucd, &name, uc);
+            child.recurse = true;
+            child.check_only = true;
+            child.valid = true;
+            child.untracked.clear();
+            child.dirs.clear();
+            child.exclude_oid = ObjectId::zero();
+            if let Ok(meta) = fs::symlink_metadata(abs) {
+                child.stat_data = stat_data_from_meta(&meta);
+            }
+            return Ok(());
+        }
         if let Some(child) = parent_ucd
             .dirs
             .iter_mut()
@@ -1316,6 +1444,10 @@ fn insert_check_only_path(
     }
 
     let comp = parts[0];
+    let collapsed = format!("{comp}/");
+    if !dir.untracked.iter().any(|u| u == &collapsed) {
+        dir.untracked.push(collapsed);
+    }
     let child_abs = dir_abs.join(comp);
     let child = lookup_or_create_child(dir, comp, uc);
     child.recurse = true;

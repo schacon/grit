@@ -555,7 +555,12 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
     if args.force_untracked_cache {
         let flags = untracked_cache::dir_flags_from_config(&config);
         let ident = untracked_cache::untracked_cache_ident(work_tree);
-        index.untracked_cache = Some(UntrackedCache::new_shell(flags, ident));
+        if let Some(uc) = index.untracked_cache.as_mut() {
+            uc.dir_flags = flags;
+            uc.ident = ident;
+        } else {
+            index.untracked_cache = Some(UntrackedCache::new_shell(flags, ident));
+        }
         repo.write_index_at(&index_path, &mut index)
             .context("writing index")?;
         return Ok(());
@@ -568,7 +573,12 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
     } else if args.untracked_cache {
         let flags = untracked_cache::dir_flags_from_config(&config);
         let ident = untracked_cache::untracked_cache_ident(work_tree);
-        index.untracked_cache = Some(UntrackedCache::new_shell(flags, ident));
+        if let Some(uc) = index.untracked_cache.as_mut() {
+            uc.dir_flags = flags;
+            uc.ident = ident;
+        } else {
+            index.untracked_cache = Some(UntrackedCache::new_shell(flags, ident));
+        }
         repo.write_index_at(&index_path, &mut index)
             .context("writing index")?;
     }

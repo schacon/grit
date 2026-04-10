@@ -820,6 +820,7 @@ impl Index {
     pub fn add_or_replace(&mut self, entry: IndexEntry) {
         let path = entry.path.clone();
         let stage = entry.stage();
+        let mut inserted_stage0 = false;
         // Binary search for the insertion point by (path, stage)
         let result = self.entries.binary_search_by(|e| {
             e.path
@@ -835,9 +836,10 @@ impl Index {
             Err(pos) => {
                 // Not found — insert at sorted position
                 self.entries.insert(pos, entry);
+                inserted_stage0 = stage == 0;
             }
         }
-        if stage == 0 {
+        if inserted_stage0 {
             if let Ok(p) = std::str::from_utf8(&path) {
                 self.invalidate_untracked_cache_for_path(p);
             }
