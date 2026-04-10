@@ -31,16 +31,20 @@ use grit_lib::diff::{
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::error::Error;
 use grit_lib::index::Index;
+use grit_lib::merge_base::{
+    merge_base_for_diff_index, merge_base_for_diff_two_commits, MergeBaseForDiffError,
+};
 use grit_lib::merge_diff::{
     blob_text_for_diff_with_oid, combined_diff_paths, diff_textconv_active,
     format_worktree_conflict_combined, run_textconv,
 };
-use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
+use grit_lib::rev_list::is_symmetric_diff;
 use grit_lib::rev_parse::{
-    resolve_revision, resolve_treeish_blob_at_path, show_prefix, split_treeish_colon,
-    TreeishBlobAtPath,
+    abbreviate_object_id, resolve_revision, resolve_revision_as_commit, resolve_treeish_blob_at_path,
+    show_prefix, split_treeish_colon, TreeishBlobAtPath,
 };
 use grit_lib::userdiff::matcher_for_path_parsed;
 use grit_lib::ws::{self, WhitespaceGitAttr, WS_BLANK_AT_EOF, WS_INCOMPLETE_LINE};
@@ -511,6 +515,10 @@ pub struct Args {
     /// Show staged changes (index vs HEAD). Alias: --staged.
     #[arg(long = "cached", alias = "staged")]
     pub cached: bool,
+
+    /// Diff against the merge base of HEAD and the given commit (or of two commits).
+    #[arg(long = "merge-base")]
+    pub merge_base: bool,
 
     /// Show a diffstat summary instead of the patch.
     /// Accepts optional `--stat=<width>[,<name-width>[,<count>]]`.
@@ -1494,6 +1502,78 @@ pub fn run(mut args: Args) -> Result<()> {
         want_combined_diff = true;
     }
 
+    let symmetric_tokens = revs.iter().filter(|r| is_symmetric_diff(r)).count();
+    let two_dot_range_tokens = revs
+        .iter()
+        .filter(|r| r.contains("..") && !is_symmetric_diff(r))
+        .count();
+    if symmetric_tokens > 1
+        || (symmetric_tokens == 1 && revs.len() != 1)
+        || two_dot_range_tokens > 1
+    {
+        bail!("usage: grit diff [<options>] [<commit>] [--] [<path>...]\n   or: grit diff [<options>] --cached [--merge-base] [<commit>] [--] [<path>...]\n   or: grit diff [<options>] [--merge-base] <commit> [<commit>...] <commit> [--] [<path>...]");
+    }
+    if revs.len() > 3
+        || (revs.len() > 2 && !want_combined_diff)
+        || (revs.len() == 3 && want_combined_diff && (args.cached || !args.name_only))
+    {
+        bail!("usage: grit diff [<options>] [<commit>] [--] [<path>...]\n   or: grit diff [<options>] --cached [--merge-base] [<commit>] [--] [<path>...]\n   or: grit diff [<options>] [--merge-base] <commit> [<commit>...] <commit> [--] [<path>...]");
+    }
+
+    if args.merge_base {
+        if args.cached {
+            if revs.len() != 1 {
+                bail!("fatal: --merge-base does not work with ranges");
+            }
+            if revs[0].contains("..") && !is_symmetric_diff(&revs[0]) {
+                bail!("fatal: --merge-base does not work with ranges");
+            }
+            let head_oid = resolve_revision_as_commit(&repo, "HEAD")
+                .map_err(|e| anyhow::anyhow!("unable to get HEAD: {e}"))?;
+            let other = resolve_commit_ish_for_merge_base(&repo, &revs[0])?;
+            let mb_oid = match merge_base_for_diff_index(&repo, head_oid, other) {
+                Ok(oid) => oid,
+                Err(MergeBaseForDiffError::None) => bail!("fatal: no merge base found"),
+                Err(MergeBaseForDiffError::Multiple) => bail!("fatal: multiple merge bases found"),
+                Err(MergeBaseForDiffError::Other(msg)) => bail!("{msg}"),
+            };
+            revs = vec![mb_oid.to_hex()];
+        } else if revs.len() == 1 && revs[0].contains("..") && !is_symmetric_diff(&revs[0]) {
+            bail!("fatal: --merge-base does not work with ranges");
+        } else if revs.is_empty() {
+            bail!("usage: grit diff [<options>] [<commit>] [--] [<path>...]\n   or: grit diff [<options>] --cached [--merge-base] [<commit>] [--] [<path>...]\n   or: grit diff [<options>] [--merge-base] <commit> [<commit>...] <commit> [--] [<path>...]");
+        } else if revs.len() > 2 {
+            bail!("usage: grit diff [<options>] [<commit>] [--] [<path>...]\n   or: grit diff [<options>] --cached [--merge-base] [<commit>] [--] [<path>...]\n   or: grit diff [<options>] [--merge-base] <commit> [<commit>...] <commit> [--] [<path>...]");
+        } else if revs.len() == 2 {
+            let a = resolve_commit_ish_for_merge_base(&repo, &revs[0])?;
+            let b = resolve_commit_ish_for_merge_base(&repo, &revs[1])?;
+            let mb_oid = match merge_base_for_diff_two_commits(&repo, a, b) {
+                Ok(oid) => oid,
+                Err(MergeBaseForDiffError::None) => bail!("fatal: no merge base found"),
+                Err(MergeBaseForDiffError::Multiple) => bail!("fatal: multiple merge bases found"),
+                Err(MergeBaseForDiffError::Other(msg)) => bail!("{msg}"),
+            };
+            revs = vec![mb_oid.to_hex(), revs[1].clone()];
+        } else {
+            // one revision: merge-base(HEAD, rev) vs index/worktree
+            let head_oid = resolve_revision_as_commit(&repo, "HEAD")
+                .map_err(|e| anyhow::anyhow!("unable to get HEAD: {e}"))?;
+            let other = resolve_commit_ish_for_merge_base(&repo, &revs[0])?;
+            let mb_oid = match merge_base_for_diff_index(&repo, head_oid, other) {
+                Ok(oid) => oid,
+                Err(MergeBaseForDiffError::None) => bail!("fatal: no merge base found"),
+                Err(MergeBaseForDiffError::Multiple) => bail!("fatal: multiple merge bases found"),
+                Err(MergeBaseForDiffError::Other(msg)) => bail!("{msg}"),
+            };
+            revs = vec![mb_oid.to_hex()];
+        }
+    }
+
+    let mut symmetric_warn_multiple_bases = false;
+    let mut symmetric_left_name = String::new();
+    let mut symmetric_right_name = String::new();
+    let mut symmetric_base_name = String::new();
+
     let mut _symmetric = false;
     if revs.len() == 1 {
         if let Some((left_spec, right_spec)) = try_treeish_blob_range(&revs[0]) {
@@ -1501,21 +1581,34 @@ pub fn run(mut args: Args) -> Result<()> {
         } else if let Some((left, right)) = revs[0].split_once("...") {
             let left = if left.is_empty() { "HEAD" } else { left };
             let right = if right.is_empty() { "HEAD" } else { right };
+            symmetric_left_name = left.to_string();
+            symmetric_right_name = right.to_string();
             let left_oid = resolve_revision(&repo, left)
                 .with_context(|| format!("unknown revision: '{left}'"))?;
             let right_oid = resolve_revision(&repo, right)
                 .with_context(|| format!("unknown revision: '{right}'"))?;
             let bases = grit_lib::rev_list::merge_bases(&repo, left_oid, right_oid, false)?;
             if bases.is_empty() {
-                bail!("no merge base between {} and {}", left, right);
+                bail!("fatal: {}: no merge base", revs[0]);
             }
-            revs = vec![bases[0].to_string(), right_oid.to_string()];
+            symmetric_warn_multiple_bases = bases.len() > 1;
+            let chosen = bases[0];
+            symmetric_base_name = abbreviate_object_id(&repo, chosen, 7)
+                .unwrap_or_else(|_| chosen.to_hex()[..7.min(40)].to_string());
+            revs = vec![chosen.to_string(), right_oid.to_string()];
             _symmetric = true;
         } else if let Some((left, right)) = revs[0].split_once("..") {
             let left = if left.is_empty() { "HEAD" } else { left };
             let right = if right.is_empty() { "HEAD" } else { right };
             revs = vec![left.to_owned(), right.to_owned()];
         }
+    }
+
+    if symmetric_warn_multiple_bases {
+        eprintln!(
+            "warning: {}...{}: multiple merge bases, using {}",
+            symmetric_left_name, symmetric_right_name, symmetric_base_name
+        );
     }
     let work_tree = repo.work_tree.as_deref();
 
@@ -3909,10 +4002,53 @@ fn try_treeish_blob_range(spec: &str) -> Option<(String, String)> {
     None
 }
 
+fn peel_tag_chain_to_oid(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
+    loop {
+        let obj = repo
+            .odb
+            .read(&oid)
+            .with_context(|| format!("reading object {oid}"))?;
+        if obj.kind != ObjectKind::Tag {
+            return Ok(oid);
+        }
+        let tag = parse_tag(&obj.data).context("parsing tag")?;
+        oid = tag.object;
+    }
+}
+
+fn object_kind_phrase(kind: ObjectKind) -> &'static str {
+    match kind {
+        ObjectKind::Tree => "tree",
+        ObjectKind::Blob => "blob",
+        ObjectKind::Tag => "tag",
+        ObjectKind::Commit => "commit",
+    }
+}
+
+/// Resolve `spec` to a commit OID, peeling annotated tags but rejecting trees/blobs (for `--merge-base`).
+fn resolve_commit_ish_for_merge_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    let oid =
+        resolve_revision(repo, spec).with_context(|| format!("unknown revision: '{spec}'"))?;
+    let peeled = peel_tag_chain_to_oid(repo, oid)?;
+    let obj = repo
+        .odb
+        .read(&peeled)
+        .with_context(|| format!("reading object {peeled}"))?;
+    if obj.kind != ObjectKind::Commit {
+        bail!(
+            "fatal: {} is a {}, not a commit",
+            spec,
+            object_kind_phrase(obj.kind)
+        );
+    }
+    Ok(peeled)
+}
+
 /// Resolve a revision spec to a tree OID, handling both commit and tree objects.
 fn commit_or_tree_oid(repo: &Repository, spec: &str) -> Result<ObjectId> {
     let mut oid =
         resolve_revision(repo, spec).with_context(|| format!("unknown revision: '{spec}'"))?;
+    oid = peel_tag_chain_to_oid(repo, oid)?;
     loop {
         let obj = repo
             .odb

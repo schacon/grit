@@ -7911,9 +7911,13 @@ fn tree_to_map(entries: Vec<IndexEntry>) -> HashMap<Vec<u8>, IndexEntry> {
 }
 
 /// Resolve a merge target (branch name or commit-ish).
+///
+/// Annotated tags must peel to their peeled object (typically a commit), matching
+/// `git merge <tag>` — resolving only to the tag OID breaks merge and yields
+/// "corrupt object: commit missing author header" when reading the tag as a commit.
 fn resolve_merge_target(repo: &Repository, spec: &str) -> Result<ObjectId> {
     use grit_lib::refs::resolve_ref;
-    use grit_lib::rev_parse::resolve_revision;
+    use grit_lib::rev_parse::resolve_revision_as_commit;
 
     if let Some(oid) = grit_lib::rev_parse::resolve_at_minus_to_oid(repo, spec)? {
         return Ok(oid);
@@ -7926,7 +7930,7 @@ fn resolve_merge_target(repo: &Repository, spec: &str) -> Result<ObjectId> {
             return Ok(oid);
         }
     }
-    resolve_revision(repo, spec).map_err(|e| anyhow::anyhow!("{e}"))
+    resolve_revision_as_commit(repo, spec).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 pub(crate) fn read_fetch_head_merge_oids(repo: &Repository) -> Result<Vec<String>> {
