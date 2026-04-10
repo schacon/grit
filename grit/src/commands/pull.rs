@@ -630,6 +630,7 @@ fn build_pull_merge_args(
         ff_only,
         no_ff,
         no_commit: false,
+        no_verify: false,
         squash: false,
         abort: false,
         continue_merge: false,

@@ -12,7 +12,7 @@ use grit_lib::diff::{
 };
 use grit_lib::error::Error;
 use grit_lib::git_date::parse::parse_date;
-use grit_lib::hooks::{run_hook, HookResult};
+use grit_lib::hooks::{run_hook, run_reference_transaction_committed_for_head_update, HookResult};
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{Index, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
@@ -875,9 +875,11 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    // Run pre-commit hook
-    if let HookResult::Failed(code) = run_hook(&repo, "pre-commit", &[], None) {
-        bail!("pre-commit hook exited with status {code}");
+    // Run pre-commit hook (skipped with `--no-verify` / `-n`, matching Git).
+    if !args.no_verify {
+        if let HookResult::Failed(code) = run_hook(&repo, "pre-commit", &[], None) {
+            bail!("pre-commit hook exited with status {code}");
+        }
     }
 
     let template_path = resolve_commit_template_path(&args, &config)?;
@@ -905,6 +907,37 @@ pub fn run(mut args: Args) -> Result<()> {
     );
     let mut raw_message = msg_result.raw_bytes;
     let template_for_aborted_check = template_path.filter(|_| use_editor_for_message);
+
+    // prepare-commit-msg runs for normal commits (not skipped by `--no-verify`; only pre-commit
+    // and commit-msg are). Writes COMMIT_EDITMSG then lets the hook edit it in place.
+    {
+        let msg_file = repo.git_dir.join("COMMIT_EDITMSG");
+        if let Some(ref raw) = raw_message {
+            fs::write(&msg_file, raw)?;
+        } else {
+            fs::write(&msg_file, message.as_bytes())?;
+        }
+        let msg_path_str = msg_file.to_string_lossy().to_string();
+        let (hook_arg1, hook_arg2) = prepare_commit_msg_hook_args(&args, &repo.git_dir);
+        let hook_args: Vec<&str> = match hook_arg2.as_deref() {
+            Some(s) => vec![msg_path_str.as_str(), hook_arg1, s],
+            None => vec![msg_path_str.as_str(), hook_arg1],
+        };
+        if let HookResult::Failed(code) = run_hook(&repo, "prepare-commit-msg", &hook_args, None) {
+            bail!("prepare-commit-msg hook exited with status {code}");
+        }
+        let new_raw = fs::read(&msg_file)?;
+        match String::from_utf8(new_raw.clone()) {
+            Ok(s) => {
+                message = s;
+                raw_message = None;
+            }
+            Err(_) => {
+                message = String::from_utf8_lossy(&new_raw).to_string();
+                raw_message = Some(new_raw);
+            }
+        }
+    }
 
     if message.trim().is_empty() && !args.allow_empty_message {
         eprintln!("Aborting commit due to empty commit message.");
@@ -1060,10 +1093,9 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    // Run commit-msg hook with temp file containing the message
-    {
+    // commit-msg hook (skipped with `--no-verify` / `-n`).
+    if !args.no_verify {
         let msg_file = repo.git_dir.join("COMMIT_EDITMSG");
-        // Write raw bytes when available so the hook sees the original encoding
         if let Some(ref raw) = raw_message {
             fs::write(&msg_file, raw)?;
         } else {
@@ -1075,7 +1107,6 @@ pub fn run(mut args: Args) -> Result<()> {
                 bail!("commit-msg hook exited with status {code}");
             }
             HookResult::Success => {
-                // Re-read the message in case the hook modified it
                 let new_raw = fs::read(&msg_file)?;
                 match String::from_utf8(new_raw.clone()) {
                     Ok(s) => {
@@ -1242,6 +1273,13 @@ pub fn run(mut args: Args) -> Result<()> {
             false,
         )?;
     }
+
+    let _ = run_reference_transaction_committed_for_head_update(
+        &repo,
+        &head,
+        head.oid().copied(),
+        commit_oid,
+    );
 
     let _ = grit_lib::rerere::rerere_post_commit(&repo);
     if std::env::var("GIT_TEST_NO_MAINT_AFTER_COMMIT")
@@ -3918,6 +3956,34 @@ fn format_git_timestamp(dt: OffsetDateTime) -> String {
     let hours = offset.whole_hours();
     let minutes = offset.minutes_past_hour().unsigned_abs();
     format!("{epoch} {hours:+03}{minutes:02}")
+}
+
+/// First and optional second argument for `prepare-commit-msg` (Git `prepare_to_commit` semantics).
+fn prepare_commit_msg_hook_args(args: &Args, git_dir: &Path) -> (&'static str, Option<String>) {
+    let merge_msg = git_dir.join("MERGE_MSG");
+    let squash_msg = git_dir.join("SQUASH_MSG");
+    if merge_msg.exists() {
+        if squash_msg.exists() {
+            return ("squash", None);
+        }
+        return ("merge", None);
+    }
+    if squash_msg.exists() {
+        return ("squash", None);
+    }
+    if args.template.is_some() {
+        return ("template", None);
+    }
+    if git_dir.join("CHERRY_PICK_HEAD").exists() {
+        return ("commit", Some("CHERRY_PICK_HEAD".to_owned()));
+    }
+    if let Some(ref r) = args.reuse_message {
+        return ("commit", Some(r.clone()));
+    }
+    if let Some(ref r) = args.reedit_message {
+        return ("commit", Some(r.clone()));
+    }
+    ("message", None)
 }
 
 /// Update HEAD to point to the new commit.

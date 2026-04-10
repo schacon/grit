@@ -25,6 +25,7 @@ use std::sync::Mutex;
 
 use crate::config::{ConfigFile, ConfigScope, ConfigSet};
 use crate::error::{Error, Result};
+use crate::hooks::run_hook;
 use crate::index::Index;
 use crate::objects::parse_commit;
 use crate::odb::Odb;
@@ -461,7 +462,11 @@ impl Repository {
         self.finalize_sparse_index_if_needed(index)?;
         let cfg = ConfigSet::load(Some(&self.git_dir), true).unwrap_or_default();
         let skip_hash = crate::index::index_skip_hash_for_write(Some(&cfg));
-        write_index_file_split(path, &self.git_dir, index, &cfg, split, skip_hash)
+        write_index_file_split(path, &self.git_dir, index, &cfg, split, skip_hash)?;
+        // Git `write_locked_index`: `post-index-change` after a successful index write (t1800).
+        // Grit does not yet track `updated_workdir` / `updated_skipworktree`; pass `0` `0`.
+        let _ = run_hook(self, "post-index-change", &["0", "0"], None);
+        Ok(())
     }
 
     fn finalize_sparse_index_if_needed(&self, index: &mut Index) -> Result<()> {
