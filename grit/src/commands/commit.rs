@@ -417,11 +417,15 @@ pub fn run(mut args: Args) -> Result<()> {
     let fixup_amend_style = fixup_parsed
         .as_ref()
         .is_some_and(|f| matches!(f.mode, FixupMode::AmendStyle { .. }));
+    let fixup_amend_message_only = fixup_parsed
+        .as_ref()
+        .is_some_and(|f| matches!(f.mode, FixupMode::AmendStyle { is_reword: false }));
     if args.pathspec.is_empty()
         && (args.include
             || (args.only
                 && !args.allow_empty
-                && (!args.amend || (fixup_parsed.is_some() && !fixup_amend_style))))
+                && (!args.amend || (fixup_parsed.is_some() && !fixup_amend_style))
+                && !fixup_amend_message_only))
     {
         bail!("fatal: No paths with --include/--only does not make sense.");
     }
