@@ -117,10 +117,20 @@ case "$1" in
       fi
     done
     ;;
-  sha1)
-    sha1sum | cut -d' ' -f1 ;;
-  sha256)
-    sha256sum | cut -d' ' -f1 ;;
+  sha1|sha256)
+    # Git's test-tool $(test_oid algo) -b reads stdin and writes the raw digest (pack trailer).
+    _algo="$1"
+    shift
+    if [ "${1:-}" = "-b" ]; then
+      shift
+      python3 -c "import sys, hashlib; h = getattr(hashlib, '${_algo}')(); h.update(sys.stdin.buffer.read()); sys.stdout.buffer.write(h.digest())"
+    else
+      case "$_algo" in
+      sha1) sha1sum | cut -d' ' -f1 ;;
+      sha256) sha256sum | cut -d' ' -f1 ;;
+      esac
+    fi
+    ;;
   genrandom)
     shift
     exec "$SCRIPT_DIR/grit" test-tool genrandom "$@" ;;

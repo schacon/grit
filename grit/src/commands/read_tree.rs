@@ -16,6 +16,8 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::sparse_checkout::apply_sparse_checkout_skip_worktree;
 
+use crate::dotfile;
+
 /// Arguments for `grit read-tree`.
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -134,6 +136,23 @@ fn verify_path_component(name: &[u8], prot: PathProtection) -> Result<()> {
         // Reject NTFS-equivalent ".git" names such as ".git ", ".git...",
         // and alternate stream forms like ".git...:stream".
         if ntfs_equivalent_to_dotgit(name) {
+            bail!("invalid path '{}'", String::from_utf8_lossy(name));
+        }
+    }
+
+    if prot.protect_hfs || prot.protect_ntfs {
+        let Ok(s) = std::str::from_utf8(name) else {
+            return Ok(());
+        };
+        if dotfile::is_hfs_dot_gitmodules(s)
+            || dotfile::is_ntfs_dot_gitmodules(s)
+            || dotfile::is_hfs_dot_gitattributes(s)
+            || dotfile::is_ntfs_dot_gitattributes(s)
+            || dotfile::is_hfs_dot_gitignore(s)
+            || dotfile::is_ntfs_dot_gitignore(s)
+            || dotfile::is_hfs_dot_mailmap(s)
+            || dotfile::is_ntfs_dot_mailmap(s)
+        {
             bail!("invalid path '{}'", String::from_utf8_lossy(name));
         }
     }

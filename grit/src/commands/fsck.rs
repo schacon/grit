@@ -13,6 +13,7 @@ use grit_lib::config::ConfigSet;
 use grit_lib::diff::zero_oid;
 use grit_lib::error::Error as LibError;
 use grit_lib::fsck_standalone::{fsck_object, fsck_tag_mktag_trailer};
+use grit_lib::gitmodules;
 use grit_lib::ident::fsck_commit_idents;
 use grit_lib::objects::{parse_commit, parse_tree, tag_object_line_oid, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -166,6 +167,8 @@ enum Issue {
     FsckMessage(String),
     /// Non-fatal `warning:` line (e.g. `fsck.extraHeaderEntry=warn` on tag objects).
     Warning(String),
+    /// `.gitmodules` / `.gitattributes` symlink and blob validation (Git `fsck_tree` / `fsck_blob`).
+    DotSpecial(String, bool),
 }
 
 /// Run `grit fsck`.
@@ -185,6 +188,7 @@ pub fn run(args: Args) -> Result<()> {
 
     let mut issues: Vec<Issue> = Vec::new();
     let mut has_errors = false;
+    let mut dot_fsck = gitmodules::DotFsckTracker::default();
 
     // 1. Collect all reachable OIDs by walking from refs, HEAD, reflogs.
     //    Also track missing objects and (optionally) bad objects.
@@ -215,6 +219,7 @@ pub fn run(args: Args) -> Result<()> {
         extra_header_policy,
         args.strict,
         &mut issues,
+        &mut dot_fsck,
     )?;
 
     check_reflog_entries(
@@ -281,6 +286,7 @@ pub fn run(args: Args) -> Result<()> {
                 args.strict,
                 reachable.contains(oid),
                 &mut issues,
+                &mut dot_fsck,
             );
         }
         for oid in &all_objects {
@@ -297,8 +303,14 @@ pub fn run(args: Args) -> Result<()> {
                 args.strict,
                 reachable.contains(oid),
                 &mut issues,
+                &mut dot_fsck,
             );
         }
+    }
+
+    for di in dot_fsck.finish_pending(&odb)? {
+        let err = di.is_error_severity();
+        issues.push(Issue::DotSpecial(di.format_line(), err));
     }
 
     // 5. If --lost-found, write dangling objects to .git/lost-found/.
@@ -440,6 +452,12 @@ pub fn run(args: Args) -> Result<()> {
             Issue::Warning(msg) => {
                 eprintln!("warning {msg}");
             }
+            Issue::DotSpecial(line, is_error) => {
+                eprintln!("{line}");
+                if *is_error {
+                    has_errors = true;
+                }
+            }
         }
     }
 
@@ -484,6 +502,7 @@ fn walk_reachable(
     extra_header_policy: ExtraHeaderPolicy,
     strict: bool,
     issues: &mut Vec<Issue>,
+    dot_fsck: &mut gitmodules::DotFsckTracker,
 ) -> Result<(HashSet<ObjectId>, HashSet<ObjectId>)> {
     let _ = objects_dir;
     let mut reachable = HashSet::new();
@@ -557,6 +576,7 @@ fn walk_reachable(
                 strict,
                 true,
                 issues,
+                dot_fsck,
             );
         }
 
@@ -718,6 +738,7 @@ fn validate_loose_object_file(
     strict: bool,
     is_reachable: bool,
     issues: &mut Vec<Issue>,
+    dot_fsck: &mut gitmodules::DotFsckTracker,
 ) {
     let display_path = loose_path_display_for_fsck(git_dir, path);
     match Odb::read_loose_verify_oid(path, oid) {
@@ -729,6 +750,7 @@ fn validate_loose_object_file(
             strict,
             is_reachable,
             issues,
+            dot_fsck,
         ),
         Err(LibError::LooseHashMismatch { path: _, real_oid }) => {
             issues.push(Issue::HashPathMismatch {
@@ -761,6 +783,7 @@ fn validate_object(
     strict: bool,
     is_reachable: bool,
     issues: &mut Vec<Issue>,
+    dot_fsck: &mut gitmodules::DotFsckTracker,
 ) {
     let obj = match odb.read(oid) {
         Ok(o) => o,
@@ -774,6 +797,7 @@ fn validate_object(
         strict,
         is_reachable,
         issues,
+        dot_fsck,
     );
 }
 
@@ -786,6 +810,7 @@ fn validate_object_data(
     strict: bool,
     is_reachable: bool,
     issues: &mut Vec<Issue>,
+    dot_fsck: &mut gitmodules::DotFsckTracker,
 ) {
     match kind {
         ObjectKind::Commit => {
@@ -804,6 +829,10 @@ fn validate_object_data(
                     kind: *kind,
                     reason: format!("invalid tree: {e}"),
                 });
+            } else if let Ok(tree_diags) = dot_fsck.on_tree(oid, data) {
+                for di in tree_diags {
+                    issues.push(Issue::DotSpecial(di.format_line(), di.is_error_severity()));
+                }
             }
         }
         ObjectKind::Tag => {
@@ -830,9 +859,11 @@ fn validate_object_data(
                 );
             }
         }
-        ObjectKind::Blob => {
-            // Blobs are arbitrary data — no structural validation needed.
-        }
+        ObjectKind::Blob => {}
+    }
+
+    for di in dot_fsck.on_object(oid, *kind, data) {
+        issues.push(Issue::DotSpecial(di.format_line(), di.is_error_severity()));
     }
 }
 

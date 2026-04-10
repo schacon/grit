@@ -511,6 +511,7 @@ dependencies = [
  "thiserror",
  "time",
  "unicode-width",
+ "url",
 ]
 
 [[package]]

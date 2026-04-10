@@ -8,6 +8,7 @@ use clap::Args as ClapArgs;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use grit_lib::config::ConfigSet;
+use grit_lib::gitmodules;
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
@@ -23,21 +24,54 @@ use grit_lib::unpack_objects::{apply_delta, strict_verify_packed_references};
 /// path is not consumed as the flag value (matches Git's argv shape in the test suite).
 pub fn preprocess_argv(rest: &mut Vec<String>) {
     let mut i = 0usize;
-    while i + 1 < rest.len() {
-        let next = &rest[i + 1];
-        let merge = next.contains('=') && !next.starts_with('-');
-        if merge && (rest[i] == "--strict" || rest[i] == "--fsck-objects") {
-            let flag = if rest[i] == "--strict" {
-                "--strict"
-            } else {
-                "--fsck-objects"
-            };
-            rest[i] = format!("{flag}={next}");
-            rest.remove(i + 1);
-            continue;
+    while i < rest.len() {
+        if rest[i] == "--strict" || rest[i] == "--fsck-objects" {
+            if let Some(next) = rest.get(i + 1) {
+                if !next.starts_with('-') && next.to_ascii_lowercase().ends_with(".pack") {
+                    // Git: `index-pack --strict foo.pack` — `foo.pack` is the pack file, not fsck rules.
+                    let flag = if rest[i] == "--strict" {
+                        "--strict"
+                    } else {
+                        "--fsck-objects"
+                    };
+                    rest[i] = format!("{flag}=");
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+        if i + 1 < rest.len() {
+            let next = &rest[i + 1];
+            let merge = next.contains('=') && !next.starts_with('-');
+            if merge && (rest[i] == "--strict" || rest[i] == "--fsck-objects") {
+                let flag = if rest[i] == "--strict" {
+                    "--strict"
+                } else {
+                    "--fsck-objects"
+                };
+                rest[i] = format!("{flag}={next}");
+                rest.remove(i + 1);
+                continue;
+            }
         }
         i += 1;
     }
+}
+
+/// Git accepts `index-pack --strict path.pack`. Ensure the `*.pack` path is the last argv
+/// token so clap binds it to the positional `PACK-FILE`.
+pub fn normalize_argv_for_positional_pack(rest: &mut Vec<String>) {
+    if rest.iter().any(|a| a == "--stdin") {
+        return;
+    }
+    let Some(pi) = rest.iter().position(|a| {
+        let lower = a.to_ascii_lowercase();
+        lower.ends_with(".pack")
+    }) else {
+        return;
+    };
+    let pack = rest.remove(pi);
+    rest.push(pack);
 }
 
 /// Arguments for `grit index-pack`.
@@ -196,6 +230,10 @@ pub fn run(args: Args) -> Result<()> {
             fsck_ignore_missing_email,
         )?
     };
+
+    if strict_on || fsck_on {
+        gitmodules::verify_packed_dot_special(&by_oid).map_err(|e| anyhow::anyhow!("{}", e))?;
+    }
 
     let mut pack_bytes = pack_data;
     let mut h = Sha1::new();
