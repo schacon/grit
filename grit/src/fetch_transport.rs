@@ -478,11 +478,118 @@ pub(crate) fn push_want_unique(wants: &mut Vec<ObjectId>, oid: ObjectId) {
 
 /// Resolve CLI refspec sources to `want` OIDs for upload-pack (matches [`collect_wants`]).
 pub(crate) fn collect_wants_cli(
-    _remote_git_dir: &Path,
+    remote_git_dir: &Path,
     advertised: &[(String, ObjectId)],
     cli_refspecs: &[String],
 ) -> Result<Vec<ObjectId>> {
-    collect_wants(advertised, cli_refspecs)
+    fn refspec_src(spec: &str) -> &str {
+        let spec_clean = spec.strip_prefix('+').unwrap_or(spec);
+        spec_clean
+            .split_once(':')
+            .map(|(a, _)| a)
+            .unwrap_or(spec_clean)
+    }
+
+    fn refspec_pattern_matches(pattern: &str, refname: &str) -> bool {
+        let Some(star) = pattern.find('*') else {
+            return pattern == refname;
+        };
+        let prefix = &pattern[..star];
+        let suffix = &pattern[star + 1..];
+        refname.len() >= prefix.len() + suffix.len()
+            && refname.starts_with(prefix)
+            && refname.ends_with(suffix)
+    }
+
+    fn resolve_remote_ref_for_cli_src(remote_git_dir: &Path, src: &str) -> Option<String> {
+        if src.is_empty() || src == "HEAD" {
+            return Some("HEAD".to_owned());
+        }
+        if src.starts_with("refs/") {
+            return Some(src.to_owned());
+        }
+        let candidates = [
+            format!("refs/{src}"),
+            format!("refs/tags/{src}"),
+            format!("refs/heads/{src}"),
+            format!("refs/remotes/{src}"),
+            format!("refs/remotes/{src}/HEAD"),
+        ];
+        for cand in candidates {
+            if refs::resolve_ref(remote_git_dir, &cand).is_ok() {
+                return Some(cand);
+            }
+        }
+        Some(format!("refs/heads/{src}"))
+    }
+
+    let mut by_name = std::collections::BTreeMap::<String, ObjectId>::new();
+    for (n, o) in advertised {
+        by_name.insert(n.clone(), *o);
+    }
+    if let Ok(all_refs) = refs::list_refs(remote_git_dir, "refs/") {
+        for (n, o) in all_refs {
+            by_name.insert(n, o);
+        }
+    }
+    if let Ok(head_oid) = refs::resolve_ref(remote_git_dir, "HEAD") {
+        by_name.insert("HEAD".to_owned(), head_oid);
+    }
+    let all_refs: Vec<(String, ObjectId)> = by_name.into_iter().collect();
+
+    let negative_patterns: Vec<String> = cli_refspecs
+        .iter()
+        .filter_map(|spec| spec.strip_prefix('^'))
+        .map(refspec_src)
+        .filter(|src| !src.is_empty())
+        .map(|src| {
+            resolve_remote_ref_for_cli_src(remote_git_dir, src)
+                .unwrap_or_else(|| format!("refs/heads/{src}"))
+        })
+        .collect();
+    let is_excluded = |refname: &str| -> bool {
+        negative_patterns
+            .iter()
+            .any(|pat| refspec_pattern_matches(pat, refname))
+    };
+
+    let mut wants = Vec::new();
+    for spec in cli_refspecs {
+        if spec.starts_with('^') {
+            continue;
+        }
+        let src = refspec_src(spec);
+        if src.contains('*') {
+            let pattern = resolve_remote_ref_for_cli_src(remote_git_dir, src)
+                .unwrap_or_else(|| format!("refs/heads/{src}"));
+            for (name, oid) in &all_refs {
+                if refspec_pattern_matches(&pattern, name) && !is_excluded(name) {
+                    push_want_unique(&mut wants, *oid);
+                }
+            }
+            continue;
+        }
+        let oid = if src.len() == 40 && src.chars().all(|c| c.is_ascii_hexdigit()) {
+            ObjectId::from_hex(src)
+                .with_context(|| format!("invalid object id in refspec: {src}"))?
+        } else {
+            let resolved_ref = resolve_remote_ref_for_cli_src(remote_git_dir, src)
+                .unwrap_or_else(|| format!("refs/heads/{src}"));
+            if is_excluded(&resolved_ref) {
+                continue;
+            }
+            all_refs
+                .iter()
+                .find(|(n, _)| n == &resolved_ref)
+                .map(|(_, o)| *o)
+                .with_context(|| format!("could not find remote ref '{resolved_ref}'"))?
+        };
+        push_want_unique(&mut wants, oid);
+    }
+    wants.retain(|o| *o != zero_oid());
+    wants.sort_by_key(|o| o.to_hex());
+    wants.dedup();
+    Ok(wants)
 }
 
 /// Tests invoke `git-upload-pack`; use grit to serve grit-created object stores.

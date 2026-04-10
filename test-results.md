@@ -1,5 +1,28 @@
 # Test results
 
+**2026-04-10 (fetch bundle/parity follow-up + prune tail progress)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `cargo build --release -p grit-rs`: pass
+- `./scripts/run-tests.sh t5510-fetch.sh`: **208/215**
+  - improved from 195/215 at this turn start.
+  - newly fixed in this iteration:
+    - bundle option/header/list-heads parity (`43`, `44`, `47`, `56`)
+    - bundle path fetch behavior (`48`)
+    - fetch.writeCommitGraph + submodule variant (`74`, `75`)
+    - prune output URL parity (`188`)
+- Remaining failures in `t5510-fetch.sh`:
+  - `187`, `189`, `190`, `192`, `193`, `194`, `196`
+- Key code changes:
+  - `bundle create` now supports `--version=3` header behavior and prerequisite subject lines.
+  - `bundle create` object selection for `-<n>` now excludes parent-commit tree payload for unchanged objects.
+  - `bundle list-heads` now prints canonical full ref names (`refs/heads/<name>`).
+  - `fetch` supports path-based bundle files via `bundle unbundle` when explicitly fetched.
+  - `fetch` now honors `fetch.writeCommitGraph` by invoking `commit-graph write` post-fetch.
+  - `fetch` source resolution and tag-follow wants were refined for CLI refspec parity.
+
 **2026-04-10 (fetch atomic transaction + prune/lock parity pass)**
 
 - `cargo fmt`: pass

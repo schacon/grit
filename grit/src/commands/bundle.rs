@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 
-use grit_lib::objects::{ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, split_revision_token, RevListOptions};
@@ -39,6 +39,10 @@ pub struct CreateArgs {
     /// Output bundle file path.
     #[arg(value_name = "FILE")]
     pub file: String,
+
+    /// Bundle format version (supports 2 and 3).
+    #[arg(long = "version", value_name = "N")]
+    pub version: Option<u8>,
 
     /// Revision arguments (refs, commit ranges, --all).
     #[arg(value_name = "REV", num_args = 0.., allow_hyphen_values = true, trailing_var_arg = true)]
@@ -82,6 +86,10 @@ pub fn run(args: Args) -> Result<()> {
 
 fn run_create(args: CreateArgs) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    let version = args.version.unwrap_or(2);
+    if version != 2 && version != 3 {
+        bail!("unsupported bundle version {version}");
+    }
 
     let refs = collect_refs_for_bundle(&repo, &args.rev_list_args)?;
     if refs.is_empty() {
@@ -89,9 +97,11 @@ fn run_create(args: CreateArgs) -> Result<()> {
     }
 
     let (positive, negative) = parse_bundle_rev_list_args(&repo, &args.rev_list_args)?;
+    let max_count = parse_max_count_arg(&args.rev_list_args);
     let opts = RevListOptions {
         objects: true,
         boundary: !negative.is_empty(),
+        max_count,
         ..Default::default()
     };
     let listed =
@@ -101,8 +111,47 @@ fn run_create(args: CreateArgs) -> Result<()> {
     for c in &listed.commits {
         oids.insert(*c);
     }
-    for (oid, _) in &listed.objects {
-        oids.insert(*oid);
+    if max_count.is_some() {
+        for c in &listed.commits {
+            let Ok(obj) = read_object(&repo, c) else {
+                continue;
+            };
+            if obj.kind != ObjectKind::Commit {
+                continue;
+            }
+            if let Ok(commit) = parse_commit(&obj.data) {
+                let mut tip_tree_objects = std::collections::BTreeSet::new();
+                walk_reachable(&repo, &commit.tree, &mut tip_tree_objects)?;
+
+                let mut parent_tree_objects = std::collections::BTreeSet::new();
+                for parent in &commit.parents {
+                    let Ok(parent_obj) = read_object(&repo, parent) else {
+                        continue;
+                    };
+                    if parent_obj.kind != ObjectKind::Commit {
+                        continue;
+                    }
+                    if let Ok(parent_commit) = parse_commit(&parent_obj.data) {
+                        walk_reachable(&repo, &parent_commit.tree, &mut parent_tree_objects)?;
+                    }
+                }
+
+                for oid in tip_tree_objects {
+                    if !parent_tree_objects.contains(&oid) {
+                        oids.insert(oid);
+                    }
+                }
+            }
+        }
+    } else {
+        for (oid, _) in &listed.objects {
+            if let Ok(obj) = read_object(&repo, oid) {
+                if obj.kind == ObjectKind::Commit {
+                    continue;
+                }
+            }
+            oids.insert(*oid);
+        }
     }
 
     // Read all objects.
@@ -119,11 +168,20 @@ fn run_create(args: CreateArgs) -> Result<()> {
     let mut out =
         fs::File::create(&args.file).with_context(|| format!("cannot create {}", args.file))?;
 
-    // Bundle v2 header.
-    out.write_all(b"# v2 git bundle\n")?;
+    if version == 3 {
+        out.write_all(b"# v3 git bundle\n")?;
+        out.write_all(b"@object-format=sha1\n")?;
+    } else {
+        out.write_all(b"# v2 git bundle\n")?;
+    }
 
     for oid in &prerequisites {
-        writeln!(out, "-{}", oid.to_hex())?;
+        let subject = commit_subject(&repo, oid).unwrap_or_default();
+        if subject.is_empty() {
+            writeln!(out, "-{}", oid.to_hex())?;
+        } else {
+            writeln!(out, "-{} {subject}", oid.to_hex())?;
+        }
     }
     // Write refs.
     for (refname, oid) in &refs {
@@ -178,22 +236,41 @@ fn collect_refs_for_bundle(
             .with_context(|| format!("cannot resolve '{tip_spec}' (from '{arg}')"))?;
         let full_name = if tip_spec.starts_with("refs/") || tip_spec == "HEAD" {
             tip_spec.to_string()
+        } else if resolve_ref(repo, &format!("refs/heads/{tip_spec}")).is_ok() {
+            format!("refs/heads/{tip_spec}")
+        } else if resolve_ref(repo, &format!("refs/tags/{tip_spec}")).is_ok() {
+            format!("refs/tags/{tip_spec}")
         } else {
-            let heads = repo.git_dir.join("refs/heads").join(tip_spec);
-            let tags = repo.git_dir.join("refs/tags").join(tip_spec);
-            if heads.exists() {
-                format!("refs/heads/{tip_spec}")
-            } else if tags.exists() {
-                format!("refs/tags/{tip_spec}")
-            } else {
-                tip_spec.to_string()
-            }
+            tip_spec.to_string()
         };
         refs.insert(full_name, oid);
         i += 1;
     }
 
     Ok(refs)
+}
+
+fn parse_max_count_arg(rev_args: &[String]) -> Option<usize> {
+    for arg in rev_args {
+        let Some(n) = arg.strip_prefix('-') else {
+            continue;
+        };
+        if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) {
+            if let Ok(v) = n.parse::<usize>() {
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
+fn commit_subject(repo: &Repository, oid: &ObjectId) -> Option<String> {
+    let obj = read_object(repo, oid).ok()?;
+    if obj.kind != ObjectKind::Commit {
+        return None;
+    }
+    let commit = parse_commit(&obj.data).ok()?;
+    commit.message.lines().next().map(ToOwned::to_owned)
 }
 
 fn parse_bundle_rev_list_args(
@@ -369,13 +446,15 @@ fn run_unbundle(args: UnbundleArgs) -> Result<()> {
 
 /// Parse the bundle v2 header, returning refs and the byte offset where pack data starts.
 fn parse_bundle_header(data: &[u8]) -> Result<(BTreeMap<String, ObjectId>, usize)> {
-    // Find the header line.
-    let header_line = b"# v2 git bundle\n";
-    if !data.starts_with(header_line) {
-        bail!("not a v2 git bundle");
-    }
-
-    let mut pos = header_line.len();
+    let header_v2 = b"# v2 git bundle\n";
+    let header_v3 = b"# v3 git bundle\n";
+    let mut pos = if data.starts_with(header_v2) {
+        header_v2.len()
+    } else if data.starts_with(header_v3) {
+        header_v3.len()
+    } else {
+        bail!("not a git bundle");
+    };
     let mut refs = BTreeMap::new();
 
     loop {
@@ -397,6 +476,10 @@ fn parse_bundle_header(data: &[u8]) -> Result<(BTreeMap<String, ObjectId>, usize
 
         // Prerequisite lines start with '-'.
         if line_str.starts_with('-') {
+            pos = eol + 1;
+            continue;
+        }
+        if line_str.starts_with('@') {
             pos = eol + 1;
             continue;
         }

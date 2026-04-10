@@ -24,6 +24,7 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::ref_transaction_hooks::{
     run_ref_transaction_aborted, run_ref_transaction_committed, run_ref_transaction_prepare,
@@ -709,6 +710,77 @@ fn collect_wants_for_upload_pack(
     Ok(wants)
 }
 
+fn append_follow_tags_for_wants(
+    local_git_dir: &Path,
+    remote_git_dir: &Path,
+    wants: &mut Vec<ObjectId>,
+) -> Result<()> {
+    let local_odb = Odb::new(&local_git_dir.join("objects"));
+    let remote_odb = Odb::new(&remote_git_dir.join("objects"));
+    let remote_repo = open_repo(remote_git_dir)?;
+    let local_tag_tips: HashSet<ObjectId> = refs::list_refs(local_git_dir, "refs/tags/")?
+        .into_iter()
+        .map(|(_, oid)| oid)
+        .collect();
+    let wanted_commit_tips: Vec<ObjectId> = wants
+        .iter()
+        .copied()
+        .filter(|oid| {
+            remote_odb
+                .read(oid)
+                .map(|o| o.kind == ObjectKind::Commit)
+                .unwrap_or(false)
+        })
+        .collect();
+    if wanted_commit_tips.is_empty() {
+        return Ok(());
+    }
+
+    let tag_refs = refs::list_refs(remote_git_dir, "refs/tags/")?;
+    for (_tag_refname, tag_ref_oid) in tag_refs {
+        if local_tag_tips.contains(&tag_ref_oid) || local_odb.exists(&tag_ref_oid) {
+            continue;
+        }
+        let Ok(tag_obj) = remote_odb.read(&tag_ref_oid) else {
+            continue;
+        };
+        if tag_obj.kind != ObjectKind::Tag {
+            continue;
+        }
+        let Ok(tag) = parse_tag(&tag_obj.data) else {
+            continue;
+        };
+        let follows_wanted_tip = wanted_commit_tips
+            .iter()
+            .any(|tip| merge_base::is_ancestor(&remote_repo, tag.object, *tip).unwrap_or(false));
+        if !follows_wanted_tip {
+            continue;
+        }
+        crate::fetch_transport::push_want_unique(wants, tag_ref_oid);
+    }
+
+    wants.sort_by_key(|o| o.to_hex());
+    wants.dedup();
+    Ok(())
+}
+
+fn append_tag_wants_for_cli_fetch(
+    local_git_dir: &Path,
+    advertised: &[(String, ObjectId)],
+    wants: &mut Vec<ObjectId>,
+) {
+    let local_odb = Odb::new(&local_git_dir.join("objects"));
+    for (refname, oid) in advertised {
+        if !refname.starts_with("refs/tags/") {
+            continue;
+        }
+        if local_odb.exists(oid) {
+            continue;
+        }
+        crate::fetch_transport::push_want_unique(wants, *oid);
+    }
+}
+
 /// Fetch from a single remote.
 ///
 /// If `url_override` is Some, use it directly as the remote URL instead of
@@ -825,8 +897,19 @@ fn fetch_remote(
     }
 
     // `git clone` from a bundle records the bundle path as `remote.origin.url`. A no-op `fetch`
-    // must succeed (`t5605` bundle clone + fetch).
+    // must succeed (`t5605` bundle clone + fetch). For explicit path fetches against a bundle
+    // file (`git fetch ../bundle main:main`), unbundle objects/refs into the current repository.
     if !is_ext_url && !is_http_url && remote_path_is_git_bundle_file(&remote_path) {
+        if url_override.is_none() {
+            return Ok(());
+        }
+        crate::commands::bundle::run(crate::commands::bundle::Args {
+            action: crate::commands::bundle::BundleAction::Unbundle(
+                crate::commands::bundle::UnbundleArgs {
+                    file: remote_path.to_string_lossy().to_string(),
+                },
+            ),
+        })?;
         return Ok(());
     }
 
@@ -882,6 +965,8 @@ fn fetch_remote(
     }
 
     let display_url = resolve_fetch_display_url(git_dir, &url, url_override, remote_repo.as_ref())?;
+    let from_display_url =
+        resolve_fetch_from_line_url(&url, url_override, remote_repo.as_ref(), &display_url);
     let follow_remote_head = parse_follow_remote_head(config, remote_name);
     let include_head_ref_prefix = follow_remote_head.mode != FollowRemoteHead::Never;
     // Only remap tracking namespace for path/URL fetches (`git fetch ./repo`). When the user
@@ -1135,7 +1220,12 @@ fn fetch_remote(
                                     "ext:: fetch with refspecs requires a resolvable local upload-pack path"
                                 );
                             };
-                            crate::fetch_transport::collect_wants_cli(gd, adv, &cli_owned_ext)
+                            let mut wants =
+                                crate::fetch_transport::collect_wants_cli(gd, adv, &cli_owned_ext)?;
+                            if should_tags_ext {
+                                append_tag_wants_for_cli_fetch(&local_git_for_ext, adv, &mut wants);
+                            }
+                            Ok(wants)
                         } else if let Some(ref gd) = remote_gd_ext {
                             collect_wants_for_upload_pack(
                                 &local_git_for_ext,
@@ -1211,7 +1301,12 @@ fn fetch_remote(
         let has_cli_refspecs = !cli_owned.is_empty();
         let compute_wants = move |adv: &[(String, ObjectId)]| -> Result<Vec<ObjectId>> {
             if !cli_owned.is_empty() {
-                crate::fetch_transport::collect_wants_cli(&remote_gd, adv, &cli_owned)
+                let mut wants =
+                    crate::fetch_transport::collect_wants_cli(&remote_gd, adv, &cli_owned)?;
+                if should_fetch_tags {
+                    append_tag_wants_for_cli_fetch(&local_git, adv, &mut wants);
+                }
+                Ok(wants)
             } else {
                 collect_wants_for_upload_pack(
                     &local_git,
@@ -1552,9 +1647,10 @@ fn fetch_remote(
                         }
 
                         if !has_updates && !args.quiet {
-                            eprintln!("From {display_url}");
+                            eprintln!("From {from_display_url}");
                             has_updates = true;
                         }
+                        let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
                         apply_single_ref_update(
                             args,
                             git_dir,
@@ -1570,7 +1666,6 @@ fn fetch_remote(
                                 .strip_prefix("refs/heads/")
                                 .or_else(|| local_ref.strip_prefix("refs/tags/"))
                                 .unwrap_or(&local_ref);
-                            let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
                             match old_oid {
                                 None => eprintln!(" * [new branch]      {branch:<17} -> {short}"),
                                 Some(old) => eprintln!(
@@ -1582,7 +1677,6 @@ fn fetch_remote(
                         }
 
                         // Build FETCH_HEAD entry
-                        let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
                         fetch_head_entries.push(fetch_head_branch_line(
                             remote_oid,
                             branch,
@@ -1673,7 +1767,11 @@ fn fetch_remote(
                 updated_refs.push(local_ref.clone());
 
                 let old_oid = read_ref_oid(git_dir, &local_ref);
-                if local_ref.starts_with("refs/heads/") && !args.update_head_ok && !is_bare_repo {
+                if local_ref.starts_with("refs/heads/")
+                    && !src.is_empty()
+                    && !args.update_head_ok
+                    && !is_bare_repo
+                {
                     if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
                         bail!(
                             "refusing to fetch into branch '{}' checked out at '{}'",
@@ -1697,7 +1795,7 @@ fn fetch_remote(
 
                 if old_oid.as_ref() != Some(&remote_oid) {
                     if !has_updates && !args.quiet {
-                        eprintln!("From {display_url}");
+                        eprintln!("From {from_display_url}");
                         has_updates = true;
                     }
                     apply_single_ref_update(
@@ -1737,7 +1835,7 @@ fn fetch_remote(
                     let old_oid = read_ref_oid(git_dir, &local_ref);
                     if old_oid.as_ref() != Some(&remote_oid) {
                         if !has_updates && !args.quiet {
-                            eprintln!("From {display_url}");
+                            eprintln!("From {from_display_url}");
                             has_updates = true;
                         }
 
@@ -1906,7 +2004,7 @@ fn fetch_remote(
             }
 
             if !has_updates && !args.quiet {
-                eprintln!("From {display_url}");
+                eprintln!("From {from_display_url}");
                 has_updates = true;
             }
 
@@ -2004,7 +2102,7 @@ fn fetch_remote(
             }
 
             if !has_updates && !args.quiet {
-                eprintln!("From {display_url}");
+                eprintln!("From {from_display_url}");
                 has_updates = true;
             }
 
@@ -2105,7 +2203,7 @@ fn fetch_remote(
             let exists_on_remote = remote_tags.iter().any(|(r, _)| r == local_tag_ref);
             if !exists_on_remote {
                 if !has_updates && !args.quiet {
-                    eprintln!("From {display_url}");
+                    eprintln!("From {from_display_url}");
                     has_updates = true;
                 }
                 apply_single_ref_delete(
@@ -2169,7 +2267,7 @@ fn fetch_remote(
                 }
             }
             if will_prune {
-                eprintln!("From {display_url}");
+                eprintln!("From {from_display_url}");
             }
         }
 
@@ -2349,6 +2447,8 @@ fn fetch_remote(
             .context("applying blob:none filter")?;
     }
 
+    maybe_write_commit_graph_after_fetch(git_dir, args)?;
+
     // Write machine-readable output if --output is given
     if let Some(ref output_path) = args.output {
         let mut lines = Vec::new();
@@ -2377,6 +2477,45 @@ fn fetch_remote(
         apply_partial_clone_fetch_config(git_dir, remote_name, args.filter.as_deref())?;
     }
 
+    Ok(())
+}
+
+fn maybe_write_commit_graph_after_fetch(git_dir: &Path, args: &Args) -> Result<()> {
+    if args.dry_run {
+        return Ok(());
+    }
+    let cfg = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    let write_graph = cfg
+        .get_bool("fetch.writecommitgraph")
+        .and_then(|v| v.ok())
+        .or_else(|| {
+            cfg.get("fetch.writeCommitGraph")
+                .as_deref()
+                .and_then(|v| parse_bool(v).ok())
+        })
+        .unwrap_or(false);
+    if !write_graph {
+        return Ok(());
+    }
+    let repo = Repository::open(git_dir, None)?;
+    let work_dir = repo.work_tree.as_deref().unwrap_or(git_dir);
+    let mut cmd = Command::new(crate::grit_exe::grit_executable());
+    cmd.current_dir(work_dir).args([
+        "commit-graph",
+        "write",
+        "--split",
+        "--reachable",
+        "--changed-paths",
+    ]);
+    if args.quiet {
+        cmd.arg("--no-progress");
+    }
+    let status = cmd
+        .status()
+        .context("failed to run grit commit-graph write after fetch")?;
+    if !status.success() {
+        eprintln!("warning: commit-graph write returned non-zero status");
+    }
     Ok(())
 }
 
@@ -3165,6 +3304,9 @@ fn ensure_head_ref_target_is_commit(
     src: &str,
     resolved_remote_ref: &Option<String>,
 ) -> Result<()> {
+    if src.is_empty() {
+        return Ok(());
+    }
     if !local_ref.starts_with("refs/heads/") {
         return Ok(());
     }
@@ -4064,7 +4206,8 @@ fn remote_path_is_git_bundle_file(path: &Path) -> bool {
     if let Ok(mut f) = fs::File::open(path) {
         let mut buf = [0u8; 20];
         if let Ok(n) = std::io::Read::read(&mut f, &mut buf) {
-            return buf[..n].starts_with(b"# v2 git bundle");
+            return buf[..n].starts_with(b"# v2 git bundle")
+                || buf[..n].starts_with(b"# v3 git bundle");
         }
     }
     false
@@ -4215,26 +4358,26 @@ fn resolve_fetch_display_url(
     remote_repo: Option<&Repository>,
 ) -> Result<String> {
     let base = configured_remote_base(git_dir);
-    if let Some(remote_repo) = remote_repo {
-        if !crate::ssh_transport::is_configured_ssh_url(raw_url) {
-            if let Ok(canon_remote) = canonical_repo_path(&remote_repo.git_dir) {
-                let mut sb = String::new();
-                let base_s = base.to_string_lossy();
-                let remote_s = canon_remote.to_string_lossy();
-                if let Some(rel) = crate::git_path::relative_path(&remote_s, &base_s, &mut sb) {
-                    let mut s = normalize_fetch_url_display(rel);
-                    if let Some(prefix) = s.strip_suffix("/.git") {
-                        s = normalize_fetch_url_display(prefix);
+    if url_override.is_some() {
+        if let Some(remote_repo) = remote_repo {
+            if !crate::ssh_transport::is_configured_ssh_url(raw_url) {
+                if let Ok(canon_remote) = canonical_repo_path(&remote_repo.git_dir) {
+                    let mut sb = String::new();
+                    let base_s = base.to_string_lossy();
+                    let remote_s = canon_remote.to_string_lossy();
+                    if let Some(rel) = crate::git_path::relative_path(&remote_s, &base_s, &mut sb) {
+                        let mut s = normalize_fetch_url_display(rel);
+                        if let Some(prefix) = s.strip_suffix("/.git") {
+                            s = normalize_fetch_url_display(prefix);
+                        }
+                        if s == ".." {
+                            return Ok("../".to_owned());
+                        }
+                        return Ok(s);
                     }
-                    if s == ".." {
-                        return Ok("../".to_owned());
-                    }
-                    return Ok(s);
                 }
             }
         }
-    }
-    if url_override.is_some() {
         let trimmed = raw_url.trim_end_matches('/');
         let u = Path::new(trimmed);
         if u.is_relative() {
@@ -4252,6 +4395,8 @@ fn resolve_fetch_display_url(
                 }
             }
         }
+    }
+    if url_override.is_some() {
         let mut s = normalize_fetch_url_display(raw_url);
         if let Some(prefix) = s.strip_suffix("/.git") {
             s = normalize_fetch_url_display(prefix);
@@ -4259,6 +4404,29 @@ fn resolve_fetch_display_url(
         return Ok(s);
     }
     Ok(normalize_fetch_url_display(raw_url))
+}
+
+fn resolve_fetch_from_line_url(
+    raw_url: &str,
+    url_override: Option<&str>,
+    remote_repo: Option<&Repository>,
+    default_display_url: &str,
+) -> String {
+    if url_override.is_none() && !crate::ssh_transport::is_configured_ssh_url(raw_url) {
+        if let Some(remote_repo) = remote_repo {
+            if let Ok(canon_remote) = canonical_repo_path(&remote_repo.git_dir) {
+                let mut s = canon_remote.to_string_lossy().to_string();
+                if let Some(prefix) = s.strip_suffix("/.git") {
+                    s = prefix.to_owned();
+                }
+                if !s.ends_with("/.") {
+                    s.push_str("/.");
+                }
+                return s;
+            }
+        }
+    }
+    default_display_url.to_owned()
 }
 
 fn remotes_match_same_repository(git_dir: &Path, remote_repo: &Repository, url_str: &str) -> bool {
