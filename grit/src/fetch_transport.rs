@@ -10,6 +10,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
+use grit_lib::config::ConfigSet;
 use grit_lib::diff::zero_oid;
 use grit_lib::fetch_negotiator::SkippingNegotiator;
 use grit_lib::objects::ObjectId;
@@ -99,6 +100,65 @@ fn trace_packet_fetch(direction: char, payload: &str) {
         return;
     }
     wire_trace::trace_packet_line_ident(identity, direction, payload);
+}
+
+/// Git blocks hostnames and ports that start with `-` so they cannot be mistaken for CLI flags when
+/// passed to proxy or transport helpers (`connect.c`: `looks_like_command_line_option`).
+fn looks_like_command_line_option(s: &str) -> bool {
+    s.as_bytes().first() == Some(&b'-')
+}
+
+/// Resolve `GIT_PROXY_COMMAND` or the first matching `core.gitproxy` rule for `host`, mirroring
+/// Git's `git_use_proxy` / `git_proxy_command_options` (`connect.c`).
+fn resolve_git_proxy_command(host: &str, config: Option<&ConfigSet>) -> Option<String> {
+    if let Ok(env_cmd) = std::env::var("GIT_PROXY_COMMAND") {
+        let t = env_cmd.trim();
+        return if t.is_empty() {
+            None
+        } else {
+            Some(t.to_owned())
+        };
+    }
+    let cfg = config?;
+    for raw in cfg.get_all("core.gitproxy") {
+        let value = raw.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let (cmd_len, matched) = if let Some(idx) = value.find(" for ") {
+            let pattern = value[idx + 5..].trim();
+            if pattern.is_empty() {
+                continue;
+            }
+            let rlen = host.len();
+            let plen = pattern.len();
+            let suffix_ok = if rlen < plen {
+                false
+            } else if host[rlen - plen..] == *pattern {
+                rlen == plen || host.as_bytes()[rlen - plen - 1] == b'.'
+            } else {
+                false
+            };
+            if !suffix_ok {
+                continue;
+            }
+            (idx, true)
+        } else {
+            (value.len(), true)
+        };
+        if !matched {
+            continue;
+        }
+        let mut eff_len = cmd_len;
+        if eff_len == 4 && value.as_bytes().get(..4) == Some(b"none") {
+            eff_len = 0;
+        }
+        if eff_len == 0 {
+            return None;
+        }
+        return Some(value[..eff_len].to_owned());
+    }
+    None
 }
 
 /// Protocol v2 ends the initial advertisement at a flush with no ref lines. Run `ls-refs` to
@@ -1053,31 +1113,18 @@ pub fn parse_git_url(url: &str) -> Result<GitDaemonUrl> {
     Ok(GitDaemonUrl { host, port, path })
 }
 
-/// Fetch over `git://` (native daemon) using upload-pack negotiation.
-pub fn fetch_via_git_protocol_skipping(
+fn fetch_git_daemon_upload_pack_over_streams(
     local_git_dir: &Path,
-    url: &str,
     refspecs: &[String],
+    parsed: &GitDaemonUrl,
+    stream_w: &mut impl Write,
+    stream: &mut impl Read,
 ) -> Result<(
     Vec<(String, ObjectId)>,
     Vec<(String, ObjectId)>,
     Option<String>,
     Option<ObjectId>,
 )> {
-    let parsed = parse_git_url(url)?;
-    let addr = format!("{}:{}", parsed.host, parsed.port)
-        .to_socket_addrs()
-        .with_context(|| format!("could not resolve git://{}:{}", parsed.host, parsed.port))?
-        .next()
-        .with_context(|| format!("no addresses for git://{}:{}", parsed.host, parsed.port))?;
-    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(30))
-        .with_context(|| format!("could not connect to git://{}:{}", parsed.host, parsed.port))?;
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(600)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(600)));
-
-    let mut stream_w = stream
-        .try_clone()
-        .context("dup git:// socket for simultaneous read/write")?;
     let client_proto = protocol_wire::effective_client_protocol_version();
     let virtual_host = std::env::var("GIT_OVERRIDE_VIRTUAL_HOST")
         .unwrap_or_else(|_| format!("{}:{}", parsed.host, parsed.port));
@@ -1092,7 +1139,7 @@ pub fn fetch_via_git_protocol_skipping(
         inner.push(0);
         inner.extend_from_slice(format!("version={client_proto}\0").as_bytes());
     }
-    pkt_line::write_packet_raw(&mut stream_w, &inner).context("write git:// request")?;
+    pkt_line::write_packet_raw(stream_w, &inner).context("write git:// request")?;
     stream_w.flush().ok();
 
     let trace_show = String::from_utf8_lossy(&inner)
@@ -1100,7 +1147,7 @@ pub fn fetch_via_git_protocol_skipping(
         .replace('\n', "");
     trace_packet_fetch('>', &trace_show);
 
-    let (advertised, head_symref) = read_advertisement(&mut stream)?;
+    let (advertised, head_symref) = read_advertisement(stream)?;
     if advertised.is_empty() {
         bail!("nothing to fetch (advertised 0 ref(s))");
     }
@@ -1134,8 +1181,8 @@ pub fn fetch_via_git_protocol_skipping(
     let pack_buf = fetch_upload_pack_negotiate_pack_bytes_with_streams(
         local_git_dir,
         &advertised,
-        &mut stream_w,
-        &mut stream,
+        stream_w,
+        stream,
         &wants,
     )?;
 
@@ -1150,4 +1197,99 @@ pub fn fetch_via_git_protocol_skipping(
     }
 
     Ok((remote_heads, remote_tags, head_symref, head_advertised_oid))
+}
+
+/// Fetch over `git://` (native daemon) using upload-pack negotiation.
+///
+/// When `GIT_PROXY_COMMAND` or `core.gitproxy` selects a proxy, the proxy is spawned with
+/// `host` and `port` as trailing arguments (Git-compatible). Pass `config` so repository
+/// `core.gitproxy` rules apply; use `None` for clone before a config exists.
+///
+/// `proxy_cwd` is the directory used as the child's working directory when spawning the proxy
+/// (typically the repository work tree). This matches Git so relative `core.gitproxy` commands
+/// like `./proxy` resolve even when the process CWD is not the work tree (e.g. `GIT_DIR` set).
+pub fn fetch_via_git_protocol_skipping(
+    local_git_dir: &Path,
+    url: &str,
+    refspecs: &[String],
+    config: Option<&ConfigSet>,
+    proxy_cwd: Option<&Path>,
+) -> Result<(
+    Vec<(String, ObjectId)>,
+    Vec<(String, ObjectId)>,
+    Option<String>,
+    Option<ObjectId>,
+)> {
+    let parsed = parse_git_url(url)?;
+    if looks_like_command_line_option(&parsed.host) {
+        bail!("strange hostname '{}' blocked", parsed.host);
+    }
+    let port_str = parsed.port.to_string();
+    if looks_like_command_line_option(&port_str) {
+        bail!("strange port '{}' blocked", port_str);
+    }
+
+    if let Some(proxy_cmd) = resolve_git_proxy_command(&parsed.host, config) {
+        let words = shell_words::split(&proxy_cmd)
+            .with_context(|| format!("invalid proxy command: {proxy_cmd:?}"))?;
+        if words.is_empty() {
+            bail!("empty proxy command");
+        }
+        let mut cmd = Command::new(&words[0]);
+        for arg in words.iter().skip(1) {
+            cmd.arg(arg);
+        }
+        cmd.arg(&parsed.host).arg(port_str.as_str());
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        if let Some(dir) = proxy_cwd {
+            cmd.current_dir(dir);
+        }
+        let mut child = cmd
+            .spawn()
+            .with_context(|| format!("cannot start proxy {proxy_cmd}"))?;
+        let mut stream_w = child.stdin.take().context("proxy stdin")?;
+        let mut stream = child.stdout.take().context("proxy stdout")?;
+
+        let fetch_res = fetch_git_daemon_upload_pack_over_streams(
+            local_git_dir,
+            refspecs,
+            &parsed,
+            &mut stream_w,
+            &mut stream,
+        );
+        drop(stream_w);
+        drop(stream);
+        let status = child.wait().context("wait for proxy")?;
+        let out = fetch_res?;
+        if !status.success() {
+            bail!("proxy exited with status {status}");
+        }
+        Ok(out)
+    } else {
+        let addr = format!("{}:{}", parsed.host, port_str)
+            .to_socket_addrs()
+            .with_context(|| format!("could not resolve git://{}:{}", parsed.host, parsed.port))?
+            .next()
+            .with_context(|| format!("no addresses for git://{}:{}", parsed.host, parsed.port))?;
+        let mut stream =
+            TcpStream::connect_timeout(&addr, Duration::from_secs(30)).with_context(|| {
+                format!("could not connect to git://{}:{}", parsed.host, parsed.port)
+            })?;
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(600)));
+        let _ = stream.set_write_timeout(Some(Duration::from_secs(600)));
+
+        let mut stream_w = stream
+            .try_clone()
+            .context("dup git:// socket for simultaneous read/write")?;
+
+        fetch_git_daemon_upload_pack_over_streams(
+            local_git_dir,
+            refspecs,
+            &parsed,
+            &mut stream_w,
+            &mut stream,
+        )
+    }
 }

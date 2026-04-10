@@ -224,6 +224,10 @@ run_one() {
   local git_test_allow_sudo=
   local utf8_nfd_to_nfc=
   local timeout_prefix=("${TIMEOUT_PREFIX[@]}")
+  # `command -v perl` can print a bare "perl"; shebangs require an absolute path (t5532-fetch-proxy).
+  local perl_abs
+  perl_abs="$(type -P perl 2>/dev/null || true)"
+  [[ -z "$perl_abs" ]] && perl_abs=/usr/bin/perl
   if [[ "$f" == "t0034-root-safe-directory.sh" ]]; then
     git_test_allow_sudo=YES
   fi
@@ -245,6 +249,7 @@ run_one() {
         GRIT_TEST_LIB_SUMMARY=1 \
         ${utf8_nfd_to_nfc:+GIT_TEST_UTF8_NFD_TO_NFC=$utf8_nfd_to_nfc} \
         GUST_BIN="$BIN" \
+        PERL_PATH="$perl_abs" \
         GIT_TEST_BUILTIN_HASH=sha1 \
         GIT_SOURCE_DIR="$REPO/git" \
         GIT_CONFIG_NOSYSTEM=1 \

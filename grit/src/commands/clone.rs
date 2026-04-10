@@ -1343,7 +1343,13 @@ fn run_git_clone(args: Args) -> Result<()> {
     };
 
     let fetch_res = crate::fetch_transport::with_packet_trace_identity("clone", || {
-        crate::fetch_transport::fetch_via_git_protocol_skipping(&dest.git_dir, &url, &[])
+        crate::fetch_transport::fetch_via_git_protocol_skipping(
+            &dest.git_dir,
+            &url,
+            &[],
+            None,
+            Some(&target_path),
+        )
     });
 
     let (source_head_symref, _source_head_oid, head_branch) = match fetch_res {
