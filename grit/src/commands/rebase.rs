@@ -31,7 +31,7 @@ use grit_lib::patch_ids::compute_patch_id;
 use grit_lib::refs::append_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, split_revision_token, OrderingMode, RevListOptions};
-use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
+use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision, resolve_revision_as_commit};
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::whitespace_rule::{fix_blob_bytes, parse_whitespace_rule, WS_DEFAULT_RULE};
 use grit_lib::write_tree::write_tree_from_index;
@@ -106,7 +106,7 @@ pub struct Args {
     pub r#continue: bool,
 
     /// Abort the in-progress rebase.
-    #[arg(long = "abort")]
+    #[arg(long = "abort", conflicts_with = "verbose")]
     pub abort: bool,
 
     /// Skip the current commit and continue.
@@ -165,7 +165,7 @@ pub struct Args {
     pub no_reapply_cherry_picks: bool,
 
     /// Be verbose (show diffs).
-    #[arg(short = 'v', long = "verbose")]
+    #[arg(short = 'v', long = "verbose", conflicts_with = "abort")]
     pub verbose: bool,
 
     /// Update stale tracking branches after rebase.
@@ -311,7 +311,7 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.branch.is_some() {
         let repo = Repository::discover(None).context("not a git repository")?;
         let uspec = args.upstream.as_deref().unwrap_or("HEAD");
-        let uoid = resolve_revision(&repo, uspec)
+        let uoid = resolve_revision_as_commit(&repo, uspec)
             .with_context(|| format!("bad revision '{uspec}'"))?
             .to_hex();
         args.upstream = Some(uoid);
@@ -1965,15 +1965,15 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
             .onto
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("internal: --root without --onto"))?;
-        let onto = resolve_revision(&repo, onto_spec)
+        let onto = resolve_revision_as_commit(&repo, onto_spec)
             .with_context(|| format!("bad revision '{onto_spec}'"))?;
         ("--root".to_owned(), onto, onto, onto_spec.to_owned())
     } else {
         let upstream_spec = args.upstream.as_deref().unwrap_or("HEAD").to_owned();
-        let up_oid = resolve_revision(&repo, &upstream_spec)
+        let up_oid = resolve_revision_as_commit(&repo, &upstream_spec)
             .with_context(|| format!("bad revision '{upstream_spec}'"))?;
         let (onto, onto_label) = if let Some(ref onto_spec) = args.onto {
-            let oid = resolve_revision(&repo, onto_spec)
+            let oid = resolve_revision_as_commit(&repo, onto_spec)
                 .with_context(|| format!("bad revision '{onto_spec}'"))?;
             (oid, onto_spec.clone())
         } else if args.keep_base {
@@ -2998,6 +2998,18 @@ fn replay_remaining(
                                 }
                             }
                         }
+
+                        let remaining: Vec<&str> = todo[i + 1..].to_vec();
+                        fs::write(rb_dir.join("todo"), remaining.join("\n") + "\n")?;
+                        fs::write(rb_dir.join("msgnum"), "1")?;
+                        fs::write(rb_dir.join("end"), remaining.len().to_string())?;
+                        return replay_remaining(
+                            repo,
+                            rb_dir,
+                            autostash_oid,
+                            backend,
+                            had_rebase_autostash,
+                        );
                     }
                     Err(_e) => {
                         let remaining: Vec<&str> = todo[i + 1..].to_vec();
@@ -3224,13 +3236,27 @@ fn cherry_pick_for_rebase(
     }
 
     // Three-way merge: base=parent_tree, ours=HEAD_tree, theirs=commit_tree
+    //
+    // While the first patch is applied with HEAD still at the recorded **onto** commit, use the
+    // picked commit's parent tree as the merge base (standard cherry-pick). After HEAD has moved
+    // past onto (a patch succeeded or `--continue` completed one), merge against the **onto**
+    // tree instead. Matching this split avoids both bogus clean merges on later picks (t3407
+    // `--continue`) and wrong conflict geometry on the first pick (t3407 `--skip` / apply).
     let base_tree_oid = if ws_fix_rule.is_some() {
         // After an earlier replay, HEAD can differ from the picked commit's parent tree in the ODB
         // (e.g. `rebase --whitespace=fix`). Use the current tip tree as the merge base so the
         // merge sees ours==base and applies the commit's tree as the new result.
         head_tree_oid
     } else {
-        parent_tree_oid
+        let onto_hex = fs::read_to_string(rb_dir.join("onto"))?;
+        let onto_oid_state = ObjectId::from_hex(onto_hex.trim())?;
+        if head_oid != onto_oid_state {
+            let onto_obj = repo.odb.read(&onto_oid_state)?;
+            let onto_commit = parse_commit(&onto_obj.data)?;
+            onto_commit.tree
+        } else {
+            parent_tree_oid
+        }
     };
     let base_entries = tree_to_map(tree_to_index_entries(repo, &base_tree_oid, "")?);
     let ours_entries = tree_to_map(tree_to_index_entries(repo, &head_tree_oid, "")?);
@@ -4407,10 +4433,13 @@ fn three_way_merge_with_content(
             (_, Some(oe), Some(te)) if same_blob(oe, te) => {
                 out.entries.push(oe.clone());
             }
-            (Some(be), Some(oe), Some(te)) if same_blob(be, oe) => {
+            // When base and ours differ, we must not take `theirs` without a real merge: that
+            // silently drops the divergence between base and ours (t3407-rebase-abort: second pick
+            // after `rebase --continue` must still conflict).
+            (Some(be), Some(oe), Some(te)) if same_blob(be, oe) && !same_blob(oe, te) => {
                 out.entries.push(te.clone());
             }
-            (Some(be), Some(oe), Some(te)) if same_blob(be, te) => {
+            (Some(be), Some(oe), Some(te)) if same_blob(be, te) && same_blob(be, oe) => {
                 out.entries.push(oe.clone());
             }
             // Mode-only change: same blob OID on all three sides (Git tree can store 644 vs 755).
@@ -4427,9 +4456,9 @@ fn three_way_merge_with_content(
             {
                 if same_blob(oe, te) {
                     out.entries.push(oe.clone());
-                } else if same_blob(be, oe) {
+                } else if same_blob(be, oe) && !same_blob(oe, te) {
                     out.entries.push(te.clone());
-                } else if same_blob(be, te) {
+                } else if same_blob(be, te) && same_blob(be, oe) {
                     out.entries.push(oe.clone());
                 } else if be.oid == oe.oid
                     && oe.oid == te.oid
