@@ -16,6 +16,7 @@ Task lines in `PLAN.md`: 345 completed (`[x]`), 5 in progress (`[~]`), 421 remai
 ## Recently completed
 
 - `t5531-deep-submodule-push` — 29/29 tests pass (checkout worktree update now preserves populated gitlink directories by default when a gitlink path disappears from the target index; only nested `.git/modules/*` repositories may force-remove those directories for directory/file transitions, which keeps embedded-submodule `.git` checkouts intact across branch switches and restores full deep recursive push parity)
+- `t5516-fetch-push` — 59/124 tests pass (fetch now rejects `--no-ipv4` / `--no-ipv6` with Git-style `unknown option` diagnostics and applies `url.<base>.insteadOf` rewrite rules when resolving fetch remotes, fixing the `fetch with insteadOf` parity case; suite remains in-progress)
 
 - `t5531-deep-submodule-push` — 18/29 tests pass (`push` now delegates recursive push invocations to the system `git` binary when any recurse-submodules mode is active, improving deep submodule parity from 14/29 to 18/29 while preserving non-recursive push behavior)
 

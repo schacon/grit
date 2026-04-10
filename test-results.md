@@ -1,5 +1,13 @@
 # Test results
 
+**2026-04-10 (phase 6 / t5516 fetch url.insteadOf parity)**  
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo clippy --fix --allow-dirty -p grit-rs`: pass (reverted unrelated formatting-only edits before commit)
+- `cargo test -p grit-lib --lib`: pass
+- `./scripts/run-tests.sh t5516-fetch-push.sh`: **59/124** (up from 58/124; `fetch with insteadOf` now passes via `url.<base>.insteadOf` rewrite on fetch URLs)
+
 **2026-04-10 (phase 6 / t5516 no-ipv option parse parity)**
 
 - `cargo fmt`: pass

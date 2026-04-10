@@ -44,6 +44,7 @@ mod test_tool_pack_deltas;
 mod trace2_transfer;
 mod trace_packet;
 mod transport_passthrough;
+mod url_rewrite;
 mod wire_trace;
 
 mod upstream_help_builtin_synopsis {

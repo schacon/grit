@@ -157,6 +157,13 @@ pub struct Args {
 }
 
 pub fn run(mut args: Args) -> Result<()> {
+    if args.no_ipv4 {
+        bail!("unknown option `no-ipv4'");
+    }
+    if args.no_ipv6 {
+        bail!("unknown option `no-ipv6'");
+    }
+
     if args.negotiate_only {
         // Negotiate-only mode: just exit successfully without fetching.
         return Ok(());
@@ -533,7 +540,7 @@ fn fetch_remote(
         };
 
     // Determine remote URL: CLI path, config, `.git/remotes/<name>`, or `.git/branches/<name>`.
-    let url = if let Some(u) = url_override {
+    let raw_url = if let Some(u) = url_override {
         u.to_owned()
     } else if let Some(u) = config.get(&url_key) {
         u
@@ -544,6 +551,7 @@ fn fetch_remote(
     } else {
         bail!("remote '{remote_name}' not found; no such remote");
     };
+    let url = crate::url_rewrite::rewrite_fetch_url(config, &raw_url);
 
     let is_ext_url = url.starts_with("ext::");
     if is_ext_url {
