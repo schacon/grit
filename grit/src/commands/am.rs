@@ -3074,13 +3074,18 @@ fn parse_mbox_with_opts(
             keep_cr,
             quoted_cr_action,
         )?;
+        // For base64 bodies, `decode_transfer_payload` already applies
+        // `mailinfo.quotedCr` / `--quoted-cr` (strip vs warn vs nowarn). Do not strip
+        // trailing `\r` again here — that would turn quoted CRLF into LF and make
+        // patches apply when Git expects them to fail under the default warn policy.
+        let strip_trailing_cr_in_split = !keep_cr && content_transfer_encoding != "base64";
         let mut payload_lines: Vec<String> = decoded_payload
             .split('\n')
             .map(|l| {
-                if keep_cr {
-                    l.to_string()
-                } else {
+                if strip_trailing_cr_in_split {
                     l.strip_suffix('\r').unwrap_or(l).to_string()
+                } else {
+                    l.to_string()
                 }
             })
             .collect();
