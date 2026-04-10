@@ -764,10 +764,10 @@ fn handle_one_time_script_smart(
     config: &Config,
 ) -> Result<(), String> {
     let script_path = one_time_script_path(config);
-    if !script_path.exists() {
-        return send_response(stream, 404, "Not Found", &[], b"Not Found\n");
-    }
     let cgi_output = run_smart_http_cgi_output(req, config, "/one_time_script")?;
+    if !script_path.exists() {
+        return parse_and_send_cgi_response(stream, &cgi_output);
+    }
     let transformed = apply_one_time_script(&script_path, &cgi_output)?;
     parse_and_send_cgi_response(stream, &transformed)
 }
