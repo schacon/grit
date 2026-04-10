@@ -102,7 +102,7 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
             continue;
         };
 
-        let modules_dir = submodule_modules_git_dir(&repo.git_dir, &m.name);
+        let modules_dir = submodule_separate_git_dir(&repo, work_tree, &m.name, &m.path)?;
         if let Some(outer) = submodule_gitdir_outer_conflict(&modules_dir, &m.name) {
             bail!(
                 "fatal: submodule git dir '{}' is inside git dir '{}'",

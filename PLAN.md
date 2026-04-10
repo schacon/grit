@@ -865,7 +865,7 @@ commit → check it off → move on.
 - [ ] `t7416-submodule-dash-url` ███░░░░░░░░░░░░░░░░░ 3/18 (15 left) — check handling of disallowed .gitmodule urls
 - [ ] `t7403-submodule-sync` ██░░░░░░░░░░░░░░░░░░ 2/18 (16 left) — git submodule sync
 
-- [ ] `t7425-submodule-gitdir-path-extension` █████░░░░░░░░░░░░░░░ 6/23 (17 left) — submodulePathConfig extension works as expected
+- [x] `t7425-submodule-gitdir-path-extension` — submodulePathConfig extension works as expected (23/23)
 - [ ] `t7422-submodule-output` █░░░░░░░░░░░░░░░░░░░ 1/18 (17 left) — submodule --cached, --quiet etc. output
 - [ ] `t7301-clean-interactive` ████░░░░░░░░░░░░░░░░ 5/23 (18 left) — git clean -i basic tests
 - [ ] `t7505-prepare-commit-msg-hook` ████░░░░░░░░░░░░░░░░ 5/23 (18 left) — prepare-commit-msg hook
