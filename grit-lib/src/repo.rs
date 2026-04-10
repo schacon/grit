@@ -370,11 +370,28 @@ impl Repository {
         self.git_dir.join("index")
     }
 
+    /// Resolve which index file to use, honouring `GIT_INDEX_FILE` like Git plumbing.
+    ///
+    /// Relative paths are resolved from the process current directory.
+    pub fn index_path_for_env(&self) -> Result<PathBuf> {
+        if let Ok(raw) = env::var("GIT_INDEX_FILE") {
+            if !raw.is_empty() {
+                let p = PathBuf::from(raw);
+                return Ok(if p.is_absolute() {
+                    p
+                } else {
+                    env::current_dir().map_err(Error::Io)?.join(p)
+                });
+            }
+        }
+        Ok(self.index_path())
+    }
+
     /// Load the index, expanding sparse-directory placeholders from the object database.
     ///
     /// Commands that operate on individual paths should use this instead of [`Index::load`].
     pub fn load_index(&self) -> Result<Index> {
-        let path = self.index_path();
+        let path = self.index_path_for_env()?;
         self.load_index_at(&path)
     }
 

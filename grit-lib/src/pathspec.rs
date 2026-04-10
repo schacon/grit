@@ -332,6 +332,18 @@ fn pathspec_matches_tail(pattern: &str, path: &str, magic: PathspecMagic) -> boo
         return false;
     }
 
+    // `:(glob)**/*.txt` at repo root: Git matches `untracked.txt` (leading `**/` is optional).
+    if magic.glob && !path.contains('/') && pattern.starts_with("**/") {
+        if wildmatch(pattern_bytes, path_bytes, wm_flags) {
+            return true;
+        }
+        if let Some(suffix) = pattern.strip_prefix("**/") {
+            if wildmatch(suffix.as_bytes(), path_bytes, wm_flags) {
+                return true;
+            }
+        }
+    }
+
     let prefix_slash = format!("{pattern}/");
     path == pattern || path_starts_with(path, &prefix_slash, magic.icase)
 }
@@ -541,6 +553,12 @@ mod tree_entry_pathspec_tests {
             }
         ));
         assert!(matches_pathspec("path1/*file1", "path1/file1"));
+    }
+
+    #[test]
+    fn glob_double_star_txt_at_repo_root() {
+        assert!(pathspec_matches(":(glob)**/*.txt", "untracked.txt"));
+        assert!(pathspec_matches(":(glob)**/*.txt", "d/untracked.txt"));
     }
 
     #[test]
