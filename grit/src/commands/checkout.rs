@@ -2983,19 +2983,9 @@ pub(crate) fn check_dirty_worktree(
                 }
 
                 if !has_tracked_prefix && !replaces_tracked_dir {
-                    // When the target tree wants to materialize a path that is absent from
-                    // the old index but present on disk as an untracked file, Git normally
-                    // refuses checkout. After orphan / `rm --cached -r .` flows, stale files
-                    // from earlier branches often remain; removing them here matches the
-                    // practical outcome of `rm <path>` before switching and keeps the
-                    // upstream cherry-pick/revert tests (e.g. t3501) working.
-                    if untracked_path_matches_index_entry(repo, &abs_path, new_entry)? {
-                        continue;
-                    }
-                    if abs_path.is_file() || abs_path.is_symlink() {
-                        let _ = std::fs::remove_file(&abs_path);
-                        continue;
-                    }
+                    // Untracked paths that would be overwritten by a new tracked entry must
+                    // abort (matches Git; see t3420 rebase --autostash checkout onto failures).
+                    let _ = untracked_path_matches_index_entry(repo, &abs_path, new_entry)?;
                     untracked_conflicts.push(rel_path.into_owned());
                 }
             }
