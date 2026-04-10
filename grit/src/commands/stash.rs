@@ -20,7 +20,9 @@ use std::io::{self, BufRead, Write as IoWrite};
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::diff::{diff_index_to_tree, diff_index_to_worktree, unified_diff};
+use grit_lib::diff::{
+    diff_index_to_tree, diff_index_to_worktree, read_submodule_head_oid, unified_diff,
+};
 use grit_lib::error::Error;
 use grit_lib::ignore::{normalize_repo_relative, IgnoreMatcher};
 use grit_lib::index::{
@@ -783,9 +785,9 @@ fn do_push(opts: PushOpts) -> Result<()> {
     let head_commit = parse_commit(&head_obj.data)?;
 
     // Check if there are staged changes (index vs HEAD tree)
-    let staged = diff_index_to_tree(&repo.odb, &index, Some(&head_commit.tree))?;
+    let staged = diff_index_to_tree(&repo.odb, &index, Some(&head_commit.tree), false)?;
     // Check if there are unstaged changes (worktree vs index)
-    let unstaged = diff_index_to_worktree(&repo.odb, &index, &work_tree)?;
+    let unstaged = diff_index_to_worktree(&repo.odb, &index, &work_tree, false)?;
 
     if stash_is_intent_to_add_only(&index, &staged, &unstaged) {
         bail!("cannot save an intent to add only commit");
@@ -972,8 +974,8 @@ fn do_stash_patch_push(
         .map(|e| (e.path.clone(), e))
         .collect();
 
-    let staged = diff_index_to_tree(&repo.odb, index, Some(&head_commit.tree))?;
-    let unstaged = diff_index_to_worktree(&repo.odb, index, work_tree)?;
+    let staged = diff_index_to_tree(&repo.odb, index, Some(&head_commit.tree), false)?;
+    let unstaged = diff_index_to_worktree(&repo.odb, index, work_tree, false)?;
 
     let mut candidate_paths: BTreeSet<String> = BTreeSet::new();
     for e in &staged {
@@ -1498,8 +1500,8 @@ fn do_push_pathspec(
     let head_commit = parse_commit(&head_obj.data)?;
 
     // Get all changes
-    let staged = diff_index_to_tree(&repo.odb, index, Some(&head_commit.tree))?;
-    let unstaged = diff_index_to_worktree(&repo.odb, index, work_tree)?;
+    let staged = diff_index_to_tree(&repo.odb, index, Some(&head_commit.tree), false)?;
+    let unstaged = diff_index_to_worktree(&repo.odb, index, work_tree, false)?;
 
     // Filter by pathspec
     let matching_staged: Vec<_> = staged
@@ -1743,7 +1745,7 @@ fn do_push_staged(
     let head_obj = repo.odb.read(head_oid)?;
     let head_commit = parse_commit(&head_obj.data)?;
 
-    let staged = diff_index_to_tree(&repo.odb, index, Some(&head_commit.tree))?;
+    let staged = diff_index_to_tree(&repo.odb, index, Some(&head_commit.tree), false)?;
     if staged.is_empty() {
         if !opts.quiet {
             println!("No local changes to save");
@@ -1866,8 +1868,8 @@ fn do_create(message: Option<String>) -> Result<()> {
 
     let head_obj = repo.odb.read(head_oid)?;
     let head_commit = parse_commit(&head_obj.data)?;
-    let staged = diff_index_to_tree(&repo.odb, &index, Some(&head_commit.tree))?;
-    let unstaged = diff_index_to_worktree(&repo.odb, &index, &work_tree)?;
+    let staged = diff_index_to_tree(&repo.odb, &index, Some(&head_commit.tree), false)?;
+    let unstaged = diff_index_to_worktree(&repo.odb, &index, &work_tree, false)?;
 
     if staged.is_empty() && unstaged.is_empty() {
         // No changes — exit silently (git stash create does this)
@@ -2898,6 +2900,11 @@ fn apply_stash_impl(
         let file_path = work_tree.join(path);
         // Get the current index entry for this file
         if let Some(idx_entry) = current_index.get(path.as_bytes(), 0) {
+            if idx_entry.mode == MODE_GITLINK {
+                // Submodule: comparing index blob in the superproject ODB is wrong; t7402 expects
+                // stash apply to succeed while the nested repo keeps its own HEAD.
+                continue;
+            }
             // Read the worktree file
             match fs::read(&file_path) {
                 Ok(contents) => {
@@ -2961,7 +2968,10 @@ fn apply_stash_impl(
     // at a path that is currently a DIRECTORY in the worktree, or vice-versa.
     // We must check BEFORE removing anything (deletions below may clear dirs).
     for (path, change) in &wt_changes {
-        if change.is_some() {
+        if let Some(entry) = change {
+            if entry.mode == MODE_GITLINK {
+                continue;
+            }
             let file_path = work_tree.join(path);
             if file_path.is_dir() {
                 // A file from the stash conflicts with a directory in the worktree.
@@ -2979,7 +2989,15 @@ fn apply_stash_impl(
             continue;
         }
         let file_path = work_tree.join(path);
-        let _ = fs::remove_file(&file_path);
+        if file_path.is_dir() {
+            let git_meta = file_path.join(".git");
+            if git_meta.is_file() || git_meta.is_dir() {
+                continue;
+            }
+            let _ = fs::remove_dir_all(&file_path);
+        } else {
+            let _ = fs::remove_file(&file_path);
+        }
         if let Some(parent) = file_path.parent() {
             remove_empty_dirs(parent, work_tree);
         }
@@ -3007,6 +3025,19 @@ fn apply_stash_impl(
                     }
                     fs::create_dir_all(parent)?;
                 }
+                if entry.mode == MODE_GITLINK {
+                    if file_path.is_file() || file_path.is_symlink() {
+                        let _ = fs::remove_file(&file_path);
+                    } else if file_path.is_dir() {
+                        let git_meta = file_path.join(".git");
+                        if !(git_meta.is_file() || git_meta.is_dir()) {
+                            fs::remove_dir_all(&file_path)?;
+                        }
+                    }
+                    fs::create_dir_all(&file_path)?;
+                    continue;
+                }
+
                 let stash_blob = repo.odb.read(&entry.oid)?;
 
                 if entry.mode == MODE_SYMLINK {
@@ -3203,7 +3234,8 @@ fn apply_stash_impl(
     if has_conflicts {
         new_index.sort();
     }
-    repo.write_index(&mut new_index)?;
+    repo.write_index(&mut new_index)
+        .context("writing index after stash apply")?;
 
     // Apply untracked files if present (3rd parent)
     if stash_commit.parents.len() >= 3 {
@@ -3246,8 +3278,8 @@ pub fn autostash_for_rebase(repo: &Repository) -> Result<Option<ObjectId>> {
 
     let head_obj = repo.odb.read(&head_oid)?;
     let head_commit = parse_commit(&head_obj.data)?;
-    let staged = diff_index_to_tree(&repo.odb, &index, Some(&head_commit.tree))?;
-    let unstaged = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
+    let staged = diff_index_to_tree(&repo.odb, &index, Some(&head_commit.tree), false)?;
+    let unstaged = diff_index_to_worktree(&repo.odb, &index, work_tree, false)?;
 
     if staged.is_empty() && unstaged.is_empty() {
         return Ok(None);
@@ -4248,12 +4280,18 @@ fn create_worktree_tree(odb: &Odb, index: &Index, work_tree: &Path) -> Result<Ob
                     entry.oid = oid;
                     entry.mode = MODE_SYMLINK;
                 } else if meta.is_dir() {
-                    // A directory exists where the index expects a file.
-                    // The stash can't represent the current directory contents
-                    // via this index entry — mark as deleted (zero OID).
-                    // The actual directory files will be captured separately
-                    // if they are in the index under subdirs.
-                    entry.oid = ObjectId::from_hex("0000000000000000000000000000000000000000")?;
+                    if entry.mode == MODE_GITLINK {
+                        // Submodule checkout is a directory; the meaningful state is the nested
+                        // repo's HEAD commit, not "directory ⇒ deleted" (t7402 stash).
+                        entry.oid = read_submodule_head_oid(&file_path).unwrap_or(entry.oid);
+                    } else {
+                        // A directory exists where the index expects a file.
+                        // The stash can't represent the current directory contents
+                        // via this index entry — mark as deleted (zero OID).
+                        // The actual directory files will be captured separately
+                        // if they are in the index under subdirs.
+                        entry.oid = ObjectId::from_hex("0000000000000000000000000000000000000000")?;
+                    }
                 } else {
                     let data = fs::read(&file_path)?;
                     let oid = odb.write(ObjectKind::Blob, &data)?;
@@ -4454,6 +4492,18 @@ fn reset_worktree_to_index(repo: &Repository, index: &Index, work_tree: &Path) -
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent)?;
         }
+        if entry.mode == MODE_GITLINK {
+            if file_path.is_file() || file_path.is_symlink() {
+                let _ = fs::remove_file(&file_path);
+            } else if file_path.is_dir() {
+                let git_meta = file_path.join(".git");
+                if !(git_meta.is_file() || git_meta.is_dir()) {
+                    fs::remove_dir_all(&file_path)?;
+                }
+            }
+            fs::create_dir_all(&file_path)?;
+            continue;
+        }
         let blob = repo.odb.read(&entry.oid)?;
         if entry.mode == MODE_SYMLINK {
             let target = String::from_utf8(blob.data)
@@ -4527,6 +4577,18 @@ fn reset_to_head(repo: &Repository, head_oid: &ObjectId, work_tree: &Path) -> Re
         let file_path = work_tree.join(&entry.path);
         if let Some(parent) = file_path.parent() {
             ensure_directory(parent, work_tree)?;
+        }
+        if entry.mode == MODE_GITLINK {
+            if file_path.is_file() || file_path.is_symlink() {
+                let _ = fs::remove_file(&file_path);
+            } else if file_path.is_dir() {
+                let git_meta = file_path.join(".git");
+                if !(git_meta.is_file() || git_meta.is_dir()) {
+                    fs::remove_dir_all(&file_path)?;
+                }
+            }
+            fs::create_dir_all(&file_path)?;
+            continue;
         }
         let blob = repo.odb.read(&entry.oid)?;
         if entry.mode == MODE_SYMLINK {

@@ -3,10 +3,9 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
-    detect_renames, diff_trees, read_submodule_head_oid, submodule_commit_subject_line,
-    stat_matches, zero_oid, DiffEntry, DiffStatus,
+    detect_renames, diff_trees, read_submodule_head_oid, stat_matches,
+    submodule_commit_subject_line, zero_oid, DiffEntry, DiffStatus,
 };
-use grit_lib::rev_list::{rev_list, RevListOptions};
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK, MODE_TREE,
 };
@@ -16,6 +15,7 @@ use grit_lib::pathspec::{context_from_mode_bits, matches_pathspec_with_context};
 use grit_lib::quote_path::{format_diff_path_with_prefix, quote_c_style};
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::merge_bases;
+use grit_lib::rev_list::{rev_list, RevListOptions};
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
 
 use crate::commands::diff::check_whitespace_errors;
@@ -1556,7 +1556,7 @@ fn submodule_has_unstaged_changes(super_wt: &Path, path: &str) -> bool {
     let Ok(idx) = sub_repo.load_index() else {
         return false;
     };
-    grit_lib::diff::diff_index_to_worktree(&sub_repo.odb, &idx, &sub)
+    grit_lib::diff::diff_index_to_worktree(&sub_repo.odb, &idx, &sub, false)
         .map(|v| !v.is_empty())
         .unwrap_or(false)
 }

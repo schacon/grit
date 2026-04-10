@@ -60,7 +60,7 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     // Get diff entries (index vs worktree)
-    let entries = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
+    let entries = diff_index_to_worktree(&repo.odb, &index, work_tree, false)?;
 
     // Filter by paths if specified
     let entries: Vec<&DiffEntry> = if args.paths.is_empty() {

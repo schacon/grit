@@ -418,10 +418,14 @@ fn emit_added_opts(
 /// # Errors
 ///
 /// Returns errors from ODB reads.
+///
+/// When `ignore_submodules` is true, gitlink (`160000`) paths are omitted from the diff, matching
+/// Git's `require_clean_work_tree(..., ignore_submodules=1)` used by `git rebase` / `git pull`.
 pub fn diff_index_to_tree(
     odb: &Odb,
     index: &Index,
     tree_oid: Option<&ObjectId>,
+    ignore_submodules: bool,
 ) -> Result<Vec<DiffEntry>> {
     // Flatten the tree into a sorted list of (path, mode, oid)
     let tree_entries = match tree_oid {
@@ -462,6 +466,11 @@ pub fn diff_index_to_tree(
                     unmerged_modes.insert(path, (rank, ie.mode));
                 }
             }
+            continue;
+        }
+        if ignore_submodules && ie.mode == 0o160000 {
+            let _ = tree_map.remove(path.as_str());
+            stage0_paths.insert(path.clone());
             continue;
         }
         stage0_paths.insert(path.clone());
@@ -516,6 +525,9 @@ pub fn diff_index_to_tree(
 
     // Remaining tree entries not in index → deleted
     for (path, te) in tree_map {
+        if ignore_submodules && te.mode == 0o160000 {
+            continue;
+        }
         result.push(DiffEntry {
             status: DiffStatus::Deleted,
             old_path: Some(path.to_owned()),
@@ -550,10 +562,15 @@ pub fn diff_index_to_tree(
 /// # Errors
 ///
 /// Returns errors from I/O or hashing.
+///
+/// When `ignore_submodules` is true, gitlink (`160000`) paths are skipped so a dirty submodule
+/// worktree does not count as unstaged changes (Git `has_unstaged_changes` with
+/// `ignore_submodules`).
 pub fn diff_index_to_worktree(
     odb: &Odb,
     index: &Index,
     work_tree: &Path,
+    ignore_submodules: bool,
 ) -> Result<Vec<DiffEntry>> {
     use crate::config::ConfigSet;
     use crate::crlf;
@@ -597,6 +614,9 @@ pub fn diff_index_to_worktree(
         // Gitlink entries (submodules): compare checked-out HEAD to the recorded commit.
         // An uninitialized path (no `.git` in the directory) is not dirty — same as Git.
         if ie.mode == 0o160000 {
+            if ignore_submodules {
+                continue;
+            }
             let sub_dir = work_tree.join(path_str_ref);
             let sub_head_oid = read_submodule_head_oid(&sub_dir);
             let matches_index = match sub_head_oid {
@@ -3009,11 +3029,11 @@ pub fn submodule_porcelain_flags(
 
     let staged_dirty = sub_head_tree
         .as_ref()
-        .map(|t| diff_index_to_tree(&odb, &sub_index, Some(t)).map(|v| !v.is_empty()))
+        .map(|t| diff_index_to_tree(&odb, &sub_index, Some(t), false).map(|v| !v.is_empty()))
         .unwrap_or(Ok(false));
     let staged_dirty = staged_dirty.unwrap_or(false);
 
-    let unstaged_dirty = diff_index_to_worktree(&odb, &sub_index, &sub_dir)
+    let unstaged_dirty = diff_index_to_worktree(&odb, &sub_index, &sub_dir, false)
         .map(|v| !v.is_empty())
         .unwrap_or(false);
 

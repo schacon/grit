@@ -714,12 +714,12 @@ pub fn run(mut args: Args) -> Result<()> {
     let mut staged = if dry_run_pathspec_status {
         diff_trees(&repo.odb, head_tree.as_ref(), Some(&tree_oid), "")?
     } else {
-        diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?
+        diff_index_to_tree(&repo.odb, &index, head_tree.as_ref(), false)?
     };
     let unstaged_raw = if dry_run_pathspec_status {
         Vec::new()
     } else if let Some(wt) = work_tree {
-        diff_index_to_worktree(&repo.odb, &index, wt)?
+        diff_index_to_worktree(&repo.odb, &index, wt, false)?
     } else {
         Vec::new()
     };
@@ -2875,7 +2875,7 @@ fn commit_template_status_append(
         }
         None => None,
     };
-    let staged = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
+    let staged = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref(), false)?;
     for e in &staged {
         let label = status_label_staged(e.status);
         buf.push_str(p);

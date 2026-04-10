@@ -1197,7 +1197,7 @@ t7300-clean	t7	yes	55	54	1	false	ok	0
 t7301-clean-interactive	t7	yes	23	8	15	false	ok	0
 t7400-submodule-basic	t7	yes	124	51	73	false	ok	0
 t7401-submodule-summary	t7	yes	25	6	19	false	ok	0
-t7402-submodule-rebase	t7	yes	6	1	5	false	ok	0
+t7402-submodule-rebase	t7	yes	6	6	0	true	ok	0
 t7403-submodule-sync	t7	yes	18	5	13	false	ok	0
 t7406-submodule-update	t7	yes	70	15	55	false	ok	0
 t7407-submodule-foreach	t7	yes	23	19	4	false	ok	0
