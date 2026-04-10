@@ -12,6 +12,7 @@ use grit_lib::rev_list::{self, ObjectFilter};
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
+use grit_lib::index::MODE_SYMLINK;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse;
@@ -195,9 +196,28 @@ pub fn run(args: Args) -> Result<()> {
         (None, _) => return Err(anyhow::anyhow!("object required when not in batch mode")),
     };
 
-    let oid = match resolve_object(&repo, obj_str) {
-        Ok(oid) => oid,
+    let transform_mode = args.textconv || args.filters;
+    let (oid, blob_mode_for_transform) = match if transform_mode {
+        resolve_object_with_mode_lib(&repo, obj_str)
+    } else {
+        resolve_object_lib(&repo, obj_str).map(|o| (o, None))
+    } {
+        Ok(pair) => pair,
+        Err(LibError::Message(msg)) if args.exists => {
+            eprintln!("{msg}");
+            std::process::exit(128);
+        }
         Err(_) if args.exists => std::process::exit(1),
+        Err(LibError::Message(msg))
+            if transform_mode && !obj_str.contains(':') && msg.contains("ambiguous argument") =>
+        {
+            eprintln!("fatal: Not a valid object name {obj_str}");
+            std::process::exit(128);
+        }
+        Err(LibError::Message(msg)) => {
+            eprintln!("{msg}");
+            std::process::exit(128);
+        }
         Err(_) => {
             if args.show_type || args.size {
                 if looks_like_full_hex_object_id(obj_str) {
@@ -251,7 +271,14 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if args.textconv || args.filters {
-        return cat_file_emit_transformed(&repo, &args, &oid, &obj, obj_str);
+        return cat_file_emit_transformed(
+            &repo,
+            &args,
+            &oid,
+            &obj,
+            obj_str,
+            blob_mode_for_transform,
+        );
     }
 
     if let Some(kind) = expected_kind {
@@ -1270,6 +1297,7 @@ fn cat_file_batch_blob_payload(
     path: &str,
     blob: &[u8],
     oid_hex: &str,
+    blob_mode: Option<u32>,
     opts: BatchWriteOpts<'_>,
 ) -> Result<Vec<u8>> {
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
@@ -1289,6 +1317,9 @@ fn cat_file_batch_blob_payload(
     )
     .map_err(|e| anyhow::anyhow!("could not convert '{oid_hex}' {path}: {e}"))?;
     if opts.batch_filters {
+        return Ok(smudged);
+    }
+    if blob_mode == Some(MODE_SYMLINK) {
         return Ok(smudged);
     }
     let rules = match index.as_ref() {
@@ -1503,7 +1534,7 @@ fn print_batch_entry(
                         }
                         let oid_hex = oid.to_string();
                         let payload =
-                            cat_file_batch_blob_payload(repo, p, &obj.data, &oid_hex, opts)?;
+                            cat_file_batch_blob_payload(repo, p, &obj.data, &oid_hex, mode, opts)?;
                         emit_batch_object_lines(
                             repo,
                             oid,
@@ -1674,6 +1705,7 @@ fn cat_file_emit_transformed(
     oid: &ObjectId,
     obj: &grit_lib::objects::Object,
     obj_spec: &str,
+    blob_mode: Option<u32>,
 ) -> Result<()> {
     let path = cat_file_transform_path(args, obj_spec)?;
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
@@ -1708,6 +1740,8 @@ fn cat_file_emit_transformed(
     .map_err(|e| anyhow::anyhow!("could not convert '{oid_hex}' {path}: {e}"))?;
 
     let data = if args.filters {
+        smudged
+    } else if blob_mode == Some(MODE_SYMLINK) {
         smudged
     } else {
         let rules = match index.as_ref() {
@@ -1796,50 +1830,16 @@ fn resolve_object_with_mode_lib(
     repo: &Repository,
     obj_str: &str,
 ) -> LibResult<(ObjectId, Option<u32>)> {
-    // Check if this is a treeish:path reference
-    if let Some(colon_pos) = obj_str.find(':') {
-        let treeish_part = &obj_str[..colon_pos];
-        let path_part = &obj_str[colon_pos + 1..];
-        if !treeish_part.is_empty() && !path_part.is_empty() {
-            // Resolve the treeish part
-            if let Ok(treeish_oid) = resolve_object_lib(repo, treeish_part) {
-                // Get the tree oid
-                let object = read_object_with_promisor_lazy_fetch(repo, &treeish_oid, false)?;
-                let tree_oid = match object.kind {
-                    ObjectKind::Commit => {
-                        let commit = parse_commit(&object.data)?;
-                        commit.tree
-                    }
-                    ObjectKind::Tree => treeish_oid,
-                    _ => {
-                        // Fall back to regular resolution
-                        let oid = resolve_object_lib(repo, obj_str)?;
-                        return Ok((oid, None));
-                    }
-                };
-
-                // Walk the tree path to find the entry mode
-                let parts: Vec<&str> = path_part.split('/').filter(|p| !p.is_empty()).collect();
-                let mut current_tree = tree_oid;
-                for (i, part) in parts.iter().enumerate() {
-                    let tree_obj =
-                        read_object_with_promisor_lazy_fetch(repo, &current_tree, false)?;
-                    let entries = parse_tree(&tree_obj.data)?;
-                    if let Some(entry) = entries.iter().find(|e| e.name == part.as_bytes()) {
-                        if i == parts.len() - 1 {
-                            // Last component: return the entry's oid and mode
-                            return Ok((entry.oid, Some(entry.mode)));
-                        }
-                        current_tree = entry.oid;
-                    } else {
-                        break;
-                    }
-                }
-            }
-        }
+    if let Ok(Some(entry)) = rev_parse::resolve_index_path_entry(repo, obj_str) {
+        return Ok((entry.oid, Some(entry.mode)));
     }
 
-    // No tree path or couldn't resolve mode
+    if rev_parse::split_treeish_colon(obj_str).is_some() {
+        let info = rev_parse::resolve_treeish_blob_at_path(repo, obj_str)?;
+        let mode = u32::from_str_radix(info.mode.as_str(), 8).ok();
+        return Ok((info.oid, mode));
+    }
+
     let oid = resolve_object_lib(repo, obj_str)?;
     Ok((oid, None))
 }

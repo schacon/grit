@@ -1034,7 +1034,8 @@ pub fn resolve_treeish_blob_at_path(repo: &Repository, spec: &str) -> Result<Tre
         Err(e) => return Err(e),
     };
 
-    let (oid, mode_str) = walk_tree_to_blob_entry(repo, &tree_oid, &clean_path)?;
+    let (oid, mode_str) = walk_tree_to_blob_entry(repo, &tree_oid, &clean_path)
+        .map_err(|e| diagnose_tree_path_error(repo, before, after, &clean_path, e))?;
     Ok(TreeishBlobAtPath {
         path: clean_path,
         oid,
