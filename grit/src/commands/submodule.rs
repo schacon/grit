@@ -1061,7 +1061,7 @@ fn relativize_submodule_gitfile(from_dir: &Path, to_path: &Path) -> Result<PathB
     Ok(out)
 }
 
-fn parse_gitmodules_with_repo(
+pub(crate) fn parse_gitmodules_with_repo(
     work_tree: &Path,
     repo: Option<&Repository>,
 ) -> Result<Vec<SubmoduleInfo>> {

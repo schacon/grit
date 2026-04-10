@@ -6565,7 +6565,10 @@ fn is_empty_dir_for_submodule_placeholder(dir: &Path) -> bool {
 ///
 /// Tree-built indexes start with zeroed stat fields; without refreshing,
 /// `git diff-files` falsely reports every tracked file as modified.
-fn refresh_index_stat_cache_from_worktree(repo: &Repository, index: &mut Index) -> Result<()> {
+pub(crate) fn refresh_index_stat_cache_from_worktree(
+    repo: &Repository,
+    index: &mut Index,
+) -> Result<()> {
     let Some(work_tree) = repo.work_tree.as_deref() else {
         return Ok(());
     };

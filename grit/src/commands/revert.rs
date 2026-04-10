@@ -36,7 +36,8 @@ use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
 
-use super::merge::cleanup_message;
+use super::checkout::checkout_index_to_worktree;
+use super::merge::{cleanup_message, refresh_index_stat_cache_from_worktree};
 use super::sequencer::{
     append_merge_msg_conflict_footer, rollback_is_safe, sequencer_is_pick_sequence,
     sequencer_is_revert_sequence, strip_first_sequencer_todo_line, unmerged_paths,
@@ -402,6 +403,8 @@ fn reset_revert_to_head_tree(repo: &Repository, git_dir: &Path) -> Result<()> {
     repo.write_index_at(&index_path, &mut new_index)?;
     if let Some(wt) = &repo.work_tree {
         checkout_merged_index(repo, wt, &old_index, &new_index, &BTreeMap::new())?;
+        refresh_index_stat_cache_from_worktree(repo, &mut new_index)?;
+        repo.write_index_at(&index_path, &mut new_index)?;
     }
     Ok(())
 }
@@ -864,6 +867,9 @@ fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot revert in a bare repository"))?;
     checkout_merged_index(repo, work_tree, &old_index, &merged_index, &conflict_map)?;
+    refresh_index_stat_cache_from_worktree(repo, &mut merged_index)?;
+    repo.write_index_at(&index_path, &mut merged_index)
+        .context("refreshing index stat cache after revert checkout")?;
 
     let (title_line, body_suffix) =
         merge_commit_message_for_revert(&commit, commit_oid, use_reference, comment_char);
@@ -1394,59 +1400,56 @@ fn checkout_merged_index(
     index: &Index,
     conflict_content: &BTreeMap<Vec<u8>, ObjectId>,
 ) -> Result<()> {
-    let new_paths: HashSet<Vec<u8>> = index.entries.iter().map(|e| e.path.clone()).collect();
-
-    // Remove files that were in the old index but not in the new one.
-    for entry in &old_index.entries {
-        if entry.stage() == 0 && !new_paths.contains(&entry.path) {
-            let path_str = String::from_utf8_lossy(&entry.path).into_owned();
-            let abs_path = work_tree.join(&path_str);
-            if abs_path.exists() || abs_path.is_symlink() {
-                if abs_path.is_dir() {
-                    let _ = fs::remove_dir_all(&abs_path);
-                } else {
-                    let _ = fs::remove_file(&abs_path);
-                }
-                remove_empty_parent_dirs(work_tree, &abs_path);
-            }
-        }
+    let has_unmerged = index.entries.iter().any(|e| e.stage() != 0);
+    if !has_unmerged {
+        return checkout_index_to_worktree(repo, old_index, index, work_tree, false, false, false);
     }
 
-    let mut written = HashSet::new();
+    let mut stage0_only = Index::new();
+    stage0_only.version = index.version;
+    stage0_only.sparse_directories = index.sparse_directories;
+    stage0_only.untracked_cache = index.untracked_cache.clone();
+    stage0_only.entries = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .cloned()
+        .collect();
+    stage0_only.sort();
+    checkout_index_to_worktree(
+        repo,
+        old_index,
+        &stage0_only,
+        work_tree,
+        false,
+        false,
+        false,
+    )?;
 
+    let mut written: HashSet<Vec<u8>> = HashSet::new();
     for entry in &index.entries {
+        if entry.stage() != 2 || written.contains(&entry.path) {
+            continue;
+        }
+        let has_stage0 = index
+            .entries
+            .iter()
+            .any(|e| e.path == entry.path && e.stage() == 0);
+        if has_stage0 {
+            continue;
+        }
+
+        let mut e = entry.clone();
+        if let Some(marker_oid) = conflict_content.get(&entry.path) {
+            e.oid = *marker_oid;
+        }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let abs_path = work_tree.join(&path_str);
-
-        if entry.stage() == 0 {
-            write_entry_to_worktree(repo, &abs_path, entry)?;
-            written.insert(entry.path.clone());
-        } else if entry.stage() == 2 && !written.contains(&entry.path) {
-            if let Some(marker_oid) = conflict_content.get(&entry.path) {
-                let mut marker_entry = entry.clone();
-                marker_entry.oid = *marker_oid;
-                write_entry_to_worktree(repo, &abs_path, &marker_entry)?;
-            } else {
-                write_entry_to_worktree(repo, &abs_path, entry)?;
-            }
-            written.insert(entry.path.clone());
-        }
+        write_entry_to_worktree(repo, &abs_path, &e)?;
+        written.insert(entry.path.clone());
     }
 
     Ok(())
-}
-
-fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
-    let mut current = path.parent();
-    while let Some(dir) = current {
-        if dir == work_tree {
-            break;
-        }
-        match fs::remove_dir(dir) {
-            Ok(()) => current = dir.parent(),
-            Err(_) => break,
-        }
-    }
 }
 
 fn write_entry_to_worktree(repo: &Repository, abs_path: &Path, entry: &IndexEntry) -> Result<()> {
