@@ -1510,6 +1510,11 @@ impl ConfigSet {
         self.entries.extend(file.entries.iter().cloned());
     }
 
+    /// Merge another [`ConfigSet`] into this set (entries appended in order).
+    pub fn merge_set(&mut self, other: &ConfigSet) {
+        self.entries.extend(other.entries.iter().cloned());
+    }
+
     /// Add a command-line override (`-c key=value`).
     pub fn add_command_override(&mut self, key: &str, value: &str) -> Result<()> {
         let canon = canonical_key(key)?;

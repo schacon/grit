@@ -19,6 +19,7 @@ Task lines in `PLAN.md`: 331 completed (`[x]`), 5 in progress (`[~]`), 435 remai
 
 ## Recently completed
 
+- `t5611-clone-config` — 13/13 harness tests pass (`clone -c` / `git -c` effective during local ref copy + checkout: merged config with `GIT_CONFIG_PARAMETERS`; custom `remote.*.fetch` + default refspec ordering in `.git/config`; CRLF smudge on clone checkout; `ConfigSet::merge_set` + public `parse_config_parameters`)
 - `t5315-pack-objects-compression` — 9/9 tests pass (`pack-objects` honors `core.compression` / `pack.compression` for zlib deflate level via `ConfigSet::pack_objects_zlib_level`; harness CSV/dashboards refreshed)
 - `t5325-reverse-index` — 16/16 tests pass (RIDX `.rev` write/read: `index-pack` `--[no-]rev-index` + `pack.writeReverseIndex`, `-o` sibling `.rev`, `--rev-index --verify` hashfile errors; `pack-objects` reverse index; `cat-file %(objectsize:disk)` uses on-disk rev when `pack.readReverseIndex` true + test env hooks; `fsck` validates `.rev` with Git-ordered diagnostics)
 - `t4008-diff-break-rewrite` — 14/14 tests pass (`diff-index -B` / `--break-rewrites`, break-merge with rename/copy, `-B -M` copy-from-typechange, tree↔symlink `T` in uncached path, worktree bytes for zero-OID adds in rename detection; raw add lines show hashed blob when needed)
