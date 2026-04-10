@@ -482,6 +482,7 @@ pub fn run(args: Args) -> Result<()> {
     // If the remote argument looks like a path (contains '/' or starts with '.'),
     // use it directly as the URL instead of looking it up in config.
     let remote_name_owned: String;
+    let remote_is_configured_name: bool;
     let urls: Vec<String>;
     let path_style_remote: bool;
 
@@ -497,10 +498,12 @@ pub fn run(args: Args) -> Result<()> {
         {
             // Path-based or explicit URL (including scp-style `host:path`); do not resolve as a
             // configured remote name (matches Git: t5507-remote-environment).
+            remote_is_configured_name = false;
             path_style_remote = true;
             remote_name_owned = r.clone();
             urls = vec![r.clone()];
         } else {
+            remote_is_configured_name = true;
             remote_name_owned = r.clone();
             let (resolved_urls, looks_like_path) = resolve_remote_urls(&config, &remote_name_owned)
                 .with_context(|| format!("remote '{}' not found", remote_name_owned))?;
@@ -508,6 +511,7 @@ pub fn run(args: Args) -> Result<()> {
             path_style_remote = looks_like_path;
         }
     } else {
+        remote_is_configured_name = true;
         remote_name_owned = infer_implicit_push_remote(&config, current_branch.as_deref());
         let (resolved_urls, looks_like_path) = resolve_remote_urls(&config, &remote_name_owned)
             .with_context(|| format!("remote '{}' not found", remote_name_owned))?;
@@ -515,10 +519,20 @@ pub fn run(args: Args) -> Result<()> {
         path_style_remote = looks_like_path;
     };
     let remote_name = remote_name_owned.as_str();
+    let remote_mirror = remote_is_configured_name
+        && config
+            .get(&format!("remote.{remote_name}.mirror"))
+            .and_then(|v| parse_bool(&v).ok())
+            .unwrap_or(false);
+    let effective_mirror = args.mirror || remote_mirror;
+
+    if effective_mirror && !args.refspecs.is_empty() {
+        bail!("--mirror can't be combined with refspecs");
+    }
 
     // Collect push refspecs from config if no CLI refspecs
     let push_refspecs_from_config: Vec<String> =
-        if args.refspecs.is_empty() && !args.mirror && !push_all && !args.delete {
+        if args.refspecs.is_empty() && !effective_mirror && !push_all && !args.delete {
             config.get_all(&format!("remote.{remote_name}.push"))
         } else {
             Vec::new()
@@ -534,6 +548,7 @@ pub fn run(args: Args) -> Result<()> {
             remote_name,
             current_branch.as_deref(),
             push_all,
+            effective_mirror,
             &push_refspecs_from_config,
             path_style_remote,
         )?;
@@ -612,6 +627,7 @@ fn push_to_url(
     remote_name: &str,
     current_branch: Option<&str>,
     push_all: bool,
+    effective_mirror: bool,
     push_refspecs_from_config: &[String],
     path_style_remote: bool,
 ) -> Result<()> {
@@ -686,7 +702,7 @@ fn push_to_url(
     // on the remote). Submodule recursion runs on this set, matching Git transport behavior.
     let mut submodule_tips: Vec<ObjectId> = Vec::new();
 
-    if args.mirror {
+    if effective_mirror {
         // Mirror: push all local refs to remote, and delete remote refs
         // that don't exist locally.
         let local_all = refs::list_refs(&repo.git_dir, "refs/")?;
@@ -706,7 +722,7 @@ fn push_to_url(
                 old_oid,
                 new_oid: Some(*local_oid),
                 expected_oid: None,
-                refspec_force: false,
+                refspec_force: true,
                 pre_push_local_name: None,
             });
         }
@@ -724,7 +740,7 @@ fn push_to_url(
                     old_oid,
                     new_oid: None,
                     expected_oid: None,
-                    refspec_force: false,
+                    refspec_force: true,
                     pre_push_local_name: None,
                 });
             }
@@ -1149,7 +1165,7 @@ fn push_to_url(
         }
     }
 
-    let mirror_atomic_order = if args.mirror && args.atomic {
+    let mirror_atomic_order = if effective_mirror && args.atomic {
         Some(mirror_atomic_ref_order(&updates))
     } else {
         None
@@ -1177,7 +1193,7 @@ fn push_to_url(
 
     if !repo.is_bare()
         && !matches!(recurse_mode, PushRecurseSubmodules::Off)
-        && !(args.mirror || push_all || args.delete)
+        && !(effective_mirror || push_all || args.delete)
         && !combined_tips.is_empty()
     {
         let tips = combined_tips;

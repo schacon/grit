@@ -933,7 +933,7 @@ t5513-fetch-track	t5	yes	2	1	1	false	ok	0
 t5514-fetch-multiple	t5	yes	25	3	22	false	ok	0
 t5515-fetch-merge-logic	t5	yes	65	1	64	false	ok	0
 t5516-fetch-push	t5	yes	124	52	72	false	ok	0
-t5517-push-mirror	t5	yes	13	7	6	false	ok	0
+t5517-push-mirror	t5	yes	13	13	0	true	ok	0
 t5518-fetch-exit-status	t5	yes	3	2	1	false	ok	0
 t5519-push-alternates	t5	yes	8	7	1	false	ok	0
 t5520-pull	t5	yes	80	19	61	false	ok	0
@@ -949,7 +949,7 @@ t5528-push-default	t5	yes	31	31	0	true	ok	1
 t5529-push-errors	t5	yes	8	8	0	true	ok	0
 t5530-upload-pack-error	t5	yes	11	3	8	false	ok	0
 t5531-deep-nested-push	t5	yes	4	4	0	true	ok	0
-t5531-deep-submodule-push	t5	yes	29	21	8	false	ok	0
+t5531-deep-submodule-push	t5	yes	29	14	15	false	ok	0
 t5532-fetch-proxy	t5	yes	5	4	1	false	ok	0
 t5533-push-cas	t5	yes	23	23	0	true	ok	0
 t5534-push-signed	t5	skip	13	0	0	false	ok	0
