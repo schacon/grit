@@ -3,6 +3,7 @@
 //! Each submodule corresponds to one plumbing subcommand.
 
 pub mod add;
+mod add_patch;
 pub mod am;
 pub mod annotate;
 pub mod apply;

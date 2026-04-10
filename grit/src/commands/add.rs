@@ -127,7 +127,7 @@ impl std::fmt::Display for AddOutsideSparse {
 
 impl std::error::Error for AddOutsideSparse {}
 
-fn resolved_env_index_path(repo: &Repository) -> PathBuf {
+pub(crate) fn resolved_env_index_path(repo: &Repository) -> PathBuf {
     if let Ok(raw) = std::env::var("GIT_INDEX_FILE") {
         let p = PathBuf::from(raw);
         if p.is_absolute() {
@@ -332,21 +332,6 @@ pub fn run(mut args: Args) -> Result<()> {
         return Ok(());
     }
 
-    // Stubs for unsupported interactive modes — accept the flags
-    // gracefully so scripts that pass them don't hard-fail.
-    if args.patch || args.interactive {
-        let mode_name = if args.patch {
-            "-p/--patch"
-        } else {
-            "-i/--interactive"
-        };
-        eprintln!(
-            "warning: {} mode is not yet implemented; doing nothing",
-            mode_name
-        );
-        return Ok(());
-    }
-
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo
         .work_tree
@@ -383,6 +368,31 @@ pub fn run(mut args: Args) -> Result<()> {
         if ps.is_empty() {
             bail!("invalid path ''");
         }
+    }
+
+    let conv = ConversionConfig::from_config(&config);
+    let attrs = crlf::load_gitattributes(work_tree);
+    let add_cfg = AddConfig {
+        core_filemode,
+        precompose_unicode,
+        ignore_errors: args.ignore_errors
+            || config
+                .get_bool("add.ignore-errors")
+                .and_then(|r| r.ok())
+                .unwrap_or(false),
+        conv,
+        attrs,
+        config: config.clone(),
+        sparse: sparse_state.clone(),
+        include_sparse: args.sparse,
+    };
+
+    if args.patch {
+        return super::add_patch::run_add_patch(&repo, &args.pathspec, &add_cfg);
+    }
+    if args.interactive {
+        eprintln!("warning: -i/--interactive mode is not yet implemented; doing nothing");
+        return Ok(());
     }
 
     // "git add" with no pathspecs and no flags: give advice
@@ -443,24 +453,6 @@ pub fn run(mut args: Args) -> Result<()> {
         Some(IgnoreMatcher::from_repository(&repo)?)
     } else {
         None
-    };
-
-    let conv = ConversionConfig::from_config(&config);
-    let attrs = crlf::load_gitattributes(work_tree);
-
-    let add_cfg = AddConfig {
-        core_filemode,
-        precompose_unicode,
-        ignore_errors: args.ignore_errors
-            || config
-                .get_bool("add.ignore-errors")
-                .and_then(|r| r.ok())
-                .unwrap_or(false),
-        conv,
-        attrs,
-        config: config.clone(),
-        sparse: sparse_state.clone(),
-        include_sparse: args.sparse,
     };
 
     // --renormalize: re-apply clean conversion to tracked files
