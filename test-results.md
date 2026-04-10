@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-10 (t3702 / add -e)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t3702-add-edit.sh`: 3/3 passed
+
 **2026-04-09 (t4063 / diff blobs)**
 
 - `cargo test -p grit-lib --lib`: 155 passed
