@@ -37,6 +37,7 @@ use grit_lib::whitespace_rule::{fix_blob_bytes, parse_whitespace_rule, WS_DEFAUL
 use grit_lib::write_tree::write_tree_from_index;
 
 use super::checkout::check_dirty_worktree;
+use super::replay::merge_trees_for_single_cherry_pick;
 use super::stash;
 use crate::ident::{resolve_email, resolve_name, IdentRole};
 
@@ -3239,21 +3240,43 @@ fn cherry_pick_for_rebase(
         backend,
         picked_subject: commit.message.lines().next().unwrap_or("replayed commit"),
     };
-    let merge_result = three_way_merge_with_content(
-        repo,
-        &base_entries,
-        &ours_entries,
-        &theirs_entries,
-        &conflict_ctx,
-    )?;
-    let mut merged_index = merge_result.index;
+
+    let (mut merged_index, merge_conflict_files) = if ws_fix_rule.is_none() {
+        let tree_merge = merge_trees_for_single_cherry_pick(
+            repo,
+            base_tree_oid,
+            head_tree_oid,
+            commit_tree_oid,
+            commit_oid,
+            commit
+                .parents
+                .first()
+                .ok_or_else(|| anyhow::anyhow!("cherry-pick of root commit not supported"))?,
+            &head_oid,
+        )?;
+        let cf = tree_merge
+            .conflict_files
+            .into_iter()
+            .map(|(p, c)| (p.into_bytes(), c))
+            .collect::<Vec<_>>();
+        (tree_merge.index, cf)
+    } else {
+        let merge_result = three_way_merge_with_content(
+            repo,
+            &base_entries,
+            &ours_entries,
+            &theirs_entries,
+            &conflict_ctx,
+        )?;
+        (merge_result.index, merge_result.conflict_files)
+    };
 
     if let Some(rule) = ws_fix_rule {
         apply_ws_fix_to_index(repo, &mut merged_index, rule)?;
     }
 
-    let has_conflicts = merged_index.entries.iter().any(|e| e.stage() != 0)
-        || !merge_result.conflict_files.is_empty();
+    let has_conflicts =
+        merged_index.entries.iter().any(|e| e.stage() != 0) || !merge_conflict_files.is_empty();
 
     // Write index
     let old_index = load_index(repo)?;
@@ -3263,7 +3286,7 @@ fn cherry_pick_for_rebase(
     if let Some(wt) = &repo.work_tree {
         checkout_merged_index(repo, wt, &old_index, &merged_index)?;
         if has_conflicts {
-            write_rebase_conflict_files(wt, &merge_result.conflict_files)?;
+            write_rebase_conflict_files(wt, &merge_conflict_files)?;
         }
     }
 
@@ -4559,7 +4582,7 @@ fn content_merge_or_conflict(
     Ok(())
 }
 
-fn write_rebase_conflict_files(
+pub(crate) fn write_rebase_conflict_files(
     work_tree: &Path,
     conflict_files: &[(Vec<u8>, Vec<u8>)],
 ) -> Result<()> {
@@ -4574,7 +4597,7 @@ fn write_rebase_conflict_files(
     Ok(())
 }
 
-fn checkout_merged_index(
+pub(crate) fn checkout_merged_index(
     repo: &Repository,
     work_tree: &Path,
     old_index: &Index,

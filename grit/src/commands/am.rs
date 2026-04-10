@@ -25,6 +25,9 @@ use grit_lib::rev_parse::resolve_revision_for_patch_old_blob;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
 
+use super::rebase::{checkout_merged_index, write_rebase_conflict_files};
+use super::replay::merge_trees_for_single_cherry_pick;
+
 /// Arguments for `grit am`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Apply patches from mailbox")]
@@ -173,6 +176,8 @@ struct MboxPatch {
     diff: String,
     /// Message-ID from the email headers.
     message_id: String,
+    /// When present, the commit OID from a `git format-patch` mbox `From <hex> Mon ...` line.
+    format_patch_commit: Option<ObjectId>,
 }
 
 /// Run the `am` command.
@@ -859,26 +864,36 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
         }
     }
 
-    // Try to apply the diff to the working tree. With `--3way`, Git verifies patch index
-    // preimages against the work tree even when a fuzzy apply could succeed; mismatch must
-    // fall through to the 3-way path (t4151 `changes.mbox`).
-    let apply_result =
-        apply_patch_to_worktree(work_tree, &patch.diff, opts.keep_cr, opts.three_way);
+    if opts.three_way {
+        if let Some(()) = apply_am_format_patch_tree_merge(repo, patch)? {
+            // `format-patch` mbox: cherry-pick-style tree merge (directory renames, etc.).
+        } else {
+            // Try to apply the diff to the working tree. With `--3way`, Git verifies patch index
+            // preimages against the work tree even when a fuzzy apply could succeed; mismatch must
+            // fall through to the 3-way path (t4151 `changes.mbox`).
+            let apply_result =
+                apply_patch_to_worktree(work_tree, &patch.diff, opts.keep_cr, opts.three_way);
 
-    match apply_result {
-        Ok(affected_paths) => {
-            // Stage only the files that the patch touched
-            stage_affected_files(repo, &affected_paths)?;
+            match apply_result {
+                Ok(affected_paths) => {
+                    stage_affected_files(repo, &affected_paths)?;
+                }
+                Err(_e) => {
+                    apply_three_way(repo, patch)?;
+                }
+            }
         }
-        Err(e) => {
-            if opts.three_way {
-                // Attempt 3-way merge
-                apply_three_way(repo, patch)?;
-            } else {
+    } else {
+        let apply_result =
+            apply_patch_to_worktree(work_tree, &patch.diff, opts.keep_cr, opts.three_way);
+        match apply_result {
+            Ok(affected_paths) => {
+                stage_affected_files(repo, &affected_paths)?;
+            }
+            Err(e) => {
                 if opts.reject {
                     let _ = write_reject_files_for_patch(work_tree, &patch.diff);
                 }
-                // Save message for --continue
                 fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
                 return Err(e);
             }
@@ -974,6 +989,88 @@ fn merge_three_way_text_am(
     }
     out.push_str(&format!(">>>>>>> {patch_label}\n"));
     AmThreeWayMerge::Conflict(out)
+}
+
+/// When the mbox carries a `git format-patch` commit OID, run a full tree merge (rename + directory
+/// rename) like `git cherry-pick` / `git rebase`, instead of per-file textual 3-way merge.
+///
+/// Returns `Ok(Some(()))` when a clean merge was written to the index and work tree.
+/// Returns `Ok(None)` when this helper does not apply (no OID, missing objects): use per-file 3-way.
+/// Returns `Err` on merge conflicts (index/worktree updated) or other failures.
+fn apply_am_format_patch_tree_merge(repo: &Repository, patch: &MboxPatch) -> Result<Option<()>> {
+    let Some(picked_oid) = patch.format_patch_commit else {
+        return Ok(None);
+    };
+    let git_dir = &repo.git_dir;
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("no work tree"))?;
+
+    let picked_obj = match repo.odb.read(&picked_oid) {
+        Ok(o) => o,
+        Err(_) => return Ok(None),
+    };
+    if picked_obj.kind != ObjectKind::Commit {
+        return Ok(None);
+    }
+    let picked_commit = parse_commit(&picked_obj.data)?;
+    let parent_tree_oid = match picked_commit.parents.first() {
+        Some(p) => {
+            let po = repo.odb.read(p)?;
+            if po.kind != ObjectKind::Commit {
+                return Ok(None);
+            }
+            parse_commit(&po.data)?.tree
+        }
+        None => ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
+            .map_err(|e| anyhow::anyhow!(e))?,
+    };
+
+    let head_oid = resolve_head(git_dir)?
+        .oid()
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("HEAD is unborn"))?;
+    let head_obj = repo.odb.read(&head_oid)?;
+    let head_commit = parse_commit(&head_obj.data)?;
+
+    let zero_parent = ObjectId::from_hex("0000000000000000000000000000000000000000")
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let parent_oid = picked_commit
+        .parents
+        .first()
+        .copied()
+        .unwrap_or(zero_parent);
+
+    let merge_result = merge_trees_for_single_cherry_pick(
+        repo,
+        parent_tree_oid,
+        head_commit.tree,
+        picked_commit.tree,
+        &picked_oid,
+        &parent_oid,
+        &head_oid,
+    )?;
+
+    let mut merged_index = merge_result.index;
+    let conflict_files: Vec<(Vec<u8>, Vec<u8>)> = merge_result
+        .conflict_files
+        .into_iter()
+        .map(|(p, c)| (p.into_bytes(), c))
+        .collect();
+    let has_conflicts =
+        merged_index.entries.iter().any(|e| e.stage() != 0) || !conflict_files.is_empty();
+
+    let old_index = load_index(repo)?;
+    repo.write_index(&mut merged_index)?;
+    checkout_merged_index(repo, work_tree, &old_index, &merged_index)?;
+    if has_conflicts {
+        fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
+        write_rebase_conflict_files(work_tree, &conflict_files)?;
+        bail!("3-way merge has conflicts");
+    }
+
+    Ok(Some(()))
 }
 
 /// Attempt a 3-way merge when a patch doesn't apply cleanly.
@@ -2273,6 +2370,7 @@ fn parse_stgit_patch(input: &str) -> Result<Vec<MboxPatch>> {
         content_charset: None,
         diff,
         message_id: String::new(),
+        format_patch_commit: None,
     }])
 }
 
@@ -2391,6 +2489,7 @@ fn parse_hg_patch(input: &str) -> Result<Vec<MboxPatch>> {
         content_charset: None,
         diff,
         message_id: String::new(),
+        format_patch_commit: None,
     }])
 }
 
@@ -2405,6 +2504,9 @@ fn parse_patches(
     keep_cr: bool,
     quoted_cr_action: QuotedCrAction,
 ) -> Result<Vec<MboxPatch>> {
+    // `format-patch` output read as UTF-8 may carry a BOM; without stripping it, the first line
+    // no longer matches `From <40-hex> Mon ...` and we lose embedded commit OIDs (t3401 am path).
+    let input = input.strip_prefix('\u{feff}').unwrap_or(input);
     let fmt = format.unwrap_or_else(|| detect_patch_format(input));
     match fmt {
         "stgit" => parse_stgit_patch(input),
@@ -2614,6 +2716,22 @@ fn split_message_body_and_diff(payload_lines: &[String]) -> (Vec<String>, Vec<St
 }
 
 /// Parse an mbox file into individual patches with options.
+/// If `line` is a `git format-patch` mbox separator (`From <40-hex> Mon Sep 17 ...`), return the
+/// commit OID; otherwise `None` (e.g. `From: user@host` in mail headers).
+fn parse_format_patch_commit_oid_from_mbox_line(line: &str) -> Option<ObjectId> {
+    let after_from = line.strip_prefix("From")?;
+    // `From: mailbox` (RFC 822) is not a format-patch separator.
+    if after_from.starts_with(':') {
+        return None;
+    }
+    let rest = after_from.trim_start();
+    let (token, tail) = rest.split_once(char::is_whitespace)?;
+    if token.len() != 40 || !tail.trim_start().starts_with("Mon ") {
+        return None;
+    }
+    ObjectId::from_hex(token).ok()
+}
+
 fn parse_mbox_with_opts(
     input: &str,
     keep: bool,
@@ -2639,12 +2757,14 @@ fn parse_mbox_with_opts(
         let mut message_id = String::new();
         let _body = String::new();
         let mut found_from = false;
+        let mut format_patch_commit: Option<ObjectId> = None;
 
         // Look for "From " separator line
         while let Some(&line) = lines.peek() {
             let line_no_cr = line.strip_suffix('\r').unwrap_or(line);
             if line_no_cr.starts_with("From ") && line_no_cr.len() > 5 {
                 found_from = true;
+                format_patch_commit = parse_format_patch_commit_oid_from_mbox_line(line_no_cr);
                 lines.next(); // consume "From " line
                 break;
             }
@@ -2861,6 +2981,7 @@ fn parse_mbox_with_opts(
                 content_charset,
                 diff: diff_section,
                 message_id: message_id.clone(),
+                format_patch_commit,
             });
         }
     }
@@ -3109,6 +3230,9 @@ fn serialize_mbox_patch(patch: &MboxPatch) -> String {
     let mut out = String::new();
     out.push_str(&format!("Author: {}\n", patch.author));
     out.push_str(&format!("Date: {}\n", patch.date));
+    if let Some(oid) = patch.format_patch_commit {
+        out.push_str(&format!("Format-Patch-Commit: {}\n", oid.to_hex()));
+    }
     if let Some(ref cs) = patch.content_charset {
         out.push_str(&format!("Content-Charset: {cs}\n"));
     }
@@ -3129,6 +3253,7 @@ fn deserialize_mbox_patch(data: &str) -> Result<MboxPatch> {
     let mut date = String::new();
     let mut message_id = String::new();
     let mut content_charset: Option<String> = None;
+    let mut format_patch_commit: Option<ObjectId> = None;
     let mut msg_len = 0usize;
     let mut diff_len = 0usize;
 
@@ -3148,6 +3273,8 @@ fn deserialize_mbox_patch(data: &str) -> Result<MboxPatch> {
             date = v.to_string();
         } else if let Some(v) = line.strip_prefix("Message-ID: ") {
             message_id = v.to_string();
+        } else if let Some(v) = line.strip_prefix("Format-Patch-Commit: ") {
+            format_patch_commit = ObjectId::from_hex(v.trim()).ok();
         } else if let Some(v) = line.strip_prefix("Content-Charset: ") {
             content_charset = Some(v.to_string());
         } else if let Some(v) = line.strip_prefix("Message-Length: ") {
@@ -3178,6 +3305,7 @@ fn deserialize_mbox_patch(data: &str) -> Result<MboxPatch> {
         content_charset,
         diff,
         message_id,
+        format_patch_commit,
     })
 }
 
