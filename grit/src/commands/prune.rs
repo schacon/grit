@@ -218,6 +218,11 @@ fn collect_reachable(
     // Seed from reflogs.
     collect_reflog_oids(&repo.git_dir, &mut queue);
 
+    // Match `git/reachable.c` `add_rebase_files`: OIDs recorded in in-progress rebase state
+    // must stay reachable so `git prune` cannot delete `orig-head` before `rebase --abort`
+    // (t3407-rebase-abort).
+    collect_rebase_state_head_oids(&repo.git_dir, &mut queue);
+
     // BFS walk. Objects in packs are read via [`Odb::read`] when reached from
     // refs/reflogs; we do **not** treat every packed OID as reachable (that
     // would keep unreachable commits alive after `git gc --prune=now`, breaking
@@ -264,6 +269,31 @@ fn collect_reachable(
     }
 
     Ok(reachable)
+}
+
+/// Push the object id from a single-line file under `.git/` if present and valid hex.
+///
+/// Git marks these paths when computing prune reachability; see `add_rebase_files` in upstream
+/// `reachable.c`.
+fn collect_rebase_state_head_oids(git_dir: &Path, queue: &mut VecDeque<ObjectId>) {
+    const REL_PATHS: [&str; 4] = [
+        "rebase-apply/autostash",
+        "rebase-apply/orig-head",
+        "rebase-merge/autostash",
+        "rebase-merge/orig-head",
+    ];
+    for rel in REL_PATHS {
+        let path = git_dir.join(rel);
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let hex = content.trim();
+        if hex.len() == 40 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            if let Ok(oid) = hex.parse::<ObjectId>() {
+                queue.push_back(oid);
+            }
+        }
+    }
 }
 
 /// Parse `old_oid` and `new_oid` from one reflog line.

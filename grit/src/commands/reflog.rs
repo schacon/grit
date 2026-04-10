@@ -16,6 +16,7 @@ use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
 use grit_lib::config::ConfigSet;
 use grit_lib::git_date::approx::approxidate_careful;
+use grit_lib::git_date::parse::parse_date_basic;
 use grit_lib::objects::ObjectId;
 use grit_lib::reflog::{
     delete_reflog_entries, expire_reflog_git, load_gc_reflog_expire_config,
@@ -445,6 +446,14 @@ fn parse_reflog_expire_cli(raw: &str, now: i64) -> Result<i64> {
     // (used by `git reflog expire --expire=now` / `--expire=never` in tests such as t3202).
     if s.eq_ignore_ascii_case("never") || s.eq_ignore_ascii_case("now") || s == "0" {
         return Ok(now);
+    }
+    // Git passes `$GIT_COMMITTER_DATE` here (`<unix> <+/-HHMM>`, e.g. `1111100540 -0700`).
+    // Parse as a full date before the plain-integer path so large epoch seconds are not
+    // mistaken for "N days" (t3407-rebase-abort).
+    if s.contains(' ') || s.starts_with('@') {
+        if let Ok((ts, _)) = parse_date_basic(s) {
+            return Ok(ts as i64);
+        }
     }
     if let Ok(v) = s.parse::<i64>() {
         const EPOCH_CUTOFF: i64 = 10_000_000;
