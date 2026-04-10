@@ -1211,7 +1211,7 @@ fn resolve_revision_impl(
                 }
                 Err(e) => return Err(e),
             };
-            return resolve_tree_path(repo, &tree_oid, &clean_path)
+            return resolve_tree_path_rev_parse(repo, &tree_oid, &clean_path)
                 .map_err(|e| diagnose_tree_path_error(repo, before, after, &clean_path, e));
         }
     }
@@ -1388,6 +1388,45 @@ pub fn peel_to_tree(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
 /// [`walk_tree_to_blob_entry`] is blob-only.
 fn resolve_tree_path(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Result<ObjectId> {
     resolve_treeish_path_to_object(repo, *tree_oid, path)
+}
+
+/// Like Git `rev-parse` for `treeish:path`: the leaf may be a blob or a tree OID.
+fn resolve_tree_path_rev_parse(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+    path: &str,
+) -> Result<ObjectId> {
+    let obj = repo.odb.read(tree_oid)?;
+    let entries = crate::objects::parse_tree(&obj.data)?;
+    let components: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
+    if components.is_empty() {
+        return Err(Error::InvalidRef(format!(
+            "path '{path}' does not name an object in tree {tree_oid}"
+        )));
+    }
+
+    let first = components[0];
+    let rest: Vec<&str> = components[1..].to_vec();
+    for entry in entries {
+        let name = String::from_utf8_lossy(&entry.name);
+        if name == first {
+            if rest.is_empty() {
+                if entry.mode == crate::index::MODE_GITLINK {
+                    return Err(Error::InvalidRef(format!(
+                        "'{path}' is a gitlink, not a blob"
+                    )));
+                }
+                return Ok(entry.oid);
+            }
+            if entry.mode != crate::index::MODE_TREE {
+                return Err(Error::ObjectNotFound(path.to_owned()));
+            }
+            return resolve_tree_path_rev_parse(repo, &entry.oid, &rest.join("/"));
+        }
+    }
+    Err(Error::ObjectNotFound(format!(
+        "path '{path}' not found in tree {tree_oid}"
+    )))
 }
 
 /// Resolved blob (non-tree) at `treeish:path` for diff plumbing.

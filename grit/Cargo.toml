@@ -21,6 +21,7 @@ workspace = true
 
 [dependencies]
 libc = { workspace = true }
+nix = { workspace = true }
 grit-lib = { version = "0.1.0", path = "../grit-lib" }
 anyhow.workspace = true
 clap.workspace = true

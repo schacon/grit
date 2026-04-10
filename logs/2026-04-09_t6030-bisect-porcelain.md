@@ -1,20 +1,27 @@
-# t6030-bisect-porcelain work log (2026-04-09)
+# t6030-bisect-porcelain (partial pass)
 
-## Changes
+## Summary
 
-- **Bisect state path**: All `BISECT_*` files use `bisect_state_dir` (common git dir) so linked worktrees share one session; `clean_bisect_state` removes loose `refs/bisect` under common dir.
-- **`bisect start`**: Skip restoring `BISECT_START` checkout from linked worktrees (`commondir` present) so test 8 pathspec-on-main does not move wt1 off `shared`. Use `--ignore-other-worktrees` when restoring saved branch from main repo. Removed premature `is_ancestor` check before state write; clean state on `bisect_auto_next` / `bisect_next_all` failure after writes. `detach_head(..., false)` for bisect checkouts so dirty trees fail like Git.
-- **`bisect replay`**: `cmd_reset` first; parse `git bisect start` args via `parse_bisect_names_line`; replay lines use `replay_bisect_state_line` (`bisect_write` only, no `bisect_auto_next` per line); final `bisect_auto_next`; use `ExplicitExit` for code 2 instead of `process::exit` inside replay.
-- **`bisect run`**: Shell execution via `sh -c` with `sq_quote_argv` command string; `ExplicitExit` for exit 2 when only skips remain (nested runs); stderr messages without extra quotes for t6030 `sed` filters; optional `p` env as `Np` from `hello` line count for `sed -ne $p` scripts.
-- **`git branch`**: List local/remotes via `refs::list_refs` so packed refs appear after `pack-refs` (fixes tests 15–19).
-- **`checkout`**: `switch_branch` respects `--ignore-other-worktrees` (bisect reset to branch checked out elsewhere).
-- **Refs/state**: Bisect refs and `state` bisect detection aligned with common dir where applicable.
+Improved `git bisect` compatibility for harness `t6030-bisect-porcelain.sh`.
 
-## Tests
+### Changes
 
-- Many early t6030 cases pass (through ~38 in direct `bash t6030` runs); full file still hits **FATAL** around **test 39** (`bisect run & skip: cannot tell between 2`) — needs further alignment with Git’s skip/ambiguous-commit listing (`error_if_skipped_commits` / rev walk).
-- `./scripts/run-tests.sh t6030-bisect-porcelain.sh` hits default **120s timeout** (file is large); use higher `--timeout` for harness runs.
+- **BISECT_LOG**: append `git bisect start …` after `bisect_write` lines (avoid truncating appended log).
+- **Terms**: align `check_term_format` with upstream C; fix `bisect terms` paragraph newline.
+- **State commands**: route literal `bad`/`good`/`new`/`old` through `passive_state_cmd`; map synonyms in `bisect_write` for custom terms.
+- **Replay**: tokenize replay lines like Git (`git bisect` + whitespace); handle `terms` subcommand; support CRLF.
+- **Skip ranges**: expand `A..B` via `split_revision_token` + `rev_list` (positive/negative), not single-spec resolve.
+- **bisect run**: redirect stdout to `BISECT_RUN` during state updates (dup2 via `nix`); detect cleared state via missing `BISECT_START`; match Git error for script deleting state.
+- **Main**: bypass clap for `bisect` argv so unknown `--bisect-*` matches Git usage.
+- **rev-parse**: `treeish:path` for rev-parse resolves directory leaves to subtree OID (`resolve_tree_path_rev_parse`); blob-at-path still uses blob-only walk.
+- **Bisect**: recursive `verify_commit_tree_fully_readable` for checkout-mode start/next; `bisect visualize` uses `preprocess_log_argv_for_spawn` and passes user `--` pathspecs after bisect names.
 
-## Note
+### Test result
 
-Reverted accidental `cargo clippy --fix` edits to unrelated commands (`cherry_pick`, `clean`, `sequencer`) before commit.
+`./scripts/run-tests.sh t6030-bisect-porcelain.sh`: **84/96** passing at last run.
+
+Remaining failures (12): path-restricted bisect / parallel skip chain, several `--no-checkout` broken-tree scenarios, ambiguous `bisect run`, skip-only log ordering, `bad HEAD` on parallel branch, custom-term skip, visualize with dash+space path.
+
+## Reason stopped
+
+`blocked` on remaining edge cases (pathspec/OR semantics vs Git for multi-path bisect, no-checkout broken trees, bisect run ambiguity) without further scope in this iteration.
