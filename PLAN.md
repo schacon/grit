@@ -130,7 +130,7 @@ commit → check it off → move on.
 - [ ] `t1002-read-tree-m-u-2way` █░░░░░░░░░░░░░░░░░░░ 2/22 (20 left) — Two way merge with read-tree -m -u $H $M
 
 - [ ] `t1301-shared-repo` █░░░░░░░░░░░░░░░░░░░ 2/22 (20 left) — Test shared repository initialization
-- [ ] `t1011-read-tree-sparse-checkout` ░░░░░░░░░░░░░░░░░░░░ 1/23 (22 left) — sparse checkout tests
+- [x] `t1011-read-tree-sparse-checkout` ████████████████████ 23/23 (0 left) — sparse checkout tests
 
 - [ ] `t0600-reffiles-backend` █████░░░░░░░░░░░░░░░ 9/33 (24 left) — Test reffiles backend
 - [ ] `t1007-hash-object` ███████░░░░░░░░░░░░░ 15/40 (25 left) — git hash-object

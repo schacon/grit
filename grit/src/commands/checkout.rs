@@ -848,6 +848,7 @@ pub fn run(mut args: Args) -> Result<()> {
             args.force,
             args.ours,
             args.theirs,
+            args.ignore_skip_worktree_bits,
             &merge_cli,
         );
     }
@@ -866,6 +867,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     args.force,
                     args.ours,
                     args.theirs,
+                    args.ignore_skip_worktree_bits,
                     &merge_cli,
                 );
             }
@@ -875,6 +877,24 @@ pub fn run(mut args: Args) -> Result<()> {
     // Case: checkout -f (no args) — force reset working tree to HEAD
     if args.force && target.is_none() && paths.is_empty() {
         return force_reset_to_head(&repo);
+    }
+
+    // Bare `git checkout` with no positional arguments: Git's `switch_branches` defaults the
+    // "new" branch to HEAD and merges the working tree (re-applies sparse-checkout when enabled).
+    if paths.is_empty() && !args.detach && target.is_none() {
+        let head = resolve_head(&repo.git_dir)?;
+        let tree_oid = match &head {
+            HeadState::Branch { oid: Some(oid), .. } | HeadState::Detached { oid } => {
+                commit_to_tree(&repo, oid)?
+            }
+            HeadState::Branch { oid: None, .. } | HeadState::Invalid => return Ok(()),
+        };
+        let sparse_on = sparse_checkout_config_enabled(&repo.git_dir);
+        if sparse_on {
+            let recurse = RECURSE_SUBMODULES.with(|r| r.get());
+            switch_to_tree(&repo, &head, &tree_oid, switch_force, recurse)?;
+        }
+        return Ok(());
     }
 
     // Case 3: checkout -- (with no paths and no target) is a no-op
@@ -1153,6 +1173,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 args.force,
                 args.ours,
                 args.theirs,
+                args.ignore_skip_worktree_bits,
                 &merge_cli,
             ) {
                 Ok(()) => Ok(()),
@@ -2525,11 +2546,13 @@ fn switch_to_tree(
         new_index.sort();
     }
 
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut new_index);
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut new_index, false);
 
     // Perform the actual working tree update.
     // When force, write all entries even if OID matches (to restore dirty files).
     checkout_index_to_worktree(repo, &old_index, &new_index, &work_tree, force)?;
+
+    warn_sparse_paths_already_present(repo, &old_index, &new_index, &work_tree);
 
     // Update stat info in the new index to match the freshly checked-out files
     for entry in &mut new_index.entries {
@@ -3210,6 +3233,7 @@ fn checkout_paths(
     force_paths: bool,
     ours: bool,
     theirs: bool,
+    ignore_skip_worktree_bits: bool,
     merge_cli: &CheckoutMergeCli,
 ) -> Result<()> {
     if source.is_some() && merge_mode {
@@ -3235,6 +3259,9 @@ checking out of the index."
     // `GIT_TRACE2` parallel worker count: full index restore may only increment `updated_paths` for
     // paths actually written; nested submodule checkouts strip trace — use index size (t2080).
     let mut trace_parallel_units_from_index = 0usize;
+
+    let skip_for_sparse =
+        |entry: &IndexEntry| -> bool { entry.skip_worktree() && !ignore_skip_worktree_bits };
 
     match source {
         None => {
@@ -3291,6 +3318,9 @@ checking out of the index."
                         if ie.stage() != 0 {
                             continue;
                         }
+                        if skip_for_sparse(ie) {
+                            continue;
+                        }
                         let p = String::from_utf8_lossy(&ie.path).to_string();
                         if glob_matches(&rel, &p) {
                             let w = write_blob_to_worktree(
@@ -3333,14 +3363,16 @@ checking out of the index."
                                     // `checkout -f`: only refresh paths that have stage 0; leave
                                     // purely unmerged paths untouched (t7201).
                                     if let Some(entry) = index.get(pb.as_slice(), 0) {
-                                        checkout_record_path_result(
-                                            write_blob_to_worktree(
-                                                repo, work_tree, &p, &entry.oid, entry.mode,
-                                                &index, false,
-                                            ),
-                                            &mut updated_paths,
-                                            &mut path_errors,
-                                        );
+                                        if !skip_for_sparse(entry) {
+                                            checkout_record_path_result(
+                                                write_blob_to_worktree(
+                                                    repo, work_tree, &p, &entry.oid, entry.mode,
+                                                    &index, false,
+                                                ),
+                                                &mut updated_paths,
+                                                &mut path_errors,
+                                            );
+                                        }
                                     }
                                     continue;
                                 } else if !ours && !theirs && !merge_mode {
@@ -3370,14 +3402,16 @@ checking out of the index."
                                         &mut path_errors,
                                     );
                                 } else if let Some(entry) = index.get(pb.as_slice(), 0) {
-                                    checkout_record_path_result(
-                                        write_blob_to_worktree(
-                                            repo, work_tree, &p, &entry.oid, entry.mode, &index,
-                                            false,
-                                        ),
-                                        &mut updated_paths,
-                                        &mut path_errors,
-                                    );
+                                    if !skip_for_sparse(entry) {
+                                        checkout_record_path_result(
+                                            write_blob_to_worktree(
+                                                repo, work_tree, &p, &entry.oid, entry.mode,
+                                                &index, false,
+                                            ),
+                                            &mut updated_paths,
+                                            &mut path_errors,
+                                        );
+                                    }
                                 }
                             } else if merge_mode {
                                 let stage1 = index.get(pb.as_slice(), 1).cloned();
@@ -3400,14 +3434,16 @@ checking out of the index."
                                         Err(e) => path_errors.push(e),
                                     }
                                 } else if let Some(entry) = index.get(pb.as_slice(), 0) {
-                                    checkout_record_path_result(
-                                        write_blob_to_worktree(
-                                            repo, work_tree, &p, &entry.oid, entry.mode, &index,
-                                            false,
-                                        ),
-                                        &mut updated_paths,
-                                        &mut path_errors,
-                                    );
+                                    if !skip_for_sparse(entry) {
+                                        checkout_record_path_result(
+                                            write_blob_to_worktree(
+                                                repo, work_tree, &p, &entry.oid, entry.mode,
+                                                &index, false,
+                                            ),
+                                            &mut updated_paths,
+                                            &mut path_errors,
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -3416,9 +3452,26 @@ checking out of the index."
                         // toward parallel checkout tests even though nested grit runs strip GIT_TRACE2).
                         let n = index.entries.iter().filter(|e| e.stage() == 0).count();
                         trace_parallel_units_from_index = trace_parallel_units_from_index.max(n);
+                        let mut sparse_skip_paths: Vec<Vec<u8>> = Vec::new();
+                        for ie in &index.entries {
+                            if ie.stage() == 0 && ie.skip_worktree() {
+                                sparse_skip_paths.push(ie.path.clone());
+                            }
+                        }
+                        for pb in sparse_skip_paths {
+                            let p = String::from_utf8_lossy(&pb).into_owned();
+                            let abs = work_tree.join(&p);
+                            if abs.is_file() || abs.is_symlink() {
+                                let _ = std::fs::remove_file(&abs);
+                            }
+                            remove_empty_parent_dirs(work_tree, &abs);
+                        }
                         // Restore ALL index entries
                         for ie in &index.entries {
                             if ie.stage() != 0 {
+                                continue;
+                            }
+                            if skip_for_sparse(ie) {
                                 continue;
                             }
                             let p = String::from_utf8_lossy(&ie.path).to_string();
@@ -3431,15 +3484,17 @@ checking out of the index."
                             );
                         }
                     }
-                } else if let Some(entry) = index.get(path_bytes, 0) {
+                } else if let Some(entry) = index.get(path_bytes, 0).cloned() {
                     // Exact file match
-                    checkout_record_path_result(
-                        write_blob_to_worktree(
-                            repo, work_tree, &rel, &entry.oid, entry.mode, &index, false,
-                        ),
-                        &mut updated_paths,
-                        &mut path_errors,
-                    );
+                    if !skip_for_sparse(&entry) {
+                        checkout_record_path_result(
+                            write_blob_to_worktree(
+                                repo, work_tree, &rel, &entry.oid, entry.mode, &index, false,
+                            ),
+                            &mut updated_paths,
+                            &mut path_errors,
+                        );
+                    }
                 } else if ours || theirs {
                     let stage2 = index.get(path_bytes, 2).cloned();
                     let stage3 = index.get(path_bytes, 3).cloned();
@@ -3499,6 +3554,9 @@ checking out of the index."
                     let mut matched = false;
                     for ie in &index.entries {
                         if ie.stage() != 0 {
+                            continue;
+                        }
+                        if skip_for_sparse(ie) {
                             continue;
                         }
                         let p = String::from_utf8_lossy(&ie.path).to_string();
@@ -4628,6 +4686,64 @@ fn find_recursive(
 // ---------------------------------------------------------------------------
 // Working tree helpers
 // ---------------------------------------------------------------------------
+
+/// After a branch/tree checkout with sparse checkout enabled, warn when paths
+/// transition from non-sparse to sparse in the index but already exist on disk
+/// (Git `WARNING_SPARSE_ORPHANED_NOT_OVERWRITTEN` / unpack-trees).
+fn warn_sparse_paths_already_present(
+    repo: &Repository,
+    old_index: &Index,
+    new_index: &Index,
+    work_tree: &Path,
+) {
+    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let sparse_on = cfg
+        .get("core.sparsecheckout")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !sparse_on {
+        return;
+    }
+
+    if !repo.git_dir.join("info").join("sparse-checkout").is_file() {
+        return;
+    }
+
+    let old_stage0: HashMap<&[u8], &IndexEntry> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| (e.path.as_slice(), e))
+        .collect();
+
+    let mut warned: Vec<String> = Vec::new();
+    for entry in &new_index.entries {
+        if entry.stage() != 0 || entry.skip_worktree() {
+            continue;
+        }
+        let rel = String::from_utf8_lossy(&entry.path);
+        let old_entry = old_stage0.get(entry.path.as_slice());
+        let materializing = old_entry.map_or(true, |e| e.skip_worktree());
+        if !materializing {
+            continue;
+        }
+        let abs = work_tree.join(rel.as_ref());
+        if abs.is_file() || abs.is_symlink() {
+            warned.push(rel.into_owned());
+        }
+    }
+
+    if warned.is_empty() {
+        return;
+    }
+    warned.sort();
+    eprintln!("warning: The following paths were already present and thus not updated despite sparse patterns:");
+    for p in &warned {
+        eprintln!("\t{p}");
+    }
+    eprintln!();
+    eprintln!("After fixing the above paths, you may want to run `git sparse-checkout reapply`.");
+}
 
 /// Update the working tree from old_index to new_index: remove deleted files,
 /// add new files, update modified files.

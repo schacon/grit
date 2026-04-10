@@ -989,7 +989,7 @@ fn merge_unborn(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> 
     let mut index = Index::new();
     index.entries = entries;
     index.sort();
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut index);
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut index, false);
 
     if let Some(ref wt) = repo.work_tree {
         checkout_entries(
@@ -1033,7 +1033,7 @@ fn do_fast_forward(
     let current_index = repo.load_index()?;
     let old_tree = commit_tree(repo, head_oid)?;
     let mut new_index = compose_fast_forward_index(repo, commit.tree, old_tree, &current_index)?;
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut new_index);
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut new_index, false);
     let old_entries = tree_to_map(tree_to_index_entries(repo, &old_tree, "")?);
     let index_dirty_vs_head = diff_index::index_cached_differs_from_head(repo)?;
     let index_already_at_target = index_matches_commit_tree(repo, merge_oid)?;
@@ -1542,7 +1542,7 @@ Aborting"
         None,
         None,
     )?;
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut merge_result.index);
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut merge_result.index, false);
 
     let append_strategy_failed = std::env::var("GIT_MERGE_VERBOSITY")
         .ok()
@@ -2561,7 +2561,7 @@ fn do_octopus_merge(
     final_index.entries = current_tree_entries;
     final_index.sort();
     compose_octopus_final_index(&pre_merge_index, &mut final_index);
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut final_index);
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut final_index, false);
     repo.write_index(&mut final_index)?;
 
     let sparse_on = sparse_checkout_enabled(&repo.git_dir);
@@ -2882,7 +2882,7 @@ fn do_strategy_theirs(
     let mut new_index = Index::new();
     new_index.entries = entries;
     new_index.sort();
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut new_index);
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut new_index, false);
 
     if let Some(ref wt) = repo.work_tree {
         let old_tree = commit_tree(repo, head_oid)?;
@@ -3097,7 +3097,7 @@ fn do_squash(
     let mut new_index = Index::new();
     new_index.entries = entries;
     new_index.sort();
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut new_index);
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut new_index, false);
 
     if let Some(ref wt) = repo.work_tree {
         checkout_entries(
@@ -3175,7 +3175,7 @@ fn merge_abort() -> Result<()> {
     let mut index = Index::new();
     index.entries = entries;
     index.sort();
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut index);
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut index, false);
 
     if let Some(ref wt) = repo.work_tree {
         checkout_entries(

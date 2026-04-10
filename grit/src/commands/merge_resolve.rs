@@ -34,6 +34,7 @@ pub fn run(args: Args) -> Result<()> {
         empty: false,
         super_prefix: None,
         recurse_submodules: false,
+        no_sparse_checkout: false,
         trees: vec![base, head, remote],
     })?;
 
