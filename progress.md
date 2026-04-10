@@ -19,6 +19,7 @@ Task lines in `PLAN.md`: 330 completed (`[x]`), 5 in progress (`[~]`), 436 remai
 
 ## Recently completed
 
+- `t5581-http-curl-verbose` — 2/2 tests pass (test-httpd strips `/error_git_upload_pack` for smart routing like Apache; POST `.../git-upload-pack` returns 500 Intentional Breakage so `GIT_CURL_VERBOSE` clone logs match upstream grep)
 - `t6021-rev-list-exclude-hidden` — 62/62 tests pass (`rev-list`: `--exclude-hidden` + `transfer.hideRefs` / section `hideRefs`, `--exclude` wildmatch, `GIT_NAMESPACE` strip vs `^` full-name rules, per-`--all` exclusion snapshots and `--not` ordering, conflict with `--branches`/`--tags`/`--remotes`, empty walk when all refs hidden)
 - `t0012-help` — 121/121 tests pass (upstream synopsis for `archive` / `remote` / `range-diff` / `rev-parse`; `rev-parse -h` brief three-line help + trailer on stdout; `--list-cmds=builtins` excludes `submodule` and `mergetool` like Git)
 - `t1011-read-tree-sparse-checkout` — 23/23 tests pass (`read-tree --no-sparse-checkout`; empty sparse file excludes all paths; non-cone matching via `ignore::path_in_sparse_checkout`; sparse refresh + checkout skips overwriting dirty out-of-cone files; bare `checkout` reapplies sparse when enabled; path checkout removes skip-worktree paths before restore; sparse "already present" warnings on materialize)

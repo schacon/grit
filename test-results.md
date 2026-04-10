@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-10 (t5581 / GIT_CURL_VERBOSE)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t5581-http-curl-verbose.sh`: 2/2 passed
+
 **2026-04-10 (t0012-help)**
 
 - `cargo test -p grit-lib --lib`: 160 passed

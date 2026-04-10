@@ -215,6 +215,23 @@ struct Request {
     body: Vec<u8>,
 }
 
+/// Strips the upstream test harness prefix `/error_git_upload_pack` so routes match `/smart/...`.
+///
+/// Apache maps `ScriptAliasMatch /error_git_upload_pack/(.*)/git-upload-pack` to `error.sh` only for
+/// that CGI path; other requests under the same URL prefix still use `git-http-backend` via the
+/// `/smart_*` rule. We emulate that by stripping the prefix for routing only.
+fn routing_path(raw_path: &str) -> &str {
+    const PREFIX: &str = "/error_git_upload_pack";
+    let Some(rest) = raw_path.strip_prefix(PREFIX) else {
+        return raw_path;
+    };
+    match rest {
+        "" | "/" => "/",
+        s if s.starts_with('/') => s,
+        _ => raw_path,
+    }
+}
+
 fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
     let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
 
@@ -323,6 +340,7 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
 
     let req = read_request(&mut stream)?;
+    let path = routing_path(&req.path);
 
     if config.proxy_mode {
         let raw_lc = req.raw_target.to_ascii_lowercase();
@@ -365,12 +383,12 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
         }
     );
 
-    let needs_auth = if req.path.starts_with("/auth-push/") {
-        req.path.contains("git-receive-pack") || req.query.contains("service=git-receive-pack")
-    } else if req.path.starts_with("/auth-fetch/") {
-        req.path.contains("git-upload-pack") && req.method == "POST"
+    let needs_auth = if path.starts_with("/auth-push/") {
+        path.contains("git-receive-pack") || req.query.contains("service=git-receive-pack")
+    } else if path.starts_with("/auth-fetch/") {
+        path.contains("git-upload-pack") && req.method == "POST"
     } else {
-        req.path.starts_with("/auth/")
+        path.starts_with("/auth/")
     };
     if needs_auth {
         if let (Some(ref user), Some(ref pass)) = (&config.auth_user, &config.auth_pass) {
@@ -387,9 +405,24 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
         }
     }
 
+    // Matches Apache `ScriptAliasMatch /error_git_upload_pack/(.*)/git-upload-pack error.sh/`.
+    if req.path.starts_with("/error_git_upload_pack/")
+        && path.ends_with("/git-upload-pack")
+        && req.method == "POST"
+    {
+        log_access(config, &req.method, &req.path, &req.query, 500);
+        return send_response(
+            &mut stream,
+            500,
+            "Intentional Breakage",
+            &[("Content-Type", "text/plain")],
+            b"this is the error message\n",
+        );
+    }
+
     // Route: /auth/smart/, /auth-push/smart/, /auth-fetch/smart/
     for pfx in &["/auth/smart", "/auth-push/smart", "/auth-fetch/smart"] {
-        if req.path.starts_with(&format!("{}/", pfx)) {
+        if path.starts_with(&format!("{}/", pfx)) {
             let r = handle_smart_http_with_path(&mut stream, &req, config, pfx);
             log_access(
                 config,
@@ -402,7 +435,7 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
         }
     }
     // Route: /smart/<repo> → git-http-backend CGI
-    if req.path.starts_with("/smart/") {
+    if path.starts_with("/smart/") {
         let r = handle_smart_http(&mut stream, &req, config);
         log_access(
             config,
@@ -415,19 +448,19 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
     }
 
     // Route: /dumb/<path> → static file serving
-    if req.path.starts_with("/dumb/") {
-        let rel_path = &req.path["/dumb/".len()..];
+    if path.starts_with("/dumb/") {
+        let rel_path = &path["/dumb/".len()..];
         return serve_static_file(&mut stream, config, rel_path);
     }
 
     // Route: /auth/dumb/<path> → auth + static file (already checked auth above)
-    if req.path.starts_with("/auth/dumb/") {
-        let rel_path = &req.path["/auth/dumb/".len()..];
+    if path.starts_with("/auth/dumb/") {
+        let rel_path = &path["/auth/dumb/".len()..];
         return serve_static_file(&mut stream, config, rel_path);
     }
 
     // Fallback: try serving from document root directly
-    let rel_path = req.path.trim_start_matches('/');
+    let rel_path = path.trim_start_matches('/');
     if !rel_path.is_empty() {
         let full_path = config.root.join(rel_path);
         if full_path.exists() && full_path.is_file() {
@@ -735,7 +768,8 @@ fn handle_smart_http_with_path(
     config: &Config,
     prefix: &str,
 ) -> Result<(), String> {
-    let smart_path = &req.path[prefix.len()..]; // e.g., /repo.git/info/refs
+    let path = routing_path(&req.path);
+    let smart_path = &path[prefix.len()..]; // e.g., /repo.git/info/refs
 
     let path_translated = format!("{}{}", config.root.display(), smart_path);
 
