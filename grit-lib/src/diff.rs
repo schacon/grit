@@ -15,7 +15,8 @@
 //!
 //! ## Content diff
 //!
-//! Line-level diffing uses the Myers algorithm via the `similar` crate.
+//! Line-level diffing uses the `similar` crate (Myers, patience, minimal) and,
+//! for Git's `histogram` algorithm, `imara-diff` for output compatible with upstream Git.
 //! Output formats: unified patch, raw (`:old-mode new-mode ...`), stat,
 //! numstat.
 
@@ -28,6 +29,113 @@ use crate::index::{Index, IndexEntry};
 use crate::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
 use crate::userdiff::FuncnameMatcher;
+
+/// Splits imara-diff unified body (concatenated hunks) into per-hunk slices for post-processing.
+fn imara_unified_hunk_slices(body: &str) -> Vec<&str> {
+    let mut starts: Vec<usize> = Vec::new();
+    if body.starts_with("@@") {
+        starts.push(0);
+    }
+    for (idx, _) in body.match_indices("\n@@ ") {
+        starts.push(idx + 1);
+    }
+    starts.push(body.len());
+    starts.windows(2).map(|w| &body[w[0]..w[1]]).collect()
+}
+
+/// Effective context length for imara's hunk merger so it approximates Git's
+/// `2 * U + inter_hunk_context` unchanged-line merge threshold.
+fn imara_context_len_for_git(context_lines: usize, inter_hunk_context: usize) -> u32 {
+    (2usize
+        .saturating_mul(context_lines)
+        .saturating_add(inter_hunk_context))
+    .div_ceil(2)
+    .min(u32::MAX as usize) as u32
+}
+
+fn histogram_unified_body_raw(
+    old_content: &str,
+    new_content: &str,
+    context_lines: usize,
+    inter_hunk_context: usize,
+) -> String {
+    use imara_diff::{Algorithm, BasicLineDiffPrinter, Diff, InternedInput, UnifiedDiffConfig};
+
+    let input = InternedInput::new(old_content, new_content);
+    let mut diff = Diff::compute(Algorithm::Histogram, &input);
+    diff.postprocess_lines(&input);
+    let mut config = UnifiedDiffConfig::default();
+    config.context_len(imara_context_len_for_git(context_lines, inter_hunk_context));
+    let printer = BasicLineDiffPrinter(&input.interner);
+    diff.unified_diff(&printer, config, &input).to_string()
+}
+
+/// Unified diff hunks for Git's histogram algorithm (no `---` / `+++` lines).
+///
+/// Used by `--no-index` when whitespace normalization is off so the patch matches upstream Git.
+#[must_use]
+pub fn unified_diff_histogram_hunks_only(
+    old_content: &str,
+    new_content: &str,
+    context_lines: usize,
+    inter_hunk_context: usize,
+) -> String {
+    histogram_unified_body_raw(old_content, new_content, context_lines, inter_hunk_context)
+}
+
+/// Full unified diff (`---` / `+++` / hunks) using Git's histogram algorithm.
+#[must_use]
+pub fn unified_diff_histogram_with_prefix_and_funcname(
+    old_content: &str,
+    new_content: &str,
+    old_path: &str,
+    new_path: &str,
+    context_lines: usize,
+    inter_hunk_context: usize,
+    src_prefix: &str,
+    dst_prefix: &str,
+    funcname_matcher: Option<&FuncnameMatcher>,
+) -> String {
+    let body =
+        histogram_unified_body_raw(old_content, new_content, context_lines, inter_hunk_context);
+
+    let mut output = String::new();
+    if old_path == "/dev/null" {
+        output.push_str("--- /dev/null\n");
+    } else {
+        output.push_str(&format!("--- {src_prefix}{old_path}\n"));
+    }
+    if new_path == "/dev/null" {
+        output.push_str("+++ /dev/null\n");
+    } else {
+        output.push_str(&format!("+++ {dst_prefix}{new_path}\n"));
+    }
+
+    let old_lines: Vec<&str> = old_content.lines().collect();
+    for hunk_str in imara_unified_hunk_slices(&body) {
+        if hunk_str.is_empty() {
+            continue;
+        }
+        if let Some(first_newline) = hunk_str.find('\n') {
+            let header_line = &hunk_str[..first_newline];
+            let rest = &hunk_str[first_newline..];
+            if let Some(func_ctx) =
+                extract_function_context(header_line, &old_lines, funcname_matcher)
+            {
+                output.push_str(header_line);
+                output.push(' ');
+                output.push_str(&func_ctx);
+                output.push_str(rest);
+            } else {
+                output.push_str(hunk_str);
+            }
+        } else {
+            output.push_str(hunk_str);
+        }
+    }
+
+    output
+}
 
 /// The kind of change between two sides of a diff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1984,6 +2092,7 @@ pub fn unified_diff_with_prefix_and_funcname(
         dst_prefix,
         funcname_matcher,
         similar::Algorithm::Myers,
+        false,
     )
 }
 
@@ -2001,7 +2110,22 @@ pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
     dst_prefix: &str,
     funcname_matcher: Option<&FuncnameMatcher>,
     algorithm: similar::Algorithm,
+    use_git_histogram: bool,
 ) -> String {
+    if use_git_histogram {
+        return unified_diff_histogram_with_prefix_and_funcname(
+            old_content,
+            new_content,
+            old_path,
+            new_path,
+            context_lines,
+            inter_hunk_context,
+            src_prefix,
+            dst_prefix,
+            funcname_matcher,
+        );
+    }
+
     use similar::{group_diff_ops, udiff::UnifiedDiffHunk, TextDiff};
 
     let diff = TextDiff::configure()
@@ -2071,7 +2195,8 @@ pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
 /// This produces diffs where the anchored text stays as context and surrounding
 /// lines are shown as additions/removals.
 ///
-/// Segment diffs use `algorithm` (Git maps `--histogram` to patience-style line diff in our stack).
+/// Segment diffs use `algorithm`. When `use_git_histogram` is true, histogram uses imara-diff
+/// (Git-compatible); otherwise `algorithm` is passed to `similar`.
 pub fn anchored_unified_diff(
     old_content: &str,
     new_content: &str,
@@ -2080,6 +2205,7 @@ pub fn anchored_unified_diff(
     context_lines: usize,
     anchors: &[String],
     algorithm: similar::Algorithm,
+    use_git_histogram: bool,
 ) -> String {
     use similar::TextDiff;
 
@@ -2127,6 +2253,7 @@ pub fn anchored_unified_diff(
             "b/",
             None,
             algorithm,
+            use_git_histogram,
         );
     }
 
@@ -2461,7 +2588,7 @@ pub fn format_stat_line_width(
 ///
 /// Returns `(insertions, deletions)`.
 pub fn count_changes(old_content: &str, new_content: &str) -> (usize, usize) {
-    count_changes_with_algorithm(old_content, new_content, similar::Algorithm::Myers)
+    count_changes_with_algorithm(old_content, new_content, similar::Algorithm::Myers, false)
 }
 
 /// Count insertions and deletions using the given line-diff algorithm.
@@ -2473,7 +2600,16 @@ pub fn count_changes_with_algorithm(
     old_content: &str,
     new_content: &str,
     algorithm: similar::Algorithm,
+    use_git_histogram: bool,
 ) -> (usize, usize) {
+    if use_git_histogram {
+        use imara_diff::{Algorithm, Diff, InternedInput};
+        let input = InternedInput::new(old_content, new_content);
+        let mut d = Diff::compute(Algorithm::Histogram, &input);
+        d.postprocess_lines(&input);
+        return (d.count_additions() as usize, d.count_removals() as usize);
+    }
+
     use similar::{ChangeTag, TextDiff};
 
     let diff = TextDiff::configure()

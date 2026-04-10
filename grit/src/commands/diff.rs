@@ -24,8 +24,8 @@ use grit_lib::crlf::{get_file_attrs, parse_gitattributes_content, DiffAttr};
 use grit_lib::diff::{
     anchored_unified_diff, count_changes, count_changes_with_algorithm, count_git_lines,
     detect_renames, diff_index_to_tree, diff_index_to_worktree, diff_tree_to_worktree, diff_trees,
-    diffcore_count_changes, empty_blob_oid, rewrite_dissimilarity_index_percent,
-    should_break_rewrite_for_stat, unified_diff,
+    diffcore_count_changes, empty_blob_oid, format_stat_line, rewrite_dissimilarity_index_percent,
+    should_break_rewrite_for_stat, unified_diff, unified_diff_histogram_hunks_only,
     unified_diff_with_prefix_and_funcname_and_algorithm, zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
@@ -63,40 +63,75 @@ struct DiffAlgoContext {
     ignore_case_attrs: bool,
 }
 
-/// Map a Git `diff.algorithm` / driver algorithm string to a `similar` line algorithm.
-fn match_grit_diff_algorithm_name(name: &str) -> Option<similar::Algorithm> {
+/// Map a Git `diff.algorithm` / driver algorithm string to a line diff backend.
+///
+/// Histogram uses `imara-diff` for Git-compatible hunks; patience/minimal/myers use `similar`.
+fn match_grit_diff_algorithm_name(name: &str) -> Option<(similar::Algorithm, bool)> {
     match name.to_ascii_lowercase().as_str() {
-        "myers" | "default" => Some(similar::Algorithm::Myers),
-        "histogram" | "patience" => Some(similar::Algorithm::Patience),
-        "minimal" => Some(similar::Algorithm::Lcs),
+        "myers" | "default" => Some((similar::Algorithm::Myers, false)),
+        "histogram" => Some((similar::Algorithm::Patience, true)),
+        "patience" => Some((similar::Algorithm::Patience, false)),
+        "minimal" => Some((similar::Algorithm::Lcs, false)),
         _ => None,
     }
 }
 
-fn diff_algo_from_config_default(cfg: &grit_lib::config::ConfigSet) -> similar::Algorithm {
+fn diff_algo_from_config_default(cfg: &grit_lib::config::ConfigSet) -> (similar::Algorithm, bool) {
     cfg.get("diff.algorithm")
         .as_deref()
         .and_then(match_grit_diff_algorithm_name)
-        .unwrap_or(similar::Algorithm::Myers)
+        .unwrap_or((similar::Algorithm::Myers, false))
 }
 
 /// Last algorithm-related flag on the argv wins (matches Git).
-fn parse_cli_diff_algorithm_from_argv() -> Option<similar::Algorithm> {
+#[derive(Clone, Copy, Debug, Default)]
+struct CliDiffAlgo {
+    similar: similar::Algorithm,
+    histogram_git: bool,
+}
+
+fn parse_cli_diff_algorithm_from_argv() -> Option<CliDiffAlgo> {
     let argv: Vec<String> = std::env::args().collect();
-    let mut last = None;
+    let mut last: Option<CliDiffAlgo> = None;
     let mut i = 0usize;
     while i < argv.len() {
         let a = argv[i].as_str();
         match a {
-            "--histogram" | "--patience" => last = Some(similar::Algorithm::Patience),
-            "--minimal" => last = Some(similar::Algorithm::Lcs),
+            "--histogram" => {
+                last = Some(CliDiffAlgo {
+                    similar: similar::Algorithm::Patience,
+                    histogram_git: true,
+                });
+            }
+            "--patience" => {
+                last = Some(CliDiffAlgo {
+                    similar: similar::Algorithm::Patience,
+                    histogram_git: false,
+                });
+            }
+            "--minimal" => {
+                last = Some(CliDiffAlgo {
+                    similar: similar::Algorithm::Lcs,
+                    histogram_git: false,
+                });
+            }
             s if s.starts_with("--diff-algorithm=") => {
                 let v = s.strip_prefix("--diff-algorithm=").unwrap_or("");
-                last = match_grit_diff_algorithm_name(v);
+                if let Some((algo, hg)) = match_grit_diff_algorithm_name(v) {
+                    last = Some(CliDiffAlgo {
+                        similar: algo,
+                        histogram_git: hg,
+                    });
+                }
             }
             "--diff-algorithm" => {
                 if let Some(v) = argv.get(i + 1) {
-                    last = match_grit_diff_algorithm_name(v);
+                    if let Some((algo, hg)) = match_grit_diff_algorithm_name(v) {
+                        last = Some(CliDiffAlgo {
+                            similar: algo,
+                            histogram_git: hg,
+                        });
+                    }
                     i += 1;
                 }
             }
@@ -109,11 +144,11 @@ fn parse_cli_diff_algorithm_from_argv() -> Option<similar::Algorithm> {
 
 fn diff_algorithm_for_path(
     rel_path: &str,
-    cli_override: Option<similar::Algorithm>,
+    cli_override: Option<CliDiffAlgo>,
     ctx: &DiffAlgoContext,
-) -> similar::Algorithm {
-    if let Some(a) = cli_override {
-        return a;
+) -> (similar::Algorithm, bool) {
+    if let Some(c) = cli_override {
+        return (c.similar, c.histogram_git);
     }
     let map = collect_attrs_for_path(
         &ctx.attrs.rules,
@@ -123,8 +158,8 @@ fn diff_algorithm_for_path(
     );
     if let Some(AttrValue::Value(driver)) = map.get("diff") {
         if let Some(algo_key) = ctx.config.get(&format!("diff.{driver}.algorithm")) {
-            if let Some(a) = match_grit_diff_algorithm_name(&algo_key) {
-                return a;
+            if let Some((a, hg)) = match_grit_diff_algorithm_name(&algo_key) {
+                return (a, hg);
             }
         }
     }
@@ -374,8 +409,10 @@ fn no_index_unified_patch_body(
     old_path: &str,
     new_path: &str,
     context_lines: usize,
+    inter_hunk_context: usize,
     mode: &WhitespaceMode,
     algorithm: similar::Algorithm,
+    use_git_histogram: bool,
 ) -> String {
     let old_slots = no_index_build_line_slots(old_bytes, mode);
     let new_slots = no_index_build_line_slots(new_bytes, mode);
@@ -396,6 +433,32 @@ fn no_index_unified_patch_body(
     let new_compare_owned: Vec<String> = new_slots.iter().map(|s| line_key(&s.compare)).collect();
     let old_compare: Vec<&str> = old_compare_owned.iter().map(|s| s.as_str()).collect();
     let new_compare: Vec<&str> = new_compare_owned.iter().map(|s| s.as_str()).collect();
+
+    if use_git_histogram && !mode.any() {
+        let old_str = String::from_utf8_lossy(old_bytes);
+        let new_str = String::from_utf8_lossy(new_bytes);
+        let hunks = unified_diff_histogram_hunks_only(
+            old_str.as_ref(),
+            new_str.as_ref(),
+            context_lines,
+            inter_hunk_context,
+        );
+        let old_label = if old_path == "/dev/null" {
+            "--- /dev/null\n".to_string()
+        } else {
+            format!("--- a/{old_path}\n")
+        };
+        let new_label = if new_path == "/dev/null" {
+            "+++ /dev/null\n".to_string()
+        } else {
+            format!("+++ b/{new_path}\n")
+        };
+        let mut output = String::new();
+        output.push_str(&old_label);
+        output.push_str(&new_label);
+        output.push_str(&hunks);
+        return output;
+    }
 
     let diff = TextDiff::configure()
         .algorithm(algorithm)
@@ -464,10 +527,10 @@ fn no_index_unified_patch_body(
 }
 
 /// Resolve line-diff algorithm for `git diff` from flags and argv order (last wins).
-fn effective_line_diff_algorithm(args: &Args) -> similar::Algorithm {
+fn effective_line_diff_algorithm(args: &Args) -> (similar::Algorithm, bool) {
     let raw: Vec<String> = std::env::args().collect();
-    let mut best: Option<(usize, similar::Algorithm)> = None;
-    let mut record = |pos: Option<usize>, algo: similar::Algorithm| {
+    let mut best: Option<(usize, CliDiffAlgo)> = None;
+    let mut record = |pos: Option<usize>, algo: CliDiffAlgo| {
         if let Some(p) = pos {
             if best.is_none_or(|(bp, _)| p >= bp) {
                 best = Some((p, algo));
@@ -476,28 +539,55 @@ fn effective_line_diff_algorithm(args: &Args) -> similar::Algorithm {
     };
     record(
         raw.iter().rposition(|a| a == "--histogram"),
-        similar::Algorithm::Patience,
+        CliDiffAlgo {
+            similar: similar::Algorithm::Patience,
+            histogram_git: true,
+        },
     );
     record(
         raw.iter().rposition(|a| a == "--patience"),
-        similar::Algorithm::Patience,
+        CliDiffAlgo {
+            similar: similar::Algorithm::Patience,
+            histogram_git: false,
+        },
     );
     record(
         raw.iter().rposition(|a| a == "--minimal"),
-        similar::Algorithm::Myers,
+        CliDiffAlgo {
+            similar: similar::Algorithm::Lcs,
+            histogram_git: false,
+        },
     );
     if let Some(name) = args.diff_algorithm.as_deref() {
         let pos = raw
             .iter()
             .rposition(|a| a == "--diff-algorithm" || a.starts_with("--diff-algorithm="));
-        let algo = match name.to_lowercase().as_str() {
-            "histogram" | "patience" => similar::Algorithm::Patience,
-            "minimal" | "myers" => similar::Algorithm::Myers,
-            _ => similar::Algorithm::Myers,
+        let c = match name.to_lowercase().as_str() {
+            "histogram" => CliDiffAlgo {
+                similar: similar::Algorithm::Patience,
+                histogram_git: true,
+            },
+            "patience" => CliDiffAlgo {
+                similar: similar::Algorithm::Patience,
+                histogram_git: false,
+            },
+            "minimal" => CliDiffAlgo {
+                similar: similar::Algorithm::Lcs,
+                histogram_git: false,
+            },
+            "myers" | "default" => CliDiffAlgo {
+                similar: similar::Algorithm::Myers,
+                histogram_git: false,
+            },
+            _ => CliDiffAlgo {
+                similar: similar::Algorithm::Myers,
+                histogram_git: false,
+            },
         };
-        record(pos, algo);
+        record(pos, c);
     }
-    best.map(|(_, a)| a).unwrap_or(similar::Algorithm::Myers)
+    best.map(|(_, a)| (a.similar, a.histogram_git))
+        .unwrap_or((similar::Algorithm::Myers, false))
 }
 
 /// Short blob id for `index` lines (matches `git rev-parse --short` default length).
@@ -2331,7 +2421,7 @@ fn run_diff_blob_vs_file(
     merged_attrs: Arc<grit_lib::attributes::ParsedGitAttributes>,
     diff_config: grit_lib::config::ConfigSet,
     ignore_case_attrs: bool,
-    diff_algo_cli: Option<similar::Algorithm>,
+    diff_algo_cli: Option<CliDiffAlgo>,
     cwd: &Path,
     quote_path_fully: bool,
 ) -> Result<()> {
@@ -2792,6 +2882,15 @@ fn run_no_index(args: Args) -> Result<()> {
         std::process::exit(1);
     }
     let context_lines = args.unified.unwrap_or(3);
+    let inter_hunk_context = args
+        .inter_hunk_context
+        .or_else(|| {
+            grit_lib::config::ConfigSet::load(None, true)
+                .ok()
+                .and_then(|cfg| cfg.get("diff.interhunkcontext"))
+                .and_then(|s| s.parse().ok())
+        })
+        .unwrap_or(0);
     let patch_abbrev = if args.full_index {
         40usize
     } else if let Some(n) = args.abbrev {
@@ -2803,7 +2902,7 @@ fn run_no_index(args: Args) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    let algo_for_paths = |rel_a: &str, rel_b: &str| -> similar::Algorithm {
+    let algo_for_paths = |rel_a: &str, rel_b: &str| -> (similar::Algorithm, bool) {
         let a = diff_algorithm_for_path(rel_a, diff_algo_cli, &diff_algo_ctx);
         let b = diff_algorithm_for_path(rel_b, diff_algo_cli, &diff_algo_ctx);
         if a == b {
@@ -2824,23 +2923,23 @@ fn run_no_index(args: Args) -> Result<()> {
     }
 
     if args.numstat {
-        let algo = algo_for_paths(path_a_str.as_str(), path_b_str.as_str());
-        let (adds, dels) = count_changes_with_algorithm(&text_a, &text_b, algo);
+        let (algo, hist) = algo_for_paths(path_a_str.as_str(), path_b_str.as_str());
+        let (adds, dels) = count_changes_with_algorithm(&text_a, &text_b, algo, hist);
         writeln!(out, "{}\t{}\t{}", adds, dels, path_b_str)?;
         std::process::exit(1);
     }
 
     if args.stat.is_some() || args.shortstat {
-        let algo = algo_for_paths(path_a_str.as_str(), path_b_str.as_str());
-        let (adds, dels) = count_changes_with_algorithm(&text_a, &text_b, algo);
+        let (algo, hist) = algo_for_paths(path_a_str.as_str(), path_b_str.as_str());
+        let (adds, dels) = count_changes_with_algorithm(&text_a, &text_b, algo, hist);
         if args.stat.is_some() {
             let display = if path_a_str != path_b_str {
                 format!("{path_a_str} => {path_b_str}")
             } else {
                 path_a_str.clone()
             };
-            let total = adds + dels;
-            writeln!(out, " {} | {}", display, total)?;
+            let stat_line = format_stat_line(&display, adds, dels, display.len());
+            writeln!(out, "{stat_line}")?;
         }
         let mut summary = " 1 file changed".to_string();
         if adds > 0 {
@@ -2879,8 +2978,9 @@ fn run_no_index(args: Args) -> Result<()> {
         false
     };
 
-    let line_algo_anchored = effective_line_diff_algorithm(&args);
-    let algo_no_index = parse_cli_diff_algorithm_from_argv()
+    let (line_algo_anchored, line_hist_anchored) = effective_line_diff_algorithm(&args);
+    let (algo_sim, algo_hist) = parse_cli_diff_algorithm_from_argv()
+        .map(|c| (c.similar, c.histogram_git))
         .unwrap_or_else(|| algo_for_paths(path_a_str.as_str(), path_b_str.as_str()));
 
     let diff_body = if use_anchored {
@@ -2892,6 +2992,7 @@ fn run_no_index(args: Args) -> Result<()> {
             context_lines,
             &args.anchored,
             line_algo_anchored,
+            line_hist_anchored,
         )
     } else {
         no_index_unified_patch_body(
@@ -2900,8 +3001,10 @@ fn run_no_index(args: Args) -> Result<()> {
             paths[0].as_str(),
             paths[1].as_str(),
             context_lines,
+            inter_hunk_context,
             &ws_mode,
-            algo_no_index,
+            algo_sim,
+            algo_hist,
         )
     };
 
@@ -3132,7 +3235,8 @@ fn run_no_index_dirs(args: Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
             writeln!(out, "old mode {mode_a}")?;
             writeln!(out, "new mode {mode_b}")?;
         }
-        let algo = diff_algorithm_for_path(rel.as_str(), diff_algo_cli, &diff_algo_ctx);
+        let (algo, use_git_histogram) =
+            diff_algorithm_for_path(rel.as_str(), diff_algo_cli, &diff_algo_ctx);
         let func_matcher = matcher_for_path_parsed(
             diff_algo_ctx.config.as_ref(),
             &diff_algo_ctx.attrs.rules,
@@ -3152,6 +3256,7 @@ fn run_no_index_dirs(args: Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
             "b/",
             func_matcher.as_ref(),
             algo,
+            use_git_histogram,
         );
         write!(out, "{patch}")?;
     }
@@ -4253,7 +4358,7 @@ fn stat_ins_del_for_entry(
     line_ignore: Option<&[Regex]>,
     ws_mode: &WhitespaceMode,
     algo_ctx: &DiffAlgoContext,
-    algo_cli: Option<similar::Algorithm>,
+    algo_cli: Option<CliDiffAlgo>,
 ) -> (usize, usize) {
     let old_raw = read_content_raw(odb, &entry.old_oid);
     let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, entry.path());
@@ -4277,8 +4382,8 @@ fn stat_ins_del_for_entry(
         old_content = ws_mode.normalize(&old_content);
         new_content = ws_mode.normalize(&new_content);
     }
-    let algo = diff_algorithm_for_path(entry.path(), algo_cli, algo_ctx);
-    count_changes_with_algorithm(&old_content, &new_content, algo)
+    let (algo, hist) = diff_algorithm_for_path(entry.path(), algo_cli, algo_ctx);
+    count_changes_with_algorithm(&old_content, &new_content, algo, hist)
 }
 
 /// Write a GIT binary patch block (used by --binary).
@@ -4625,7 +4730,7 @@ fn write_typechange_blob_symlink_split_patch(
     inter_hunk_context: usize,
     path_for_attrs: &str,
     algo_ctx: &DiffAlgoContext,
-    algo_cli: Option<similar::Algorithm>,
+    algo_cli: Option<CliDiffAlgo>,
 ) -> Result<()> {
     let path = entry.old_path.clone().or_else(|| entry.new_path.clone());
     let del = DiffEntry {
@@ -4704,7 +4809,7 @@ fn write_typechange_symlink_blob_split_patch(
     inter_hunk_context: usize,
     path_for_attrs: &str,
     algo_ctx: &DiffAlgoContext,
-    algo_cli: Option<similar::Algorithm>,
+    algo_cli: Option<CliDiffAlgo>,
 ) -> Result<()> {
     let path = entry.old_path.clone().or_else(|| entry.new_path.clone());
     let del = DiffEntry {
@@ -4780,11 +4885,11 @@ fn write_blob_to_blob_patch_fragment(
     dst_prefix: &str,
     path_for_attrs: &str,
     algo_ctx: &DiffAlgoContext,
-    algo_cli: Option<similar::Algorithm>,
+    algo_cli: Option<CliDiffAlgo>,
     use_color: bool,
     suppress_incomplete_highlight_after_plus: bool,
 ) -> Result<()> {
-    let algo = diff_algorithm_for_path(path_for_attrs, algo_cli, algo_ctx);
+    let (algo, use_git_histogram) = diff_algorithm_for_path(path_for_attrs, algo_cli, algo_ctx);
     let func_matcher = matcher_for_path_parsed(
         algo_ctx.config.as_ref(),
         &algo_ctx.attrs.rules,
@@ -4804,6 +4909,7 @@ fn write_blob_to_blob_patch_fragment(
         dst_prefix,
         func_matcher.as_ref(),
         algo,
+        use_git_histogram,
     );
     let patch = if suppress_blank_empty {
         strip_blank_context_trailing_space(&patch)
@@ -4842,7 +4948,7 @@ fn write_patch_with_prefix(
     submodule_ignore: SubmoduleIgnoreFlags,
     line_ignore: Option<&[Regex]>,
     algo_ctx: &DiffAlgoContext,
-    algo_cli: Option<similar::Algorithm>,
+    algo_cli: Option<CliDiffAlgo>,
     cached: bool,
     no_ext_diff: bool,
     external_diff_cmd: Option<&str>,
@@ -5205,7 +5311,8 @@ fn write_patch_with_prefix(
                 write!(out, "{patch}")?;
             }
         } else {
-            let algo = diff_algorithm_for_path(path_for_attrs.as_str(), algo_cli, algo_ctx);
+            let (algo, use_git_histogram) =
+                diff_algorithm_for_path(path_for_attrs.as_str(), algo_cli, algo_ctx);
             let func_matcher = matcher_for_path_parsed(
                 algo_ctx.config.as_ref(),
                 &algo_ctx.attrs.rules,
@@ -5225,6 +5332,7 @@ fn write_patch_with_prefix(
                 dst_prefix,
                 func_matcher.as_ref(),
                 algo,
+                use_git_histogram,
             );
             let patch = if suppress_blank_empty {
                 strip_blank_context_trailing_space(&patch)
@@ -5467,7 +5575,7 @@ fn write_shortstat(
     line_ignore: Option<&[Regex]>,
     ws_mode: &WhitespaceMode,
     algo_ctx: &DiffAlgoContext,
-    algo_cli: Option<similar::Algorithm>,
+    algo_cli: Option<CliDiffAlgo>,
 ) -> Result<()> {
     if entries.is_empty() {
         return Ok(());
@@ -5548,7 +5656,7 @@ fn write_stat(
     ws_mode: &WhitespaceMode,
     quote_path_fully: bool,
     algo_ctx: &DiffAlgoContext,
-    algo_cli: Option<similar::Algorithm>,
+    algo_cli: Option<CliDiffAlgo>,
 ) -> Result<()> {
     if entries.is_empty() {
         return Ok(());
@@ -5665,7 +5773,7 @@ fn write_numstat(
     line_ignore: Option<&[Regex]>,
     ws_mode: &WhitespaceMode,
     algo_ctx: &DiffAlgoContext,
-    algo_cli: Option<similar::Algorithm>,
+    algo_cli: Option<CliDiffAlgo>,
 ) -> Result<()> {
     for entry in entries {
         let (ins, del) = stat_ins_del_for_entry(
@@ -6146,6 +6254,7 @@ pub(crate) fn check_whitespace_errors(
             "",
             None,
             similar::Algorithm::Myers,
+            false,
         );
 
         let patch_lines: Vec<&str> = patch.lines().collect();

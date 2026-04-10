@@ -1243,21 +1243,36 @@ fn normalize_path_components(path: PathBuf) -> PathBuf {
     out
 }
 
-fn normalize_colon_path_for_tree(repo: &Repository, raw_path: &str) -> Result<String> {
-    // In a bare repo, `<rev>:<path>` is always relative to that revision's tree root (Git does not
-    // join against a work tree). `test-tool find-pack` uses `HEAD:file` from `git -C bare.git`.
-    if repo.work_tree.is_none() {
-        let p = raw_path.trim_start_matches("./");
-        if p.is_empty() {
-            return Ok(String::new());
-        }
-        if p.starts_with("../") || p.contains("/../") {
-            return Err(Error::InvalidRef("path outside repository".to_owned()));
-        }
-        return Ok(p.replace('\\', "/").trim_end_matches('/').to_owned());
+/// Normalize `treeish:path` path segment for tree lookup when there is no work tree (bare repo).
+///
+/// Paths are interpreted relative to the repository root; `./` / `../` / `.` still require a work
+/// tree in Git and are rejected here.
+fn normalize_colon_path_for_bare_tree(raw_path: &str) -> Result<String> {
+    let cwd_relative = raw_path.starts_with("./") || raw_path.starts_with("../") || raw_path == ".";
+    if cwd_relative {
+        return Err(Error::InvalidRef(
+            "relative path syntax can't be used outside working tree".to_owned(),
+        ));
     }
+    let s = raw_path.trim_start_matches('/');
+    let mut stack: Vec<&str> = Vec::new();
+    for part in s.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            let _ = stack.pop();
+        } else {
+            stack.push(part);
+        }
+    }
+    Ok(stack.join("/"))
+}
 
-    let work_tree = repo.work_tree.as_ref().expect("work tree set for non-bare");
+fn normalize_colon_path_for_tree(repo: &Repository, raw_path: &str) -> Result<String> {
+    let Some(work_tree) = repo.work_tree.as_ref() else {
+        return normalize_colon_path_for_bare_tree(raw_path);
+    };
 
     let cwd = std::env::current_dir().map_err(Error::Io)?;
     let wt_canon = work_tree.canonicalize().map_err(Error::Io)?;
