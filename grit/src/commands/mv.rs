@@ -14,6 +14,7 @@ use grit_lib::repo::Repository;
 use grit_lib::sparse_checkout::{
     parse_sparse_checkout_file, path_in_cone_mode_sparse_checkout, path_in_sparse_checkout_patterns,
 };
+use grit_lib::submodule_gitdir::submodule_modules_git_dir;
 use grit_lib::unicode_normalization::precompose_utf8_path;
 use std::collections::HashSet;
 use std::fs;
@@ -577,10 +578,19 @@ pub fn run(args: Args) -> Result<()> {
         if !row.index_only {
             if let Some(e) = index.get(row.src.as_bytes(), 0) {
                 if e.mode == MODE_GITLINK {
+                    let gm = work_tree.join(".gitmodules");
+                    let old_name = if gm.is_file() {
+                        let c = fs::read_to_string(&gm)?;
+                        submodule_logical_name_for_path_in_gitmodules(&c, &row.src)?
+                    } else {
+                        None
+                    };
                     update_gitmodules_submodule_path(
                         &repo, work_tree, &mut index, &row.src, &row.dst,
                     )?;
-                    rename_submodule_modules_dir(&repo.git_dir, &row.src, &row.dst)?;
+                    if old_name.is_none() {
+                        rename_submodule_modules_dir(&repo.git_dir, &row.src, &row.dst)?;
+                    }
                 }
             }
         }
@@ -608,7 +618,23 @@ pub fn run(args: Args) -> Result<()> {
                     .with_context(|| format!("renaming '{}' failed", row.src))?;
             }
             if row_is_gitlink {
-                rewrite_submodule_worktree_gitfile(&repo.git_dir, work_tree, &row.dst)?;
+                let gm = work_tree.join(".gitmodules");
+                let name_opt = if gm.is_file() {
+                    let c = fs::read_to_string(&gm)?;
+                    submodule_logical_name_for_path_in_gitmodules(&c, &row.dst)?
+                } else {
+                    None
+                };
+                if let Some(name) = name_opt {
+                    rewrite_submodule_worktree_gitfile_for_name(
+                        &repo.git_dir,
+                        work_tree,
+                        &row.dst,
+                        &name,
+                    )?;
+                } else {
+                    rewrite_submodule_worktree_gitfile(&repo.git_dir, work_tree, &row.dst)?;
+                }
             }
         }
 
@@ -703,6 +729,50 @@ fn empty_dir_has_sparse_contents(name: &str, index: &Index) -> bool {
     })
 }
 
+/// Returns the logical submodule name whose `submodule.<name>.path` matches `path` in `.gitmodules`.
+fn submodule_logical_name_for_path_in_gitmodules(
+    content: &str,
+    path: &str,
+) -> Result<Option<String>> {
+    let cfg = ConfigFile::parse(Path::new(".gitmodules"), content, ConfigScope::Local)?;
+    for entry in &cfg.entries {
+        let key = &entry.key;
+        let Some(rest) = key.strip_prefix("submodule.") else {
+            continue;
+        };
+        let Some(name) = rest.strip_suffix(".path") else {
+            continue;
+        };
+        if entry.value.as_deref().is_some_and(|v| v.trim() == path) {
+            return Ok(Some(name.to_string()));
+        }
+    }
+    Ok(None)
+}
+
+/// Point the submodule work tree's `.git` gitfile at `.git/modules/<logical_name>/`.
+fn rewrite_submodule_worktree_gitfile_for_name(
+    super_git_dir: &Path,
+    work_tree: &Path,
+    sub_worktree_path: &str,
+    submodule_name: &str,
+) -> Result<()> {
+    let sub_wt = work_tree.join(sub_worktree_path);
+    let gitfile = sub_wt.join(".git");
+    if !gitfile.is_file() {
+        return Ok(());
+    }
+    let modules_dir = submodule_modules_git_dir(super_git_dir, submodule_name);
+    if !modules_dir.is_dir() {
+        return Ok(());
+    }
+    let rel = pathdiff_relative(&sub_wt, &modules_dir);
+    fs::write(&gitfile, format!("gitdir: {rel}\n"))
+        .with_context(|| format!("updating submodule gitfile at {}", gitfile.display()))?;
+    refresh_submodule_core_worktree_at(&modules_dir, work_tree, sub_worktree_path)?;
+    Ok(())
+}
+
 /// When renaming a submodule (gitlink), update `submodule.*.path` in `.gitmodules`
 /// and refresh the `.gitmodules` blob in the index.
 /// When renaming a submodule directory, move `.git/modules/<old>` → `.git/modules/<new>` (Git
@@ -762,15 +832,23 @@ fn refresh_submodule_core_worktree(
     sub_path: &str,
 ) -> Result<()> {
     let modules_dir = super_git_dir.join("modules").join(sub_path);
+    refresh_submodule_core_worktree_at(&modules_dir, work_tree, sub_path)
+}
+
+fn refresh_submodule_core_worktree_at(
+    modules_dir: &Path,
+    work_tree: &Path,
+    sub_path: &str,
+) -> Result<()> {
     let sub_wt = work_tree.join(sub_path);
     if !modules_dir.is_dir() || !sub_wt.join(".git").exists() {
         return Ok(());
     }
-    let wt = pathdiff_relative(&modules_dir, &sub_wt);
+    let wt = pathdiff_relative(modules_dir, &sub_wt);
     let grit_bin = grit_exe::grit_executable();
     let status = Command::new(&grit_bin)
         .arg("--git-dir")
-        .arg(&modules_dir)
+        .arg(modules_dir)
         .args(["config", "core.worktree"])
         .arg(&wt)
         .status()

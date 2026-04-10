@@ -15,16 +15,19 @@ use crate::index::Index;
 use crate::objects::{ObjectId, ObjectKind};
 use crate::odb::Odb;
 
-/// Filesystem path to the separate git directory for a submodule at `submodule_worktree_rel`
-/// (path relative to the superproject work tree), under `super_git_dir`.
+/// Filesystem path to the separate git directory for a submodule under `super_git_dir`.
 ///
-/// Git nests additional `modules/` segments for each path component (e.g. path `a/b` →
-/// `<super>/modules/a/modules/b`), not a single `modules/a/b` directory.
+/// Matches Git `submodule_name_to_gitdir` with `extensions.submodulePathConfig` off: append
+/// `modules/<name>` by splitting only on `/` and `\\` (components like `..` are kept; no
+/// normalization).
 #[must_use]
-pub fn submodule_modules_git_dir(super_git_dir: &Path, submodule_worktree_rel: &str) -> PathBuf {
+pub fn submodule_modules_git_dir(super_git_dir: &Path, submodule_relpath: &str) -> PathBuf {
     let mut out = super_git_dir.to_path_buf();
-    for seg in submodule_worktree_rel.split('/').filter(|s| !s.is_empty()) {
-        out.push("modules");
+    out.push("modules");
+    for seg in submodule_relpath.split(['/', '\\']) {
+        if seg.is_empty() || seg == "." {
+            continue;
+        }
         out.push(seg);
     }
     out
@@ -83,6 +86,34 @@ pub fn is_git_directory(path: &Path) -> bool {
     path.join("HEAD").is_file() && path.join("objects").is_dir()
 }
 
+/// Rejects submodule paths that traverse symlinks (Git `validate_submodule_path`).
+///
+/// Path components follow Git `is_dir_sep`: on Unix only `/` separates; on Windows both `/`
+/// and `\` do. A carriage return in a single segment (e.g. `sub\r`) must not be split.
+pub fn validate_submodule_path(work_tree: &Path, rel: &str) -> Result<()> {
+    if rel.is_empty() {
+        return Err(Error::ConfigError("empty submodule path".into()));
+    }
+    let mut cur = work_tree.to_path_buf();
+    #[cfg(windows)]
+    let parts = rel.split(|c| c == '/' || c == '\\');
+    #[cfg(not(windows))]
+    let parts = rel.split('/');
+    for comp in parts.filter(|s| !s.is_empty()) {
+        cur.push(comp);
+        let meta = match fs::symlink_metadata(&cur) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if meta.file_type().is_symlink() {
+            return Err(Error::ConfigError(format!(
+                "expected '{comp}' in submodule path '{rel}' not to be a symbolic link"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn last_modules_segment(git_dir_abs: &Path) -> Option<String> {
     let s = git_dir_abs.to_string_lossy();
     let marker = "/modules/";
@@ -97,28 +128,36 @@ fn last_modules_segment(git_dir_abs: &Path) -> Option<String> {
 }
 
 fn path_inside_other_gitdir(git_dir: &Path, submodule_name: &str) -> bool {
+    submodule_gitdir_outer_conflict(git_dir, submodule_name).is_some()
+}
+
+/// When a proposed `.git/modules/<name>` path would sit inside another submodule's git dir
+/// (e.g. names `hippo` and `hippo/hooks`), returns the outer git directory path (Git
+/// `validate_submodule_legacy_git_dir`).
+#[must_use]
+pub fn submodule_gitdir_outer_conflict(git_dir: &Path, submodule_name: &str) -> Option<PathBuf> {
     let suffix = submodule_name.as_bytes();
     let gd = git_dir.to_string_lossy();
     let gd_bytes = gd.as_bytes();
     if gd_bytes.len() <= suffix.len() {
-        return false;
+        return None;
     }
     let cut = gd_bytes.len() - suffix.len();
     if gd_bytes[cut - 1] != b'/' {
-        return false;
+        return None;
     }
     if &gd_bytes[cut..] != suffix {
-        return false;
+        return None;
     }
     for i in cut..gd_bytes.len() {
         if gd_bytes[i] == b'/' {
             let prefix = Path::new(std::str::from_utf8(&gd_bytes[..i]).unwrap_or(""));
             if is_git_directory(prefix) {
-                return true;
+                return Some(prefix.to_path_buf());
             }
         }
     }
-    false
+    None
 }
 
 fn resolve_gitdir_value(work_tree: &Path, gitdir_cfg: &str) -> PathBuf {
@@ -630,11 +669,15 @@ mod submodule_modules_git_dir_tests {
     use std::path::Path;
 
     #[test]
-    fn nested_path_inserts_modules_per_segment() {
+    fn nested_path_under_single_modules_prefix() {
         let super_git = Path::new("/repo/.git");
         assert_eq!(
             submodule_modules_git_dir(super_git, "sub1/sub2"),
-            Path::new("/repo/.git/modules/sub1/modules/sub2")
+            Path::new("/repo/.git/modules/sub1/sub2")
+        );
+        assert_eq!(
+            submodule_modules_git_dir(super_git, r"..\foo"),
+            Path::new("/repo/.git/modules/../foo")
         );
     }
 

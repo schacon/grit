@@ -4305,6 +4305,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "index-pack" => {
             let mut argv = rest.to_vec();
             commands::index_pack::preprocess_argv(&mut argv);
+            commands::index_pack::normalize_argv_for_positional_pack(&mut argv);
             commands::index_pack::run(parse_cmd_args(subcmd, &argv))
         }
         "init" => commands::init::run(parse_cmd_args(subcmd, rest), opts.bare),
@@ -5263,6 +5264,34 @@ fn run_test_tool_submodule(rest: &[String]) -> Result<()> {
                     Ok(())
                 }
             }
+        }
+        "check-name" => {
+            let mut buf = String::new();
+            let stdin = std::io::stdin();
+            let mut reader = std::io::BufReader::new(stdin.lock());
+            use std::io::BufRead;
+            while reader.read_line(&mut buf)? > 0 {
+                let line = buf.trim_end_matches(['\n', '\r']);
+                if grit_lib::gitmodules::check_submodule_name(line) {
+                    println!("{line}");
+                }
+                buf.clear();
+            }
+            Ok(())
+        }
+        "check-url" => {
+            let mut buf = String::new();
+            let stdin = std::io::stdin();
+            let mut reader = std::io::BufReader::new(stdin.lock());
+            use std::io::BufRead;
+            while reader.read_line(&mut buf)? > 0 {
+                let line = buf.trim_end_matches(['\n', '\r']);
+                if grit_lib::gitmodules::check_submodule_url(line) {
+                    println!("{line}");
+                }
+                buf.clear();
+            }
+            Ok(())
         }
         other => bail!("test-tool submodule: unknown subcommand '{other}'"),
     }

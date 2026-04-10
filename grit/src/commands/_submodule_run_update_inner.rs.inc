@@ -45,6 +45,15 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
     let mut any_failure = false;
 
     for m in &selected {
+        if !grit_lib::gitmodules::check_submodule_name(&m.name) {
+            if !args.quiet {
+                eprintln!(
+                    "warning: ignoring suspicious submodule name: {}",
+                    m.name
+                );
+            }
+            continue;
+        }
         let sub_path = work_tree.join(&m.path);
         let msg_path = submodule_display_path_from_cwd(&sub_path);
 
@@ -94,6 +103,13 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
         };
 
         let modules_dir = submodule_modules_git_dir(&repo.git_dir, &m.name);
+        if let Some(outer) = submodule_gitdir_outer_conflict(&modules_dir, &m.name) {
+            bail!(
+                "fatal: submodule git dir '{}' is inside git dir '{}'",
+                modules_dir.display(),
+                outer.display()
+            );
+        }
 
         // When `--recursive` is set, do not skip submodules that are already at the recorded
         // commit: nested `.gitmodules` paths may still need `submodule update` (t5531 nested clone).
@@ -149,6 +165,9 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
                 if sub_path.exists() {
                     let _ = fs::remove_dir_all(&sub_path);
                 }
+
+                validate_submodule_path(work_tree, &m.path)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
 
                 let clone_src_str =
                     resolve_submodule_super_url(work_tree, &repo.git_dir, &clone_url)?;

@@ -219,6 +219,7 @@ fn run_with_top_opts(top: SubmoduleTopOpts, args: Args) -> Result<()> {
 use grit_lib::config::{canonical_key, ConfigFile, ConfigScope};
 use grit_lib::diff::{diff_index_to_tree, DiffEntry, DiffStatus};
 use grit_lib::error::Error as LibError;
+use grit_lib::gitmodules::check_submodule_name;
 use grit_lib::index::MODE_GITLINK;
 use grit_lib::merge_diff::blob_oid_at_path;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
@@ -227,7 +228,9 @@ use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{self, resolve_revision};
 use grit_lib::state::resolve_head;
-use grit_lib::submodule_gitdir::submodule_modules_git_dir;
+use grit_lib::submodule_gitdir::{
+    submodule_gitdir_outer_conflict, submodule_modules_git_dir, validate_submodule_path,
+};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
@@ -251,7 +254,9 @@ pub(crate) fn parse_gitmodules_for_clone(work_tree: &Path) -> Result<Vec<Submodu
     }
     let content = fs::read_to_string(&gitmodules_path).context("reading .gitmodules")?;
     let _ = grit_lib::gitmodules::write_gitmodules_cli_option_warnings(&mut io::stderr(), &content);
-    parse_gitmodules_with_repo(work_tree, None)
+    let mut modules = parse_gitmodules_with_repo(work_tree, None)?;
+    modules.retain(|m| grit_lib::gitmodules::check_submodule_name(&m.name));
+    Ok(modules)
 }
 
 /// Submodule `git clone --depth N` when `Some(1)`; `None` means a non-shallow clone.
@@ -1019,8 +1024,10 @@ pub fn refresh_submodule_gitfiles(repo: &Repository) -> Result<()> {
     let Some(wt) = repo.work_tree.as_ref() else {
         return Ok(());
     };
-    for path in listed_submodule_paths(repo)? {
-        let sm_dir = wt.join(&path);
+    let modules = parse_gitmodules_with_repo(wt, Some(repo))?;
+    for m in modules {
+        let path = &m.path;
+        let sm_dir = wt.join(path);
         if !sm_dir.is_dir() {
             continue;
         }
@@ -1326,6 +1333,7 @@ fn checkout_submodule_worktree(
     repo: &Repository,
     work_tree: &Path,
     submodule_path: &str,
+    _submodule_name: &str,
     oid: &str,
     quiet: bool,
 ) -> Result<()> {
@@ -2006,6 +2014,11 @@ fn run_add(args: &AddArgs) -> Result<()> {
     // Submodule git dir is keyed by `--name` when given (Git: `.git/modules/<name>`), not by
     // the worktree path (`t0035-safe-bare-repository`, `git submodule add --name`).
     let submodule_name = args.name.as_deref().unwrap_or(path.as_str());
+    if let Some(ref n) = args.name {
+        if !check_submodule_name(n) {
+            bail!("fatal: '{n}' is not a valid submodule name");
+        }
+    }
 
     let grit_bin = grit_exe::grit_executable();
 
@@ -2121,7 +2134,7 @@ fn run_add(args: &AddArgs) -> Result<()> {
     // `clone --no-checkout` leaves an empty work tree; populate it from the staged gitlink
     // (HEAD’s tree may not include the new submodule until after commit — read the index).
     if let Some(oid) = read_gitlink_oid_from_index(&repo, &path)? {
-        checkout_submodule_worktree(&grit_bin, &repo, work_tree, &path, &oid, args.quiet)?;
+        checkout_submodule_worktree(&grit_bin, &repo, work_tree, &path, name, &oid, args.quiet)?;
     }
 
     if !args.quiet {

@@ -117,19 +117,20 @@ case "$1" in
       fi
     done
     ;;
-  sha1)
+  sha1|sha256)
+    # Git's test-tool $(test_oid algo) -b reads stdin and writes the raw digest (pack trailer).
+    _algo="$1"
     shift
-    # Match git's test-hash: optional "-b" writes raw 20-byte digest (used by lib-pack.sh pack_trailer).
-    if [ "$1" = "-b" ]; then
-      exec python3 -c 'import hashlib,sys; sys.stdout.buffer.write(hashlib.sha1(sys.stdin.buffer.read()).digest())'
+    if [ "${1:-}" = "-b" ]; then
+      shift
+      python3 -c "import sys, hashlib; h = getattr(hashlib, '${_algo}')(); h.update(sys.stdin.buffer.read()); sys.stdout.buffer.write(h.digest())"
+    else
+      case "$_algo" in
+      sha1) sha1sum | cut -d' ' -f1 ;;
+      sha256) sha256sum | cut -d' ' -f1 ;;
+      esac
     fi
-    sha1sum | cut -d' ' -f1 ;;
-  sha256)
-    shift
-    if [ "$1" = "-b" ]; then
-      exec python3 -c 'import hashlib,sys; sys.stdout.buffer.write(hashlib.sha256(sys.stdin.buffer.read()).digest())'
-    fi
-    sha256sum | cut -d' ' -f1 ;;
+    ;;
   pack-deltas)
     shift
     _grit="${GUST_BIN:-$SCRIPT_DIR/grit}"

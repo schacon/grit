@@ -23,11 +23,15 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
 
 use crate::commands::checkout::{
     checkout_parallel_worker_spawns, trace2_emit_checkout_parallel_workers,
 };
 use crate::commands::submodule::set_submodule_core_worktree_after_separate_clone;
+use grit_lib::submodule_gitdir::{
+    submodule_gitdir_outer_conflict, submodule_modules_git_dir, validate_submodule_path,
+};
 
 /// Arguments for `grit clone`.
 #[derive(Debug, ClapArgs)]
@@ -126,6 +130,10 @@ pub struct Args {
     /// Do not use shallow submodule clones (overrides `.gitmodules` shallow recommendation).
     #[arg(long = "no-shallow-submodules")]
     pub no_shallow_submodules: bool,
+
+    /// Parallel jobs when cloning multiple submodules (`--recurse-submodules`).
+    #[arg(long = "jobs", value_name = "N")]
+    pub submodule_jobs: Option<usize>,
 
     /// Use a custom upload-pack command on the remote side.
     #[arg(short = 'u', long = "upload-pack", value_name = "UPLOAD_PACK")]
@@ -2925,7 +2933,7 @@ fn collect_gitlink_paths(
 /// alternate object store that looks like a Git directory (Git `prepare_possible_alternates`).
 fn collect_superproject_submodule_references(
     super_git_dir: &Path,
-    submodule_path: &str,
+    submodule_logical_name: &str,
 ) -> Result<Vec<PathBuf>> {
     let config_path = super_git_dir.join("config");
     let config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
@@ -2950,7 +2958,7 @@ fn collect_superproject_submodule_references(
             continue;
         }
         let alt_git_dir = parent.parent().unwrap_or(parent);
-        let candidate = alt_git_dir.join("modules").join(submodule_path);
+        let candidate = alt_git_dir.join("modules").join(submodule_logical_name);
         let candidate = candidate.canonicalize().unwrap_or(candidate);
         if candidate.join("HEAD").is_file() {
             refs.push(candidate);
@@ -2959,10 +2967,10 @@ fn collect_superproject_submodule_references(
         let msg = format!("path '{}' does not exist", candidate.display());
         match strategy.as_str() {
             "die" => {
-                bail!("fatal: submodule '{submodule_path}' cannot add alternate: {msg}");
+                bail!("fatal: submodule '{submodule_logical_name}' cannot add alternate: {msg}");
             }
             "info" => {
-                eprintln!("submodule '{submodule_path}' cannot add alternate: {msg}");
+                eprintln!("submodule '{submodule_logical_name}' cannot add alternate: {msg}");
             }
             _ => {}
         }
@@ -3030,6 +3038,15 @@ fn clone_with_optional_superproject_refs(
     Ok(status)
 }
 
+#[derive(Clone)]
+struct SubmoduleCloneJob {
+    resolved_url: String,
+    extra_refs: Vec<PathBuf>,
+    modules_dir: PathBuf,
+    sub_dest: PathBuf,
+    depth: Option<usize>,
+}
+
 fn clone_submodules(work_tree: &Path, repo: &Repository, clone_args: &Args) -> Result<()> {
     let quiet = clone_args.quiet;
     let gitmodules_path = work_tree.join(".gitmodules");
@@ -3055,6 +3072,9 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, clone_args: &Args) -> R
     // cloning would delete the checked-out tree (`t2080` clone + verify_checkout).
     let gitlink_paths = gitlink_paths_at_head(work_tree).unwrap_or_default();
 
+    let super_shallow = repo.git_dir.join("shallow").is_file();
+    let mut jobs: Vec<SubmoduleCloneJob> = Vec::new();
+
     for sm in &modules {
         if !gitlink_paths.contains(&sm.path) {
             continue;
@@ -3076,9 +3096,16 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, clone_args: &Args) -> R
             sm.url.clone()
         };
 
-        let extra_refs = collect_superproject_submodule_references(&repo.git_dir, &sm.path)?;
+        let extra_refs = collect_superproject_submodule_references(&repo.git_dir, &sm.name)?;
 
-        let modules_dir = repo.git_dir.join("modules").join(&sm.path);
+        let modules_dir = submodule_modules_git_dir(&repo.git_dir, &sm.name);
+        if let Some(outer) = submodule_gitdir_outer_conflict(&modules_dir, &sm.name) {
+            anyhow::bail!(
+                "fatal: submodule git dir '{}' is inside git dir '{}'",
+                modules_dir.display(),
+                outer.display()
+            );
+        }
         if let Some(parent) = modules_dir.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -3099,7 +3126,8 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, clone_args: &Args) -> R
             }
         }
 
-        let super_shallow = repo.git_dir.join("shallow").is_file();
+        validate_submodule_path(work_tree, &sm.path).map_err(|e| anyhow::anyhow!("{e}"))?;
+
         let depth = crate::commands::submodule::submodule_clone_depth_for_superproject(
             super_shallow,
             clone_args.shallow_submodules,
@@ -3108,24 +3136,104 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, clone_args: &Args) -> R
             sm.shallow,
         );
 
-        let status = clone_with_optional_superproject_refs(
-            &grit_bin,
-            &resolved_url,
-            &sub_dest,
-            &extra_refs,
-            quiet,
-            Some(&modules_dir),
-            true,
+        jobs.push(SubmoduleCloneJob {
+            resolved_url,
+            extra_refs,
+            modules_dir,
+            sub_dest,
             depth,
-        )?;
-        if !status.success() {
-            anyhow::bail!(
-                "clone of '{}' into submodule path '{}' failed",
-                resolved_url,
-                sub_dest.display()
+        });
+    }
+
+    if jobs.is_empty() {
+        return Ok(());
+    }
+
+    let n_workers = clone_args
+        .submodule_jobs
+        .unwrap_or(1)
+        .max(1)
+        .min(jobs.len());
+    if n_workers <= 1 {
+        for j in jobs {
+            let status = clone_with_optional_superproject_refs(
+                &grit_bin,
+                &j.resolved_url,
+                &j.sub_dest,
+                &j.extra_refs,
+                quiet,
+                Some(&j.modules_dir),
+                true,
+                j.depth,
+            )?;
+            if !status.success() {
+                anyhow::bail!(
+                    "clone of '{}' into submodule path '{}' failed",
+                    j.resolved_url,
+                    j.sub_dest.display()
+                );
+            }
+            set_submodule_core_worktree_after_separate_clone(
+                &grit_bin,
+                &j.modules_dir,
+                &j.sub_dest,
             );
         }
-        set_submodule_core_worktree_after_separate_clone(&grit_bin, &modules_dir, &sub_dest);
+    } else {
+        let mut handles = Vec::new();
+        let chunk_size = (jobs.len() + n_workers - 1) / n_workers;
+        for chunk in jobs.chunks(chunk_size.max(1)) {
+            let chunk: Vec<SubmoduleCloneJob> = chunk.to_vec();
+            let grit = grit_bin.clone();
+            let quiet_c = quiet;
+            handles.push(thread::spawn(move || -> Result<(), String> {
+                for j in chunk {
+                    let st = clone_with_optional_superproject_refs(
+                        &grit,
+                        &j.resolved_url,
+                        &j.sub_dest,
+                        &j.extra_refs,
+                        quiet_c,
+                        Some(&j.modules_dir),
+                        true,
+                        j.depth,
+                    );
+                    match st {
+                        Ok(s) if s.success() => {
+                            set_submodule_core_worktree_after_separate_clone(
+                                &grit,
+                                &j.modules_dir,
+                                &j.sub_dest,
+                            );
+                        }
+                        Ok(_) => {
+                            return Err(format!(
+                                "clone of '{}' into submodule path '{}' failed",
+                                j.resolved_url,
+                                j.sub_dest.display()
+                            ));
+                        }
+                        Err(e) => return Err(e.to_string()),
+                    }
+                }
+                Ok(())
+            }));
+        }
+        let mut first_err = None;
+        for h in handles {
+            match h.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    first_err.get_or_insert(e);
+                }
+                Err(_) => {
+                    first_err.get_or_insert("submodule clone thread panicked".to_string());
+                }
+            }
+        }
+        if let Some(e) = first_err {
+            anyhow::bail!("{e}");
+        }
     }
 
     let mut upd = std::process::Command::new(&grit_bin);

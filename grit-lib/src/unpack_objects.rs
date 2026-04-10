@@ -18,6 +18,7 @@ use flate2::{Decompress, FlushDecompress, Status};
 use sha1::{Digest, Sha1};
 
 use crate::error::{Error, Result};
+use crate::gitmodules;
 use crate::objects::{parse_commit, parse_tag, parse_tree, Object, ObjectId, ObjectKind};
 use crate::odb::Odb;
 
@@ -208,6 +209,17 @@ pub fn unpack_objects(reader: &mut dyn Read, odb: &Odb, opts: &UnpackOptions) ->
     }
 
     if opts.strict {
+        let mut dot_fsck_map: HashMap<ObjectId, (ObjectKind, Vec<u8>)> =
+            HashMap::with_capacity(by_oid.len());
+        for (oid, entry) in &by_oid {
+            let kind = entry.kind();
+            let data = match entry {
+                PackedObjectEntry::InMemory { data, .. } => data.clone(),
+                PackedObjectEntry::BlobOnDisk { oid: blob_oid } => odb.read(blob_oid)?.data,
+            };
+            dot_fsck_map.insert(*oid, (kind, data));
+        }
+        gitmodules::verify_packed_dot_special(&dot_fsck_map)?;
         strict_verify_packed_references_map(Some(odb), &by_oid)?;
     }
 
