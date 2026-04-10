@@ -1634,10 +1634,21 @@ fn fetch_remote(
             union_refspecs.extend(rs);
         }
 
+        let refs_for_mapping: Vec<(String, ObjectId)> =
+            if let Some(rr) = ext_resolved_remote.as_ref().or(remote_repo.as_ref()) {
+                refs::list_refs(&rr.git_dir, "refs/")?
+            } else if remote_advertised.is_empty() {
+                let mut refs = remote_heads.clone();
+                refs.extend(remote_tags.clone());
+                refs
+            } else {
+                remote_advertised.clone()
+            };
+
         if !union_refspecs.is_empty() {
             let mut dst_to_src: std::collections::HashMap<String, String> =
                 std::collections::HashMap::new();
-            for (refname, _) in &remote_heads {
+            for (refname, _) in &refs_for_mapping {
                 if let Some(local_ref) = map_ref_through_refspecs(refname, &union_refspecs) {
                     if let Some(prev_src) = dst_to_src.get(&local_ref) {
                         if prev_src != refname {
@@ -1654,12 +1665,6 @@ fn fetch_remote(
             }
         }
         let prune_updated_refs = updated_refs.clone();
-
-        let refs_for_mapping: Vec<(String, ObjectId)> = if remote_advertised.is_empty() {
-            remote_heads.clone()
-        } else {
-            remote_advertised.clone()
-        };
 
         // Standard path: update refs according to configured fetch refspecs.
         let has_merge_cfg = branch_has_merge_config_for_remote(git_dir, config, remote_name);
