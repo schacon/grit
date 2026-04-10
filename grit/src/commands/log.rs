@@ -10,7 +10,7 @@ use grit_lib::combined_tree_diff::{combined_diff_paths_filtered, CombinedTreeDif
 use grit_lib::commit_graph_file::{
     BloomPrecheck, BloomWalkStats, BloomWalkStatsHandle, CommitGraphChain,
 };
-use grit_lib::config::{parse_bool, ConfigSet};
+use grit_lib::config::{parse_bool, parse_color, ConfigSet};
 use grit_lib::crlf::{get_file_attrs, load_gitattributes, DiffAttr};
 use grit_lib::diff::{
     count_changes, diff_trees, diff_trees_show_tree_entries, format_raw,
@@ -45,7 +45,7 @@ use grit_lib::rev_parse::{
 use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
 use std::fs::OpenOptions;
 use std::io::{self, IsTerminal, Write};
@@ -915,6 +915,13 @@ fn run_line_log(
         c
     };
 
+    let head_state = resolve_head(&repo.git_dir).unwrap_or(HeadState::Invalid);
+    let decoration_paint = if use_color {
+        Some(load_decoration_paint(&repo.git_dir))
+    } else {
+        None
+    };
+
     let (start_oids, exclude_oids) = if args.all {
         (collect_all_ref_oids(&repo.git_dir)?, Vec::new())
     } else if args.revisions.is_empty() {
@@ -963,7 +970,7 @@ fn run_line_log(
         .unwrap_or(50);
 
     let walk = walk_commits(
-        &repo.odb,
+        repo,
         &repo.git_dir,
         &[tip],
         None,
@@ -1127,6 +1134,9 @@ fn run_line_log(
                         decorations.as_ref(),
                         abbrev_len,
                         &parent_line,
+                        use_color,
+                        decoration_paint.as_ref(),
+                        &head_state,
                     );
                     writeln!(out_main, "{line_prefix}{line}{rendered}")?;
                     break;
@@ -1210,6 +1220,8 @@ fn run_line_log(
             &mailmap,
             decorations.as_ref(),
             use_color,
+            decoration_paint.as_ref(),
+            &head_state,
             &mut notes_cache,
             &repo.odb,
             parent_override.as_deref(),
@@ -1740,6 +1752,12 @@ fn run_rev_list_log(
     let stdout = io::stdout();
     let mut out = stdout.lock();
     let mut notes_cache = NotesMapCache::new(repo);
+    let head_state = resolve_head(&repo.git_dir).unwrap_or(HeadState::Invalid);
+    let decoration_paint = if use_color {
+        Some(load_decoration_paint(&repo.git_dir))
+    } else {
+        None
+    };
     let is_format_separator = args
         .format
         .as_deref()
@@ -1813,6 +1831,8 @@ fn run_rev_list_log(
             mailmap,
             decoration_map_for_display.as_ref(),
             use_color,
+            decoration_paint.as_ref(),
+            &head_state,
             &mut notes_cache,
             &repo.odb,
             None,
@@ -1835,6 +1855,8 @@ fn run_rev_list_log(
                 None,
                 decoration_map_for_display.as_ref(),
                 use_color,
+                decoration_paint.as_ref(),
+                &head_state,
                 &mut notes_cache,
                 patch_context,
             )?;
@@ -2159,6 +2181,12 @@ fn run_graph_log(
     let line_prefix = args.line_prefix.as_deref().unwrap_or("");
     let abbrev_len = parse_abbrev(&args.abbrev);
     let use_color = log_resolve_stdout_color(args, &repo.git_dir);
+    let head_state = resolve_head(&repo.git_dir).unwrap_or(HeadState::Invalid);
+    let decoration_paint = if use_color {
+        Some(load_decoration_paint(&repo.git_dir))
+    } else {
+        None
+    };
     let show_commit_body = !args.suppress_diff
         && !args.no_patch
         && (args.patch
@@ -2204,6 +2232,9 @@ fn run_graph_log(
                         decorations.as_ref(),
                         abbrev_len,
                         &node.parents,
+                        use_color,
+                        decoration_paint.as_ref(),
+                        &head_state,
                     );
                     writeln!(out, "{line_prefix}{line}{rendered}")?;
                 } else {
@@ -2217,6 +2248,8 @@ fn run_graph_log(
                         mailmap,
                         decorations.as_ref(),
                         use_color,
+                        decoration_paint.as_ref(),
+                        &head_state,
                         &mut notes_cache,
                         &repo.odb,
                         Some(node.parents.as_slice()),
@@ -2261,6 +2294,8 @@ fn run_graph_log(
                 graph_stat_prefix.as_deref(),
                 decorations.as_ref(),
                 use_color,
+                decoration_paint.as_ref(),
+                &head_state,
                 &mut notes_cache,
                 patch_context,
             )?;
@@ -2637,17 +2672,42 @@ fn render_graph_commit_text(
     args: &Args,
     use_mailmap: bool,
     mailmap: &MailmapTable,
-    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
+    decorations: Option<&DecorationMap>,
     abbrev_len: usize,
     parent_line: &[ObjectId],
+    use_color: bool,
+    decoration_paint: Option<&DecorationPaint>,
+    head_for_decor: &HeadState,
 ) -> String {
     let hex = node.oid.to_hex();
     if args.oneline || args.format.as_deref() == Some("oneline") {
         let first_line = info.message.lines().next().unwrap_or("");
-        let dec = format_decoration(&hex, decorations);
+        let oid_color = if use_color {
+            decoration_paint
+                .map(|p| p.commit.as_str())
+                .unwrap_or("\x1b[33m")
+        } else {
+            ""
+        };
+        let oid_reset = if use_color {
+            decoration_paint
+                .map(|p| p.reset.as_str())
+                .unwrap_or("\x1b[m")
+        } else {
+            ""
+        };
+        let dec = format_decoration(
+            &hex,
+            decorations,
+            use_color,
+            decoration_paint,
+            head_for_decor,
+        );
         return format!(
-            "{}{} {}",
+            "{}{}{}{} {}",
+            oid_color,
             &hex[..abbrev_len.min(hex.len())],
+            oid_reset,
             dec,
             first_line
         );
@@ -2669,7 +2729,9 @@ fn render_graph_commit_text(
                 decorations,
                 args.date.as_deref(),
                 abbrev_len,
-                false,
+                use_color,
+                decoration_paint,
+                head_for_decor,
                 None,
                 parent_line,
                 None,
@@ -2685,7 +2747,9 @@ fn render_graph_commit_text(
                 decorations,
                 args.date.as_deref(),
                 abbrev_len,
-                false,
+                use_color,
+                decoration_paint,
+                head_for_decor,
                 None,
                 parent_line,
                 None,
@@ -3387,6 +3451,12 @@ pub fn run(mut args: Args) -> Result<()> {
     let mut implied_pathspecs: Vec<String> = Vec::new();
 
     let use_color = log_resolve_stdout_color(&args, &repo.git_dir);
+    let head_state = resolve_head(&repo.git_dir).unwrap_or(HeadState::Invalid);
+    let decoration_paint = if use_color {
+        Some(load_decoration_paint(&repo.git_dir))
+    } else {
+        None
+    };
 
     if !args.walk_reflogs && !args.grep_reflog_patterns.is_empty() {
         anyhow::bail!("--grep-reflog can only be used with -g");
@@ -3793,6 +3863,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
     if use_streaming_log {
         let mut iter = WalkCommitsIter::new(
+            &repo,
             &repo.odb,
             &repo.git_dir,
             &start_oids,
@@ -3870,6 +3941,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 &mailmap,
                 decoration_map_for_display.as_ref(),
                 use_color,
+                decoration_paint.as_ref(),
+                &head_state,
                 &mut notes_cache,
                 &repo.odb,
                 None,
@@ -3892,6 +3965,8 @@ pub fn run(mut args: Args) -> Result<()> {
                     None,
                     decoration_map_for_display.as_ref(),
                     use_color,
+                    decoration_paint.as_ref(),
+                    &head_state,
                     &mut notes_cache,
                     patch_context,
                 )?;
@@ -3904,7 +3979,7 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     } else {
         let commits = walk_commits(
-            &repo.odb,
+            &repo,
             &repo.git_dir,
             &start_oids,
             if args.follow { None } else { args.max_count }, // follow needs full walk for rename tracking
@@ -4070,6 +4145,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 &mailmap,
                 decoration_map_for_display.as_ref(),
                 use_color,
+                decoration_paint.as_ref(),
+                &head_state,
                 &mut notes_cache,
                 &repo.odb,
                 None,
@@ -4092,6 +4169,8 @@ pub fn run(mut args: Args) -> Result<()> {
                     None,
                     decoration_map_for_display.as_ref(),
                     use_color,
+                    decoration_paint.as_ref(),
+                    &head_state,
                     &mut notes_cache,
                     patch_context,
                 )?;
@@ -4334,6 +4413,13 @@ pub fn run_no_walk(
         || args.patch_with_stat;
 
     let mut notes_cache = NotesMapCache::new(repo);
+    let use_color = log_resolve_stdout_color(args, &repo.git_dir);
+    let head_state = resolve_head(&repo.git_dir).unwrap_or(HeadState::Invalid);
+    let decoration_paint = if use_color {
+        Some(load_decoration_paint(&repo.git_dir))
+    } else {
+        None
+    };
 
     let mut prev_had_notes = false;
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
@@ -4352,7 +4438,9 @@ pub fn run_no_walk(
             use_mailmap,
             mailmap,
             decorations.as_ref(),
-            false,
+            use_color,
+            decoration_paint.as_ref(),
+            &head_state,
             &mut notes_cache,
             &repo.odb,
             None,
@@ -4373,7 +4461,9 @@ pub fn run_no_walk(
                 &args.pathspecs,
                 None,
                 decorations.as_ref(),
-                false,
+                use_color,
+                decoration_paint.as_ref(),
+                &head_state,
                 &mut notes_cache,
                 patch_context,
             )?;
@@ -4655,6 +4745,13 @@ fn run_reflog_walk(
     let stdout = io::stdout();
     let mut out = stdout.lock();
     let mut notes_cache = NotesMapCache::new(repo);
+    let use_color = log_resolve_stdout_color(args, &repo.git_dir);
+    let head_state = resolve_head(&repo.git_dir).unwrap_or(HeadState::Invalid);
+    let decoration_paint = if use_color {
+        Some(load_decoration_paint(&repo.git_dir))
+    } else {
+        None
+    };
 
     // Detect format
     let is_format_separator = args
@@ -4981,7 +5078,9 @@ fn run_reflog_walk(
                 &args.pathspecs,
                 None,
                 None,
-                false,
+                use_color,
+                decoration_paint.as_ref(),
+                &head_state,
                 &mut notes_cache,
                 patch_context,
             )?;
@@ -5229,11 +5328,52 @@ struct CommitInfo {
     message: String,
 }
 
-/// Incremental commit walk matching [`walk_commits`] output order (date-ordered heap).
+/// Key for Git-style date ordering: newest committer (or author) date first; ties broken by FIFO
+/// (`seq`) then OID (matches `commit_list_insert_by_date` when timestamps collide).
+type CommitQueueKey = (std::cmp::Reverse<i64>, u64, ObjectId);
+
+/// Decoration category for `git log --decorate` coloring (`color.decorate.*`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DecorationKind {
+    Branch,
+    RemoteBranch,
+    Tag,
+    Stash,
+    Head,
+    Grafted,
+}
+
+/// One ref (or synthetic label) attached to a commit for `--decorate` / `%d`.
+#[derive(Clone, Debug)]
+struct DecorationItem {
+    /// Full ref name when this came from a real ref (used for `HEAD -> branch` folding).
+    refname: Option<String>,
+    display: String,
+    kind: DecorationKind,
+}
+
+/// Parsed `color.decorate.*` and `diff.color.commit` sequences for log output.
+#[derive(Clone, Debug)]
+struct DecorationPaint {
+    commit: String,
+    reset: String,
+    branch: String,
+    remote_branch: String,
+    tag: String,
+    stash: String,
+    head: String,
+    grafted: String,
+}
+
+type DecorationMap = HashMap<String, Vec<DecorationItem>>;
+
+/// Incremental commit walk matching Git's `commit_list_insert_by_date` queue (not a max-heap on
+/// timestamp alone — ties preserve discovery order like upstream `revision.c`).
 ///
 /// Used by `grit log` to print commits as they are discovered instead of buffering
 /// the full history in a `Vec` first.
 struct WalkCommitsIter<'a> {
+    repo: &'a Repository,
     odb: &'a Odb,
     git_dir: &'a Path,
     pickaxe_args: Option<&'a Args>,
@@ -5245,8 +5385,10 @@ struct WalkCommitsIter<'a> {
     bloom_cwd: Option<String>,
     author_date_order: bool,
     shallow_boundaries: HashSet<ObjectId>,
-    visited: HashSet<ObjectId>,
-    queue: std::collections::BinaryHeap<(i64, ObjectId)>,
+    blocked: HashSet<ObjectId>,
+    enlisted: HashSet<ObjectId>,
+    queue: BTreeMap<CommitQueueKey, ()>,
+    next_seq: u64,
     skipped: usize,
     skip_n: usize,
     max_count: Option<usize>,
@@ -5266,6 +5408,7 @@ struct WalkCommitsIter<'a> {
 
 impl<'a> WalkCommitsIter<'a> {
     fn new(
+        repo: &'a Repository,
         odb: &'a Odb,
         git_dir: &'a Path,
         start: &[ObjectId],
@@ -5293,18 +5436,28 @@ impl<'a> WalkCommitsIter<'a> {
         author_date_order: bool,
     ) -> Self {
         let shallow_boundaries = load_shallow_boundaries(git_dir);
-        let visited: HashSet<ObjectId> = excluded.clone();
-        let mut queue: std::collections::BinaryHeap<(i64, ObjectId)> =
-            std::collections::BinaryHeap::new();
+        let blocked: HashSet<ObjectId> = excluded.clone();
+        let mut enlisted = HashSet::new();
+        let mut queue: BTreeMap<CommitQueueKey, ()> = BTreeMap::new();
+        let mut next_seq = 0u64;
         for oid in start {
+            if blocked.contains(oid) {
+                continue;
+            }
+            if !enlisted.insert(*oid) {
+                continue;
+            }
             let ts = if author_date_order {
-                read_author_timestamp(odb, oid)
+                read_author_timestamp_repo(repo, oid)
             } else {
-                read_commit_timestamp(odb, oid)
+                read_commit_timestamp_repo(repo, oid)
             };
-            queue.push((ts, *oid));
+            let key: CommitQueueKey = (std::cmp::Reverse(ts), next_seq, *oid);
+            next_seq = next_seq.saturating_add(1);
+            queue.insert(key, ());
         }
         Self {
+            repo,
             odb,
             git_dir,
             pickaxe_args,
@@ -5316,8 +5469,10 @@ impl<'a> WalkCommitsIter<'a> {
             bloom_cwd,
             author_date_order,
             shallow_boundaries,
-            visited,
+            blocked,
+            enlisted,
             queue,
+            next_seq,
             skipped: 0,
             skip_n: skip.unwrap_or(0),
             max_count,
@@ -5345,25 +5500,28 @@ impl<'a> WalkCommitsIter<'a> {
                 return Ok(None);
             }
         }
-        while let Some((_ts, oid)) = self.queue.pop() {
-            if !self.visited.insert(oid) {
-                continue;
-            }
+        while let Some((key, ())) = self.queue.pop_first() {
+            let oid = key.2;
 
-            let obj = self.odb.read(&oid)?;
+            let obj = self.repo.read_replaced(&oid)?;
             if obj.kind == ObjectKind::Tag {
                 let tag = parse_tag(&obj.data)?;
                 let mut target = tag.object;
                 loop {
-                    let t_obj = self.odb.read(&target)?;
+                    let t_obj = self.repo.read_replaced(&target)?;
                     match t_obj.kind {
                         ObjectKind::Commit => {
                             let ts = if self.author_date_order {
-                                read_author_timestamp(self.odb, &target)
+                                read_author_timestamp_repo(self.repo, &target)
                             } else {
-                                read_commit_timestamp(self.odb, &target)
+                                read_commit_timestamp_repo(self.repo, &target)
                             };
-                            self.queue.push((ts, target));
+                            if !self.blocked.contains(&target) && self.enlisted.insert(target) {
+                                let k: CommitQueueKey =
+                                    (std::cmp::Reverse(ts), self.next_seq, target);
+                                self.next_seq = self.next_seq.saturating_add(1);
+                                self.queue.insert(k, ());
+                            }
                             break;
                         }
                         ObjectKind::Tag => {
@@ -5388,24 +5546,28 @@ impl<'a> WalkCommitsIter<'a> {
             if !self.shallow_boundaries.contains(&oid) {
                 if self.first_parent {
                     if let Some(parent) = commit.parents.first() {
-                        if self.odb.read(parent).is_ok() {
+                        if !self.blocked.contains(parent) && self.enlisted.insert(*parent) {
                             let ts = if self.author_date_order {
-                                read_author_timestamp(self.odb, parent)
+                                read_author_timestamp_repo(self.repo, parent)
                             } else {
-                                read_commit_timestamp(self.odb, parent)
+                                read_commit_timestamp_repo(self.repo, parent)
                             };
-                            self.queue.push((ts, *parent));
+                            let k: CommitQueueKey = (std::cmp::Reverse(ts), self.next_seq, *parent);
+                            self.next_seq = self.next_seq.saturating_add(1);
+                            self.queue.insert(k, ());
                         }
                     }
                 } else {
                     for parent in &commit.parents {
-                        if !self.visited.contains(parent) && self.odb.read(parent).is_ok() {
+                        if !self.blocked.contains(parent) && self.enlisted.insert(*parent) {
                             let ts = if self.author_date_order {
-                                read_author_timestamp(self.odb, parent)
+                                read_author_timestamp_repo(self.repo, parent)
                             } else {
-                                read_commit_timestamp(self.odb, parent)
+                                read_commit_timestamp_repo(self.repo, parent)
                             };
-                            self.queue.push((ts, *parent));
+                            let k: CommitQueueKey = (std::cmp::Reverse(ts), self.next_seq, *parent);
+                            self.next_seq = self.next_seq.saturating_add(1);
+                            self.queue.insert(k, ());
                         }
                     }
                 }
@@ -5511,7 +5673,7 @@ fn collect_reachable(odb: &Odb, starts: &[ObjectId]) -> Result<HashSet<ObjectId>
 }
 
 fn walk_commits(
-    odb: &Odb,
+    repo: &Repository,
     git_dir: &Path,
     start: &[ObjectId],
     max_count: Option<usize>,
@@ -5540,7 +5702,9 @@ fn walk_commits(
     if max_count == Some(0) {
         return Ok(Vec::new());
     }
+    let odb = &repo.odb;
     let mut iter = WalkCommitsIter::new(
+        repo,
         odb,
         git_dir,
         start,
@@ -5707,8 +5871,28 @@ fn read_commit_timestamp(odb: &Odb, oid: &ObjectId) -> i64 {
     }
 }
 
+fn read_commit_timestamp_repo(repo: &Repository, oid: &ObjectId) -> i64 {
+    match repo.read_replaced(oid) {
+        Ok(obj) => match parse_commit(&obj.data) {
+            Ok(commit) => committer_unix_seconds_for_ordering(&commit.committer),
+            Err(_) => 0,
+        },
+        Err(_) => 0,
+    }
+}
+
 fn read_author_timestamp(odb: &Odb, oid: &ObjectId) -> i64 {
     match odb.read(oid) {
+        Ok(obj) => match parse_commit(&obj.data) {
+            Ok(commit) => committer_unix_seconds_for_ordering(&commit.author),
+            Err(_) => 0,
+        },
+        Err(_) => 0,
+    }
+}
+
+fn read_author_timestamp_repo(repo: &Repository, oid: &ObjectId) -> i64 {
+    match repo.read_replaced(oid) {
         Ok(obj) => match parse_commit(&obj.data) {
             Ok(commit) => committer_unix_seconds_for_ordering(&commit.author),
             Err(_) => 0,
@@ -6416,7 +6600,7 @@ fn commit_passes_post_walk_filters(
     diff_filter: Option<&str>,
     find_oid: Option<ObjectId>,
     find_object_tree_recursive: bool,
-    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
+    decorations: Option<&DecorationMap>,
     since_threshold: Option<i64>,
     until_threshold: Option<i64>,
 ) -> Result<bool> {
@@ -6549,6 +6733,13 @@ fn run_symmetric_log(
     let mut out = stdout.lock();
     let mut notes_cache = NotesMapCache::new(repo);
     let mut prev_had_notes = false;
+    let use_color = log_resolve_stdout_color(args, &repo.git_dir);
+    let head_state = resolve_head(&repo.git_dir).unwrap_or(HeadState::Invalid);
+    let decoration_paint = if use_color {
+        Some(load_decoration_paint(&repo.git_dir))
+    } else {
+        None
+    };
 
     for (i, oid) in ordered.iter().enumerate() {
         let this_has_notes = commit_has_notes_to_show(oid, &mut notes_cache, args);
@@ -6574,7 +6765,9 @@ fn run_symmetric_log(
             use_mailmap,
             &mailmap,
             None,
-            false,
+            use_color,
+            decoration_paint.as_ref(),
+            &head_state,
             &mut notes_cache,
             &repo.odb,
             None,
@@ -6600,8 +6793,10 @@ fn format_commit(
     args: &Args,
     use_mailmap: bool,
     mailmap: &MailmapTable,
-    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
+    decorations: Option<&DecorationMap>,
     use_color: bool,
+    decoration_paint: Option<&DecorationPaint>,
+    head_for_decor: &HeadState,
     notes_cache: &mut NotesMapCache<'_>,
     odb: &Odb,
     parent_line_override: Option<&[ObjectId]>,
@@ -6630,8 +6825,36 @@ fn format_commit(
         if let Some(src) = source_for_oneline {
             writeln!(out, "{abbrev}\t{src} {first_line}")?;
         } else {
-            let dec = format_decoration(&hex, decorations);
-            writeln!(out, "{abbrev}{dec} {first_line}")?;
+            let oid_color = if use_color {
+                decoration_paint
+                    .map(|p| p.commit.as_str())
+                    .unwrap_or("\x1b[33m")
+            } else {
+                ""
+            };
+            let oid_reset = if use_color {
+                decoration_paint
+                    .map(|p| p.reset.as_str())
+                    .unwrap_or("\x1b[m")
+            } else {
+                ""
+            };
+            let dec = format_decoration(
+                &hex,
+                decorations,
+                use_color,
+                decoration_paint,
+                head_for_decor,
+            );
+            writeln!(
+                out,
+                "{}{}{}{} {}",
+                oid_color,
+                &hex[..abbrev_len.min(hex.len())],
+                oid_reset,
+                dec,
+                first_line
+            )?;
         }
         return Ok(());
     }
@@ -6656,6 +6879,8 @@ fn format_commit(
                 date_format,
                 abbrev_len,
                 use_color,
+                decoration_paint,
+                head_for_decor,
                 note_bytes,
                 display_parents,
                 log_marker,
@@ -6694,7 +6919,13 @@ fn format_commit(
             }
         }
         Some("short") => {
-            let dec = format_decoration(&hex, decorations);
+            let dec = format_decoration(
+                &hex,
+                decorations,
+                use_color,
+                decoration_paint,
+                head_for_decor,
+            );
             writeln!(out, "commit {hex}{merge_suffix}{dec}")?;
             if display_parents.len() > 1 {
                 let parent_abbrevs: Vec<String> = display_parents
@@ -6715,9 +6946,21 @@ fn format_commit(
             writeln!(out)?;
         }
         Some("medium") | None => {
-            let dec = format_decoration(&hex, decorations);
+            let dec = format_decoration(
+                &hex,
+                decorations,
+                use_color,
+                decoration_paint,
+                head_for_decor,
+            );
             if use_color {
-                writeln!(out, "\x1b[33mcommit {hex}{merge_suffix}\x1b[m{dec}")?;
+                let c = decoration_paint
+                    .map(|p| p.commit.as_str())
+                    .unwrap_or("\x1b[33m");
+                let r = decoration_paint
+                    .map(|p| p.reset.as_str())
+                    .unwrap_or("\x1b[m");
+                writeln!(out, "{c}commit {hex}{merge_suffix}{r}{dec}")?;
             } else {
                 writeln!(out, "commit {hex}{merge_suffix}{dec}")?;
             }
@@ -6748,7 +6991,13 @@ fn format_commit(
             write_notes(out, oid, notes_cache, args, odb)?;
         }
         Some("full") => {
-            let dec = format_decoration(&hex, decorations);
+            let dec = format_decoration(
+                &hex,
+                decorations,
+                use_color,
+                decoration_paint,
+                head_for_decor,
+            );
             writeln!(out, "commit {hex}{merge_suffix}{dec}")?;
             if display_parents.len() > 1 {
                 let parent_abbrevs: Vec<String> = display_parents
@@ -6777,7 +7026,13 @@ fn format_commit(
             write_notes(out, oid, notes_cache, args, odb)?;
         }
         Some("fuller") => {
-            let dec = format_decoration(&hex, decorations);
+            let dec = format_decoration(
+                &hex,
+                decorations,
+                use_color,
+                decoration_paint,
+                head_for_decor,
+            );
             writeln!(out, "commit {hex}{merge_suffix}{dec}")?;
             if display_parents.len() > 1 {
                 let parent_abbrevs: Vec<String> = display_parents
@@ -6836,6 +7091,8 @@ fn format_commit(
                 date_format,
                 abbrev_len,
                 use_color,
+                decoration_paint,
+                head_for_decor,
                 note_bytes,
                 display_parents,
                 log_marker,
@@ -6854,10 +7111,12 @@ fn apply_format_string(
     template: &str,
     oid: &ObjectId,
     info: &CommitInfo,
-    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
+    decorations: Option<&DecorationMap>,
     date_format: Option<&str>,
     abbrev_len: usize,
     use_color: bool,
+    decoration_paint: Option<&DecorationPaint>,
+    head_for_decor: &HeadState,
     notes_raw: Option<&[u8]>,
     display_parents: &[ObjectId],
     log_marker: Option<char>,
@@ -7266,13 +7525,25 @@ fn apply_format_string(
                 Some('d') => {
                     chars.next();
                     // Decorations
-                    let dec = format_decoration(&hex, decorations);
+                    let dec = format_decoration(
+                        &hex,
+                        decorations,
+                        use_color,
+                        decoration_paint,
+                        head_for_decor,
+                    );
                     result.push_str(&dec);
                 }
                 Some('D') => {
                     chars.next();
                     // Decorations without parens
-                    let dec = format_decoration_no_parens(&hex, decorations);
+                    let dec = format_decoration_no_parens(
+                        &hex,
+                        decorations,
+                        use_color,
+                        decoration_paint,
+                        head_for_decor,
+                    );
                     result.push_str(&dec);
                 }
                 Some('n') => {
@@ -7815,62 +8086,170 @@ fn is_likely_pathspec_during_rev_parse(token: &str) -> bool {
         || token.contains(']')
 }
 
-/// Collect ref name → OID decorations from the repository.
-fn collect_decorations(
-    repo: &Repository,
-    full: bool,
-) -> Result<std::collections::HashMap<String, Vec<String>>> {
-    let mut map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+fn replace_ref_base() -> String {
+    let mut base =
+        std::env::var("GIT_REPLACE_REF_BASE").unwrap_or_else(|_| "refs/replace/".to_owned());
+    if !base.ends_with('/') {
+        base.push('/');
+    }
+    base
+}
 
-    // HEAD
-    let head = resolve_head(&repo.git_dir)?;
+fn load_decoration_paint(git_dir: &Path) -> DecorationPaint {
+    let cfg = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    let slot = |key: &str, default: &str| {
+        cfg.get(key)
+            .and_then(|s| parse_color(s.trim()).ok())
+            .unwrap_or_else(|| default.to_string())
+    };
+    DecorationPaint {
+        commit: cfg
+            .get("diff.color.commit")
+            .and_then(|s| parse_color(s.trim()).ok())
+            .unwrap_or_else(|| "\x1b[33m".to_string()),
+        reset: slot("color.decorate.reset", "\x1b[m"),
+        branch: slot("color.decorate.branch", "\x1b[1;32m"),
+        remote_branch: slot("color.decorate.remoteBranch", "\x1b[1;31m"),
+        tag: slot("color.decorate.tag", "\x1b[1;33m"),
+        stash: slot("color.decorate.stash", "\x1b[1;35m"),
+        head: slot("color.decorate.HEAD", "\x1b[1;36m"),
+        grafted: slot("color.decorate.grafted", "\x1b[1;34m"),
+    }
+}
+
+fn color_for_decoration_kind(paint: &DecorationPaint, kind: DecorationKind) -> &str {
+    match kind {
+        DecorationKind::Branch => &paint.branch,
+        DecorationKind::RemoteBranch => &paint.remote_branch,
+        DecorationKind::Tag => &paint.tag,
+        DecorationKind::Stash => &paint.stash,
+        DecorationKind::Head => &paint.head,
+        DecorationKind::Grafted => &paint.grafted,
+    }
+}
+
+fn prepend_decoration(items: &mut Vec<DecorationItem>, item: DecorationItem) {
+    items.insert(0, item);
+}
+
+/// Collect ref decorations from the repository (heads, tags, remotes, stash, replace refs, HEAD).
+///
+/// Order matches Git's `refs_for_each_ref` walk: each ref is **prepended** in ascending ref-name
+/// order, so the final per-commit list matches upstream (e.g. `tag: A1` before `other/main` before
+/// `other/HEAD`).
+fn collect_decorations(repo: &Repository, full: bool) -> Result<DecorationMap> {
+    let mut map: DecorationMap = HashMap::new();
+    let git_dir = &repo.git_dir;
+    let odb = &repo.odb;
+
+    let head = resolve_head(git_dir)?;
+    let rep_base = replace_ref_base();
+
+    let mut all_refs = grit_lib::refs::list_refs(git_dir, "refs/")?;
+    all_refs.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for (refname, oid) in all_refs {
+        if refname.starts_with(&rep_base) {
+            let Some(rest) = refname.strip_prefix(&rep_base) else {
+                continue;
+            };
+            let rest = rest.trim();
+            if rest.len() != 40 || rest.parse::<ObjectId>().is_err() {
+                continue;
+            }
+            prepend_decoration(
+                map.entry(rest.to_owned()).or_default(),
+                DecorationItem {
+                    refname: None,
+                    display: "replaced".to_owned(),
+                    kind: DecorationKind::Grafted,
+                },
+            );
+            continue;
+        }
+
+        if refname == "refs/stash" || refname.starts_with("refs/stash/") {
+            let hex = peel_to_commit_hex(odb, &oid.to_hex()).unwrap_or_else(|| oid.to_hex());
+            prepend_decoration(
+                map.entry(hex).or_default(),
+                DecorationItem {
+                    refname: Some("refs/stash".to_string()),
+                    display: "refs/stash".to_owned(),
+                    kind: DecorationKind::Stash,
+                },
+            );
+            continue;
+        }
+
+        if let Some(rest) = refname.strip_prefix("refs/heads/") {
+            let display = if full {
+                refname.clone()
+            } else {
+                rest.to_owned()
+            };
+            let hex = peel_to_commit_hex(odb, &oid.to_hex()).unwrap_or_else(|| oid.to_hex());
+            prepend_decoration(
+                map.entry(hex).or_default(),
+                DecorationItem {
+                    refname: Some(refname.clone()),
+                    display,
+                    kind: DecorationKind::Branch,
+                },
+            );
+            continue;
+        }
+
+        if let Some(rest) = refname.strip_prefix("refs/tags/") {
+            let display = if full {
+                refname.clone()
+            } else {
+                rest.to_owned()
+            };
+            let peeled = peel_to_commit_hex(odb, &oid.to_hex()).unwrap_or_else(|| oid.to_hex());
+            prepend_decoration(
+                map.entry(peeled).or_default(),
+                DecorationItem {
+                    refname: Some(refname.clone()),
+                    display,
+                    kind: DecorationKind::Tag,
+                },
+            );
+            continue;
+        }
+
+        if let Some(rest) = refname.strip_prefix("refs/remotes/") {
+            let display = if full {
+                refname.clone()
+            } else {
+                rest.to_owned()
+            };
+            let peeled = peel_to_commit_hex(odb, &oid.to_hex()).unwrap_or_else(|| oid.to_hex());
+            prepend_decoration(
+                map.entry(peeled).or_default(),
+                DecorationItem {
+                    refname: Some(refname.clone()),
+                    display,
+                    kind: DecorationKind::RemoteBranch,
+                },
+            );
+        }
+    }
+
     if let Some(oid) = head.oid() {
         let hex = oid.to_hex();
-        let label = match &head {
-            HeadState::Branch { short_name, .. } => {
-                if full {
-                    format!("HEAD -> refs/heads/{short_name}")
-                } else {
-                    format!("HEAD -> {short_name}")
-                }
-            }
-            _ => "HEAD".to_owned(),
-        };
-        map.entry(hex).or_default().push(label);
+        prepend_decoration(
+            map.entry(hex).or_default(),
+            DecorationItem {
+                refname: Some("HEAD".to_string()),
+                display: "HEAD".to_owned(),
+                kind: DecorationKind::Head,
+            },
+        );
     }
 
-    // Use `list_refs` so packed refs (after `git pack-refs` / `tag -d`) are visible — scanning
-    // `refs/heads` and `refs/tags` directories alone misses `packed-refs` (`t6016`).
-    for (refname, oid) in grit_lib::refs::list_refs(&repo.git_dir, "refs/heads/")? {
-        let hex = oid.to_hex();
-        let short = refname
-            .strip_prefix("refs/heads/")
-            .unwrap_or(refname.as_str());
-        let label = if full {
-            format!("refs/heads/{short}")
-        } else {
-            short.to_owned()
-        };
-        map.entry(hex).or_default().push(label);
-    }
-    for (refname, oid) in grit_lib::refs::list_refs(&repo.git_dir, "refs/tags/")? {
-        let resolved_hex =
-            peel_to_commit_hex(&repo.odb, &oid.to_hex()).unwrap_or_else(|| oid.to_hex());
-        let short = refname
-            .strip_prefix("refs/tags/")
-            .unwrap_or(refname.as_str());
-        let label = if full {
-            format!("tag: refs/tags/{short}")
-        } else {
-            format!("tag: {short}")
-        };
-        map.entry(resolved_hex).or_default().push(label);
-    }
-
-    // De-duplicate while preserving order.
-    for refs in map.values_mut() {
-        let mut seen = std::collections::HashSet::new();
-        refs.retain(|r| seen.insert(r.clone()));
+    for items in map.values_mut() {
+        let mut seen = HashSet::new();
+        items.retain(|it| seen.insert(it.display.clone()));
     }
 
     Ok(map)
@@ -7897,38 +8276,126 @@ fn peel_to_commit_hex(odb: &Odb, hex: &str) -> Option<String> {
     }
 }
 
-/// Format decoration string for a commit (with parentheses).
-fn format_decoration(
-    hex: &str,
-    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
-) -> String {
-    match decorations {
-        Some(map) => {
-            if let Some(refs) = map.get(hex) {
-                format!(" ({})", refs.join(", "))
-            } else {
-                String::new()
-            }
-        }
-        None => String::new(),
-    }
+fn current_branch_decoration_index(items: &[DecorationItem], head: &HeadState) -> Option<usize> {
+    let refname = match head {
+        HeadState::Branch { refname, .. } => refname.as_str(),
+        _ => return None,
+    };
+    items
+        .iter()
+        .position(|it| it.kind == DecorationKind::Branch && it.refname.as_deref() == Some(refname))
 }
 
-/// Format decoration string without parentheses (for %D).
-fn format_decoration_no_parens(
+/// Format decoration string for a commit (with parentheses), matching Git's `format_decorations`.
+fn format_decoration(
     hex: &str,
-    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
+    decorations: Option<&DecorationMap>,
+    use_color: bool,
+    paint: Option<&DecorationPaint>,
+    head: &HeadState,
 ) -> String {
-    match decorations {
-        Some(map) => {
-            if let Some(refs) = map.get(hex) {
-                refs.join(", ")
+    let Some(map) = decorations else {
+        return String::new();
+    };
+    let Some(items) = map.get(hex) else {
+        return String::new();
+    };
+    if items.is_empty() {
+        return String::new();
+    }
+
+    const TAG: &str = "tag: ";
+    const POINTER: &str = " -> ";
+    const SEP: &str = ", ";
+
+    let skip_idx = current_branch_decoration_index(items, head);
+    let paint_opt = if use_color { paint } else { None };
+
+    let mut out = String::new();
+    let mut sep_prefix: &str = " (";
+
+    for (i, it) in items.iter().enumerate() {
+        if skip_idx == Some(i) {
+            continue;
+        }
+
+        if let Some(p) = paint_opt {
+            out.push_str(&p.commit);
+            out.push_str(sep_prefix);
+            out.push_str(&p.reset);
+        } else {
+            out.push_str(sep_prefix);
+        }
+        sep_prefix = SEP;
+
+        if it.kind == DecorationKind::Tag {
+            if let Some(p) = paint_opt {
+                out.push_str(color_for_decoration_kind(p, DecorationKind::Tag));
+                out.push_str(TAG);
+                out.push_str(&p.reset);
             } else {
-                String::new()
+                out.push_str(TAG);
             }
         }
-        None => String::new(),
+
+        if let Some(p) = paint_opt {
+            out.push_str(color_for_decoration_kind(p, it.kind));
+            out.push_str(&it.display);
+            out.push_str(&p.reset);
+        } else {
+            out.push_str(&it.display);
+        }
+
+        if it.kind == DecorationKind::Head {
+            if let Some(bi) = skip_idx {
+                let branch = &items[bi];
+                if let Some(p) = paint_opt {
+                    out.push_str(&p.commit);
+                    out.push_str(POINTER);
+                    out.push_str(&p.reset);
+                    out.push_str(color_for_decoration_kind(p, branch.kind));
+                } else {
+                    out.push_str(POINTER);
+                }
+                let d = &branch.display;
+                if branch.kind == DecorationKind::Tag && d.starts_with(TAG) {
+                    out.push_str(d.trim_start_matches(TAG));
+                } else {
+                    out.push_str(d);
+                }
+                if let Some(p) = paint_opt {
+                    out.push_str(&p.reset);
+                }
+            }
+        }
     }
+
+    if !out.is_empty() {
+        if let Some(p) = paint_opt {
+            out.push_str(&p.commit);
+            out.push(')');
+            out.push_str(&p.reset);
+        } else {
+            out.push(')');
+        }
+    }
+    out
+}
+
+/// Format decoration string without parentheses (for `%D`).
+fn format_decoration_no_parens(
+    hex: &str,
+    decorations: Option<&DecorationMap>,
+    use_color: bool,
+    paint: Option<&DecorationPaint>,
+    head: &HeadState,
+) -> String {
+    let inner = format_decoration(hex, decorations, use_color, paint, head);
+    inner
+        .strip_prefix(" (")
+        .and_then(|s| s.strip_suffix(')'))
+        .unwrap_or("")
+        .to_owned()
 }
 
 // ── Diff output for log ──────────────────────────────────────────────
@@ -8012,8 +8479,10 @@ fn write_commit_diff(
     mailmap: &MailmapTable,
     pathspecs: &[String],
     graph_stat_prefix: Option<&str>,
-    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
+    decorations: Option<&DecorationMap>,
     use_color: bool,
+    decoration_paint: Option<&DecorationPaint>,
+    head_for_decor: &HeadState,
     notes_cache: &mut NotesMapCache<'_>,
     patch_context: usize,
 ) -> Result<()> {
@@ -8081,6 +8550,8 @@ fn write_commit_diff(
                     mailmap,
                     decorations,
                     use_color,
+                    decoration_paint,
+                    head_for_decor,
                     notes_cache,
                     odb,
                     None,
@@ -8602,82 +9073,34 @@ fn log_read_blob_pair(odb: &Odb, entry: &DiffEntry) -> Result<(String, String)> 
     Ok((old_content, new_content))
 }
 
-/// Collect all commit OIDs from all refs (branches, tags, etc.) for --all.
+/// Collect all commit OIDs from all refs (branches, tags, etc.) for `--all`.
+///
+/// Tips are returned in **sorted ref-name order** (like Git's `refs_for_each_ref`), not in
+/// arbitrary discovery order, so `log --all` matches upstream when committer dates tie.
 fn collect_all_ref_oids(git_dir: &std::path::Path) -> Result<Vec<ObjectId>> {
-    use std::fs;
-    let mut oids = Vec::new();
-    let mut seen = HashSet::new();
+    let mut pairs: Vec<(String, ObjectId)> = Vec::new();
 
-    // Reftable backend
     if grit_lib::reftable::is_reftable_repo(git_dir) {
         if let Ok(refs) = grit_lib::reftable::reftable_list_refs(git_dir, "refs/") {
-            for (_name, oid) in refs {
-                if seen.insert(oid) {
-                    oids.push(oid);
-                }
-            }
+            pairs.extend(refs);
         }
-        return Ok(oids);
-    }
-
-    // Loose refs
-    collect_oids_from_dir(git_dir, &git_dir.join("refs"), &mut oids, &mut seen)?;
-
-    // Packed refs
-    let packed_path = git_dir.join("packed-refs");
-    if let Ok(text) = fs::read_to_string(packed_path) {
-        for line in text.lines() {
-            if line.starts_with('#') || line.starts_with('^') || line.is_empty() {
-                continue;
-            }
-            if let Some(hex) = line.split_whitespace().next() {
-                if let Ok(oid) = hex.parse::<ObjectId>() {
-                    if seen.insert(oid) {
-                        oids.push(oid);
-                    }
-                }
-            }
+    } else {
+        pairs.extend(grit_lib::refs::list_refs(git_dir, "refs/")?);
+        if let Ok(head_oid) = grit_lib::refs::resolve_ref(git_dir, "HEAD") {
+            pairs.push(("HEAD".to_owned(), head_oid));
         }
     }
 
+    pairs.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut oids = Vec::new();
+    let mut seen = HashSet::new();
+    for (_, oid) in pairs {
+        if seen.insert(oid) {
+            oids.push(oid);
+        }
+    }
     Ok(oids)
-}
-
-fn collect_oids_from_dir(
-    git_dir: &std::path::Path,
-    dir: &std::path::Path,
-    oids: &mut Vec<ObjectId>,
-    seen: &mut HashSet<ObjectId>,
-) -> Result<()> {
-    use std::fs;
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(()),
-    };
-    for entry in entries {
-        let entry = entry?;
-        let ft = entry.file_type()?;
-        if ft.is_dir() {
-            collect_oids_from_dir(git_dir, &entry.path(), oids, seen)?;
-        } else if ft.is_file() {
-            if let Ok(content) = fs::read_to_string(entry.path()) {
-                let raw = content.trim();
-                if let Some(target) = raw.strip_prefix("ref: ") {
-                    // Symbolic ref — resolve it
-                    if let Ok(oid) = grit_lib::refs::resolve_ref(git_dir, target) {
-                        if seen.insert(oid) {
-                            oids.push(oid);
-                        }
-                    }
-                } else if let Ok(oid) = raw.parse::<ObjectId>() {
-                    if seen.insert(oid) {
-                        oids.push(oid);
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 /// Check if a commit does NOT have any changes of the excluded types (for lowercase diff-filter).
