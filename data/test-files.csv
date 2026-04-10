@@ -1132,7 +1132,7 @@ t6430-merge-strategy-option	t6	yes	6	6	0	true	ok	0
 t6431-merge-criscross	t6	yes	2	2	0	true	ok	0
 t6432-merge-recursive-rename-options	t6	yes	3	3	0	true	ok	0
 t6432-merge-recursive-space-options	t6	yes	11	11	0	true	ok	0
-t6433-merge-toplevel	t6	yes	15	10	5	false	ok	0
+t6433-merge-toplevel	t6	yes	15	15	0	true	ok	0
 t6434-merge-recursive-rename-options	t6	yes	27	27	0	true	ok	0
 t6434-merge-with-no-common-ancestor	t6	yes	3	3	0	true	ok	0
 t6435-merge-sparse	t6	yes	6	6	0	true	ok	0
