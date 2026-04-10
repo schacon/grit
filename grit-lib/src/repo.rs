@@ -1590,10 +1590,16 @@ fn ensure_valid_ownership(
             .map(owned_by_effective_user)
             .transpose()?
             .unwrap_or(true);
-        let wt_ok = worktree
-            .map(owned_by_effective_user)
-            .transpose()?
-            .unwrap_or(true);
+        // Git may use a `GIT_WORK_TREE` that does not exist yet (t1510); skip ownership when
+        // the path is absent instead of failing discovery with ENOENT.
+        let wt_ok = match worktree {
+            None => true,
+            Some(wt) => match owned_by_effective_user(wt) {
+                Ok(ok) => ok,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+                Err(e) => return Err(Error::Io(e)),
+            },
+        };
         let gd_ok = owned_by_effective_user(gitdir)?;
         if gitfile_ok && wt_ok && gd_ok {
             return Ok(());
@@ -1892,8 +1898,17 @@ fn validate_git_work_tree_path(path: &Path) -> Result<()> {
     if !path.is_absolute() {
         return Ok(());
     }
+    let comps: Vec<Component<'_>> = path.components().collect();
+    let Some(last_normal_idx) = comps
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(i, c)| matches!(c, Component::Normal(_)).then_some(i))
+    else {
+        return Ok(());
+    };
     let mut cur = PathBuf::new();
-    for comp in path.components() {
+    for (i, comp) in comps.iter().enumerate() {
         match comp {
             Component::Prefix(p) => cur.push(p.as_os_str()),
             Component::RootDir => cur.push(comp.as_os_str()),
@@ -1903,7 +1918,7 @@ fn validate_git_work_tree_path(path: &Path) -> Result<()> {
             }
             Component::Normal(seg) => {
                 cur.push(seg);
-                if !cur.exists() {
+                if i != last_normal_idx && !cur.exists() {
                     return Err(Error::PathError(format!(
                         "Invalid path '{}': No such file or directory",
                         cur.display()
