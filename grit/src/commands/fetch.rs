@@ -19,6 +19,7 @@ use grit_lib::state::resolve_head;
 use grit_lib::state::HeadState;
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -51,7 +52,7 @@ pub struct Args {
     pub multiple: bool,
 
     /// Fetch tags from the remote.
-    #[arg(long)]
+    #[arg(short = 't', long)]
     pub tags: bool,
 
     /// Do not fetch tags.
@@ -61,10 +62,31 @@ pub struct Args {
     /// Remove remote-tracking refs that no longer exist on the remote.
     #[arg(long)]
     pub prune: bool,
+    /// Disable pruning remote-tracking refs.
+    #[arg(long = "no-prune")]
+    pub no_prune: bool,
 
     /// Remove local tags that no longer exist on the remote (implies --prune).
     #[arg(long)]
     pub prune_tags: bool,
+    /// Use one atomic transaction to update refs.
+    #[arg(long)]
+    pub atomic: bool,
+    /// Append ref updates to `.git/FETCH_HEAD` instead of overwriting.
+    #[arg(long)]
+    pub append: bool,
+    /// Dry run; do not write `FETCH_HEAD`.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Write fetched refs to `FETCH_HEAD`.
+    #[arg(long = "write-fetch-head")]
+    pub write_fetch_head: bool,
+    /// Do not write fetched refs to `FETCH_HEAD`.
+    #[arg(long = "no-write-fetch-head")]
+    pub no_write_fetch_head: bool,
+    /// Override configured `remote.<name>.fetch` refspec mapping.
+    #[arg(long = "refmap", value_name = "REFSPEC")]
+    pub refmap: Vec<String>,
 
     /// Deepen a shallow clone by N commits.
     #[arg(long, value_name = "N")]
@@ -153,6 +175,9 @@ pub struct Args {
 }
 
 pub fn run(mut args: Args) -> Result<()> {
+    if args.no_prune {
+        args.prune = false;
+    }
     if args.negotiate_only {
         let recurse_requested = args
             .recurse_submodules
@@ -170,6 +195,9 @@ pub fn run(mut args: Args) -> Result<()> {
         if args.negotiation_tip.is_empty() {
             exit_fatal("--negotiate-only needs one or more --negotiation-tip=*");
         }
+    }
+    if !args.refmap.is_empty() && args.refspecs.is_empty() {
+        bail!("--refmap option is only meaningful with command-line refspecs");
     }
 
     // `git fetch tag <name>` is parsed as remote=`tag` unless we lift the magic keyword.
@@ -801,6 +829,31 @@ fn fetch_remote(
     let mut configured_refspecs = collect_refspecs(config, &fetch_key);
     let had_configured_fetch = !configured_refspecs.is_empty();
     let user_passed_cli_refspecs = !args.refspecs.is_empty();
+    let explicit_refmap = !args.refmap.is_empty();
+    let cli_tracking_refspecs: Vec<FetchRefspec> = if explicit_refmap {
+        let non_empty: Vec<String> = args
+            .refmap
+            .iter()
+            .filter_map(|v| {
+                let t = v.trim();
+                if t.is_empty() {
+                    None
+                } else {
+                    Some(t.to_owned())
+                }
+            })
+            .collect();
+        let mut parsed = parse_cli_fetch_refspecs(&non_empty);
+        for spec in &mut parsed {
+            if spec.negative || spec.dst.is_empty() {
+                continue;
+            }
+            spec.dst = normalize_fetch_refspec_dst(&spec.dst);
+        }
+        parsed
+    } else {
+        remote_fetch_refspecs(config, remote_name)
+    };
 
     if args.prefetch {
         if user_passed_cli_refspecs {
@@ -1293,6 +1346,7 @@ fn fetch_remote(
                     }
                     if let Some(matched) = match_glob_pattern(&src, refname) {
                         let local_ref = dst.replacen('*', matched, 1);
+                        updated_refs.push(local_ref.clone());
                         let old_oid = read_ref_oid(git_dir, &local_ref);
                         if old_oid.as_ref() == Some(remote_oid) {
                             continue;
@@ -1351,24 +1405,28 @@ fn fetch_remote(
             }
 
             // Resolve source: full OID, ref name, or short branch/tag (match `collect_wants_cli`).
-            let remote_oid = if let Ok(oid) = ObjectId::from_hex(src.as_str()) {
-                oid
-            } else {
-                let remote_ref = if src.starts_with("refs/") {
-                    src.clone()
+            let (remote_oid, resolved_remote_ref): (ObjectId, Option<String>) =
+                if let Ok(oid) = ObjectId::from_hex(src.as_str()) {
+                    (oid, None)
                 } else {
-                    format!("refs/heads/{src}")
+                    let remote_ref = if src.starts_with("refs/") {
+                        src.clone()
+                    } else {
+                        format!("refs/heads/{src}")
+                    };
+                    if let Some(oid) = find_remote_ref_oid(&remote_ref) {
+                        (oid, Some(remote_ref))
+                    } else if !src.starts_with("refs/") {
+                        let tag_ref = format!("refs/tags/{src}");
+                        (
+                            find_remote_ref_oid(&tag_ref)
+                                .with_context(|| format!("couldn't find remote ref '{}'", src))?,
+                            Some(tag_ref),
+                        )
+                    } else {
+                        bail!("couldn't find remote ref '{src}'");
+                    }
                 };
-                if let Some(oid) = find_remote_ref_oid(&remote_ref) {
-                    oid
-                } else if !src.starts_with("refs/") {
-                    let tag_ref = format!("refs/tags/{src}");
-                    find_remote_ref_oid(&tag_ref)
-                        .with_context(|| format!("couldn't find remote ref '{}'", src))?
-                } else {
-                    bail!("couldn't find remote ref '{src}'");
-                }
-            };
 
             let branch_label = if ObjectId::from_hex(src.as_str()).is_ok() {
                 src.as_str()
@@ -1389,6 +1447,7 @@ fn fetch_remote(
             // If a destination is specified, write the ref there
             if !dst.is_empty() {
                 let local_ref = normalize_fetch_refspec_dst(&dst);
+                updated_refs.push(local_ref.clone());
 
                 let old_oid = read_ref_oid(git_dir, &local_ref);
 
@@ -1440,6 +1499,31 @@ fn fetch_remote(
                                 );
                             }
                         }
+                    }
+                }
+            } else if let Some(remote_ref_name) = resolved_remote_ref.as_deref() {
+                if let Some(local_ref) =
+                    map_ref_through_refspecs(remote_ref_name, &cli_tracking_refspecs)
+                {
+                    updated_refs.push(local_ref.clone());
+                    let old_oid = read_ref_oid(git_dir, &local_ref);
+                    if old_oid.as_ref() != Some(&remote_oid) {
+                        if !has_updates && !args.quiet {
+                            eprintln!("From {display_url}");
+                            has_updates = true;
+                        }
+
+                        if local_ref.starts_with("refs/heads/") && !args.update_head_ok {
+                            if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
+                                bail!(
+                                    "refusing to fetch into branch '{}' checked out at '{}'",
+                                    local_ref,
+                                    wt_path
+                                );
+                            }
+                        }
+                        refs::write_ref(git_dir, &local_ref, &remote_oid)
+                            .with_context(|| format!("updating ref {local_ref}"))?;
                     }
                 }
             }
@@ -1524,6 +1608,7 @@ fn fetch_remote(
                 }
             }
         }
+        let mut prune_updated_refs = updated_refs.clone();
 
         // Standard path: update remote-tracking refs from remote heads
         let has_merge_cfg = branch_has_merge_config_for_remote(git_dir, config, remote_name);
@@ -1601,6 +1686,9 @@ fn fetch_remote(
             } else if !args.quiet {
                 print_update(&old_oid, &remote_oid, branch, tracking_print);
             }
+        }
+        if user_passed_cli_refspecs {
+            updated_refs = prune_updated_refs;
         }
 
         if implicit_path_fetch {
@@ -1848,7 +1936,30 @@ fn fetch_remote(
         sort_fetch_head_lines(&mut fetch_head_entries, &fetch_head_refspecs);
         let fetch_head_path = git_dir.join("FETCH_HEAD");
         let content = fetch_head_entries.join("\n") + "\n";
-        fs::write(&fetch_head_path, content).context("writing FETCH_HEAD")?;
+        let should_write_fetch_head = if args.dry_run {
+            false
+        } else if args.no_write_fetch_head {
+            false
+        } else if args.write_fetch_head {
+            true
+        } else {
+            true
+        };
+        if should_write_fetch_head {
+            if args.append {
+                let mut file = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&fetch_head_path)
+                    .context("opening FETCH_HEAD for append")?;
+                file.write_all(content.as_bytes())
+                    .context("appending FETCH_HEAD")?;
+            } else {
+                fs::write(&fetch_head_path, content).context("writing FETCH_HEAD")?;
+            }
+        } else if args.dry_run && !args.no_write_fetch_head {
+            eprintln!("would write to .git/FETCH_HEAD");
+        }
     }
 
     if args.filter.as_deref() == Some("blob:none") {
@@ -2899,7 +3010,7 @@ fn parse_cli_fetch_refspecs(cli: &[String]) -> Vec<FetchRefspec> {
     out
 }
 
-/// Remote-tracking prune namespaces implied by CLI refspecs.
+/// Prune namespaces implied by CLI refspecs.
 ///
 /// Only explicit `<src>:<dst>` refspecs participate. A source-only refspec
 /// (e.g. `main`) does not define a prune destination namespace.
@@ -2918,7 +3029,7 @@ fn prune_prefixes_from_cli_refspecs(cli: &[String]) -> Vec<String> {
             continue;
         }
         let dst = normalize_fetch_refspec_dst(dst_raw);
-        if !dst.starts_with("refs/remotes/") {
+        if !dst.starts_with("refs/") {
             continue;
         }
         let prefix = if let Some(star) = dst.find('*') {
