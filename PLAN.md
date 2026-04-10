@@ -799,7 +799,7 @@ commit → check it off → move on.
 
 - [ ] `t7420-submodule-set-url` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — Test submodules set-url subcommand
 
-- [ ] `t7514-commit-patch` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — hunk edit with 
+- [x] `t7514-commit-patch` ████████████████████ 3/3 (0 left) — hunk edit with `commit -p -m` / `--dry-run -p`
 - [ ] `t7515-status-symlinks` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git status and symlinks
 - [ ] `t7516-commit-races` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — git commit races
 - [ ] `t7006-pager` ███████████████████░ 106/109 (3 left) — Test automatic use of a pager.

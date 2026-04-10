@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 330 completed (`[x]`), 5 in progress (`[~]`), 436 remai
 
 ## Recently completed
 
+- `t7514-commit-patch` — 3/3 tests pass (`commit -p` / `commit -i`: interactive index↔worktree hunks, `GIT_EDITOR` for `e`, EOF-after-edit stages like Git; `--dry-run -p` without writing index; `-a`/`-i`/`-o` conflicts with `-p` like Git; `edit_bytes_tempfile` respects `GIT_EDITOR` / non-tty)
 - `t5532-fetch-proxy` — 5/5 tests pass (`core.gitproxy` / `GIT_PROXY_COMMAND` for `git://`: spawn proxy with host+port, validate `-` hostnames before proxy; default glob `remote.*.fetch` uses checked-out branch for FETCH_HEAD for-merge like Git; harness sets absolute `PERL_PATH` for valid shebangs)
 - `t5705-session-id-in-capabilities` — 17/17 tests pass (trace2 `transfer` `negotiated-version` / `server-sid` / `client-sid`; `transfer.advertiseSID` on upload-pack, receive-pack, and protocol v2; local fetch v2 handshake + stdin close; `send_pack` `HEAD:dst` + `git-receive-pack` → grit; strip trace2 env + quoted env paths in upload-pack spawn; harness CSV refreshed)
 - `t6101-rev-parse-parents` — 38/38 tests pass (`rev-parse`: `^@` / `^!` / `^-` parent shorthands, graft-aware `^N` navigation, `tags/<name>` DWIM, `--symbolic` ASIS mode + two-dot range ordering; leading `^` uninteresting revisions; `rev-list` `^@`/`^-` expansion with grafts; shared `load_graft_parents`; `expand_rev_token_circ_bang` for merge commits)

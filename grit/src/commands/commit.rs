@@ -13,7 +13,7 @@ use grit_lib::diff::{
 use grit_lib::error::Error;
 use grit_lib::git_date::parse::parse_date;
 use grit_lib::hooks::{run_hook, HookResult};
-use grit_lib::index::{Index, MODE_GITLINK, MODE_TREE};
+use grit_lib::index::{Index, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::reflog::read_reflog;
 use grit_lib::refs::{append_reflog, list_refs, write_ref};
@@ -30,7 +30,7 @@ use grit_lib::write_tree::{
 use crate::ident::{resolve_email, resolve_name, IdentRole};
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
@@ -137,7 +137,7 @@ pub struct Args {
     #[arg(long = "interactive")]
     pub interactive: bool,
 
-    /// Select hunks interactively (accepted for Git compatibility; not implemented).
+    /// Select hunks interactively before committing (same idea as `git add -p`).
     #[arg(short = 'p', long = "patch", hide = true)]
     pub patch: bool,
 
@@ -403,6 +403,18 @@ pub fn run(mut args: Args) -> Result<()> {
         bail!("--include and --only are mutually exclusive");
     }
 
+    if args.include && (args.interactive || args.patch) {
+        bail!(
+            "fatal: options '-i/--include' and '--interactive/-p/--patch' cannot be used together"
+        );
+    }
+    if args.only && (args.interactive || args.patch) {
+        bail!("fatal: options '-o/--only' and '--interactive/-p/--patch' cannot be used together");
+    }
+    if args.all && (args.interactive || args.patch) {
+        bail!("fatal: options '-a/--all' and '--interactive/-p/--patch' cannot be used together");
+    }
+
     if args.fixup.is_some() && args.squash.is_some() {
         bail!("fatal: options '--squash' and '--fixup' cannot be used together");
     }
@@ -488,6 +500,17 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
+    let head = resolve_head(&repo.git_dir)?;
+    let parent_tree_oid = if let Some(head_oid) = head.oid() {
+        let obj = repo.odb.read(head_oid)?;
+        let commit = grit_lib::objects::parse_commit(&obj.data)?;
+        Some(commit.tree)
+    } else {
+        None
+    };
+
+    let work_tree = repo.work_tree.as_deref();
+
     let reset_author_allowed = args.amend
         || args.reuse_message.is_some()
         || args.reedit_message.is_some()
@@ -496,8 +519,6 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.reset_author && !reset_author_allowed {
         bail!("--reset-author can be used only with -C, -c or --amend.");
     }
-
-    let work_tree = repo.work_tree.as_deref();
 
     // If -a, stage all tracked file changes first
     if args.all {
@@ -508,46 +529,88 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // If pathspec given, stage those files. A real commit persists to disk; `--dry-run` only
     // simulates staging in memory so status output matches Git without mutating the index.
-    let mut pathspec_matched: Option<HashSet<Vec<u8>>> =
-        if !args.pathspec.is_empty() && !args.dry_run {
+    // `commit -p` with pathspec does not pre-stage like a normal pathspec commit; partial trees
+    // still use the path list for `write_tree_partial_from_index`.
+    let mut pathspec_matched: Option<HashSet<Vec<u8>>> = if args.patch || args.interactive {
+        if args.pathspec.is_empty() {
+            None
+        } else {
             let Some(wt) = work_tree else {
                 bail!("pathspec requires a work tree");
             };
-            let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-            let core_filemode = config
-                .get_bool("core.filemode")
-                .and_then(|r| r.ok())
-                .unwrap_or(true);
-            let precompose_unicode =
-                grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir));
-            let sparse_state = crate::commands::add::AddSparseState::load(&repo, &config);
-            let add_cfg = crate::commands::add::AddConfig {
-                core_filemode,
-                precompose_unicode,
-                ignore_errors: false,
-                conv: grit_lib::crlf::ConversionConfig::from_config(&config),
-                attrs: grit_lib::crlf::load_gitattributes(wt),
-                config,
-                sparse: sparse_state,
-                include_sparse: false,
-            };
-            Some(crate::commands::add::stage_pathspecs_for_commit(
-                &repo,
-                wt,
-                &args.pathspec,
-                &add_cfg,
-            )?)
-        } else {
-            None
+            Some(
+                commit_patch_pathspec_targets(wt, &args.pathspec)?
+                    .into_iter()
+                    .map(|s| s.into_bytes())
+                    .collect(),
+            )
+        }
+    } else if !args.pathspec.is_empty() && !args.dry_run {
+        let Some(wt) = work_tree else {
+            bail!("pathspec requires a work tree");
         };
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let core_filemode = config
+            .get_bool("core.filemode")
+            .and_then(|r| r.ok())
+            .unwrap_or(true);
+        let precompose_unicode =
+            grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir));
+        let sparse_state = crate::commands::add::AddSparseState::load(&repo, &config);
+        let add_cfg = crate::commands::add::AddConfig {
+            core_filemode,
+            precompose_unicode,
+            ignore_errors: false,
+            conv: grit_lib::crlf::ConversionConfig::from_config(&config),
+            attrs: grit_lib::crlf::load_gitattributes(wt),
+            config,
+            sparse: sparse_state,
+            include_sparse: false,
+        };
+        Some(crate::commands::add::stage_pathspecs_for_commit(
+            &repo,
+            wt,
+            &args.pathspec,
+            &add_cfg,
+        )?)
+    } else {
+        None
+    };
 
     let index_path = resolved_index_path(&repo);
 
-    // Load index (after non-dry-run pathspec staging has updated the file on disk).
-    let mut index = match repo.load_index_at(&index_path) {
-        Ok(idx) => idx,
-        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
-        Err(e) => return Err(e.into()),
+    let index = if args.interactive || args.patch {
+        let Some(wt) = work_tree else {
+            bail!("this operation must be run in a work tree");
+        };
+        run_commit_patch_mode(&repo, wt, &args, &head, parent_tree_oid.as_ref())?
+    } else {
+        let mut idx = match repo.load_index_at(&index_path) {
+            Ok(i) => i,
+            Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
+            Err(e) => return Err(e.into()),
+        };
+
+        if idx.entries.iter().any(|e| e.stage() != 0) {
+            eprintln!("error: Committing is not possible because you have unmerged files.");
+            eprintln!("hint: Fix them up in the work tree, and then use 'git add/rm <file>'");
+            eprintln!("hint: as appropriate to mark resolution and make a commit.");
+            eprintln!("fatal: Exiting because of an unresolved conflict.");
+            std::process::exit(128);
+        }
+
+        if args.dry_run && !args.pathspec.is_empty() {
+            let Some(wt) = work_tree else {
+                bail!("pathspec requires a work tree");
+            };
+            pathspec_matched = Some(apply_pathspec_to_index(
+                &repo,
+                wt,
+                &mut idx,
+                &args.pathspec,
+            )?);
+        }
+        idx
     };
 
     if index.entries.iter().any(|e| e.stage() != 0) {
@@ -557,30 +620,6 @@ pub fn run(mut args: Args) -> Result<()> {
         eprintln!("fatal: Exiting because of an unresolved conflict.");
         std::process::exit(128);
     }
-
-    if args.dry_run && !args.pathspec.is_empty() {
-        let Some(wt) = work_tree else {
-            bail!("pathspec requires a work tree");
-        };
-        let mut idx = index.clone();
-        pathspec_matched = Some(apply_pathspec_to_index(
-            &repo,
-            wt,
-            &mut idx,
-            &args.pathspec,
-        )?);
-        index = idx;
-    }
-
-    // Resolve HEAD for parent(s) and optional base tree for partial commits
-    let head = resolve_head(&repo.git_dir)?;
-    let parent_tree_oid = if let Some(head_oid) = head.oid() {
-        let obj = repo.odb.read(head_oid)?;
-        let commit = grit_lib::objects::parse_commit(&obj.data)?;
-        Some(commit.tree)
-    } else {
-        None
-    };
 
     // Write tree: pathspec commits record only matched paths (Git partial / initial pathspec commit)
     let tree_oid = match (&pathspec_matched, &parent_tree_oid) {
@@ -1660,6 +1699,405 @@ fn walk_untracked(
         }
     }
     Ok(())
+}
+
+/// Paths named by `commit -p` pathspec arguments (repository-relative), for partial-tree commits.
+fn commit_patch_pathspec_targets(work_tree: &Path, pathspecs: &[String]) -> Result<Vec<String>> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| work_tree.to_path_buf());
+    let prefix = crate::pathspec::pathdiff(&cwd, work_tree);
+    let mut out = Vec::new();
+
+    for spec in pathspecs {
+        let resolved = crate::pathspec::resolve_pathspec(spec, work_tree, prefix.as_deref());
+        if !crate::pathspec::has_glob_chars(&resolved) {
+            let abs_path = work_tree.join(&resolved);
+            if fs::symlink_metadata(&abs_path).is_ok() {
+                out.push(resolved);
+            } else {
+                bail!("pathspec '{spec}' did not match any file(s) known to git");
+            }
+            continue;
+        }
+
+        let (dir_prefix, pattern) = if let Some(slash_pos) = resolved.rfind('/') {
+            (&resolved[..slash_pos], &resolved[slash_pos + 1..])
+        } else {
+            ("", resolved.as_str())
+        };
+
+        let search_dir = if dir_prefix.is_empty() {
+            work_tree.to_path_buf()
+        } else {
+            work_tree.join(dir_prefix)
+        };
+
+        let mut spec_matched = false;
+        if let Ok(entries) = fs::read_dir(&search_dir) {
+            for entry in entries.flatten() {
+                let name_str = entry.file_name().to_string_lossy().to_string();
+                if name_str == ".git" {
+                    continue;
+                }
+                if !grit_lib::wildmatch::wildmatch(pattern.as_bytes(), name_str.as_bytes(), 0) {
+                    continue;
+                }
+                let rel = if dir_prefix.is_empty() {
+                    name_str.clone()
+                } else {
+                    format!("{dir_prefix}/{name_str}")
+                };
+                let abs_path = work_tree.join(&rel);
+                if fs::symlink_metadata(&abs_path).is_ok() {
+                    out.push(rel);
+                    spec_matched = true;
+                }
+            }
+        }
+        if pattern.contains('[') && fs::symlink_metadata(search_dir.join(pattern)).is_ok() {
+            let rel = if dir_prefix.is_empty() {
+                pattern.to_string()
+            } else {
+                format!("{dir_prefix}/{pattern}")
+            };
+            if !out.iter().any(|p| p == &rel) {
+                out.push(rel);
+                spec_matched = true;
+            }
+        }
+
+        if !spec_matched {
+            bail!("pathspec '{spec}' did not match any file(s) known to git");
+        }
+    }
+
+    Ok(out)
+}
+
+/// Interactive `commit -p` / `commit -i`: stage selected hunks (index vs worktree), optionally without
+/// writing the index (`--dry-run`).
+///
+/// Returns the index to use for the remainder of `commit` (in-memory when `dry_run`, otherwise
+/// re-read from disk after writing).
+fn run_commit_patch_mode(
+    repo: &Repository,
+    work_tree: &Path,
+    args: &Args,
+    head: &HeadState,
+    parent_tree_oid: Option<&ObjectId>,
+) -> Result<Index> {
+    use similar::{Algorithm, TextDiff};
+    use std::io::BufRead;
+
+    let index_path = resolved_index_path(repo);
+    let disk_index = match repo.load_index_at(&index_path) {
+        Ok(idx) => idx,
+        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
+        Err(e) => return Err(e.into()),
+    };
+
+    if disk_index.entries.iter().any(|e| e.stage() != 0) {
+        eprintln!("error: Committing is not possible because you have unmerged files.");
+        eprintln!("hint: Fix them up in the work tree, and then use 'git add/rm <file>'");
+        eprintln!("hint: as appropriate to mark resolution and make a commit.");
+        eprintln!("fatal: Exiting because of an unresolved conflict.");
+        std::process::exit(128);
+    }
+
+    let filter_paths: Vec<String> = if args.pathspec.is_empty() {
+        Vec::new()
+    } else {
+        commit_patch_pathspec_targets(work_tree, &args.pathspec)?
+    };
+
+    let mut candidate_paths: Vec<String> = Vec::new();
+    for ie in &disk_index.entries {
+        if ie.stage() != 0 {
+            continue;
+        }
+        if ie.mode == MODE_SYMLINK || ie.mode == grit_lib::index::MODE_GITLINK {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&ie.path).to_string();
+        if !crate::commands::checkout::patch_path_filter_matches(&path_str, &filter_paths) {
+            continue;
+        }
+        let abs_path = work_tree.join(&path_str);
+        let work_content = if fs::symlink_metadata(&abs_path).is_ok() {
+            fs::read(&abs_path).with_context(|| format!("reading {path_str}"))?
+        } else {
+            Vec::new()
+        };
+        let obj = repo.odb.read(&ie.oid)?;
+        if obj.kind != ObjectKind::Blob {
+            continue;
+        }
+        if work_content == obj.data {
+            continue;
+        }
+        candidate_paths.push(path_str);
+    }
+
+    candidate_paths.sort();
+    candidate_paths.dedup();
+
+    if candidate_paths.is_empty() {
+        println!("No changes.");
+        let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+        let staged = diff_index_to_tree(&repo.odb, &disk_index, parent_tree_oid, false)?;
+        let unstaged_raw = diff_index_to_worktree(&repo.odb, &disk_index, work_tree, false)?;
+        let (rename_threshold, rename_copies) = commit_rename_settings(&config);
+        let unstaged = if let Some(th) = rename_threshold {
+            status_apply_rename_copy_detection(
+                &repo.odb,
+                unstaged_raw,
+                th,
+                rename_copies,
+                parent_tree_oid,
+            )?
+        } else {
+            unstaged_raw
+        };
+        let untracked = find_untracked_files(work_tree, &disk_index)?;
+        let unmerged_full = crate::commands::status::unmerged_paths_and_mask(&disk_index);
+        let in_progress = detect_in_progress(&repo.git_dir);
+        print_dry_run(
+            repo,
+            &config,
+            head,
+            &staged,
+            &unstaged,
+            &untracked,
+            &unmerged_full,
+            &in_progress,
+            None,
+            false,
+            args.amend,
+            &index_path,
+            &disk_index,
+        )?;
+        std::process::exit(1);
+    }
+
+    let stdin = io::stdin();
+    let mut reader = stdin.lock();
+    let mut out = io::stdout();
+
+    let mut new_index = disk_index.clone();
+    let mut path_to_new_blob: HashMap<String, Vec<u8>> = HashMap::new();
+    let mut any_hunk_staged = false;
+    let mut stdin_eof_after_edit = false;
+
+    for path in candidate_paths {
+        let path_bytes = path.as_bytes();
+        let Some(ie) = new_index.get(path_bytes, 0).cloned() else {
+            continue;
+        };
+        if ie.mode == MODE_SYMLINK || ie.mode == grit_lib::index::MODE_GITLINK {
+            continue;
+        }
+        let index_obj = repo.odb.read(&ie.oid)?;
+        if index_obj.kind != ObjectKind::Blob {
+            continue;
+        }
+        let index_content = index_obj.data;
+        let abs_path = work_tree.join(&path);
+        let mut cur_work = if fs::symlink_metadata(&abs_path).is_ok() {
+            fs::read(&abs_path).with_context(|| format!("reading {path}"))?
+        } else {
+            Vec::new()
+        };
+
+        'file_pass: loop {
+            let index_str = String::from_utf8_lossy(&index_content);
+            let work_str = String::from_utf8_lossy(&cur_work);
+            let text_diff = TextDiff::configure()
+                .algorithm(Algorithm::Myers)
+                .diff_lines(index_str.as_ref(), work_str.as_ref());
+            let ops: Vec<_> = text_diff.ops().to_vec();
+
+            let has_change = ops
+                .iter()
+                .any(|o| !matches!(o, similar::DiffOp::Equal { .. }));
+            if !has_change {
+                path_to_new_blob.insert(path.clone(), index_content.clone());
+                break 'file_pass;
+            }
+
+            let n_ops = ops.len();
+            let mut hunk_ranges: Vec<(usize, usize)> = vec![(0, n_ops)];
+            let mut accepted = vec![false; hunk_ranges.len()];
+            let mut hunk_cursor = 0usize;
+
+            'hunk_loop: loop {
+                let n_hunks = hunk_ranges.len();
+                if hunk_cursor >= n_hunks {
+                    break;
+                }
+
+                let display_idx = hunk_cursor + 1;
+                let (s, e) = hunk_ranges[hunk_cursor];
+                let hunk_only = crate::commands::stash::partial_unified_for_op_range(
+                    path.as_str(),
+                    &index_content,
+                    &cur_work,
+                    &ops[s..e],
+                    3,
+                );
+
+                writeln!(out, "diff --git a/{path} b/{path}").ok();
+                write!(out, "--- a/{path}\n+++ b/{path}\n").ok();
+                write!(out, "{hunk_only}").ok();
+                write!(
+                    out,
+                    "({display_idx}/{n_hunks}) Stage this hunk [y,n,q,a,d,s,e,?]? "
+                )
+                .ok();
+                out.flush().ok();
+
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    if stdin_eof_after_edit {
+                        // Match Git: after `e`, EOF on the next prompt stages the hunk (t7514).
+                        line.push('y');
+                        stdin_eof_after_edit = false;
+                    } else {
+                        std::process::exit(1);
+                    }
+                }
+                let answer = line.trim();
+                match answer {
+                    "y" | "Y" => {
+                        accepted[hunk_cursor] = true;
+                        any_hunk_staged = true;
+                        hunk_cursor += 1;
+                    }
+                    "n" | "N" => {
+                        hunk_cursor += 1;
+                    }
+                    "a" | "A" => {
+                        any_hunk_staged = true;
+                        for j in hunk_cursor..n_hunks {
+                            accepted[j] = true;
+                        }
+                        break 'hunk_loop;
+                    }
+                    "d" | "D" => {
+                        break 'hunk_loop;
+                    }
+                    "q" | "Q" => {
+                        std::process::exit(1);
+                    }
+                    "s" | "S" => {
+                        if !crate::commands::stash::split_hunk_at_first_gap(
+                            &mut hunk_ranges,
+                            hunk_cursor,
+                            &ops,
+                        ) {
+                            continue 'hunk_loop;
+                        }
+                        let n = hunk_ranges.len();
+                        accepted.resize(n, false);
+                        if hunk_cursor >= n {
+                            hunk_cursor = n.saturating_sub(1);
+                        }
+                    }
+                    "e" | "E" => {
+                        if let Ok(edited) = crate::commands::stash::edit_bytes_tempfile(&cur_work) {
+                            cur_work = edited;
+                            stdin_eof_after_edit = true;
+                            continue 'file_pass;
+                        }
+                    }
+                    "?" => {
+                        writeln!(
+                            out,
+                            "y - stage this hunk\n\
+                             n - do not stage this hunk\n\
+                             q - quit; do not stage this hunk or any of the remaining ones\n\
+                             a - stage this hunk and all later hunks in the file\n\
+                             d - do not stage this hunk or any of the later hunks in the file\n\
+                             s - split the current hunk into smaller hunks\n\
+                             e - manually edit the current hunk\n"
+                        )
+                        .ok();
+                        out.flush().ok();
+                    }
+                    _ => {}
+                }
+            }
+
+            // `blend_line_diff_by_hunk_ranges` uses the first arg as "source" when a range is
+            // accepted. For `commit -p` the diff is **index → worktree**; answering `y` must stage
+            // the worktree side, so invert flags (same relationship as stash's `stash_accepted`).
+            let stage_accepted: Vec<bool> = accepted.iter().map(|a| !*a).collect();
+            let staged_bytes = crate::commands::checkout::blend_line_diff_by_hunk_ranges(
+                &index_content,
+                &cur_work,
+                &hunk_ranges,
+                &stage_accepted,
+            );
+            path_to_new_blob.insert(path, staged_bytes.into_bytes());
+            break 'file_pass;
+        }
+    }
+
+    if !any_hunk_staged {
+        let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+        let staged = diff_index_to_tree(&repo.odb, &disk_index, parent_tree_oid, false)?;
+        let unstaged_raw = diff_index_to_worktree(&repo.odb, &disk_index, work_tree, false)?;
+        let (rename_threshold, rename_copies) = commit_rename_settings(&config);
+        let unstaged = if let Some(th) = rename_threshold {
+            status_apply_rename_copy_detection(
+                &repo.odb,
+                unstaged_raw,
+                th,
+                rename_copies,
+                parent_tree_oid,
+            )?
+        } else {
+            unstaged_raw
+        };
+        let untracked = find_untracked_files(work_tree, &disk_index)?;
+        let unmerged_full = crate::commands::status::unmerged_paths_and_mask(&disk_index);
+        let in_progress = detect_in_progress(&repo.git_dir);
+        print_dry_run(
+            repo,
+            &config,
+            head,
+            &staged,
+            &unstaged,
+            &untracked,
+            &unmerged_full,
+            &in_progress,
+            None,
+            false,
+            args.amend,
+            &index_path,
+            &disk_index,
+        )?;
+        std::process::exit(1);
+    }
+
+    for (path, bytes) in &path_to_new_blob {
+        let path_b = path.as_bytes();
+        let Some(entry) = new_index.get_mut(path_b, 0) else {
+            continue;
+        };
+        if bytes.is_empty() {
+            entry.oid = repo.odb.write(ObjectKind::Blob, &[])?;
+            entry.size = 0;
+        } else {
+            entry.oid = repo.odb.write(ObjectKind::Blob, bytes)?;
+            entry.size = bytes.len() as u32;
+        }
+    }
+
+    if args.dry_run {
+        return Ok(new_index);
+    }
+
+    repo.write_index(&mut new_index)?;
+    repo.load_index_at(&index_path).map_err(|e| e.into())
 }
 
 /// Apply pathspec staging to `index` in memory (no disk write).

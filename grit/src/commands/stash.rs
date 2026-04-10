@@ -16,7 +16,7 @@ use clap::{Args as ClapArgs, Subcommand};
 use crate::explicit_exit::SilentNonZeroExit;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{self, BufRead, Write as IoWrite};
+use std::io::{self, BufRead, IsTerminal, Write as IoWrite};
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
@@ -1466,14 +1466,35 @@ pub(crate) fn split_hunk_at_first_gap(
     true
 }
 
-fn edit_bytes_tempfile(content: &[u8]) -> Result<Vec<u8>> {
-    let mut f = tempfile::NamedTempFile::new().context("temp file for stash -p edit")?;
+/// Run `VISUAL`/`EDITOR` on a temp copy of `content` and return the edited bytes.
+///
+/// Used by `stash -p` and `commit -p` when the user chooses `e` (manual hunk edit).
+pub(crate) fn edit_bytes_tempfile(content: &[u8]) -> Result<Vec<u8>> {
+    fn effective_editor(raw: &str) -> bool {
+        let t = raw.trim();
+        !t.is_empty() && t != ":"
+    }
+
+    let mut f = tempfile::NamedTempFile::new().context("temp file for interactive patch edit")?;
     f.as_file_mut().write_all(content)?;
     f.flush()?;
     let path = f.path().to_owned();
-    let editor = std::env::var("VISUAL")
-        .or_else(|_| std::env::var("EDITOR"))
-        .unwrap_or_else(|_| "vi".to_string());
+    let visual_present = std::env::var("VISUAL").is_ok();
+    let editor_present = std::env::var("EDITOR").is_ok();
+    let editor = std::env::var("GIT_EDITOR")
+        .ok()
+        .filter(|e| effective_editor(e))
+        .or_else(|| std::env::var("VISUAL").ok().filter(|e| effective_editor(e)))
+        .or_else(|| std::env::var("EDITOR").ok().filter(|e| effective_editor(e)))
+        .unwrap_or_else(|| {
+            if visual_present || editor_present {
+                "true".to_owned()
+            } else if !std::io::stdin().is_terminal() {
+                "true".to_owned()
+            } else {
+                "vi".to_owned()
+            }
+        });
     let status = std::process::Command::new("sh")
         .arg("-c")
         .arg(format!("{} \"$1\"", editor))
