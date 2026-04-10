@@ -76,7 +76,7 @@ fn split_submodule_leading_flags(rest: &[String]) -> (SubmoduleTopOpts, Vec<Stri
     while i < rest.len() {
         let a = rest[i].as_str();
         match a {
-            "-h" | "--help" => break,
+            "-h" | "--help" | "--help-all" => break,
             "--quiet" | "-q" => {
                 top.quiet = true;
                 i += 1;
@@ -92,27 +92,35 @@ fn split_submodule_leading_flags(rest: &[String]) -> (SubmoduleTopOpts, Vec<Stri
     (top, rest[i..].to_vec())
 }
 
-fn parse_submodule_args(inner: &[String]) -> Args {
-    if inner.len() == 1 && (inner[0] == "-h" || inner[0] == "--help") {
-        if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin("submodule") {
-            let pad = " ".repeat("git submodule ".len());
-            let variants = submodule_synopsis_variants_from_adoc(syn);
-            for (i, var) in variants.iter().enumerate() {
-                let Some(first) = var.first() else {
-                    continue;
-                };
-                if i == 0 {
-                    println!("usage: {first}");
-                } else {
-                    println!("   or: {first}");
-                }
-                for cont in var.iter().skip(1) {
-                    println!("{pad}{cont}");
-                }
-            }
-            println!();
-            std::process::exit(0);
+fn print_submodule_upstream_usage_stdout() {
+    let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin("submodule") else {
+        return;
+    };
+    let pad = " ".repeat("git submodule ".len());
+    let variants = submodule_synopsis_variants_from_adoc(syn);
+    for (i, var) in variants.iter().enumerate() {
+        let Some(first) = var.first() else {
+            continue;
+        };
+        if i == 0 {
+            println!("usage: {first}");
+        } else {
+            println!("   or: {first}");
         }
+        for cont in var.iter().skip(1) {
+            println!("{pad}{cont}");
+        }
+    }
+    println!();
+}
+
+fn parse_submodule_args(inner: &[String]) -> Args {
+    if inner.len() == 1 && matches!(inner[0].as_str(), "-h" | "--help" | "--help-all") {
+        print_submodule_upstream_usage_stdout();
+        // t1517-outside-repo expects exit **129** for `-h` / `--help-all` (like other builtins).
+        // Long `--help` alone exits **0** for POSIX `&&` chains (t0450-style).
+        let code = if inner[0] == "--help" { 0 } else { 129 };
+        std::process::exit(code);
     }
 
     let mut argv = vec!["git submodule".to_owned()];

@@ -432,7 +432,13 @@ git multi-pack-index [<options>] repack [--batch-size=<size>]"#),
 		[-u | -i]] [--index-output=<file>] [--no-sparse-checkout]
 		(--empty | <tree-ish1> [<tree-ish2> [<tree-ish3>]])"#),
         "rev-list" => Some(r#"git rev-list [<options>] <commit>... [--] [<path>...]"#),
-        "rev-parse" => Some(r#"git rev-parse [<options>] <arg>..."#),
+        "rev-parse" => Some(
+            "git rev-parse --parseopt [<options>] -- [<args>...]\n\
+   or: git rev-parse --sq-quote [<arg>...]\n\
+   or: git rev-parse [<options>] [<arg>...]\n\
+\n\
+Run \"git rev-parse --parseopt -h\" for more information on the first usage.",
+        ),
         "show-ref" => Some(r#"git show-ref [--head] [-d | --dereference]
 	     [-s | --hash[=<n>]] [--abbrev[=<n>]] [--branches] [--tags]
 	     [--] [<pattern>...]

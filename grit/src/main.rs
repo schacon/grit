@@ -41,7 +41,7 @@ mod trace_packet;
 mod transport_passthrough;
 mod wire_trace;
 
-mod upstream_help_builtin_synopsis {
+pub(crate) mod upstream_help_builtin_synopsis {
     include!(concat!(env!("OUT_DIR"), "/upstream_help_synopsis.rs"));
 }
 
@@ -2501,7 +2501,7 @@ struct ArgsWrapper<T: Args> {
 
 /// Split adoc synopsis into usage variants: each variant starts with a `git …` line; following
 /// lines are continuations (AsciiDoc tabs) until the next `git …` line.
-fn synopsis_variants_from_adoc(syn: &str) -> Vec<Vec<String>> {
+pub(crate) fn synopsis_variants_from_adoc(syn: &str) -> Vec<Vec<String>> {
     let mut variants: Vec<Vec<String>> = Vec::new();
     let mut current: Vec<String> = Vec::new();
     for line in syn.lines() {
@@ -2527,7 +2527,7 @@ fn synopsis_variants_from_adoc(syn: &str) -> Vec<Vec<String>> {
 /// Git's `-h` uses exit **129** (t0450 and other tests rely on this). Long `--help` uses exit **0**
 /// so POSIX `sh` scripts can chain `git <cmd> --help && grep …` (exit codes >125 are "failure" in
 /// `test -e` / `&&` under `/bin/sh`).
-fn print_upstream_synopsis_and_exit(subcmd: &str, syn: &str, exit_code: u8) -> ! {
+pub(crate) fn print_upstream_synopsis_and_exit(subcmd: &str, syn: &str, exit_code: u8) -> ! {
     let pad = " ".repeat(format!("git {subcmd} ").len());
     let variants = synopsis_variants_from_adoc(syn);
     for (i, var) in variants.iter().enumerate() {
@@ -2790,15 +2790,15 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
     {
         print_stash_push_help_upstream();
     }
-    if rest.len() == 1 && (rest[0] == "-h" || rest[0] == "--help") {
-        if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd) {
-            // Most builtins use exit 129 for `-h` (t0450). `git submodule -h` exits 0 (t7400).
-            let code = if subcmd == "submodule" || rest[0] == "--help" {
-                0
-            } else {
-                129
-            };
-            print_upstream_synopsis_and_exit(subcmd, syn, code);
+    // `git <cmd> --help-all` is an alias for short usage (t1517); exit **129** like `-h`.
+    // Long `--help` alone exits **0** so shell `&&` chains keep working (t0450).
+    if rest.len() == 1 {
+        let arg = rest[0].as_str();
+        if matches!(arg, "-h" | "--help" | "--help-all") {
+            if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd) {
+                let code = if arg == "--help" { 0 } else { 129 };
+                print_upstream_synopsis_and_exit(subcmd, syn, code);
+            }
         }
     }
 
@@ -3199,6 +3199,7 @@ fn print_list_cmds(categories: &str) {
         "difftool",
         "fsck",
         "help",
+        "imap-send",
         "mergetool",
         "prune",
         "reflog",
@@ -3950,6 +3951,7 @@ pub(crate) const KNOWN_COMMANDS: &[&str] = &[
     "http-backend",
     "http-fetch",
     "http-push",
+    "imap-send",
     "index-pack",
     "init",
     "interpret-trailers",
@@ -4092,7 +4094,19 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "am" => commands::am::run(parse_cmd_args(subcmd, rest)),
         "annotate" => commands::annotate::run(parse_cmd_args(subcmd, rest)),
         "apply" => commands::apply::run(parse_cmd_args(subcmd, rest)),
-        "archive" => commands::archive::run_from_argv(rest),
+        "archive" => {
+            if rest.len() == 1 {
+                let a = rest[0].as_str();
+                if matches!(a, "-h" | "--help" | "--help-all") {
+                    if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd)
+                    {
+                        let code = if a == "--help" { 0 } else { 129 };
+                        print_upstream_synopsis_and_exit(subcmd, syn, code);
+                    }
+                }
+            }
+            commands::archive::run_from_argv(rest)
+        }
         "backfill" => commands::backfill::run(parse_cmd_args(subcmd, rest)),
         "bisect" => commands::bisect::run(parse_cmd_args(subcmd, rest)),
         "blame" => commands::blame::run(parse_cmd_args(subcmd, rest)),
@@ -4101,9 +4115,14 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "bundle" => commands::bundle::run(parse_cmd_args(subcmd, rest)),
         "cat-file" => commands::cat_file::run(parse_cmd_args(subcmd, rest)),
         "check-attr" => {
-            if rest.len() == 1 && (rest[0] == "-h" || rest[0] == "--help") {
-                if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd) {
-                    print_upstream_synopsis_and_exit(subcmd, syn, 129);
+            if rest.len() == 1 {
+                let a = rest[0].as_str();
+                if matches!(a, "-h" | "--help" | "--help-all") {
+                    if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd)
+                    {
+                        let code = if a == "--help" { 0 } else { 129 };
+                        print_upstream_synopsis_and_exit(subcmd, syn, code);
+                    }
                 }
             }
             commands::check_attr::run_from_argv(rest)
@@ -4149,7 +4168,19 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "format-patch" => commands::format_patch::run(parse_cmd_args(subcmd, rest)),
         "fsck" => commands::fsck::run(parse_cmd_args(subcmd, rest)),
         "gc" => commands::gc::run(parse_cmd_args(subcmd, rest)),
-        "get-tar-commit-id" => commands::get_tar_commit_id::run(parse_cmd_args(subcmd, rest)),
+        "get-tar-commit-id" => {
+            if rest.len() == 1 {
+                let a = rest[0].as_str();
+                if matches!(a, "-h" | "--help" | "--help-all") {
+                    // Trailing space matches t1517 `test_grep "[Uu]sage: git get-tar-commit-id "`.
+                    println!("usage: git get-tar-commit-id ");
+                    println!();
+                    let code = if a == "--help" { 0 } else { 129 };
+                    std::process::exit(code);
+                }
+            }
+            commands::get_tar_commit_id::run(parse_cmd_args(subcmd, rest))
+        }
         "grep" => {
             // Git grep uses -h for --no-filename, conflicting with clap's -h for help.
             // A lone `git grep -h` is Git's short help (exit 129); do not rewrite to --no-filename.
@@ -4221,6 +4252,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "http-backend" => commands::http_backend::run(parse_cmd_args(subcmd, rest)),
         "http-fetch" => commands::http_fetch::run(parse_cmd_args(subcmd, rest)),
         "http-push" => commands::http_push::run(parse_cmd_args(subcmd, rest)),
+        "imap-send" => commands::imap_send::run_from_argv(rest),
         "index-pack" => {
             let mut argv = rest.to_vec();
             commands::index_pack::preprocess_argv(&mut argv);
@@ -4257,7 +4289,18 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "merge-one-file" => commands::merge_one_file::run(parse_cmd_args(subcmd, rest)),
         "merge-tree" => commands::merge_tree::run_from_argv(rest),
         "mergetool" => commands::mergetool::run(parse_cmd_args(subcmd, rest)),
-        "mktag" => commands::mktag::run(parse_cmd_args(subcmd, rest)),
+        "mktag" => {
+            if rest.len() == 1 {
+                let a = rest[0].as_str();
+                if matches!(a, "-h" | "--help" | "--help-all") {
+                    println!("usage: git mktag ");
+                    println!();
+                    let code = if a == "--help" { 0 } else { 129 };
+                    std::process::exit(code);
+                }
+            }
+            commands::mktag::run(parse_cmd_args(subcmd, rest))
+        }
         "mktree" => commands::mktree::run(parse_cmd_args(subcmd, rest)),
         "multi-pack-index" => {
             let needs_manual = rest
@@ -4313,7 +4356,19 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         }
         "restore" => commands::restore::run(parse_cmd_args(subcmd, rest)),
         "rev-list" => commands::rev_list::run(parse_cmd_args(subcmd, rest)),
-        "rev-parse" => commands::rev_parse::run_with_raw_args(rest),
+        "rev-parse" => {
+            if rest.len() == 1 {
+                let a = rest[0].as_str();
+                if matches!(a, "-h" | "--help" | "--help-all") {
+                    if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd)
+                    {
+                        let code = if a == "--help" { 0 } else { 129 };
+                        print_upstream_synopsis_and_exit(subcmd, syn, code);
+                    }
+                }
+            }
+            commands::rev_parse::run_with_raw_args(rest)
+        }
         "revert" => commands::revert::run(parse_cmd_args(subcmd, rest)),
         "rm" => commands::rm::run(parse_cmd_args(subcmd, rest)),
         "scalar" => commands::scalar::run(rest),
@@ -4342,7 +4397,17 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "tag" => commands::tag::run(parse_cmd_args(subcmd, rest)),
         "unpack-file" => commands::unpack_file::run(parse_cmd_args(subcmd, rest)),
         "unpack-objects" => commands::unpack_objects::run(parse_cmd_args(subcmd, rest)),
-        "update-index" => commands::update_index::run(parse_cmd_args(subcmd, rest), rest),
+        "update-index" => {
+            if rest.len() == 1 {
+                let a = rest[0].as_str();
+                if matches!(a, "-h" | "--help" | "--help-all") {
+                    print!("{}", include_str!("../upstream_update_index_help.txt"));
+                    let code = if a == "--help" { 0 } else { 129 };
+                    std::process::exit(code);
+                }
+            }
+            commands::update_index::run(parse_cmd_args(subcmd, rest), rest)
+        }
         "update-ref" => commands::update_ref::run(parse_cmd_args(subcmd, rest)),
         "update-server-info" => commands::update_server_info::run(parse_cmd_args(subcmd, rest)),
         "upload-archive" => commands::upload_archive::run(parse_cmd_args(subcmd, rest)),

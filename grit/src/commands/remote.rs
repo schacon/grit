@@ -31,6 +31,17 @@ pub struct Args {
 
 /// Entry point from `main` after global options and `remote` subcommand name are stripped.
 pub fn run_from_argv(rest: &[String]) -> Result<()> {
+    if rest.len() == 1 {
+        let a = rest[0].as_str();
+        if matches!(a, "-h" | "--help" | "--help-all") {
+            println!("{}", remote_usage_lines());
+            let code = if a == "--help" { 0 } else { 129 };
+            return Err(anyhow::Error::new(ExplicitExit {
+                code,
+                message: String::new(),
+            }));
+        }
+    }
     let (verbose, rest) = consume_verbose_prefix(rest);
     if rest.is_empty() {
         return cmd_list(verbose);

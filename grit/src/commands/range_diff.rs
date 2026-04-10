@@ -5,7 +5,7 @@
 //! inner diffs.
 
 use anyhow::{bail, Context, Result};
-use clap::{CommandFactory, Parser};
+use clap::Parser;
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{
@@ -83,12 +83,19 @@ struct Patch {
     shown: bool,
 }
 
+const RANGE_DIFF_HELP_TEXT: &str = include_str!("../../upstream_range_diff_help.txt");
+
 /// Parse argv after `range-diff` and run (used from `main` so `--` / pathspecs work).
 pub fn run_with_rest(rest: &[String]) -> Result<()> {
-    if rest.len() == 1 && (rest[0] == "-h" || rest[0] == "--help") {
-        let mut cmd = Args::command();
-        cmd.print_help().ok();
-        return Ok(());
+    if rest.len() == 1 {
+        let a = rest[0].as_str();
+        if matches!(a, "-h" | "--help" | "--help-all") {
+            print!("{RANGE_DIFF_HELP_TEXT}");
+            if a == "--help" {
+                return Ok(());
+            }
+            std::process::exit(129);
+        }
     }
     let mut argv = vec!["grit range-diff".to_string()];
     argv.extend(rest.iter().cloned());
