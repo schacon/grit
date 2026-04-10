@@ -613,8 +613,16 @@ fn do_merge_or_rebase_after_fetch(
         return super::rebase::run(rebase_args);
     }
 
-    let merge_args =
-        build_pull_merge_args(args, ff, no_ff, ff_only, vec!["FETCH_HEAD".to_owned()])?;
+    let merge_commits = if merge_heads.len() > 1 {
+        if !args.refspecs.is_empty() {
+            args.refspecs.clone()
+        } else {
+            merge_heads.iter().map(|o| o.to_hex()).collect()
+        }
+    } else {
+        vec!["FETCH_HEAD".to_owned()]
+    };
+    let merge_args = build_pull_merge_args(args, ff, no_ff, ff_only, merge_commits)?;
     super::merge::run(merge_args)
 }
 

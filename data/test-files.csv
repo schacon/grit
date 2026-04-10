@@ -1254,7 +1254,7 @@ t7528-signed-commit-ssh	t7	skip	29	0	0	false	ok	3
 t7600-merge	t7	skip	83	0	0	false	ok	0
 t7601-merge-pull-config	t7	yes	65	65	0	true	ok	0
 t7602-merge-octopus-many	t7	yes	5	2	3	false	ok	0
-t7603-merge-reduce-heads	t7	yes	13	10	3	false	ok	0
+t7603-merge-reduce-heads	t7	yes	13	13	0	true	ok	0
 t7604-merge-custom-message	t7	yes	8	8	0	true	ok	0
 t7605-merge-resolve	t7	yes	4	4	0	true	ok	0
 t7606-merge-custom	t7	yes	4	4	0	true	ok	0
