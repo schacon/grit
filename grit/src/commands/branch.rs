@@ -1401,16 +1401,26 @@ fn unset_upstream(repo: &Repository, _head: &HeadState, args: &Args) -> Result<(
 fn parse_upstream(repo: &Repository, upstream: &str) -> Result<(String, String)> {
     let upstream = upstream.strip_prefix("refs/heads/").unwrap_or(upstream);
 
-    // Try to find a matching remote
+    // Match the longest remote name prefix so `origin/foo` is not parsed as remote `or` + branch
+    // `igin/foo` (readdir order is undefined; t5572 `branch --set-upstream-to=origin/...`).
     let remotes_dir = repo.git_dir.join("refs/remotes");
     if let Ok(entries) = fs::read_dir(&remotes_dir) {
+        let mut best: Option<(usize, String, String)> = None;
         for entry in entries.flatten() {
             let remote_name = entry.file_name().to_string_lossy().to_string();
-            if let Some(branch) = upstream.strip_prefix(&format!("{remote_name}/")) {
-                if !branch.is_empty() {
-                    return Ok((remote_name, branch.to_string()));
+            let prefix = format!("{remote_name}/");
+            if let Some(branch) = upstream.strip_prefix(&prefix) {
+                if branch.is_empty() {
+                    continue;
+                }
+                let len = remote_name.len();
+                if best.as_ref().is_none_or(|(best_len, _, _)| len > *best_len) {
+                    best = Some((len, remote_name, branch.to_string()));
                 }
             }
+        }
+        if let Some((_, remote_name, branch)) = best {
+            return Ok((remote_name, branch));
         }
     }
 

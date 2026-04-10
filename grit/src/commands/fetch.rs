@@ -1349,7 +1349,7 @@ fn fetch_remote(
                                 &remote_nm_ext,
                             )
                         } else {
-                            crate::fetch_transport::collect_wants(adv, &[])
+                            crate::fetch_transport::collect_wants(adv, &[], None)
                         }
                     },
                     filter_active,
@@ -2757,6 +2757,10 @@ fn fetch_object_copy_roots(
                 .split_once(':')
                 .map(|(a, _)| a)
                 .unwrap_or(spec_clean);
+            if let Ok(oid) = ObjectId::from_hex(src.trim()) {
+                roots.push(oid);
+                continue;
+            }
             if src.contains('*') {
                 let remote_all_refs = refs::list_refs(remote_git_dir, "refs/")?;
                 for (refname, oid) in &remote_all_refs {

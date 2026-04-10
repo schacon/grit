@@ -1384,7 +1384,8 @@ pub fn peel_to_tree(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
 /// Navigate a tree to find an object at a given path.
 ///
 /// Git accepts `rev:path` when the leaf is a **blob, symlink, gitlink, or tree** (e.g.
-/// `HEAD:subdir` for a subdirectory tree). Only [`walk_tree_to_blob_entry`] is blob-only.
+/// `HEAD:subdir` for a subdirectory tree, or a submodule path whose leaf is a gitlink). Only
+/// [`walk_tree_to_blob_entry`] is blob-only.
 fn resolve_tree_path(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Result<ObjectId> {
     resolve_treeish_path_to_object(repo, *tree_oid, path)
 }

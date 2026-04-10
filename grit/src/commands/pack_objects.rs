@@ -27,6 +27,7 @@ use std::time::Duration;
 
 use crate::grit_exe;
 use grit_lib::delta_encode::{encode_lcp_delta, encode_prefix_extension_delta};
+use grit_lib::index::MODE_GITLINK;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pack::hash_object_bytes;
@@ -2017,7 +2018,7 @@ fn walk_reachable(
             for entry in entries {
                 // Submodule / gitlink: the OID names a commit in another repository; it is not
                 // stored in this ODB. Recursing would fail pack-objects (see t3050-subprojects-fetch).
-                if entry.mode == 0o160000 {
+                if entry.mode == MODE_GITLINK {
                     continue;
                 }
                 walk_reachable(repo, &entry.oid, oids, shallow_grafts)?;

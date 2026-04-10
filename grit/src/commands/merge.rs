@@ -7756,7 +7756,7 @@ fn apply_directory_file_conflicts(
         let t = theirs_entries.get(path);
         if let Some(oe) = o {
             // Gitlink at `path` with `path/...` on the other side is submodule/directory merge
-            // logic, not plain directory/file (`t6437-submodule-merge`).
+            // logic, not plain directory/file (`t6437-submodule-merge`, t5572 replace dir with submodule).
             if oe.mode != MODE_TREE
                 && oe.mode != MODE_GITLINK
                 && path_has_tree_descendant(theirs_entries, path)

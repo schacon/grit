@@ -429,6 +429,7 @@ pub(crate) fn match_glob_star_pattern<'a>(pattern: &str, refname: &'a str) -> Op
 pub(crate) fn collect_wants(
     advertised: &[(String, ObjectId)],
     refspecs: &[String],
+    oid_remote_git_dir: Option<&Path>,
 ) -> Result<Vec<ObjectId>> {
     if refspecs.is_empty() {
         let mut wants = Vec::new();
@@ -467,6 +468,19 @@ pub(crate) fn collect_wants(
             .split_once(':')
             .map(|(a, _)| a)
             .unwrap_or(spec_clean);
+        let src_trim = src.trim();
+        if src_trim.len() == 40 && src_trim.bytes().all(|b| b.is_ascii_hexdigit()) {
+            if let Ok(oid) = ObjectId::from_hex(src_trim) {
+                if let Some(gd) = oid_remote_git_dir {
+                    let odb = Odb::new(&gd.join("objects"));
+                    if !odb.exists(&oid) {
+                        bail!("could not find remote ref 'refs/heads/{src_trim}'");
+                    }
+                }
+                push_want_unique(&mut wants, oid);
+                continue;
+            }
+        }
         if src.contains('*') {
             for (name, oid) in advertised {
                 if *oid == zero_oid() {
@@ -517,11 +531,11 @@ pub(crate) fn push_want_unique(wants: &mut Vec<ObjectId>, oid: ObjectId) {
 
 /// Resolve CLI refspec sources to `want` OIDs for upload-pack (matches [`collect_wants`]).
 pub(crate) fn collect_wants_cli(
-    _remote_git_dir: &Path,
+    remote_git_dir: &Path,
     advertised: &[(String, ObjectId)],
     cli_refspecs: &[String],
 ) -> Result<Vec<ObjectId>> {
-    collect_wants(advertised, cli_refspecs)
+    collect_wants(advertised, cli_refspecs, Some(remote_git_dir))
 }
 
 /// Tests invoke `git-upload-pack`; use grit to serve grit-created object stores.
@@ -1440,7 +1454,7 @@ fn fetch_git_daemon_upload_pack_over_streams(
     if advertised.is_empty() {
         bail!("nothing to fetch (advertised 0 ref(s))");
     }
-    let wants = collect_wants(&advertised, refspecs)?;
+    let wants = collect_wants(&advertised, refspecs, None)?;
     let remote_heads: Vec<_> = advertised
         .iter()
         .filter(|(n, _)| n.starts_with("refs/heads/"))
