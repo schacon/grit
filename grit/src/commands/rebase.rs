@@ -3121,7 +3121,22 @@ fn cherry_pick_for_rebase(
     let root_rebase = rb_dir.join("root").exists();
     let ws_fix_rule = load_ws_fix_rule_from_rebase_state(git_dir);
 
-    // Already at the picked commit's parent tip — nothing to replay (matches Git's noop pick).
+    // Root commit replayed onto a tip that already has the same tree (e.g. `commit-tree` with
+    // `HEAD^{tree}` after an unrelated-history pull --rebase): Git drops this as already applied.
+    // Creating a new commit would leave a sibling of future upstream updates (t5572.68/69).
+    if todo_cmd == RebaseTodoCmd::Pick && commit.parents.is_empty() && commit.tree == head_tree_oid
+    {
+        if record_rewrite {
+            record_rebase_in_rewritten_pending(git_dir, rb_dir, commit_oid, next_after_line)?;
+        }
+        return Ok(());
+    }
+
+    // Already at the picked commit's parent tip: apply its tree to the index/worktree, then
+    // either skip (tree matches HEAD) or create a **new** commit with parent `head_oid`.
+    // Reusing `commit_oid` here is wrong — that commit's first parent is still the pre-rebase
+    // parent, so the tip would not be a descendant of the new upstream (t5572 after unrelated
+    // history pull --rebase --recurse-submodules).
     // Fixup/squash must still run merge + message folding even when parent == HEAD.
     // Reword still needs the commit editor even when the tree is already applied.
     if todo_cmd == RebaseTodoCmd::Pick {
@@ -3138,37 +3153,55 @@ fn cherry_pick_for_rebase(
                 if let Some(wt) = &repo.work_tree {
                     checkout_merged_index(repo, wt, &old_index, &idx)?;
                 }
-                if ws_fix_rule.is_some() {
-                    let tree_oid = write_tree_from_index(&repo.odb, &idx, "")?;
-                    let now = time::OffsetDateTime::now_utc();
-                    let committer = resolve_identity(&config, "COMMITTER")?;
-                    let (message, encoding, raw_message) = if root_rebase {
-                        let msg = message_for_root_replayed_commit(repo, &commit, true);
-                        (msg, commit.encoding.clone(), None)
-                    } else {
-                        transcoded_replayed_message(&commit, &config)
-                    };
-                    let raw_msg =
-                        commit_message_after_prepare_hook(repo, git_dir, &message, "message")?;
-                    let message =
-                        apply_commit_msg_cleanup(&raw_msg, rebase_commit_msg_cleanup(&config));
-                    let commit_data = CommitData {
-                        tree: tree_oid,
-                        parents: vec![head_oid],
-                        author: commit.author.clone(),
-                        committer: format_ident(&committer, now),
-                        author_raw: commit.author_raw.clone(),
-                        committer_raw: commit.committer_raw.clone(),
-                        encoding,
-                        message,
-                        raw_message,
-                    };
-                    let commit_bytes = serialize_commit(&commit_data);
-                    let new_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
-                    fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
-                    append_rebase_rewrite_line(rb_dir, commit_oid, &new_oid)?;
+                let tree_after = if ws_fix_rule.is_some() {
+                    write_tree_from_index(&repo.odb, &idx, "")?
                 } else {
-                    fs::write(git_dir.join("HEAD"), format!("{}\n", commit_oid.to_hex()))?;
+                    commit_tree_oid
+                };
+                if tree_after == head_tree_oid {
+                    if record_rewrite {
+                        record_rebase_in_rewritten_pending(
+                            git_dir,
+                            rb_dir,
+                            commit_oid,
+                            next_after_line,
+                        )?;
+                    }
+                    return Ok(());
+                }
+                let now = time::OffsetDateTime::now_utc();
+                let committer = resolve_identity(&config, "COMMITTER")?;
+                let (message, encoding, raw_message) = if root_rebase {
+                    let msg = message_for_root_replayed_commit(repo, &commit, true);
+                    (msg, commit.encoding.clone(), None)
+                } else {
+                    transcoded_replayed_message(&commit, &config)
+                };
+                let raw_msg =
+                    commit_message_after_prepare_hook(repo, git_dir, &message, "message")?;
+                let message =
+                    apply_commit_msg_cleanup(&raw_msg, rebase_commit_msg_cleanup(&config));
+                let commit_data = CommitData {
+                    tree: tree_after,
+                    parents: vec![head_oid],
+                    author: commit.author.clone(),
+                    committer: format_ident(&committer, now),
+                    author_raw: commit.author_raw.clone(),
+                    committer_raw: commit.committer_raw.clone(),
+                    encoding,
+                    message,
+                    raw_message,
+                };
+                let commit_bytes = serialize_commit(&commit_data);
+                let new_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
+                fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
+                if record_rewrite {
+                    record_rebase_in_rewritten_pending(
+                        git_dir,
+                        rb_dir,
+                        commit_oid,
+                        next_after_line,
+                    )?;
                 }
                 return Ok(());
             }

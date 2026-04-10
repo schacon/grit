@@ -772,7 +772,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 &dest.git_dir,
                 &source.git_dir,
                 upload_cmd,
-                |adv| crate::fetch_transport::collect_wants(adv, &[]),
+                |adv| crate::fetch_transport::collect_wants(adv, &[], None),
                 false,
             )
         });
@@ -926,7 +926,7 @@ pub fn run(mut args: Args) -> Result<()> {
             &dest.git_dir,
             &source.git_dir,
             upload_cmd,
-            |adv| crate::fetch_transport::collect_wants(adv, &[]),
+            |adv| crate::fetch_transport::collect_wants(adv, &[], None),
             false,
         ) {
             Ok(_) => {
@@ -1604,7 +1604,7 @@ fn run_ext_clone(args: Args) -> Result<()> {
             &url,
             "git-upload-pack",
             &[],
-            |adv| crate::fetch_transport::collect_wants(adv, &[]),
+            |adv| crate::fetch_transport::collect_wants(adv, &[], None),
         )
     });
 
@@ -2399,7 +2399,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                 &dest.git_dir,
                 &source.git_dir,
                 upload_cmd,
-                |adv| crate::fetch_transport::collect_wants(adv, &[]),
+                |adv| crate::fetch_transport::collect_wants(adv, &[], None),
                 false,
             )
         });
@@ -2547,7 +2547,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
             &dest.git_dir,
             &source.git_dir,
             upload_cmd,
-            |adv| crate::fetch_transport::collect_wants(adv, &[]),
+            |adv| crate::fetch_transport::collect_wants(adv, &[], None),
             false,
         ) {
             Ok(_) => {

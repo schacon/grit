@@ -230,6 +230,78 @@ pub fn collect_changed_gitlinks_for_push(
     Ok(by_path)
 }
 
+/// True when walking superproject commits in `(excl..incl]` introduces or changes a submodule
+/// gitlink (matches Git's `submodule_touches_in_range` in `submodule.c`).
+///
+/// Used by `git pull --rebase --recurse-submodules` to reject rebases when local commits already
+/// recorded submodule pointer changes.
+pub fn submodule_gitlinks_touched_in_range(
+    repo: &Repository,
+    excl: Option<ObjectId>,
+    incl: ObjectId,
+) -> Result<bool> {
+    let positive = vec![incl.to_hex()];
+    let negative = excl.map(|e| vec![e.to_hex()]).unwrap_or_default();
+    let options = RevListOptions::default();
+    let walked = rev_list(repo, &positive, &negative, &options)?;
+    let odb = &repo.odb;
+    let walk_opts = CombinedTreeDiffOptions {
+        recursive: true,
+        tree_in_recursive: false,
+    };
+
+    for commit_oid in walked.commits {
+        let obj = odb.read(&commit_oid)?;
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = parse_commit(&obj.data)?;
+        let parents = commit.parents;
+
+        if parents.is_empty() {
+            // Root commits: Git's `submodule_touches_in_range` / combined-diff skips these (no
+            // parents → combined diff returns early). Do not treat "added submodule at init" as a
+            // local submodule modification for `pull --rebase` (t5572).
+            continue;
+        } else if parents.len() == 1 {
+            let pobj = odb.read(&parents[0])?;
+            if pobj.kind != ObjectKind::Commit {
+                continue;
+            }
+            let parent = parse_commit(&pobj.data)?;
+            let entries = diff_trees(odb, Some(&parent.tree), Some(&commit.tree), "")?;
+            for e in entries {
+                if !matches!(
+                    e.status,
+                    DiffStatus::Added
+                        | DiffStatus::Modified
+                        | DiffStatus::TypeChanged
+                        | DiffStatus::Renamed
+                ) {
+                    continue;
+                }
+                let mode = match e.status {
+                    DiffStatus::Deleted => continue,
+                    _ => &e.new_mode,
+                };
+                if is_gitlink_mode(mode) {
+                    return Ok(true);
+                }
+            }
+        } else {
+            let paths =
+                combined_diff_paths_filtered(odb, &commit.tree, &parents, &walk_opts, None)?;
+            for p in paths {
+                if (p.merge_mode & 0o170000) == MODE_GITLINK && !p.merge_oid.is_zero() {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+
+    Ok(false)
+}
+
 /// Work tree path for a submodule at `rel_path` in the superproject.
 pub fn submodule_worktree_path(super_repo: &Repository, rel_path: &str) -> PathBuf {
     super_repo

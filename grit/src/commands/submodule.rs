@@ -684,6 +684,27 @@ pub(crate) fn update_after_superproject_merge(init: bool, recursive: bool) -> Re
     })
 }
 
+/// After `pull --rebase --recurse-submodules`, run `submodule update --init --recursive --rebase`
+/// (matches Git's `rebase_submodules` in `builtin/pull.c`).
+pub(crate) fn update_after_superproject_rebase(init: bool, recursive: bool) -> Result<()> {
+    run_update(&UpdateArgs {
+        paths: vec![],
+        quiet: false,
+        init,
+        checkout: false,
+        remote: false,
+        rebase: true,
+        merge: false,
+        force: false,
+        depth: None,
+        jobs: None,
+        filter: None,
+        recursive,
+        reference: vec![],
+        no_recommend_shallow: false,
+    })
+}
+
 /// Stage the given commit OID as the gitlink for `rel_path` in the superproject index.
 ///
 /// Used by `submodule update --remote` so the superproject records the fetched submodule tip
@@ -747,6 +768,8 @@ fn refresh_gitlink_index_stat(repo: &Repository, rel_path: &str) -> Result<()> {
 }
 
 /// Run `grit fetch` in each initialized submodule (and nested submodules when `recursive`).
+///
+/// Uses each submodule's default remote (after `origin` rename), not a hard-coded `origin`.
 pub(crate) fn recursive_fetch_submodules(recursive: bool) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
@@ -755,33 +778,42 @@ pub(crate) fn recursive_fetch_submodules(recursive: bool) -> Result<()> {
 
     fn fetch_one(
         grit_bin: &std::path::Path,
-        sub_path: &std::path::Path,
+        work_tree: &Path,
+        rel_path: &str,
         recursive: bool,
     ) -> Result<()> {
+        let sub_path = work_tree.join(rel_path);
         if !sub_path.join(".git").exists() {
             return Ok(());
         }
+        let remote = get_default_remote_for_path_in_super(rel_path, work_tree)
+            .unwrap_or_else(|_| "origin".to_owned());
         let status = std::process::Command::new(grit_bin)
-            .args(["fetch", "origin"])
-            .current_dir(sub_path)
+            .args(["fetch", remote.as_str()])
+            .current_dir(&sub_path)
             .status()
-            .context("submodule fetch")?;
+            .with_context(|| format!("submodule fetch in {rel_path}"))?;
         if !status.success() {
             bail!("submodule fetch failed in {}", sub_path.display());
         }
         if recursive {
-            let sub_repo = Repository::discover(Some(sub_path)).context("open submodule repo")?;
+            let sub_repo = Repository::discover(Some(&sub_path)).context("open submodule repo")?;
             let sub_wt = sub_repo.work_tree.as_ref().context("bare submodule")?;
             let nested = parse_gitmodules_with_repo(sub_wt, Some(&sub_repo)).unwrap_or_default();
             for m in nested {
-                fetch_one(grit_bin, &sub_wt.join(&m.path), true)?;
+                let nested_rel = if rel_path.is_empty() {
+                    m.path.clone()
+                } else {
+                    format!("{}/{}", rel_path.trim_end_matches('/'), m.path)
+                };
+                fetch_one(grit_bin, work_tree, &nested_rel, true)?;
             }
         }
         Ok(())
     }
 
     for m in modules {
-        fetch_one(&grit_bin, &work_tree.join(&m.path), recursive)?;
+        fetch_one(&grit_bin, work_tree, &m.path, recursive)?;
     }
     Ok(())
 }
@@ -918,13 +950,13 @@ fn default_remote_for_config(config: &ConfigFile, head_branch: Option<&str>) -> 
     "origin".to_string()
 }
 
-fn get_default_remote_for_path(path: &str) -> Result<String> {
-    let repo = Repository::discover(None).context("not a git repository")?;
+fn get_default_remote_for_path_in_super(path: &str, super_work_tree: &Path) -> Result<String> {
+    let repo = Repository::discover(Some(super_work_tree)).context("not a git repository")?;
     let path_buf = Path::new(path);
     let abs_sub = if path_buf.is_absolute() {
         path_buf.to_path_buf()
     } else {
-        std::env::current_dir()?.join(path_buf)
+        super_work_tree.join(path_buf)
     };
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
     let sub_rel = match worktree_relative_posix(work_tree, &abs_sub) {
@@ -949,6 +981,12 @@ fn get_default_remote_for_path(path: &str) -> Result<String> {
     let head = resolve_head(&final_git_dir)?;
     let branch = head.branch_name().map(str::to_owned);
     Ok(default_remote_for_config(&config, branch.as_deref()))
+}
+
+fn get_default_remote_for_path(path: &str) -> Result<String> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let wt = repo.work_tree.as_deref().context("bare repository")?;
+    get_default_remote_for_path_in_super(path, wt)
 }
 
 fn resolve_submodule_chain(
@@ -1673,6 +1711,50 @@ fn submodule_fetch_origin_local_path(
     crate::commands::fetch::copy_reachable_objects(remote_git, &sub_git_dir, &roots)?;
 
     Ok(true)
+}
+
+/// When the superproject records a gitlink OID that is not in the submodule ODB yet (for example
+/// commits reachable only from a non-default branch after `git remote rename`), fetch that object
+/// explicitly from the submodule's default remote. Matches Git behavior exercised by
+/// `t5572-pull-submodule`.
+fn submodule_fetch_gitlink_if_missing(
+    grit_bin: &std::path::Path,
+    super_work_tree: &Path,
+    sub_rel_path: &str,
+    sub_path: &Path,
+    recorded_hex: &str,
+) -> Result<()> {
+    let Ok(recorded) = ObjectId::from_hex(recorded_hex.trim()) else {
+        return Ok(());
+    };
+    let Some(sub_git_dir) = resolve_submodule_git_dir(sub_path) else {
+        return Ok(());
+    };
+    let nested_repo = match Repository::open(&sub_git_dir, Some(sub_path)) {
+        Ok(r) => r,
+        Err(_) => return Ok(()),
+    };
+    if nested_repo.odb.exists(&recorded) {
+        return Ok(());
+    }
+    let remote = get_default_remote_for_path_in_super(sub_rel_path, super_work_tree)
+        .unwrap_or_else(|_| "origin".to_owned());
+    let mut cmd = grit_subprocess(grit_bin);
+    cmd.args(["fetch", remote.as_str(), recorded_hex])
+        .current_dir(sub_path)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE");
+    let st = cmd.status().with_context(|| {
+        format!("fetch missing submodule object {recorded_hex} from remote '{remote}'")
+    })?;
+    if !st.success() {
+        bail!(
+            "failed to fetch missing submodule object '{}' from remote '{}'",
+            recorded_hex,
+            remote
+        );
+    }
+    Ok(())
 }
 
 fn superproject_head_short_branch(repo: &Repository) -> Option<String> {

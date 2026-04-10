@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use crate::grit_exe;
 use grit_lib::delta_encode::{encode_lcp_delta, encode_prefix_extension_delta};
+use grit_lib::index::MODE_GITLINK;
 use grit_lib::objects::{parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
@@ -1002,23 +1003,13 @@ fn walk_reachable(repo: &Repository, oid: &ObjectId, oids: &mut BTreeSet<ObjectI
             }
         }
         ObjectKind::Tree => {
-            // Parse tree entries: mode SP name NUL 20-byte-oid
-            let data = &obj.data;
-            let mut pos = 0;
-            while pos < data.len() {
-                // Find the NUL.
-                let nul = data[pos..]
-                    .iter()
-                    .position(|&b| b == 0)
-                    .map(|i| pos + i)
-                    .ok_or_else(|| anyhow::anyhow!("corrupt tree object"))?;
-                if nul + 21 > data.len() {
-                    break;
+            // Use the shared tree parser so gitlink (submodule) entries are skipped: the OID
+            // names a commit in the submodule's object store, not in this repository.
+            for entry in parse_tree(&obj.data)? {
+                if entry.mode == MODE_GITLINK {
+                    continue;
                 }
-                let entry_oid = ObjectId::from_bytes(&data[nul + 1..nul + 21])
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-                walk_reachable(repo, &entry_oid, oids)?;
-                pos = nul + 21;
+                walk_reachable(repo, &entry.oid, oids)?;
             }
         }
         ObjectKind::Tag => {

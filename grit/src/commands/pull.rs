@@ -7,11 +7,13 @@ use crate::protocol_wire;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
-use grit_lib::merge_base::is_ancestor;
+use grit_lib::merge_base::{is_ancestor, merge_bases_first_vs_rest};
+use grit_lib::push_submodules::submodule_gitlinks_touched_in_range;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::resolve_head;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -93,6 +95,119 @@ fn rebase_cli_value_is_valid(s: &str) -> bool {
 
 /// If clap consumed the repository token as `--rebase`'s optional value (`pull --rebase . c1` →
 /// rebase=".", remote=c1), restore Git's argv layout: remote=`.`, refspecs start with `c1`.
+fn remote_default_branch_short(remote_git_dir: &Path) -> Result<String> {
+    if let Some(sym) = refs::read_symbolic_ref(remote_git_dir, "HEAD")? {
+        let sym = sym.trim();
+        if let Some(rest) = sym.strip_prefix("refs/heads/") {
+            if !rest.is_empty() {
+                return Ok(rest.to_owned());
+            }
+        }
+    }
+    let heads = refs::list_refs(remote_git_dir, "refs/heads/")?;
+    if heads.len() == 1 {
+        let full = &heads[0].0;
+        return Ok(full
+            .strip_prefix("refs/heads/")
+            .unwrap_or(full.as_str())
+            .to_owned());
+    }
+    bail!("remote repository has no default branch (unborn HEAD or multiple branches)")
+}
+
+/// Resolve `HEAD` in a pull refspec to the **remote branch short name** (e.g. `main`).
+///
+/// Fetch already knows which remote to contact; passing `origin/main` as the refspec is wrong
+/// (it looks for `refs/heads/origin/main` on the remote — t5572 `pull origin HEAD`).
+fn pull_head_refspec_to_fetch_token(
+    repo: &Repository,
+    remote_name: &str,
+    local_remote_path: Option<&Path>,
+) -> Result<String> {
+    if let Some(p) = local_remote_path {
+        if let Ok(branch) = remote_default_branch_short(p) {
+            return Ok(branch);
+        }
+    }
+    let sym_key = format!("refs/remotes/{remote_name}/HEAD");
+    if let Some(sym) = refs::read_symbolic_ref(&repo.git_dir, &sym_key)? {
+        let sym = sym.trim();
+        let prefix = format!("refs/remotes/{remote_name}/");
+        if let Some(rest) = sym.strip_prefix(&prefix) {
+            if !rest.is_empty() {
+                return Ok(rest.to_owned());
+            }
+        }
+    }
+    let Some(p) = local_remote_path else {
+        bail!("could not resolve remote HEAD for '{remote_name}' (missing refs/remotes/{remote_name}/HEAD)");
+    };
+    remote_default_branch_short(p)
+}
+
+/// `git pull remote HEAD` passes the refspec token `HEAD`; map it to `remote/<default-branch>`.
+fn normalize_pull_fetch_refspecs(
+    repo: &Repository,
+    args: &Args,
+    remote_name: &str,
+    local_remote_path: Option<&Path>,
+) -> Result<Vec<String>> {
+    if args.refspecs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::with_capacity(args.refspecs.len());
+    for s in &args.refspecs {
+        let t = s.trim();
+        if t == "HEAD" || t == "refs/heads/HEAD" {
+            out.push(pull_head_refspec_to_fetch_token(
+                repo,
+                remote_name,
+                local_remote_path,
+            )?);
+        } else {
+            out.push(s.clone());
+        }
+    }
+    Ok(out)
+}
+
+fn merge_branch_for_pull(
+    effective_refspecs: &[String],
+    remote_name: &str,
+    current_branch: Option<&str>,
+    config: &ConfigSet,
+    local_remote_path: Option<&Path>,
+) -> Result<String> {
+    if let Some(first) = effective_refspecs.first() {
+        let prefix = format!("{remote_name}/");
+        return Ok(first
+            .strip_prefix(&prefix)
+            .unwrap_or(first.as_str())
+            .to_owned());
+    }
+    if let Some(ref branch) = current_branch {
+        if let Some(merge_ref) = config.get(&format!("branch.{branch}.merge")) {
+            return Ok(merge_ref
+                .strip_prefix("refs/heads/")
+                .unwrap_or(&merge_ref)
+                .to_owned());
+        }
+        return Ok(branch.to_string());
+    }
+    let Some(path) = local_remote_path else {
+        bail!("no tracking branch configured and no branch specified");
+    };
+    remote_default_branch_short(path)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PullIntegrateKind {
+    Merge,
+    /// `pull --rebase` used merge with `--ff-only` because a fast-forward was possible.
+    MergeFfOnlyForRebase,
+    Rebase,
+}
+
 fn normalize_pull_positionals(mut args: Args) -> Args {
     if let Some(ref r) = args.rebase {
         if !rebase_cli_value_is_valid(r) {
@@ -134,29 +249,15 @@ pub fn run(args: Args) -> Result<()> {
         resolve_local_remote_path(work_tree, remote_name, &config)?
     };
 
-    let merge_branch = if let Some(first) = args.refspecs.first() {
-        first.clone()
-    } else if let Some(ref branch) = current_branch {
-        if let Some(merge_ref) = config.get(&format!("branch.{branch}.merge")) {
-            merge_ref
-                .strip_prefix("refs/heads/")
-                .unwrap_or(&merge_ref)
-                .to_owned()
-        } else {
-            branch.clone()
-        }
-    } else {
-        // Detached HEAD (common in submodules): use the remote's default branch (remote HEAD).
-        let Some(path) = local_remote_path.as_ref() else {
-            bail!("no tracking branch configured and no branch specified");
-        };
-        let remote_repo = open_repository_at_path(path)?;
-        let head_sym = refs::read_symbolic_ref(&remote_repo.git_dir, "HEAD")?;
-        let Some(sym) = head_sym else {
-            bail!("no tracking branch configured and no branch specified");
-        };
-        sym.strip_prefix("refs/heads/").unwrap_or(&sym).to_owned()
-    };
+    let effective_refspecs =
+        normalize_pull_fetch_refspecs(&repo, &args, remote_name, local_remote_path.as_deref())?;
+    let merge_branch = merge_branch_for_pull(
+        &effective_refspecs,
+        remote_name,
+        current_branch.as_deref(),
+        &config,
+        local_remote_path.as_deref(),
+    )?;
 
     let client_proto = protocol_wire::effective_client_protocol_version();
 
@@ -212,7 +313,7 @@ pub fn run(args: Args) -> Result<()> {
                 )]
             } else {
                 let mut out = Vec::new();
-                for spec in &args.refspecs {
+                for spec in &effective_refspecs {
                     let oid = grit_lib::rev_parse::resolve_revision(&remote_repo, spec)
                         .with_context(|| format!("bad revision '{spec}'"))?;
                     out.push(format!(
@@ -224,11 +325,9 @@ pub fn run(args: Args) -> Result<()> {
             };
             fs::write(repo.git_dir.join("FETCH_HEAD"), lines.concat())?;
 
-            let res = do_merge_or_rebase_after_fetch(&args, &config, &repo, &head);
-            if res.is_ok() {
-                maybe_update_submodules_after_pull(&args, &config)?;
-            }
-            return res;
+            let kind = do_merge_or_rebase_after_fetch(&args, &config, &repo, &head)?;
+            maybe_update_submodules_after_pull(&args, &config, kind)?;
+            return Ok(());
         }
     }
 
@@ -254,16 +353,14 @@ pub fn run(args: Args) -> Result<()> {
         };
         fs::write(repo.git_dir.join("FETCH_HEAD"), lines.concat())?;
 
-        let res = do_merge_or_rebase_after_fetch(&args, &config, &repo, &head);
-        if res.is_ok() {
-            maybe_update_submodules_after_pull(&args, &config)?;
-        }
-        return res;
+        let kind = do_merge_or_rebase_after_fetch(&args, &config, &repo, &head)?;
+        maybe_update_submodules_after_pull(&args, &config, kind)?;
+        return Ok(());
     }
 
     let fetch_args = super::fetch::Args {
         remote: Some(remote_name.to_owned()),
-        refspecs: args.refspecs.clone(),
+        refspecs: effective_refspecs.clone(),
         filter: None,
         all: false,
         multiple: false,
@@ -293,16 +390,14 @@ pub fn run(args: Args) -> Result<()> {
     };
     super::fetch::run(fetch_args)?;
 
-    let res = do_merge_or_rebase_after_fetch(&args, &config, &repo, &head);
-    if res.is_ok() {
-        maybe_update_submodules_after_pull(&args, &config)?;
-    }
-    res
+    let kind = do_merge_or_rebase_after_fetch(&args, &config, &repo, &head)?;
+    maybe_update_submodules_after_pull(&args, &config, kind)?;
+    Ok(())
 }
 
-fn maybe_update_submodules_after_pull(args: &Args, config: &ConfigSet) -> Result<()> {
+fn submodule_update_after_pull_will_run(args: &Args, config: &ConfigSet) -> bool {
     if args.no_recurse_submodules {
-        return Ok(());
+        return false;
     }
     let fetch_wants_recurse = config
         .get("fetch.recursesubmodules")
@@ -325,17 +420,36 @@ fn maybe_update_submodules_after_pull(args: &Args, config: &ConfigSet) -> Result
             l == "true" || l == "yes" || l == "on" || l == "1"
         })
         .unwrap_or(false);
-    let should_update = if explicit_off {
-        false
-    } else if explicit_on {
-        true
-    } else if fetch_wants_recurse {
-        false
-    } else {
-        config_recurse
-    };
-    if should_update {
-        super::submodule::update_after_superproject_merge(true, true)?;
+    if explicit_off {
+        return false;
+    }
+    if explicit_on {
+        return true;
+    }
+    if fetch_wants_recurse {
+        return false;
+    }
+    config_recurse
+}
+
+fn maybe_update_submodules_after_pull(
+    args: &Args,
+    config: &ConfigSet,
+    integrate: PullIntegrateKind,
+) -> Result<()> {
+    if !submodule_update_after_pull_will_run(args, config) {
+        return Ok(());
+    }
+    super::submodule::recursive_fetch_submodules(true)?;
+    match integrate {
+        PullIntegrateKind::Merge => {
+            super::submodule::update_after_superproject_merge(true, true)?;
+        }
+        PullIntegrateKind::Rebase | PullIntegrateKind::MergeFfOnlyForRebase => {
+            // `git pull --rebase` runs `submodule update --rebase` even when the superproject
+            // integrated via fast-forward merge (Git `pull.c` `rebase_submodules`).
+            super::submodule::update_after_superproject_rebase(true, true)?;
+        }
     }
     Ok(())
 }
@@ -391,8 +505,12 @@ fn merge_heads_from_fetch_head(repo: &Repository) -> Result<Vec<grit_lib::object
     let path = repo.git_dir.join("FETCH_HEAD");
     let content = fs::read_to_string(&path).with_context(|| "could not read FETCH_HEAD")?;
     let mut out = Vec::new();
+    let mut seen = HashSet::new();
     for hex in grit_lib::fetch_head::merge_object_ids_hex(&content) {
-        out.push(ObjectId::from_hex(&hex)?);
+        let oid = ObjectId::from_hex(&hex)?;
+        if seen.insert(oid) {
+            out.push(oid);
+        }
     }
     if out.is_empty() {
         bail!("FETCH_HEAD: no merge candidates");
@@ -408,6 +526,7 @@ fn pull_can_fast_forward(
     if merge_heads.len() != 1 {
         return Ok(false);
     }
+    // Matches Git's `get_can_ff`: FETCH_HEAD tip is a descendant of HEAD (fast-forward possible).
     Ok(is_ancestor(repo, head_oid, merge_heads[0])?)
 }
 
@@ -463,22 +582,15 @@ fn do_merge_or_rebase_after_fetch(
     config: &ConfigSet,
     repo: &Repository,
     head: &grit_lib::state::HeadState,
-) -> Result<()> {
-    let head_oid = match head.oid() {
-        Some(oid) => *oid,
-        None => {
-            if merge_heads_from_fetch_head(repo)?.len() > 1 {
-                bail!("Cannot merge multiple branches into empty head.");
-            }
-            let merge_args =
-                build_pull_merge_args(args, true, false, false, vec!["FETCH_HEAD".to_owned()])?;
-            return super::merge::run(merge_args);
+) -> Result<PullIntegrateKind> {
+    if head.oid().is_none() {
+        if merge_heads_from_fetch_head(repo)?.len() > 1 {
+            bail!("Cannot merge multiple branches into empty head.");
         }
-    };
-
-    let merge_heads = merge_heads_from_fetch_head(repo)?;
-    if merge_heads.is_empty() {
-        bail!("no merge candidates in FETCH_HEAD");
+        let merge_args =
+            build_pull_merge_args(args, true, false, false, vec!["FETCH_HEAD".to_owned()])?;
+        super::merge::run(merge_args)?;
+        return Ok(PullIntegrateKind::Merge);
     }
 
     let (mut opt_rebase, rebase_unspecified) = if args.no_rebase {
@@ -518,6 +630,17 @@ fn do_merge_or_rebase_after_fetch(
         ff_only = false;
     }
 
+    // Re-resolve HEAD and merge tips after `fetch` rewrote FETCH_HEAD (and possibly not HEAD).
+    let head_now = resolve_head(&repo.git_dir)?;
+    let head_oid = head_now
+        .oid()
+        .copied()
+        .context("internal error: expected branch head after fetch")?;
+    let merge_heads = merge_heads_from_fetch_head(repo)?;
+    if merge_heads.is_empty() {
+        bail!("no merge candidates in FETCH_HEAD");
+    }
+
     if merge_heads.len() > 1 {
         if opt_rebase == RebaseTri::True {
             bail!("Cannot rebase onto multiple branches.");
@@ -528,7 +651,8 @@ fn do_merge_or_rebase_after_fetch(
     }
 
     let can_ff = pull_can_fast_forward(repo, head_oid, &merge_heads)?;
-    let divergent = !can_ff && !pull_already_up_to_date(repo, head_oid, &merge_heads)?;
+    let already_up = pull_already_up_to_date(repo, head_oid, &merge_heads)?;
+    let divergent = !can_ff && !already_up;
 
     if ff_only {
         if divergent {
@@ -537,8 +661,9 @@ fn do_merge_or_rebase_after_fetch(
         opt_rebase = RebaseTri::False;
     }
 
-    // Match git pull.c: advise only when pull.rebase was left unspecified by config, branches
-    // diverge, and pull.ff was not configured (Git's `!opt_ff` after reading pull.ff).
+    // Match git pull.c: `if (!opt_ff && rebase_unspecified && divergent)` where `opt_ff` is set
+    // from CLI or `pull.ff` config (t7601). `cli_touched_ff` covers CLI; `pull_ff_in_config`
+    // covers `pull.ff` in config.
     if rebase_unspecified && divergent && !pull_ff_in_config && !cli_touched_ff && !ff_only {
         show_advice_pull_non_ff(config);
         bail!("Need to specify how to reconcile divergent branches.");
@@ -548,14 +673,23 @@ fn do_merge_or_rebase_after_fetch(
         if can_ff {
             let merge_args =
                 build_pull_merge_args(args, false, false, true, vec!["FETCH_HEAD".to_owned()])?;
-            return super::merge::run(merge_args);
+            super::merge::run(merge_args)?;
+            return Ok(PullIntegrateKind::MergeFfOnlyForRebase);
         }
-        let upstream = super::merge::read_fetch_head_merge_oids(repo)?
+        let upstream_hex = super::merge::read_fetch_head_merge_oids(repo)?
             .into_iter()
             .next()
             .context("FETCH_HEAD merge oid")?;
+        let upstream_oid = grit_lib::objects::ObjectId::from_hex(upstream_hex.trim())?;
+        let unrelated = merge_bases_first_vs_rest(repo, head_oid, &[upstream_oid])?.is_empty();
+        if submodule_update_after_pull_will_run(args, config)
+            && !unrelated
+            && submodule_gitlinks_touched_in_range(repo, Some(upstream_oid), head_oid)?
+        {
+            bail!("cannot rebase with locally recorded submodule modifications");
+        }
         let rebase_args = super::rebase::Args {
-            upstream: Some(upstream),
+            upstream: Some(upstream_hex),
             onto: None,
             root: false,
             interactive: false,
@@ -591,12 +725,14 @@ fn do_merge_or_rebase_after_fetch(
             no_autosquash: false,
             keep_empty: false,
         };
-        return super::rebase::run(rebase_args);
+        super::rebase::run(rebase_args)?;
+        return Ok(PullIntegrateKind::Rebase);
     }
 
     let merge_args =
         build_pull_merge_args(args, ff, no_ff, ff_only, vec!["FETCH_HEAD".to_owned()])?;
-    super::merge::run(merge_args)
+    super::merge::run(merge_args)?;
+    Ok(PullIntegrateKind::Merge)
 }
 
 fn build_pull_merge_args(

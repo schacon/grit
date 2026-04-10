@@ -975,9 +975,12 @@ pub fn peel_to_tree(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
 }
 
 /// Navigate a tree to find an object at a given path.
+///
+/// Returns the object id of the leaf entry (blob, tree, or gitlink). This matches
+/// `git rev-parse <treeish>:<path>` for submodule paths, which prints the recorded
+/// commit oid rather than erroring with "gitlink, not a blob".
 fn resolve_tree_path(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Result<ObjectId> {
-    let (oid, _) = walk_tree_to_blob_entry(repo, tree_oid, path)?;
-    Ok(oid)
+    resolve_treeish_path(repo, *tree_oid, path)
 }
 
 /// Resolved blob (non-tree) at `treeish:path` for diff plumbing.

@@ -6297,13 +6297,22 @@ fn apply_directory_file_conflicts(
         let o = ours_entries.get(path);
         let t = theirs_entries.get(path);
         if let Some(oe) = o {
-            if oe.mode != MODE_TREE && path_has_tree_descendant(theirs_entries, path) && t.is_none()
+            // Gitlink (submodule) at `path` replacing a directory tree is a normal transition;
+            // do not treat it as directory/file conflict (t5572: replace directory with submodule).
+            if oe.mode != MODE_TREE
+                && oe.mode != MODE_GITLINK
+                && path_has_tree_descendant(theirs_entries, path)
+                && t.is_none()
             {
                 df_cases.push((path.clone(), true));
             }
         }
         if let Some(te) = t {
-            if te.mode != MODE_TREE && path_has_tree_descendant(ours_entries, path) && o.is_none() {
+            if te.mode != MODE_TREE
+                && te.mode != MODE_GITLINK
+                && path_has_tree_descendant(ours_entries, path)
+                && o.is_none()
+            {
                 df_cases.push((path.clone(), false));
             }
         }

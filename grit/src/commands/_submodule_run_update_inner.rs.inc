@@ -221,6 +221,16 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
             }
         }
 
+        if !args.remote {
+            submodule_fetch_gitlink_if_missing(
+                &grit_bin,
+                work_tree,
+                &m.path,
+                &sub_path,
+                recorded_oid,
+            )?;
+        }
+
         let shell_update = config_last_value(&local_cfg, &update_key)
             .filter(|u| u.trim_start().starts_with('!'));
 
