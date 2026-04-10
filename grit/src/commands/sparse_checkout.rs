@@ -13,10 +13,10 @@ use grit_lib::index::MODE_TREE;
 use grit_lib::objects::parse_commit;
 use grit_lib::repo::Repository;
 use grit_lib::sparse_checkout::{
-    build_expanded_cone_sparse_checkout_lines, effective_cone_mode_for_sparse_file,
-    load_sparse_checkout_with_warnings, parse_expanded_cone_recursive_dirs,
-    path_in_sparse_checkout, sparse_checkout_lines_look_like_expanded_cone, ConePatterns,
-    ConeWorkspace, NonConePatterns,
+    build_expanded_cone_sparse_checkout_lines, cone_directory_inputs_for_add,
+    effective_cone_mode_for_sparse_file, load_sparse_checkout_with_warnings,
+    parse_expanded_cone_recursive_dirs, path_in_sparse_checkout,
+    sparse_checkout_lines_look_like_expanded_cone, ConePatterns, ConeWorkspace, NonConePatterns,
 };
 use grit_lib::state::resolve_head;
 use std::collections::HashSet;
@@ -133,6 +133,18 @@ pub(crate) fn copy_sparse_checkout_to_admin(source_git_dir: &Path, admin_dir: &P
     Ok(())
 }
 
+/// Copy `.git/config.worktree` into a linked worktree admin dir (Git stores sparse-checkout toggles
+/// there so each worktree can differ).
+pub(crate) fn copy_worktree_config_to_admin(source_git_dir: &Path, admin_dir: &Path) -> Result<()> {
+    let src = source_git_dir.join("config.worktree");
+    if !src.exists() {
+        return Ok(());
+    }
+    fs::copy(&src, admin_dir.join("config.worktree"))
+        .context("copying config.worktree to linked worktree")?;
+    Ok(())
+}
+
 pub(crate) fn finalize_sparse_clone(repo: &Repository, apply_to_index: bool) -> Result<()> {
     if apply_to_index {
         crate::commands::clone::ensure_index_from_head_if_missing(repo)?;
@@ -219,7 +231,7 @@ fn acquire_sparse_lock(repo: &Repository) -> Result<std::fs::File> {
     {
         Ok(f) => Ok(f),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            bail!("Unable to create {}: File exists.", lock_path.display());
+            bail!("Unable to create '{}': File exists.", lock_path.display());
         }
         Err(e) => Err(e).context("sparse-checkout lock")?,
     }
@@ -508,23 +520,10 @@ fn cmd_add(repo: &Repository, args: &AddArgs) -> Result<()> {
     let result = (|| {
         if cone {
             let content = read_sparse_file_content(repo);
-            let existing = read_sparse_patterns(repo)?;
-            let mut dirs = if sparse_checkout_lines_look_like_expanded_cone(&existing) {
-                parse_expanded_cone_recursive_dirs(&existing)
-            } else if let Some(cp) = ConePatterns::try_parse(&content) {
-                ConeWorkspace::from_cone_patterns(&cp).list_cone_directories()
-            } else {
-                existing
-                    .iter()
-                    .map(|s| {
-                        s.trim()
-                            .trim_start_matches('/')
-                            .trim_end_matches('/')
-                            .to_string()
-                    })
-                    .filter(|s| !s.is_empty())
-                    .collect::<Vec<_>>()
-            };
+            if ConePatterns::try_parse(&content).is_none() {
+                bail!("existing sparse-checkout patterns do not use cone mode");
+            }
+            let mut dirs = cone_directory_inputs_for_add(&content);
             let inputs = if args.stdin {
                 let stdin = io::stdin();
                 let mut stdin = stdin.lock();
@@ -1087,6 +1086,12 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String], cone_mode: bool
         .unwrap_or(false);
 
     let index_path = repo.index_path();
+    // `git clone --no-checkout` leaves no index until the first real checkout. Sparse-checkout
+    // may still update `info/sparse-checkout` and config; Git does not create `.git/index` until
+    // checkout (t1091).
+    if !index_path.exists() {
+        return Ok(());
+    }
     let mut index = repo.load_index_at(&index_path).context("reading index")?;
     if index.entries.is_empty() {
         crate::commands::clone::ensure_index_from_head_if_missing(repo)?;

@@ -4471,15 +4471,13 @@ pub(crate) fn ensure_index_from_head_if_missing(repo: &Repository) -> Result<()>
             return Ok(());
         }
     }
-    let head_content = fs::read_to_string(repo.git_dir.join("HEAD")).context("reading HEAD")?;
-    let head = head_content.trim();
-    let oid = if let Some(refname) = head.strip_prefix("ref: ") {
-        let refname = refname.trim();
-        let oid_str = clone_read_direct_ref_oid(&repo.git_dir, refname)?;
-        ObjectId::from_hex(oid_str.trim()).with_context(|| format!("invalid OID in {refname}"))?
-    } else {
-        ObjectId::from_hex(head).context("invalid OID in HEAD")?
+    let head_state = grit_lib::state::resolve_head(&repo.git_dir).context("reading HEAD")?;
+    let Some(commit_oid) = head_state.oid() else {
+        // Unborn branch or missing ref: nothing to build an index from (matches Git sparse-checkout
+        // on empty repos).
+        return Ok(());
     };
+    let oid = commit_oid;
     let obj = repo.odb.read(&oid).context("reading HEAD commit")?;
     let commit = parse_commit(&obj.data).context("parsing HEAD commit")?;
     write_index_from_tree(repo, &commit.tree)?;

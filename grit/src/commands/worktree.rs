@@ -634,9 +634,10 @@ fn cmd_add(args: AddArgs) -> Result<()> {
 
     // Write commondir file — relative path from worktree admin to the common dir
     // Standard git uses relative paths like "../../"
+    let commondir_rel = make_relative_path(&wt_admin, &common);
     fs::write(
         wt_admin.join("commondir"),
-        format!("{}\n", common.display()),
+        format!("{}\n", commondir_rel.display()),
     )?;
 
     // Linked worktrees need `core.worktree` in their admin `config` so discovery
@@ -724,6 +725,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     }
 
     crate::commands::sparse_checkout::copy_sparse_checkout_to_admin(&repo.git_dir, &wt_admin)?;
+    crate::commands::sparse_checkout::copy_worktree_config_to_admin(&repo.git_dir, &wt_admin)?;
 
     Ok(())
 }
@@ -765,9 +767,10 @@ fn setup_unborn_worktree(
 
     let gitdir_content = format!("{}\n", wt_path.join(".git").display());
     fs::write(wt_admin.join("gitdir"), &gitdir_content)?;
+    let commondir_rel = make_relative_path(&wt_admin, &common);
     fs::write(
         wt_admin.join("commondir"),
-        format!("{}\n", common.display()),
+        format!("{}\n", commondir_rel.display()),
     )?;
     let wt_path_abs = wt_path
         .canonicalize()

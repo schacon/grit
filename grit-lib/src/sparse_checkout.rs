@@ -166,9 +166,9 @@ impl ConePatterns {
                 (false, line)
             };
 
-            // Git `dir.c:add_pattern_to_hashsets`: `!/*` (negative + root "all") clears full_cone;
-            // `/*` sets full_cone. These are cone-mode structural lines, not globs.
-            if negated && rest == "/*" {
+            // Git `dir.c:add_pattern_to_hashsets`: negative root-all with directory flag clears
+            // full_cone (`!/*` or expanded form `!/*/`); `/*` sets full_cone.
+            if negated && (rest == "/*" || rest == "/*/") {
                 full_cone = false;
                 continue;
             }
@@ -436,20 +436,15 @@ pub fn apply_sparse_checkout_skip_worktree(
         .unwrap_or(true);
 
     let mut warnings = Vec::new();
-    let (_cone_ok, _cone_loaded, non_cone) =
+    let (cone_ok, cone_struct, non_cone) =
         load_sparse_checkout_with_warnings(git_dir, cone_config, &mut warnings);
     for line in warnings {
         eprintln!("{line}");
     }
 
-    let sparse_path = git_dir.join("info").join("sparse-checkout");
-    let file_content = std::fs::read_to_string(&sparse_path).unwrap_or_default();
-    let cone_struct = if cone_config {
-        ConePatterns::try_parse(&file_content)
-    } else {
-        None
-    };
-    let effective_cone = cone_config && cone_struct.is_some();
+    // `cone_ok` is true only when the file parses as cone patterns; malformed expanded-cone
+    // files fall back to non-cone matching (and stderr warnings), matching Git `read-tree`.
+    let effective_cone = cone_ok && cone_struct.is_some();
 
     let mut any_skip = false;
     for entry in &mut index.entries {
@@ -959,6 +954,54 @@ pub fn parse_expanded_cone_recursive_dirs(lines: &[String]) -> Vec<String> {
     out
 }
 
+/// Directory paths to merge with new inputs for `git sparse-checkout add` when cone mode is on.
+///
+/// Git loads the existing file with `core.sparseCheckoutCone` set, then checks
+/// `existing.use_cone_patterns` after parsing. When the file has the expanded-cone header (`/*`,
+/// `!/*/`) but non-cone body lines (e.g. a bare `dir` after `init --no-cone`), the file is not cone
+/// mode and the merge uses literal pattern lines as directory names — not
+/// [`parse_expanded_cone_recursive_dirs`], which would skip those lines and wrongly treat the file as
+/// an empty cone list.
+#[must_use]
+pub fn cone_directory_inputs_for_add(content: &str) -> Vec<String> {
+    let lines: Vec<String> = parse_sparse_checkout_file(content);
+    if sparse_checkout_lines_look_like_expanded_cone(&lines) {
+        let recursive = parse_expanded_cone_recursive_dirs(&lines);
+        if !recursive.is_empty() {
+            return recursive;
+        }
+        if lines.len() == 2 {
+            return Vec::new();
+        }
+        // Header matches expanded cone but body lines are not in expanded form (e.g. bare `dir`
+        // after `init --no-cone`). Merge uses those literals — do not strip with
+        // `trim_start_matches('/')` on the whole file (would corrupt `/*`).
+        return lines[2..]
+            .iter()
+            .map(|s| {
+                s.trim()
+                    .trim_start_matches('/')
+                    .trim_end_matches('/')
+                    .to_string()
+            })
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
+    if let Some(cp) = ConePatterns::try_parse(content) {
+        return ConeWorkspace::from_cone_patterns(&cp).list_cone_directories();
+    }
+    lines
+        .iter()
+        .map(|s| {
+            s.trim()
+                .trim_start_matches('/')
+                .trim_end_matches('/')
+                .to_string()
+        })
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 /// Returns true when `path` is included in the sparse-checkout definition.
 ///
 /// Implements parent-directory fallback like Git's `path_in_sparse_checkout`:
@@ -1109,5 +1152,28 @@ mod path_in_expanded_cone_tests {
             &lines,
             true
         ));
+    }
+}
+
+#[cfg(test)]
+mod cone_directory_inputs_for_add_tests {
+    use super::cone_directory_inputs_for_add;
+
+    #[test]
+    fn expanded_header_with_non_cone_body_preserves_literal_dir() {
+        let content = "/*\n!/*/\ndir\n";
+        assert_eq!(
+            cone_directory_inputs_for_add(content),
+            vec!["dir".to_string()]
+        );
+    }
+
+    #[test]
+    fn pure_expanded_cone_uses_recursive_dirs_only() {
+        let content = "/*\n!/*/\n/sub/\n";
+        assert_eq!(
+            cone_directory_inputs_for_add(content),
+            vec!["sub".to_string()]
+        );
     }
 }

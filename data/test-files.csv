@@ -190,7 +190,7 @@ t10880-reset-hard-soft-path	t1	yes	31	31	0	true	ok	0
 t10890-cherry-pick-message	t1	yes	30	30	0	true	ok	0
 t1090-sparse-checkout-scope	t1	yes	7	7	0	true	ok	0
 t10900-for-each-ref-pattern-sort	t1	yes	34	34	0	true	ok	0
-t1091-sparse-checkout-builtin	t1	yes	76	53	23	false	ok	1
+t1091-sparse-checkout-builtin	t1	yes	77	24	52	false	ok	1
 t10910-show-ref-tags-branches	t1	yes	35	35	0	true	ok	0
 t1092-sparse-checkout-compatibility	t1	yes	106	49	57	false	ok	0
 t10920-update-ref-create-delete	t1	yes	29	29	0	true	ok	0
