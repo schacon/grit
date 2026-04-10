@@ -6,8 +6,8 @@ use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
-    detect_renames, diff_index_to_tree, diff_index_to_worktree, head_path_states,
-    submodule_porcelain_flags, DiffEntry, DiffStatus,
+    detect_renames, diff_index_to_tree, diff_index_to_worktree_with_options, head_path_states,
+    submodule_porcelain_flags, DiffEntry, DiffIndexToWorktreeOptions, DiffStatus,
 };
 use grit_lib::error::Error;
 use grit_lib::ignore::IgnoreMatcher;
@@ -63,6 +63,18 @@ fn dir_is_nested_submodule_worktree(super_git_dir: &Path, dir: &Path) -> bool {
         return false;
     };
     resolved_canon.starts_with(&modules_canon)
+}
+
+/// Return the current index-file mtime tuple `(sec, nsec)`, or `(0, 0)` when unavailable.
+fn index_file_mtime_pair(index_path: &Path) -> (u32, u32) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(meta) = fs::metadata(index_path) {
+            return (meta.mtime() as u32, meta.mtime_nsec() as u32);
+        }
+    }
+    (0, 0)
 }
 
 /// Arguments for `grit status`.
@@ -355,8 +367,9 @@ pub fn run(mut args: Args) -> Result<()> {
         ));
     }
 
-    // Load index: remember sparse-index on disk, then expand placeholders for diffs.
     let index_path = repo.index_path();
+    let index_mtime = index_file_mtime_pair(&index_path);
+    // Load index: remember sparse-index on disk, then expand placeholders for diffs.
     let mut index = match grit_lib::index::Index::load(&index_path) {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
@@ -404,7 +417,14 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     // Diff: unstaged (worktree vs index), with optional rename detection.
-    let unstaged_raw = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
+    let unstaged_raw = diff_index_to_worktree_with_options(
+        &repo.odb,
+        &index,
+        work_tree,
+        DiffIndexToWorktreeOptions {
+            index_mtime: Some(index_mtime),
+        },
+    )?;
     let unstaged = if let Some(threshold) = status_rename_threshold {
         detect_renames(&repo.odb, unstaged_raw.clone(), threshold)
     } else {

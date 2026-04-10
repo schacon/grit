@@ -555,6 +555,47 @@ pub fn diff_index_to_worktree(
     index: &Index,
     work_tree: &Path,
 ) -> Result<Vec<DiffEntry>> {
+    diff_index_to_worktree_with_options(
+        odb,
+        index,
+        work_tree,
+        DiffIndexToWorktreeOptions::default(),
+    )
+}
+
+/// Additional inputs for [`diff_index_to_worktree_with_options`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DiffIndexToWorktreeOptions {
+    /// Optional index mtime pair `(sec, nsec)` sampled when the index was read.
+    ///
+    /// When provided, entries with matching stat data are still considered dirty candidates if
+    /// their recorded mtime is "racy" (at or after this timestamp), matching Git's
+    /// `is_racy_timestamp` behavior.
+    pub index_mtime: Option<(u32, u32)>,
+}
+
+/// Compare the index against the working tree with optional racy-timestamp context.
+///
+/// This variant enables a stat-trust fast path: if an entry's stat tuple matches and the mode is
+/// unchanged, the worktree blob hash is skipped unless the entry is racy relative to the supplied
+/// index mtime.
+///
+/// # Parameters
+///
+/// - `odb` — object database (for hashing worktree files).
+/// - `index` — the current index.
+/// - `work_tree` — path to the working tree root.
+/// - `options` — optional context for racy timestamp checks.
+///
+/// # Errors
+///
+/// Returns errors from I/O or hashing.
+pub fn diff_index_to_worktree_with_options(
+    odb: &Odb,
+    index: &Index,
+    work_tree: &Path,
+    options: DiffIndexToWorktreeOptions,
+) -> Result<Vec<DiffEntry>> {
     use crate::config::ConfigSet;
     use crate::crlf;
 
@@ -702,8 +743,9 @@ pub fn diff_index_to_worktree(
             }
             Ok(meta) => {
                 let worktree_mode = mode_from_metadata(&meta);
+                let stat_same = stat_matches(ie, &meta);
                 // Mode-only change: stat still matches the index entry but executable bit differs.
-                if stat_matches(ie, &meta) && worktree_mode != ie.mode {
+                if stat_same && worktree_mode != ie.mode {
                     let path_owned = path_str_ref.to_owned();
                     result.push(DiffEntry {
                         status: DiffStatus::Modified,
@@ -718,9 +760,13 @@ pub fn diff_index_to_worktree(
                     continue;
                 }
 
-                // Hash the worktree blob. We cannot skip hashing when stat matches: two different
-                // contents can share the same size (e.g. `foo` vs `bar`), and rapid edits can
-                // leave timestamps looking "unchanged" relative to the index (t4015-diff-whitespace).
+                // Fast path: unchanged stat + unchanged mode + non-racy timestamp means this entry
+                // is clean without re-hashing blob data.
+                if stat_same && worktree_mode == ie.mode && !entry_is_racy(ie, options.index_mtime) {
+                    continue;
+                }
+
+                // Hash the worktree blob for uncertain/racy entries.
                 let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, false, &config);
                 let worktree_oid = hash_worktree_file(
                     odb,
@@ -833,6 +879,17 @@ pub fn diff_index_to_worktree(
     }
 
     Ok(result)
+}
+
+fn entry_is_racy(ie: &IndexEntry, index_mtime: Option<(u32, u32)>) -> bool {
+    let Some((index_mtime_sec, index_mtime_nsec)) = index_mtime else {
+        return false;
+    };
+    if index_mtime_sec == 0 {
+        return false;
+    }
+    index_mtime_sec < ie.mtime_sec
+        || (index_mtime_sec == ie.mtime_sec && index_mtime_nsec <= ie.mtime_nsec)
 }
 
 /// Quick stat check: does the index entry's cached stat data match the file?
