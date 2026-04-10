@@ -3007,9 +3007,14 @@ pub(crate) fn check_dirty_worktree(
                 }
 
                 if !has_tracked_prefix && !replaces_tracked_dir {
-                    // Untracked paths that would be overwritten by a new tracked entry must
-                    // abort (matches Git; see t3420 rebase --autostash checkout onto failures).
-                    let _ = untracked_path_matches_index_entry(repo, &abs_path, new_entry)?;
+                    // Untracked on disk that already matches the target blob is safe to keep
+                    // (t3501 orphan / stale-file flows).
+                    if untracked_path_matches_index_entry(repo, &abs_path, new_entry)? {
+                        continue;
+                    }
+                    // Refuse checkout when untracked would be overwritten (t3420 rebase
+                    // --autostash). Same for unborn HEAD — no silent deletion of blocking
+                    // paths (t2015-checkout-unborn); matches Git.
                     untracked_conflicts.push(rel_path.into_owned());
                 }
             }
