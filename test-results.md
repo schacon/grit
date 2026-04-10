@@ -2,6 +2,17 @@
 
 # Test results
 
+**2026-04-10 (fetch HTTP option wiring / Phase C.1 C.2 C.3 groundwork)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `./scripts/run-tests.sh t5700-protocol-v1.sh`: 9/24 (unchanged in this environment)
+- `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: 13/37 (unchanged in this environment)
+  - HTTP fetch path now threads shallow/deepen/filter request options into smart HTTP v2/v0-v1
+    request encoding.
+  - HTTP CLI refspec parity groundwork added (glob expansion + explicit mapping path over advertised
+    refs), but this suite remains limited by broader pre-existing fetch gaps.
+
 **2026-04-10 (fetch HTTP v0/v1 stateless negotiation / Phase B.2 partial)**
 
 - `cargo check -p grit-rs`: pass

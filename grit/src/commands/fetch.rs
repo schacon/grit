@@ -780,8 +780,15 @@ fn fetch_remote(
         .as_deref()
         .filter(|s| !s.trim().is_empty())
         .is_some();
+    let http_fetch_options = crate::http_smart::HttpFetchOptions {
+        depth: args.depth,
+        deepen: args.deepen,
+        shallow_since: args.shallow_since.clone(),
+        shallow_exclude: args.shallow_exclude.iter().cloned().collect(),
+        filter_spec: args.filter.clone(),
+    };
 
-    let (remote_heads, remote_tags) = if is_ext_url {
+    let (remote_heads, remote_tags, remote_advertised) = if is_ext_url {
         let local_git_for_ext = git_dir.to_path_buf();
         let refspec_owned_ext = refspecs.clone();
         let remote_nm_ext = remote_name.to_owned();
@@ -826,7 +833,7 @@ fn fetch_remote(
                 )
             },
         )?;
-        (heads, tags)
+        (heads, tags, Vec::new())
     } else if url.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", Some(git_dir))?;
         let (heads, tags, _, _) =
@@ -838,22 +845,24 @@ fn fetch_remote(
                     filter_active,
                 )
             })?;
-        (heads, tags)
+        (heads, tags, Vec::new())
     } else if is_http_url {
         // Match Git `fetch.c`: apply `fetch.bundleURI` before the transport fetch so bundle
         // prerequisites are not satisfied early by the pack (t5558 creationToken deepening).
         crate::bundle_uri::maybe_apply_bundle_uri_after_http_fetch(git_dir, &url, None)?;
         let http_ctx = crate::http_client::HttpClientContext::from_config_set(config)?;
-        let (heads, tags, _adv) = crate::http_smart::http_fetch_pack(
+        let (heads, tags, adv) = crate::http_smart::http_fetch_pack(
             git_dir,
             &url,
             upload_pack_refspecs,
             filter_active,
+            &http_fetch_options,
             &http_ctx,
         )?;
+        let adv: Vec<(String, ObjectId)> = adv.into_iter().map(|e| (e.name, e.oid)).collect();
         let heads: Vec<(String, ObjectId)> = heads.into_iter().map(|e| (e.name, e.oid)).collect();
         let tags: Vec<(String, ObjectId)> = tags.into_iter().map(|e| (e.name, e.oid)).collect();
-        (heads, tags)
+        (heads, tags, adv)
     } else if use_upload_pack_negotiation {
         crate::protocol::check_protocol_allowed("file", Some(git_dir))?;
         let remote_repo_upload = remote_repo
@@ -903,7 +912,7 @@ fn fetch_remote(
         if tags.is_empty() {
             tags = refs::list_refs(&remote_repo_upload.git_dir, "refs/tags/")?;
         }
-        (heads, tags)
+        (heads, tags, Vec::new())
     } else {
         let remote_repo = remote_repo
             .as_ref()
@@ -945,7 +954,7 @@ fn fetch_remote(
                 .context("copying reachable objects from remote")?;
         }
         check_connectivity(git_dir, &object_copy_roots)?;
-        (heads, tags)
+        (heads, tags, Vec::new())
     };
 
     let tip_oids: Vec<ObjectId> = remote_heads
@@ -998,14 +1007,35 @@ fn fetch_remote(
     // path. `collect_wants_cli` only drives the pack request; ref writes happen here.
     if user_passed_cli_refspecs
         && !prefetch_left_no_positive
-        && !is_http_url
         && (!is_ext_url || ext_resolved_remote.is_some())
     {
-        let remote_repo = ext_resolved_remote.as_ref().unwrap_or_else(|| {
-            remote_repo
-                .as_ref()
-                .expect("CLI refspec fetch requires a local remote repository")
-        });
+        let remote_repo = if is_http_url {
+            None
+        } else {
+            Some(ext_resolved_remote.as_ref().unwrap_or_else(|| {
+                remote_repo
+                    .as_ref()
+                    .expect("CLI refspec fetch requires a local remote repository")
+            }))
+        };
+        let remote_all_refs: Vec<(String, ObjectId)> = if is_http_url {
+            remote_advertised.clone()
+        } else {
+            refs::list_refs(
+                &remote_repo
+                    .expect("non-HTTP CLI refspec fetch requires local remote repository")
+                    .git_dir,
+                "refs/",
+            )?
+        };
+        let find_remote_ref_oid = |name: &str| -> Option<ObjectId> {
+            remote_all_refs
+                .iter()
+                .find(|(refname, _)| refname == name)
+                .map(|(_, oid)| *oid)
+        };
+        let ff_repo = Repository::open(git_dir, None)
+            .context("open repository for CLI refspec fast-forward checks")?;
         // Collect negative refspecs first (^pattern)
         let negative_patterns: Vec<&str> = cli_refspecs
             .iter()
@@ -1030,7 +1060,6 @@ fn fetch_remote(
         {
             let mut dst_to_src: std::collections::HashMap<String, String> =
                 std::collections::HashMap::new();
-            let remote_all_refs = refs::list_refs(&remote_repo.git_dir, "refs/")?;
             for spec in cli_refspecs {
                 if spec.starts_with('^') {
                     continue;
@@ -1116,7 +1145,6 @@ fn fetch_remote(
 
             // Handle glob refspecs (e.g. refs/remotes/*:refs/remotes/*)
             if src.contains('*') {
-                let remote_all_refs = refs::list_refs(&remote_repo.git_dir, "refs/")?;
                 for (refname, remote_oid) in &remote_all_refs {
                     if is_excluded(refname) {
                         continue;
@@ -1174,7 +1202,9 @@ fn fetch_remote(
                     }
                 }
                 // Also copy symbolic refs for the matched pattern
-                copy_symrefs(&remote_repo.git_dir, git_dir, &src, &dst)?;
+                if let Some(remote_repo) = remote_repo {
+                    copy_symrefs(&remote_repo.git_dir, git_dir, &src, &dst)?;
+                }
                 continue;
             }
 
@@ -1187,16 +1217,14 @@ fn fetch_remote(
                 } else {
                     format!("refs/heads/{src}")
                 };
-                match refs::resolve_ref(&remote_repo.git_dir, &remote_ref) {
-                    Ok(oid) => oid,
-                    Err(_) if !src.starts_with("refs/") => {
-                        let tag_ref = format!("refs/tags/{src}");
-                        refs::resolve_ref(&remote_repo.git_dir, &tag_ref)
-                            .with_context(|| format!("couldn't find remote ref '{}'", src))?
-                    }
-                    Err(e) => {
-                        bail!("couldn't find remote ref '{src}': {e}");
-                    }
+                if let Some(oid) = find_remote_ref_oid(&remote_ref) {
+                    oid
+                } else if !src.starts_with("refs/") {
+                    let tag_ref = format!("refs/tags/{src}");
+                    find_remote_ref_oid(&tag_ref)
+                        .with_context(|| format!("couldn't find remote ref '{}'", src))?
+                } else {
+                    bail!("couldn't find remote ref '{src}'");
                 }
             };
 
@@ -1225,8 +1253,8 @@ fn fetch_remote(
                 // Check fast-forward: reject non-ff updates unless forced
                 if let Some(ref old) = old_oid {
                     if old != &remote_oid && !force {
-                        let is_ff = merge_base::is_ancestor(&remote_repo, *old, remote_oid)
-                            .unwrap_or(false);
+                        let is_ff =
+                            merge_base::is_ancestor(&ff_repo, *old, remote_oid).unwrap_or(false);
                         if !is_ff {
                             eprintln!(" ! [rejected]        {src} -> {dst} (non-fast-forward)");
                             bail!("cannot fast-forward ref '{local_ref}'");

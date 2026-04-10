@@ -1949,11 +1949,19 @@ fn run_http_clone(args: Args) -> Result<()> {
 
     let http_config = clone_http_client_config(&args)?;
     let http_ctx = crate::http_client::HttpClientContext::from_config_set(&http_config)?;
+    let fetch_options = crate::http_smart::HttpFetchOptions {
+        depth: args.depth,
+        deepen: None,
+        shallow_since: args.shallow_since.clone(),
+        shallow_exclude: args.shallow_exclude.clone(),
+        filter_spec: args.filter.clone(),
+    };
     let (remote_heads, remote_tags, adv) = crate::http_smart::http_fetch_pack(
         &dest.git_dir,
         &repo_url,
         &refspec_for_fetch,
         filter_active,
+        &fetch_options,
         &http_ctx,
     )?;
     crate::bundle_uri::maybe_apply_bundle_uri_after_http_fetch(&dest.git_dir, &repo_url, None)?;

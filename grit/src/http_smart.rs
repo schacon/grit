@@ -245,6 +245,104 @@ pub struct LsRefEntry {
     pub oid: ObjectId,
 }
 
+/// Wire options for HTTP smart fetch requests.
+#[derive(Clone, Debug, Default)]
+pub struct HttpFetchOptions {
+    /// Absolute depth requested by `--depth`.
+    pub depth: Option<usize>,
+    /// Relative deepening requested by `--deepen`.
+    pub deepen: Option<usize>,
+    /// Date boundary requested by `--shallow-since`.
+    pub shallow_since: Option<String>,
+    /// Exclusion revisions requested by `--shallow-exclude`.
+    pub shallow_exclude: Vec<String>,
+    /// Partial-clone filter specification requested by `--filter`.
+    pub filter_spec: Option<String>,
+}
+
+fn requested_depth(opts: &HttpFetchOptions) -> Option<usize> {
+    opts.depth.or(opts.deepen).filter(|d| *d > 0)
+}
+
+fn append_fetch_request_extensions_v0_v1(
+    req: &mut Vec<u8>,
+    caps: &std::collections::HashSet<String>,
+    options: &HttpFetchOptions,
+) -> Result<()> {
+    if let Some(depth) = requested_depth(options) {
+        pkt_line::write_line_to_vec(req, &format!("deepen {depth}"))?;
+    }
+    if let Some(since) = options.shallow_since.as_deref() {
+        if caps.contains("deepen-since") {
+            pkt_line::write_line_to_vec(req, &format!("deepen-since {since}"))?;
+        }
+    }
+    if caps.contains("deepen-not") {
+        for excl in &options.shallow_exclude {
+            let excl = excl.trim();
+            if excl.is_empty() {
+                continue;
+            }
+            pkt_line::write_line_to_vec(req, &format!("deepen-not {excl}"))?;
+        }
+    }
+    if caps.contains("filter") {
+        if let Some(filter_spec) = options.filter_spec.as_deref() {
+            let filter_spec = filter_spec.trim();
+            if !filter_spec.is_empty() {
+                pkt_line::write_line_to_vec(req, &format!("filter {filter_spec}"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn v2_fetch_features(caps: &[String]) -> std::collections::HashSet<String> {
+    let mut features = std::collections::HashSet::new();
+    for line in caps {
+        if let Some(rest) = line.strip_prefix("fetch=") {
+            for feature in rest.split_whitespace() {
+                features.insert(feature.to_string());
+            }
+        }
+    }
+    features
+}
+
+fn append_fetch_request_extensions_v2(
+    req: &mut Vec<u8>,
+    caps: &[String],
+    options: &HttpFetchOptions,
+) -> Result<()> {
+    let features = v2_fetch_features(caps);
+    if let Some(depth) = requested_depth(options) {
+        pkt_line::write_line_to_vec(req, &format!("deepen {depth}"))?;
+    }
+    if let Some(since) = options.shallow_since.as_deref() {
+        if features.contains("deepen-since") || features.contains("shallow") {
+            pkt_line::write_line_to_vec(req, &format!("deepen-since {since}"))?;
+        }
+    }
+    if features.contains("deepen-not") || features.contains("shallow") {
+        for excl in &options.shallow_exclude {
+            let excl = excl.trim();
+            if excl.is_empty() {
+                continue;
+            }
+            pkt_line::write_line_to_vec(req, &format!("deepen-not {excl}"))?;
+        }
+    }
+    if features.contains("filter") {
+        if let Some(filter_spec) = options.filter_spec.as_deref() {
+            let filter_spec = filter_spec.trim();
+            if !filter_spec.is_empty() {
+                pkt_line::write_line_to_vec(req, &format!("filter {filter_spec}"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Run `ls-refs` over smart HTTP and return advertised refs.
 pub fn http_ls_refs(
     repo_url: &str,
@@ -327,6 +425,15 @@ fn collect_wants_from_advertised(
         return Ok(wants);
     }
     let mut wants = Vec::new();
+    let negative_patterns: Vec<&str> = refspecs
+        .iter()
+        .filter_map(|s| s.strip_prefix('^'))
+        .collect();
+    let is_excluded = |refname: &str| -> bool {
+        negative_patterns
+            .iter()
+            .any(|pat| match_glob_pattern(pat, refname).is_some() || *pat == refname)
+    };
     for spec in refspecs {
         if spec.starts_with('^') {
             continue;
@@ -337,25 +444,60 @@ fn collect_wants_from_advertised(
             .map(|(a, _)| a)
             .unwrap_or(spec_clean);
         if src.contains('*') {
-            bail!("glob refspec in HTTP fetch not supported");
+            for e in advertised {
+                if is_excluded(&e.name) {
+                    continue;
+                }
+                if match_glob_pattern(src, &e.name).is_some() {
+                    wants.push(e.oid);
+                }
+            }
+            continue;
         }
         let remote_ref = if src.starts_with("refs/") {
             src.to_string()
         } else {
             format!("refs/heads/{src}")
         };
+        if is_excluded(&remote_ref) {
+            continue;
+        }
         let oid = advertised
             .iter()
             .find(|e| e.name == remote_ref)
             .map(|e| e.oid)
             .or_else(|| {
                 let tag_ref = format!("refs/tags/{src}");
+                if is_excluded(&tag_ref) {
+                    return None;
+                }
                 advertised.iter().find(|e| e.name == tag_ref).map(|e| e.oid)
             })
             .with_context(|| format!("could not find remote ref '{remote_ref}'"))?;
         wants.push(oid);
     }
+    wants.sort_by_key(|o| o.to_hex());
+    wants.dedup();
     Ok(wants)
+}
+
+fn match_glob_pattern<'a>(pattern: &str, refname: &'a str) -> Option<&'a str> {
+    if let Some(star_pos) = pattern.find('*') {
+        let prefix = &pattern[..star_pos];
+        let suffix = &pattern[star_pos + 1..];
+        if refname.starts_with(prefix)
+            && refname.ends_with(suffix)
+            && refname.len() >= prefix.len() + suffix.len()
+        {
+            Some(&refname[prefix.len()..refname.len() - suffix.len()])
+        } else {
+            None
+        }
+    } else if pattern == refname {
+        Some(refname)
+    } else {
+        None
+    }
 }
 
 fn build_fetch_caps_v0(caps: &std::collections::HashSet<String>) -> String {
@@ -386,6 +528,7 @@ fn fetch_pack_v0_v1_stateless_http(
     refspecs: &[String],
     caps: &std::collections::HashSet<String>,
     filter_active: bool,
+    options: &HttpFetchOptions,
     client: &crate::http_client::HttpClientContext,
 ) -> Result<(Vec<LsRefEntry>, Vec<LsRefEntry>, Vec<LsRefEntry>)> {
     let wants = collect_wants_from_advertised(advertised, refspecs)?;
@@ -463,6 +606,7 @@ fn fetch_pack_v0_v1_stateless_http(
     for w in wants.iter().skip(1) {
         pkt_line::write_line_to_vec(&mut req, &format!("want {}", w.to_hex()))?;
     }
+    append_fetch_request_extensions_v0_v1(&mut req, caps, options)?;
     while let Some(oid) = negotiator.next_have()? {
         pkt_line::write_line_to_vec(&mut req, &format!("have {}", oid.to_hex()))?;
     }
@@ -556,6 +700,7 @@ pub fn http_fetch_pack(
     repo_url: &str,
     refspecs: &[String],
     filter_active: bool,
+    options: &HttpFetchOptions,
     client: &crate::http_client::HttpClientContext,
 ) -> Result<(Vec<LsRefEntry>, Vec<LsRefEntry>, Vec<LsRefEntry>)> {
     trace_http_v0_v1_negotiated(client);
@@ -580,6 +725,7 @@ pub fn http_fetch_pack(
                 refspecs,
                 &caps,
                 filter_active,
+                options,
                 client,
             )
         }
@@ -710,6 +856,7 @@ pub fn http_fetch_pack(
         for w in &wants {
             pkt_line::write_line_to_vec(&mut req, &format!("want {} {}", w.to_hex(), fetch_caps))?;
         }
+        append_fetch_request_extensions_v2(&mut req, &caps, options)?;
         for h in &pending_haves {
             let trace = format!("clone> have {}", h.to_hex());
             trace_clone_negotiation_line(&trace);
