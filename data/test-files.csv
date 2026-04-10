@@ -103,7 +103,7 @@ t1009-read-tree-new-index	t1	yes	3	3	0	true	ok	0
 t10090-write-tree-idempotent	t1	yes	34	34	0	true	ok	0
 t1010-mktree	t1	yes	8	8	0	true	ok	0
 t10100-ls-tree-long-format	t1	yes	36	36	0	true	ok	0
-t1011-read-tree-sparse-checkout	t1	yes	23	13	10	false	ok	0
+t1011-read-tree-sparse-checkout	t1	yes	23	23	0	true	ok	0
 t10110-ls-files-pathspec-filter	t1	yes	37	37	0	true	ok	0
 t1012-read-tree-df	t1	yes	5	5	0	true	ok	0
 t10120-config-unset-all	t1	yes	33	33	0	true	ok	0

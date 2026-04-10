@@ -70,6 +70,10 @@ pub struct Args {
     #[arg(long = "recurse-submodules", alias = "recursive")]
     pub recurse_submodules: bool,
 
+    /// Skip applying sparse-checkout skip-worktree bits (matches `git read-tree --no-sparse-checkout`).
+    #[arg(long = "no-sparse-checkout")]
+    pub no_sparse_checkout: bool,
+
     /// Tree-ish arguments (1 for reset, 2 for 2-way merge, 3 for 3-way merge).
     pub trees: Vec<String>,
 }
@@ -272,6 +276,9 @@ pub fn run(args: Args) -> Result<()> {
         new_index.entries =
             tree_to_index_entries(&repo, &tree_oids[tree_oids.len() - 1], "", prot)?;
         new_index.sort();
+        if !dry_run {
+            apply_sparse_checkout(&repo.git_dir, &mut new_index, args.no_sparse_checkout)?;
+        }
         if args.update {
             validate_worktree_updates(
                 &repo,
@@ -377,7 +384,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Apply sparse checkout: set skip-worktree on entries not matching patterns
-    apply_sparse_checkout(&repo.git_dir, &mut new_index)?;
+    apply_sparse_checkout(&repo.git_dir, &mut new_index, args.no_sparse_checkout)?;
 
     if args.update {
         validate_worktree_updates(
@@ -391,6 +398,8 @@ pub fn run(args: Args) -> Result<()> {
             false,
         )?;
     }
+
+    sparse_refresh_skip_worktree_for_dirty_paths(&repo, &old_index, &mut new_index)?;
     if !dry_run && args.update {
         checkout_index_entries(
             &repo,
@@ -1242,8 +1251,52 @@ fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {
 }
 
 /// Check if `core.sparseCheckout` is enabled and apply skip-worktree bits.
-fn apply_sparse_checkout(git_dir: &Path, index: &mut Index) -> Result<()> {
-    apply_sparse_checkout_skip_worktree(git_dir, index);
+fn apply_sparse_checkout(
+    git_dir: &Path,
+    index: &mut Index,
+    skip_sparse_checkout: bool,
+) -> Result<()> {
+    apply_sparse_checkout_skip_worktree(git_dir, index, skip_sparse_checkout);
+    Ok(())
+}
+
+/// When sparse checkout would mark a path `skip-worktree` but the work tree already differs
+/// from the index entry, clear `skip-worktree` so `read-tree -u` can materialize or report
+/// conflicts (Git `verify_uptodate_sparse` / `apply_sparse_checkout`).
+fn sparse_refresh_skip_worktree_for_dirty_paths(
+    repo: &Repository,
+    _old_index: &Index,
+    new_index: &mut Index,
+) -> Result<()> {
+    let Some(wt) = repo.work_tree.as_deref() else {
+        return Ok(());
+    };
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let sparse_on = config
+        .get("core.sparsecheckout")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !sparse_on {
+        return Ok(());
+    }
+
+    for entry in new_index.entries.iter_mut() {
+        if entry.stage() != 0 || !entry.skip_worktree() {
+            continue;
+        }
+        let was_sparse = _old_index
+            .get(&entry.path, 0)
+            .is_some_and(|e| e.skip_worktree());
+        if was_sparse {
+            continue;
+        }
+        let rel = String::from_utf8_lossy(&entry.path);
+        let abs = wt.join(rel.as_ref());
+        let exists = std::fs::symlink_metadata(&abs).is_ok();
+        if exists && !worktree_matches_entry(repo, entry, &abs)? {
+            entry.set_skip_worktree(false);
+        }
+    }
     Ok(())
 }
 
@@ -1425,10 +1478,21 @@ fn checkout_index_entries(
             }
             continue;
         }
-        if old_stage0
-            .get(&entry.path)
-            .is_some_and(|old_entry| same_blob(old_entry, entry))
+        if entry.mode != MODE_GITLINK
+            && old_stage0
+                .get(&entry.path)
+                .is_some_and(|old_entry| same_blob(old_entry, entry))
             && checkout_entry_present_on_disk(&abs_path, entry.mode)
+        {
+            continue;
+        }
+
+        // Sparse checkout: when `skip-worktree` was cleared because the work tree did not match
+        // the index (Git `verify_uptodate_sparse`), do not overwrite the on-disk file with the
+        // index blob (t1011 read-tree dirty case outside sparse cone).
+        if entry.mode != MODE_GITLINK
+            && checkout_entry_present_on_disk(&abs_path, entry.mode)
+            && !worktree_matches_entry(repo, entry, &abs_path)?
         {
             continue;
         }
@@ -1675,6 +1739,11 @@ fn validate_worktree_updates(
         }
 
         match (old, new) {
+            (None, Some(new_entry)) if new_entry.skip_worktree() => {
+                // Sparse checkout: new paths outside the cone are not materialized; Git skips
+                // `verify_absent` for `CE_NEW_SKIP_WORKTREE` entries (t1011 dirty case).
+                continue;
+            }
             (None, Some(new_entry)) => {
                 if reset_allows_untracked_overwrite {
                     continue;
@@ -1945,7 +2014,7 @@ pub fn am_clean_index(
     let orig_map = tree_to_map(tree_to_index_entries(repo, &orig_tree_oid, "", prot)?);
     let mut phase2 = two_way_merge(repo, &phase1, &head_map, &orig_map)?;
 
-    apply_sparse_checkout(&repo.git_dir, &mut phase2)?;
+    apply_sparse_checkout(&repo.git_dir, &mut phase2, false)?;
 
     if repo.work_tree.is_some() {
         checkout_index_entries(repo, &phase1, &phase2, true, false)?;

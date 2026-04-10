@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 330 completed (`[x]`), 5 in progress (`[~]`), 436 remai
 
 ## Recently completed
 
+- `t1011-read-tree-sparse-checkout` — 23/23 tests pass (`read-tree --no-sparse-checkout`; empty sparse file excludes all paths; non-cone matching via `ignore::path_in_sparse_checkout`; sparse refresh + checkout skips overwriting dirty out-of-cone files; bare `checkout` reapplies sparse when enabled; path checkout removes skip-worktree paths before restore; sparse "already present" warnings on materialize)
 - `t5528-push-default` — 31/32 tests pass (`push`: Git-compatible default remote (`branch.*.remote` path aliases, stale remote cleanup, `remote.pushDefault`, sole-remote fallback); `resolve_push_remote_urls`; `push.default` matching/nothing/simple/upstream/current + `push.autoSetupRemote` post-push upstream; matching `:` only updates refs present on remote; "No refs in common" when no overlapping branch names; 1 intentional `test_expect_failure` for matching on new branch)
 - `t3452-history-split` — 25/25 tests pass (`history split`; `refs list --include-root-refs`; commit editor + reflog fixes; checkout `switch -`; `log --graph --branches` ordering)
 - `t5327-multi-pack-bitmaps-rev` — 314/314 tests pass (MIDX `.rev` + bitmap harness: fast-import symbolic HEAD, rev-list bitmap/trace, clone/fetch partial + bare layout, `multi-pack-index write` flags, `pack-objects` reachability/progress/REF_DELTA bases, `test-tool read-midx --show-objects`)

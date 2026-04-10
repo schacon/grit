@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 
+use crate::ignore::path_in_sparse_checkout as path_in_sparse_checkout_non_cone_git;
 use crate::wildmatch::{wildmatch, WM_PATHNAME};
 
 /// Parsed non-cone sparse-checkout patterns in file order (last match wins).
@@ -415,10 +416,17 @@ pub fn path_in_sparse_checkout(
 ///
 /// - `git_dir` — repository git directory (reads `config` and `info/sparse-checkout`).
 /// - `index` — index to update in place; bumped to version 3 when any entry is marked skip-worktree.
+/// - `skip_sparse_checkout` — when true (e.g. `read-tree --no-sparse-checkout`), do not set
+///   `skip-worktree` bits even if sparse checkout is enabled.
 pub fn apply_sparse_checkout_skip_worktree(
     git_dir: &std::path::Path,
     index: &mut crate::index::Index,
+    skip_sparse_checkout: bool,
 ) {
+    if skip_sparse_checkout {
+        return;
+    }
+
     let config = crate::config::ConfigSet::load(Some(git_dir), true)
         .unwrap_or_else(|_| crate::config::ConfigSet::new());
     let sparse_enabled = config
@@ -435,16 +443,23 @@ pub fn apply_sparse_checkout_skip_worktree(
         .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(true);
 
-    let mut warnings = Vec::new();
-    let (cone_ok, cone_struct, non_cone) =
-        load_sparse_checkout_with_warnings(git_dir, cone_config, &mut warnings);
-    for line in warnings {
-        eprintln!("{line}");
-    }
+    let sparse_path = git_dir.join("info").join("sparse-checkout");
+    let file_content = std::fs::read_to_string(&sparse_path).unwrap_or_default();
+    let sparse_lines = parse_sparse_checkout_file(&file_content);
 
-    // `cone_ok` is true only when the file parses as cone patterns; malformed expanded-cone
-    // files fall back to non-cone matching (and stderr warnings), matching Git `read-tree`.
-    let effective_cone = cone_ok && cone_struct.is_some();
+    // Use silent cone parsing here: non-cone files like `sub` are normal and should not emit
+    // "disabling cone pattern matching" on every index update (t1011 checkout noise).
+    let cone_struct = if cone_config {
+        ConePatterns::try_parse(&file_content)
+    } else {
+        None
+    };
+
+    // Git: an on-disk sparse-checkout file with no effective patterns (e.g. a file that only
+    // contains blank lines) still enables sparse mode and excludes every path (`pl->nr == 0`
+    // yields UNDECIDED → rejected at repo root in `path_in_sparse_checkout_1`).
+    let sparse_file_exists = sparse_path.is_file();
+    let exclude_all = sparse_file_exists && sparse_lines.is_empty();
 
     let mut any_skip = false;
     for entry in &mut index.entries {
@@ -452,12 +467,13 @@ pub fn apply_sparse_checkout_skip_worktree(
             continue;
         }
         let path_str = String::from_utf8_lossy(&entry.path);
-        let included = path_in_sparse_checkout(
-            path_str.as_ref(),
-            effective_cone,
-            cone_struct.as_ref(),
-            &non_cone,
-        );
+        let included = if exclude_all {
+            false
+        } else if let Some(cone) = cone_struct.as_ref() {
+            cone.path_included(path_str.as_ref())
+        } else {
+            path_in_sparse_checkout_non_cone_git(path_str.as_ref(), &sparse_lines)
+        };
         entry.set_skip_worktree(!included);
         if !included {
             any_skip = true;
