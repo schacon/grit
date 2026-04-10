@@ -50,6 +50,7 @@ use std::fmt::Write as FmtWrite;
 use std::sync::Arc;
 
 use crate::commands::diff_index::{write_patch_entry, SubmoduleIgnoreFlags};
+use crate::commands::promisor_hydrate::{prefetch_promisor_for_diff_entries, PromisorDiffPrefetch};
 
 /// Shared gitattributes + config for per-path diff algorithm selection (`diff.<driver>.algorithm`).
 #[derive(Clone)]
@@ -1036,8 +1037,15 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let raw_args: Vec<String> = std::env::args().collect();
     let has_separator = raw_args.iter().any(|a| a == "--");
-    let (mut revs, raw_path_args) =
-        parse_rev_and_paths(&args.args, has_separator, precompose_paths);
+    let (mut revs, raw_path_args) = parse_rev_and_paths(
+        &args.args,
+        has_separator,
+        precompose_paths,
+        repo_opt
+            .as_ref()
+            .and_then(|r| r.work_tree.as_deref())
+            .is_some(),
+    );
     // Options parsed by clap can remain in the `revs` bucket when `--` separates paths
     // (`git diff -D -- path`). Drop duplicates so they are not treated as revision names.
     if args.irreversible_delete {
@@ -1451,6 +1459,33 @@ pub fn run(mut args: Args) -> Result<()> {
         want_combined_diff = true;
     }
 
+    // -C implies -M (copy detection requires rename detection)
+    if args.find_copies.is_some() && args.find_renames.is_none() {
+        args.find_renames = Some("50".to_owned());
+    }
+
+    let rename_threshold: Option<u32> = if args.no_renames {
+        None
+    } else if let Some(ref threshold_str) = args.find_renames {
+        Some(parse_diff_rename_threshold(threshold_str))
+    } else {
+        use grit_lib::config::ConfigSet;
+        let config =
+            ConfigSet::load(Some(&repo.git_dir), false).unwrap_or_else(|_| ConfigSet::new());
+        match config.get("diff.renames") {
+            Some(val) => {
+                let val_lower = val.to_lowercase();
+                match val_lower.as_str() {
+                    "false" | "no" | "0" => None,
+                    "true" | "yes" | "1" | "" => Some(50),
+                    "copies" | "copy" => Some(50),
+                    _ => None,
+                }
+            }
+            None => Some(50),
+        }
+    };
+
     let mut _symmetric = false;
     if revs.len() == 1 {
         if let Some((left_spec, right_spec)) = try_treeish_blob_range(&revs[0]) {
@@ -1652,32 +1687,32 @@ pub fn run(mut args: Args) -> Result<()> {
         entries
     };
 
-    // -C implies -M (copy detection requires rename detection)
-    if args.find_copies.is_some() && args.find_renames.is_none() {
-        args.find_renames = Some("50".to_owned());
-    }
+    let needs_blob_prefetch_before_rename = wt_for_content.is_none()
+        && (args.shortstat
+            || stat_enabled
+            || args.stat_count.is_some()
+            || args.stat_width.is_some()
+            || args.stat_graph_width.is_some()
+            || args.stat_name_width.is_some()
+            || args.numstat
+            || !args.dirstat.is_empty()
+            || args.dirstat_by_file.is_some()
+            || (emit_unified_patch
+                && !args.no_patch
+                && !args.raw
+                && !args.name_only
+                && !args.name_status));
+    prefetch_promisor_for_diff_entries(
+        &repo,
+        &entries,
+        wt_for_content,
+        PromisorDiffPrefetch {
+            rename_detection: rename_threshold.is_some(),
+            break_rewrites: false,
+            needs_blob_content: needs_blob_prefetch_before_rename,
+        },
+    );
 
-    // Apply rename detection if requested (explicit -M flag or diff.renames config).
-    let rename_threshold: Option<u32> = if let Some(ref threshold_str) = args.find_renames {
-        Some(parse_diff_rename_threshold(threshold_str))
-    } else {
-        // Check diff.renames config.
-        use grit_lib::config::ConfigSet;
-        let config =
-            ConfigSet::load(Some(&repo.git_dir), false).unwrap_or_else(|_| ConfigSet::new());
-        match config.get("diff.renames") {
-            Some(val) => {
-                let val_lower = val.to_lowercase();
-                match val_lower.as_str() {
-                    "false" | "no" | "0" => None,
-                    "true" | "yes" | "1" | "" => Some(50),
-                    "copies" | "copy" => Some(50), // -C mode, treat as renames for now
-                    _ => None,
-                }
-            }
-            None => Some(50), // Git 2.x defaults diff.renames to true
-        }
-    };
     let entries = if let Some(threshold) = rename_threshold {
         detect_renames(&repo.odb, entries, threshold)
     } else {
@@ -1836,7 +1871,34 @@ pub fn run(mut args: Args) -> Result<()> {
         entries
     };
 
+    let dirstat_cli_active = !args.dirstat.is_empty() || args.dirstat_by_file.is_some();
+    let (dirstat_opts, dirstat_config_warnings) =
+        resolve_dirstat_options(&args, &repo.git_dir, dirstat_cli_active)?;
+    let relative_prefix_for_paths = resolve_diff_relative_prefix(work_tree, &repo.git_dir, &args);
+    let format_besides_unified_patch = args.shortstat
+        || stat_enabled
+        || args.stat_count.is_some()
+        || args.stat_width.is_some()
+        || args.stat_graph_width.is_some()
+        || args.stat_name_width.is_some()
+        || args.raw
+        || args.numstat
+        || args.name_only
+        || args.name_status
+        || (args.summary && !stat_enabled)
+        || dirstat_opts.is_some();
+
     if args.break_rewrites {
+        prefetch_promisor_for_diff_entries(
+            &repo,
+            &entries,
+            wt_for_content,
+            PromisorDiffPrefetch {
+                rename_detection: false,
+                break_rewrites: true,
+                needs_blob_content: false,
+            },
+        );
         for entry in &mut entries {
             if entry.status != DiffStatus::Modified {
                 continue;
@@ -1858,23 +1920,6 @@ pub fn run(mut args: Args) -> Result<()> {
             }
         }
     }
-
-    let dirstat_cli_active = !args.dirstat.is_empty() || args.dirstat_by_file.is_some();
-    let (dirstat_opts, dirstat_config_warnings) =
-        resolve_dirstat_options(&args, &repo.git_dir, dirstat_cli_active)?;
-    let relative_prefix_for_paths = resolve_diff_relative_prefix(work_tree, &repo.git_dir, &args);
-    let format_besides_unified_patch = args.shortstat
-        || stat_enabled
-        || args.stat_count.is_some()
-        || args.stat_width.is_some()
-        || args.stat_graph_width.is_some()
-        || args.stat_name_width.is_some()
-        || args.raw
-        || args.numstat
-        || args.name_only
-        || args.name_status
-        || (args.summary && !stat_enabled)
-        || dirstat_opts.is_some();
 
     let merge_in_progress = std::fs::metadata(repo.git_dir.join("MERGE_HEAD")).is_ok();
     let mut conflict_combined_patches: Vec<String> = Vec::new();
@@ -3710,6 +3755,7 @@ fn parse_rev_and_paths(
     args: &[String],
     has_separator: bool,
     precompose_unicode: bool,
+    has_work_tree: bool,
 ) -> (Vec<String>, Vec<String>) {
     if let Some(sep) = args.iter().position(|a| a == "--") {
         let revs = args[..sep].to_vec();
@@ -3731,11 +3777,13 @@ fn parse_rev_and_paths(
                 // Git pathspec exclusion (`:!` / `:^`); never a revision (t7012, `git diff HEAD :!path`).
                 in_paths = true;
                 paths.push(arg.clone());
-            } else if let Some(p) =
-                resolve_pathspec_for_diff_classification(arg, precompose_unicode)
-            {
-                in_paths = true;
-                paths.push(p);
+            } else if has_work_tree {
+                if let Some(p) = resolve_pathspec_for_diff_classification(arg, precompose_unicode) {
+                    in_paths = true;
+                    paths.push(p);
+                } else {
+                    revs.push(arg.clone());
+                }
             } else {
                 revs.push(arg.clone());
             }

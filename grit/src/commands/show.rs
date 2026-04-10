@@ -25,6 +25,8 @@ use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKin
 use grit_lib::odb::Odb;
 use grit_lib::refs::{list_refs, resolve_ref};
 use grit_lib::repo::Repository;
+
+use crate::commands::promisor_hydrate::{prefetch_promisor_for_diff_entries, PromisorDiffPrefetch};
 use grit_lib::rev_list::{
     collect_revision_specs_with_stdin, merge_bases, rev_list, OrderingMode, RevListOptions,
 };
@@ -950,12 +952,23 @@ fn show_commit(
                     .map(|c| c.tree)
             });
             let old_tree_oid = old_tree.flatten();
-            let diff_entries =
+            let raw_entries =
                 diff_trees(odb, old_tree_oid.as_ref(), new_tree, "").context("computing diff")?;
-            (
-                old_tree_oid,
-                apply_rename_copy_detection(odb, diff_entries, args, old_tree_oid.as_ref()),
-            )
+            if args.find_renames.is_some() || !args.find_copies.is_empty() {
+                prefetch_promisor_for_diff_entries(
+                    repo,
+                    &raw_entries,
+                    None,
+                    PromisorDiffPrefetch {
+                        rename_detection: true,
+                        break_rewrites: false,
+                        needs_blob_content: false,
+                    },
+                );
+            }
+            let diff_entries =
+                apply_rename_copy_detection(odb, raw_entries, args, old_tree_oid.as_ref());
+            (old_tree_oid, diff_entries)
         }
     } else {
         let new_tree = Some(&commit.tree);
@@ -966,12 +979,23 @@ fn show_commit(
                 .map(|c| c.tree)
         });
         let old_tree_oid = old_tree.flatten();
-        let diff_entries =
+        let raw_entries =
             diff_trees(odb, old_tree_oid.as_ref(), new_tree, "").context("computing diff")?;
-        (
-            old_tree_oid,
-            apply_rename_copy_detection(odb, diff_entries, args, old_tree_oid.as_ref()),
-        )
+        if args.find_renames.is_some() || !args.find_copies.is_empty() {
+            prefetch_promisor_for_diff_entries(
+                repo,
+                &raw_entries,
+                None,
+                PromisorDiffPrefetch {
+                    rename_detection: true,
+                    break_rewrites: false,
+                    needs_blob_content: false,
+                },
+            );
+        }
+        let diff_entries =
+            apply_rename_copy_detection(odb, raw_entries, args, old_tree_oid.as_ref());
+        (old_tree_oid, diff_entries)
     };
 
     let is_merge = commit.parents.len() > 1;
@@ -1032,6 +1056,17 @@ fn show_commit(
                 && !args.numstat
                 && !args.name_only
                 && !args.name_status));
+
+    prefetch_promisor_for_diff_entries(
+        repo,
+        &diff_entries,
+        None,
+        PromisorDiffPrefetch {
+            rename_detection: false,
+            break_rewrites: false,
+            needs_blob_content: show_patch || show_numstat || show_stat || args.shortstat,
+        },
+    );
 
     // --raw: raw diff-tree output format
     if show_raw {
