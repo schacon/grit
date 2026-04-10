@@ -497,7 +497,7 @@ fn checkout_entry(
             let file_attrs = crlf::get_file_attrs(&attrs, &path_str, false, &config);
             let oid_hex = format!("{}", entry.oid);
             let smudge_meta = grit_lib::filter_process::smudge_meta_for_checkout(repo, &oid_hex);
-            crlf::convert_to_worktree(
+            crlf::convert_to_worktree_eager(
                 &obj.data,
                 &path_str,
                 &conv,

@@ -4297,7 +4297,7 @@ fn write_worktree_path(
         );
         let file_attrs = crlf::get_file_attrs(&rules, rel_path, false, &ctx.config);
         Cow::Owned(
-            crlf::convert_to_worktree(
+            crlf::convert_to_worktree_eager(
                 content.as_bytes(),
                 rel_path,
                 &ctx.conv,

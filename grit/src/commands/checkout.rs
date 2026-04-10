@@ -19,7 +19,7 @@ use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{self, MergeAttr};
 use grit_lib::diff::read_submodule_head_oid;
 use grit_lib::diff::{diff_index_to_worktree, zero_oid};
-use grit_lib::filter_process;
+use grit_lib::filter_process::{self, DelayedProcessCheckout};
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
@@ -591,6 +591,25 @@ pub fn run(mut args: Args) -> Result<()> {
         separator_at_end,
         args.switch_mode,
     );
+
+    // Without `--`, `split_target_and_paths` treats the first token as tree-ish when there are
+    // trailing arguments. A bare blob OID (e.g. stage `:A` from `git cat-file -p :A`) is a valid
+    // revision but not a commit-ish; interpret the full argv list as pathspecs so
+    // `git checkout A B` matches Git (t2082 parallel-checkout attributes).
+    if !has_separator && !args.switch_mode && paths.len() >= 1 {
+        if let Some(ref t) = target {
+            if let Ok(oid) = resolve_revision(&repo, t) {
+                if let Ok(obj) = repo.odb.read(&oid) {
+                    if obj.kind == ObjectKind::Blob {
+                        let mut combined = vec![t.clone()];
+                        combined.extend(paths);
+                        paths = combined;
+                        target = None;
+                    }
+                }
+            }
+        }
+    }
 
     if args.track.is_some() && args.new_branch.is_none() && paths.is_empty() {
         let argv0 = target.as_deref().unwrap_or("");
@@ -1417,7 +1436,7 @@ fn checkout_merged_worktree_from_index(
                 }
             }
             write_blob_to_worktree(
-                repo, work_tree, &path_str, &entry.oid, entry.mode, index, false,
+                repo, work_tree, &path_str, &entry.oid, entry.mode, index, false, None,
             )?;
             written.insert(entry.path.clone());
         } else if entry.stage() == 2 && !written.contains(&entry.path) {
@@ -1432,10 +1451,11 @@ fn checkout_merged_worktree_from_index(
                     marker_entry.mode,
                     index,
                     false,
+                    None,
                 )?;
             } else {
                 write_blob_to_worktree(
-                    repo, work_tree, &path_str, &entry.oid, entry.mode, index, false,
+                    repo, work_tree, &path_str, &entry.oid, entry.mode, index, false, None,
                 )?;
             }
             written.insert(entry.path.clone());
@@ -2248,7 +2268,7 @@ fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> 
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let _ = write_blob_to_worktree(
-            repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index, true,
+            repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index, true, None,
         )?;
     }
 
@@ -2286,6 +2306,8 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
         .filter(|e| e.stage() == 0 && e.mode != 0o160000)
         .count();
 
+    let mut delayed = DelayedProcessCheckout::default();
+
     // Write every entry to the worktree (force overwrite)
     for entry in &new_index.entries {
         if entry.stage() != 0 {
@@ -2293,9 +2315,57 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let _ = write_blob_to_worktree(
-            repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index, true,
+            repo,
+            &work_tree,
+            &path_str,
+            &entry.oid,
+            entry.mode,
+            &new_index,
+            true,
+            Some(&mut delayed),
         )?;
     }
+
+    delayed
+        .finish(
+            |path, meta| {
+                let path_bytes = path.as_bytes();
+                let Some(ie) = new_index.get(path_bytes, 0) else {
+                    return Err(format!(
+                        "delayed checkout: missing index entry for '{path}'"
+                    ));
+                };
+                let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+                let conv = crlf::ConversionConfig::from_config(&config);
+                let attrs =
+                    crlf::load_gitattributes_for_checkout(&work_tree, path, &new_index, &repo.odb);
+                let file_attrs = crlf::get_file_attrs(&attrs, path, false, &config);
+                let oid_hex = format!("{}", ie.oid);
+                let data = crlf::convert_to_worktree(
+                    b"",
+                    path,
+                    &conv,
+                    &file_attrs,
+                    Some(&oid_hex),
+                    Some(meta),
+                    None,
+                )
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("delayed checkout retry still delayed for '{path}'"))?;
+                Ok(data)
+            },
+            |path, data| {
+                let path_bytes = path.as_bytes();
+                let Some(ie) = new_index.get(path_bytes, 0) else {
+                    return Err(format!(
+                        "delayed checkout write: missing index entry for '{path}'"
+                    ));
+                };
+                write_to_worktree(&work_tree, path, data, ie.mode).map_err(|e| e.to_string())
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("finishing delayed process filter checkout")?;
 
     // Refresh stat cache so `git diff` agrees with the index (t0020: checkout -f).
     for entry in &mut new_index.entries {
@@ -3275,6 +3345,7 @@ checking out of the index."
                             checkout_record_path_result(
                                 write_blob_to_worktree(
                                     repo, work_tree, &rel, &entry.oid, entry.mode, &index, false,
+                                    None,
                                 ),
                                 &mut updated_paths,
                                 &mut path_errors,
@@ -3294,7 +3365,7 @@ checking out of the index."
                         let p = String::from_utf8_lossy(&ie.path).to_string();
                         if glob_matches(&rel, &p) {
                             let w = write_blob_to_worktree(
-                                repo, work_tree, &p, &ie.oid, ie.mode, &index, false,
+                                repo, work_tree, &p, &ie.oid, ie.mode, &index, false, None,
                             );
                             if w.is_ok() {
                                 matched = true;
@@ -3336,7 +3407,7 @@ checking out of the index."
                                         checkout_record_path_result(
                                             write_blob_to_worktree(
                                                 repo, work_tree, &p, &entry.oid, entry.mode,
-                                                &index, false,
+                                                &index, false, None,
                                             ),
                                             &mut updated_paths,
                                             &mut path_errors,
@@ -3365,6 +3436,7 @@ checking out of the index."
                                             entry_src.mode,
                                             &index,
                                             false,
+                                            None,
                                         ),
                                         &mut updated_paths,
                                         &mut path_errors,
@@ -3373,7 +3445,7 @@ checking out of the index."
                                     checkout_record_path_result(
                                         write_blob_to_worktree(
                                             repo, work_tree, &p, &entry.oid, entry.mode, &index,
-                                            false,
+                                            false, None,
                                         ),
                                         &mut updated_paths,
                                         &mut path_errors,
@@ -3403,7 +3475,7 @@ checking out of the index."
                                     checkout_record_path_result(
                                         write_blob_to_worktree(
                                             repo, work_tree, &p, &entry.oid, entry.mode, &index,
-                                            false,
+                                            false, None,
                                         ),
                                         &mut updated_paths,
                                         &mut path_errors,
@@ -3424,7 +3496,7 @@ checking out of the index."
                             let p = String::from_utf8_lossy(&ie.path).to_string();
                             checkout_record_path_result(
                                 write_blob_to_worktree(
-                                    repo, work_tree, &p, &ie.oid, ie.mode, &index, false,
+                                    repo, work_tree, &p, &ie.oid, ie.mode, &index, false, None,
                                 ),
                                 &mut updated_paths,
                                 &mut path_errors,
@@ -3435,7 +3507,7 @@ checking out of the index."
                     // Exact file match
                     checkout_record_path_result(
                         write_blob_to_worktree(
-                            repo, work_tree, &rel, &entry.oid, entry.mode, &index, false,
+                            repo, work_tree, &rel, &entry.oid, entry.mode, &index, false, None,
                         ),
                         &mut updated_paths,
                         &mut path_errors,
@@ -3463,6 +3535,7 @@ checking out of the index."
                             entry_src.mode,
                             &index,
                             false,
+                            None,
                         ),
                         &mut updated_paths,
                         &mut path_errors,
@@ -3504,7 +3577,7 @@ checking out of the index."
                         let p = String::from_utf8_lossy(&ie.path).to_string();
                         if p.starts_with(&prefix) {
                             let w = write_blob_to_worktree(
-                                repo, work_tree, &p, &ie.oid, ie.mode, &index, false,
+                                repo, work_tree, &p, &ie.oid, ie.mode, &index, false, None,
                             );
                             if w.is_ok() {
                                 matched = true;
@@ -3561,6 +3634,7 @@ checking out of the index."
                             flat_entry.mode,
                             &index,
                             false,
+                            None,
                         );
                         if w.is_ok() {
                             index.add_or_replace(flat_entry.clone());
@@ -3649,6 +3723,7 @@ checking out of the index."
                             flat_entry.mode,
                             &index,
                             false,
+                            None,
                         );
                         if w.is_ok() {
                             index.add_or_replace(flat_entry.clone());
@@ -3723,7 +3798,7 @@ checking out of the index."
 
                     // Write to working tree with CRLF conversion
                     let w = write_blob_to_worktree(
-                        repo, work_tree, &rel, &blob_oid, mode, &index, false,
+                        repo, work_tree, &rel, &blob_oid, mode, &index, false, None,
                     );
                     if w.is_ok() {
                         // Read blob size for index entry
@@ -4802,7 +4877,7 @@ fn checkout_index_to_worktree(
 
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let _ = write_blob_to_worktree(
-            repo, work_tree, &path_str, &entry.oid, entry.mode, new_index, true,
+            repo, work_tree, &path_str, &entry.oid, entry.mode, new_index, true, None,
         )?;
     }
 
@@ -4833,6 +4908,7 @@ fn write_blob_to_worktree(
     mode: u32,
     index: &Index,
     full_smudge_meta: bool,
+    delayed_checkout: Option<&mut DelayedProcessCheckout>,
 ) -> Result<bool> {
     if mode == MODE_GITLINK {
         // Path checkout from index: always materialize (may follow symlinked submodule paths).
@@ -4859,13 +4935,14 @@ fn write_blob_to_worktree(
             if let Ok(wt_raw) = std::fs::read(&abs_path) {
                 let oid_hex = format!("{oid}");
                 let smudge_meta = filter_process::smudge_meta_blob_only(&oid_hex);
-                if let Ok(smudged) = crlf::convert_to_worktree(
+                if let Ok(Some(smudged)) = crlf::convert_to_worktree(
                     &obj.data,
                     rel_path,
                     &conv,
                     &file_attrs,
                     Some(&oid_hex),
                     Some(&smudge_meta),
+                    None,
                 ) {
                     if smudged == wt_raw {
                         return Ok(false);
@@ -4887,15 +4964,20 @@ fn write_blob_to_worktree(
         } else {
             filter_process::smudge_meta_blob_only(&oid_hex)
         };
-        crlf::convert_to_worktree(
+        match crlf::convert_to_worktree(
             &obj.data,
             rel_path,
             &conv,
             &file_attrs,
             Some(&oid_hex),
             Some(&smudge_meta),
+            delayed_checkout,
         )
         .map_err(|e| anyhow::anyhow!("{e}"))?
+        {
+            Some(d) => d,
+            None => return Ok(true),
+        }
     } else {
         obj.data
     };

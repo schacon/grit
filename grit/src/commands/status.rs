@@ -193,8 +193,6 @@ fn relative_path(parent: &str, name: &str) -> String {
 
 /// Run the `status` command.
 pub fn run(mut args: Args) -> Result<()> {
-    // Whether the user passed `--porcelain` (before `-z` may synthesize it).
-    let explicit_porcelain = args.porcelain.is_some();
     // -z implies porcelain
     if args.null_terminated && args.porcelain.is_none() {
         args.porcelain = Some("v1".to_string());
@@ -358,19 +356,6 @@ pub fn run(mut args: Args) -> Result<()> {
     // Untracked and ignored files
     let show_all_untracked = untracked_mode == "all";
     let hide_untracked = untracked_mode == "no";
-
-    // Porcelain v1: Git omits the `##` branch line when `--untracked-files=no` (e.g.
-    // `status --porcelain -uno`). Grit still defaults to showing `##` for plain `--porcelain`
-    // so clean repos and mixed outputs match our status tests (t12570). `-b` / `--branch`
-    // always forces the header.
-    if explicit_porcelain
-        && args.porcelain.as_deref() == Some("v1")
-        && !args.no_branch
-        && !args.branch
-        && !hide_untracked
-    {
-        args.branch = true;
-    }
 
     let (untracked, ignored_files) = if !hide_untracked {
         let uc_mode = match ignored_mode {

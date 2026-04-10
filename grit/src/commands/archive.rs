@@ -9,7 +9,9 @@ use clap::Args as ClapArgs;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use grit_lib::config::ConfigSet;
-use grit_lib::crlf::{convert_to_worktree, get_file_attrs, load_gitattributes, ConversionConfig};
+use grit_lib::crlf::{
+    convert_to_worktree_eager, get_file_attrs, load_gitattributes, ConversionConfig,
+};
 use grit_lib::git_date::parse::parse_date_basic;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::pathspec::matches_pathspec_for_object;
@@ -980,7 +982,7 @@ fn collect_entries(
             let mut data = if is_symlink {
                 blob.data.clone()
             } else {
-                convert_to_worktree(&blob.data, &attr_path, conv, &fa, Some(&oid_hex), None)
+                convert_to_worktree_eager(&blob.data, &attr_path, conv, &fa, Some(&oid_hex), None)
                     .map_err(|e| anyhow::anyhow!("smudge filter failed for {attr_path}: {e}"))?
             };
             if fa.export_subst {

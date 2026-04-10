@@ -149,11 +149,10 @@ test_expect_success 'restore worktree deletion' '
 
 # -- porcelain format ----------------------------------------------------------
 
-test_expect_success 'status --porcelain shows branch header with ##' '
+test_expect_success 'status --porcelain clean repo has no ## line (matches git)' '
 	cd repo &&
 	git status --porcelain >"$OUT/s14" &&
-	head -1 "$OUT/s14" >"$OUT/s14-hdr" &&
-	grep "^## master" "$OUT/s14-hdr"
+	test_line_count = 0 "$OUT/s14"
 '
 
 test_expect_success 'status --porcelain shows modifications' '
@@ -163,12 +162,11 @@ test_expect_success 'status --porcelain shows modifications' '
 	grep "file1.txt" "$OUT/s15"
 '
 
-test_expect_success 'status --porcelain with clean worktree shows only branch' '
+test_expect_success 'status --porcelain with clean worktree is empty (matches git)' '
 	cd repo &&
 	git checkout -- file1.txt &&
 	git status --porcelain >"$OUT/s16" &&
-	test_line_count = 1 "$OUT/s16" &&
-	grep "^##" "$OUT/s16"
+	test_line_count = 0 "$OUT/s16"
 '
 
 # -- branch flag in short mode -------------------------------------------------

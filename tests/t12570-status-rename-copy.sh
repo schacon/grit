@@ -35,11 +35,9 @@ test_expect_success 'status -s: clean repo is empty' '
 	test_must_be_empty actual
 '
 
-test_expect_success 'status --porcelain: clean repo shows only branch' '
+test_expect_success 'status --porcelain: clean repo is empty (matches git)' '
 	(cd repo && grit status --porcelain >../actual) &&
-	grep "^## master" actual &&
-	line_count=$(wc -l <actual | tr -d " ") &&
-	test "$line_count" = "1"
+	test_must_be_empty actual
 '
 
 # ---- staged rename (delete + add) ----
@@ -236,7 +234,6 @@ test_expect_success 'status -s: all change types shown' '
 
 test_expect_success 'status --porcelain: all change types shown' '
 	(cd repo && grit status --porcelain >../actual) &&
-	grep "^## master" actual &&
 	grep "^M" actual &&
 	grep "^A" actual &&
 	grep "^ M" actual &&

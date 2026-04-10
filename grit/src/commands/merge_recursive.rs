@@ -85,8 +85,15 @@ pub fn run(args: Args) -> Result<()> {
             let output = if let Some(ref cfg) = config {
                 let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, path, false, cfg);
                 let conv = grit_lib::crlf::ConversionConfig::from_config(cfg);
-                grit_lib::crlf::convert_to_worktree(content, path, &conv, &file_attrs, None, None)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?
+                grit_lib::crlf::convert_to_worktree_eager(
+                    content,
+                    path,
+                    &conv,
+                    &file_attrs,
+                    None,
+                    None,
+                )
+                .map_err(|e| anyhow::anyhow!("{e}"))?
             } else {
                 content.clone()
             };
@@ -328,7 +335,7 @@ fn checkout_entries(
                 let oid_hex = entry.oid.to_string();
                 let smudge_meta =
                     grit_lib::filter_process::smudge_meta_for_checkout(repo, &oid_hex);
-                grit_lib::crlf::convert_to_worktree(
+                grit_lib::crlf::convert_to_worktree_eager(
                     &obj.data,
                     &path_str,
                     conv,

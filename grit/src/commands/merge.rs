@@ -1593,8 +1593,15 @@ Aborting"
             let output = if let Some(ref config) = crlf_config {
                 let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, path, false, config);
                 let conv = grit_lib::crlf::ConversionConfig::from_config(config);
-                grit_lib::crlf::convert_to_worktree(content, path, &conv, &file_attrs, None, None)
-                    .map_err(|e| anyhow::anyhow!("smudge filter failed for {path}: {e}"))?
+                grit_lib::crlf::convert_to_worktree_eager(
+                    content,
+                    path,
+                    &conv,
+                    &file_attrs,
+                    None,
+                    None,
+                )
+                .map_err(|e| anyhow::anyhow!("smudge filter failed for {path}: {e}"))?
             } else {
                 content.clone()
             };
@@ -7022,7 +7029,7 @@ fn checkout_entries(
             let data = if let (Some(ref config), Some(ref conv)) = (&config, &conv) {
                 let file_attrs =
                     grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, false, config);
-                grit_lib::crlf::convert_to_worktree(
+                grit_lib::crlf::convert_to_worktree_eager(
                     &obj.data,
                     &path_str,
                     conv,

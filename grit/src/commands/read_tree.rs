@@ -962,7 +962,7 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
             let file_attrs = crlf::get_file_attrs(&attrs, &path_str, false, &config);
             let oid_hex = format!("{}", entry.oid);
             let smudge_meta = grit_lib::filter_process::smudge_meta_for_checkout(repo, &oid_hex);
-            let data = crlf::convert_to_worktree(
+            let data = crlf::convert_to_worktree_eager(
                 &obj.data,
                 &path_str,
                 &conv,
