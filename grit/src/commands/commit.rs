@@ -551,7 +551,8 @@ pub fn run(mut args: Args) -> Result<()> {
         Err(e) => return Err(e.into()),
     };
 
-    if index.entries.iter().any(|e| e.stage() != 0) {
+    let has_unmerged_entries = index.entries.iter().any(|e| e.stage() != 0);
+    if has_unmerged_entries && !args.dry_run {
         eprintln!("error: Committing is not possible because you have unmerged files.");
         eprintln!("hint: Fix them up in the work tree, and then use 'git add/rm <file>'");
         eprintln!("hint: as appropriate to mark resolution and make a commit.");
@@ -711,11 +712,22 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let status_base_tree = if args.amend {
+        if let Some(parent_oid) = parents.first() {
+            let parent_obj = repo.odb.read(parent_oid)?;
+            let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)?;
+            Some(parent_commit.tree)
+        } else {
+            None
+        }
+    } else {
+        head_tree
+    };
 
     let mut staged = if dry_run_pathspec_status {
-        diff_trees(&repo.odb, head_tree.as_ref(), Some(&tree_oid), "")?
+        diff_trees(&repo.odb, status_base_tree.as_ref(), Some(&tree_oid), "")?
     } else {
-        diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?
+        diff_index_to_tree(&repo.odb, &index, status_base_tree.as_ref())?
     };
     let unstaged_raw = if dry_run_pathspec_status {
         Vec::new()
@@ -741,7 +753,7 @@ pub fn run(mut args: Args) -> Result<()> {
     staged.retain(|e| !unmerged_keys.contains(e.path()));
     unstaged.retain(|e| !unmerged_keys.contains(e.path()));
     let untracked = if let Some(wt) = work_tree {
-        find_untracked_files(&repo, wt, &index)?
+        find_untracked_files(&repo, wt, &index, None)?
     } else {
         Vec::new()
     };
@@ -777,12 +789,16 @@ pub fn run(mut args: Args) -> Result<()> {
             &index_path,
             &index,
         )?;
+        if has_unmerged_entries {
+            std::process::exit(1);
+        }
         // Match Git: `commit --dry-run` exits 1 when there is nothing to commit (after printing status).
         // Merge commits are allowed even when the index matches `HEAD^{tree}` (e.g. resolving
         // modify/delete by keeping our version — tree unchanged but we still record the merge).
         if !args.allow_empty
             && !args.amend
             && !skip_index_tree_vs_parent
+            && !has_unmerged_entries
             && staged.is_empty()
             && !parents.is_empty()
             && parents.len() == 1
@@ -1479,23 +1495,6 @@ fn print_dry_run(
         }
     }
 
-    if let Some(limit) = crate::commands::status::parse_submodule_summary_limit(config) {
-        let head_spec = if amend { "HEAD^" } else { "HEAD" };
-        let txt = crate::commands::status::run_submodule_summary_text(
-            repo,
-            index_path,
-            limit,
-            true,
-            Some(head_spec),
-        )?;
-        if !txt.trim().is_empty() {
-            begin_section(&mut out)?;
-            writeln!(out, "Submodule changes to be committed:")?;
-            writeln!(out)?;
-            write!(out, "{txt}")?;
-        }
-    }
-
     if !unmerged.is_empty() {
         let include_unstage = show_hints && !merge_active;
         crate::commands::status::print_unmerged_long_section(
@@ -1522,6 +1521,24 @@ fn print_dry_run(
         for entry in &unstaged_show {
             let label = status_label_unstaged(entry.status);
             writeln!(out, "\t{label}:   {}", entry.path())?;
+        }
+    }
+
+    if let Some(limit) = crate::commands::status::parse_submodule_summary_limit(config) {
+        let head_spec = if amend { "HEAD^" } else { "HEAD" };
+        let txt = crate::commands::status::run_submodule_summary_text(
+            repo,
+            index_path,
+            limit,
+            true,
+            Some(head_spec),
+        )?;
+        let txt = txt.trim_end_matches('\n');
+        if !txt.trim().is_empty() {
+            begin_section(&mut out)?;
+            writeln!(out, "Submodule changes to be committed:")?;
+            writeln!(out)?;
+            writeln!(out, "{txt}")?;
         }
     }
 
@@ -1613,7 +1630,7 @@ fn print_dry_run(
             writeln!(out, "\t{path}")?;
         }
     }
-    if printed_body_section {
+    if printed_body_section && unmerged.is_empty() {
         writeln!(out)?;
     }
 
@@ -1648,8 +1665,13 @@ fn status_label_unstaged(status: DiffStatus) -> &'static str {
 }
 
 /// Find untracked files in the working tree.
-fn find_untracked_files(repo: &Repository, work_tree: &Path, index: &Index) -> Result<Vec<String>> {
-    crate::commands::status::collect_untracked_normal_for_status(repo, index, work_tree)
+fn find_untracked_files(
+    repo: &Repository,
+    work_tree: &Path,
+    index: &Index,
+    pathspecs: Option<&[String]>,
+) -> Result<Vec<String>> {
+    crate::commands::status::collect_untracked_normal_for_status(repo, index, work_tree, pathspecs)
 }
 
 /// Apply pathspec staging to `index` in memory (no disk write).

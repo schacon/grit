@@ -381,6 +381,18 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.null_terminated && args.porcelain.is_none() {
         args.porcelain = Some("v1".to_string());
     }
+    if let Some(raw) = args.porcelain.as_deref() {
+        let normalized = raw.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "v1" | "1" => args.porcelain = Some("v1".to_string()),
+            "v2" | "2" => args.porcelain = Some("v2".to_string()),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "unsupported porcelain format version '{raw}'"
+                ));
+            }
+        }
+    }
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo
         .work_tree
@@ -944,9 +956,11 @@ pub(crate) fn collect_untracked_normal_for_status(
     repo: &Repository,
     index: &Index,
     work_tree: &Path,
+    pathspecs: Option<&[String]>,
 ) -> Result<Vec<String>> {
+    let specs: &[String] = pathspecs.unwrap_or(&[]);
     let (untracked, _) =
-        collect_untracked_and_ignored(repo, index, work_tree, IgnoredMode::No, false, &[])?;
+        collect_untracked_and_ignored(repo, index, work_tree, IgnoredMode::No, false, specs)?;
     Ok(untracked)
 }
 
@@ -958,6 +972,10 @@ fn collect_untracked_and_ignored(
     show_all: bool,
     pathspecs: &[String],
 ) -> Result<(Vec<String>, Vec<String>)> {
+    // Keep parity with historical status behavior in tests that rely on broad untracked scans
+    // (including detached-HEAD wtstatus cases): when no explicit pathspec is requested, avoid
+    // pathspec-based pruning entirely.
+    let effective_pathspecs: &[String] = if pathspecs.is_empty() { &[] } else { pathspecs };
     let tracked: BTreeSet<String> = index
         .entries
         .iter()
@@ -986,7 +1004,7 @@ fn collect_untracked_and_ignored(
         show_all,
         "",
         work_tree,
-        pathspecs,
+        effective_pathspecs,
         &mut untracked,
         &mut ignored,
     )?;
@@ -1011,7 +1029,11 @@ fn visit_untracked_node(
     untracked_out: &mut Vec<String>,
     ignored_out: &mut Vec<String>,
 ) -> Result<()> {
-    if abs.is_dir() && dir_is_nested_submodule_worktree(&repo.git_dir, abs) {
+    if !rel.is_empty()
+        && abs.is_dir()
+        && dir_is_nested_submodule_worktree(&repo.git_dir, abs)
+        && has_tracked_under(tracked, gitlinks, rel)
+    {
         return Ok(());
     }
 
@@ -1188,7 +1210,30 @@ fn visit_untracked_directory(
         return Ok(());
     }
 
+    // Match Git's normal untracked mode: keep directories that are empty apart from an internal
+    // `.git` as collapsed `dir/` entries, but do not surface directories that only contain
+    // ignored entries (t7063 expects those to stay hidden).
+    if sub_untracked.is_empty()
+        && sub_ignored.is_empty()
+        && !rel.is_empty()
+        && !directory_has_non_git_entries(abs)
+    {
+        untracked_out.push(format!("{rel}/"));
+        return Ok(());
+    }
+
     Ok(())
+}
+
+fn directory_has_non_git_entries(dir: &Path) -> bool {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return false,
+    };
+    entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .any(|name| name != ".git")
 }
 
 /// Full tree scan: true when every file under `abs` is ignored and nothing untracked is present.
@@ -1928,6 +1973,14 @@ fn format_short(
             continue;
         }
         let path = String::from_utf8_lossy(&ie.path).into_owned();
+        if staged_map.contains_key(&path) || unstaged_map.contains_key(&path) {
+            paths.insert(path);
+            continue;
+        }
+        let flags = submodule_porcelain_flags(work_tree, &path, ie.oid);
+        if !(flags.new_commits || flags.modified || flags.untracked) {
+            continue;
+        }
         paths.insert(path);
     }
 
@@ -2781,11 +2834,11 @@ fn format_long(
     // Match Git `wt_status_collect`: `committable` is set when the index differs from HEAD (staged
     // changes) and additionally when a merge finished without unmerged paths.
     let committable = !staged_normal.is_empty() || (state.merge_in_progress && !has_unmerged);
-    let show_staged_unstage_hints = show_hints
-        && !((state.merge_in_progress || state.cherry_pick_in_progress) && !has_unmerged);
+    let show_staged_unstage_hints =
+        show_hints && !(state.merge_in_progress || state.cherry_pick_in_progress);
     // Git `wt_longstatus_print`: when untracked are hidden, still print this line if the index
     // differs from HEAD (`committable`) — including a concluded merge with staged resolution.
-    let unlisted_untracked_line = hide_untracked && !has_unmerged && committable;
+    let unlisted_untracked_line = hide_untracked && committable;
 
     let dirty_like_git_worktree = !unstaged_normal.is_empty() || has_unmerged;
 
@@ -3333,7 +3386,16 @@ fn walk_for_untracked(
             continue;
         }
 
-        if is_dir && dir_is_nested_submodule_worktree(super_git_dir, &path) {
+        if is_dir
+            && dir_is_nested_submodule_worktree(super_git_dir, &path)
+            && (tracked
+                .range::<String, _>(format!("{rel}/")..)
+                .next()
+                .is_some_and(|t| t.starts_with(&format!("{rel}/")))
+                || gitlinks
+                    .iter()
+                    .any(|g| g.as_str() == rel || g.starts_with(&format!("{rel}/"))))
+        {
             continue;
         }
 
