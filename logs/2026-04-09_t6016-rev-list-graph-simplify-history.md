@@ -1,0 +1,5 @@
+## 2026-04-09 — t6016-rev-list-graph-simplify-history
+
+- **grit-lib `rev_list`**: Implemented Git-style `--topo-order` as LIFO queue (tips oldest-first, parents enqueued in first-parent order) matching `sort_in_topological_order` + `prio_queue_reverse`. Split `--date-order` to max-heap by commit date. Removed incorrect `simplify_by_decoration` pre-filter that intersected the walk with `all_ref_tips` (Git does not do this).
+- **`log --graph`**: `collect_decorations` now uses `refs::list_refs` so packed refs count after `tag -d` / `pack-refs` (fixes simplify-by-decoration). Graph parent rewriting: follow all raw parents for visible merges; use first-parent only when walking *through* omitted commits; sparse path-limited graphs use first-parent direct parents for the main column; full-history vs simplify-merges combinations handled per t6016. Removed erroneous two-parent merge line padding (`width - 2`).
+- **Verification**: `./scripts/run-tests.sh t6016-rev-list-graph-simplify-history.sh` → 12/12. `cargo test -p grit-lib --lib`, `cargo clippy` on grit-rs/grit-lib.
