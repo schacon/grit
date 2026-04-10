@@ -964,6 +964,12 @@ impl Index {
             let ep = e.path.as_slice();
             ep.len() > plen && ep.starts_with(prefix) && ep[plen] == b'/'
         });
+        for e in self.entries.iter() {
+            let ep = e.path.as_slice();
+            if ep.len() > plen && ep.starts_with(prefix) && ep[plen] == b'/' && e.stage() != 0 {
+                resolve_undo::record_resolve_undo_for_entry(&mut self.resolve_undo, e);
+            }
+        }
         self.entries.retain(|e| {
             let ep = e.path.as_slice();
             if ep.len() <= plen {

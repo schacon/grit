@@ -170,6 +170,9 @@ pub fn run(args: Args) -> Result<()> {
         let path_bytes = rel_path.as_bytes();
 
         if args.merge && restore_worktree {
+            if index.unmerge_path_from_resolve_undo(path_bytes) {
+                index_modified = true;
+            }
             do_restore_worktree_merge(
                 &repo,
                 &index,
@@ -377,8 +380,6 @@ fn do_restore_worktree_merge(
     let ((ours_oid, ours_mode), (theirs_oid, _theirs_mode)) =
         if let (Some(ours), Some(theirs)) = (staged_ours, staged_theirs) {
             (ours, theirs)
-        } else if let Some(saved) = read_saved_merge_state(repo, rel_path)? {
-            ((saved.0, saved.1), (saved.2, saved.3))
         } else {
             bail!("path '{}' is not unmerged", rel_path);
         };
@@ -440,45 +441,6 @@ fn ensure_trailing_newline(mut text: String) -> String {
         text.push('\n');
     }
     text
-}
-
-fn read_saved_merge_state(
-    repo: &Repository,
-    rel_path: &str,
-) -> Result<Option<(ObjectId, u32, ObjectId, u32)>> {
-    let state_path = repo.git_dir.join("grit-restore-merge-state");
-    let content = match std::fs::read_to_string(&state_path) {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e.into()),
-    };
-
-    for line in content.lines() {
-        let mut parts = line.splitn(5, '\t');
-        let Some(path) = parts.next() else { continue };
-        if path != rel_path {
-            continue;
-        }
-        let Some(ours_oid_s) = parts.next() else {
-            continue;
-        };
-        let Some(ours_mode_s) = parts.next() else {
-            continue;
-        };
-        let Some(theirs_oid_s) = parts.next() else {
-            continue;
-        };
-        let Some(theirs_mode_s) = parts.next() else {
-            continue;
-        };
-        let ours_oid = ours_oid_s.parse::<ObjectId>()?;
-        let ours_mode = u32::from_str_radix(ours_mode_s, 8).unwrap_or(0o100644);
-        let theirs_oid = theirs_oid_s.parse::<ObjectId>()?;
-        let theirs_mode = u32::from_str_radix(theirs_mode_s, 8).unwrap_or(0o100644);
-        return Ok(Some((ours_oid, ours_mode, theirs_oid, theirs_mode)));
-    }
-
-    Ok(None)
 }
 
 /// Write blob data to the working tree at `rel_path` under `work_tree`.
