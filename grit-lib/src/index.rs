@@ -186,6 +186,8 @@ pub struct Index {
     pub sparse_directories: bool,
     /// Optional untracked-cache extension (`UNTR`), matching Git's `istate->untracked`.
     pub untracked_cache: Option<untracked_cache::UntrackedCache>,
+    /// Root tree OID from a valid `TREE` index extension (`cache_tree`), when present.
+    pub cache_tree_root: Option<ObjectId>,
 }
 
 /// Options for loading an index from disk.
@@ -212,6 +214,58 @@ const INDEX_FORMAT_LB: u32 = 2;
 /// Maximum supported index version (version 4 requests are accepted and
 /// downgraded on write).
 const INDEX_FORMAT_UB: u32 = 4;
+/// Index extension signature `TREE` (cache-tree).
+const INDEX_EXT_CACHE_TREE: u32 = 0x5452_4545;
+
+/// Best-effort read of the root OID from Git's `TREE` index extension (`cache_tree_read`).
+fn parse_cache_tree_root_oid(data: &[u8]) -> Option<ObjectId> {
+    // Root node: leading NUL name (`read_one` skips NUL-terminated name; empty name is one byte).
+    if data.first().copied()? != 0 {
+        return None;
+    }
+    let mut i = 1usize;
+    let (entry_count, ni) = parse_signed_int_prefix(&data[i..])?;
+    i += ni;
+    if data.get(i) != Some(&b' ') {
+        return None;
+    }
+    i += 1;
+    let (_subtree_nr, ni2) = parse_signed_int_prefix(&data[i..])?;
+    i += ni2;
+    if data.get(i) != Some(&b'\n') {
+        return None;
+    }
+    i += 1;
+    if entry_count < 0 {
+        return None;
+    }
+    if data.len().saturating_sub(i) < 20 {
+        return None;
+    }
+    let raw: [u8; 20] = data[i..i + 20].try_into().ok()?;
+    ObjectId::from_bytes(&raw).ok()
+}
+
+fn parse_signed_int_prefix(data: &[u8]) -> Option<(i32, usize)> {
+    let mut j = 0usize;
+    while j < data.len() && data[j] == b' ' {
+        j += 1;
+    }
+    let start = j;
+    if j < data.len() && data[j] == b'-' {
+        j += 1;
+    }
+    let digit_start = j;
+    while j < data.len() && data[j].is_ascii_digit() {
+        j += 1;
+    }
+    if j == digit_start {
+        return None;
+    }
+    let s = std::str::from_utf8(&data[start..j]).ok()?;
+    let v: i32 = s.parse().ok()?;
+    Some((v, j))
+}
 
 /// Read `GIT_INDEX_VERSION` and return the requested version.
 ///
@@ -247,6 +301,7 @@ impl Index {
             entries: Vec::new(),
             sparse_directories: false,
             untracked_cache: None,
+            cache_tree_root: None,
         }
     }
 
@@ -264,6 +319,7 @@ impl Index {
                 entries: Vec::new(),
                 sparse_directories: false,
                 untracked_cache: None,
+                cache_tree_root: None,
             };
         }
 
@@ -293,6 +349,7 @@ impl Index {
             entries: Vec::new(),
             sparse_directories: false,
             untracked_cache: None,
+            cache_tree_root: None,
         }
     }
 
@@ -308,6 +365,7 @@ impl Index {
                 entries: Vec::new(),
                 sparse_directories: false,
                 untracked_cache: None,
+                cache_tree_root: None,
             };
         }
 
@@ -340,6 +398,7 @@ impl Index {
             entries: Vec::new(),
             sparse_directories: false,
             untracked_cache: None,
+            cache_tree_root: None,
         }
     }
 
@@ -586,6 +645,7 @@ impl Index {
 
         let mut sparse_directories = false;
         let mut untracked_cache = None;
+        let mut cache_tree_root = None;
         while pos + 8 <= body.len() {
             let sig = u32::from_be_bytes(
                 body[pos..pos + 4]
@@ -608,6 +668,9 @@ impl Index {
             } else if sig == INDEX_EXT_UNTRACKED {
                 let ext_data = &body[pos..pos + ext_sz];
                 untracked_cache = untracked_cache::parse_untracked_extension(ext_data);
+            } else if sig == INDEX_EXT_CACHE_TREE {
+                let ext_data = &body[pos..pos + ext_sz];
+                cache_tree_root = parse_cache_tree_root_oid(ext_data);
             }
             pos += ext_sz;
         }
@@ -620,6 +683,7 @@ impl Index {
             entries,
             sparse_directories,
             untracked_cache,
+            cache_tree_root,
         })
     }
 

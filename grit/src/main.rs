@@ -1138,6 +1138,51 @@ fn test_tool_usage() -> Result<()> {
 
 /// `test-tool online-cpus` — print the number of processors Git would consider "online"
 /// (matches `git/t/helper/test-online-cpus.c` using `std::thread::available_parallelism`).
+fn run_test_tool_path_walk(rest: &[String]) -> Result<()> {
+    let args = preprocess_test_tool_args(rest)?;
+    let args = if args.first().map(String::as_str) == Some("path-walk") {
+        args[1..].to_vec()
+    } else {
+        args
+    };
+    let (opts, positive, negative, stdin_all, boundary) =
+        grit_lib::path_walk::parse_path_walk_cli(&args).context("path-walk options")?;
+    let repo = grit_lib::repo::Repository::discover(None)?;
+    let (lines, counts) = grit_lib::path_walk::walk_objects_by_path(
+        &repo, &positive, &negative, stdin_all, boundary, &opts,
+    )?;
+
+    fn kind_str(k: grit_lib::objects::ObjectKind) -> &'static str {
+        match k {
+            grit_lib::objects::ObjectKind::Blob => "blob",
+            grit_lib::objects::ObjectKind::Tree => "tree",
+            grit_lib::objects::ObjectKind::Commit => "commit",
+            grit_lib::objects::ObjectKind::Tag => "tag",
+        }
+    }
+
+    for line in lines {
+        let suf = if line.uninteresting {
+            ":UNINTERESTING"
+        } else {
+            ""
+        };
+        println!(
+            "{}:{}:{}:{}{}",
+            line.batch,
+            kind_str(line.object_kind),
+            line.path,
+            line.oid.to_hex(),
+            suf
+        );
+    }
+    println!(
+        "commits:{}\ntrees:{}\nblobs:{}\ntags:{}",
+        counts.commits, counts.trees, counts.blobs, counts.tags
+    );
+    Ok(())
+}
+
 fn run_test_tool_online_cpus(rest: &[String]) -> Result<()> {
     let _ = preprocess_test_tool_args(rest)?;
     let n = std::thread::available_parallelism()
@@ -4412,6 +4457,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 "userdiff" => run_test_tool_userdiff(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
                 "ref-store" => run_test_tool_ref_store(rest),
+                "path-walk" => run_test_tool_path_walk(rest),
                 "online-cpus" => run_test_tool_online_cpus(rest),
                 "lazy-init-name-hash" => run_test_tool_lazy_init_name_hash(rest),
                 "rot13-filter" => commands::test_tool_rot13_filter::run(&rest[1..]),
