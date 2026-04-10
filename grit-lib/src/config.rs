@@ -1624,6 +1624,36 @@ impl ConfigSet {
             .unwrap_or(true)
     }
 
+    /// Default for `pack.writeReverseIndex` / `pack.writereverseindex` (Git default: true).
+    ///
+    /// Tests set `GIT_TEST_NO_WRITE_REV_INDEX` to force no `.rev` output.
+    #[must_use]
+    pub fn pack_write_reverse_index_default(&self) -> bool {
+        if std::env::var("GIT_TEST_NO_WRITE_REV_INDEX")
+            .ok()
+            .as_deref()
+            .is_some_and(|v| {
+                let s = v.trim().to_ascii_lowercase();
+                matches!(s.as_str(), "1" | "true" | "yes" | "on")
+            })
+        {
+            return false;
+        }
+        self.get_bool("pack.writereverseindex")
+            .or_else(|| self.get_bool("pack.writeReverseIndex"))
+            .and_then(|r| r.ok())
+            .unwrap_or(true)
+    }
+
+    /// Default for `pack.readReverseIndex` / `pack.readreverseindex` (Git default: true).
+    #[must_use]
+    pub fn pack_read_reverse_index_default(&self) -> bool {
+        self.get_bool("pack.readreverseindex")
+            .or_else(|| self.get_bool("pack.readReverseIndex"))
+            .and_then(|r| r.ok())
+            .unwrap_or(true)
+    }
+
     /// Resolved `core.logAllRefUpdates` using this merged set (includes `git -c` / env), then Git's
     /// bare-repo default when the key is unset everywhere.
     #[must_use]

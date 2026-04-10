@@ -16,6 +16,7 @@ use grit_lib::pack::{
     read_pack_index, read_packed_delta_dependency, slice_one_pack_object, PackIndex,
     PackedDeltaDependency,
 };
+use grit_lib::pack_rev::{build_pack_rev_bytes_from_index_order_offsets, rev_path_for_index};
 use grit_lib::rev_list::{rev_list, shallow_boundary_oids, MissingAction, RevListOptions};
 use sha1::{Digest as Sha1Digest, Sha1};
 use sha2::{Digest as Sha256Digest, Sha256};
@@ -862,8 +863,18 @@ pub fn run(mut args: Args) -> Result<()> {
             let idx_path = format!("{base}-{pack_hash}.idx");
 
             std::fs::write(&pack_path, &pack_bytes)?;
-            let idx_bytes = build_idx_for_pack(&pack_bytes, chunk, pack_hash_bytes)?;
+            let (idx_bytes, idx_order_offsets) =
+                build_idx_for_pack(&pack_bytes, chunk, pack_hash_bytes)?;
             std::fs::write(&idx_path, &idx_bytes)?;
+
+            let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+            let idx_pb = Path::new(&idx_path);
+            if cfg.pack_write_reverse_index_default() {
+                let rev_bytes = build_pack_rev_bytes_from_index_order_offsets(&idx_order_offsets);
+                std::fs::write(rev_path_for_index(idx_pb), rev_bytes)?;
+            } else {
+                let _ = std::fs::remove_file(rev_path_for_index(idx_pb));
+            }
 
             println!("{pack_hash}");
             if !args.quiet {
@@ -2571,11 +2582,13 @@ fn build_pack(
 }
 
 /// Build idx v2 for a pack we just wrote.
+///
+/// The second return value is object offsets in **index row order** (OID-sorted), for `.rev` files.
 fn build_idx_for_pack(
     pack_bytes: &[u8],
     entries: &[PackWriteEntry],
     pack_hash_bytes: usize,
-) -> Result<Vec<u8>> {
+) -> Result<(Vec<u8>, Vec<u64>)> {
     use grit_lib::pack::skip_one_pack_object;
 
     // We need offsets. Reparse the pack to get them.
@@ -2668,7 +2681,12 @@ fn build_idx_for_pack(
     let idx_checksum = h.finalize();
     buf.extend_from_slice(idx_checksum.as_slice());
 
-    Ok(buf)
+    let idx_order_offsets: Vec<u64> = sorted
+        .iter()
+        .map(|(orig_idx, _)| offsets[*orig_idx])
+        .collect();
+
+    Ok((buf, idx_order_offsets))
 }
 
 /// CRC32 IEEE.

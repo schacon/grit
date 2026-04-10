@@ -19,6 +19,9 @@ use std::path::PathBuf;
 
 use grit_lib::odb::Odb;
 use grit_lib::pack::{read_pack_index, verify_pack_and_collect};
+use grit_lib::pack_rev::{
+    build_pack_rev_bytes_from_index_order_offsets, rev_path_for_index, verify_pack_rev_file,
+};
 use grit_lib::unpack_objects::{apply_delta, strict_verify_packed_references};
 
 /// Merge `git index-pack --strict RULE` / `--fsck-objects RULE` into `--strict=RULE` so the pack
@@ -135,6 +138,14 @@ pub struct Args {
     /// Thread count (accepted; grit is single-threaded).
     #[arg(long = "threads", value_name = "N")]
     pub threads: Option<u32>,
+
+    /// Write a `.rev` reverse index next to the `.idx` (overrides `pack.writeReverseIndex` when set).
+    #[arg(long = "rev-index")]
+    pub rev_index: bool,
+
+    /// Do not write a `.rev` reverse index (overrides `pack.writeReverseIndex` when set).
+    #[arg(long = "no-rev-index", conflicts_with = "rev_index")]
+    pub no_rev_index: bool,
 }
 
 /// A resolved pack object.
@@ -143,6 +154,16 @@ struct ResolvedObject {
     _kind: ObjectKind,
     offset: u64,
     crc32: u32,
+}
+
+fn effective_write_rev_index(args: &Args, cfg: &ConfigSet) -> bool {
+    if args.no_rev_index {
+        return false;
+    }
+    if args.rev_index {
+        return true;
+    }
+    cfg.pack_write_reverse_index_default()
 }
 
 /// Run `grit index-pack`.
@@ -304,6 +325,22 @@ pub fn run(args: Args) -> Result<()> {
     // Write the .idx file.
     let idx_bytes = build_idx_v2(&resolved, &pack_bytes)?;
     fs::write(&idx_path, &idx_bytes)?;
+
+    let cfg = grit_lib::repo::Repository::discover(None)
+        .ok()
+        .and_then(|r| ConfigSet::load(Some(&r.git_dir), true).ok())
+        .unwrap_or_default();
+    let write_rev = effective_write_rev_index(&args, &cfg);
+    let rev_path = rev_path_for_index(&idx_path);
+    if write_rev {
+        let mut sorted_entries: Vec<&ResolvedObject> = resolved.iter().collect();
+        sorted_entries.sort_by_key(|e| *e.oid.as_bytes());
+        let idx_order_offsets: Vec<u64> = sorted_entries.iter().map(|e| e.offset).collect();
+        let rev_bytes = build_pack_rev_bytes_from_index_order_offsets(&idx_order_offsets);
+        fs::write(&rev_path, rev_bytes)?;
+    } else if rev_path.exists() {
+        let _ = fs::remove_file(&rev_path);
+    }
 
     // Print the pack hash (matches git index-pack output).
     let pack_checksum = &pack_bytes[pack_bytes.len() - 20..];
@@ -1046,6 +1083,17 @@ fn run_verify(args: &Args) -> Result<()> {
         }
         println!("{}: ok", pack_path);
         return Ok(());
+    }
+
+    if args.rev_index {
+        let rev_path = rev_path_for_index(&idx_path);
+        if rev_path.is_file() {
+            let index = read_pack_index(&idx_path)
+                .with_context(|| format!("cannot read index {}", idx_path.display()))?;
+            if let Err(msg) = verify_pack_rev_file(&rev_path, &index) {
+                bail!("{msg}");
+            }
+        }
     }
 
     if show_stat {

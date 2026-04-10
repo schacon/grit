@@ -18,6 +18,7 @@ use grit_lib::ident::fsck_commit_idents;
 use grit_lib::objects::{parse_commit, parse_tree, tag_object_line_oid, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pack::{read_local_pack_indexes, read_pack_index};
+use grit_lib::pack_rev::rev_path_for_index;
 use grit_lib::promisor::{
     promisor_expanded_object_ids, promisor_pack_object_ids, repo_treats_promisor_packs,
 };
@@ -236,6 +237,8 @@ pub fn run(args: Args) -> Result<()> {
     };
     let packed_ids = collect_packed_ids(&objects_dir)?;
     let shallow_boundaries = load_shallow_boundaries(repo.git_dir.as_path());
+
+    check_pack_reverse_indexes(&objects_dir, &config, &mut issues)?;
 
     let (reachable, walked_kinds) = walk_reachable(
         &repo,
@@ -1190,4 +1193,47 @@ fn report_orphan_pack_indexes(objects_dir: &Path, issues: &mut Vec<Issue>) -> Re
         }
     }
     Ok(())
+}
+
+fn check_pack_reverse_indexes(
+    objects_dir: &Path,
+    config: &ConfigSet,
+    issues: &mut Vec<Issue>,
+) -> Result<()> {
+    if !config.pack_read_reverse_index_default() {
+        return Ok(());
+    }
+    let indexes = read_local_pack_indexes(objects_dir)?;
+    for idx in indexes {
+        let rev_path = rev_path_for_index(&idx.idx_path);
+        if !rev_path.is_file() {
+            continue;
+        }
+        let data = match fs::read(&rev_path) {
+            Ok(d) => d,
+            Err(e) => {
+                let pack_label = pack_fsck_label(&idx.pack_path);
+                issues.push(Issue::FsckMessage(format!(
+                    "unable to load rev-index for pack '{pack_label}': {e}"
+                )));
+                continue;
+            }
+        };
+        let pack_label = pack_fsck_label(&idx.pack_path);
+        let rev_disp = rev_path.display().to_string();
+        for msg in grit_lib::pack_rev::pack_rev_fsck_messages(&data, &idx, &rev_disp) {
+            issues.push(Issue::FsckMessage(format!(
+                "invalid rev-index for pack '{pack_label}': {msg}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn pack_fsck_label(pack_path: &Path) -> String {
+    pack_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|n| format!("objects/pack/{n}"))
+        .unwrap_or_else(|| pack_path.display().to_string())
 }

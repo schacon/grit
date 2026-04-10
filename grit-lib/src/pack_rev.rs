@@ -1,0 +1,263 @@
+//! On-disk pack reverse index (`.rev`) — RIDX format matching Git's `pack-write.c`.
+//!
+//! Maps pack-file order (sorted by object offset) to index positions in the `.idx` OID table.
+
+use crate::pack::PackIndex;
+use sha1::{Digest, Sha1};
+use std::path::Path;
+
+/// Magic `RIDX` in big-endian form (same as Git's `RIDX_SIGNATURE`).
+pub const RIDX_SIGNATURE: u32 = 0x5249_4458;
+/// On-disk format version (Git `RIDX_VERSION`).
+pub const RIDX_VERSION: u32 = 1;
+/// Hash id field for SHA-1 packs (`oid_version` in Git).
+pub const RIDX_HASH_ID_SHA1: u32 = 1;
+
+const HEADER_LEN: usize = 12;
+const SHA1_TRAILER: usize = 20;
+
+/// Build `.rev` file bytes for a pack index (RIDX body + trailing SHA-1 of the body).
+#[must_use]
+pub fn build_pack_rev_bytes(index: &PackIndex) -> Vec<u8> {
+    let offsets: Vec<u64> = index.entries.iter().map(|e| e.offset).collect();
+    build_pack_rev_bytes_from_index_order_offsets(&offsets)
+}
+
+/// Build `.rev` bytes from object offsets in **pack index order** (OID-sorted, same row order as `.idx`).
+#[must_use]
+pub fn build_pack_rev_bytes_from_index_order_offsets(offsets: &[u64]) -> Vec<u8> {
+    let n = offsets.len();
+    let mut order: Vec<u32> = (0..n as u32).collect();
+    order.sort_by_key(|&i| offsets[i as usize]);
+
+    let body_len = HEADER_LEN + n * 4;
+    let total_len = body_len + SHA1_TRAILER;
+    let mut out = Vec::with_capacity(total_len);
+
+    out.extend_from_slice(&RIDX_SIGNATURE.to_be_bytes());
+    out.extend_from_slice(&RIDX_VERSION.to_be_bytes());
+    out.extend_from_slice(&RIDX_HASH_ID_SHA1.to_be_bytes());
+    for idx_pos in order {
+        out.extend_from_slice(&idx_pos.to_be_bytes());
+    }
+
+    debug_assert_eq!(out.len(), body_len);
+    let mut h = Sha1::new();
+    h.update(&out);
+    let digest = h.finalize();
+    // Git's hashfile appends the hash of the body; it is unrelated to the pack checksum.
+    out.extend_from_slice(digest.as_slice());
+    debug_assert_eq!(out.len(), total_len);
+
+    out
+}
+
+/// Path for the reverse index alongside a `.idx` file (`other.idx` → `other.rev`).
+#[must_use]
+pub fn rev_path_for_index(idx_path: &Path) -> std::path::PathBuf {
+    let mut p = idx_path.to_path_buf();
+    p.set_extension("rev");
+    p
+}
+
+/// True if `data` is a valid SHA-1 hashfile: last 20 bytes equal SHA-1 of preceding bytes.
+#[must_use]
+pub fn hashfile_checksum_valid_sha1(data: &[u8]) -> bool {
+    if data.len() < SHA1_TRAILER {
+        return false;
+    }
+    let body_len = data.len() - SHA1_TRAILER;
+    let mut h = Sha1::new();
+    h.update(&data[..body_len]);
+    h.finalize().as_slice() == &data[body_len..]
+}
+
+fn read_u32_be(buf: &[u8], pos: &mut usize) -> Option<u32> {
+    if *pos + 4 > buf.len() {
+        return None;
+    }
+    let v = u32::from_be_bytes(buf[*pos..*pos + 4].try_into().ok()?);
+    *pos += 4;
+    Some(v)
+}
+
+/// Verify `.rev` bytes against the given pack index.
+///
+/// `path_for_errors` is embedded in messages (use the file path or a placeholder).
+/// Messages for `git fsck` / load order: header checks first (like `load_revindex_from_disk`), then
+/// checksum and index comparison (like `verify_pack_revindex`). May return multiple strings.
+pub fn pack_rev_fsck_messages(
+    data: &[u8],
+    index: &PackIndex,
+    rev_path_display: &str,
+) -> Vec<String> {
+    let n = index.entries.len();
+    let expected_len = HEADER_LEN + n * 4 + SHA1_TRAILER;
+    if data.len() < ridx_min_size() {
+        return vec![format!(
+            "reverse-index file {rev_path_display} is too small"
+        )];
+    }
+    if data.len() != expected_len {
+        return vec![format!("reverse-index file {rev_path_display} is corrupt")];
+    }
+
+    let mut pos = 0usize;
+    let Some(sig) = read_u32_be(data, &mut pos) else {
+        return vec!["truncated rev-index header".to_owned()];
+    };
+    if sig != RIDX_SIGNATURE {
+        return vec![format!(
+            "reverse-index file {rev_path_display} has unknown signature"
+        )];
+    }
+    let Some(ver) = read_u32_be(data, &mut pos) else {
+        return vec!["truncated rev-index header".to_owned()];
+    };
+    if ver != RIDX_VERSION {
+        return vec![format!(
+            "reverse-index file {rev_path_display} has unsupported version {ver}"
+        )];
+    }
+    let Some(hash_id) = read_u32_be(data, &mut pos) else {
+        return vec!["truncated rev-index header".to_owned()];
+    };
+    if hash_id != RIDX_HASH_ID_SHA1 && hash_id != 2 {
+        return vec![format!(
+            "reverse-index file {rev_path_display} has unsupported hash id {hash_id}"
+        )];
+    }
+
+    let mut msgs = Vec::new();
+    if !hashfile_checksum_valid_sha1(data) {
+        msgs.push("invalid checksum".to_owned());
+    }
+
+    let mut order: Vec<u32> = (0..n as u32).collect();
+    order.sort_by_key(|&i| index.entries[i as usize].offset);
+
+    for i in 0..n {
+        let Some(got) = read_u32_be(data, &mut pos) else {
+            msgs.push("truncated rev-index data".to_owned());
+            break;
+        };
+        let expected = order[i];
+        if got != expected {
+            msgs.push(format!(
+                "invalid rev-index position at {i}: {got} != {expected}"
+            ));
+        }
+    }
+
+    msgs
+}
+
+fn ridx_min_size() -> usize {
+    HEADER_LEN + SHA1_TRAILER
+}
+
+/// Verify a `.rev` file for `index-pack --rev-index --verify` (checksum first, like Git's
+/// `verify_pack_revindex`).
+pub fn verify_pack_rev_file_contents(
+    data: &[u8],
+    index: &PackIndex,
+    path_for_errors: &str,
+) -> std::result::Result<(), String> {
+    if !hashfile_checksum_valid_sha1(data) {
+        return Err(format!("sha1 file '{path_for_errors}': validation error"));
+    }
+    let n = index.entries.len();
+    let expected_len = HEADER_LEN + n * 4 + SHA1_TRAILER;
+    if data.len() != expected_len {
+        return Err(format!("reverse-index file {path_for_errors} is corrupt"));
+    }
+    let mut pos = 0usize;
+    let sig = read_u32_be(data, &mut pos).ok_or_else(|| "truncated rev-index header".to_owned())?;
+    if sig != RIDX_SIGNATURE {
+        return Err(format!(
+            "reverse-index file {path_for_errors} has unknown signature"
+        ));
+    }
+    let ver = read_u32_be(data, &mut pos).ok_or_else(|| "truncated rev-index header".to_owned())?;
+    if ver != RIDX_VERSION {
+        return Err(format!(
+            "reverse-index file {path_for_errors} has unsupported version {ver}"
+        ));
+    }
+    let hash_id =
+        read_u32_be(data, &mut pos).ok_or_else(|| "truncated rev-index header".to_owned())?;
+    if hash_id != RIDX_HASH_ID_SHA1 && hash_id != 2 {
+        return Err(format!(
+            "reverse-index file {path_for_errors} has unsupported hash id {hash_id}"
+        ));
+    }
+    let mut order: Vec<u32> = (0..n as u32).collect();
+    order.sort_by_key(|&i| index.entries[i as usize].offset);
+    for i in 0..n {
+        let got =
+            read_u32_be(data, &mut pos).ok_or_else(|| "truncated rev-index data".to_owned())?;
+        let expected = order[i];
+        if got != expected {
+            return Err(format!(
+                "invalid rev-index position at {i}: {got} != {expected}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Verify on-disk `.rev` against the given pack index.
+///
+/// Returns `Ok(())` when the file is missing (optional sidecar). On parse or mismatch errors,
+/// returns a message suitable for `error: ...` output.
+pub fn verify_pack_rev_file(rev_path: &Path, index: &PackIndex) -> std::result::Result<(), String> {
+    let data = match std::fs::read(rev_path) {
+        Ok(d) => d,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("failed to read {}: {e}", rev_path.display())),
+    };
+    let p = rev_path.display().to_string();
+    verify_pack_rev_file_contents(&data, index, &p)
+}
+
+/// If `data` is a well-formed RIDX for `num_objects`, returns index positions in **pack order**
+/// (object at pack offset rank `i` → OID at index row `result[i]`). Otherwise `None`.
+#[must_use]
+pub fn try_rev_positions_in_pack_order(data: &[u8], num_objects: usize) -> Option<Vec<u32>> {
+    let expected_len = HEADER_LEN + num_objects * 4 + SHA1_TRAILER;
+    if data.len() != expected_len || !hashfile_checksum_valid_sha1(data) {
+        return None;
+    }
+    let mut pos = 0usize;
+    let sig = read_u32_be(data, &mut pos)?;
+    if sig != RIDX_SIGNATURE {
+        return None;
+    }
+    let ver = read_u32_be(data, &mut pos)?;
+    if ver != RIDX_VERSION {
+        return None;
+    }
+    let hash_id = read_u32_be(data, &mut pos)?;
+    if hash_id != RIDX_HASH_ID_SHA1 && hash_id != 2 {
+        return None;
+    }
+    let mut pack_order_idx = vec![0u32; num_objects];
+    for slot in &mut pack_order_idx {
+        *slot = read_u32_be(data, &mut pos)?;
+    }
+    if pos != HEADER_LEN + num_objects * 4 {
+        return None;
+    }
+    if pack_order_idx.len() != num_objects {
+        return None;
+    }
+    let mut seen = vec![false; num_objects];
+    for &p in &pack_order_idx {
+        let pi = p as usize;
+        if pi >= num_objects || seen[pi] {
+            return None;
+        }
+        seen[pi] = true;
+    }
+    Some(pack_order_idx)
+}
