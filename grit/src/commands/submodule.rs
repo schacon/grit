@@ -1976,6 +1976,9 @@ fn run_add(args: &AddArgs) -> Result<()> {
     };
 
     let sub_path = work_tree.join(&path);
+    // Submodule git dir is keyed by `--name` when given (Git: `.git/modules/<name>`), not by
+    // the worktree path (`t0035-safe-bare-repository`, `git submodule add --name`).
+    let submodule_name = args.name.as_deref().unwrap_or(path.as_str());
 
     let grit_bin = grit_exe::grit_executable();
 
@@ -1991,7 +1994,7 @@ fn run_add(args: &AddArgs) -> Result<()> {
         }
     } else {
         // Clone the submodule.
-        let modules_dir = submodule_modules_git_dir(&repo.git_dir, &path);
+        let modules_dir = submodule_modules_git_dir(&repo.git_dir, submodule_name);
         // Only create the parent directory; git clone --separate-git-dir
         // will create the modules_dir itself.
         if let Some(parent) = modules_dir.parent() {
@@ -2043,8 +2046,7 @@ fn run_add(args: &AddArgs) -> Result<()> {
         set_separate_gitdir_worktree(&grit_bin, &modules_dir, &sub_path);
     }
 
-    // Derive the submodule name (use --name if provided, otherwise path).
-    let name = args.name.as_deref().unwrap_or(&path);
+    let name = submodule_name;
 
     // Update .gitmodules.
     let gitmodules_path = work_tree.join(".gitmodules");

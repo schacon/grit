@@ -25,6 +25,11 @@
 - `cargo test -p grit-lib --lib`: 160 passed
 - `./scripts/run-tests.sh t8008-blame-formats.sh`: 5/5 passed
 
+**2026-04-10 (t0035 / safe.bareRepository)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t0035-safe-bare-repository.sh`: 12/12 passed
+
 **2026-04-09 (t4063 / diff blobs)**
 
 - `cargo test -p grit-lib --lib`: 155 passed

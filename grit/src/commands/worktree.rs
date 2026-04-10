@@ -266,6 +266,62 @@ fn resolve_commitish(repo: &Repository, spec: &str) -> Result<ObjectId> {
     bail!("not a valid commit-ish: '{spec}'");
 }
 
+/// True when any ref exists under `refs/heads/` (Git: `refs_for_each_branch_ref`).
+fn has_any_local_branch(common: &Path) -> bool {
+    refs::list_refs(common, "refs/heads/")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+}
+
+/// Git's `can_use_local_refs`: we may use local refs as a worktree source when HEAD resolves
+/// to a commit or at least one local branch exists.
+fn can_use_local_refs(common: &Path, head_state: &grit_lib::state::HeadState) -> bool {
+    if head_state.oid().is_some() {
+        return true;
+    }
+    has_any_local_branch(common)
+}
+
+/// Git's `can_use_remote_refs`: when `guess_remote` is on, remote-tracking refs count as a source.
+fn can_use_remote_refs(common: &Path, args: &AddArgs) -> Result<bool> {
+    if !args.guess_remote || args.no_guess_remote {
+        return Ok(false);
+    }
+    Ok(!refs::list_refs(common, "refs/remotes/")
+        .unwrap_or_default()
+        .is_empty())
+}
+
+/// Git's `dwim_orphan` for `worktree add`: infer `--orphan` when the repo has no usable refs.
+///
+/// When `check_remote` is true (path-only `add <path>`), Git skips inferring if `guess_remote`
+/// is enabled and [`can_use_remote_refs`] applies — the caller should DWIM from a remote branch.
+fn dwim_infer_orphan(
+    common: &Path,
+    head_state: &grit_lib::state::HeadState,
+    args: &AddArgs,
+    check_remote: bool,
+) -> Result<bool> {
+    if can_use_local_refs(common, head_state) {
+        return Ok(false);
+    }
+
+    if check_remote && can_use_remote_refs(common, args)? {
+        return Ok(false);
+    }
+
+    if !args.quiet {
+        eprintln!("No possible source branch, inferring '--orphan'");
+    }
+    if args.track {
+        bail!("options '--orphan' and '--track' cannot be used together");
+    }
+    if args.no_checkout {
+        bail!("options '--orphan' and '--no-checkout' cannot be used together");
+    }
+    Ok(true)
+}
+
 // ---------------------------------------------------------------------------
 // worktree add
 // ---------------------------------------------------------------------------
@@ -361,10 +417,26 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         );
     }
 
-    // Handle --orphan: create worktree with unborn branch
-    if args.orphan {
-        // Use -b branch name if provided, otherwise use path basename
-        let orphan_branch = args.new_branch.as_deref().unwrap_or(&wt_name);
+    let head_state = resolve_head(&common)?;
+
+    // Git infers `--orphan` when the repo has no commit on HEAD and no local branches (dwim_orphan),
+    // before resolving the start ref for `-b` / path-only add.
+    let mut orphan = args.orphan;
+    let used_new_branch_options = args.new_branch.is_some() || args.force_new_branch.is_some();
+    if !orphan {
+        if args.branch.is_none() && used_new_branch_options {
+            orphan = dwim_infer_orphan(&common, &head_state, &args, false)?;
+        } else if args.branch.is_none() && !used_new_branch_options {
+            orphan = dwim_infer_orphan(&common, &head_state, &args, true)?;
+        }
+    }
+
+    if orphan {
+        let orphan_branch = args
+            .new_branch
+            .as_deref()
+            .or(args.force_new_branch.as_deref())
+            .unwrap_or(&wt_name);
         setup_unborn_worktree(
             &common,
             &wt_admin,
@@ -376,8 +448,6 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         return Ok(());
     }
 
-    // Determine branch target and commit.
-    let head_state = resolve_head(&common)?;
     let head_oid = head_state.oid().copied();
 
     // Determine branch mode and starting commit.
@@ -385,7 +455,6 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     //   otherwise create a new branch from HEAD.
     // `worktree add <path> <commit-ish>` — check out detached HEAD at that commit.
     // `worktree add -b <new> <path>` — always create a new branch from HEAD.
-    let mut inferred_orphan = false;
     let (branch_name, commit_oid, implicit_detach) = if let Some(ref new_b) = args.force_new_branch
     {
         // -B: create or reset branch (args.branch is the start point)
@@ -395,25 +464,20 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             match head_oid {
                 Some(oid) => oid,
                 None => {
-                    // HEAD is on an unborn branch — show orphan hint
-                    let has_remotes = !grit_lib::refs::list_refs(&common, "refs/remotes/")
-                        .unwrap_or_default()
-                        .is_empty();
-                    if !has_remotes || args.no_guess_remote {
-                        eprintln!("hint: If you meant to create a worktree containing a new unborn branch");
-                        eprintln!(
-                            "hint: named '{}', use the option '--orphan' as follows:",
-                            new_b
-                        );
-                        eprintln!("hint:");
-                        eprintln!(
-                            "hint:     git worktree add --orphan -b {} {}",
-                            new_b,
-                            args.path.display()
-                        );
-                        bail!("invalid reference: HEAD");
-                    }
-                    bail!("HEAD does not point to a valid commit");
+                    eprintln!(
+                        "hint: If you meant to create a worktree containing a new unborn branch"
+                    );
+                    eprintln!(
+                        "hint: named '{}', use the option '--orphan' as follows:",
+                        new_b
+                    );
+                    eprintln!("hint:");
+                    eprintln!(
+                        "hint:     git worktree add --orphan -b {} {}",
+                        new_b,
+                        args.path.display()
+                    );
+                    bail!("invalid reference: HEAD");
                 }
             }
         };
@@ -426,25 +490,20 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             match head_oid {
                 Some(oid) => oid,
                 None => {
-                    // HEAD is on an unborn branch — show orphan hint
-                    let has_remotes = !grit_lib::refs::list_refs(&common, "refs/remotes/")
-                        .unwrap_or_default()
-                        .is_empty();
-                    if !has_remotes || args.no_guess_remote {
-                        eprintln!("hint: If you meant to create a worktree containing a new unborn branch");
-                        eprintln!(
-                            "hint: named '{}', use the option '--orphan' as follows:",
-                            new_b
-                        );
-                        eprintln!("hint:");
-                        eprintln!(
-                            "hint:     git worktree add --orphan -b {} {}",
-                            new_b,
-                            args.path.display()
-                        );
-                        bail!("invalid reference: HEAD");
-                    }
-                    bail!("HEAD does not point to a valid commit");
+                    eprintln!(
+                        "hint: If you meant to create a worktree containing a new unborn branch"
+                    );
+                    eprintln!(
+                        "hint: named '{}', use the option '--orphan' as follows:",
+                        new_b
+                    );
+                    eprintln!("hint:");
+                    eprintln!(
+                        "hint:     git worktree add --orphan -b {} {}",
+                        new_b,
+                        args.path.display()
+                    );
+                    bail!("invalid reference: HEAD");
                 }
             }
         };
@@ -513,63 +572,73 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             }
         }
     } else {
-        match head_oid {
-            Some(oid) => (Some(wt_name.clone()), Some(oid), false),
-            None => {
-                // Check if there are remote branches we can DWIM from
-                let has_remotes = !grit_lib::refs::list_refs(&common, "refs/remotes/")
-                    .unwrap_or_default()
-                    .is_empty();
-                if has_remotes && !args.no_guess_remote {
-                    // DWIM: infer --orphan when remotes exist
-                    inferred_orphan = true;
-                    (Some(wt_name.clone()), None, false)
-                } else {
-                    // No remotes, no way to branch — fail with hint
-                    let branch_n = &wt_name;
-                    eprintln!(
-                        "hint: If you meant to create a worktree containing a new unborn branch"
+        // `worktree add <path>` only: Git `dwim_branch` prefers an existing local branch named
+        // like the path basename, else `new_branch` = basename and start from HEAD / remote.
+        if let Ok(oid) = refs::resolve_ref(&common, &format!("refs/heads/{wt_name}")) {
+            (Some(wt_name.clone()), Some(oid), false)
+        } else if let Some(oid) = head_oid {
+            (Some(wt_name.clone()), Some(oid), false)
+        } else if args.guess_remote && !args.no_guess_remote {
+            let remote_refs = refs::list_refs(&common, "refs/remotes/").unwrap_or_default();
+            let matching: Vec<_> = remote_refs
+                .iter()
+                .filter(|(r, _)| {
+                    let parts: Vec<&str> = r
+                        .trim_start_matches("refs/remotes/")
+                        .splitn(2, '/')
+                        .collect();
+                    parts.len() == 2 && parts[1] == wt_name.as_str()
+                })
+                .collect();
+            if matching.len() == 1 {
+                let oid = matching[0].1;
+                let remote_name = matching[0]
+                    .0
+                    .trim_start_matches("refs/remotes/")
+                    .split('/')
+                    .next()
+                    .unwrap_or("origin")
+                    .to_owned();
+                let cfg_path = common.join("config");
+                if let Ok(mut cfg_content) = std::fs::read_to_string(&cfg_path) {
+                    let section = format!(
+                        "\n[branch \"{}\"]\
+\n\tremote = {}\
+\n\tmerge = refs/heads/{}\n",
+                        wt_name, remote_name, wt_name
                     );
-                    eprintln!(
-                        "hint: named '{}', use the option '--orphan' as follows:",
-                        branch_n
-                    );
-                    eprintln!("hint:");
-                    if args.new_branch.is_some() {
-                        let hint_branch = args.new_branch.as_deref().unwrap_or(branch_n);
-                        eprintln!(
-                            "hint:     git worktree add --orphan -b {} {}",
-                            hint_branch,
-                            args.path.display()
-                        );
-                    } else {
-                        eprintln!(
-                            "hint:     git worktree add --orphan {}",
-                            args.path.display()
-                        );
-                    }
-                    bail!("invalid reference: HEAD");
+                    cfg_content.push_str(&section);
+                    let _ = std::fs::write(&cfg_path, cfg_content);
                 }
+                (Some(wt_name.clone()), Some(oid), false)
+            } else {
+                let branch_n = wt_name.as_str();
+                eprintln!("hint: If you meant to create a worktree containing a new unborn branch");
+                eprintln!(
+                    "hint: named '{}', use the option '--orphan' as follows:",
+                    branch_n
+                );
+                eprintln!("hint:");
+                eprintln!(
+                    "hint:     git worktree add --orphan {}",
+                    args.path.display()
+                );
+                bail!("invalid reference: HEAD");
             }
+        } else {
+            let branch_n = wt_name.as_str();
+            eprintln!("hint: If you meant to create a worktree containing a new unborn branch");
+            eprintln!(
+                "hint: named '{}', use the option '--orphan' as follows:",
+                branch_n
+            );
+            eprintln!("hint:");
+            eprintln!(
+                "hint:     git worktree add --orphan {}",
+                args.path.display()
+            );
+            bail!("invalid reference: HEAD");
         }
-    };
-
-    if inferred_orphan {
-        if !args.quiet {
-            eprintln!("No possible source branch, inferring '--orphan'");
-        }
-        let branch = branch_name
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("internal error: missing orphan branch name"))?;
-        setup_unborn_worktree(
-            &common,
-            &wt_admin,
-            &wt_path,
-            branch,
-            args.lock,
-            args.reason.as_deref(),
-        )?;
-        return Ok(());
     };
 
     // Check if the branch is already checked out in another worktree
