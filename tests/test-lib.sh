@@ -363,11 +363,13 @@ test_declared_prereq () {
 test_grep () {
 	local negate=""
 	local invert=""
+	local fixed=""
 	while test $# -gt 0; do
 		case "$1" in
 		-e) shift; break ;;
 		!) negate=1; shift ;;
 		-v) invert="-v"; shift ;;
+		-F) fixed="-F"; shift ;;
 		--) shift; break ;;
 		-*) shift ;;
 		*) break ;;
@@ -378,9 +380,9 @@ test_grep () {
 	# Always pass the pattern via -e so values like "--quiet" are not parsed as grep options.
 	if test -n "$negate"
 	then
-		! command grep $invert -e "$pattern" "$@"
+		! command grep $fixed $invert -e "$pattern" "$@"
 	else
-		command grep $invert -e "$pattern" "$@"
+		command grep $fixed $invert -e "$pattern" "$@"
 	fi
 }
 

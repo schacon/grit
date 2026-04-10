@@ -652,7 +652,7 @@ t3600-rm	t3	yes	82	69	13	false	ok	0
 t3601-rm-pathspec-file	t3	yes	5	5	0	true	ok	0
 t3602-rm-sparse-checkout	t3	yes	13	13	0	true	ok	0
 t3650-replay-basics	t3	yes	31	25	6	false	ok	0
-t3700-add	t3	yes	58	44	14	false	ok	0
+t3700-add	t3	yes	58	58	0	true	ok	0
 t3700-add-pathspec-file	t3	yes	24	24	0	true	ok	0
 t3701-add-interactive	t3	yes	130	31	99	false	ok	0
 t3702-add-edit	t3	yes	3	3	0	true	ok	0

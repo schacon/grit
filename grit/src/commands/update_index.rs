@@ -432,6 +432,10 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
     let cwd = std::env::current_dir().context("resolving current directory")?;
 
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let core_filemode = config
+        .get_bool("core.filemode")
+        .and_then(|r| r.ok())
+        .unwrap_or(true);
     let conv = crlf::ConversionConfig::from_config(&config);
     let attrs = crlf::load_gitattributes(work_tree);
 
@@ -636,6 +640,7 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
             &args,
             &paths,
             symlinks_enabled,
+            core_filemode,
             &config,
             &conv,
             &attrs,
@@ -870,7 +875,13 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
 
         let mut mode = {
             use std::os::unix::fs::MetadataExt;
-            normalize_mode(meta.mode())
+            if core_filemode {
+                normalize_mode(meta.mode())
+            } else if meta.file_type().is_symlink() {
+                grit_lib::index::MODE_SYMLINK
+            } else {
+                grit_lib::index::MODE_REGULAR
+            }
         };
         let existing_mode = index.get(&rel_bytes, 0).map(|e| e.mode);
         // On filesystems without symlink support (core.symlinks=false), keep
@@ -1314,6 +1325,7 @@ fn run_update_index_again(
     args: &Args,
     pathspec_paths: &[PathBuf],
     symlinks_enabled: bool,
+    core_filemode: bool,
     config: &ConfigSet,
     conv: &crlf::ConversionConfig,
     attrs: &[crlf::AttrRule],
@@ -1438,7 +1450,13 @@ fn run_update_index_again(
             Ok(meta) => {
                 let mut mode = {
                     use std::os::unix::fs::MetadataExt;
-                    normalize_mode(meta.mode())
+                    if core_filemode {
+                        normalize_mode(meta.mode())
+                    } else if meta.file_type().is_symlink() {
+                        grit_lib::index::MODE_SYMLINK
+                    } else {
+                        grit_lib::index::MODE_REGULAR
+                    }
                 };
                 let existing_mode = index.get(&path_bytes, 0).map(|e| e.mode);
                 if !symlinks_enabled

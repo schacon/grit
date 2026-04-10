@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
+use std::fs;
 use std::io::{self, Write};
 use std::path::Component;
 use std::path::{Path, PathBuf};
@@ -1162,6 +1163,20 @@ fn glob_match_inner(pattern: &[u8], text: &[u8]) -> bool {
     let mut star_ti = 0;
 
     while ti < text.len() {
+        if pi < pattern.len() && pattern[pi] == b'\\' && pi + 1 < pattern.len() {
+            if pattern[pi + 1] == text[ti] {
+                pi += 2;
+                ti += 1;
+                continue;
+            } else if star_pi != usize::MAX {
+                star_ti += 1;
+                ti = star_ti;
+                pi = star_pi + 1;
+            } else {
+                return false;
+            }
+            continue;
+        }
         if pi < pattern.len() && pattern[pi] == b'?' && text[ti] != b'/' {
             pi += 1;
             ti += 1;
@@ -1274,6 +1289,20 @@ fn resolve_pathspec(
         return Ok(Pathspec::Literal(rest.as_bytes().to_vec()));
     }
     if has_glob_chars(&nfc_lossy) {
+        // If the pathspec spells an existing work-tree path literally (e.g. `fo[ou]bar` when
+        // `foobar` also exists), Git treats it as a literal path, not a character class
+        // (`t3700-add.sh`).
+        let combined_glob = if pathspec.is_absolute() {
+            pathspec.to_path_buf()
+        } else {
+            cwd.join(std::path::Path::new(nfc_lossy.as_str()))
+        };
+        let normalized_glob = normalize_path(&combined_glob);
+        if let Ok(rel_exact) = normalized_glob.strip_prefix(work_tree) {
+            if fs::symlink_metadata(work_tree.join(rel_exact)).is_ok() {
+                return Ok(Pathspec::Literal(path_to_bytes(rel_exact)));
+            }
+        }
         // For glob pathspecs, prepend the cwd prefix (relative to work_tree)
         let prefix = cwd_prefix_bytes(work_tree, cwd)?;
         let prefix_str = String::from_utf8_lossy(&prefix).into_owned();
