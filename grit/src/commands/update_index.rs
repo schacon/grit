@@ -20,34 +20,6 @@ use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
 use grit_lib::untracked_cache::{self, UntrackedCache};
 
-/// Match Git: when `--chmod` changes the index entry, update the working tree file mode so a
-/// subsequent `git add` of the same path keeps the executable bit.
-fn mirror_index_executable_to_worktree(abs_path: &Path, executable: bool) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let Ok(meta) = std::fs::symlink_metadata(abs_path) else {
-            return;
-        };
-        if !meta.is_file() {
-            return;
-        }
-        let Ok(mut perms) = std::fs::metadata(abs_path).map(|m| m.permissions()) else {
-            return;
-        };
-        let mode = perms.mode();
-        let new_mode = if executable {
-            mode | 0o111
-        } else {
-            mode & !0o111
-        };
-        perms.set_mode(new_mode);
-        let _ = std::fs::set_permissions(abs_path, perms);
-    }
-    #[cfg(not(unix))]
-    let _ = (abs_path, executable);
-}
-
 /// Returns `(mtime_sec, mtime_nsec)` of the index file, or `(0, 0)` if unavailable.
 ///
 /// Git records this at index read time and uses it with [`has_racy_timestamp`] to decide
@@ -713,9 +685,6 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
                 } else {
                     bail!("'{}' is not in the index", input_path.display());
                 }
-                if !args.info_only {
-                    mirror_index_executable_to_worktree(&abs_path, chmod_val.as_str() == "+x");
-                }
                 if args.verbose {
                     println!("add '{}'", rel_path.display());
                     println!("chmod {} '{}'", chmod_val, rel_path.display());
@@ -876,9 +845,6 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
             };
             if let Some(e) = index.get_mut(&rel_bytes, 0) {
                 e.mode = new_mode;
-            }
-            if !args.info_only {
-                mirror_index_executable_to_worktree(&abs_path, chmod_val.as_str() == "+x");
             }
             if args.verbose {
                 println!("chmod {} '{}'", chmod_val, rel_path.display());

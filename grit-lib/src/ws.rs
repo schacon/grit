@@ -222,11 +222,14 @@ fn is_space_git(c: u8) -> bool {
 }
 
 /// Check one line of patch body (without the leading `+`/`-`/` ` prefix) for whitespace issues.
+///
+/// Matches Git `ws_check_emit_1` (`ws.c`): `WS_INCOMPLETE_LINE` is set only when the line has no
+/// trailing newline in the patch (so context lines that end at `\` are not flagged).
 #[must_use]
 pub fn ws_check(line: &str, ws_rule: u32) -> u32 {
     let mut result = 0u32;
-    let mut len = line.len();
     let bytes = line.as_bytes();
+    let mut len = bytes.len();
 
     let mut trailing_newline = false;
     if len > 0 && bytes[len - 1] == b'\n' {
@@ -240,19 +243,24 @@ pub fn ws_check(line: &str, ws_rule: u32) -> u32 {
         len -= 1;
     }
 
-    let mut trailing_whitespace: Option<usize> = None;
+    let mut trailing_whitespace: isize = -1;
     if (ws_rule & WS_BLANK_AT_EOL) != 0 {
-        let mut i = len;
-        while i > 0 && is_space_git(bytes[i - 1]) {
+        let mut i = len as isize - 1;
+        while i >= 0 {
+            if bytes[i as usize].is_ascii_whitespace() {
+                trailing_whitespace = i;
+                result |= WS_BLANK_AT_EOL;
+            } else {
+                break;
+            }
             i -= 1;
         }
-        if i < len {
-            trailing_whitespace = Some(i);
-            result |= WS_BLANK_AT_EOL;
-        }
     }
-
-    let tw_end = trailing_whitespace.unwrap_or(len);
+    let tw_end = if trailing_whitespace < 0 {
+        len
+    } else {
+        trailing_whitespace as usize
+    };
 
     if !trailing_newline && (ws_rule & WS_INCOMPLETE_LINE) != 0 {
         result |= WS_INCOMPLETE_LINE;

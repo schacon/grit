@@ -16,11 +16,11 @@ use crate::explicit_exit::ExplicitExit;
 use crate::pathspec::resolve_pathspec;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::attributes::{collect_attrs_for_path, load_gitattributes_for_diff, AttrValue};
-use grit_lib::config::ConfigSet;
-use grit_lib::crlf::{
-    get_file_attrs, load_gitattributes, parse_gitattributes_content, AttrRule, DiffAttr,
+use grit_lib::attributes::{
+    collect_attrs_for_path, load_gitattributes_for_diff, AttrValue, ParsedGitAttributes,
 };
+use grit_lib::config::ConfigSet;
+use grit_lib::crlf::{get_file_attrs, parse_gitattributes_content, DiffAttr};
 use grit_lib::diff::{
     anchored_unified_diff, count_changes, count_changes_with_algorithm, count_git_lines,
     detect_renames, diff_index_to_tree, diff_index_to_worktree, diff_tree_to_worktree, diff_trees,
@@ -43,6 +43,7 @@ use grit_lib::rev_parse::{
     TreeishBlobAtPath,
 };
 use grit_lib::userdiff::matcher_for_path_parsed;
+use grit_lib::ws::{self, WhitespaceGitAttr, WS_BLANK_AT_EOF, WS_INCOMPLETE_LINE};
 use regex::Regex;
 use similar::{ChangeTag, TextDiff};
 use std::fmt::Write as FmtWrite;
@@ -164,6 +165,7 @@ const BOLD: &str = "\x1b[1m";
 const RED: &str = "\x1b[31m";
 const GREEN: &str = "\x1b[32m";
 const CYAN: &str = "\x1b[36m";
+const BG_RED: &str = "\x1b[41m";
 
 /// Whitespace-ignore options bundled together.
 #[derive(Debug, Default)]
@@ -173,6 +175,26 @@ struct WhitespaceMode {
     ignore_space_at_eol: bool,
     ignore_blank_lines: bool,
     ignore_cr_at_eol: bool,
+}
+
+/// Whether to emit ANSI colors for unified diff output (CLI `--color` + `diff.color` / `color.diff`).
+fn diff_use_color(cli_color: Option<&str>, config: &ConfigSet, output_path: Option<&Path>) -> bool {
+    let cfg_val = config
+        .get("diff.color")
+        .or_else(|| config.get("color.diff"))
+        .map(|s| s.to_ascii_lowercase());
+    match cli_color.map(|s| s.to_ascii_lowercase()).as_deref() {
+        Some("always") => true,
+        Some("never") => false,
+        Some("auto") => output_path.is_none() && io::stdout().is_terminal(),
+        Some(_) => false,
+        None => match cfg_val.as_deref() {
+            Some("always") => true,
+            Some("never") | Some("false") => false,
+            Some("auto") | None => output_path.is_none() && io::stdout().is_terminal(),
+            _ => output_path.is_none() && io::stdout().is_terminal(),
+        },
+    }
 }
 
 impl WhitespaceMode {
@@ -1966,19 +1988,11 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let has_diff = !entries.is_empty() || !conflict_combined_patches.is_empty();
 
-    // Determine color mode
-    let use_color = match args.color.as_deref() {
-        Some("always") => true,
-        Some("never") => false,
-        Some("auto") | None => {
-            if args.output_path.is_some() {
-                false
-            } else {
-                io::stdout().is_terminal()
-            }
-        }
-        Some(_) => false,
-    };
+    let use_color = diff_use_color(
+        args.color.as_deref(),
+        &diff_config,
+        args.output_path.as_deref(),
+    );
 
     let mut out: Box<dyn Write> = if let Some(ref p) = args.output_path {
         let resolved = if p.is_absolute() {
@@ -2015,14 +2029,14 @@ pub fn run(mut args: Args) -> Result<()> {
     // diff that passes the check and 3 when the check fails; without `--exit-code`, a failed
     // check exits 2 (see t4017-diff-retval).
     if args.check {
-        let attr_rules: Option<Vec<AttrRule>> = wt_for_content.map(load_gitattributes);
         let config_for_attrs = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
         let has_ws_errors = check_whitespace_errors(
             &mut out,
             &entries,
             &repo.odb,
             wt_for_content,
-            attr_rules.as_deref(),
+            merged_attrs.as_ref(),
+            ignore_case_attrs,
             &config_for_attrs,
         )?;
         if has_ws_errors {
@@ -2294,14 +2308,17 @@ fn run_diff_blob_vs_file(
         } else {
             Box::new(io::stdout())
         };
-        let attr_rules: Option<Vec<AttrRule>> = Some(load_gitattributes(&repo.git_dir));
         let config_for_attrs = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let ignore_case = config_for_attrs
+            .get("core.ignorecase")
+            .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "1"));
         let has_ws_errors = check_whitespace_errors(
             &mut out,
             &entries,
             &repo.odb,
             Some(wt.as_ref()),
-            attr_rules.as_deref(),
+            merged_attrs.as_ref(),
+            ignore_case,
             &config_for_attrs,
         )?;
         if has_ws_errors {
@@ -2335,18 +2352,6 @@ fn run_diff_blob_vs_file(
         n.max(4).min(40)
     } else {
         7
-    };
-    let use_color = match args.color.as_deref() {
-        Some("always") => true,
-        Some("never") => false,
-        Some("auto") | None => {
-            if args.output_path.is_some() {
-                false
-            } else {
-                io::stdout().is_terminal()
-            }
-        }
-        Some(_) => false,
     };
     let suppress_blank_empty = diff_config
         .get("diff.suppressBlankEmpty")
@@ -2382,6 +2387,11 @@ fn run_diff_blob_vs_file(
         Box::new(io::stdout())
     };
 
+    let use_color = diff_use_color(
+        args.color.as_deref(),
+        &diff_config,
+        args.output_path.as_deref(),
+    );
     let word_diff = args.word_diff.is_some() || args.color_words;
     let show_patch = !args.quiet && !args.no_patch;
     if show_patch {
@@ -2513,15 +2523,11 @@ fn run_diff_two_paths(
         context_lines,
     );
 
+    let diff_cfg = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let mut out = io::stdout().lock();
     let show_patch = !args.no_patch;
     if show_patch {
-        let use_color = match args.color.as_deref() {
-            Some("always") => true,
-            Some("never") => false,
-            Some("auto") | None => io::stdout().is_terminal(),
-            Some(_) => false,
-        };
+        let use_color = diff_use_color(args.color.as_deref(), &diff_cfg, None);
         if use_color {
             for line in patch.lines() {
                 if line.starts_with("@@") {
@@ -2636,7 +2642,7 @@ fn run_no_index(args: Args) -> Result<()> {
         .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "1"));
     let diff_algo_ctx = DiffAlgoContext {
         attrs: Arc::new(merged_attrs),
-        config: Arc::new(diff_config),
+        config: Arc::new(diff_config.clone()),
         ignore_case_attrs,
     };
     let diff_algo_cli = parse_cli_diff_algorithm_from_argv();
@@ -2822,12 +2828,7 @@ fn run_no_index(args: Args) -> Result<()> {
         "100644"
     };
 
-    let use_color = match args.color.as_deref() {
-        Some("always") => true,
-        Some("never") => false,
-        Some("auto") | None => io::stdout().is_terminal(),
-        Some(_) => false,
-    };
+    let use_color = diff_use_color(args.color.as_deref(), diff_algo_ctx.config.as_ref(), None);
 
     if use_color {
         writeln!(out, "{BOLD}diff --git a/{} b/{}{RESET}", paths[0], paths[1])?;
@@ -2934,7 +2935,7 @@ fn run_no_index_dirs(args: Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
         .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "1"));
     let diff_algo_ctx = DiffAlgoContext {
         attrs: Arc::new(merged_attrs),
-        config: Arc::new(diff_config),
+        config: Arc::new(diff_config.clone()),
         ignore_case_attrs,
     };
     let diff_algo_cli = parse_cli_diff_algorithm_from_argv();
@@ -4058,7 +4059,16 @@ fn read_content_raw_or_worktree(
         // Empty tree / new file side: read from the work tree when available (t1501 tree diffs).
         if let Some(wt) = work_tree {
             if path != "/dev/null" {
-                if let Ok(data) = std::fs::read(wt.join(path)) {
+                let p = wt.join(path);
+                if let Ok(meta) = std::fs::symlink_metadata(&p) {
+                    if meta.file_type().is_symlink() {
+                        if let Ok(target) = std::fs::read_link(&p) {
+                            return target.to_string_lossy().into_owned().into_bytes();
+                        }
+                        return Vec::new();
+                    }
+                }
+                if let Ok(data) = std::fs::read(&p) {
                     return data;
                 }
             }
@@ -4072,7 +4082,16 @@ fn read_content_raw_or_worktree(
     // Fall back to reading from working tree
     if let Some(wt) = work_tree {
         if path != "/dev/null" {
-            if let Ok(data) = std::fs::read(wt.join(path)) {
+            let p = wt.join(path);
+            if let Ok(meta) = std::fs::symlink_metadata(&p) {
+                if meta.file_type().is_symlink() {
+                    if let Ok(target) = std::fs::read_link(&p) {
+                        return target.to_string_lossy().into_owned().into_bytes();
+                    }
+                    return Vec::new();
+                }
+            }
+            if let Ok(data) = std::fs::read(&p) {
                 return data;
             }
         }
@@ -4445,6 +4464,224 @@ fn run_external_diff_for_patch(
     Ok(())
 }
 
+fn mode_is_symlink_mode_str(mode: &str) -> bool {
+    mode == "120000"
+}
+
+fn mode_is_regular_blob_mode_str(mode: &str) -> bool {
+    matches!(mode, "100644" | "100755")
+}
+
+/// Git splits a regular-file ↔ symlink type change into two patches (deleted old + added new).
+fn write_typechange_blob_symlink_split_patch(
+    out: &mut impl Write,
+    entry: &DiffEntry,
+    use_color: bool,
+    abbrev_len: usize,
+    src_prefix: &str,
+    dst_prefix: &str,
+    old_path: &str,
+    new_path: &str,
+    old_blob_text: &str,
+    new_symlink_text: &str,
+    suppress_blank_empty: bool,
+    context_lines: usize,
+    inter_hunk_context: usize,
+    path_for_attrs: &str,
+    algo_ctx: &DiffAlgoContext,
+    algo_cli: Option<similar::Algorithm>,
+) -> Result<()> {
+    let path = entry.old_path.clone().or_else(|| entry.new_path.clone());
+    let del = DiffEntry {
+        status: DiffStatus::Deleted,
+        old_path: path.clone(),
+        new_path: None,
+        old_mode: entry.old_mode.clone(),
+        new_mode: "000000".to_owned(),
+        old_oid: entry.old_oid,
+        new_oid: zero_oid(),
+        score: None,
+    };
+    write_diff_header_with_prefix(out, &del, use_color, abbrev_len, src_prefix, dst_prefix)?;
+    write_blob_to_blob_patch_fragment(
+        out,
+        old_blob_text,
+        "",
+        old_path,
+        "/dev/null",
+        suppress_blank_empty,
+        context_lines,
+        inter_hunk_context,
+        src_prefix,
+        dst_prefix,
+        path_for_attrs,
+        algo_ctx,
+        algo_cli,
+        use_color,
+        false,
+    )?;
+
+    let add = DiffEntry {
+        status: DiffStatus::Added,
+        old_path: None,
+        new_path: path,
+        old_mode: "000000".to_owned(),
+        new_mode: entry.new_mode.clone(),
+        old_oid: zero_oid(),
+        new_oid: entry.new_oid,
+        score: None,
+    };
+    write_diff_header_with_prefix(out, &add, use_color, abbrev_len, src_prefix, dst_prefix)?;
+    write_blob_to_blob_patch_fragment(
+        out,
+        "",
+        new_symlink_text,
+        "/dev/null",
+        new_path,
+        suppress_blank_empty,
+        context_lines,
+        inter_hunk_context,
+        src_prefix,
+        dst_prefix,
+        path_for_attrs,
+        algo_ctx,
+        algo_cli,
+        use_color,
+        true,
+    )?;
+    Ok(())
+}
+
+fn write_typechange_symlink_blob_split_patch(
+    out: &mut impl Write,
+    entry: &DiffEntry,
+    use_color: bool,
+    abbrev_len: usize,
+    src_prefix: &str,
+    dst_prefix: &str,
+    old_path: &str,
+    new_path: &str,
+    old_symlink_text: &str,
+    new_blob_text: &str,
+    suppress_blank_empty: bool,
+    context_lines: usize,
+    inter_hunk_context: usize,
+    path_for_attrs: &str,
+    algo_ctx: &DiffAlgoContext,
+    algo_cli: Option<similar::Algorithm>,
+) -> Result<()> {
+    let path = entry.old_path.clone().or_else(|| entry.new_path.clone());
+    let del = DiffEntry {
+        status: DiffStatus::Deleted,
+        old_path: path.clone(),
+        new_path: None,
+        old_mode: entry.old_mode.clone(),
+        new_mode: "000000".to_owned(),
+        old_oid: entry.old_oid,
+        new_oid: zero_oid(),
+        score: None,
+    };
+    write_diff_header_with_prefix(out, &del, use_color, abbrev_len, src_prefix, dst_prefix)?;
+    write_blob_to_blob_patch_fragment(
+        out,
+        old_symlink_text,
+        "",
+        old_path,
+        "/dev/null",
+        suppress_blank_empty,
+        context_lines,
+        inter_hunk_context,
+        src_prefix,
+        dst_prefix,
+        path_for_attrs,
+        algo_ctx,
+        algo_cli,
+        use_color,
+        false,
+    )?;
+
+    let add = DiffEntry {
+        status: DiffStatus::Added,
+        old_path: None,
+        new_path: path,
+        old_mode: "000000".to_owned(),
+        new_mode: entry.new_mode.clone(),
+        old_oid: zero_oid(),
+        new_oid: entry.new_oid,
+        score: None,
+    };
+    write_diff_header_with_prefix(out, &add, use_color, abbrev_len, src_prefix, dst_prefix)?;
+    write_blob_to_blob_patch_fragment(
+        out,
+        "",
+        new_blob_text,
+        "/dev/null",
+        new_path,
+        suppress_blank_empty,
+        context_lines,
+        inter_hunk_context,
+        src_prefix,
+        dst_prefix,
+        path_for_attrs,
+        algo_ctx,
+        algo_cli,
+        use_color,
+        false,
+    )?;
+    Ok(())
+}
+
+fn write_blob_to_blob_patch_fragment(
+    out: &mut impl Write,
+    old_content: &str,
+    new_content: &str,
+    display_old: &str,
+    display_new: &str,
+    suppress_blank_empty: bool,
+    context_lines: usize,
+    inter_hunk_context: usize,
+    src_prefix: &str,
+    dst_prefix: &str,
+    path_for_attrs: &str,
+    algo_ctx: &DiffAlgoContext,
+    algo_cli: Option<similar::Algorithm>,
+    use_color: bool,
+    suppress_incomplete_highlight_after_plus: bool,
+) -> Result<()> {
+    let algo = diff_algorithm_for_path(path_for_attrs, algo_cli, algo_ctx);
+    let func_matcher = matcher_for_path_parsed(
+        algo_ctx.config.as_ref(),
+        &algo_ctx.attrs.rules,
+        &algo_ctx.attrs.macros,
+        path_for_attrs,
+        algo_ctx.ignore_case_attrs,
+    )
+    .unwrap_or(None);
+    let patch = unified_diff_with_prefix_and_funcname_and_algorithm(
+        old_content,
+        new_content,
+        display_old,
+        display_new,
+        context_lines,
+        inter_hunk_context,
+        src_prefix,
+        dst_prefix,
+        func_matcher.as_ref(),
+        algo,
+    );
+    let patch = if suppress_blank_empty {
+        strip_blank_context_trailing_space(&patch)
+    } else {
+        patch
+    };
+    if use_color {
+        write_colored_patch(out, &patch, suppress_incomplete_highlight_after_plus)?;
+    } else {
+        write!(out, "{patch}")?;
+    }
+    Ok(())
+}
+
 fn write_patch_with_prefix(
     out: &mut impl Write,
     repo: &Repository,
@@ -4541,6 +4778,88 @@ fn write_patch_with_prefix(
                     continue;
                 }
             }
+        }
+
+        let old_sy = mode_is_symlink_mode_str(&entry.old_mode);
+        let new_sy = mode_is_symlink_mode_str(&entry.new_mode);
+        let old_reg = mode_is_regular_blob_mode_str(&entry.old_mode);
+        let new_reg = mode_is_regular_blob_mode_str(&entry.new_mode);
+        let blob_symlink_type_flip = (old_reg && new_sy) || (old_sy && new_reg);
+        if blob_symlink_type_flip
+            && matches!(entry.status, DiffStatus::TypeChanged | DiffStatus::Modified)
+        {
+            let textconv_patch =
+                use_textconv && diff_textconv_active(git_dir, config, path_for_attrs.as_str());
+            let old_t = if entry.old_oid == zero_oid() {
+                String::new()
+            } else if textconv_patch {
+                blob_text_for_diff_with_oid(
+                    odb,
+                    git_dir,
+                    config,
+                    path_for_attrs.as_str(),
+                    &old_content_raw,
+                    &entry.old_oid,
+                    true,
+                )
+            } else {
+                String::from_utf8_lossy(&old_content_raw).into_owned()
+            };
+            let new_t = if entry.new_oid == zero_oid() {
+                String::new()
+            } else if textconv_patch {
+                blob_text_for_diff_with_oid(
+                    odb,
+                    git_dir,
+                    config,
+                    path_for_attrs.as_str(),
+                    &new_content_raw,
+                    &entry.new_oid,
+                    true,
+                )
+            } else {
+                String::from_utf8_lossy(&new_content_raw).into_owned()
+            };
+            if old_reg && new_sy {
+                write_typechange_blob_symlink_split_patch(
+                    out,
+                    entry,
+                    use_color,
+                    abbrev_len,
+                    src_prefix,
+                    dst_prefix,
+                    old_path,
+                    new_path,
+                    &old_t,
+                    &new_t,
+                    suppress_blank_empty,
+                    context_lines,
+                    inter_hunk_context,
+                    path_for_attrs.as_str(),
+                    algo_ctx,
+                    algo_cli,
+                )?;
+            } else {
+                write_typechange_symlink_blob_split_patch(
+                    out,
+                    entry,
+                    use_color,
+                    abbrev_len,
+                    src_prefix,
+                    dst_prefix,
+                    old_path,
+                    new_path,
+                    &old_t,
+                    &new_t,
+                    suppress_blank_empty,
+                    context_lines,
+                    inter_hunk_context,
+                    path_for_attrs.as_str(),
+                    algo_ctx,
+                    algo_cli,
+                )?;
+            }
+            continue;
         }
 
         write_diff_header_with_prefix(out, entry, use_color, abbrev_len, src_prefix, dst_prefix)?;
@@ -4745,7 +5064,7 @@ fn write_patch_with_prefix(
                 patch
             };
             if use_color {
-                write_colored_patch(out, &patch)?;
+                write_colored_patch(out, &patch, false)?;
             } else {
                 write!(out, "{patch}")?;
             }
@@ -4778,7 +5097,7 @@ fn write_patch_with_prefix(
             };
 
             if use_color {
-                write_colored_patch(out, &patch)?;
+                write_colored_patch(out, &patch, false)?;
             } else {
                 write!(out, "{patch}")?;
             }
@@ -4804,18 +5123,41 @@ fn strip_blank_context_trailing_space(patch: &str) -> String {
 }
 
 /// Write a unified diff patch with ANSI color codes.
-fn write_colored_patch(out: &mut impl Write, patch: &str) -> Result<()> {
-    for line in patch.lines() {
+///
+/// When `suppress_incomplete_red_after_plus` is true, the `\ No newline at end of file` marker that
+/// follows a `+` line is not painted with the whitespace-error background (symlink post-image:
+/// `t4015-diff-whitespace`).
+fn write_colored_patch(
+    out: &mut impl Write,
+    patch: &str,
+    suppress_incomplete_red_after_plus: bool,
+) -> Result<()> {
+    let mut last_was_plus_hunk_line = false;
+    for line in patch.split_inclusive('\n') {
+        let line_no_nl = line.strip_suffix('\n').unwrap_or(line);
+        if line_no_nl.starts_with('\\') {
+            if last_was_plus_hunk_line && !suppress_incomplete_red_after_plus {
+                writeln!(out, "{BG_RED}{line_no_nl}{RESET}")?;
+            } else {
+                writeln!(out, "{CYAN}{line_no_nl}{RESET}")?;
+            }
+            continue;
+        }
         if line.starts_with("---") || line.starts_with("+++") {
-            writeln!(out, "{BOLD}{line}{RESET}")?;
+            last_was_plus_hunk_line = false;
+            writeln!(out, "{BOLD}{line_no_nl}{RESET}")?;
         } else if line.starts_with("@@") {
-            writeln!(out, "{CYAN}{line}{RESET}")?;
+            last_was_plus_hunk_line = false;
+            writeln!(out, "{CYAN}{line_no_nl}{RESET}")?;
         } else if line.starts_with('-') {
-            writeln!(out, "{RED}{line}{RESET}")?;
+            last_was_plus_hunk_line = false;
+            writeln!(out, "{RED}{line_no_nl}{RESET}")?;
         } else if line.starts_with('+') {
-            writeln!(out, "{GREEN}{line}{RESET}")?;
+            last_was_plus_hunk_line = true;
+            writeln!(out, "{GREEN}{line_no_nl}{RESET}")?;
         } else {
-            writeln!(out, "{line}{RESET}")?;
+            last_was_plus_hunk_line = false;
+            writeln!(out, "{line_no_nl}{RESET}")?;
         }
     }
     Ok(())
@@ -5391,22 +5733,175 @@ fn write_name_status(
 const DEFAULT_CONFLICT_MARKER_SIZE: usize = 7;
 
 fn conflict_marker_size_for_path(
-    rules: Option<&[AttrRule]>,
+    attrs: &ParsedGitAttributes,
     rel_path: &str,
-    config: &ConfigSet,
+    ignore_case_attrs: bool,
 ) -> usize {
     let mut size = DEFAULT_CONFLICT_MARKER_SIZE;
-    if let Some(rules) = rules {
-        let fa = get_file_attrs(rules, rel_path, false, config);
-        if let Some(ref s) = fa.conflict_marker_size {
-            if let Ok(n) = s.trim().parse::<i32>() {
-                if n > 0 {
-                    size = n as usize;
-                }
+    let map = collect_attrs_for_path(&attrs.rules, &attrs.macros, rel_path, ignore_case_attrs);
+    if let Some(AttrValue::Value(s)) = map.get("conflict-marker-size") {
+        if let Ok(n) = s.trim().parse::<i32>() {
+            if n > 0 {
+                size = n as usize;
             }
         }
     }
     size
+}
+
+fn config_whitespace_rule_bits(config: &ConfigSet) -> Result<u32, ws::WhitespaceRuleError> {
+    let value = config
+        .get("core.whitespace")
+        .unwrap_or_else(|| "".to_owned());
+    ws::parse_whitespace_rule(&value)
+}
+
+fn effective_ws_rule_for_path(
+    attrs: &ParsedGitAttributes,
+    rel_path: &str,
+    entry_mode: &str,
+    config: &ConfigSet,
+    ignore_case_attrs: bool,
+) -> Result<u32, ws::WhitespaceRuleError> {
+    let cfg_rule = config_whitespace_rule_bits(config)?;
+    let map = collect_attrs_for_path(&attrs.rules, &attrs.macros, rel_path, ignore_case_attrs);
+    let git_attr = match map.get("whitespace") {
+        None | Some(AttrValue::Clear) => WhitespaceGitAttr::Unspecified,
+        Some(AttrValue::Unset) => WhitespaceGitAttr::False,
+        Some(AttrValue::Set) => WhitespaceGitAttr::True,
+        Some(AttrValue::Value(s)) => WhitespaceGitAttr::String(s.clone()),
+    };
+    let mut rule = git_attr.merge_with_config(cfg_rule)?;
+    if entry_mode == "120000" {
+        rule &= !WS_INCOMPLETE_LINE;
+    }
+    Ok(rule)
+}
+
+/// Git `count_lines` from `diff.c`: counts logical lines including a final non-newline-terminated line.
+fn count_lines_git(data: &[u8]) -> usize {
+    if data.is_empty() {
+        return 0;
+    }
+    let mut count = 0usize;
+    let mut nl_just_seen = false;
+    let mut completely_empty = true;
+    for &ch in data {
+        if ch == b'\n' {
+            count += 1;
+            nl_just_seen = true;
+            completely_empty = false;
+        } else {
+            nl_just_seen = false;
+            completely_empty = false;
+        }
+    }
+    if completely_empty {
+        return 0;
+    }
+    if !nl_just_seen {
+        count += 1;
+    }
+    count
+}
+
+/// Port of Git `count_trailing_blank` (`diff.c`).
+fn count_trailing_blank_lines(data: &[u8]) -> usize {
+    let size = data.len();
+    if size == 0 {
+        return 0;
+    }
+    let mut ptr = size - 1;
+    if data[ptr] != b'\n' {
+        return 0;
+    }
+    if ptr == 0 {
+        return 0;
+    }
+    ptr -= 1;
+    let mut cnt = 0usize;
+    loop {
+        let mut prev_eol = ptr;
+        loop {
+            if data[prev_eol] == b'\n' {
+                break;
+            }
+            if prev_eol == 0 {
+                let body = &data[..=ptr];
+                if ws::ws_blank_line(&String::from_utf8_lossy(body)) {
+                    cnt += 1;
+                }
+                return cnt;
+            }
+            prev_eol -= 1;
+        }
+        let body = &data[prev_eol + 1..=ptr];
+        if !ws::ws_blank_line(&String::from_utf8_lossy(body)) {
+            break;
+        }
+        cnt += 1;
+        if prev_eol == 0 {
+            break;
+        }
+        ptr = prev_eol - 1;
+    }
+    cnt
+}
+
+/// Line number (1-based) of the first new trailing blank line at EOF, if `post` has more than `pre`.
+fn blank_at_eof_error_line(pre: &[u8], post: &[u8], ws_rule: u32) -> Option<usize> {
+    if ws_rule & WS_BLANK_AT_EOF == 0 {
+        return None;
+    }
+    let l1 = count_trailing_blank_lines(pre);
+    let l2 = count_trailing_blank_lines(post);
+    if l2 <= l1 {
+        return None;
+    }
+    let total = count_lines_git(post);
+    let line = total.saturating_sub(l2).saturating_add(1);
+    Some(line)
+}
+
+fn parse_udiff_range(part: &str) -> Option<(i32, i32)> {
+    let part = part.trim();
+    let mut it = part.split(',');
+    let start: i32 = it.next()?.parse().ok()?;
+    let count = if let Some(c) = it.next() {
+        c.parse().ok()?
+    } else {
+        1
+    };
+    Some((start, count))
+}
+
+/// Parse `@@ -old_start,old_count +new_start,new_count @@` header; returns `(new_start, new_count)`.
+fn parse_unified_hunk_header(line: &str) -> Option<(i32, i32)> {
+    let s = line.strip_prefix("@@")?.trim_start();
+    let (old_raw, new_raw) = s.split_once(" +")?;
+    let _ = old_raw.strip_prefix('-')?;
+    let new_range = new_raw.split("@@").next()?.trim();
+    parse_udiff_range(new_range)
+}
+
+/// Reconstruct a `+` line body for `ws_check` after splitting a patch on `\n`.
+///
+/// `str::lines()` strips the newline that terminates each complete patch line; Git's checkdiff
+/// passes the line *including* that newline to `ws_check`, except when the unified diff uses
+/// `\ No newline at end of file` (then the `+` line has no trailing `\n`).
+fn patch_line_body_with_newline_for_ws_check(
+    patch_lines: &[&str],
+    idx: usize,
+    body: &str,
+) -> String {
+    let incomplete_eof = patch_lines
+        .get(idx + 1)
+        .is_some_and(|l| l.starts_with('\\'));
+    if incomplete_eof {
+        body.to_owned()
+    } else {
+        format!("{body}\n")
+    }
 }
 
 /// Match upstream `is_conflict_marker` in `git/diff.c`.
@@ -5440,17 +5935,25 @@ fn is_conflict_marker_line(body: &str, marker_size: usize) -> bool {
         .is_some_and(|b| b.is_ascii_whitespace())
 }
 
-/// Check for whitespace errors in added/modified lines.
+/// Check for whitespace errors in added/modified lines (`git diff --check` / `diff-index --check`).
+///
 /// Returns true if any errors were found.
-fn check_whitespace_errors(
+pub(crate) fn check_whitespace_errors(
     out: &mut impl Write,
     entries: &[DiffEntry],
     odb: &Odb,
     work_tree: Option<&Path>,
-    attr_rules: Option<&[AttrRule]>,
+    merged_attrs: &ParsedGitAttributes,
+    ignore_case_attrs: bool,
     config: &ConfigSet,
 ) -> Result<bool> {
     use grit_lib::diff::zero_oid;
+    if let Err(ws::WhitespaceRuleError::ConflictingTabAndIndentRules) =
+        config_whitespace_rule_bits(config)
+    {
+        eprintln!("fatal: cannot enforce both tab-in-indent and indent-with-non-tab");
+        std::process::exit(128);
+    }
     let mut has_errors = false;
 
     for entry in entries {
@@ -5458,18 +5961,26 @@ fn check_whitespace_errors(
             continue;
         }
         let path = entry.path();
-        let marker_size = conflict_marker_size_for_path(attr_rules, path, config);
+        let marker_size = conflict_marker_size_for_path(merged_attrs, path, ignore_case_attrs);
+        let ws_rule = match effective_ws_rule_for_path(
+            merged_attrs,
+            path,
+            &entry.new_mode,
+            config,
+            ignore_case_attrs,
+        ) {
+            Ok(r) => r,
+            Err(ws::WhitespaceRuleError::ConflictingTabAndIndentRules) => {
+                eprintln!("fatal: cannot enforce both tab-in-indent and indent-with-non-tab");
+                std::process::exit(128);
+            }
+        };
 
-        // Read old and new content
+        let old_path = entry.old_path.as_deref().unwrap_or(path);
         let old_content = if entry.old_oid == zero_oid() {
             String::new()
         } else {
-            read_content(
-                odb,
-                &entry.old_oid,
-                work_tree,
-                entry.old_path.as_deref().unwrap_or(path),
-            )
+            read_content(odb, &entry.old_oid, work_tree, old_path)
         };
         let new_content = if entry.new_oid == zero_oid() {
             String::new()
@@ -5477,51 +5988,84 @@ fn check_whitespace_errors(
             read_content(odb, &entry.new_oid, work_tree, path)
         };
 
-        // Compute diff and check added lines for whitespace errors
-        use similar::{ChangeTag, TextDiff};
-        let diff = TextDiff::from_lines(&old_content, &new_content);
-        let mut line_no = 0u64;
-        for change in diff.iter_all_changes() {
-            match change.tag() {
-                ChangeTag::Insert => {
-                    line_no += 1;
-                    let line = change.value();
-                    // Check for conflict markers
-                    let bare = line.trim_end_matches('\n').trim_end_matches('\r');
-                    if is_conflict_marker_line(bare, marker_size) {
-                        writeln!(out, "{}:{}: leftover conflict marker", path, line_no)?;
-                        write!(out, "+{}", line)?;
-                        if !line.ends_with('\n') {
-                            writeln!(out)?;
-                        }
-                        has_errors = true;
-                    }
-                    // Check for trailing whitespace
-                    let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
-                    if trimmed != trimmed.trim_end() {
-                        writeln!(out, "{}:{}: trailing whitespace.", path, line_no)?;
-                        write!(out, "+{}", line)?;
-                        if !line.ends_with('\n') {
-                            writeln!(out)?;
-                        }
-                        has_errors = true;
-                    }
-                    // Check for space before tab in indent
-                    let indent: &str = &trimmed[..trimmed.len() - trimmed.trim_start().len()];
-                    if indent.contains(" \t") {
-                        writeln!(out, "{}:{}: space before tab in indent.", path, line_no)?;
-                        write!(out, "+{}", line)?;
-                        if !line.ends_with('\n') {
-                            writeln!(out)?;
-                        }
-                        has_errors = true;
-                    }
+        if is_binary(&read_content_raw(odb, &entry.old_oid))
+            || is_binary(&read_content_raw_or_worktree(
+                odb,
+                &entry.new_oid,
+                work_tree,
+                path,
+            ))
+        {
+            continue;
+        }
+
+        let patch = unified_diff_with_prefix_and_funcname_and_algorithm(
+            &old_content,
+            &new_content,
+            path,
+            path,
+            1,
+            0,
+            "",
+            "",
+            None,
+            similar::Algorithm::Myers,
+        );
+
+        let patch_lines: Vec<&str> = patch.lines().collect();
+        let mut lineno = 0i32;
+        for (idx, raw_line) in patch_lines.iter().enumerate() {
+            if raw_line.starts_with("@@") {
+                if let Some((start, _)) = parse_unified_hunk_header(raw_line) {
+                    lineno = start.saturating_sub(1);
                 }
-                ChangeTag::Equal => {
-                    line_no += 1;
-                }
-                ChangeTag::Delete => {}
+                continue;
             }
+            if raw_line.is_empty() {
+                continue;
+            }
+            let kind = raw_line.as_bytes().first().copied().unwrap_or(b' ');
+            if kind == b'+' {
+                lineno += 1;
+                let body = &raw_line[1..];
+                let body_for_check =
+                    patch_line_body_with_newline_for_ws_check(&patch_lines, idx, body);
+                let bare = body_for_check.trim_end_matches(['\n', '\r']);
+                if is_conflict_marker_line(bare, marker_size) {
+                    writeln!(out, "{path}:{lineno}: leftover conflict marker")?;
+                    write!(out, "+{body}")?;
+                    if !body.ends_with('\n') {
+                        writeln!(out)?;
+                    }
+                    has_errors = true;
+                }
+                let bad = ws::ws_check(&body_for_check, ws_rule);
+                if bad != 0 {
+                    let msg = ws::whitespace_error_string(bad);
+                    writeln!(out, "{path}:{lineno}: {msg}.")?;
+                    write!(out, "+{body}")?;
+                    if !body.ends_with('\n') {
+                        writeln!(out)?;
+                    }
+                    has_errors = true;
+                }
+            } else if kind == b' ' {
+                lineno += 1;
+            } else if kind == b'\\' {
+                // `\ No newline at end of file` — incomplete-line errors come from `ws_check`
+                // on the preceding `+` line (Git `checkdiff_consume`).
+            }
+        }
+
+        if let Some(ln) =
+            blank_at_eof_error_line(old_content.as_bytes(), new_content.as_bytes(), ws_rule)
+        {
+            writeln!(
+                out,
+                "{path}:{ln}: {}.",
+                ws::whitespace_error_string(WS_BLANK_AT_EOF)
+            )?;
+            has_errors = true;
         }
     }
     Ok(has_errors)

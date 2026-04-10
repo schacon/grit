@@ -29,9 +29,11 @@ use grit_lib::pathspec::{context_from_mode_octal, matches_pathspec_with_context}
 use grit_lib::quote_path::{format_diff_path_with_prefix, quote_c_style};
 use grit_lib::repo::{resolve_dot_git, Repository};
 
+use crate::commands::diff::check_whitespace_errors;
 use crate::commands::diff_index::write_diff_index_name_status;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
+use grit_lib::attributes::load_gitattributes_for_diff;
 use grit_lib::rev_parse::resolve_revision;
 use regex::Regex;
 use std::io::Write as IoWrite;
@@ -147,6 +149,8 @@ struct Options {
     submodule_mode: Option<String>,
     /// Object id spec for `--find-object` (resolved against the repo before the walk).
     find_object: Option<String>,
+    /// Whitespace / conflict-marker check (no raw/patch output).
+    check: bool,
 }
 
 impl Default for Options {
@@ -191,6 +195,7 @@ impl Default for Options {
             pickaxe_all: false,
             submodule_mode: None,
             find_object: None,
+            check: false,
         }
     }
 }
@@ -346,7 +351,8 @@ fn parse_options(repo: &Repository, argv: &[String]) -> Result<Options> {
                     }
                 }
                 // Silently accept common diff options that we do not implement.
-                "--no-rename-empty" | "--always" | "--diff-merges=off" | "--check" => {}
+                "--no-rename-empty" | "--always" | "--diff-merges=off" => {}
+                "--check" => opts.check = true,
                 "-R" => opts.reverse = true,
                 _ if arg.len() > 2 && arg.starts_with("-R") => {
                     opts.reverse = true;
@@ -469,6 +475,9 @@ pub fn run(mut args: Args) -> Result<()> {
         )
     };
 
+    if opts.check {
+        return Ok(());
+    }
     if opts.exit_code && has_diff {
         std::process::exit(1);
     }
@@ -505,6 +514,11 @@ fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Res
     let entries = diff_with_opts(&repo.odb, old_tree, new_tree, opts)?;
     let filtered = filter_entries(&repo.odb, &repo, entries, opts)?;
     let has_diff = !filtered.is_empty();
+    if opts.check {
+        let prepared = prepare_diff_tree_entries(&repo.odb, filtered, opts, old_tree);
+        run_diff_tree_whitespace_check(repo, &prepared, opts)?;
+        return Ok(has_diff);
+    }
     if !opts.quiet {
         print_diff(out, repo, &filtered, opts, old_tree)?;
     }
@@ -632,6 +646,12 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
                 let filtered = filter_entries(&repo.odb, &repo, entries, opts)?;
                 has_diff = !filtered.is_empty();
+                if opts.check {
+                    let prepared =
+                        prepare_diff_tree_entries(&repo.odb, filtered, opts, Some(&parent_tree));
+                    run_diff_tree_whitespace_check(repo, &prepared, opts)?;
+                    return Ok(has_diff);
+                }
                 if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                     write_commit_header(out, &oid, &obj.data, opts)?;
                     print_diff(out, repo, &filtered, opts, Some(&parent_tree))?;
@@ -1349,6 +1369,88 @@ fn write_raw_diff_tree_z(
     Ok(())
 }
 
+fn prepare_diff_tree_entries<'a>(
+    odb: &Odb,
+    entries: Vec<DiffEntry>,
+    opts: &Options,
+    old_tree_oid: Option<&ObjectId>,
+) -> Vec<DiffEntry> {
+    let old_blobs = if opts.find_copies.is_some() && opts.find_copies_harder {
+        if let Some(tree_oid) = old_tree_oid {
+            collect_tree_blobs_recursive(odb, tree_oid, "").unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+    let mut out = if let Some(threshold) = opts.find_renames {
+        let mut result = detect_renames(odb, entries, threshold);
+        if let Some(copy_threshold) = opts.find_copies {
+            result = lib_detect_copies(
+                odb,
+                result,
+                copy_threshold,
+                opts.find_copies_harder,
+                &old_blobs,
+            );
+        }
+        result
+    } else if let Some(copy_threshold) = opts.find_copies {
+        lib_detect_copies(
+            odb,
+            entries,
+            copy_threshold,
+            opts.find_copies_harder,
+            &old_blobs,
+        )
+    } else {
+        entries
+    };
+    if opts.format == OutputFormat::Patch
+        && opts.submodule_mode.as_deref().is_some_and(|m| m == "log")
+    {
+        out = preprocess_gitlink_renames_for_submodule_log(out);
+    }
+    out
+}
+
+fn run_diff_tree_whitespace_check(
+    repo: &Repository,
+    entries: &[DiffEntry],
+    opts: &Options,
+) -> Result<()> {
+    let merged_attrs = match load_gitattributes_for_diff(repo) {
+        Ok(a) => a,
+        Err(grit_lib::error::Error::InvalidRef(msg)) if msg.starts_with("bad --attr-source") => {
+            eprintln!("fatal: bad --attr-source or GIT_ATTR_SOURCE");
+            std::process::exit(128);
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let ignore_case = config
+        .get("core.ignorecase")
+        .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "1"));
+    let mut stdout = std::io::stdout().lock();
+    let has_ws = check_whitespace_errors(
+        &mut stdout,
+        entries,
+        &repo.odb,
+        None,
+        &merged_attrs,
+        ignore_case,
+        &config,
+    )?;
+    if has_ws {
+        if opts.exit_code {
+            std::process::exit(3);
+        }
+        std::process::exit(2);
+    }
+    Ok(())
+}
+
 /// Print the diff entries according to `opts.format`.
 fn print_diff(
     out: &mut impl Write,
@@ -1364,53 +1466,11 @@ fn print_diff(
         .unwrap_or_default()
         .quote_path_fully();
 
-    // Apply rename detection if requested.
-    let owned_entries;
-    let old_blobs = if opts.find_copies.is_some() && opts.find_copies_harder {
-        if let Some(tree_oid) = old_tree_oid {
-            collect_tree_blobs_recursive(odb, tree_oid, "").unwrap_or_default()
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
-    let entries = if let Some(threshold) = opts.find_renames {
-        let mut result = detect_renames(odb, entries.to_vec(), threshold);
-        if let Some(copy_threshold) = opts.find_copies {
-            result = lib_detect_copies(
-                odb,
-                result,
-                copy_threshold,
-                opts.find_copies_harder,
-                &old_blobs,
-            );
-        }
-        owned_entries = result;
-        &owned_entries[..]
-    } else if let Some(copy_threshold) = opts.find_copies {
-        owned_entries = lib_detect_copies(
-            odb,
-            entries.to_vec(),
-            copy_threshold,
-            opts.find_copies_harder,
-            &old_blobs,
-        );
-        &owned_entries[..]
-    } else {
-        entries
-    };
+    let owned_entries = prepare_diff_tree_entries(odb, entries.to_vec(), opts, old_tree_oid);
+    let entries = owned_entries.as_slice();
 
     let submodule_log = opts.format == OutputFormat::Patch
         && opts.submodule_mode.as_deref().is_some_and(|m| m == "log");
-
-    let preprocessed_owned;
-    let entries = if submodule_log {
-        preprocessed_owned = preprocess_gitlink_renames_for_submodule_log(entries.to_vec());
-        &preprocessed_owned[..]
-    } else {
-        entries
-    };
 
     if submodule_log {
         let abbrev_len = if opts.full_index {
