@@ -922,7 +922,7 @@ commit → check it off → move on.
 - [ ] `t8007-cat-file-textconv` ████████████░░░░░░░░ 9/15 (6 left) — git cat-file textconv support
 - [ ] `t8011-blame-split-file` ████░░░░░░░░░░░░░░░░ 2/10 (8 left) — 
 
-- [ ] `t8006-blame-textconv` ███████░░░░░░░░░░░░░ 6/16 (10 left) — git blame textconv support
+- [x] `t8006-blame-textconv` — git blame textconv support (16/16 harness)
 - [ ] `t8014-blame-ignore-fuzzy` █████░░░░░░░░░░░░░░░ 4/16 (12 left) — git blame ignore fuzzy heuristic
 - [ ] `t8013-blame-ignore-revs` ███░░░░░░░░░░░░░░░░░ 3/19 (16 left) — ignore revisions when blaming
 - [x] `t8003-blame-corner-cases` ████████████████████ 30/30 (0 left) — git blame corner cases
