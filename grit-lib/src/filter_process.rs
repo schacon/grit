@@ -18,6 +18,15 @@ const CAP_CLEAN: u32 = 1 << 0;
 const CAP_SMUDGE: u32 = 1 << 1;
 const CAP_DELAY: u32 = 1 << 2;
 
+/// Result of a process-filter smudge: either output bytes or a deferred (`delayed`) response.
+#[derive(Debug)]
+pub enum ProcessSmudgeOutput {
+    /// Smudged blob bytes to write to the working tree.
+    Data(Vec<u8>),
+    /// Filter chose to defer this path (Git parallel checkout / delay protocol; t2080).
+    Delayed,
+}
+
 /// Optional metadata sent with smudge (ref, treeish, blob hex).
 #[derive(Debug, Clone, Default)]
 pub struct FilterSmudgeMeta {
@@ -458,6 +467,26 @@ pub fn apply_process_smudge(
     input: &[u8],
     meta: Option<&FilterSmudgeMeta>,
 ) -> Result<Vec<u8>, String> {
+    match apply_process_smudge_extended(cmd, path, input, meta, false)? {
+        ProcessSmudgeOutput::Data(d) => Ok(d),
+        ProcessSmudgeOutput::Delayed => {
+            Err("delayed checkout not supported by grit process filter".to_string())
+        }
+    }
+}
+
+/// Like [`apply_process_smudge`] but surfaces `delayed` for callers that skip writing the path.
+///
+/// When `send_can_delay` is true and the filter advertised the delay capability, sends
+/// `can-delay=1` after the metadata lines (matches Git `convert.c`; required for
+/// `test-tool rot13-filter --always-delay` in t2080).
+pub fn apply_process_smudge_extended(
+    cmd: &str,
+    path: &str,
+    input: &[u8],
+    meta: Option<&FilterSmudgeMeta>,
+    send_can_delay: bool,
+) -> Result<ProcessSmudgeOutput, String> {
     ensure_started(cmd)?;
     let reg = process_registry()
         .lock()
@@ -479,7 +508,7 @@ pub fn apply_process_smudge(
 
     let result = (|| {
         if rf.caps & CAP_SMUDGE == 0 {
-            return Ok(input.to_vec());
+            return Ok(ProcessSmudgeOutput::Data(input.to_vec()));
         }
         write_packet_line(&mut stdin, "command=smudge").map_err(|e| e.to_string())?;
         write_packet_line(&mut stdin, &format!("pathname={path}")).map_err(|e| e.to_string())?;
@@ -495,6 +524,9 @@ pub fn apply_process_smudge(
                 write_packet_line(&mut stdin, &format!("blob={b}")).map_err(|e| e.to_string())?;
             }
         }
+        if send_can_delay && (rf.caps & CAP_DELAY) != 0 {
+            write_packet_line(&mut stdin, "can-delay=1").map_err(|e| e.to_string())?;
+        }
         write_flush(&mut stdin).map_err(|e| e.to_string())?;
         write_packetized(&mut stdin, input).map_err(|e| e.to_string())?;
         write_flush(&mut stdin).map_err(|e| e.to_string())?;
@@ -502,7 +534,7 @@ pub fn apply_process_smudge(
         let mut st = String::new();
         read_status(&mut stdout, &mut st).map_err(|e| e.to_string())?;
         if st == "delayed" {
-            return Err("delayed checkout not supported by grit process filter".to_string());
+            return Ok(ProcessSmudgeOutput::Delayed);
         }
         if st != "success" {
             return Err(format!("filter status: {st}"));
@@ -512,7 +544,7 @@ pub fn apply_process_smudge(
         if st != "success" {
             return Err(format!("filter tail status: {st}"));
         }
-        Ok(out)
+        Ok(ProcessSmudgeOutput::Data(out))
     })();
 
     rf.stdin = Some(stdin);

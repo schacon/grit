@@ -34,6 +34,37 @@ use std::process::Command;
 
 use crate::git_column::{merge_column_config, print_columns, ColOpts, ColumnOptions};
 
+/// True when `dir` looks like a submodule work tree: a `.git` gitfile whose `gitdir:` resolves
+/// under the superproject's `.git/modules/` (matches Git: do not list nested files as superproject
+/// untracked when the index only records paths like `b/b`, not a gitlink at `b`; t2080).
+fn dir_is_nested_submodule_worktree(super_git_dir: &Path, dir: &Path) -> bool {
+    let gitfile = dir.join(".git");
+    let Ok(content) = fs::read_to_string(&gitfile) else {
+        return false;
+    };
+    let Some(rest) = content.lines().find_map(|l| l.strip_prefix("gitdir:")) else {
+        return false;
+    };
+    let raw = rest.trim();
+    if raw.is_empty() {
+        return false;
+    }
+    let gitdir_path = Path::new(raw);
+    let resolved = if gitdir_path.is_absolute() {
+        gitdir_path.to_path_buf()
+    } else {
+        dir.join(gitdir_path)
+    };
+    let Ok(resolved_canon) = resolved.canonicalize() else {
+        return false;
+    };
+    let modules_root = super_git_dir.join("modules");
+    let Ok(modules_canon) = modules_root.canonicalize() else {
+        return false;
+    };
+    resolved_canon.starts_with(&modules_canon)
+}
+
 /// Arguments for `grit status`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Show the working tree status")]
@@ -774,6 +805,10 @@ fn visit_untracked_node(
     untracked_out: &mut Vec<String>,
     ignored_out: &mut Vec<String>,
 ) -> Result<()> {
+    if abs.is_dir() && dir_is_nested_submodule_worktree(&repo.git_dir, abs) {
+        return Ok(());
+    }
+
     let entries = match fs::read_dir(abs) {
         Ok(e) => e,
         Err(_) => return Ok(()),
@@ -2961,6 +2996,8 @@ fn resolve_status_rename_threshold(args: &Args, config: &ConfigSet) -> Option<u3
 /// Find untracked files in the working tree (raw, before ignore filtering).
 #[allow(dead_code)]
 fn find_untracked(work_tree: &Path, index: &Index) -> Result<Vec<String>> {
+    let repo = Repository::discover(Some(work_tree)).context("not a git repository")?;
+    let super_git_dir = repo.git_dir;
     let tracked: BTreeSet<String> = index
         .entries
         .iter()
@@ -2977,6 +3014,7 @@ fn find_untracked(work_tree: &Path, index: &Index) -> Result<Vec<String>> {
     walk_for_untracked(
         work_tree,
         work_tree,
+        &super_git_dir,
         &tracked,
         &gitlinks,
         &mut untracked,
@@ -2990,6 +3028,7 @@ fn find_untracked(work_tree: &Path, index: &Index) -> Result<Vec<String>> {
 fn walk_for_untracked(
     dir: &Path,
     work_tree: &Path,
+    super_git_dir: &Path,
     tracked: &BTreeSet<String>,
     gitlinks: &BTreeSet<String>,
     out: &mut Vec<String>,
@@ -3029,9 +3068,21 @@ fn walk_for_untracked(
             continue;
         }
 
+        if is_dir && dir_is_nested_submodule_worktree(super_git_dir, &path) {
+            continue;
+        }
+
         if is_dir {
             if show_all {
-                walk_for_untracked(&path, work_tree, tracked, gitlinks, out, show_all)?;
+                walk_for_untracked(
+                    &path,
+                    work_tree,
+                    super_git_dir,
+                    tracked,
+                    gitlinks,
+                    out,
+                    show_all,
+                )?;
             } else {
                 let prefix = format!("{rel}/");
                 let has_tracked = tracked
@@ -3042,12 +3093,28 @@ fn walk_for_untracked(
                     .iter()
                     .any(|g| g.as_str() == rel || g.starts_with(&format!("{rel}/")));
                 if has_tracked || covers_submodule {
-                    walk_for_untracked(&path, work_tree, tracked, gitlinks, out, show_all)?;
+                    walk_for_untracked(
+                        &path,
+                        work_tree,
+                        super_git_dir,
+                        tracked,
+                        gitlinks,
+                        out,
+                        show_all,
+                    )?;
                 } else {
                     // Check if dir has any files (recursively);
                     // empty directories are not shown by git.
                     let mut sub = Vec::new();
-                    walk_for_untracked(&path, work_tree, tracked, gitlinks, &mut sub, false)?;
+                    walk_for_untracked(
+                        &path,
+                        work_tree,
+                        super_git_dir,
+                        tracked,
+                        gitlinks,
+                        &mut sub,
+                        false,
+                    )?;
                     if !sub.is_empty() {
                         out.push(format!("{rel}/"));
                     }

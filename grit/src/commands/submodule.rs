@@ -1024,7 +1024,8 @@ pub fn refresh_submodule_gitfiles(repo: &Repository) -> Result<()> {
         if !sm_dir.is_dir() {
             continue;
         }
-        let modules_git = submodule_modules_git_dir(&repo.git_dir, &path);
+        let modules_git =
+            submodule_modules_git_dir_for_worktree_path(&repo.git_dir, wt, Some(repo), &path);
         if !modules_git.exists() {
             continue;
         }
@@ -1157,6 +1158,27 @@ fn parse_gitmodules_with_repo(
     }
 
     Ok(result)
+}
+
+/// Resolve `.git/modules/<…>` for a submodule work tree path.
+///
+/// Git names the directory after the submodule **name** from `.gitmodules`, not the checkout path
+/// (e.g. name `g`, path `b` → `.git/modules/g`). Fall back to nesting by path when unregistered.
+#[must_use]
+pub(crate) fn submodule_modules_git_dir_for_worktree_path(
+    super_git_dir: &Path,
+    work_tree: &Path,
+    repo: Option<&Repository>,
+    submodule_worktree_rel: &str,
+) -> PathBuf {
+    if let Some(repo) = repo {
+        if let Ok(modules) = parse_gitmodules_with_repo(work_tree, Some(repo)) {
+            if let Some(m) = modules.iter().find(|m| m.path == submodule_worktree_rel) {
+                return submodule_modules_git_dir(super_git_dir, &m.name);
+            }
+        }
+    }
+    submodule_modules_git_dir(super_git_dir, submodule_worktree_rel)
 }
 
 /// Filter submodules by path args (empty = all).
@@ -1308,7 +1330,12 @@ fn checkout_submodule_worktree(
     quiet: bool,
 ) -> Result<()> {
     let sub_path = work_tree.join(submodule_path);
-    let modules_dir = submodule_modules_git_dir(&repo.git_dir, submodule_path);
+    let modules_dir = submodule_modules_git_dir_for_worktree_path(
+        &repo.git_dir,
+        work_tree,
+        Some(repo),
+        submodule_path,
+    );
 
     // CWD must lie inside `GIT_WORK_TREE`; the superproject root is outside the submodule tree.
     // `--force`: after `clone --no-checkout`, HEAD may already equal `oid` while the index and
