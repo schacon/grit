@@ -15,6 +15,11 @@
 - `cargo test -p grit-lib --lib`: 160 passed
 - `./scripts/run-tests.sh t4122-apply-symlink-inside.sh`: 7/7 passed
 
+**2026-04-10 (t8008 / blame formats)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t8008-blame-formats.sh`: 5/5 passed
+
 **2026-04-09 (t4063 / diff blobs)**
 
 - `cargo test -p grit-lib --lib`: 155 passed

@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use std::path::PathBuf;
 
 use grit_lib::index::{
     Index, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK, MODE_TREE,
@@ -9,6 +10,21 @@ use grit_lib::index::{
 use grit_lib::objects::{serialize_tree, tree_entry_cmp, ObjectId, ObjectKind, TreeEntry};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
+
+fn resolved_env_index_path(repo: &Repository) -> PathBuf {
+    if let Ok(raw) = std::env::var("GIT_INDEX_FILE") {
+        let p = PathBuf::from(raw);
+        if p.is_absolute() {
+            p
+        } else if let Ok(cwd) = std::env::current_dir() {
+            cwd.join(p)
+        } else {
+            p
+        }
+    } else {
+        repo.index_path()
+    }
+}
 
 /// Arguments for `grit write-tree`.
 #[derive(Debug, ClapArgs)]
@@ -25,7 +41,10 @@ pub struct Args {
 /// Run `grit write-tree`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    let index = repo.load_index().context("loading index")?;
+    let index_path = resolved_env_index_path(&repo);
+    let index = repo
+        .load_index_at(&index_path)
+        .with_context(|| format!("loading index {}", index_path.display()))?;
 
     let prefix = args.prefix.as_deref().unwrap_or("");
     let oid = match write_tree_from_index(&repo.odb, &index, prefix, args.missing_ok)
