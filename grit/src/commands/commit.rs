@@ -27,6 +27,7 @@ use grit_lib::write_tree::{
 
 use crate::ident::{resolve_email, resolve_name, IdentRole};
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
@@ -34,6 +35,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
+
+/// Environment variable set by [`preprocess_commit_argv`] with the effective `-v` count after
+/// scanning argv (Git-compatible ordering with `--no-verbose`).
+pub(crate) const GIT_GRIT_COMMIT_VERBOSE_ENV: &str = "GIT_GRIT_INTERNAL_COMMIT_VERBOSE";
+
+/// Scissors line inserted before verbose diffs in `COMMIT_EDITMSG` (matches Git's `cut_line`).
+const GIT_COMMIT_CUT_LINE: &str = "------------------------ >8 ------------------------\n";
 
 /// Arguments for `grit commit`.
 #[derive(Debug, ClapArgs)]
@@ -135,13 +143,9 @@ pub struct Args {
     #[arg(short = 'u', long = "untracked-files", value_name = "MODE", num_args = 0..=1, default_missing_value = "all")]
     pub untracked_files: Option<String>,
 
-    /// Verbose - show diff in commit message editor.
+    /// Verbose - show diff in commit message template (`-v` / `--verbose`; see argv preprocessing in `main`).
     #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
     pub verbose: u8,
-
-    /// Suppress verbose output.
-    #[arg(long = "no-verbose")]
-    pub no_verbose: bool,
 
     /// Override cleanup mode.
     #[arg(long = "cleanup", value_name = "MODE")]
@@ -282,6 +286,44 @@ fn peel_message_flags_from_pathspec(args: &mut Args) {
         i += 1;
     }
     args.pathspec = out;
+}
+
+/// Git-compatible scan of `commit` argv for `-v` / `--verbose` / `--no-verbose`, sets
+/// [`GIT_GRIT_COMMIT_VERBOSE_ENV`], and strips `--no-verbose` so clap does not error on unknown long
+/// options.
+pub(crate) fn preprocess_commit_for_parse(argv: &[String]) -> Vec<String> {
+    let mut effective: Option<u32> = None;
+    for arg in argv {
+        if arg == "--no-verbose" {
+            effective = Some(0);
+            continue;
+        }
+        let inc = match arg.as_str() {
+            "-v" | "--verbose" => Some(1u32),
+            s if s.starts_with('-')
+                && !s.starts_with("--")
+                && s.len() > 1
+                && s[1..].chars().all(|c| c == 'v') =>
+            {
+                Some(s.len().saturating_sub(1) as u32)
+            }
+            _ => None,
+        };
+        if let Some(n) = inc {
+            let base = effective.unwrap_or(0);
+            effective = Some(base.saturating_add(n));
+        }
+    }
+    if let Some(v) = effective {
+        std::env::set_var(GIT_GRIT_COMMIT_VERBOSE_ENV, v.to_string());
+    } else {
+        let _ = std::env::remove_var(GIT_GRIT_COMMIT_VERBOSE_ENV);
+    }
+
+    argv.iter()
+        .filter(|a| a.as_str() != "--no-verbose")
+        .cloned()
+        .collect()
 }
 
 /// Run the `commit` command.
@@ -770,6 +812,8 @@ pub fn run(mut args: Args) -> Result<()> {
     let template_path = resolve_commit_template_path(&args, &config)?;
     let use_editor_for_message = commit_uses_editor(&args, fixup_parsed.as_ref());
 
+    let verbose_level = resolve_commit_verbose_level(&args, &config);
+    let commit_cleanup_mode = resolve_commit_cleanup_mode(&args, &config, use_editor_for_message);
     let msg_result = prepare_commit_message(
         &args,
         &repo,
@@ -778,6 +822,9 @@ pub fn run(mut args: Args) -> Result<()> {
         template_path.as_deref(),
         use_editor_for_message,
         &head,
+        &staged,
+        &unstaged,
+        verbose_level,
     )?;
     let mut message = normalize_autosquash_editor_message(
         &args,
@@ -794,7 +841,10 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     if let Some(ref tpl) = template_for_aborted_check {
-        if template_untouched(&message, tpl) && !args.allow_empty_message {
+        let cp = comment_line_prefix_full(&config);
+        if template_untouched(&message, tpl, cp.as_ref(), commit_cleanup_mode)
+            && !args.allow_empty_message
+        {
             eprintln!("Aborting commit; you did not edit the message.");
             std::process::exit(1);
         }
@@ -962,7 +1012,13 @@ pub fn run(mut args: Args) -> Result<()> {
                 let new_raw = fs::read(&msg_file)?;
                 match String::from_utf8(new_raw.clone()) {
                     Ok(s) => {
-                        message = s;
+                        let cp = comment_line_prefix_full(&config);
+                        message = apply_cleanup_message(
+                            &s,
+                            verbose_level,
+                            cp.as_ref(),
+                            commit_cleanup_mode,
+                        );
                         raw_message = None;
                     }
                     Err(_) => {
@@ -2070,10 +2126,11 @@ pub(crate) fn launch_commit_editor(repo: &Repository, path: &Path) -> Result<()>
     Ok(())
 }
 
-/// Post-editor cleanup matching Git `strbuf_stripspace` with `comment_prefix = "#"` (default
-/// `cleanup=strip`): skip `#` lines, trim trailing whitespace per line, collapse runs of empty
-/// lines to a single blank between paragraphs, trim leading/trailing blank lines.
-pub(crate) fn cleanup_edited_commit_message(message: &str) -> String {
+/// Post-editor cleanup matching Git `strbuf_stripspace` with `comment_prefix` (from
+/// `core.commentChar` / `core.commentString`, default `#`): skip comment-prefixed lines, trim
+/// trailing whitespace per line, collapse runs of empty lines to a single blank between paragraphs,
+/// trim leading/trailing blank lines.
+pub(crate) fn cleanup_edited_commit_message(message: &str, comment_prefix: &str) -> String {
     fn line_cleanup(line: &str) -> usize {
         let mut len = line.len();
         while len > 0 {
@@ -2098,7 +2155,7 @@ pub(crate) fn cleanup_edited_commit_message(message: &str) -> String {
         };
         i += advance;
 
-        if line_with_nl.starts_with('#') {
+        if line_with_nl.starts_with(comment_prefix) {
             continue;
         }
         let content_len = line_cleanup(line_with_nl);
@@ -2140,14 +2197,29 @@ fn rest_is_empty_signedoff_only(s: &str, start: usize) -> bool {
     true
 }
 
-fn template_untouched(message: &str, template_path: &Path) -> bool {
+fn template_untouched(
+    message: &str,
+    template_path: &Path,
+    comment_prefix: &str,
+    cleanup_mode: CommitMsgCleanupMode,
+) -> bool {
     let Ok(tmpl_raw) = fs::read_to_string(template_path) else {
         return false;
     };
-    // Git runs `cleanup_message` before `template_untouched`, so `#` lines are stripped from
-    // both the editor buffer and the template file content for this comparison.
-    let tmpl = cleanup_edited_commit_message(&tmpl_raw);
-    let msg = cleanup_edited_commit_message(message);
+    let tmpl = match cleanup_mode {
+        CommitMsgCleanupMode::None => tmpl_raw,
+        CommitMsgCleanupMode::All => cleanup_edited_commit_message(&tmpl_raw, comment_prefix),
+        CommitMsgCleanupMode::Space | CommitMsgCleanupMode::Scissors => {
+            git_vertical_stripspace(&tmpl_raw)
+        }
+    };
+    let msg = match cleanup_mode {
+        CommitMsgCleanupMode::None => message.to_string(),
+        CommitMsgCleanupMode::All => cleanup_edited_commit_message(message, comment_prefix),
+        CommitMsgCleanupMode::Space | CommitMsgCleanupMode::Scissors => {
+            git_vertical_stripspace(message)
+        }
+    };
     let after_prefix = msg.strip_prefix(&tmpl).unwrap_or(msg.as_str());
     rest_is_empty_signedoff_only(msg.as_str(), msg.len().saturating_sub(after_prefix.len()))
 }
@@ -2178,6 +2250,304 @@ fn git_binary_for_status() -> PathBuf {
     PathBuf::from("git")
 }
 
+/// Full `core.commentChar` / `core.commentString` prefix (Git may use multi-character prefixes).
+pub(crate) fn comment_line_prefix_full(config: &ConfigSet) -> Cow<'_, str> {
+    let raw = config
+        .get("core.commentchar")
+        .or_else(|| config.get("core.commentChar"))
+        .or_else(|| config.get("core.commentstring"))
+        .or_else(|| config.get("core.commentString"));
+    let Some(s) = raw else {
+        return Cow::Borrowed("#");
+    };
+    let t = s.trim();
+    if t.is_empty() || t.eq_ignore_ascii_case("auto") {
+        Cow::Borrowed("#")
+    } else {
+        Cow::Owned(t.to_string())
+    }
+}
+
+/// Git `commit.verbose`: bool or integer; `-1` when unset (inherit default 0).
+fn config_commit_verbose_raw(config: &ConfigSet) -> i64 {
+    let Some(v) = config.get("commit.verbose") else {
+        return -1;
+    };
+    let t = v.trim();
+    let lower = t.to_ascii_lowercase();
+    if matches!(lower.as_str(), "true" | "yes" | "on" | "1" | "") {
+        return 1;
+    }
+    if matches!(lower.as_str(), "false" | "no" | "off" | "0") {
+        return 0;
+    }
+    t.parse::<i64>().unwrap_or(0)
+}
+
+/// Effective verbosity level after argv (`GIT_GRIT_INTERNAL_COMMIT_VERBOSE`) and `commit.verbose`.
+fn resolve_commit_verbose_level(args: &Args, config: &ConfigSet) -> i64 {
+    let cfg_v = config_commit_verbose_raw(config);
+    let scanned = std::env::var(GIT_GRIT_COMMIT_VERBOSE_ENV)
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok());
+    let _ = std::env::remove_var(GIT_GRIT_COMMIT_VERBOSE_ENV);
+    let clap_v = u32::from(args.verbose);
+    let cli_count = scanned.unwrap_or(clap_v);
+    if scanned.is_some() {
+        return i64::from(cli_count);
+    }
+    if clap_v > 0 {
+        return i64::from(clap_v);
+    }
+    if cfg_v >= 0 {
+        cfg_v
+    } else {
+        0
+    }
+}
+
+/// Git `get_cleanup_mode` / `cleanup_message` modes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CommitMsgCleanupMode {
+    None,
+    Space,
+    All,
+    Scissors,
+}
+
+fn resolve_commit_cleanup_mode(
+    args: &Args,
+    config: &ConfigSet,
+    use_editor: bool,
+) -> CommitMsgCleanupMode {
+    let cleanup_cfg = config.get("commit.cleanup");
+    let cleanup = args.cleanup.as_deref().or(cleanup_cfg.as_deref());
+    match cleanup.map(|s| s.trim()) {
+        None | Some("default") => {
+            if use_editor {
+                CommitMsgCleanupMode::All
+            } else {
+                CommitMsgCleanupMode::Space
+            }
+        }
+        Some("verbatim") => CommitMsgCleanupMode::None,
+        Some("whitespace") => CommitMsgCleanupMode::Space,
+        Some("strip") => CommitMsgCleanupMode::All,
+        Some("scissors") => {
+            if use_editor {
+                CommitMsgCleanupMode::Scissors
+            } else {
+                CommitMsgCleanupMode::Space
+            }
+        }
+        Some(_) => {
+            if use_editor {
+                CommitMsgCleanupMode::All
+            } else {
+                CommitMsgCleanupMode::Space
+            }
+        }
+    }
+}
+
+/// Match Git `cleanup_message`: truncate before scissors when `verbose` or `scissors` mode; then
+/// `strbuf_stripspace` with comment prefix only for `All`.
+fn apply_cleanup_message(
+    message: &str,
+    verbose_level: i64,
+    comment_prefix: &str,
+    mode: CommitMsgCleanupMode,
+) -> String {
+    let truncate = verbose_level > 0 || mode == CommitMsgCleanupMode::Scissors;
+    let truncated = if truncate {
+        truncate_at_verbose_cutoff(message, comment_prefix)
+    } else {
+        message.to_string()
+    };
+    match mode {
+        CommitMsgCleanupMode::None => truncated,
+        CommitMsgCleanupMode::All => cleanup_edited_commit_message(&truncated, comment_prefix),
+        CommitMsgCleanupMode::Space | CommitMsgCleanupMode::Scissors => {
+            git_vertical_stripspace(&truncated)
+        }
+    }
+}
+
+/// Locate end of user message before the scissors line (Git `wt_status_locate_end`).
+fn wt_status_locate_end(message: &str, comment_prefix: &str) -> usize {
+    let cut = GIT_COMMIT_CUT_LINE;
+    let lead = format!("{comment_prefix} {cut}");
+    if message.starts_with(&lead) {
+        return 0;
+    }
+    let needle = format!("\n{comment_prefix} {cut}");
+    if let Some(pos) = message.find(&needle) {
+        return pos.saturating_add(1);
+    }
+    message.len()
+}
+
+fn truncate_at_verbose_cutoff(message: &str, comment_prefix: &str) -> String {
+    let end = wt_status_locate_end(message, comment_prefix);
+    message.get(..end).unwrap_or("").to_string()
+}
+
+fn diff_mnemonic_prefix(config: &ConfigSet) -> bool {
+    config.get("diff.mnemonicprefix").is_some_and(|v| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "true" | "yes" | "on" | "1" | ""
+        )
+    })
+}
+
+fn append_commented_line(buf: &mut String, comment_prefix: &str, body: &str) {
+    buf.push_str(comment_prefix);
+    if !body.starts_with(['\n', '\t']) {
+        buf.push(' ');
+    }
+    buf.push_str(body);
+    if !body.ends_with('\n') {
+        buf.push('\n');
+    }
+}
+
+fn append_verbose_cut_line(buf: &mut String, comment_prefix: &str) {
+    let explanation =
+        "Do not modify or remove the line above.\nEverything below it will be ignored.\n";
+    append_commented_line(
+        buf,
+        comment_prefix,
+        GIT_COMMIT_CUT_LINE.trim_end_matches('\n'),
+    );
+    for line in explanation.split_inclusive('\n') {
+        let line = line.strip_suffix('\n').unwrap_or(line);
+        if line.is_empty() {
+            continue;
+        }
+        append_commented_line(buf, comment_prefix, line);
+    }
+}
+
+/// Append unified diffs to the commit message template (Git `wt_longstatus_print_verbose`).
+fn append_commit_verbose_diffs(
+    args: &Args,
+    repo: &Repository,
+    config: &ConfigSet,
+    head: &HeadState,
+    staged: &[DiffEntry],
+    unstaged: &[DiffEntry],
+    verbose_level: i64,
+    buf: &mut String,
+) -> Result<()> {
+    if verbose_level <= 0 {
+        return Ok(());
+    }
+    let Some(wt) = repo.work_tree.as_deref() else {
+        return Ok(());
+    };
+    let committable = !staged.is_empty();
+    let worktree_dirty = !unstaged.is_empty();
+    let mnemonic = diff_mnemonic_prefix(config);
+    let comment = comment_line_prefix_full(config).into_owned();
+    let index_file = resolved_index_path(repo);
+
+    append_verbose_cut_line(buf, &comment);
+
+    let (a1, b1) = if verbose_level > 1 && committable {
+        ("c/", "i/")
+    } else if mnemonic {
+        ("c/", "i/")
+    } else {
+        ("a/", "b/")
+    };
+
+    if verbose_level > 1 && committable {
+        buf.push('\n');
+        append_commented_line(buf, &comment, "Changes to be committed:");
+    }
+
+    // Match Git `wt_longstatus_print_verbose`: base tree is `HEAD^` when amending (index vs parent),
+    // otherwise `HEAD`. Root amend uses the empty tree.
+    let cached_base = if args.amend {
+        match head.oid() {
+            Some(oid) => {
+                let obj = repo.odb.read(oid)?;
+                let c = grit_lib::objects::parse_commit(&obj.data)?;
+                if c.parents.is_empty() {
+                    Cow::Borrowed("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
+                } else {
+                    Cow::Owned(format!("{}^", oid.to_hex()))
+                }
+            }
+            None => Cow::Borrowed("HEAD"),
+        }
+    } else {
+        Cow::Borrowed("HEAD")
+    };
+
+    let out1 = Command::new(git_binary_for_status())
+        .current_dir(wt)
+        .env("GIT_DIR", &repo.git_dir)
+        .env("GIT_INDEX_FILE", &index_file)
+        .args([
+            "-c",
+            "diff.noprefix=false",
+            "-c",
+            "diff.mnemonicprefix=false",
+            "diff",
+            "--cached",
+            cached_base.as_ref(),
+            "-p",
+            "--no-color",
+            "--src-prefix",
+            a1,
+            "--dst-prefix",
+            b1,
+        ])
+        .output()
+        .context("run git diff --cached for commit template")?;
+    if out1.status.success() {
+        let patch = String::from_utf8_lossy(&out1.stdout);
+        buf.push_str(&patch);
+    }
+
+    if verbose_level > 1 && worktree_dirty {
+        buf.push('\n');
+        append_commented_line(
+            buf,
+            &comment,
+            "--------------------------------------------------",
+        );
+        append_commented_line(buf, &comment, "Changes not staged for commit:");
+        let out2 = Command::new(git_binary_for_status())
+            .current_dir(wt)
+            .env("GIT_DIR", &repo.git_dir)
+            .env("GIT_INDEX_FILE", &index_file)
+            .args([
+                "-c",
+                "diff.noprefix=false",
+                "-c",
+                "diff.mnemonicprefix=false",
+                "diff",
+                "-p",
+                "--no-color",
+                "--src-prefix",
+                "i/",
+                "--dst-prefix",
+                "w/",
+            ])
+            .output()
+            .context("run git diff for commit template")?;
+        if out2.status.success() {
+            let patch = String::from_utf8_lossy(&out2.stdout);
+            buf.push_str(&patch);
+        }
+    }
+
+    Ok(())
+}
+
 fn commit_template_status_append(
     args: &Args,
     repo: &Repository,
@@ -2185,34 +2555,41 @@ fn commit_template_status_append(
     config: &ConfigSet,
     buf: &mut String,
 ) -> Result<()> {
+    let cp = comment_line_prefix_full(config);
+    let p = cp.as_ref();
     buf.push('\n');
     if args.allow_empty_message {
-        buf.push_str(
-            "# Please enter the commit message for your changes. Lines starting\n\
-             # with '#' will be ignored.\n",
+        append_commented_line(
+            buf,
+            p,
+            "Please enter the commit message for your changes. Lines starting",
         );
+        append_commented_line(buf, p, &format!("with '{p}' will be ignored."));
     } else {
-        buf.push_str(
-            "# Please enter the commit message for your changes. Lines starting\n\
-             # with '#' will be ignored, and an empty message aborts the commit.\n",
+        append_commented_line(
+            buf,
+            p,
+            "Please enter the commit message for your changes. Lines starting",
+        );
+        append_commented_line(
+            buf,
+            p,
+            &format!("with '{p}' will be ignored, and an empty message aborts the commit."),
         );
     }
     if args.allow_empty_message {
-        buf.push_str("#\n");
+        buf.push_str(p);
+        buf.push('\n');
     }
     let author = resolve_author(args, config, repo, OffsetDateTime::now_utc())?;
-    buf.push_str("# Author:    ");
     let author_display = author
         .split_once('>')
         .map(|(a, _)| format!("{}>", a.trim()))
         .unwrap_or_else(|| author.clone());
-    buf.push_str(&author_display);
-    buf.push('\n');
-    buf.push_str("#\n");
-    buf.push_str("# On branch ");
-    buf.push_str(&branch_display_name(head));
-    buf.push('\n');
-    buf.push_str("# Changes to be committed:\n");
+    append_commented_line(buf, p, &format!("Author:    {author_display}"));
+    append_commented_line(buf, p, "");
+    append_commented_line(buf, p, &format!("On branch {}", branch_display_name(head)));
+    append_commented_line(buf, p, "Changes to be committed:");
 
     if let Some(wt) = repo.work_tree.as_deref() {
         let index_file = resolved_index_path(repo);
@@ -2255,13 +2632,17 @@ fn commit_template_status_append(
                                 Some('T') => "typechange",
                                 _ => "changed",
                             };
-                            let p = parts.get(1).copied().unwrap_or("");
-                            (lbl, p.to_string())
+                            let path_cell = parts.get(1).copied().unwrap_or("");
+                            (lbl, path_cell.to_string())
                         };
-                    buf.push_str(&format!("#\t{label}:   {display_path}\n"));
+                    buf.push_str(p);
+                    buf.push('\t');
+                    buf.push_str(&format!("{label}:   {display_path}\n"));
                 }
-                buf.push_str("#\n");
-                buf.push_str("# Untracked files not listed\n");
+                buf.push_str(p);
+                buf.push('\n');
+                buf.push_str(p);
+                buf.push_str(" Untracked files not listed\n");
                 return Ok(());
             }
         }
@@ -2283,10 +2664,14 @@ fn commit_template_status_append(
     let staged = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
     for e in &staged {
         let label = status_label_staged(e.status);
-        buf.push_str(&format!("#\t{label}:   {}\n", e.display_path()));
+        buf.push_str(p);
+        buf.push('\t');
+        buf.push_str(&format!("{label}:   {}\n", e.display_path()));
     }
-    buf.push_str("#\n");
-    buf.push_str("# Untracked files not listed\n");
+    buf.push_str(p);
+    buf.push('\n');
+    buf.push_str(p);
+    buf.push_str(" Untracked files not listed\n");
     Ok(())
 }
 
@@ -2298,7 +2683,14 @@ fn prepare_commit_message(
     template_path: Option<&Path>,
     use_editor: bool,
     head: &HeadState,
+    staged: &[DiffEntry],
+    unstaged: &[DiffEntry],
+    verbose_level: i64,
 ) -> Result<MessageResult> {
+    let comment_owned = comment_line_prefix_full(config);
+    let comment_prefix = comment_owned.as_ref();
+    let cleanup_mode = resolve_commit_cleanup_mode(args, config, use_editor);
+
     if let Some(sq) = args.squash.as_deref() {
         let reuse = args
             .reuse_message
@@ -2322,10 +2714,23 @@ fn prepare_commit_message(
                 if !args.no_status {
                     commit_template_status_append(args, repo, head, config, &mut file_body)?;
                 }
+                if verbose_level > 0 {
+                    append_commit_verbose_diffs(
+                        args,
+                        repo,
+                        config,
+                        head,
+                        staged,
+                        unstaged,
+                        verbose_level,
+                        &mut file_body,
+                    )?;
+                }
                 fs::write(&edit_path, &file_body)?;
                 launch_commit_editor(repo, &edit_path)?;
                 let edited = fs::read_to_string(&edit_path)?;
-                let cleaned = cleanup_edited_commit_message(&edited);
+                let cleaned =
+                    apply_cleanup_message(&edited, verbose_level, comment_prefix, cleanup_mode);
                 return Ok(MessageResult {
                     message: ensure_trailing_newline(&cleaned),
                     raw_bytes: None,
@@ -2348,10 +2753,23 @@ fn prepare_commit_message(
             if !args.no_status {
                 commit_template_status_append(args, repo, head, config, &mut file_body)?;
             }
+            if verbose_level > 0 {
+                append_commit_verbose_diffs(
+                    args,
+                    repo,
+                    config,
+                    head,
+                    staged,
+                    unstaged,
+                    verbose_level,
+                    &mut file_body,
+                )?;
+            }
             fs::write(&edit_path, &file_body)?;
             launch_commit_editor(repo, &edit_path)?;
             let edited = fs::read_to_string(&edit_path)?;
-            let cleaned = cleanup_edited_commit_message(&edited);
+            let cleaned =
+                apply_cleanup_message(&edited, verbose_level, comment_prefix, cleanup_mode);
             return Ok(MessageResult {
                 message: ensure_trailing_newline(&cleaned),
                 raw_bytes: None,
@@ -2368,7 +2786,8 @@ fn prepare_commit_message(
 
     if !args.message.is_empty() && fixup.map(|f| matches!(f.mode, FixupMode::Fixup)) != Some(true) {
         let msg = args.message.join("\n\n");
-        let cleaned = cleanup_edited_commit_message(&msg);
+        let no_editor_cleanup = resolve_commit_cleanup_mode(args, config, false);
+        let cleaned = apply_cleanup_message(&msg, 0, comment_prefix, no_editor_cleanup);
         return Ok(MessageResult {
             message: ensure_trailing_newline(&cleaned),
             raw_bytes: None,
@@ -2391,10 +2810,23 @@ fn prepare_commit_message(
             if !args.no_status {
                 commit_template_status_append(args, repo, head, config, &mut file_body)?;
             }
+            if verbose_level > 0 {
+                append_commit_verbose_diffs(
+                    args,
+                    repo,
+                    config,
+                    head,
+                    staged,
+                    unstaged,
+                    verbose_level,
+                    &mut file_body,
+                )?;
+            }
             fs::write(&edit_path, &file_body)?;
             launch_commit_editor(repo, &edit_path)?;
             let edited = fs::read_to_string(&edit_path)?;
-            let cleaned = cleanup_edited_commit_message(&edited);
+            let cleaned =
+                apply_cleanup_message(&edited, verbose_level, comment_prefix, cleanup_mode);
             return Ok(MessageResult {
                 message: ensure_trailing_newline(&cleaned),
                 raw_bytes: None,
@@ -2438,10 +2870,22 @@ fn prepare_commit_message(
         if !args.no_status {
             commit_template_status_append(args, repo, head, config, &mut file_body)?;
         }
+        if verbose_level > 0 {
+            append_commit_verbose_diffs(
+                args,
+                repo,
+                config,
+                head,
+                staged,
+                unstaged,
+                verbose_level,
+                &mut file_body,
+            )?;
+        }
         fs::write(&edit_path, &file_body)?;
         launch_commit_editor(repo, &edit_path)?;
         let edited = fs::read_to_string(&edit_path)?;
-        let cleaned = cleanup_edited_commit_message(&edited);
+        let cleaned = apply_cleanup_message(&edited, verbose_level, comment_prefix, cleanup_mode);
         return Ok(MessageResult {
             message: ensure_trailing_newline(&cleaned),
             raw_bytes: None,
@@ -2455,7 +2899,7 @@ fn prepare_commit_message(
             .as_deref()
             .is_some_and(|m| m.eq_ignore_ascii_case("strip"))
         {
-            cleanup_edited_commit_message(&msg)
+            cleanup_edited_commit_message(&msg, comment_prefix)
         } else {
             msg
         };

@@ -2714,16 +2714,17 @@ fn preprocess_status_argv(rest: &[String]) -> Vec<String> {
 /// - `commit -q -m <msg>` (and similar) → `-m <msg> -q` so the message is not parsed as a pathspec
 /// - `commit -m <msg> <paths>...` → `-m <msg> -- <paths>...`
 fn preprocess_commit_argv(rest: &[String]) -> Vec<String> {
+    let rest = crate::commands::commit::preprocess_commit_for_parse(rest);
     const M_STYLE: [&str; 2] = ["-m", "--message"];
     let Some(i) = rest.iter().position(|a| M_STYLE.contains(&a.as_str())) else {
-        return rest.to_vec();
+        return rest;
     };
     if i + 1 >= rest.len() {
-        return rest.to_vec();
+        return rest;
     }
     let flag = rest[i].as_str();
     if !matches!(flag, "-m" | "--message") {
-        return rest.to_vec();
+        return rest;
     }
 
     let before = &rest[..i];
