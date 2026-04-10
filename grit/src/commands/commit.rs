@@ -13,6 +13,7 @@ use grit_lib::diff::{
 use grit_lib::error::Error;
 use grit_lib::git_date::parse::parse_date;
 use grit_lib::hooks::{run_hook, HookResult};
+use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{Index, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::reflog::read_reflog;
@@ -758,7 +759,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let unstaged_raw = if dry_run_pathspec_status {
         Vec::new()
     } else if let Some(wt) = work_tree {
-        diff_index_to_worktree(&repo.odb, &index, wt, false)?
+        diff_index_to_worktree(&repo.odb, &index, wt, false, false)?
     } else {
         Vec::new()
     };
@@ -779,7 +780,7 @@ pub fn run(mut args: Args) -> Result<()> {
     staged.retain(|e| !unmerged_keys.contains(e.path()));
     unstaged.retain(|e| !unmerged_keys.contains(e.path()));
     let untracked = if let Some(wt) = work_tree {
-        find_untracked_files(wt, &index)?
+        find_untracked_files(&repo, wt, &index)?
     } else {
         Vec::new()
     };
@@ -1630,6 +1631,15 @@ fn print_dry_run(
         )?;
     }
 
+    if staged_show.is_empty()
+        && unstaged_show.is_empty()
+        && all_untracked.is_empty()
+        && unmerged.is_empty()
+        && !merge_active
+    {
+        writeln!(out, "nothing to commit, working tree clean")?;
+    }
+
     Ok(())
 }
 
@@ -1654,23 +1664,47 @@ fn status_label_unstaged(status: DiffStatus) -> &'static str {
 }
 
 /// Find untracked files in the working tree.
-fn find_untracked_files(work_tree: &Path, index: &Index) -> Result<Vec<String>> {
+///
+/// Respects `.gitignore` / exclude rules so `commit --dry-run` matches Git when test output is
+/// redirected to a path listed in `.gitignore` (t7506).
+fn find_untracked_files(repo: &Repository, work_tree: &Path, index: &Index) -> Result<Vec<String>> {
     let tracked: BTreeSet<String> = index
         .entries
         .iter()
         .map(|ie| String::from_utf8_lossy(&ie.path).to_string())
         .collect();
 
+    let gitlinks: BTreeSet<String> = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0 && e.mode == MODE_GITLINK)
+        .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+        .collect();
+
+    let mut matcher = IgnoreMatcher::from_repository(repo)?;
     let mut untracked = Vec::new();
-    walk_untracked(work_tree, work_tree, &tracked, &mut untracked)?;
+    walk_untracked(
+        repo,
+        work_tree,
+        work_tree,
+        index,
+        &tracked,
+        &gitlinks,
+        &mut matcher,
+        &mut untracked,
+    )?;
     untracked.sort();
     Ok(untracked)
 }
 
 fn walk_untracked(
+    repo: &Repository,
     dir: &Path,
     work_tree: &Path,
+    index: &Index,
     tracked: &BTreeSet<String>,
+    gitlinks: &BTreeSet<String>,
+    matcher: &mut IgnoreMatcher,
     out: &mut Vec<String>,
 ) -> Result<()> {
     let entries = match fs::read_dir(dir) {
@@ -1689,16 +1723,29 @@ fn walk_untracked(
             .strip_prefix(work_tree)
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| name);
-        if path.is_dir() {
+        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+        if is_dir && gitlinks.contains(&rel) {
+            // Submodule checkout: only the gitlink path is tracked in the superproject index.
+            continue;
+        }
+        if is_dir {
             let prefix = format!("{rel}/");
             let has_tracked = tracked.iter().any(|t| t.starts_with(&prefix));
             if has_tracked {
-                walk_untracked(&path, work_tree, tracked, out)?;
+                walk_untracked(
+                    repo, &path, work_tree, index, tracked, gitlinks, matcher, out,
+                )?;
             } else {
-                out.push(format!("{rel}/"));
+                let (ignored, _) = matcher.check_path(repo, Some(index), &rel, true)?;
+                if !ignored {
+                    out.push(format!("{rel}/"));
+                }
             }
         } else if !tracked.contains(&rel) {
-            out.push(rel);
+            let (ignored, _) = matcher.check_path(repo, Some(index), &rel, false)?;
+            if !ignored {
+                out.push(rel);
+            }
         }
     }
     Ok(())
@@ -1847,7 +1894,7 @@ fn run_commit_patch_mode(
         println!("No changes.");
         let config = ConfigSet::load(Some(&repo.git_dir), true)?;
         let staged = diff_index_to_tree(&repo.odb, &disk_index, parent_tree_oid, false)?;
-        let unstaged_raw = diff_index_to_worktree(&repo.odb, &disk_index, work_tree, false)?;
+        let unstaged_raw = diff_index_to_worktree(&repo.odb, &disk_index, work_tree, false, false)?;
         let (rename_threshold, rename_copies) = commit_rename_settings(&config);
         let unstaged = if let Some(th) = rename_threshold {
             status_apply_rename_copy_detection(
@@ -1860,7 +1907,7 @@ fn run_commit_patch_mode(
         } else {
             unstaged_raw
         };
-        let untracked = find_untracked_files(work_tree, &disk_index)?;
+        let untracked = find_untracked_files(repo, work_tree, &disk_index)?;
         let unmerged_full = crate::commands::status::unmerged_paths_and_mask(&disk_index);
         let in_progress = detect_in_progress(&repo.git_dir);
         print_dry_run(
@@ -2047,7 +2094,7 @@ fn run_commit_patch_mode(
     if !any_hunk_staged {
         let config = ConfigSet::load(Some(&repo.git_dir), true)?;
         let staged = diff_index_to_tree(&repo.odb, &disk_index, parent_tree_oid, false)?;
-        let unstaged_raw = diff_index_to_worktree(&repo.odb, &disk_index, work_tree, false)?;
+        let unstaged_raw = diff_index_to_worktree(&repo.odb, &disk_index, work_tree, false, false)?;
         let (rename_threshold, rename_copies) = commit_rename_settings(&config);
         let unstaged = if let Some(th) = rename_threshold {
             status_apply_rename_copy_detection(
@@ -2060,7 +2107,7 @@ fn run_commit_patch_mode(
         } else {
             unstaged_raw
         };
-        let untracked = find_untracked_files(work_tree, &disk_index)?;
+        let untracked = find_untracked_files(repo, work_tree, &disk_index)?;
         let unmerged_full = crate::commands::status::unmerged_paths_and_mask(&disk_index);
         let in_progress = detect_in_progress(&repo.git_dir);
         print_dry_run(
@@ -2323,6 +2370,14 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
             if idx_mode == 0o160000 {
                 // `.git` may be a gitfile (submodule layout); resolve via the same helper as `git add`.
                 if let Some(oid) = grit_lib::diff::read_submodule_head_oid(&abs_path) {
+                    if index
+                        .entries
+                        .iter()
+                        .find(|e| e.path == *raw_path)
+                        .is_some_and(|e| e.oid == oid && e.mode == 0o160000)
+                    {
+                        continue;
+                    }
                     use std::os::unix::fs::MetadataExt;
                     let meta = fs::symlink_metadata(&abs_path)?;
                     let entry = grit_lib::index::IndexEntry {

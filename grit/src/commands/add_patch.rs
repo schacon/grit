@@ -61,7 +61,7 @@ pub(crate) fn run_add_patch(
     let index_path = resolved_env_index_path(repo);
     let mut index = repo.load_index_at(&index_path).context("loading index")?;
 
-    let mut entries = diff_index_to_worktree(&repo.odb, &index, work_tree, false)?;
+    let mut entries = diff_index_to_worktree(&repo.odb, &index, work_tree, false, false)?;
     entries.retain(|e| {
         if e.status == DiffStatus::Unmerged {
             return false;

@@ -2084,7 +2084,8 @@ fn worktree_matches_head(repo: &Repository, git_dir: &Path) -> Result<bool> {
         parse_commit(&obj.data).ok().map(|c| c.tree)
     });
     let staged = grit_lib::diff::diff_index_to_tree(&repo.odb, &idx, head_tree.as_ref(), true)?;
-    let unstaged = grit_lib::diff::diff_index_to_worktree(&repo.odb, &idx, wt, true)?;
+    let mut unstaged = grit_lib::diff::diff_index_to_worktree(&repo.odb, &idx, wt, false, false)?;
+    unstaged.retain(|e| e.old_mode != "160000" && e.new_mode != "160000");
     Ok(staged.is_empty() && unstaged.is_empty())
 }
 
@@ -2312,8 +2313,7 @@ fn do_rebase(
             .is_some_and(|v| v.eq_ignore_ascii_case("all"));
         let mut staged =
             diff_index_to_tree(&repo.odb, &idx, head_tree.as_ref(), ignore_submodules_all)?;
-        let mut unstaged =
-            diff_index_to_worktree(&repo.odb, &idx, work_tree, ignore_submodules_all)?;
+        let mut unstaged = diff_index_to_worktree(&repo.odb, &idx, work_tree, false, false)?;
         if ignore_submodules_all {
             staged.retain(|e| e.old_mode != "160000" && e.new_mode != "160000");
             unstaged.retain(|e| e.old_mode != "160000" && e.new_mode != "160000");

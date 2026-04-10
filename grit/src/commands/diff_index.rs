@@ -1646,7 +1646,7 @@ fn submodule_has_unstaged_changes(super_wt: &Path, path: &str) -> bool {
     let Ok(idx) = sub_repo.load_index() else {
         return false;
     };
-    grit_lib::diff::diff_index_to_worktree(&sub_repo.odb, &idx, &sub, false)
+    grit_lib::diff::diff_index_to_worktree(&sub_repo.odb, &idx, &sub, false, false)
         .map(|v| !v.is_empty())
         .unwrap_or(false)
 }

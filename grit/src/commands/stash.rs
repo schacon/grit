@@ -787,7 +787,7 @@ fn do_push(opts: PushOpts) -> Result<()> {
     // Check if there are staged changes (index vs HEAD tree)
     let staged = diff_index_to_tree(&repo.odb, &index, Some(&head_commit.tree), false)?;
     // Check if there are unstaged changes (worktree vs index)
-    let unstaged = diff_index_to_worktree(&repo.odb, &index, &work_tree, false)?;
+    let unstaged = diff_index_to_worktree(&repo.odb, &index, &work_tree, false, false)?;
 
     if stash_is_intent_to_add_only(&index, &staged, &unstaged) {
         bail!("cannot save an intent to add only commit");
@@ -975,7 +975,7 @@ fn do_stash_patch_push(
         .collect();
 
     let staged = diff_index_to_tree(&repo.odb, index, Some(&head_commit.tree), false)?;
-    let unstaged = diff_index_to_worktree(&repo.odb, index, work_tree, false)?;
+    let unstaged = diff_index_to_worktree(&repo.odb, index, work_tree, false, false)?;
 
     let mut candidate_paths: BTreeSet<String> = BTreeSet::new();
     for e in &staged {
@@ -1524,7 +1524,7 @@ fn do_push_pathspec(
 
     // Get all changes
     let staged = diff_index_to_tree(&repo.odb, index, Some(&head_commit.tree), false)?;
-    let unstaged = diff_index_to_worktree(&repo.odb, index, work_tree, false)?;
+    let unstaged = diff_index_to_worktree(&repo.odb, index, work_tree, false, false)?;
 
     // Filter by pathspec
     let matching_staged: Vec<_> = staged
@@ -1894,7 +1894,7 @@ fn do_create(message: Option<String>) -> Result<()> {
     let head_obj = repo.odb.read(head_oid)?;
     let head_commit = parse_commit(&head_obj.data)?;
     let staged = diff_index_to_tree(&repo.odb, &index, Some(&head_commit.tree), false)?;
-    let unstaged = diff_index_to_worktree(&repo.odb, &index, &work_tree, false)?;
+    let unstaged = diff_index_to_worktree(&repo.odb, &index, &work_tree, false, false)?;
 
     if staged.is_empty() && unstaged.is_empty() {
         // No changes — exit silently (git stash create does this)
@@ -3306,7 +3306,7 @@ pub fn autostash_for_rebase(repo: &Repository) -> Result<Option<ObjectId>> {
     let head_obj = repo.odb.read(&head_oid)?;
     let head_commit = parse_commit(&head_obj.data)?;
     let staged = diff_index_to_tree(&repo.odb, &index, Some(&head_commit.tree), false)?;
-    let unstaged = diff_index_to_worktree(&repo.odb, &index, work_tree, false)?;
+    let unstaged = diff_index_to_worktree(&repo.odb, &index, work_tree, false, false)?;
 
     if staged.is_empty() && unstaged.is_empty() {
         return Ok(None);

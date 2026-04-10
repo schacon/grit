@@ -558,19 +558,22 @@ pub fn diff_index_to_tree(
 /// - `odb` — object database (for hashing worktree files).
 /// - `index` — the current index.
 /// - `work_tree` — path to the working tree root.
+/// - `ignore_submodule_untracked` — when true, gitlink entries are not dirty solely from untracked
+///   files inside the submodule (matches `git status -uno`).
+/// - `simplify_gitlinks` — when true, nested gitlink entries only compare the submodule checkout
+///   HEAD to the recorded OID (ignore dirty work trees inside nested submodules). Used when
+///   computing `submodule_porcelain_flags` so untracked files under a nested submodule do not set
+///   the parent submodule's `modified` bit (Git `DIRTY_SUBMODULE_MODIFIED`; t7506).
 ///
 /// # Errors
 ///
 /// Returns errors from I/O or hashing.
-///
-/// When `ignore_submodules` is true, gitlink (`160000`) paths are skipped so a dirty submodule
-/// worktree does not count as unstaged changes (Git `has_unstaged_changes` with
-/// `ignore_submodules`).
 pub fn diff_index_to_worktree(
     odb: &Odb,
     index: &Index,
     work_tree: &Path,
-    ignore_submodules: bool,
+    ignore_submodule_untracked: bool,
+    simplify_gitlinks: bool,
 ) -> Result<Vec<DiffEntry>> {
     use crate::config::ConfigSet;
     use crate::crlf;
@@ -611,21 +614,46 @@ pub fn diff_index_to_worktree(
         let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");
         let is_intent_to_add = ie.intent_to_add();
 
-        // Gitlink entries (submodules): compare checked-out HEAD to the recorded commit.
-        // An uninitialized path (no `.git` in the directory) is not dirty — same as Git.
+        // Gitlink entries (submodules): Git's `diff-index` reports `M` when the recorded
+        // commit differs from the submodule checkout **or** when the submodule work tree is
+        // dirty (staged/unstaged/untracked) even if HEAD still matches the gitlink. For the
+        // latter case the "new" OID column is the null OID (see `git diff-index` / t7506).
         if ie.mode == 0o160000 {
-            if ignore_submodules {
-                continue;
-            }
             let sub_dir = work_tree.join(path_str_ref);
             let sub_head_oid = read_submodule_head_oid(&sub_dir);
-            let matches_index = match sub_head_oid {
+            let ref_matches = match sub_head_oid {
                 Some(oid) => oid == ie.oid,
                 None => submodule_worktree_is_unpopulated_placeholder(&sub_dir),
             };
-            if !matches_index {
+            if simplify_gitlinks {
+                if !ref_matches {
+                    let path_owned = path_str_ref.to_owned();
+                    let new_oid = sub_head_oid.unwrap_or_else(zero_oid);
+                    result.push(DiffEntry {
+                        status: DiffStatus::Modified,
+                        old_path: Some(path_owned.clone()),
+                        new_path: Some(path_owned),
+                        old_mode: format_mode(ie.mode),
+                        new_mode: format_mode(ie.mode),
+                        old_oid: ie.oid,
+                        new_oid,
+                        score: None,
+                    });
+                }
+                continue;
+            }
+            let mut flags = submodule_porcelain_flags(work_tree, path_str_ref, ie.oid);
+            if ignore_submodule_untracked {
+                flags.untracked = false;
+            }
+            let inner_dirty = flags.modified || flags.untracked;
+            if !ref_matches || inner_dirty {
                 let path_owned = path_str_ref.to_owned();
-                let new_oid = sub_head_oid.unwrap_or_else(zero_oid);
+                let new_oid = if !ref_matches {
+                    sub_head_oid.unwrap_or_else(zero_oid)
+                } else {
+                    zero_oid()
+                };
                 result.push(DiffEntry {
                     status: DiffStatus::Modified,
                     old_path: Some(path_owned.clone()),
@@ -860,10 +888,13 @@ pub fn diff_index_to_worktree(
 ///
 /// Used by commands such as `git mv` to detect "dirty" paths under sparse checkout.
 /// Symlinks and submodules are compared in a Git-compatible way.
+///
+/// `ignore_submodule_untracked` mirrors [`diff_index_to_worktree`]'s same flag for gitlinks.
 pub fn worktree_differs_from_index_entry(
     odb: &Odb,
     work_tree: &Path,
     ie: &IndexEntry,
+    ignore_submodule_untracked: bool,
 ) -> Result<bool> {
     use crate::config::ConfigSet;
     use crate::crlf;
@@ -873,7 +904,15 @@ pub fn worktree_differs_from_index_entry(
 
     if ie.mode == 0o160000 {
         let sub_head_oid = read_submodule_head(&file_path);
-        return Ok(sub_head_oid.as_ref() != Some(&ie.oid));
+        let ref_matches = match sub_head_oid {
+            Some(oid) => oid == ie.oid,
+            None => submodule_worktree_is_unpopulated_placeholder(&file_path),
+        };
+        let mut flags = submodule_porcelain_flags(work_tree, path_str_ref, ie.oid);
+        if ignore_submodule_untracked {
+            flags.untracked = false;
+        }
+        return Ok(!ref_matches || flags.modified || flags.untracked);
     }
 
     let meta = match fs::symlink_metadata(&file_path) {
@@ -3008,7 +3047,7 @@ pub fn submodule_porcelain_flags(
         .filter(|e| e.stage() == 0)
         .map(|e| String::from_utf8_lossy(&e.path).into_owned())
         .collect();
-    let untracked = submodule_dir_has_untracked_inner(&sub_dir, &sub_dir, &tracked);
+    let untracked = submodule_dir_has_untracked_inner(&sub_dir, &sub_dir, &tracked, &sub_index);
 
     let objects_dir = sub_git_dir.join("objects");
     let odb = Odb::new(&objects_dir);
@@ -3033,11 +3072,29 @@ pub fn submodule_porcelain_flags(
         .unwrap_or(Ok(false));
     let staged_dirty = staged_dirty.unwrap_or(false);
 
-    let unstaged_dirty = diff_index_to_worktree(&odb, &sub_index, &sub_dir, false)
+    let unstaged_dirty = diff_index_to_worktree(&odb, &sub_index, &sub_dir, false, true)
         .map(|v| !v.is_empty())
         .unwrap_or(false);
 
-    let modified = staged_dirty || unstaged_dirty;
+    let mut modified = staged_dirty || unstaged_dirty;
+
+    // Nested submodule has its own index: OR `modified` from immediate gitlink children so a
+    // dirty nested checkout (e.g. staged `file` under `sub1/sub2`) marks the parent gitlink as
+    // modified in the superproject (t7506). Do **not** OR `untracked` — untracked-only inside a
+    // nested submodule must stay `S..U` on the parent, not `S.U` / `S.M.`.
+    for e in &sub_index.entries {
+        if e.stage() != 0 || e.mode != 0o160000 {
+            continue;
+        }
+        let child = String::from_utf8_lossy(&e.path).into_owned();
+        let full_rel = if rel_path.is_empty() {
+            child
+        } else {
+            format!("{rel_path}/{child}")
+        };
+        let nested = submodule_porcelain_flags(super_worktree, &full_rel, e.oid);
+        modified |= nested.modified;
+    }
 
     SubmodulePorcelainFlags {
         new_commits,
@@ -3050,6 +3107,7 @@ fn submodule_dir_has_untracked_inner(
     dir: &Path,
     root: &Path,
     tracked: &std::collections::BTreeSet<String>,
+    owning_index: &Index,
 ) -> bool {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
@@ -3071,7 +3129,27 @@ fn submodule_dir_has_untracked_inner(
 
         let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
         if is_dir {
-            if submodule_dir_has_untracked_inner(&path, root, tracked) {
+            let is_gitlink = owning_index
+                .get(rel.as_bytes(), 0)
+                .is_some_and(|e| e.mode == 0o160000);
+            if is_gitlink {
+                let Some(nested_git) = submodule_embedded_git_dir(&path) else {
+                    continue;
+                };
+                let nested_index_path = nested_git.join("index");
+                let Ok(nested_ix) = crate::index::Index::load(&nested_index_path) else {
+                    continue;
+                };
+                let nested_tracked: std::collections::BTreeSet<String> = nested_ix
+                    .entries
+                    .iter()
+                    .filter(|e| e.stage() == 0)
+                    .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+                    .collect();
+                if submodule_dir_has_untracked_inner(&path, &path, &nested_tracked, &nested_ix) {
+                    return true;
+                }
+            } else if submodule_dir_has_untracked_inner(&path, root, tracked, owning_index) {
                 return true;
             }
         } else if !tracked.contains(&rel) {

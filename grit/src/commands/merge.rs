@@ -2361,6 +2361,12 @@ fn bail_if_merge_would_overwrite_local_changes(
             {
                 continue;
             }
+            // After `checkout` away from a branch that had a submodule, Git may leave the
+            // populated work tree on disk (rmdir fails: directory not empty; t7506). The merge
+            // that re-introduces the gitlink must still proceed.
+            if new_entry.mode == 0o160000 && abs.is_dir() && abs.join(".git").exists() {
+                continue;
+            }
             overwrite_untracked.insert(rel);
         }
     }

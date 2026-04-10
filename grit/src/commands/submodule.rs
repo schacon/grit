@@ -540,6 +540,10 @@ pub struct UpdateArgs {
 
 #[derive(Debug, ClapArgs)]
 pub struct AddArgs {
+    /// Allow adding when the path exists but is not a git repository (remove and clone).
+    #[arg(short = 'f', long = "force")]
+    pub force: bool,
+
     /// Use the given name instead of defaulting to its path.
     #[arg(long)]
     pub name: Option<String>,
@@ -2089,14 +2093,22 @@ fn run_add(args: &AddArgs) -> Result<()> {
         // "Adding existing repo" (same as C git).
         let is_repo = sub_path.join(".git").exists();
         if !is_repo {
-            bail!("'{}' already exists and is not a git repository", path);
-        }
-        if !args.quiet {
+            if args.force {
+                fs::remove_dir_all(&sub_path).with_context(|| {
+                    format!(
+                        "could not remove existing path '{}' for submodule add --force",
+                        path
+                    )
+                })?;
+            } else {
+                bail!("'{}' already exists and is not a git repository", path);
+            }
+        } else if !args.quiet {
             eprintln!("Adding existing repo at '{}' to the index", path);
         }
 
         let dot_git = sub_path.join(".git");
-        if submodule_path_config_enabled(&store) && dot_git.is_dir() {
+        if sub_path.exists() && submodule_path_config_enabled(&store) && dot_git.is_dir() {
             let modules_dir = submodule_separate_git_dir(&repo, work_tree, &name, &path)?;
             if let Some(parent) = modules_dir.parent() {
                 fs::create_dir_all(parent)?;
@@ -2116,7 +2128,9 @@ fn run_add(args: &AddArgs) -> Result<()> {
             write_submodule_gitfile(&sub_path, &modules_dir).map_err(|e| anyhow::anyhow!("{e}"))?;
             set_separate_gitdir_worktree(&grit_bin, &modules_dir, &sub_path);
         }
-    } else {
+    }
+
+    if !sub_path.exists() {
         // Clone the submodule.
         let modules_dir = submodule_separate_git_dir(&repo, work_tree, &name, &path)?;
         if let Some(outer) = submodule_gitdir_outer_conflict(&modules_dir, submodule_name) {

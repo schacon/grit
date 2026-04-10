@@ -291,7 +291,7 @@ fn is_worktree_dirty(repo: &Repository) -> bool {
     if !staged.is_empty() {
         return true;
     }
-    diff_index_to_worktree(&repo.odb, &index, workdir, false)
+    diff_index_to_worktree(&repo.odb, &index, workdir, false, false)
         .map(|u| !u.is_empty())
         .unwrap_or(true)
 }

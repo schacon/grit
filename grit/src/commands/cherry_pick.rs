@@ -1107,7 +1107,7 @@ fn error_if_cherry_pick_would_clobber_worktree(
     }
 
     let index = repo.load_index()?;
-    let unstaged = diff_index_to_worktree(&repo.odb, &index, work_tree, false)?;
+    let unstaged = diff_index_to_worktree(&repo.odb, &index, work_tree, false, false)?;
     let unstaged_paths: BTreeSet<String> = unstaged.iter().map(|e| e.path().to_string()).collect();
     let overlap_u: BTreeSet<String> = unstaged_paths.intersection(&touched).cloned().collect();
     if !overlap_u.is_empty() {

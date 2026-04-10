@@ -43,8 +43,8 @@ use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::is_symmetric_diff;
 use grit_lib::rev_parse::{
-    abbreviate_object_id, resolve_revision, resolve_revision_as_commit, resolve_treeish_blob_at_path,
-    show_prefix, split_treeish_colon, TreeishBlobAtPath,
+    abbreviate_object_id, resolve_revision, resolve_revision_as_commit,
+    resolve_treeish_blob_at_path, show_prefix, split_treeish_colon, TreeishBlobAtPath,
 };
 use grit_lib::userdiff::matcher_for_path_parsed;
 use grit_lib::ws::{self, WhitespaceGitAttr, WS_BLANK_AT_EOF, WS_INCOMPLETE_LINE};
@@ -975,7 +975,7 @@ pub(crate) fn unstaged_patch_for_add_edit(
         Err(e) => return Err(e.into()),
     };
 
-    let entries = diff_index_to_worktree(&repo.odb, &index, work_tree, false)?;
+    let entries = diff_index_to_worktree(&repo.odb, &index, work_tree, false, false)?;
 
     let cwd = repo.effective_pathspec_cwd();
     let mut pathspec_prefix_buf = show_prefix(repo, &cwd);
@@ -1688,7 +1688,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 // No flags: unstaged changes (index vs worktree)
                 let wt = work_tree
                     .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
-                diff_index_to_worktree(&repo.odb, &index, wt, false)?
+                diff_index_to_worktree(&repo.odb, &index, wt, false, false)?
             }
             (false, 1) => {
                 // One revision: tree vs worktree
@@ -2039,15 +2039,15 @@ pub fn run(mut args: Args) -> Result<()> {
                         relative_prefix_for_paths.as_deref(),
                     );
                     let key = repo_path.as_bytes();
-                    let Some(e1) = index.get(key, 1) else {
-                        continue;
-                    };
                     let Some(e2) = index.get(key, 2) else {
                         continue;
                     };
                     let Some(e3) = index.get(key, 3) else {
                         continue;
                     };
+                    // Two-way merges (add/add, etc.) omit stage 1; `format_worktree_conflict_combined`
+                    // still needs three OIDs — Git uses the null OID for the missing base.
+                    let e1_oid = index.get(key, 1).map(|e| e.oid).unwrap_or_else(zero_oid);
                     let file_path = wt.join(&repo_path);
                     let wt_bytes = std::fs::read(&file_path).unwrap_or_default();
                     conflict_combined_patches.push(format_worktree_conflict_combined(
@@ -2055,7 +2055,7 @@ pub fn run(mut args: Args) -> Result<()> {
                         &config,
                         &repo.odb,
                         display_path,
-                        &e1.oid,
+                        &e1_oid,
                         &e2.oid,
                         &e3.oid,
                         &wt_bytes,

@@ -239,6 +239,12 @@ pub fn run(mut args: Args) -> Result<()> {
     if !git_optional_locks_enabled() {
         args.no_optional_locks = true;
     }
+    // Whether the user passed `--porcelain` (before `-z` may synthesize it).
+    let explicit_porcelain = args.porcelain.is_some();
+    // Git accepts `--porcelain=2` as an alias for v2 (same as `--porcelain=v2`).
+    if args.porcelain.as_deref() == Some("2") {
+        args.porcelain = Some("v2".to_string());
+    }
     // -z implies porcelain
     if args.null_terminated && args.porcelain.is_none() {
         args.porcelain = Some("v1".to_string());
@@ -355,6 +361,9 @@ pub fn run(mut args: Args) -> Result<()> {
         ));
     }
 
+    let show_all_untracked = untracked_mode == "all";
+    let hide_untracked = untracked_mode == "no";
+
     // Load index: remember sparse-index on disk, then expand placeholders for diffs.
     let index_path = repo.index_path();
     let mut index = match grit_lib::index::Index::load(&index_path) {
@@ -404,16 +413,12 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     // Diff: unstaged (worktree vs index), with optional rename detection.
-    let unstaged_raw = diff_index_to_worktree(&repo.odb, &index, work_tree, false)?;
+    let unstaged_raw = diff_index_to_worktree(&repo.odb, &index, work_tree, hide_untracked, false)?;
     let unstaged = if let Some(threshold) = status_rename_threshold {
         detect_renames(&repo.odb, unstaged_raw.clone(), threshold)
     } else {
         unstaged_raw.clone()
     };
-
-    // Untracked and ignored files
-    let show_all_untracked = untracked_mode == "all";
-    let hide_untracked = untracked_mode == "no";
 
     // User pathspecs (after stripping `--`), used for porcelain header rules below.
     let user_pathspecs: Vec<String> = args
@@ -439,6 +444,7 @@ pub fn run(mut args: Args) -> Result<()> {
     {
         args.branch = true;
     }
+
     let (untracked, ignored_files) = if !hide_untracked {
         let uc_mode = match ignored_mode {
             IgnoredMode::No => UntrackedIgnoredMode::No,
@@ -551,6 +557,32 @@ pub fn run(mut args: Args) -> Result<()> {
         Some(Err(_)) | None => true,
     };
 
+    // Porcelain v1: print a synthetic `##` branch line for clean repos and for mixed changes
+    // (t12570). Omit it when the **only** path lines are unstaged gitlink (submodule) entries
+    // (t7506 — matches Git's porcelain body without a branch row for that case).
+    if explicit_porcelain
+        && args.porcelain.as_deref() == Some("v1")
+        && !args.short
+        && !args.no_branch
+        && !args.branch
+        && !hide_untracked
+    {
+        let has_path_lines = !staged.is_empty()
+            || !unstaged.is_empty()
+            || !untracked.is_empty()
+            || !ignored_files.is_empty();
+        let only_unstaged_gitlinks = !unstaged.is_empty()
+            && staged.is_empty()
+            && untracked.is_empty()
+            && ignored_files.is_empty()
+            && unstaged.iter().all(|e| {
+                index_stage_entry(&index, e.path(), 0).is_some_and(|ie| ie.mode == MODE_GITLINK)
+            });
+        if !has_path_lines || !only_unstaged_gitlinks {
+            args.branch = true;
+        }
+    }
+
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
@@ -564,6 +596,7 @@ pub fn run(mut args: Args) -> Result<()> {
             work_tree,
             &index,
             head_tree.as_ref(),
+            hide_untracked,
             &staged,
             &unstaged,
             &untracked,
@@ -580,6 +613,7 @@ pub fn run(mut args: Args) -> Result<()> {
             &repo,
             work_tree,
             &index,
+            hide_untracked,
             &staged,
             &unstaged,
             &untracked,
@@ -608,6 +642,7 @@ pub fn run(mut args: Args) -> Result<()> {
             &wt_state,
             &index,
             index_sparse_on_disk,
+            work_tree,
             &staged_long,
             &unstaged_long,
             &untracked_long,
@@ -1132,6 +1167,16 @@ fn unmerged_v2_key(mask: u8) -> &'static str {
     }
 }
 
+/// First column letter for `git status --short` on an unmerged path (`unmerged_v2_key` char 0).
+fn unmerged_short_staged_letter(mask: u8) -> char {
+    unmerged_v2_key(mask).chars().next().unwrap_or(' ')
+}
+
+/// Second column letter for `git status --short` on an unmerged path (`unmerged_v2_key` char 1).
+fn unmerged_short_unstaged_letter(mask: u8) -> char {
+    unmerged_v2_key(mask).chars().nth(1).unwrap_or(' ')
+}
+
 fn index_stage_entry<'a>(index: &'a Index, path: &str, stage: u8) -> Option<&'a IndexEntry> {
     index.get(path.as_bytes(), stage)
 }
@@ -1145,6 +1190,7 @@ fn format_porcelain_v2(
     work_tree: &Path,
     index: &Index,
     head_tree: Option<&ObjectId>,
+    hide_untracked: bool,
     staged_raw: &[DiffEntry],
     unstaged_raw: &[DiffEntry],
     untracked: &[String],
@@ -1265,7 +1311,10 @@ fn format_porcelain_v2(
         if changed_paths.contains(&path) {
             continue;
         }
-        let flags = submodule_porcelain_flags(work_tree, &path, ie.oid);
+        let mut flags = submodule_porcelain_flags(work_tree, &path, ie.oid);
+        if hide_untracked {
+            flags.untracked = false;
+        }
         if flags.modified || flags.untracked || flags.new_commits {
             changed_paths.insert(path);
         }
@@ -1370,10 +1419,8 @@ fn format_porcelain_v2(
         let (sub, sm_flags) =
             if mode_head == MODE_GITLINK || mode_index == MODE_GITLINK || mode_wt == MODE_GITLINK {
                 let mut f = submodule_porcelain_flags(work_tree, path, recorded_gitlink_oid);
-                if let Some(ue) = unstaged_e {
-                    if ue.status == DiffStatus::Modified && ue.old_oid != ue.new_oid {
-                        f.new_commits = true;
-                    }
+                if hide_untracked {
+                    f.untracked = false;
                 }
                 (format_submodule_token(f), Some(f))
             } else {
@@ -1477,7 +1524,7 @@ fn format_porcelain_v2(
 
     for (path, mask) in &unmerged {
         let key = unmerged_v2_key(*mask);
-        let sub = submodule_token_v2_unmerged(path, index, work_tree);
+        let sub = submodule_token_v2_unmerged(path, index, work_tree, hide_untracked);
         let s1 = index_stage_entry(index, path, 1);
         let s2 = index_stage_entry(index, path, 2);
         let s3 = index_stage_entry(index, path, 3);
@@ -1575,7 +1622,12 @@ fn worktree_mode_oid_for_unmerged(
     }
 }
 
-fn submodule_token_v2_unmerged(path: &str, index: &Index, work_tree: &Path) -> String {
+fn submodule_token_v2_unmerged(
+    path: &str,
+    index: &Index,
+    work_tree: &Path,
+    hide_untracked: bool,
+) -> String {
     let mut any_gitlink = false;
     for st in 1u8..=3 {
         if let Some(e) = index_stage_entry(index, path, st) {
@@ -1592,7 +1644,10 @@ fn submodule_token_v2_unmerged(path: &str, index: &Index, work_tree: &Path) -> S
     else {
         return "S...".to_string();
     };
-    let flags = submodule_porcelain_flags(work_tree, path, ie.oid);
+    let mut flags = submodule_porcelain_flags(work_tree, path, ie.oid);
+    if hide_untracked {
+        flags.untracked = false;
+    }
     format_submodule_token(flags)
 }
 
@@ -1604,6 +1659,24 @@ fn format_submodule_token(f: grit_lib::diff::SubmodulePorcelainFlags) -> String 
         if f.modified { 'M' } else { '.' },
         if f.untracked { 'U' } else { '.' }
     )
+}
+
+fn format_submodule_long_suffix(f: grit_lib::diff::SubmodulePorcelainFlags) -> String {
+    let mut parts: Vec<&'static str> = Vec::new();
+    if f.new_commits {
+        parts.push("new commits");
+    }
+    if f.modified {
+        parts.push("modified content");
+    }
+    if f.untracked {
+        parts.push("untracked content");
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", parts.join(", "))
+    }
 }
 
 /// Short/porcelain format.
@@ -1619,6 +1692,7 @@ fn format_short(
     repo: &Repository,
     work_tree: &Path,
     index: &Index,
+    hide_untracked: bool,
     staged: &[grit_lib::diff::DiffEntry],
     unstaged: &[grit_lib::diff::DiffEntry],
     untracked: &[String],
@@ -1671,6 +1745,7 @@ fn format_short(
     }
 
     // Build a merged view: XY path
+    let unmerged_map = unmerged_paths_and_mask(index);
     let mut paths: BTreeSet<String> = BTreeSet::new();
     let mut staged_map: std::collections::HashMap<String, char> = std::collections::HashMap::new();
     let mut unstaged_map: std::collections::HashMap<String, char> =
@@ -1703,17 +1778,44 @@ fn format_short(
     }
 
     for path in &paths {
-        let x = staged_map.get(path).copied().unwrap_or(' ');
-        let mut y = unstaged_map.get(path).copied().unwrap_or(' ');
-        if let Some(ie) = index.get(path.as_bytes(), 0) {
-            if ie.mode == MODE_GITLINK {
-                let f = submodule_porcelain_flags(work_tree, path, ie.oid);
-                if f.untracked {
-                    y = '?';
-                } else if f.modified {
-                    y = 'm';
-                } else if f.new_commits && y == ' ' {
-                    y = 'M';
+        let (x, mut y) = if let Some(mask) = unmerged_map.get(path.as_str()) {
+            (
+                unmerged_short_staged_letter(*mask),
+                unmerged_short_unstaged_letter(*mask),
+            )
+        } else {
+            let x = staged_map.get(path).copied().unwrap_or(' ');
+            let y = unstaged_map.get(path).copied().unwrap_or(' ');
+            (x, y)
+        };
+        if !unmerged_map.contains_key(path.as_str()) {
+            if let Some(ie) = index_stage_entry(index, path, 0) {
+                if ie.mode == MODE_GITLINK {
+                    let mut f = submodule_porcelain_flags(work_tree, path, ie.oid);
+                    if hide_untracked {
+                        f.untracked = false;
+                    }
+                    if args.porcelain.is_some() {
+                        if y == ' ' && (f.new_commits || f.modified || f.untracked) {
+                            y = 'M';
+                        }
+                    } else if args.short {
+                        // Git's short format uses the second column for submodule dirtiness:
+                        // `M` new commits only, `m` modified/staged content, `?` untracked.
+                        // When both modified and untracked apply (e.g. nested submodule dirty +
+                        // untracked files elsewhere), `m` wins over `?` (t7506 nested submodule).
+                        y = if f.new_commits && f.modified {
+                            'm'
+                        } else if f.modified {
+                            'm'
+                        } else if f.untracked {
+                            '?'
+                        } else if f.new_commits {
+                            'M'
+                        } else {
+                            y
+                        };
+                    }
                 }
             }
         }
@@ -2254,6 +2356,7 @@ fn format_long(
     state: &WtStatusState,
     expanded_index: &Index,
     index_sparse_on_disk: bool,
+    work_tree: &Path,
     staged: &[grit_lib::diff::DiffEntry],
     unstaged: &[grit_lib::diff::DiffEntry],
     untracked: &[String],
@@ -2617,6 +2720,18 @@ fn format_long(
         let has_deleted = unstaged_normal
             .iter()
             .any(|e| e.status == DiffStatus::Deleted);
+        let submodule_inner_hint = unstaged_normal.iter().any(|e| {
+            let path = e.path();
+            index_stage_entry(expanded_index, path, 0)
+                .filter(|ie| ie.mode == MODE_GITLINK)
+                .is_some_and(|ie| {
+                    let mut f = submodule_porcelain_flags(work_tree, path, ie.oid);
+                    if hide_untracked {
+                        f.untracked = false;
+                    }
+                    f.modified || f.untracked
+                })
+        });
         cpw(out, cp, "Changes not staged for commit:")?;
         if show_hints {
             if has_deleted {
@@ -2637,6 +2752,13 @@ fn format_long(
                 cp,
                 "  (use \"git restore <file>...\" to discard changes in working directory)",
             )?;
+            if submodule_inner_hint {
+                cpw(
+                    out,
+                    cp,
+                    "  (commit or discard the untracked or modified content in submodules)",
+                )?;
+            }
         }
         for entry in &unstaged_normal {
             let label = match entry.status {
@@ -2648,7 +2770,20 @@ fn format_long(
                 DiffStatus::TypeChanged => "typechange",
                 _ => "changed",
             };
-            cpw(out, cp, &format!("\t{label}:   {}", entry.display_path()))?;
+            let display = if let Some(ie) = index_stage_entry(expanded_index, entry.path(), 0) {
+                if ie.mode == MODE_GITLINK {
+                    let mut f = submodule_porcelain_flags(work_tree, entry.path(), ie.oid);
+                    if hide_untracked {
+                        f.untracked = false;
+                    }
+                    format!("{}{}", entry.path(), format_submodule_long_suffix(f))
+                } else {
+                    entry.display_path()
+                }
+            } else {
+                entry.display_path()
+            };
+            cpw(out, cp, &format!("\t{label}:   {display}"))?;
         }
         cpw(out, cp, "")?;
     }
