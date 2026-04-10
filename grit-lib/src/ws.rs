@@ -50,6 +50,8 @@ impl WhitespaceGitAttr {
                 }
                 Ok(all)
             }
+            // Git `whitespace_rule()`: a string attribute replaces the rule entirely via
+            // `parse_whitespace_rule(value)` — it does not merge with `core.whitespace`.
             WhitespaceGitAttr::String(s) => parse_whitespace_rule(&s),
         }
     }
