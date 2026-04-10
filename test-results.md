@@ -1,5 +1,28 @@
 # Test results
 
+**2026-04-10 (status perf done-definition narrowing / post-`0db9dc0b`)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `bash tests/t7508-status.sh --run=1-70 -v`: **70/70** pass
+- `bash tests/t7060-wtstatus.sh -v`: **17/17** pass
+- `bash tests/t7063-status-untracked-cache.sh -v`: **58/58** pass
+- `bash tests/t7519-status-fsmonitor.sh -v`: **33/33** pass
+- `bash tests/t7065-status-rename.sh -v`: **28/28** pass
+- `bash tests/t7508-status.sh -v`: **98/126** with **28 remaining failures**
+
+Remaining `t7508` failures are narrowed to non-status blockers:
+- `73,74,76,77,79,80,82,83,85,86,88,89,107`:
+  `git config --add ...` parser incompatibility (`--add` argument handling).
+- `71`:
+  read-only status case fails on final `git diff-files | grep dir1/tracked` assertion
+  (diff-files/stat-refresh behavior), while `status -s` itself succeeds.
+- `119`:
+  global option parse gap (`git --no-optional-locks status` not accepted by top-level parser).
+- `81,84,87,90,91,92,93,94,108,109,110,111,112`:
+  downstream effects of submodule/config setup failures above.
+
 **2026-04-10 (status perf follow-up / t7508 dry-run partial commit parity)**  
 
 - `cargo fmt`: passed
