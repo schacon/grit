@@ -438,7 +438,7 @@ pub fn run(args: Args) -> Result<()> {
                 Err(_) => return fail_verify(quiet, false),
             }
         } else {
-            match resolve_revision(current, spec) {
+            match grit_lib::rev_parse::resolve_revision_for_verify(current, spec) {
                 Ok(oid) => oid,
                 Err(e) => return fail_verify_resolve(quiet, &e, Some(current)),
             }

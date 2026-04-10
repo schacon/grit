@@ -850,6 +850,7 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
             label_theirs: TheirsConflictLabel::Fixed(label_theirs.as_str()),
             label_base: label_base.as_str(),
             style: conflict_style,
+            checkout_merge: false,
         },
     )?;
     let mut merge_result = MergeResult {
@@ -1359,6 +1360,7 @@ pub(crate) fn abort_cherry_pick_or_revert() -> Result<()> {
             no_recurse_submodules: false,
             rest: vec![stored_oid.to_hex()],
             skip_sequencer_head_cleanup: true,
+            raw_argv_had_path_separator: false,
         })?;
         cleanup_cherry_pick_state(git_dir);
         cleanup_sequencer_state(git_dir);
@@ -1381,6 +1383,7 @@ pub(crate) fn abort_cherry_pick_or_revert() -> Result<()> {
         no_recurse_submodules: false,
         rest: vec!["HEAD".to_owned()],
         skip_sequencer_head_cleanup: true,
+        raw_argv_had_path_separator: false,
     })?;
     cleanup_cherry_pick_state(git_dir);
     let _ = fs::remove_file(git_dir.join("REVERT_HEAD"));

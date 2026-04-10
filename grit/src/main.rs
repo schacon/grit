@@ -4563,8 +4563,12 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "rerere" => commands::rerere::run(parse_cmd_args(subcmd, rest)),
         "reset" => {
             commands::reset::pre_validate_args(rest)?;
+            let raw_argv_had_path_separator =
+                rest.iter().any(|a| a == "--" || a == "--end-of-options");
             let filtered = commands::reset::filter_args(rest);
-            commands::reset::run(parse_cmd_args(subcmd, &filtered))
+            let mut reset_args = parse_cmd_args::<commands::reset::Args>(subcmd, &filtered);
+            reset_args.raw_argv_had_path_separator = raw_argv_had_path_separator;
+            commands::reset::run(reset_args)
         }
         "restore" => commands::restore::run(parse_cmd_args(subcmd, rest)),
         "rev-list" => commands::rev_list::run(parse_cmd_args(subcmd, rest)),

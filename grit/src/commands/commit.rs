@@ -1789,25 +1789,96 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
         Err(e) => return Err(e.into()),
     };
 
-    let tracked: Vec<(Vec<u8>, String, u32)> = index
-        .entries
-        .iter()
-        .map(|ie| {
-            let path_str = String::from_utf8_lossy(&ie.path).to_string();
-            (ie.path.clone(), path_str, ie.mode)
-        })
-        .collect();
+    let path_keys: std::collections::HashSet<Vec<u8>> =
+        index.entries.iter().map(|e| e.path.clone()).collect();
 
     let mut changed = false;
-    for (raw_path, path_str, idx_mode) in &tracked {
-        let abs_path = work_tree.join(path_str);
+    for raw_path in path_keys {
+        let path_str = String::from_utf8_lossy(&raw_path).to_string();
+        let abs_path = work_tree.join(&path_str);
+
+        let unmerged = index
+            .entries
+            .iter()
+            .any(|e| e.path == raw_path && e.stage() != 0);
+        if unmerged {
+            // Merge conflicts list multiple index rows per path. Refresh once from the
+            // worktree and collapse to a single stage-0 entry (matches `git commit -a`).
+            let idx_mode = index
+                .entries
+                .iter()
+                .find(|e| e.path == raw_path && e.stage() == 0)
+                .map(|e| e.mode)
+                .or_else(|| {
+                    index
+                        .entries
+                        .iter()
+                        .find(|e| e.path == raw_path)
+                        .map(|e| e.mode)
+                })
+                .unwrap_or(0o100644);
+            index.remove(&raw_path);
+            if fs::symlink_metadata(&abs_path).is_ok() {
+                if idx_mode == 0o160000 {
+                    if let Some(oid) = grit_lib::diff::read_submodule_head_oid(&abs_path) {
+                        use std::os::unix::fs::MetadataExt;
+                        let meta = fs::symlink_metadata(&abs_path)?;
+                        let entry = grit_lib::index::IndexEntry {
+                            ctime_sec: meta.ctime() as u32,
+                            ctime_nsec: meta.ctime_nsec() as u32,
+                            mtime_sec: meta.mtime() as u32,
+                            mtime_nsec: meta.mtime_nsec() as u32,
+                            dev: meta.dev() as u32,
+                            ino: meta.ino() as u32,
+                            mode: 0o160000,
+                            uid: meta.uid(),
+                            gid: meta.gid(),
+                            size: 0,
+                            oid,
+                            flags: path_str.len().min(0xFFF) as u16,
+                            flags_extended: None,
+                            path: raw_path.clone(),
+                        };
+                        index.add_or_replace(entry);
+                        changed = true;
+                    }
+                } else {
+                    use std::os::unix::fs::MetadataExt;
+                    let meta = fs::symlink_metadata(&abs_path)?;
+                    let data = if meta.file_type().is_symlink() {
+                        let target = fs::read_link(&abs_path)?;
+                        target.to_string_lossy().into_owned().into_bytes()
+                    } else {
+                        fs::read(&abs_path)?
+                    };
+                    let oid = repo.odb.write(ObjectKind::Blob, &data)?;
+                    let mode = grit_lib::index::normalize_mode(meta.mode());
+                    let entry = grit_lib::index::entry_from_stat(&abs_path, &raw_path, oid, mode)?;
+                    index.add_or_replace(entry);
+                    changed = true;
+                }
+            } else {
+                changed = true;
+            }
+            continue;
+        }
+
+        let Some(idx_e) = index
+            .entries
+            .iter()
+            .find(|e| e.path == raw_path && e.stage() == 0)
+        else {
+            continue;
+        };
+        let idx_mode = idx_e.mode;
+
         // Use `symlink_metadata`, not `exists()`: `Path::exists` follows symlinks, so
         // dangling symlinks look "missing" and would be dropped from the index (t1006).
         if fs::symlink_metadata(&abs_path).is_ok() {
             // Gitlink (submodule) entries: read the embedded repo's HEAD to
             // get the current commit OID instead of trying to read the
             // directory as a file.
-            if *idx_mode == 0o160000 {
+            if idx_mode == 0o160000 {
                 // `.git` may be a gitfile (submodule layout); resolve via the same helper as `git add`.
                 if let Some(oid) = grit_lib::diff::read_submodule_head_oid(&abs_path) {
                     use std::os::unix::fs::MetadataExt;
@@ -1845,17 +1916,17 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
             if index
                 .entries
                 .iter()
-                .find(|e| e.path == *raw_path)
+                .find(|e| e.path == raw_path && e.stage() == 0)
                 .is_some_and(|e| !e.intent_to_add() && e.oid == oid)
             {
                 continue;
             }
             let mode = grit_lib::index::normalize_mode(meta.mode());
-            let entry = grit_lib::index::entry_from_stat(&abs_path, raw_path, oid, mode)?;
+            let entry = grit_lib::index::entry_from_stat(&abs_path, &raw_path, oid, mode)?;
             index.add_or_replace(entry);
             changed = true;
         } else {
-            index.remove(raw_path);
+            index.remove(&raw_path);
             changed = true;
         }
     }

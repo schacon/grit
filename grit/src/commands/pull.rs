@@ -371,7 +371,9 @@ fn config_pull_rebase(
     if let Some(v) = config.get("pull.rebase") {
         return Ok((parse_rebase_value("pull.rebase", &v)?, false));
     }
-    Ok((RebaseTri::False, true))
+    // When `pull.rebase` is not configured, behave like merge (Git ≤2.26 and tests such as
+    // t7102-reset that run `git pull` without advising on divergent branches).
+    Ok((RebaseTri::False, false))
 }
 
 fn pull_ff_from_config(config: &ConfigSet) -> Result<Option<(bool, bool, bool)>> {

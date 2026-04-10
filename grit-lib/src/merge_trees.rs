@@ -51,6 +51,8 @@ pub struct TreeMergeConflictPresentation<'a> {
     pub label_base: &'a str,
     /// Two-way vs diff3 markers.
     pub style: ConflictStyle,
+    /// `git checkout -m`: always leave unmerged index entries when ours ≠ theirs.
+    pub checkout_merge: bool,
 }
 
 impl Default for TreeMergeConflictPresentation<'_> {
@@ -60,6 +62,7 @@ impl Default for TreeMergeConflictPresentation<'_> {
             label_theirs: TheirsConflictLabel::PathUtf8,
             label_base: "merged common ancestors",
             style: ConflictStyle::Merge,
+            checkout_merge: false,
         }
     }
 }
@@ -436,6 +439,36 @@ fn content_merge_or_conflict(
         return Ok(());
     }
 
+    // `git checkout -m`: Git records unmerged index entries whenever the branch being checked
+    // out and the pre-checkout working tree disagree, even when a line merge would auto-resolve.
+    if presentation.checkout_merge && !same_blob(ours, theirs) {
+        let ours_obj = repo.odb.read(&ours.oid)?;
+        let theirs_obj = repo.odb.read(&theirs.oid)?;
+        let path_label = String::from_utf8_lossy(path);
+        let label_theirs: std::borrow::Cow<'_, str> = match presentation.label_theirs {
+            TheirsConflictLabel::PathUtf8 => path_label.clone(),
+            TheirsConflictLabel::Fixed(s) => std::borrow::Cow::Borrowed(s),
+        };
+        let mut out = Vec::new();
+        out.extend_from_slice(format!("<<<<<<< {}\n", presentation.label_ours).as_bytes());
+        out.extend_from_slice(&ours_obj.data);
+        if !out.ends_with(b"\n") {
+            out.push(b'\n');
+        }
+        out.extend_from_slice(b"=======\n");
+        out.extend_from_slice(&theirs_obj.data);
+        if !out.ends_with(b"\n") {
+            out.push(b'\n');
+        }
+        out.extend_from_slice(format!(">>>>>>> {}\n", label_theirs).as_bytes());
+        let conflict_oid = repo.odb.write(ObjectKind::Blob, &out)?;
+        conflict_content.insert(path.to_vec(), conflict_oid);
+        stage_entry(index, path, base, 1);
+        stage_entry(index, path, ours, 2);
+        stage_entry(index, path, theirs, 3);
+        return Ok(());
+    }
+
     let base_obj = repo.odb.read(&base.oid)?;
     let ours_obj = repo.odb.read(&ours.oid)?;
     let theirs_obj = repo.odb.read(&theirs.oid)?;
@@ -470,7 +503,7 @@ fn content_merge_or_conflict(
 
     let path_label = String::from_utf8_lossy(path);
     let label_theirs: std::borrow::Cow<'_, str> = match presentation.label_theirs {
-        TheirsConflictLabel::PathUtf8 => path_label,
+        TheirsConflictLabel::PathUtf8 => path_label.clone(),
         TheirsConflictLabel::Fixed(s) => std::borrow::Cow::Borrowed(s),
     };
     let input = MergeInput {

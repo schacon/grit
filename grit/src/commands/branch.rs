@@ -27,13 +27,17 @@ use std::process::Command;
 #[derive(Debug, ClapArgs)]
 #[command(about = "List, create, or delete branches")]
 pub struct Args {
-    /// Branch name to create (or pattern to list).
+    /// Branch name to create, first name to delete, or list pattern.
     #[arg()]
     pub name: Option<String>,
 
-    /// Start point for new branch (commit, branch, or tag).
+    /// Second positional: start point for new branch, or second `-d`/`-D` target.
     #[arg()]
     pub start_point: Option<String>,
+
+    /// Further branch names for `git branch -d a b c` (third argument onward).
+    #[arg(trailing_var_arg = true, hide = true)]
+    pub extra_names: Vec<String>,
 
     /// Delete a branch.
     #[arg(short = 'd', long = "delete")]
@@ -312,7 +316,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if args.delete || args.force_delete {
-        return delete_branch(&repo, &head, &args);
+        return delete_branches(&repo, &head, &args);
     }
 
     if args.rename || args.force_rename {
@@ -1703,13 +1707,32 @@ fn should_log_ref_updates(repo: &Repository) -> bool {
         .unwrap_or(false)
 }
 
-/// Delete a branch.
-fn delete_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
-    let name_input = args
-        .name
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("branch name required"))?;
+/// Delete one or more branches (`git branch -d a b` / `-D`).
+///
+/// Clap maps the first two positionals to `name` and `start_point`; for delete mode the
+/// second positional is another branch to remove, not a start point.
+fn delete_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
+    let mut names: Vec<&str> = Vec::new();
+    if let Some(n) = args.name.as_deref() {
+        names.push(n);
+    }
+    if let Some(n) = args.start_point.as_deref() {
+        names.push(n);
+    }
+    for n in &args.extra_names {
+        names.push(n.as_str());
+    }
+    if names.is_empty() {
+        bail!("branch name required");
+    }
+    for name in names {
+        delete_branch(repo, head, args, name)?;
+    }
+    Ok(())
+}
 
+/// Delete a branch.
+fn delete_branch(repo: &Repository, head: &HeadState, args: &Args, name_input: &str) -> Result<()> {
     if args.remotes {
         let refname = if name_input.starts_with("refs/remotes/") {
             name_input.to_owned()
