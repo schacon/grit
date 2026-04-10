@@ -565,7 +565,7 @@ fn do_merge_or_rebase_after_fetch(
             exec: None,
             merge: false,
             apply: false,
-            rebase_merges: false,
+            rebase_merges: None,
             no_rebase_merges: false,
             no_ff: false,
             keep_base: false,
