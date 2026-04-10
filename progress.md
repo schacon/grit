@@ -19,6 +19,7 @@ Task lines in `PLAN.md`: 358 completed (`[x]`), 6 in progress (`[~]`), 408 remai
 
 ## Recently completed
 
+- `t4129-apply-samemode` — 23/23 tests pass (`diff --stat -p` emits unified hunks after stat; `apply` strips `a/`/`b/` from `diff --git` paths; Git `canon_mode` / invalid mode errors; `core.fileMode` preimage warnings; reverse mode swap matches Git; umask-aware worktree chmod)
 - `t4252-am-options` — 8/8 tests pass (`am`: passthrough `git apply` options `-p`/`-C`, `--directory`, `--whitespace=fix`, `--ignore-space-change`, `--ignore-whitespace`, `--exclude`/`--include`, `--reject`; persist shell-quoted argv in `rebase-apply/apply-opt`; partial apply with `.rej` hunks leaves work tree dirty vs index; harness CSV/dashboards refreshed)
 - `t4069-remerge-diff` — 16/16 tests pass (`show`: POSIX `-S"not present"` glued argv split for clap; `--remerge-diff` omits redundant `modify/delete` for `file/directory` relocated paths like Git)
 - `t4115-apply-symlink` — 8/8 tests pass (`apply`: Git-style symlink safety + `index` mode parsing; plan-then-execute worktree apply; strip `a/`/`b/` from `---`/`+++` with `-p0`; `diff-files -p` index line + symlink stat fast path + readlink for patch text; `clean -dfx` no longer removes tracked symlinks that point inside the repo; `--reject` stderr lines for `Rejected hunk`)

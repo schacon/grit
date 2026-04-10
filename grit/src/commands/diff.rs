@@ -3099,55 +3099,60 @@ pub fn run(mut args: Args) -> Result<()> {
             if need_blank_before_patch && wrote_output {
                 writeln!(out)?;
             }
-            for patch in &conflict_combined_patches {
-                write!(out, "{patch}")?;
+            // `git diff --stat -p` prints the stat summary and the unified patch (Git last-flag-wins
+            // for `-p` vs `-s`; combined `-sp` is different).
+            let show_unified_after_stat = emit_unified_patch && !args.no_patch;
+            if show_unified_after_stat {
+                for patch in &conflict_combined_patches {
+                    write!(out, "{patch}")?;
+                }
+                let diff_config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+                    .unwrap_or_default();
+                let external_diff_cmd = std::env::var("GIT_EXTERNAL_DIFF")
+                    .ok()
+                    .filter(|s| !s.trim().is_empty())
+                    .or_else(|| {
+                        diff_config
+                            .get("diff.external")
+                            .filter(|s| !s.trim().is_empty())
+                    });
+                write_patch_with_prefix(
+                    &mut out,
+                    &repo,
+                    &entries,
+                    &repo.odb,
+                    &repo.git_dir,
+                    &diff_config,
+                    context_lines,
+                    use_color_patch,
+                    effective_word_diff_opt.as_ref(),
+                    wt_for_content,
+                    suppress_blank_empty,
+                    patch_abbrev,
+                    inter_hunk_context,
+                    args.binary,
+                    args.break_rewrites,
+                    args.irreversible_delete,
+                    !args.no_textconv,
+                    &src_prefix,
+                    &dst_prefix,
+                    quote_path_fully,
+                    args.submodule.as_deref(),
+                    submodule_ignore_flags_from_diff_arg(ignore_sm.unwrap_or("none")),
+                    ignore_sm,
+                    &diff_config,
+                    &path_to_sm_name,
+                    &gm_sub_ignore,
+                    line_ignore,
+                    &diff_algo_ctx,
+                    diff_algo_cli,
+                    args.cached,
+                    args.no_ext_diff,
+                    external_diff_cmd.as_deref(),
+                    relative_prefix_for_paths.as_deref(),
+                    indent_heuristic,
+                )?;
             }
-            let diff_config =
-                grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-            let external_diff_cmd = std::env::var("GIT_EXTERNAL_DIFF")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .or_else(|| {
-                    diff_config
-                        .get("diff.external")
-                        .filter(|s| !s.trim().is_empty())
-                });
-            write_patch_with_prefix(
-                &mut out,
-                &repo,
-                &entries,
-                &repo.odb,
-                &repo.git_dir,
-                &diff_config,
-                context_lines,
-                use_color_patch,
-                effective_word_diff_opt.as_ref(),
-                wt_for_content,
-                suppress_blank_empty,
-                patch_abbrev,
-                inter_hunk_context,
-                args.binary,
-                args.break_rewrites,
-                args.irreversible_delete,
-                !args.no_textconv,
-                &src_prefix,
-                &dst_prefix,
-                quote_path_fully,
-                args.submodule.as_deref(),
-                submodule_ignore_flags_from_diff_arg(ignore_sm.unwrap_or("none")),
-                ignore_sm,
-                &diff_config,
-                &path_to_sm_name,
-                &gm_sub_ignore,
-                line_ignore,
-                &diff_algo_ctx,
-                diff_algo_cli,
-                args.cached,
-                args.no_ext_diff,
-                external_diff_cmd.as_deref(),
-                relative_prefix_for_paths.as_deref(),
-                indent_heuristic,
-            )?;
         }
     }
 
