@@ -133,6 +133,10 @@ else
 	RED='' GREEN='' YELLOW='' RESET=''
 fi
 
+# Used by lib-git-p4 (git-p4 wrapper) and other tests; must exist before `setup_trash`.
+PYTHON_PATH=${PYTHON_PATH:-$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo /usr/bin/python3)}
+export PYTHON_PATH
+
 # Set up a fresh trash directory for this test script.
 setup_trash () {
 	if test -d "$TRASH_DIRECTORY"; then
@@ -172,6 +176,20 @@ EOF
 exec "$GUST_BIN" scalar "\$@"
 EOF
 	chmod +x "$BIN_DIRECTORY/scalar"
+	# GIT_EXEC_PATH: upstream git-p4 lives beside the git binary; grit delegates to
+	# git-p4.py from the vendored Git tree so `git p4` and `$(git --exec-path)/git-p4` work.
+	_GIT_EXEC_HELPER_DIR="$BIN_DIRECTORY/git-exec"
+	mkdir -p "$_GIT_EXEC_HELPER_DIR"
+	if test -f "$GIT_SOURCE_DIR/git-p4.py"
+	then
+		cat >"$_GIT_EXEC_HELPER_DIR/git-p4" <<EOF
+#!/bin/sh
+exec "$PYTHON_PATH" "$GIT_SOURCE_DIR/git-p4.py" "\$@"
+EOF
+		chmod +x "$_GIT_EXEC_HELPER_DIR/git-p4"
+	fi
+	GIT_EXEC_PATH="$_GIT_EXEC_HELPER_DIR"
+	export GIT_EXEC_PATH
 	# Save PATH before grit/git wrappers so test_done can restore the caller's environment.
 	TEST_LIB_ORIG_PATH=$PATH
 	export TEST_LIB_ORIG_PATH
@@ -957,6 +975,12 @@ test_set_prereq () {
 
 # Grit implements the traditional loose-ref + packed-refs layout (not reftable).
 test_set_prereq REFFILES
+
+# Python prerequisite (matches upstream git/t test-lib NO_PYTHON).
+if test -z "${NO_PYTHON-}"
+then
+	test_set_prereq PYTHON
+fi
 
 # Lazy prerequisites (git/t0000 nested-lazy): script runs in a temp dir under trash.
 lazily_testable_prereq=

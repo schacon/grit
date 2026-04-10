@@ -2242,6 +2242,22 @@ pub(crate) struct GlobalOpts {
     exec_path: Option<PathBuf>,
 }
 
+/// Directory used to resolve `git-<cmd>` helpers, matching upstream Git order:
+/// `GIT_EXEC_PATH` (when non-empty), then `--exec-path`, then the directory of the running binary.
+#[must_use]
+pub(crate) fn git_exec_path_for_helpers(cli_exec_path: Option<&Path>) -> Option<PathBuf> {
+    if let Ok(ep) = std::env::var("GIT_EXEC_PATH") {
+        if !ep.is_empty() {
+            return Some(PathBuf::from(ep));
+        }
+    }
+    cli_exec_path.map(Path::to_path_buf).or_else(|| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|e| e.parent().map(|p| p.to_path_buf()))
+    })
+}
+
 /// Extract global options and return (globals, subcommand_name, remaining_args).
 ///
 /// We scan argv[1..] for global flags that appear before the subcommand.
@@ -2279,11 +2295,9 @@ pub(crate) fn extract_globals(
             continue;
         }
         if arg == "--exec-path" {
-            // Print exec-path and exit
-            if let Ok(exe) = std::env::current_exe() {
-                if let Some(dir) = exe.parent() {
-                    println!("{}", dir.display());
-                }
+            // Print exec-path and exit (honour GIT_EXEC_PATH like upstream Git).
+            if let Some(dir) = git_exec_path_for_helpers(opts.exec_path.as_deref()) {
+                println!("{}", dir.display());
             }
             std::process::exit(0);
         }
@@ -3796,11 +3810,7 @@ fn handle_unknown_git_command(subcmd: &str, rest: &[String], opts: &GlobalOpts) 
                 .map(|r| r.git_dir)
         });
     let config = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true).unwrap_or_default();
-    let exec_path = opts.exec_path.clone().or_else(|| {
-        std::env::current_exe()
-            .ok()
-            .and_then(|e| e.parent().map(|p| p.to_path_buf()))
-    });
+    let exec_path = git_exec_path_for_helpers(opts.exec_path.as_deref());
 
     let mut names: HashSet<String> = KNOWN_COMMANDS.iter().map(|s| (*s).to_string()).collect();
     for a in collect_alias_command_names(&config) {
