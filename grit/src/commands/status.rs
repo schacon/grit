@@ -246,6 +246,78 @@ fn git_optional_locks_enabled() -> bool {
     }
 }
 
+/// Parse fsmonitor hook stdout payload: `<token>\0<path>\0<path>\0...`.
+fn parse_fsmonitor_payload(payload: &[u8]) -> Option<(String, BTreeSet<Vec<u8>>)> {
+    let mut fields = payload.split(|b| *b == 0);
+    let token = fields.next()?;
+    let token = String::from_utf8_lossy(token).into_owned();
+    if token.is_empty() {
+        return None;
+    }
+    let mut paths = BTreeSet::new();
+    for p in fields {
+        if !p.is_empty() {
+            paths.insert(p.to_vec());
+        }
+    }
+    Some((token, paths))
+}
+
+/// Run the configured fsmonitor hook (`core.fsmonitor`) and return `(new_token, reported_paths)`.
+///
+/// The hook is invoked with Git-compatible argv shape: `hook 2 <last_update_token>`.
+fn query_status_fsmonitor_paths(
+    work_tree: &Path,
+    config: &ConfigSet,
+    last_update_token: Option<&str>,
+) -> Option<(String, BTreeSet<Vec<u8>>)> {
+    let raw = config.get("core.fsmonitor")?;
+    let lower = raw.to_ascii_lowercase();
+    if matches!(lower.as_str(), "false" | "0" | "no" | "off") {
+        return None;
+    }
+    if matches!(lower.as_str(), "true" | "1" | "yes" | "on") {
+        // fsmonitor-daemon mode is not implemented yet.
+        return None;
+    }
+
+    if let Ok(trace2_event) = std::env::var("GIT_TRACE2_EVENT") {
+        if !trace2_event.trim().is_empty() {
+            let _ = crate::trace2_region_json(&trace2_event, "fsm_hook", "query");
+        }
+    }
+
+    let hook_path = {
+        let p = Path::new(&raw);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            work_tree.join(p)
+        }
+    };
+    let output = Command::new(&hook_path)
+        .current_dir(work_tree)
+        .arg("2")
+        .arg(last_update_token.unwrap_or(""))
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_fsmonitor_payload(&output.stdout)
+}
+
+fn fsmonitor_reported_path_matches(path: &str, reported: &BTreeSet<Vec<u8>>) -> bool {
+    let path_bytes = path.as_bytes();
+    if reported.contains(path_bytes) {
+        return true;
+    }
+    reported.iter().any(|r| {
+        (path_bytes.starts_with(r) && path_bytes.get(r.len()) == Some(&b'/'))
+            || (r.starts_with(path_bytes) && r.get(path_bytes.len()) == Some(&b'/'))
+    })
+}
+
 /// Run the `status` command.
 pub fn run(mut args: Args) -> Result<()> {
     if !git_optional_locks_enabled() {
@@ -415,6 +487,12 @@ pub fn run(mut args: Args) -> Result<()> {
     // Resolve rename detection settings for status.
     let status_rename_threshold = resolve_status_rename_threshold(&args, &config);
 
+    let fsmonitor_query =
+        query_status_fsmonitor_paths(work_tree, &config, index.fsmonitor_last_update.as_deref());
+    if let Some((new_token, _)) = fsmonitor_query.as_ref() {
+        index.fsmonitor_last_update = Some(new_token.clone());
+    }
+
     // Diff: staged (index vs HEAD tree), narrowed to pathspecs before rename detection.
     let staged_raw = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
     let staged_raw: Vec<grit_lib::diff::DiffEntry> = staged_raw
@@ -440,6 +518,11 @@ pub fn run(mut args: Args) -> Result<()> {
     let unstaged_raw: Vec<grit_lib::diff::DiffEntry> = unstaged_raw
         .into_iter()
         .filter(|entry| status_path_matches(entry.path(), &user_pathspecs))
+        .filter(|entry| {
+            fsmonitor_query
+                .as_ref()
+                .is_none_or(|(_, reported)| fsmonitor_reported_path_matches(entry.path(), reported))
+        })
         .collect();
     let unstaged = if let Some(threshold) = status_rename_threshold {
         detect_renames_for_status(&repo.odb, unstaged_raw.clone(), threshold)
@@ -467,7 +550,8 @@ pub fn run(mut args: Args) -> Result<()> {
     {
         args.branch = true;
     }
-    let (untracked, ignored_files) = if !hide_untracked {
+    let untracked_cache_enabled = index.untracked_cache.is_some();
+    let (mut untracked, mut ignored_files) = if !hide_untracked {
         let uc_mode = match ignored_mode {
             IgnoredMode::No => UntrackedIgnoredMode::No,
             IgnoredMode::Traditional => UntrackedIgnoredMode::Traditional,
@@ -524,6 +608,13 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         (Vec::new(), Vec::new())
     };
+
+    if untracked_cache_enabled {
+        if let Some((_, reported)) = fsmonitor_query.as_ref() {
+            untracked.retain(|p| fsmonitor_reported_path_matches(p, reported));
+            ignored_files.retain(|p| fsmonitor_reported_path_matches(p, reported));
+        }
+    }
 
     // `status.relativePaths` (default true): when false, paths stay worktree-relative
     // from repo root even when cwd is a subdirectory (Git `wt_status_collect`).

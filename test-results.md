@@ -1,5 +1,15 @@
 # Test results
 
+**2026-04-10 (status perf phase4 / status fsmonitor query integration)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh t7519-status-fsmonitor.sh`: 18/33 (no regression)
+- `./scripts/run-tests.sh t7063-status-untracked-cache.sh`: 14/58 (no regression)
+- `./scripts/run-tests.sh t7508-status.sh`: 94/126 (improved from 48/126)
+- `./scripts/run-tests.sh t7060-wtstatus.sh`: 12/17 (improved from 10/17)
+- `./scripts/run-tests.sh t7065-status-rename.sh`: 28/28 (improved from 27/28)
+
 **2026-04-10 (status perf phase4 / fsmonitor refresh hook + add semantics fix)**
 
 - `cargo check -p grit-rs`: passed
