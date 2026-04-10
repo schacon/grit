@@ -7,7 +7,7 @@ pub mod tm;
 
 use show::{parse_date_format, DateMode, DateModeType};
 use std::mem::size_of;
-use tm::{atoi_bytes, parse_timestamp_prefix};
+use tm::{atoi_bytes, parse_timestamp_prefix, Timestamp};
 
 /// Result of `test-tool date` — either lines for stdout or a process exit code (no output).
 pub enum TestToolDateResult {
@@ -37,7 +37,8 @@ pub fn test_tool_date(args: &[String]) -> Result<TestToolDateResult, String> {
 
     match sub {
         "is64bit" => {
-            let code = if size_of::<u64>() == 8 { 0 } else { 1 };
+            // Match Git's `test-tool date is64bit` (`test-date.c`): `sizeof(timestamp_t) == 8`.
+            let code = if size_of::<Timestamp>() == 8 { 0 } else { 1 };
             Ok(TestToolDateResult::Exit(code))
         }
         "time_t-is64bit" => {

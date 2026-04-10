@@ -793,6 +793,9 @@ pub fn rev_list(
             && options.use_commit_graph_bloom
             && crate::pathspec::pathspecs_allow_bloom(paths);
         let read_changed = read_paths && options.commit_graph_read_changed_paths;
+        if core_cg {
+            CommitGraphChain::try_load(&repo.git_dir.join("objects"))?;
+        }
         let bloom_chain = if use_bloom {
             CommitGraphChain::load(&repo.git_dir.join("objects"))
         } else {

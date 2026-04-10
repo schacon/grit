@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use crate::bloom::{
     bloom_filter_contains, bloom_keyvec_for_path, BloomBuildOutcome, BloomFilterSettings,
 };
+use crate::error::Error;
 use crate::objects::ObjectId;
 use crate::odb::Odb;
 
@@ -18,11 +19,15 @@ const CHUNK_OID_FANOUT: u32 = 0x4f49_4446; // OIDF
 const CHUNK_OID_LOOKUP: u32 = 0x4f49_444c; // OIDL
 const CHUNK_COMMIT_DATA: u32 = 0x4344_4154; // CDAT
 const CHUNK_GENERATION_DATA: u32 = 0x4744_4132; // GDA2
+const CHUNK_GENERATION_DATA_OVERFLOW: u32 = 0x4744_4f32; // GDO2
 const CHUNK_EXTRA_EDGES: u32 = 0x4544_4745; // EDGE
 const CHUNK_BLOOM_INDEXES: u32 = 0x4249_4458; // BIDX
 const CHUNK_BLOOM_DATA: u32 = 0x4244_4154; // BDAT
 
 const BLOOM_HEADER: usize = crate::bloom::BLOOMDATA_HEADER_LEN;
+
+/// `CORRECTED_COMMIT_DATE_OFFSET_OVERFLOW` — high bit marks GDA2 entries that index GDO2.
+const CORRECTED_COMMIT_DATE_OFFSET_OVERFLOW: u32 = 1u32 << 31;
 
 fn warn_path_for_graph_file(path: &Path) -> String {
     let s = path.to_string_lossy();
@@ -51,50 +56,74 @@ pub struct CommitGraphLayer {
 }
 
 impl CommitGraphLayer {
-    fn parse(path: PathBuf, raw: Vec<u8>) -> Option<Self> {
+    /// Parse a commit-graph layer; fails if generation overflow chunk is inconsistent with GDA2.
+    pub fn try_parse(path: PathBuf, raw: Vec<u8>) -> Result<Self, Error> {
         if raw.len() < 28 {
-            return None;
+            return Err(Error::CorruptObject(
+                "commit-graph file too small".to_owned(),
+            ));
         }
         let body = raw[..raw.len() - HASH_LEN].to_vec();
         if body.len() < 8 || &body[0..4] != SIGNATURE {
-            return None;
+            return Err(Error::CorruptObject(
+                "commit-graph has bad signature".to_owned(),
+            ));
         }
         if body[4] != GRAPH_VERSION || body[5] != HASH_VERSION_SHA1 {
-            return None;
+            return Err(Error::CorruptObject(format!(
+                "commit-graph version/hash not supported (version {} hash {})",
+                body[4], body[5]
+            )));
         }
         let num_chunks = body[6] as usize;
         let toc_start = 8;
         let toc_end = toc_start + (num_chunks + 1) * 12;
         if body.len() < toc_end {
-            return None;
+            return Err(Error::CorruptObject(
+                "commit-graph truncated at chunk table".to_owned(),
+            ));
         }
 
         let mut fanout_off = None;
         let mut oid_lookup_off = None;
         let mut commit_data_off = None;
         let mut generation_off = None;
+        let mut generation_overflow_off = None;
         let mut bloom_idx_off = None;
         let mut bloom_data_range = None;
         let mut chunk_offsets: Vec<usize> = Vec::new();
+        let mut toc_entries: Vec<(u32, usize)> = Vec::with_capacity(num_chunks);
 
         for i in 0..num_chunks {
             let e = toc_start + i * 12;
-            let id = u32::from_be_bytes(body[e..e + 4].try_into().ok()?);
-            let off = u64::from_be_bytes(body[e + 4..e + 12].try_into().ok()?) as usize;
+            let id = u32::from_be_bytes(
+                body[e..e + 4]
+                    .try_into()
+                    .map_err(|_| Error::CorruptObject("commit-graph bad TOC".to_owned()))?,
+            );
+            let off = u64::from_be_bytes(
+                body[e + 4..e + 12]
+                    .try_into()
+                    .map_err(|_| Error::CorruptObject("commit-graph bad TOC".to_owned()))?,
+            ) as usize;
+            toc_entries.push((id, off));
             chunk_offsets.push(off);
             match id {
                 CHUNK_OID_FANOUT => fanout_off = Some(off),
                 CHUNK_OID_LOOKUP => oid_lookup_off = Some(off),
                 CHUNK_COMMIT_DATA => commit_data_off = Some(off),
                 CHUNK_GENERATION_DATA => generation_off = Some(off),
+                CHUNK_GENERATION_DATA_OVERFLOW => generation_overflow_off = Some(off),
                 CHUNK_BLOOM_INDEXES => bloom_idx_off = Some(off),
                 CHUNK_BLOOM_DATA => {
                     let end = if i + 1 < num_chunks {
                         let e2 = toc_start + (i + 1) * 12;
-                        u64::from_be_bytes(body[e2 + 4..e2 + 12].try_into().ok()?) as usize
+                        u64::from_be_bytes(body[e2 + 4..e2 + 12].try_into().unwrap_or([0u8; 8]))
+                            as usize
                     } else {
                         let term = toc_start + num_chunks * 12;
-                        u64::from_be_bytes(body[term + 4..term + 12].try_into().ok()?) as usize
+                        u64::from_be_bytes(body[term + 4..term + 12].try_into().unwrap_or([0u8; 8]))
+                            as usize
                     };
                     bloom_data_range = Some((off, end.saturating_sub(off)));
                 }
@@ -104,11 +133,80 @@ impl CommitGraphLayer {
         let file_end = u64::from_be_bytes(
             body[toc_start + num_chunks * 12 + 4..toc_start + num_chunks * 12 + 12]
                 .try_into()
-                .ok()?,
+                .map_err(|_| Error::CorruptObject("commit-graph bad file end".to_owned()))?,
         ) as usize;
         chunk_offsets.push(file_end);
         chunk_offsets.sort_unstable();
         chunk_offsets.dedup();
+
+        fn chunk_byte_range(
+            start: usize,
+            toc_entries: &[(u32, usize)],
+            file_end: usize,
+        ) -> Result<usize, Error> {
+            let mut ends: Vec<usize> = toc_entries
+                .iter()
+                .map(|&(_, o)| o)
+                .filter(|&o| o > start)
+                .collect();
+            ends.sort_unstable();
+            let end = ends.first().copied().unwrap_or(file_end);
+            if end < start {
+                return Err(Error::CorruptObject(
+                    "commit-graph chunk layout invalid".to_owned(),
+                ));
+            }
+            Ok(end)
+        }
+
+        if let Some(gda) = generation_off {
+            let gda_end = chunk_byte_range(gda, &toc_entries, file_end)?;
+            let gda_len = gda_end.saturating_sub(gda);
+            let num_commits = fanout_off
+                .and_then(|fo| {
+                    let slice = body.get(fo + 255 * 4..fo + 256 * 4)?;
+                    Some(u32::from_be_bytes(slice.try_into().ok()?))
+                })
+                .ok_or_else(|| Error::CorruptObject("commit-graph missing fanout".to_owned()))?;
+            let expected = num_commits as usize * 4;
+            if gda_len < expected {
+                return Err(Error::CorruptObject(
+                    "commit-graph generation data chunk is too small".to_owned(),
+                ));
+            }
+            let gda_slice = body.get(gda..gda + expected).ok_or_else(|| {
+                Error::CorruptObject("commit-graph generation data OOB".to_owned())
+            })?;
+            let mut max_overflow_idx: Option<u32> = None;
+            for w in 0..num_commits as usize {
+                let v =
+                    u32::from_be_bytes(gda_slice[w * 4..w * 4 + 4].try_into().map_err(|_| {
+                        Error::CorruptObject("commit-graph GDA2 corrupt".to_owned())
+                    })?);
+                if v & CORRECTED_COMMIT_DATE_OFFSET_OVERFLOW != 0 {
+                    let pos = v ^ CORRECTED_COMMIT_DATE_OFFSET_OVERFLOW;
+                    max_overflow_idx = Some(match max_overflow_idx {
+                        None => pos,
+                        Some(m) => m.max(pos),
+                    });
+                }
+            }
+            if let Some(pos) = max_overflow_idx {
+                let Some(gdo_start) = generation_overflow_off else {
+                    return Err(Error::CorruptObject(
+                        "commit-graph requires overflow generation data but has none".to_owned(),
+                    ));
+                };
+                let gdo_end = chunk_byte_range(gdo_start, &toc_entries, file_end)?;
+                let overflow_bytes = gdo_end.saturating_sub(gdo_start);
+                let n_slots = overflow_bytes / 8;
+                if n_slots <= pos as usize {
+                    return Err(Error::CorruptObject(
+                        "commit-graph overflow generation data is too small".to_owned(),
+                    ));
+                }
+            }
+        }
         let bidx_len = bloom_idx_off.and_then(|b| {
             chunk_offsets
                 .iter()
@@ -116,23 +214,35 @@ impl CommitGraphLayer {
                 .map(|&next| next.saturating_sub(b))
         });
 
-        let fanout_off = fanout_off?;
-        let oid_lookup_off = oid_lookup_off?;
-        let commit_data_off = commit_data_off?;
+        let fanout_off = fanout_off.ok_or_else(|| {
+            Error::CorruptObject("commit-graph missing OID fanout chunk".to_owned())
+        })?;
+        let oid_lookup_off = oid_lookup_off.ok_or_else(|| {
+            Error::CorruptObject("commit-graph missing OID lookup chunk".to_owned())
+        })?;
+        let commit_data_off = commit_data_off.ok_or_else(|| {
+            Error::CorruptObject("commit-graph missing commit data chunk".to_owned())
+        })?;
         if fanout_off + 256 * 4 > body.len() || oid_lookup_off + 4 > body.len() {
-            return None;
+            return Err(Error::CorruptObject(
+                "commit-graph chunk extends past end of file".to_owned(),
+            ));
         }
         let num_commits = u32::from_be_bytes(
             body[fanout_off + 255 * 4..fanout_off + 256 * 4]
                 .try_into()
-                .ok()?,
+                .map_err(|_| Error::CorruptObject("commit-graph fanout corrupt".to_owned()))?,
         );
         if oid_lookup_off + num_commits as usize * HASH_LEN > body.len() {
-            return None;
+            return Err(Error::CorruptObject(
+                "commit-graph OID lookup extends past end of file".to_owned(),
+            ));
         }
         let graph_data_width = HASH_LEN + 16;
         if commit_data_off + num_commits as usize * graph_data_width > body.len() {
-            return None;
+            return Err(Error::CorruptObject(
+                "commit-graph commit data extends past end of file".to_owned(),
+            ));
         }
 
         let read_generation_data = generation_off.is_some();
@@ -146,10 +256,19 @@ impl CommitGraphLayer {
                 );
             } else if bdat_off + bdat_len <= body.len() {
                 let hdr = &body[bdat_off..bdat_off + BLOOM_HEADER];
+                let hash_version: [u8; 4] = hdr[0..4]
+                    .try_into()
+                    .map_err(|_| Error::CorruptObject("Bloom header corrupt".to_owned()))?;
+                let num_hashes: [u8; 4] = hdr[4..8]
+                    .try_into()
+                    .map_err(|_| Error::CorruptObject("Bloom header corrupt".to_owned()))?;
+                let bits_per_entry: [u8; 4] = hdr[8..12]
+                    .try_into()
+                    .map_err(|_| Error::CorruptObject("Bloom header corrupt".to_owned()))?;
                 bloom_settings = Some(BloomFilterSettings {
-                    hash_version: u32::from_be_bytes(hdr[0..4].try_into().ok()?),
-                    num_hashes: u32::from_be_bytes(hdr[4..8].try_into().ok()?),
-                    bits_per_entry: u32::from_be_bytes(hdr[8..12].try_into().ok()?),
+                    hash_version: u32::from_be_bytes(hash_version),
+                    num_hashes: u32::from_be_bytes(num_hashes),
+                    bits_per_entry: u32::from_be_bytes(bits_per_entry),
                     max_changed_paths: 512,
                 });
                 chunk_bloom_data = Some((bdat_off, bdat_len));
@@ -185,7 +304,7 @@ impl CommitGraphLayer {
             None
         };
 
-        Some(Self {
+        Ok(Self {
             path,
             body,
             num_commits,
@@ -198,6 +317,10 @@ impl CommitGraphLayer {
             bloom_settings,
             bloom_disabled: false,
         })
+    }
+
+    fn parse(path: PathBuf, raw: Vec<u8>) -> Option<Self> {
+        Self::try_parse(path, raw).ok()
     }
 
     fn oid_at_lex(&self, lex_index: u32) -> Option<ObjectId> {
@@ -370,11 +493,14 @@ impl CommitGraphChain {
     }
 
     /// Load from `objects/info/commit-graph` or `objects/info/commit-graphs/commit-graph-chain`.
-    pub fn load(objects_dir: &Path) -> Option<Self> {
+    ///
+    /// Returns `Ok(None)` when no commit-graph exists. Corrupt graphs (including invalid GDO2)
+    /// return [`Err`].
+    pub fn try_load(objects_dir: &Path) -> Result<Option<Self>, Error> {
         let info = objects_dir.join("info");
         let chain_path = info.join("commit-graphs").join("commit-graph-chain");
         if chain_path.is_file() {
-            let content = std::fs::read_to_string(&chain_path).ok()?;
+            let content = std::fs::read_to_string(&chain_path).map_err(Error::from)?;
             let mut layers = Vec::new();
             for line in content.lines() {
                 let h = line.trim();
@@ -382,28 +508,33 @@ impl CommitGraphChain {
                     continue;
                 }
                 let graph_path = info.join("commit-graphs").join(format!("graph-{h}.graph"));
-                let raw = std::fs::read(&graph_path).ok()?;
-                let layer = CommitGraphLayer::parse(graph_path, raw)?;
+                let raw = std::fs::read(&graph_path).map_err(Error::from)?;
+                let layer = CommitGraphLayer::try_parse(graph_path, raw)?;
                 layers.push(layer);
             }
             if layers.is_empty() {
-                return None;
+                return Ok(None);
             }
             let mut chain = Self { layers };
             chain.validate_bloom_compatibility();
-            return Some(chain);
+            return Ok(Some(chain));
         }
         let single = info.join("commit-graph");
         if single.is_file() {
-            let raw = std::fs::read(&single).ok()?;
-            let layer = CommitGraphLayer::parse(single.clone(), raw)?;
+            let raw = std::fs::read(&single).map_err(Error::from)?;
+            let layer = CommitGraphLayer::try_parse(single.clone(), raw)?;
             let mut chain = Self {
                 layers: vec![layer],
             };
             chain.validate_bloom_compatibility();
-            return Some(chain);
+            return Ok(Some(chain));
         }
-        None
+        Ok(None)
+    }
+
+    /// Like [`Self::try_load`] but ignores parse errors (returns `None`).
+    pub fn load(objects_dir: &Path) -> Option<Self> {
+        Self::try_load(objects_dir).ok().flatten()
     }
 
     fn validate_bloom_compatibility(&mut self) {
@@ -618,6 +749,7 @@ pub fn parse_graph_file(path: &Path) -> Option<ParsedGraphDump> {
             CHUNK_OID_LOOKUP => "oid_lookup",
             CHUNK_COMMIT_DATA => "commit_metadata",
             CHUNK_GENERATION_DATA => "generation_data",
+            CHUNK_GENERATION_DATA_OVERFLOW => "generation_data_overflow",
             CHUNK_EXTRA_EDGES => "extra_edges",
             CHUNK_BLOOM_INDEXES => "bloom_indexes",
             CHUNK_BLOOM_DATA => "bloom_data",

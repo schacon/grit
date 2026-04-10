@@ -19,6 +19,7 @@ const CHUNK_OID_FANOUT: u32 = 0x4f49_4446;
 const CHUNK_OID_LOOKUP: u32 = 0x4f49_444c;
 const CHUNK_COMMIT_DATA: u32 = 0x4344_4154;
 const CHUNK_GENERATION_DATA: u32 = 0x4744_4132;
+const CHUNK_GENERATION_DATA_OVERFLOW: u32 = 0x4744_4f32; // GDO2
 const CHUNK_EXTRA_EDGES: u32 = 0x4544_4745;
 const CHUNK_BLOOM_INDEXES: u32 = 0x4249_4458;
 const CHUNK_BLOOM_DATA: u32 = 0x4244_4154;
@@ -28,12 +29,18 @@ const PARENT_NONE: u32 = 0x7000_0000;
 const GRAPH_EXTRA_EDGES_NEEDED: u32 = 0x8000_0000;
 const GRAPH_LAST_EDGE: u32 = 0x8000_0000;
 
+/// `GENERATION_NUMBER_V2_OFFSET_MAX` from Git `commit.h`.
+const GENERATION_NUMBER_V2_OFFSET_MAX: u64 = (1u64 << 31) - 1;
+/// `CORRECTED_COMMIT_DATE_OFFSET_OVERFLOW` from Git `commit-graph.c`.
+const CORRECTED_COMMIT_DATE_OFFSET_OVERFLOW: u32 = 1u32 << 31;
+
 /// Per-commit data needed to write CDAT / Bloom.
 #[derive(Debug, Clone)]
 pub struct CommitGraphCommitInfo {
     pub tree: ObjectId,
     pub parents: Vec<ObjectId>,
-    pub commit_time: u32,
+    /// Committer Unix timestamp (Git `timestamp_t`; may exceed `u32`).
+    pub commit_time: u64,
 }
 
 fn sha1_file_body(body: &[u8]) -> [u8; 20] {
@@ -42,10 +49,10 @@ fn sha1_file_body(body: &[u8]) -> [u8; 20] {
     h.finalize().into()
 }
 
-fn parse_commit_time(committer: &str) -> u32 {
+fn parse_commit_time(committer: &str) -> u64 {
     let parts: Vec<&str> = committer.rsplitn(3, ' ').collect();
     if parts.len() >= 2 {
-        parts[1].parse::<u32>().unwrap_or(0)
+        parts[1].parse::<u64>().unwrap_or(0)
     } else {
         0
     }
@@ -152,7 +159,7 @@ fn compute_corrected_generations(
             }
             let oid = sorted_oids[idx];
             let info = &infos[&oid];
-            let cdate = info.commit_time as u64;
+            let cdate = info.commit_time;
             if parents_done {
                 let mut max_g = cdate;
                 for p in &info.parents {
@@ -254,12 +261,20 @@ pub fn build_commit_graph_bytes(
     let gen_date = compute_corrected_generations(sorted_oids, infos, &oid_to_idx, &topo);
 
     let mut gda2: Vec<u8> = Vec::with_capacity(sorted_oids.len() * 4);
+    let mut generation_overflow: Vec<u8> = Vec::new();
+    let mut overflow_count: u32 = 0;
     for (i, oid) in sorted_oids.iter().enumerate() {
         let info = &infos[oid];
-        let offset = gen_date[i]
-            .saturating_sub(info.commit_time as u64)
-            .min(u64::from(u32::MAX));
-        gda2.extend_from_slice(&(offset as u32).to_be_bytes());
+        let offset_raw = gen_date[i].saturating_sub(info.commit_time);
+        if offset_raw > GENERATION_NUMBER_V2_OFFSET_MAX {
+            let marker = CORRECTED_COMMIT_DATE_OFFSET_OVERFLOW | overflow_count;
+            overflow_count = overflow_count.wrapping_add(1);
+            gda2.extend_from_slice(&marker.to_be_bytes());
+            generation_overflow.extend_from_slice(&((offset_raw >> 32) as u32).to_be_bytes());
+            generation_overflow.extend_from_slice(&((offset_raw as u32).to_be_bytes()));
+        } else {
+            gda2.extend_from_slice(&(offset_raw as u32).to_be_bytes());
+        }
     }
 
     let mut extra_edges: Vec<u8> = Vec::new();
@@ -294,10 +309,10 @@ pub fn build_commit_graph_bytes(
         cdat.extend_from_slice(&p2.to_be_bytes());
 
         let topo = topo[i];
-        let time_low2 = info.commit_time & 0x3;
-        let packed = (topo << 2) | time_low2;
+        let date = info.commit_time;
+        let packed = (topo << 2) | (((date >> 32) & 0x3) as u32);
         cdat.extend_from_slice(&packed.to_be_bytes());
-        cdat.extend_from_slice(&info.commit_time.to_be_bytes());
+        cdat.extend_from_slice(&((date & 0xFFFF_FFFF) as u32).to_be_bytes());
     }
 
     let mut fanout = vec![0u8; 256 * 4];
@@ -370,6 +385,9 @@ pub fn build_commit_graph_bytes(
     chunks.push((CHUNK_OID_LOOKUP, oid_lookup));
     chunks.push((CHUNK_COMMIT_DATA, cdat));
     chunks.push((CHUNK_GENERATION_DATA, gda2));
+    if !generation_overflow.is_empty() {
+        chunks.push((CHUNK_GENERATION_DATA_OVERFLOW, generation_overflow));
+    }
     if !extra_edges.is_empty() {
         chunks.push((CHUNK_EXTRA_EDGES, extra_edges));
     }
