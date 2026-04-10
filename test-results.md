@@ -1,5 +1,21 @@
 # Test results
 
+**2026-04-10 (status perf phase4 / read-cache helper + fsmonitor config guard)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `cargo clippy --fix --allow-dirty -p grit-rs -p grit-lib`: passed (pre-existing warnings remain)
+- `cargo test -p grit-lib --lib`: 166 passed
+- `bash tests/t7519-status-fsmonitor.sh --run=30-33 -v`: 31/33 (remaining: 31, 33)
+- `bash tests/t7519-status-fsmonitor.sh --run=4-31 -v -i`: 31/31 (test 31 passes in full-context reproduction)
+- `bash tests/t7519-status-fsmonitor.sh -v`: 31/33 (remaining failures: 31, 33)
+- `./scripts/run-tests.sh t7519-status-fsmonitor.sh`: 26/33 (improved from 25/33)
+- `./scripts/run-tests.sh t7063-status-untracked-cache.sh`: 14/58
+- `./scripts/run-tests.sh t7508-status.sh`: 94/126
+- `./scripts/run-tests.sh t7060-wtstatus.sh`: 12/17
+- `./scripts/run-tests.sh t7065-status-rename.sh`: 28/28
+
 **2026-04-10 (status perf phase4 / untracked cache dedup on cache replay)**
 
 - `cargo fmt`: passed

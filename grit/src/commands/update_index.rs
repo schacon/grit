@@ -363,6 +363,9 @@ fn query_fsmonitor_paths(
     last_update_token: Option<&str>,
 ) -> Option<(String, BTreeSet<Vec<u8>>)> {
     let raw = config.get("core.fsmonitor")?;
+    if raw.trim().is_empty() {
+        return None;
+    }
     let lower = raw.to_ascii_lowercase();
     if matches!(lower.as_str(), "false" | "0" | "no" | "off") {
         return None;
