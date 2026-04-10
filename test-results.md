@@ -1,5 +1,15 @@
 # Test results
 
+**2026-04-10 (phase 6 / t5516 push destination-refspec parity)**  
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo clippy --fix --allow-dirty -p grit-rs`: pass (reverted unrelated clippy-only edits in non-target files before commit)
+- `cargo test -p grit-lib --lib`: pass
+- `cargo build --release -p grit-rs`: pass
+- `bash tests/t5516-fetch-push.sh --run=1,31,32,38,39,40` (harness env): all selected tests pass (`onelevel ref`, colon-less ambiguous branch/tag source, and non-existent/incomplete destination rejection cases)
+- `./scripts/run-tests.sh t5516-fetch-push.sh`: **68/124** (up from 66/124)
+
 **2026-04-10 (phase 6 / t5516 push negotiation delegation parity)**  
 
 - `cargo fmt`: pass

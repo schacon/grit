@@ -7,6 +7,7 @@ use crate::protocol_wire;
 use crate::wire_trace;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
 use grit_lib::config::{parse_bool, parse_color, ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::gitmodules::{oids_from_copied_object_paths, verify_gitmodules_for_commit};
 use grit_lib::hooks::{run_hook, run_hook_capture, HookResult};
@@ -1037,14 +1038,14 @@ fn push_to_url(
                 dst.clone()
             };
             let (local_ref, local_oid, pre_push_local_name) =
-                resolve_push_src_for_refspec(repo, &src)
+                resolve_push_src_for_refspec(repo, &src, &effective_dst)
                     .with_context(|| format!("src refspec '{}' does not match any", src))?;
-            let remote_ref =
-                if !effective_dst.starts_with("refs/") && local_ref.starts_with("refs/tags/") {
-                    format!("refs/tags/{effective_dst}")
-                } else {
-                    normalize_ref(&effective_dst)
-                };
+            let remote_ref = resolve_destination_ref_for_push(
+                &remote_repo.git_dir,
+                &effective_dst,
+                &local_ref,
+                !spec_clean.contains(':') && spec_clean != "tag",
+            )?;
             let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
 
             let expected_oid = resolve_force_with_lease_expect(
@@ -1149,7 +1150,12 @@ fn push_to_url(
                 }
             } else {
                 let local_ref = normalize_ref(src_pat);
-                let remote_ref = normalize_ref(dst_pat);
+                let remote_ref = resolve_destination_ref_for_push(
+                    &remote_repo.git_dir,
+                    dst_pat,
+                    &local_ref,
+                    false,
+                )?;
                 let local_oid = refs::resolve_ref(&repo.git_dir, &local_ref)
                     .with_context(|| format!("src refspec '{}' does not match any", src_pat))?;
                 let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
@@ -3320,7 +3326,13 @@ fn default_push_ref_for_current_branch(
 fn resolve_push_src_for_refspec(
     repo: &Repository,
     src: &str,
+    dst: &str,
 ) -> Result<(String, ObjectId, Option<String>)> {
+    if src.contains('^') || src.contains('~') {
+        let oid = rev_parse::resolve_revision(repo, src)?;
+        return Ok((src.to_owned(), oid, None));
+    }
+
     if src == "HEAD" {
         return match resolve_head(&repo.git_dir)? {
             HeadState::Branch {
@@ -3363,10 +3375,145 @@ fn resolve_push_src_for_refspec(
             Ok((name, oid, None))
         }
         _ => {
+            if !dst.is_empty() && !dst.contains('/') && !dst.starts_with("refs/") {
+                if let Some((name, oid)) = matches
+                    .iter()
+                    .find(|(name, _)| name.starts_with("refs/heads/"))
+                    .cloned()
+                {
+                    return Ok((name, oid, None));
+                }
+            }
             eprintln!("error: src refspec {src} matches more than one");
             bail!("failed to push some refs");
         }
     }
+}
+
+fn resolve_destination_ref_for_push(
+    remote_git_dir: &Path,
+    dst: &str,
+    local_ref: &str,
+    prefer_source_namespace: bool,
+) -> Result<String> {
+    if dst.is_empty() {
+        return Ok(local_ref.to_owned());
+    }
+    if dst == "HEAD" {
+        return Ok("HEAD".to_owned());
+    }
+    if dst.starts_with("refs/") {
+        if dst.matches('/').count() < 2 {
+            bail!("The destination you provided is not a full refname");
+        }
+        let opts = RefNameOptions {
+            allow_onelevel: false,
+            refspec_pattern: false,
+            normalize: false,
+        };
+        if check_refname_format(dst, &opts).is_err() {
+            bail!("The destination you provided is not a full refname");
+        }
+        if let Some(mapped) = map_short_destination_under_existing_namespace(remote_git_dir, dst) {
+            return Ok(mapped);
+        }
+        return Ok(dst.to_owned());
+    }
+    if dst.starts_with("refs/") || dst.contains('/') {
+        // `refs/<name>` without a category component is not a full refname.
+        if dst.starts_with("refs/") && dst.matches('/').count() < 2 {
+            bail!("The destination you provided is not a full refname");
+        }
+        bail!("The destination you provided is not a full refname");
+    }
+    let onelevel_opts = RefNameOptions {
+        allow_onelevel: true,
+        refspec_pattern: false,
+        normalize: false,
+    };
+    if check_refname_format(dst, &onelevel_opts).is_err() {
+        bail!("The destination you provided is not a full refname");
+    }
+    if !local_ref.starts_with("refs/") {
+        bail!("The destination you provided is not a full refname");
+    }
+    if prefer_source_namespace {
+        if local_ref.starts_with("refs/heads/") {
+            return Ok(format!("refs/heads/{dst}"));
+        }
+        if local_ref.starts_with("refs/tags/") {
+            return Ok(format!("refs/tags/{dst}"));
+        }
+    }
+    if local_ref.starts_with("refs/tags/") {
+        return Ok(format!("refs/tags/{dst}"));
+    }
+
+    let candidates = [
+        format!("refs/heads/{dst}"),
+        format!("refs/tags/{dst}"),
+        format!("refs/remotes/{dst}"),
+    ];
+    let existing: Vec<String> = candidates
+        .iter()
+        .filter_map(|c| {
+            refs::resolve_ref(remote_git_dir, c)
+                .ok()
+                .map(|_| c.to_owned())
+        })
+        .collect();
+    match existing.len() {
+        0 => Ok(format!("refs/heads/{dst}")),
+        1 => Ok(existing
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| dst.to_owned())),
+        _ => {
+            eprintln!("error: dst refspec {dst} matches more than one");
+            bail!("failed to push some refs");
+        }
+    }
+}
+
+fn map_short_destination_under_existing_namespace(
+    remote_git_dir: &Path,
+    dst: &str,
+) -> Option<String> {
+    if !dst.starts_with("refs/") || dst.matches('/').count() != 1 {
+        return None;
+    }
+    let Some((kind, leaf)) = dst[5..].split_once('/') else {
+        return None;
+    };
+    if leaf.is_empty() {
+        return None;
+    }
+
+    let prefixes = match kind {
+        "heads" => refs::list_refs(remote_git_dir, "refs/remotes/").ok()?,
+        "tags" => refs::list_refs(remote_git_dir, "refs/tags/").ok()?,
+        "remotes" => refs::list_refs(remote_git_dir, "refs/remotes/").ok()?,
+        _ => return None,
+    };
+
+    let mut matches = Vec::new();
+    for (name, _) in prefixes {
+        let parts: Vec<&str> = name.split('/').collect();
+        if parts.len() < 4 {
+            continue;
+        }
+        if parts.last().copied() != Some(leaf) {
+            continue;
+        }
+        let mapped = format!("refs/{}/{}", parts[..parts.len() - 1].join("/"), leaf);
+        matches.push(mapped);
+    }
+    matches.sort();
+    matches.dedup();
+    if matches.len() == 1 {
+        return matches.into_iter().next();
+    }
+    None
 }
 
 /// Write branch tracking config (`branch.<name>.remote` + `branch.<name>.merge`).
