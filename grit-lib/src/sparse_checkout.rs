@@ -69,6 +69,11 @@ fn glob_special_unescaped(name: &[u8]) -> bool {
 }
 
 fn sparse_glob_match_star_crosses_slash(pattern: &[u8], text: &[u8]) -> bool {
+    // For bracket classes / escapes, defer to full wildmatch with pathname disabled,
+    // which keeps sparse non-cone semantics where `*` may span `/`.
+    if pattern.contains(&b'[') || pattern.contains(&b'\\') {
+        return wildmatch(pattern, text, 0);
+    }
     let (mut pi, mut ti) = (0usize, 0usize);
     let (mut star_p, mut star_t) = (usize::MAX, 0usize);
     while ti < text.len() {
