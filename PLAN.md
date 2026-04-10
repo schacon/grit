@@ -527,7 +527,7 @@ commit → check it off → move on.
 - [ ] `t4205-log-pretty-formats` ██████████░░░░░░░░░░ 67/125 (58 left) — Test pretty formats
 - [ ] `t4034-diff-words` ██░░░░░░░░░░░░░░░░░░ 7/66 (59 left) — word diff colors
 - [ ] `t4203-mailmap` ███░░░░░░░░░░░░░░░░░ 14/74 (60 left) — .mailmap configurations
-- [ ] `t4015-diff-whitespace` ██████████░░░░░░░░░░ 74/136 (62 left) — Test special whitespace in diff engine.
+- [ ] `t4015-diff-whitespace` ██████████████░░░░░░ 100/136 (36 left) — Test special whitespace in diff engine.
 
 - [ ] `t4150-am` █████░░░░░░░░░░░░░░░ 23/87 (64 left) — git am running
 - [ ] `t4052-stat-output` ███░░░░░░░░░░░░░░░░░ 17/89 (72 left) — test --stat output of various commands
