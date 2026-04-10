@@ -850,8 +850,7 @@ pub fn run(mut args: Args) -> Result<()> {
         let stdout = io::stdout();
         let mut out = stdout.lock();
         for chunk in &chunks {
-            let pack_bytes =
-                build_pack(chunk, use_ofs_delta, pack_hash_bytes, zlib_compression)?;
+            let pack_bytes = build_pack(chunk, use_ofs_delta, pack_hash_bytes, zlib_compression)?;
             out.write_all(&pack_bytes)?;
         }
         out.flush()?;
@@ -863,8 +862,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
         let mut pack_hashes: Vec<String> = Vec::new();
         for chunk in &chunks {
-            let pack_bytes =
-                build_pack(chunk, use_ofs_delta, pack_hash_bytes, zlib_compression)?;
+            let pack_bytes = build_pack(chunk, use_ofs_delta, pack_hash_bytes, zlib_compression)?;
             let pack_hash = hex::encode(&pack_bytes[pack_bytes.len() - pack_hash_bytes..]);
             pack_hashes.push(pack_hash.clone());
             let pack_path = format!("{base}-{pack_hash}.pack");
@@ -2727,3 +2725,47 @@ static CRC32_TABLE: [u32; 256] = {
     }
     table
 };
+
+/// Write `pack-<hash>.pack` and `pack-<hash>.idx` under `pack_dir` containing exactly `oids`
+/// (full objects, no deltas). Used by partial clone to materialize a promisor pack without
+/// spawning a subprocess.
+pub(crate) fn write_partial_clone_promisor_pack(
+    repo: &Repository,
+    pack_dir: &Path,
+    oids: &[ObjectId],
+) -> Result<()> {
+    std::fs::create_dir_all(pack_dir)?;
+    let pack_hash_bytes = pack_trailer_bytes_for_repo(&repo.git_dir);
+    let mut sorted: Vec<ObjectId> = oids.to_vec();
+    sorted.sort_by_key(|o| o.to_hex());
+    sorted.dedup();
+
+    let mut write_entries: Vec<PackWriteEntry> = Vec::with_capacity(sorted.len());
+    for oid in &sorted {
+        let obj = read_object_from_repo(repo, oid)?;
+        let pack_id = hash_object_bytes(obj.kind, &obj.data, pack_hash_bytes)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        write_entries.push(PackWriteEntry::Full(PackEntry {
+            oid: *oid,
+            pack_id,
+            kind: obj.kind,
+            data: obj.data,
+        }));
+    }
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let pack_zlib_level = config
+        .pack_objects_zlib_level()
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let zlib_compression = Compression::new(pack_zlib_level as u32);
+
+    let pack_bytes = build_pack(&write_entries, false, pack_hash_bytes, zlib_compression)?;
+    let pack_hash = hex::encode(&pack_bytes[pack_bytes.len() - pack_hash_bytes..]);
+    let pack_path = pack_dir.join(format!("pack-{pack_hash}.pack"));
+    let idx_path = pack_dir.join(format!("pack-{pack_hash}.idx"));
+
+    std::fs::write(&pack_path, &pack_bytes)?;
+    let (idx_bytes, _) = build_idx_for_pack(&pack_bytes, &write_entries, pack_hash_bytes)?;
+    std::fs::write(&idx_path, &idx_bytes)?;
+    Ok(())
+}

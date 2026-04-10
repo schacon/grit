@@ -288,6 +288,25 @@ pub(crate) fn hydrate_sparse_tip_blobs_from_promisor(
     flush_promisor_blob_batches(dest, promisor, &mut need, 50_000)
 }
 
+/// Copy every blob under `tree_oid` that is not yet present in the local ODB (loose or pack).
+pub(crate) fn hydrate_tree_blobs_from_promisor(
+    dest: &Repository,
+    promisor: &PromisorSource,
+    tree_oid: ObjectId,
+) -> Result<()> {
+    let mut need = Vec::new();
+    let mut seen_trees = HashSet::new();
+    let mut seen_blobs = HashSet::new();
+    collect_all_missing_blobs_from_tree(
+        dest,
+        tree_oid,
+        &mut seen_trees,
+        &mut seen_blobs,
+        &mut need,
+    )?;
+    flush_promisor_blob_batches(dest, promisor, &mut need, 50_000)
+}
+
 /// Copy every blob reachable from `HEAD`'s tree from the promisor remote.
 pub(crate) fn hydrate_head_tree_blobs_from_promisor(
     dest: &Repository,

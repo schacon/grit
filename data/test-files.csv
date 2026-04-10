@@ -1012,7 +1012,7 @@ t5612-clone-refspec	t5	yes	13	3	10	false	ok	0
 t5613-info-alternate	t5	yes	13	13	0	true	ok	0
 t5614-clone-submodules-shallow	t5	yes	9	9	0	true	ok	0
 t5615-alternate-env	t5	yes	9	9	0	true	ok	0
-t5616-partial-clone	t5	yes	0	0	0	false	timeout	0
+t5616-partial-clone	t5	yes	47	13	34	false	ok	0
 t5617-clone-submodules-remote	t5	yes	9	2	7	false	ok	0
 t5618-alternate-refs	t5	yes	6	6	0	true	ok	0
 t5619-clone-local-ambiguous-transport	t5	yes	2	1	1	false	ok	0
