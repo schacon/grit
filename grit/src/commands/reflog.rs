@@ -438,7 +438,11 @@ fn run_drop(args: DropArgs) -> Result<()> {
     Ok(())
 }
 
-/// Parse `--expire` / `--expire-unreachable` values (Git-compatible subset).
+/// Parse `--expire` / `--expire-unreachable` values (Git `parse_expiry_date` subset).
+///
+/// Git maps `all` and `now` to `TIME_MAX` so every reflog entry (always in the past) is pruned.
+/// `never` follows `now` for expiry cutoffs (e.g. t3202). Plain `0` is still wall-clock "now" for
+/// day-count / relative semantics.
 fn parse_reflog_expire_cli(raw: &str, now: i64) -> Result<i64> {
     let s = raw.trim();
     if s.eq_ignore_ascii_case("all") {
@@ -447,9 +451,10 @@ fn parse_reflog_expire_cli(raw: &str, now: i64) -> Result<i64> {
     if s.eq_ignore_ascii_case("false") {
         return Ok(0);
     }
-    // Git treats `never` like `now` for expiry cutoffs: prune entries not newer than "now"
-    // (used by `git reflog expire --expire=now` / `--expire=never` in tests such as t3202).
-    if s.eq_ignore_ascii_case("never") || s.eq_ignore_ascii_case("now") || s == "0" {
+    if s.eq_ignore_ascii_case("never") || s.eq_ignore_ascii_case("now") {
+        return Ok(i64::MAX);
+    }
+    if s == "0" {
         return Ok(now);
     }
     // Git passes `$GIT_COMMITTER_DATE` here (`<unix> <+/-HHMM>`, e.g. `1111100540 -0700`).

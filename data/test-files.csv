@@ -1141,7 +1141,7 @@ t6437-submodule-merge	t6	yes	22	22	0	true	ok	0
 t6438-submodule-directory-file-conflicts	t6	yes	56	55	1	false	ok	0
 t6439-merge-co-error-msgs	t6	yes	6	4	2	false	ok	0
 t6500-gc	t6	yes	35	29	6	false	ok	0
-t6501-freshen-objects	t6	yes	42	39	3	false	ok	0
+t6501-freshen-objects	t6	yes	42	42	0	true	ok	0
 t6600-test-reach	t6	yes	47	16	31	false	ok	0
 t6601-path-walk	t6	yes	15	1	14	false	ok	0
 t6700-tree-depth	t6	yes	10	10	0	true	ok	0
