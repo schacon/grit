@@ -79,3 +79,15 @@
 
 - `cargo test -p grit-lib --lib`: 147 passed
 - `./scripts/run-tests.sh t5318-pack-objects-revs-exclude.sh`: 9/9 passed
+
+**2026-04-10 (fetch-plan Phase A slice: HTTP auth + POST transport)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `bash tests/t5551-http-fetch-smart.sh --run=32`: fails (known pre-existing broader HTTP fetch gaps; credential storage path now active, but suite setup still non-green)
+- `bash tests/t5551-http-fetch-smart.sh --run=33`: fails (known pre-existing broader HTTP fetch gaps; expected askpass/credential interaction still not fully matching)
+- `bash tests/t5564-http-proxy.sh`: fails in this environment with pre-existing setup/path issues; proxy/auth regression inspected via access logs
+- Manual credential helper validation:
+  - `grit credential approve` with `credential.helper=store` writes credentials
+  - `grit credential fill` returns stored username/password
+  - `grit credential reject` erases stored entry (credential file reduced to empty newline)
