@@ -13,7 +13,9 @@ use grit_lib::rev_parse::{
     resolve_revision_without_index_dwim, show_prefix, split_double_dot_range,
     split_triple_dot_range, symbolic_full_name, to_relative_path,
 };
+use std::borrow::Cow;
 use std::env;
+use std::path::Path;
 
 /// Arguments for `grit rev-parse`.
 #[derive(Debug, ClapArgs)]
@@ -1073,6 +1075,19 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                             }
                         }
                         if matches!(&e, LibError::Message(m) if m.contains("ambiguous argument")) {
+                            // Git's `rev-parse` with `--prefix`: after failed `repo_get_oid`,
+                            // `verify_filename` uses `prefix_filename(prefix, arg)` + `lstat`.
+                            // If that path exists, emit the prefixed path instead of dying
+                            // (t1513 disambiguate path / file+refs with prefix).
+                            if let Some(ref pfx) = prefix {
+                                if prefixed_path_exists_on_disk(Some(pfx.as_str()), rev) {
+                                    if short_len.is_some() {
+                                        return fail_verify(quiet, false);
+                                    }
+                                    println!("{}", apply_prefix_for_forced_path(pfx, rev));
+                                    continue;
+                                }
+                            }
                             // With `--short`, match Git: no stdout for the failed rev; exit via
                             // fail_verify after other actions (t9903 bare/orphan prompt).
                             if short_len.is_some() {
@@ -1184,6 +1199,25 @@ fn apply_prefix_for_forced_path(prefix: &str, path: &str) -> String {
         return path.to_owned();
     }
     format!("{prefix}{path}")
+}
+
+/// Git `abspath.c` `prefix_filename`: concatenate `pfx` and `arg` unless `arg` is absolute.
+fn prefix_filename_for_stat<'a>(pfx: Option<&'a str>, arg: &'a str) -> Cow<'a, str> {
+    let Some(p) = pfx else {
+        return Cow::Borrowed(arg);
+    };
+    if p.is_empty() {
+        return Cow::Borrowed(arg);
+    }
+    if Path::new(arg).is_absolute() {
+        return Cow::Borrowed(arg);
+    }
+    Cow::Owned(format!("{p}{arg}"))
+}
+
+fn prefixed_path_exists_on_disk(pfx: Option<&str>, arg: &str) -> bool {
+    let path = prefix_filename_for_stat(pfx, arg);
+    Path::new(path.as_ref()).exists()
 }
 
 fn rewrite_tree_path_spec(spec: &str, prefix: Option<&str>) -> String {
