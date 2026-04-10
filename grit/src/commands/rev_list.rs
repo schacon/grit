@@ -13,6 +13,7 @@ use grit_lib::rev_list::{
     render_commit_with_color, rev_list, split_symmetric_diff, tag_targets, FilterObjectKind,
     MissingAction, ObjectFilter, OrderingMode, OutputMode, RevListOptions,
 };
+use grit_lib::rev_parse::commit_parents_for_navigation;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::Path;
@@ -1053,15 +1054,57 @@ fn expand_parent_shorthand(repo: &Repository, spec: &str) -> Result<Vec<String>>
         let base_spec = if base.is_empty() { "HEAD" } else { base };
         let base_oid = grit_lib::rev_parse::resolve_revision(repo, base_spec)
             .with_context(|| format!("bad revision '{base_spec}'"))?;
-        let object = repo.odb.read(&base_oid)?;
-        let commit = parse_commit(&object.data)?;
+        let commit_oid = grit_lib::rev_parse::peel_to_commit_for_merge_base(repo, base_oid)?;
+        let parents = commit_parents_for_navigation(repo, commit_oid)
+            .with_context(|| format!("bad revision '{base_spec}'"))?;
 
-        let mut expanded = Vec::with_capacity(commit.parents.len() + 1);
+        let mut expanded = Vec::with_capacity(parents.len() + 1);
         expanded.push(base_spec.to_string());
-        for parent in commit.parents {
+        for parent in parents {
             expanded.push(format!("^{}", parent.to_hex()));
         }
         return Ok(expanded);
+    }
+
+    if let Some(base) = spec.strip_suffix("^@") {
+        let base_spec = if base.is_empty() { "HEAD" } else { base };
+        let base_oid = grit_lib::rev_parse::resolve_revision(repo, base_spec)
+            .with_context(|| format!("bad revision '{base_spec}'"))?;
+        let commit_oid = grit_lib::rev_parse::peel_to_commit_for_merge_base(repo, base_oid)?;
+        let parents = commit_parents_for_navigation(repo, commit_oid)
+            .with_context(|| format!("bad revision '{base_spec}'"))?;
+        return Ok(parents.iter().map(|p| p.to_hex().to_string()).collect());
+    }
+
+    if let Some(pos) = spec.rfind("^-") {
+        let after_minus = &spec[pos + 2..];
+        let exclude_parent = if after_minus.is_empty() {
+            Some(1usize)
+        } else if after_minus.bytes().all(|b| b.is_ascii_digit()) {
+            after_minus.parse::<usize>().ok().filter(|&n| n >= 1)
+        } else {
+            None
+        };
+        if let Some(exclude_parent) = exclude_parent {
+            if pos + 2 + after_minus.len() == spec.len() {
+                let base = &spec[..pos];
+                let base_spec = if base.is_empty() { "HEAD" } else { base };
+                let base_oid = grit_lib::rev_parse::resolve_revision(repo, base_spec)
+                    .with_context(|| format!("bad revision '{base_spec}'"))?;
+                let commit_oid =
+                    grit_lib::rev_parse::peel_to_commit_for_merge_base(repo, base_oid)?;
+                let parents = commit_parents_for_navigation(repo, commit_oid)
+                    .with_context(|| format!("bad revision '{base_spec}'"))?;
+                if exclude_parent > parents.len() {
+                    bail!("bad revision '{spec}'");
+                }
+                let excluded = parents[exclude_parent - 1];
+                return Ok(vec![
+                    commit_oid.to_hex().to_string(),
+                    format!("^{}", excluded.to_hex()),
+                ]);
+            }
+        }
     }
 
     Ok(vec![spec.to_string()])

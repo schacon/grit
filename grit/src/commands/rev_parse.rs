@@ -8,11 +8,27 @@ use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{
     abbreviate_object_id, abbreviate_ref_name, ambiguous_object_hint_lines, discover_optional,
-    is_inside_git_dir, is_inside_work_tree, list_all_abbrev_matches, parse_peel_suffix,
-    peel_to_commit_for_merge_base, resolve_revision, resolve_revision_for_range_end, show_prefix,
-    split_double_dot_range, split_triple_dot_range, symbolic_full_name, to_relative_path,
+    expand_parent_shorthand_rev_parse_lines, is_inside_git_dir, is_inside_work_tree,
+    list_all_abbrev_matches, parse_peel_suffix, peel_to_commit_for_merge_base, resolve_revision,
+    resolve_revision_for_range_end, resolve_revision_without_index_dwim, show_prefix,
+    spec_has_parent_shorthand_suffix, split_double_dot_range, split_triple_dot_range,
+    symbolic_full_name, to_relative_path,
 };
 use std::env;
+
+/// Strip a single leading uninteresting `^` (Git revision machinery).
+///
+/// Returns `(true, rest)` when `spec` is `^<rev>` with a non-empty rest that does not start with
+/// `^` (so `^^foo` is not treated as negated). Matches `git rev-parse` for plumbing output.
+fn strip_leading_uninteresting_caret(spec: &str) -> (bool, &str) {
+    let Some(rest) = spec.strip_prefix('^') else {
+        return (false, spec);
+    };
+    if rest.is_empty() || rest.starts_with('^') {
+        return (false, spec);
+    }
+    (true, rest)
+}
 
 /// Arguments for `grit rev-parse`.
 #[derive(Debug, ClapArgs)]
@@ -47,6 +63,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut sq_quote = false;
     let mut short_len: Option<usize> = None;
     let mut show_symbolic_full_name = false;
+    let mut show_symbolic_asis = false;
     let mut abbrev_ref = false;
     let mut prefix: Option<String> = None;
     let mut default_rev: Option<String> = None;
@@ -80,7 +97,7 @@ pub fn run(args: Args) -> Result<()> {
         Exclude(String),
         LocalEnvVars,
         ResolveGitDir(String),
-        Revision(String, bool, bool), // (rev_spec, symbolic_full_name, strict_before_first_dd)
+        Revision(String, bool, bool, bool), // (rev_spec, symbolic_full_name, symbolic_asis, strict_before_first_dd)
         ForcedPath(String),
         PathSeparator,
         Literal(String),
@@ -117,6 +134,7 @@ pub fn run(args: Args) -> Result<()> {
                 actions.push(Action::Revision(
                     arg.clone(),
                     show_symbolic_full_name,
+                    show_symbolic_asis,
                     strict,
                 ));
             }
@@ -153,6 +171,8 @@ pub fn run(args: Args) -> Result<()> {
                 actions.push(Action::ShowCdup);
             } else if arg == "--symbolic-full-name" {
                 show_symbolic_full_name = true;
+            } else if arg == "--symbolic" {
+                show_symbolic_asis = true;
             } else if arg == "--abbrev-ref" {
                 abbrev_ref = true;
             } else if arg == "--git-dir" {
@@ -277,6 +297,7 @@ pub fn run(args: Args) -> Result<()> {
             actions.push(Action::Revision(
                 arg.clone(),
                 show_symbolic_full_name,
+                show_symbolic_asis,
                 strict,
             ));
         }
@@ -287,7 +308,7 @@ pub fn run(args: Args) -> Result<()> {
     if sq_quote {
         let mut out = String::new();
         for action in &actions {
-            if let Action::Revision(rev, _, _) = action {
+            if let Action::Revision(rev, _, _, _) = action {
                 if !out.is_empty() {
                     out.push(' ');
                 }
@@ -303,7 +324,7 @@ pub fn run(args: Args) -> Result<()> {
         let revisions: Vec<&str> = actions
             .iter()
             .filter_map(|a| match a {
-                Action::Revision(r, _, _) => Some(r.as_str()),
+                Action::Revision(r, _, _, _) => Some(r.as_str()),
                 _ => None,
             })
             .collect();
@@ -320,7 +341,18 @@ pub fn run(args: Args) -> Result<()> {
         let Some(current) = repo.as_ref() else {
             return fail_verify(quiet, false);
         };
-        let spec = rev_list[0];
+        let mut spec = rev_list[0];
+        let mut negated = false;
+        if let (true, rest) = strip_leading_uninteresting_caret(spec) {
+            if split_double_dot_range(rest).is_some()
+                || split_triple_dot_range(rest).is_some()
+                || spec_has_parent_shorthand_suffix(rest)
+            {
+                return fail_verify(quiet, false);
+            }
+            negated = true;
+            spec = rest;
+        }
         if let Some((left, right)) = split_double_dot_range(spec) {
             let left_oid = match if left.is_empty() {
                 resolve_revision_for_range_end(current, "HEAD")
@@ -421,7 +453,13 @@ pub fn run(args: Args) -> Result<()> {
                     .and_then(|v| v.parse::<usize>().ok())
                     .unwrap_or(7);
             }
-            println!("{}", abbreviate_object_id(current, oid, len)?);
+            if negated {
+                println!("^{}", abbreviate_object_id(current, oid, len)?);
+            } else {
+                println!("{}", abbreviate_object_id(current, oid, len)?);
+            }
+        } else if negated {
+            println!("^{oid}");
         } else {
             println!("{oid}");
         }
@@ -432,11 +470,12 @@ pub fn run(args: Args) -> Result<()> {
     if let Some(ref def) = default_rev {
         let has_revision = actions
             .iter()
-            .any(|a| matches!(a, Action::Revision(_, _, _)));
+            .any(|a| matches!(a, Action::Revision(_, _, _, _)));
         if !has_revision {
             actions.push(Action::Revision(
                 def.clone(),
                 show_symbolic_full_name,
+                show_symbolic_asis,
                 false,
             ));
         }
@@ -888,7 +927,12 @@ pub fn run(args: Args) -> Result<()> {
                     bail!("not a valid directory: {path_arg}");
                 }
             }
-            Action::Revision(rev, rev_symbolic_full_name, strict_before_first_dd) => {
+            Action::Revision(
+                rev,
+                rev_symbolic_full_name,
+                rev_symbolic_asis,
+                strict_before_first_dd,
+            ) => {
                 let Some(current) = repo.as_ref() else {
                     if quiet {
                         std::process::exit(1);
@@ -905,8 +949,7 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                     }
                     continue;
                 }
-                // Use ONLY the per-action flag (not global, to support mixed usage)
-                let use_symbolic = *rev_symbolic_full_name;
+                let use_symbolic_asis = *rev_symbolic_asis;
 
                 if abbrev_ref {
                     // --abbrev-ref: resolve to symbolic name and abbreviate
@@ -917,7 +960,7 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                     // Fall through to try resolving as OID and printing as-is
                 }
 
-                if use_symbolic {
+                if *rev_symbolic_full_name {
                     if let Some(full) = symbolic_full_name(current, rev) {
                         println!("{full}");
                         continue;
@@ -925,7 +968,20 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                 }
 
                 let rewritten = rewrite_tree_path_spec(rev, prefix.as_deref());
-                if let Some((left, right)) = split_triple_dot_range(&rewritten) {
+                let (negated, work) = strip_leading_uninteresting_caret(&rewritten);
+                if negated
+                    && (split_double_dot_range(work).is_some()
+                        || split_triple_dot_range(work).is_some())
+                {
+                    eprintln!(
+                        "fatal: ambiguous argument '{rewritten}': unknown revision or path not in the working tree.\n\
+Use '--' to separate paths from revisions, like this:\n\
+'git <command> [<revision>...] -- [<file>...]'"
+                    );
+                    println!("{rewritten}");
+                    std::process::exit(128);
+                }
+                if let Some((left, right)) = split_triple_dot_range(work) {
                     if no_revs {
                         continue;
                     }
@@ -947,9 +1003,23 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                         &[right_commit],
                     )?;
                     let Some(mb) = bases.into_iter().next() else {
-                        bail!("no merge base for '{rewritten}'");
+                        bail!("no merge base for '{work}'");
                     };
-                    if let Some(len) = short_len {
+                    if use_symbolic_asis && short_len.is_none() {
+                        let left_out = if left.is_empty() {
+                            "HEAD".to_owned()
+                        } else {
+                            left.to_owned()
+                        };
+                        let right_out = if right.is_empty() {
+                            "HEAD".to_owned()
+                        } else {
+                            right.to_owned()
+                        };
+                        println!("{right_out}");
+                        println!("{left_out}");
+                        println!("^{mb}");
+                    } else if let Some(len) = short_len {
                         println!("{}", abbreviate_object_id(current, left_tip, len)?);
                         println!("{}", abbreviate_object_id(current, right_tip, len)?);
                         println!("^{}", abbreviate_object_id(current, mb, len)?);
@@ -960,7 +1030,7 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                     }
                     continue;
                 }
-                if let Some((left, right)) = split_double_dot_range(&rewritten) {
+                if let Some((left, right)) = split_double_dot_range(work) {
                     if no_revs {
                         continue;
                     }
@@ -976,23 +1046,60 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                     };
                     if left.is_empty() && right.is_empty() {
                         println!("..");
+                    } else if use_symbolic_asis && short_len.is_none() {
+                        let left_out = if left.is_empty() {
+                            "HEAD".to_owned()
+                        } else {
+                            left.to_owned()
+                        };
+                        let right_out = if right.is_empty() {
+                            "HEAD".to_owned()
+                        } else {
+                            right.to_owned()
+                        };
+                        println!("{right_out}");
+                        println!("^{left_out}");
                     } else if let Some(len) = short_len {
-                        println!("{}", abbreviate_object_id(current, left_oid, len)?);
-                        println!("^{}", abbreviate_object_id(current, right_oid, len)?);
+                        println!("{}", abbreviate_object_id(current, right_oid, len)?);
+                        println!("^{}", abbreviate_object_id(current, left_oid, len)?);
                     } else {
-                        println!("{left_oid}");
-                        println!("^{right_oid}");
+                        println!("{right_oid}");
+                        println!("^{left_oid}");
                     }
                     continue;
                 }
-                if looks_like_shell_glob(&rewritten) {
+                if let Some(lines) = expand_parent_shorthand_rev_parse_lines(
+                    current,
+                    work,
+                    use_symbolic_asis,
+                    short_len,
+                )? {
                     if no_revs {
                         continue;
                     }
-                    match resolve_revision(current, &rewritten) {
+                    for line in lines {
+                        if negated {
+                            println!("^{line}");
+                        } else {
+                            println!("{line}");
+                        }
+                    }
+                    continue;
+                }
+                if looks_like_shell_glob(work) {
+                    if no_revs {
+                        continue;
+                    }
+                    match resolve_revision_without_index_dwim(current, work) {
                         Ok(oid) => {
                             if let Some(len) = short_len {
-                                println!("{}", abbreviate_object_id(current, oid, len)?);
+                                if negated {
+                                    println!("^{}", abbreviate_object_id(current, oid, len)?);
+                                } else {
+                                    println!("{}", abbreviate_object_id(current, oid, len)?);
+                                }
+                            } else if negated {
+                                println!("^{oid}");
                             } else {
                                 println!("{oid}");
                             }
@@ -1001,19 +1108,35 @@ Use 'git <command> -- <path>...' to specify paths that do not exist locally."
                             if revs_only {
                                 continue;
                             }
-                            println!("{rewritten}");
+                            if negated {
+                                println!("^{work}");
+                            } else {
+                                println!("{rewritten}");
+                            }
                         }
                     }
                     continue;
                 }
-                match resolve_revision(current, &rewritten) {
+                match resolve_revision_without_index_dwim(current, work) {
                     Ok(oid) => {
                         if no_revs {
                             // --no-revs: skip resolved revisions
                             continue;
                         }
-                        if let Some(len) = short_len {
-                            println!("{}", abbreviate_object_id(current, oid, len)?);
+                        if use_symbolic_asis && short_len.is_none() {
+                            if negated {
+                                println!("^{work}");
+                            } else {
+                                println!("{rewritten}");
+                            }
+                        } else if let Some(len) = short_len {
+                            if negated {
+                                println!("^{}", abbreviate_object_id(current, oid, len)?);
+                            } else {
+                                println!("{}", abbreviate_object_id(current, oid, len)?);
+                            }
+                        } else if negated {
+                            println!("^{oid}");
                         } else {
                             println!("{oid}");
                         }

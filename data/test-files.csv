@@ -1068,7 +1068,7 @@ t6041-bisect-submodule	t6	yes	14	6	8	false	ok	0
 t6050-replace	t6	skip	37	0	0	false	ok	0
 t6060-merge-index	t6	yes	7	7	0	true	ok	0
 t6100-rev-list-in-order	t6	yes	3	3	0	true	ok	0
-t6101-rev-parse-parents	t6	yes	38	25	13	false	ok	0
+t6101-rev-parse-parents	t6	yes	38	38	0	true	ok	0
 t6102-rev-list-unexpected-objects	t6	yes	22	22	0	true	ok	0
 t6110-rev-list-sparse	t6	yes	2	2	0	true	ok	0
 t6111-rev-list-treesame	t6	yes	65	22	43	false	ok	0

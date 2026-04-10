@@ -12,7 +12,7 @@ use std::path::{Component, Path, PathBuf};
 
 use regex::Regex;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
@@ -555,6 +555,223 @@ fn parse_branch_tracking(config: &str, branch: &str) -> Option<(String, String)>
 ///
 /// Returns `(left, right)` where either side may be empty (`..HEAD`, `HEAD..`, `..`).
 #[must_use]
+/// Load commit parent overrides from `.git/info/grafts` (same format as Git).
+///
+/// Used for `^N` / `^@` / `^!` / `^-` resolution and for `rev-list` traversal.
+pub(crate) fn load_graft_parents(git_dir: &Path) -> HashMap<ObjectId, Vec<ObjectId>> {
+    let graft_path = git_dir.join("info/grafts");
+    let mut grafts = HashMap::new();
+    let Ok(contents) = fs::read_to_string(&graft_path) else {
+        return grafts;
+    };
+    for raw_line in contents.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut fields = line.split_whitespace();
+        let Some(commit_hex) = fields.next() else {
+            continue;
+        };
+        let Ok(commit_oid) = commit_hex.parse::<ObjectId>() else {
+            continue;
+        };
+        let mut parents = Vec::new();
+        let mut valid = true;
+        for parent_hex in fields {
+            match parent_hex.parse::<ObjectId>() {
+                Ok(parent_oid) => parents.push(parent_oid),
+                Err(_) => {
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        if valid {
+            grafts.insert(commit_oid, parents);
+        }
+    }
+    grafts
+}
+
+/// Parent OIDs of `commit_oid` for revision navigation, honoring grafts.
+pub fn commit_parents_for_navigation(
+    repo: &Repository,
+    commit_oid: ObjectId,
+) -> Result<Vec<ObjectId>> {
+    let obj = repo.odb.read(&commit_oid)?;
+    if obj.kind != ObjectKind::Commit {
+        return Err(Error::InvalidRef(format!(
+            "invalid ref: {commit_oid} is not a commit"
+        )));
+    }
+    let commit = parse_commit(&obj.data)?;
+    let mut parents = commit.parents;
+    let grafts = load_graft_parents(&repo.git_dir);
+    if let Some(grafted) = grafts.get(&commit_oid) {
+        parents = grafted.clone();
+    }
+    Ok(parents)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ParentShorthandKind {
+    /// `rev^@` — all parents.
+    At,
+    /// `rev^!` — include `rev`, exclude all parents (merge-safe).
+    Bang,
+    /// `rev^-` / `rev^-N` — include `rev`, exclude parent N (1-based), include other parents.
+    Minus { exclude_parent: usize },
+}
+
+/// Returns true when `spec` ends with Git parent shorthands `^@`, `^!`, or `^-` / `^-N`.
+#[must_use]
+pub fn spec_has_parent_shorthand_suffix(spec: &str) -> bool {
+    find_parent_shorthand(spec).is_some()
+}
+
+fn find_parent_shorthand(spec: &str) -> Option<(usize, ParentShorthandKind)> {
+    let mut best: Option<(usize, ParentShorthandKind, u8)> = None;
+    for (idx, _) in spec.match_indices('^') {
+        let Some(tail) = spec.get(idx + 1..) else {
+            continue;
+        };
+        if tail.starts_with('@') && idx + 2 == spec.len() {
+            best = Some((idx, ParentShorthandKind::At, 0));
+            break;
+        }
+        if tail.starts_with('!') && idx + 2 == spec.len() {
+            let cand = (idx, ParentShorthandKind::Bang, 1);
+            best = Some(match best {
+                Some(b) if b.2 < 1 => b,
+                _ => cand,
+            });
+            continue;
+        }
+        if let Some(after) = tail.strip_prefix('-') {
+            let (exclude_parent, valid) = if after.is_empty() {
+                (1usize, true)
+            } else if after.bytes().all(|b| b.is_ascii_digit()) && !after.is_empty() {
+                let n: usize = after.parse().unwrap_or(0);
+                (n, n >= 1)
+            } else {
+                (0, false)
+            };
+            if !valid {
+                continue;
+            }
+            let cand = (idx, ParentShorthandKind::Minus { exclude_parent }, 2);
+            best = Some(match best {
+                Some(b) if b.2 < 2 => b,
+                _ => cand,
+            });
+        }
+    }
+    best.map(|(i, k, _)| (i, k))
+}
+
+/// Expand Git parent shorthands (`^@`, `^!`, `^-`, `^-N`) to the strings `git rev-parse` would print.
+///
+/// Returns [`None`] when `spec` does not use these suffixes at the end (or the suffix is invalid).
+///
+/// # Errors
+///
+/// Returns resolution errors when the base committish cannot be resolved or is not a commit.
+pub fn expand_parent_shorthand_rev_parse_lines(
+    repo: &Repository,
+    spec: &str,
+    symbolic: bool,
+    short_len: Option<usize>,
+) -> Result<Option<Vec<String>>> {
+    let Some((mark_idx, kind)) = find_parent_shorthand(spec) else {
+        return Ok(None);
+    };
+    let base_spec = &spec[..mark_idx];
+    let base_for_resolve = if base_spec.is_empty() {
+        "HEAD"
+    } else {
+        base_spec
+    };
+    // Git `--symbolic` prints parent specs using the same spelling as the user would type
+    // (e.g. `final^1^1`), not full ref names (`refs/heads/...`).
+    let symbolic_base = if base_spec.is_empty() {
+        "HEAD"
+    } else {
+        base_spec
+    };
+    let tip_oid = resolve_revision_for_range_end(repo, base_for_resolve)?;
+    let commit_oid = peel_to_commit_for_merge_base(repo, tip_oid)?;
+    let parents = commit_parents_for_navigation(repo, commit_oid)?;
+
+    let mut out = Vec::new();
+    match kind {
+        ParentShorthandKind::At => {
+            if parents.is_empty() {
+                return Ok(Some(out));
+            }
+            for (i, p) in parents.iter().enumerate() {
+                let parent_n = i + 1;
+                if symbolic {
+                    out.push(format!("{symbolic_base}^{parent_n}"));
+                } else if let Some(len) = short_len {
+                    out.push(abbreviate_object_id(repo, *p, len)?);
+                } else {
+                    out.push(p.to_string());
+                }
+            }
+        }
+        ParentShorthandKind::Bang => {
+            if parents.is_empty() {
+                if symbolic {
+                    out.push(symbolic_base.to_string());
+                } else if let Some(len) = short_len {
+                    out.push(abbreviate_object_id(repo, commit_oid, len)?);
+                } else {
+                    out.push(commit_oid.to_string());
+                }
+                return Ok(Some(out));
+            }
+            if symbolic {
+                out.push(symbolic_base.to_string());
+                for (i, _) in parents.iter().enumerate() {
+                    let parent_n = i + 1;
+                    out.push(format!("^{symbolic_base}^{parent_n}"));
+                }
+            } else if let Some(len) = short_len {
+                out.push(abbreviate_object_id(repo, commit_oid, len)?);
+                for p in &parents {
+                    out.push(format!("^{}", abbreviate_object_id(repo, *p, len)?));
+                }
+            } else {
+                out.push(commit_oid.to_string());
+                for p in &parents {
+                    out.push(format!("^{p}"));
+                }
+            }
+        }
+        ParentShorthandKind::Minus { exclude_parent } => {
+            if exclude_parent > parents.len() {
+                return Ok(None);
+            }
+            let excluded_parent = parents[exclude_parent - 1];
+            if symbolic {
+                out.push(symbolic_base.to_string());
+                out.push(format!("^{symbolic_base}^{exclude_parent}"));
+            } else if let Some(len) = short_len {
+                out.push(abbreviate_object_id(repo, commit_oid, len)?);
+                out.push(format!(
+                    "^{}",
+                    abbreviate_object_id(repo, excluded_parent, len)?
+                ));
+            } else {
+                out.push(commit_oid.to_string());
+                out.push(format!("^{excluded_parent}"));
+            }
+        }
+    }
+    Ok(Some(out))
+}
+
 pub fn split_double_dot_range(spec: &str) -> Option<(&str, &str)> {
     if spec == ".." {
         return Some(("", ""));
@@ -743,6 +960,16 @@ fn resolve_revision_impl(
     if let Some(pattern) = spec.strip_prefix(":/") {
         if !pattern.is_empty() {
             return resolve_commit_message_search(repo, pattern);
+        }
+    }
+
+    // `tags/<name>` is Git's DWIM for `refs/tags/<name>` (t6101 `tags/start`).
+    if let Some(tag_path) = spec.strip_prefix("tags/") {
+        if !tag_path.is_empty() {
+            let tag_ref = format!("refs/tags/{tag_path}");
+            if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &tag_ref) {
+                return Ok(oid);
+            }
         }
     }
 
@@ -1263,15 +1490,8 @@ fn apply_nav_step(repo: &Repository, oid: ObjectId, step: NavStep) -> Result<Obj
         NavStep::ParentN(0) => Ok(oid),
         NavStep::ParentN(n) => {
             let oid = peel_annotated_tag_chain(repo, oid)?;
-            let obj = repo.read_replaced(&oid)?;
-            if obj.kind != ObjectKind::Commit {
-                return Err(Error::InvalidRef(format!(
-                    "invalid ref: {oid} is not a commit"
-                )));
-            }
-            let commit = parse_commit(&obj.data)?;
-            commit
-                .parents
+            let parents = commit_parents_for_navigation(repo, oid)?;
+            parents
                 .get(n - 1)
                 .copied()
                 .ok_or_else(|| Error::ObjectNotFound(format!("{oid}^{n}")))
@@ -2814,14 +3034,14 @@ fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Resul
 
 /// Expand a single revision token that ends with `^!` (Git: commit without its parents).
 ///
-/// Returns one token unchanged when `^!` is absent. When present, returns two tokens: the base
-/// revision (without `^!`) and a negative spec `^<first-parent-hex>` so that `rev-list` includes
-/// exactly that commit when combined with the exclusion. Merge commits and other multi-parent
-/// commits are rejected with the same ambiguity error as Git.
+/// Returns one token unchanged when `^!` is absent. When present, returns the base revision
+/// (without `^!`) plus one `^<parent-hex>` entry per parent from [`commit_parents_for_navigation`]
+/// (commit object parents plus graft/replace overrides), matching Git’s `^!` expansion for
+/// merge commits.
 ///
 /// # Errors
 ///
-/// Returns [`Error::Message`] for ambiguous `^!` (merge commit) and resolution failures.
+/// Returns [`Error::Message`] for an empty base revision and other resolution failures.
 pub fn expand_rev_token_circ_bang(repo: &Repository, token: &str) -> Result<Vec<String>> {
     let Some(base) = token.strip_suffix("^!") else {
         return Ok(vec![token.to_owned()]);
@@ -2835,19 +3055,12 @@ Use '--' to separate paths from revisions, like this:\n\
     }
     let oid = resolve_revision_for_range_end(repo, base)?;
     let commit_oid = peel_to_commit_for_merge_base(repo, oid)?;
-    let obj = repo.read_replaced(&commit_oid)?;
-    let commit = parse_commit(&obj.data)?;
-    if commit.parents.len() != 1 {
-        return Err(Error::Message(format!(
-            "fatal: ambiguous argument '{token}': unknown revision or path not in the working tree.\n\
-Use '--' to separate paths from revisions, like this:\n\
-'git <command> [<revision>...] -- [<file>...]'"
-        )));
+    let parents = commit_parents_for_navigation(repo, commit_oid)?;
+    let mut out = vec![base.to_owned()];
+    for p in parents {
+        out.push(format!("^{}", p.to_hex()));
     }
-    Ok(vec![
-        base.to_owned(),
-        format!("^{}", commit.parents[0].to_hex()),
-    ])
+    Ok(out)
 }
 
 /// Split `spec` into `(base, peel_inner)` for `^{...}` / `^0` suffixes (same rules as revision parsing).
