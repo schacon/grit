@@ -11,23 +11,27 @@
 //! Subcommands: push, save, list, show, pop, apply, drop, clear, branch, create, store.
 
 use anyhow::{bail, Context, Result};
-use clap::{Args as ClapArgs, Subcommand};
+use clap::{Args as ClapArgs, Parser, Subcommand};
 
-use crate::explicit_exit::SilentNonZeroExit;
+use crate::explicit_exit::{ExplicitExit, SilentNonZeroExit};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, BufRead, IsTerminal, Write as IoWrite};
 use std::path::Path;
 
+use grit_lib::combined_diff_patch::CombinedDiffWsOptions;
+use grit_lib::combined_tree_diff::{combined_diff_paths_filtered, CombinedTreeDiffOptions};
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     diff_index_to_tree, diff_index_to_worktree, read_submodule_head_oid, unified_diff,
+    unified_diff_with_prefix_and_funcname_and_algorithm,
 };
 use grit_lib::error::Error;
 use grit_lib::ignore::{normalize_repo_relative, IgnoreMatcher};
 use grit_lib::index::{
     entry_from_stat, Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
 };
+use grit_lib::merge_diff::format_combined_textconv_patch;
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, serialize_tree, CommitData, ObjectId, ObjectKind,
     TreeEntry,
@@ -459,85 +463,118 @@ fn tokens_after_stash_argv() -> Vec<String> {
     argv[idx + 1..].to_vec()
 }
 
-fn assume_push_or_error(args: &Args) -> Result<()> {
-    let mut t = tokens_after_stash_argv();
-    loop {
-        let Some(first) = t.first().cloned() else {
+/// Stash verbs that cannot follow bare `stash` global flags without an explicit `push`/`save`
+/// subcommand (matches Git's `stash -q drop` error). `push` and `save` are excluded because they
+/// are valid after flags (`git stash -q push`).
+const STASH_VERB_AFTER_PUSH_FLAGS: &[&str] = &[
+    "drop", "pop", "apply", "branch", "show", "list", "clear", "create", "store", "export",
+    "import",
+];
+
+/// Skip tokens that belong to the implicit `stash push` form (global flags on `git stash`).
+///
+/// Returns `(index of first non-skipped token, whether any push-style flag was consumed)`.
+fn skip_implicit_stash_push_prefix(rest: &[String]) -> (usize, bool) {
+    let mut i = 0usize;
+    let mut saw_push_flag = false;
+    while i < rest.len() {
+        let a = rest[i].as_str();
+        if a == "--" {
             break;
-        };
-        if first == "--" {
-            break;
         }
-        if first == "-q" || first == "--quiet" {
-            t.remove(0);
-            continue;
-        }
-        if first == "-k" || first == "--keep-index" {
-            t.remove(0);
-            continue;
-        }
-        if first == "--no-keep-index" {
-            t.remove(0);
-            continue;
-        }
-        if first == "-u" || first == "--include-untracked" {
-            t.remove(0);
-            continue;
-        }
-        if first == "-a" || first == "--all" {
-            t.remove(0);
-            continue;
-        }
-        if first == "-S" || first == "--staged" {
-            t.remove(0);
-            continue;
-        }
-        if first == "-p" || first == "--patch" {
-            t.remove(0);
-            continue;
-        }
-        if first == "-m" || first == "--message" {
-            t.remove(0);
-            if !t.is_empty() {
-                t.remove(0);
+        match a {
+            "-q"
+            | "--quiet"
+            | "-k"
+            | "--keep-index"
+            | "--no-keep-index"
+            | "-u"
+            | "--include-untracked"
+            | "-a"
+            | "--all"
+            | "-S"
+            | "--staged"
+            | "-p"
+            | "--patch" => {
+                saw_push_flag = true;
+                i += 1;
             }
-            continue;
-        }
-        if first.starts_with("-m") && first.len() > 2 {
-            t.remove(0);
-            continue;
-        }
-        if let Some(rest) = first.strip_prefix("--message=") {
-            if !rest.is_empty() {
-                t.remove(0);
-                continue;
+            "-m" | "--message" => {
+                saw_push_flag = true;
+                i += 1;
+                if i < rest.len() {
+                    i += 1;
+                }
             }
+            _ if a.starts_with("-m") && a.len() > 2 => {
+                saw_push_flag = true;
+                i += 1;
+            }
+            _ if a
+                .strip_prefix("--message=")
+                .is_some_and(|rest| !rest.is_empty()) =>
+            {
+                saw_push_flag = true;
+                i += 1;
+            }
+            "--pathspec-file-nul" => {
+                saw_push_flag = true;
+                i += 1;
+            }
+            "--pathspec-from-file" => {
+                saw_push_flag = true;
+                i += 1;
+                if i < rest.len() {
+                    i += 1;
+                }
+            }
+            _ if a.starts_with("--pathspec-from-file=") => {
+                saw_push_flag = true;
+                i += 1;
+            }
+            _ => break,
         }
-        break;
     }
-    if let Some(tok) = t.first() {
+    (i, saw_push_flag)
+}
+
+/// Run before clap parses `stash` so `git stash -q drop` is not mistaken for `git stash drop`.
+pub fn pre_parse_stash_argv_guard(rest: &[String]) -> Result<()> {
+    let (i, saw_push_flag) = skip_implicit_stash_push_prefix(rest);
+    if !saw_push_flag {
+        return Ok(());
+    }
+    let Some(tok) = rest.get(i) else {
+        return Ok(());
+    };
+    if tok == "--" {
+        return Ok(());
+    }
+    if STASH_VERB_AFTER_PUSH_FLAGS.contains(&tok.as_str()) {
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 128,
+            message: format!(
+                "fatal: subcommand wasn't specified; 'push' can't be assumed due to unexpected token '{tok}'"
+            ),
+        }));
+    }
+    Ok(())
+}
+
+fn assume_push_or_error(args: &Args) -> Result<()> {
+    let t = tokens_after_stash_argv();
+    let (i, _) = skip_implicit_stash_push_prefix(&t);
+    if let Some(tok) = t.get(i) {
         if tok == "--" {
             return Ok(());
         }
-        if matches!(
-            tok.as_str(),
-            "drop"
-                | "pop"
-                | "apply"
-                | "branch"
-                | "show"
-                | "list"
-                | "clear"
-                | "push"
-                | "save"
-                | "create"
-                | "store"
-                | "export"
-                | "import"
-        ) {
-            bail!(
-                "subcommand wasn't specified; 'push' can't be assumed due to unexpected token '{tok}'"
-            );
+        if STASH_VERB_AFTER_PUSH_FLAGS.contains(&tok.as_str()) {
+            return Err(anyhow::Error::new(ExplicitExit {
+                code: 128,
+                message: format!(
+                    "fatal: subcommand wasn't specified; 'push' can't be assumed due to unexpected token '{tok}'"
+                ),
+            }));
         }
     }
     let _ = args;
@@ -707,6 +744,22 @@ fn parse_stash_show_args(
 // Push options
 // ---------------------------------------------------------------------------
 
+/// Fail before stash work when `index.lock` exists (matches t3903 / Git's pre-write check).
+fn stash_preflight_index_writable(repo: &Repository) -> Result<()> {
+    let index_path = repo.index_path();
+    let lock_path = index_path.with_extension("lock");
+    if index_path.exists() && lock_path.exists() {
+        eprintln!("error: could not write index");
+        eprintln!();
+        let detail = grit_lib::index::format_index_lock_blocked_detail(&index_path);
+        for line in detail.lines() {
+            eprintln!("error: {line}");
+        }
+        return Err(anyhow::Error::new(SilentNonZeroExit { code: 1 }));
+    }
+    Ok(())
+}
+
 struct PushOpts {
     message: Option<String>,
     keep_index: bool,
@@ -756,6 +809,7 @@ fn stash_is_intent_to_add_only(
 
 fn do_push(opts: PushOpts) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    stash_preflight_index_writable(&repo)?;
     let work_tree = repo
         .work_tree
         .as_deref()
@@ -943,6 +997,7 @@ fn do_stash_patch_push(
 ) -> Result<()> {
     use similar::{Algorithm, TextDiff};
 
+    stash_preflight_index_writable(repo)?;
     let cwd = std::env::current_dir().context("current directory")?;
     let normalized_pathspec: Vec<String> = opts
         .pathspec
@@ -1528,6 +1583,7 @@ fn do_push_pathspec(
     pathspec: &[String],
     untracked_files: &[String],
 ) -> Result<()> {
+    stash_preflight_index_writable(repo)?;
     let head_obj = repo.odb.read(head_oid)?;
     let head_commit = parse_commit(&head_obj.data)?;
 
@@ -1776,6 +1832,7 @@ fn do_push_staged(
     index: &Index,
     opts: &PushOpts,
 ) -> Result<()> {
+    stash_preflight_index_writable(repo)?;
     let head_obj = repo.odb.read(head_oid)?;
     let head_commit = parse_commit(&head_obj.data)?;
 
@@ -1889,6 +1946,7 @@ fn do_create(message: Option<String>) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("cannot stash in a bare repository"))?
         .to_path_buf();
 
+    stash_preflight_index_writable(&repo)?;
     let head = resolve_head(&repo.git_dir)?;
     let head_oid = head
         .oid()
@@ -2109,24 +2167,224 @@ fn do_import(revision: String) -> Result<()> {
 // List
 // ---------------------------------------------------------------------------
 
-fn do_list(extra_args: Vec<String>) -> Result<()> {
-    let repo = Repository::discover(None).context("not a git repository")?;
-    let entries = read_reflog(&repo.git_dir, "refs/stash")?;
+/// `git stash list -3` passes `-3` as a single argv token; clap would reject it for `git log`.
+/// Normalize to `-n 3` (and similar for any `-` + all-digits).
+fn preprocess_stash_list_argv_for_log(args: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len() + 4);
+    for a in args {
+        if a.len() > 1
+            && a.starts_with('-')
+            && !a.starts_with("--")
+            && a[1..].chars().all(|c| c.is_ascii_digit())
+        {
+            out.push("-n".to_owned());
+            out.push(a[1..].to_owned());
+        } else {
+            out.push(a.clone());
+        }
+    }
+    out
+}
 
-    // Check if -p flag was passed
-    let show_patch = extra_args.iter().any(|a| a == "-p" || a == "--patch");
-    let show_cc = extra_args.iter().any(|a| a == "--cc");
+struct ParsedStashList {
+    max_count: Option<usize>,
+    /// `true` when `--format=%gd` (t3903 stash list -p / --cc).
+    format_gd_only: bool,
+    show_patch: bool,
+    show_cc: bool,
+    unknown: Vec<String>,
+}
 
-    // Entries are in file order (oldest first), display newest first
-    for (i, entry) in entries.iter().rev().enumerate() {
-        println!("stash@{{{i}}}: {}", entry.message);
-        if show_patch || show_cc {
-            // Show diff for this stash entry
-            if let Ok(stash_oid) = resolve_stash_ref(&repo, Some(&format!("stash@{{{i}}}"))) {
-                let _ = show_stash_diff(&repo, &stash_oid, true);
+fn parse_stash_list_args(args: &[String]) -> ParsedStashList {
+    let mut max_count: Option<usize> = None;
+    let mut format_gd_only = false;
+    let mut show_patch = false;
+    let mut show_cc = false;
+    let mut unknown: Vec<String> = Vec::new();
+    let mut i = 0usize;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if a.len() > 1
+            && a.starts_with('-')
+            && !a.starts_with("--")
+            && a[1..].chars().all(|c| c.is_ascii_digit())
+        {
+            if let Ok(n) = a[1..].parse::<usize>() {
+                max_count = Some(n);
+            }
+            i += 1;
+            continue;
+        }
+        match a {
+            "-p" | "--patch" => {
+                show_patch = true;
+                i += 1;
+            }
+            "--cc" => {
+                show_cc = true;
+                i += 1;
+            }
+            "-n" | "--max-count" => {
+                if i + 1 < args.len() {
+                    if let Ok(n) = args[i + 1].parse::<usize>() {
+                        max_count = Some(n);
+                    }
+                    i += 2;
+                } else {
+                    unknown.push(args[i].clone());
+                    i += 1;
+                }
+            }
+            _ if a.starts_with("--max-count=") => {
+                if let Ok(n) = a
+                    .strip_prefix("--max-count=")
+                    .unwrap_or("")
+                    .parse::<usize>()
+                {
+                    max_count = Some(n);
+                }
+                i += 1;
+            }
+            "--format" => {
+                if i + 1 < args.len() {
+                    let fmt = &args[i + 1];
+                    format_gd_only = fmt == "%gd";
+                    if !format_gd_only {
+                        unknown.push("--format".to_owned());
+                        unknown.push(fmt.clone());
+                    }
+                    i += 2;
+                } else {
+                    unknown.push(args[i].clone());
+                    i += 1;
+                }
+            }
+            _ if a.starts_with("--format=") => {
+                let fmt = a.strip_prefix("--format=").unwrap_or("");
+                format_gd_only = fmt == "%gd";
+                if !format_gd_only {
+                    unknown.push(args[i].clone());
+                }
+                i += 1;
+            }
+            _ => {
+                unknown.push(args[i].clone());
+                i += 1;
             }
         }
     }
+    ParsedStashList {
+        max_count,
+        format_gd_only,
+        show_patch,
+        show_cc,
+        unknown,
+    }
+}
+
+fn stash_list_print_combined_patch(repo: &Repository, stash_oid: &ObjectId) -> Result<()> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let obj = repo.odb.read(stash_oid)?;
+    let commit = parse_commit(&obj.data)?;
+    if commit.parents.len() < 2 {
+        return Ok(());
+    }
+    let parents: Vec<ObjectId> = commit.parents.iter().take(2).copied().collect();
+    let mut parent_trees = Vec::new();
+    for p in &parents {
+        let po = repo.odb.read(p)?;
+        let pc = parse_commit(&po.data)?;
+        parent_trees.push(pc.tree);
+    }
+    if parent_trees.len() != 2 {
+        return Ok(());
+    }
+    let walk = CombinedTreeDiffOptions {
+        recursive: true,
+        tree_in_recursive: false,
+    };
+    let paths = combined_diff_paths_filtered(&repo.odb, &commit.tree, &parents, &walk, None)?;
+    let abbrev_len = 7usize;
+    let context = 3usize;
+    let ws = CombinedDiffWsOptions::default();
+    let quote_fully = config.quote_path_fully();
+    for p in paths {
+        if let Some(patch) = format_combined_textconv_patch(
+            &repo.git_dir,
+            &config,
+            &repo.odb,
+            &p.path,
+            &parent_trees,
+            &commit.tree,
+            abbrev_len,
+            context,
+            true,
+            false,
+            ws,
+            false,
+            None,
+            &p.parents,
+            quote_fully,
+        ) {
+            print!("{patch}");
+        }
+    }
+    Ok(())
+}
+
+fn do_list(extra_args: Vec<String>) -> Result<()> {
+    let parsed = parse_stash_list_args(&extra_args);
+    if !parsed.unknown.is_empty() {
+        #[derive(Parser)]
+        struct StashListLogCli {
+            #[command(flatten)]
+            log: super::log::Args,
+        }
+
+        let log_argv = preprocess_stash_list_argv_for_log(&extra_args);
+        let mut argv = vec!["git log".to_owned(), "-g".to_owned()];
+        argv.extend(log_argv);
+        argv.push("refs/stash".to_owned());
+        match StashListLogCli::try_parse_from(&argv) {
+            Ok(wrapped) => return super::log::run(wrapped.log),
+            Err(e) => {
+                let mut msg = e.render().to_string();
+                msg = msg.replace("Usage:", "usage:");
+                eprint!("{msg}");
+                std::process::exit(129);
+            }
+        }
+    }
+
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let entries = read_reflog(&repo.git_dir, "refs/stash")?;
+    let n_entries = entries.len();
+    let mut shown = 0usize;
+
+    for (i, entry) in entries.iter().rev().enumerate() {
+        if let Some(limit) = parsed.max_count {
+            if shown >= limit {
+                break;
+            }
+        }
+        if parsed.format_gd_only {
+            println!("stash@{{{i}}}");
+        } else {
+            println!("stash@{{{i}}}: {}", entry.message.trim_end_matches('\n'));
+        }
+        if parsed.show_patch {
+            println!();
+            let stash_oid = entry.new_oid;
+            if parsed.show_cc {
+                stash_list_print_combined_patch(&repo, &stash_oid)?;
+            } else {
+                show_stash_diff(&repo, &stash_oid, true, false)?;
+            }
+        }
+        shown += 1;
+    }
+
+    let _ = n_entries;
     Ok(())
 }
 
@@ -2168,15 +2426,12 @@ fn do_show(
 
     match mode {
         ShowMode::Patch => {
-            if patience {
-                // Patience is accepted; diff algorithm not wired — same output as default.
-            }
             if only_ut {
                 if include_ut {
                     show_stash_untracked_patch_only(repo, &stash_commit)?;
                 }
             } else {
-                show_stash_tracked_patch(repo, &stash_commit)?;
+                show_stash_tracked_patch(repo, &stash_commit, patience)?;
                 if include_ut {
                     show_stash_untracked_patch_extra(repo, &stash_commit)?;
                 }
@@ -2307,17 +2562,31 @@ fn flatten_untracked_tree(
     flatten_tree_full(&repo.odb, &ut_commit.tree, "")
 }
 
-fn show_stash_diff(repo: &Repository, stash_oid: &ObjectId, _with_hunks: bool) -> Result<()> {
+fn show_stash_diff(
+    repo: &Repository,
+    stash_oid: &ObjectId,
+    _with_hunks: bool,
+    patience: bool,
+) -> Result<()> {
     let obj = repo.odb.read(stash_oid)?;
     let stash_commit = parse_commit(&obj.data)?;
-    show_stash_tracked_patch(repo, &stash_commit)
+    show_stash_tracked_patch(repo, &stash_commit, patience)
 }
 
-fn show_stash_tracked_patch(repo: &Repository, stash_commit: &CommitData) -> Result<()> {
+fn show_stash_tracked_patch(
+    repo: &Repository,
+    stash_commit: &CommitData,
+    patience: bool,
+) -> Result<()> {
     let old_tree = stash_head_parent_tree_oid(repo, stash_commit)?;
     let old_entries = flatten_tree_full(&repo.odb, &old_tree, "")?;
     let new_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
-    show_tree_diff(&repo.odb, &old_entries, &new_entries)
+    let algorithm = if patience {
+        similar::Algorithm::Patience
+    } else {
+        similar::Algorithm::Myers
+    };
+    show_tree_diff(&repo.odb, &old_entries, &new_entries, algorithm)
 }
 
 fn show_stash_untracked_patch_extra(repo: &Repository, stash_commit: &CommitData) -> Result<()> {
@@ -2784,6 +3053,7 @@ fn do_pop(stash_ref: Option<String>, index: bool, quiet: bool) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("cannot apply stash in a bare repository"))?
         .to_path_buf();
 
+    stash_preflight_index_writable(&repo)?;
     reject_bare_oid_for_stash_stack_op(&repo, stash_ref.as_deref())?;
     let stash_index = parse_stash_index(stash_ref.as_deref())?;
     let stash_oid = resolve_stash_ref(&repo, stash_ref.as_deref())?;
@@ -2821,6 +3091,7 @@ fn do_apply(stash_ref: Option<String>, _drop_after: bool, index: bool, quiet: bo
         .ok_or_else(|| anyhow::anyhow!("cannot apply stash in a bare repository"))?
         .to_path_buf();
 
+    stash_preflight_index_writable(&repo)?;
     let stash_oid = resolve_stash_ref(&repo, stash_ref.as_deref())?;
 
     let had_conflicts = apply_stash_impl(&repo, &work_tree, &stash_oid, index, quiet)?;
@@ -3217,6 +3488,10 @@ fn apply_stash_impl(
     } else {
         // Without --index: index tracks current HEAD for paths the stash touched
         // (worktree gets the stashed changes; index matches HEAD at those paths).
+        //
+        // Exception: paths that exist in the stash index parent but not on **current** HEAD
+        // (e.g. a newly `git add`ed file) must be re-staged from the stash index parent
+        // (t3903 `stash an added file`).
         let mut touched: BTreeSet<String> = BTreeSet::new();
         for p in wt_changes.keys() {
             touched.insert(p.clone());
@@ -3261,7 +3536,48 @@ fn apply_stash_impl(
                     new_index.stage_file(new_entry);
                 }
             } else {
-                new_index.remove(path.as_bytes());
+                let path_bytes = path.as_bytes();
+                let has_unmerged = new_index
+                    .entries
+                    .iter()
+                    .any(|e| e.path == path_bytes && e.stage() > 0);
+                if has_unmerged {
+                    continue;
+                }
+                if let Some(ie) = idx_map.get(path.as_str()) {
+                    let had_staged = match base_map.get(path.as_str()) {
+                        Some(b) => b.oid != ie.oid || b.mode != ie.mode,
+                        None => true,
+                    };
+                    if had_staged {
+                        let size = if ie.mode == MODE_SYMLINK || ie.mode == MODE_GITLINK {
+                            0u32
+                        } else {
+                            repo.odb.read(&ie.oid)?.data.len() as u32
+                        };
+                        new_index.stage_file(IndexEntry {
+                            ctime_sec: 0,
+                            ctime_nsec: 0,
+                            mtime_sec: 0,
+                            mtime_nsec: 0,
+                            dev: 0,
+                            ino: 0,
+                            mode: ie.mode,
+                            uid: 0,
+                            gid: 0,
+                            size,
+                            oid: ie.oid,
+                            flags: path_bytes.len().min(0xFFF) as u16,
+                            flags_extended: None,
+                            path: path_bytes.to_vec(),
+                            base_index_pos: 0,
+                        });
+                    } else {
+                        new_index.remove(path_bytes);
+                    }
+                } else {
+                    new_index.remove(path_bytes);
+                }
             }
         }
         new_index.sort();
@@ -3418,6 +3734,7 @@ fn do_branch(branch_name: String, stash_ref: Option<String>) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("cannot use stash branch in a bare repository"))?
         .to_path_buf();
 
+    stash_preflight_index_writable(&repo)?;
     let stash_index = parse_stash_index(stash_ref.as_deref())?;
     let stash_oid = resolve_stash_ref(&repo, stash_ref.as_deref())?;
 
@@ -3558,7 +3875,10 @@ fn create_stash_commit(
     };
 
     // 3. Create the working-tree state commit
-    let wt_tree_oid = create_worktree_tree(&repo.odb, index, work_tree)?;
+    let head_obj = repo.odb.read(head_oid)?;
+    let head_commit_for_tree = parse_commit(&head_obj.data)?;
+    let wt_tree_oid =
+        create_worktree_tree(&repo.odb, index, work_tree, &head_commit_for_tree.tree)?;
 
     let stash_msg = stash_save_msg(head, message);
 
@@ -3879,8 +4199,22 @@ fn flatten_tree_full(odb: &Odb, tree_oid: &ObjectId, prefix: &str) -> Result<Vec
     Ok(result)
 }
 
+fn git_index_mode_tag(mode: u32) -> String {
+    match mode {
+        MODE_REGULAR => "100644".to_owned(),
+        MODE_EXECUTABLE => "100755".to_owned(),
+        MODE_SYMLINK => "120000".to_owned(),
+        _ => format!("{mode:o}"),
+    }
+}
+
 /// Show diff between two flattened trees.
-fn show_tree_diff(odb: &Odb, old: &[FlatTreeEntry], new: &[FlatTreeEntry]) -> Result<()> {
+fn show_tree_diff(
+    odb: &Odb,
+    old: &[FlatTreeEntry],
+    new: &[FlatTreeEntry],
+    algorithm: similar::Algorithm,
+) -> Result<()> {
     use std::collections::BTreeMap;
 
     let mut old_map: BTreeMap<&str, &FlatTreeEntry> = BTreeMap::new();
@@ -3917,56 +4251,85 @@ fn show_tree_diff(odb: &Odb, old: &[FlatTreeEntry], new: &[FlatTreeEntry]) -> Re
                             format_mode(o.mode)
                         );
                     }
-                    println!("--- a/{path}");
-                    println!("+++ b/{path}");
-                    show_blob_diff(odb, &o.oid, &n.oid, path)?;
+                    let old_blob = odb.read(&o.oid)?;
+                    let new_blob = odb.read(&n.oid)?;
+                    let old_text = String::from_utf8_lossy(&old_blob.data);
+                    let new_text = String::from_utf8_lossy(&new_blob.data);
+                    let patch = unified_diff_with_prefix_and_funcname_and_algorithm(
+                        old_text.as_ref(),
+                        new_text.as_ref(),
+                        path,
+                        path,
+                        0,
+                        0,
+                        "a/",
+                        "b/",
+                        None,
+                        algorithm,
+                        false,
+                        false,
+                    );
+                    print!("{patch}");
                 }
             }
             (None, Some(n)) => {
                 println!("diff --git a/{path} b/{path}");
                 println!("new file mode {}", format_mode(n.mode));
+                let nm = git_index_mode_tag(n.mode);
+                println!(
+                    "index {}..{} {}",
+                    &ObjectId::zero().to_hex()[..7],
+                    &n.oid.to_hex()[..7],
+                    nm
+                );
                 let blob = odb.read(&n.oid)?;
-                println!("index {}..{}", "0000000", &n.oid.to_hex()[..7]);
-                if !blob.data.is_empty() {
-                    println!("--- /dev/null");
-                    println!("+++ b/{path}");
-                    let text = String::from_utf8_lossy(&blob.data);
-                    for line in text.lines() {
-                        println!("+{line}");
-                    }
-                }
+                let new_text = String::from_utf8_lossy(&blob.data);
+                let patch = unified_diff_with_prefix_and_funcname_and_algorithm(
+                    "",
+                    new_text.as_ref(),
+                    "/dev/null",
+                    path,
+                    0,
+                    0,
+                    "a/",
+                    "b/",
+                    None,
+                    algorithm,
+                    false,
+                    false,
+                );
+                print!("{patch}");
             }
             (Some(o), None) => {
                 println!("diff --git a/{path} b/{path}");
                 println!("deleted file mode {}", format_mode(o.mode));
-                println!("--- a/{path}");
-                println!("+++ /dev/null");
+                let om = git_index_mode_tag(o.mode);
+                println!(
+                    "index {}..{} {}",
+                    &o.oid.to_hex()[..7],
+                    &ObjectId::zero().to_hex()[..7],
+                    om
+                );
                 let blob = odb.read(&o.oid)?;
-                let text = String::from_utf8_lossy(&blob.data);
-                for line in text.lines() {
-                    println!("-{line}");
-                }
+                let old_text = String::from_utf8_lossy(&blob.data);
+                let patch = unified_diff_with_prefix_and_funcname_and_algorithm(
+                    old_text.as_ref(),
+                    "",
+                    path,
+                    "/dev/null",
+                    0,
+                    0,
+                    "a/",
+                    "b/",
+                    None,
+                    algorithm,
+                    false,
+                    false,
+                );
+                print!("{patch}");
             }
             (None, None) => unreachable!(),
         }
-    }
-
-    Ok(())
-}
-
-/// Unified hunks between two blobs (Git-style `@@` headers), without repeating `---`/`+++` lines.
-fn show_blob_diff(odb: &Odb, old_oid: &ObjectId, new_oid: &ObjectId, path: &str) -> Result<()> {
-    let old_blob = odb.read(old_oid)?;
-    let new_blob = odb.read(new_oid)?;
-    let old_text = String::from_utf8_lossy(&old_blob.data);
-    let new_text = String::from_utf8_lossy(&new_blob.data);
-
-    let u = unified_diff(&old_text, &new_text, path, path, 3, true);
-    let mut lines = u.lines();
-    let _ = lines.next();
-    let _ = lines.next();
-    for line in lines {
-        println!("{line}");
     }
 
     Ok(())
@@ -4264,8 +4627,82 @@ fn create_untracked_tree(odb: &Odb, work_tree: &Path, files: &[String]) -> Resul
 }
 
 /// Create a tree representing the working tree state of all tracked files.
-fn create_worktree_tree(odb: &Odb, index: &Index, work_tree: &Path) -> Result<ObjectId> {
+///
+/// `head_tree` is the tree at `HEAD` when the stash is created. Paths that still exist on disk
+/// but are absent from the index (e.g. after `git rm` / staged deletion in Git-compatible form)
+/// must still be captured — Git keeps a stage-0 "deleted" entry in the index; grit `rm` may drop
+/// the path entirely, so we merge in any `HEAD` path missing from the index when the worktree
+/// file is present (`t3903` stash after `rm` + recreate).
+fn create_worktree_tree(
+    odb: &Odb,
+    index: &Index,
+    work_tree: &Path,
+    head_tree: &ObjectId,
+) -> Result<ObjectId> {
     let mut temp_index = index.clone();
+
+    let head_entries = flatten_tree_full(odb, head_tree, "")?;
+    let index_paths: BTreeSet<Vec<u8>> = temp_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.clone())
+        .collect();
+    for fe in &head_entries {
+        if index_paths.contains(fe.path.as_bytes()) {
+            continue;
+        }
+        let file_path = work_tree.join(&fe.path);
+        let path_bytes = fe.path.as_bytes();
+        let flags = path_bytes.len().min(0xFFF) as u16;
+        match fs::symlink_metadata(&file_path) {
+            Ok(meta) => {
+                if meta.is_symlink() {
+                    let target = fs::read_link(&file_path)?;
+                    let target_bytes = target.to_string_lossy().into_owned().into_bytes();
+                    let oid = odb.write(ObjectKind::Blob, &target_bytes)?;
+                    temp_index.add_or_replace(IndexEntry {
+                        ctime_sec: 0,
+                        ctime_nsec: 0,
+                        mtime_sec: 0,
+                        mtime_nsec: 0,
+                        dev: 0,
+                        ino: 0,
+                        mode: MODE_SYMLINK,
+                        uid: 0,
+                        gid: 0,
+                        size: 0,
+                        oid,
+                        flags,
+                        flags_extended: None,
+                        path: path_bytes.to_vec(),
+                        base_index_pos: 0,
+                    });
+                } else if meta.is_file() {
+                    let data = fs::read(&file_path)?;
+                    let oid = odb.write(ObjectKind::Blob, &data)?;
+                    temp_index.add_or_replace(IndexEntry {
+                        ctime_sec: 0,
+                        ctime_nsec: 0,
+                        mtime_sec: 0,
+                        mtime_nsec: 0,
+                        dev: 0,
+                        ino: 0,
+                        mode: mode_from_metadata(&meta),
+                        uid: 0,
+                        gid: 0,
+                        size: 0,
+                        oid,
+                        flags,
+                        flags_extended: None,
+                        path: path_bytes.to_vec(),
+                        base_index_pos: 0,
+                    });
+                }
+            }
+            Err(_) => {}
+        }
+    }
 
     // Collect directory prefixes that are implied by the index (e.g. if the index
     // has `dir/file`, then `dir` is an implied directory component).
@@ -4554,6 +4991,9 @@ fn reset_worktree_to_index(repo: &Repository, index: &Index, work_tree: &Path) -
             #[cfg(unix)]
             std::os::unix::fs::symlink(&target, &file_path)?;
         } else {
+            if file_path.symlink_metadata().is_ok() {
+                let _ = fs::remove_file(&file_path);
+            }
             fs::write(&file_path, &blob.data)?;
             #[cfg(unix)]
             {
@@ -4643,6 +5083,10 @@ fn reset_to_head(repo: &Repository, head_oid: &ObjectId, work_tree: &Path) -> Re
             // If the path is a directory, remove it first (type change: dir→file).
             if file_path.is_dir() {
                 fs::remove_dir_all(&file_path)?;
+            } else if file_path.symlink_metadata().is_ok() {
+                // File→symlink in the worktree: must replace the symlink with the tree blob
+                // (otherwise `fs::write` follows the link; t3903 stash file→symlink).
+                let _ = fs::remove_file(&file_path);
             }
             fs::write(&file_path, &blob.data)?;
             #[cfg(unix)]

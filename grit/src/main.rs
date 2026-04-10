@@ -2599,9 +2599,9 @@ fn print_stash_invalid_option_usage_header() {
         let Some(first) = var.first() else {
             continue;
         };
-        println!("   or: {first}");
+        eprintln!("   or: {first}");
         for cont in var.iter().skip(1) {
-            println!("{pad}{cont}");
+            eprintln!("{pad}{cont}");
         }
     }
 }
@@ -3199,6 +3199,10 @@ fn run() -> Result<()> {
             std::process::exit(1);
         }
     };
+
+    if subcmd == "stash" {
+        commands::stash::pre_parse_stash_argv_guard(&rest)?;
+    }
 
     // t0017-env-helper expects config to be loaded very early when
     // GIT_TEST_ENV_HELPER=true, even before applying -C.
