@@ -909,7 +909,7 @@ impl AddSparseState {
         if self.effective_cone {
             path_in_sparse_checkout_patterns(path, &self.patterns, true)
         } else {
-            path_in_sparse_checkout_lines(path, &self.patterns)
+            path_in_sparse_checkout_lines(path, &self.patterns, None)
         }
     }
 

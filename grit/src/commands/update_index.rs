@@ -695,7 +695,9 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         }
 
         // Assume-valid / skip-worktree bit updates must run before the skip-worktree short-circuit
-        // below; otherwise `--no-skip-worktree` could never clear the bit (t2104).
+        // below; otherwise `--no-skip-worktree` could never clear the bit (t2104). Bit updates must
+        // also run when the entry already has skip-worktree (e.g. t7817:
+        // `git update-index --skip-worktree sub2` on a gitlink).
         if args.assume_unchanged {
             if let Some(e) = index.get_mut(&rel_bytes, 0) {
                 e.set_assume_unchanged(true);
@@ -711,9 +713,8 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         if args.skip_worktree {
             if let Some(e) = index.get_mut(&rel_bytes, 0) {
                 e.set_skip_worktree(true);
-                if e.flags_extended.is_some() {
-                    index.version = 3;
-                }
+                // Skip-worktree lives in extended flags; v2 index serialization drops them.
+                index.version = index.version.max(3);
             }
             continue;
         }
@@ -725,9 +726,9 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         }
 
         // Git `read-cache.c:process_path`: skip-worktree entries are not refreshed from disk.
-        // With `--remove`, drop the index entry (harness tests expect this even when the file
-        // still exists; see t8050 / t10990). Unless `--ignore-skip-worktree-entries` is set,
-        // skip-worktree entries are left unchanged except for the explicit remove above.
+        // Plain `update-index <path>` is a no-op; `--remove` drops the index entry (harness tests
+        // expect this even when the file still exists; see t8050 / t10990) unless
+        // `--ignore-skip-worktree-entries` is set.
         if let Some(e) = index.get(&rel_bytes, 0) {
             if e.skip_worktree() {
                 if path_mode == PathMode::Remove && !args.ignore_skip_worktree_entries {

@@ -5,7 +5,6 @@
 
 use std::collections::BTreeSet;
 
-use crate::ignore::path_in_sparse_checkout as path_in_sparse_checkout_non_cone_git;
 use crate::wildmatch::{wildmatch, WM_PATHNAME};
 
 /// Parsed non-cone sparse-checkout patterns in file order (last match wins).
@@ -19,6 +18,12 @@ impl NonConePatterns {
     #[must_use]
     pub fn from_lines(lines: Vec<String>) -> Self {
         Self { lines }
+    }
+
+    /// Sparse-checkout pattern lines in file order (for Git-style inclusion checks).
+    #[must_use]
+    pub fn lines(&self) -> &[String] {
+        &self.lines
     }
 
     /// Parse a sparse-checkout file into ordered patterns (non-cone mode).
@@ -397,13 +402,14 @@ pub fn path_in_sparse_checkout(
     cone_config: bool,
     cone: Option<&ConePatterns>,
     non_cone: &NonConePatterns,
+    work_tree: Option<&std::path::Path>,
 ) -> bool {
     if cone_config {
         if let Some(c) = cone {
             return c.path_included(path);
         }
     }
-    non_cone.path_included(path)
+    crate::ignore::path_in_sparse_checkout(path, non_cone.lines(), work_tree)
 }
 
 /// Apply sparse-checkout rules to `index`: stage-0 entries get `skip-worktree` when excluded.
@@ -420,6 +426,7 @@ pub fn path_in_sparse_checkout(
 ///   `skip-worktree` bits even if sparse checkout is enabled.
 pub fn apply_sparse_checkout_skip_worktree(
     git_dir: &std::path::Path,
+    work_tree: Option<&std::path::Path>,
     index: &mut crate::index::Index,
     skip_sparse_checkout: bool,
 ) {
@@ -443,6 +450,13 @@ pub fn apply_sparse_checkout_skip_worktree(
         .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(true);
 
+    let mut warnings = Vec::new();
+    let (_cone_ok, _cone_loaded, non_cone) =
+        load_sparse_checkout_with_warnings(git_dir, cone_config, &mut warnings);
+    for line in warnings {
+        eprintln!("{line}");
+    }
+
     let sparse_path = git_dir.join("info").join("sparse-checkout");
     let file_content = std::fs::read_to_string(&sparse_path).unwrap_or_default();
     let sparse_lines = parse_sparse_checkout_file(&file_content);
@@ -454,6 +468,7 @@ pub fn apply_sparse_checkout_skip_worktree(
     } else {
         None
     };
+    let effective_cone = cone_config && cone_struct.is_some();
 
     // Git: an on-disk sparse-checkout file with no effective patterns (e.g. a file that only
     // contains blank lines) still enables sparse mode and excludes every path (`pl->nr == 0`
@@ -469,10 +484,16 @@ pub fn apply_sparse_checkout_skip_worktree(
         let path_str = String::from_utf8_lossy(&entry.path);
         let included = if exclude_all {
             false
-        } else if let Some(cone) = cone_struct.as_ref() {
-            cone.path_included(path_str.as_ref())
+        } else if effective_cone {
+            path_in_sparse_checkout(
+                path_str.as_ref(),
+                true,
+                cone_struct.as_ref(),
+                &non_cone,
+                work_tree,
+            )
         } else {
-            path_in_sparse_checkout_non_cone_git(path_str.as_ref(), &sparse_lines)
+            crate::ignore::path_in_sparse_checkout(path_str.as_ref(), non_cone.lines(), work_tree)
         };
         entry.set_skip_worktree(!included);
         if !included {
@@ -569,6 +590,11 @@ pub fn clear_skip_worktree_from_present_files(
     let mut found = PathFoundData { dir: String::new() };
     for entry in &mut index.entries {
         if entry.stage() != 0 || !entry.skip_worktree() {
+            continue;
+        }
+        // With assume-unchanged (CE_VALID), Git keeps skip-worktree for `git grep` semantics
+        // (t7817: present file + both bits still excluded from work-tree index grep).
+        if entry.assume_unchanged() {
             continue;
         }
         let rel = String::from_utf8_lossy(&entry.path);
@@ -1116,9 +1142,9 @@ pub fn path_matches_sparse_patterns(path: &str, patterns: &[String], cone_mode: 
             let inner = prefix_with_slash.trim_start_matches('/');
             if inner.is_empty() {
                 false
-            } else if negated && core_pattern == "/*/" {
-                // Cone expanded form: after `/*` includes all top-level names, `!/*/` removes
-                // nested paths (two+ segments). Single-segment paths like `a` stay included.
+            } else if inner == "*" {
+                // `/*/` and `!/*/` in expanded-cone files: match only nested paths (contain `/`),
+                // not every top-level name (plain `wildmatch("*", …)` would match `sub2`, etc.).
                 let trimmed = path.trim_end_matches('/');
                 trimmed.contains('/')
             } else if inner.contains('*') || inner.contains('?') || inner.contains('[') {

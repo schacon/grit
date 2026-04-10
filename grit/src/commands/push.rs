@@ -3218,7 +3218,14 @@ fn copy_objects_tracked(src_git_dir: &Path, dst_git_dir: &Path) -> Result<Vec<Pa
                 continue;
             }
             let skip = read_pack_index(&path)
-                .map(|idx| idx.entries.iter().all(|e| dst_odb.exists(&e.oid)))
+                .map(|idx| {
+                    idx.entries.iter().all(|e| {
+                        e.oid.len() == 20
+                            && ObjectId::from_bytes(&e.oid)
+                                .map(|id| dst_odb.exists(&id))
+                                .unwrap_or(false)
+                    })
+                })
                 .unwrap_or(false);
             if skip {
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {

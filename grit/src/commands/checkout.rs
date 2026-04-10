@@ -1603,7 +1603,12 @@ fn merge_branch_working_tree(
     let mut dest_index = Index::new();
     dest_index.entries = target_entries;
     dest_index.sort();
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut dest_index, false);
+    apply_sparse_checkout_skip_worktree(
+        &repo.git_dir,
+        repo.work_tree.as_deref(),
+        &mut dest_index,
+        false,
+    );
     checkout_index_to_worktree(
         repo,
         &index_before,
@@ -2643,7 +2648,12 @@ fn switch_to_tree(
         new_index.sort();
     }
 
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut new_index, false);
+    apply_sparse_checkout_skip_worktree(
+        &repo.git_dir,
+        repo.work_tree.as_deref(),
+        &mut new_index,
+        false,
+    );
 
     // Perform the actual working tree update.
     // When force, write all entries even if OID matches (to restore dirty files).

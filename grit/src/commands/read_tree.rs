@@ -277,7 +277,12 @@ pub fn run(args: Args) -> Result<()> {
             tree_to_index_entries(&repo, &tree_oids[tree_oids.len() - 1], "", prot)?;
         new_index.sort();
         if !dry_run {
-            apply_sparse_checkout(&repo.git_dir, &mut new_index, args.no_sparse_checkout)?;
+            apply_sparse_checkout(
+                &repo.git_dir,
+                repo.work_tree.as_deref(),
+                &mut new_index,
+                args.no_sparse_checkout,
+            )?;
         }
         if args.update {
             validate_worktree_updates(
@@ -384,7 +389,12 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Apply sparse checkout: set skip-worktree on entries not matching patterns
-    apply_sparse_checkout(&repo.git_dir, &mut new_index, args.no_sparse_checkout)?;
+    apply_sparse_checkout(
+        &repo.git_dir,
+        repo.work_tree.as_deref(),
+        &mut new_index,
+        args.no_sparse_checkout,
+    )?;
 
     if args.update {
         validate_worktree_updates(
@@ -1253,10 +1263,11 @@ fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {
 /// Check if `core.sparseCheckout` is enabled and apply skip-worktree bits.
 fn apply_sparse_checkout(
     git_dir: &Path,
+    work_tree: Option<&Path>,
     index: &mut Index,
     skip_sparse_checkout: bool,
 ) -> Result<()> {
-    apply_sparse_checkout_skip_worktree(git_dir, index, skip_sparse_checkout);
+    apply_sparse_checkout_skip_worktree(git_dir, work_tree, index, skip_sparse_checkout);
     Ok(())
 }
 
@@ -2014,7 +2025,7 @@ pub fn am_clean_index(
     let orig_map = tree_to_map(tree_to_index_entries(repo, &orig_tree_oid, "", prot)?);
     let mut phase2 = two_way_merge(repo, &phase1, &head_map, &orig_map)?;
 
-    apply_sparse_checkout(&repo.git_dir, &mut phase2, false)?;
+    apply_sparse_checkout(&repo.git_dir, repo.work_tree.as_deref(), &mut phase2, false)?;
 
     if repo.work_tree.is_some() {
         checkout_index_entries(repo, &phase1, &phase2, true, false)?;

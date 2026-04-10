@@ -284,7 +284,13 @@ pub fn run(mut args: Args) -> Result<()> {
                 .into_iter()
                 .filter(|p| {
                     index.get(p.as_bytes(), 0).is_some_and(|e| {
-                        rm_entry_matches_sparse_worktree(e, p, &sparse_patterns, cone_cfg)
+                        rm_entry_matches_sparse_worktree(
+                            e,
+                            p,
+                            &sparse_patterns,
+                            cone_cfg,
+                            Some(work_tree),
+                        )
                     })
                 })
                 .collect()
@@ -486,6 +492,7 @@ fn rm_entry_matches_sparse_worktree(
     path: &str,
     patterns: &[String],
     cone_cfg: bool,
+    work_tree: Option<&std::path::Path>,
 ) -> bool {
     if entry.skip_worktree() {
         return false;
@@ -495,7 +502,7 @@ fn rm_entry_matches_sparse_worktree(
     } else if cone_cfg {
         path_in_sparse_checkout_patterns(path, patterns, true)
     } else {
-        path_in_sparse_checkout_lines(path, patterns)
+        path_in_sparse_checkout_lines(path, patterns, work_tree)
     };
     in_sparse
 }
