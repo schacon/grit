@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::index::{Index, IndexEntry};
-use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind, TreeEntry};
+use crate::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
 use crate::userdiff::FuncnameMatcher;
 
@@ -2800,6 +2800,32 @@ pub fn format_mode(mode: u32) -> String {
 #[must_use]
 pub fn read_submodule_head_for_checkout(sub_dir: &Path) -> Option<ObjectId> {
     read_submodule_head(sub_dir)
+}
+
+/// First line of a commit's message for `git diff --submodule=log` output.
+///
+/// Honors `encoding` in the commit object (Latin-1 vs UTF-8) using the same
+/// rules as Git's submodule summary.
+#[must_use]
+pub fn submodule_commit_subject_line(c: &CommitData) -> String {
+    let enc = c.encoding.as_deref().unwrap_or("UTF-8");
+    let is_latin1 = enc.eq_ignore_ascii_case("ISO8859-1")
+        || enc.eq_ignore_ascii_case("ISO-8859-1")
+        || enc.eq_ignore_ascii_case("LATIN1")
+        || enc.eq_ignore_ascii_case("ISO-8859-15");
+    if let Some(raw) = c.raw_message.as_deref() {
+        let line = raw.split(|b| *b == b'\n').next().unwrap_or(raw);
+        if is_latin1 {
+            return line
+                .iter()
+                .map(|&b| b as char)
+                .collect::<String>()
+                .trim()
+                .to_owned();
+        }
+        return String::from_utf8_lossy(line).trim().to_string();
+    }
+    c.message.lines().next().unwrap_or("").trim().to_owned()
 }
 
 /// True when `sub_dir` is an empty directory (or missing), i.e. the placeholder left by
