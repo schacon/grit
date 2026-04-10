@@ -3905,6 +3905,33 @@ fn preprocess_diff_args(rest: &[String]) -> Vec<String> {
 /// Preprocess log arguments: convert `-<N>` shorthand to `-n <N>`, and make bare `-L` visible to clap.
 /// Map `git log` pickaxe `-G` / `-S` (including glued forms) to hidden long options so `-G` stays
 /// free for `--basic-regexp` on `--grep`.
+/// Split glued pickaxe argv like `-Sneedle` into `-S` + `needle`.
+///
+/// POSIX `/bin/sh` parses `-S"not present"` as a single token `-Snot present`, which clap would
+/// reject as an unknown short flag. Git accepts the glued form (t4069-remerge-diff).
+fn preprocess_show_argv(rest: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(rest.len() + 2);
+    let mut i = 0usize;
+    while i < rest.len() {
+        let arg = rest[i].as_str();
+        if arg == "--" {
+            out.extend_from_slice(&rest[i..]);
+            break;
+        }
+        if let Some(needle) = arg.strip_prefix("-S") {
+            if !needle.is_empty() {
+                out.push("-S".to_owned());
+                out.push(needle.to_owned());
+                i += 1;
+                continue;
+            }
+        }
+        out.push(rest[i].clone());
+        i += 1;
+    }
+    out
+}
+
 fn preprocess_log_pickaxe_args(rest: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(rest.len() + 4);
     let mut i = 0usize;
@@ -4963,6 +4990,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "shell" => commands::shell::run(parse_cmd_args(subcmd, rest)),
         "shortlog" => commands::shortlog::run(parse_cmd_args(subcmd, rest)),
         "show" => {
+            let rest = preprocess_show_argv(rest);
             let mut saw_bare_pretty = false;
             let mut explicit_pretty = false;
             let mut i = 0usize;
@@ -5003,7 +5031,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
             } else {
                 std::env::remove_var("GIT_GRIT_SHOW_EXPLICIT_PRETTY");
             }
-            let rest = preprocess_git_notes_display_argv(rest, NotesDisplayDefault::OnIfUnset);
+            let rest = preprocess_git_notes_display_argv(&rest, NotesDisplayDefault::OnIfUnset);
             commands::show::run(parse_cmd_args(subcmd, &rest))
         }
         "show-branch" => commands::show_branch::run_raw(rest),
