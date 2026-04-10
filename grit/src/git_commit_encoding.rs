@@ -145,6 +145,34 @@ fn base64_decode_rfc2047(input: &str) -> Result<Vec<u8>, ()> {
     Ok(output)
 }
 
+/// Raw `author` / `committer` header payloads for a new commit object.
+///
+/// When `encoding` is unset or UTF-8, returns empty vectors so [`grit_lib::objects::serialize_commit`]
+/// writes the Unicode [`String`] fields as UTF-8. When `encoding` is non-UTF-8, encodes the full
+/// identity lines (name, email, timestamp) for storage in that charset — required after replaying a
+/// pick so we do not reuse a picked commit's raw bytes under a different `i18n.commitEncoding`
+/// (upstream `t3901`).
+#[must_use]
+pub fn identity_raw_for_serialized_commit(
+    encoding: &Option<String>,
+    author: &str,
+    committer: &str,
+) -> (Vec<u8>, Vec<u8>) {
+    let is_utf8 = match encoding.as_deref() {
+        None => true,
+        Some(e) => e.eq_ignore_ascii_case("utf-8") || e.eq_ignore_ascii_case("utf8"),
+    };
+    if is_utf8 {
+        return (Vec::new(), Vec::new());
+    }
+    let Some(label) = encoding.as_deref() else {
+        return (Vec::new(), Vec::new());
+    };
+    let author_raw = encode_header_text(label, author).unwrap_or_default();
+    let committer_raw = encode_header_text(label, committer).unwrap_or_default();
+    (author_raw, committer_raw)
+}
+
 /// Unicode commit message body for display (e.g. `format-patch`): uses `raw_message` when set.
 #[must_use]
 pub fn commit_message_unicode_for_display(

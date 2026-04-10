@@ -22,7 +22,8 @@ use grit_lib::ident::parse_signature_times;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::merge_trees::{
-    merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation, WhitespaceMergeOptions,
+    merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation,
+    WhitespaceMergeOptions,
 };
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
@@ -1661,13 +1662,15 @@ fn bump_committer_if_replay_matches_source(
     stored_msg: &str,
     raw_message: &Option<Vec<u8>>,
 ) -> Result<()> {
+    let (author_raw, committer_raw) =
+        crate::git_commit_encoding::identity_raw_for_serialized_commit(encoding, author, committer);
     let trial = CommitData {
         tree: tree_oid,
         parents: parents.to_vec(),
         author: author.to_owned(),
         committer: committer.clone(),
-        author_raw: Vec::new(),
-        committer_raw: Vec::new(),
+        author_raw,
+        committer_raw,
         encoding: encoding.clone(),
         message: stored_msg.to_owned(),
         raw_message: raw_message.clone(),
@@ -1748,13 +1751,18 @@ fn create_cherry_pick_commit(
         &raw_message,
     )?;
 
+    let (author_raw, committer_raw) =
+        crate::git_commit_encoding::identity_raw_for_serialized_commit(
+            &encoding, &author, &committer,
+        );
+
     let commit_data = CommitData {
         tree: tree_oid,
         parents,
         author,
         committer,
-        author_raw: Vec::new(),
-        committer_raw: Vec::new(),
+        author_raw,
+        committer_raw,
         encoding,
         message: stored_msg,
         raw_message,

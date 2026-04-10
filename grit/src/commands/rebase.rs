@@ -1392,13 +1392,20 @@ fn commit_from_merged_index(
     let now = time::OffsetDateTime::now_utc();
     let committer = resolve_identity(config, "COMMITTER")?;
     let (message, encoding, raw_message) = finalize_message_for_commit_encoding(message, config);
+    let committer_line = format_ident(&committer, now);
+    let (author_raw, committer_raw) =
+        crate::git_commit_encoding::identity_raw_for_serialized_commit(
+            &encoding,
+            author,
+            &committer_line,
+        );
     let commit_data = CommitData {
         tree: tree_oid,
         parents,
         author: author.to_string(),
-        committer: format_ident(&committer, now),
-        author_raw: Vec::new(),
-        committer_raw: Vec::new(),
+        committer: committer_line,
+        author_raw,
+        committer_raw,
         encoding,
         message,
         raw_message,
@@ -3080,13 +3087,20 @@ fn cherry_pick_for_rebase(
         let now = time::OffsetDateTime::now_utc();
         let committer = resolve_identity(&config, "COMMITTER")?;
         let (message, encoding, raw_message) = transcoded_replayed_message(&commit, &config);
+        let committer_line = format_ident(&committer, now);
+        let (author_raw, committer_raw) =
+            crate::git_commit_encoding::identity_raw_for_serialized_commit(
+                &encoding,
+                &commit.author,
+                &committer_line,
+            );
         let commit_data = CommitData {
             tree: head_commit.tree,
             parents: vec![head_oid],
             author: commit.author.clone(),
-            committer: format_ident(&committer, now),
-            author_raw: commit.author_raw.clone(),
-            committer_raw: commit.committer_raw.clone(),
+            committer: committer_line,
+            author_raw,
+            committer_raw,
             encoding,
             message,
             raw_message,
@@ -3152,13 +3166,20 @@ fn cherry_pick_for_rebase(
                         commit_message_after_prepare_hook(repo, git_dir, &message, "message")?;
                     let message =
                         apply_commit_msg_cleanup(&raw_msg, rebase_commit_msg_cleanup(&config));
+                    let committer_line = format_ident(&committer, now);
+                    let (author_raw, committer_raw) =
+                        crate::git_commit_encoding::identity_raw_for_serialized_commit(
+                            &encoding,
+                            &commit.author,
+                            &committer_line,
+                        );
                     let commit_data = CommitData {
                         tree: tree_oid,
                         parents: vec![head_oid],
                         author: commit.author.clone(),
-                        committer: format_ident(&committer, now),
-                        author_raw: commit.author_raw.clone(),
-                        committer_raw: commit.committer_raw.clone(),
+                        committer: committer_line,
+                        author_raw,
+                        committer_raw,
                         encoding,
                         message,
                         raw_message,
@@ -3198,13 +3219,20 @@ fn cherry_pick_for_rebase(
                     finalize_message_for_commit_encoding(cleaned, &config);
                 let now = time::OffsetDateTime::now_utc();
                 let committer = resolve_identity(&config, "COMMITTER")?;
+                let committer_line = format_ident(&committer, now);
+                let (author_raw, committer_raw) =
+                    crate::git_commit_encoding::identity_raw_for_serialized_commit(
+                        &encoding,
+                        &commit.author,
+                        &committer_line,
+                    );
                 let commit_data = CommitData {
                     tree: commit_tree_oid,
                     parents: vec![head_oid],
                     author: commit.author.clone(),
-                    committer: format_ident(&committer, now),
-                    author_raw: commit.author_raw.clone(),
-                    committer_raw: commit.committer_raw.clone(),
+                    committer: committer_line,
+                    author_raw,
+                    committer_raw,
                     encoding,
                     message,
                     raw_message,
@@ -3407,13 +3435,20 @@ fn cherry_pick_for_rebase(
         finalize_message_for_commit_encoding(message, &config)
     };
 
+    let committer_line = format_ident(&committer, now);
+    let (author_raw, committer_raw) =
+        crate::git_commit_encoding::identity_raw_for_serialized_commit(
+            &encoding,
+            &commit.author,
+            &committer_line,
+        );
     let commit_data = CommitData {
         tree: tree_oid,
         parents: vec![head_oid],
         author: commit.author.clone(), // preserve original author
-        committer: format_ident(&committer, now),
-        author_raw: commit.author_raw.clone(),
-        committer_raw: commit.committer_raw.clone(),
+        committer: committer_line,
+        author_raw,
+        committer_raw,
         encoding,
         message,
         raw_message,
@@ -3923,13 +3958,20 @@ fn do_continue() -> Result<()> {
         let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
         let now = time::OffsetDateTime::now_utc();
         let committer = resolve_identity(&config, "COMMITTER")?;
+        let committer_line = format_ident(&committer, now);
+        let (author_raw, committer_raw) =
+            crate::git_commit_encoding::identity_raw_for_serialized_commit(
+                &encoding,
+                &original_commit.author,
+                &committer_line,
+            );
         let commit_data = CommitData {
             tree: tree_oid,
             parents: vec![head_oid],
             author: original_commit.author.clone(),
-            committer: format_ident(&committer, now),
-            author_raw: original_commit.author_raw.clone(),
-            committer_raw: original_commit.committer_raw.clone(),
+            committer: committer_line,
+            author_raw,
+            committer_raw,
             encoding,
             message,
             raw_message,
@@ -3937,20 +3979,28 @@ fn do_continue() -> Result<()> {
         let commit_bytes = serialize_commit(&commit_data);
         repo.odb.write(ObjectKind::Commit, &commit_bytes)?
     } else {
-        let (message, encoding, raw_message) =
-            read_rebase_continue_message(git_dir, &original_commit, &config)?;
+        let (message, _, _) = read_rebase_continue_message(git_dir, &original_commit, &config)?;
         let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
         let now = time::OffsetDateTime::now_utc();
         let committer = resolve_identity(&config, "COMMITTER")?;
         let raw_msg = commit_message_after_prepare_hook(&repo, git_dir, &message, "message")?;
-        let message = apply_commit_msg_cleanup(&raw_msg, rebase_commit_msg_cleanup(&config));
+        let cleaned = apply_commit_msg_cleanup(&raw_msg, rebase_commit_msg_cleanup(&config));
+        let (message, encoding, raw_message) =
+            finalize_message_for_commit_encoding(cleaned, &config);
+        let committer_line = format_ident(&committer, now);
+        let (author_raw, committer_raw) =
+            crate::git_commit_encoding::identity_raw_for_serialized_commit(
+                &encoding,
+                &original_commit.author,
+                &committer_line,
+            );
         let commit_data = CommitData {
             tree: tree_oid,
             parents: vec![head_oid],
             author: original_commit.author.clone(),
-            committer: format_ident(&committer, now),
-            author_raw: original_commit.author_raw.clone(),
-            committer_raw: original_commit.committer_raw.clone(),
+            committer: committer_line,
+            author_raw,
+            committer_raw,
             encoding,
             message,
             raw_message,
