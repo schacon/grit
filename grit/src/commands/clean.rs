@@ -10,13 +10,14 @@ use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::ignore::{normalize_repo_relative, submodule_containing_path, IgnoreMatcher};
 use grit_lib::index::{Index, MODE_GITLINK};
+use grit_lib::pathspec::pathspec_matches as lib_pathspec_matches;
 use grit_lib::repo::Repository;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 
-use crate::pathspec::{parse_magic, pathspec_matches};
+use crate::pathspec::parse_magic;
 
 /// Arguments for `grit clean`.
 #[derive(Debug, ClapArgs)]
@@ -445,8 +446,8 @@ fn collect_untracked(
 
             let pathspec_wants_recurse = !pathspecs.is_empty()
                 && pathspecs.iter().any(|ps| {
-                    pathspec_matches(ps, &repo_rel_for_spec)
-                        || pathspec_matches(ps, &format!("{repo_rel_for_spec}/"))
+                    lib_pathspec_matches(ps, &repo_rel_for_spec)
+                        || lib_pathspec_matches(ps, &format!("{repo_rel_for_spec}/"))
                         || pathspec_targets_under_prefix(ps, &repo_rel_for_spec)
                         || pathspec_covers_descendants(ps, &repo_rel_for_spec)
                 });
@@ -705,7 +706,7 @@ fn dir_contains_nested_git_or_gitlink(
 
 /// True when `abs_dir` is at or below a nested repository root inside `work_tree`
 /// (but not the superproject root itself).
-fn is_strictly_inside_nested_git_work_tree(work_tree: &Path, abs_dir: &Path) -> bool {
+pub(crate) fn is_strictly_inside_nested_git_work_tree(work_tree: &Path, abs_dir: &Path) -> bool {
     let mut cur = abs_dir.to_path_buf();
     loop {
         if cur == work_tree {
@@ -759,7 +760,7 @@ fn submodule_worktree_via_gitfile(work_tree_entry: &Path, super_git_dir: &Path) 
     can.starts_with(&mods)
 }
 
-fn is_nested_git_metadata(work_tree_entry: &Path) -> bool {
+pub(crate) fn is_nested_git_metadata(work_tree_entry: &Path) -> bool {
     let git_meta = work_tree_entry.join(".git");
     if !git_meta.exists() {
         return false;
@@ -845,7 +846,7 @@ fn entry_worktree_present(entry: &grit_lib::index::IndexEntry, work_tree: &Path)
 }
 
 /// `git add`-style prefix: worktree-relative path from `cwd` to work tree root, or `None` if cwd is root.
-fn pathdiff(cwd: &Path, work_tree: &Path) -> Option<String> {
+pub(crate) fn pathdiff(cwd: &Path, work_tree: &Path) -> Option<String> {
     let cwd_canon = cwd.canonicalize().ok()?;
     let wt_canon = work_tree.canonicalize().ok()?;
     if cwd_canon == wt_canon {
@@ -884,7 +885,7 @@ fn pathdiff_relative(from: &Path, to: &Path) -> String {
     }
 }
 
-fn repo_relative_under_walk(cwd_prefix: Option<&str>, rel_from_walk: &str) -> String {
+pub(crate) fn repo_relative_under_walk(cwd_prefix: Option<&str>, rel_from_walk: &str) -> String {
     match cwd_prefix {
         Some(p) if !p.is_empty() => format!("{p}/{rel_from_walk}"),
         _ => rel_from_walk.to_owned(),
@@ -901,8 +902,8 @@ fn path_to_slash(path: &Path) -> String {
         .join("/")
 }
 
-fn path_matches_any_pathspec(specs: &[String], rel: &str) -> bool {
-    specs.iter().any(|s| pathspec_matches(s, rel))
+pub(crate) fn path_matches_any_pathspec(specs: &[String], rel: &str) -> bool {
+    specs.iter().any(|s| lib_pathspec_matches(s, rel))
 }
 
 fn pathspecs_have_glob(specs: &[String]) -> bool {
@@ -912,7 +913,7 @@ fn pathspecs_have_glob(specs: &[String]) -> bool {
     })
 }
 
-fn dir_may_match_pathspecs(specs: &[String], dir_repo_rel: &str) -> bool {
+pub(crate) fn dir_may_match_pathspecs(specs: &[String], dir_repo_rel: &str) -> bool {
     if specs.iter().any(|s| {
         let (_, pat) = parse_magic(s);
         crate::pathspec::has_glob_chars(pat)
@@ -921,8 +922,8 @@ fn dir_may_match_pathspecs(specs: &[String], dir_repo_rel: &str) -> bool {
         return true;
     }
     specs.iter().any(|s| {
-        pathspec_matches(s, dir_repo_rel)
-            || pathspec_matches(s, &format!("{dir_repo_rel}/"))
+        lib_pathspec_matches(s, dir_repo_rel)
+            || lib_pathspec_matches(s, &format!("{dir_repo_rel}/"))
             || pathspec_targets_under_prefix(s, dir_repo_rel)
             || pathspec_covers_descendants(s, dir_repo_rel)
     })
@@ -964,12 +965,12 @@ fn pathspec_enters_directory(spec: &str, dir_rel: &str) -> bool {
         if !crate::pathspec::has_glob_chars(&full) {
             return full == d || full.starts_with(&format!("{d}/"));
         }
-        return pathspec_matches(spec, &format!("{d}/x"));
+        return lib_pathspec_matches(spec, &format!("{d}/x"));
     }
     if !crate::pathspec::has_glob_chars(pat) {
         return pat == d || pat.starts_with(&format!("{d}/"));
     }
-    pathspec_matches(spec, &format!("{d}/x"))
+    lib_pathspec_matches(spec, &format!("{d}/x"))
 }
 
 /// True when a literal pathspec names this directory or something inside it (e.g. `src/feature` → `src`).

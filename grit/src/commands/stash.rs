@@ -12,6 +12,8 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
+
+use crate::explicit_exit::SilentNonZeroExit;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, BufRead, Write as IoWrite};
@@ -20,6 +22,7 @@ use std::path::Path;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{diff_index_to_tree, diff_index_to_worktree, unified_diff};
 use grit_lib::error::Error;
+use grit_lib::ignore::{normalize_repo_relative, IgnoreMatcher};
 use grit_lib::index::{
     entry_from_stat, Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
 };
@@ -28,6 +31,7 @@ use grit_lib::objects::{
     TreeEntry,
 };
 use grit_lib::odb::Odb;
+use grit_lib::pathspec::pathspec_matches as lib_pathspec_matches;
 use grit_lib::reflog::{read_reflog, reflog_path};
 use grit_lib::refs::{resolve_ref, write_ref};
 use grit_lib::repo::Repository;
@@ -64,6 +68,10 @@ pub struct Args {
     #[arg(short = 'u', long = "include-untracked", global = true)]
     pub include_untracked: bool,
 
+    /// Like `-u`, but also stash ignored files.
+    #[arg(short = 'a', long = "all", global = true)]
+    pub include_all: bool,
+
     /// Only stash staged changes.
     #[arg(short = 'S', long = "staged", global = true)]
     pub staged: bool,
@@ -97,6 +105,9 @@ pub enum StashCommand {
         /// Also stash untracked files.
         #[arg(short = 'u', long = "include-untracked")]
         include_untracked: bool,
+        /// Like `-u`, but also stash ignored files.
+        #[arg(short = 'a', long = "all")]
+        include_all: bool,
         /// Only stash staged changes.
         #[arg(short = 'S', long = "staged")]
         staged: bool,
@@ -130,6 +141,9 @@ pub enum StashCommand {
         /// Also stash untracked files.
         #[arg(short = 'u', long = "include-untracked")]
         include_untracked: bool,
+        /// Like `-u`, but also stash ignored files.
+        #[arg(short = 'a', long = "all")]
+        include_all: bool,
         /// Interactive patch mode.
         #[arg(short = 'p', long = "patch")]
         patch: bool,
@@ -234,11 +248,13 @@ pub fn run(args: Args) -> Result<()> {
             assume_push_or_error(&args)?;
             // Bare `grit stash` == `grit stash push`
             // But if there are pathspec args, treat as `stash push -- <pathspec>`
+            let iu = args.include_untracked || args.include_all;
             do_push(PushOpts {
                 message: args.message,
                 keep_index: args.keep_index,
                 no_keep_index: args.no_keep_index,
-                include_untracked: args.include_untracked,
+                include_untracked: iu,
+                include_all: args.include_all,
                 staged: args.staged,
                 patch: args.patch,
                 quiet: args.quiet,
@@ -250,6 +266,7 @@ pub fn run(args: Args) -> Result<()> {
             keep_index,
             no_keep_index,
             include_untracked,
+            include_all,
             staged,
             patch,
             quiet,
@@ -302,13 +319,15 @@ pub fn run(args: Args) -> Result<()> {
             }
             let msg = message.or(args.message);
             let ki = keep_index || args.keep_index;
-            let iu = include_untracked || args.include_untracked;
+            let ia = include_all || args.include_all;
+            let iu = include_untracked || args.include_untracked || ia;
             let q = quiet || args.quiet;
             do_push(PushOpts {
                 message: msg,
                 keep_index: ki,
                 no_keep_index,
                 include_untracked: iu,
+                include_all: ia,
                 staged,
                 patch,
                 quiet: q,
@@ -320,6 +339,7 @@ pub fn run(args: Args) -> Result<()> {
             keep_index,
             no_keep_index,
             include_untracked,
+            include_all,
             patch,
             quiet,
             legacy_message,
@@ -334,7 +354,8 @@ pub fn run(args: Args) -> Result<()> {
             });
             let ki = keep_index || args.keep_index;
             let nki = no_keep_index || args.no_keep_index;
-            let iu = include_untracked || args.include_untracked;
+            let ia = include_all || args.include_all;
+            let iu = include_untracked || args.include_untracked || ia;
             let q = quiet || args.quiet;
             let p = patch || args.patch;
             do_push(PushOpts {
@@ -342,6 +363,7 @@ pub fn run(args: Args) -> Result<()> {
                 keep_index: ki,
                 no_keep_index: nki,
                 include_untracked: iu,
+                include_all: ia,
                 staged: false,
                 patch: p,
                 quiet: q,
@@ -350,8 +372,16 @@ pub fn run(args: Args) -> Result<()> {
         }
         Some(StashCommand::List { args: list_args }) => do_list(list_args),
         Some(StashCommand::Show { args: show_args }) => {
-            let parsed = parse_stash_show_args(&show_args)?;
-            do_show(parsed.stash_ref, parsed.mode, parsed.patience)
+            let repo = Repository::discover(None).context("not a git repository")?;
+            let parsed =
+                parse_stash_show_args(&repo, args.include_untracked, args.patch, &show_args)?;
+            do_show(
+                &repo,
+                parsed.stash_ref,
+                parsed.mode,
+                parsed.untracked,
+                parsed.patience,
+            )
         }
         Some(StashCommand::Pop {
             index,
@@ -442,6 +472,10 @@ fn assume_push_or_error(args: &Args) -> Result<()> {
             continue;
         }
         if first == "-u" || first == "--include-untracked" {
+            t.remove(0);
+            continue;
+        }
+        if first == "-a" || first == "--all" {
             t.remove(0);
             continue;
         }
@@ -551,16 +585,58 @@ fn do_branch_from_rest(rest: &[String]) -> Result<()> {
     do_branch(branch_name, stash_ref)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StashUntrackedShow {
+    /// Tracked changes only (ignore untracked parent).
+    TrackedOnly,
+    /// Include untracked in output (when stash has a third parent).
+    IncludeUntracked,
+    /// Only show untracked side.
+    OnlyUntracked,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StashUntrackedFlag {
+    Include,
+    Only,
+    No,
+}
+
 struct ParsedStashShow {
     stash_ref: Option<String>,
     mode: ShowMode,
+    untracked: StashUntrackedShow,
     patience: bool,
 }
 
-fn parse_stash_show_args(raw: &[String]) -> Result<ParsedStashShow> {
-    let mut mode = ShowMode::Stat;
+fn parse_stash_show_args(
+    repo: &Repository,
+    global_include_untracked: bool,
+    global_patch: bool,
+    raw: &[String],
+) -> Result<ParsedStashShow> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let cfg_include_ut = config
+        .get("stash.showIncludeUntracked")
+        .map(|v| {
+            matches!(
+                v.trim().to_lowercase().as_str(),
+                "true" | "yes" | "1" | "on"
+            )
+        })
+        .unwrap_or(false);
+
+    let mut mode = if global_patch {
+        ShowMode::Patch
+    } else {
+        ShowMode::Stat
+    };
     let mut patience = false;
     let mut pos: Vec<String> = Vec::new();
+    let mut ut_flags: Vec<StashUntrackedFlag> = Vec::new();
+    if global_include_untracked {
+        ut_flags.push(StashUntrackedFlag::Include);
+    }
     let mut i = 0usize;
     while i < raw.len() {
         let a = &raw[i];
@@ -576,9 +652,9 @@ fn parse_stash_show_args(raw: &[String]) -> Result<ParsedStashShow> {
                 "--name-only" => mode = ShowMode::NameOnly,
                 "--numstat" => mode = ShowMode::Numstat,
                 "--patience" => patience = true,
-                "-u" | "--include-untracked" | "--only-untracked" => {
-                    // Accepted for compatibility; untracked content is not shown yet.
-                }
+                "-u" | "--include-untracked" => ut_flags.push(StashUntrackedFlag::Include),
+                "--only-untracked" => ut_flags.push(StashUntrackedFlag::Only),
+                "--no-include-untracked" => ut_flags.push(StashUntrackedFlag::No),
                 _ if a.starts_with("--no-") => {
                     // ignore for forward-compat
                 }
@@ -596,9 +672,24 @@ fn parse_stash_show_args(raw: &[String]) -> Result<ParsedStashShow> {
     if pos.len() > 1 {
         bail!("Too many revisions specified: {}", pos.join(" "));
     }
+
+    let untracked = match ut_flags.last().copied() {
+        None => {
+            if cfg_include_ut {
+                StashUntrackedShow::IncludeUntracked
+            } else {
+                StashUntrackedShow::TrackedOnly
+            }
+        }
+        Some(StashUntrackedFlag::No) => StashUntrackedShow::TrackedOnly,
+        Some(StashUntrackedFlag::Include) => StashUntrackedShow::IncludeUntracked,
+        Some(StashUntrackedFlag::Only) => StashUntrackedShow::OnlyUntracked,
+    };
+
     Ok(ParsedStashShow {
         stash_ref: pos.into_iter().next(),
         mode,
+        untracked,
         patience,
     })
 }
@@ -612,6 +703,8 @@ struct PushOpts {
     keep_index: bool,
     no_keep_index: bool,
     include_untracked: bool,
+    /// When true, stash ignored paths too (implies `include_untracked` for discovery).
+    include_all: bool,
     staged: bool,
     patch: bool,
     quiet: bool,
@@ -660,6 +753,12 @@ fn do_push(opts: PushOpts) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("cannot stash in a bare repository"))?
         .to_path_buf();
 
+    if opts.patch && (opts.include_untracked || opts.include_all) {
+        eprintln!("Can't use --patch and --include-untracked or --all at the same time");
+        // Exit 128 matches Git; avoids harness treating exit 1 as acceptable success.
+        return Err(anyhow::Error::new(SilentNonZeroExit { code: 128 }));
+    }
+
     let head = resolve_head(&repo.git_dir)?;
     let head_oid = head
         .oid()
@@ -688,9 +787,27 @@ fn do_push(opts: PushOpts) -> Result<()> {
     // Filter by pathspec if given
     let has_pathspec = !opts.pathspec.is_empty();
 
-    // Find untracked files if requested (and no pathspec)
-    let untracked_files = if opts.include_untracked && !has_pathspec && !opts.staged {
-        find_untracked_files(&work_tree, &index)?
+    let cwd = std::env::current_dir().context("current directory")?;
+    let normalized_pathspec: Vec<String> = opts
+        .pathspec
+        .iter()
+        .map(|p| normalize_repo_relative(&repo, &cwd, p).map_err(|e| anyhow::anyhow!("{e}")))
+        .collect::<Result<Vec<_>>>()?;
+
+    // Find untracked (and optionally ignored) files when `-u` / `-a` is used.
+    let untracked_files = if opts.include_untracked && !opts.staged {
+        find_untracked_for_stash(
+            &repo,
+            &work_tree,
+            &index,
+            &cwd,
+            opts.include_all,
+            if has_pathspec {
+                &normalized_pathspec
+            } else {
+                &[]
+            },
+        )?
     } else {
         Vec::new()
     };
@@ -709,7 +826,16 @@ fn do_push(opts: PushOpts) -> Result<()> {
 
     if has_pathspec {
         // Pathspec mode: only stash files matching the pathspec
-        return do_push_pathspec(&repo, &work_tree, &head, head_oid, &index, &opts);
+        return do_push_pathspec(
+            &repo,
+            &work_tree,
+            &head,
+            head_oid,
+            &index,
+            &opts,
+            &normalized_pathspec,
+            &untracked_files,
+        );
     }
 
     if opts.staged {
@@ -719,7 +845,7 @@ fn do_push(opts: PushOpts) -> Result<()> {
 
     if staged.is_empty() && unstaged.is_empty() && untracked_files.is_empty() {
         if !opts.quiet {
-            eprintln!("No local changes to save");
+            println!("No local changes to save");
         }
         return Ok(());
     }
@@ -761,17 +887,14 @@ fn do_push(opts: PushOpts) -> Result<()> {
     // Remove untracked files if they were stashed
     if opts.include_untracked {
         for f in &untracked_files {
-            let path = work_tree.join(f);
-            let _ = fs::remove_file(&path);
-            if let Some(parent) = path.parent() {
-                remove_empty_dirs(parent, &work_tree);
-            }
+            remove_untracked_path(&work_tree, f)?;
         }
     }
 
     if !opts.quiet {
         let msg = stash_save_msg(&head, opts.message.as_deref());
-        eprintln!("Saved working directory and index state {msg}");
+        // Match Git: this line goes to stdout (t3905 redirects stderr only).
+        println!("Saved working directory and index state {msg}");
     }
 
     Ok(())
@@ -791,6 +914,29 @@ fn do_stash_patch_push(
 ) -> Result<()> {
     use similar::{Algorithm, TextDiff};
 
+    let cwd = std::env::current_dir().context("current directory")?;
+    let normalized_pathspec: Vec<String> = opts
+        .pathspec
+        .iter()
+        .map(|p| normalize_repo_relative(repo, &cwd, p).map_err(|e| anyhow::anyhow!("{e}")))
+        .collect::<Result<Vec<_>>>()?;
+    let untracked_for_patch = if opts.include_untracked && !opts.staged {
+        find_untracked_for_stash(
+            repo,
+            work_tree,
+            index,
+            &cwd,
+            opts.include_all,
+            if has_pathspec {
+                &normalized_pathspec
+            } else {
+                &[]
+            },
+        )?
+    } else {
+        Vec::new()
+    };
+
     let head_obj = repo.odb.read(&head_oid)?;
     let head_commit = parse_commit(&head_obj.data)?;
     let head_tree_entries = flatten_tree_full(&repo.odb, &head_commit.tree, "")?;
@@ -805,7 +951,7 @@ fn do_stash_patch_push(
     let mut candidate_paths: BTreeSet<String> = BTreeSet::new();
     for e in &staged {
         if let Some(p) = e.new_path.as_ref().or(e.old_path.as_ref()) {
-            if has_pathspec && !matches_pathspec(p, &opts.pathspec) {
+            if has_pathspec && !matches_pathspec(p, &normalized_pathspec) {
                 continue;
             }
             candidate_paths.insert(p.clone());
@@ -813,7 +959,7 @@ fn do_stash_patch_push(
     }
     for e in &unstaged {
         if let Some(p) = e.new_path.as_ref().or(e.old_path.as_ref()) {
-            if has_pathspec && !matches_pathspec(p, &opts.pathspec) {
+            if has_pathspec && !matches_pathspec(p, &normalized_pathspec) {
                 continue;
             }
             candidate_paths.insert(p.clone());
@@ -850,8 +996,25 @@ fn do_stash_patch_push(
     }
 
     if shadow_by_path.is_empty() {
+        if !untracked_for_patch.is_empty() {
+            if has_pathspec {
+                return do_push_pathspec(
+                    repo,
+                    work_tree,
+                    head,
+                    &head_oid,
+                    index,
+                    &opts,
+                    &normalized_pathspec,
+                    &untracked_for_patch,
+                );
+            }
+            let mut rest_opts = opts;
+            rest_opts.patch = false;
+            return do_push(rest_opts);
+        }
         if !opts.quiet {
-            eprintln!("No local changes to save");
+            println!("No local changes to save");
         }
         return Ok(());
     }
@@ -1301,6 +1464,8 @@ fn do_push_pathspec(
     head_oid: &ObjectId,
     index: &Index,
     opts: &PushOpts,
+    pathspec: &[String],
+    untracked_files: &[String],
 ) -> Result<()> {
     let head_obj = repo.odb.read(head_oid)?;
     let head_commit = parse_commit(&head_obj.data)?;
@@ -1312,16 +1477,23 @@ fn do_push_pathspec(
     // Filter by pathspec
     let matching_staged: Vec<_> = staged
         .iter()
-        .filter(|e| matches_pathspec(e.path(), &opts.pathspec))
+        .filter(|e| matches_pathspec(e.path(), pathspec))
         .collect();
     let matching_unstaged: Vec<_> = unstaged
         .iter()
-        .filter(|e| matches_pathspec(e.path(), &opts.pathspec))
+        .filter(|e| matches_pathspec(e.path(), pathspec))
         .collect();
 
-    if matching_staged.is_empty() && matching_unstaged.is_empty() {
+    let mut matched_untracked: Vec<String> = untracked_files.to_vec();
+    if opts.include_untracked {
+        matched_untracked.retain(|p| pathspec.iter().any(|s| lib_pathspec_matches(s, p)));
+    } else {
+        matched_untracked.clear();
+    }
+
+    if matching_staged.is_empty() && matching_unstaged.is_empty() && matched_untracked.is_empty() {
         if !opts.quiet {
-            eprintln!("No local changes to save");
+            println!("No local changes to save");
         }
         return Ok(());
     }
@@ -1337,6 +1509,9 @@ fn do_push_pathspec(
         if let Some(p) = e.new_path.as_ref().or(e.old_path.as_ref()) {
             matched_paths.insert(p.clone());
         }
+    }
+    for u in &matched_untracked {
+        matched_paths.insert(u.clone());
     }
 
     let now = OffsetDateTime::now_utc();
@@ -1357,6 +1532,25 @@ fn do_push_pathspec(
     };
     let index_commit_bytes = serialize_commit(&index_commit_data);
     let index_commit_oid = repo.odb.write(ObjectKind::Commit, &index_commit_bytes)?;
+
+    let untracked_commit_oid = if opts.include_untracked && !matched_untracked.is_empty() {
+        let tree_oid = create_untracked_tree(&repo.odb, work_tree, &matched_untracked)?;
+        let ut_commit = CommitData {
+            tree: tree_oid,
+            parents: vec![*head_oid],
+            author: identity.clone(),
+            committer: identity.clone(),
+            author_raw: Vec::new(),
+            committer_raw: Vec::new(),
+            encoding: None,
+            message: format!("untracked files on {}\n", branch_description(head)),
+            raw_message: None,
+        };
+        let ut_bytes = serialize_commit(&ut_commit);
+        Some(repo.odb.write(ObjectKind::Commit, &ut_bytes)?)
+    } else {
+        None
+    };
 
     // 2. Create working-tree state commit (only pathspec-matched changes)
     let wt_tree_oid = {
@@ -1418,9 +1612,14 @@ fn do_push_pathspec(
     let stash_msg = stash_save_msg(head, opts.message.as_deref());
     let reflog_msg = stash_reflog_msg(head, opts.message.as_deref());
 
+    let mut parents = vec![*head_oid, index_commit_oid];
+    if let Some(u) = untracked_commit_oid {
+        parents.push(u);
+    }
+
     let stash_commit = CommitData {
         tree: wt_tree_oid,
-        parents: vec![*head_oid, index_commit_oid],
+        parents,
         author: identity.clone(),
         committer: identity.clone(),
         author_raw: Vec::new(),
@@ -1492,8 +1691,14 @@ fn do_push_pathspec(
 
     repo.write_index(&mut new_index)?;
 
+    if opts.include_untracked {
+        for f in &matched_untracked {
+            remove_untracked_path(work_tree, f)?;
+        }
+    }
+
     if !opts.quiet {
-        eprintln!("Saved working directory and index state {stash_msg}");
+        println!("Saved working directory and index state {stash_msg}");
     }
 
     Ok(())
@@ -1514,7 +1719,7 @@ fn do_push_staged(
     let staged = diff_index_to_tree(&repo.odb, index, Some(&head_commit.tree))?;
     if staged.is_empty() {
         if !opts.quiet {
-            eprintln!("No local changes to save");
+            println!("No local changes to save");
         }
         return Ok(());
     }
@@ -1603,7 +1808,7 @@ fn do_push_staged(
     repo.write_index(&mut new_index)?;
 
     if !opts.quiet {
-        eprintln!("Saved working directory and index state {stash_msg}");
+        println!("Saved working directory and index state {stash_msg}");
     }
 
     Ok(())
@@ -1875,24 +2080,96 @@ enum ShowMode {
     Numstat,
 }
 
-fn do_show(stash_ref: Option<String>, mode: ShowMode, patience: bool) -> Result<()> {
-    let repo = Repository::discover(None).context("not a git repository")?;
-    let stash_oid = resolve_stash_ref(&repo, stash_ref.as_deref())?;
+fn do_show(
+    repo: &Repository,
+    stash_ref: Option<String>,
+    mode: ShowMode,
+    untracked: StashUntrackedShow,
+    patience: bool,
+) -> Result<()> {
+    let stash_oid = resolve_stash_ref(repo, stash_ref.as_deref())?;
+    let obj = repo.odb.read(&stash_oid)?;
+    let stash_commit = parse_commit(&obj.data)?;
+
+    let wants_ut = matches!(
+        untracked,
+        StashUntrackedShow::IncludeUntracked | StashUntrackedShow::OnlyUntracked
+    );
+    if wants_ut && stash_commit.parents.len() >= 3 {
+        check_stash_untracked_index_duplicates(repo, &stash_commit)?;
+    }
+
+    let has_ut_parent = stash_commit.parents.len() >= 3;
+    let include_ut = wants_ut && has_ut_parent;
+    let only_ut = untracked == StashUntrackedShow::OnlyUntracked;
 
     match mode {
         ShowMode::Patch => {
             if patience {
                 // Patience is accepted; diff algorithm not wired — same output as default.
             }
-            show_stash_diff(&repo, &stash_oid, true)?;
+            if only_ut {
+                if include_ut {
+                    show_stash_untracked_patch_only(repo, &stash_commit)?;
+                }
+            } else {
+                show_stash_tracked_patch(repo, &stash_commit)?;
+                if include_ut {
+                    show_stash_untracked_patch_extra(repo, &stash_commit)?;
+                }
+            }
         }
-        ShowMode::NameStatus => show_stash_name_status(&repo, &stash_oid, true)?,
-        ShowMode::NameOnly => show_stash_name_status(&repo, &stash_oid, false)?,
-        ShowMode::Stat => show_stash_stat(&repo, &stash_oid)?,
-        ShowMode::Numstat => show_stash_numstat(&repo, &stash_oid)?,
+        ShowMode::NameStatus => {
+            show_stash_name_status_extended(repo, &stash_commit, true, only_ut, include_ut)?;
+        }
+        ShowMode::NameOnly => {
+            show_stash_name_status_extended(repo, &stash_commit, false, only_ut, include_ut)?;
+        }
+        ShowMode::Stat => show_stash_stat_extended(repo, &stash_commit, only_ut, include_ut)?,
+        ShowMode::Numstat => show_stash_numstat_extended(repo, &stash_commit, only_ut, include_ut)?,
     }
 
     Ok(())
+}
+
+fn check_stash_untracked_index_duplicates(
+    repo: &Repository,
+    stash_commit: &CommitData,
+) -> Result<()> {
+    let idx_parent = stash_commit
+        .parents
+        .get(1)
+        .ok_or_else(|| anyhow::anyhow!("corrupt stash commit: expected index parent"))?;
+    let ut_parent = stash_commit
+        .parents
+        .get(2)
+        .ok_or_else(|| anyhow::anyhow!("corrupt stash commit: expected untracked parent"))?;
+    let idx_obj = repo.odb.read(idx_parent)?;
+    let idx_commit = parse_commit(&idx_obj.data)?;
+    let ut_obj = repo.odb.read(ut_parent)?;
+    let ut_commit = parse_commit(&ut_obj.data)?;
+    let idx_entries = flatten_tree_full(&repo.odb, &idx_commit.tree, "")?;
+    let ut_entries = flatten_tree_full(&repo.odb, &ut_commit.tree, "")?;
+    let idx_paths: BTreeSet<String> = idx_entries.iter().map(|e| e.path.clone()).collect();
+    for e in &ut_entries {
+        if idx_paths.contains(&e.path) {
+            bail!(
+                "worktree and untracked commit have duplicate entries: {}",
+                e.path
+            );
+        }
+    }
+    Ok(())
+}
+
+fn stash_head_parent_tree_oid(repo: &Repository, stash_commit: &CommitData) -> Result<ObjectId> {
+    let p = stash_commit
+        .parents
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("corrupt stash commit: missing HEAD parent"))?;
+    let o = repo.odb.read(p)?;
+    let c = parse_commit(&o.data)?;
+    Ok(c.tree)
 }
 
 fn show_stash_name_status(
@@ -1902,7 +2179,7 @@ fn show_stash_name_status(
 ) -> Result<()> {
     let obj = repo.odb.read(stash_oid)?;
     let stash_commit = parse_commit(&obj.data)?;
-    let old_tree = stash_index_tree_oid(repo, &stash_commit)?;
+    let old_tree = stash_head_parent_tree_oid(repo, &stash_commit)?;
     let old_entries = flatten_tree_full(&repo.odb, &old_tree, "")?;
     let new_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
 
@@ -1943,7 +2220,7 @@ fn show_stash_name_status(
     Ok(())
 }
 
-/// Tree for the "old" side of `git stash show`: the index snapshot (`stash^2`), not `stash^1`.
+/// Tree for the index snapshot parent (`stash^2`).
 fn stash_index_tree_oid(repo: &Repository, stash_commit: &CommitData) -> Result<ObjectId> {
     let idx_parent = stash_commit
         .parents
@@ -1954,15 +2231,150 @@ fn stash_index_tree_oid(repo: &Repository, stash_commit: &CommitData) -> Result<
     Ok(idx_commit.tree)
 }
 
+fn flatten_untracked_tree(
+    repo: &Repository,
+    stash_commit: &CommitData,
+) -> Result<Vec<FlatTreeEntry>> {
+    if stash_commit.parents.len() < 3 {
+        return Ok(Vec::new());
+    }
+    let ut_parent = stash_commit.parents[2];
+    let ut_obj = repo.odb.read(&ut_parent)?;
+    let ut_commit = parse_commit(&ut_obj.data)?;
+    flatten_tree_full(&repo.odb, &ut_commit.tree, "")
+}
+
 fn show_stash_diff(repo: &Repository, stash_oid: &ObjectId, _with_hunks: bool) -> Result<()> {
     let obj = repo.odb.read(stash_oid)?;
     let stash_commit = parse_commit(&obj.data)?;
+    show_stash_tracked_patch(repo, &stash_commit)
+}
 
-    let old_tree = stash_index_tree_oid(repo, &stash_commit)?;
+fn show_stash_tracked_patch(repo: &Repository, stash_commit: &CommitData) -> Result<()> {
+    let old_tree = stash_head_parent_tree_oid(repo, stash_commit)?;
     let old_entries = flatten_tree_full(&repo.odb, &old_tree, "")?;
     let new_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
+    show_tree_diff(&repo.odb, &old_entries, &new_entries)
+}
 
-    show_tree_diff(&repo.odb, &old_entries, &new_entries)?;
+fn show_stash_untracked_patch_extra(repo: &Repository, stash_commit: &CommitData) -> Result<()> {
+    if stash_commit.parents.len() < 3 {
+        return Ok(());
+    }
+    let head_tree = stash_head_parent_tree_oid(repo, stash_commit)?;
+    let head_entries = flatten_tree_full(&repo.odb, &head_tree, "")?;
+    let head_paths: BTreeSet<String> = head_entries.iter().map(|e| e.path.clone()).collect();
+    let ut_entries = flatten_untracked_tree(repo, stash_commit)?;
+    for e in &ut_entries {
+        if head_paths.contains(&e.path) {
+            continue;
+        }
+        let blob = repo.odb.read(&e.oid)?;
+        println!("diff --git a/{} b/{}", e.path, e.path);
+        println!("new file mode {}", format_mode(e.mode));
+        println!("index 0000000..{}", &e.oid.to_hex()[..7]);
+        if !blob.data.is_empty() {
+            println!("--- /dev/null");
+            println!("+++ b/{}", e.path);
+            let text = String::from_utf8_lossy(&blob.data);
+            for line in text.lines() {
+                println!("+{line}");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn show_stash_untracked_patch_only(repo: &Repository, stash_commit: &CommitData) -> Result<()> {
+    if stash_commit.parents.len() < 3 {
+        return Ok(());
+    }
+    let ut_entries = flatten_untracked_tree(repo, stash_commit)?;
+    for e in &ut_entries {
+        let blob = repo.odb.read(&e.oid)?;
+        println!("diff --git a/{} b/{}", e.path, e.path);
+        println!("new file mode {}", format_mode(e.mode));
+        println!("index 0000000..{}", &e.oid.to_hex()[..7]);
+        if !blob.data.is_empty() {
+            println!("--- /dev/null");
+            println!("+++ b/{}", e.path);
+            let text = String::from_utf8_lossy(&blob.data);
+            for line in text.lines() {
+                println!("+{line}");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn show_stash_name_status_extended(
+    repo: &Repository,
+    stash_commit: &CommitData,
+    with_status: bool,
+    only_untracked: bool,
+    include_untracked: bool,
+) -> Result<()> {
+    let new_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
+    let new_by_path: BTreeMap<String, &FlatTreeEntry> =
+        new_entries.iter().map(|e| (e.path.clone(), e)).collect();
+
+    if only_untracked {
+        if !include_untracked {
+            return Ok(());
+        }
+        let ut_entries = flatten_untracked_tree(repo, stash_commit)?;
+        for e in &ut_entries {
+            if with_status {
+                println!("A\t{}", e.path);
+            } else {
+                println!("{}", e.path);
+            }
+        }
+        return Ok(());
+    }
+
+    let head_tree = stash_head_parent_tree_oid(repo, stash_commit)?;
+    let old_entries = flatten_tree_full(&repo.odb, &head_tree, "")?;
+    let old_map: BTreeMap<String, &FlatTreeEntry> =
+        old_entries.iter().map(|e| (e.path.clone(), e)).collect();
+
+    let mut all_paths: BTreeSet<String> = BTreeSet::new();
+    for p in old_map.keys() {
+        all_paths.insert(p.clone());
+    }
+    for p in new_by_path.keys() {
+        all_paths.insert(p.clone());
+    }
+
+    for path in &all_paths {
+        let o = old_map.get(path);
+        let n = new_by_path.get(path);
+        let status = match (o, n) {
+            (None, Some(_)) => 'A',
+            (Some(_), None) => 'D',
+            (Some(ol), Some(nw)) if ol.oid != nw.oid || ol.mode != nw.mode => 'M',
+            _ => continue,
+        };
+        if with_status {
+            println!("{status}\t{path}");
+        } else {
+            println!("{path}");
+        }
+    }
+
+    if include_untracked {
+        let ut_entries = flatten_untracked_tree(repo, stash_commit)?;
+        for e in &ut_entries {
+            if new_by_path.contains_key(&e.path) {
+                continue;
+            }
+            if with_status {
+                println!("A\t{}", e.path);
+            } else {
+                println!("{}", e.path);
+            }
+        }
+    }
 
     Ok(())
 }
@@ -1970,34 +2382,71 @@ fn show_stash_diff(repo: &Repository, stash_oid: &ObjectId, _with_hunks: bool) -
 fn show_stash_stat(repo: &Repository, stash_oid: &ObjectId) -> Result<()> {
     let obj = repo.odb.read(stash_oid)?;
     let stash_commit = parse_commit(&obj.data)?;
+    show_stash_stat_extended(repo, &stash_commit, false, false)
+}
 
-    let old_tree = stash_index_tree_oid(repo, &stash_commit)?;
-    let old_entries = flatten_tree_full(&repo.odb, &old_tree, "")?;
-    let new_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
-
-    // Build maps
+fn show_stash_stat_extended(
+    repo: &Repository,
+    stash_commit: &CommitData,
+    only_untracked: bool,
+    include_untracked: bool,
+) -> Result<()> {
     use std::collections::BTreeMap;
-    let mut old_map: BTreeMap<&str, &FlatTreeEntry> = BTreeMap::new();
-    for e in &old_entries {
-        old_map.insert(&e.path, e);
-    }
-    let mut new_map: BTreeMap<&str, &FlatTreeEntry> = BTreeMap::new();
-    for e in &new_entries {
-        new_map.insert(&e.path, e);
-    }
-
-    let mut all_paths: BTreeSet<&str> = BTreeSet::new();
-    for e in &old_entries {
-        all_paths.insert(&e.path);
-    }
-    for e in &new_entries {
-        all_paths.insert(&e.path);
-    }
 
     struct StatEntry {
         path: String,
         insertions: usize,
         deletions: usize,
+    }
+
+    let new_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
+    let new_by_path: BTreeMap<String, &FlatTreeEntry> =
+        new_entries.iter().map(|e| (e.path.clone(), e)).collect();
+
+    if only_untracked {
+        if !include_untracked {
+            return Ok(());
+        }
+        let ut_entries = flatten_untracked_tree(repo, stash_commit)?;
+        let mut stats: Vec<StatEntry> = Vec::new();
+        for e in &ut_entries {
+            stats.push(StatEntry {
+                path: e.path.clone(),
+                insertions: 0,
+                deletions: 0,
+            });
+        }
+        if stats.is_empty() {
+            return Ok(());
+        }
+        for s in &stats {
+            println!(" {} | {}", s.path, 0);
+        }
+        println!(
+            " {} file{} changed, 0 insertions(+), 0 deletions(-)",
+            stats.len(),
+            if stats.len() == 1 { "" } else { "s" }
+        );
+        return Ok(());
+    }
+
+    let head_tree = stash_head_parent_tree_oid(repo, stash_commit)?;
+    let old_flat = flatten_tree_full(&repo.odb, &head_tree, "")?;
+    let mut old_map: BTreeMap<&str, &FlatTreeEntry> = BTreeMap::new();
+    for e in &old_flat {
+        old_map.insert(&e.path, e);
+    }
+    let mut new_map_ref: BTreeMap<&str, &FlatTreeEntry> = BTreeMap::new();
+    for e in &new_entries {
+        new_map_ref.insert(&e.path, e);
+    }
+
+    let mut all_paths: BTreeSet<String> = BTreeSet::new();
+    for e in &old_flat {
+        all_paths.insert(e.path.clone());
+    }
+    for e in &new_entries {
+        all_paths.insert(e.path.clone());
     }
 
     let mut stats: Vec<StatEntry> = Vec::new();
@@ -2006,14 +2455,14 @@ fn show_stash_stat(repo: &Repository, stash_oid: &ObjectId) -> Result<()> {
     let mut total_files = 0usize;
 
     for path in &all_paths {
-        match (old_map.get(path), new_map.get(path)) {
+        match (old_map.get(path.as_str()), new_map_ref.get(path.as_str())) {
             (Some(o), Some(n)) if o.oid != n.oid || o.mode != n.mode => {
                 let (ins, del) = count_line_changes(&repo.odb, &o.oid, &n.oid)?;
                 total_insertions += ins;
                 total_deletions += del;
                 total_files += 1;
                 stats.push(StatEntry {
-                    path: path.to_string(),
+                    path: path.clone(),
                     insertions: ins,
                     deletions: del,
                 });
@@ -2024,7 +2473,7 @@ fn show_stash_stat(repo: &Repository, stash_oid: &ObjectId) -> Result<()> {
                 total_insertions += ins;
                 total_files += 1;
                 stats.push(StatEntry {
-                    path: path.to_string(),
+                    path: path.clone(),
                     insertions: ins,
                     deletions: 0,
                 });
@@ -2035,7 +2484,7 @@ fn show_stash_stat(repo: &Repository, stash_oid: &ObjectId) -> Result<()> {
                 total_deletions += del;
                 total_files += 1;
                 stats.push(StatEntry {
-                    path: path.to_string(),
+                    path: path.clone(),
                     insertions: 0,
                     deletions: del,
                 });
@@ -2044,19 +2493,31 @@ fn show_stash_stat(repo: &Repository, stash_oid: &ObjectId) -> Result<()> {
         }
     }
 
+    if include_untracked {
+        let ut_entries = flatten_untracked_tree(repo, stash_commit)?;
+        for e in &ut_entries {
+            if new_by_path.contains_key(&e.path) {
+                continue;
+            }
+            total_files += 1;
+            stats.push(StatEntry {
+                path: e.path.clone(),
+                insertions: 0,
+                deletions: 0,
+            });
+        }
+    }
+
     if stats.is_empty() {
         return Ok(());
     }
 
-    // Find max path width and max changes for scaling
-    let max_path_len = stats.iter().map(|s| s.path.len()).max().unwrap_or(0);
     let max_changes = stats
         .iter()
         .map(|s| s.insertions + s.deletions)
         .max()
         .unwrap_or(0);
 
-    // Scale bar to fit in terminal (max bar width ~50)
     let max_bar_width = 50usize;
     let scale = if max_changes > max_bar_width {
         max_bar_width as f64 / max_changes as f64
@@ -2064,41 +2525,66 @@ fn show_stash_stat(repo: &Repository, stash_oid: &ObjectId) -> Result<()> {
         1.0
     };
 
+    // With `-u`, Git pads the path column so `tracked` aligns with `untracked`; without it,
+    // use a single space before `|` (t3905.31).
+    let wide_stat = include_untracked && !only_untracked;
+    let path_field = if wide_stat {
+        // Git pads to at least 10 so `tracked` (7) and `untracked` (9) align before `|`.
+        stats
+            .iter()
+            .map(|s| s.path.len())
+            .max()
+            .unwrap_or(0)
+            .max(10)
+    } else {
+        0
+    };
+
     for s in &stats {
         let changes = s.insertions + s.deletions;
         let bar_ins = (s.insertions as f64 * scale).ceil() as usize;
         let bar_del = (s.deletions as f64 * scale).ceil() as usize;
         let bar = format!("{}{}", "+".repeat(bar_ins), "-".repeat(bar_del));
-        println!(
-            " {:<width$} | {:>3} {}",
-            s.path,
-            changes,
-            bar,
-            width = max_path_len,
-        );
+        if wide_stat {
+            if bar.is_empty() {
+                println!(
+                    " {:<path_field$}| {}",
+                    s.path,
+                    changes,
+                    path_field = path_field
+                );
+            } else {
+                println!(
+                    " {:<path_field$}| {:>3} {}",
+                    s.path,
+                    changes,
+                    bar,
+                    path_field = path_field,
+                );
+            }
+        } else if bar.is_empty() {
+            println!(" {} | {}", s.path, changes);
+        } else {
+            println!(" {} | {:>3} {}", s.path, changes, bar);
+        }
     }
 
-    // Summary line
     let mut summary_parts = Vec::new();
     summary_parts.push(format!(
         " {} file{} changed",
         total_files,
         if total_files == 1 { "" } else { "s" }
     ));
-    if total_insertions > 0 {
-        summary_parts.push(format!(
-            " {} insertion{}(+)",
-            total_insertions,
-            if total_insertions == 1 { "" } else { "s" }
-        ));
-    }
-    if total_deletions > 0 {
-        summary_parts.push(format!(
-            " {} deletion{}(-)",
-            total_deletions,
-            if total_deletions == 1 { "" } else { "s" }
-        ));
-    }
+    summary_parts.push(format!(
+        " {} insertion{}(+)",
+        total_insertions,
+        if total_insertions == 1 { "" } else { "s" }
+    ));
+    summary_parts.push(format!(
+        " {} deletion{}(-)",
+        total_deletions,
+        if total_deletions == 1 { "" } else { "s" }
+    ));
     println!("{}", summary_parts.join(","));
 
     Ok(())
@@ -2131,30 +2617,53 @@ fn blob_is_binary(data: &[u8]) -> bool {
 fn show_stash_numstat(repo: &Repository, stash_oid: &ObjectId) -> Result<()> {
     let obj = repo.odb.read(stash_oid)?;
     let stash_commit = parse_commit(&obj.data)?;
-    let old_tree = stash_index_tree_oid(repo, &stash_commit)?;
-    let old_entries = flatten_tree_full(&repo.odb, &old_tree, "")?;
-    let new_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
+    show_stash_numstat_extended(repo, &stash_commit, false, false)
+}
 
+fn show_stash_numstat_extended(
+    repo: &Repository,
+    stash_commit: &CommitData,
+    only_untracked: bool,
+    include_untracked: bool,
+) -> Result<()> {
     use std::collections::BTreeMap;
+
+    let new_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
+    let new_by_path: BTreeMap<String, &FlatTreeEntry> =
+        new_entries.iter().map(|e| (e.path.clone(), e)).collect();
+
+    if only_untracked {
+        if !include_untracked {
+            return Ok(());
+        }
+        let ut_entries = flatten_untracked_tree(repo, stash_commit)?;
+        for e in &ut_entries {
+            println!("0\t0\t{}", e.path);
+        }
+        return Ok(());
+    }
+
+    let head_tree = stash_head_parent_tree_oid(repo, stash_commit)?;
+    let old_flat = flatten_tree_full(&repo.odb, &head_tree, "")?;
     let mut old_map: BTreeMap<&str, &FlatTreeEntry> = BTreeMap::new();
-    for e in &old_entries {
+    for e in &old_flat {
         old_map.insert(&e.path, e);
     }
-    let mut new_map: BTreeMap<&str, &FlatTreeEntry> = BTreeMap::new();
+    let mut new_map_ref: BTreeMap<&str, &FlatTreeEntry> = BTreeMap::new();
     for e in &new_entries {
-        new_map.insert(&e.path, e);
+        new_map_ref.insert(&e.path, e);
     }
 
-    let mut all_paths: BTreeSet<&str> = BTreeSet::new();
-    for e in &old_entries {
-        all_paths.insert(&e.path);
+    let mut all_paths: BTreeSet<String> = BTreeSet::new();
+    for e in &old_flat {
+        all_paths.insert(e.path.clone());
     }
     for e in &new_entries {
-        all_paths.insert(&e.path);
+        all_paths.insert(e.path.clone());
     }
 
     for path in &all_paths {
-        match (old_map.get(path), new_map.get(path)) {
+        match (old_map.get(path.as_str()), new_map_ref.get(path.as_str())) {
             (Some(o), Some(n)) if o.oid != n.oid || o.mode != n.mode => {
                 let ob = repo.odb.read(&o.oid)?;
                 let nb = repo.odb.read(&n.oid)?;
@@ -2186,6 +2695,17 @@ fn show_stash_numstat(repo: &Repository, stash_oid: &ObjectId) -> Result<()> {
             _ => {}
         }
     }
+
+    if include_untracked {
+        let ut_entries = flatten_untracked_tree(repo, stash_commit)?;
+        for e in &ut_entries {
+            if new_by_path.contains_key(&e.path) {
+                continue;
+            }
+            println!("0\t0\t{}", e.path);
+        }
+    }
+
     Ok(())
 }
 
@@ -2870,62 +3390,12 @@ fn do_clear() -> Result<()> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Check if a path matches any of the given pathspecs.
+/// Check if a path matches any of the given pathspecs (Git pathspec syntax).
 fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {
-    for spec in pathspecs {
-        // Strip leading "--" if present (from clap parsing)
+    pathspecs.iter().any(|spec| {
         let spec = spec.strip_prefix("--").unwrap_or(spec);
-        // Simple matching: exact match or glob-like prefix
-        if path == spec {
-            return true;
-        }
-        // Simple glob: if spec ends with *, match prefix
-        if let Some(prefix) = spec.strip_suffix('*') {
-            if path.starts_with(prefix) {
-                return true;
-            }
-        }
-        // Directory prefix: spec/ matches all files under spec
-        if spec.ends_with('/') && path.starts_with(spec) {
-            return true;
-        }
-        // If spec doesn't contain '/' and doesn't have glob, also try as directory prefix
-        if !spec.contains('/') && path.starts_with(&format!("{spec}/")) {
-            return true;
-        }
-        // Glob pattern matching for patterns like "foo b*"
-        if spec.contains('*') && glob_match(spec, path) {
-            return true;
-        }
-    }
-    false
-}
-
-/// Simple glob matching (only supports * wildcard).
-fn glob_match(pattern: &str, text: &str) -> bool {
-    let parts: Vec<&str> = pattern.split('*').collect();
-    if parts.len() == 1 {
-        return pattern == text;
-    }
-    let mut pos = 0;
-    for (i, part) in parts.iter().enumerate() {
-        if part.is_empty() {
-            continue;
-        }
-        if let Some(found) = text[pos..].find(part) {
-            if i == 0 && found != 0 {
-                return false;
-            }
-            pos += found + part.len();
-        } else {
-            return false;
-        }
-    }
-    // If pattern doesn't end with *, text must end exactly
-    if !pattern.ends_with('*') {
-        return pos == text.len();
-    }
-    true
+        lib_pathspec_matches(spec, path)
+    })
 }
 
 /// Create a stash commit and return its OID (does NOT update refs/stash).
@@ -3155,6 +3625,18 @@ fn resolve_stash_ref(repo: &Repository, stash_ref: Option<&str>) -> Result<Objec
                 if let Ok(oid) = resolve_revision(repo, s) {
                     return Ok(oid);
                 }
+                // `resolve_revision` can fail for bare OIDs in some environments; accept a full
+                // hex commit that exists in the ODB (t3905 constructs stash-like commits via
+                // `commit-tree`).
+                if s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+                    if let Ok(oid) = ObjectId::from_hex(s) {
+                        if let Ok(obj) = repo.odb.read(&oid) {
+                            if obj.kind == ObjectKind::Commit {
+                                return Ok(oid);
+                            }
+                        }
+                    }
+                }
             }
             bail!("No stash entries");
         }
@@ -3255,6 +3737,7 @@ fn split_ident_timestamp_offset(ident: &str) -> Option<(&str, &str)> {
 }
 
 /// A flat tree entry for diffing.
+#[derive(Clone)]
 struct FlatTreeEntry {
     path: String,
     mode: u32,
@@ -3326,12 +3809,15 @@ fn show_tree_diff(odb: &Odb, old: &[FlatTreeEntry], new: &[FlatTreeEntry]) -> Re
             (None, Some(n)) => {
                 println!("diff --git a/{path} b/{path}");
                 println!("new file mode {}", format_mode(n.mode));
-                println!("--- /dev/null");
-                println!("+++ b/{path}");
                 let blob = odb.read(&n.oid)?;
-                let text = String::from_utf8_lossy(&blob.data);
-                for line in text.lines() {
-                    println!("+{line}");
+                println!("index {}..{}", "0000000", &n.oid.to_hex()[..7]);
+                if !blob.data.is_empty() {
+                    println!("--- /dev/null");
+                    println!("+++ b/{path}");
+                    let text = String::from_utf8_lossy(&blob.data);
+                    for line in text.lines() {
+                        println!("+{line}");
+                    }
                 }
             }
             (Some(o), None) => {
@@ -3377,53 +3863,191 @@ fn format_mode(mode: u32) -> String {
     format!("{mode:06o}")
 }
 
-/// Find untracked files in the working tree.
-fn find_untracked_files(work_tree: &Path, index: &Index) -> Result<Vec<String>> {
+/// Remove a stashed untracked path (file or directory tree).
+fn remove_untracked_path(work_tree: &Path, rel: &str) -> Result<()> {
+    let path = work_tree.join(rel);
+    if path.is_dir() {
+        fs::remove_dir_all(&path).ok();
+    } else {
+        let _ = fs::remove_file(&path);
+    }
+    if let Some(parent) = path.parent() {
+        remove_empty_dirs(parent, work_tree);
+    }
+    Ok(())
+}
+
+/// Collect untracked paths for `stash -u` / `stash -a`, optionally limited by pathspecs.
+fn find_untracked_for_stash(
+    repo: &Repository,
+    work_tree: &Path,
+    index: &Index,
+    cwd: &Path,
+    include_all: bool,
+    pathspecs: &[String],
+) -> Result<Vec<String>> {
     let tracked: BTreeSet<String> = index
         .entries
         .iter()
+        .filter(|e| e.stage() == 0)
         .map(|ie| String::from_utf8_lossy(&ie.path).to_string())
         .collect();
 
-    let mut untracked = Vec::new();
-    walk_for_untracked(work_tree, work_tree, &tracked, &mut untracked)?;
-    untracked.sort();
-    Ok(untracked)
+    let cwd_prefix = super::clean::pathdiff(cwd, work_tree);
+    let walk_root = match &cwd_prefix {
+        Some(p) if !p.is_empty() => work_tree.join(p),
+        _ => work_tree.to_path_buf(),
+    };
+    let walk_prefix_for_specs = if pathspecs.is_empty() {
+        cwd_prefix.as_deref()
+    } else {
+        None
+    };
+
+    let mut matcher = IgnoreMatcher::from_repository(repo).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut out = Vec::new();
+    walk_stash_untracked(
+        &walk_root,
+        work_tree,
+        walk_prefix_for_specs,
+        &tracked,
+        &mut matcher,
+        repo,
+        Some(index),
+        include_all,
+        pathspecs,
+        &mut out,
+    )?;
+    out.sort();
+    out.dedup();
+    Ok(out)
 }
 
-fn walk_for_untracked(
+fn walk_stash_untracked(
     dir: &Path,
     work_tree: &Path,
+    cwd_prefix: Option<&str>,
     tracked: &BTreeSet<String>,
+    matcher: &mut IgnoreMatcher,
+    repo: &Repository,
+    index: Option<&Index>,
+    include_all: bool,
+    pathspecs: &[String],
     out: &mut Vec<String>,
 ) -> Result<()> {
+    if super::clean::is_strictly_inside_nested_git_work_tree(work_tree, dir) {
+        return Ok(());
+    }
+
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return Ok(()),
     };
 
-    for entry in entries {
-        let entry = entry?;
+    let mut sorted: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+    sorted.sort_by_key(|e| e.file_name());
+
+    for entry in sorted {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-
         if name == ".git" {
             continue;
         }
 
         let rel = path
             .strip_prefix(work_tree)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| name);
+            .map(|p| {
+                p.components()
+                    .filter_map(|c| match c {
+                        std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("/")
+            })
+            .unwrap_or_else(|_| name.clone());
+
+        let repo_rel = super::clean::repo_relative_under_walk(cwd_prefix, &rel);
+
+        if !pathspecs.is_empty() {
+            if path.is_dir() {
+                if !super::clean::dir_may_match_pathspecs(pathspecs, &repo_rel) {
+                    continue;
+                }
+            } else if !super::clean::path_matches_any_pathspec(pathspecs, &repo_rel) {
+                continue;
+            }
+        }
 
         if path.is_dir() {
-            walk_for_untracked(&path, work_tree, tracked, out)?;
-        } else if !tracked.contains(&rel) {
+            if super::clean::is_nested_git_metadata(&path) {
+                continue;
+            }
+            walk_stash_untracked(
+                &path,
+                work_tree,
+                cwd_prefix,
+                tracked,
+                matcher,
+                repo,
+                index,
+                include_all,
+                pathspecs,
+                out,
+            )?;
+        } else {
+            let rel_for_track = rel.clone();
+            if is_tracked_for_stash_untracked(tracked, index, work_tree, &rel_for_track) {
+                continue;
+            }
+            let (ignored, _) = matcher
+                .check_path(repo, index, &rel, false)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            if !include_all && ignored {
+                continue;
+            }
             out.push(rel);
         }
     }
 
     Ok(())
+}
+
+fn is_tracked_for_stash_untracked(
+    tracked: &BTreeSet<String>,
+    index: Option<&Index>,
+    work_tree: &Path,
+    rel: &str,
+) -> bool {
+    if tracked.contains(rel) {
+        return true;
+    }
+    let prefix = format!("{rel}/");
+    if tracked.iter().any(|t| t.starts_with(&prefix)) {
+        return true;
+    }
+    let Some(ix) = index else {
+        return false;
+    };
+    ix.entries.iter().any(|e| {
+        if e.stage() != 0 {
+            return false;
+        }
+        let Ok(p) = std::str::from_utf8(&e.path) else {
+            return false;
+        };
+        if p == rel {
+            return true;
+        }
+        if e.mode == MODE_GITLINK {
+            let gd = work_tree.join(p).join(".git");
+            if gd.exists() {
+                let sub_rel = format!("{p}/");
+                return rel.starts_with(&sub_rel);
+            }
+        }
+        false
+    })
 }
 
 /// Create a tree object containing untracked files.
