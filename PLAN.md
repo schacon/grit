@@ -222,7 +222,7 @@ commit → check it off → move on.
 - [ ] `t2080-parallel-checkout-basics` ░░░░░░░░░░░░░░░░░░░░ 0/11 (11 left) — parallel-checkout basics
 
 - [ ] `t2016-checkout-patch` ███████░░░░░░░░░░░░░ 7/19 (12 left) — git checkout --patch
-- [ ] `t2030-unresolve-info` ██░░░░░░░░░░░░░░░░░░ 2/14 (12 left) — undoing resolution
+- [ ] `t2030-unresolve-info` █████████████░░░░░░░ 9/14 (5 left) — undoing resolution (REUC + ls-files; rerere + fsck tail remain)
 - [ ] `t2071-restore-patch` ██░░░░░░░░░░░░░░░░░░ 2/15 (13 left) — git restore --patch
 - [x] `t2203-add-intent` ████████████████████ 19/19 (0 left) — Intent to add
 - [ ] `t2004-checkout-cache-temp` ██████░░░░░░░░░░░░░░ 7/23 (16 left) — git checkout-index --temp test.

@@ -15,7 +15,7 @@
 //! See `Documentation/technical/index-format.txt` in the Git source tree for
 //! the authoritative format specification.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
@@ -27,6 +27,7 @@ use crate::error::{Error, Result};
 use crate::objects::{parse_tree, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
 use crate::repo::Repository;
+use crate::resolve_undo::{self, write_resolve_undo_payload, ResolveUndoRecord};
 use crate::rev_parse;
 use crate::untracked_cache;
 
@@ -45,6 +46,8 @@ pub const MODE_TREE: u32 = 0o040000;
 const INDEX_EXT_SPARSE_DIRECTORIES: u32 = u32::from_be_bytes(*b"sdir");
 /// Git index extension signature `UNTR` (untracked cache).
 const INDEX_EXT_UNTRACKED: u32 = u32::from_be_bytes(*b"UNTR");
+/// Git index extension signature `REUC` (resolve undo).
+const INDEX_EXT_RESOLVE_UNDO: u32 = u32::from_be_bytes(*b"REUC");
 
 /// A single entry in the Git index.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,6 +189,8 @@ pub struct Index {
     pub sparse_directories: bool,
     /// Optional untracked-cache extension (`UNTR`), matching Git's `istate->untracked`.
     pub untracked_cache: Option<untracked_cache::UntrackedCache>,
+    /// Optional `REUC` resolve-undo extension (paths that were unmerged before a resolution).
+    pub resolve_undo: Option<BTreeMap<Vec<u8>, ResolveUndoRecord>>,
 }
 
 /// Options for loading an index from disk.
@@ -247,6 +252,7 @@ impl Index {
             entries: Vec::new(),
             sparse_directories: false,
             untracked_cache: None,
+            resolve_undo: None,
         }
     }
 
@@ -264,6 +270,7 @@ impl Index {
                 entries: Vec::new(),
                 sparse_directories: false,
                 untracked_cache: None,
+                resolve_undo: None,
             };
         }
 
@@ -293,6 +300,7 @@ impl Index {
             entries: Vec::new(),
             sparse_directories: false,
             untracked_cache: None,
+            resolve_undo: None,
         }
     }
 
@@ -308,6 +316,7 @@ impl Index {
                 entries: Vec::new(),
                 sparse_directories: false,
                 untracked_cache: None,
+                resolve_undo: None,
             };
         }
 
@@ -340,6 +349,7 @@ impl Index {
             entries: Vec::new(),
             sparse_directories: false,
             untracked_cache: None,
+            resolve_undo: None,
         }
     }
 
@@ -586,6 +596,7 @@ impl Index {
 
         let mut sparse_directories = false;
         let mut untracked_cache = None;
+        let mut resolve_undo = None;
         while pos + 8 <= body.len() {
             let sig = u32::from_be_bytes(
                 body[pos..pos + 4]
@@ -608,6 +619,9 @@ impl Index {
             } else if sig == INDEX_EXT_UNTRACKED {
                 let ext_data = &body[pos..pos + ext_sz];
                 untracked_cache = untracked_cache::parse_untracked_extension(ext_data);
+            } else if sig == INDEX_EXT_RESOLVE_UNDO {
+                let ext_data = &body[pos..pos + ext_sz];
+                resolve_undo = Some(resolve_undo::parse_resolve_undo_payload(ext_data)?);
             }
             pos += ext_sz;
         }
@@ -620,6 +634,7 @@ impl Index {
             entries,
             sparse_directories,
             untracked_cache,
+            resolve_undo,
         })
     }
 
@@ -742,6 +757,14 @@ impl Index {
             out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
             out.extend_from_slice(&payload);
         }
+        if let Some(ru) = &self.resolve_undo {
+            let payload = write_resolve_undo_payload(ru);
+            if !payload.is_empty() {
+                out.extend_from_slice(&INDEX_EXT_RESOLVE_UNDO.to_be_bytes());
+                out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+                out.extend_from_slice(&payload);
+            }
+        }
         Ok(())
     }
 
@@ -778,25 +801,93 @@ impl Index {
     /// conflicted file during merge/cherry-pick resolution.
     pub fn stage_file(&mut self, entry: IndexEntry) {
         let path = entry.path.clone();
+        for e in &self.entries {
+            if e.path == path && e.stage() != 0 {
+                resolve_undo::record_resolve_undo_for_entry(&mut self.resolve_undo, e);
+            }
+        }
         // Remove conflict stages first
         self.entries.retain(|e| e.path != path || e.stage() == 0);
         // Then add/replace stage-0 entry
         self.add_or_replace(entry);
     }
 
+    /// Drop all resolve-undo records (matches Git `resolve_undo_clear_index`).
+    pub fn clear_resolve_undo(&mut self) {
+        self.resolve_undo = None;
+    }
+
+    /// Remove and return the resolve-undo record for `path`, if any.
+    pub fn take_resolve_undo_record(&mut self, path: &[u8]) -> Option<ResolveUndoRecord> {
+        let map = self.resolve_undo.as_mut()?;
+        let ru = map.remove(path)?;
+        if map.is_empty() {
+            self.resolve_undo = None;
+        }
+        Some(ru)
+    }
+
+    /// Replace all index entries for `path` with unmerged stages from `record`.
+    pub fn install_unmerged_from_resolve_undo(&mut self, path: &[u8], record: &ResolveUndoRecord) {
+        self.entries.retain(|e| e.path != path);
+        for stage in 1u8..=3u8 {
+            let i = (stage - 1) as usize;
+            if record.modes[i] == 0 {
+                continue;
+            }
+            let entry = IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: record.modes[i],
+                uid: 0,
+                gid: 0,
+                size: 0,
+                oid: record.oids[i],
+                flags: path.len().min(0xFFF) as u16 | ((stage as u16) << 12),
+                flags_extended: None,
+                path: path.to_vec(),
+            };
+            self.add_or_replace(entry);
+        }
+        self.sort();
+    }
+
+    /// Re-create unmerged index entries for `path` from the resolve-undo extension.
+    ///
+    /// Returns `true` when a resolve-undo record existed and was consumed (Git `unmerge_one`).
+    pub fn unmerge_path_from_resolve_undo(&mut self, path: &[u8]) -> bool {
+        let Some(record) = self.take_resolve_undo_record(path) else {
+            return false;
+        };
+        self.install_unmerged_from_resolve_undo(path, &record);
+        true
+    }
+
     /// Remove all entries matching the given path (all stages).
     ///
     /// Returns `true` if at least one entry was removed.
     pub fn remove(&mut self, path: &[u8]) -> bool {
-        let before = self.entries.len();
-        self.entries.retain(|e| e.path != path);
-        let removed = self.entries.len() < before;
-        if removed {
-            if let Ok(p) = std::str::from_utf8(path) {
-                self.invalidate_untracked_cache_for_path(p);
+        let mut removed_any = false;
+        for e in &self.entries {
+            if e.path == path {
+                if e.stage() != 0 {
+                    resolve_undo::record_resolve_undo_for_entry(&mut self.resolve_undo, e);
+                }
+                removed_any = true;
             }
         }
-        removed
+        if !removed_any {
+            return false;
+        }
+        self.entries.retain(|e| e.path != path);
+        if let Ok(p) = std::str::from_utf8(path) {
+            self.invalidate_untracked_cache_for_path(p);
+        }
+        true
     }
 
     /// Remove every index entry for `path` (all merge stages), like `remove_file_from_index`.

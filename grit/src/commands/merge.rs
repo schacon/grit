@@ -1788,6 +1788,10 @@ fn do_real_merge(
     }
 
     let pre_merge_index_snapshot = repo.load_index()?;
+    let mut index_for_merge = pre_merge_index_snapshot.clone();
+    index_for_merge.clear_resolve_undo();
+    repo.write_index(&mut index_for_merge)
+        .context("clearing resolve-undo before merge")?;
 
     // Find merge base(s)
     let bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, head_oid, &[merge_oid])?;

@@ -170,6 +170,10 @@ pub struct Args {
     #[arg(long = "unresolve")]
     pub unresolve: bool,
 
+    /// Clear the resolve-undo extension from the index.
+    #[arg(long = "clear-resolve-undo")]
+    pub clear_resolve_undo: bool,
+
     /// Show the index format version.
     #[arg(long = "show-index-version")]
     pub show_index_version: bool,
@@ -468,11 +472,8 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         return run_index_info(&repo, &mut index, &index_path);
     }
 
-    if args.unresolve {
-        // --unresolve: not yet implemented (requires MERGE_HEAD / merge-base logic).
-        // Accept the flag silently so scripts that pass it don't hard-fail.
-        // If paths are given, just succeed; real git re-creates stage 1/2/3 entries.
-        eprintln!("warning: --unresolve is not yet fully implemented");
+    if args.clear_resolve_undo {
+        index.clear_resolve_undo();
         repo.write_index_at(&index_path, &mut index)
             .context("writing index")?;
         return Ok(());
@@ -570,10 +571,10 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
             };
             if args.verbose {
                 let path_str = String::from_utf8_lossy(&entry.path).into_owned();
-                index.add_or_replace(entry);
+                index.stage_file(entry);
                 println!("add '{path_str}'");
             } else {
-                index.add_or_replace(entry);
+                index.stage_file(entry);
             }
         }
     }
@@ -588,6 +589,17 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
     } else {
         args.files.clone()
     };
+
+    if args.unresolve {
+        for input_path in &paths {
+            let (rel_path, _) = resolve_repo_path(work_tree, &cwd, input_path)?;
+            let rel_bytes = path_to_bytes(&rel_path)?;
+            let _ = index.unmerge_path_from_resolve_undo(&rel_bytes);
+        }
+        repo.write_index_at(&index_path, &mut index)
+            .context("writing index")?;
+        return Ok(());
+    }
 
     if args.again {
         if args.null_terminated {
@@ -827,7 +839,7 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
                     flags_extended: None,
                     path: rel_bytes.to_vec(),
                 };
-                index.add_or_replace(entry);
+                index.stage_file(entry);
             }
             continue;
         }
@@ -880,7 +892,7 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         let entry = entry_from_stat(&abs_path, &rel_bytes, oid, mode)
             .with_context(|| format!("stat failed for '{}'", abs_path.display()))?;
 
-        index.add_or_replace(entry);
+        index.stage_file(entry);
 
         // Apply --chmod after adding the entry (per-file takes priority over global).
         let apply_chmod = per_file_chmod
@@ -1016,7 +1028,11 @@ fn run_index_info(
             flags_extended: None,
             path,
         };
-        index.add_or_replace(entry);
+        if stage == 0 {
+            index.stage_file(entry);
+        } else {
+            index.add_or_replace(entry);
+        }
     }
 
     repo.write_index_at(index_path, index)
@@ -1382,7 +1398,7 @@ fn run_update_index_again(
                         flags_extended: None,
                         path: path_bytes.clone(),
                     };
-                    index.add_or_replace(new_entry);
+                    index.stage_file(new_entry);
                 } else if args.remove {
                     index.remove(&path_bytes);
                     pos = 0;
@@ -1432,7 +1448,7 @@ fn run_update_index_again(
                 };
                 let new_entry = entry_from_stat(&abs_path, &path_bytes, oid, mode)
                     .with_context(|| format!("stat failed for '{}'", abs_path.display()))?;
-                index.add_or_replace(new_entry);
+                index.stage_file(new_entry);
             }
             Err(e) if is_missing_lstat_error(&e) => {
                 if args.remove {

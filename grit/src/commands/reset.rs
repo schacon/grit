@@ -1351,6 +1351,7 @@ fn reset_commit(
         }
     }
 
+    new_index.clear_resolve_undo();
     repo.write_index_at(&index_path, &mut new_index)
         .context("writing index")?;
     crate::commands::sparse_checkout::reapply_sparse_checkout_if_configured(repo)?;
