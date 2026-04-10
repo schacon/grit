@@ -907,6 +907,12 @@ fn read_directory_recursive(
                 } else if *file_idx < child_files.len() {
                     let n = child_files[*file_idx].clone();
                     *file_idx += 1;
+                    // Collapsed directory markers (`dir/`) are already represented in
+                    // `ucd.untracked`. Re-traversing them via cache source would treat them as
+                    // real directories and duplicate entries across successive status runs.
+                    if n.ends_with('/') {
+                        continue;
+                    }
                     let child_rel = if rel.is_empty() {
                         n.clone()
                     } else {
