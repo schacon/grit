@@ -2160,10 +2160,21 @@ fn force_create_and_switch_branch(
             let head = resolve_head(&repo.git_dir)?;
             match head.oid() {
                 Some(oid) => *oid,
-                None => bail!(
-                    "cannot create branch '{}': HEAD does not point to a commit",
-                    name
-                ),
+                None => match &head {
+                    HeadState::Branch { refname, .. } if refname == &branch_ref => {
+                        checkout_eprintln!("Switched to a new branch '{}'", name);
+                        return Ok(());
+                    }
+                    HeadState::Branch { .. } => {
+                        std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
+                        checkout_eprintln!("Switched to a new branch '{}'", name);
+                        return Ok(());
+                    }
+                    _ => bail!(
+                        "cannot create branch '{}': HEAD does not point to a commit",
+                        name
+                    ),
+                },
             }
         }
     };

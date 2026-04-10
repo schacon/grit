@@ -522,6 +522,19 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         // Existing local branch: check out attached.
         if let Ok(oid) = refs::resolve_ref(&common, &format!("refs/heads/{spec}")) {
             (Some(spec.clone()), Some(oid), false)
+        } else if matches!(
+            resolve_head(&common)?,
+            HeadState::Branch {
+                refname,
+                oid: None,
+                ..
+            } if refname == format!("refs/heads/{spec}")
+        ) {
+            // HEAD is unborn but already points at refs/heads/<spec> (no ref file yet). Git still
+            // allows `worktree add <path> <branch>` once there are commits (t1500 setup).
+            let oid =
+                head_oid.ok_or_else(|| anyhow::anyhow!("fatal: invalid reference: '{spec}'"))?;
+            (Some(spec.clone()), Some(oid), false)
         } else {
             // Existing non-branch commit-ish (e.g. tag): check out detached.
             match resolve_commitish(&repo, spec) {

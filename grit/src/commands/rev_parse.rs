@@ -1,8 +1,10 @@
 //! `grit rev-parse` - pick out and massage revision parameters.
 
+use crate::grit_exe;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::error::Error as LibError;
+use grit_lib::git_date::approx::approxidate_careful;
 use grit_lib::merge_base;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
@@ -12,11 +14,12 @@ use grit_lib::rev_parse::{
     list_all_abbrev_matches, parse_peel_suffix, peel_to_commit_for_merge_base, resolve_revision,
     resolve_revision_for_range_end, resolve_revision_without_index_dwim, show_prefix,
     spec_has_parent_shorthand_suffix, split_double_dot_range, split_triple_dot_range,
-    symbolic_full_name, to_relative_path,
+    superproject_work_tree_from_nested_git_modules, symbolic_full_name, to_relative_path,
 };
 use std::borrow::Cow;
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// Strip a single leading uninteresting `^` (Git revision machinery).
 ///
@@ -38,6 +41,158 @@ pub struct Args {
     /// Raw command arguments forwarded by the CLI parser.
     #[arg(value_name = "ARG", num_args = 0.., allow_hyphen_values = true, trailing_var_arg = true)]
     pub args: Vec<String>,
+}
+
+fn realpath_forgiving(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn is_linked_worktree_git_dir(git_dir: &Path) -> bool {
+    git_dir
+        .components()
+        .any(|c| c.as_os_str() == std::ffi::OsStr::new("worktrees"))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PathDefaultMode {
+    /// Pass through `path` without canonicalization (e.g. literal `.git`).
+    Unmodified,
+    /// Realpath / canonical absolute (default for `--git-dir` inside a work tree).
+    Canonical,
+    /// `relative_path(realpath(path), realpath(cwd))` (Git `DEFAULT_RELATIVE_IF_SHARED`).
+    RelativeToCwd,
+}
+
+fn print_rev_parse_path(
+    path: &Path,
+    cwd: &Path,
+    cli_prefix: Option<&Path>,
+    path_format_absolute: Option<bool>,
+    default_mode: PathDefaultMode,
+) {
+    let path_abs = realpath_forgiving(path);
+    let cwd_abs = realpath_forgiving(cwd);
+    match path_format_absolute {
+        Some(true) => {
+            println!("{}", path_abs.display());
+        }
+        Some(false) => {
+            let base = cli_prefix
+                .map(realpath_forgiving)
+                .unwrap_or_else(|| cwd_abs.clone());
+            println!("{}", to_relative_path(&path_abs, &base));
+        }
+        None => match default_mode {
+            PathDefaultMode::Unmodified => {
+                println!("{}", path.display());
+            }
+            PathDefaultMode::Canonical => {
+                println!("{}", path_abs.display());
+            }
+            PathDefaultMode::RelativeToCwd => {
+                println!("{}", to_relative_path(&path_abs, &cwd_abs));
+            }
+        },
+    }
+}
+
+fn read_extensions_refstorage(git_dir: &Path) -> String {
+    let config_path = git_dir.join("config");
+    let Ok(content) = std::fs::read_to_string(&config_path) else {
+        return "files".to_string();
+    };
+    let mut in_ext = false;
+    let mut found = String::from("files");
+    for line in content.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_ext = t.eq_ignore_ascii_case("[extensions]");
+            continue;
+        }
+        if in_ext {
+            if let Some((k, v)) = t.split_once('=') {
+                if k.trim().eq_ignore_ascii_case("refstorage") {
+                    found = v.trim().to_owned();
+                }
+            }
+        }
+    }
+    found
+}
+
+fn ref_storage_format_is_valid(raw: &str) -> bool {
+    let lower = raw.to_ascii_lowercase();
+    let name = lower
+        .split_once(':')
+        .map(|(a, _)| a)
+        .unwrap_or(lower.as_str());
+    matches!(name, "files" | "reftable")
+}
+
+fn path_relative_to_base(base: &Path, target: &Path) -> Option<String> {
+    let base_a = realpath_forgiving(base);
+    let target_a = realpath_forgiving(target);
+    let base_c: Vec<_> = base_a.components().collect();
+    let target_c: Vec<_> = target_a.components().collect();
+    let mut common = 0usize;
+    let max = base_c.len().min(target_c.len());
+    while common < max && base_c[common] == target_c[common] {
+        common += 1;
+    }
+    if common < base_c.len() {
+        return None;
+    }
+    let rest: Vec<_> = target_c
+        .iter()
+        .skip(common)
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    Some(if rest.is_empty() {
+        ".".to_owned()
+    } else {
+        rest.join("/")
+    })
+}
+
+fn superproject_working_tree_via_ls_files(repo: &Repository, cwd: &Path) -> Option<PathBuf> {
+    let work_tree = repo.work_tree.as_ref()?;
+    let rel_s = path_relative_to_base(work_tree, cwd)?;
+    let spec = if rel_s.is_empty() {
+        "."
+    } else {
+        rel_s.as_str()
+    };
+    let mut cmd = Command::new(grit_exe::grit_executable());
+    grit_exe::strip_trace2_env(&mut cmd);
+    cmd.current_dir(work_tree)
+        .args(["ls-files", "-z", "--stage", "--full-name", "--", spec])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let output = cmd.output().ok()?;
+    if output.status.code() == Some(128) || !output.status.success() {
+        return None;
+    }
+    let data = output.stdout;
+    if !data.starts_with(b"160000 ") {
+        return None;
+    }
+    let tab = data.iter().position(|&b| b == b'\t')?;
+    let path_bytes = &data[tab + 1..data.len().saturating_sub(1)];
+    let super_sub = std::str::from_utf8(path_bytes).ok()?.trim_end_matches('\0');
+    let cwd_s = cwd.to_string_lossy();
+    if super_sub.len() > cwd_s.len() {
+        return None;
+    }
+    if !cwd_s.ends_with(super_sub) {
+        return None;
+    }
+    let trim = cwd_s.len() - super_sub.len();
+    let mut super_wt = cwd_s[..trim].to_string();
+    while super_wt.ends_with('/') {
+        super_wt.pop();
+    }
+    Some(PathBuf::from(super_wt))
 }
 
 /// Run `rev-parse` with argv as passed after the subcommand (preserves `--` for path separation).
@@ -74,6 +229,8 @@ pub fn run(args: Args) -> Result<()> {
     let mut no_revs = false;
     let mut no_flags = false;
     let mut sq_output = false;
+    let mut path_format_absolute: Option<bool> = None;
+    let mut cli_prefix_path: Option<PathBuf> = None;
 
     // Collect ordered actions for sequential output
     // Each action captures the flag state at time of parsing
@@ -83,16 +240,20 @@ pub fn run(args: Args) -> Result<()> {
         ShowIsInsideGitDir,
         ShowIsBare,
         ShowIsShallow,
-        ShowToplevel,
+        ShowToplevel(Option<bool>),
         ShowPrefix,
         ShowCdup,
-        ShowGitDir,
+        ShowGitDir(Option<bool>),
         ShowSharedIndexPath,
-        ShowGitCommonDir,
+        ShowGitCommonDir(Option<bool>),
         ShowAbsoluteGitDir,
+        ShowSuperprojectWorkingTree(Option<bool>),
         ShowRefFormat,
         ShowObjectFormat(String),
-        GitPath(String),
+        GitPath(Option<bool>, String),
+        BisectRefs(bool),
+        MaxAge(String),
+        MinAge(String),
         All,
         Branches(Option<String>),
         Tags(Option<String>),
@@ -147,12 +308,24 @@ pub fn run(args: Args) -> Result<()> {
         }
         if !end_of_options && arg.starts_with('-') {
             if arg == "--path-format=absolute" {
-                // --path-format=absolute: output absolute paths; currently our default
-                // for git-dir etc., so this is a no-op
+                path_format_absolute = Some(true);
                 i += 1;
                 continue;
             } else if arg == "--path-format=relative" {
-                // Relative paths: no-op (we handle per command)
+                path_format_absolute = Some(false);
+                i += 1;
+                continue;
+            } else if arg == "--path-format" {
+                i += 1;
+                let val = args
+                    .args
+                    .get(i)
+                    .ok_or_else(|| anyhow::anyhow!("--path-format requires an argument"))?;
+                match val.as_str() {
+                    "absolute" => path_format_absolute = Some(true),
+                    "relative" => path_format_absolute = Some(false),
+                    other => bail!("unknown argument to --path-format: {other}"),
+                }
                 i += 1;
                 continue;
             } else if arg == "--verify" {
@@ -168,7 +341,9 @@ pub fn run(args: Args) -> Result<()> {
             } else if arg == "--is-bare-repository" {
                 actions.push(Action::ShowIsBare);
             } else if arg == "--show-toplevel" {
-                actions.push(Action::ShowToplevel);
+                actions.push(Action::ShowToplevel(path_format_absolute));
+            } else if arg == "--show-superproject-working-tree" {
+                actions.push(Action::ShowSuperprojectWorkingTree(path_format_absolute));
             } else if arg == "--show-prefix" {
                 actions.push(Action::ShowPrefix);
             } else if arg == "--show-cdup" {
@@ -180,20 +355,30 @@ pub fn run(args: Args) -> Result<()> {
             } else if arg == "--abbrev-ref" {
                 abbrev_ref = true;
             } else if arg == "--git-dir" {
-                actions.push(Action::ShowGitDir);
+                actions.push(Action::ShowGitDir(path_format_absolute));
             } else if arg == "--shared-index-path" {
                 actions.push(Action::ShowSharedIndexPath);
             } else if arg == "--git-common-dir" {
-                actions.push(Action::ShowGitCommonDir);
+                actions.push(Action::ShowGitCommonDir(path_format_absolute));
             } else if arg == "--absolute-git-dir" {
                 actions.push(Action::ShowAbsoluteGitDir);
+            } else if arg == "--bisect" {
+                actions.push(Action::BisectRefs(show_symbolic_full_name));
+            } else if let Some(date) = arg.strip_prefix("--since=") {
+                actions.push(Action::MaxAge(date.to_owned()));
+            } else if let Some(date) = arg.strip_prefix("--after=") {
+                actions.push(Action::MaxAge(date.to_owned()));
+            } else if let Some(date) = arg.strip_prefix("--before=") {
+                actions.push(Action::MinAge(date.to_owned()));
+            } else if let Some(date) = arg.strip_prefix("--until=") {
+                actions.push(Action::MinAge(date.to_owned()));
             } else if arg == "--git-path" {
                 i += 1;
                 let path_arg = args
                     .args
                     .get(i)
                     .ok_or_else(|| anyhow::anyhow!("--git-path requires an argument"))?;
-                actions.push(Action::GitPath(path_arg.clone()));
+                actions.push(Action::GitPath(path_format_absolute, path_arg.clone()));
             } else if arg == "--prefix" {
                 i += 1;
                 let value = args
@@ -201,8 +386,10 @@ pub fn run(args: Args) -> Result<()> {
                     .get(i)
                     .ok_or_else(|| anyhow::anyhow!("--prefix requires an argument"))?;
                 prefix = Some(value.clone());
+                cli_prefix_path = Some(cwd.join(value));
             } else if let Some(value) = arg.strip_prefix("--prefix=") {
                 prefix = Some(value.to_owned());
+                cli_prefix_path = Some(cwd.join(value));
             } else if let Some(value) = arg.strip_prefix("--short=") {
                 short_len = Some(parse_short_len(value)?);
             } else if arg == "--short" {
@@ -564,14 +751,36 @@ pub fn run(args: Args) -> Result<()> {
                     .unwrap_or(false);
                 println!("{}", if bare { "true" } else { "false" });
             }
-            Action::ShowToplevel => {
+            Action::ShowToplevel(fmt) => {
                 let Some(current) = repo.as_ref() else {
                     bail!("not a git repository (or any of the parent directories)");
                 };
                 let Some(work_tree) = &current.work_tree else {
                     bail!("this operation must be run in a work tree");
                 };
-                println!("{}", work_tree.display());
+                match fmt {
+                    Some(true) => {
+                        println!("{}", realpath_forgiving(work_tree).display());
+                    }
+                    Some(false) => {
+                        let wt_a = realpath_forgiving(work_tree);
+                        let cwd_a = realpath_forgiving(&cwd);
+                        if wt_a == cwd_a {
+                            println!("./");
+                        } else {
+                            print_rev_parse_path(
+                                work_tree,
+                                &cwd,
+                                cli_prefix_path.as_deref(),
+                                Some(false),
+                                PathDefaultMode::Canonical,
+                            );
+                        }
+                    }
+                    None => {
+                        println!("{}", work_tree.display());
+                    }
+                }
             }
             Action::ShowPrefix => {
                 let Some(current) = repo.as_ref() else {
@@ -594,32 +803,65 @@ pub fn run(args: Args) -> Result<()> {
                     println!("{cdup}");
                 }
             }
-            Action::ShowGitDir => {
+            Action::ShowGitDir(fmt) => {
                 let Some(current) = repo.as_ref() else {
                     bail!("not a git repository (or any of the parent directories)");
                 };
-                let git_dir = current.git_dir.as_path();
-                if cwd == git_dir {
-                    println!(".");
-                } else if cwd.starts_with(git_dir) {
-                    // Inside the git directory (e.g. `.git/hooks`): Git prints an absolute path.
-                    println!("{}", git_dir.display());
-                } else if let Ok(rel) = git_dir.strip_prefix(&cwd) {
-                    let rel_s = rel.display().to_string();
-                    if rel_s.contains("..") {
-                        println!("{}", git_dir.display());
-                    } else {
-                        println!("{rel_s}");
-                    }
+                if let Ok(gd) = std::env::var("GIT_DIR") {
+                    let gd_path = PathBuf::from(gd);
+                    print_rev_parse_path(
+                        &gd_path,
+                        &cwd,
+                        cli_prefix_path.as_deref(),
+                        *fmt,
+                        PathDefaultMode::Unmodified,
+                    );
                 } else {
-                    let rel_s = to_relative_path(git_dir, &cwd);
-                    // `current_dir()` is often the real path while POSIX `cd` uses the logical cwd
-                    // when the work tree was reached via symlinks (t2300). Relative paths with `..`
-                    // then point at the wrong place; Git prints an absolute `--git-dir` instead.
-                    if rel_s.starts_with("..") || rel_s.contains("/..") {
-                        println!("{}", git_dir.display());
+                    let git_dir = current.git_dir.as_path();
+                    let cwd_a = realpath_forgiving(&cwd);
+                    let git_a = realpath_forgiving(git_dir);
+                    if cwd_a == git_a {
+                        match fmt {
+                            Some(true) => println!("{}", git_a.display()),
+                            Some(false) => println!("."),
+                            None => println!("."),
+                        }
+                    } else if cwd_a.starts_with(&git_a) {
+                        print_rev_parse_path(
+                            git_dir,
+                            &cwd,
+                            cli_prefix_path.as_deref(),
+                            *fmt,
+                            PathDefaultMode::Canonical,
+                        );
+                    } else if current.work_tree.as_ref().is_some_and(|wt| {
+                        cwd_a == realpath_forgiving(wt) && !is_linked_worktree_git_dir(git_dir)
+                    }) {
+                        match fmt {
+                            Some(true) => {
+                                println!("{}", git_a.display());
+                            }
+                            Some(false) => {
+                                print_rev_parse_path(
+                                    Path::new(".git"),
+                                    &cwd,
+                                    cli_prefix_path.as_deref(),
+                                    Some(false),
+                                    PathDefaultMode::Unmodified,
+                                );
+                            }
+                            None => {
+                                println!(".git");
+                            }
+                        }
                     } else {
-                        println!("{rel_s}");
+                        print_rev_parse_path(
+                            git_dir,
+                            &cwd,
+                            cli_prefix_path.as_deref(),
+                            *fmt,
+                            PathDefaultMode::Canonical,
+                        );
                     }
                 }
             }
@@ -649,50 +891,72 @@ pub fn run(args: Args) -> Result<()> {
                     println!("{}", to_relative_path(shared.as_path(), &cwd));
                 }
             }
-            Action::ShowGitCommonDir => {
+            Action::ShowGitCommonDir(fmt) => {
                 let Some(current) = repo.as_ref() else {
                     bail!("not a git repository (or any of the parent directories)");
                 };
                 let common_git_dir =
                     refs::common_dir(&current.git_dir).unwrap_or_else(|| current.git_dir.clone());
-                let common_c = common_git_dir
-                    .canonicalize()
-                    .unwrap_or_else(|_| common_git_dir.clone());
-                println!("{}", common_c.display());
+                print_rev_parse_path(
+                    &common_git_dir,
+                    &cwd,
+                    cli_prefix_path.as_deref(),
+                    *fmt,
+                    PathDefaultMode::RelativeToCwd,
+                );
             }
             Action::ShowAbsoluteGitDir => {
                 let Some(current) = repo.as_ref() else {
                     bail!("not a git repository (or any of the parent directories)");
                 };
-                println!("{}", current.git_dir.display());
+                let gd_path = if let Ok(gd) = std::env::var("GIT_DIR") {
+                    let p = PathBuf::from(gd);
+                    if p.is_relative() {
+                        cwd.join(p)
+                    } else {
+                        p
+                    }
+                } else {
+                    current.git_dir.clone()
+                };
+                println!("{}", realpath_forgiving(&gd_path).display());
+            }
+            Action::ShowSuperprojectWorkingTree(fmt) => {
+                let Some(current) = repo.as_ref() else {
+                    bail!("not a git repository (or any of the parent directories)");
+                };
+                if !is_inside_work_tree(current, &cwd) {
+                    continue;
+                }
+                let super_wt = superproject_working_tree_via_ls_files(current, &cwd)
+                    .or_else(|| superproject_work_tree_from_nested_git_modules(&current.git_dir));
+                if let Some(super_wt) = super_wt {
+                    print_rev_parse_path(
+                        &super_wt,
+                        &cwd,
+                        cli_prefix_path.as_deref(),
+                        *fmt,
+                        PathDefaultMode::Unmodified,
+                    );
+                }
             }
             Action::ShowRefFormat => {
                 let Some(current) = repo.as_ref() else {
                     bail!("not a git repository (or any of the parent directories)");
                 };
-                let config_path = current.git_dir.join("config");
-                let format = if let Ok(content) = std::fs::read_to_string(&config_path) {
-                    let mut in_ext = false;
-                    let mut found = String::from("files");
-                    for line in content.lines() {
-                        let t = line.trim();
-                        if t.starts_with('[') {
-                            in_ext = t.eq_ignore_ascii_case("[extensions]");
-                            continue;
-                        }
-                        if in_ext {
-                            if let Some((k, v)) = t.split_once('=') {
-                                if k.trim().eq_ignore_ascii_case("refstorage") {
-                                    found = v.trim().to_lowercase();
-                                }
-                            }
-                        }
-                    }
-                    found
-                } else {
-                    "files".to_string()
-                };
-                println!("{format}");
+                let raw = read_extensions_refstorage(&current.git_dir);
+                if !ref_storage_format_is_valid(&raw) {
+                    bail!(
+                        "error: invalid value for 'extensions.refstorage': '{}'",
+                        raw
+                    );
+                }
+                let format = raw.to_ascii_lowercase();
+                let name = format
+                    .split_once(':')
+                    .map(|(a, _)| a.to_string())
+                    .unwrap_or(format);
+                println!("{name}");
             }
             Action::ShowObjectFormat(mode) => {
                 let Some(current) = repo.as_ref() else {
@@ -713,7 +977,52 @@ pub fn run(args: Args) -> Result<()> {
                     }
                 }
             }
-            Action::GitPath(path_arg) => {
+            Action::BisectRefs(_) => {
+                let Some(current) = repo.as_ref() else {
+                    bail!("not a git repository (or any of the parent directories)");
+                };
+                let all = grit_lib::refs::list_refs(&current.git_dir, "refs/bisect/")
+                    .context("failed to list bisect refs")?;
+                let mut bad: Vec<String> = all
+                    .iter()
+                    .filter(|(r, _)| {
+                        r.starts_with("refs/bisect/bad")
+                            && r.as_bytes()
+                                .get("refs/bisect/bad".len())
+                                .is_none_or(|b| *b == b'-')
+                    })
+                    .map(|(r, _)| r.clone())
+                    .collect();
+                bad.sort();
+                for r in &bad {
+                    println!("{r}");
+                }
+                let mut good: Vec<String> = all
+                    .iter()
+                    .filter(|(r, _)| {
+                        r.starts_with("refs/bisect/good")
+                            && r.as_bytes()
+                                .get("refs/bisect/good".len())
+                                .is_none_or(|b| *b == b'-')
+                    })
+                    .map(|(r, _)| r.clone())
+                    .collect();
+                good.sort();
+                for r in &good {
+                    println!("^{r}");
+                }
+            }
+            Action::MaxAge(date) => {
+                let mut err = 0;
+                let ts = approxidate_careful(&date, Some(&mut err));
+                println!("--max-age={ts}");
+            }
+            Action::MinAge(date) => {
+                let mut err = 0;
+                let ts = approxidate_careful(&date, Some(&mut err));
+                println!("--min-age={ts}");
+            }
+            Action::GitPath(fmt, path_arg) => {
                 if let Some(current) = repo.as_ref() {
                     // Use original path_arg for output, normalized for matching
                     let path_arg_for_match = {
@@ -841,10 +1150,13 @@ pub fn run(args: Args) -> Result<()> {
                             current.git_dir.join(path_arg)
                         }
                     };
-                    // Git 2.43+ prints an absolute path here so `test -f "$(git -C dir rev-parse
-                    // --git-path …)"` works when the shell cwd differs from `-C` (t1091).
-                    let out = resolved.canonicalize().unwrap_or_else(|_| resolved.clone());
-                    println!("{}", out.display().to_string().replace('\\', "/"));
+                    print_rev_parse_path(
+                        &resolved,
+                        &cwd,
+                        cli_prefix_path.as_deref(),
+                        *fmt,
+                        PathDefaultMode::RelativeToCwd,
+                    );
                 } else {
                     bail!("not a git repository");
                 }
