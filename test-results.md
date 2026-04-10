@@ -1,5 +1,12 @@
 # Test results
 
+**2026-04-10 (status perf phase4 / fsmonitor refresh hook + add semantics fix)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh t7519-status-fsmonitor.sh`: 18/33 (from 12/33)
+- `./scripts/run-tests.sh t7063-status-untracked-cache.sh`: 14/58 (from 12/58)
+
 **2026-04-10 (status perf phase4 / remove add-side auto root commit)**
 
 - `cargo check -p grit-rs`: passed

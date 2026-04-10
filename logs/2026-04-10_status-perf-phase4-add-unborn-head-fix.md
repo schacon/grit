@@ -20,6 +20,12 @@ which is not Git behavior and caused tests that expect explicit first commits to
 
 - Removed the implicit post-add commit creation call from `git add` flow.
 - Removed now-unused imports and helper references tied to that behavior.
+- Extended fsmonitor compatibility in `update-index --refresh`:
+  - when fsmonitor is enabled, run the configured fsmonitor hook and apply invalidations
+    before refreshing entry stats,
+  - clear `CE_FSMONITOR_VALID` on paths reported by the hook,
+  - mark cleanly refreshed paths as `CE_FSMONITOR_VALID`,
+  - preserve old behavior when no hook/config is present.
 
 ### Validation
 
@@ -31,7 +37,7 @@ which is not Git behavior and caused tests that expect explicit first commits to
   - after: setup test passed
 - `./scripts/run-tests.sh t7519-status-fsmonitor.sh`
   - before (earlier phase baseline): 12/33
-  - after: 18/33
+  - after add lifecycle fix + refresh/fsmonitor invalidation integration: 18/33
 - `./scripts/run-tests.sh t7063-status-untracked-cache.sh`
   - before (earlier phase baseline): 12/58
   - after: 14/58

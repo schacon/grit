@@ -2,6 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use std::collections::BTreeSet;
 use std::env;
 use std::io::{self, BufRead};
 #[cfg(unix)]
@@ -322,6 +323,62 @@ fn skip_one_update_index_arg(rest: &[String], i: usize) -> usize {
         return i + 1;
     }
     (i + 1).min(rest.len())
+}
+
+/// Parse fsmonitor hook stdout payload:
+/// `<token>\0<path>\0<path>\0...`.
+fn parse_fsmonitor_payload(payload: &[u8]) -> Option<(String, BTreeSet<Vec<u8>>)> {
+    let mut fields = payload.split(|b| *b == 0);
+    let token = fields.next()?;
+    let token = String::from_utf8_lossy(token).into_owned();
+    if token.is_empty() {
+        return None;
+    }
+    let mut paths = BTreeSet::new();
+    for p in fields {
+        if !p.is_empty() {
+            paths.insert(p.to_vec());
+        }
+    }
+    Some((token, paths))
+}
+
+/// Run the configured fsmonitor hook (`core.fsmonitor`) and return `(new_token, reported_paths)`.
+///
+/// The hook is invoked with Git-compatible argv shape:
+/// `hook 2 <last_update_token>`.
+fn query_fsmonitor_paths(
+    work_tree: &Path,
+    config: &ConfigSet,
+    last_update_token: Option<&str>,
+) -> Option<(String, BTreeSet<Vec<u8>>)> {
+    let raw = config.get("core.fsmonitor")?;
+    let lower = raw.to_ascii_lowercase();
+    if matches!(lower.as_str(), "false" | "0" | "no" | "off") {
+        return None;
+    }
+    if matches!(lower.as_str(), "true" | "1" | "yes" | "on") {
+        // fsmonitor daemon mode is not implemented yet.
+        return None;
+    }
+    let hook_path = {
+        let p = Path::new(&raw);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            work_tree.join(p)
+        }
+    };
+    let output = std::process::Command::new(&hook_path)
+        .current_dir(work_tree)
+        .arg("2")
+        .arg(last_update_token.unwrap_or(""))
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_fsmonitor_payload(&output.stdout)
 }
 
 fn sticky_path_modes_for_paths(rest: &[String], files: &[PathBuf]) -> Result<Vec<PathMode>> {
@@ -1023,6 +1080,14 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
 
     if args.refresh || args.really_refresh {
         let (index_mtime_sec, index_mtime_nsec) = index_file_mtime_pair(&index_path);
+        let fsmonitor_query = if index.fsmonitor_last_update.is_some() {
+            query_fsmonitor_paths(work_tree, &config, index.fsmonitor_last_update.as_deref())
+        } else {
+            None
+        };
+        if let Some((new_token, _)) = fsmonitor_query.as_ref() {
+            index.fsmonitor_last_update = Some(new_token.clone());
+        }
         // Re-stat all entries; exit 1 if any files need updating.
         let (uptodate, index_modified) = refresh_index(
             &mut index,
@@ -1031,6 +1096,7 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
             args.unmerged,
             args.ignore_missing,
             args.ignore_submodules,
+            fsmonitor_query.as_ref().map(|(_, p)| p),
         )?;
         // Match Git: skip rewriting the index when nothing changed and no entry is racy
         // relative to the index file's mtime at read time (see `has_racy_timestamp` in
@@ -1152,6 +1218,7 @@ fn refresh_index(
     allow_unmerged: bool,
     ignore_missing: bool,
     ignore_submodules: bool,
+    fsmonitor_reported_paths: Option<&BTreeSet<Vec<u8>>>,
 ) -> Result<(bool, bool)> {
     // Returns (all_uptodate, index_modified)
     // all_uptodate: true if no files need updating
@@ -1189,6 +1256,15 @@ fn refresh_index(
         }
         let path_str = std::str::from_utf8(&entry.path)
             .map_err(|_| anyhow::anyhow!("non-UTF-8 path in index"))?;
+        if let Some(reported) = fsmonitor_reported_paths {
+            if !reported.contains(&entry.path) {
+                if !entry.fsmonitor_valid() {
+                    entry.set_fsmonitor_valid(true);
+                    index_modified = true;
+                }
+                continue;
+            }
+        }
         let path = std::path::Path::new(path_str);
         let abs = work_tree.join(path);
         match std::fs::symlink_metadata(&abs) {
@@ -1208,18 +1284,29 @@ fn refresh_index(
                     if actual_oid != entry.oid {
                         eprintln!("{path_str}: needs update");
                         all_uptodate = false;
+                        if entry.fsmonitor_valid() {
+                            entry.set_fsmonitor_valid(false);
+                            index_modified = true;
+                        }
                     } else if stat_changed {
                         entry.ctime_sec = meta.ctime() as u32;
                         entry.ctime_nsec = meta.ctime_nsec() as u32;
                         entry.mtime_sec = meta.mtime() as u32;
                         entry.mtime_nsec = meta.mtime_nsec() as u32;
                         entry.size = meta.size() as u32;
+                        if !entry.fsmonitor_valid() {
+                            entry.set_fsmonitor_valid(true);
+                        }
                         index_modified = true;
                     } else {
                         let new_ctime = meta.ctime() as u32;
                         if entry.ctime_sec != new_ctime {
                             entry.ctime_sec = new_ctime;
                             entry.ctime_nsec = meta.ctime_nsec() as u32;
+                            index_modified = true;
+                        }
+                        if !entry.fsmonitor_valid() {
+                            entry.set_fsmonitor_valid(true);
                             index_modified = true;
                         }
                     }
@@ -1239,6 +1326,10 @@ fn refresh_index(
                     if content_changed {
                         eprintln!("{path_str}: needs update");
                         all_uptodate = false;
+                        if entry.fsmonitor_valid() {
+                            entry.set_fsmonitor_valid(false);
+                            index_modified = true;
+                        }
                     } else {
                         // Update stat info
                         entry.ctime_sec = meta.ctime() as u32;
@@ -1246,6 +1337,9 @@ fn refresh_index(
                         entry.mtime_sec = meta.mtime() as u32;
                         entry.mtime_nsec = meta.mtime_nsec() as u32;
                         entry.size = meta.size() as u32;
+                        if !entry.fsmonitor_valid() {
+                            entry.set_fsmonitor_valid(true);
+                        }
                         index_modified = true;
                     }
                 } else {
@@ -1256,6 +1350,10 @@ fn refresh_index(
                         entry.ctime_nsec = meta.ctime_nsec() as u32;
                         index_modified = true;
                     }
+                    if !entry.fsmonitor_valid() {
+                        entry.set_fsmonitor_valid(true);
+                        index_modified = true;
+                    }
                 }
             }
             Err(_) => {
@@ -1263,6 +1361,10 @@ fn refresh_index(
                 if !ignore_missing {
                     eprintln!("{path_str}: does not exist and --remove not set");
                     all_uptodate = false;
+                }
+                if entry.fsmonitor_valid() {
+                    entry.set_fsmonitor_valid(false);
+                    index_modified = true;
                 }
             }
         }
@@ -1710,7 +1812,7 @@ pub fn run_refresh_quiet(repo: &Repository) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("cannot update-index in bare repository"))?;
     let (index_mtime_sec, index_mtime_nsec) = index_file_mtime_pair(&index_path);
     let (_uptodate, index_modified) =
-        refresh_index(&mut index, work_tree, &repo.odb, false, false, false)?;
+        refresh_index(&mut index, work_tree, &repo.odb, false, false, false, None)?;
     if index_modified || has_racy_timestamp(&index, index_mtime_sec, index_mtime_nsec) {
         repo.write_index_at(&index_path, &mut index)
             .context("writing index")?;
