@@ -350,10 +350,10 @@ fn effective_push_recurse_submodules(
     args: &Args,
     config: &ConfigSet,
 ) -> Result<PushRecurseSubmodules> {
-    if args.no_recurse_submodules {
-        return Ok(PushRecurseSubmodules::Off);
-    }
     let mut mode = PushRecurseSubmodules::Off;
+    if args.no_recurse_submodules {
+        mode = PushRecurseSubmodules::Off;
+    }
     if let Some(v) = config
         .get("push.recurseSubmodules")
         .or_else(|| config.get("push.recursesubmodules"))

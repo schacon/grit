@@ -686,6 +686,8 @@ pub fn run(mut args: Args) -> Result<()> {
         } else {
             args.repository.clone()
         }
+    } else if let Ok(abs) = source_path.canonicalize() {
+        abs.to_string_lossy().to_string()
     } else {
         source_path.to_string_lossy().to_string()
     };

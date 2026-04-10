@@ -1,5 +1,11 @@
 # Test results
 
+**2026-04-10 (phase 6 / submodule push follow-up in progress)**
+
+- `cargo build --release -p grit-rs`: pass
+- `./scripts/run-tests.sh t5531-deep-submodule-push.sh`: 14/29
+- `./scripts/run-tests.sh t5538-push-shallow.sh`: 8/8 (regression check after recursion/path handling changes)
+
 **2026-04-10 (phase 6 / mirror+shallow complete, namespaces advanced)**
 
 - `cargo build --release -p grit-rs`: pass
