@@ -1,5 +1,19 @@
 # Test results
 
+**2026-04-10 (protocol-v1 file/http transport and MIDX reuse guard)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `GUST_BIN=/workspace/target/release/grit bash tests/t5700-protocol-v1.sh --run=6,7,11`: all passed
+  - `clone with file:// using protocol v1` now passes.
+  - `cloning branchless tagless but not refless remote` now passes (no more `no multi-pack-index found`).
+- `GUST_BIN=/workspace/target/release/grit bash tests/t5700-protocol-v1.sh --run=6,7,8,9,10,13,14,15,16,17,19,20,22`:
+  - file:// + http:// subset in this run: pass
+  - remaining failures: ssh:// protocol-v1 tests 14/15/16/17
+- Code changes in this increment:
+  - `pack-objects` MIDX reuse path now treats missing multi-pack-index as "reuse unavailable" instead of fatal,
+    avoiding clone/fetch failure on repositories without MIDX files.
+
 **2026-04-10 (fetch HTTP v1 retry loop + protocol-v1 checkpoint)**
 
 - `cargo check -p grit-rs`: pass

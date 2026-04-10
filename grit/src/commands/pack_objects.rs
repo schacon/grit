@@ -349,7 +349,13 @@ fn compute_midx_reused_entries(
     }
     let objects_dir = repo.odb.objects_dir();
 
-    let pack_names = read_midx_pack_idx_names(objects_dir).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let pack_names = match read_midx_pack_idx_names(objects_dir) {
+        Ok(names) => names,
+        Err(LibError::CorruptObject(msg)) if msg == "no multi-pack-index found" => {
+            return Ok(None);
+        }
+        Err(e) => return Err(anyhow::anyhow!("{e}")),
+    };
     let preferred_pack_id = if mode == PackReuseMode::Single {
         let pref_name = grit_lib::midx::read_midx_preferred_idx_name(objects_dir)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
