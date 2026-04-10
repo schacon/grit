@@ -233,23 +233,26 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
         ConfigSet::load(None, true).unwrap_or_else(|_| ConfigSet::new())
     };
 
-    // Determine initial branch name (fresh init only), matching `repo_default_branch_name` in
-    // git/refs.c: env `GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME` wins over `init.defaultBranch` config.
+    // Determine initial branch name:
+    // 1. --initial-branch / -b flag (only on fresh init)
+    // 2. GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME env (test support)
+    // 3. init.defaultBranch config
+    // 4. "main" as fallback (matches modern Git default; see `git init` builtin)
     let initial_branch = if !is_reinit {
         if let Some(ref b) = args.initial_branch {
             b.clone()
         } else if let Ok(b) = std::env::var("GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME") {
             if !b.is_empty() {
                 b
-            } else if let Some(c) = config.get("init.defaultBranch") {
-                c
             } else {
-                "master".to_owned()
+                config
+                    .get("init.defaultBranch")
+                    .unwrap_or_else(|| "main".to_owned())
             }
         } else if let Some(b) = config.get("init.defaultBranch") {
             b
         } else {
-            "master".to_owned()
+            "main".to_owned()
         }
     } else {
         // On reinit, don't change HEAD
