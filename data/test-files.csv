@@ -205,7 +205,7 @@ t1100-commit-tree-options	t1	yes	5	5	0	true	ok	0
 t11000-ls-tree-root-subdir	t1	yes	32	32	0	true	ok	0
 t11010-ls-files-z-stage	t1	yes	39	39	0	true	ok	0
 t11020-diff-no-index-subdir	t1	yes	43	43	0	true	ok	0
-t11030-diff-cached-rename	t1	yes	41	40	1	false	ok	0
+t11030-diff-cached-rename	t1	yes	41	41	0	true	ok	0
 t11040-diff-tree-combined	t1	yes	35	35	0	true	ok	0
 t11140-config-get-regexp	t1	yes	36	36	0	true	ok	0
 t11150-config-default-value	t1	yes	33	33	0	true	ok	0
