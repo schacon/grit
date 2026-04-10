@@ -247,6 +247,14 @@ pub struct Args {
     #[arg(long = "force-write-index")]
     pub force_write_index: bool,
 
+    /// Enable split-index mode (accepted as compatibility no-op).
+    #[arg(long = "split-index")]
+    pub split_index: bool,
+
+    /// Disable split-index mode (accepted as compatibility no-op).
+    #[arg(long = "no-split-index")]
+    pub no_split_index: bool,
+
     /// Files to add/remove from the index.
     pub files: Vec<PathBuf>,
 }
@@ -464,6 +472,10 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let conv = crlf::ConversionConfig::from_config(&config);
     let attrs = crlf::load_gitattributes(work_tree);
+
+    if args.split_index && args.no_split_index {
+        bail!("cannot both enable and disable split index");
+    }
 
     if args.test_untracked_cache {
         // Grit always supports UNTR on POSIX; return success like Git on capable systems.

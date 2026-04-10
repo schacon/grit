@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-10 (status perf phase4 / split-index option compatibility)**
+
+- `cargo check -p grit-rs`: passed
+- `./scripts/run-tests.sh t7519-status-fsmonitor.sh`: 12/33
+
 **2026-04-10 (status perf phase3 / ignored-directory prune)**
 
 - `cargo check -p grit-rs`: passed
