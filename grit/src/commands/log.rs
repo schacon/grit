@@ -1077,9 +1077,14 @@ fn run_line_log(
     };
 
     if args.graph {
+        let graph_order: Vec<ObjectId> = if args.reverse {
+            filtered.iter().rev().copied().collect()
+        } else {
+            filtered.clone()
+        };
         let mut nodes = Vec::new();
         let mut seen = HashSet::new();
-        for oid in &filtered {
+        for oid in &graph_order {
             if !seen.insert(*oid) {
                 continue;
             }
