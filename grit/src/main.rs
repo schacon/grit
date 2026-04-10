@@ -43,6 +43,7 @@ mod protocol_wire;
 mod ref_transaction_hooks;
 mod ssh_transport;
 mod test_tool_pack_deltas;
+mod test_tool_run_command;
 mod trace2_transfer;
 mod trace_packet;
 mod transport_passthrough;
@@ -4378,6 +4379,7 @@ pub(crate) const KNOWN_COMMANDS: &[&str] = &[
     "switch",
     "symbolic-ref",
     "tag",
+    "test-tool",
     "unpack-file",
     "unpack-objects",
     "update-index",
@@ -4784,6 +4786,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 "lazy-init-name-hash" => run_test_tool_lazy_init_name_hash(rest),
                 "rot13-filter" => commands::test_tool_rot13_filter::run(&rest[1..]),
                 "path-utils" => run_test_tool_path_utils(&rest[1..]),
+                "run-command" => test_tool_run_command::run(&rest[1..]),
                 "subprocess" => run_test_tool_subprocess(&rest[1..]),
                 "submodule" => run_test_tool_submodule(rest),
                 "submodule-config" => run_test_tool_submodule_config(rest),
