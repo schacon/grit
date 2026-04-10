@@ -1042,6 +1042,7 @@ pub fn fetch_via_upload_pack_skipping(
             &wants,
             sideband_all,
             client_sid.as_deref(),
+            None,
         )?;
         // Close stdin so `upload-pack` v2 sees EOF after this fetch; otherwise `serve_loop`
         // blocks for the next command while we block reading the pack response (deadlock).

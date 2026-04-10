@@ -707,6 +707,7 @@ pub fn run(mut args: Args) -> Result<()> {
             upload_cmd,
             request_bundle,
             bundle_cli,
+            args.filter.as_deref(),
         )
         .context("file:// protocol v2 clone preflight")?;
     }
