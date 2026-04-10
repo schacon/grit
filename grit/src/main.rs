@@ -114,6 +114,8 @@ fn main() {
                     eprintln!("{ex}");
                 }
                 exit_code = ex.code;
+            } else if let Some(ex) = e.downcast_ref::<commands::fetch::ExitCodeError>() {
+                exit_code = ex.code;
             } else if let Some(msg) = verbatim_lib_error_message(&e) {
                 eprintln!("{msg}");
                 exit_code = 128;
