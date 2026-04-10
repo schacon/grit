@@ -1625,13 +1625,14 @@ fn run_ext_clone(args: Args) -> Result<()> {
             &url,
             "git-upload-pack",
             &[],
+            args.mirror && args.bare,
             |adv| crate::fetch_transport::collect_wants(adv, &[]),
             filter_active,
         )
     });
 
     let (source_head_symref, _source_head_oid, head_branch) = match fetch_res {
-        Ok((remote_heads, remote_tags, adv_sym, head_oid)) => {
+        Ok((remote_heads, remote_tags, extra_ns, adv_sym, head_oid)) => {
             let source_head_symref = adv_sym;
             let source_head_oid = head_oid.map(|o| o.to_hex());
             let head_branch = if args.branch.is_some() {
@@ -1654,6 +1655,15 @@ fn run_ext_clone(args: Args) -> Result<()> {
                 }
                 if !args.no_tags {
                     for (refname, oid) in &remote_tags {
+                        let dst_ref = dest.git_dir.join(refname);
+                        if let Some(parent) = dst_ref.parent() {
+                            fs::create_dir_all(parent)?;
+                        }
+                        fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
+                    }
+                }
+                if args.mirror {
+                    for (refname, oid) in &extra_ns {
                         let dst_ref = dest.git_dir.join(refname);
                         if let Some(parent) = dst_ref.parent() {
                             fs::create_dir_all(parent)?;
@@ -4511,6 +4521,16 @@ fn determine_head_branch(src_git_dir: &Path, requested: Option<&str>) -> Result<
 
 /// Read source `HEAD` as either a symref target or a raw object id.
 fn read_source_head_info(src_git_dir: &Path) -> (Option<String>, Option<String>) {
+    if grit_lib::ref_namespace::ref_storage_prefix().is_some() {
+        if let Ok(Some(sym)) = grit_lib::refs::read_symbolic_ref(src_git_dir, "HEAD") {
+            let sym = grit_lib::ref_namespace::logical_ref_name_from_storage(&sym).unwrap_or(sym);
+            return (Some(sym), None);
+        }
+        if let Ok(oid) = grit_lib::refs::resolve_ref(src_git_dir, "HEAD") {
+            return (None, Some(oid.to_hex()));
+        }
+    }
+
     let head_path = src_git_dir.join("HEAD");
     let Ok(content) = fs::read_to_string(&head_path) else {
         return (None, None);

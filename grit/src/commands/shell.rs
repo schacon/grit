@@ -37,7 +37,8 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 fn run_restricted_command(cmd_str: &str) -> Result<()> {
-    let (git_cmd, directory) = parse_git_command(cmd_str)?;
+    let (git_namespace, rest) = strip_leading_namespace_args(cmd_str.trim());
+    let (git_cmd, directory) = parse_git_command(&rest)?;
 
     if !ALLOWED_COMMANDS.iter().any(|allowed| git_cmd == *allowed) {
         bail!(
@@ -54,12 +55,37 @@ fn run_restricted_command(cmd_str: &str) -> Result<()> {
     };
 
     let grit_bin = std::env::current_exe().unwrap_or_else(|_| "grit".into());
-    let status = Command::new(&grit_bin)
-        .arg(subcommand)
-        .arg(&directory)
-        .status()?;
+    let mut child = Command::new(&grit_bin);
+    child.arg(subcommand).arg(&directory);
+    if let Some(ns) = git_namespace {
+        child.env("GIT_NAMESPACE", ns);
+    }
+    let status = child.status()?;
 
     std::process::exit(status.code().unwrap_or(1));
+}
+
+fn strip_leading_namespace_args(cmd_str: &str) -> (Option<String>, String) {
+    let mut ns: Option<String> = None;
+    let mut words: Vec<&str> = cmd_str.split_whitespace().collect();
+    while let Some(w) = words.first().copied() {
+        if w == "--namespace" {
+            if words.len() >= 2 {
+                ns = Some(words[1].to_owned());
+                words.drain(..2);
+                continue;
+            }
+            break;
+        } else if let Some(v) = w.strip_prefix("--namespace=") {
+            if !v.is_empty() {
+                ns = Some(v.to_owned());
+            }
+            words.remove(0);
+            continue;
+        }
+        break;
+    }
+    (ns, words.join(" "))
 }
 
 fn run_interactive_command() -> Result<()> {

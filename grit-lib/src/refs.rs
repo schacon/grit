@@ -128,43 +128,50 @@ fn resolve_ref_depth(
         )));
     }
 
-    // First try as a loose ref file in git_dir
-    let path = git_dir.join(refname);
-    match read_ref_file(&path) {
-        Ok(Ref::Direct(oid)) => return Ok(oid),
-        Ok(Ref::Symbolic(target)) => {
-            return resolve_ref_depth(git_dir, common, &target, depth + 1);
-        }
-        Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e),
-    }
+    let storage_owned = crate::ref_namespace::storage_ref_name(refname);
+    let try_names: Vec<&str> =
+        if refname == "HEAD" && crate::ref_namespace::ref_storage_prefix().is_some() {
+            vec![storage_owned.as_str()]
+        } else if storage_owned != refname {
+            vec![storage_owned.as_str(), refname]
+        } else {
+            vec![refname]
+        };
 
-    // For worktrees, try the common dir for shared refs
-    if let Some(cdir) = common {
-        if notes_merge_state_ref(refname) {
-            // These live only under this worktree's gitdir (see Git `is_root_ref` / per-worktree stores).
-        } else if cdir != git_dir {
-            let cpath = cdir.join(refname);
-            match read_ref_file(&cpath) {
-                Ok(Ref::Direct(oid)) => return Ok(oid),
-                Ok(Ref::Symbolic(target)) => {
-                    return resolve_ref_depth(git_dir, common, &target, depth + 1);
+    for name in try_names {
+        let path = git_dir.join(name);
+        match read_ref_file(&path) {
+            Ok(Ref::Direct(oid)) => return Ok(oid),
+            Ok(Ref::Symbolic(target)) => {
+                return resolve_ref_depth(git_dir, common, &target, depth + 1);
+            }
+            Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+
+        if let Some(cdir) = common {
+            if notes_merge_state_ref(name) {
+            } else if cdir != git_dir {
+                let cpath = cdir.join(name);
+                match read_ref_file(&cpath) {
+                    Ok(Ref::Direct(oid)) => return Ok(oid),
+                    Ok(Ref::Symbolic(target)) => {
+                        return resolve_ref_depth(git_dir, common, &target, depth + 1);
+                    }
+                    Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(e),
                 }
-                Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e),
             }
         }
-    }
 
-    // Fall back to packed-refs (in common dir if available)
-    let packed_dir = common.unwrap_or(git_dir);
-    if let Some(oid) = lookup_packed_ref(packed_dir, refname)? {
-        return Ok(oid);
-    }
-    // Also check git_dir packed-refs if different from common
-    if common.is_some() && common != Some(git_dir) {
-        if let Some(oid) = lookup_packed_ref(git_dir, refname)? {
+        let packed_dir = common.unwrap_or(git_dir);
+        if let Some(oid) = lookup_packed_ref(packed_dir, name)? {
             return Ok(oid);
+        }
+        if common.is_some() && common != Some(git_dir) {
+            if let Some(oid) = lookup_packed_ref(git_dir, name)? {
+                return Ok(oid);
+            }
         }
     }
 
@@ -210,28 +217,36 @@ pub fn read_raw_ref(git_dir: &Path, refname: &str) -> Result<RawRefLookup> {
 
 fn read_raw_ref_files(git_dir: &Path, refname: &str) -> Result<RawRefLookup> {
     let common = common_dir(git_dir);
+    let storage_owned = crate::ref_namespace::storage_ref_name(refname);
+    let (names, n): ([&str; 2], usize) = if storage_owned != refname {
+        ([storage_owned.as_str(), refname], 2)
+    } else {
+        ([refname, refname], 1)
+    };
 
-    if let Some(lookup) = read_raw_ref_at(git_dir.join(refname))? {
-        return Ok(lookup);
-    }
+    for name in names.iter().take(n) {
+        if let Some(lookup) = read_raw_ref_at(git_dir.join(name))? {
+            return Ok(lookup);
+        }
 
-    if let Some(cdir) = common.as_ref() {
-        if *cdir != git_dir && !notes_merge_state_ref(refname) {
-            if let Some(lookup) = read_raw_ref_at(cdir.join(refname))? {
-                return Ok(lookup);
+        if let Some(cdir) = common.as_ref() {
+            if *cdir != git_dir && !notes_merge_state_ref(name) {
+                if let Some(lookup) = read_raw_ref_at(cdir.join(name))? {
+                    return Ok(lookup);
+                }
             }
         }
-    }
 
-    let packed_dir = common.as_deref().unwrap_or(git_dir);
-    if packed_ref_name_exists(packed_dir, refname)? {
-        return Ok(RawRefLookup::Exists);
-    }
-    if common.is_some()
-        && common.as_deref() != Some(git_dir)
-        && packed_ref_name_exists(git_dir, refname)?
-    {
-        return Ok(RawRefLookup::Exists);
+        let packed_dir = common.as_deref().unwrap_or(git_dir);
+        if packed_ref_name_exists(packed_dir, name)? {
+            return Ok(RawRefLookup::Exists);
+        }
+        if common.is_some()
+            && common.as_deref() != Some(git_dir)
+            && packed_ref_name_exists(git_dir, name)?
+        {
+            return Ok(RawRefLookup::Exists);
+        }
     }
 
     Ok(RawRefLookup::NotFound)
@@ -365,7 +380,8 @@ pub fn write_symbolic_ref(git_dir: &Path, refname: &str, target: &str) -> Result
         return crate::reftable::reftable_write_symref(git_dir, refname, target, None, None);
     }
     let storage_dir = ref_storage_dir(git_dir, refname);
-    let path = storage_dir.join(refname);
+    let stor = crate::ref_namespace::storage_ref_name(refname);
+    let path = storage_dir.join(stor);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -381,7 +397,8 @@ pub fn write_ref(git_dir: &Path, refname: &str, oid: &ObjectId) -> Result<()> {
         return crate::reftable::reftable_write_ref(git_dir, refname, oid, None, None);
     }
     let storage_dir = ref_storage_dir(git_dir, refname);
-    let path = storage_dir.join(refname);
+    let stor = crate::ref_namespace::storage_ref_name(refname);
+    let path = storage_dir.join(stor);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -405,8 +422,9 @@ pub fn delete_ref(git_dir: &Path, refname: &str) -> Result<()> {
         return crate::reftable::reftable_delete_ref(git_dir, refname);
     }
     let storage_dir = ref_storage_dir(git_dir, refname);
+    let stor = crate::ref_namespace::storage_ref_name(refname);
     // Remove the loose ref file
-    let path = storage_dir.join(refname);
+    let path = storage_dir.join(&stor);
     match fs::remove_file(&path) {
         Ok(()) => {}
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
@@ -414,9 +432,9 @@ pub fn delete_ref(git_dir: &Path, refname: &str) -> Result<()> {
     }
 
     // Also remove the entry from packed-refs if present
-    remove_packed_ref(&storage_dir, refname)?;
+    remove_packed_ref(&storage_dir, &stor)?;
 
-    let log_path = storage_dir.join("logs").join(refname);
+    let log_path = storage_dir.join("logs").join(&stor);
 
     // Keep `logs/refs/heads/<name>` when deleting a branch so `branch -D` + later recreate can
     // retain history (matches upstream expectations in t1507 `log -g` with `@{now}`).
@@ -530,28 +548,41 @@ pub fn read_symbolic_ref(git_dir: &Path, refname: &str) -> Result<Option<String>
     if crate::reftable::is_reftable_repo(git_dir) {
         return crate::reftable::reftable_read_symbolic_ref(git_dir, refname);
     }
-    let path = git_dir.join(refname);
-    match read_ref_file(&path) {
-        Ok(Ref::Symbolic(target)) => Ok(Some(target)),
-        Ok(Ref::Direct(_)) => Ok(None),
-        Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {
-            if !notes_merge_state_ref(refname) {
-                if let Some(common) = common_dir(git_dir) {
-                    if common != git_dir {
-                        let cpath = common.join(refname);
-                        match read_ref_file(&cpath) {
-                            Ok(Ref::Symbolic(target)) => return Ok(Some(target)),
-                            Ok(Ref::Direct(_)) => return Ok(None),
-                            Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {}
-                            Err(e) => return Err(e),
-                        }
+    let storage_owned = crate::ref_namespace::storage_ref_name(refname);
+    let try_names: Vec<&str> =
+        if refname == "HEAD" && crate::ref_namespace::ref_storage_prefix().is_some() {
+            vec![storage_owned.as_str()]
+        } else if storage_owned != refname {
+            vec![storage_owned.as_str(), refname]
+        } else {
+            vec![refname]
+        };
+
+    for name in try_names {
+        let path = git_dir.join(name);
+        match read_ref_file(&path) {
+            Ok(Ref::Symbolic(target)) => return Ok(Some(target)),
+            Ok(Ref::Direct(_)) => return Ok(None),
+            Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+
+        if !notes_merge_state_ref(name) {
+            if let Some(common) = common_dir(git_dir) {
+                if common != git_dir {
+                    let cpath = common.join(name);
+                    match read_ref_file(&cpath) {
+                        Ok(Ref::Symbolic(target)) => return Ok(Some(target)),
+                        Ok(Ref::Direct(_)) => return Ok(None),
+                        Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {}
+                        Err(e) => return Err(e),
                     }
                 }
             }
-            Ok(None)
         }
-        Err(e) => Err(e),
     }
+
+    Ok(None)
 }
 
 /// Core `logAllRefUpdates` modes (after config lookup), matching Git's `log_refs_config`.
@@ -706,7 +737,9 @@ pub fn append_reflog(
             force_create,
         );
     }
-    let log_path = reflog_file_path(git_dir, refname);
+    let storage_dir = ref_storage_dir(git_dir, refname);
+    let stor = crate::ref_namespace::storage_ref_name(refname);
+    let log_path = storage_dir.join("logs").join(&stor);
     let may_write =
         force_create || should_autocreate_reflog(git_dir, refname) || !message.is_empty();
     if !may_write && !log_path.exists() {
@@ -796,31 +829,60 @@ pub fn list_refs(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>
     // main git dir case, so `pack-refs` could leave stale packed lines that shadowed updates.
     let mut by_name: HashMap<String, ObjectId> = HashMap::new();
 
+    let stored_prefixes: Vec<String> = if let Some(ns) = crate::ref_namespace::ref_storage_prefix()
+    {
+        if prefix.starts_with("refs/namespaces/") {
+            vec![prefix.to_owned()]
+        } else if prefix.starts_with("refs/") {
+            vec![format!("{ns}{prefix}")]
+        } else {
+            vec![prefix.to_owned()]
+        }
+    } else {
+        vec![prefix.to_owned()]
+    };
+
+    for stored_prefix in stored_prefixes {
+        if let Some(cdir) = common_dir(git_dir) {
+            if cdir != git_dir {
+                collect_packed_refs_into_map(&cdir, &stored_prefix, false, &mut by_name)?;
+                let cbase = cdir.join(&stored_prefix);
+                collect_loose_refs_into_map(&cbase, &stored_prefix, &cdir, false, &mut by_name)?;
+            }
+        }
+
+        collect_packed_refs_into_map(git_dir, &stored_prefix, false, &mut by_name)?;
+        let base = git_dir.join(&stored_prefix);
+        collect_loose_refs_into_map(&base, &stored_prefix, git_dir, false, &mut by_name)?;
+    }
+
+    let mut results: Vec<(String, ObjectId)> = by_name.into_iter().collect();
+    results.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(results)
+}
+
+/// List refs under `prefix` using **literal** on-disk paths (ignores `GIT_NAMESPACE`).
+///
+/// Used by `receive-pack` when advertising: the server must see every physical ref so refs outside
+/// the active namespace can be offered as `.have` lines (matches Git `show_ref_cb`).
+pub fn list_refs_physical(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>> {
+    if crate::reftable::is_reftable_repo(git_dir) {
+        return crate::reftable::reftable_list_refs(git_dir, prefix);
+    }
+    let mut by_name: HashMap<String, ObjectId> = HashMap::new();
+    let stored_prefix = prefix.to_owned();
+
     if let Some(cdir) = common_dir(git_dir) {
         if cdir != git_dir {
-            collect_packed_refs_into_map(&cdir, prefix, &mut by_name)?;
-            let cbase = cdir.join(prefix);
-            if cbase.is_file() {
-                let refname = prefix.trim_end_matches('/');
-                if let Ok(oid) = resolve_ref(&cdir, refname) {
-                    by_name.insert(refname.to_string(), oid);
-                }
-            } else {
-                collect_loose_refs_into_map(&cbase, prefix, &cdir, &mut by_name)?;
-            }
+            collect_packed_refs_into_map(&cdir, &stored_prefix, true, &mut by_name)?;
+            let cbase = cdir.join(&stored_prefix);
+            collect_loose_refs_into_map(&cbase, &stored_prefix, &cdir, true, &mut by_name)?;
         }
     }
 
-    collect_packed_refs_into_map(git_dir, prefix, &mut by_name)?;
-    let base = git_dir.join(prefix);
-    if base.is_file() {
-        let refname = prefix.trim_end_matches('/');
-        if let Ok(oid) = resolve_ref(git_dir, refname) {
-            by_name.insert(refname.to_string(), oid);
-        }
-    } else {
-        collect_loose_refs_into_map(&base, prefix, git_dir, &mut by_name)?;
-    }
+    collect_packed_refs_into_map(git_dir, &stored_prefix, true, &mut by_name)?;
+    let base = git_dir.join(&stored_prefix);
+    collect_loose_refs_into_map(&base, &stored_prefix, git_dir, true, &mut by_name)?;
 
     let mut results: Vec<(String, ObjectId)> = by_name.into_iter().collect();
     results.sort_by(|a, b| a.0.cmp(&b.0));
@@ -933,10 +995,22 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     pi == pat.len()
 }
 
+/// OID stored directly in a loose ref file (40 hex), ignoring symbolic targets.
+fn loose_ref_file_direct_oid(path: &Path) -> Option<ObjectId> {
+    let content = fs::read_to_string(path).ok()?;
+    let content = content.trim_end_matches('\n').trim();
+    if content.len() == 40 && content.chars().all(|c| c.is_ascii_hexdigit()) {
+        content.parse().ok()
+    } else {
+        None
+    }
+}
+
 fn collect_loose_refs_into_map(
     dir: &Path,
     prefix: &str,
     resolve_git_dir: &Path,
+    physical_keys: bool,
     out: &mut HashMap<String, ObjectId>,
 ) -> Result<()> {
     let read = match fs::read_dir(dir) {
@@ -957,10 +1031,28 @@ fn collect_loose_refs_into_map(
         };
 
         if meta.is_dir() {
-            collect_loose_refs_into_map(&path, &format!("{refname}/"), resolve_git_dir, out)?;
+            collect_loose_refs_into_map(
+                &path,
+                &format!("{refname}/"),
+                resolve_git_dir,
+                physical_keys,
+                out,
+            )?;
         } else if meta.is_file() {
-            if let Ok(oid) = resolve_ref(resolve_git_dir, &refname) {
-                out.insert(refname, oid);
+            if physical_keys {
+                if let Some(oid) = loose_ref_file_direct_oid(&path) {
+                    out.insert(refname, oid);
+                } else if let Ok(Ref::Symbolic(target)) = read_ref_file(&path) {
+                    if let Ok(oid) = resolve_ref(resolve_git_dir, target.trim()) {
+                        out.insert(refname, oid);
+                    }
+                }
+            } else {
+                let logical = crate::ref_namespace::logical_ref_name_from_storage(&refname)
+                    .unwrap_or_else(|| refname.clone());
+                if let Ok(oid) = resolve_ref(resolve_git_dir, &logical) {
+                    out.insert(logical, oid);
+                }
             }
         }
     }
@@ -1015,6 +1107,7 @@ fn ref_name_matches_list_prefix(refname: &str, prefix: &str) -> bool {
 fn collect_packed_refs_into_map(
     git_dir: &Path,
     prefix: &str,
+    physical_keys: bool,
     out: &mut HashMap<String, ObjectId>,
 ) -> Result<()> {
     let packed_path = git_dir.join("packed-refs");
@@ -1035,7 +1128,13 @@ fn collect_packed_refs_into_map(
             continue;
         }
         let oid: ObjectId = hash.parse()?;
-        out.insert(refname.to_string(), oid);
+        let key = if physical_keys {
+            refname.to_owned()
+        } else {
+            crate::ref_namespace::logical_ref_name_from_storage(refname)
+                .unwrap_or_else(|| refname.to_owned())
+        };
+        out.insert(key, oid);
     }
     Ok(())
 }

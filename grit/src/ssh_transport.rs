@@ -27,6 +27,9 @@ pub struct SshUrl {
 /// True when `url` is an SSH transport address (not plain local path).
 pub fn is_configured_ssh_url(url: &str) -> bool {
     let u = url.trim();
+    if u.starts_with("ext::") {
+        return false;
+    }
     u.starts_with("ssh://") || u.starts_with("git+ssh://") || is_scp_style_ssh_url(u)
 }
 
