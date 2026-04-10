@@ -1721,25 +1721,54 @@ fn fetch_remote(
         }
     }
 
-    // Prune stale remote-tracking refs
+    // Prune stale remote-tracking refs.
     if args.prune || args.prune_tags {
+        let prune_prefixes: Vec<String> = if user_passed_cli_refspecs {
+            prune_prefixes_from_cli_refspecs(cli_refspecs)
+        } else if !refspecs.is_empty() {
+            prune_prefixes_from_fetch_refspecs(&refspecs)
+        } else {
+            Vec::new()
+        };
+
         if !has_updates && !args.quiet {
             let mut will_prune = false;
-            for rn in &coalesced_remotes {
-                let prefix = format!("refs/remotes/{rn}/");
-                let existing = refs::list_refs(git_dir, &prefix)?;
-                if existing.iter().any(|(r, _)| !updated_refs.contains(r)) {
-                    will_prune = true;
-                    break;
+            if prune_prefixes.is_empty() {
+                for rn in &coalesced_remotes {
+                    let prefix = format!("refs/remotes/{rn}/");
+                    let existing = refs::list_refs(git_dir, &prefix)?;
+                    if existing.iter().any(|(r, _)| !updated_refs.contains(r)) {
+                        will_prune = true;
+                        break;
+                    }
+                }
+            } else {
+                for prefix in &prune_prefixes {
+                    let existing = refs::list_refs(git_dir, prefix)?;
+                    if existing.iter().any(|(r, _)| !updated_refs.contains(r)) {
+                        will_prune = true;
+                        break;
+                    }
                 }
             }
             if will_prune {
                 eprintln!("From {display_url}");
             }
         }
-        for rn in &coalesced_remotes {
-            let prefix = format!("refs/remotes/{rn}/");
-            prune_stale_refs(git_dir, &prefix, &updated_refs, rn, args.quiet)?;
+
+        if prune_prefixes.is_empty() {
+            for rn in &coalesced_remotes {
+                let prefix = format!("refs/remotes/{rn}/");
+                prune_stale_refs(git_dir, &prefix, &updated_refs, rn, args.quiet)?;
+            }
+        } else {
+            for prefix in &prune_prefixes {
+                let remote_hint = prefix
+                    .strip_prefix("refs/remotes/")
+                    .and_then(|s| s.split('/').next())
+                    .unwrap_or(remote_name);
+                prune_stale_refs(git_dir, prefix, &updated_refs, remote_hint, args.quiet)?;
+            }
         }
     }
 
@@ -2568,37 +2597,6 @@ fn prune_stale_refs(
     Ok(())
 }
 
-/// Compute prune destination prefixes from positive CLI refspecs that specify an explicit
-/// destination (`src:dst`), matching Git's behavior of limiting `--prune` scope to configured
-/// mapping namespaces when command-line refspecs are used.
-fn prune_prefixes_from_cli_refspecs(cli_refspecs: &[String]) -> Vec<String> {
-    let mut prefixes = Vec::new();
-    for spec in cli_refspecs {
-        if spec.starts_with('^') {
-            continue;
-        }
-        let spec_clean = spec.strip_prefix('+').unwrap_or(spec.as_str());
-        let Some((_src, dst_raw)) = spec_clean.split_once(':') else {
-            continue;
-        };
-        if dst_raw.is_empty() {
-            continue;
-        }
-        let dst = normalize_fetch_refspec_dst(dst_raw);
-        let prefix = if let Some(pos) = dst.find('*') {
-            dst[..pos].to_owned()
-        } else {
-            dst
-        };
-        if !prefix.is_empty() {
-            prefixes.push(prefix);
-        }
-    }
-    prefixes.sort();
-    prefixes.dedup();
-    prefixes
-}
-
 /// Write shallow graft information when --depth / --deepen is used.
 ///
 /// For local transport we approximate shallowness by listing the commit(s) at
@@ -2898,6 +2896,63 @@ fn parse_cli_fetch_refspecs(cli: &[String]) -> Vec<FetchRefspec> {
             });
         }
     }
+    out
+}
+
+/// Remote-tracking prune namespaces implied by CLI refspecs.
+///
+/// Only explicit `<src>:<dst>` refspecs participate. A source-only refspec
+/// (e.g. `main`) does not define a prune destination namespace.
+fn prune_prefixes_from_cli_refspecs(cli: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for spec in cli {
+        if spec.starts_with('^') {
+            continue;
+        }
+        let clean = spec.strip_prefix('+').unwrap_or(spec.as_str());
+        let Some(colon) = clean.find(':') else {
+            continue;
+        };
+        let dst_raw = &clean[colon + 1..];
+        if dst_raw.is_empty() {
+            continue;
+        }
+        let dst = normalize_fetch_refspec_dst(dst_raw);
+        if !dst.starts_with("refs/remotes/") {
+            continue;
+        }
+        let prefix = if let Some(star) = dst.find('*') {
+            dst[..star].to_string()
+        } else {
+            dst
+        };
+        out.push(prefix);
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Remote-tracking prune namespaces implied by configured fetch refspecs.
+fn prune_prefixes_from_fetch_refspecs(specs: &[FetchRefspec]) -> Vec<String> {
+    let mut out = Vec::new();
+    for spec in specs {
+        if spec.negative || spec.dst.is_empty() {
+            continue;
+        }
+        let dst = normalize_fetch_refspec_dst(&spec.dst);
+        if !dst.starts_with("refs/remotes/") {
+            continue;
+        }
+        let prefix = if let Some(star) = dst.find('*') {
+            dst[..star].to_string()
+        } else {
+            dst
+        };
+        out.push(prefix);
+    }
+    out.sort();
+    out.dedup();
     out
 }
 

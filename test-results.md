@@ -1,5 +1,23 @@
 # Test results
 
+**2026-04-10 (fetch glob wants + prune scope refinement)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `./scripts/run-tests.sh t5510-fetch.sh`: 90/215
+  - Improved from 86/215 before this increment (and 43/215 earlier in the same run).
+  - Key changes:
+    - upload-pack wants now support glob refspec expansion from advertised refs (no hard failure),
+    - prune scope for CLI/configured refspecs now derives from destination namespaces instead of
+      pruning all `refs/remotes/<remote>/*` unconditionally.
+- Regression matrix after this increment:
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: 20/24
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: 27/37
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: 6/16
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: 10/16
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: 10/10
+  - `./scripts/run-tests.sh t5702-protocol-v2.sh`: 0/0 (harness timeout mode in this run)
+
 **2026-04-10 (regression matrix refresh after protocol-v1 + no-MIDX fixes)**
 
 - `./scripts/run-tests.sh t5700-protocol-v1.sh`: 20/24

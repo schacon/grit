@@ -802,43 +802,29 @@ pub fn fetch_via_upload_pack_skipping(
     }
     let wants = compute_wants(&advertised)?;
     if wants.is_empty() {
-        if !has_cli_refspecs && advertised.is_empty() {
-            drop(stdin);
-            let _ = drain_child_stdout_to_eof(&mut stdout);
-            let status = child.wait()?;
-            if !status.success() {
-                bail!("upload-pack exited with {}", status);
-            }
-            return Ok((Vec::new(), Vec::new(), head_symref, None));
+        // No pack to transfer (either already up-to-date or refspecs selected no refs), but we
+        // still return advertised heads/tags so callers can perform ref/prune bookkeeping.
+        drop(stdin);
+        let _ = drain_child_stdout_to_eof(&mut stdout);
+        let status = child.wait()?;
+        if !status.success() {
+            bail!("upload-pack exited with {}", status);
         }
-        // No pack to transfer (local already has all objects), but when the remote advertised
-        // refs we must still return those heads/tags so `git fetch` can update
-        // `refs/remotes/<remote>/*` to match the remote repository (Git behavior; submodule
-        // `update --remote` depends on this).
-        if !has_cli_refspecs {
-            drop(stdin);
-            let _ = drain_child_stdout_to_eof(&mut stdout);
-            let status = child.wait()?;
-            if !status.success() {
-                bail!("upload-pack exited with {}", status);
-            }
-            let remote_heads: Vec<_> = advertised
-                .iter()
-                .filter(|(n, _)| n.starts_with("refs/heads/"))
-                .cloned()
-                .collect();
-            let remote_tags: Vec<_> = advertised
-                .iter()
-                .filter(|(n, _)| n.starts_with("refs/tags/"))
-                .cloned()
-                .collect();
-            let head_advertised_oid = advertised
-                .iter()
-                .find(|(n, _)| n == "HEAD")
-                .map(|(_, o)| *o);
-            return Ok((remote_heads, remote_tags, head_symref, head_advertised_oid));
-        }
-        bail!("nothing to fetch (advertised {} ref(s))", advertised.len());
+        let remote_heads: Vec<_> = advertised
+            .iter()
+            .filter(|(n, _)| n.starts_with("refs/heads/"))
+            .cloned()
+            .collect();
+        let remote_tags: Vec<_> = advertised
+            .iter()
+            .filter(|(n, _)| n.starts_with("refs/tags/"))
+            .cloned()
+            .collect();
+        let head_advertised_oid = advertised
+            .iter()
+            .find(|(n, _)| n == "HEAD")
+            .map(|(_, o)| *o);
+        return Ok((remote_heads, remote_tags, head_symref, head_advertised_oid));
     }
 
     let remote_heads: Vec<_> = advertised
