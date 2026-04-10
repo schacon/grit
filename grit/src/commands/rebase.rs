@@ -1781,7 +1781,7 @@ fn worktree_matches_head(repo: &Repository, git_dir: &Path) -> Result<bool> {
         parse_commit(&obj.data).ok().map(|c| c.tree)
     });
     let staged = grit_lib::diff::diff_index_to_tree(&repo.odb, &idx, head_tree.as_ref())?;
-    let unstaged = grit_lib::diff::diff_index_to_worktree(&repo.odb, &idx, wt)?;
+    let unstaged = grit_lib::diff::diff_index_to_worktree(&repo.odb, &idx, wt, false, false)?;
     Ok(staged.is_empty() && unstaged.is_empty())
 }
 
@@ -1921,7 +1921,8 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
             parse_commit(&obj.data).ok().map(|c| c.tree)
         });
         let staged = grit_lib::diff::diff_index_to_tree(&repo.odb, &idx, head_tree.as_ref())?;
-        let unstaged = grit_lib::diff::diff_index_to_worktree(&repo.odb, &idx, work_tree)?;
+        let unstaged =
+            grit_lib::diff::diff_index_to_worktree(&repo.odb, &idx, work_tree, false, false)?;
         let dirty = !staged.is_empty() || !unstaged.is_empty();
         if dirty {
             if !want_autostash {

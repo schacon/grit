@@ -1306,8 +1306,8 @@ fn collect_checkout_local_change_lines(repo: &Repository) -> Result<Vec<String>>
     let index = repo
         .load_index_at(&index_path)
         .context("loading index for checkout local changes")?;
-    let entries =
-        diff_index_to_worktree(&repo.odb, &index, work_tree).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let entries = diff_index_to_worktree(&repo.odb, &index, work_tree, false, false)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(entries
         .into_iter()
         .map(|e| format!("{}\t{}", e.status.letter(), e.path()))

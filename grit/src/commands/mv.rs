@@ -618,7 +618,8 @@ pub fn run(args: Args) -> Result<()> {
 
         let mut sparse_and_dirty = false;
         if args.sparse && sparse_enabled && cone_cfg && !row.sparse_source && src_abs.exists() {
-            sparse_and_dirty = worktree_differs_from_index_entry(&repo.odb, work_tree, &old_entry)?;
+            sparse_and_dirty =
+                worktree_differs_from_index_entry(&repo.odb, work_tree, &old_entry, false)?;
         }
 
         let new_path = row.dst.as_bytes().to_vec();

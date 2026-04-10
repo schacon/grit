@@ -507,6 +507,10 @@ pub struct UpdateArgs {
 
 #[derive(Debug, ClapArgs)]
 pub struct AddArgs {
+    /// Allow adding when the path exists but is not a git repository (remove and clone).
+    #[arg(short = 'f', long = "force")]
+    pub force: bool,
+
     /// Use the given name instead of defaulting to its path.
     #[arg(long)]
     pub name: Option<String>,
@@ -1899,12 +1903,22 @@ fn run_add(args: &AddArgs) -> Result<()> {
         // "Adding existing repo" (same as C git).
         let is_repo = sub_path.join(".git").exists();
         if !is_repo {
-            bail!("'{}' already exists and is not a git repository", path);
-        }
-        if !args.quiet {
+            if args.force {
+                fs::remove_dir_all(&sub_path).with_context(|| {
+                    format!(
+                        "could not remove existing path '{}' for submodule add --force",
+                        path
+                    )
+                })?;
+            } else {
+                bail!("'{}' already exists and is not a git repository", path);
+            }
+        } else if !args.quiet {
             eprintln!("Adding existing repo at '{}' to the index", path);
         }
-    } else {
+    }
+
+    if !sub_path.exists() {
         // Clone the submodule.
         let modules_dir = submodule_modules_git_dir(&repo.git_dir, &path);
         // Only create the parent directory; git clone --separate-git-dir
