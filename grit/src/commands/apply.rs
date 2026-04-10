@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 /// Arguments for `grit apply`.
-#[derive(Debug, ClapArgs)]
+#[derive(Debug, Default, ClapArgs)]
 #[command(about = "Apply a patch to files and/or to the index")]
 pub struct Args {
     /// Apply the patch to the index instead of the working tree.

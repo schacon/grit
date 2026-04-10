@@ -25,6 +25,10 @@ use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
+use crate::commands::apply;
+use crate::commands::commit::launch_commit_editor;
+use crate::commands::diff::unstaged_patch_for_add_edit;
+
 fn resolved_env_index_path(repo: &Repository) -> PathBuf {
     if let Ok(raw) = std::env::var("GIT_INDEX_FILE") {
         let p = PathBuf::from(raw);
@@ -38,6 +42,34 @@ fn resolved_env_index_path(repo: &Repository) -> PathBuf {
     } else {
         repo.index_path()
     }
+}
+
+/// `git add -e`: write unstaged diff to `ADD_EDIT.patch`, run the editor, apply with `apply --recount --cached`.
+fn run_add_edit(repo: &Repository, pathspecs: &[String]) -> Result<()> {
+    let patch_path = repo.git_dir.join("ADD_EDIT.patch");
+    let initial = unstaged_patch_for_add_edit(repo, pathspecs)?;
+    if initial.trim().is_empty() {
+        bail!("No changes.");
+    }
+    fs::write(&patch_path, initial).with_context(|| format!("writing {}", patch_path.display()))?;
+    launch_commit_editor(repo, &patch_path).context("editing patch failed")?;
+    let edited = fs::read_to_string(&patch_path)
+        .with_context(|| format!("reading {}", patch_path.display()))?;
+    if edited.trim().is_empty() {
+        let _ = fs::remove_file(&patch_path);
+        bail!("empty patch. aborted");
+    }
+    let apply_args = apply::Args {
+        cached: true,
+        recount: true,
+        strip: 1,
+        patches: vec![patch_path.clone()],
+        ..Default::default()
+    };
+    apply::run(apply_args)
+        .with_context(|| format!("could not apply '{}'", patch_path.display()))?;
+    let _ = fs::remove_file(&patch_path);
+    Ok(())
 }
 
 /// Arguments for `grit add`.
@@ -185,20 +217,26 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // --dry-run is incompatible with interactive modes
-    if args.dry_run && (args.interactive || args.patch) {
-        bail!("options '--dry-run' and '--interactive'/'--patch' cannot be used together");
+    if args.dry_run && (args.interactive || args.patch || args.edit) {
+        bail!("options '--dry-run' and '--interactive'/'--patch'/'--edit' cannot be used together");
+    }
+
+    if args.edit {
+        let repo = Repository::discover(None).context("not a git repository")?;
+        repo.work_tree
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+        run_add_edit(&repo, &args.pathspec)?;
+        return Ok(());
     }
 
     // Stubs for unsupported interactive modes — accept the flags
     // gracefully so scripts that pass them don't hard-fail.
-    if args.patch || args.interactive || args.edit {
-        // Real git would enter interactive mode; we just warn and succeed.
+    if args.patch || args.interactive {
         let mode_name = if args.patch {
             "-p/--patch"
-        } else if args.interactive {
-            "-i/--interactive"
         } else {
-            "-e/--edit"
+            "-i/--interactive"
         };
         eprintln!(
             "warning: {} mode is not yet implemented; doing nothing",
