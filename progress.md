@@ -1,20 +1,21 @@
 # Progress — Grit Test Coverage
 
-**Updated:** 2026-04-09
+**Updated:** 2026-04-10
 
 ## Counts (derived from plan.md)
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   325 |
+| Completed   |   326 |
 | In progress |     5 |
-| Remaining   |   441 |
+| Remaining   |   440 |
 | **Total**   |   771 |
 
-Task lines in `PLAN.md`: 325 completed (`[x]`), 5 in progress (`[~]`), 441 remaining (`[ ]`).
+Task lines in `PLAN.md`: 326 completed (`[x]`), 5 in progress (`[~]`), 440 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5325-reverse-index` — 16/16 tests pass (RIDX `.rev` write/read: `index-pack` `--[no-]rev-index` + `pack.writeReverseIndex`, `-o` sibling `.rev`, `--rev-index --verify` hashfile errors; `pack-objects` reverse index; `cat-file %(objectsize:disk)` uses on-disk rev when `pack.readReverseIndex` true + test env hooks; `fsck` validates `.rev` with Git-ordered diagnostics)
 - `t3309-notes-merge-auto-resolve` — 31/31 tests pass (`notes merge`: `union` / `cat_sort_uniq` blob combine like Git; successful merge commits use two parents; `notes.mergeStrategy` config errors match upstream expectations)
 - `t4063-diff-blobs` — 18/18 tests pass (`diff`: blob↔blob and `rev:path` pairs without treating blobs as trees; `HEAD:one..HEAD:two` range split; `rev:path` vs worktree file uses tree path + modes + `write_patch_with_prefix`; raw blob OID vs existing file uses filename as old path; `rev_parse::resolve_treeish_blob_at_path` for tree walks)
 - `t5524-pull-msg` — 3/3 tests pass (`git pull --no-rebase --log` merge message preserves `$` in subject lines; `--log=1` limits shortlog; harness CSV/dashboards refreshed; `PLAN.md` marked complete)

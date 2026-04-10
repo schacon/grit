@@ -630,7 +630,7 @@ commit → check it off → move on.
 - [x] `t5403-post-checkout-hook` ████████████████████ 14/14 (0 left) — Test the post-checkout hook.
 - [ ] `t5610-clone-detached` ███░░░░░░░░░░░░░░░░░ 2/13 (11 left) — test cloning a repository with detached HEAD
 - [x] `t5605-clone-local` ████████████████████ 23/23 (0 left) — test local clone
-- [ ] `t5325-reverse-index` █████░░░░░░░░░░░░░░░ 4/16 (12 left) — on-disk reverse index
+- [x] `t5325-reverse-index` — on-disk reverse index (16/16)
 - [ ] `t5560-http-backend-noserver` ██░░░░░░░░░░░░░░░░░░ 2/14 (12 left) — test git-http-backend-noserver
 - [ ] `t5612-clone-refspec` █░░░░░░░░░░░░░░░░░░░ 1/13 (12 left) — test refspec written by clone-command
 - [ ] `t5537-fetch-shallow` ███░░░░░░░░░░░░░░░░░ 3/16 (13 left) — fetch/clone from a shallow clone

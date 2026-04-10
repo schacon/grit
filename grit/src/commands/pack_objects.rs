@@ -9,6 +9,7 @@ use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use grit_lib::config::ConfigSet;
 use grit_lib::error::Error as LibError;
+use grit_lib::pack_rev::{build_pack_rev_bytes_from_index_order_offsets, rev_path_for_index};
 use grit_lib::rev_list::{rev_list, MissingAction, RevListOptions};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeSet, HashSet};
@@ -420,9 +421,17 @@ pub fn run(args: Args) -> Result<()> {
 
         std::fs::write(&pack_path, &pack_bytes)?;
 
-        // Build and write idx.
-        let idx_bytes = build_idx_for_pack(&pack_bytes, &write_entries)?;
+        // Build and write idx (and optional `.rev`).
+        let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let (idx_bytes, idx_order_offsets) = build_idx_for_pack(&pack_bytes, &write_entries)?;
         std::fs::write(&idx_path, &idx_bytes)?;
+        let idx_pb = Path::new(&idx_path);
+        if cfg.pack_write_reverse_index_default() {
+            let rev_bytes = build_pack_rev_bytes_from_index_order_offsets(&idx_order_offsets);
+            std::fs::write(rev_path_for_index(idx_pb), rev_bytes)?;
+        } else {
+            let _ = std::fs::remove_file(rev_path_for_index(idx_pb));
+        }
 
         println!("{pack_hash}");
         if !args.quiet {
@@ -1475,7 +1484,12 @@ fn build_pack(entries: &[PackWriteEntry]) -> Result<Vec<u8>> {
 }
 
 /// Build idx v2 for a pack we just wrote.
-fn build_idx_for_pack(pack_bytes: &[u8], entries: &[PackWriteEntry]) -> Result<Vec<u8>> {
+///
+/// The second return value is object offsets in **index row order** (OID-sorted), for `.rev` files.
+fn build_idx_for_pack(
+    pack_bytes: &[u8],
+    entries: &[PackWriteEntry],
+) -> Result<(Vec<u8>, Vec<u64>)> {
     use grit_lib::pack::skip_one_pack_object;
 
     // We need offsets. Reparse the pack to get them.
@@ -1566,7 +1580,12 @@ fn build_idx_for_pack(pack_bytes: &[u8], entries: &[PackWriteEntry]) -> Result<V
     let idx_checksum = h.finalize();
     buf.extend_from_slice(idx_checksum.as_slice());
 
-    Ok(buf)
+    let idx_order_offsets: Vec<u64> = sorted
+        .iter()
+        .map(|(orig_idx, _)| offsets[*orig_idx])
+        .collect();
+
+    Ok((buf, idx_order_offsets))
 }
 
 /// CRC32 IEEE.

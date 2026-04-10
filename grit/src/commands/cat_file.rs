@@ -8,6 +8,7 @@ use grit_lib::error::Error as LibError;
 use grit_lib::error::Result as LibResult;
 use grit_lib::merge_diff::{convert_blob_to_worktree_for_path, run_textconv_raw};
 use grit_lib::pack;
+use grit_lib::pack_rev::{rev_path_for_index, try_rev_positions_in_pack_order};
 use grit_lib::rev_list::{self, ObjectFilter};
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -682,7 +683,18 @@ fn collect_loose_disk_entries(objects_dir: &Path, out: &mut Vec<(ObjectId, u64)>
     Ok(())
 }
 
-fn append_packed_disk_entries(objects_dir: &Path, out: &mut Vec<(ObjectId, u64)>) -> Result<()> {
+fn env_git_test_bool(name: &str) -> bool {
+    std::env::var(name).ok().as_deref().is_some_and(|v| {
+        let s = v.trim().to_ascii_lowercase();
+        matches!(s.as_str(), "1" | "true" | "yes" | "on")
+    })
+}
+
+fn append_packed_disk_entries(
+    objects_dir: &Path,
+    read_rev_index: bool,
+    out: &mut Vec<(ObjectId, u64)>,
+) -> Result<()> {
     let indexes = pack::read_local_pack_indexes(objects_dir)?;
     for idx in indexes {
         let pack_size = match std::fs::metadata(&idx.pack_path) {
@@ -694,21 +706,44 @@ fn append_packed_disk_entries(objects_dir: &Path, out: &mut Vec<(ObjectId, u64)>
             .first()
             .map(|e| pack_checksum_trailer_len(&e.oid))
             .unwrap_or(20);
-        let mut offsets: Vec<(u64, ObjectId)> = idx
-            .entries
-            .into_iter()
-            .map(|entry| (entry.offset, entry.oid))
-            .collect();
-        offsets.sort_by_key(|(offset, _)| *offset);
-        for (pos, (offset, oid)) in offsets.iter().enumerate() {
-            let next_offset = offsets
-                .get(pos + 1)
-                .map(|(next, _)| *next)
-                .unwrap_or_else(|| pack_size.saturating_sub(trailer));
-            if next_offset < *offset {
+        let n = idx.entries.len();
+        let rev_path = rev_path_for_index(&idx.idx_path);
+
+        let pack_order_idx: Vec<u32> = if read_rev_index && rev_path.is_file() {
+            if env_git_test_bool("GIT_TEST_REV_INDEX_DIE_ON_DISK") {
+                bail!("dying as requested by 'GIT_TEST_REV_INDEX_DIE_ON_DISK'");
+            }
+            match std::fs::read(&rev_path) {
+                Ok(data) => try_rev_positions_in_pack_order(&data, n).unwrap_or_default(),
+                Err(_) => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+
+        let pack_order_idx = if !pack_order_idx.is_empty() {
+            pack_order_idx
+        } else {
+            if env_git_test_bool("GIT_TEST_REV_INDEX_DIE_IN_MEMORY") {
+                bail!("dying as requested by 'GIT_TEST_REV_INDEX_DIE_IN_MEMORY'");
+            }
+            let mut order: Vec<u32> = (0..n as u32).collect();
+            order.sort_by_key(|&i| idx.entries[i as usize].offset);
+            order
+        };
+
+        for i in 0..n {
+            let oid = idx.entries[pack_order_idx[i] as usize].oid;
+            let offset = idx.entries[pack_order_idx[i] as usize].offset;
+            let next_offset = if i + 1 < n {
+                idx.entries[pack_order_idx[i + 1] as usize].offset
+            } else {
+                pack_size.saturating_sub(trailer)
+            };
+            if next_offset < offset {
                 continue;
             }
-            out.push((*oid, next_offset - *offset));
+            out.push((oid, next_offset - offset));
         }
     }
     Ok(())
@@ -719,8 +754,10 @@ fn collect_all_disk_object_entries(repo: &Repository) -> Result<Vec<(ObjectId, u
     // Match upstream tests (t1006 `%(objectsize:disk)`): only count on-disk copies under this
     // repo's `objects/` tree, not duplicate loose/pack files reachable via `info/alternates`.
     let dir = repo.odb.objects_dir().to_path_buf();
+    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let read_rev = cfg.pack_read_reverse_index_default();
     collect_loose_disk_entries(&dir, &mut out)?;
-    append_packed_disk_entries(&dir, &mut out)?;
+    append_packed_disk_entries(&dir, read_rev, &mut out)?;
     Ok(out)
 }
 
@@ -1596,10 +1633,11 @@ fn pack_checksum_trailer_len(sample_oid: &ObjectId) -> u64 {
 
 fn append_packed_object_sizes(
     objects_dir: &Path,
+    read_rev_index: bool,
     sizes: &mut HashMap<ObjectId, u64>,
 ) -> Result<()> {
     let mut tmp = Vec::new();
-    append_packed_disk_entries(objects_dir, &mut tmp)?;
+    append_packed_disk_entries(objects_dir, read_rev_index, &mut tmp)?;
     for (oid, sz) in tmp {
         sizes.entry(oid).or_insert(sz);
     }
@@ -1607,9 +1645,11 @@ fn append_packed_object_sizes(
 }
 
 fn collect_packed_object_sizes(repo: &Repository) -> Result<HashMap<ObjectId, u64>> {
+    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let read_rev = cfg.pack_read_reverse_index_default();
     let mut sizes = HashMap::new();
     for dir in object_storage_dirs_for_repo(repo)? {
-        append_packed_object_sizes(&dir, &mut sizes)?;
+        append_packed_object_sizes(&dir, read_rev, &mut sizes)?;
     }
     Ok(sizes)
 }
