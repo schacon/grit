@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use crate::grit_exe;
 use grit_lib::delta_encode::{encode_lcp_delta, encode_prefix_extension_delta};
-use grit_lib::objects::{parse_tree, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
 use grit_lib::repo::Repository;
@@ -232,6 +232,9 @@ struct PackObjectList {
     oids: Vec<ObjectId>,
     /// Blob OIDs that should delta against a base blob (base may be omitted from `oids`).
     thin_blob_deltas: Vec<(ObjectId, ObjectId)>,
+    /// With `--revs --filter=blob:none`, blobs listed as explicit positive rev roots (e.g. a tag
+    /// pointing at a blob) must remain in the pack (t5327 `tagged-blob`).
+    blob_none_keep_roots: HashSet<ObjectId>,
 }
 
 /// One slot in a pack file (full object or `REF_DELTA`).
@@ -267,9 +270,8 @@ pub fn run(args: Args) -> Result<()> {
     // is not a terminal (`t6500-gc` TTY block).
     let progress_delay_env = std::env::var("GIT_PROGRESS_DELAY").ok();
     let show_enumerate_progress = !args.quiet
-        && !args.stdout
         && !pack_list.oids.is_empty()
-        && (io::stderr().is_terminal() || progress_delay_env.is_some());
+        && (io::stderr().is_terminal() || progress_delay_env.is_some() || args.progress);
     if show_enumerate_progress {
         let delay = progress_delay_env
             .as_deref()
@@ -278,7 +280,8 @@ pub fn run(args: Args) -> Result<()> {
         if delay > 0 {
             thread::sleep(Duration::from_secs(delay));
         }
-        eprintln!("Enumerating objects");
+        let n = pack_list.oids.len();
+        eprintln!("Enumerating objects: {n}, done.");
     }
 
     if pack_list.oids.is_empty() {
@@ -300,8 +303,13 @@ pub fn run(args: Args) -> Result<()> {
 
     // Read all objects.
     let mut entries: Vec<PackEntry> = Vec::with_capacity(pack_list.oids.len());
+    let mut pack_reused_objects = 0usize;
     for oid in &pack_list.oids {
+        let from_pack = !repo.odb.object_path(oid).exists();
         let obj = read_object_from_repo(&repo, oid)?;
+        if from_pack {
+            pack_reused_objects += 1;
+        }
         entries.push(PackEntry {
             oid: *oid,
             kind: obj.kind,
@@ -327,7 +335,11 @@ pub fn run(args: Args) -> Result<()> {
             write_pack_via_stdin_objects(&repo, &side_blobs, to_base, args.quiet)?;
         }
     } else {
-        apply_list_objects_filter(&mut entries, args.filter.as_deref());
+        apply_list_objects_filter(
+            &mut entries,
+            args.filter.as_deref(),
+            &pack_list.blob_none_keep_roots,
+        );
     }
 
     if entries.is_empty() {
@@ -407,6 +419,17 @@ pub fn run(args: Args) -> Result<()> {
         let mut out = stdout.lock();
         out.write_all(&pack_bytes)?;
         out.flush()?;
+        let show_pack_progress = !args.quiet
+            && (args.progress || progress_delay_env.is_some() || io::stderr().is_terminal());
+        if show_pack_progress {
+            eprintln!(
+                "Total {} (delta {}), reused 0 (delta {}), pack-reused {}",
+                write_entries.len(),
+                new_deltas + reused_deltas,
+                reused_deltas,
+                pack_reused_objects
+            );
+        }
     } else {
         let base = args
             .base_name
@@ -427,10 +450,11 @@ pub fn run(args: Args) -> Result<()> {
         println!("{pack_hash}");
         if !args.quiet {
             eprintln!(
-                "Total {} (delta {}), reused 0 (delta {})",
+                "Total {} (delta {}), reused 0 (delta {}), pack-reused {}",
                 write_entries.len(),
                 new_deltas + reused_deltas,
-                reused_deltas
+                reused_deltas,
+                pack_reused_objects
             );
         }
 
@@ -571,6 +595,7 @@ fn collect_cruft_pack_stdin_oids(repo: &Repository) -> Result<PackObjectList> {
     Ok(PackObjectList {
         oids: oids.into_iter().collect(),
         thin_blob_deltas: Vec::new(),
+        blob_none_keep_roots: HashSet::new(),
     })
 }
 
@@ -674,19 +699,25 @@ fn write_pack_via_stdin_objects(
 }
 
 /// Apply `git pack-objects --filter=<spec>` (subset: `blob:none` for `gc.repackFilter` tests).
-fn apply_list_objects_filter(entries: &mut Vec<PackEntry>, filter: Option<&str>) {
+fn apply_list_objects_filter(
+    entries: &mut Vec<PackEntry>,
+    filter: Option<&str>,
+    blob_none_keep: &HashSet<ObjectId>,
+) {
     let Some(spec) = filter.map(str::trim).filter(|s| !s.is_empty()) else {
         return;
     };
     if spec == "blob:none" {
-        entries.retain(|e| e.kind != ObjectKind::Blob);
+        entries.retain(|e| e.kind != ObjectKind::Blob || blob_none_keep.contains(&e.oid));
     }
 }
 
 fn pack_all_use_reachable_closure_only(args: &Args) -> bool {
-    // Default `pack-objects --all` walks the full ODB (loose + all packs). The first pass of
-    // `repack --cruft` is the exception: it must match Git’s main pack (ref closure only).
-    args.reachability_all
+    // `git pack-objects --all` (non-incremental) enumerates the ref reachability closure, matching
+    // `git rev-list --objects --all` counts (`t5327` progress). A full loose+pack ODB scan would
+    // skip virtual objects like the canonical empty tree. `--reachability-all` remains accepted for
+    // explicit compatibility with older grit repack invocations.
+    !args.incremental || args.reachability_all
 }
 
 /// Collect object IDs from stdin or `--all`.
@@ -734,6 +765,7 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
         let mut exclude = BTreeSet::new();
         let mut post_not = false;
         let mut have_roots: BTreeSet<ObjectId> = BTreeSet::new();
+        let mut blob_none_keep_roots: HashSet<ObjectId> = HashSet::new();
         for line in stdin.lock().lines() {
             let line = line?;
             let trimmed = line.trim();
@@ -769,6 +801,11 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
                     resolve_revision(repo, trimmed)
                         .with_context(|| format!("cannot resolve ref '{trimmed}'"))?
                 };
+                if let Ok(obj) = read_object_from_repo(repo, &oid) {
+                    if obj.kind == ObjectKind::Blob {
+                        blob_none_keep_roots.insert(oid);
+                    }
+                }
                 walk_reachable(repo, &oid, &mut oids)?;
             }
         }
@@ -785,6 +822,7 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
         return Ok(PackObjectList {
             oids: oids.into_iter().collect(),
             thin_blob_deltas: Vec::new(),
+            blob_none_keep_roots,
         });
     } else if args.stdin_packs {
         // Read pack filenames from stdin and include all objects in those packs.
@@ -821,6 +859,7 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
         return Ok(PackObjectList {
             oids: oids.into_iter().collect(),
             thin_blob_deltas: Vec::new(),
+            blob_none_keep_roots: HashSet::new(),
         });
     } else if !args.all {
         // Git `pack-objects` stdin format (see git/builtin/pack-objects.c `read_object_list_from_stdin`):
@@ -870,6 +909,7 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
         return Ok(PackObjectList {
             oids: oids_ordered,
             thin_blob_deltas,
+            blob_none_keep_roots: HashSet::new(),
         });
     }
 
@@ -884,6 +924,7 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
     Ok(PackObjectList {
         oids: oids.into_iter().collect(),
         thin_blob_deltas: Vec::new(),
+        blob_none_keep_roots: HashSet::new(),
     })
 }
 
@@ -923,6 +964,7 @@ fn collect_incremental_repack_oids(repo: &Repository, args: &Args) -> Result<Pac
     Ok(PackObjectList {
         oids: ordered,
         thin_blob_deltas: Vec::new(),
+        blob_none_keep_roots: HashSet::new(),
     })
 }
 
@@ -1186,6 +1228,71 @@ fn read_object_from_pack(
     }
 }
 
+/// Blob OIDs reachable from commits/trees listed in `entries` (including nested trees), used as
+/// delta bases when those blobs are not themselves listed as pack inputs (`t5327` second pack).
+///
+/// Capped so `pack-objects` over large `--revs` closures does not walk every tree version in
+/// history and load every blob for prefix heuristics (`clone` / bitmap tests).
+fn blob_oids_referenced_by_packed_trees(
+    repo: &Repository,
+    entries: &[PackEntry],
+    max_blobs: usize,
+) -> Result<Vec<ObjectId>> {
+    let mut out = Vec::new();
+    let mut seen_blob: HashSet<ObjectId> = HashSet::new();
+    let mut seen_tree: HashSet<ObjectId> = HashSet::new();
+    let mut stack: Vec<ObjectId> = Vec::new();
+
+    for e in entries {
+        match e.kind {
+            ObjectKind::Commit => {
+                let c = parse_commit(&e.data).map_err(|e| anyhow::anyhow!("{e}"))?;
+                stack.push(c.tree);
+            }
+            ObjectKind::Tree => stack.push(e.oid),
+            _ => {}
+        }
+    }
+
+    while let Some(t_oid) = stack.pop() {
+        if !seen_tree.insert(t_oid) {
+            continue;
+        }
+        if let Some(te) = entries
+            .iter()
+            .find(|x| x.oid == t_oid && x.kind == ObjectKind::Tree)
+        {
+            for ent in parse_tree(&te.data).map_err(|e| anyhow::anyhow!("{e}"))? {
+                if out.len() >= max_blobs {
+                    return Ok(out);
+                }
+                if ent.mode == 0o040000 {
+                    stack.push(ent.oid);
+                } else if seen_blob.insert(ent.oid) {
+                    out.push(ent.oid);
+                }
+            }
+        } else {
+            let o = read_object_from_repo(repo, &t_oid)?;
+            if o.kind != ObjectKind::Tree {
+                continue;
+            }
+            for ent in parse_tree(&o.data).map_err(|e| anyhow::anyhow!("{e}"))? {
+                if out.len() >= max_blobs {
+                    return Ok(out);
+                }
+                if ent.mode == 0o040000 {
+                    stack.push(ent.oid);
+                } else if seen_blob.insert(ent.oid) {
+                    out.push(ent.oid);
+                }
+            }
+        }
+    }
+
+    Ok(out)
+}
+
 /// Prefer `REF_DELTA` when one blob is a strict prefix of another (same as Git's
 /// `create_delta` for the common “append bytes” case).
 ///
@@ -1222,6 +1329,29 @@ fn optimize_blob_deltas(
         .iter()
         .filter(|e| e.kind == ObjectKind::Blob)
         .collect();
+
+    // Tree-referenced blobs not listed as pack inputs (small packs only — see cap in collector).
+    const MAX_EXTERNAL_BLOB_OIDS: usize = 512;
+    let mut external_blob_bases: Vec<PackEntry> = Vec::new();
+    if max_delta_depth != Some(0) {
+        for oid in blob_oids_referenced_by_packed_trees(repo, &entries, MAX_EXTERNAL_BLOB_OIDS)? {
+            if packed_set.contains(&oid) {
+                continue;
+            }
+            let obj = read_object_from_repo(repo, &oid)?;
+            if obj.kind == ObjectKind::Blob {
+                external_blob_bases.push(PackEntry {
+                    oid,
+                    kind: ObjectKind::Blob,
+                    data: obj.data,
+                });
+            }
+            if external_blob_bases.len() >= MAX_EXTERNAL_BLOB_OIDS {
+                break;
+            }
+        }
+    }
+
     let mut delta_target_to_base: HashMap<ObjectId, ObjectId> = HashMap::new();
 
     if max_delta_depth != Some(0) {
@@ -1243,13 +1373,54 @@ fn optimize_blob_deltas(
                 }
             }
         }
+        // Prefer storing the shorter blob as a delta against the longer strict-prefix base
+        // (matches Git `pack-objects`: `t5327` have_delta / MIDX preferred-pack).
+        for s in blobs.iter().copied() {
+            if delta_target_to_base.contains_key(&s.oid) {
+                continue;
+            }
+            if s.data.is_empty() {
+                continue;
+            }
+            let mut best_longer: Option<&PackEntry> = None;
+            for l in blobs.iter().copied().chain(external_blob_bases.iter()) {
+                if l.oid == s.oid {
+                    continue;
+                }
+                if delta_target_to_base.contains_key(&l.oid) {
+                    continue;
+                }
+                if l.data.starts_with(&s.data)
+                    && l.data.len() > s.data.len()
+                    && best_longer.is_none_or(|bl| l.data.len() > bl.data.len())
+                {
+                    best_longer = Some(l);
+                }
+            }
+            if let Some(l) = best_longer {
+                delta_target_to_base.insert(s.oid, l.oid);
+            }
+        }
+        let long_bases_for_short: HashSet<ObjectId> =
+            delta_target_to_base.values().copied().collect();
         for t in &blobs {
             if delta_target_to_base.contains_key(&t.oid) {
                 continue;
             }
+            // After short→long pairing, the longer blob is the REF_DELTA base; do not invert it
+            // with the generic prefix pass (`t5327` first pack).
+            if long_bases_for_short.contains(&t.oid) {
+                continue;
+            }
+            // Same-pack bases only: pairing a longer blob against a shorter external prefix
+            // produces `RefDelta(longer, shorter)`, which `index-pack` cannot resolve when the
+            // shorter blob is omitted from the pack (`t5327` second pack lists only `b`).
             let mut best_base: Option<&PackEntry> = None;
-            for b in &blobs {
+            for b in blobs.iter().copied() {
                 if b.oid == t.oid {
+                    continue;
+                }
+                if delta_target_to_base.contains_key(&b.oid) {
                     continue;
                 }
                 if b.data.is_empty() {
@@ -1294,6 +1465,36 @@ fn optimize_blob_deltas(
         out.push(PackWriteEntry::Full(e.clone()));
     }
 
+    let full_oid_in_out: HashSet<ObjectId> = out
+        .iter()
+        .filter_map(|w| match w {
+            PackWriteEntry::Full(e) => Some(e.oid),
+            _ => None,
+        })
+        .collect();
+
+    let mut missing_base_oids: Vec<ObjectId> = delta_target_to_base
+        .values()
+        .copied()
+        .filter(|oid| !full_oid_in_out.contains(oid))
+        .collect();
+    missing_base_oids.sort_by_key(|o| o.to_hex());
+    missing_base_oids.dedup();
+    for base_oid in missing_base_oids {
+        let obj = read_object_from_repo(repo, &base_oid)?;
+        if obj.kind != ObjectKind::Blob {
+            bail!(
+                "REF_DELTA base {} is not a blob (missing from pack inputs)",
+                base_oid.to_hex()
+            );
+        }
+        out.push(PackWriteEntry::Full(PackEntry {
+            oid: base_oid,
+            kind: ObjectKind::Blob,
+            data: obj.data,
+        }));
+    }
+
     let mut new_deltas = 0usize;
     let mut reused_deltas = 0usize;
 
@@ -1320,6 +1521,8 @@ fn optimize_blob_deltas(
             if be.kind != ObjectKind::Blob {
                 bail!("delta base {} is not a blob", base_oid.to_hex());
             }
+            be.data.clone()
+        } else if let Some(be) = external_blob_bases.iter().find(|x| x.oid == base_oid) {
             be.data.clone()
         } else {
             let o = read_object_from_repo(repo, &base_oid)?;

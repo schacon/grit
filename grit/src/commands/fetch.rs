@@ -858,6 +858,7 @@ fn fetch_remote(
             upload_pack_cmd.as_deref(),
             compute_wants,
             has_cli_refspecs,
+            None::<&str>,
         )?;
         // If upload-pack advertised no branch tips (or negotiation returned early) but the remote
         // repository has `refs/heads/*` on disk, read them directly so `refs/remotes/` updates
@@ -3316,7 +3317,12 @@ fn configured_remote_base(git_dir: &Path) -> PathBuf {
 /// Resolve the git directory from CWD.
 fn resolve_git_dir() -> Result<PathBuf> {
     if let Ok(dir) = std::env::var("GIT_DIR") {
-        return Ok(PathBuf::from(dir));
+        let cwd = std::env::current_dir().context("cannot determine current directory")?;
+        let mut p = PathBuf::from(dir);
+        if p.is_relative() {
+            p = cwd.join(p);
+        }
+        return grit_lib::repo::resolve_git_directory_arg(&p).map_err(|e| anyhow::anyhow!(e));
     }
     let cwd = std::env::current_dir().context("cannot determine current directory")?;
     let mut cur = cwd.as_path();
@@ -3353,6 +3359,12 @@ fn resolve_git_dir() -> Result<PathBuf> {
 
 /// Check if a branch ref is checked out in any worktree, return the worktree path.
 fn is_branch_in_worktree(git_dir: &std::path::Path, branch_ref: &str) -> Option<String> {
+    // Bare repositories have no checked-out branch; `HEAD` is administrative only (`t5327`).
+    if let Ok(repo) = Repository::open(git_dir, None) {
+        if repo.is_bare() {
+            return None;
+        }
+    }
     let common = grit_lib::refs::common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf());
     // Check main worktree
     if let Ok(head) = grit_lib::state::resolve_head(&common) {

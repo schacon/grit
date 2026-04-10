@@ -380,7 +380,8 @@ fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()
 
     pkt_line::write_line(out, "packfile")?;
     let thin = !have_oids.is_empty();
-    let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(git_dir, thin)?;
+    let mut child =
+        crate::pack_objects_upload::spawn_pack_objects_upload(git_dir, thin, None::<&str>)?;
     {
         let mut pin = child
             .stdin

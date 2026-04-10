@@ -13,11 +13,11 @@ use anyhow::{bail, Context, Result};
 use grit_lib::diff::zero_oid;
 use grit_lib::fetch_negotiator::SkippingNegotiator;
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{peel_to_commit_for_merge_base, resolve_revision};
-use grit_lib::unpack_objects::{unpack_objects, UnpackOptions};
+use grit_lib::rev_parse::{
+    peel_to_commit_for_merge_base, resolve_revision, try_peel_to_commit_for_merge_base,
+};
 
 use crate::file_upload_pack_v2::{read_pkt_lines_until_flush, skip_v2_section_until_boundary};
 use crate::grit_exe::grit_executable;
@@ -29,11 +29,66 @@ thread_local! {
     static PACKET_TRACE_IDENTITY: Cell<&'static str> = const { Cell::new("fetch") };
 }
 
+/// Store a received pack as `objects/pack/pack-<hash>.{pack,idx}` (matches `git index-pack --stdin`).
+pub(crate) fn store_received_pack(local_git_dir: &Path, pack_buf: &[u8]) -> Result<()> {
+    if pack_buf.len() <= 12 {
+        return Ok(());
+    }
+    // `Repository::discover` walks from `current_dir`. A bare clone lives at `foo.git/` (not
+    // `foo/.git`); using the parent as cwd + `GIT_DIR=foo.git` would discover the enclosing
+    // repository instead (`trash/.git` during tests).
+    let (cwd, git_dir_env) = if local_git_dir.file_name().and_then(|s| s.to_str()) == Some(".git") {
+        (
+            local_git_dir
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf(),
+            local_git_dir.to_path_buf(),
+        )
+    } else {
+        (local_git_dir.to_path_buf(), local_git_dir.to_path_buf())
+    };
+    let mut child = Command::new(grit_executable())
+        .current_dir(cwd)
+        .env("GIT_DIR", git_dir_env)
+        .args(["index-pack", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("spawn grit index-pack --stdin")?;
+    let mut stdin = child.stdin.take().context("index-pack stdin")?;
+    stdin
+        .write_all(pack_buf)
+        .context("write pack to index-pack stdin")?;
+    drop(stdin);
+    let output = child.wait_with_output().context("wait for index-pack")?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "index-pack --stdin failed with status {}: {}",
+            output.status,
+            err.trim()
+        );
+    }
+    Ok(())
+}
+
 fn peel_commit_oid_for_negotiation(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
     peel_to_commit_for_merge_base(repo, oid).map_err(|e| match e {
         grit_lib::error::Error::InvalidRef(msg) => anyhow::anyhow!(msg),
         other => other.into(),
     })
+}
+
+/// Like [`peel_commit_oid_for_negotiation`], but refs that do not peel to a commit (e.g. tags to
+/// blobs) are ignored — they must not abort fetch negotiation (`t5327` `tagged-blob`).
+fn try_peel_commit_oid_for_negotiation(
+    repo: &Repository,
+    oid: ObjectId,
+) -> Result<Option<ObjectId>> {
+    try_peel_to_commit_for_merge_base(repo, oid).map_err(|e| e.into())
 }
 
 /// Split a simple upload-pack command string into leading `VAR=value` tokens (shell-style, no
@@ -192,9 +247,10 @@ fn parse_ref_advertisement_line(line: &str) -> Option<(ObjectId, String, &str)> 
 
 pub(crate) fn read_advertisement(
     child_stdout: &mut impl Read,
-) -> Result<(Vec<(String, ObjectId)>, Option<String>)> {
+) -> Result<(Vec<(String, ObjectId)>, Option<String>, bool)> {
     let mut out = Vec::new();
     let mut head_symref: Option<String> = None;
+    let mut filter_supported = false;
     loop {
         match pkt_line::read_packet(child_stdout)? {
             None => break,
@@ -218,12 +274,15 @@ pub(crate) fn read_advertisement(
                         }
                     }
                 }
+                if caps.split_whitespace().any(|c| c == "filter") {
+                    filter_supported = true;
+                }
                 out.push((refname, oid));
             }
             _ => {}
         }
     }
-    Ok((out, head_symref))
+    Ok((out, head_symref, filter_supported))
 }
 
 /// When the child speaks protocol v2, [`read_advertisement`] only skips capability lines and never
@@ -646,6 +705,7 @@ pub fn fetch_via_upload_pack_skipping(
     upload_pack_cmd: Option<&str>,
     compute_wants: impl FnOnce(&[(String, ObjectId)]) -> Result<Vec<ObjectId>>,
     has_cli_refspecs: bool,
+    list_objects_filter: Option<&str>,
 ) -> Result<(
     Vec<(String, ObjectId)>,
     Vec<(String, ObjectId)>,
@@ -659,7 +719,7 @@ pub fn fetch_via_upload_pack_skipping(
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 
     // Must match `spawn_upload_pack`: the child is always protocol v0 (`GIT_PROTOCOL` cleared).
-    let (mut advertised, head_symref) = read_advertisement(&mut stdout)?;
+    let (mut advertised, head_symref, filter_supported) = read_advertisement(&mut stdout)?;
     if !has_cli_refspecs {
         merge_remote_refs_into_upload_pack_advertisement(remote_repo_path, &mut advertised)?;
     }
@@ -720,12 +780,17 @@ pub fn fetch_via_upload_pack_skipping(
         .find(|(n, _)| n == "HEAD")
         .map(|(_, o)| *o);
 
+    let filter_spec = list_objects_filter
+        .filter(|_| filter_supported)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     let pack_buf = fetch_upload_pack_negotiate_pack_bytes_with_streams(
         local_git_dir,
         &advertised,
         &mut stdin,
         &mut stdout,
         &wants,
+        filter_spec,
     )?;
 
     let status = child.wait()?;
@@ -739,10 +804,9 @@ pub fn fetch_via_upload_pack_skipping(
         bail!("did not receive a pack file from upload-pack");
     }
 
-    let odb = Odb::new(&local_git_dir.join("objects"));
     if pack_buf.len() > 12 {
         append_pack_to_git_trace_packfile(&pack_buf)?;
-        unpack_objects(&mut pack_buf.as_slice(), &odb, &UnpackOptions::default())?;
+        store_received_pack(local_git_dir, &pack_buf)?;
     }
 
     Ok((remote_heads, remote_tags, head_symref, head_advertised_oid))
@@ -776,13 +840,14 @@ fn fetch_upload_pack_negotiate_pack_bytes(
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 
-    let (advertised, _head_symref) = read_advertisement(&mut stdout)?;
+    let (advertised, _head_symref, _filter_supported) = read_advertisement(&mut stdout)?;
     let pack_buf = fetch_upload_pack_negotiate_pack_bytes_with_streams(
         local_git_dir,
         &advertised,
         &mut stdin,
         &mut stdout,
         wants,
+        None::<&str>,
     )?;
 
     let status = child.wait()?;
@@ -805,6 +870,7 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     stdin: &mut impl Write,
     stdout: &mut impl Read,
     wants: &[ObjectId],
+    list_objects_filter: Option<&str>,
 ) -> Result<Vec<u8>> {
     let local_repo = Repository::open(local_git_dir, None)
         .with_context(|| format!("open local repository {}", local_git_dir.display()))?;
@@ -814,8 +880,13 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     let first_want = wants[0];
     let agent = crate::version_string();
     // Match `git fetch-pack` capability order on the first `want` line (see pkt traces in t5700).
+    let filter_cap = if list_objects_filter.is_some() {
+        " filter"
+    } else {
+        ""
+    };
     let caps = format!(
-        " multi_ack_detailed side-band-64k thin-pack no-progress include-tag ofs-delta deepen-since deepen-not agent=git/{agent}"
+        " multi_ack_detailed side-band-64k thin-pack no-progress include-tag ofs-delta deepen-since deepen-not agent=git/{agent}{filter_cap}"
     );
     let mut req = Vec::new();
     let w0 = format!("want {}{}", first_want.to_hex(), caps);
@@ -833,6 +904,11 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
         trace_packet_fetch('>', line.as_str());
         pkt_line::write_line_to_vec(&mut req, &line)?;
     }
+    if let Some(spec) = list_objects_filter {
+        let line = format!("filter {spec}");
+        trace_packet_fetch('>', line.as_str());
+        pkt_line::write_line_to_vec(&mut req, &line)?;
+    }
     req.extend_from_slice(b"0000");
     stdin.write_all(&req).context("write wants")?;
     stdin.flush()?;
@@ -847,16 +923,18 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
                 oid
             };
             if negotiator.repo().odb.read(&t).is_ok() {
-                let c = peel_commit_oid_for_negotiation(negotiator.repo(), t)?;
-                negotiator.add_tip(c)?;
+                if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), t)? {
+                    negotiator.add_tip(c)?;
+                }
             }
         }
     }
 
     for w in wants {
         if negotiator.repo().odb.read(w).is_ok() {
-            let c = peel_commit_oid_for_negotiation(negotiator.repo(), *w)?;
-            negotiator.add_tip(c)?;
+            if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), *w)? {
+                negotiator.add_tip(c)?;
+            }
         }
     }
 
@@ -872,19 +950,25 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
                 if negotiator.repo().odb.read(&tip).is_err() {
                     continue;
                 }
-                tips.push(peel_commit_oid_for_negotiation(negotiator.repo(), tip)?);
+                if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), tip)? {
+                    tips.push(c);
+                }
             }
         }
     }
     if let Ok(h) = refs::resolve_ref(local_git_dir, "HEAD") {
         if negotiator.repo().odb.read(&h).is_ok() {
-            tips.push(peel_commit_oid_for_negotiation(negotiator.repo(), h)?);
+            if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), h)? {
+                tips.push(c);
+            }
         }
     }
     for sym in ["HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] {
         if let Ok(oid) = resolve_revision(negotiator.repo(), sym) {
             if negotiator.repo().odb.read(&oid).is_ok() {
-                tips.push(peel_commit_oid_for_negotiation(negotiator.repo(), oid)?);
+                if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), oid)? {
+                    tips.push(c);
+                }
             }
         }
     }
@@ -907,8 +991,9 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
             continue;
         }
         if negotiator.repo().odb.read(oid).is_ok() {
-            let c = peel_commit_oid_for_negotiation(negotiator.repo(), *oid)?;
-            negotiator.known_common(c)?;
+            if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), *oid)? {
+                negotiator.known_common(c)?;
+            }
         }
     }
 
@@ -1100,7 +1185,7 @@ pub fn fetch_via_git_protocol_skipping(
         .replace('\n', "");
     trace_packet_fetch('>', &trace_show);
 
-    let (advertised, head_symref) = read_advertisement(&mut stream)?;
+    let (advertised, head_symref, _) = read_advertisement(&mut stream)?;
     if advertised.is_empty() {
         bail!("nothing to fetch (advertised 0 ref(s))");
     }
@@ -1137,16 +1222,16 @@ pub fn fetch_via_git_protocol_skipping(
         &mut stream_w,
         &mut stream,
         &wants,
+        None::<&str>,
     )?;
 
     if !pack_buf.is_empty() && (pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK") {
         bail!("did not receive a pack file from upload-pack");
     }
 
-    let odb = Odb::new(&local_git_dir.join("objects"));
     if pack_buf.len() > 12 {
         append_pack_to_git_trace_packfile(&pack_buf)?;
-        unpack_objects(&mut pack_buf.as_slice(), &odb, &UnpackOptions::default())?;
+        store_received_pack(local_git_dir, &pack_buf)?;
     }
 
     Ok((remote_heads, remote_tags, head_symref, head_advertised_oid))

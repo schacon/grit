@@ -22,7 +22,14 @@ fn resolve_hook_path(git_dir: &Path, hook: &str) -> PathBuf {
 ///
 /// When `thin` is true, omit objects the client already has (requires matching `have` lines).
 /// For a fetch/clone with no common objects, pass `false` so the pack is self-contained.
-pub fn spawn_pack_objects_upload(git_dir: &Path, thin: bool) -> Result<Child> {
+///
+/// When `list_objects_filter` is set (e.g. `blob:none`), forward `--filter` to `pack-objects`
+/// (`upload-pack` partial clone negotiation).
+pub fn spawn_pack_objects_upload(
+    git_dir: &Path,
+    thin: bool,
+    list_objects_filter: Option<&str>,
+) -> Result<Child> {
     let protected = ConfigSet::load_protected(true).unwrap_or_default();
     let hook_raw = protected.get("uploadpack.packobjectshook");
     let grit = grit_executable();
@@ -42,6 +49,9 @@ pub fn spawn_pack_objects_upload(git_dir: &Path, thin: bool) -> Result<Child> {
         c.arg("--stdout")
             .arg("--progress")
             .arg("--delta-base-offset");
+        if let Some(f) = list_objects_filter.filter(|s| !s.trim().is_empty()) {
+            c.arg(format!("--filter={f}"));
+        }
         c
     } else {
         let mut c = Command::new(&grit);
@@ -52,10 +62,17 @@ pub fn spawn_pack_objects_upload(git_dir: &Path, thin: bool) -> Result<Child> {
         c.arg("--stdout")
             .arg("--progress")
             .arg("--delta-base-offset");
+        if let Some(f) = list_objects_filter.filter(|s| !s.trim().is_empty()) {
+            c.arg(format!("--filter={f}"));
+        }
         c
     };
 
+    // Clear inherited `GIT_DIR` from the client (`git --git-dir=… fetch`); otherwise
+    // `current_dir(git_dir)` + relative `GIT_DIR` resolves under the wrong admin directory
+    // (e.g. remote `.git/clone.git` during upload-pack).
     cmd.current_dir(git_dir)
+        .env("GIT_DIR", git_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

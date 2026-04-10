@@ -12,7 +12,7 @@ use grit_lib::diff::zero_oid;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::promisor::{read_promisor_missing_oids, repo_treats_promisor_packs};
-use grit_lib::refs;
+use grit_lib::refs::{self, read_ref_file, Ref as ParsedRef};
 use grit_lib::reftable;
 use grit_lib::repo::{
     init_bare_clone_minimal, init_bare_with_env_worktree, init_repository,
@@ -426,6 +426,65 @@ fn checkout_head_allow_unborn(repo: &Repository) -> Result<()> {
     Ok(())
 }
 
+/// When cloning with `--filter=blob:none` and the source allows upload-pack filtering, negotiate
+/// the same filter over the v0 fetch protocol so `pack-objects` omits tree blobs (t5327).
+fn upload_pack_list_objects_filter_for_clone<'a>(
+    filter: Option<&'a str>,
+    source_git_dir: &Path,
+) -> Option<&'a str> {
+    if matches!(filter, Some("blob:none")) && uploadpack_filter_allowed(source_git_dir) {
+        filter
+    } else {
+        None
+    }
+}
+
+fn write_bare_clone_refs_after_upload_pack(
+    args: &Args,
+    dest_git_dir: &Path,
+    source_git_dir: &Path,
+    remote_url: &str,
+    remote_name: &str,
+    remote_heads: &[(String, ObjectId)],
+    remote_tags: &[(String, ObjectId)],
+    head_branch: &Option<String>,
+    head_oid: Option<ObjectId>,
+) -> Result<()> {
+    if args.mirror {
+        copy_refs_mirror_all(source_git_dir, dest_git_dir).context("copying mirror refs")?;
+        setup_remote_mirror_fetch_and_url(dest_git_dir, remote_url, remote_name)
+            .context("setting up mirror remote")?;
+    } else {
+        for (refname, oid) in remote_heads {
+            let dst_ref = dest_git_dir.join(refname);
+            if let Some(parent) = dst_ref.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
+        }
+        if !args.no_tags {
+            for (refname, oid) in remote_tags {
+                let dst_ref = dest_git_dir.join(refname);
+                if let Some(parent) = dst_ref.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
+            }
+        }
+        setup_origin_remote_bare_url(dest_git_dir, remote_url, remote_name)
+            .context("setting up origin remote")?;
+        if let Some(ref branch) = head_branch {
+            fs::write(
+                dest_git_dir.join("HEAD"),
+                format!("ref: refs/heads/{branch}\n"),
+            )?;
+        } else if let Some(oid) = head_oid {
+            fs::write(dest_git_dir.join("HEAD"), format!("{}\n", oid.to_hex()))?;
+        }
+    }
+    Ok(())
+}
+
 pub fn run(mut args: Args) -> Result<()> {
     // `git clone --mirror` is a bare clone into `<name>.git` with a full ref mirror;
     // the object store must live at `<repo>/objects/...`, not `<repo>/.git/objects/...`.
@@ -659,6 +718,8 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
+    // Local directory clones must record an absolute `remote.<name>.url` so later
+    // `git fetch` resolves the source repo from a bare `*.git` cwd (t5327).
     let remote_url_for_config = if is_file_url {
         if let Ok(abs) = source_path.canonicalize() {
             format!("file://{}", abs.display())
@@ -666,7 +727,10 @@ pub fn run(mut args: Args) -> Result<()> {
             args.repository.clone()
         }
     } else {
-        source_path.to_string_lossy().to_string()
+        let abs = source_path
+            .canonicalize()
+            .unwrap_or_else(|_| source_path.clone());
+        format!("{}/.", abs.display())
     };
 
     let use_upload_for_protocol_v1 = protocol_wire::effective_client_protocol_version() == 1
@@ -747,10 +811,24 @@ pub fn run(mut args: Args) -> Result<()> {
             ref_storage,
         )
         .with_context(|| format!("failed to initialize '{}'", target_path.display()))?
+    } else if args.bare {
+        init_repository(
+            &target_path,
+            true,
+            initial_branch,
+            template_dir.as_deref(),
+            ref_storage,
+        )
+        .with_context(|| {
+            format!(
+                "failed to initialize bare repository '{}'",
+                target_path.display()
+            )
+        })?
     } else {
         init_repository(
             &target_path,
-            args.bare,
+            false,
             initial_branch,
             template_dir.as_deref(),
             ref_storage,
@@ -774,6 +852,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 upload_cmd,
                 |adv| crate::fetch_transport::collect_wants(adv, &[]),
                 false,
+                upload_pack_list_objects_filter_for_clone(args.filter.as_deref(), &source.git_dir),
             )
         });
         match fetch_res {
@@ -785,54 +864,24 @@ pub fn run(mut args: Args) -> Result<()> {
                     determine_head_branch(&source.git_dir, args.branch.as_deref())?
                 } else {
                     guess_checkout_branch(
-                        &dest.git_dir,
+                        &source.git_dir,
                         source_head_symref.as_deref(),
                         source_head_oid.as_deref(),
                     )?
                 };
 
                 if args.bare {
-                    if args.mirror {
-                        copy_refs_mirror_all(&source.git_dir, &dest.git_dir)
-                            .context("copying mirror refs")?;
-                        setup_remote_mirror_fetch_and_url(
-                            &dest.git_dir,
-                            remote_url_for_config.as_str(),
-                            &remote_name,
-                        )
-                        .context("setting up mirror remote")?;
-                    } else {
-                        for (refname, oid) in &remote_heads {
-                            let dst_ref = dest.git_dir.join(refname);
-                            if let Some(parent) = dst_ref.parent() {
-                                fs::create_dir_all(parent)?;
-                            }
-                            fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
-                        }
-                        if !args.no_tags {
-                            for (refname, oid) in &remote_tags {
-                                let dst_ref = dest.git_dir.join(refname);
-                                if let Some(parent) = dst_ref.parent() {
-                                    fs::create_dir_all(parent)?;
-                                }
-                                fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
-                            }
-                        }
-                        setup_origin_remote_bare_url(
-                            &dest.git_dir,
-                            remote_url_for_config.as_str(),
-                            &remote_name,
-                        )
-                        .context("setting up origin remote")?;
-                        if let Some(ref branch) = head_branch {
-                            fs::write(
-                                dest.git_dir.join("HEAD"),
-                                format!("ref: refs/heads/{branch}\n"),
-                            )?;
-                        } else if let Some(ref oid) = source_head_oid {
-                            fs::write(dest.git_dir.join("HEAD"), format!("{oid}\n"))?;
-                        }
-                    }
+                    write_bare_clone_refs_after_upload_pack(
+                        &args,
+                        &dest.git_dir,
+                        &source.git_dir,
+                        remote_url_for_config.as_str(),
+                        &remote_name,
+                        &remote_heads,
+                        &remote_tags,
+                        &head_branch,
+                        head_oid,
+                    )?;
                 } else {
                     copy_refs_from_upload_pack_lists(
                         &dest.git_dir,
@@ -928,9 +977,34 @@ pub fn run(mut args: Args) -> Result<()> {
             upload_cmd,
             |adv| crate::fetch_transport::collect_wants(adv, &[]),
             false,
+            upload_pack_list_objects_filter_for_clone(args.filter.as_deref(), &source.git_dir),
         ) {
-            Ok(_) => {
+            Ok((remote_heads, remote_tags, adv_sym, head_oid)) => {
                 propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
+                if args.bare {
+                    source_head_symref = adv_sym;
+                    source_head_oid = head_oid.map(|o| o.to_hex());
+                    let hb = if args.branch.is_some() {
+                        determine_head_branch(&source.git_dir, args.branch.as_deref())?
+                    } else {
+                        guess_checkout_branch(
+                            &source.git_dir,
+                            source_head_symref.as_deref(),
+                            source_head_oid.as_deref(),
+                        )?
+                    };
+                    write_bare_clone_refs_after_upload_pack(
+                        &args,
+                        &dest.git_dir,
+                        &source.git_dir,
+                        remote_url_for_config.as_str(),
+                        &remote_name,
+                        &remote_heads,
+                        &remote_tags,
+                        &hb,
+                        head_oid,
+                    )?;
+                }
             }
             Err(e) => {
                 let _ = fs::remove_dir_all(&target_path);
@@ -1331,10 +1405,24 @@ fn run_git_clone(args: Args) -> Result<()> {
         })?;
         Repository::open(&target_path, None)
             .with_context(|| format!("failed to open repository '{}'", target_path.display()))?
+    } else if args.bare {
+        init_repository(
+            &target_path,
+            true,
+            initial_branch,
+            template_dir.as_deref(),
+            ref_storage,
+        )
+        .with_context(|| {
+            format!(
+                "failed to initialize bare repository '{}'",
+                target_path.display()
+            )
+        })?
     } else {
         init_repository(
             &target_path,
-            args.bare,
+            false,
             initial_branch,
             template_dir.as_deref(),
             ref_storage,
@@ -1587,10 +1675,24 @@ fn run_ext_clone(args: Args) -> Result<()> {
         })?;
         Repository::open(&target_path, None)
             .with_context(|| format!("failed to open repository '{}'", target_path.display()))?
+    } else if args.bare {
+        init_repository(
+            &target_path,
+            true,
+            initial_branch,
+            template_dir.as_deref(),
+            ref_storage,
+        )
+        .with_context(|| {
+            format!(
+                "failed to initialize bare repository '{}'",
+                target_path.display()
+            )
+        })?
     } else {
         init_repository(
             &target_path,
-            args.bare,
+            false,
             initial_branch,
             template_dir.as_deref(),
             ref_storage,
@@ -1858,10 +1960,24 @@ fn run_http_clone(args: Args) -> Result<()> {
         })?;
         Repository::open(&target_path, None)
             .with_context(|| format!("failed to open repository '{}'", target_path.display()))?
+    } else if args.bare {
+        init_repository(
+            &target_path,
+            true,
+            &initial_branch,
+            template_dir.as_deref(),
+            ref_storage,
+        )
+        .with_context(|| {
+            format!(
+                "failed to initialize bare repository '{}'",
+                target_path.display()
+            )
+        })?
     } else {
         init_repository(
             &target_path,
-            args.bare,
+            false,
             &initial_branch,
             template_dir.as_deref(),
             ref_storage,
@@ -2375,10 +2491,24 @@ fn run_ssh_clone(args: Args) -> Result<()> {
             ref_storage,
         )
         .with_context(|| format!("failed to initialize '{}'", target_path.display()))?
+    } else if args.bare {
+        init_repository(
+            &target_path,
+            true,
+            initial_branch,
+            template_dir.as_deref(),
+            ref_storage,
+        )
+        .with_context(|| {
+            format!(
+                "failed to initialize bare repository '{}'",
+                target_path.display()
+            )
+        })?
     } else {
         init_repository(
             &target_path,
-            args.bare,
+            false,
             initial_branch,
             template_dir.as_deref(),
             ref_storage,
@@ -2401,6 +2531,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                 upload_cmd,
                 |adv| crate::fetch_transport::collect_wants(adv, &[]),
                 false,
+                upload_pack_list_objects_filter_for_clone(args.filter.as_deref(), &source.git_dir),
             )
         });
         match fetch_res {
@@ -2412,54 +2543,24 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                     determine_head_branch(&source.git_dir, args.branch.as_deref())?
                 } else {
                     guess_checkout_branch(
-                        &dest.git_dir,
+                        &source.git_dir,
                         source_head_symref.as_deref(),
                         source_head_oid.as_deref(),
                     )?
                 };
 
                 if args.bare {
-                    if args.mirror {
-                        copy_refs_mirror_all(&source.git_dir, &dest.git_dir)
-                            .context("copying mirror refs")?;
-                        setup_remote_mirror_fetch_and_url(
-                            &dest.git_dir,
-                            remote_url_for_config.as_str(),
-                            &remote_name,
-                        )
-                        .context("setting up mirror remote")?;
-                    } else {
-                        for (refname, oid) in &remote_heads {
-                            let dst_ref = dest.git_dir.join(refname);
-                            if let Some(parent) = dst_ref.parent() {
-                                fs::create_dir_all(parent)?;
-                            }
-                            fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
-                        }
-                        if !args.no_tags {
-                            for (refname, oid) in &remote_tags {
-                                let dst_ref = dest.git_dir.join(refname);
-                                if let Some(parent) = dst_ref.parent() {
-                                    fs::create_dir_all(parent)?;
-                                }
-                                fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
-                            }
-                        }
-                        setup_origin_remote_bare_url(
-                            &dest.git_dir,
-                            remote_url_for_config.as_str(),
-                            &remote_name,
-                        )
-                        .context("setting up origin remote")?;
-                        if let Some(ref branch) = head_branch {
-                            fs::write(
-                                dest.git_dir.join("HEAD"),
-                                format!("ref: refs/heads/{branch}\n"),
-                            )?;
-                        } else if let Some(ref oid) = source_head_oid {
-                            fs::write(dest.git_dir.join("HEAD"), format!("{oid}\n"))?;
-                        }
-                    }
+                    write_bare_clone_refs_after_upload_pack(
+                        &args,
+                        &dest.git_dir,
+                        &source.git_dir,
+                        remote_url_for_config.as_str(),
+                        &remote_name,
+                        &remote_heads,
+                        &remote_tags,
+                        &head_branch,
+                        head_oid,
+                    )?;
                 } else {
                     copy_refs_from_upload_pack_lists(
                         &dest.git_dir,
@@ -2549,9 +2650,34 @@ fn run_ssh_clone(args: Args) -> Result<()> {
             upload_cmd,
             |adv| crate::fetch_transport::collect_wants(adv, &[]),
             false,
+            upload_pack_list_objects_filter_for_clone(args.filter.as_deref(), &source.git_dir),
         ) {
-            Ok(_) => {
+            Ok((remote_heads, remote_tags, adv_sym, head_oid)) => {
                 propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
+                if args.bare {
+                    source_head_symref = adv_sym;
+                    source_head_oid = head_oid.map(|o| o.to_hex());
+                    let hb = if args.branch.is_some() {
+                        determine_head_branch(&source.git_dir, args.branch.as_deref())?
+                    } else {
+                        guess_checkout_branch(
+                            &source.git_dir,
+                            source_head_symref.as_deref(),
+                            source_head_oid.as_deref(),
+                        )?
+                    };
+                    write_bare_clone_refs_after_upload_pack(
+                        &args,
+                        &dest.git_dir,
+                        &source.git_dir,
+                        remote_url_for_config.as_str(),
+                        &remote_name,
+                        &remote_heads,
+                        &remote_tags,
+                        &hb,
+                        head_oid,
+                    )?;
+                }
             }
             Err(e) => {
                 let _ = fs::remove_dir_all(&target_path);
@@ -4019,6 +4145,8 @@ fn materialize_blob_none_partial_layout(dest: &Repository) -> Result<()> {
     let alt = dest.git_dir.join("objects/info/alternates");
     let _ = fs::remove_file(&alt);
 
+    let keep_direct_refs = direct_ref_target_oids(&dest.git_dir)?;
+
     let (skeleton, blobs) = collect_reachable_skeleton_and_blobs(dest)?;
 
     for oid in &skeleton {
@@ -4029,18 +4157,14 @@ fn materialize_blob_none_partial_layout(dest: &Repository) -> Result<()> {
         let _ = dest.odb.write(obj.kind, &obj.data)?;
     }
 
-    let pack_dir = dest.git_dir.join("objects/pack");
-    if pack_dir.is_dir() {
-        for entry in fs::read_dir(&pack_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() {
-                let _ = fs::remove_file(&path);
-            }
-        }
-    }
+    // Keep `objects/pack/*.pack` from the fetch/clone (e.g. `--filter=blob:none`); tests such as
+    // t5327 `verify-pack` expect a pack file to remain. Removing packs here left bare promisor
+    // clones with an empty ODB after stripping tree blobs.
 
     for oid in &blobs {
+        if keep_direct_refs.contains(oid) {
+            continue;
+        }
         let hex = oid.to_hex();
         if hex.len() < 3 {
             continue;
@@ -4050,6 +4174,25 @@ fn materialize_blob_none_partial_layout(dest: &Repository) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// OIDs stored as direct (non-symbolic) refs, e.g. `refs/tags/foo` → blob (t5327 `tagged-blob`).
+fn direct_ref_target_oids(git_dir: &Path) -> Result<HashSet<ObjectId>> {
+    let mut out = HashSet::new();
+    let head_path = git_dir.join("HEAD");
+    if let Ok(ParsedRef::Direct(oid)) = read_ref_file(&head_path) {
+        out.insert(oid);
+    }
+    for prefix in ["refs/heads/", "refs/tags/", "refs/remotes/"] {
+        let refs = grit_lib::refs::list_refs(git_dir, prefix)?;
+        for (name, _) in refs {
+            let path = git_dir.join(&name);
+            if let Ok(ParsedRef::Direct(oid)) = read_ref_file(&path) {
+                out.insert(oid);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Walk all refs and partition reachable objects into commits+trees vs blobs.
@@ -4879,8 +5022,17 @@ fn run_bundle_clone(args: Args) -> Result<()> {
 
     // Initialize target repo
     fs::create_dir_all(&target_path)?;
-    let dest = init_repository(&target_path, args.bare, &head_branch, None, ref_storage)
-        .with_context(|| format!("failed to initialize '{}'", target_path.display()))?;
+    let dest = if args.bare {
+        init_repository(&target_path, true, &head_branch, None, ref_storage).with_context(|| {
+            format!(
+                "failed to initialize bare repository '{}'",
+                target_path.display()
+            )
+        })?
+    } else {
+        init_repository(&target_path, false, &head_branch, None, ref_storage)
+            .with_context(|| format!("failed to initialize '{}'", target_path.display()))?
+    };
 
     // Unbundle pack data
     let pack_data = &data[pos..];

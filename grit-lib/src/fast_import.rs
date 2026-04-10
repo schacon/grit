@@ -17,7 +17,8 @@ use crate::objects::{
     parse_commit, serialize_commit, serialize_tag, CommitData, ObjectId, ObjectKind, TagData,
 };
 use crate::refs::{
-    append_reflog, resolve_ref, should_autocreate_reflog_for_mode, write_ref, LogRefsConfig,
+    append_reflog, read_head, resolve_ref, should_autocreate_reflog_for_mode, write_ref,
+    LogRefsConfig,
 };
 use crate::repo::Repository;
 use crate::rev_parse::resolve_revision;
@@ -114,6 +115,29 @@ impl<'a, R: BufRead> Importer<'a, R> {
             );
         }
         Ok(())
+    }
+
+    /// Apply a fast-import update for `refname`, treating symbolic `HEAD` like Git's harness.
+    ///
+    /// When `refname` is `HEAD` and `HEAD` points at `refs/heads/<branch>`, update that branch
+    /// and keep `HEAD` symbolic. Writing a raw OID into `HEAD` would detach it and break helpers
+    /// such as `test_commit_bulk` followed by `git branch -M` (e.g. t5327 with
+    /// `GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME`).
+    fn update_ref_for_fast_import(
+        &self,
+        refname: &str,
+        new_oid: &ObjectId,
+        identity: &str,
+        message: &str,
+    ) -> Result<()> {
+        if refname == "HEAD" {
+            if let Some(target) = read_head(&self.repo.git_dir)? {
+                if target.starts_with("refs/heads/") {
+                    return self.update_ref_with_reflog(&target, new_oid, identity, message);
+                }
+            }
+        }
+        self.update_ref_with_reflog(refname, new_oid, identity, message)
     }
 
     /// Read a `data` command body: either `data <n>` (exact bytes) or `data <<delim>` (line-delimited).
@@ -655,7 +679,7 @@ impl<'a, R: BufRead> Importer<'a, R> {
                 }
             }
         }
-        self.update_ref_with_reflog(refname, &commit_oid, &reflog_identity, "fast-import")?;
+        self.update_ref_for_fast_import(refname, &commit_oid, &reflog_identity, "fast-import")?;
         Ok(())
     }
 
@@ -785,7 +809,7 @@ impl<'a, R: BufRead> Importer<'a, R> {
                 }
             }
             let ident = Self::fast_import_reflog_identity_from_env();
-            self.update_ref_with_reflog(refname, &oid, &ident, "fast-import")?;
+            self.update_ref_for_fast_import(refname, &oid, &ident, "fast-import")?;
             return Ok(());
         }
         self.stashed_line = Some(line);

@@ -4,7 +4,7 @@
 //! negotiates want/have (protocol v0, `multi_ack_detailed`), then streams a
 //! packfile (side-band-64k) to the client.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::zero_oid;
@@ -89,6 +89,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut stdin = io::stdin();
     let mut wants: Vec<ObjectId> = Vec::new();
     let mut multi_ack_detailed = false;
+    let mut list_objects_filter: Option<String> = None;
 
     loop {
         match pkt_line::read_packet(&mut stdin)? {
@@ -104,6 +105,11 @@ pub fn run(args: Args) -> Result<()> {
                     if let Ok(oid) = ObjectId::from_hex(hex) {
                         wants.push(oid);
                     }
+                } else if let Some(spec) = line.strip_prefix("filter ") {
+                    if list_objects_filter.is_some() {
+                        bail!("duplicate filter line from fetch client");
+                    }
+                    list_objects_filter = Some(spec.trim().to_owned());
                 }
             }
             _ => {}
@@ -198,7 +204,11 @@ pub fn run(args: Args) -> Result<()> {
         crate::pack_objects_upload::write_sideband_64k(&mut out, &pack)?;
     } else {
         let thin = !client_have_commits.is_empty();
-        let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(&repo.git_dir, thin)?;
+        let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(
+            &repo.git_dir,
+            thin,
+            list_objects_filter.as_deref(),
+        )?;
         {
             let mut pin = child.stdin.take().context("pack-objects stdin")?;
             crate::pack_objects_upload::write_pack_objects_revs_stdin(

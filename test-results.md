@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-09 (t5327 / multi-pack bitmaps .rev)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t5327-multi-pack-bitmaps-rev.sh`: 314/314 passed
+
 **2026-04-09 (t4063 / diff blobs)**
 
 - `cargo test -p grit-lib --lib`: 155 passed

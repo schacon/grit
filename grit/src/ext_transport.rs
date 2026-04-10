@@ -9,8 +9,6 @@ use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
-use grit_lib::unpack_objects::{unpack_objects, UnpackOptions};
 
 use crate::fetch_transport;
 use crate::grit_exe::grit_executable;
@@ -328,7 +326,7 @@ pub fn fetch_via_ext_skipping(
         write_git_daemon_request(&mut stdin, service, repo_path, spec.git_vhost.as_deref())?;
     }
 
-    let (advertised, head_symref) = fetch_transport::read_advertisement(&mut stdout)?;
+    let (advertised, head_symref, _) = fetch_transport::read_advertisement(&mut stdout)?;
     let wants = compute_wants(&advertised)?;
     if wants.is_empty() {
         if refspecs.is_empty() && advertised.is_empty() {
@@ -387,6 +385,7 @@ pub fn fetch_via_ext_skipping(
         &mut stdin,
         &mut stdout,
         &wants,
+        None::<&str>,
     )?;
 
     let status = child.wait()?;
@@ -398,9 +397,8 @@ pub fn fetch_via_ext_skipping(
         bail!("did not receive a pack file from ext:: transport");
     }
 
-    let odb = Odb::new(&local_git_dir.join("objects"));
     if pack_buf.len() > 12 {
-        unpack_objects(&mut pack_buf.as_slice(), &odb, &UnpackOptions::default())?;
+        fetch_transport::store_received_pack(local_git_dir, &pack_buf)?;
     }
 
     Ok((remote_heads, remote_tags, head_symref, head_advertised_oid))

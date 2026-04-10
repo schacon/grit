@@ -4505,7 +4505,8 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 },
                 "read-midx" => {
                     use grit_lib::midx::{
-                        format_midx_dump, midx_checksum_hex, read_midx_preferred_idx_name,
+                        format_midx_dump, format_midx_show_objects, midx_checksum_hex,
+                        read_midx_preferred_idx_name,
                     };
                     let sub = rest.get(1).map(|s| s.as_str()).unwrap_or("");
                     match sub {
@@ -4526,7 +4527,12 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                             println!("{h}");
                         }
                         "--show-objects" => {
-                            bail!("test-tool read-midx --show-objects is not implemented");
+                            let dir = rest.get(2).map(Path::new).context(
+                                "usage: test-tool read-midx --show-objects <object-dir>",
+                            )?;
+                            let s = format_midx_show_objects(dir)
+                                .map_err(|e| anyhow::anyhow!("{e}"))?;
+                            print!("{s}");
                         }
                         "--bitmap" => {
                             let dir = rest

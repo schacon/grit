@@ -9,6 +9,7 @@ use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::midx::{write_multi_pack_index_with_options, WriteMultiPackIndexOptions};
 use grit_lib::repo::Repository;
 use std::fs;
+use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -45,6 +46,15 @@ pub struct WriteArgs {
     /// Write placeholder bitmap sidecar (compat with Git `--bitmap`).
     #[arg(long)]
     pub bitmap: bool,
+    /// Omit bitmap / `.rev` sidecars even when `--bitmap` would write them.
+    #[arg(long = "no-bitmap")]
+    pub no_bitmap: bool,
+    /// Read `pack-*.idx` basenames from stdin (one per line) instead of scanning the pack dir.
+    #[arg(long = "stdin-packs")]
+    pub stdin_packs: bool,
+    /// Prefer this pack's copy when an object appears in multiple packs (`pack-<hash>.idx` or `.pack`).
+    #[arg(long = "preferred-pack", value_name = "NAME")]
+    pub preferred_pack: Option<String>,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -102,18 +112,44 @@ pub fn run_from_argv(argv: &[String]) -> Result<()> {
         "write" => {
             let mut incremental = false;
             let mut bitmap = false;
-            for a in rest.iter().skip(1) {
-                match a.as_str() {
+            let mut no_bitmap = false;
+            let mut stdin_packs = false;
+            let mut preferred_pack: Option<String> = None;
+            let mut i = 1usize;
+            while i < rest.len() {
+                let a = rest[i].as_str();
+                match a {
                     "--incremental" => incremental = true,
                     "--bitmap" => bitmap = true,
+                    "--no-bitmap" => no_bitmap = true,
+                    "--stdin-packs" => stdin_packs = true,
+                    other if other.starts_with("--preferred-pack=") => {
+                        preferred_pack = Some(
+                            other
+                                .strip_prefix("--preferred-pack=")
+                                .unwrap_or("")
+                                .to_string(),
+                        );
+                    }
+                    "--preferred-pack" => {
+                        let Some(v) = rest.get(i + 1) else {
+                            bail!("--preferred-pack requires a value");
+                        };
+                        preferred_pack = Some(v.clone());
+                        i += 1;
+                    }
                     other => bail!("unsupported multi-pack-index write option: {other}"),
                 }
+                i += 1;
             }
             cmd_write(
                 &repo,
                 &WriteArgs {
                     incremental,
                     bitmap,
+                    no_bitmap,
+                    stdin_packs,
+                    preferred_pack,
                 },
             )
         }
@@ -154,13 +190,41 @@ fn pack_dir(repo: &Repository) -> PathBuf {
 
 fn cmd_write(repo: &Repository, args: &WriteArgs) -> Result<()> {
     let write_rev = std::env::var("GIT_TEST_MIDX_WRITE_REV").ok().as_deref() == Some("1");
+    let explicit_indexes = if args.stdin_packs {
+        let stdin = io::stdin();
+        let mut names = Vec::new();
+        for line in stdin.lock().lines() {
+            let line = line?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let name = if trimmed.ends_with(".idx") {
+                trimmed.to_string()
+            } else if trimmed.ends_with(".pack") {
+                format!("{}idx", trimmed.strip_suffix(".pack").unwrap_or(trimmed))
+            } else {
+                format!("{trimmed}.idx")
+            };
+            if !name.starts_with("pack-") || !name.ends_with(".idx") {
+                bail!("invalid pack index name on stdin: {trimmed}");
+            }
+            names.push(name);
+        }
+        Some(names)
+    } else {
+        None
+    };
+    let write_bitmaps = args.bitmap && !args.no_bitmap;
     write_multi_pack_index_with_options(
         &pack_dir(repo),
         &WriteMultiPackIndexOptions {
             preferred_pack_idx: None,
-            write_bitmap_placeholders: args.bitmap,
+            preferred_pack_spec: args.preferred_pack.clone(),
+            explicit_pack_indexes: explicit_indexes,
+            write_bitmap_placeholders: write_bitmaps,
             incremental: args.incremental,
-            write_rev_placeholder: write_rev,
+            write_rev_placeholder: write_rev && write_bitmaps,
         },
     )
     .map_err(|e| anyhow::anyhow!("{e}"))

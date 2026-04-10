@@ -31,6 +31,11 @@ const MIDX_CHUNKID_OIDLOOKUP: u32 = 0x4f49_444c;
 const MIDX_CHUNKID_OBJECTOFFSETS: u32 = 0x4f4f_4646;
 const MIDX_CHUNKID_REVINDEX: u32 = 0x5249_4458;
 
+// Git `pack-revindex.h` / `pack-write.c` (standalone `.rev` next to MIDX).
+const RIDX_SIGNATURE: u32 = 0x5249_4458;
+const RIDX_VERSION: u32 = 1;
+const RIDX_HEADER_SIZE: usize = 12;
+
 // `git midx.h` (MIDX_LARGE_OFFSET_NEEDED).
 const MIDX_LARGE_OFFSET_NEEDED: u32 = 0x8000_0000;
 
@@ -46,6 +51,12 @@ pub struct WriteMultiPackIndexOptions {
     /// When set, objects also present in other packs are taken from this pack
     /// (`pack_names` index in the sorted name list).
     pub preferred_pack_idx: Option<u32>,
+    /// Basename like `pack-abc.pack` or `pack-abc.idx` resolved against `work_names` after the
+    /// pack list is known (`git multi-pack-index write --preferred-pack=…`).
+    pub preferred_pack_spec: Option<String>,
+    /// When set, build the MIDX from exactly these `pack-*.idx` basenames (preserves order;
+    /// `git multi-pack-index write --stdin-packs`).
+    pub explicit_pack_indexes: Option<Vec<String>>,
     /// When true, append RIDX + empty BTMP chunks so `test-tool read-midx --bitmap` succeeds.
     pub write_bitmap_placeholders: bool,
     /// When true, write a new layer in `multi-pack-index.d/` and extend the chain file
@@ -289,7 +300,8 @@ fn build_midx_bytes(
     indexes: &[PackIndex],
     preferred_idx: Option<usize>,
     write_bitmap_placeholders: bool,
-) -> Result<Vec<u8>> {
+    omit_embedded_ridx_chunk: bool,
+) -> Result<(Vec<u8>, Option<Vec<u32>>)> {
     let preferred_pack_idx = preferred_idx.map(|p| p as u32);
 
     let mut best: HashMap<ObjectId, (u32, u64)> = HashMap::new();
@@ -394,6 +406,12 @@ fn build_midx_bytes(
         chunk_ridx.extend_from_slice(&oid_idx.to_be_bytes());
     }
 
+    let rev_sidecar_order = if omit_embedded_ridx_chunk && write_bitmap_placeholders {
+        Some(order.clone())
+    } else {
+        None
+    };
+
     const MIDX_CHUNKID_BITMAPPEDPACKS: u32 = 0x4254_4d50;
     let chunk_btmp: Vec<u8> = if write_bitmap_placeholders {
         let mut v = Vec::new();
@@ -415,7 +433,7 @@ fn build_midx_bytes(
         (MIDX_CHUNKID_OIDLOOKUP, chunk_oidl),
         (MIDX_CHUNKID_OBJECTOFFSETS, chunk_ooff),
     ];
-    if pref.is_some() || write_bitmap_placeholders {
+    if (pref.is_some() || write_bitmap_placeholders) && !omit_embedded_ridx_chunk {
         chunks.push((MIDX_CHUNKID_REVINDEX, chunk_ridx));
     }
     if write_bitmap_placeholders {
@@ -457,7 +475,24 @@ fn build_midx_bytes(
     let hash = hasher.finalize();
     out.extend_from_slice(&hash);
 
-    Ok(out)
+    Ok((out, rev_sidecar_order))
+}
+
+/// Standalone MIDX `.rev` file (Git `write_rev_file_order` / `RIDX_SIGNATURE`).
+fn write_midx_rev_sidecar(
+    path: &Path,
+    pack_order: &[u32],
+    midx_file_hash: &[u8; 20],
+) -> Result<()> {
+    let mut body = Vec::with_capacity(RIDX_HEADER_SIZE + pack_order.len() * 4 + 20);
+    body.extend_from_slice(&RIDX_SIGNATURE.to_be_bytes());
+    body.extend_from_slice(&RIDX_VERSION.to_be_bytes());
+    body.extend_from_slice(&1u32.to_be_bytes());
+    for idx in pack_order {
+        body.extend_from_slice(&idx.to_be_bytes());
+    }
+    body.extend_from_slice(midx_file_hash);
+    fs::write(path, body).map_err(Error::Io)
 }
 
 fn find_chunk(data: &[u8], header_end: usize, chunk_id: u32) -> Result<(usize, usize)> {
@@ -515,6 +550,43 @@ pub fn midx_checksum_hex(objects_dir: &Path) -> Result<String> {
 }
 
 /// Human-readable dump of the MIDX (matches `test-tool read-midx` layout closely enough for grep-based tests).
+/// Emit one line per MIDX object: `{oid} {offset}\t{pack-idx-name}` (matches Git `test-read-midx.c`).
+pub fn format_midx_show_objects(objects_dir: &Path) -> Result<String> {
+    let mut out = format_midx_dump(objects_dir)?;
+    let pack_dir = objects_dir.join("pack");
+    let path = resolve_tip_midx_path(&pack_dir)
+        .ok_or_else(|| Error::CorruptObject("no multi-pack-index found".to_owned()))?;
+    let data = fs::read(&path).map_err(Error::Io)?;
+    let (_, hdr_end) = parse_midx_header(&data)?;
+    let (pn_off, pn_len) = find_chunk(&data, hdr_end, MIDX_CHUNKID_PACKNAMES)?;
+    let names = parse_pack_names_blob(&data[pn_off..pn_off + pn_len])?;
+    let (oidl_off, oidl_len) = find_chunk(&data, hdr_end, MIDX_CHUNKID_OIDLOOKUP)?;
+    let (ooff_off, ooff_len) = find_chunk(&data, hdr_end, MIDX_CHUNKID_OBJECTOFFSETS)?;
+    if oidl_len % 20 != 0 || ooff_len % 8 != 0 {
+        return Err(Error::CorruptObject(
+            "bad MIDX oid-lookup / object-offsets size".to_owned(),
+        ));
+    }
+    let num = oidl_len / 20;
+    if num * 8 != ooff_len {
+        return Err(Error::CorruptObject(
+            "MIDX oid count does not match object-offsets".to_owned(),
+        ));
+    }
+    for i in 0..num {
+        let oid = ObjectId::from_bytes(&data[oidl_off + i * 20..oidl_off + (i + 1) * 20])
+            .map_err(|e| Error::CorruptObject(e.to_string()))?;
+        let base = ooff_off + i * 8;
+        let pack_id = u32::from_be_bytes(data[base..base + 4].try_into().unwrap()) as usize;
+        let offset = u32::from_be_bytes(data[base + 4..base + 8].try_into().unwrap()) as u64;
+        let pack_name = names
+            .get(pack_id)
+            .ok_or_else(|| Error::CorruptObject("pack id out of range in MIDX".to_owned()))?;
+        out.push_str(&format!("{} {}\t{}\n", oid.to_hex(), offset, pack_name));
+    }
+    Ok(out)
+}
+
 pub fn format_midx_dump(objects_dir: &Path) -> Result<String> {
     let pack_dir = objects_dir.join("pack");
     let path = resolve_tip_midx_path(&pack_dir)
@@ -634,19 +706,33 @@ pub fn write_multi_pack_index_with_options(
     pack_dir: &Path,
     opts: &WriteMultiPackIndexOptions,
 ) -> Result<()> {
-    let mut idx_names: Vec<String> = fs::read_dir(pack_dir)
-        .map_err(Error::Io)?
-        .filter_map(|e| e.ok())
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            if name.ends_with(".idx") && name.starts_with("pack-") {
-                Some(name)
-            } else {
-                None
+    let idx_names: Vec<String> = if let Some(explicit) = &opts.explicit_pack_indexes {
+        for n in explicit {
+            let path = pack_dir.join(n);
+            if !path.is_file() {
+                return Err(Error::CorruptObject(format!(
+                    "pack index not found: {}",
+                    path.display()
+                )));
             }
-        })
-        .collect();
-    idx_names.sort();
+        }
+        explicit.clone()
+    } else {
+        let mut names: Vec<String> = fs::read_dir(pack_dir)
+            .map_err(Error::Io)?
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.ends_with(".idx") && name.starts_with("pack-") {
+                    Some(name)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        names.sort();
+        names
+    };
 
     if idx_names.is_empty() {
         return Err(Error::CorruptObject(
@@ -685,6 +771,19 @@ pub fn write_multi_pack_index_with_options(
     };
 
     let mut preferred_idx = opts.preferred_pack_idx.map(|p| p as usize);
+    if preferred_idx.is_none() {
+        if let Some(spec) = opts.preferred_pack_spec.as_deref() {
+            let pos = work_names
+                .iter()
+                .position(|n| cmp_idx_or_pack_name(spec, n).is_eq())
+                .ok_or_else(|| {
+                    Error::CorruptObject(format!(
+                        "preferred pack '{spec}' not found in multi-pack-index input"
+                    ))
+                })?;
+            preferred_idx = Some(pos);
+        }
+    }
     if preferred_idx.is_none() && opts.write_bitmap_placeholders && !work_names.is_empty() {
         preferred_idx = preferred_pack_index_by_mtime(pack_dir, work_names)?;
     }
@@ -737,10 +836,20 @@ pub fn write_multi_pack_index_with_options(
     let bitmap_placeholders =
         opts.write_bitmap_placeholders && (!opts.incremental || !best.is_empty());
 
-    let out = build_midx_bytes(work_names, &indexes, preferred_idx, bitmap_placeholders)?;
+    let omit_embedded_ridx = opts.write_rev_placeholder;
+    let (out, rev_sidecar_order) = build_midx_bytes(
+        work_names,
+        &indexes,
+        preferred_idx,
+        bitmap_placeholders,
+        omit_embedded_ridx,
+    )?;
 
     let hash = &out[out.len() - 20..];
     let hash_hex = hex::encode(hash);
+    let hash_arr: [u8; 20] = hash
+        .try_into()
+        .map_err(|_| Error::CorruptObject("midx hash length mismatch".to_owned()))?;
 
     if opts.incremental {
         let root_midx = pack_dir.join("multi-pack-index");
@@ -779,8 +888,12 @@ pub fn write_multi_pack_index_with_options(
             fs::write(midx_d.join(format!("multi-pack-index-{full}.bitmap")), [])
                 .map_err(Error::Io)?;
             if opts.write_rev_placeholder {
-                fs::write(midx_d.join(format!("multi-pack-index-{full}.rev")), [])
-                    .map_err(Error::Io)?;
+                let rev_path = midx_d.join(format!("multi-pack-index-{full}.rev"));
+                if let Some(order) = rev_sidecar_order.as_ref() {
+                    write_midx_rev_sidecar(&rev_path, order, &hash_arr)?;
+                } else {
+                    fs::write(rev_path, []).map_err(Error::Io)?;
+                }
             }
         }
     } else {
@@ -809,11 +922,12 @@ pub fn write_multi_pack_index_with_options(
             )
             .map_err(Error::Io)?;
             if opts.write_rev_placeholder {
-                fs::write(
-                    pack_dir.join(format!("multi-pack-index-{hash_hex}.rev")),
-                    [],
-                )
-                .map_err(Error::Io)?;
+                let rev_path = pack_dir.join(format!("multi-pack-index-{hash_hex}.rev"));
+                if let Some(order) = rev_sidecar_order.as_ref() {
+                    write_midx_rev_sidecar(&rev_path, order, &hash_arr)?;
+                } else {
+                    fs::write(rev_path, []).map_err(Error::Io)?;
+                }
             }
         }
     }
