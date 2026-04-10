@@ -755,7 +755,7 @@ commit → check it off → move on.
 - [x] `t6130-pathspec-noglob` ████████████████████ 21/21 (0 left) — test globbing (and noglob) of pathspec limiting
 - [x] `t6424-merge-unrelated-index-changes` — merges with unrelated index changes (19/19)
 - [ ] `t6019-rev-list-ancestry-path` █░░░░░░░░░░░░░░░░░░░ 1/18 (17 left) — --ancestry-path
-- [ ] `t6101-rev-parse-parents` ██████████░░░░░░░░░░ 20/38 (18 left) — Test git rev-parse with different parent options
+- [x] `t6101-rev-parse-parents` ████████████████████ 38/38 (0 left) — Test git rev-parse with different parent options
 - [x] `t6137-pathspec-wildcards-literal` — 25/25 tests pass (pathspec `simple_length` + wildmatch; partial commit trees; skip `.git` on `*` expansion; bracket pathspec also matches literal `[abc]` filename)
 - [ ] `t6411-merge-filemode` █░░░░░░░░░░░░░░░░░░░ 1/19 (18 left) — merge: handle file mode
 - [ ] `t6500-gc` ████████░░░░░░░░░░░░ 15/35 (20 left) — basic git gc tests
