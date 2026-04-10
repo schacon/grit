@@ -886,6 +886,9 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
 
     for old_path in old_paths.difference(&new_paths) {
         let rel = String::from_utf8_lossy(old_path).into_owned();
+        if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(&work_tree, &rel) {
+            bail!("Refusing to remove the current working directory:\n{rel}\n");
+        }
         let abs = work_tree.join(&rel);
         if abs.is_file() || abs.is_symlink() {
             let _ = std::fs::remove_file(&abs);
@@ -898,13 +901,15 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
     // Remove files that now have skip-worktree set
     for skip_path in &new_skip_worktree {
         let rel = String::from_utf8_lossy(skip_path).into_owned();
+        if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(&work_tree, &rel) {
+            bail!("Refusing to remove the current working directory:\n{rel}\n");
+        }
         let abs = work_tree.join(&rel);
         if abs.is_file() || abs.is_symlink() {
             let _ = std::fs::remove_file(&abs);
         }
         remove_empty_parent_dirs(&work_tree, &abs);
     }
-
     for entry in &new_index.entries {
         if entry.stage() != 0 {
             continue;
@@ -946,8 +951,18 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
                 if worktree_has_untracked_under_path(&work_tree, old_index, &path_str)? {
                     bail!("Updating '{path_str}' would lose untracked files in it");
                 }
+                if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(
+                    &work_tree, &path_str,
+                ) {
+                    bail!("Refusing to remove the current working directory:\n{path_str}\n");
+                }
                 std::fs::remove_dir_all(&abs_path)?;
             } else {
+                if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(
+                    &work_tree, &path_str,
+                ) {
+                    bail!("Refusing to remove the current working directory:\n{path_str}\n");
+                }
                 std::fs::remove_file(&abs_path)?;
             }
         }
@@ -1140,10 +1155,16 @@ fn worktree_matches_entry(repo: &Repository, entry: &IndexEntry, abs_path: &Path
 }
 
 fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
+    let cwd_rel = grit_lib::worktree_cwd::process_cwd_repo_relative(work_tree);
     let mut current = path.parent();
     while let Some(dir) = current {
         if dir == work_tree {
             break;
+        }
+        if let Some(ref cr) = cwd_rel {
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_dir(work_tree, dir, cr) {
+                break;
+            }
         }
         match std::fs::remove_dir(dir) {
             Ok(()) => current = dir.parent(),

@@ -256,6 +256,8 @@ use std::cell::Cell;
 struct CheckoutMergeCli {
     /// `-1` = unset, `0` = explicit `--no-merge`, `1` = explicit `-m`/`--merge`.
     merge_tri: i8,
+    /// Set only by `-m` / `--merge` in argv (not by `--conflict` alone).
+    explicit_merge: bool,
     conflict_style: Option<ConflictStyle>,
     /// With explicit `--merge`, `--no-conflict` forces two-way markers (t7201).
     force_two_way_markers: bool,
@@ -276,6 +278,7 @@ fn parse_checkout_merge_flags_from_raw(raw: &[String]) -> CheckoutMergeCli {
         let a = raw[i].as_str();
         if a == "-m" || a == "--merge" {
             out.merge_tri = 1;
+            out.explicit_merge = true;
             out.force_two_way_markers = false;
         } else if a == "--no-merge" {
             out.merge_tri = 0;
@@ -310,9 +313,6 @@ fn parse_checkout_merge_flags_from_raw(raw: &[String]) -> CheckoutMergeCli {
         }
         i += 1;
     }
-    if out.merge_tri < 0 && out.conflict_style.is_some() {
-        out.merge_tri = 1;
-    }
     out
 }
 
@@ -332,13 +332,12 @@ fn validate_checkout_conflict_arg(raw: &[String]) -> Result<()> {
 }
 
 fn effective_branch_merge_wants_real_merge(cli: &CheckoutMergeCli, args_merge_flag: bool) -> bool {
-    if cli.merge_tri == 1 {
-        return true;
-    }
     if cli.merge_tri == 0 {
         return false;
     }
-    args_merge_flag
+    // Plain `git checkout <branch>` must not use merge-style checkout: `--conflict` alone is for
+    // path checkouts / marker style, not `merge_branch_working_tree` (t2501-cwd-empty).
+    args_merge_flag || cli.explicit_merge
 }
 
 fn effective_path_checkout_merge(cli: &CheckoutMergeCli, args_merge_flag: bool) -> bool {
@@ -1399,6 +1398,9 @@ fn checkout_merged_worktree_from_index(
     for entry in &old_index.entries {
         if entry.stage() == 0 && !new_paths.contains(&entry.path) {
             let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, &path_str) {
+                bail!("Refusing to remove the current working directory:\n{path_str}\n");
+            }
             let abs_path = work_tree.join(&path_str);
             if abs_path.exists() || abs_path.is_symlink() {
                 let _ = std::fs::remove_file(&abs_path);
@@ -1478,7 +1480,14 @@ fn merge_branch_working_tree(
     let new_tree_oid = commit_to_tree(repo, new_commit_oid)?;
     match switch_to_tree(repo, head, &new_tree_oid, false, recurse_submodules) {
         Ok(()) => return Ok(()),
-        Err(_) => {}
+        Err(e) => {
+            // Do not fall back to merge when checkout failed because the process cwd would be
+            // removed (t2501-cwd-empty).
+            let msg = format!("{e:#}");
+            if msg.contains("Refusing to remove the current working directory") {
+                return Err(e);
+            }
+        }
     }
 
     let old_tree_oid = commit_to_tree(repo, &old_oid)?;
@@ -3581,6 +3590,24 @@ checking out of the index."
                             .filter(|e| !source_paths.contains(&e.path))
                             .map(|e| e.path.clone())
                             .collect();
+                        let blocked: Vec<String> = to_remove
+                            .iter()
+                            .map(|p| String::from_utf8_lossy(p).into_owned())
+                            .filter(|p| {
+                                grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(
+                                    work_tree, p,
+                                )
+                            })
+                            .collect();
+                        if !blocked.is_empty() {
+                            let mut msg =
+                                String::from("Refusing to remove the current working directory:\n");
+                            for p in &blocked {
+                                msg.push_str(p);
+                                msg.push('\n');
+                            }
+                            bail!("{msg}");
+                        }
                         for path in &to_remove {
                             let p = String::from_utf8_lossy(path);
                             let abs = work_tree.join(p.as_ref());
@@ -3674,6 +3701,24 @@ checking out of the index."
                             .filter(|e| !source_paths.contains(&e.path))
                             .map(|e| e.path.clone())
                             .collect();
+                        let blocked: Vec<String> = to_remove
+                            .iter()
+                            .map(|p| String::from_utf8_lossy(p).into_owned())
+                            .filter(|p| {
+                                grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(
+                                    work_tree, p,
+                                )
+                            })
+                            .collect();
+                        if !blocked.is_empty() {
+                            let mut msg =
+                                String::from("Refusing to remove the current working directory:\n");
+                            for p in &blocked {
+                                msg.push_str(p);
+                                msg.push('\n');
+                            }
+                            bail!("{msg}");
+                        }
                         for path in &to_remove {
                             let p = String::from_utf8_lossy(path);
                             let abs = work_tree.join(p.as_ref());
@@ -3701,6 +3746,11 @@ checking out of the index."
                     let found_in_tree = find_in_tree(repo, tree_oid, &rel)?;
                     if found_in_tree.is_none() && no_overlay {
                         // With --no-overlay: delete the file (it's not in the target tree)
+                        if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(
+                            work_tree, &rel,
+                        ) {
+                            bail!("Refusing to remove the current working directory:\n{rel}\n");
+                        }
                         let abs_path = work_tree.join(&rel);
                         if abs_path.exists() || abs_path.is_symlink() {
                             let _ = std::fs::remove_file(&abs_path);
@@ -4631,6 +4681,25 @@ fn find_recursive(
 
 /// Update the working tree from old_index to new_index: remove deleted files,
 /// add new files, update modified files.
+fn path_through_symlink_prefix(
+    work_tree: &std::path::Path,
+    rel: &str,
+    abs: &std::path::Path,
+) -> bool {
+    let mut p = work_tree.to_path_buf();
+    let mut through_sym = false;
+    for component in std::path::Path::new(rel).components() {
+        p.push(component);
+        if let Ok(meta) = std::fs::symlink_metadata(&p) {
+            if meta.file_type().is_symlink() && p != *abs {
+                through_sym = true;
+                break;
+            }
+        }
+    }
+    through_sym
+}
+
 fn checkout_index_to_worktree(
     repo: &Repository,
     old_index: &Index,
@@ -4671,8 +4740,57 @@ fn checkout_index_to_worktree(
         .map(|e| (e.path.as_slice(), e))
         .collect();
 
+    // Before mutating the work tree: if cwd is a directory and the target index places a blob or
+    // symlink at that exact path (D/F replacing the directory), abort. This catches merge-style
+    // checkouts that retry with `force` after a first pass removed sibling paths but left cwd
+    // intact (t2501-cwd-empty).
+    if let Some(cwd_rel) = grit_lib::worktree_cwd::process_cwd_repo_relative(work_tree) {
+        let cwd_abs = work_tree.join(&cwd_rel);
+        if std::fs::symlink_metadata(&cwd_abs)
+            .map(|m| m.is_dir())
+            .unwrap_or(false)
+        {
+            for e in &new_index.entries {
+                if e.stage() != 0 || e.skip_worktree() || e.mode == MODE_GITLINK {
+                    continue;
+                }
+                let p = String::from_utf8_lossy(&e.path);
+                if p.as_ref() != cwd_rel.as_str() {
+                    continue;
+                }
+                if e.mode == MODE_SYMLINK
+                    || e.mode == 0o100644
+                    || e.mode == 0o100755
+                    || e.mode == 0o100664
+                {
+                    bail!("Refusing to remove the current working directory:\n{cwd_rel}\n");
+                }
+            }
+        }
+    }
+
+    // Preflight removals in deterministic (deepest-first) order so we never delete some paths
+    // and then abort on cwd — that would leave the work tree dirty vs HEAD (t2501-cwd-empty).
+    let mut to_remove_sorted: Vec<Vec<u8>> = old_stage0.difference(&new_stage0).cloned().collect();
+    to_remove_sorted.sort_by(|a, b| b.len().cmp(&a.len()));
+    for old_path in &to_remove_sorted {
+        if let Some(old_entry) = old_map.get(old_path.as_slice()) {
+            if old_entry.mode == MODE_GITLINK && !git_dir_is_nested_modules_repo(&repo.git_dir) {
+                continue;
+            }
+        }
+        let rel = String::from_utf8_lossy(old_path).into_owned();
+        let abs = work_tree.join(&rel);
+        if path_through_symlink_prefix(work_tree, &rel, &abs) {
+            continue;
+        }
+        if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, &rel) {
+            bail!("Refusing to remove the current working directory:\n{rel}\n");
+        }
+    }
+
     // Remove paths that are no longer present in the new index.
-    for old_path in old_stage0.difference(&new_stage0) {
+    for old_path in to_remove_sorted {
         if let Some(old_entry) = old_map.get(old_path.as_slice()) {
             // Superproject: do not delete submodule work trees for gitlinks dropped from the index
             // (Git keeps them on disk; t7300-clean). Nested submodule repos under `.git/modules/`
@@ -4681,25 +4799,9 @@ fn checkout_index_to_worktree(
                 continue;
             }
         }
-        let rel = String::from_utf8_lossy(old_path).into_owned();
+        let rel = String::from_utf8_lossy(&old_path).into_owned();
         let abs = work_tree.join(&rel);
-        // Safety: don't follow symlinks when removing paths.
-        // Check if any parent path component is a symlink.
-        let path_through_symlink = {
-            let mut p = work_tree.to_path_buf();
-            let mut through_sym = false;
-            for component in std::path::Path::new(&rel).components() {
-                p.push(component);
-                if let Ok(meta) = std::fs::symlink_metadata(&p) {
-                    if meta.file_type().is_symlink() && p != abs {
-                        through_sym = true;
-                        break;
-                    }
-                }
-            }
-            through_sym
-        };
-        if path_through_symlink {
+        if path_through_symlink_prefix(work_tree, &rel, &abs) {
             continue; // Skip: path goes through a symlink
         }
         if abs.is_file() || abs.is_symlink() {
@@ -4719,6 +4821,7 @@ fn checkout_index_to_worktree(
 
     // Sparse checkout: paths still in the index but newly excluded must disappear from the work tree.
     if sparse_checkout {
+        let mut sparse_remove: Vec<Vec<u8>> = Vec::new();
         for old_path in old_stage0.intersection(&new_stage0) {
             if new_map
                 .get(old_path.as_slice())
@@ -4731,23 +4834,35 @@ fn checkout_index_to_worktree(
                         continue;
                     }
                 }
-                let rel = String::from_utf8_lossy(old_path).into_owned();
-                let abs = work_tree.join(&rel);
-                let path_through_symlink = {
-                    let mut p = work_tree.to_path_buf();
-                    let mut through_sym = false;
-                    for component in std::path::Path::new(&rel).components() {
-                        p.push(component);
-                        if let Ok(meta) = std::fs::symlink_metadata(&p) {
-                            if meta.file_type().is_symlink() && p != abs {
-                                through_sym = true;
-                                break;
-                            }
-                        }
+                sparse_remove.push(old_path.clone());
+            }
+        }
+        sparse_remove.sort_by(|a, b| b.len().cmp(&a.len()));
+        for old_path in &sparse_remove {
+            let rel = String::from_utf8_lossy(old_path).into_owned();
+            let abs = work_tree.join(&rel);
+            if path_through_symlink_prefix(work_tree, &rel, &abs) {
+                continue;
+            }
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, &rel) {
+                bail!("Refusing to remove the current working directory:\n{rel}\n");
+            }
+        }
+        for old_path in sparse_remove {
+            if new_map
+                .get(old_path.as_slice())
+                .is_some_and(|e| e.skip_worktree())
+            {
+                if let Some(old_entry) = old_map.get(old_path.as_slice()) {
+                    if old_entry.mode == MODE_GITLINK
+                        && !git_dir_is_nested_modules_repo(&repo.git_dir)
+                    {
+                        continue;
                     }
-                    through_sym
-                };
-                if path_through_symlink {
+                }
+                let rel = String::from_utf8_lossy(&old_path).into_owned();
+                let abs = work_tree.join(&rel);
+                if path_through_symlink_prefix(work_tree, &rel, &abs) {
                     continue;
                 }
                 if abs.is_file() || abs.is_symlink() {
@@ -5076,6 +5191,7 @@ fn write_to_worktree(
     mode: u32,
 ) -> Result<()> {
     let abs_path = work_tree.join(rel_path);
+    let rel_norm = rel_path.trim().trim_start_matches('/').replace('\\', "/");
 
     prepare_parent_dirs_for_checkout(work_tree, rel_path)?;
     if let Some(parent) = abs_path.parent() {
@@ -5085,6 +5201,21 @@ fn write_to_worktree(
 
     // Remove existing file/dir/symlink at target path. Use symlink_metadata + is_symlink so we
     // replace symlinked paths (e.g. `D` → `untracked`) before creating a real directory tree.
+    if let Some(cwd_rel) = grit_lib::worktree_cwd::process_cwd_repo_relative(work_tree) {
+        if !rel_norm.is_empty() && cwd_rel.starts_with(&format!("{rel_norm}/")) {
+            if std::fs::symlink_metadata(&abs_path)
+                .map(|m| m.is_dir())
+                .unwrap_or(false)
+            {
+                bail!("Refusing to remove the current working directory:\n{rel_norm}\n");
+            }
+        }
+    }
+    if std::fs::symlink_metadata(&abs_path).is_ok()
+        && grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, rel_path)
+    {
+        bail!("Refusing to remove the current working directory:\n{rel_path}\n");
+    }
     if let Ok(meta) = std::fs::symlink_metadata(&abs_path) {
         if meta.file_type().is_symlink() {
             std::fs::remove_file(&abs_path)?;
@@ -5116,10 +5247,16 @@ fn write_to_worktree(
 
 /// Remove empty parent directories up to (but not including) `work_tree`.
 fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
+    let cwd_rel = grit_lib::worktree_cwd::process_cwd_repo_relative(work_tree);
     let mut current = path.parent();
     while let Some(dir) = current {
         if dir == work_tree {
             break;
+        }
+        if let Some(ref cr) = cwd_rel {
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_dir(work_tree, dir, cr) {
+                break;
+            }
         }
         match std::fs::remove_dir(dir) {
             Ok(()) => current = dir.parent(),

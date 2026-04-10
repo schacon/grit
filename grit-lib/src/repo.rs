@@ -31,6 +31,32 @@ use crate::odb::Odb;
 use crate::rev_parse::is_inside_work_tree;
 use crate::sparse_checkout::effective_cone_mode_for_sparse_file;
 use crate::state::resolve_head;
+use crate::worktree_cwd::cwd_relative_under_work_tree;
+
+const GIT_PREFIX_ENV: &str = "GIT_PREFIX";
+
+/// Set `GIT_PREFIX` to the repository-relative path of the process cwd (POSIX, no trailing `/`).
+///
+/// Git's `git-sh-setup` / `cd_to_toplevel` moves the process to the work tree root but preserves
+/// the original subdirectory in `GIT_PREFIX` (`setup.c`). Helpers such as `git-merge-one-file`
+/// rely on this for correct cwd-sensitive behavior.
+fn export_git_prefix_env(repo: &Repository) {
+    let Some(wt) = repo.work_tree.as_ref() else {
+        return;
+    };
+    let Ok(cwd) = env::current_dir() else {
+        return;
+    };
+    let new_s = cwd_relative_under_work_tree(wt, &cwd).unwrap_or_default();
+    if new_s.is_empty() {
+        if let Ok(existing) = env::var(GIT_PREFIX_ENV) {
+            if !existing.trim().is_empty() {
+                return;
+            }
+        }
+    }
+    let _ = env::set_var(GIT_PREFIX_ENV, new_s);
+}
 
 fn read_sparse_checkout_patterns(git_dir: &Path) -> Vec<String> {
     let path = git_dir.join("info").join("sparse-checkout");
@@ -194,6 +220,7 @@ impl Repository {
                 repo.discovery_root = None;
                 repo.work_tree_from_env = false;
                 repo.discovery_via_gitfile = false;
+                export_git_prefix_env(&repo);
                 return Ok(repo);
             }
             // `GIT_DIR` without `GIT_WORK_TREE`: honour `core.bare` / `core.worktree` like Git.
@@ -218,6 +245,7 @@ impl Repository {
             repo.discovery_root = None;
             repo.work_tree_from_env = false;
             repo.discovery_via_gitfile = false;
+            export_git_prefix_env(&repo);
             return Ok(repo);
         }
 
@@ -305,6 +333,7 @@ impl Repository {
                         &repo.git_dir,
                     )?;
                 }
+                export_git_prefix_env(&repo);
                 return Ok(repo);
             }
 

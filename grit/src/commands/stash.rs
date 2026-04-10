@@ -758,11 +758,25 @@ fn do_push(opts: PushOpts) -> Result<()> {
         reset_to_head(&repo, head_oid, &work_tree)?;
     }
 
-    // Remove untracked files if they were stashed
+    // Remove untracked files if they were stashed (deepest paths first so parent cleanup
+    // does not strand files under a cwd-blocked directory; t2501-cwd-empty).
     if opts.include_untracked {
-        for f in &untracked_files {
+        let mut sorted = untracked_files.clone();
+        sorted.sort_by(|a, b| {
+            let da = a.bytes().filter(|c| *c == b'/').count();
+            let db = b.bytes().filter(|c| *c == b'/').count();
+            db.cmp(&da).then_with(|| a.cmp(b))
+        });
+        for f in &sorted {
             let path = work_tree.join(f);
-            let _ = fs::remove_file(&path);
+            if path.is_dir() {
+                if !grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree.as_path(), f)
+                {
+                    let _ = fs::remove_dir(&path);
+                }
+            } else {
+                let _ = fs::remove_file(&path);
+            }
             if let Some(parent) = path.parent() {
                 remove_empty_dirs(parent, &work_tree);
             }
@@ -3402,6 +3416,7 @@ fn walk_for_untracked(
         Err(_) => return Ok(()),
     };
 
+    let mut saw_child = false;
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
@@ -3411,14 +3426,31 @@ fn walk_for_untracked(
             continue;
         }
 
+        saw_child = true;
         let rel = path
             .strip_prefix(work_tree)
             .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| name);
+            .unwrap_or_else(|_| name.clone());
 
         if path.is_dir() {
             walk_for_untracked(&path, work_tree, tracked, out)?;
         } else if !tracked.contains(&rel) {
+            out.push(rel);
+        }
+    }
+
+    if dir != work_tree && !saw_child {
+        let rel = dir
+            .strip_prefix(work_tree)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if rel.is_empty() {
+            return Ok(());
+        }
+        let prefix = format!("{rel}/");
+        let under_tracked =
+            tracked.contains(&rel) || tracked.iter().any(|t| t.starts_with(&prefix));
+        if !under_tracked {
             out.push(rel);
         }
     }
@@ -3496,6 +3528,9 @@ fn create_untracked_tree(odb: &Odb, work_tree: &Path, files: &[String]) -> Resul
     let mut builder = TreeBuilder::new();
     for file in files {
         let file_path = work_tree.join(file);
+        if file_path.is_dir() {
+            continue;
+        }
         let data = fs::read(&file_path)?;
         let oid = odb.write(ObjectKind::Blob, &data)?;
         let meta = fs::symlink_metadata(&file_path)?;
@@ -3946,12 +3981,18 @@ fn remove_worktree_extras(
 
 /// Remove empty parent directories up to (but not including) the work tree root.
 fn remove_empty_dirs(dir: &Path, stop_at: &Path) {
+    let cwd_rel = grit_lib::worktree_cwd::process_cwd_repo_relative(stop_at);
     let mut current = dir.to_path_buf();
     while current != stop_at {
         if fs::read_dir(&current)
             .map(|mut d| d.next().is_none())
             .unwrap_or(false)
         {
+            if let Some(ref cr) = cwd_rel {
+                if grit_lib::worktree_cwd::cwd_would_be_removed_with_dir(stop_at, &current, cr) {
+                    break;
+                }
+            }
             let _ = fs::remove_dir(&current);
             if let Some(parent) = current.parent() {
                 current = parent.to_path_buf();

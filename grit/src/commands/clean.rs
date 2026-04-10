@@ -96,7 +96,10 @@ pub fn run(args: Args) -> Result<()> {
         .pathspec
         .iter()
         .map(|p| normalize_repo_relative(&repo, &cwd, p).map_err(|e| anyhow::anyhow!("{e}")))
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|p| !p.is_empty())
+        .collect();
 
     let cwd_prefix = pathdiff(&cwd, &work_tree);
     let walk_root = if pathspecs.is_empty() {
@@ -133,7 +136,11 @@ pub fn run(args: Args) -> Result<()> {
         &mut to_remove,
     )?;
 
-    to_remove.sort_by(|a, b| a.0.cmp(&b.0));
+    to_remove.sort_by(|a, b| {
+        let depth_a = a.0.bytes().filter(|c| *c == b'/').count();
+        let depth_b = b.0.bytes().filter(|c| *c == b'/').count();
+        depth_b.cmp(&depth_a).then_with(|| a.0.cmp(&b.0))
+    });
 
     // Apply `--exclude` (Git `-e`): glob match on path / basename only — do not use directory-prefix
     // semantics here (those affect what gets collected via `should_include_path_for_clean`, not
@@ -178,6 +185,22 @@ pub fn run(args: Args) -> Result<()> {
         if !args.dry_run {
             let abs = work_tree.join(path);
             if *is_dir {
+                if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(&work_tree, path) {
+                    writeln!(out, "Refusing to remove current working directory")?;
+                    remove_cleanable_untracked_under_dir(
+                        &cwd,
+                        &work_tree,
+                        path,
+                        &tracked,
+                        Some(&index),
+                        &repo,
+                        &mut matcher,
+                        &args,
+                        &mut out,
+                        args.quiet,
+                    )?;
+                    continue;
+                }
                 remove_dir_all_best_effort(&abs)
                     .with_context(|| format!("failed to remove directory '{path}'"))?;
             } else {
@@ -1154,6 +1177,92 @@ fn dir_all_ignored(
     Ok(saw_entry)
 }
 
+/// When a directory removal is blocked because it contains the process cwd, still remove
+/// eligible untracked paths inside it (matches Git / `t2501-cwd-empty`).
+fn remove_cleanable_untracked_under_dir(
+    cwd: &Path,
+    work_tree: &Path,
+    dir_rel: &str,
+    tracked: &BTreeSet<String>,
+    index: Option<&Index>,
+    repo: &Repository,
+    matcher: &mut IgnoreMatcher,
+    args: &Args,
+    out: &mut dyn Write,
+    quiet: bool,
+) -> Result<()> {
+    let abs_dir = work_tree.join(dir_rel);
+    let entries = match fs::read_dir(&abs_dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    let mut children: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+    children.sort_by_key(|e| e.file_name());
+
+    for entry in children {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == ".git" {
+            continue;
+        }
+        let child_rel = if dir_rel.is_empty() {
+            name
+        } else {
+            format!("{dir_rel}/{name}")
+        };
+
+        if exclude_plain_prefix_blocks_path(&child_rel, &args.exclude) {
+            continue;
+        }
+        if args
+            .exclude
+            .iter()
+            .any(|pattern| matches_exclude_glob_only(&child_rel, pattern))
+        {
+            continue;
+        }
+
+        let is_dir = path.is_dir();
+        let rel_prefix = format!("{child_rel}/");
+        let under_tracked = if is_dir {
+            tracked.contains(&child_rel) || tracked.iter().any(|t| t.starts_with(&rel_prefix))
+        } else {
+            is_tracked(tracked, index, work_tree, &child_rel)
+        };
+        if under_tracked {
+            continue;
+        }
+
+        if !should_include_path_for_clean(matcher, repo, index, &child_rel, is_dir, args)? {
+            continue;
+        }
+
+        if is_dir {
+            remove_cleanable_untracked_under_dir(
+                cwd, work_tree, &child_rel, tracked, index, repo, matcher, args, out, quiet,
+            )?;
+            if fs::read_dir(&path)
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(false)
+            {
+                let _ = fs::remove_dir(&path);
+            }
+        } else if !grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(
+            work_tree, &child_rel,
+        ) {
+            if !quiet {
+                let display = path_for_clean_display(cwd, work_tree, &child_rel);
+                writeln!(out, "Removing {display}")?;
+            }
+            let _ = fs::remove_file(&path);
+            if args.pathspec.is_empty() {
+                remove_empty_parents(&path, work_tree);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn remove_dir_all_best_effort(path: &Path) -> Result<()> {
     match fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
@@ -1175,10 +1284,16 @@ fn remove_dir_all_best_effort(path: &Path) -> Result<()> {
 
 /// Remove empty parent directories up to (but not including) the worktree root.
 fn remove_empty_parents(file: &Path, work_tree: &Path) {
+    let cwd_rel = grit_lib::worktree_cwd::process_cwd_repo_relative(work_tree);
     let mut current = file.parent();
     while let Some(dir) = current {
         if dir == work_tree {
             break;
+        }
+        if let Some(ref cr) = cwd_rel {
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_dir(work_tree, dir, cr) {
+                break;
+            }
         }
         match fs::remove_dir(dir) {
             Ok(()) => current = dir.parent(),

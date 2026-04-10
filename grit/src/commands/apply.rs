@@ -21,6 +21,7 @@ use grit_lib::objects::ObjectKind;
 use grit_lib::quote_path::quote_c_style;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
+use grit_lib::worktree_cwd;
 use grit_lib::ws::{self, WhitespaceGitAttr, WS_BLANK_AT_EOF, WS_DEFAULT_RULE, WS_INCOMPLETE_LINE};
 use regex::Regex;
 use std::borrow::Cow;
@@ -1788,6 +1789,14 @@ fn adjust_path(path: &str, directory: Option<&str>) -> String {
         return path.to_string();
     };
     format!("{dir}{path}")
+}
+
+/// Join a repo-relative path to the work tree when known; otherwise treat as cwd-relative.
+fn worktree_path(work_tree: Option<&Path>, rel: &str) -> PathBuf {
+    match work_tree {
+        Some(wt) => wt.join(rel),
+        None => PathBuf::from(rel),
+    }
 }
 
 fn symlink_prefix(path: &str, symlink_overlay: &HashMap<String, bool>) -> Option<String> {
@@ -3843,6 +3852,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
     verify_patch_paths_not_beyond_symlink(&patches, &args)?;
     let ws_mode = resolve_apply_whitespace_mode(&args);
+    let work_tree_opt = Repository::discover(None).ok().and_then(|r| r.work_tree);
 
     // For --cached, we need a repository and index.
     // For working tree apply, we may or may not be in a repo.
@@ -3850,7 +3860,13 @@ pub fn run(mut args: Args) -> Result<()> {
         apply_to_index(&patches, &args, ws_mode, &patch_input_display)?;
     } else {
         if args.check {
-            check_patches(&patches, &args, ws_mode, &patch_input_display)?;
+            check_patches(
+                &patches,
+                &args,
+                ws_mode,
+                &patch_input_display,
+                work_tree_opt.as_deref(),
+            )?;
             if !args.apply {
                 return Ok(());
             }
@@ -3868,11 +3884,23 @@ pub fn run(mut args: Args) -> Result<()> {
                     }
                 }
             }
-            apply_to_worktree(&patches, &args, ws_mode, &patch_input_display)?;
+            apply_to_worktree(
+                &patches,
+                &args,
+                ws_mode,
+                &patch_input_display,
+                work_tree_opt.as_deref(),
+            )?;
             apply_to_index(&patches, &args, ws_mode, &patch_input_display)?;
             ensure_gitlink_placeholder_dirs(&patches, &args)?;
         } else {
-            apply_to_worktree(&patches, &args, ws_mode, &patch_input_display)?;
+            apply_to_worktree(
+                &patches,
+                &args,
+                ws_mode,
+                &patch_input_display,
+                work_tree_opt.as_deref(),
+            )?;
             if args.intent_to_add {
                 apply_intent_to_add_entries(&patches, &args)?;
             }
@@ -4223,6 +4251,31 @@ fn remove_empty_dirs_up(dir: &Path) {
     }
 }
 
+fn remove_empty_parent_dirs_after_removal(work_tree: Option<&Path>, removed_path: &Path) {
+    let Some(wt) = work_tree else {
+        if let Some(parent) = removed_path.parent() {
+            remove_empty_dirs_up(parent);
+        }
+        return;
+    };
+    let cwd_rel = worktree_cwd::process_cwd_repo_relative(wt);
+    let mut current = removed_path.parent();
+    while let Some(dir) = current {
+        if dir == wt {
+            break;
+        }
+        if let Some(ref cr) = cwd_rel {
+            if worktree_cwd::cwd_would_be_removed_with_dir(wt, dir, cr) {
+                break;
+            }
+        }
+        match fs::remove_dir(dir) {
+            Ok(()) => current = dir.parent(),
+            Err(_) => break,
+        }
+    }
+}
+
 fn remove_path_for_replacement(path: &Path) -> Result<()> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
@@ -4337,6 +4390,7 @@ fn verify_old_oid_matches_content(expected_oid: &str, content: &str) -> Result<(
 }
 
 fn record_path_existence(
+    work_tree: Option<&Path>,
     path: &str,
     current: &mut HashMap<String, bool>,
     initial: &mut HashMap<String, bool>,
@@ -4344,7 +4398,7 @@ fn record_path_existence(
     if current.contains_key(path) {
         return;
     }
-    let exists = Path::new(path).exists();
+    let exists = worktree_path(work_tree, path).exists();
     current.insert(path.to_string(), exists);
     initial.insert(path.to_string(), exists);
 }
@@ -4373,18 +4427,32 @@ fn can_apply_with_empty_preimage(fp: &FilePatch) -> bool {
 /// This catches invalid sequences (e.g. later patches reading a path that was
 /// moved away by an earlier rename) and prevents partially-applied worktree
 /// state when such sequences are detected.
-fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Result<()> {
+fn precheck_worktree_patch_sequence(
+    patches: &[FilePatch],
+    args: &Args,
+    work_tree: Option<&Path>,
+) -> Result<()> {
     let mut current_exists: HashMap<String, bool> = HashMap::new();
     let mut initial_exists: HashMap<String, bool> = HashMap::new();
 
     for fp in patches {
         if let Some(source) = fp.source_path() {
             let adjusted = adjust_path(source, args.directory.as_deref());
-            record_path_existence(&adjusted, &mut current_exists, &mut initial_exists);
+            record_path_existence(
+                work_tree,
+                &adjusted,
+                &mut current_exists,
+                &mut initial_exists,
+            );
         }
         if let Some(target) = fp.target_path() {
             let adjusted = adjust_path(target, args.directory.as_deref());
-            record_path_existence(&adjusted, &mut current_exists, &mut initial_exists);
+            record_path_existence(
+                work_tree,
+                &adjusted,
+                &mut current_exists,
+                &mut initial_exists,
+            );
         }
     }
 
@@ -4401,7 +4469,7 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
         let source_exists_now = current_exists
             .get(&source_adjusted)
             .copied()
-            .unwrap_or_else(|| Path::new(&source_adjusted).exists());
+            .unwrap_or_else(|| worktree_path(work_tree, &source_adjusted).exists());
         let source_existed_initially = initial_exists
             .get(&source_adjusted)
             .copied()
@@ -4428,7 +4496,7 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
             let target_exists_now = current_exists
                 .get(&target_adjusted)
                 .copied()
-                .unwrap_or_else(|| Path::new(&target_adjusted).exists());
+                .unwrap_or_else(|| worktree_path(work_tree, &target_adjusted).exists());
             if target_exists_now {
                 if Path::new(&target_adjusted).is_dir() {
                     set_path_and_descendants_state(&mut current_exists, &target_adjusted, false);
@@ -4483,6 +4551,7 @@ fn apply_to_worktree(
     args: &Args,
     ws_mode: ApplyWhitespaceMode,
     patch_input_display: &str,
+    work_tree: Option<&Path>,
 ) -> Result<()> {
     let crlf_ctx = ApplyCrlfContext::load();
     let mut had_rejects = false;
@@ -4501,25 +4570,30 @@ fn apply_to_worktree(
         if source_adjusted == target_adjusted || source_snapshots.contains_key(&source_adjusted) {
             continue;
         }
+        let read_abs = worktree_path(work_tree, &source_adjusted);
         let snap_ok = match &crlf_ctx {
-            Some(ctx) => ctx.normalized_text(Path::new(&source_adjusted), &source_adjusted),
-            None => read_worktree_blob_as_text(Path::new(&source_adjusted))
-                .map_err(|e| anyhow::anyhow!("{e}")),
+            Some(ctx) => ctx.normalized_text(&read_abs, &source_adjusted),
+            None => read_worktree_blob_as_text(&read_abs).map_err(|e| anyhow::anyhow!("{e}")),
         };
         if let Ok(content) = snap_ok {
             source_snapshots.insert(source_adjusted, content);
         }
     }
-    precheck_worktree_patch_sequence(patches, args)?;
+    precheck_worktree_patch_sequence(patches, args, work_tree)?;
 
     for fp in patches {
         let path_str = fp
             .target_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
         let path_adjusted = adjust_path(path_str, args.directory.as_deref());
-        let path = PathBuf::from(&path_adjusted);
+        let path = worktree_path(work_tree, &path_adjusted);
 
         if fp.is_deleted {
+            if let Some(wt) = work_tree {
+                if worktree_cwd::cwd_would_be_removed_with_repo_path(wt, &path_adjusted) {
+                    bail!("Refusing to remove the current working directory:\n{path_adjusted}\n");
+                }
+            }
             // Delete the file (or directory for submodules)
             if path.is_dir() {
                 fs::remove_dir_all(&path)
@@ -4528,10 +4602,7 @@ fn apply_to_worktree(
                 fs::remove_file(&path)
                     .with_context(|| format!("failed to remove {}", path.display()))?;
             }
-            // Clean up empty parent directories
-            if let Some(parent) = path.parent() {
-                remove_empty_dirs_up(parent);
-            }
+            remove_empty_parent_dirs_after_removal(work_tree, &path);
             continue;
         }
 
@@ -4587,7 +4658,7 @@ fn apply_to_worktree(
             .source_path()
             .map(|p| adjust_path(p, args.directory.as_deref()))
             .unwrap_or_else(|| path_adjusted.clone());
-        let read_path = PathBuf::from(&source_adjusted);
+        let read_path = worktree_path(work_tree, &source_adjusted);
         let source_contains_target =
             fp.is_rename && read_path != path && target_is_inside_source(&path, &read_path);
         let load_old_content_from_disk = || -> Result<String> {
@@ -5106,6 +5177,7 @@ fn check_patches(
     args: &Args,
     ws_mode: ApplyWhitespaceMode,
     patch_input_display: &str,
+    work_tree: Option<&Path>,
 ) -> Result<()> {
     let crlf_ctx = ApplyCrlfContext::load();
     for fp in patches {
@@ -5113,7 +5185,7 @@ fn check_patches(
             .effective_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
         let path_adjusted = adjust_path(path_str, args.directory.as_deref());
-        let path = PathBuf::from(&path_adjusted);
+        let path = worktree_path(work_tree, &path_adjusted);
 
         if fp.is_deleted {
             if !path.exists() {
@@ -5133,7 +5205,7 @@ fn check_patches(
 
         let read_path = fp
             .source_path()
-            .map(|p| PathBuf::from(adjust_path(p, args.directory.as_deref())))
+            .map(|p| worktree_path(work_tree, &adjust_path(p, args.directory.as_deref())))
             .unwrap_or_else(|| path.clone());
         let source_adjusted = fp
             .source_path()

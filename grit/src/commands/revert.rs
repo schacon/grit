@@ -13,7 +13,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{stdin, IsTerminal, Write};
 use std::path::Path;
@@ -36,6 +36,9 @@ use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
 
+use super::cherry_pick::{
+    bail_if_df_merge_would_remove_cwd, preflight_cherry_pick_cwd_obstruction,
+};
 use super::merge::cleanup_message;
 use super::sequencer::{
     append_merge_msg_conflict_footer, rollback_is_safe, sequencer_is_pick_sequence,
@@ -399,6 +402,9 @@ fn reset_revert_to_head_tree(repo: &Repository, git_dir: &Path) -> Result<()> {
     new_index.entries = entries;
     new_index.sort();
     let index_path = repo.index_path();
+    if let Some(wt) = &repo.work_tree {
+        preflight_cherry_pick_cwd_obstruction(repo, wt, &new_index, &BTreeMap::new(), None)?;
+    }
     repo.write_index_at(&index_path, &mut new_index)?;
     if let Some(wt) = &repo.work_tree {
         checkout_merged_index(repo, wt, &old_index, &new_index, &BTreeMap::new())?;
@@ -810,6 +816,13 @@ fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
         error_dirty_index_revert(repo, head_oid)?;
     }
 
+    if let Some(wt) = repo.work_tree.as_deref() {
+        let base_map = tree_entries_to_map(tree_to_index_entries(repo, &commit_tree_oid, "")?);
+        let ours_map = tree_entries_to_map(tree_to_index_entries(repo, &head_tree_oid, "")?);
+        let theirs_map = tree_entries_to_map(tree_to_index_entries(repo, &parent_tree_oid, "")?);
+        bail_if_df_merge_would_remove_cwd(wt, &base_map, &ours_map, &theirs_map)?;
+    }
+
     let config = ConfigSet::load(Some(git_dir), true)?;
 
     let use_reference = should_use_reference_format(git_dir, args)?;
@@ -853,16 +866,18 @@ fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
     // Load old index BEFORE writing new one (needed for worktree cleanup).
     let old_index = load_index(repo)?;
 
-    // Write index.
-    let index_path = repo.index_path();
-    repo.write_index_at(&index_path, &mut merged_index)
-        .context("writing index")?;
-
     // Update working tree.
     let work_tree = repo
         .work_tree
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot revert in a bare repository"))?;
+    preflight_cherry_pick_cwd_obstruction(repo, work_tree, &merged_index, &conflict_map, None)?;
+
+    // Write index.
+    let index_path = repo.index_path();
+    repo.write_index_at(&index_path, &mut merged_index)
+        .context("writing index")?;
+
     checkout_merged_index(repo, work_tree, &old_index, &merged_index, &conflict_map)?;
 
     let (title_line, body_suffix) =
@@ -1340,6 +1355,14 @@ fn update_head(git_dir: &Path, head: &HeadState, commit_oid: &ObjectId) -> Resul
 
 // ── Tree → index helpers ────────────────────────────────────────────
 
+fn tree_entries_to_map(entries: Vec<IndexEntry>) -> HashMap<Vec<u8>, IndexEntry> {
+    let mut m = HashMap::new();
+    for e in entries {
+        m.insert(e.path.clone(), e);
+    }
+    m
+}
+
 fn tree_to_index_entries(
     repo: &Repository,
     oid: &ObjectId,
@@ -1387,6 +1410,10 @@ fn tree_to_index_entries(
 }
 
 /// Write merged index entries to the working tree.
+fn same_blob_revert(a: &IndexEntry, b: &IndexEntry) -> bool {
+    a.oid == b.oid && a.mode == b.mode
+}
+
 fn checkout_merged_index(
     repo: &Repository,
     work_tree: &Path,
@@ -1394,12 +1421,27 @@ fn checkout_merged_index(
     index: &Index,
     conflict_content: &BTreeMap<Vec<u8>, ObjectId>,
 ) -> Result<()> {
-    let new_paths: HashSet<Vec<u8>> = index.entries.iter().map(|e| e.path.clone()).collect();
+    let old_stage0: HashMap<Vec<u8>, &IndexEntry> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| (e.path.clone(), e))
+        .collect();
+
+    let new_paths: HashSet<Vec<u8>> = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.clone())
+        .collect();
 
     // Remove files that were in the old index but not in the new one.
     for entry in &old_index.entries {
         if entry.stage() == 0 && !new_paths.contains(&entry.path) {
             let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, &path_str) {
+                bail!("Refusing to remove the current working directory:\n{path_str}\n");
+            }
             let abs_path = work_tree.join(&path_str);
             if abs_path.exists() || abs_path.is_symlink() {
                 if abs_path.is_dir() {
@@ -1411,7 +1453,6 @@ fn checkout_merged_index(
             }
         }
     }
-
     let mut written = HashSet::new();
 
     for entry in &index.entries {
@@ -1419,15 +1460,21 @@ fn checkout_merged_index(
         let abs_path = work_tree.join(&path_str);
 
         if entry.stage() == 0 {
-            write_entry_to_worktree(repo, &abs_path, entry)?;
+            if let Some(prev) = old_stage0.get(&entry.path) {
+                if same_blob_revert(prev, entry) {
+                    written.insert(entry.path.clone());
+                    continue;
+                }
+            }
+            write_entry_to_worktree(repo, work_tree, &path_str, &abs_path, entry)?;
             written.insert(entry.path.clone());
         } else if entry.stage() == 2 && !written.contains(&entry.path) {
             if let Some(marker_oid) = conflict_content.get(&entry.path) {
                 let mut marker_entry = entry.clone();
                 marker_entry.oid = *marker_oid;
-                write_entry_to_worktree(repo, &abs_path, &marker_entry)?;
+                write_entry_to_worktree(repo, work_tree, &path_str, &abs_path, &marker_entry)?;
             } else {
-                write_entry_to_worktree(repo, &abs_path, entry)?;
+                write_entry_to_worktree(repo, work_tree, &path_str, &abs_path, entry)?;
             }
             written.insert(entry.path.clone());
         }
@@ -1437,10 +1484,16 @@ fn checkout_merged_index(
 }
 
 fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
+    let cwd_rel = grit_lib::worktree_cwd::process_cwd_repo_relative(work_tree);
     let mut current = path.parent();
     while let Some(dir) = current {
         if dir == work_tree {
             break;
+        }
+        if let Some(ref cr) = cwd_rel {
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_dir(work_tree, dir, cr) {
+                break;
+            }
         }
         match fs::remove_dir(dir) {
             Ok(()) => current = dir.parent(),
@@ -1449,12 +1502,21 @@ fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
     }
 }
 
-fn write_entry_to_worktree(repo: &Repository, abs_path: &Path, entry: &IndexEntry) -> Result<()> {
+fn write_entry_to_worktree(
+    repo: &Repository,
+    work_tree: &Path,
+    path_str: &str,
+    abs_path: &Path,
+    entry: &IndexEntry,
+) -> Result<()> {
     if let Some(parent) = abs_path.parent() {
         fs::create_dir_all(parent)?;
     }
 
     if entry.mode == 0o160000 {
+        if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, path_str) {
+            bail!("Refusing to remove the current working directory:\n{path_str}\n");
+        }
         if abs_path.is_file() || abs_path.is_symlink() {
             let _ = fs::remove_file(abs_path);
         } else if abs_path.is_dir() {
@@ -1473,11 +1535,17 @@ fn write_entry_to_worktree(repo: &Repository, abs_path: &Path, entry: &IndexEntr
         let target =
             String::from_utf8(obj.data).map_err(|_| anyhow::anyhow!("symlink not UTF-8"))?;
         if abs_path.exists() || abs_path.is_symlink() {
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, path_str) {
+                bail!("Refusing to remove the current working directory:\n{path_str}\n");
+            }
             let _ = fs::remove_file(abs_path);
         }
         std::os::unix::fs::symlink(target, abs_path)?;
     } else {
         if abs_path.is_dir() {
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, path_str) {
+                bail!("Refusing to remove the current working directory:\n{path_str}\n");
+            }
             fs::remove_dir_all(abs_path)?;
         }
         fs::write(abs_path, &obj.data)?;

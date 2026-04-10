@@ -1077,34 +1077,12 @@ fn reset_commit(
     // Get the old OID for reflog and ORIG_HEAD.
     let old_oid = head.oid().copied().unwrap_or_else(zero_oid);
 
-    // Save ORIG_HEAD before moving HEAD.
-    if head.oid().is_some() {
-        write_orig_head(&repo.git_dir, &old_oid)?;
-    }
-
-    // Update HEAD (and the branch it points to, if on a branch).
-    update_head_ref(&repo.git_dir, &head, &target_oid)?;
-
-    // Write reflog entries.
-    write_reset_reflog(repo, &head, &old_oid, &target_oid, commit_spec);
-
-    // Clean up merge/cherry-pick state files on non-soft reset.
-    if mode != ResetMode::Soft {
-        let _ = std::fs::remove_file(repo.git_dir.join("MERGE_HEAD"));
-        let _ = std::fs::remove_file(repo.git_dir.join("MERGE_MSG"));
-        let _ = std::fs::remove_file(repo.git_dir.join("MERGE_MODE"));
-        if !extra.skip_sequencer_head_cleanup {
-            let _ = std::fs::remove_file(repo.git_dir.join("CHERRY_PICK_HEAD"));
-            let _ = std::fs::remove_file(repo.git_dir.join("REVERT_HEAD"));
-            let seq = repo.git_dir.join("sequencer");
-            if seq.is_dir() {
-                let _ = std::fs::remove_dir_all(&seq);
-            }
-        }
-    }
-
     if mode == ResetMode::Soft {
-        // Soft: HEAD moved, index and working tree unchanged.
+        if head.oid().is_some() {
+            write_orig_head(&repo.git_dir, &old_oid)?;
+        }
+        update_head_ref(&repo.git_dir, &head, &target_oid)?;
+        write_reset_reflog(repo, &head, &old_oid, &target_oid, commit_spec);
         return Ok(());
     }
 
@@ -1119,71 +1097,82 @@ fn reset_commit(
     let mut new_index = Index::new();
     new_index.entries = tree_entries;
     new_index.sort();
-    // Git keeps cache-entry flags (assume-unchanged, skip-worktree) across mixed/hard/merge
-    // index rebuilds so sparse/skip-worktree paths stay marked (t7011).
     preserve_index_cache_flags_from(&old_index, &mut new_index);
 
-    if mode == ResetMode::Hard || mode == ResetMode::Keep || mode == ResetMode::Merge {
-        // Hard/Keep/Merge require a working tree
+    let needs_worktree_checkout =
+        mode == ResetMode::Hard || mode == ResetMode::Keep || mode == ResetMode::Merge;
+
+    if needs_worktree_checkout {
         if repo.work_tree.is_none() {
             bail!("fatal: this operation must be run in a work tree");
         }
+        let wt = repo.work_tree.as_deref().expect("worktree checked above");
+        if mode == ResetMode::Merge || mode == ResetMode::Keep {
+            let obstruction = find_untracked_obstruction(wt, &old_index, &new_index);
+            if let Some((path, is_dir)) = obstruction {
+                if is_dir {
+                    bail!("Updating '{}' would lose untracked files in it", path);
+                } else {
+                    bail!("Updating '{}' would lose untracked files.", path);
+                }
+            }
+        }
+        checkout_index_to_worktree(
+            repo,
+            &old_index,
+            &mut new_index,
+            Some((&target_oid, Some(commit_spec))),
+        )?;
         if repo.work_tree.is_some() {
-            let wt = repo.work_tree.as_deref().expect("worktree checked above");
-            if mode == ResetMode::Merge || mode == ResetMode::Keep {
-                let obstruction = find_untracked_obstruction(wt, &old_index, &new_index);
-                if let Some((path, is_dir)) = obstruction {
-                    if is_dir {
-                        bail!("Updating '{}' would lose untracked files in it", path);
-                    } else {
-                        bail!("Updating '{}' would lose untracked files.", path);
+            if let Some(ref wt) = repo.work_tree {
+                for entry in &mut new_index.entries {
+                    if entry.stage() != 0 {
+                        continue;
+                    }
+                    let path_str = String::from_utf8_lossy(&entry.path);
+                    let abs = wt.join(path_str.as_ref());
+                    if let Ok(meta) = std::fs::symlink_metadata(&abs) {
+                        use std::os::unix::fs::MetadataExt as _;
+                        entry.ctime_sec = meta.ctime() as u32;
+                        entry.ctime_nsec = meta.ctime_nsec() as u32;
+                        entry.mtime_sec = meta.mtime() as u32;
+                        entry.mtime_nsec = meta.mtime_nsec() as u32;
+                        entry.dev = meta.dev() as u32;
+                        entry.ino = meta.ino() as u32;
+                        entry.size = meta.size() as u32;
                     }
                 }
             }
-            checkout_index_to_worktree(
-                repo,
-                &old_index,
-                &mut new_index,
-                Some((&target_oid, Some(commit_spec))),
-            )?;
-        }
-        if !quiet {
-            print_head_message(repo, &target_oid)?;
         }
     } else if mode == ResetMode::Mixed && !quiet {
-        // Mixed: print unstaged changes after reset.
-        // We need to print before writing the new index.
         print_unstaged_changes(repo, &new_index)?;
-    }
-
-    // Refresh stat info after hard/merge/keep checkout to prevent false diff-files hits
-    if (mode == ResetMode::Hard || mode == ResetMode::Keep || mode == ResetMode::Merge)
-        && repo.work_tree.is_some()
-    {
-        if let Some(ref wt) = repo.work_tree {
-            for entry in &mut new_index.entries {
-                if entry.stage() != 0 {
-                    continue;
-                }
-                let path_str = String::from_utf8_lossy(&entry.path);
-                let abs = wt.join(path_str.as_ref());
-                if let Ok(meta) = std::fs::symlink_metadata(&abs) {
-                    use std::os::unix::fs::MetadataExt as _;
-                    entry.ctime_sec = meta.ctime() as u32;
-                    entry.ctime_nsec = meta.ctime_nsec() as u32;
-                    entry.mtime_sec = meta.mtime() as u32;
-                    entry.mtime_nsec = meta.mtime_nsec() as u32;
-                    entry.dev = meta.dev() as u32;
-                    entry.ino = meta.ino() as u32;
-                    entry.size = meta.size() as u32;
-                }
-            }
-        }
     }
 
     repo.write_index_at(&index_path, &mut new_index)
         .context("writing index")?;
     crate::commands::sparse_checkout::reapply_sparse_checkout_if_configured(repo)?;
+
+    if head.oid().is_some() {
+        write_orig_head(&repo.git_dir, &old_oid)?;
+    }
+    update_head_ref(&repo.git_dir, &head, &target_oid)?;
+    write_reset_reflog(repo, &head, &old_oid, &target_oid, commit_spec);
+    let _ = std::fs::remove_file(repo.git_dir.join("MERGE_HEAD"));
+    let _ = std::fs::remove_file(repo.git_dir.join("MERGE_MSG"));
+    let _ = std::fs::remove_file(repo.git_dir.join("MERGE_MODE"));
+    if !extra.skip_sequencer_head_cleanup {
+        let _ = std::fs::remove_file(repo.git_dir.join("CHERRY_PICK_HEAD"));
+        let _ = std::fs::remove_file(repo.git_dir.join("REVERT_HEAD"));
+        let seq = repo.git_dir.join("sequencer");
+        if seq.is_dir() {
+            let _ = std::fs::remove_dir_all(&seq);
+        }
+    }
+
+    if needs_worktree_checkout && !quiet {
+        print_head_message(repo, &target_oid)?;
+    }
+
     Ok(())
 }
 
@@ -1328,7 +1317,12 @@ fn find_untracked_obstruction(
     old_index: &Index,
     new_index: &Index,
 ) -> Option<(String, bool)> {
-    let old_paths: HashSet<Vec<u8>> = old_index.entries.iter().map(|e| e.path.clone()).collect();
+    let old_paths: HashSet<Vec<u8>> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.clone())
+        .collect();
 
     for entry in &new_index.entries {
         if entry.stage() != 0 {
@@ -1745,6 +1739,31 @@ fn checkout_index_to_worktree(
         None => return Ok(()),
     };
 
+    if let Some(cwd_rel) = grit_lib::worktree_cwd::process_cwd_repo_relative(&work_tree) {
+        let cwd_abs = work_tree.join(&cwd_rel);
+        if std::fs::symlink_metadata(&cwd_abs)
+            .map(|m| m.is_dir())
+            .unwrap_or(false)
+        {
+            for e in &new_index.entries {
+                if e.stage() != 0 || e.skip_worktree() || e.mode == MODE_GITLINK {
+                    continue;
+                }
+                let p = String::from_utf8_lossy(&e.path);
+                if p.as_ref() != cwd_rel.as_str() {
+                    continue;
+                }
+                if e.mode == MODE_SYMLINK
+                    || e.mode == 0o100644
+                    || e.mode == 0o100755
+                    || e.mode == 0o100664
+                {
+                    bail!("Refusing to remove the current working directory:\n{cwd_rel}\n");
+                }
+            }
+        }
+    }
+
     // Load gitattributes and config for CRLF conversion
     let attr_rules = grit_lib::crlf::load_gitattributes(&work_tree);
     let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
@@ -1760,6 +1779,12 @@ fn checkout_index_to_worktree(
     // (HashSet iteration order is unspecified; wrong order can leave stale files on disk).
     let mut to_drop: Vec<Vec<u8>> = old_paths.difference(&new_paths).cloned().collect();
     to_drop.sort_by(|a, b| b.len().cmp(&a.len()));
+    for old_path in &to_drop {
+        let rel = String::from_utf8_lossy(old_path).into_owned();
+        if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(&work_tree, &rel) {
+            bail!("Refusing to remove the current working directory:\n{rel}\n");
+        }
+    }
     for old_path in to_drop {
         let rel = String::from_utf8_lossy(&old_path).into_owned();
         let abs = work_tree.join(&rel);
@@ -1775,13 +1800,23 @@ fn checkout_index_to_worktree(
         .filter(|e| e.stage() != 0)
         .map(|e| e.path.clone())
         .collect();
-    for path in &old_unmerged_paths {
-        if !new_paths.contains(path) {
-            let rel = String::from_utf8_lossy(path).into_owned();
-            let abs = work_tree.join(&rel);
-            remove_worktree_path_best_effort(&abs);
-            remove_empty_parent_dirs(&work_tree, &abs);
+    let mut unmerged_drop: Vec<Vec<u8>> = old_unmerged_paths
+        .iter()
+        .filter(|p| !new_paths.contains(p.as_slice()))
+        .cloned()
+        .collect();
+    unmerged_drop.sort_by(|a, b| b.len().cmp(&a.len()));
+    for path in &unmerged_drop {
+        let rel = String::from_utf8_lossy(path).into_owned();
+        if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(&work_tree, &rel) {
+            bail!("Refusing to remove the current working directory:\n{rel}\n");
         }
+    }
+    for path in unmerged_drop {
+        let rel = String::from_utf8_lossy(&path).into_owned();
+        let abs = work_tree.join(&rel);
+        remove_worktree_path_best_effort(&abs);
+        remove_empty_parent_dirs(&work_tree, &abs);
     }
 
     // Write all stage-0 entries from the new index.
@@ -1800,6 +1835,9 @@ fn checkout_index_to_worktree(
             // Submodules are represented as gitlinks: their OIDs are commit
             // objects in the submodule's object store, not blobs in ours.
             // Materialize only the directory path in the superproject.
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(&work_tree, &path_str) {
+                bail!("Refusing to remove the current working directory:\n{path_str}\n");
+            }
             if abs_path.is_file() || abs_path.is_symlink() {
                 std::fs::remove_file(&abs_path)?;
             } else if abs_path.is_dir() && abs_path.join(".git").exists() {
@@ -1845,6 +1883,9 @@ fn checkout_index_to_worktree(
         }
 
         if abs_path.is_dir() {
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(&work_tree, &path_str) {
+                bail!("Refusing to remove the current working directory:\n{path_str}\n");
+            }
             std::fs::remove_dir_all(&abs_path)?;
         }
 
@@ -1852,6 +1893,11 @@ fn checkout_index_to_worktree(
             let target = String::from_utf8(obj.data)
                 .map_err(|_| anyhow::anyhow!("symlink target is not UTF-8"))?;
             if abs_path.exists() || abs_path.is_symlink() {
+                if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(
+                    &work_tree, &path_str,
+                ) {
+                    bail!("Refusing to remove the current working directory:\n{path_str}\n");
+                }
                 std::fs::remove_file(&abs_path)?;
             }
             std::os::unix::fs::symlink(target, &abs_path)?;
@@ -1931,10 +1977,16 @@ fn remove_worktree_path_best_effort(abs: &Path) {
 
 /// Remove empty parent directories up to (but not including) `work_tree`.
 fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
+    let cwd_rel = grit_lib::worktree_cwd::process_cwd_repo_relative(work_tree);
     let mut current = path.parent();
     while let Some(dir) = current {
         if dir == work_tree {
             break;
+        }
+        if let Some(ref cr) = cwd_rel {
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_dir(work_tree, dir, cr) {
+                break;
+            }
         }
         match std::fs::remove_dir(dir) {
             Ok(()) => current = dir.parent(),

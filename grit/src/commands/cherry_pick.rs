@@ -19,10 +19,11 @@ use grit_lib::commit_trailers::{
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::diff_index_to_worktree;
 use grit_lib::ident::parse_signature_times;
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK, MODE_TREE};
 use grit_lib::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::merge_trees::{
-    merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation, WhitespaceMergeOptions,
+    merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation,
+    WhitespaceMergeOptions,
 };
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
@@ -830,6 +831,13 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
         _ => ConflictStyle::Merge,
     };
 
+    if let Some(wt) = repo.work_tree.as_deref() {
+        let base_entries = tree_to_map(tree_to_index_entries(repo, &parent_tree_oid, "")?);
+        let ours_entries = tree_to_map(tree_to_index_entries(repo, &ours_tree_oid, "")?);
+        let theirs_entries = tree_to_map(tree_to_index_entries(repo, &commit_tree_oid, "")?);
+        bail_if_df_merge_would_remove_cwd(wt, &base_entries, &ours_entries, &theirs_entries)?;
+    }
+
     let merged = merge_trees_three_way(
         repo,
         parent_tree_oid,
@@ -894,13 +902,20 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
     if let Some(wt) = &repo.work_tree {
         super::reset::check_untracked_cherry_pick_obstruction(wt, &old_index, &merge_result.index)?;
     }
-    repo.write_index(&mut merge_result.index)
-        .context("writing index")?;
-
     let work_tree = repo
         .work_tree
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot cherry-pick in a bare repository"))?;
+    preflight_cherry_pick_cwd_obstruction(
+        repo,
+        work_tree,
+        &merge_result.index,
+        &merge_result.conflict_content,
+        None,
+    )?;
+    repo.write_index(&mut merge_result.index)
+        .context("writing index")?;
+
     checkout_merged_index(
         repo,
         work_tree,
@@ -1946,6 +1961,95 @@ fn tree_to_map(entries: Vec<IndexEntry>) -> HashMap<Vec<u8>, IndexEntry> {
     out
 }
 
+fn path_has_tree_descendant(map: &HashMap<Vec<u8>, IndexEntry>, path: &[u8]) -> bool {
+    map.keys()
+        .any(|k| k.len() > path.len() && k.starts_with(path) && k.get(path.len()) == Some(&b'/'))
+}
+
+/// Directory/file obstruction relative to merge base: one side introduces a non-tree at `P` while
+/// the merge base only had paths under `P/` (no blob at `P`). Matches the cases `merge.rs` handles
+/// after rename flattening; `merge_trees_three_way` / rebase do not, so we preflight here
+/// (`t2501-cwd-empty`).
+pub(crate) fn bail_if_df_merge_would_remove_cwd(
+    work_tree: &Path,
+    base: &HashMap<Vec<u8>, IndexEntry>,
+    ours: &HashMap<Vec<u8>, IndexEntry>,
+    theirs: &HashMap<Vec<u8>, IndexEntry>,
+) -> Result<()> {
+    let mut all_paths = BTreeSet::new();
+    all_paths.extend(base.keys().cloned());
+    all_paths.extend(ours.keys().cloned());
+    all_paths.extend(theirs.keys().cloned());
+    for path in all_paths {
+        let b = base.get(&path);
+        let o = ours.get(&path);
+        let t = theirs.get(&path);
+        if let Some(te) = t {
+            if te.mode != MODE_TREE && o.is_none() && path_has_tree_descendant(base, &path) {
+                let anchor = String::from_utf8_lossy(&path);
+                if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(
+                    work_tree,
+                    anchor.as_ref(),
+                ) {
+                    bail!("Refusing to remove the current working directory:\n{anchor}\n");
+                }
+            }
+        }
+        if let Some(oe) = o {
+            if oe.mode != MODE_TREE && t.is_none() && path_has_tree_descendant(base, &path) {
+                let anchor = String::from_utf8_lossy(&path);
+                if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(
+                    work_tree,
+                    anchor.as_ref(),
+                ) {
+                    bail!("Refusing to remove the current working directory:\n{anchor}\n");
+                }
+            }
+        }
+        if let (Some(oe), Some(te)) = (o, t) {
+            if oe.mode == MODE_TREE && te.mode != MODE_TREE {
+                let anchor = String::from_utf8_lossy(&path);
+                if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(
+                    work_tree,
+                    anchor.as_ref(),
+                ) {
+                    bail!("Refusing to remove the current working directory:\n{anchor}\n");
+                }
+            }
+            if oe.mode != MODE_TREE && te.mode == MODE_TREE {
+                let anchor = String::from_utf8_lossy(&path);
+                if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(
+                    work_tree,
+                    anchor.as_ref(),
+                ) {
+                    bail!("Refusing to remove the current working directory:\n{anchor}\n");
+                }
+            }
+        }
+        if let (Some(be), Some(oe), Some(te)) = (b, o, t) {
+            if be.mode == MODE_TREE && oe.mode == MODE_TREE && te.mode != MODE_TREE {
+                let anchor = String::from_utf8_lossy(&path);
+                if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(
+                    work_tree,
+                    anchor.as_ref(),
+                ) {
+                    bail!("Refusing to remove the current working directory:\n{anchor}\n");
+                }
+            }
+            if be.mode == MODE_TREE && te.mode == MODE_TREE && oe.mode != MODE_TREE {
+                let anchor = String::from_utf8_lossy(&path);
+                if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(
+                    work_tree,
+                    anchor.as_ref(),
+                ) {
+                    bail!("Refusing to remove the current working directory:\n{anchor}\n");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn same_blob(a: &IndexEntry, b: &IndexEntry) -> bool {
     a.oid == b.oid && a.mode == b.mode
 }
@@ -2124,6 +2228,13 @@ fn content_merge_or_conflict(
         return Ok(());
     }
 
+    if base.mode == MODE_TREE || ours.mode == MODE_TREE || theirs.mode == MODE_TREE {
+        stage_entry(index, base, 1);
+        stage_entry(index, ours, 2);
+        stage_entry(index, theirs, 3);
+        return Ok(());
+    }
+
     let base_obj = repo.odb.read(&base.oid)?;
     let ours_obj = repo.odb.read(&ours.oid)?;
     let theirs_obj = repo.odb.read(&theirs.oid)?;
@@ -2192,6 +2303,105 @@ fn content_merge_or_conflict(
     Ok(())
 }
 
+/// Abort before index write when the cherry-pick/revert/rebase checkout would replace a directory
+/// that contains the process cwd with a file (`t2501-cwd-empty`).
+pub(crate) fn preflight_cherry_pick_cwd_obstruction(
+    repo: &Repository,
+    work_tree: &Path,
+    index: &Index,
+    conflict_content: &BTreeMap<Vec<u8>, ObjectId>,
+    rebase_conflict_paths: Option<&[Vec<u8>]>,
+) -> Result<()> {
+    let old_index = load_index(repo)?;
+    let old_stage0: HashMap<Vec<u8>, &IndexEntry> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| (e.path.clone(), e))
+        .collect();
+
+    let new_paths: HashSet<Vec<u8>> = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.clone())
+        .collect();
+
+    for entry in &old_index.entries {
+        if entry.stage() == 0 && !new_paths.contains(&entry.path) {
+            let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, &path_str) {
+                bail!("Refusing to remove the current working directory:\n{path_str}\n");
+            }
+        }
+    }
+
+    let mut written = HashSet::new();
+    for entry in &index.entries {
+        let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+        let abs_path = work_tree.join(&path_str);
+
+        if entry.stage() == 0 {
+            if let Some(prev) = old_stage0.get(&entry.path) {
+                if same_blob(prev, entry) {
+                    written.insert(entry.path.clone());
+                    continue;
+                }
+            }
+            preflight_blob_write_vs_cwd_dir(repo, work_tree, &path_str, &abs_path, entry)?;
+            written.insert(entry.path.clone());
+        } else if entry.stage() == 2 && !written.contains(&entry.path) {
+            if rebase_conflict_paths.is_some_and(|paths| paths.iter().any(|p| p == &entry.path)) {
+                if abs_path.is_dir()
+                    && grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(
+                        work_tree, &path_str,
+                    )
+                {
+                    bail!("Refusing to remove the current working directory:\n{path_str}\n");
+                }
+            } else {
+                let effective = if let Some(marker_oid) = conflict_content.get(&entry.path) {
+                    let mut marker_entry = entry.clone();
+                    marker_entry.oid = *marker_oid;
+                    marker_entry
+                } else {
+                    entry.clone()
+                };
+                preflight_blob_write_vs_cwd_dir(repo, work_tree, &path_str, &abs_path, &effective)?;
+            }
+            written.insert(entry.path.clone());
+        }
+    }
+    Ok(())
+}
+
+fn preflight_blob_write_vs_cwd_dir(
+    repo: &Repository,
+    work_tree: &Path,
+    path_str: &str,
+    abs_path: &Path,
+    entry: &IndexEntry,
+) -> Result<()> {
+    if entry.mode == 0o160000 {
+        if abs_path.is_dir() && !abs_path.join(".git").exists() {
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, path_str) {
+                bail!("Refusing to remove the current working directory:\n{path_str}\n");
+            }
+        }
+        return Ok(());
+    }
+    let obj = repo.odb.read(&entry.oid)?;
+    if obj.kind != ObjectKind::Blob {
+        return Ok(());
+    }
+    if abs_path.is_dir() {
+        if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, path_str) {
+            bail!("Refusing to remove the current working directory:\n{path_str}\n");
+        }
+    }
+    Ok(())
+}
+
 fn checkout_merged_index(
     repo: &Repository,
     work_tree: &Path,
@@ -2206,19 +2416,30 @@ fn checkout_merged_index(
         .map(|e| (e.path.clone(), e))
         .collect();
 
-    let new_paths: HashSet<Vec<u8>> = index.entries.iter().map(|e| e.path.clone()).collect();
+    let new_paths: HashSet<Vec<u8>> = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.clone())
+        .collect();
 
     for entry in &old_index.entries {
         if entry.stage() == 0 && !new_paths.contains(&entry.path) {
             let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, &path_str) {
+                bail!("Refusing to remove the current working directory:\n{path_str}\n");
+            }
             let abs_path = work_tree.join(&path_str);
             if abs_path.exists() || abs_path.is_symlink() {
-                let _ = fs::remove_file(&abs_path);
+                if abs_path.is_dir() {
+                    let _ = fs::remove_dir_all(&abs_path);
+                } else {
+                    let _ = fs::remove_file(&abs_path);
+                }
                 remove_empty_parent_dirs(work_tree, &abs_path);
             }
         }
     }
-
     let mut written = HashSet::new();
     for entry in &index.entries {
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
@@ -2232,16 +2453,16 @@ fn checkout_merged_index(
                     continue;
                 }
             }
-            write_entry_to_worktree(repo, &abs_path, entry)?;
+            write_entry_to_worktree(repo, work_tree, &path_str, &abs_path, entry)?;
             written.insert(entry.path.clone());
         } else if entry.stage() == 2 && !written.contains(&entry.path) {
             // For conflicts, prefer writing conflict-marker content if available
             if let Some(marker_oid) = conflict_content.get(&entry.path) {
                 let mut marker_entry = entry.clone();
                 marker_entry.oid = *marker_oid;
-                write_entry_to_worktree(repo, &abs_path, &marker_entry)?;
+                write_entry_to_worktree(repo, work_tree, &path_str, &abs_path, &marker_entry)?;
             } else {
-                write_entry_to_worktree(repo, &abs_path, entry)?;
+                write_entry_to_worktree(repo, work_tree, &path_str, &abs_path, entry)?;
             }
             written.insert(entry.path.clone());
         }
@@ -2251,10 +2472,16 @@ fn checkout_merged_index(
 }
 
 fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
+    let cwd_rel = grit_lib::worktree_cwd::process_cwd_repo_relative(work_tree);
     let mut current = path.parent();
     while let Some(dir) = current {
         if dir == work_tree {
             break;
+        }
+        if let Some(ref cr) = cwd_rel {
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_dir(work_tree, dir, cr) {
+                break;
+            }
         }
         match fs::remove_dir(dir) {
             Ok(()) => current = dir.parent(),
@@ -2263,12 +2490,21 @@ fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
     }
 }
 
-fn write_entry_to_worktree(repo: &Repository, abs_path: &Path, entry: &IndexEntry) -> Result<()> {
+fn write_entry_to_worktree(
+    repo: &Repository,
+    work_tree: &Path,
+    path_str: &str,
+    abs_path: &Path,
+    entry: &IndexEntry,
+) -> Result<()> {
     if let Some(parent) = abs_path.parent() {
         fs::create_dir_all(parent)?;
     }
 
     if entry.mode == 0o160000 {
+        if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, path_str) {
+            bail!("Refusing to remove the current working directory:\n{path_str}\n");
+        }
         if abs_path.is_file() || abs_path.is_symlink() {
             let _ = fs::remove_file(abs_path);
         } else if abs_path.is_dir() {
@@ -2278,20 +2514,23 @@ fn write_entry_to_worktree(repo: &Repository, abs_path: &Path, entry: &IndexEntr
         return Ok(());
     }
 
-    let obj = repo
-        .odb
-        .read(&entry.oid)
-        .context("reading object for checkout")?;
+    let obj = repo.odb.read(&entry.oid)?;
 
     if entry.mode == MODE_SYMLINK {
         let target =
             String::from_utf8(obj.data).map_err(|_| anyhow::anyhow!("symlink not UTF-8"))?;
         if abs_path.exists() || abs_path.is_symlink() {
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, path_str) {
+                bail!("Refusing to remove the current working directory:\n{path_str}\n");
+            }
             let _ = fs::remove_file(abs_path);
         }
         std::os::unix::fs::symlink(target, abs_path)?;
     } else {
         if abs_path.is_dir() {
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, path_str) {
+                bail!("Refusing to remove the current working directory:\n{path_str}\n");
+            }
             fs::remove_dir_all(abs_path)?;
         }
         fs::write(abs_path, &obj.data)?;
