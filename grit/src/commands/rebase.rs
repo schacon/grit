@@ -31,7 +31,10 @@ use grit_lib::patch_ids::compute_patch_id;
 use grit_lib::refs::append_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, split_revision_token, OrderingMode, RevListOptions};
-use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
+use grit_lib::rev_parse::{
+    abbreviate_object_id, peel_to_commit_for_merge_base, resolve_revision,
+    resolve_revision_for_range_end, split_triple_dot_range,
+};
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::whitespace_rule::{fix_blob_bytes, parse_whitespace_rule, WS_DEFAULT_RULE};
 use grit_lib::write_tree::write_tree_from_index;
@@ -271,6 +274,10 @@ pub fn preprocess_rebase_argv(rest: &[String]) -> Vec<String> {
 /// Run the `rebase` command.
 pub fn run(mut args: Args) -> Result<()> {
     validate_compat_syntax(&args)?;
+
+    if args.keep_base && args.onto.is_some() {
+        bail!("options '--keep-base' and '--onto' cannot be used together");
+    }
 
     if args.root {
         if args.keep_base {
@@ -1972,13 +1979,25 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         let upstream_spec = args.upstream.as_deref().unwrap_or("HEAD").to_owned();
         let up_oid = resolve_revision(&repo, &upstream_spec)
             .with_context(|| format!("bad revision '{upstream_spec}'"))?;
-        let (onto, onto_label) = if let Some(ref onto_spec) = args.onto {
-            let oid = resolve_revision(&repo, onto_spec)
-                .with_context(|| format!("bad revision '{onto_spec}'"))?;
-            (oid, onto_spec.clone())
-        } else if args.keep_base {
-            let oid = find_merge_base(&repo, up_oid, head_oid_early).unwrap_or(up_oid);
-            (oid, upstream_spec.clone())
+        let (onto, onto_label) = if args.keep_base {
+            let branch_name = head_state
+                .branch_name()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "HEAD".to_string());
+            let onto_spec = format!("{upstream_spec}...{branch_name}");
+            let onto =
+                merge_base_from_triple_dot_onto(&repo, &onto_spec, true, upstream_spec.as_str())?;
+            (onto, onto_spec)
+        } else if let Some(ref onto_spec) = args.onto {
+            if split_triple_dot_range(onto_spec).is_some() {
+                let onto =
+                    merge_base_from_triple_dot_onto(&repo, onto_spec, false, onto_spec.as_str())?;
+                (onto, onto_spec.clone())
+            } else {
+                let oid = resolve_revision(&repo, onto_spec)
+                    .with_context(|| format!("bad revision '{onto_spec}'"))?;
+                (oid, onto_spec.clone())
+            }
         } else {
             (up_oid, upstream_spec.clone())
         };
@@ -2041,11 +2060,23 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
     } else {
         args.keep_base
     };
-    let filter_cherry_equivalents = !reapply_cherry_picks && !args.interactive;
+    let upstream_for_replay = if args.keep_base && reapply_cherry_picks {
+        onto_oid
+    } else {
+        upstream_oid
+    };
+    // Interactive rebase normally skips this filter (todo lists all commits); `--keep-base` with
+    // `--no-reapply-cherry-picks` must still omit patch-id duplicates like the merge backend.
+    let filter_cherry_equivalents = !reapply_cherry_picks && (!args.interactive || args.keep_base);
     let mut commits = if args.root {
         collect_commits_for_root_rebase(&repo, head_oid, onto_oid)?
     } else {
-        collect_rebase_todo_commits(&repo, head_oid, upstream_oid, filter_cherry_equivalents)?
+        collect_rebase_todo_commits(
+            &repo,
+            head_oid,
+            upstream_for_replay,
+            filter_cherry_equivalents,
+        )?
     };
 
     if !args.keep_empty && !args.interactive {
@@ -2346,12 +2377,40 @@ fn fast_forward_rebase(
     Ok(())
 }
 
-/// Find the merge-base of two commits.  Returns `None` when there is no
-/// common ancestor.
-fn find_merge_base(repo: &Repository, a: ObjectId, b: ObjectId) -> Option<ObjectId> {
-    grit_lib::merge_base::merge_bases_first_vs_rest(repo, a, &[b])
-        .ok()
-        .and_then(|bases| bases.into_iter().next())
+/// Resolve `A...B` in an `--onto` or synthesized `--keep-base` onto name to a single merge base.
+///
+/// When `keep_base` is true, Git reports `'<upstream>': need exactly one merge base with branch`;
+/// otherwise `'<onto>': need exactly one merge base`.
+fn merge_base_from_triple_dot_onto(
+    repo: &Repository,
+    onto_spec: &str,
+    keep_base: bool,
+    upstream_label: &str,
+) -> Result<ObjectId> {
+    let Some((left_raw, right_raw)) = split_triple_dot_range(onto_spec) else {
+        bail!("internal: expected symmetric-diff revision in onto spec");
+    };
+    let left_tip = if left_raw.is_empty() {
+        resolve_revision_for_range_end(repo, "HEAD")?
+    } else {
+        resolve_revision_for_range_end(repo, left_raw)?
+    };
+    let right_tip = if right_raw.is_empty() {
+        resolve_revision_for_range_end(repo, "HEAD")?
+    } else {
+        resolve_revision_for_range_end(repo, right_raw)?
+    };
+    let left_c = peel_to_commit_for_merge_base(repo, left_tip)?;
+    let right_c = peel_to_commit_for_merge_base(repo, right_tip)?;
+    let bases = merge_bases_first_vs_rest(repo, left_c, &[right_c])?;
+    if bases.len() != 1 {
+        if keep_base {
+            bail!("'{upstream_label}': need exactly one merge base with branch");
+        } else {
+            bail!("'{onto_spec}': need exactly one merge base");
+        }
+    }
+    Ok(bases[0])
 }
 
 /// Commits to replay for a non-interactive rebase, oldest-first.
