@@ -1596,15 +1596,15 @@ fn commit_from_merged_index(
     message: String,
     replay_opts: RebaseReplayCommitOpts,
     now: time::OffsetDateTime,
-    identity_template: Option<&CommitData>,
 ) -> Result<ObjectId> {
     let tree_oid = write_tree_from_index(&repo.odb, merged_index, "")?;
     let author = rebase_replayed_author_line(source_author_line, replay_opts, now)?;
     let committer = rebase_replayed_committer_line(config, source_author_line, replay_opts, now)?;
     let (message, encoding, raw_message) = finalize_message_for_commit_encoding(message, config);
-    let (author_raw, committer_raw) = identity_template
-        .map(|c| rebase_identity_raw_fields_preserved(c, replay_opts))
-        .unwrap_or_default();
+    let (author_raw, committer_raw) =
+        crate::git_commit_encoding::identity_raw_for_serialized_commit(
+            &encoding, &author, &committer,
+        );
     let commit_data = CommitData {
         tree: tree_oid,
         parents,
@@ -1755,17 +1755,6 @@ fn load_rebase_replay_commit_opts(rb_dir: &Path) -> RebaseReplayCommitOpts {
         ignore_space_change: load_rebase_ignore_whitespace(rb_dir),
         committer_date_is_author_date: rb_dir.join("cdate_is_adate").exists(),
         ignore_date: rb_dir.join("ignore_date").exists(),
-    }
-}
-
-fn rebase_identity_raw_fields_preserved(
-    commit: &CommitData,
-    opts: RebaseReplayCommitOpts,
-) -> (Vec<u8>, Vec<u8>) {
-    if opts.committer_date_is_author_date || opts.ignore_date {
-        (Vec::new(), Vec::new())
-    } else {
-        (commit.author_raw.clone(), commit.committer_raw.clone())
     }
 }
 
@@ -3739,13 +3728,17 @@ fn cherry_pick_for_rebase(
         let (message, encoding, raw_message) = transcoded_replayed_message(&commit, &config);
         let author = rebase_replayed_author_line(&commit.author, replay_opts, now)?;
         let committer = rebase_replayed_committer_line(&config, &commit.author, replay_opts, now)?;
+        let (author_raw, committer_raw) =
+            crate::git_commit_encoding::identity_raw_for_serialized_commit(
+                &encoding, &author, &committer,
+            );
         let commit_data = CommitData {
             tree: head_commit.tree,
             parents: vec![head_oid],
             author,
             committer,
-            author_raw: Vec::new(),
-            committer_raw: Vec::new(),
+            author_raw,
+            committer_raw,
             encoding,
             message,
             raw_message,
@@ -3834,13 +3827,17 @@ fn cherry_pick_for_rebase(
                     let author = rebase_replayed_author_line(&commit.author, replay_opts, now)?;
                     let committer =
                         rebase_replayed_committer_line(&config, &commit.author, replay_opts, now)?;
+                    let (author_raw, committer_raw) =
+                        crate::git_commit_encoding::identity_raw_for_serialized_commit(
+                            &encoding, &author, &committer,
+                        );
                     let commit_data = CommitData {
                         tree: tree_oid,
                         parents: vec![head_oid],
                         author,
                         committer,
-                        author_raw: Vec::new(),
-                        committer_raw: Vec::new(),
+                        author_raw,
+                        committer_raw,
                         encoding,
                         message,
                         raw_message,
@@ -3863,13 +3860,17 @@ fn cherry_pick_for_rebase(
                     let author = rebase_replayed_author_line(&commit.author, replay_opts, now)?;
                     let committer =
                         rebase_replayed_committer_line(&config, &commit.author, replay_opts, now)?;
+                    let (author_raw, committer_raw) =
+                        crate::git_commit_encoding::identity_raw_for_serialized_commit(
+                            &encoding, &author, &committer,
+                        );
                     let commit_data = CommitData {
                         tree: commit_tree_oid,
                         parents: vec![head_oid],
                         author,
                         committer,
-                        author_raw: Vec::new(),
-                        committer_raw: Vec::new(),
+                        author_raw,
+                        committer_raw,
                         encoding,
                         message,
                         raw_message,
@@ -3893,13 +3894,17 @@ fn cherry_pick_for_rebase(
                     let author = rebase_replayed_author_line(&commit.author, replay_opts, now)?;
                     let committer =
                         rebase_replayed_committer_line(&config, &commit.author, replay_opts, now)?;
+                    let (author_raw, committer_raw) =
+                        crate::git_commit_encoding::identity_raw_for_serialized_commit(
+                            &encoding, &author, &committer,
+                        );
                     let commit_data = CommitData {
                         tree: tree_oid,
                         parents: vec![head_oid],
                         author,
                         committer,
-                        author_raw: Vec::new(),
-                        committer_raw: Vec::new(),
+                        author_raw,
+                        committer_raw,
                         encoding,
                         message,
                         raw_message,
@@ -3955,7 +3960,9 @@ fn cherry_pick_for_rebase(
                 let committer =
                     rebase_replayed_committer_line(&config, &commit.author, replay_opts, now)?;
                 let (author_raw, committer_raw) =
-                    rebase_identity_raw_fields_preserved(&commit, replay_opts);
+                    crate::git_commit_encoding::identity_raw_for_serialized_commit(
+                        &encoding, &author, &committer,
+                    );
                 let commit_data = CommitData {
                     tree: commit_tree_oid,
                     parents: vec![head_oid],
@@ -4119,7 +4126,6 @@ fn cherry_pick_for_rebase(
                 msg,
                 replay_opts,
                 now,
-                Some(&hc),
             )?;
             fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
             record_rebase_in_rewritten_pending(git_dir, rb_dir, commit_oid, next_after_line)?;
@@ -4139,7 +4145,6 @@ fn cherry_pick_for_rebase(
                 cleaned,
                 replay_opts,
                 now,
-                Some(&hc),
             )?;
             fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
             if record_rewrite {
@@ -4169,7 +4174,6 @@ fn cherry_pick_for_rebase(
                 cleaned,
                 replay_opts,
                 now,
-                Some(&hc),
             )?;
             fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
             clear_squash_ctx(&rb_dir);
@@ -4199,7 +4203,6 @@ fn cherry_pick_for_rebase(
             cleaned,
             replay_opts,
             now,
-            Some(&hc),
         )?;
         fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
         clear_squash_ctx(&rb_dir);
@@ -4236,7 +4239,10 @@ fn cherry_pick_for_rebase(
 
     let author = rebase_replayed_author_line(&commit.author, replay_opts, now)?;
     let committer = rebase_replayed_committer_line(&config, &commit.author, replay_opts, now)?;
-    let (author_raw, committer_raw) = rebase_identity_raw_fields_preserved(&commit, replay_opts);
+    let (author_raw, committer_raw) =
+        crate::git_commit_encoding::identity_raw_for_serialized_commit(
+            &encoding, &author, &committer,
+        );
     let commit_data = CommitData {
         tree: tree_oid,
         parents: vec![head_oid],
@@ -4614,7 +4620,6 @@ fn do_continue() -> Result<()> {
             message,
             replay_opts_continue,
             now_continue,
-            amend_src_commit.as_ref().or(Some(&hc)),
         )?;
         fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
         let next_peek_amend =
@@ -4734,7 +4739,6 @@ fn do_continue() -> Result<()> {
                 msg,
                 replay_opts_continue,
                 now_continue,
-                Some(&original_commit),
             )?
         } else if todo_cmd == RebaseTodoCmd::Squash && !final_fixup {
             let tmpl = fs::read_to_string(rb_dir.join("message-squash"))?;
@@ -4750,7 +4754,6 @@ fn do_continue() -> Result<()> {
                 cleaned,
                 replay_opts_continue,
                 now_continue,
-                Some(&original_commit),
             )?
         } else if todo_cmd == RebaseTodoCmd::Fixup {
             let fixup_path = rb_dir.join("message-fixup");
@@ -4773,7 +4776,6 @@ fn do_continue() -> Result<()> {
                 cleaned,
                 replay_opts_continue,
                 now_continue,
-                Some(&original_commit),
             )?;
             clear_squash_ctx(&rb_dir);
             oid
@@ -4797,7 +4799,6 @@ fn do_continue() -> Result<()> {
                 cleaned,
                 replay_opts_continue,
                 now_continue,
-                Some(&original_commit),
             )?;
             clear_squash_ctx(&rb_dir);
             oid
@@ -4829,7 +4830,9 @@ fn do_continue() -> Result<()> {
             now_continue,
         )?;
         let (author_raw, committer_raw) =
-            rebase_identity_raw_fields_preserved(&original_commit, replay_opts_continue);
+            crate::git_commit_encoding::identity_raw_for_serialized_commit(
+                &encoding, &author, &committer,
+            );
         let commit_data = CommitData {
             tree: tree_oid,
             parents: vec![head_oid],
@@ -4844,11 +4847,12 @@ fn do_continue() -> Result<()> {
         let commit_bytes = serialize_commit(&commit_data);
         repo.odb.write(ObjectKind::Commit, &commit_bytes)?
     } else {
-        let (message, encoding, raw_message) =
-            read_rebase_continue_message(git_dir, &original_commit, &config)?;
+        let (message, _, _) = read_rebase_continue_message(git_dir, &original_commit, &config)?;
         let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
         let raw_msg = commit_message_after_prepare_hook(&repo, git_dir, &message, "message")?;
-        let message = apply_commit_msg_cleanup(&raw_msg, rebase_commit_msg_cleanup(&config));
+        let cleaned = apply_commit_msg_cleanup(&raw_msg, rebase_commit_msg_cleanup(&config));
+        let (message, encoding, raw_message) =
+            finalize_message_for_commit_encoding(cleaned, &config);
         let author = rebase_replayed_author_line(
             &original_commit.author,
             replay_opts_continue,
@@ -4861,7 +4865,9 @@ fn do_continue() -> Result<()> {
             now_continue,
         )?;
         let (author_raw, committer_raw) =
-            rebase_identity_raw_fields_preserved(&original_commit, replay_opts_continue);
+            crate::git_commit_encoding::identity_raw_for_serialized_commit(
+                &encoding, &author, &committer,
+            );
         let commit_data = CommitData {
             tree: tree_oid,
             parents: vec![head_oid],

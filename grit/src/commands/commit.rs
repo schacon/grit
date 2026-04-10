@@ -750,6 +750,9 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let commit_encoding = config
+        .get("i18n.commitEncoding")
+        .or_else(|| config.get("i18n.commitencoding"));
 
     let mut staged = if dry_run_pathspec_status {
         diff_trees(&repo.odb, head_tree.as_ref(), Some(&tree_oid), "")?
@@ -928,10 +931,6 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    // Check i18n.commitEncoding for non-UTF-8 commit messages
-    let commit_encoding = config
-        .get("i18n.commitEncoding")
-        .or_else(|| config.get("i18n.commitencoding"));
     let now = OffsetDateTime::now_utc();
 
     // When amending, preserve original author unless explicitly overridden

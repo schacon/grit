@@ -1239,13 +1239,22 @@ fn create_revert_commit(
             commit_enc.as_deref(),
         );
 
+    let author_line = format_ident(&author, now);
+    let committer_line = format_ident(&committer, now);
+    let (author_raw, committer_raw) =
+        crate::git_commit_encoding::identity_raw_for_serialized_commit(
+            &encoding,
+            &author_line,
+            &committer_line,
+        );
+
     let commit_data = CommitData {
         tree: tree_oid,
         parents,
-        author: format_ident(&author, now),
-        committer: format_ident(&committer, now),
-        author_raw: Vec::new(),
-        committer_raw: Vec::new(),
+        author: author_line,
+        committer: committer_line,
+        author_raw,
+        committer_raw,
         encoding,
         message: stored_msg,
         raw_message,
