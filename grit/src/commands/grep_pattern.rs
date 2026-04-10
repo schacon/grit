@@ -6,6 +6,7 @@
 
 use anyhow::{Context, Result};
 use std::io::Read;
+use std::path::Path;
 
 /// A shell token that participates in Git's boolean pattern expression.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,7 +91,15 @@ pub(crate) fn extract_pattern_tokens(rest: &[String]) -> Result<(Vec<PatternToke
                             .context("cannot read patterns from stdin")?;
                         s
                     } else {
-                        std::fs::read_to_string(path)
+                        let p = Path::new(path);
+                        let resolved = if p.is_absolute() {
+                            p.to_path_buf()
+                        } else {
+                            std::env::current_dir()
+                                .unwrap_or_else(|_| Path::new(".").to_path_buf())
+                                .join(p)
+                        };
+                        std::fs::read_to_string(&resolved)
                             .with_context(|| format!("cannot read pattern file: '{path}'"))?
                     };
                     for line in content.lines() {

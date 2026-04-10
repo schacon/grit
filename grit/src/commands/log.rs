@@ -878,11 +878,12 @@ fn ident_matches_header_patterns(
     if patterns.is_empty() {
         return true;
     }
-    let haystack = if use_mailmap && !mailmap.is_empty() {
+    let haystack_full = if use_mailmap && !mailmap.is_empty() {
         ident_for_mailmap_match(mailmap, raw)
     } else {
         raw.to_string()
     };
+    let haystack = ident_for_author_pattern_match(&haystack_full);
     patterns.iter().any(|re| re.is_match(&haystack))
 }
 
@@ -1292,6 +1293,19 @@ fn sort_revision_specs_by_committer_desc(repo: &Repository, specs: &mut Vec<Stri
 
 fn extract_epoch_from_ident(ident: &str) -> i64 {
     committer_timestamp_for_until_filter(ident)
+}
+
+/// Strip the timestamp trailer from a Git ident line (Git `strip_timestamp` in `grep.c`).
+///
+/// The author/committer payload is `Name <email> <epoch> <tz>`; pattern matching uses only
+/// the `Name <email>` prefix (through the closing `>`), so `--author=-0700` does not match
+/// the timezone field (t7810).
+fn ident_for_author_pattern_match(ident: &str) -> String {
+    if let Some(gt) = ident.rfind('>') {
+        ident[..=gt].to_string()
+    } else {
+        ident.to_string()
+    }
 }
 
 /// When `git log --graph <tip> --branches` is used, Git prefers `<tip>` as the leftmost
