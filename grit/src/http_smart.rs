@@ -258,6 +258,8 @@ pub struct HttpFetchOptions {
     pub shallow_exclude: Vec<String>,
     /// Partial-clone filter specification requested by `--filter`.
     pub filter_spec: Option<String>,
+    /// Request full-object transfer without have/common negotiation (`--refetch`).
+    pub refetch: bool,
 }
 
 fn requested_depth(opts: &HttpFetchOptions) -> Option<usize> {
@@ -550,55 +552,60 @@ fn fetch_pack_v0_v1_stateless_http(
 
     let fetch_caps = build_fetch_caps_v0(caps);
     let want_set: HashSet<ObjectId> = wants.iter().copied().collect();
-    let local_repo = Repository::open(local_git_dir, None)
-        .with_context(|| format!("open {}", local_git_dir.display()))?;
-    let mut negotiator = SkippingNegotiator::new(local_repo);
+    let mut negotiator = if options.refetch {
+        None
+    } else {
+        let local_repo = Repository::open(local_git_dir, None)
+            .with_context(|| format!("open {}", local_git_dir.display()))?;
+        let mut negotiator = SkippingNegotiator::new(local_repo);
 
-    for w in &wants {
-        if negotiator.repo().odb.read(w).is_ok() {
-            negotiator.add_tip(*w)?;
-        }
-    }
-    let mut tips: Vec<ObjectId> = Vec::new();
-    for prefix in ["refs/heads/", "refs/tags/"] {
-        if let Ok(entries) = refs::list_refs(local_git_dir, prefix) {
-            for (name, oid) in entries {
-                let tip = if let Ok(resolved) = resolve_revision(negotiator.repo(), &name) {
-                    resolved
-                } else {
-                    oid
-                };
-                if negotiator.repo().odb.read(&tip).is_err() {
-                    continue;
-                }
-                tips.push(tip);
+        for w in &wants {
+            if negotiator.repo().odb.read(w).is_ok() {
+                negotiator.add_tip(*w)?;
             }
         }
-    }
-    if let Ok(h) = refs::resolve_ref(local_git_dir, "HEAD") {
-        if negotiator.repo().odb.read(&h).is_ok() {
-            tips.push(h);
+        let mut tips: Vec<ObjectId> = Vec::new();
+        for prefix in ["refs/heads/", "refs/tags/"] {
+            if let Ok(entries) = refs::list_refs(local_git_dir, prefix) {
+                for (name, oid) in entries {
+                    let tip = if let Ok(resolved) = resolve_revision(negotiator.repo(), &name) {
+                        resolved
+                    } else {
+                        oid
+                    };
+                    if negotiator.repo().odb.read(&tip).is_err() {
+                        continue;
+                    }
+                    tips.push(tip);
+                }
+            }
         }
-    }
-    tips.sort_by_key(|o| o.to_hex());
-    tips.dedup();
-    for t in tips {
-        if want_set.contains(&t) {
-            continue;
+        if let Ok(h) = refs::resolve_ref(local_git_dir, "HEAD") {
+            if negotiator.repo().odb.read(&h).is_ok() {
+                tips.push(h);
+            }
         }
-        if negotiator.repo().odb.read(&t).is_err() {
-            continue;
+        tips.sort_by_key(|o| o.to_hex());
+        tips.dedup();
+        for t in tips {
+            if want_set.contains(&t) {
+                continue;
+            }
+            if negotiator.repo().odb.read(&t).is_err() {
+                continue;
+            }
+            negotiator.add_tip(t)?;
         }
-        negotiator.add_tip(t)?;
-    }
-    for e in advertised {
-        if want_set.contains(&e.oid) {
-            continue;
+        for e in advertised {
+            if want_set.contains(&e.oid) {
+                continue;
+            }
+            if negotiator.repo().odb.read(&e.oid).is_ok() {
+                negotiator.known_common(e.oid)?;
+            }
         }
-        if negotiator.repo().odb.read(&e.oid).is_ok() {
-            negotiator.known_common(e.oid)?;
-        }
-    }
+        Some(negotiator)
+    };
 
     let mut req = Vec::new();
     let first = wants[0];
@@ -607,8 +614,10 @@ fn fetch_pack_v0_v1_stateless_http(
         pkt_line::write_line_to_vec(&mut req, &format!("want {}", w.to_hex()))?;
     }
     append_fetch_request_extensions_v0_v1(&mut req, caps, options)?;
-    while let Some(oid) = negotiator.next_have()? {
-        pkt_line::write_line_to_vec(&mut req, &format!("have {}", oid.to_hex()))?;
+    if let Some(negotiator) = negotiator.as_mut() {
+        while let Some(oid) = negotiator.next_have()? {
+            pkt_line::write_line_to_vec(&mut req, &format!("have {}", oid.to_hex()))?;
+        }
     }
     pkt_line::write_line_to_vec(&mut req, "done")?;
     pkt_line::write_flush(&mut req)?;
@@ -772,77 +781,82 @@ pub fn http_fetch_pack(
         .cloned()
         .collect();
 
-    let local_repo = Repository::open(local_git_dir, None)
-        .with_context(|| format!("open {}", local_git_dir.display()))?;
-    let mut negotiator = SkippingNegotiator::new(local_repo);
+    let mut negotiator = if options.refetch {
+        None
+    } else {
+        let local_repo = Repository::open(local_git_dir, None)
+            .with_context(|| format!("open {}", local_git_dir.display()))?;
+        let mut negotiator = SkippingNegotiator::new(local_repo);
 
-    if let Ok(entries) = refs::list_refs(local_git_dir, "refs/bundles/") {
-        for (name, oid) in entries {
-            let t = if let Ok(resolved) = resolve_revision(negotiator.repo(), &name) {
-                resolved
-            } else {
-                oid
-            };
-            if negotiator.repo().odb.read(&t).is_ok() {
-                negotiator.add_tip(t)?;
-            }
-        }
-    }
-
-    for w in &wants {
-        if negotiator.repo().odb.read(w).is_ok() {
-            negotiator.add_tip(*w)?;
-        }
-    }
-
-    let mut tips: Vec<ObjectId> = Vec::new();
-    for prefix in ["refs/heads/", "refs/tags/"] {
-        if let Ok(entries) = refs::list_refs(local_git_dir, prefix) {
+        if let Ok(entries) = refs::list_refs(local_git_dir, "refs/bundles/") {
             for (name, oid) in entries {
-                if let Ok(resolved) = resolve_revision(negotiator.repo(), &name) {
-                    tips.push(resolved);
+                let t = if let Ok(resolved) = resolve_revision(negotiator.repo(), &name) {
+                    resolved
                 } else {
-                    tips.push(oid);
+                    oid
+                };
+                if negotiator.repo().odb.read(&t).is_ok() {
+                    negotiator.add_tip(t)?;
                 }
             }
         }
-    }
-    if let Ok(h) = refs::resolve_ref(local_git_dir, "HEAD") {
-        tips.push(h);
-    }
-    for sym in ["HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] {
-        if let Ok(oid) = resolve_revision(negotiator.repo(), sym) {
-            tips.push(oid);
-        }
-    }
-    tips.sort_by_key(|o| o.to_hex());
-    tips.dedup();
-    for t in tips {
-        if want_set.contains(&t) {
-            continue;
-        }
-        if negotiator.repo().odb.read(&t).is_err() {
-            continue;
-        }
-        negotiator.add_tip(t)?;
-    }
 
-    for e in &advertised {
-        if want_set.contains(&e.oid) {
-            continue;
+        for w in &wants {
+            if negotiator.repo().odb.read(w).is_ok() {
+                negotiator.add_tip(*w)?;
+            }
         }
-        if negotiator.repo().odb.read(&e.oid).is_ok() {
-            negotiator.known_common(e.oid)?;
+        let mut tips: Vec<ObjectId> = Vec::new();
+        for prefix in ["refs/heads/", "refs/tags/"] {
+            if let Ok(entries) = refs::list_refs(local_git_dir, prefix) {
+                for (name, oid) in entries {
+                    if let Ok(resolved) = resolve_revision(negotiator.repo(), &name) {
+                        tips.push(resolved);
+                    } else {
+                        tips.push(oid);
+                    }
+                }
+            }
         }
-    }
+        if let Ok(h) = refs::resolve_ref(local_git_dir, "HEAD") {
+            tips.push(h);
+        }
+        for sym in ["HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] {
+            if let Ok(oid) = resolve_revision(negotiator.repo(), sym) {
+                tips.push(oid);
+            }
+        }
+        tips.sort_by_key(|o| o.to_hex());
+        tips.dedup();
+        for t in tips {
+            if want_set.contains(&t) {
+                continue;
+            }
+            if negotiator.repo().odb.read(&t).is_err() {
+                continue;
+            }
+            negotiator.add_tip(t)?;
+        }
+        for e in &advertised {
+            if want_set.contains(&e.oid) {
+                continue;
+            }
+            if negotiator.repo().odb.read(&e.oid).is_ok() {
+                negotiator.known_common(e.oid)?;
+            }
+        }
+        Some(negotiator)
+    };
 
     let post_url = format!("{base}/{SERVICE}");
     let cap_send = cap_lines_for_client_request(&caps);
     let fetch_caps = "thin-pack ofs-delta side-band-64k no-progress wait-for-done";
 
     let mut pending_haves: Vec<ObjectId> = Vec::new();
-    while let Some(oid) = negotiator.next_have()? {
-        pending_haves.push(oid);
+    if let Some(negotiator) = negotiator.as_mut() {
+        while let Some(oid) = negotiator.next_have()? {
+            pending_haves.push(oid);
+        }
     }
 
     let write_fetch_request = |include_done: bool| -> Result<Vec<u8>> {

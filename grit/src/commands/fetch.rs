@@ -786,6 +786,7 @@ fn fetch_remote(
         shallow_since: args.shallow_since.clone(),
         shallow_exclude: args.shallow_exclude.iter().cloned().collect(),
         filter_spec: args.filter.clone(),
+        refetch: args.refetch,
     };
 
     let (remote_heads, remote_tags, remote_advertised) = if is_ext_url {

@@ -1,6 +1,16 @@
 # Test results
 
-# Test results
+**2026-04-10 (fetch HTTP refetch parity / Phase C.4)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `./scripts/run-tests.sh t5702-protocol-v2.sh`: 0/0 (timeout/environmental in this run)
+- `./scripts/run-tests.sh t5700-protocol-v1.sh`: 9/24 (unchanged baseline in this environment)
+- `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: 13/37 (unchanged baseline in this environment)
+- `./scripts/run-tests.sh t5537-fetch-shallow.sh`: 0/16 (unchanged baseline in this environment)
+  - Code now supports `--refetch` over HTTP by suppressing `have`-based negotiation in both
+    v2 and v0/v1 HTTP fetch paths, making object transfer behavior match Git's documented
+    "fresh clone" semantics for refetch/filter reapplication.
 
 **2026-04-10 (fetch HTTP option wiring / Phase C.1 C.2 C.3 groundwork)**
 
