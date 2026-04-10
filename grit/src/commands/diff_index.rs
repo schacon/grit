@@ -16,6 +16,10 @@ use grit_lib::quote_path::{format_diff_path_with_prefix, quote_c_style};
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::merge_bases;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
+
+use crate::commands::diff::check_whitespace_errors;
+use grit_lib::attributes::load_gitattributes_for_diff;
+use grit_lib::config::ConfigSet;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
@@ -257,6 +261,51 @@ pub fn run(mut args: Args) -> Result<()> {
         diff_entries
     };
 
+    if options.check {
+        let merged_attrs = match load_gitattributes_for_diff(&repo) {
+            Ok(a) => a,
+            Err(grit_lib::error::Error::InvalidRef(msg))
+                if msg.starts_with("bad --attr-source") =>
+            {
+                eprintln!("fatal: bad --attr-source or GIT_ATTR_SOURCE");
+                std::process::exit(128);
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let ignore_case = config
+            .get("core.ignorecase")
+            .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "1"));
+        let wt_for_attrs = if options.cached {
+            None
+        } else {
+            repo.work_tree.as_deref()
+        };
+        let mut stdout = std::io::stdout().lock();
+        let has_ws = check_whitespace_errors(
+            &mut stdout,
+            &diff_entries,
+            &repo.odb,
+            wt_for_attrs,
+            &merged_attrs,
+            ignore_case,
+            &config,
+        )?;
+        if has_ws {
+            if options.exit_code {
+                std::process::exit(3);
+            }
+            std::process::exit(2);
+        }
+        if options.exit_code || options.quiet {
+            if !diff_entries.is_empty() {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        return Ok(());
+    }
+
     if !options.quiet {
         if options.stat {
             write_diff_index_stat(&diff_entries, &repo.odb)?;
@@ -492,6 +541,7 @@ struct Options {
     ignore_all_space: bool,
     nul_terminated: bool,
     relative: bool,
+    check: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -554,6 +604,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut ignore_all_space = false;
     let mut nul_terminated = false;
     let mut relative = false;
+    let mut check = false;
 
     let mut idx = 0usize;
     while idx < argv.len() {
@@ -671,7 +722,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                         .with_context(|| format!("invalid --abbrev value: `{value}`"))?;
                     abbrev = Some(parsed);
                 }
-                "--check" => { /* accepted for compatibility */ }
+                "--check" => {
+                    check = true;
+                }
                 "--ignore-submodules" => {
                     ignore_submodules_all = true;
                 }
@@ -753,6 +806,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         ignore_all_space,
         nul_terminated,
         relative,
+        check,
     })
 }
 
