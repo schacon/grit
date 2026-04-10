@@ -117,7 +117,7 @@ pub fn run_inner(args: Args) -> Result<i32> {
     // Read content from files or object store.
     let (current_bytes, base_bytes, other_bytes) = if args.object_id {
         let repo = Repository::discover(None).context("not a git repository")?;
-        let index_path = repo.git_dir.join("index");
+        let index_path = repo.index_path();
         let index = repo.load_index_at(&index_path).context("reading index")?;
         let cb = resolve_object_id_content(&repo, &index, &current_str)?;
         let bb = resolve_object_id_content(&repo, &index, &base_str)?;
