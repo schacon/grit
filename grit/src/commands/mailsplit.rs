@@ -1,116 +1,258 @@
 //! `grit mailsplit` — split mbox into individual messages.
-//!
-//! Reads an mbox-format file and splits it into numbered message files
-//! in the output directory, printing the count to stdout.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 
-/// Arguments for `grit mailsplit`.
 #[derive(Debug, ClapArgs)]
 #[command(
     about = "Split mbox into individual messages",
-    override_usage = "grit mailsplit -o<dir> [--keep-cr] <mbox>..."
+    override_usage = "grit mailsplit [-d<prec>] [-f<n>] [-b] [--keep-cr] [--mboxrd] -o<dir> [<mbox>...]"
 )]
 pub struct Args {
-    /// Output directory for split messages (e.g., `-odir`).
     #[arg(short = 'o', long = "output")]
-    pub output: PathBuf,
+    pub output: Option<PathBuf>,
 
-    /// Preserve CR at end of lines.
     #[arg(long = "keep-cr")]
     pub keep_cr: bool,
 
-    /// Skip first N messages.
-    #[arg(short = 'd', long = "skip", default_value = "0")]
-    pub skip: usize,
+    /// Filename width (3–9), not a skip count (matches Git `-d`).
+    #[arg(short = 'd', default_value = "4")]
+    pub nr_prec: u32,
 
-    /// The mbox file(s) to split. Uses stdin if omitted.
+    /// Initial counter for numbering (matches Git `-f`; first file is counter + 1).
+    #[arg(short = 'f', default_value = "0")]
+    pub first_nr: u32,
+
+    #[arg(short = 'b', long)]
+    pub allow_bare: bool,
+
+    #[arg(long = "mboxrd")]
+    pub mboxrd: bool,
+
+    #[arg(value_name = "MBOX")]
     pub mbox: Vec<PathBuf>,
 }
 
-/// Run `grit mailsplit`.
 pub fn run(args: Args) -> Result<()> {
-    // Ensure the output directory exists
-    fs::create_dir_all(&args.output)
-        .with_context(|| format!("creating output dir {:?}", args.output))?;
+    if !(3..10).contains(&args.nr_prec) {
+        bail!("mailsplit: -d must be between 3 and 9");
+    }
 
-    let mut count: usize = 0;
+    let (dir, files) = resolve_paths(&args)?;
 
-    if args.mbox.is_empty() {
-        // Read from stdin
-        let data = {
-            use std::io::Read;
-            let mut buf = String::new();
-            std::io::stdin().read_to_string(&mut buf)?;
-            buf
+    fs::create_dir_all(&dir).with_context(|| format!("creating {:?}", dir))?;
+
+    let mut seq = args.first_nr;
+    let mut total_written = 0u32;
+
+    for file in files {
+        let data = if file.as_os_str() == "-" {
+            let mut v = Vec::new();
+            std::io::stdin()
+                .read_to_end(&mut v)
+                .context("reading stdin")?;
+            v
+        } else {
+            fs::read(&file).with_context(|| format!("reading {:?}", file))?
         };
-        count = split_mbox(&data, &args.output, count, args.skip, args.keep_cr)?;
-    } else {
-        for mbox_path in &args.mbox {
-            let data = fs::read_to_string(mbox_path)
-                .with_context(|| format!("reading mbox {:?}", mbox_path))?;
-            count = split_mbox(&data, &args.output, count, args.skip, args.keep_cr)?;
+
+        if data.is_empty() && file.as_os_str() != "-" {
+            bail!("empty mbox: '{}'", file.display());
+        }
+
+        let mut pos = skip_leading_ws(&data);
+        if pos >= data.len() {
+            if file.as_os_str() == "-" {
+                println!("{total_written}");
+                return Ok(());
+            }
+            bail!("empty mbox: '{}'", file.display());
+        }
+        pos = skip_preamble_to_first_from(&data, pos, args.keep_cr);
+
+        let mut file_done = false;
+        while !file_done {
+            seq += 1;
+            let name = format!("{:0width$}", seq, width = args.nr_prec as usize);
+            let path = dir.join(&name);
+            let mut out =
+                fs::File::create_new(&path).with_context(|| format!("creating {:?}", path))?;
+            file_done = split_one_message(
+                &data,
+                &mut pos,
+                &mut out,
+                args.allow_bare,
+                args.keep_cr,
+                args.mboxrd,
+            )?;
+            total_written += 1;
         }
     }
 
-    println!("{}", count);
+    println!("{total_written}");
     Ok(())
 }
 
-/// Split mbox content into numbered files.
-/// Returns the total count of messages written (cumulative from `start`).
-fn split_mbox(
-    data: &str,
-    output: &std::path::Path,
-    start: usize,
-    skip: usize,
-    _keep_cr: bool,
-) -> Result<usize> {
-    let mut messages: Vec<String> = Vec::new();
-    let mut current: Option<String> = None;
-
-    for line in data.lines() {
-        if is_mbox_from_line(line) {
-            // Start a new message
-            if let Some(msg) = current.take() {
-                messages.push(msg);
-            }
-            current = Some(format!("{}\n", line));
-        } else if let Some(ref mut msg) = current {
-            msg.push_str(line);
-            msg.push('\n');
-        }
-        // Lines before the first From line are ignored (mbox preamble)
+fn resolve_paths(args: &Args) -> Result<(PathBuf, Vec<PathBuf>)> {
+    match (&args.output, args.mbox.len()) {
+        (Some(dir), 0) => Ok((dir.clone(), vec![PathBuf::from("-")])),
+        (Some(dir), _) => Ok((dir.clone(), args.mbox.clone())),
+        (None, 1) => Ok((args.mbox[0].clone(), vec![PathBuf::from("-")])),
+        (None, 2) => Ok((args.mbox[1].clone(), vec![args.mbox[0].clone()])),
+        _ => bail!("mailsplit: need -o<dir> or legacy <mbox> <dir> usage"),
     }
-    // Don't forget the last message
-    if let Some(msg) = current.take() {
-        messages.push(msg);
-    }
-
-    let mut count = start;
-    for (i, msg) in messages.into_iter().enumerate() {
-        if i < skip {
-            continue;
-        }
-        count += 1;
-        let filename = format!("{:04}", count);
-        let path = output.join(&filename);
-        let mut f = fs::File::create(&path).with_context(|| format!("creating {:?}", path))?;
-        f.write_all(msg.as_bytes())?;
-    }
-
-    Ok(count)
 }
 
-/// Check if a line is an mbox "From " separator.
-///
-/// Traditional mbox format: lines starting with "From " followed by an
-/// email address and a date are message separators.
-fn is_mbox_from_line(line: &str) -> bool {
-    // Git uses a simple heuristic: line starts with "From "
-    line.starts_with("From ")
+fn skip_leading_ws(data: &[u8]) -> usize {
+    let mut i = 0;
+    while i < data.len() && data[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    i
+}
+
+fn skip_preamble_to_first_from(data: &[u8], mut pos: usize, keep_cr: bool) -> usize {
+    while pos < data.len() {
+        let start = pos;
+        let end = data[pos..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map(|p| pos + p + 1)
+            .unwrap_or(data.len());
+        let mut line = data[start..end].to_vec();
+        if !keep_cr {
+            strip_crlf_end(&mut line);
+        }
+        if is_from_line(&line) {
+            return start;
+        }
+        pos = end;
+    }
+    pos
+}
+
+fn strip_crlf_end(line: &mut Vec<u8>) {
+    if line.len() >= 2 && line.ends_with(b"\n") && line[line.len() - 2] == b'\r' {
+        line.truncate(line.len() - 2);
+        line.push(b'\n');
+    }
+}
+
+fn is_from_line(line: &[u8]) -> bool {
+    if line.len() < 20 || !line.starts_with(b"From ") {
+        return false;
+    }
+    if line.len() < 2 {
+        return false;
+    }
+    let mut colon = line.len() - 2;
+    let start = 5usize;
+    loop {
+        if colon < start {
+            return false;
+        }
+        if line[colon] == b':' {
+            break;
+        }
+        colon -= 1;
+    }
+    if colon < 4 {
+        return false;
+    }
+    if !line[colon - 4].is_ascii_digit()
+        || !line[colon - 2].is_ascii_digit()
+        || !line[colon - 1].is_ascii_digit()
+        || !line[colon + 1].is_ascii_digit()
+        || !line[colon + 2].is_ascii_digit()
+    {
+        return false;
+    }
+    let tail = std::str::from_utf8(&line[colon + 3..]).unwrap_or("");
+    let year_str = tail.trim_start();
+    let year_digits: String = year_str
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    let Ok(year) = year_digits.parse::<i64>() else {
+        return false;
+    };
+    year > 90
+}
+
+fn is_gtfrom(buf: &[u8]) -> bool {
+    let min = b">From ".len();
+    if buf.len() < min {
+        return false;
+    }
+    let ngt = buf.iter().take_while(|&&b| b == b'>').count();
+    ngt > 0 && buf[ngt..].starts_with(b"From ")
+}
+
+fn split_one_message(
+    data: &[u8],
+    pos: &mut usize,
+    out: &mut fs::File,
+    allow_bare: bool,
+    keep_cr: bool,
+    mboxrd: bool,
+) -> Result<bool> {
+    let mut line = read_line_bytes(data, pos)?;
+    if !keep_cr && line.len() > 1 && line.ends_with(b"\n") && line[line.len() - 2] == b'\r' {
+        line.truncate(line.len() - 2);
+        line.push(b'\n');
+    }
+    let is_bare = !is_from_line(&line);
+
+    if is_bare && !allow_bare {
+        bail!("corrupt mailbox");
+    }
+
+    loop {
+        let mut write_line = line.clone();
+        if !keep_cr
+            && write_line.len() > 1
+            && write_line.ends_with(b"\n")
+            && write_line[write_line.len() - 2] == b'\r'
+        {
+            write_line.truncate(write_line.len() - 2);
+            write_line.push(b'\n');
+        }
+        if mboxrd && is_gtfrom(&write_line) {
+            write_line.remove(0);
+        }
+        out.write_all(&write_line)
+            .context("writing split message")?;
+
+        line = read_line_bytes(data, pos)?;
+        if line.is_empty() {
+            return Ok(true);
+        }
+        if !keep_cr && line.len() > 1 && line.ends_with(b"\n") && line[line.len() - 2] == b'\r' {
+            line.truncate(line.len() - 2);
+            line.push(b'\n');
+        }
+        if !is_bare && is_from_line(&line) {
+            let rewind = line.len();
+            *pos = (*pos).saturating_sub(rewind);
+            return Ok(false);
+        }
+    }
+}
+
+fn read_line_bytes(data: &[u8], pos: &mut usize) -> Result<Vec<u8>> {
+    if *pos >= data.len() {
+        return Ok(Vec::new());
+    }
+    let start = *pos;
+    while *pos < data.len() {
+        let b = data[*pos];
+        *pos += 1;
+        if b == b'\n' {
+            break;
+        }
+    }
+    Ok(data[start..*pos].to_vec())
 }

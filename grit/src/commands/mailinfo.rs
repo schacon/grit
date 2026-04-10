@@ -1,200 +1,128 @@
 //! `grit mailinfo` — extract patch from email message.
-//!
-//! Reads an email message from stdin, separates it into a commit message
-//! (written to `<msg>`) and a patch (written to `<patch>`), and prints
-//! author/subject metadata to stdout.  This is the plumbing behind
-//! `git am`.
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
-use std::io::{self, BufRead, Write};
+use grit_lib::config::ConfigSet;
+use grit_lib::mailinfo::{apply_mailinfo_config, mailinfo, MailinfoOptions, QuotedCrAction};
+use grit_lib::repo::Repository;
+use std::fs::File;
+use std::io::{self, Read};
 use std::path::PathBuf;
 
-/// Arguments for `grit mailinfo`.
 #[derive(Debug, ClapArgs)]
 #[command(
     about = "Extract patch from a single email message",
     override_usage = "grit mailinfo [OPTIONS] <msg> <patch>"
 )]
 pub struct Args {
-    /// Keep non-UTF-8 charsets as-is (do not re-encode).
     #[arg(short = 'k', long)]
     pub keep: bool,
 
-    /// Keep everything in the body before a `---` line.
     #[arg(short = 'b', long)]
     pub keep_body: bool,
 
-    /// Do not strip brackets from Subject.
-    #[arg(short = 'u', long)]
-    pub encoding: bool,
+    /// Re-code metadata to `i18n.commitEncoding` (default UTF-8).
+    #[arg(short = 'u')]
+    pub reencode_metadata: bool,
 
-    /// Scissors mode: look for `-- >8 --` and discard everything before.
+    /// Do not re-encode metadata.
+    #[arg(short = 'n', long = "no-reencode")]
+    pub no_reencode: bool,
+
+    /// Re-code metadata to this encoding.
+    #[arg(long = "encoding", value_name = "ENCODING")]
+    pub explicit_encoding: Option<String>,
+
+    #[arg(short = 'm', long = "message-id")]
+    pub message_id: bool,
+
     #[arg(long)]
     pub scissors: bool,
 
-    /// Disable scissors mode.
     #[arg(long = "no-scissors")]
     pub no_scissors: bool,
 
-    /// Decode quoted-printable (default; ignored for compat).
-    #[arg(long = "quoted-cr", hide = true)]
+    #[arg(long = "no-inbody-headers")]
+    pub no_inbody_headers: bool,
+
+    #[arg(long = "quoted-cr")]
     pub quoted_cr: Option<String>,
 
-    /// File to write the commit-message body to.
     pub msg: PathBuf,
 
-    /// File to write the patch (diff) to.
     pub patch: PathBuf,
 }
 
-/// Run `grit mailinfo`.
 pub fn run(args: Args) -> Result<()> {
-    let stdin = io::stdin();
-    let lines: Vec<String> = stdin
-        .lock()
-        .lines()
-        .collect::<Result<Vec<_>, _>>()
-        .context("reading stdin")?;
+    let mut opts = MailinfoOptions::default();
+    opts.keep_subject = args.keep;
+    opts.keep_non_patch_brackets_in_subject = args.keep_body;
+    opts.add_message_id = args.message_id;
 
-    let mut from = String::new();
-    let mut subject = String::new();
-    let mut date = String::new();
-    let mut message_id = String::new();
-
-    let mut body_lines: Vec<String> = Vec::new();
-    let mut patch_lines: Vec<String> = Vec::new();
-    let mut in_headers = true;
-    let mut in_patch = false;
-    let mut past_scissors = false;
-
-    for line in &lines {
-        if in_headers {
-            if line.is_empty() {
-                in_headers = false;
-                continue;
-            }
-            if let Some(rest) = strip_header(line, "From:") {
-                from = rest.trim().to_string();
-            } else if let Some(rest) = strip_header(line, "Subject:") {
-                subject = clean_subject(rest.trim(), args.keep);
-            } else if let Some(rest) = strip_header(line, "Date:") {
-                date = rest.trim().to_string();
-            } else if let Some(rest) = strip_header(line, "Message-Id:") {
-                message_id = rest.trim().to_string();
-            } else if let Some(rest) = strip_header(line, "Message-ID:") {
-                message_id = rest.trim().to_string();
-            }
-            continue;
-        }
-
-        // Handle scissors: discard everything before `-- >8 --`
-        if args.scissors && !past_scissors && (line.contains("-- >8 --") || line.contains("-->8--"))
-        {
-            body_lines.clear();
-            patch_lines.clear();
-            past_scissors = true;
-            continue;
-        }
-
-        if !in_patch {
-            // Detect the start of the patch
-            if line.starts_with("diff --git ")
-                || line.starts_with("diff -")
-                || line.starts_with("--- ")
-                || line.starts_with("Index: ")
-            {
-                in_patch = true;
-                patch_lines.push(line.clone());
-            } else if line == "---" && !args.keep_body {
-                // Separator between body and diffstat/patch — skip the `---` line,
-                // body is everything before it.
-                in_patch = true;
-            } else {
-                body_lines.push(line.clone());
-            }
-        } else {
-            patch_lines.push(line.clone());
-        }
+    if args.no_reencode {
+        opts.metainfo_charset = None;
+    } else if args.reencode_metadata {
+        opts.metainfo_charset = Some("utf-8".to_string());
+    }
+    if let Some(enc) = args.explicit_encoding.as_ref() {
+        opts.metainfo_charset = Some(enc.clone());
     }
 
-    // Write the commit message body
-    let mut msg_file = std::fs::File::create(&args.msg).context("creating msg file")?;
-    for line in &body_lines {
-        writeln!(msg_file, "{}", line)?;
+    if args.scissors {
+        opts.use_scissors = true;
+    }
+    if args.no_scissors {
+        opts.use_scissors = false;
+    }
+    if args.no_inbody_headers {
+        opts.use_inbody_headers = false;
     }
 
-    // Write the patch
-    let mut patch_file = std::fs::File::create(&args.patch).context("creating patch file")?;
-    for line in &patch_lines {
-        writeln!(patch_file, "{}", line)?;
+    if let Some(ref s) = args.quoted_cr {
+        let a =
+            QuotedCrAction::parse(s).with_context(|| format!("bad action for --quoted-cr: {s}"))?;
+        opts.quoted_cr = a;
     }
 
-    // Print metadata to stdout
+    if let Ok(repo) = Repository::discover(None) {
+        let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        apply_mailinfo_config(&cfg, &mut opts);
+    }
+
+    if args.scissors {
+        opts.use_scissors = true;
+    }
+    if args.no_scissors {
+        opts.use_scissors = false;
+    }
+    if args.no_inbody_headers {
+        opts.use_inbody_headers = false;
+    }
+    if let Some(ref s) = args.quoted_cr {
+        opts.quoted_cr =
+            QuotedCrAction::parse(s).with_context(|| format!("bad action for --quoted-cr: {s}"))?;
+    }
+
+    let mut stdin = io::stdin();
+    let mut input = Vec::new();
+    stdin.read_to_end(&mut input).context("reading stdin")?;
+
+    let mut msg_file = File::create(&args.msg).context("creating msg file")?;
+    let mut patch_file = File::create(&args.patch).context("creating patch file")?;
     let stdout = io::stdout();
     let mut out = stdout.lock();
-    if !from.is_empty() {
-        let (name, email) = parse_author(&from);
-        writeln!(out, "Author: {}", name)?;
-        writeln!(out, "Email: {}", email)?;
-    }
-    if !subject.is_empty() {
-        writeln!(out, "Subject: {}", subject)?;
-    }
-    if !date.is_empty() {
-        writeln!(out, "Date: {}", date)?;
-    }
-    if !message_id.is_empty() {
-        writeln!(out, "Message-Id: {}", message_id)?;
-    }
+    let stderr = io::stderr();
+    let mut err = stderr.lock();
+
+    mailinfo(
+        &input,
+        &opts,
+        &mut msg_file,
+        &mut patch_file,
+        &mut out,
+        &mut err,
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     Ok(())
-}
-
-/// Case-insensitive header stripping.
-fn strip_header<'a>(line: &'a str, header: &str) -> Option<&'a str> {
-    if line.len() >= header.len() && line[..header.len()].eq_ignore_ascii_case(header) {
-        Some(&line[header.len()..])
-    } else {
-        None
-    }
-}
-
-/// Clean up a Subject line: remove `[PATCH ...]` prefixes and similar.
-fn clean_subject(s: &str, keep: bool) -> String {
-    if keep {
-        return s.to_string();
-    }
-    let mut result = s.to_string();
-    // Strip leading [PATCH ...] or [RFC ...] brackets
-    while result.starts_with('[') {
-        if let Some(end) = result.find(']') {
-            result = result[end + 1..].trim_start().to_string();
-        } else {
-            break;
-        }
-    }
-    // Strip leading "Re: " etc.
-    loop {
-        let lower = result.to_lowercase();
-        if lower.starts_with("re: ") || lower.starts_with("re:") {
-            result = result[3..].trim_start().to_string();
-        } else {
-            break;
-        }
-    }
-    result
-}
-
-/// Parse an author field like `Name <email>` or just `email`.
-fn parse_author(from: &str) -> (String, String) {
-    if let Some(start) = from.find('<') {
-        if let Some(end) = from.find('>') {
-            let name = from[..start].trim().trim_matches('"').to_string();
-            let email = from[start + 1..end].to_string();
-            return (name, email);
-        }
-    }
-    // No angle brackets — treat the whole thing as email
-    (String::new(), from.to_string())
 }
