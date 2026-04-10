@@ -1906,6 +1906,10 @@ fn dwim_refname(repo: &Repository, raw: &str) -> String {
     if raw.is_empty() || raw == "HEAD" || raw.starts_with("refs/") {
         return raw.to_owned();
     }
+    // Bare `stash` is `refs/stash` (not `refs/heads/stash`); reflog lives at `logs/refs/stash`.
+    if raw == "stash" && refs::resolve_ref(&repo.git_dir, "refs/stash").is_ok() {
+        return "refs/stash".to_owned();
+    }
     let candidate = format!("refs/heads/{raw}");
     if refs::resolve_ref(&repo.git_dir, &candidate).is_ok() {
         candidate

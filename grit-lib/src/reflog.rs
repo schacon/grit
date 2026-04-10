@@ -266,10 +266,14 @@ pub fn expire_reflog_unreachable(
 
 /// Format a reflog entry back into the on-disk line format.
 fn format_reflog_entry(entry: &ReflogEntry) -> String {
-    format!(
-        "{} {} {}\t{}\n",
-        entry.old_oid, entry.new_oid, entry.identity, entry.message
-    )
+    if entry.message.is_empty() {
+        format!("{} {} {}\n", entry.old_oid, entry.new_oid, entry.identity)
+    } else {
+        format!(
+            "{} {} {}\t{}\n",
+            entry.old_oid, entry.new_oid, entry.identity, entry.message
+        )
+    }
 }
 
 /// Extract the Unix timestamp from an identity string.

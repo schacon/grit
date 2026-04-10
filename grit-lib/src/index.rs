@@ -1278,6 +1278,14 @@ fn write_lock_pid_file(pid_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Detail lines Git prints when the index lock file already exists (used by stash and similar).
+pub fn format_index_lock_blocked_detail(index_path: &Path) -> String {
+    let lock_path = index_path.with_extension("lock");
+    let pid_path = pid_path_for_lock(&lock_path);
+    let err = io::Error::new(io::ErrorKind::AlreadyExists, "File exists");
+    build_lock_exists_message(&lock_path, &pid_path, &err)
+}
+
 fn build_lock_exists_message(lock_path: &Path, pid_path: &Path, err: &io::Error) -> String {
     let mut msg = format!("Unable to create '{}': {}.\n\n", lock_path.display(), err);
 
