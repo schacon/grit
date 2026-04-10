@@ -15,7 +15,7 @@ use clap::Args as ClapArgs;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
@@ -2153,6 +2153,9 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
     }
 
     let backend = choose_rebase_backend(&args);
+    if matches!(backend, RebaseBackend::Apply) {
+        prepare_rebased_patches_writable(git_dir)?;
+    }
     // Remove any stale rebase state from either backend so `active_rebase_dir` cannot pick the
     // wrong directory (merge is checked before apply).
     cleanup_rebase_state(git_dir);
@@ -3276,6 +3279,9 @@ fn cherry_pick_for_rebase(
         } else {
             fs::write(git_dir.join("MERGE_MSG"), &commit.message)?;
         }
+        if rb_dir == rebase_merge_dir(git_dir) {
+            write_rebase_author_script_for_commit(git_dir, &commit)?;
+        }
         bail!("conflicts during cherry-pick of {}", commit_oid.to_hex());
     }
 
@@ -3944,12 +3950,28 @@ fn do_continue() -> Result<()> {
         let committer = resolve_identity(&config, "COMMITTER")?;
         let raw_msg = commit_message_after_prepare_hook(&repo, git_dir, &message, "message")?;
         let message = apply_commit_msg_cleanup(&raw_msg, rebase_commit_msg_cleanup(&config));
+        let author_script_path = rebase_merge_dir(git_dir).join("author-script");
+        let (author_line, author_raw) = if author_script_path.exists() {
+            match read_rebase_author_script(git_dir) {
+                Ok(line) => (line, Vec::new()),
+                Err(e) => {
+                    eprintln!("error: could not parse author script");
+                    eprintln!("{e:#}");
+                    bail!("could not parse author script");
+                }
+            }
+        } else {
+            (
+                original_commit.author.clone(),
+                original_commit.author_raw.clone(),
+            )
+        };
         let commit_data = CommitData {
             tree: tree_oid,
             parents: vec![head_oid],
-            author: original_commit.author.clone(),
+            author: author_line,
             committer: format_ident(&committer, now),
-            author_raw: original_commit.author_raw.clone(),
+            author_raw,
             committer_raw: original_commit.committer_raw.clone(),
             encoding,
             message,
@@ -4260,6 +4282,220 @@ fn read_rebase_continue_message(
         }),
     };
     Ok(finalize_message_for_commit_encoding(unicode, config))
+}
+
+/// Ensure `.git/rebased-patches` can be created/truncated for the apply backend, matching Git's
+/// `run_am` behavior (see t3438 `unwritable rebased-patches does not leak`).
+fn prepare_rebased_patches_writable(git_dir: &Path) -> Result<()> {
+    let path = git_dir.join("rebased-patches");
+    match OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&path)
+    {
+        Ok(_) => {
+            let _ = fs::remove_file(&path);
+            Ok(())
+        }
+        Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+            bail!("could not open '{}' for writing: {}", path.display(), e)
+        }
+        Err(e) => Err(e).with_context(|| format!("open {}", path.display())),
+    }
+}
+
+/// Single-quote a string for `rebase-merge/author-script`, matching Git's `sq_quote_buf`.
+fn shell_single_quote_author_script(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('\'');
+    for ch in value.chars() {
+        if ch == '\'' {
+            out.push_str("'\\'");
+            out.push(ch);
+            out.push('\'');
+        } else if ch == '!' {
+            out.push_str("'\\!");
+            out.push('\'');
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// Write `rebase-merge/author-script` from the picked commit's author line (Git `write_author_script`).
+fn write_rebase_author_script_for_commit(git_dir: &Path, commit: &CommitData) -> Result<()> {
+    let rb_merge = rebase_merge_dir(git_dir);
+    if !rb_merge.exists() {
+        return Ok(());
+    }
+    let author = commit.author.trim_end_matches(['\r', '\n']);
+    let Some(lt) = author.find('<') else {
+        let _ = fs::remove_file(rb_merge.join("author-script"));
+        return Ok(());
+    };
+    let Some(gt) = author.rfind('>') else {
+        let _ = fs::remove_file(rb_merge.join("author-script"));
+        return Ok(());
+    };
+    if gt <= lt {
+        let _ = fs::remove_file(rb_merge.join("author-script"));
+        return Ok(());
+    }
+    let name = author[..lt].trim_end();
+    let email = author[lt + 1..gt].trim();
+    let after_gt = author[gt + 1..].trim_start();
+    if name.is_empty() || email.is_empty() {
+        let _ = fs::remove_file(rb_merge.join("author-script"));
+        return Ok(());
+    }
+    let mut script = String::new();
+    script.push_str("GIT_AUTHOR_NAME=");
+    script.push_str(&shell_single_quote_author_script(name));
+    script.push_str("\nGIT_AUTHOR_EMAIL=");
+    script.push_str(&shell_single_quote_author_script(email));
+    script.push_str("\nGIT_AUTHOR_DATE=");
+    script.push('\'');
+    if after_gt.is_empty() {
+        script.push('\'');
+    } else {
+        for ch in after_gt.chars() {
+            if ch == '\'' {
+                script.push_str("'\\'");
+                script.push(ch);
+                script.push('\'');
+            } else if ch == '!' {
+                script.push_str("'\\!");
+                script.push('\'');
+            } else {
+                script.push(ch);
+            }
+        }
+        script.push('\'');
+    }
+    script.push('\n');
+    fs::write(rb_merge.join("author-script"), script)?;
+    Ok(())
+}
+
+/// Dequote one Git shell single-quoted value (see `sq_dequote` in Git's `quote.c`).
+fn git_sq_dequote_single_quoted(value: &str) -> Result<String> {
+    let b = value.trim_start().as_bytes();
+    if b.first() != Some(&b'\'') {
+        bail!("unable to dequote value");
+    }
+    let mut i = 1usize;
+    let mut out = Vec::new();
+    loop {
+        let c = *b
+            .get(i)
+            .ok_or_else(|| anyhow::anyhow!("unable to dequote value"))?;
+        i += 1;
+        if c != b'\'' {
+            out.push(c);
+            continue;
+        }
+        match b.get(i).copied() {
+            None => {
+                return String::from_utf8(out)
+                    .map_err(|_| anyhow::anyhow!("unable to dequote value"));
+            }
+            Some(b'\\') => {
+                i += 1;
+                let esc = *b
+                    .get(i)
+                    .ok_or_else(|| anyhow::anyhow!("unable to dequote value"))?;
+                let close = *b
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow::anyhow!("unable to dequote value"))?;
+                if (esc == b'\'' || esc == b'!') && close == b'\'' {
+                    out.push(esc);
+                    i += 2;
+                    continue;
+                }
+                bail!("unable to dequote value");
+            }
+            Some(_) => bail!("unable to dequote value"),
+        }
+    }
+}
+
+/// Parse `rebase-merge/author-script` into a single Git author identity line (`name <email> date`).
+fn read_rebase_author_script(git_dir: &Path) -> Result<String> {
+    let path = rebase_merge_dir(git_dir).join("author-script");
+    let raw = fs::read_to_string(&path)
+        .with_context(|| format!("could not open '{}' for reading", path.display()))?;
+
+    let mut name: Option<String> = None;
+    let mut email: Option<String> = None;
+    let mut date: Option<String> = None;
+    let mut unknown_err: Option<anyhow::Error> = None;
+
+    for line in raw.lines() {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            continue;
+        }
+        let Some((key, value_raw)) = line.split_once('=') else {
+            bail!("no key present in '{}'", line);
+        };
+        let key = key.trim();
+        let value_raw = value_raw.trim_start();
+        let decoded = git_sq_dequote_single_quoted(value_raw)
+            .with_context(|| format!("unable to dequote value of '{key}'"))?;
+
+        match key {
+            "GIT_AUTHOR_NAME" => {
+                if name.is_some() {
+                    bail!("'GIT_AUTHOR_NAME' already given");
+                }
+                name = Some(decoded);
+            }
+            "GIT_AUTHOR_EMAIL" => {
+                if email.is_some() {
+                    bail!("'GIT_AUTHOR_EMAIL' already given");
+                }
+                email = Some(decoded);
+            }
+            "GIT_AUTHOR_DATE" => {
+                if date.is_some() {
+                    bail!("'GIT_AUTHOR_DATE' already given");
+                }
+                date = Some(decoded);
+            }
+            other => {
+                unknown_err = Some(anyhow::anyhow!("unknown variable '{other}'"));
+            }
+        }
+    }
+
+    let mut missing = false;
+    if name.is_none() {
+        eprintln!("error: missing 'GIT_AUTHOR_NAME'");
+        missing = true;
+    }
+    if email.is_none() {
+        eprintln!("error: missing 'GIT_AUTHOR_EMAIL'");
+        missing = true;
+    }
+    if date.is_none() {
+        eprintln!("error: missing 'GIT_AUTHOR_DATE'");
+        missing = true;
+    }
+
+    if missing || unknown_err.is_some() {
+        if let Some(e) = unknown_err {
+            return Err(e);
+        }
+        bail!("invalid author script");
+    }
+
+    let name = name.expect("checked");
+    let email = email.expect("checked");
+    let date = date.expect("checked");
+    Ok(format!("{name} <{email}> {date}"))
 }
 
 // ── Helpers (mirrored from revert.rs) ───────────────────────────────
