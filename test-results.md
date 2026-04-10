@@ -1,6 +1,24 @@
 # Test results
 
-**2026-04-10 (fetch-plan Phase E.4: one_time_script HTTP route parity)**n+
+**2026-04-10 (fetch HTTP v1 setup + sideband parsing hardening)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `GUST_BIN=/workspace/target/release/grit bash tests/t5702-protocol-v2.sh --run=83,84,85`: 85/85 passed
+  - `http:// --negotiate-only without wait-for-done support` now passes reliably in this environment.
+- `GUST_BIN=/workspace/target/release/grit bash tests/t5700-protocol-v1.sh --run=19,20,22`: partial
+  - Passed: 19 (`create repos`), 20 (`clone with http:// using protocol v1`)
+  - Remaining failure: 22 (`fetch with http:// using protocol v1`) still fails; logs show refs update output but
+    post-fetch validation still does not see `origin/main` as expected in this harness flow.
+- Code changes in this increment:
+  - Removed `git add` auto-root-commit behavior that was causing setup repos to report
+    `error: nothing to commit, working tree clean` in protocol/http harness setup.
+  - Hardened HTTP v0/v1 side-band pack reader in `http_smart`:
+    - avoid pre-consuming the first binary data pkt-line before sideband demux,
+    - tolerate pre-pack flushes,
+    - detect `PACK` magic across pkt boundaries/channels.
+
+**2026-04-10 (fetch-plan Phase E.4: one_time_script HTTP route parity)**
 - `cargo check -p grit-rs`: pass
 - `cargo test -p grit-lib --lib`: 166 passed
 - `GUST_BIN=/workspace/target/release/grit bash tests/t5702-protocol-v2.sh --run=83,84,85`: partial

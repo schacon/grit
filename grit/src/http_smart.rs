@@ -712,20 +712,23 @@ fn fetch_pack_v0_v1_stateless_http(
 
     let mut cur = Cursor::new(resp.as_slice());
     let mut first_pkt = None::<String>;
-    if let Some(pkt_line::Packet::Data(line)) = pkt_line::read_packet(&mut cur)? {
-        let line = line.trim_end_matches('\n').to_string();
-        if line.starts_with("ERR ") {
-            bail!(
-                "remote upload-pack error: {}",
-                line.trim_start_matches("ERR ")
-            );
-        }
-        first_pkt = Some(line);
-    }
     let mut pack_buf = Vec::new();
     if caps.contains("side-band-64k") {
+        // Do not consume an initial pkt-line with `pkt_line::read_packet()` here: when the
+        // server starts streaming channel-1 data immediately, that first packet is binary pack
+        // data and must be fed to the side-band reader.
         read_sideband_pack_until_done(&mut cur, &mut pack_buf)?;
     } else {
+        if let Some(pkt_line::Packet::Data(line)) = pkt_line::read_packet(&mut cur)? {
+            let line = line.trim_end_matches('\n').to_string();
+            if line.starts_with("ERR ") {
+                bail!(
+                    "remote upload-pack error: {}",
+                    line.trim_start_matches("ERR ")
+                );
+            }
+            first_pkt = Some(line);
+        }
         let pos = cur.position() as usize;
         if pos < resp.len() {
             pack_buf.extend_from_slice(&resp[pos..]);
@@ -753,23 +756,63 @@ fn trace_clone_negotiation_line(line: &str) {
 
 fn read_sideband_pack_until_done(r: &mut impl Read, out: &mut Vec<u8>) -> Result<()> {
     let mut seen_pack = false;
+    let mut pending: Vec<u8> = Vec::new();
     loop {
-        let Some(payload) = crate::fetch_transport::read_pkt_payload_raw(r)? else {
-            break;
-        };
+        let mut len_buf = [0u8; 4];
+        match r.read_exact(&mut len_buf) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(e.into()),
+        }
+        let len_str = std::str::from_utf8(&len_buf)?;
+        let len = usize::from_str_radix(len_str, 16)?;
+        match len {
+            0 => {
+                // Some upload-pack responses include an extra flush between ACK/NAK and side-band
+                // data. Ignore such pre-pack flushes instead of terminating early.
+                if seen_pack {
+                    break;
+                }
+                continue;
+            }
+            1 | 2 => continue,
+            n if n <= 4 => bail!("invalid pkt-line length in side-band stream: {n}"),
+            _ => {}
+        }
+        let mut payload = vec![0u8; len - 4];
+        r.read_exact(&mut payload)?;
         if payload.is_empty() {
             continue;
         }
         match payload[0] {
             1 => {
-                seen_pack = true;
-                out.extend_from_slice(&payload[1..]);
+                let data = &payload[1..];
+                if !seen_pack {
+                    pending.extend_from_slice(data);
+                    if let Some(pos) = pending.windows(4).position(|w| w == b"PACK") {
+                        seen_pack = true;
+                        out.extend_from_slice(&pending[pos..]);
+                        pending.clear();
+                    } else if pending.len() > 3 {
+                        let keep_from = pending.len() - 3;
+                        pending.drain(..keep_from);
+                    }
+                } else {
+                    out.extend_from_slice(data);
+                }
             }
             2 | 3 => {}
             _ => {
-                if !seen_pack && payload.starts_with(b"PACK") {
-                    seen_pack = true;
-                    out.extend_from_slice(&payload);
+                if !seen_pack {
+                    pending.extend_from_slice(&payload);
+                    if let Some(pos) = pending.windows(4).position(|w| w == b"PACK") {
+                        seen_pack = true;
+                        out.extend_from_slice(&pending[pos..]);
+                        pending.clear();
+                    } else if pending.len() > 3 {
+                        let keep_from = pending.len() - 3;
+                        pending.drain(..keep_from);
+                    }
                 } else if seen_pack {
                     out.extend_from_slice(&payload);
                 }
