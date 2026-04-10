@@ -40,6 +40,39 @@
 
 - `187`, `190`, `192`, `193`, `194`, `196`
 
+## 2026-04-10 — final parity follow-up (post 215/215)
+
+### Additional scope worked
+
+- Continued execution because plan still had protocol-v1 ssh parity explicitly pending.
+- Focused on `t5700-protocol-v1.sh` remaining ssh failures (`14-17`) after fetch tail completion.
+
+### Code changes
+
+- `grit/src/ssh_transport.rs`
+  - Accept `GIT_SSH` `test-fake-ssh` path outside `$TRASH_DIRECTORY` when recording expected ssh wrapper output for tests.
+  - Fixed `ssh://host:/absolute/path` authority parsing:
+    - trailing colon with empty port now normalizes host to `host` (no literal `host:` argv leak).
+- `grit/src/commands/fetch.rs`
+  - Allowed upload-pack negotiation path for resolved local SSH remotes (maintains protocol v1 packet semantics/traces).
+- `grit/src/fetch_transport.rs`
+  - Emit `packet: fetch< version 1` on v1 advertisement in local upload-pack fetch path for ssh transport parity checks.
+
+### Validation
+
+- `cargo fmt` ✅
+- `cargo check -p grit-rs` ✅
+- `cargo test -p grit-lib --lib` ✅
+- `cargo build --release -p grit-rs` ✅
+- `GUST_BIN=/workspace/target/release/grit bash tests/t5700-protocol-v1.sh -v` ✅ **24/24**
+- Matrix rerun checkpoints:
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh` ✅ **24/24**
+  - `./scripts/run-tests.sh t5510-fetch.sh` ✅ **215/215**
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh` ✅ **10/10**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh` ➜ 6/16 (pre-existing broader gaps)
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh` ➜ 27/37 (pre-existing broader gaps)
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh` ➜ 10/16 (pre-existing broader gaps)
+
 ## 2026-04-10 — final parity closeout (t5510 215/215)
 
 ### Additional fixes

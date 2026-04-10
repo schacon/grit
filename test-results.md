@@ -8,6 +8,14 @@
 - `cargo build --release -p grit-rs`: pass
 - `GUST_BIN=/workspace/target/release/grit bash tests/t5510-fetch.sh -v`: **215/215**
 - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+- `GUST_BIN=/workspace/target/release/grit bash tests/t5700-protocol-v1.sh -v`: **24/24**
+- Regression matrix checkpoint:
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: **10/10**
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: **24/24**
+  - `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **6/16**
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **27/37**
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **10/16**
+  - `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
   - `data/test-files.csv` refreshed and dashboards regenerated (`docs/index.html`, `docs/testfiles.html`, `docs/test-progress.svg`).
 - Final fixes in this completion slice:
   - fetch connectivity trace parity for hideRefs (`--exclude-hidden=fetch`) now emitted in upload-pack path.

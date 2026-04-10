@@ -1157,9 +1157,11 @@ fn fetch_remote(
     // When several remotes share the same repository URL, skip upload-pack: the negotiator can
     // stall when all wanted objects already exist locally (t5505 `git fetch second`).
     let coalesced_multi = coalesced_remotes.len() > 1;
+    let ssh_url_with_local_repo =
+        crate::ssh_transport::is_configured_ssh_url(&url) && remote_repo.is_some();
     let use_upload_pack_negotiation = !is_ext_url
         && !is_http_url
-        && !crate::ssh_transport::is_configured_ssh_url(&url)
+        && (!crate::ssh_transport::is_configured_ssh_url(&url) || ssh_url_with_local_repo)
         && !coalesced_multi;
 
     let upload_pack_refspecs: &[String] = if prefetch_left_no_positive {

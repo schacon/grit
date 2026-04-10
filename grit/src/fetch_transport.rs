@@ -940,6 +940,9 @@ pub fn fetch_via_upload_pack_skipping(
     } else {
         let (adv, hsym, saw_v1, _, server_sid) = read_advertisement(&mut stdout)?;
         trace2_transfer::emit_negotiated_version_client_fetch(saw_v1);
+        if saw_v1 {
+            crate::trace_packet::trace_packet_git('<', "version 1");
+        }
         if let Some(ref sid) = server_sid {
             trace2_transfer::emit_server_sid(sid);
         }
