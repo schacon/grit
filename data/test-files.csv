@@ -616,7 +616,7 @@ t3425-rebase-topology-merges	t3	yes	13	1	12	false	ok	0
 t3426-rebase-submodule	t3	yes	29	29	0	true	ok	0
 t3427-rebase-subtree	t3	yes	3	0	3	false	ok	0
 t3428-rebase-signoff	t3	yes	7	1	6	false	ok	0
-t3429-rebase-edit-todo	t3	yes	7	5	2	false	ok	0
+t3429-rebase-edit-todo	t3	yes	7	7	0	true	ok	0
 t3430-rebase-merges	t3	yes	34	2	32	false	ok	0
 t3431-rebase-fork-point	t3	yes	26	8	18	false	ok	0
 t3432-rebase-fast-forward	t3	yes	219	219	0	true	ok	0
