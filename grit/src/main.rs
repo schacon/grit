@@ -5153,6 +5153,23 @@ fn run_test_tool_submodule(rest: &[String]) -> Result<()> {
                 bail!(".gitmodules is not writable in this state");
             }
         }
+        "is-active" => {
+            let path = rest
+                .get(1)
+                .map(|s| s.as_str())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("usage: test-tool submodule is-active <path>"))?;
+            let repo =
+                grit_lib::repo::Repository::discover(None).context("not a git repository")?;
+            match grit_lib::submodule_active::is_submodule_active(&repo, path) {
+                Ok(true) => Ok(()),
+                Ok(false) => std::process::exit(1),
+                Err(msg) => {
+                    eprintln!("{msg}");
+                    Ok(())
+                }
+            }
+        }
         other => bail!("test-tool submodule: unknown subcommand '{other}'"),
     }
 }

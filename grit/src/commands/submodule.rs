@@ -1983,7 +1983,9 @@ fn run_add(args: &AddArgs) -> Result<()> {
         ConfigFile::parse(&local_config_path, "", ConfigScope::Local)?
     };
     local_config.set(&format!("submodule.{name}.url"), &args.url)?;
-    local_config.set(&format!("submodule.{name}.active"), "true")?;
+    if grit_lib::submodule_active::submodule_add_should_set_active(&repo, &path) {
+        local_config.set(&format!("submodule.{name}.active"), "true")?;
+    }
     local_config.write()?;
 
     // Add the submodule path to the index.

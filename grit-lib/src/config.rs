@@ -1420,6 +1420,18 @@ impl ConfigSet {
             .collect()
     }
 
+    /// True if any config entry uses `key` (after canonicalization), including bare boolean keys.
+    ///
+    /// Unlike [`Self::get`], this does not treat a missing value as `"true"` — it reports whether
+    /// the key appears in the merged config at all (Git `repo_config_get` / `git_configset_get`).
+    #[must_use]
+    pub fn has_key(&self, key: &str) -> bool {
+        let Ok(canon) = canonical_key(key) else {
+            return false;
+        };
+        self.entries.iter().any(|e| e.key == canon)
+    }
+
     /// Get a boolean value, interpreting `true`/`yes`/`on`/`1` as true and
     /// `false`/`no`/`off`/`0` as false.
     pub fn get_bool(&self, key: &str) -> Option<std::result::Result<bool, String>> {
