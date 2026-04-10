@@ -577,7 +577,7 @@ commit → check it off → move on.
 - [x] `t5002-archive-attr-pattern` — git archive attribute pattern tests (19/19)
 - [ ] `t5004-archive-corner-cases` ██████████████░░░░░░ 10/14 (4 left) — test corner cases of git-archive
 - [x] `t5351-unpack-large-objects` ████████████████████ 7/7 (0 left) — git unpack-objects with large objects
-- [ ] `t5404-tracking-branches` ████████░░░░░░░░░░░░ 3/7 (4 left) — tracking branch update checks for git push
+- [x] `t5404-tracking-branches` ████████████████████ 7/7 (0 left) — tracking branch update checks for git push
 - [x] `t5618-alternate-refs` ████████████████████ 6/6 (0 left) — test handling of --alternate-refs traversal
 - [ ] `t5410-receive-pack` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git receive-pack
 - [ ] `t5517-push-mirror` ████████████░░░░░░░░ 8/13 (5 left) — pushing to a mirror repository
