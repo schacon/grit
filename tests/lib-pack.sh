@@ -46,8 +46,9 @@ pack_obj () {
 		esac
 		;;
 
-	# blob containing "\7\76"
-	$(test_oid packlib_7_76))
+	# blob containing "\7\76" (sha1); also match by hex so pack_obj works after a test
+	# overwrites TEST_OID_CACHE (test_oid_cache truncates; t5308/t5309 define lo_oid, etc.).
+	e68fe8129b546b101aee9510c5328e7f21ca1d18 | $(test_oid packlib_7_76))
 		case "$2" in
 		'')
 			printf '\062\170\234\143\267\3\0\0\116\0\106'
