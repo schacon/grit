@@ -3614,9 +3614,10 @@ fn preprocess_log_args(rest: &[String]) -> Vec<String> {
             i += 1;
             continue;
         }
-        if let Some(spec) = arg.strip_prefix("-L:") {
+        // `-L:pat:file` must keep the leading `:` (e.g. `-L:$:file.c` → `:$:file.c` for line-log).
+        if arg.starts_with("-L:") {
             result.push("-L".to_string());
-            result.push(spec.to_string());
+            result.push(arg[2..].to_string());
             i += 1;
             continue;
         }

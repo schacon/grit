@@ -887,16 +887,19 @@ fn run_line_log(repo: &Repository, args: Args, _patch_context: usize) -> Result<
     )?;
     let order: Vec<ObjectId> = walk.iter().map(|(o, _)| *o).collect();
 
-    let initial = parse_line_log_ranges(&repo.odb, &tip, &args.line_range)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
-    let paths: Vec<String> = initial.iter().map(|f| f.path.clone()).collect();
-
+    let initial = parse_line_log_ranges(
+        &repo.odb,
+        &repo.git_dir,
+        repo.work_tree.as_deref(),
+        &tip,
+        &args.line_range,
+    )
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
     let (filtered, _state, displays) = line_log_filter_commits(
         &repo.odb,
         order,
         tip,
         initial,
-        paths,
         rename_threshold,
         args.first_parent,
     )
@@ -950,6 +953,25 @@ fn run_line_log(repo: &Repository, args: Args, _patch_context: usize) -> Result<
 
     let show_patch = !args.suppress_diff && !args.no_patch;
 
+    let (graph_line_log_pipe_pfx, graph_line_log_space_pfx) = if args.graph && show_patch {
+        let use_color_g = log_resolve_stdout_color(&args, &repo.git_dir);
+        let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let red = if use_color_g {
+            cfg.get("color.diff.meta")
+                .and_then(|s| grit_lib::config::parse_color(&s).ok())
+                .unwrap_or_else(|| "\x1b[31m".to_string())
+        } else {
+            String::new()
+        };
+        let reset = if use_color_g { "\x1b[m" } else { "" };
+        (
+            Some(format!("{line_prefix}{red}|{reset} ")),
+            Some(format!("{line_prefix}  ")),
+        )
+    } else {
+        (None, None)
+    };
+
     if args.graph {
         let mut nodes = Vec::new();
         let mut seen = HashSet::new();
@@ -969,8 +991,6 @@ fn run_line_log(repo: &Repository, args: Args, _patch_context: usize) -> Result<
         }
 
         let abbrev_len = parse_abbrev(&args.abbrev);
-        let stdout = io::stdout();
-        let mut out = stdout.lock();
         let mut graph = AsciiGraph::new();
 
         let node_count = nodes.len();
@@ -997,37 +1017,45 @@ fn run_line_log(repo: &Repository, args: Args, _patch_context: usize) -> Result<
                         abbrev_len,
                         &parent_line,
                     );
-                    writeln!(out, "{line_prefix}{line}{rendered}")?;
+                    writeln!(out_main, "{line_prefix}{line}{rendered}")?;
                     break;
                 }
-                writeln!(out, "{line_prefix}{line}")?;
+                writeln!(out_main, "{line_prefix}{line}")?;
             }
 
             while !graph.is_commit_finished() {
                 let (line, _) = graph.next_line();
-                writeln!(out, "{line_prefix}{line}")?;
+                writeln!(out_main, "{line_prefix}{line}")?;
             }
 
             if show_patch {
-                if let Some(ds) = displays.get(&node.oid) {
-                    for d in ds {
-                        write!(
-                            out,
-                            "{}",
-                            format_line_log_diff(
-                                line_prefix,
-                                &d.old_path,
-                                &d.new_path,
-                                &d.old_bytes,
-                                &d.new_bytes,
-                                &d.commit_ranges,
-                                &d.touched,
-                            )
-                        )?;
+                let nparents = load_raw_parents(repo, node.oid)?.len();
+                if nparents <= 1 {
+                    if let Some(ds) = displays.get(&node.oid) {
+                        let diff_pfx = match graph_line_log_pipe_pfx.as_deref() {
+                            Some(pipe) if node_idx == 0 => pipe,
+                            Some(_) => graph_line_log_space_pfx.as_deref().unwrap_or(line_prefix),
+                            None => line_prefix,
+                        };
+                        for d in ds {
+                            write!(
+                                out_main,
+                                "{}",
+                                format_line_log_diff(
+                                    diff_pfx,
+                                    &d.old_path,
+                                    &d.new_path,
+                                    &d.old_bytes,
+                                    &d.new_bytes,
+                                    &d.commit_ranges,
+                                    &d.touched,
+                                )
+                            )?;
+                        }
                     }
-                    if node_idx + 1 < node_count {
-                        writeln!(out)?;
-                    }
+                } else if node_idx + 1 < node_count {
+                    writeln!(out_main)?;
+                    writeln!(out_main)?;
                 }
             }
         }
@@ -1077,26 +1105,33 @@ fn run_line_log(repo: &Repository, args: Args, _patch_context: usize) -> Result<
             None,
         )?;
         prev_had_notes = this_has_notes;
+        let nparents = load_raw_parents(repo, *oid)?.len();
         if show_patch {
-            if let Some(ds) = displays.get(oid) {
-                for d in ds {
-                    write!(
-                        out_main,
-                        "{}",
-                        format_line_log_diff(
-                            line_prefix,
-                            &d.old_path,
-                            &d.new_path,
-                            &d.old_bytes,
-                            &d.new_bytes,
-                            &d.commit_ranges,
-                            &d.touched,
-                        )
-                    )?;
+            if nparents <= 1 {
+                if let Some(ds) = displays.get(oid) {
+                    for d in ds {
+                        write!(
+                            out_main,
+                            "{}",
+                            format_line_log_diff(
+                                line_prefix,
+                                &d.old_path,
+                                &d.new_path,
+                                &d.old_bytes,
+                                &d.new_bytes,
+                                &d.commit_ranges,
+                                &d.touched,
+                            )
+                        )?;
+                    }
+                    if i + 1 < n_filtered {
+                        writeln!(out_main)?;
+                    }
                 }
-                if i + 1 < n_filtered {
-                    writeln!(out_main)?;
-                }
+            } else if i + 1 < n_filtered {
+                // Git prints an extra blank line after merge commits when emitting line-log patches.
+                writeln!(out_main)?;
+                writeln!(out_main)?;
             }
         }
     }
