@@ -294,7 +294,7 @@ commit → check it off → move on.
 - [ ] `t3505-cherry-pick-empty` ██████████░░░░░░░░░░ 9/17 (8 left) — test cherry-picking an empty commit
 - [ ] `t3902-quoted` ███████░░░░░░░░░░░░░ 5/13 (8 left) — quoted output
 - [ ] `t3306-notes-prune` ██████░░░░░░░░░░░░░░ 4/12 (8 left) — Test git notes prune
-- [ ] `t3438-rebase-broken-files` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — rebase behavior when on-disk files are broken
+- [x] `t3438-rebase-broken-files` ████████████████████ 9/9 (0 left) — rebase behavior when on-disk files are broken
 - [x] `t3201-branch-contains` ████████████████████ 24/24 (done) — branch --contains <commit>, --no-contains <commit> --merged, and --no-merged
 - [ ] `t3104-ls-tree-format` ██████████░░░░░░░░░░ 10/19 (9 left) — ls-tree --format
 - [ ] `t3204-branch-name-interpretation` ████████░░░░░░░░░░░░ 7/16 (9 left) — interpreting exotic branch name arguments

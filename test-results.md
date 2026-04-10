@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-09 (t3438 / rebase broken files)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t3438-rebase-broken-files.sh`: 9/9 passed
+
 **2026-04-09 (t4063 / diff blobs)**
 
 - `cargo test -p grit-lib --lib`: 155 passed
