@@ -630,13 +630,17 @@ pub fn die_path_inside_submodule_when_disabled(
 }
 
 /// Sets `core.worktree` in the submodule repo at `modules_dir` via `grit --git-dir`.
+///
+/// Stores a path relative to `modules_dir` (e.g. `../../../sub1`), matching C Git and
+/// `test_git_directory_exists` in the ported submodule tests.
 pub fn set_submodule_repo_worktree(grit_bin: &Path, modules_dir: &Path, sub_worktree: &Path) {
+    let wt_rel = pathdiff_relative(modules_dir, sub_worktree);
     let _ = std::process::Command::new(grit_bin)
         .arg("--git-dir")
         .arg(modules_dir)
         .arg("config")
         .arg("core.worktree")
-        .arg(sub_worktree)
+        .arg(&wt_rel)
         .status();
 }
 

@@ -107,7 +107,7 @@ t1011-read-tree-sparse-checkout	t1	yes	23	13	10	false	ok	0
 t10110-ls-files-pathspec-filter	t1	yes	37	37	0	true	ok	0
 t1012-read-tree-df	t1	yes	5	5	0	true	ok	0
 t10120-config-unset-all	t1	yes	33	33	0	true	ok	0
-t1013-read-tree-submodule	t1	yes	62	7	55	false	ok	0
+t1013-read-tree-submodule	t1	yes	68	68	0	true	ok	0
 t10130-init-bare-reinit	t1	yes	32	32	0	true	ok	0
 t1014-read-tree-confusing	t1	yes	28	27	1	false	ok	0
 t10140-branch-show-current	t1	yes	32	32	0	true	ok	0

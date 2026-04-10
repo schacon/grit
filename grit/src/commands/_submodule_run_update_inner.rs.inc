@@ -162,8 +162,12 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
                     &m.url,
                 );
 
-                if sub_path.exists() {
-                    let _ = fs::remove_dir_all(&sub_path);
+                if let Ok(meta) = fs::symlink_metadata(&sub_path) {
+                    if meta.is_dir() {
+                        let _ = fs::remove_dir_all(&sub_path);
+                    } else {
+                        let _ = fs::remove_file(&sub_path);
+                    }
                 }
 
                 validate_submodule_path(work_tree, &m.path)

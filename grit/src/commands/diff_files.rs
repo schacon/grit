@@ -9,8 +9,8 @@ use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::diff::{
     count_changes, detect_copies, empty_blob_oid, format_stat_line, hash_worktree_file,
-    rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat, stat_matches, unified_diff,
-    zero_oid, DiffEntry, DiffStatus,
+    read_submodule_head_oid, rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat,
+    stat_matches, unified_diff, zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
@@ -660,6 +660,16 @@ fn collect_changes(
                 WorktreeStatus::Unchanged => { /* skip — stat says identical */ }
                 WorktreeStatus::Modified(wt_mode, wt_oid) => {
                     let idx_canonical = canonicalize_mode(*idx_mode);
+                    let wt_canonical = canonicalize_mode(wt_mode);
+                    if options.ignore_submodules
+                        && idx_canonical == MODE_GITLINK
+                        && wt_canonical == MODE_GITLINK
+                        && wt_oid == *idx_oid
+                    {
+                        // `diff.ignoreSubmodules`: same recorded commit and clean submodule HEAD;
+                        // ignore untracked paths inside the checkout (t1013).
+                        continue;
+                    }
                     let content_matches = wt_oid == *idx_oid && wt_mode == idx_canonical;
                     if content_matches
                         && index_stat_is_trusted(idx_entry)
@@ -1213,7 +1223,7 @@ fn read_worktree_info_fast(
         if meta.file_type().is_dir() {
             let dot_git = abs_path.join(".git");
             if dot_git.exists() {
-                let sub_oid = read_submodule_head(abs_path).unwrap_or(index_entry.oid);
+                let sub_oid = read_submodule_head_oid(abs_path).unwrap_or(index_entry.oid);
                 return Ok(WorktreeStatus::Modified(0o160000, sub_oid));
             }
         }
@@ -1274,7 +1284,7 @@ fn read_worktree_info_fast(
         let dot_git = abs_path.join(".git");
         if dot_git.exists() {
             // Treat as a submodule (mode 160000)
-            let sub_oid = read_submodule_head(abs_path).unwrap_or(index_entry.oid);
+            let sub_oid = read_submodule_head_oid(abs_path).unwrap_or(index_entry.oid);
             return Ok(WorktreeStatus::Modified(0o160000, sub_oid));
         }
         if canonicalize_mode(index_entry.mode) == MODE_GITLINK {
@@ -1288,20 +1298,6 @@ fn read_worktree_info_fast(
     }
 
     Ok(WorktreeStatus::Missing)
-}
-
-/// Read the current HEAD commit OID of a submodule at the given path.
-fn read_submodule_head(path: &Path) -> Result<ObjectId> {
-    let head_path = path.join(".git").join("HEAD");
-    let content = std::fs::read_to_string(&head_path)?;
-    let content = content.trim();
-    if let Some(refname) = content.strip_prefix("ref: ") {
-        let ref_file = path.join(".git").join(refname);
-        let ref_content = std::fs::read_to_string(&ref_file)?;
-        Ok(ref_content.trim().parse()?)
-    } else {
-        Ok(content.parse()?)
-    }
 }
 
 /// Read mode and OID for a working-tree file; returns `None` if missing.
