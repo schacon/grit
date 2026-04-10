@@ -93,7 +93,7 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
             continue;
         };
 
-        let modules_dir = submodule_modules_git_dir(&repo.git_dir, &m.path);
+        let modules_dir = submodule_modules_git_dir(&repo.git_dir, &m.name);
 
         // When `--recursive` is set, do not skip submodules that are already at the recorded
         // commit: nested `.gitmodules` paths may still need `submodule update` (t5531 nested clone).
@@ -397,6 +397,12 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
                     }
 
                     let mut reset_cmd = Command::new(&grit_bin);
+                    grit_exe::strip_trace2_env(&mut reset_cmd);
+                    if modules_dir.join("HEAD").exists() {
+                        reset_cmd
+                            .env("GIT_DIR", &modules_dir)
+                            .env("GIT_WORK_TREE", &sub_path);
+                    }
                     reset_cmd
                         .args(["reset", "--hard", "--quiet"])
                         .current_dir(&sub_path);

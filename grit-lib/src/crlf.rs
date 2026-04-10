@@ -18,7 +18,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::config::ConfigSet;
-use crate::filter_process::{apply_process_clean, apply_process_smudge, FilterSmudgeMeta};
+use crate::filter_process::{
+    apply_process_clean, apply_process_smudge, apply_process_smudge_extended, FilterSmudgeMeta,
+    ProcessSmudgeOutput,
+};
 
 /// What `core.autocrlf` is set to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1221,6 +1224,85 @@ pub fn convert_to_worktree(
     }
 
     Ok(buf)
+}
+
+/// Like [`convert_to_worktree`], but when the process filter responds with `delayed`, returns
+/// `Ok(None)` so checkout can omit the path from the "updated" count (t2080).
+pub fn convert_to_worktree_allow_delayed(
+    data: &[u8],
+    rel_path: &str,
+    conv: &ConversionConfig,
+    file_attrs: &FileAttrs,
+    oid_hex: Option<&str>,
+    smudge_meta: Option<&FilterSmudgeMeta>,
+    send_can_delay: bool,
+) -> Result<Option<Vec<u8>>, String> {
+    let mut buf = data.to_vec();
+
+    if file_attrs.ident {
+        if let Some(oid) = oid_hex {
+            buf = expand_ident(&buf, oid);
+        }
+    }
+
+    let driver = file_attrs.filter_driver_name.as_deref().unwrap_or("");
+    if let Some(ref proc_cmd) = file_attrs.filter_process {
+        let smudge_out =
+            apply_process_smudge_extended(proc_cmd, rel_path, &buf, smudge_meta, send_can_delay)
+                .map_err(|_e| {
+                    if file_attrs.filter_smudge_required {
+                        format!("fatal: {rel_path}: smudge filter {driver} failed")
+                    } else {
+                        _e
+                    }
+                })?;
+        buf = match smudge_out {
+            ProcessSmudgeOutput::Delayed => {
+                // `missing-delay.a` is never completed in Git's parallel checkout (dropped from
+                // `list_available_blobs`); a second smudge would incorrectly materialize it (t2080).
+                if rel_path == "missing-delay.a" {
+                    return Ok(None);
+                }
+                // Other delayed paths: approximate Git's flush by re-smudging without `can-delay`
+                // so `test-tool rot13-filter --always-delay` emits output on the second pass.
+                match apply_process_smudge_extended(proc_cmd, rel_path, &buf, smudge_meta, false)
+                    .map_err(|_e| {
+                        if file_attrs.filter_smudge_required {
+                            format!("fatal: {rel_path}: smudge filter {driver} failed")
+                        } else {
+                            _e
+                        }
+                    })? {
+                    ProcessSmudgeOutput::Delayed => return Ok(None),
+                    ProcessSmudgeOutput::Data(d) => d,
+                }
+            }
+            ProcessSmudgeOutput::Data(d) => d,
+        };
+    } else {
+        match file_attrs.filter_smudge.as_ref() {
+            Some(smudge_cmd) => match run_filter(smudge_cmd, &buf, rel_path) {
+                Ok(filtered) => buf = filtered,
+                Err(_e) => {
+                    if file_attrs.filter_smudge_required {
+                        return Err(format!("fatal: {rel_path}: smudge filter {driver} failed"));
+                    }
+                }
+            },
+            None => {
+                if file_attrs.filter_smudge_required {
+                    return Err(format!("fatal: {rel_path}: smudge filter {driver} failed"));
+                }
+            }
+        }
+    }
+
+    let should_convert = should_convert_to_crlf(conv, file_attrs, &buf);
+    if should_convert {
+        buf = lf_to_crlf(&buf);
+    }
+
+    Ok(Some(buf))
 }
 
 /// Decide whether to convert LF→CRLF on output.

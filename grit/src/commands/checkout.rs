@@ -36,7 +36,6 @@ use grit_lib::rev_parse::{
 };
 use grit_lib::sparse_checkout::apply_sparse_checkout_skip_worktree;
 use grit_lib::state::{resolve_head, HeadState};
-use grit_lib::submodule_gitdir::submodule_modules_git_dir;
 use grit_lib::write_tree::write_tree_from_index;
 
 use crate::branch_tracking::{format_tracking_info, AheadBehindMode};
@@ -1417,7 +1416,7 @@ fn checkout_merged_worktree_from_index(
                 }
             }
             write_blob_to_worktree(
-                repo, work_tree, &path_str, &entry.oid, entry.mode, index, false,
+                repo, work_tree, &path_str, &entry.oid, entry.mode, index, false, false,
             )?;
             written.insert(entry.path.clone());
         } else if entry.stage() == 2 && !written.contains(&entry.path) {
@@ -1432,10 +1431,11 @@ fn checkout_merged_worktree_from_index(
                     marker_entry.mode,
                     index,
                     false,
+                    false,
                 )?;
             } else {
                 write_blob_to_worktree(
-                    repo, work_tree, &path_str, &entry.oid, entry.mode, index, false,
+                    repo, work_tree, &path_str, &entry.oid, entry.mode, index, false, false,
                 )?;
             }
             written.insert(entry.path.clone());
@@ -2248,7 +2248,7 @@ fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> 
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let _ = write_blob_to_worktree(
-            repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index, true,
+            repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index, true, false,
         )?;
     }
 
@@ -2293,7 +2293,7 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let _ = write_blob_to_worktree(
-            repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index, true,
+            repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index, true, false,
         )?;
     }
 
@@ -2531,6 +2531,8 @@ fn switch_to_tree(
     // When force, write all entries even if OID matches (to restore dirty files).
     checkout_index_to_worktree(repo, &old_index, &new_index, &work_tree, force)?;
 
+    remove_disk_entries_not_in_index_under_prefixes(&new_index, &work_tree)?;
+
     // Update stat info in the new index to match the freshly checked-out files
     for entry in &mut new_index.entries {
         if entry.stage() != 0 {
@@ -2559,6 +2561,83 @@ fn switch_to_tree(
         recurse_submodules_after_checkout(repo)?;
     }
 
+    Ok(())
+}
+
+/// Remove on-disk paths under top-level directory prefixes that hold nested index entries but are
+/// not themselves gitlinks. Clears stale submodule leftovers (e.g. `b/.git`, `b/file`) when the
+/// index records `b/b` only (t2080).
+fn remove_disk_entries_not_in_index_under_prefixes(
+    index: &Index,
+    work_tree: &std::path::Path,
+) -> Result<()> {
+    let mut prefixes: HashSet<String> = HashSet::new();
+    for e in &index.entries {
+        if e.stage() != 0 {
+            continue;
+        }
+        let p = String::from_utf8_lossy(&e.path);
+        if let Some((first, _)) = p.split_once('/') {
+            prefixes.insert(first.to_string());
+        }
+    }
+
+    fn is_tracked(index: &Index, rel: &str) -> bool {
+        index.entries.iter().any(|e| {
+            if e.stage() != 0 {
+                return false;
+            }
+            let p = String::from_utf8_lossy(&e.path);
+            p == rel || p.starts_with(&format!("{rel}/"))
+        })
+    }
+
+    fn walk_remove(
+        abs_dir: &std::path::Path,
+        work_tree: &std::path::Path,
+        index: &Index,
+    ) -> Result<()> {
+        let Ok(rd) = std::fs::read_dir(abs_dir) else {
+            return Ok(());
+        };
+        for ent in rd.flatten() {
+            let path = ent.path();
+            let Ok(rel) = path.strip_prefix(work_tree) else {
+                continue;
+            };
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let is_dir = ent.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if !is_tracked(index, &rel_str) {
+                if is_dir {
+                    let _ = std::fs::remove_dir_all(&path);
+                } else {
+                    let _ = std::fs::remove_file(&path);
+                }
+            } else if is_dir {
+                walk_remove(&path, work_tree, index)?;
+            }
+        }
+        Ok(())
+    }
+
+    for prefix in prefixes {
+        if index
+            .get(prefix.as_bytes(), 0)
+            .is_some_and(|e| e.mode == MODE_GITLINK)
+        {
+            continue;
+        }
+        let root = work_tree.join(&prefix);
+        let Ok(meta) = std::fs::symlink_metadata(&root) else {
+            continue;
+        };
+        if meta.is_symlink() {
+            continue;
+        }
+        if meta.is_dir() {
+            walk_remove(&root, work_tree, index)?;
+        }
+    }
     Ok(())
 }
 
@@ -2862,6 +2941,19 @@ pub(crate) fn check_dirty_worktree(
                 });
 
                 if replaces_tracked_dir && abs_path.is_dir() {
+                    // Gitlink at `rel_str` replaces a former tree with tracked paths under it.
+                    // Files inside the on-disk directory (e.g. submodule worktree contents) are not
+                    // superproject index paths; `verify_clean_subdirectory` uses submodule logic
+                    // instead of scanning for untracked paths (t2080 B1→B2: `e` submodule).
+                    if new_entry.mode == MODE_GITLINK {
+                        continue;
+                    }
+                    // Submodule checkout at `rel_str` (gitfile under `.git/modules/`): nested files
+                    // like `b/file` are not superproject-untracked when switching back to a blob at
+                    // `b` (t2080 B2→B1 after `g` populated `b/`).
+                    if submodule_worktree_git_dir(&abs_path).is_some() {
+                        continue;
+                    }
                     let mut has_untracked_in_dir = false;
                     let mut stack = vec![abs_path.clone()];
                     while let Some(dir) = stack.pop() {
@@ -3063,7 +3155,12 @@ fn checkout_gitlink_worktree_entry(
     force_populate: bool,
 ) -> Result<()> {
     let sm_dir = work_tree.join(rel);
-    let modules_git = submodule_modules_git_dir(&repo.git_dir, rel);
+    let modules_git = crate::commands::submodule::submodule_modules_git_dir_for_worktree_path(
+        &repo.git_dir,
+        work_tree,
+        Some(repo),
+        rel,
+    );
     let has_local_module = modules_git.join("HEAD").exists();
 
     if let Ok(meta) = std::fs::symlink_metadata(&sm_dir) {
@@ -3085,6 +3182,22 @@ fn checkout_gitlink_worktree_entry(
 
     if !has_local_module {
         return Ok(());
+    }
+
+    // A previous checkout may have left a `.git` gitfile pointing at another submodule's
+    // `modules/` directory (e.g. `g` checked out into `b` while `f` still reuses that work tree).
+    // Rewriting the superproject index then requires each gitlink path to use its own module.
+    if sm_dir.is_dir() {
+        let target_modules = modules_git
+            .canonicalize()
+            .unwrap_or_else(|_| modules_git.clone());
+        if let Some(existing_git) = submodule_worktree_git_dir(&sm_dir) {
+            let existing_canon = existing_git.canonicalize().unwrap_or(existing_git);
+            if existing_canon != target_modules {
+                let _ = std::fs::remove_dir_all(&sm_dir);
+                std::fs::create_dir_all(&sm_dir)?;
+            }
+        }
     }
 
     let modules_abs = modules_git.canonicalize().unwrap_or(modules_git);
@@ -3235,6 +3348,14 @@ checking out of the index."
     // `GIT_TRACE2` parallel worker count: full index restore may only increment `updated_paths` for
     // paths actually written; nested submodule checkouts strip trace — use index size (t2080).
     let mut trace_parallel_units_from_index = 0usize;
+    let filter_send_can_delay = repo
+        .load_index()
+        .ok()
+        .map(|idx| {
+            let n = idx.entries.iter().filter(|e| e.stage() == 0).count();
+            checkout_parallel_worker_spawns(repo, n) > 0
+        })
+        .unwrap_or(false);
 
     match source {
         None => {
@@ -3274,7 +3395,14 @@ checking out of the index."
                         if let Some(entry) = index.get(path_bytes, 0) {
                             checkout_record_path_result(
                                 write_blob_to_worktree(
-                                    repo, work_tree, &rel, &entry.oid, entry.mode, &index, false,
+                                    repo,
+                                    work_tree,
+                                    &rel,
+                                    &entry.oid,
+                                    entry.mode,
+                                    &index,
+                                    false,
+                                    filter_send_can_delay,
                                 ),
                                 &mut updated_paths,
                                 &mut path_errors,
@@ -3294,7 +3422,14 @@ checking out of the index."
                         let p = String::from_utf8_lossy(&ie.path).to_string();
                         if glob_matches(&rel, &p) {
                             let w = write_blob_to_worktree(
-                                repo, work_tree, &p, &ie.oid, ie.mode, &index, false,
+                                repo,
+                                work_tree,
+                                &p,
+                                &ie.oid,
+                                ie.mode,
+                                &index,
+                                false,
+                                filter_send_can_delay,
                             );
                             if w.is_ok() {
                                 matched = true;
@@ -3335,8 +3470,14 @@ checking out of the index."
                                     if let Some(entry) = index.get(pb.as_slice(), 0) {
                                         checkout_record_path_result(
                                             write_blob_to_worktree(
-                                                repo, work_tree, &p, &entry.oid, entry.mode,
-                                                &index, false,
+                                                repo,
+                                                work_tree,
+                                                &p,
+                                                &entry.oid,
+                                                entry.mode,
+                                                &index,
+                                                false,
+                                                filter_send_can_delay,
                                             ),
                                             &mut updated_paths,
                                             &mut path_errors,
@@ -3365,6 +3506,7 @@ checking out of the index."
                                             entry_src.mode,
                                             &index,
                                             false,
+                                            filter_send_can_delay,
                                         ),
                                         &mut updated_paths,
                                         &mut path_errors,
@@ -3372,8 +3514,14 @@ checking out of the index."
                                 } else if let Some(entry) = index.get(pb.as_slice(), 0) {
                                     checkout_record_path_result(
                                         write_blob_to_worktree(
-                                            repo, work_tree, &p, &entry.oid, entry.mode, &index,
+                                            repo,
+                                            work_tree,
+                                            &p,
+                                            &entry.oid,
+                                            entry.mode,
+                                            &index,
                                             false,
+                                            filter_send_can_delay,
                                         ),
                                         &mut updated_paths,
                                         &mut path_errors,
@@ -3402,8 +3550,14 @@ checking out of the index."
                                 } else if let Some(entry) = index.get(pb.as_slice(), 0) {
                                     checkout_record_path_result(
                                         write_blob_to_worktree(
-                                            repo, work_tree, &p, &entry.oid, entry.mode, &index,
+                                            repo,
+                                            work_tree,
+                                            &p,
+                                            &entry.oid,
+                                            entry.mode,
+                                            &index,
                                             false,
+                                            filter_send_can_delay,
                                         ),
                                         &mut updated_paths,
                                         &mut path_errors,
@@ -3424,7 +3578,14 @@ checking out of the index."
                             let p = String::from_utf8_lossy(&ie.path).to_string();
                             checkout_record_path_result(
                                 write_blob_to_worktree(
-                                    repo, work_tree, &p, &ie.oid, ie.mode, &index, false,
+                                    repo,
+                                    work_tree,
+                                    &p,
+                                    &ie.oid,
+                                    ie.mode,
+                                    &index,
+                                    false,
+                                    filter_send_can_delay,
                                 ),
                                 &mut updated_paths,
                                 &mut path_errors,
@@ -3435,7 +3596,14 @@ checking out of the index."
                     // Exact file match
                     checkout_record_path_result(
                         write_blob_to_worktree(
-                            repo, work_tree, &rel, &entry.oid, entry.mode, &index, false,
+                            repo,
+                            work_tree,
+                            &rel,
+                            &entry.oid,
+                            entry.mode,
+                            &index,
+                            false,
+                            filter_send_can_delay,
                         ),
                         &mut updated_paths,
                         &mut path_errors,
@@ -3463,6 +3631,7 @@ checking out of the index."
                             entry_src.mode,
                             &index,
                             false,
+                            filter_send_can_delay,
                         ),
                         &mut updated_paths,
                         &mut path_errors,
@@ -3504,7 +3673,14 @@ checking out of the index."
                         let p = String::from_utf8_lossy(&ie.path).to_string();
                         if p.starts_with(&prefix) {
                             let w = write_blob_to_worktree(
-                                repo, work_tree, &p, &ie.oid, ie.mode, &index, false,
+                                repo,
+                                work_tree,
+                                &p,
+                                &ie.oid,
+                                ie.mode,
+                                &index,
+                                false,
+                                filter_send_can_delay,
                             );
                             if w.is_ok() {
                                 matched = true;
@@ -3561,6 +3737,7 @@ checking out of the index."
                             flat_entry.mode,
                             &index,
                             false,
+                            filter_send_can_delay,
                         );
                         if w.is_ok() {
                             index.add_or_replace(flat_entry.clone());
@@ -3649,6 +3826,7 @@ checking out of the index."
                             flat_entry.mode,
                             &index,
                             false,
+                            filter_send_can_delay,
                         );
                         if w.is_ok() {
                             index.add_or_replace(flat_entry.clone());
@@ -3723,7 +3901,14 @@ checking out of the index."
 
                     // Write to working tree with CRLF conversion
                     let w = write_blob_to_worktree(
-                        repo, work_tree, &rel, &blob_oid, mode, &index, false,
+                        repo,
+                        work_tree,
+                        &rel,
+                        &blob_oid,
+                        mode,
+                        &index,
+                        false,
+                        filter_send_can_delay,
                     );
                     if w.is_ok() {
                         // Read blob size for index entry
@@ -3784,13 +3969,15 @@ checking out of the index."
         for e in &path_errors {
             eprintln!("error: {e:#}");
         }
-        if updated_paths > 0 {
-            checkout_eprintln!(
-                "Updated {} path{} from the index",
-                updated_paths,
-                if updated_paths == 1 { "" } else { "s" }
-            );
-        }
+    }
+    if updated_paths > 0 {
+        checkout_eprintln!(
+            "Updated {} path{} from the index",
+            updated_paths,
+            if updated_paths == 1 { "" } else { "s" }
+        );
+    }
+    if !path_errors.is_empty() {
         let trace_units = trace_parallel_units_from_index.max(updated_paths);
         trace2_emit_checkout_parallel_workers(checkout_parallel_worker_spawns(repo, trace_units));
         return Err(path_errors
@@ -4629,6 +4816,23 @@ fn find_recursive(
 // Working tree helpers
 // ---------------------------------------------------------------------------
 
+/// True when `new_index` has a stage-0 entry whose path is strictly under `prefix`
+/// (i.e. `prefix/foo`, not `prefix` itself).
+///
+/// Used when a gitlink at `prefix` is removed from the index but the target tree
+/// places regular files under that directory (submodule → directory transition).
+/// In that case the old submodule work tree must be removed entirely so checkout
+/// can materialize nested paths (matches Git; `t2080-parallel-checkout-basics`).
+fn new_index_has_path_under_prefix(new_index: &Index, prefix: &[u8]) -> bool {
+    new_index.entries.iter().any(|e| {
+        if e.stage() != 0 {
+            return false;
+        }
+        let p = e.path.as_slice();
+        p.len() > prefix.len() && p.get(prefix.len()) == Some(&b'/') && p.starts_with(prefix)
+    })
+}
+
 /// Update the working tree from old_index to new_index: remove deleted files,
 /// add new files, update modified files.
 fn checkout_index_to_worktree(
@@ -4673,12 +4877,20 @@ fn checkout_index_to_worktree(
 
     // Remove paths that are no longer present in the new index.
     for old_path in old_stage0.difference(&new_stage0) {
+        let force_remove_populated_submodule = old_map.get(old_path.as_slice()).is_some_and(|e| {
+            e.mode == MODE_GITLINK
+                && !git_dir_is_nested_modules_repo(&repo.git_dir)
+                && new_index_has_path_under_prefix(new_index, old_path.as_slice())
+        });
+
         if let Some(old_entry) = old_map.get(old_path.as_slice()) {
             // Superproject: do not delete submodule work trees for gitlinks dropped from the index
             // (Git keeps them on disk; t7300-clean). Nested submodule repos under `.git/modules/`
             // still use normal removal so `git checkout` can refresh the nested worktree.
             if old_entry.mode == MODE_GITLINK && !git_dir_is_nested_modules_repo(&repo.git_dir) {
-                continue;
+                if !force_remove_populated_submodule {
+                    continue;
+                }
             }
         }
         let rel = String::from_utf8_lossy(old_path).into_owned();
@@ -4710,7 +4922,7 @@ fn checkout_index_to_worktree(
             let is_populated_submodule = old_map
                 .get(old_path.as_slice())
                 .is_some_and(|e| e.mode == MODE_GITLINK && abs.join(".git").exists());
-            if !is_populated_submodule {
+            if !is_populated_submodule || force_remove_populated_submodule {
                 let _ = std::fs::remove_dir_all(&abs);
             }
         }
@@ -4765,7 +4977,11 @@ fn checkout_index_to_worktree(
         }
     }
 
-    // Write new/modified entries
+    // Write new/modified entries: blobs/trees first so symlink targets exist before gitlink
+    // checkout. Gitlinks are sorted by path so a real directory (`b`) is populated before a
+    // symlinked sibling (`g` → `b`) would otherwise reuse the same work tree and clobber `.git`
+    // (t2080: clone vs checkout working tree parity).
+    let mut gitlink_entries: Vec<&IndexEntry> = Vec::new();
     for entry in &new_index.entries {
         if entry.stage() != 0 {
             continue;
@@ -4773,16 +4989,8 @@ fn checkout_index_to_worktree(
         if entry.skip_worktree() {
             continue;
         }
-
-        // Skip gitlink (submodule) entries — their OIDs reference commits
-        // in the submodule's object store, not blobs in ours.
         if entry.mode == MODE_GITLINK {
-            let rel = String::from_utf8_lossy(&entry.path).into_owned();
-            let force_populate = match old_map.get(entry.path.as_slice()) {
-                None => true,
-                Some(old) => old.mode != MODE_GITLINK || old.oid != entry.oid,
-            };
-            checkout_gitlink_worktree_entry(repo, work_tree, &rel, &entry.oid, force_populate)?;
+            gitlink_entries.push(entry);
             continue;
         }
 
@@ -4802,8 +5010,17 @@ fn checkout_index_to_worktree(
 
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let _ = write_blob_to_worktree(
-            repo, work_tree, &path_str, &entry.oid, entry.mode, new_index, true,
+            repo, work_tree, &path_str, &entry.oid, entry.mode, new_index, true, false,
         )?;
+    }
+
+    for entry in gitlink_entries {
+        let rel = String::from_utf8_lossy(&entry.path).into_owned();
+        let force_populate = match old_map.get(entry.path.as_slice()) {
+            None => true,
+            Some(old) => old.mode != MODE_GITLINK || old.oid != entry.oid,
+        };
+        checkout_gitlink_worktree_entry(repo, work_tree, &rel, &entry.oid, force_populate)?;
     }
 
     let _ = crate::commands::submodule::refresh_submodule_gitfiles(repo);
@@ -4833,6 +5050,7 @@ fn write_blob_to_worktree(
     mode: u32,
     index: &Index,
     full_smudge_meta: bool,
+    filter_send_can_delay: bool,
 ) -> Result<bool> {
     if mode == MODE_GITLINK {
         // Path checkout from index: always materialize (may follow symlinked submodule paths).
@@ -4859,13 +5077,14 @@ fn write_blob_to_worktree(
             if let Ok(wt_raw) = std::fs::read(&abs_path) {
                 let oid_hex = format!("{oid}");
                 let smudge_meta = filter_process::smudge_meta_blob_only(&oid_hex);
-                if let Ok(smudged) = crlf::convert_to_worktree(
+                if let Ok(Some(smudged)) = crlf::convert_to_worktree_allow_delayed(
                     &obj.data,
                     rel_path,
                     &conv,
                     &file_attrs,
                     Some(&oid_hex),
                     Some(&smudge_meta),
+                    filter_send_can_delay,
                 ) {
                     if smudged == wt_raw {
                         return Ok(false);
@@ -4887,15 +5106,32 @@ fn write_blob_to_worktree(
         } else {
             filter_process::smudge_meta_blob_only(&oid_hex)
         };
-        crlf::convert_to_worktree(
-            &obj.data,
-            rel_path,
-            &conv,
-            &file_attrs,
-            Some(&oid_hex),
-            Some(&smudge_meta),
-        )
-        .map_err(|e| anyhow::anyhow!("{e}"))?
+        if full_smudge_meta {
+            crlf::convert_to_worktree(
+                &obj.data,
+                rel_path,
+                &conv,
+                &file_attrs,
+                Some(&oid_hex),
+                Some(&smudge_meta),
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+        } else {
+            match crlf::convert_to_worktree_allow_delayed(
+                &obj.data,
+                rel_path,
+                &conv,
+                &file_attrs,
+                Some(&oid_hex),
+                Some(&smudge_meta),
+                filter_send_can_delay,
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+            {
+                None => return Ok(false),
+                Some(d) => d,
+            }
+        }
     } else {
         obj.data
     };
