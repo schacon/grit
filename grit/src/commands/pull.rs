@@ -288,8 +288,12 @@ pub fn run(args: Args) -> Result<()> {
         verbose: 0,
         update_refs: false,
         upload_pack: None,
+        dry_run: false,
+        no_write_fetch_head: false,
         recurse_submodules: fetch_recurse,
         no_recurse_submodules: args.no_recurse_submodules,
+        recurse_submodules_default: None,
+        submodule_prefix: None,
     };
     super::fetch::run(fetch_args)?;
 

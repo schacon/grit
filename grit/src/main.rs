@@ -21,6 +21,8 @@ mod commands;
 mod dotfile;
 mod explicit_exit;
 mod ext_transport;
+mod fetch_submodule_record;
+mod fetch_submodule_recurse;
 mod fetch_transport;
 mod file_upload_pack_v2;
 mod git_column;

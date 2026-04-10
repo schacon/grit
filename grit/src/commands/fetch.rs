@@ -8,6 +8,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
+use grit_lib::fetch_submodules::FetchRecurseSubmodules;
 use grit_lib::merge_base;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -101,7 +102,7 @@ pub struct Args {
     #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
     pub verbose: u8,
 
-    /// Number of parallel children for fetching (accepted but ignored).
+    /// Number of parallel submodule fetches (`submodule.fetchJobs` / `fetch.parallel` when unset).
     #[arg(short = 'j', long = "jobs", value_name = "N")]
     pub jobs: Option<usize>,
 
@@ -120,6 +121,14 @@ pub struct Args {
     /// Only negotiate, do not fetch objects.
     #[arg(long)]
     pub negotiate_only: bool,
+
+    /// Do not update refs or FETCH_HEAD; still report what would be fetched.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Do not write FETCH_HEAD (submodule recursion passes this from the superproject).
+    #[arg(long = "no-write-fetch-head")]
+    pub no_write_fetch_head: bool,
 
     /// Allow updating the current branch head (normally refused).
     #[arg(long)]
@@ -142,12 +151,30 @@ pub struct Args {
     /// Disable submodule recursion (overrides config).
     #[arg(long = "no-recurse-submodules")]
     pub no_recurse_submodules: bool,
+
+    /// Internal: default recurse mode for nested submodule fetches (two-arg form `… default yes`).
+    #[arg(
+        long = "recurse-submodules-default",
+        hide = true,
+        num_args = 1,
+        value_name = "MODE"
+    )]
+    pub recurse_submodules_default: Option<String>,
+
+    /// Internal: path prefix for nested submodule fetch (Git hidden option).
+    #[arg(long = "submodule-prefix", hide = true)]
+    pub submodule_prefix: Option<String>,
 }
 
-pub fn run(mut args: Args) -> Result<()> {
+pub fn run(args: Args) -> Result<()> {
     if args.negotiate_only {
         // Negotiate-only mode: just exit successfully without fetching.
         return Ok(());
+    }
+
+    let mut args = args;
+    if args.dry_run {
+        args.no_write_fetch_head = true;
     }
 
     // `git fetch tag <name>` is parsed as remote=`tag` unless we lift the magic keyword.
@@ -166,6 +193,8 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let git_dir = resolve_git_dir()?;
     let config = ConfigSet::load(Some(&git_dir), true)?;
+
+    crate::fetch_submodule_record::begin_fetch_submodule_record(&git_dir);
 
     // Validate fetch.output config if set
     if let Some(val) = config.get("fetch.output") {
@@ -238,8 +267,18 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     };
 
-    if result.is_ok() && should_recurse_fetch_submodules(&config, &args) {
-        super::submodule::recursive_fetch_submodules(true)?;
+    if result.is_ok() && !args.porcelain {
+        let recurse = effective_fetch_recurse_submodules(&git_dir, &config, &args)?;
+        if recurse != FetchRecurseSubmodules::Off
+            && matches!(
+                recurse,
+                FetchRecurseSubmodules::On | FetchRecurseSubmodules::OnDemand
+            )
+        {
+            crate::fetch_submodule_recurse::recursive_fetch_submodules_after_fetch(
+                &git_dir, &config, &args, recurse,
+            )?;
+        }
     }
     result
 }
@@ -344,26 +383,109 @@ fn default_fetch_remote_name(git_dir: &Path, config: &ConfigSet) -> String {
     }
 }
 
-fn should_recurse_fetch_submodules(config: &ConfigSet, args: &Args) -> bool {
+fn config_bool_truthy(v: &str) -> bool {
+    let l = v.trim().to_ascii_lowercase();
+    matches!(l.as_str(), "true" | "yes" | "on" | "1")
+}
+
+fn config_bool_falsey(v: &str) -> bool {
+    let l = v.trim().to_ascii_lowercase();
+    matches!(l.as_str(), "false" | "no" | "off" | "0")
+}
+
+/// Effective `fetch --recurse-submodules` mode after config / `.gitmodules` (Git `fetch_config` + `fetch_config_from_gitmodules`).
+fn effective_fetch_recurse_submodules(
+    git_dir: &Path,
+    config: &ConfigSet,
+    args: &Args,
+) -> Result<FetchRecurseSubmodules> {
     if args.no_recurse_submodules {
-        return false;
+        return Ok(FetchRecurseSubmodules::Off);
     }
-    if args.recurse_submodules.as_deref() == Some("no")
-        || args.recurse_submodules.as_deref() == Some("false")
-    {
-        return false;
+    if let Some(ref v) = args.recurse_submodules {
+        let t = v.trim();
+        if t.eq_ignore_ascii_case("no") || t.eq_ignore_ascii_case("false") {
+            return Ok(FetchRecurseSubmodules::Off);
+        }
+        return grit_lib::fetch_submodules::parse_fetch_recurse_submodules_arg(
+            "--recurse-submodules",
+            t,
+        )
+        .map_err(|e| anyhow::anyhow!(e));
     }
-    if args.recurse_submodules.is_some() {
-        return true;
+    if let Some(v) = config.get("submodule.recurse") {
+        if config_bool_truthy(&v) {
+            return Ok(FetchRecurseSubmodules::On);
+        }
+        if config_bool_falsey(&v) {
+            return Ok(FetchRecurseSubmodules::Off);
+        }
     }
-    config
+    let mut mode = if let Some(v) = config
         .get("fetch.recursesubmodules")
         .or_else(|| config.get("fetch.recurseSubmodules"))
-        .map(|v| {
-            let l = v.to_ascii_lowercase();
-            l == "true" || l == "yes" || l == "on" || l == "1"
-        })
-        .unwrap_or(false)
+    {
+        grit_lib::fetch_submodules::parse_fetch_recurse_submodules_arg(
+            "fetch.recurseSubmodules",
+            &v,
+        )
+        .map_err(|e| anyhow::anyhow!(e))?
+    } else {
+        FetchRecurseSubmodules::Default
+    };
+
+    if mode == FetchRecurseSubmodules::Default {
+        if let Some(m) = fetch_recurse_from_gitmodules_file(git_dir, config)? {
+            mode = m;
+        }
+    }
+    Ok(mode)
+}
+
+fn fetch_recurse_from_gitmodules_file(
+    git_dir: &Path,
+    config: &ConfigSet,
+) -> Result<Option<FetchRecurseSubmodules>> {
+    let repo = Repository::open(git_dir, None).ok();
+    let work_tree = repo.as_ref().and_then(|r| r.work_tree.clone());
+    let Some(wt) = work_tree else {
+        return Ok(None);
+    };
+    let path = wt.join(".gitmodules");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(&path).unwrap_or_default();
+    let gm =
+        grit_lib::config::ConfigFile::parse(&path, &content, grit_lib::config::ConfigScope::Local)
+            .ok();
+    let Some(gm) = gm else {
+        return Ok(None);
+    };
+    let mut found: Option<FetchRecurseSubmodules> = None;
+    for e in &gm.entries {
+        if !e.key.starts_with("submodule.") {
+            continue;
+        }
+        if !e.key.ends_with(".fetchrecursesubmodules") {
+            continue;
+        }
+        let raw = config
+            .get(&e.key)
+            .or_else(|| e.value.clone())
+            .unwrap_or_default();
+        let m = grit_lib::fetch_submodules::parse_fetch_recurse_submodules_arg(&e.key, &raw)
+            .map_err(|err| anyhow::anyhow!(err))?;
+        found = Some(m);
+    }
+    Ok(found)
+}
+
+fn note_submodule_fetch_tip(old_oid: Option<&ObjectId>, new_oid: &ObjectId) {
+    if old_oid == Some(new_oid) {
+        return;
+    }
+    crate::fetch_submodule_record::record_submodule_tip(new_oid);
 }
 
 /// Build the upload-pack `want` list for a configured (non-CLI) fetch: only refs matched by
@@ -1112,8 +1234,11 @@ fn fetch_remote(
                                 );
                             }
                         }
-                        refs::write_ref(git_dir, &local_ref, remote_oid)
-                            .with_context(|| format!("updating ref {local_ref}"))?;
+                        note_submodule_fetch_tip(old_oid.as_ref(), remote_oid);
+                        if !args.dry_run {
+                            refs::write_ref(git_dir, &local_ref, remote_oid)
+                                .with_context(|| format!("updating ref {local_ref}"))?;
+                        }
 
                         if !args.quiet {
                             let short = local_ref
@@ -1218,8 +1343,11 @@ fn fetch_remote(
                             );
                         }
                     }
-                    refs::write_ref(git_dir, &local_ref, &remote_oid)
-                        .with_context(|| format!("updating ref {local_ref}"))?;
+                    note_submodule_fetch_tip(old_oid.as_ref(), &remote_oid);
+                    if !args.dry_run {
+                        refs::write_ref(git_dir, &local_ref, &remote_oid)
+                            .with_context(|| format!("updating ref {local_ref}"))?;
+                    }
 
                     if !args.quiet {
                         let short = local_ref
@@ -1372,16 +1500,19 @@ fn fetch_remote(
                 has_updates = true;
             }
 
-            refs::write_ref(git_dir, &local_ref, &remote_oid)
-                .with_context(|| format!("updating ref {local_ref}"))?;
-            let _ = append_fetch_reflog(
-                git_dir,
-                &local_ref,
-                old_oid.as_ref(),
-                &remote_oid,
-                &url,
-                branch,
-            );
+            note_submodule_fetch_tip(old_oid.as_ref(), &remote_oid);
+            if !args.dry_run {
+                refs::write_ref(git_dir, &local_ref, &remote_oid)
+                    .with_context(|| format!("updating ref {local_ref}"))?;
+                let _ = append_fetch_reflog(
+                    git_dir,
+                    &local_ref,
+                    old_oid.as_ref(),
+                    &remote_oid,
+                    &url,
+                    branch,
+                );
+            }
 
             let tracking_print = local_ref
                 .strip_prefix("refs/remotes/")
@@ -1426,9 +1557,13 @@ fn fetch_remote(
                 has_updates = true;
             }
 
-            refs::write_ref(git_dir, refname, remote_oid)
-                .with_context(|| format!("updating tag {refname}"))?;
-            let _ = append_fetch_reflog(git_dir, refname, old_oid.as_ref(), remote_oid, &url, "");
+            note_submodule_fetch_tip(old_oid.as_ref(), remote_oid);
+            if !args.dry_run {
+                refs::write_ref(git_dir, refname, remote_oid)
+                    .with_context(|| format!("updating tag {refname}"))?;
+                let _ =
+                    append_fetch_reflog(git_dir, refname, old_oid.as_ref(), remote_oid, &url, "");
+            }
 
             if !args.quiet {
                 let tag_name = refname.strip_prefix("refs/tags/").unwrap_or(refname);
@@ -1607,12 +1742,29 @@ fn fetch_remote(
         }
     }
 
-    if !fetch_head_entries.is_empty() {
+    if !fetch_head_entries.is_empty() && !args.no_write_fetch_head {
         sort_fetch_head_lines(&mut fetch_head_entries, &fetch_head_refspecs);
         let fetch_head_path = git_dir.join("FETCH_HEAD");
         let content = fetch_head_entries.join("\n") + "\n";
         fs::write(&fetch_head_path, content).context("writing FETCH_HEAD")?;
     }
+
+    if user_passed_cli_refspecs && !prefetch_left_no_positive {
+        for spec in cli_refspecs {
+            if spec.starts_with('^') {
+                continue;
+            }
+            let sc = spec.strip_prefix('+').unwrap_or(spec.as_str());
+            let src = sc.split_once(':').map(|(a, _)| a).unwrap_or(sc);
+            if src.len() == 40 {
+                if let Ok(oid) = ObjectId::from_hex(src) {
+                    note_submodule_fetch_tip(None, &oid);
+                }
+            }
+        }
+    }
+
+    crate::fetch_submodule_record::finish_record_tips_after(git_dir);
 
     if args.filter.as_deref() == Some("blob:none") {
         apply_blob_none_filter(git_dir, remote_repo.as_ref(), &remote_heads)
@@ -3303,13 +3455,19 @@ fn fetch_branch_merge_rank(
 }
 
 fn configured_remote_base(git_dir: &Path) -> PathBuf {
-    if git_dir.file_name().is_some_and(|name| name == ".git") {
-        git_dir
-            .parent()
+    let gd = git_dir
+        .canonicalize()
+        .unwrap_or_else(|_| git_dir.to_path_buf());
+    let s = gd.to_string_lossy();
+    if let Some(idx) = s.find("/.git/modules/") {
+        return PathBuf::from(s[..idx].to_string());
+    }
+    if gd.file_name().is_some_and(|name| name == ".git") {
+        gd.parent()
             .map(Path::to_path_buf)
-            .unwrap_or_else(|| git_dir.to_path_buf())
+            .unwrap_or_else(|| gd.clone())
     } else {
-        git_dir.to_path_buf()
+        gd
     }
 }
 
