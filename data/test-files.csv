@@ -1134,7 +1134,7 @@ t6432-merge-recursive-space-options	t6	yes	11	11	0	true	ok	0
 t6433-merge-toplevel	t6	yes	15	10	5	false	ok	0
 t6434-merge-recursive-rename-options	t6	yes	27	27	0	true	ok	0
 t6434-merge-with-no-common-ancestor	t6	yes	3	3	0	true	ok	0
-t6435-merge-sparse	t6	yes	6	4	2	false	ok	0
+t6435-merge-sparse	t6	yes	6	6	0	true	ok	0
 t6435-merge-sparse-directory	t6	yes	2	2	0	true	ok	0
 t6436-merge-overwrite	t6	yes	18	12	6	false	ok	0
 t6437-submodule-merge	t6	yes	22	8	14	false	ok	0
