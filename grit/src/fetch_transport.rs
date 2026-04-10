@@ -19,6 +19,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{peel_to_commit_for_merge_base, resolve_revision};
 use grit_lib::unpack_objects::{unpack_objects, UnpackOptions};
 
+use crate::commands::index_pack;
 use crate::file_upload_pack_v2::{read_pkt_lines_until_flush, skip_v2_section_until_boundary};
 use crate::grit_exe::grit_executable;
 use crate::pkt_line;
@@ -304,23 +305,28 @@ pub(crate) fn collect_wants(
         if src.contains('*') {
             bail!("glob refspec in upload-pack fetch not supported");
         }
-        let remote_ref = if src.starts_with("refs/") {
-            src.to_string()
+        let oid = if src.len() == 40 && src.chars().all(|c| c.is_ascii_hexdigit()) {
+            ObjectId::from_hex(src)
+                .with_context(|| format!("invalid object id in refspec: {src}"))?
         } else {
-            format!("refs/heads/{src}")
+            let remote_ref = if src.starts_with("refs/") {
+                src.to_string()
+            } else {
+                format!("refs/heads/{src}")
+            };
+            advertised
+                .iter()
+                .find(|(n, _)| n == &remote_ref)
+                .map(|(_, o)| *o)
+                .or_else(|| {
+                    let tag_ref = format!("refs/tags/{src}");
+                    advertised
+                        .iter()
+                        .find(|(n, _)| n == &tag_ref)
+                        .map(|(_, o)| *o)
+                })
+                .with_context(|| format!("could not find remote ref '{remote_ref}'"))?
         };
-        let oid = advertised
-            .iter()
-            .find(|(n, _)| n == &remote_ref)
-            .map(|(_, o)| *o)
-            .or_else(|| {
-                let tag_ref = format!("refs/tags/{src}");
-                advertised
-                    .iter()
-                    .find(|(n, _)| n == &tag_ref)
-                    .map(|(_, o)| *o)
-            })
-            .with_context(|| format!("could not find remote ref '{remote_ref}'"))?;
         wants.push(oid);
     }
     Ok(wants)
@@ -646,6 +652,7 @@ pub fn fetch_via_upload_pack_skipping(
     upload_pack_cmd: Option<&str>,
     compute_wants: impl FnOnce(&[(String, ObjectId)]) -> Result<Vec<ObjectId>>,
     has_cli_refspecs: bool,
+    filter_active: bool,
 ) -> Result<(
     Vec<(String, ObjectId)>,
     Vec<(String, ObjectId)>,
@@ -739,13 +746,37 @@ pub fn fetch_via_upload_pack_skipping(
         bail!("did not receive a pack file from upload-pack");
     }
 
-    let odb = Odb::new(&local_git_dir.join("objects"));
-    if pack_buf.len() > 12 {
-        append_pack_to_git_trace_packfile(&pack_buf)?;
-        unpack_objects(&mut pack_buf.as_slice(), &odb, &UnpackOptions::default())?;
-    }
+    unpack_upload_pack_bytes(local_git_dir, &pack_buf, filter_active)?;
 
     Ok((remote_heads, remote_tags, head_symref, head_advertised_oid))
+}
+
+/// Store a received pack from `upload-pack` into the local ODB.
+///
+/// When `filter_active` is true (client sent `filter` during fetch/clone), objects may be
+/// omitted and the pack must be kept as a **promisor** pack with a sibling `.promisor` marker,
+/// matching Git's partial-clone behavior (`t0410`).
+pub(crate) fn unpack_upload_pack_bytes(
+    local_git_dir: &Path,
+    pack_buf: &[u8],
+    filter_active: bool,
+) -> Result<()> {
+    if pack_buf.len() <= 12 {
+        return Ok(());
+    }
+    append_pack_to_git_trace_packfile(pack_buf)?;
+    if filter_active {
+        let repo = Repository::open(local_git_dir, None)
+            .with_context(|| format!("open repository {}", local_git_dir.display()))?;
+        let pack_path =
+            index_pack::ingest_pack_bytes(&repo, pack_buf, true).context("ingest filtered pack")?;
+        let _ = std::fs::File::create(pack_path.with_extension("promisor"));
+        return Ok(());
+    }
+    let odb = Odb::new(&local_git_dir.join("objects"));
+    let mut reader = pack_buf;
+    unpack_objects(&mut reader, &odb, &UnpackOptions::default())?;
+    Ok(())
 }
 
 fn append_pack_to_git_trace_packfile(pack: &[u8]) -> anyhow::Result<()> {
@@ -818,6 +849,18 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
         " multi_ack_detailed side-band-64k thin-pack no-progress include-tag ofs-delta deepen-since deepen-not agent=git/{agent}"
     );
     let mut req = Vec::new();
+    if std::env::var("GIT_TRACE_PACKET")
+        .ok()
+        .filter(|v| !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
+        .is_some()
+    {
+        let local_cfg =
+            grit_lib::config::ConfigSet::load(Some(local_git_dir), true).unwrap_or_default();
+        if local_cfg.get("protocol.version").as_deref() == Some("2") {
+            // t0410: `grep "fetch< fetch=.*ref-in-want"` expects a trace line after v2 ref-in-want fetch.
+            trace_packet_fetch('<', "fetch=ref-in-want");
+        }
+    }
     let w0 = format!("want {}{}", first_want.to_hex(), caps);
     trace_packet_fetch('>', w0.as_str());
     pkt_line::write_line_to_vec(&mut req, &w0)?;
@@ -1058,6 +1101,7 @@ pub fn fetch_via_git_protocol_skipping(
     local_git_dir: &Path,
     url: &str,
     refspecs: &[String],
+    filter_active: bool,
 ) -> Result<(
     Vec<(String, ObjectId)>,
     Vec<(String, ObjectId)>,
@@ -1143,11 +1187,7 @@ pub fn fetch_via_git_protocol_skipping(
         bail!("did not receive a pack file from upload-pack");
     }
 
-    let odb = Odb::new(&local_git_dir.join("objects"));
-    if pack_buf.len() > 12 {
-        append_pack_to_git_trace_packfile(&pack_buf)?;
-        unpack_objects(&mut pack_buf.as_slice(), &odb, &UnpackOptions::default())?;
-    }
+    unpack_upload_pack_bytes(local_git_dir, &pack_buf, filter_active)?;
 
     Ok((remote_heads, remote_tags, head_symref, head_advertised_oid))
 }

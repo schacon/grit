@@ -176,14 +176,6 @@ pub(crate) fn try_lazy_fetch_promisor_object(repo: &Repository, oid: ObjectId) -
     for (remote_name, src) in list_promisor_remotes(&config, &repo.git_dir)? {
         match &src {
             PromisorSource::Local(odb) => {
-                if let Ok(obj) = odb.read(&oid) {
-                    repo.odb.write(obj.kind, &obj.data).with_context(|| {
-                        format!("writing lazy-fetched object from {remote_name}")
-                    })?;
-                    if repo.odb.exists_local(&oid) {
-                        return Ok(());
-                    }
-                }
                 let remote_git_dir = odb
                     .objects_dir()
                     .parent()

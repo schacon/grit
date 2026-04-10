@@ -1254,13 +1254,15 @@ pub fn peel_to_tree(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
 
 /// Navigate a tree to find an object at a given path.
 ///
-/// Returns the leaf OID for blobs, symlinks, and **gitlinks** (matches `git rev-parse treeish:path`).
-/// Trees at the leaf still error (`'path' is a tree, not a blob`).
+/// Git accepts `rev:path` when the leaf is a **blob, symlink, gitlink, or tree** (e.g.
+/// `HEAD:subdir` for a subdirectory tree). Only [`walk_tree_to_blob_entry`] is blob-only — use
+/// [`walk_tree_to_leaf_entry`] for `treeish:path` resolution.
 fn resolve_tree_path(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Result<ObjectId> {
-    let (oid, mode) = walk_tree_to_leaf_entry(repo, tree_oid, path)?;
-    if mode == crate::index::MODE_TREE {
-        return Err(Error::InvalidRef(format!("'{path}' is a tree, not a blob")));
+    let components: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
+    if components.is_empty() {
+        return Ok(*tree_oid);
     }
+    let (oid, _) = walk_tree_to_leaf_entry(repo, tree_oid, path)?;
     Ok(oid)
 }
 

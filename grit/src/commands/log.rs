@@ -3293,7 +3293,8 @@ fn validate_pathspec_scope(repo: &Repository, pathspecs: &[String]) -> Result<()
 
     let cwd = std::env::current_dir().context("resolving current directory")?;
     let Some(work_tree) = repo.work_tree.as_deref() else {
-        anyhow::bail!("pathspec '{}' is outside repository", pathspecs[0]);
+        // Bare repos: pathspecs limit history without resolving against a work tree (t0410).
+        return Ok(());
     };
 
     let cwd_norm = normalize_path(&cwd);

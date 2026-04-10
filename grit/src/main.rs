@@ -747,6 +747,29 @@ fn run_test_tool_find_pack(rest: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// `test-tool partial-clone` — matches `git/t/helper/test-partial-clone.c` (t0410).
+fn run_test_tool_partial_clone(rest: &[String]) -> Result<()> {
+    if rest.len() < 4 {
+        bail!("usage: test-tool partial-clone object-info <gitdir> <oid>");
+    }
+    if rest[1] != "object-info" {
+        bail!("test-tool partial-clone: unknown subcommand '{}'", rest[1]);
+    }
+    let git_dir = std::path::Path::new(&rest[2]);
+    let repo = grit_lib::repo::Repository::open(git_dir, None)
+        .with_context(|| format!("could not open repository at {}", git_dir.display()))?;
+    let oid: grit_lib::objects::ObjectId = rest[3]
+        .parse()
+        .map_err(|_| anyhow::anyhow!("could not parse oid"))?;
+    crate::commands::promisor_hydrate::try_lazy_fetch_promisor_object(&repo, oid)?;
+    let obj = repo
+        .odb
+        .read(&oid)
+        .with_context(|| format!("could not obtain object info for {}", oid.to_hex()))?;
+    println!("{}", obj.data.len());
+    Ok(())
+}
+
 fn run_test_tool_ref_store(rest: &[String]) -> Result<()> {
     if rest.len() < 4 {
         bail!("usage: test-tool ref-store <backend> <subcommand> ...");
@@ -4469,6 +4492,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 "dump-untracked-cache" => run_test_tool_dump_untracked_cache(),
                 "userdiff" => run_test_tool_userdiff(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
+                "partial-clone" => run_test_tool_partial_clone(rest),
                 "ref-store" => run_test_tool_ref_store(rest),
                 "online-cpus" => run_test_tool_online_cpus(rest),
                 "lazy-init-name-hash" => run_test_tool_lazy_init_name_hash(rest),

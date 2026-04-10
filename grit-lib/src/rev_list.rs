@@ -17,9 +17,13 @@ use crate::error::{Error, Result};
 use crate::ident::{committer_unix_seconds_for_ordering, parse_signature_times};
 use crate::ignore::{parse_sparse_patterns_from_blob, path_matches_sparse_pattern_list};
 use crate::index::Index;
-use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
+use crate::objects::{parse_commit, parse_tag, parse_tree, Object, ObjectId, ObjectKind};
 use crate::pack;
 use crate::patch_ids::compute_patch_id;
+use crate::promisor::{
+    promisor_pack_and_tag_targets, promisor_pack_object_ids, promisor_pack_peeled_tag_targets,
+    repo_treats_promisor_packs,
+};
 use crate::reflog::{list_reflog_refs, read_reflog};
 use crate::refs;
 use crate::repo::Repository;
@@ -431,6 +435,10 @@ pub struct RevListOptions {
     pub no_kept_objects: bool,
     /// Behavior when referenced objects are missing.
     pub missing_action: MissingAction,
+    /// Stop commit traversal at objects listed in promisor packs (Git `--exclude-promisor-objects`).
+    pub exclude_promisor_objects: bool,
+    /// When set, missing explicit revision OIDs do not abort `--exclude-promisor-objects` (Git `--ignore-missing`).
+    pub ignore_missing: bool,
     /// When set with `--objects`, omit path names from non-commit object lines (bitmap-style output).
     pub use_bitmap_index: bool,
     /// When set with `--objects`, list only objects not present in any pack file.
@@ -498,6 +506,8 @@ impl Default for RevListOptions {
             in_commit_order: false,
             no_kept_objects: false,
             missing_action: MissingAction::Error,
+            exclude_promisor_objects: false,
+            ignore_missing: false,
             use_bitmap_index: false,
             unpacked_only: false,
             objects_tree_walk_cap: None,
@@ -567,14 +577,59 @@ pub fn rev_list(
     negative_specs: &[String],
     options: &RevListOptions,
 ) -> Result<RevListResult> {
-    let mut graph = CommitGraph::new(repo, options.first_parent);
-
-    let (mut include, object_roots) = if options.objects {
-        resolve_specs_for_objects(repo, positive_specs)?
+    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let promisor_pack_oids = if repo_treats_promisor_packs(&repo.git_dir, &cfg) {
+        promisor_pack_object_ids(&repo.git_dir.join("objects"))
     } else {
-        (resolve_specs(repo, positive_specs)?, Vec::new())
+        HashSet::new()
+    };
+    // Commit graph: only treat **pack member** OIDs as boundaries. Expanding through tag/commit
+    // closures would mark missing promised commits as empty tips and break `rev-list` cmd-line
+    // failures (t0410).
+    let promisor_graph_stop = if options.exclude_promisor_objects {
+        promisor_pack_oids.clone()
+    } else {
+        HashSet::new()
+    };
+    // Object walks: pack members plus peeled tag targets (matches `fsck` promisor expansion for
+    // trees/blobs referenced only through tags).
+    let promisor_object_exclude: HashSet<ObjectId> = if options.exclude_promisor_objects {
+        if repo_treats_promisor_packs(&repo.git_dir, &cfg) {
+            promisor_pack_and_tag_targets(repo).unwrap_or_else(|_| promisor_pack_oids.clone())
+        } else {
+            HashSet::new()
+        }
+    } else {
+        HashSet::new()
+    };
+    let promisor_peeled_tag_targets =
+        if options.exclude_promisor_objects && repo_treats_promisor_packs(&repo.git_dir, &cfg) {
+            promisor_pack_peeled_tag_targets(repo)
+        } else {
+            HashSet::new()
+        };
+
+    let (mut include, object_roots, missing_commit_tips) = if options.objects {
+        resolve_specs_for_objects(repo, positive_specs, options)?
+    } else {
+        (
+            resolve_specs(repo, positive_specs)?,
+            Vec::new(),
+            HashSet::new(),
+        )
     };
     let exclude = resolve_specs(repo, negative_specs)?;
+
+    let tolerate_missing_parents =
+        !promisor_pack_oids.is_empty() && options.missing_action != MissingAction::Error;
+    let mut graph = CommitGraph::new(
+        repo,
+        options.first_parent,
+        promisor_graph_stop,
+        promisor_peeled_tag_targets,
+        missing_commit_tips.clone(),
+        tolerate_missing_parents,
+    );
 
     if options.all_refs {
         include.extend(all_ref_tips(repo)?);
@@ -851,6 +906,11 @@ pub fn rev_list(
         ordered.reverse();
     }
 
+    if options.exclude_promisor_objects && !promisor_object_exclude.is_empty() {
+        let tips: HashSet<ObjectId> = object_walk_tip_commits.iter().copied().collect();
+        ordered.retain(|c| !promisor_object_exclude.contains(c) || tips.contains(c));
+    }
+
     // Collect boundary commits: parents of included commits that are in the excluded set
     let boundary_commits = if options.boundary {
         let included_set: HashSet<ObjectId> = ordered.iter().copied().collect();
@@ -869,6 +929,19 @@ pub fn rev_list(
     } else {
         Vec::new()
     };
+    let promisor_exclude =
+        if options.exclude_promisor_objects && !promisor_object_exclude.is_empty() {
+            Some(&promisor_object_exclude)
+        } else {
+            None
+        };
+    let promisor_missing_skip =
+        if options.missing_action == MissingAction::Allow && !promisor_pack_oids.is_empty() {
+            Some(&promisor_pack_oids)
+        } else {
+            None
+        };
+    let ignore_missing = options.ignore_missing;
 
     // Filter kept objects when --no-kept-objects is set
     let kept_set = if options.no_kept_objects {
@@ -963,6 +1036,10 @@ pub fn rev_list(
                     packed_set.as_ref(),
                     skip_excluded_objects,
                     subtract_parent_closure,
+                    promisor_exclude,
+                    promisor_missing_skip,
+                    ignore_missing,
+                    &missing_commit_tips,
                 )?;
                 (o, om, mi, c, Vec::new())
             } else {
@@ -980,6 +1057,10 @@ pub fn rev_list(
                     packed_set.as_ref(),
                     skip_excluded_objects,
                     subtract_parent_closure,
+                    promisor_exclude,
+                    promisor_missing_skip,
+                    ignore_missing,
+                    &missing_commit_tips,
                 )?;
                 (o, om, mi, Vec::new(), seg)
             };
@@ -2126,13 +2207,31 @@ fn resolve_specs(repo: &Repository, specs: &[String]) -> Result<Vec<ObjectId>> {
 fn resolve_specs_for_objects(
     repo: &Repository,
     specs: &[String],
-) -> Result<(Vec<ObjectId>, Vec<RootObject>)> {
+    options: &RevListOptions,
+) -> Result<(Vec<ObjectId>, Vec<RootObject>, HashSet<ObjectId>)> {
     let mut commits = Vec::new();
     let mut roots = Vec::new();
+    let mut missing_commit_tips: HashSet<ObjectId> = HashSet::new();
 
     for spec in specs {
         if let Ok(raw_oid) = spec.parse::<ObjectId>() {
-            let raw_object = repo.odb.read(&raw_oid)?;
+            let raw_object = match repo.odb.read(&raw_oid) {
+                Ok(o) => o,
+                Err(Error::ObjectNotFound(_)) => {
+                    if options.exclude_promisor_objects && !options.ignore_missing {
+                        let tagged = promisor_pack_peeled_tag_targets(repo);
+                        if tagged.contains(&raw_oid) {
+                            return Err(Error::ObjectNotFound(raw_oid.to_hex()));
+                        }
+                    }
+                    // Partial clones: unknown tip OIDs (e.g. remote commits) still participate in
+                    // `--objects` walks with default `--missing=allow` (t0410 push / rev-list).
+                    commits.push(raw_oid);
+                    missing_commit_tips.insert(raw_oid);
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
             match raw_object.kind {
                 ObjectKind::Commit => {
                     commits.push(raw_oid);
@@ -2192,7 +2291,7 @@ fn resolve_specs_for_objects(
         }
     }
 
-    Ok((commits, roots))
+    Ok((commits, roots, missing_commit_tips))
 }
 
 /// Peel an object (possibly a tag) to the underlying commit.
@@ -2603,6 +2702,26 @@ fn path_differs_for_specs(
     false
 }
 
+/// Read an object for revision walks.
+///
+/// When `missing_action` is [`MissingAction::Print`], only objects present in the local ODB are
+/// considered available: [`Odb::exists_local`] must be true before calling [`Odb::read`]. This
+/// avoids promisor lazy-fetch while listing missing objects (`rev-list --missing=print`, `t0410`).
+fn read_object_for_rev_list_walk(
+    repo: &Repository,
+    oid: &ObjectId,
+    missing_action: MissingAction,
+) -> Result<Option<Object>> {
+    if missing_action == MissingAction::Print && !repo.odb.exists_local(oid) {
+        return Ok(None);
+    }
+    match repo.odb.read(oid) {
+        Ok(o) => Ok(Some(o)),
+        Err(Error::ObjectNotFound(_)) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 fn load_commit(repo: &Repository, oid: ObjectId) -> Result<crate::objects::CommitData> {
     let object = repo.odb.read(&oid)?;
     if object.kind != ObjectKind::Commit {
@@ -2704,10 +2823,26 @@ struct CommitGraph<'r> {
     committer_time: HashMap<ObjectId, i64>,
     shallow_boundaries: HashSet<ObjectId>,
     graft_parents: HashMap<ObjectId, Vec<ObjectId>>,
+    promisor_stop: HashSet<ObjectId>,
+    /// Peeled `tag.object` OIDs from promisor packs — missing commits promised only via tag.
+    promisor_peeled_tag_targets: HashSet<ObjectId>,
+    /// Commit OIDs accepted as tips while absent from the ODB (partial clone remote commits).
+    missing_commit_tips: HashSet<ObjectId>,
+    /// When true, a missing commit object reached while walking parents is treated as a boundary
+    /// (no parents), not an error. Used for `pack-objects --incremental` / `repack -l` in promisor
+    /// repositories where a missing commit is still promised by the remote (`t0410`).
+    tolerate_missing_parent_commits: bool,
 }
 
 impl<'r> CommitGraph<'r> {
-    fn new(repo: &'r Repository, first_parent_only: bool) -> Self {
+    fn new(
+        repo: &'r Repository,
+        first_parent_only: bool,
+        promisor_stop: HashSet<ObjectId>,
+        promisor_peeled_tag_targets: HashSet<ObjectId>,
+        missing_commit_tips: HashSet<ObjectId>,
+        tolerate_missing_parent_commits: bool,
+    ) -> Self {
         let shallow_boundaries = load_shallow_boundaries(&repo.git_dir);
         let graft_parents = load_graft_parents(repo.git_dir.as_path());
         Self {
@@ -2717,6 +2852,10 @@ impl<'r> CommitGraph<'r> {
             committer_time: HashMap::new(),
             shallow_boundaries,
             graft_parents,
+            promisor_stop,
+            promisor_peeled_tag_targets,
+            missing_commit_tips,
+            tolerate_missing_parent_commits,
         }
     }
 
@@ -2736,12 +2875,43 @@ impl<'r> CommitGraph<'r> {
         if self.parents.contains_key(&oid) {
             return Ok(());
         }
-        let commit = load_commit(self.repo, oid)?;
+        if self.promisor_stop.contains(&oid) {
+            self.committer_time.insert(oid, 0);
+            self.parents.insert(oid, Vec::new());
+            return Ok(());
+        }
+        let commit = match load_commit(self.repo, oid) {
+            Ok(c) => c,
+            Err(Error::ObjectNotFound(_))
+                if !self.promisor_peeled_tag_targets.is_empty()
+                    && self.promisor_peeled_tag_targets.contains(&oid) =>
+            {
+                self.committer_time.insert(oid, 0);
+                self.parents.insert(oid, Vec::new());
+                return Ok(());
+            }
+            Err(Error::ObjectNotFound(_)) if self.missing_commit_tips.contains(&oid) => {
+                self.committer_time.insert(oid, 0);
+                self.parents.insert(oid, Vec::new());
+                return Ok(());
+            }
+            Err(Error::ObjectNotFound(_)) if self.tolerate_missing_parent_commits => {
+                self.committer_time.insert(oid, 0);
+                self.parents.insert(oid, Vec::new());
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        };
         // Shallow boundaries: treat commit as having no parents
         let mut parents = if self.shallow_boundaries.contains(&oid) {
             Vec::new()
         } else {
-            commit.parents
+            commit
+                .parents
+                .iter()
+                .copied()
+                .filter(|p| !self.promisor_stop.contains(p))
+                .collect()
         };
         if let Some(graft_parents) = self.graft_parents.get(&oid) {
             parents = graft_parents.clone();
@@ -2872,6 +3042,8 @@ fn collect_tree_closure_objects(
     missing_action: MissingAction,
     missing: &mut Vec<ObjectId>,
     missing_seen: &mut HashSet<ObjectId>,
+    promisor_exclude: Option<&HashSet<ObjectId>>,
+    promisor_missing_skip: Option<&HashSet<ObjectId>>,
 ) -> Result<()> {
     let mut stack = vec![tree_oid];
     let mut expanded_trees = HashSet::new();
@@ -2879,16 +3051,26 @@ fn collect_tree_closure_objects(
         if !expanded_trees.insert(t) {
             continue;
         }
+        if promisor_exclude.is_some_and(|s| s.contains(&t)) {
+            continue;
+        }
         into.insert(t);
-        let object = match repo.odb.read(&t) {
-            Ok(o) => o,
-            Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
-                if missing_action == MissingAction::Print && missing_seen.insert(t) {
-                    missing.push(t);
+        let object = match read_object_for_rev_list_walk(repo, &t, missing_action)? {
+            Some(o) => o,
+            None => {
+                if missing_action == MissingAction::Allow
+                    && promisor_missing_skip.is_some_and(|s| s.contains(&t))
+                {
+                    continue;
                 }
-                continue;
+                if missing_action != MissingAction::Error {
+                    if missing_action == MissingAction::Print && missing_seen.insert(t) {
+                        missing.push(t);
+                    }
+                    continue;
+                }
+                return Err(Error::ObjectNotFound(t.to_hex()));
             }
-            Err(e) => return Err(e),
         };
         if object.kind != ObjectKind::Tree {
             continue;
@@ -2896,6 +3078,14 @@ fn collect_tree_closure_objects(
         let entries = parse_tree(&object.data)?;
         for entry in entries {
             if entry.mode == 0o160000 {
+                continue;
+            }
+            if promisor_exclude.is_some_and(|s| s.contains(&entry.oid)) {
+                continue;
+            }
+            if missing_action == MissingAction::Allow
+                && promisor_missing_skip.is_some_and(|s| s.contains(&entry.oid))
+            {
                 continue;
             }
             into.insert(entry.oid);
@@ -2913,6 +3103,8 @@ fn union_parent_reachable_objects(
     missing_action: MissingAction,
     missing: &mut Vec<ObjectId>,
     missing_seen: &mut HashSet<ObjectId>,
+    promisor_exclude: Option<&HashSet<ObjectId>>,
+    promisor_missing_skip: Option<&HashSet<ObjectId>>,
 ) -> Result<HashSet<ObjectId>> {
     let mut out = HashSet::new();
     for &p in parents {
@@ -2933,6 +3125,8 @@ fn union_parent_reachable_objects(
             missing_action,
             missing,
             missing_seen,
+            promisor_exclude,
+            promisor_missing_skip,
         )?;
     }
     Ok(out)
@@ -2953,6 +3147,9 @@ fn collect_reachable_objects(
     skip_trees_for_type_filter: bool,
     omit_object_paths: bool,
     packed_set: Option<&HashSet<ObjectId>>,
+    promisor_exclude: Option<&HashSet<ObjectId>>,
+    promisor_missing_skip: Option<&HashSet<ObjectId>>,
+    ignore_missing: bool,
 ) -> Result<(Vec<(ObjectId, String)>, Vec<ObjectId>, Vec<ObjectId>)> {
     let mut tree_state = TreeWalkState::new(filter);
     let mut emitted = HashSet::new();
@@ -2978,6 +3175,8 @@ fn collect_reachable_objects(
             missing_action,
             &mut missing,
             &mut missing_seen,
+            promisor_exclude,
+            promisor_missing_skip,
         )?;
         collect_tree_objects_filtered(
             repo,
@@ -3000,6 +3199,9 @@ fn collect_reachable_objects(
             omit_object_paths,
             packed_set,
             None,
+            promisor_exclude,
+            promisor_missing_skip,
+            ignore_missing,
         )?;
     }
 
@@ -3021,6 +3223,9 @@ fn collect_reachable_objects(
             omit_object_paths,
             packed_set,
             None,
+            promisor_exclude,
+            promisor_missing_skip,
+            ignore_missing,
         )?;
     }
 
@@ -3046,6 +3251,10 @@ fn collect_reachable_objects_segmented(
     packed_set: Option<&HashSet<ObjectId>>,
     skip_tree_blobs: Option<&HashSet<ObjectId>>,
     subtract_parent_closure: bool,
+    promisor_exclude: Option<&HashSet<ObjectId>>,
+    promisor_missing_skip: Option<&HashSet<ObjectId>>,
+    ignore_missing: bool,
+    missing_commit_tips: &HashSet<ObjectId>,
 ) -> Result<(
     Vec<(ObjectId, String)>,
     Vec<ObjectId>,
@@ -3063,6 +3272,13 @@ fn collect_reachable_objects_segmented(
         let start = result.len();
         let commit = match load_commit(repo, commit_oid) {
             Ok(commit) => commit,
+            Err(Error::ObjectNotFound(_)) if missing_commit_tips.contains(&commit_oid) => {
+                if missing_action == MissingAction::Print && missing_seen.insert(commit_oid) {
+                    missing.push(commit_oid);
+                }
+                segments.push(Vec::new());
+                continue;
+            }
             Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
                 if missing_action == MissingAction::Print && missing_seen.insert(commit_oid) {
                     missing.push(commit_oid);
@@ -3080,6 +3296,8 @@ fn collect_reachable_objects_segmented(
                 missing_action,
                 &mut missing,
                 &mut missing_seen,
+                promisor_exclude,
+                promisor_missing_skip,
             )?)
         } else {
             None
@@ -3109,6 +3327,9 @@ fn collect_reachable_objects_segmented(
             omit_object_paths,
             packed_set,
             skip_tree_blobs,
+            promisor_exclude,
+            promisor_missing_skip,
+            ignore_missing,
         )?;
         segments.push(result[start..].to_vec());
     }
@@ -3133,6 +3354,9 @@ fn collect_reachable_objects_segmented(
             omit_object_paths,
             packed_set,
             skip_tree_blobs,
+            promisor_exclude,
+            promisor_missing_skip,
+            ignore_missing,
         )?;
     }
     segments.push(result[roots_start..].to_vec());
@@ -3157,16 +3381,32 @@ fn collect_root_object(
     omit_object_paths: bool,
     packed_set: Option<&HashSet<ObjectId>>,
     skip_tree_blobs: Option<&HashSet<ObjectId>>,
+    promisor_exclude: Option<&HashSet<ObjectId>>,
+    promisor_missing_skip: Option<&HashSet<ObjectId>>,
+    ignore_missing: bool,
 ) -> Result<()> {
-    let object = match repo.odb.read(&root.oid) {
-        Ok(object) => object,
-        Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
-            if missing_action == MissingAction::Print && missing_seen.insert(root.oid) {
-                missing.push(root.oid);
-            }
+    if promisor_exclude.is_some_and(|s| s.contains(&root.oid)) {
+        if ignore_missing {
             return Ok(());
         }
-        Err(err) => return Err(err),
+        return Err(Error::ObjectNotFound(root.oid.to_hex()));
+    }
+    let object = match read_object_for_rev_list_walk(repo, &root.oid, missing_action)? {
+        Some(object) => object,
+        None => {
+            if missing_action == MissingAction::Allow
+                && promisor_missing_skip.is_some_and(|s| s.contains(&root.oid))
+            {
+                return Ok(());
+            }
+            if missing_action != MissingAction::Error {
+                if missing_action == MissingAction::Print && missing_seen.insert(root.oid) {
+                    missing.push(root.oid);
+                }
+                return Ok(());
+            }
+            return Err(Error::ObjectNotFound(root.oid.to_hex()));
+        }
     };
 
     if let Some(expected) = root.expected_kind {
@@ -3188,6 +3428,8 @@ fn collect_root_object(
                 missing_action,
                 missing,
                 missing_seen,
+                promisor_exclude,
+                promisor_missing_skip,
             )?;
             collect_tree_objects_filtered(
                 repo,
@@ -3210,6 +3452,9 @@ fn collect_root_object(
                 omit_object_paths,
                 packed_set,
                 skip_tree_blobs,
+                promisor_exclude,
+                promisor_missing_skip,
+                ignore_missing,
             )?;
         }
         ObjectKind::Tree => {
@@ -3234,9 +3479,18 @@ fn collect_root_object(
                 omit_object_paths,
                 packed_set,
                 skip_tree_blobs,
+                promisor_exclude,
+                promisor_missing_skip,
+                ignore_missing,
             )?;
         }
         ObjectKind::Blob => {
+            if promisor_exclude.is_some_and(|s| s.contains(&root.oid)) {
+                if ignore_missing {
+                    return Ok(());
+                }
+                return Err(Error::ObjectNotFound(root.oid.to_hex()));
+            }
             let path_for_sparse = root.root_path.as_deref().unwrap_or("");
             let blob_included = match filter {
                 None => true,
@@ -3304,6 +3558,9 @@ fn collect_root_object(
                 omit_object_paths,
                 packed_set,
                 skip_tree_blobs,
+                promisor_exclude,
+                promisor_missing_skip,
+                ignore_missing,
             )?;
         }
     }
@@ -3333,8 +3590,20 @@ fn collect_tree_objects_filtered(
     omit_object_paths: bool,
     packed_set: Option<&HashSet<ObjectId>>,
     skip_tree_blobs: Option<&HashSet<ObjectId>>,
+    promisor_exclude: Option<&HashSet<ObjectId>>,
+    promisor_missing_skip: Option<&HashSet<ObjectId>>,
+    ignore_missing: bool,
 ) -> Result<()> {
     if tree_state.should_skip_tree(tree_oid, depth) {
+        return Ok(());
+    }
+    if promisor_exclude.is_some_and(|s| s.contains(&tree_oid)) {
+        if explicit_root {
+            if ignore_missing {
+                return Ok(());
+            }
+            return Err(Error::ObjectNotFound(tree_oid.to_hex()));
+        }
         return Ok(());
     }
     if skip_tree_blobs.is_some_and(|s| s.contains(&tree_oid)) {
@@ -3347,15 +3616,22 @@ fn collect_tree_objects_filtered(
             }
         }
     }
-    let object = match repo.odb.read(&tree_oid) {
-        Ok(object) => object,
-        Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
-            if missing_action == MissingAction::Print && missing_seen.insert(tree_oid) {
-                missing.push(tree_oid);
+    let object = match read_object_for_rev_list_walk(repo, &tree_oid, missing_action)? {
+        Some(object) => object,
+        None => {
+            if missing_action == MissingAction::Allow
+                && promisor_missing_skip.is_some_and(|s| s.contains(&tree_oid))
+            {
+                return Ok(());
             }
-            return Ok(());
+            if missing_action != MissingAction::Error {
+                if missing_action == MissingAction::Print && missing_seen.insert(tree_oid) {
+                    missing.push(tree_oid);
+                }
+                return Ok(());
+            }
+            return Err(Error::ObjectNotFound(tree_oid.to_hex()));
         }
-        Err(err) => return Err(err),
     };
     if object.kind != ObjectKind::Tree {
         return Err(Error::CorruptObject(format!(
@@ -3397,21 +3673,38 @@ fn collect_tree_objects_filtered(
         if entry.mode == 0o160000 {
             continue;
         }
+        if promisor_exclude.is_some_and(|s| s.contains(&entry.oid)) {
+            continue;
+        }
+        if missing_action == MissingAction::Allow
+            && promisor_missing_skip.is_some_and(|s| s.contains(&entry.oid))
+        {
+            // Promised objects may still be readable from promisor packs; do not recurse into
+            // them when tolerating missing objects (t0410 `--missing=allow-promisor`).
+            continue;
+        }
         let name = String::from_utf8_lossy(&entry.name).to_string();
         let path = if prefix.is_empty() {
             name.clone()
         } else {
             format!("{prefix}/{name}")
         };
-        let child_obj = match repo.odb.read(&entry.oid) {
-            Ok(object) => object,
-            Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
-                if missing_action == MissingAction::Print && missing_seen.insert(entry.oid) {
-                    missing.push(entry.oid);
+        let child_obj = match read_object_for_rev_list_walk(repo, &entry.oid, missing_action)? {
+            Some(object) => object,
+            None => {
+                if missing_action == MissingAction::Allow
+                    && promisor_missing_skip.is_some_and(|s| s.contains(&entry.oid))
+                {
+                    continue;
                 }
-                continue;
+                if missing_action != MissingAction::Error {
+                    if missing_action == MissingAction::Print && missing_seen.insert(entry.oid) {
+                        missing.push(entry.oid);
+                    }
+                    continue;
+                }
+                return Err(Error::ObjectNotFound(entry.oid.to_hex()));
             }
-            Err(err) => return Err(err),
         };
         if entry.mode == 0o040000 {
             if child_obj.kind != ObjectKind::Tree {
@@ -3450,6 +3743,9 @@ fn collect_tree_objects_filtered(
                 omit_object_paths,
                 packed_set,
                 skip_tree_blobs,
+                promisor_exclude,
+                promisor_missing_skip,
+                ignore_missing,
             )?;
         } else {
             if let Some(pu) = parent_union {
@@ -3525,6 +3821,10 @@ fn collect_reachable_objects_in_commit_order(
     packed_set: Option<&HashSet<ObjectId>>,
     skip_tree_blobs: Option<&HashSet<ObjectId>>,
     subtract_parent_closure: bool,
+    promisor_exclude: Option<&HashSet<ObjectId>>,
+    promisor_missing_skip: Option<&HashSet<ObjectId>>,
+    ignore_missing: bool,
+    missing_commit_tips: &HashSet<ObjectId>,
 ) -> Result<(
     Vec<(ObjectId, String)>,
     Vec<ObjectId>,
@@ -3541,6 +3841,13 @@ fn collect_reachable_objects_in_commit_order(
     for &commit_oid in commits {
         let commit = match load_commit(repo, commit_oid) {
             Ok(commit) => commit,
+            Err(Error::ObjectNotFound(_)) if missing_commit_tips.contains(&commit_oid) => {
+                if missing_action == MissingAction::Print && missing_seen.insert(commit_oid) {
+                    missing.push(commit_oid);
+                }
+                counts.push(0);
+                continue;
+            }
             Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
                 if missing_action == MissingAction::Print && missing_seen.insert(commit_oid) {
                     missing.push(commit_oid);
@@ -3559,6 +3866,8 @@ fn collect_reachable_objects_in_commit_order(
                 missing_action,
                 &mut missing,
                 &mut missing_seen,
+                promisor_exclude,
+                promisor_missing_skip,
             )?)
         } else {
             None
@@ -3584,6 +3893,9 @@ fn collect_reachable_objects_in_commit_order(
             omit_object_paths,
             packed_set,
             skip_tree_blobs,
+            promisor_exclude,
+            promisor_missing_skip,
+            ignore_missing,
         )?;
         counts.push(result.len() - before);
     }
@@ -3606,6 +3918,9 @@ fn collect_reachable_objects_in_commit_order(
             omit_object_paths,
             packed_set,
             skip_tree_blobs,
+            promisor_exclude,
+            promisor_missing_skip,
+            ignore_missing,
         )?;
     }
 
@@ -3677,7 +3992,14 @@ pub fn merge_bases(
     b: ObjectId,
     first_parent_only: bool,
 ) -> Result<Vec<ObjectId>> {
-    let mut graph = CommitGraph::new(repo, first_parent_only);
+    let mut graph = CommitGraph::new(
+        repo,
+        first_parent_only,
+        HashSet::new(),
+        HashSet::new(),
+        HashSet::new(),
+        false,
+    );
     let ancestors_a = walk_closure(&mut graph, &[a])?;
     let ancestors_b = walk_closure(&mut graph, &[b])?;
     let common: HashSet<ObjectId> = ancestors_a.intersection(&ancestors_b).copied().collect();

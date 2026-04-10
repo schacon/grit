@@ -9,8 +9,6 @@ use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
-use grit_lib::unpack_objects::{unpack_objects, UnpackOptions};
 
 use crate::fetch_transport;
 use crate::grit_exe::grit_executable;
@@ -276,6 +274,7 @@ pub fn fetch_via_ext_skipping(
     service: &str,
     refspecs: &[String],
     compute_wants: impl FnOnce(&[(String, ObjectId)]) -> anyhow::Result<Vec<ObjectId>>,
+    filter_active: bool,
 ) -> Result<(
     Vec<(String, ObjectId)>,
     Vec<(String, ObjectId)>,
@@ -398,10 +397,7 @@ pub fn fetch_via_ext_skipping(
         bail!("did not receive a pack file from ext:: transport");
     }
 
-    let odb = Odb::new(&local_git_dir.join("objects"));
-    if pack_buf.len() > 12 {
-        unpack_objects(&mut pack_buf.as_slice(), &odb, &UnpackOptions::default())?;
-    }
+    fetch_transport::unpack_upload_pack_bytes(local_git_dir, &pack_buf, filter_active)?;
 
     Ok((remote_heads, remote_tags, head_symref, head_advertised_oid))
 }

@@ -6,8 +6,10 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
+use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, ObjectId, ObjectKind};
+use crate::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
 use crate::repo::Repository;
 use crate::rev_parse::{peel_to_commit_for_merge_base, resolve_revision};
 
@@ -197,14 +199,22 @@ struct CommitGraphCache<'r> {
     repo: &'r Repository,
     parents: HashMap<ObjectId, Vec<ObjectId>>,
     closures: HashMap<ObjectId, HashSet<ObjectId>>,
+    promisor_stop: std::collections::HashSet<ObjectId>,
 }
 
 impl<'r> CommitGraphCache<'r> {
     fn new(repo: &'r Repository) -> Self {
+        let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let promisor_stop = if repo_treats_promisor_packs(&repo.git_dir, &cfg) {
+            promisor_pack_object_ids(&repo.git_dir.join("objects"))
+        } else {
+            HashSet::new()
+        };
         Self {
             repo,
             parents: HashMap::new(),
             closures: HashMap::new(),
+            promisor_stop,
         }
     }
 
@@ -236,14 +246,27 @@ impl<'r> CommitGraphCache<'r> {
             Error::InvalidRef(msg) => Error::CorruptObject(msg),
             other => other,
         })?;
-        let object = self.repo.odb.read(&commit_oid)?;
+        let object = match self.repo.odb.read(&commit_oid) {
+            Ok(o) => o,
+            Err(Error::ObjectNotFound(_)) => {
+                self.parents.insert(oid, Vec::new());
+                return Ok(Vec::new());
+            }
+            Err(e) => return Err(e),
+        };
         if object.kind != ObjectKind::Commit {
             return Err(Error::CorruptObject(format!(
                 "object {commit_oid} is not a commit"
             )));
         }
         let commit = parse_commit(&object.data)?;
-        self.parents.insert(oid, commit.parents.clone());
-        Ok(commit.parents)
+        let parents: Vec<ObjectId> = commit
+            .parents
+            .iter()
+            .copied()
+            .filter(|p| !self.promisor_stop.contains(p))
+            .collect();
+        self.parents.insert(oid, parents.clone());
+        Ok(parents)
     }
 }

@@ -1215,24 +1215,31 @@ fn collect_pack_objects_from_rev_stdin_lines(
         }
     }
 
-    let mut opts = RevListOptions::default();
-    opts.objects = true;
-    opts.missing_action = MissingAction::Error;
-    let result =
-        rev_list(repo, &positive, &negative, &opts).context("rev-list for pack-objects --revs")?;
+    let mut oids: BTreeSet<ObjectId> = BTreeSet::new();
+    let mut exclude = BTreeSet::new();
+    for neg in &negative {
+        let oid =
+            resolve_revision(repo, neg).with_context(|| format!("cannot resolve ref '{neg}'"))?;
+        walk_reachable(repo, &oid, &mut exclude)?;
+    }
+    for pos in &positive {
+        let oid =
+            resolve_revision(repo, pos).with_context(|| format!("cannot resolve ref '{pos}'"))?;
+        let obj = read_object_from_repo(repo, &oid)?;
+        // Upload-pack may `want` a raw tree/blob OID (lazy fetch). Pack only that object, not the
+        // subtree/closure (`t0410` tree fetch without blobs). Commits/tags use a full walk.
+        match obj.kind {
+            ObjectKind::Commit | ObjectKind::Tag => walk_reachable(repo, &oid, &mut oids)?,
+            ObjectKind::Tree | ObjectKind::Blob => {
+                oids.insert(oid);
+            }
+        }
+    }
+    for oid in &exclude {
+        oids.remove(oid);
+    }
 
-    let mut ordered: Vec<ObjectId> = Vec::new();
-    let mut seen: HashSet<ObjectId> = HashSet::new();
-    for oid in &result.commits {
-        if seen.insert(*oid) {
-            ordered.push(*oid);
-        }
-    }
-    for (oid, _) in &result.objects {
-        if seen.insert(*oid) {
-            ordered.push(*oid);
-        }
-    }
+    let mut ordered: Vec<ObjectId> = oids.into_iter().collect();
 
     if args.thin && !have_roots.is_empty() {
         let mut have_closure = BTreeSet::new();

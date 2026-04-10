@@ -1366,12 +1366,14 @@ fn push_to_url(
                 && !update.remote_ref.starts_with("refs/tags/")
                 && !is_ancestor(repo, *old, *new)?
             {
-                pre_reject[i] = Some(format!(
-                    "Updates were rejected because the tip of your current branch is behind\n\
-                     its remote counterpart. If you want to force the update, use --force.\n\
-                     remote ref: {}",
-                    update.remote_ref
-                ));
+                pre_reject[i] = Some(
+                    "Updates were rejected because the remote contains work that you do not\n\
+                     have locally. This is usually caused by another repository pushing to\n\
+                     the same ref. If you want to integrate the remote changes, use\n\
+                     'git pull' before pushing again.\n\
+                     See the 'Note about fast-forwards' in 'git push --help' for details."
+                        .to_string(),
+                );
             }
             if !args.force
                 && !update.refspec_force
@@ -1402,7 +1404,7 @@ fn push_to_url(
                 ("atomic push failed", "remote rejected")
             } else if pre_reject[fi]
                 .as_deref()
-                .is_some_and(|m| m.contains("tip of your current branch is behind"))
+                .is_some_and(|m| m.contains("remote contains work that you do not"))
             {
                 ("atomic push failed", "rejected")
             } else {
@@ -1695,8 +1697,8 @@ fn push_to_url(
                 eprintln!("{msg}");
                 let paren = if msg.contains("tag already exists") {
                     "failed"
-                } else if msg.contains("tip of your current branch is behind") {
-                    "non-fast-forward"
+                } else if msg.contains("remote contains work that you do not") {
+                    "fetch first"
                 } else {
                     "failed"
                 };
@@ -1718,8 +1720,8 @@ fn push_to_url(
             eprintln!("{msg}");
             let paren = if msg.contains("tag already exists") {
                 "failed"
-            } else if msg.contains("tip of your current branch is behind") {
-                "non-fast-forward"
+            } else if msg.contains("remote contains work that you do not") {
+                "fetch first"
             } else {
                 "failed"
             };

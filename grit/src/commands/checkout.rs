@@ -963,10 +963,34 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // Handle "checkout HEAD" (and "@") — no-op when on a branch (don't detach)
-    // But with -f, force-reset the working tree
+    // unless the index is missing/empty (e.g. `clone --no-checkout`), in which case
+    // materialize the branch tip like Git (t0410 partial clone checkout).
     if (target == "HEAD" || target == "@") && !args.detach {
         if args.force {
             return force_reset_to_head(&repo);
+        }
+        let head = resolve_head(&repo.git_dir)?;
+        if let HeadState::Branch { ref refname, .. } = head {
+            if repo.work_tree.is_some() {
+                let branch_name = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+                let target_oid = refs::resolve_ref(&repo.git_dir, refname)
+                    .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
+                let target_tree = commit_to_tree(&repo, &target_oid)?;
+                let index_empty = repo
+                    .load_index()
+                    .map(|idx| idx.entries.is_empty())
+                    .unwrap_or(true);
+                let sparse_on = sparse_checkout_config_enabled(&repo.git_dir);
+                if sparse_on || index_empty || !index_matches_flat_tree(&repo, &target_tree)? {
+                    switch_to_tree(
+                        &repo,
+                        &head,
+                        &target_tree,
+                        false,
+                        RECURSE_SUBMODULES.with(|r| r.get()),
+                    )?;
+                }
+            }
         }
         return Ok(());
     }
@@ -5304,6 +5328,22 @@ fn git_dir_is_nested_modules_repo(git_dir: &Path) -> bool {
 ///
 /// `full_smudge_meta`: when true, process smudge gets `ref=` / `treeish=` (branch/tree checkout).
 /// Path-only checkout passes blob id only.
+fn read_object_for_checkout(
+    repo: &Repository,
+    oid: &ObjectId,
+) -> Result<grit_lib::objects::Object> {
+    match repo.odb.read(oid) {
+        Ok(o) => Ok(o),
+        Err(grit_lib::error::Error::ObjectNotFound(_)) => {
+            crate::commands::promisor_hydrate::try_lazy_fetch_promisor_object(repo, *oid)?;
+            repo.odb
+                .read(oid)
+                .context("reading object for checkout after promisor fetch")
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
 fn write_blob_to_worktree(
     repo: &Repository,
     work_tree: &std::path::Path,
@@ -5320,7 +5360,7 @@ fn write_blob_to_worktree(
         return Ok(true);
     }
 
-    let obj = repo.odb.read(oid).context("reading object for checkout")?;
+    let obj = read_object_for_checkout(repo, oid).context("reading object for checkout")?;
     if obj.kind != ObjectKind::Blob {
         bail!("cannot checkout non-blob at '{rel_path}'");
     }
