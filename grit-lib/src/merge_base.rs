@@ -5,11 +5,13 @@
 //! and `--is-ancestor`.
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::path::Path;
 
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, ObjectId, ObjectKind};
 use crate::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
+use crate::reflog::read_reflog;
 use crate::repo::Repository;
 use crate::rev_parse::{peel_to_commit_for_merge_base, resolve_revision};
 
@@ -98,6 +100,92 @@ pub fn is_ancestor(repo: &Repository, ancestor: ObjectId, descendant: ObjectId) 
         return Ok(true);
     }
     Ok(cache.ancestor_closure(descendant)?.contains(&ancestor))
+}
+
+/// Reflog file path to scan for `git merge-base --fork-point`-style selection.
+///
+/// Mirrors the resolution used by Git's merge-base and rebase commands.
+pub fn fork_point_reflog_ref(git_dir: &Path, spec: &str) -> String {
+    if spec == "HEAD" || spec.starts_with("refs/") {
+        return spec.to_string();
+    }
+
+    let logs_dir = git_dir.join("logs");
+    let candidates = [
+        spec.to_string(),
+        format!("refs/heads/{spec}"),
+        format!("refs/remotes/{spec}"),
+    ];
+
+    for candidate in candidates {
+        if logs_dir.join(&candidate).is_file() {
+            return candidate;
+        }
+    }
+
+    format!("refs/heads/{spec}")
+}
+
+fn select_fork_point_from_reflog_candidates(
+    repo: &Repository,
+    candidates: &[ObjectId],
+) -> Result<Option<ObjectId>> {
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+
+    let mut best = HashSet::new();
+    for &candidate in candidates {
+        let mut dominated = false;
+        for &other in candidates {
+            if candidate == other {
+                continue;
+            }
+            if is_ancestor(repo, candidate, other)? {
+                dominated = true;
+                break;
+            }
+        }
+        if !dominated {
+            best.insert(candidate);
+        }
+    }
+
+    Ok(candidates.iter().copied().find(|oid| best.contains(oid)))
+}
+
+/// Compute the fork-point commit between `upstream` and `head`, or `None` when the
+/// reflog heuristic finds nothing (caller should fall back to the ordinary merge base).
+///
+/// This matches `git merge-base --fork-point <upstream-spec> <head>`: walk the upstream
+/// ref's reflog (newest first), collect OIDs that are ancestors of `head`, then pick the
+/// best candidate; if that set is empty, return `None`.
+pub fn merge_base_fork_point(
+    repo: &Repository,
+    git_dir: &Path,
+    upstream_spec: &str,
+    head_oid: ObjectId,
+) -> Result<Option<ObjectId>> {
+    let reflog_ref = fork_point_reflog_ref(git_dir, upstream_spec);
+    let entries = read_reflog(git_dir, &reflog_ref)?;
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+
+    for entry in entries.iter().rev() {
+        let oid = if entry.message.starts_with("checkout:") {
+            entry.old_oid
+        } else {
+            entry.new_oid
+        };
+        if !seen.insert(oid) {
+            continue;
+        }
+        if is_ancestor(repo, oid, head_oid)? {
+            candidates.push(oid);
+        }
+    }
+
+    select_fork_point_from_reflog_candidates(repo, &candidates)
 }
 
 /// Returns every commit reachable from `tip` by walking parent links (including `tip`).
