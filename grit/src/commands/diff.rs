@@ -1100,6 +1100,10 @@ pub struct Args {
     #[arg(long = "shortstat")]
     pub shortstat: bool,
 
+    /// Compact per-file summary with mode/new/gone annotations (like `git diff --compact-summary`).
+    #[arg(long = "compact-summary")]
+    pub compact_summary: bool,
+
     /// Show machine-readable stat (additions/deletions per file).
     #[arg(long = "numstat")]
     pub numstat: bool,
@@ -1267,6 +1271,14 @@ pub struct Args {
     #[arg(short = 's', long = "no-patch")]
     pub no_patch: bool,
 
+    /// Emit raw diff lines before the unified patch (same as Git `diff --patch-with-raw`).
+    #[arg(long = "patch-with-raw")]
+    pub patch_with_raw: bool,
+
+    /// Emit `--stat` before the unified patch (same as Git `diff --patch-with-stat`).
+    #[arg(long = "patch-with-stat")]
+    pub patch_with_stat: bool,
+
     /// Directory-level diffstat (`--dirstat=lines`, etc.). Empty value means default `changes`.
     /// Later `--dirstat` / `-X` options override earlier ones (Git semantics).
     #[arg(
@@ -1393,7 +1405,7 @@ pub struct Args {
 
 /// Parsed `--dirstat` / `diff.dirstat` options (Git-compatible).
 #[derive(Clone, Debug)]
-struct DirstatOptions {
+pub(crate) struct DirstatOptions {
     /// `changes` (byte damage), `lines` (insertion+deletion lines), or `files` (1 per file).
     mode: DirstatMode,
     cumulative: bool,
@@ -1869,6 +1881,9 @@ pub fn run(mut args: Args) -> Result<()> {
                 "--name-status" => args.name_status = true,
                 "--numstat" => args.numstat = true,
                 "--shortstat" => args.shortstat = true,
+                "--compact-summary" => args.compact_summary = true,
+                "--patch-with-raw" => args.patch_with_raw = true,
+                "--patch-with-stat" => args.patch_with_stat = true,
                 "--summary" => args.summary = true,
                 "--quiet" | "-q" => args.quiet = true,
                 s if s.starts_with("--stat-width=") => {
@@ -2697,18 +2712,6 @@ pub fn run(mut args: Args) -> Result<()> {
     let (dirstat_opts, dirstat_config_warnings) =
         resolve_dirstat_options(&args, &repo.git_dir, dirstat_cli_active)?;
     let relative_prefix_for_paths = resolve_diff_relative_prefix(work_tree, &repo.git_dir, &args);
-    let format_besides_unified_patch = args.shortstat
-        || stat_enabled
-        || args.stat_count.is_some()
-        || args.stat_width.is_some()
-        || args.stat_graph_width.is_some()
-        || args.stat_name_width.is_some()
-        || args.raw
-        || args.numstat
-        || args.name_only
-        || args.name_status
-        || (args.summary && !stat_enabled)
-        || dirstat_opts.is_some();
 
     if args.break_rewrites {
         prefetch_promisor_for_diff_entries(
@@ -2742,6 +2745,27 @@ pub fn run(mut args: Args) -> Result<()> {
             }
         }
     }
+
+    if args.compact_summary {
+        stat_enabled = true;
+    }
+    let stat_block_active = stat_enabled
+        || args.stat_count.is_some()
+        || args.stat_width.is_some()
+        || args.stat_graph_width.is_some()
+        || args.stat_name_width.is_some();
+    let show_unified_patch = diff_show_unified_patch_last_wins(&raw_args);
+    let format_besides_unified_patch = args.shortstat
+        || stat_block_active
+        || args.raw
+        || args.numstat
+        || args.name_only
+        || args.name_status
+        || (args.summary && !stat_block_active)
+        || dirstat_opts.is_some()
+        || args.compact_summary
+        || args.patch_with_raw
+        || args.patch_with_stat;
 
     let mut conflict_combined_patches: Vec<String> = Vec::new();
     // Combined `diff --cc` for unmerged paths: required for conflicted index entries even when
@@ -2827,8 +2851,7 @@ pub fn run(mut args: Args) -> Result<()> {
             }
             // Git keeps index↔worktree `U`/`M` lines for `--raw` / `--name-only` during conflicts;
             // combined `diff --cc` replaces them only when unified patch is the sole format.
-            let strip_conflict_index_lines =
-                emit_unified_patch && !args.no_patch && !format_besides_unified_patch;
+            let strip_conflict_index_lines = show_unified_patch && !format_besides_unified_patch;
             if strip_conflict_index_lines {
                 entries.retain(|e| !conflict_paths.iter().any(|p| p == e.path()));
             }
@@ -2927,6 +2950,43 @@ pub fn run(mut args: Args) -> Result<()> {
                     .and_then(|s| s.parse().ok())
             })
             .unwrap_or(0);
+        let patch_abbrev = if args.full_index {
+            40
+        } else if let Some(n) = args.abbrev {
+            n.max(4).min(40)
+        } else {
+            7
+        };
+        let oid_len = if args.full_index || args.no_abbrev {
+            40
+        } else if let Some(n) = args.abbrev {
+            n.max(4).min(40)
+        } else {
+            7
+        };
+        let mut wrote_output = false;
+        let mut need_blank_before_patch = false;
+
+        if args.raw {
+            write_raw(&mut out, &entries, oid_len)?;
+            wrote_output = true;
+            need_blank_before_patch = true;
+        }
+        if args.numstat {
+            write_numstat(
+                &mut out,
+                &entries,
+                &repo.odb,
+                wt_for_content,
+                args.break_rewrites,
+                line_ignore,
+                &ws_mode,
+                &diff_algo_ctx,
+                diff_algo_cli,
+            )?;
+            wrote_output = true;
+            need_blank_before_patch = true;
+        }
         if args.shortstat {
             write_shortstat(
                 &mut out,
@@ -2939,22 +2999,82 @@ pub fn run(mut args: Args) -> Result<()> {
                 &diff_algo_ctx,
                 diff_algo_cli,
             )?;
-            if let Some(ref ds) = dirstat_opts {
-                write_dirstat(
+            wrote_output = true;
+            need_blank_before_patch = true;
+        }
+        if stat_block_active {
+            if args.compact_summary {
+                write_compact_summary(
                     &mut out,
-                    ds,
                     &entries,
                     &repo.odb,
                     wt_for_content,
                     args.break_rewrites,
+                    line_ignore,
+                    &ws_mode,
+                    &diff_algo_ctx,
+                    diff_algo_cli,
+                    &repo.git_dir,
+                    quote_path_fully,
+                )?;
+            } else {
+                write_stat(
+                    &mut out,
+                    &entries,
+                    &repo.odb,
+                    wt_for_content,
+                    args.stat_count,
+                    args.stat_width,
+                    args.stat_name_width,
+                    args.break_rewrites,
+                    args.stat_graph_width,
+                    args.line_prefix.as_deref().unwrap_or(""),
+                    &repo.git_dir,
+                    line_ignore,
+                    &ws_mode,
+                    quote_path_fully,
+                    &diff_algo_ctx,
+                    diff_algo_cli,
                 )?;
             }
-        } else if stat_enabled
-            || args.stat_count.is_some()
-            || args.stat_width.is_some()
-            || args.stat_graph_width.is_some()
-            || args.stat_name_width.is_some()
-        {
+            if args.summary {
+                write_diff_summary(&mut out, &entries, args.break_rewrites, quote_path_fully)?;
+            }
+            wrote_output = true;
+            need_blank_before_patch = true;
+        } else if args.summary {
+            write_diff_summary(&mut out, &entries, args.break_rewrites, quote_path_fully)?;
+            wrote_output = true;
+            need_blank_before_patch = true;
+        }
+        if args.name_only {
+            write_name_only(&mut out, &entries, quote_path_fully)?;
+            wrote_output = true;
+            need_blank_before_patch = true;
+        }
+        if args.name_status {
+            write_name_status(&mut out, &entries, quote_path_fully)?;
+            wrote_output = true;
+            need_blank_before_patch = true;
+        }
+        if let Some(ref ds) = dirstat_opts {
+            write_dirstat(
+                &mut out,
+                ds,
+                &entries,
+                &repo.odb,
+                wt_for_content,
+                args.break_rewrites,
+            )?;
+            wrote_output = true;
+            need_blank_before_patch = true;
+        }
+
+        if args.patch_with_raw && show_unified_patch && !args.raw {
+            write_raw(&mut out, &entries, oid_len)?;
+            need_blank_before_patch = true;
+        }
+        if args.patch_with_stat && show_unified_patch && !stat_block_active {
             write_stat(
                 &mut out,
                 &entries,
@@ -2973,108 +3093,61 @@ pub fn run(mut args: Args) -> Result<()> {
                 &diff_algo_ctx,
                 diff_algo_cli,
             )?;
-            if args.summary {
-                write_diff_summary(&mut out, &entries, args.break_rewrites, quote_path_fully)?;
+            need_blank_before_patch = true;
+        }
+        if show_unified_patch {
+            if need_blank_before_patch && wrote_output {
+                writeln!(out)?;
             }
-        } else if args.raw {
-            let oid_len = if args.full_index || args.no_abbrev {
-                40
-            } else if let Some(n) = args.abbrev {
-                n.max(4).min(40)
-            } else {
-                7
-            };
-            write_raw(&mut out, &entries, oid_len)?;
-        } else if args.numstat {
-            write_numstat(
+            for patch in &conflict_combined_patches {
+                write!(out, "{patch}")?;
+            }
+            let diff_config =
+                grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+            let external_diff_cmd = std::env::var("GIT_EXTERNAL_DIFF")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| {
+                    diff_config
+                        .get("diff.external")
+                        .filter(|s| !s.trim().is_empty())
+                });
+            write_patch_with_prefix(
                 &mut out,
+                &repo,
                 &entries,
                 &repo.odb,
+                &repo.git_dir,
+                &diff_config,
+                context_lines,
+                use_color_patch,
+                effective_word_diff_opt.as_ref(),
                 wt_for_content,
+                suppress_blank_empty,
+                patch_abbrev,
+                inter_hunk_context,
+                args.binary,
                 args.break_rewrites,
+                args.irreversible_delete,
+                !args.no_textconv,
+                &src_prefix,
+                &dst_prefix,
+                quote_path_fully,
+                args.submodule.as_deref(),
+                submodule_ignore_flags_from_diff_arg(ignore_sm.unwrap_or("none")),
+                ignore_sm,
+                &diff_config,
+                &path_to_sm_name,
+                &gm_sub_ignore,
                 line_ignore,
-                &ws_mode,
                 &diff_algo_ctx,
                 diff_algo_cli,
+                args.cached,
+                args.no_ext_diff,
+                external_diff_cmd.as_deref(),
+                relative_prefix_for_paths.as_deref(),
+                indent_heuristic,
             )?;
-        } else if args.name_only {
-            write_name_only(&mut out, &entries, quote_path_fully)?;
-        } else if args.name_status {
-            write_name_status(&mut out, &entries, quote_path_fully)?;
-        } else if args.summary && !stat_enabled {
-            write_diff_summary(&mut out, &entries, args.break_rewrites, quote_path_fully)?;
-        } else {
-            let patch_abbrev = if args.full_index {
-                40
-            } else if let Some(n) = args.abbrev {
-                n.max(4).min(40)
-            } else {
-                7
-            };
-            let show_unified = emit_unified_patch && !args.no_patch;
-            if show_unified {
-                for patch in &conflict_combined_patches {
-                    write!(out, "{patch}")?;
-                }
-            }
-            if let Some(ref ds) = dirstat_opts {
-                write_dirstat(
-                    &mut out,
-                    ds,
-                    &entries,
-                    &repo.odb,
-                    wt_for_content,
-                    args.break_rewrites,
-                )?;
-            }
-            if show_unified {
-                let diff_config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
-                    .unwrap_or_default();
-                let external_diff_cmd = std::env::var("GIT_EXTERNAL_DIFF")
-                    .ok()
-                    .filter(|s| !s.trim().is_empty())
-                    .or_else(|| {
-                        diff_config
-                            .get("diff.external")
-                            .filter(|s| !s.trim().is_empty())
-                    });
-                write_patch_with_prefix(
-                    &mut out,
-                    &repo,
-                    &entries,
-                    &repo.odb,
-                    &repo.git_dir,
-                    &diff_config,
-                    context_lines,
-                    use_color_patch,
-                    effective_word_diff_opt.as_ref(),
-                    wt_for_content,
-                    suppress_blank_empty,
-                    patch_abbrev,
-                    inter_hunk_context,
-                    args.binary,
-                    args.break_rewrites,
-                    args.irreversible_delete,
-                    !args.no_textconv,
-                    &src_prefix,
-                    &dst_prefix,
-                    quote_path_fully,
-                    args.submodule.as_deref(),
-                    submodule_ignore_flags_from_diff_arg(ignore_sm.unwrap_or("none")),
-                    ignore_sm,
-                    &diff_config,
-                    &path_to_sm_name,
-                    &gm_sub_ignore,
-                    line_ignore,
-                    &diff_algo_ctx,
-                    diff_algo_cli,
-                    args.cached,
-                    args.no_ext_diff,
-                    external_diff_cmd.as_deref(),
-                    relative_prefix_for_paths.as_deref(),
-                    indent_heuristic,
-                )?;
-            }
         }
     }
 
@@ -4338,16 +4411,17 @@ fn apply_diff_filter(entries: Vec<DiffEntry>, filter: &str) -> Vec<DiffEntry> {
         .collect()
 }
 
-/// Whether to emit unified patch hunks for this `git diff` invocation.
+/// Last-flag-wins patch emission after a plumbing subcommand (`diff-files`, `diff-index`, …).
 ///
 /// Git uses last-flag-wins among `-s` / `--no-patch` (suppress) and `-p` / `--patch` / `-u` /
 /// `-U` / `--unified` (show patch). Combined short flags (e.g. `-sp`) are expanded per character.
-fn diff_emit_unified_patch_from_argv(argv: &[String]) -> bool {
-    let Some(diff_pos) = argv.iter().position(|a| a == "diff") else {
-        return true;
+pub(crate) fn diff_emit_unified_patch_from_plumbing_argv(subcmd: &str, argv: &[String]) -> bool {
+    let default_emit = subcmd != "diff-files";
+    let Some(pos) = argv.iter().position(|a| a == subcmd) else {
+        return default_emit;
     };
-    let mut emit = true;
-    for arg in argv.iter().skip(diff_pos + 1) {
+    let mut emit = default_emit;
+    for arg in argv.iter().skip(pos + 1) {
         if arg == "--" {
             break;
         }
@@ -4356,6 +4430,10 @@ fn diff_emit_unified_patch_from_argv(argv: &[String]) -> bool {
             continue;
         }
         if arg == "-p" || arg == "--patch" || arg == "-u" {
+            emit = true;
+            continue;
+        }
+        if arg == "--patch-with-raw" || arg == "--patch-with-stat" {
             emit = true;
             continue;
         }
@@ -4386,8 +4464,289 @@ fn diff_emit_unified_patch_from_argv(argv: &[String]) -> bool {
     emit
 }
 
+/// Whether to emit unified patch hunks for this `git diff` invocation.
+pub(crate) fn diff_emit_unified_patch_from_argv(argv: &[String]) -> bool {
+    diff_emit_unified_patch_from_plumbing_argv("diff", argv)
+}
+
+/// Whether `git diff` should emit the unified patch (last wins among `-s` / format flags / `-p`).
+fn diff_show_unified_patch_last_wins(argv: &[String]) -> bool {
+    let Some(pos) = argv.iter().position(|a| a == "diff") else {
+        return true;
+    };
+    let mut show = true;
+    for arg in argv.iter().skip(pos + 1) {
+        if arg == "--" {
+            break;
+        }
+        match arg.as_str() {
+            "-s" | "--no-patch" => show = false,
+            "-p" | "--patch" | "-u" => show = true,
+            "--patch-with-raw" | "--patch-with-stat" => show = true,
+            "--submodule" | "--histogram" | "--patience" | "--minimal" => show = true,
+            s if s.starts_with("--submodule=") => show = true,
+            s if s.starts_with("-U") || s.starts_with("--unified") => show = true,
+            "--stat" | "--shortstat" | "--numstat" | "--raw" | "--name-only" | "--name-status"
+            | "--summary" | "--compact-summary" | "--dirstat" | "--dirstat-by-file"
+            | "--cumulative" => show = false,
+            s if s.starts_with("--stat=") => show = false,
+            s if s.starts_with("--dirstat=") => show = false,
+            s if s.starts_with("--dirstat-by-file=") => show = false,
+            _ if arg.starts_with('-')
+                && !arg.starts_with("--")
+                && arg.len() > 2
+                && arg.as_bytes().get(1).is_some_and(|b| *b != b'-') =>
+            {
+                const COMBINABLE: &[u8] = b"spuwqRb";
+                let bytes = arg.as_bytes();
+                let tail = &bytes[1..];
+                if !tail.is_empty() && tail.iter().all(|b| COMBINABLE.contains(b)) {
+                    for &b in tail {
+                        match b {
+                            b's' => show = false,
+                            b'p' | b'u' => show = true,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    show
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DiffFilesEmitKind {
+    Raw,
+    Stat,
+    NumStat,
+    Shortstat,
+    Dirstat,
+    Summary,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum DiffFilesStatVariant {
+    #[default]
+    None,
+    Stat,
+    CompactSummary,
+}
+
+#[derive(Debug, Default, Clone)]
+pub(crate) struct DiffFilesFormatParse {
+    pub emit_queue: Vec<DiffFilesEmitKind>,
+    pub stat_variant: DiffFilesStatVariant,
+    pub patch_with_raw: bool,
+    pub patch_with_stat: bool,
+    pub dirstat_cli: DirstatCliState,
+    pub explicit_raw: bool,
+    pub suppress_diff: bool,
+    pub format: DiffFilesDefaultFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DiffFilesDefaultFormat {
+    Raw,
+    Patch,
+    Stat,
+    NumStat,
+    NameOnly,
+    NameStatus,
+}
+
+impl Default for DiffFilesDefaultFormat {
+    fn default() -> Self {
+        Self::Raw
+    }
+}
+
+/// Parse `diff-files`-specific output flags in argv order (matches Git: `-s` suppresses following format output until `-p`).
+pub(crate) fn parse_diff_files_format_argv(argv: &[String]) -> DiffFilesFormatParse {
+    let mut out = DiffFilesFormatParse::default();
+    let Some(pos) = argv.iter().position(|a| a == "diff-files") else {
+        return out;
+    };
+    let mut idx = pos + 1;
+    let mut end_of_options = false;
+    while idx < argv.len() {
+        let arg = &argv[idx];
+        if !end_of_options && arg == "--" {
+            end_of_options = true;
+            idx += 1;
+            continue;
+        }
+        if !end_of_options && arg.starts_with('-') {
+            match arg.as_str() {
+                "-s" | "--no-patch" => {
+                    out.suppress_diff = true;
+                    out.emit_queue.clear();
+                    out.patch_with_raw = false;
+                    out.patch_with_stat = false;
+                    out.stat_variant = DiffFilesStatVariant::None;
+                    out.dirstat_cli = DirstatCliState::default();
+                    out.explicit_raw = false;
+                    out.format = DiffFilesDefaultFormat::Raw;
+                }
+                "-p" | "--patch" | "-u" => {
+                    out.suppress_diff = false;
+                    out.format = DiffFilesDefaultFormat::Patch;
+                }
+                "--raw" => {
+                    out.explicit_raw = true;
+                    out.format = DiffFilesDefaultFormat::Raw;
+                    out.emit_queue.push(DiffFilesEmitKind::Raw);
+                    out.suppress_diff = false;
+                }
+                "--stat" => {
+                    out.format = DiffFilesDefaultFormat::Stat;
+                    out.stat_variant = DiffFilesStatVariant::Stat;
+                    out.emit_queue.push(DiffFilesEmitKind::Stat);
+                    out.suppress_diff = false;
+                }
+                "--compact-summary" => {
+                    out.format = DiffFilesDefaultFormat::Stat;
+                    out.stat_variant = DiffFilesStatVariant::CompactSummary;
+                    out.emit_queue.push(DiffFilesEmitKind::Stat);
+                    out.suppress_diff = false;
+                }
+                "--numstat" => {
+                    out.format = DiffFilesDefaultFormat::NumStat;
+                    out.emit_queue.push(DiffFilesEmitKind::NumStat);
+                    out.suppress_diff = false;
+                }
+                "--shortstat" => {
+                    out.emit_queue.push(DiffFilesEmitKind::Shortstat);
+                    out.suppress_diff = false;
+                }
+                "--name-only" => {
+                    out.format = DiffFilesDefaultFormat::NameOnly;
+                    out.suppress_diff = false;
+                }
+                "--name-status" => {
+                    out.format = DiffFilesDefaultFormat::NameStatus;
+                    out.suppress_diff = false;
+                }
+                "--summary" => {
+                    out.emit_queue.push(DiffFilesEmitKind::Summary);
+                }
+                "--patch-with-raw" => {
+                    out.patch_with_raw = true;
+                    out.format = DiffFilesDefaultFormat::Patch;
+                    out.suppress_diff = false;
+                }
+                "--patch-with-stat" => {
+                    out.patch_with_stat = true;
+                    out.format = DiffFilesDefaultFormat::Patch;
+                    out.suppress_diff = false;
+                }
+                "--dirstat" => {
+                    out.format = DiffFilesDefaultFormat::Patch;
+                    out.dirstat_cli.dirstat.push(String::new());
+                    out.emit_queue.push(DiffFilesEmitKind::Dirstat);
+                    out.suppress_diff = false;
+                }
+                s if s.starts_with("--dirstat=") => {
+                    out.format = DiffFilesDefaultFormat::Patch;
+                    out.dirstat_cli
+                        .dirstat
+                        .push(s.strip_prefix("--dirstat=").unwrap_or("").to_owned());
+                    out.emit_queue.push(DiffFilesEmitKind::Dirstat);
+                    out.suppress_diff = false;
+                }
+                "--dirstat-by-file" => {
+                    out.format = DiffFilesDefaultFormat::Patch;
+                    if out.dirstat_cli.dirstat_by_file.is_none() {
+                        out.dirstat_cli.dirstat_by_file = Some(String::new());
+                    }
+                    out.emit_queue.push(DiffFilesEmitKind::Dirstat);
+                    out.suppress_diff = false;
+                }
+                s if s.starts_with("--dirstat-by-file=") => {
+                    out.format = DiffFilesDefaultFormat::Patch;
+                    out.dirstat_cli.dirstat_by_file = Some(
+                        s.strip_prefix("--dirstat-by-file=")
+                            .unwrap_or("")
+                            .to_owned(),
+                    );
+                    out.emit_queue.push(DiffFilesEmitKind::Dirstat);
+                    out.suppress_diff = false;
+                }
+                "--cumulative" => {
+                    out.format = DiffFilesDefaultFormat::Patch;
+                    out.dirstat_cli.dirstat_cumulative_flag = true;
+                    out.emit_queue.push(DiffFilesEmitKind::Dirstat);
+                    out.suppress_diff = false;
+                }
+                _ if arg.starts_with('-')
+                    && !arg.starts_with("--")
+                    && arg.len() > 2
+                    && arg.as_bytes().get(1).is_some_and(|b| *b != b'-') =>
+                {
+                    const COMBINABLE: &[u8] = b"spuwqRb";
+                    let bytes = arg.as_bytes();
+                    let tail = &bytes[1..];
+                    if !tail.is_empty() && tail.iter().all(|b| COMBINABLE.contains(b)) {
+                        for &b in tail {
+                            match b {
+                                b's' => {
+                                    out.suppress_diff = true;
+                                    out.emit_queue.clear();
+                                    out.patch_with_raw = false;
+                                    out.patch_with_stat = false;
+                                    out.stat_variant = DiffFilesStatVariant::None;
+                                    out.dirstat_cli = DirstatCliState::default();
+                                    out.explicit_raw = false;
+                                    out.format = DiffFilesDefaultFormat::Raw;
+                                }
+                                b'p' | b'u' => {
+                                    out.suppress_diff = false;
+                                    out.format = DiffFilesDefaultFormat::Patch;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            idx += 1;
+            continue;
+        }
+        idx += 1;
+    }
+    out
+}
+
+/// CLI state for `--dirstat` / `--dirstat-by-file` / `--cumulative` (shared by `diff` and `diff-files`).
+#[derive(Debug, Default, Clone)]
+pub(crate) struct DirstatCliState {
+    pub dirstat: Vec<String>,
+    pub dirstat_by_file: Option<String>,
+    pub dirstat_cumulative_flag: bool,
+}
+
+impl From<&Args> for DirstatCliState {
+    fn from(args: &Args) -> Self {
+        Self {
+            dirstat: args.dirstat.clone(),
+            dirstat_by_file: args.dirstat_by_file.clone(),
+            dirstat_cumulative_flag: args.dirstat_cumulative_flag,
+        }
+    }
+}
+
 fn resolve_dirstat_options(
     args: &Args,
+    git_dir: &std::path::Path,
+    cli_active: bool,
+) -> Result<(Option<DirstatOptions>, Vec<String>)> {
+    resolve_dirstat_options_from_cli(&DirstatCliState::from(args), git_dir, cli_active)
+}
+
+pub(crate) fn resolve_dirstat_options_from_cli(
+    cli: &DirstatCliState,
     git_dir: &std::path::Path,
     cli_active: bool,
 ) -> Result<(Option<DirstatOptions>, Vec<String>)> {
@@ -4403,18 +4762,18 @@ fn resolve_dirstat_options(
         opts = o;
     }
 
-    if args.dirstat_cumulative_flag {
+    if cli.dirstat_cumulative_flag {
         parse_dirstat_apply_tokens("cumulative", &mut opts, true, &mut warnings)?;
     }
 
-    if let Some(ref p) = args.dirstat_by_file {
+    if let Some(ref p) = cli.dirstat_by_file {
         parse_dirstat_apply_tokens("files", &mut opts, true, &mut warnings)?;
         if !p.is_empty() {
             parse_dirstat_apply_tokens(p, &mut opts, true, &mut warnings)?;
         }
     }
 
-    for param in &args.dirstat {
+    for param in &cli.dirstat {
         if param.is_empty() {
             opts = DirstatOptions::default();
         } else {
@@ -4564,7 +4923,7 @@ fn gather_dirstat_recursive(
     Ok(if cumulative { 0 } else { sum })
 }
 
-fn write_dirstat(
+pub(crate) fn write_dirstat(
     out: &mut impl Write,
     opts: &DirstatOptions,
     entries: &[DiffEntry],
@@ -7337,6 +7696,132 @@ fn word_diff_flush_hunk(
         }
         WordDiffModeCli::None => {}
     }
+}
+
+fn mode_str_has_executable_bit(mode_str: &str) -> bool {
+    u32::from_str_radix(mode_str, 8)
+        .map(|m| m & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+fn compact_summary_display_path(entry: &DiffEntry, quote_path_fully: bool) -> String {
+    let path = grit_lib::quote_path::quote_c_style(entry.path(), quote_path_fully);
+    match entry.status {
+        DiffStatus::Added => format!("{path} (new)"),
+        DiffStatus::Deleted => format!("{path} (gone)"),
+        _ => {
+            let old_x = mode_str_has_executable_bit(&entry.old_mode);
+            let new_x = mode_str_has_executable_bit(&entry.new_mode);
+            if new_x != old_x {
+                if new_x {
+                    format!("{path} (mode +x)")
+                } else {
+                    format!("{path} (mode -x)")
+                }
+            } else {
+                path
+            }
+        }
+    }
+}
+
+/// Per-file compact summary plus totals line (matches `git diff --compact-summary`).
+fn write_compact_summary(
+    out: &mut impl Write,
+    entries: &[DiffEntry],
+    odb: &Odb,
+    work_tree: Option<&Path>,
+    break_rewrites: bool,
+    line_ignore: Option<&[Regex]>,
+    ws_mode: &WhitespaceMode,
+    algo_ctx: &DiffAlgoContext,
+    algo_cli: Option<CliDiffAlgo>,
+    git_dir: &Path,
+    quote_path_fully: bool,
+) -> Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    let mut files: Vec<FileStatInput> = Vec::with_capacity(entries.len());
+    let mut total_ins = 0usize;
+    let mut total_del = 0usize;
+    for entry in entries {
+        if entry.status == DiffStatus::Unmerged {
+            continue;
+        }
+        let old_raw = read_content_raw(odb, &entry.old_oid);
+        let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, entry.path());
+        let binary = is_binary(&old_raw) || is_binary(&new_raw);
+        let (ins, del) = if binary {
+            let deleted = if entry.old_oid == zero_oid() {
+                0
+            } else {
+                old_raw.len()
+            };
+            let added = if entry.new_oid == zero_oid() {
+                0
+            } else {
+                new_raw.len()
+            };
+            (added, deleted)
+        } else {
+            let mode_only = entry.status == DiffStatus::Modified
+                && entry.old_mode != entry.new_mode
+                && old_raw == new_raw;
+            if mode_only {
+                (0, 0)
+            } else {
+                stat_ins_del_for_entry(
+                    odb,
+                    entry,
+                    work_tree,
+                    break_rewrites,
+                    line_ignore,
+                    ws_mode,
+                    algo_ctx,
+                    algo_cli,
+                )
+            }
+        };
+        total_ins += ins;
+        total_del += del;
+        files.push(FileStatInput {
+            path_display: compact_summary_display_path(entry, quote_path_fully),
+            insertions: ins,
+            deletions: del,
+            is_binary: binary,
+        });
+    }
+
+    let cfg = ConfigSet::load(Some(git_dir), false).unwrap_or_else(|_| ConfigSet::new());
+    let stat_name_width = cfg
+        .get("diff.statNameWidth")
+        .and_then(|v| v.parse::<usize>().ok());
+    let stat_graph_width = cfg
+        .get("diff.statGraphWidth")
+        .and_then(|v| v.parse::<usize>().ok());
+    let opts = DiffstatOptions {
+        total_width: terminal_columns(),
+        line_prefix: "",
+        subtract_prefix_from_terminal: false,
+        stat_name_width,
+        stat_graph_width,
+        stat_count: None,
+        color_add: "",
+        color_del: "",
+        color_reset: "",
+        graph_bar_slack: 0,
+        graph_prefix_budget_slack: 0,
+    };
+    write_diffstat_block(out, &files, &opts)?;
+
+    let n = files.len();
+    let mut summary = format!(" {} file{} changed", n, if n == 1 { "" } else { "s" });
+    append_stat_counts(&mut summary, total_ins, total_del);
+    writeln!(out, "{summary}")?;
+
+    Ok(())
 }
 
 /// Write only the summary line: `N files changed, N insertions(+), N deletions(-)`.
