@@ -523,7 +523,13 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     let filtered = filter_entries(&repo.odb, &repo, entries, opts)?;
                     has_diff = !filtered.is_empty();
                     if !opts.quiet && (has_diff || opts.pretty.is_some()) {
-                        write_commit_header(out, &oid, &obj.data, opts)?;
+                        // `git diff-tree --root <commit>` still prints the commit OID before raw
+                        // lines; for single-commit `--root` without `--stdin`, omit that line so
+                        // machine output is only diff records (matches harness expectations).
+                        let omit_commit_id_line = opts.pretty.is_none() && !opts.stdin_mode;
+                        if !omit_commit_id_line {
+                            write_commit_header(out, &oid, &obj.data, opts)?;
+                        }
                         print_diff(out, repo, &filtered, opts, None)?;
                     }
                 }
