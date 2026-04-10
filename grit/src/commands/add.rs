@@ -25,7 +25,7 @@ use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-fn resolved_env_index_path(repo: &Repository) -> PathBuf {
+pub(crate) fn resolved_env_index_path(repo: &Repository) -> PathBuf {
     if let Ok(raw) = std::env::var("GIT_INDEX_FILE") {
         let p = PathBuf::from(raw);
         if p.is_absolute() {
@@ -189,24 +189,6 @@ pub fn run(mut args: Args) -> Result<()> {
         bail!("options '--dry-run' and '--interactive'/'--patch' cannot be used together");
     }
 
-    // Stubs for unsupported interactive modes — accept the flags
-    // gracefully so scripts that pass them don't hard-fail.
-    if args.patch || args.interactive || args.edit {
-        // Real git would enter interactive mode; we just warn and succeed.
-        let mode_name = if args.patch {
-            "-p/--patch"
-        } else if args.interactive {
-            "-i/--interactive"
-        } else {
-            "-e/--edit"
-        };
-        eprintln!(
-            "warning: {} mode is not yet implemented; doing nothing",
-            mode_name
-        );
-        return Ok(());
-    }
-
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo
         .work_tree
@@ -243,6 +225,37 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
+    let conv = ConversionConfig::from_config(&config);
+    let attrs = crlf::load_gitattributes(work_tree);
+    let add_cfg = AddConfig {
+        core_filemode,
+        precompose_unicode,
+        ignore_errors: args.ignore_errors
+            || config
+                .get_bool("add.ignore-errors")
+                .and_then(|r| r.ok())
+                .unwrap_or(false),
+        conv,
+        attrs,
+        config: config.clone(),
+    };
+
+    if args.patch {
+        return super::add_patch::run_add_patch(&repo, &args.pathspec, &add_cfg);
+    }
+    if args.interactive || args.edit {
+        let mode_name = if args.interactive {
+            "-i/--interactive"
+        } else {
+            "-e/--edit"
+        };
+        eprintln!(
+            "warning: {} mode is not yet implemented; doing nothing",
+            mode_name
+        );
+        return Ok(());
+    }
+
     // "git add" with no pathspecs and no flags: give advice
     if args.pathspec.is_empty()
         && !args.all
@@ -276,22 +289,6 @@ pub fn run(mut args: Args) -> Result<()> {
         Some(IgnoreMatcher::from_repository(&repo)?)
     } else {
         None
-    };
-
-    let conv = ConversionConfig::from_config(&config);
-    let attrs = crlf::load_gitattributes(work_tree);
-
-    let add_cfg = AddConfig {
-        core_filemode,
-        precompose_unicode,
-        ignore_errors: args.ignore_errors
-            || config
-                .get_bool("add.ignore-errors")
-                .and_then(|r| r.ok())
-                .unwrap_or(false),
-        conv,
-        attrs,
-        config: config.clone(),
     };
 
     // --renormalize: re-apply clean conversion to tracked files
