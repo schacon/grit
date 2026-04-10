@@ -7,7 +7,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::config::{parse_bool, ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::merge_base;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -313,6 +313,10 @@ fn current_branch_from_head(git_dir: &Path) -> Option<String> {
     let target = head.strip_prefix("ref: ")?.trim();
     let branch = target.strip_prefix("refs/heads/")?;
     Some(branch.to_string())
+}
+
+fn parse_git_bool(value: &str) -> Option<bool> {
+    parse_bool(value.trim()).ok()
 }
 
 /// FETCH_HEAD "for merge" when the current branch tracks this remote and the remote ref
@@ -890,6 +894,44 @@ fn fetch_remote(
     } else {
         configured_refspecs.clone()
     };
+    let remote_prune_key = format!("remote.{remote_name}.prune");
+    let remote_prune_tags_key = format!("remote.{remote_name}.pruneTags");
+    let configured_prune = config
+        .get(&remote_prune_key)
+        .as_deref()
+        .and_then(|v| parse_bool(v).ok())
+        .or_else(|| {
+            config
+                .get("fetch.prune")
+                .as_deref()
+                .and_then(|v| parse_bool(v).ok())
+        })
+        .unwrap_or(false);
+    let configured_prune_tags = config
+        .get(&remote_prune_tags_key)
+        .as_deref()
+        .and_then(|v| parse_bool(v).ok())
+        .or_else(|| {
+            config
+                .get("fetch.pruneTags")
+                .as_deref()
+                .and_then(|v| parse_bool(v).ok())
+        })
+        .unwrap_or(false);
+    let should_prune = if args.no_prune {
+        false
+    } else if args.prune {
+        true
+    } else {
+        configured_prune
+    };
+    // Like Git, prune-tags only takes effect when pruning is enabled.
+    let should_prune_tags = should_prune
+        && (if args.prune_tags {
+            true
+        } else {
+            configured_prune_tags
+        });
     let prefetch_left_no_positive = args.prefetch
         && cli_refspecs_owned.is_empty()
         && (user_passed_cli_refspecs || had_configured_fetch);
@@ -1175,7 +1217,7 @@ fn fetch_remote(
     // refs/remotes/<name>/; prune must cover those destinations (Git behavior).
     let is_url_remote = url_override.is_some();
     let prune_namespace =
-        (args.prune || args.prune_tags) && is_url_remote && user_passed_cli_refspecs;
+        (should_prune || should_prune_tags) && is_url_remote && user_passed_cli_refspecs;
     let _dst_prefix = if prune_namespace {
         longest_common_ref_prefix_from_cli_positive(cli_refspecs)
             .unwrap_or_else(|| "refs/".to_string())
@@ -1788,7 +1830,7 @@ fn fetch_remote(
     }
 
     // Prune tags that no longer exist on the remote
-    if args.prune_tags {
+    if should_prune_tags {
         let local_tags = refs::list_refs(git_dir, "refs/tags/")?;
         for (local_tag_ref, _oid) in &local_tags {
             let exists_on_remote = remote_tags.iter().any(|(r, _)| r == local_tag_ref);
@@ -1810,7 +1852,7 @@ fn fetch_remote(
     }
 
     // Prune stale remote-tracking refs.
-    if args.prune || args.prune_tags {
+    if should_prune || should_prune_tags {
         let prune_prefixes: Vec<String> = if user_passed_cli_refspecs {
             prune_prefixes_from_cli_refspecs(cli_refspecs)
         } else if !refspecs.is_empty() {
