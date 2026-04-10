@@ -382,6 +382,11 @@ pub fn run(mut args: Args) -> Result<()> {
         }
 
         if !args.cached {
+            if !args.force
+                && grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, path_str)
+            {
+                bail!("Refusing to remove the current working directory:\n{path_str}\n");
+            }
             let abs_path = work_tree.join(path_str);
             if abs_path.exists() || abs_path.symlink_metadata().is_ok() {
                 let removed_was_gitlink = removed_gitlinks.contains(path_str);
@@ -641,10 +646,16 @@ fn flatten_tree_to_map(
 
 /// Remove empty parent directories up to (but not including) the worktree root.
 fn remove_empty_parents(file: &Path, work_tree: &Path) {
+    let cwd_rel = grit_lib::worktree_cwd::process_cwd_repo_relative(work_tree);
     let mut current = file.parent();
     while let Some(dir) = current {
         if dir == work_tree {
             break;
+        }
+        if let Some(ref cr) = cwd_rel {
+            if grit_lib::worktree_cwd::cwd_would_be_removed_with_dir(work_tree, dir, cr) {
+                break;
+            }
         }
         match fs::remove_dir(dir) {
             Ok(()) => current = dir.parent(),

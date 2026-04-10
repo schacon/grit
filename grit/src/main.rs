@@ -2854,6 +2854,16 @@ fn run() -> Result<()> {
         // ignore empty GIT_DIR
     }
 
+    if std::env::var("GRIT_INVOCATION_CWD")
+        .ok()
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true)
+    {
+        if let Ok(cwd) = std::env::current_dir() {
+            std::env::set_var("GRIT_INVOCATION_CWD", cwd.display().to_string());
+        }
+    }
+
     let args: Vec<String> = std::env::args().collect();
     let (opts, subcmd, rest) = extract_globals(&args)?;
 
@@ -4758,6 +4768,14 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                     Ok(())
                 }
                 "progress" => grit_lib::test_tool_progress::run().map_err(|e| e.into()),
+                "getcwd" => {
+                    if rest.len() != 1 {
+                        bail!("usage: test-tool getcwd");
+                    }
+                    let cwd = std::env::current_dir().context("getcwd")?;
+                    println!("{}", cwd.display());
+                    Ok(())
+                }
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }

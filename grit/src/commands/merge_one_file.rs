@@ -15,6 +15,7 @@ use grit_lib::index::{IndexEntry, MODE_REGULAR};
 use grit_lib::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
+use grit_lib::worktree_cwd;
 
 /// Arguments for `grit merge-one-file`.
 #[derive(Debug, ClapArgs)]
@@ -145,6 +146,9 @@ fn effective_index_path(repo: &Repository) -> Result<PathBuf> {
 
 fn write_worktree_file(work_tree: &Path, path: &str, content: &[u8]) -> Result<()> {
     let abs: PathBuf = work_tree.join(path);
+    if abs.is_dir() && worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, path) {
+        bail!("Refusing to remove the current working directory:\n{path}\n");
+    }
     if let Some(parent) = abs.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -212,10 +216,16 @@ fn delete_case_permission_error(args: &Args) -> bool {
 }
 
 fn remove_empty_parent_dirs_after_file(work_tree: &Path, removed_file: &Path) {
+    let cwd_rel = worktree_cwd::process_cwd_repo_relative(work_tree);
     let mut current = removed_file.parent();
     while let Some(dir) = current {
         if dir == work_tree {
             break;
+        }
+        if let Some(ref cr) = cwd_rel {
+            if worktree_cwd::cwd_would_be_removed_with_dir(work_tree, dir, cr) {
+                break;
+            }
         }
         match fs::remove_dir(dir) {
             Ok(()) => current = dir.parent(),
@@ -248,6 +258,12 @@ fn run_delete_merge_case(repo: &Repository, work_tree: &Path, args: &Args) -> Re
         return Ok(());
     }
 
+    if worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, &args.path) {
+        bail!(
+            "Refusing to remove the current working directory:\n{}\n",
+            args.path
+        );
+    }
     eprintln!("Removing {}", args.path);
     if let Ok(meta) = fs::symlink_metadata(&abs) {
         if meta.is_file() || meta.file_type().is_symlink() {

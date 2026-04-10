@@ -109,5 +109,6 @@ pub mod unpack_objects;
 pub mod userdiff;
 pub mod whitespace_rule;
 pub mod wildmatch;
+pub mod worktree_cwd;
 pub mod write_tree;
 pub mod ws;
