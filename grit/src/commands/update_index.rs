@@ -1085,6 +1085,7 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         } else {
             None
         };
+        let fsmonitor_paths = fsmonitor_query.as_ref().map(|(_, p)| p);
         if let Some((new_token, _)) = fsmonitor_query.as_ref() {
             index.fsmonitor_last_update = Some(new_token.clone());
         }
@@ -1096,7 +1097,7 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
             args.unmerged,
             args.ignore_missing,
             args.ignore_submodules,
-            fsmonitor_query.as_ref().map(|(_, p)| p),
+            fsmonitor_paths,
         )?;
         // Match Git: skip rewriting the index when nothing changed and no entry is racy
         // relative to the index file's mtime at read time (see `has_racy_timestamp` in

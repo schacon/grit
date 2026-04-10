@@ -1,5 +1,16 @@
 # Test results
 
+**2026-04-10 (status perf phase4 / fsmonitor refresh hook applies only to --refresh path)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `bash tests/t7519-status-fsmonitor.sh --run=12 -v` (with harness env): still fails (`test_must_fail git update-index --refresh --force-write-index` unexpectedly succeeded)
+- `./scripts/run-tests.sh t7519-status-fsmonitor.sh`: 22/33 (improved from 18/33)
+- `./scripts/run-tests.sh t7063-status-untracked-cache.sh`: 14/58 (no change)
+- `./scripts/run-tests.sh t7508-status.sh`: 94/126 (holds improved baseline)
+- `./scripts/run-tests.sh t7060-wtstatus.sh`: 12/17 (holds improved baseline)
+- `./scripts/run-tests.sh t7065-status-rename.sh`: 28/28
+
 **2026-04-10 (status perf phase4 / status fsmonitor query integration)**
 
 - `cargo check -p grit-rs`: passed
