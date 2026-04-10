@@ -20,6 +20,7 @@ mod bundle_uri;
 mod bundle_uri_test_tool;
 mod commands;
 mod dotfile;
+mod editor;
 mod explicit_exit;
 mod ext_transport;
 mod fetch_transport;

@@ -2007,46 +2007,10 @@ fn reset_index_to_head(repo: &Repository, git_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn is_terminal_dumb() -> bool {
-    match std::env::var("TERM") {
-        Ok(t) => t == "dumb",
-        Err(_) => true,
-    }
-}
-
-/// Matches Git's `git_editor()`: `GIT_EDITOR`, `core.editor`, `VISUAL` (non-dumb only), `EDITOR`,
-/// then `vi`.
+/// Matches Git's `git_editor()` (see [`crate::editor::resolve_git_editor`]).
 fn git_editor_cmd(config: &ConfigSet) -> Result<String> {
-    if let Ok(e) = std::env::var("GIT_EDITOR") {
-        let s = e.trim();
-        if !s.is_empty() {
-            return Ok(e);
-        }
-    }
-    if let Some(e) = config.get("core.editor") {
-        let s = e.trim();
-        if !s.is_empty() {
-            return Ok(e);
-        }
-    }
-    if !is_terminal_dumb() {
-        if let Ok(v) = std::env::var("VISUAL") {
-            let s = v.trim();
-            if !s.is_empty() {
-                return Ok(v);
-            }
-        }
-    }
-    if let Ok(e) = std::env::var("EDITOR") {
-        let s = e.trim();
-        if !s.is_empty() {
-            return Ok(e);
-        }
-    }
-    if is_terminal_dumb() {
-        bail!("Terminal is dumb, but EDITOR unset");
-    }
-    Ok("vi".to_string())
+    crate::editor::resolve_git_editor(config, true)
+        .ok_or_else(|| anyhow::anyhow!("Terminal is dumb, but EDITOR unset"))
 }
 
 /// Resolves the program to run for `rebase -i` / autosquash todo editing (`git_sequence_editor`).
