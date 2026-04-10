@@ -4161,6 +4161,10 @@ fn resolve_path_merge_behavior(repo: &Repository, path: &str) -> PathMergeBehavi
         return PathMergeBehavior::Default;
     };
 
+    if let Some(b) = merge_behavior_from_attr_source(repo, path, &config) {
+        return b;
+    }
+
     let attrs = repo
         .work_tree
         .as_deref()
@@ -4189,6 +4193,47 @@ fn resolve_path_merge_behavior(repo: &Repository, path: &str) -> PathMergeBehavi
                 PathMergeBehavior::Default
             }
         }
+    }
+}
+
+/// `merge` attribute from `GIT_ATTR_SOURCE` / `attr.tree` (same stack as `git check-attr`).
+fn merge_behavior_from_attr_source(
+    repo: &Repository,
+    path: &str,
+    config: &ConfigSet,
+) -> Option<PathMergeBehavior> {
+    let parsed = grit_lib::attributes::load_gitattributes_for_diff(repo).ok()?;
+    let ignore_case = config
+        .get("core.ignorecase")
+        .is_some_and(|v| v == "true" || v == "1" || v == "yes");
+    let map = grit_lib::attributes::collect_attrs_for_path(
+        &parsed.rules,
+        &parsed.macros,
+        path,
+        ignore_case,
+    );
+    match map.get("merge") {
+        Some(grit_lib::attributes::AttrValue::Unset) => Some(PathMergeBehavior::BinaryNoMerge),
+        Some(grit_lib::attributes::AttrValue::Value(name)) => {
+            if name == "union" {
+                Some(PathMergeBehavior::Union)
+            } else {
+                let key = format!("merge.{name}.driver");
+                if let Some(command) = config.get(&key) {
+                    Some(PathMergeBehavior::CustomDriver { command })
+                } else {
+                    Some(PathMergeBehavior::CustomDriverMissing { name: name.clone() })
+                }
+            }
+        }
+        Some(grit_lib::attributes::AttrValue::Set) => {
+            if let Some(command) = config.get("merge.default.driver") {
+                Some(PathMergeBehavior::CustomDriver { command })
+            } else {
+                None
+            }
+        }
+        None | Some(grit_lib::attributes::AttrValue::Clear) => None,
     }
 }
 
@@ -7587,7 +7632,7 @@ fn apply_directory_file_conflicts(
 
 /// Get the tree OID from a commit.
 fn commit_tree(repo: &Repository, commit_oid: ObjectId) -> Result<ObjectId> {
-    let obj = repo.odb.read(&commit_oid)?;
+    let obj = repo.read_replaced(&commit_oid)?;
     let commit = parse_commit(&obj.data)?;
     Ok(commit.tree)
 }
@@ -7596,7 +7641,7 @@ fn commit_tree(repo: &Repository, commit_oid: ObjectId) -> Result<ObjectId> {
 ///
 /// Falls back to `0` when the author identity lacks a parseable timestamp.
 fn commit_author_timestamp(repo: &Repository, commit_oid: ObjectId) -> Result<i64> {
-    let obj = repo.odb.read(&commit_oid)?;
+    let obj = repo.read_replaced(&commit_oid)?;
     let commit = parse_commit(&obj.data)?;
     let author = commit.author;
     if let Some(ts) = author

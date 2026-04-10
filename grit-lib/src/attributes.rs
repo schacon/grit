@@ -1115,7 +1115,7 @@ pub fn resolve_attr_treeish(
 /// Parse a revision to a tree OID for attribute loading.
 pub fn resolve_tree_oid(repo: &Repository, spec: &str) -> std::result::Result<ObjectId, String> {
     let oid = resolve_revision(repo, spec).map_err(|e| e.to_string())?;
-    let obj = repo.odb.read(&oid).map_err(|e| e.to_string())?;
+    let obj = repo.read_replaced(&oid).map_err(|e| e.to_string())?;
     match obj.kind {
         ObjectKind::Commit => {
             let c = crate::objects::parse_commit(&obj.data).map_err(|e| e.to_string())?;

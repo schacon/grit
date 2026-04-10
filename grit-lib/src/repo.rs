@@ -577,6 +577,14 @@ impl Repository {
         if std::env::var_os("GIT_NO_REPLACE_OBJECTS").is_some() {
             return self.odb.read(oid);
         }
+        let use_replace_refs = ConfigSet::load(Some(&self.git_dir), true)
+            .ok()
+            .and_then(|c| c.get_bool("core.useReplaceRefs"))
+            .and_then(|r| r.ok())
+            .unwrap_or(true);
+        if !use_replace_refs {
+            return self.odb.read(oid);
+        }
         let replace_base = std::env::var("GIT_REPLACE_REF_BASE")
             .ok()
             .filter(|s| !s.is_empty())

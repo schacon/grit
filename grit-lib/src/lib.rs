@@ -54,6 +54,7 @@ pub mod mailmap;
 pub mod merge_base;
 pub mod merge_diff;
 pub mod merge_file;
+pub mod merge_tree_trivial;
 pub mod merge_trees;
 pub mod mergetool_vimdiff;
 pub mod midx;

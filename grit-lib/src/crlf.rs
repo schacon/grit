@@ -218,6 +218,23 @@ pub struct AttrRule {
 }
 
 impl AttrRule {
+    /// Build a rule for callers that assemble attributes outside this module (e.g. from
+    /// [`crate::attributes::ParsedGitAttributes`]).
+    #[must_use]
+    pub fn new(
+        pattern: String,
+        must_be_dir: bool,
+        basename_only: bool,
+        attrs: Vec<(String, String)>,
+    ) -> Self {
+        Self {
+            pattern,
+            must_be_dir,
+            basename_only,
+            attrs,
+        }
+    }
+
     /// Diff driver names assigned by this rule (`diff=<driver>`), excluding `set`/`unset`.
     pub fn diff_drivers(&self) -> impl Iterator<Item = &str> + '_ {
         self.attrs.iter().filter_map(|(name, value)| {
