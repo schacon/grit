@@ -10,6 +10,7 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use tempfile::NamedTempFile;
 
 use grit_lib::config::ConfigSet;
@@ -214,6 +215,32 @@ enum SubtreeShift {
 /// First `-s` strategy wins for merge-tree behavior; empty means default (ort).
 fn primary_merge_strategy(args: &Args) -> Option<&str> {
     args.strategy.first().map(String::as_str)
+}
+
+fn is_builtin_merge_strategy(name: &str) -> bool {
+    matches!(
+        name,
+        "recursive" | "ort" | "resolve" | "octopus" | "ours" | "theirs" | "subtree"
+    )
+}
+
+/// `git-merge-<name>` on `PATH`, matching Git's custom merge strategy discovery.
+fn resolve_git_merge_driver(strategy: &str) -> Option<PathBuf> {
+    let name = format!("git-merge-{strategy}");
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        let candidate = dir.join(&name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn use_external_merge_strategy(args: &Args) -> bool {
+    args.strategy.len() == 1
+        && !is_builtin_merge_strategy(&args.strategy[0])
+        && resolve_git_merge_driver(&args.strategy[0]).is_some()
 }
 
 /// Subtree path shifting for `merge_trees`: `-s subtree` implies auto-detect unless `-X subtree` set a prefix.
@@ -638,40 +665,46 @@ pub fn run(mut args: Args) -> Result<()> {
         bail!("fatal: You cannot combine --squash with --commit.");
     }
 
-    // Validate --strategy: each `-s` is one strategy name (space-separated lists come from
-    // `pull.twohead` / `pull.octopus`, expanded before `merge` runs).
+    // Validate --strategy: built-ins or `git-merge-<name>` on PATH (Git `merge.c` / `try_merge_command`).
     for strat in &args.strategy {
-        match strat.as_str() {
-            "recursive" | "ort" | "resolve" | "octopus" | "ours" | "theirs" | "subtree" => {}
-            other => bail!("Could not find merge strategy '{}'", other),
+        if is_builtin_merge_strategy(strat) {
+            continue;
         }
+        if resolve_git_merge_driver(strat).is_some() {
+            continue;
+        }
+        bail!("Could not find merge strategy '{}'", strat);
     }
 
-    // Parse -X strategy options
+    let external_driver_merge = use_external_merge_strategy(&args);
+
+    // Parse -X strategy options (ignored for external drivers; passed through as `--<opt>`).
     let mut favor = MergeFavor::None;
     let mut diff_algorithm: Option<String> = None;
     let mut subtree_shift = SubtreeShift::Disabled;
-    for xopt in &args.strategy_option {
-        if let Some(algo) = xopt.strip_prefix("diff-algorithm=") {
-            diff_algorithm = Some(algo.to_string());
-        } else if xopt == "renormalize" {
-            merge_renormalize = true;
-        } else if xopt == "no-renormalize" {
-            merge_renormalize = false;
-        } else if xopt == "subtree" {
-            subtree_shift = SubtreeShift::Auto;
-        } else if let Some(path) = xopt.strip_prefix("subtree=") {
-            let normalized = path.trim_matches('/');
-            subtree_shift = if normalized.is_empty() {
-                SubtreeShift::Auto
+    if !external_driver_merge {
+        for xopt in &args.strategy_option {
+            if let Some(algo) = xopt.strip_prefix("diff-algorithm=") {
+                diff_algorithm = Some(algo.to_string());
+            } else if xopt == "renormalize" {
+                merge_renormalize = true;
+            } else if xopt == "no-renormalize" {
+                merge_renormalize = false;
+            } else if xopt == "subtree" {
+                subtree_shift = SubtreeShift::Auto;
+            } else if let Some(path) = xopt.strip_prefix("subtree=") {
+                let normalized = path.trim_matches('/');
+                subtree_shift = if normalized.is_empty() {
+                    SubtreeShift::Auto
+                } else {
+                    SubtreeShift::Prefix(normalized.to_string())
+                };
             } else {
-                SubtreeShift::Prefix(normalized.to_string())
-            };
-        } else {
-            match xopt.as_str() {
-                "ours" => favor = MergeFavor::Ours,
-                "theirs" => favor = MergeFavor::Theirs,
-                other => bail!("unknown strategy option: -X {other}"),
+                match xopt.as_str() {
+                    "ours" => favor = MergeFavor::Ours,
+                    "theirs" => favor = MergeFavor::Theirs,
+                    other => bail!("unknown strategy option: -X {other}"),
+                }
             }
         }
     }
@@ -789,6 +822,10 @@ pub fn run(mut args: Args) -> Result<()> {
     // True merge needed
     if args.ff_only {
         bail!("Not possible to fast-forward, aborting.");
+    }
+
+    if use_external_merge_strategy(&args) {
+        return run_external_merge_driver(&repo, &head, head_oid, merge_oid, &args);
     }
 
     if args.strategy.len() > 1 {
@@ -918,6 +955,9 @@ fn try_merge_strategies(
                 true,
                 false,
             ),
+            _ if use_external_merge_strategy(&sub) => {
+                run_external_merge_driver(repo, head, head_oid, merge_oid, &sub)
+            }
             other => bail!("Could not find merge strategy '{other}'"),
         };
 
@@ -1409,6 +1449,211 @@ fn prefixed_path(path: &[u8], prefix: &str) -> Vec<u8> {
     out.push(b'/');
     out.extend_from_slice(path);
     out
+}
+
+/// Run `git-merge-<strategy>` from `PATH` (Git `try_merge_command` / `merge.c`).
+fn run_external_merge_driver(
+    repo: &Repository,
+    head: &HeadState,
+    head_oid: ObjectId,
+    merge_oid: ObjectId,
+    args: &Args,
+) -> Result<()> {
+    let strategy_name = args
+        .strategy
+        .first()
+        .map(String::as_str)
+        .ok_or_else(|| anyhow::anyhow!("internal: external merge without strategy"))?;
+    let Some(driver) = resolve_git_merge_driver(strategy_name) else {
+        bail!("Could not find merge strategy '{strategy_name}'");
+    };
+
+    if matches!(
+        primary_merge_strategy(args),
+        Some("recursive" | "ort" | "subtree" | "octopus")
+    ) {
+        bail_if_index_tree_differs_from_head(repo, head_oid, args.autostash)?;
+    }
+
+    let bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, head_oid, &[merge_oid])?;
+    if bases.is_empty() && !args.allow_unrelated_histories {
+        bail!("refusing to merge unrelated histories");
+    }
+
+    if !args.autostash && diff_index::index_cached_differs_from_head(repo)? {
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 2,
+            message: "Your local changes to the following files would be overwritten by merge:\n\
+Please commit your changes or stash them before you merge.\n\
+Aborting"
+                .to_string(),
+        }));
+    }
+
+    fs::write(
+        repo.git_dir.join("ORIG_HEAD"),
+        format!("{}\n", head_oid.to_hex()),
+    )?;
+
+    let wt = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("external merge strategy requires a work tree"))?;
+
+    let mut cmd = Command::new(&driver);
+    for xopt in &args.strategy_option {
+        cmd.arg(format!("--{xopt}"));
+    }
+    for b in &bases {
+        cmd.arg(b.to_hex());
+    }
+    cmd.args(["--", "HEAD", &merge_oid.to_hex()]);
+    cmd.current_dir(wt);
+
+    let status = cmd
+        .status()
+        .with_context(|| format!("failed to execute {}", driver.display()))?;
+    let code = status.code().unwrap_or(1);
+    // Git: 0 = clean, 1 = conflicts left, 2 = strategy does not handle this merge.
+    if code == 2 {
+        bail!("Merge with strategy {strategy_name} failed.");
+    }
+
+    let mut index = repo.load_index()?;
+    let has_conflicts = index.entries.iter().any(|e| e.stage() != 0);
+
+    if has_conflicts {
+        if code == 0 {
+            bail!("external merge driver reported success but index has unmerged entries");
+        }
+        refresh_index_stat_cache_from_worktree(repo, &mut index)?;
+        repo.write_index(&mut index)?;
+
+        if args.squash {
+            let mut msg = build_squash_msg(repo, head_oid, &[merge_oid])?;
+            msg.push_str("# Conflicts:\n");
+            fs::write(repo.git_dir.join("SQUASH_MSG"), &msg)?;
+        } else {
+            fs::write(
+                repo.git_dir.join("MERGE_HEAD"),
+                format!("{}\n", merge_oid.to_hex()),
+            )?;
+            let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), repo);
+            fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
+            fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
+        }
+
+        println!("Automatic merge failed; fix conflicts and then commit the result.");
+        let rr = if args.no_rerere_autoupdate {
+            grit_lib::rerere::RerereAutoupdate::No
+        } else if args.rerere_autoupdate {
+            grit_lib::rerere::RerereAutoupdate::Yes
+        } else {
+            grit_lib::rerere::RerereAutoupdate::FromConfig
+        };
+        let _ = grit_lib::rerere::repo_rerere(repo, rr);
+        return Err(anyhow::Error::new(SilentNonZeroExit { code: 1 }));
+    }
+
+    if code != 0 {
+        bail!("Merge with strategy {strategy_name} failed.");
+    }
+
+    refresh_index_stat_cache_from_worktree(repo, &mut index)?;
+    repo.write_index(&mut index)?;
+
+    if args.squash {
+        return do_squash_from_merge(repo, index, head, head_oid, merge_oid, args);
+    }
+
+    if args.no_commit {
+        fs::write(
+            repo.git_dir.join("MERGE_HEAD"),
+            format!("{}\n", merge_oid.to_hex()),
+        )?;
+        let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), repo);
+        fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
+        fs::write(repo.git_dir.join("MERGE_MODE"), "no-ff\n")?;
+        if !args.quiet {
+            eprintln!("Automatic merge went well; stopped before committing as requested");
+        }
+        run_post_merge_hook(repo, false);
+        return Ok(());
+    }
+
+    let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let effective_custom_msg = if let Some(ref file_path) = args.file {
+        Some(read_merge_message_from_file(Path::new(file_path), &config)?)
+    } else {
+        args.message.clone()
+    };
+    let mut msg = build_merge_message(
+        head,
+        &args.commits[0],
+        effective_custom_msg.as_deref(),
+        repo,
+    );
+    if let Some(max_log) = args.log {
+        let log_entries = build_merge_log(repo, head_oid, merge_oid, &args.commits[0], max_log)?;
+        if !log_entries.is_empty() {
+            if !msg.ends_with('\n') {
+                msg.push('\n');
+            }
+            msg.push('\n');
+            msg.push_str(&log_entries);
+        }
+    }
+    let now = OffsetDateTime::now_utc();
+    let author = resolve_ident(&config, "author", now)?;
+    let committer = resolve_ident(&config, "committer", now)?;
+    if args.signoff && !args.no_signoff {
+        let sob_name = std::env::var("GIT_COMMITTER_NAME")
+            .ok()
+            .or_else(|| config.get("user.name"))
+            .unwrap_or_else(|| "Unknown".to_owned());
+        let sob_email = std::env::var("GIT_COMMITTER_EMAIL")
+            .ok()
+            .or_else(|| config.get("user.email"))
+            .unwrap_or_default();
+        msg = append_signoff(&msg, &sob_name, &sob_email);
+    }
+    if let Some(ref mode) = args.cleanup {
+        msg = cleanup_message(&msg, mode);
+    }
+    let finalized = finalize_merge_commit_message(msg, &config);
+    let commit_data = CommitData {
+        tree: tree_oid,
+        parents: vec![head_oid, merge_oid],
+        author,
+        committer,
+        author_raw: Vec::new(),
+        committer_raw: Vec::new(),
+        encoding: finalized.encoding,
+        message: finalized.message,
+        raw_message: finalized.raw_message,
+    };
+    let commit_bytes = serialize_commit(&commit_data);
+    let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
+    update_head(&repo.git_dir, head, &commit_oid)?;
+
+    if !args.quiet {
+        let short = &commit_oid.to_hex()[..7];
+        let branch = head.branch_name().unwrap_or("HEAD");
+        let first_line = commit_data.message.lines().next().unwrap_or("");
+        println!("[{branch} {short}] {first_line}");
+        println!("Merge made by the '{strategy_name}' strategy.");
+        let show_stat = args.stat || args.summary || !args.no_stat;
+        if show_stat {
+            let old_tree = commit_tree(repo, head_oid)?;
+            let new_tree = commit_tree(repo, merge_oid)?;
+            if let Ok(diff_entries) = diff_trees(&repo.odb, Some(&old_tree), Some(&new_tree), "") {
+                print_diffstat(repo, &diff_entries, args.compact_summary);
+            }
+        }
+    }
+    run_post_merge_hook(repo, false);
+    Ok(())
 }
 
 fn do_real_merge(

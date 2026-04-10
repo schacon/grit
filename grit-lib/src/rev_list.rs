@@ -704,9 +704,10 @@ pub fn rev_list(
                     left_right_map.insert(oid, true);
                 } else if from_right && !from_left {
                     left_right_map.insert(oid, false);
-                } else {
-                    left_right_map.insert(oid, false);
                 }
+                // Commits reachable from both tips are on the shared ancestry; they must not be
+                // classified as "right-only" or cherry-pick matching breaks (`rev-list A...B
+                // --right-only --cherry-pick`, rebase todo generation; t3418 / t3419).
             }
         }
     }

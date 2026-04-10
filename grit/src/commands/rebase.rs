@@ -2146,6 +2146,12 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
             let _ = append_reflog(git_dir, refname, &head_oid, &head_oid, &ident, &msg, false);
             let _ = append_reflog(git_dir, "HEAD", &head_oid, &head_oid, &ident, &msg, false);
         }
+        // Git still records ORIG_HEAD when the rebase is a no-op because every commit was skipped
+        // as a cherry-pick equivalent (t3418-rebase-continue ORIG_HEAD tests).
+        fs::write(
+            git_dir.join("ORIG_HEAD"),
+            format!("{}\n", head_oid.to_hex()),
+        )?;
         if let Some(ref oid) = autostash_oid {
             apply_autostash_after_ff(&repo, oid)?;
         }
@@ -2165,6 +2171,10 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
     };
     fs::write(rb_dir.join("head-name"), &head_name)?;
     fs::write(rb_dir.join("orig-head"), head_oid.to_hex())?;
+    fs::write(
+        git_dir.join("ORIG_HEAD"),
+        format!("{}\n", head_oid.to_hex()),
+    )?;
     fs::write(rb_dir.join("onto"), onto_oid.to_hex())?;
     fs::write(rb_dir.join("onto-name"), format!("{onto_name_for_state}\n"))?;
     fs::write(
