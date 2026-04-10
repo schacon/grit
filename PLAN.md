@@ -542,7 +542,7 @@ commit → check it off → move on.
 - [ ] `t5600-clone-fail-cleanup` ██████████████████░░ 13/14 (1 left) — test git clone to cleanup after failure
 
 - [ ] `t5613-info-alternate` ██████████████████░░ 12/13 (1 left) — test transitive info/alternate entries
-- [ ] `t5815-submodule-protos` █████████████████░░░ 7/8 (1 left) — test protocol filtering with submodules
+- [x] `t5815-submodule-protos` — test protocol filtering with submodules
 - [ ] `t5547-push-quarantine` ████████████████░░░░ 5/6 (1 left) — check quarantine of objects during push
 - [ ] `t5307-pack-missing-commit` ████████████████░░░░ 4/5 (1 left) — pack should notice missing commit objects
 - [ ] `t5525-fetch-tagopt` ████████████████░░░░ 4/5 (1 left) — tagopt variable affects 
