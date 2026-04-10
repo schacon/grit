@@ -2,9 +2,10 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::error::Error as GritError;
 use grit_lib::merge_base::{
-    independent_commits, is_ancestor, merge_base_fork_point, merge_bases_first_vs_rest,
-    merge_bases_octopus, resolve_commit_specs,
+    fork_point, independent_commits, is_ancestor, merge_bases_first_vs_rest, merge_bases_octopus,
+    resolve_commit_specs,
 };
 use grit_lib::repo::Repository;
 
@@ -141,20 +142,20 @@ fn run_fork_point(repo: &Repository, show_all: bool, revisions: Vec<String>) -> 
     let upstream_oid = commits[0];
     let commit_oid = commits[1];
 
-    if let Some(fork_point) =
-        merge_base_fork_point(repo, &repo.git_dir, &upstream_spec, commit_oid)?
-    {
-        println!("{fork_point}");
-        return Ok(());
+    match fork_point(repo, &upstream_spec, upstream_oid, commit_oid) {
+        Ok(oid) => {
+            println!("{oid}");
+            Ok(())
+        }
+        Err(e) => {
+            if let GritError::Message(msg) = &e {
+                if msg.contains("no merge base") {
+                    std::process::exit(1);
+                }
+            }
+            Err(e.into())
+        }
     }
-
-    let mut bases = merge_bases_first_vs_rest(repo, upstream_oid, &[commit_oid])?;
-    if bases.is_empty() {
-        std::process::exit(1);
-    }
-    bases.sort();
-    println!("{}", bases[0]);
-    Ok(())
 }
 
 fn print_result(mut oids: Vec<grit_lib::objects::ObjectId>, show_all: bool) {

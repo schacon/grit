@@ -262,6 +262,8 @@ pub struct Args {
     pub no_recurse_submodules: bool,
 
     /// Remaining positional arguments: `[<commit>] [--] [<path>…]`.
+    ///
+    /// Hyphen values must be allowed so `HEAD^` / `HEAD~1` are not dropped by clap (t3431 setup).
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub rest: Vec<String>,
 

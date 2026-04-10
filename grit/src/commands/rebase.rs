@@ -24,9 +24,7 @@ use grit_lib::diff::{
 };
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
-use grit_lib::merge_base::{
-    ancestor_closure, is_ancestor, merge_base_fork_point, merge_bases_first_vs_rest,
-};
+use grit_lib::merge_base::{ancestor_closure, fork_point, is_ancestor, merge_bases_first_vs_rest};
 use grit_lib::merge_file::{merge, ConflictStyle, MergeInput};
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
@@ -35,7 +33,10 @@ use grit_lib::patch_ids::compute_patch_id;
 use grit_lib::refs::{append_reflog, list_refs, resolve_ref, write_ref};
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, split_revision_token, OrderingMode, RevListOptions};
-use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision, resolve_revision_as_commit};
+use grit_lib::rev_parse::{
+    abbreviate_object_id, resolve_revision, resolve_revision_without_index_dwim,
+    upstream_suffix_info,
+};
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::whitespace_rule::{fix_blob_bytes, parse_whitespace_rule, WS_DEFAULT_RULE};
 use grit_lib::write_tree::write_tree_from_index;
@@ -335,6 +336,7 @@ pub fn run(mut args: Args) -> Result<()> {
         if args.keep_base > 0 {
             bail!("options '--keep-base' and '--root' cannot be used together");
         }
+        // `rebase.forkPoint` may be true in config; Git only rejects the explicit CLI combination.
         if args.fork_point {
             bail!("options '--root' and '--fork-point' cannot be used together");
         }
@@ -372,7 +374,7 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.branch.is_some() {
         let repo = Repository::discover(None).context("not a git repository")?;
         let uspec = args.upstream.as_deref().unwrap_or("HEAD");
-        let uoid = resolve_revision_as_commit(&repo, uspec)
+        let uoid = resolve_revision_without_index_dwim(&repo, uspec)
             .with_context(|| format!("bad revision '{uspec}'"))?
             .to_hex();
         args.upstream = Some(uoid);
@@ -417,25 +419,28 @@ pub fn run(mut args: Args) -> Result<()> {
         args.branch = None;
     }
 
-    // If no upstream specified and no --onto, try to find the upstream tracking branch.
-    if args.upstream.is_none() && args.onto.is_none() && !args.root {
+    // Default upstream to the current branch's @{upstream} whenever it is omitted (including
+    // `rebase --onto <newbase>` — Git still uses the configured upstream for fork-point / merge
+    // base logic; t3431).
+    if args.upstream.is_none() && !args.root {
         let repo = Repository::discover(None).context("not a git repository")?;
         let head = resolve_head(&repo.git_dir)?;
         let branch_name = match &head {
             HeadState::Branch { short_name, .. } => short_name.clone(),
             _ => bail!("no upstream configured for the current branch"),
         };
-        // Try to resolve @{upstream}
         match resolve_revision(&repo, &format!("{}@{{upstream}}", branch_name)) {
             Ok(_) => {
                 args.upstream = Some(format!("{}@{{upstream}}", branch_name));
                 upstream_explicit = false;
             }
             Err(_) => {
-                bail!(
-                    "There is no tracking information for the current branch.\n\
-                     Please specify which branch you want to rebase against."
-                );
+                if args.onto.is_none() {
+                    bail!(
+                        "There is no tracking information for the current branch.\n\
+                         Please specify which branch you want to rebase against."
+                    );
+                }
             }
         }
     }
@@ -2225,6 +2230,26 @@ fn filter_unstaged_gitlinks_for_submodule_ignore(
 
 // ── Main rebase flow ────────────────────────────────────────────────
 
+/// True when `name` is both a local branch and a tag pointing at different commits.
+///
+/// `git rebase --fork-point` fails in this case (t3431) while a plain revision parse would pick
+/// the branch and warn.
+fn fork_point_upstream_name_is_ambiguous(repo: &Repository, name: &str) -> Result<bool> {
+    if name.contains('@')
+        || name.starts_with("refs/")
+        || name == "HEAD"
+        || name.contains('*')
+        || name.contains(':')
+    {
+        return Ok(false);
+    }
+    let head_ref = format!("refs/heads/{name}");
+    let tag_ref = format!("refs/tags/{name}");
+    let head_oid = grit_lib::refs::resolve_ref(&repo.git_dir, &head_ref).ok();
+    let tag_oid = grit_lib::refs::resolve_ref(&repo.git_dir, &tag_ref).ok();
+    Ok(matches!((head_oid, tag_oid), (Some(h), Some(t)) if h != t))
+}
+
 fn do_rebase(
     args: Args,
     pre_rebase_hook_second: Option<String>,
@@ -2332,79 +2357,123 @@ fn do_rebase(
         .ok_or_else(|| anyhow::anyhow!("cannot rebase: HEAD is unborn"))?
         .to_owned();
 
-    let (upstream_spec, upstream_oid, onto_oid, onto_name_for_state) = if args.root {
-        // Without `--onto`, Git creates an ephemeral empty-tree root commit as the squash base
-        // (`rebase --root` with no upstream).
-        let (onto, onto_label) = if let Some(ref onto_spec) = args.onto {
-            let oid = resolve_revision_as_commit(&repo, onto_spec)
-                .with_context(|| format!("bad revision '{onto_spec}'"))?;
-            (oid, onto_spec.clone())
-        } else {
-            let oid = create_squash_onto_root_commit(
-                &repo,
-                git_dir,
-                args.reset_author_date,
-                args.committer_date_is_author_date,
-            )?;
-            (oid, oid.to_hex())
-        };
-        ("--root".to_owned(), onto, onto, onto_label)
+    let upstream_spec_str = upstream_spec_before_branch_checkout
+        .clone()
+        .or_else(|| args.upstream.clone())
+        .unwrap_or_else(|| "HEAD".to_owned());
+
+    // Git applies fork-point for the default upstream (`@{upstream}`) when `rebase.forkPoint` is
+    // true, but not when the user names the upstream explicitly (`rebase main`), unless
+    // `--fork-point` is passed (t3431).
+    let fork_point_effective = if args.root {
+        false
+    } else if args.fork_point {
+        true
+    } else if args.no_fork_point {
+        false
     } else {
-        let upstream_spec = upstream_spec_before_branch_checkout
-            .unwrap_or_else(|| args.upstream.as_deref().unwrap_or("HEAD").to_owned());
-        let up_oid = resolve_revision_as_commit(&repo, &upstream_spec)
-            .with_context(|| format!("bad revision '{upstream_spec}'"))?;
-        let (onto, onto_label) = if let Some(ref onto_spec) = args.onto {
-            let oid = resolve_revision_as_commit(&repo, onto_spec)
-                .with_context(|| format!("bad revision '{onto_spec}'"))?;
-            (oid, onto_spec.clone())
-        } else if args.keep_base > 0 {
-            let oid = find_merge_base(&repo, up_oid, head_oid_early).unwrap_or(up_oid);
-            (oid, upstream_spec.clone())
-        } else {
-            (up_oid, upstream_spec.clone())
-        };
-        (upstream_spec, up_oid, onto, onto_label)
+        let cfg_default = config
+            .get_bool("rebase.forkPoint")
+            .or_else(|| config.get_bool("rebase.forkpoint"))
+            .and_then(|r| r.ok())
+            .unwrap_or(true);
+        let upstream_arg = upstream_spec_before_branch_checkout
+            .as_deref()
+            .or_else(|| args.upstream.as_deref())
+            .unwrap_or("HEAD");
+        let implicit_upstream = upstream_suffix_info(upstream_arg).is_some();
+        cfg_default && implicit_upstream
     };
 
-    let mut replay_upstream_oid = upstream_oid;
+    // Fork-point scans the upstream ref's reflog. The spec string is the same as the upstream
+    // argument (`side@{upstream}` when implicit, or `main` / `refs/heads/main` when explicit).
+    let fork_point_reflog_spec: Option<String> = if fork_point_effective {
+        Some(upstream_spec_str.clone())
+    } else {
+        None
+    };
+
     if !args.root {
-        let use_fork_point = if args.no_fork_point {
-            false
-        } else if args.fork_point {
-            true
-        } else {
-            let from_cfg = config
-                .get_bool("rebase.forkPoint")
-                .or_else(|| config.get_bool("rebase.forkpoint"))
-                .and_then(|r| r.ok())
-                .unwrap_or(true);
-            if args.upstream_explicit || args.onto.is_some() || args.keep_base > 0 {
-                from_cfg
-            } else {
-                true
-            }
-        };
-        if use_fork_point {
-            if let Some(fp) =
-                merge_base_fork_point(&repo, git_dir, upstream_spec.as_str(), head_oid_early)?
-            {
-                replay_upstream_oid = fp;
-            }
+        let us_for_ambiguous = upstream_spec_before_branch_checkout
+            .as_deref()
+            .or_else(|| args.upstream.as_deref())
+            .unwrap_or("HEAD");
+        if args.fork_point && fork_point_upstream_name_is_ambiguous(&repo, us_for_ambiguous)? {
+            bail!(
+                "fatal: ambiguous argument '{us_for_ambiguous}': unknown revision or path not in the working tree.\n\
+Use '--' to separate paths from revisions, like this:\n\
+'git <command> [<revision>...] -- [<file>...]'"
+            );
         }
     }
 
+    let (upstream_spec, upstream_oid, upstream_tip_oid, onto_oid, onto_name_for_state) =
+        if args.root {
+            let (onto, onto_label) = if let Some(ref onto_spec) = args.onto {
+                let oid = resolve_revision_without_index_dwim(&repo, onto_spec)
+                    .with_context(|| format!("bad revision '{onto_spec}'"))?;
+                (oid, onto_spec.clone())
+            } else {
+                let oid = create_squash_onto_root_commit(
+                    &repo,
+                    git_dir,
+                    args.reset_author_date,
+                    args.committer_date_is_author_date,
+                )?;
+                (oid, oid.to_hex())
+            };
+            ("--root".to_owned(), onto, onto, onto, onto_label)
+        } else {
+            let upstream_spec = upstream_spec_str.clone();
+            let up_oid = resolve_revision_without_index_dwim(&repo, &upstream_spec)
+                .with_context(|| format!("bad revision '{upstream_spec}'"))?;
+            let upstream_tip_oid = up_oid;
+
+            let mut effective_upstream_for_range = up_oid;
+            if let Some(ref fp_spec) = fork_point_reflog_spec {
+                let fp_oid = fork_point(&repo, fp_spec, up_oid, head_oid_early)
+                    .with_context(|| format!("fork-point resolution failed for '{fp_spec}'"))?;
+                effective_upstream_for_range = fp_oid;
+            }
+
+            let (onto, onto_label) = if let Some(ref onto_spec) = args.onto {
+                let oid = resolve_revision_without_index_dwim(&repo, onto_spec)
+                    .with_context(|| format!("bad revision '{onto_spec}'"))?;
+                (oid, onto_spec.clone())
+            } else if args.keep_base > 0 {
+                // Replay onto merge-base(upstream-tip, HEAD). Fork-point only narrows which commits
+                // are replayed, not this base (t3431 `--fork-point --keep-base` → onto B).
+                let oid = find_merge_base(&repo, upstream_tip_oid, head_oid_early)
+                    .unwrap_or(upstream_tip_oid);
+                (oid, upstream_spec.clone())
+            } else {
+                (up_oid, upstream_spec.clone())
+            };
+            (
+                upstream_spec,
+                effective_upstream_for_range,
+                upstream_tip_oid,
+                onto,
+                onto_label,
+            )
+        };
     let head = head_state;
     let head_oid = head_oid_early;
+
+    let root_rebase_no_onto = args.root && args.onto.is_none();
 
     let want_stat =
         args.stat || (config.get("rebase.stat").as_deref() == Some("true") && !args.no_stat);
 
-    let branch_base_merge = merge_bases_first_vs_rest(&repo, onto_oid, &[head_oid])?;
-    let branch_base = if branch_base_merge.len() == 1 {
-        Some(branch_base_merge[0])
-    } else {
+    let branch_base = if root_rebase_no_onto {
         None
+    } else {
+        let branch_base_merge = merge_bases_first_vs_rest(&repo, onto_oid, &[head_oid])?;
+        if branch_base_merge.len() == 1 {
+            Some(branch_base_merge[0])
+        } else {
+            None
+        }
     };
 
     let whitespace_forces_replay = args
@@ -2421,8 +2490,16 @@ fn do_rebase(
         && !args.autosquash
         && !date_options_force_replay;
 
+    // `rebase --keep-base` with fork-point uses a different upstream OID for the replay list than
+    // the branch tip; preemptive fast-forward detection wrongly treats the branch as up-to-date
+    // (t3431 `--fork-point --keep-base`).
+    let skip_preemptive_ff_for_keep_base_fork_point =
+        args.keep_base > 0 && upstream_tip_oid != upstream_oid;
+
     if allow_preemptive_ff
-        && rebase_can_preemptive_ff(&repo, onto_oid, replay_upstream_oid, head_oid)?
+        && !root_rebase_no_onto
+        && !skip_preemptive_ff_for_keep_base_fork_point
+        && rebase_can_preemptive_ff(&repo, onto_oid, upstream_tip_oid, head_oid)?
     {
         if !args.no_ff {
             print_branch_up_to_date(&head);
@@ -2449,7 +2526,9 @@ fn do_rebase(
                 None => println!("Changes to {}:", onto_oid.to_hex()),
             }
         }
-        print_rebase_diffstat(&repo, branch_base, onto_oid)?;
+        if !root_rebase_no_onto {
+            print_rebase_diffstat(&repo, branch_base, onto_oid)?;
+        }
     }
 
     let reapply_cherry_picks = if args.reapply_cherry_picks {
@@ -2459,18 +2538,23 @@ fn do_rebase(
     } else {
         args.keep_base > 0
     };
-    // Interactive rebases use the same default commit set as non-interactive (cherry-skip
-    // patch-identical commits) — only `--reapply-cherry-picks` / `--keep-base` changes this.
-    let filter_cherry_equivalents = !reapply_cherry_picks;
+    let filter_cherry_equivalents = !reapply_cherry_picks && !args.interactive;
+    // `--keep-base` commit selection: default (config fork-point only) still uses the upstream
+    // *tip* for the replay list so `rebase --keep-base` includes commits like C (t3431.4). Explicit
+    // `--fork-point --keep-base` uses the fork-point commit so only F..G replay onto B (t3431.12).
+    let commits_upstream = if args.keep_base > 0 {
+        if fork_point_effective && args.fork_point {
+            upstream_oid
+        } else {
+            upstream_tip_oid
+        }
+    } else {
+        upstream_oid
+    };
     let mut commits = if args.root {
         collect_commits_for_root_rebase(&repo, head_oid, onto_oid)?
     } else {
-        collect_rebase_todo_commits(
-            &repo,
-            head_oid,
-            replay_upstream_oid,
-            filter_cherry_equivalents,
-        )?
+        collect_rebase_todo_commits(&repo, head_oid, commits_upstream, filter_cherry_equivalents)?
     };
 
     // `--reset-author-date` / `--ignore-date` must still replay empty commits so author timestamps
@@ -2534,14 +2618,14 @@ fn do_rebase(
     };
 
     if !args.no_ff && rebase_todo_lines.is_empty() {
-        if head_oid == onto_oid {
+        if !onto_oid.is_zero() && head_oid == onto_oid {
             print_branch_up_to_date(&head);
             if let Some(ref oid) = autostash_oid {
                 apply_autostash_after_ff(&repo, oid)?;
             }
             return Ok(());
         }
-        if can_fast_forward(&repo, head_oid, onto_oid)? {
+        if !onto_oid.is_zero() && can_fast_forward(&repo, head_oid, onto_oid)? {
             let ff_base = merge_bases_first_vs_rest(&repo, onto_oid, &[head_oid])?
                 .into_iter()
                 .next();
@@ -2684,9 +2768,17 @@ fn do_rebase(
     let start_msg = format!("{ra} (start): checkout {onto_name_for_state}");
 
     let checkout_onto = || -> Result<()> {
-        let onto_obj = repo.odb.read(&onto_oid)?;
-        let onto_commit = parse_commit(&onto_obj.data)?;
-        let entries = tree_to_index_entries(&repo, &onto_commit.tree, "")?;
+        let empty_tree: ObjectId = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+            .parse()
+            .map_err(|_| anyhow::anyhow!("internal: empty tree object id"))?;
+        let tree_oid = if args.root && args.onto.is_none() {
+            empty_tree
+        } else {
+            let onto_obj = repo.odb.read(&onto_oid)?;
+            let onto_commit = parse_commit(&onto_obj.data)?;
+            onto_commit.tree
+        };
+        let entries = tree_to_index_entries(&repo, &tree_oid, "")?;
         let mut idx = Index::new();
         idx.entries = entries;
         idx.sort();
@@ -2706,13 +2798,21 @@ fn do_rebase(
             refresh_index_stat_cache_from_worktree(&repo, &mut idx)?;
         }
 
-        fs::write(git_dir.join("HEAD"), format!("{}\n", onto_oid.to_hex()))?;
+        let head_after_checkout = if args.root && args.onto.is_none() {
+            ObjectId::zero()
+        } else {
+            onto_oid
+        };
+        fs::write(
+            git_dir.join("HEAD"),
+            format!("{}\n", head_after_checkout.to_hex()),
+        )?;
         fs::write(
             git_dir.join("ORIG_HEAD"),
             format!("{}\n", head_oid.to_hex()),
         )?;
         repo.write_index(&mut idx)?;
-        run_post_checkout_hook(&repo, &head_oid, &onto_oid)?;
+        run_post_checkout_hook(&repo, &head_oid, &head_after_checkout)?;
         Ok(())
     };
 
@@ -2724,17 +2824,29 @@ fn do_rebase(
         return Err(e);
     }
 
+    let checkout_target_oid = if args.root && args.onto.is_none() {
+        ObjectId::zero()
+    } else {
+        onto_oid
+    };
     // Record `(start)` only after HEAD/index/worktree successfully match `onto` (t3426: failed
     // rewind must not append a misleading HEAD move to the reflog).
     let _ = append_reflog(
-        git_dir, "HEAD", &head_oid, &onto_oid, &ident, &start_msg, false,
+        git_dir,
+        "HEAD",
+        &head_oid,
+        &checkout_target_oid,
+        &ident,
+        &start_msg,
+        false,
     );
 
-    eprintln!(
-        "rebasing {} commits onto {}",
-        total,
-        &onto_oid.to_hex()[..7]
-    );
+    let onto_display = if args.root && args.onto.is_none() {
+        "root".to_owned()
+    } else {
+        onto_oid.to_hex()[..7].to_string()
+    };
+    eprintln!("rebasing {} commits onto {}", total, onto_display);
 
     replay_remaining(
         &repo,
@@ -2921,13 +3033,19 @@ fn collect_commits_for_root_rebase(
     head: ObjectId,
     onto: ObjectId,
 ) -> Result<Vec<ObjectId>> {
-    let range = format!("{}..{}", onto.to_hex(), head.to_hex());
-    let (positive, negative) = split_revision_token(&range);
     let mut opts = RevListOptions::default();
     opts.first_parent = true;
     opts.ordering = OrderingMode::Default;
     opts.reverse = true;
-    let listed = rev_list(repo, &positive, &negative, &opts).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let listed = if onto.is_zero() {
+        // `rebase --root` without `--onto`: replay the full first-parent chain from the branch tip
+        // (Git uses an empty lower bound; we cannot pass the null OID through rev-list).
+        rev_list(repo, &[head.to_hex()], &[], &opts).map_err(|e| anyhow::anyhow!("{e}"))?
+    } else {
+        let range = format!("{}..{}", onto.to_hex(), head.to_hex());
+        let (positive, negative) = split_revision_token(&range);
+        rev_list(repo, &positive, &negative, &opts).map_err(|e| anyhow::anyhow!("{e}"))?
+    };
     filter_redundant_patch_commits(repo, onto, &listed.commits)
 }
 
@@ -2940,23 +3058,25 @@ fn filter_redundant_patch_commits(
     ordered: &[ObjectId],
 ) -> Result<Vec<ObjectId>> {
     let mut seen_patch_ids: HashSet<ObjectId> = HashSet::new();
-    for oid in ancestor_closure(repo, onto)? {
-        let obj = match repo.odb.read(&oid) {
-            Ok(o) => o,
-            Err(_) => continue,
-        };
-        if obj.kind != ObjectKind::Commit {
-            continue;
-        }
-        let commit = match parse_commit(&obj.data) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        if commit.parents.len() > 1 {
-            continue;
-        }
-        if let Some(pid) = compute_patch_id(&repo.odb, &oid)? {
-            seen_patch_ids.insert(pid);
+    if !onto.is_zero() {
+        for oid in ancestor_closure(repo, onto)? {
+            let obj = match repo.odb.read(&oid) {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            if obj.kind != ObjectKind::Commit {
+                continue;
+            }
+            let commit = match parse_commit(&obj.data) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            if commit.parents.len() > 1 {
+                continue;
+            }
+            if let Some(pid) = compute_patch_id(&repo.odb, &oid)? {
+                seen_patch_ids.insert(pid);
+            }
         }
     }
 
@@ -3044,9 +3164,17 @@ fn print_rebase_diffstat(
     } else {
         None
     };
-    let new_obj = repo.odb.read(&onto_oid)?;
-    let new_commit = parse_commit(&new_obj.data)?;
-    let entries = diff::diff_trees(&repo.odb, old_tree.as_ref(), Some(&new_commit.tree), "")?;
+    let empty_tree: ObjectId = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        .parse()
+        .map_err(|_| anyhow::anyhow!("internal: empty tree object id"))?;
+    let new_tree = if onto_oid.is_zero() {
+        empty_tree
+    } else {
+        let new_obj = repo.odb.read(&onto_oid)?;
+        let new_commit = parse_commit(&new_obj.data)?;
+        new_commit.tree
+    };
+    let entries = diff::diff_trees(&repo.odb, old_tree.as_ref(), Some(&new_tree), "")?;
     print_diffstat_from_entries(repo, &entries);
     Ok(())
 }
@@ -3596,9 +3724,16 @@ fn cherry_pick_for_rebase(
         .oid()
         .ok_or_else(|| anyhow::anyhow!("HEAD is unborn during rebase"))?
         .to_owned();
+    const GIT_EMPTY_TREE_HEX: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+    let empty_tree_oid = ObjectId::from_hex(GIT_EMPTY_TREE_HEX)
+        .map_err(|e| anyhow::anyhow!("invalid empty tree oid: {e}"))?;
+    let head_at_empty_tree = head_oid.is_zero();
 
     if keep_empty && todo_cmd == RebaseTodoCmd::Pick && is_commit_tree_unchanged(repo, commit_oid)?
     {
+        if head_at_empty_tree {
+            bail!("internal: keep-empty pick with null HEAD during rebase");
+        }
         let head_obj = repo.odb.read(&head_oid)?;
         let head_commit = parse_commit(&head_obj.data)?;
         let (message, encoding, raw_message) = transcoded_replayed_message(&commit, &config);
@@ -3625,7 +3760,6 @@ fn cherry_pick_for_rebase(
     }
 
     // Parent tree (base for the cherry-pick). Root commits use Git's empty tree as base.
-    const GIT_EMPTY_TREE_HEX: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
     let parent_tree_oid = if let Some(parent_oid) = commit.parents.first() {
         let parent_obj = repo.odb.read(parent_oid)?;
         let parent_commit = parse_commit(&parent_obj.data)?;
@@ -3638,10 +3772,15 @@ fn cherry_pick_for_rebase(
     // Commit's tree (theirs — the changes we want)
     let commit_tree_oid = commit.tree;
 
-    // HEAD tree (ours — the current state)
-    let head_obj = repo.odb.read(&head_oid)?;
-    let head_commit = parse_commit(&head_obj.data)?;
-    let head_tree_oid = head_commit.tree;
+    // HEAD tree (ours — the current state). `rebase --root` without `--onto` leaves HEAD at the
+    // null OID until the first replayed commit exists (Git-compatible).
+    let head_tree_oid = if head_at_empty_tree {
+        empty_tree_oid
+    } else {
+        let head_obj = repo.odb.read(&head_oid)?;
+        let head_commit = parse_commit(&head_obj.data)?;
+        head_commit.tree
+    };
     let root_rebase = rb_dir.join("root").exists();
     let ws_fix_rule = load_ws_fix_rule_from_rebase_state(git_dir);
 

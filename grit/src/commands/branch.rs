@@ -1547,6 +1547,18 @@ fn create_branch(
 
     grit_lib::refs::write_ref(&repo.git_dir, &refname, &oid).map_err(|e| anyhow::anyhow!("{e}"))?;
 
+    if start_point.is_none() && args.track.is_some() {
+        if let Some(tracked_short) = head.branch_name() {
+            let merge_ref = format!("refs/heads/{tracked_short}");
+            let config_path = repo.git_dir.join("config");
+            let mut cfg = std::fs::read_to_string(&config_path).unwrap_or_default();
+            cfg.push_str(&format!("\n[branch \"{name}\"]"));
+            cfg.push_str("\n\tremote = .");
+            cfg.push_str(&format!("\n\tmerge = {merge_ref}\n"));
+            std::fs::write(&config_path, cfg)?;
+        }
+    }
+
     // Create reflog when explicitly requested or when core.logAllRefUpdates
     // enables branch reflogs for this repository.
     if args.create_reflog || should_log_ref_updates(repo) {
