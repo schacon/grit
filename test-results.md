@@ -88,3 +88,19 @@
 
 - `cargo test -p grit-lib --lib`: 147 passed
 - `./scripts/run-tests.sh t5318-pack-objects-revs-exclude.sh`: 9/9 passed
+
+**2026-04-10 (status perf follow-up: phase2 + phase4 interfaces)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `./scripts/run-tests.sh t7063-status-untracked-cache.sh`: 12/58
+- `./scripts/run-tests.sh t7508-status.sh`: 48/126
+- `./scripts/run-tests.sh t7060-wtstatus.sh`: 10/17
+- `./scripts/run-tests.sh t7519-status-fsmonitor.sh`: 12/33
+
+Notes:
+- Phase2 optimization reuses populated UNTR cache for untracked-only status collection (`--ignored=no`) to remove one duplicate full tree walk.
+- Phase4 interface work implemented missing fsmonitor command/test-tool surfaces needed by status-associated suites:
+  `update-index --fsmonitor`, `--no-fsmonitor`, `--fsmonitor-valid`, `--no-fsmonitor-valid`, `--force-write-index`,
+  `ls-files -f`, and `test-tool dump-fsmonitor`.
+- `t7519` improved from 8/33 to 12/33; remaining failures are deeper behavior parity (hook-driven invalidation and status integration), tracked for subsequent phase work.

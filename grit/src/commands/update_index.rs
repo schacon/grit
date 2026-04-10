@@ -227,6 +227,26 @@ pub struct Args {
     #[arg(long = "force-untracked-cache", hide = true)]
     pub force_untracked_cache: bool,
 
+    /// Enable fsmonitor index extension metadata.
+    #[arg(long = "fsmonitor")]
+    pub fsmonitor: bool,
+
+    /// Disable fsmonitor index extension metadata.
+    #[arg(long = "no-fsmonitor")]
+    pub no_fsmonitor: bool,
+
+    /// Mark listed tracked paths as fsmonitor-valid.
+    #[arg(long = "fsmonitor-valid", value_name = "PATH")]
+    pub fsmonitor_valid: Vec<PathBuf>,
+
+    /// Mark listed tracked paths as not fsmonitor-valid.
+    #[arg(long = "no-fsmonitor-valid", value_name = "PATH")]
+    pub no_fsmonitor_valid: Vec<PathBuf>,
+
+    /// Force writing the index after refresh.
+    #[arg(long = "force-write-index")]
+    pub force_write_index: bool,
+
     /// Files to add/remove from the index.
     pub files: Vec<PathBuf>,
 }
@@ -286,6 +306,12 @@ fn skip_one_update_index_arg(rest: &[String], i: usize) -> usize {
     }
     if tok == "--index-version" && i + 1 < rest.len() {
         return i + 2;
+    }
+    if (tok == "--fsmonitor-valid" || tok == "--no-fsmonitor-valid") && i + 1 < rest.len() {
+        return i + 2;
+    }
+    if tok.starts_with("--fsmonitor-valid=") || tok.starts_with("--no-fsmonitor-valid=") {
+        return i + 1;
     }
     (i + 1).min(rest.len())
 }
@@ -416,6 +442,19 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
     let mut index = repo.load_index_at(&index_path).context("loading index")?;
     let symlinks_enabled = core_symlinks_enabled(&repo);
 
+    if repo.work_tree.is_none() {
+        if args.fsmonitor
+            || args.no_fsmonitor
+            || !args.fsmonitor_valid.is_empty()
+            || !args.no_fsmonitor_valid.is_empty()
+        {
+            bail!(
+                "bare repository '{}' is incompatible with fsmonitor",
+                repo.git_dir.display()
+            );
+        }
+        bail!("cannot update-index in bare repository");
+    }
     let work_tree = repo
         .work_tree
         .as_deref()
@@ -448,6 +487,58 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         let flags = untracked_cache::dir_flags_from_config(&config);
         let ident = untracked_cache::untracked_cache_ident(work_tree);
         index.untracked_cache = Some(UntrackedCache::new_shell(flags, ident));
+        repo.write_index_at(&index_path, &mut index)
+            .context("writing index")?;
+    }
+
+    if args.fsmonitor && args.no_fsmonitor {
+        bail!("cannot both enable and disable fsmonitor");
+    }
+    if args.fsmonitor {
+        if config
+            .get_bool("core.virtualfilesystem")
+            .and_then(|r| r.ok())
+            .unwrap_or(false)
+        {
+            bail!(
+                "virtual repository '{}' is incompatible with fsmonitor",
+                repo.git_dir.display()
+            );
+        }
+        if index.fsmonitor_last_update.is_none() {
+            index.fsmonitor_last_update = Some("builtin:fake".to_string());
+        }
+        repo.write_index_at(&index_path, &mut index)
+            .context("writing index")?;
+    } else if args.no_fsmonitor {
+        index.fsmonitor_last_update = None;
+        for entry in &mut index.entries {
+            if entry.stage() == 0 {
+                entry.set_fsmonitor_valid(false);
+            }
+        }
+        repo.write_index_at(&index_path, &mut index)
+            .context("writing index")?;
+    }
+
+    if !args.fsmonitor_valid.is_empty() || !args.no_fsmonitor_valid.is_empty() {
+        if index.fsmonitor_last_update.is_none() {
+            index.fsmonitor_last_update = Some("builtin:fake".to_string());
+        }
+        for p in &args.fsmonitor_valid {
+            let (rel_path, _abs_path) = resolve_repo_path(work_tree, &cwd, p)?;
+            let rel_bytes = path_to_bytes(&rel_path)?;
+            if let Some(e) = index.get_mut(&rel_bytes, 0) {
+                e.set_fsmonitor_valid(true);
+            }
+        }
+        for p in &args.no_fsmonitor_valid {
+            let (rel_path, _abs_path) = resolve_repo_path(work_tree, &cwd, p)?;
+            let rel_bytes = path_to_bytes(&rel_path)?;
+            if let Some(e) = index.get_mut(&rel_bytes, 0) {
+                e.set_fsmonitor_valid(false);
+            }
+        }
         repo.write_index_at(&index_path, &mut index)
             .context("writing index")?;
     }
@@ -933,8 +1024,9 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         // relative to the index file's mtime at read time (see `has_racy_timestamp` in
         // `read-cache.c` / `repo_update_index_if_able`). This preserves intentional index
         // mtimes (e.g. t2108 `--refresh has no racy timestamps to fix`).
-        let need_write =
-            index_modified || has_racy_timestamp(&index, index_mtime_sec, index_mtime_nsec);
+        let need_write = args.force_write_index
+            || index_modified
+            || has_racy_timestamp(&index, index_mtime_sec, index_mtime_nsec);
         if need_write {
             repo.write_index_at(&index_path, &mut index)
                 .context("writing index")?;

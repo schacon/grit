@@ -4664,6 +4664,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 "hexdump" => run_test_tool_hexdump(rest),
                 "chmtime" => run_test_tool_chmtime(&rest[1..]),
                 "dump-untracked-cache" => run_test_tool_dump_untracked_cache(),
+                "dump-fsmonitor" => run_test_tool_dump_fsmonitor(),
                 "userdiff" => run_test_tool_userdiff(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
                 "partial-clone" => run_test_tool_partial_clone(rest),
@@ -5524,6 +5525,21 @@ fn run_test_tool_dump_untracked_cache() -> Result<()> {
         dump(root, &mut base);
     }
 
+    Ok(())
+}
+
+/// `test-tool dump-fsmonitor` — minimal helper used by status/fsmonitor tests.
+fn run_test_tool_dump_fsmonitor() -> Result<()> {
+    use grit_lib::index::Index;
+    use grit_lib::repo::Repository;
+
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let index = Index::load(&repo.index_path()).context("read index")?;
+    if let Some(token) = index.fsmonitor_last_update.as_deref() {
+        println!("fsmonitor last update {token}");
+    } else {
+        println!("no fsmonitor");
+    }
     Ok(())
 }
 

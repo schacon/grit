@@ -2375,6 +2375,11 @@ pub(crate) fn stage_file(
     // Use stage_file which also clears conflict stages (1, 2, 3) for the same
     // path — this is how `git add` resolves merge/cherry-pick conflicts.
     index.stage_file(entry);
+    if index.fsmonitor_last_update.is_some() {
+        if let Some(staged) = index.get_mut(rel_path.as_bytes(), 0) {
+            staged.set_fsmonitor_valid(true);
+        }
+    }
 
     if ctx.verbose {
         println!("add '{rel_path}'");

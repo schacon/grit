@@ -85,6 +85,10 @@ pub struct Args {
     #[arg(short = 'v')]
     pub show_untracked_cache_tag: bool,
 
+    /// Show lowercase tags for fsmonitor-valid entries (`-f`).
+    #[arg(short = 'f')]
+    pub show_fsmonitor_valid_tag: bool,
+
     /// Show verbose long format.
     #[arg(long)]
     pub long: bool,
@@ -392,32 +396,35 @@ pub fn run(args: Args) -> Result<()> {
         // For -d/-m with -t/-v, compute tags. Git uses "C" for modified (including
         // unmerged conflict paths under -d/-m), not the unmerged "M" tag from -u/-s.
         // A deleted file with both -d and -m produces TWO output lines: 'R path' and 'C path'.
-        let (tag, extra_tag) = if args.show_tag || args.show_untracked_cache_tag {
-            if args.deleted || args.modified {
-                let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
-                if !full.exists() {
-                    if args.deleted && args.modified {
-                        (Some('R'), Some('C'))
+        let (tag, extra_tag) =
+            if args.show_tag || args.show_untracked_cache_tag || args.show_fsmonitor_valid_tag {
+                if args.deleted || args.modified {
+                    let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
+                    if !full.exists() {
+                        if args.deleted && args.modified {
+                            (Some('R'), Some('C'))
+                        } else {
+                            (Some('R'), None)
+                        }
+                    } else if is_modified(entry, &full) {
+                        (Some('C'), None)
                     } else {
-                        (Some('R'), None)
+                        (Some(status_tag(entry)), None)
                     }
-                } else if is_modified(entry, &full) {
-                    (Some('C'), None)
                 } else {
-                    (Some(status_tag(entry)), None)
+                    let base_tag = status_tag(entry);
+                    let adjusted_tag = if args.show_untracked_cache_tag {
+                        base_tag.to_ascii_lowercase()
+                    } else if args.show_fsmonitor_valid_tag && entry.fsmonitor_valid() {
+                        base_tag.to_ascii_lowercase()
+                    } else {
+                        base_tag
+                    };
+                    (Some(adjusted_tag), None)
                 }
             } else {
-                let base_tag = status_tag(entry);
-                let adjusted_tag = if args.show_untracked_cache_tag {
-                    base_tag.to_ascii_lowercase()
-                } else {
-                    base_tag
-                };
-                (Some(adjusted_tag), None)
-            }
-        } else {
-            (None, None)
-        };
+                (None, None)
+            };
 
         if args.eol {
             let display =
