@@ -407,7 +407,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let staged_raw = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref(), false)?;
     // Detect renames among staged entries when enabled.
     let staged = if let Some(threshold) = status_rename_threshold {
-        detect_renames(&repo.odb, staged_raw.clone(), threshold)
+        detect_renames(&repo.odb, None, staged_raw.clone(), threshold)
     } else {
         staged_raw.clone()
     };
@@ -415,7 +415,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // Diff: unstaged (worktree vs index), with optional rename detection.
     let unstaged_raw = diff_index_to_worktree(&repo.odb, &index, work_tree, hide_untracked, false)?;
     let unstaged = if let Some(threshold) = status_rename_threshold {
-        detect_renames(&repo.odb, unstaged_raw.clone(), threshold)
+        detect_renames(&repo.odb, None, unstaged_raw.clone(), threshold)
     } else {
         unstaged_raw.clone()
     };

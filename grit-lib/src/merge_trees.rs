@@ -150,7 +150,7 @@ fn rename_pairs_base_to_other(
     other_tree: &ObjectId,
 ) -> crate::error::Result<Vec<(Vec<u8>, Vec<u8>, u32)>> {
     let mut entries = diff_trees(odb, Some(base_tree), Some(other_tree), "")?;
-    entries = detect_renames(odb, entries, 50);
+    entries = detect_renames(odb, None, entries, 50);
     let mut out = Vec::new();
     for e in entries {
         if e.status != DiffStatus::Renamed {

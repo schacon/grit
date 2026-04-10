@@ -219,7 +219,7 @@ pub(crate) fn remerge_diff_matches_pickaxe_or_find(
     let (remerge_tree, _conflict_descs) = remerge_merge_tree(repo, parents[0], parents[1])?;
 
     let mut entries = diff_trees(&repo.odb, Some(&remerge_tree), Some(tree), "")?;
-    entries = detect_renames(&repo.odb, entries, 50);
+    entries = detect_renames(&repo.odb, None, entries, 50);
 
     if let Some(p) = opts.pickaxe {
         if !pickaxe_matches(&repo.odb, &entries, p.as_bytes(), opts.pathspecs)? {
@@ -253,7 +253,7 @@ pub(crate) fn write_remerge_diff(
     let (remerge_tree, conflict_descs) = remerge_merge_tree(repo, parents[0], parents[1])?;
 
     let mut entries = diff_trees(&repo.odb, Some(&remerge_tree), Some(tree), "")?;
-    entries = detect_renames(&repo.odb, entries, 50);
+    entries = detect_renames(&repo.odb, None, entries, 50);
 
     if let Some(p) = opts.pickaxe {
         if !pickaxe_matches(&repo.odb, &entries, p.as_bytes(), opts.pathspecs)? {

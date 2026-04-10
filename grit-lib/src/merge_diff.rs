@@ -93,7 +93,7 @@ pub fn combined_merge_parent_blob_paths(
             continue;
         }
         let entries = diff_trees(odb, Some(t), None, merge_path).ok()?;
-        let with_rn = detect_renames(odb, entries, rename_threshold);
+        let with_rn = detect_renames(odb, None, entries, rename_threshold);
         let mut found: Option<String> = None;
         for e in with_rn {
             if e.status != DiffStatus::Renamed {

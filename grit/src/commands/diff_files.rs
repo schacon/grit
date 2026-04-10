@@ -123,13 +123,14 @@ pub fn run(mut args: Args) -> Result<()> {
             .collect();
         diff_entries = detect_copies(
             &repo.odb,
+            None,
             diff_entries,
             threshold,
             options.find_copies_harder,
             &source_index_entries,
         );
     } else if let Some(threshold) = options.find_renames {
-        diff_entries = grit_lib::diff::detect_renames(&repo.odb, diff_entries, threshold);
+        diff_entries = grit_lib::diff::detect_renames(&repo.odb, None, diff_entries, threshold);
     }
 
     if options.summary {

@@ -3,9 +3,11 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
-    detect_renames, diff_trees, parse_indent_heuristic_cli_flags, read_submodule_head_oid,
-    resolve_indent_heuristic, stat_matches, submodule_commit_subject_line, zero_oid, DiffEntry,
-    DiffStatus,
+    detect_renames, diff_trees, empty_blob_oid, parse_diff_rename_score_token,
+    parse_indent_heuristic_cli_flags, read_submodule_head_oid, resolve_indent_heuristic,
+    rewrite_dissimilarity_index_percent, rewrite_merge_score, should_break_rewrite_pair,
+    stat_matches, submodule_commit_subject_line, zero_oid, DiffEntry, DiffStatus,
+    GIT_DIFF_DEFAULT_MERGE_SCORE_AFTER_BREAK,
 };
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK, MODE_TREE,
@@ -22,7 +24,7 @@ use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision, resolve_revisi
 use crate::commands::diff::check_whitespace_errors;
 use grit_lib::attributes::load_gitattributes_for_diff;
 use grit_lib::config::ConfigSet;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
@@ -181,26 +183,95 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    let diff_entries = if options.find_copies {
+    let rename_work_root = if options.cached {
+        None
+    } else {
+        repo.work_tree.as_deref()
+    };
+
+    let (mut diff_entries, broken_for_merge) = if options.break_rewrites {
+        apply_diffcore_break_rewrites_split(
+            &repo.odb,
+            rename_work_root,
+            options.cached,
+            diff_entries,
+            options.break_score,
+            options.merge_after_break_score,
+        )
+    } else {
+        (diff_entries, HashSet::new())
+    };
+
+    let source_tree_entries: Vec<(String, String, ObjectId)> = tree_map
+        .iter()
+        .map(|(path, snap)| (path.clone(), format!("{:06o}", snap.mode), snap.oid))
+        .collect();
+
+    diff_entries = if options.find_copies {
         let threshold = options.find_renames.unwrap_or(50);
-        // Build source tree entries for copy detection (`path, mode, oid` order matches
-        // `grit_lib::diff::detect_copies`).
-        let source_tree_entries: Vec<(String, String, ObjectId)> = tree_map
-            .iter()
-            .map(|(path, snap)| (path.clone(), format!("{:06o}", snap.mode), snap.oid))
-            .collect();
         grit_lib::diff::detect_copies(
             &repo.odb,
+            rename_work_root,
             diff_entries,
             threshold,
             options.find_copies_harder,
             &source_tree_entries,
         )
     } else if let Some(threshold) = options.find_renames {
-        detect_renames(&repo.odb, diff_entries, threshold)
+        let mut d = detect_renames(&repo.odb, rename_work_root, diff_entries, threshold);
+        // Git runs copy detection after rename when `-B` and `-M` are combined (e.g.
+        // `t4008-diff-break-rewrite` #6): a type-changed path can be the copy source for a modified
+        // sibling even without `-C`.
+        if options.break_rewrites {
+            d = grit_lib::diff::detect_copies(
+                &repo.odb,
+                rename_work_root,
+                d,
+                threshold,
+                false,
+                &source_tree_entries,
+            );
+        }
+        d
     } else {
         diff_entries
     };
+
+    if options.break_rewrites && !broken_for_merge.is_empty() {
+        diff_entries = merge_broken_rewrite_pairs(diff_entries, &broken_for_merge);
+    }
+
+    if options.break_rewrites && options.find_renames.is_some() {
+        diff_entries = drop_break_delete_superseded_by_rename_dest(diff_entries);
+    }
+
+    if options.break_rewrites {
+        for e in &mut diff_entries {
+            if e.status != DiffStatus::TypeChanged {
+                continue;
+            }
+            if e.score.is_some() {
+                continue;
+            }
+            if e.old_oid == zero_oid() || e.new_oid == zero_oid() {
+                continue;
+            }
+            let Ok(old_obj) = repo.odb.read(&e.old_oid) else {
+                continue;
+            };
+            let Ok(new_obj) = repo.odb.read(&e.new_oid) else {
+                continue;
+            };
+            if grit_lib::merge_file::is_binary(&old_obj.data)
+                || grit_lib::merge_file::is_binary(&new_obj.data)
+            {
+                continue;
+            }
+            if let Some(pct) = rewrite_dissimilarity_index_percent(&old_obj.data, &new_obj.data) {
+                e.score = Some(pct);
+            }
+        }
+    }
 
     let diff_entries = if options.ignore_all_space {
         filter_entries_ignore_all_space(&repo, diff_entries)
@@ -578,6 +649,13 @@ struct Options {
     relative: bool,
     check: bool,
     indent_heuristic: bool,
+    /// Git `-B` / `--break-rewrites`: split large in-place edits before rename/copy, then merge
+    /// surviving pairs (see `diffcore-break.c`).
+    break_rewrites: bool,
+    /// Internal break threshold (0–[`GIT_DIFF_MAX_SCORE`]); default matches Git `DEFAULT_BREAK_SCORE`.
+    break_score: u64,
+    /// Internal merge-back threshold after break (high 16 bits of Git's `break_opt`).
+    merge_after_break_score: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -593,6 +671,18 @@ impl Snapshot {
             oid,
         }
     }
+}
+
+fn blobish_object_kind(mode: u32) -> bool {
+    let t = mode & 0o170_000;
+    // Regular and executable files share the `0o100000` object type; symlinks use `0o120000`.
+    t == 0o100_000 || t == 0o120_000
+}
+
+fn typechange_between_snapshots(old: Snapshot, new_mode: u32) -> bool {
+    blobish_object_kind(old.mode)
+        && blobish_object_kind(new_mode)
+        && (old.mode & 0o170_000) != (new_mode & 0o170_000)
 }
 
 #[derive(Debug, Clone)]
@@ -654,6 +744,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut nul_terminated = false;
     let mut relative = false;
     let mut check = false;
+    let mut break_rewrites = false;
+    let mut break_score: u64 = grit_lib::diff::GIT_DIFF_DEFAULT_BREAK_SCORE;
+    let mut merge_after_break_score: u64 = GIT_DIFF_DEFAULT_MERGE_SCORE_AFTER_BREAK;
 
     let mut idx = 0usize;
     while idx < argv.len() {
@@ -686,6 +779,50 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 }
                 "--numstat" => {
                     numstat = true;
+                }
+                "-B" => {
+                    break_rewrites = true;
+                }
+                "--break-rewrites" => {
+                    break_rewrites = true;
+                }
+                _ if arg.starts_with("--break-rewrites=") => {
+                    break_rewrites = true;
+                    let rest = arg.trim_start_matches("--break-rewrites=");
+                    if !rest.is_empty() {
+                        let (b_part, m_part) = rest
+                            .split_once('/')
+                            .map(|(a, b)| (a, Some(b)))
+                            .unwrap_or((rest, None));
+                        break_score = parse_diff_rename_score_token(b_part)
+                            .with_context(|| format!("invalid --break-rewrites value: `{rest}`"))?;
+                        if let Some(m) = m_part {
+                            if m.is_empty() {
+                                bail!("invalid --break-rewrites value: `{rest}`");
+                            }
+                            merge_after_break_score = parse_diff_rename_score_token(m)
+                                .with_context(|| {
+                                    format!("invalid --break-rewrites value: `{rest}`")
+                                })?;
+                        }
+                    }
+                }
+                _ if arg.starts_with("-B") && arg.len() > 2 => {
+                    break_rewrites = true;
+                    let rest = &arg[2..];
+                    let (b_part, m_part) = rest
+                        .split_once('/')
+                        .map(|(a, b)| (a, Some(b)))
+                        .unwrap_or((rest, None));
+                    break_score = parse_diff_rename_score_token(b_part)
+                        .with_context(|| format!("invalid -B value: `{arg}`"))?;
+                    if let Some(m) = m_part {
+                        if m.is_empty() {
+                            bail!("invalid -B value: `{arg}`");
+                        }
+                        merge_after_break_score = parse_diff_rename_score_token(m)
+                            .with_context(|| format!("invalid -B value: `{arg}`"))?;
+                    }
                 }
                 "-M" | "--find-renames" => {
                     find_renames = Some(50);
@@ -868,6 +1005,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         relative,
         check,
         indent_heuristic,
+        break_rewrites,
+        break_score,
+        merge_after_break_score,
     })
 }
 
@@ -1053,15 +1193,27 @@ fn diff_tree_vs_index(
         let new = index_map.get(&path).copied();
         match (old, new) {
             (Some(old), Some(new)) if old == new => {}
-            // Same blob OID with only mode noise: Git does not treat this as blocking
-            // `git merge` / `git checkout` (see t4038 tree-sorting merge scenario).
-            (Some(old), Some(new)) if old.oid == new.oid => {}
-            (Some(old), Some(new)) => changes.push(RawChange {
-                path,
-                status: 'M',
-                old: Some(old),
-                new: Some(new),
-            }),
+            (Some(old), Some(new)) => {
+                let old_type = old.mode & 0o170_000;
+                let new_type = new.mode & 0o170_000;
+                let is_blob_pair = blobish_object_kind(old.mode) && blobish_object_kind(new.mode);
+                // Same blob OID: ignore chmod-only noise (t4038), but still report tree↔blob type
+                // flips when the OID happens to match (t4008).
+                if old.oid == new.oid && !(is_blob_pair && old_type != new_type) {
+                } else {
+                    let status = if is_blob_pair && old_type != new_type {
+                        'T'
+                    } else {
+                        'M'
+                    };
+                    changes.push(RawChange {
+                        path,
+                        status,
+                        old: Some(old),
+                        new: Some(new),
+                    });
+                }
+            }
             (Some(old), None) => changes.push(RawChange {
                 path,
                 status: 'D',
@@ -1142,6 +1294,11 @@ fn diff_tree_vs_worktree(
         let Some(wt_snapshot) = read_worktree_snapshot_from_meta(repo, &abs, &meta)? else {
             continue;
         };
+        if let Some(tree_side) = change.old {
+            if typechange_between_snapshots(tree_side, wt_snapshot.mode) {
+                change.status = 'T';
+            }
+        }
         change.new = Some(Snapshot {
             mode: wt_snapshot.mode,
             oid: zero_oid(),
@@ -1270,6 +1427,15 @@ fn diff_tree_vs_worktree(
                         );
                     } else {
                         let old = tree_map.get(path).copied().or(Some(*index_snapshot));
+                        let old_tree_side = tree_snap.unwrap_or(*index_snapshot);
+                        let status = if typechange_between_snapshots(
+                            old_tree_side,
+                            worktree_snapshot.mode,
+                        ) {
+                            'T'
+                        } else {
+                            'M'
+                        };
                         // Use zero OID for worktree side — the blob is not
                         // in the object database, matching git's behaviour.
                         let wt_placeholder = Snapshot {
@@ -1280,7 +1446,7 @@ fn diff_tree_vs_worktree(
                             path.clone(),
                             RawChange {
                                 path: path.clone(),
-                                status: 'M',
+                                status,
                                 old,
                                 new: Some(wt_placeholder),
                             },
@@ -1356,6 +1522,204 @@ fn entry_matches_pathspecs(
         .any(|spec| matches_pathspec_with_context(spec, path, ctx))
 }
 
+fn parse_mode_octal(mode: &str) -> Option<u32> {
+    u32::from_str_radix(mode, 8).ok()
+}
+
+fn is_break_eligible_blob_mode(mode: u32) -> bool {
+    mode == MODE_REGULAR || mode == MODE_EXECUTABLE
+}
+
+/// Split in-place edits that qualify for `diffcore-break` into delete+add pairs.
+///
+/// Returns the expanded entry list and the set of paths that were split (for `diffcore_merge_broken`).
+fn apply_diffcore_break_rewrites_split(
+    odb: &Odb,
+    work_root: Option<&Path>,
+    cached: bool,
+    entries: Vec<DiffEntry>,
+    break_score: u64,
+    merge_after_break_score: u64,
+) -> (Vec<DiffEntry>, HashSet<String>) {
+    let mut out = Vec::with_capacity(entries.len() + 8);
+    let mut broken_paths = HashSet::new();
+    for e in entries {
+        if e.status != DiffStatus::Modified {
+            out.push(e);
+            continue;
+        }
+        if e.old_oid == zero_oid() || e.new_oid == zero_oid() {
+            out.push(e);
+            continue;
+        }
+        let Some(old_mode) = parse_mode_octal(&e.old_mode) else {
+            out.push(e);
+            continue;
+        };
+        let Some(new_mode) = parse_mode_octal(&e.new_mode) else {
+            out.push(e);
+            continue;
+        };
+        if !is_break_eligible_blob_mode(old_mode) || !is_break_eligible_blob_mode(new_mode) {
+            out.push(e);
+            continue;
+        }
+        let Ok(old_obj) = odb.read(&e.old_oid) else {
+            out.push(e);
+            continue;
+        };
+        let new_data = if e.new_oid != zero_oid() {
+            match odb.read(&e.new_oid) {
+                Ok(obj) => obj.data,
+                Err(_) => {
+                    out.push(e);
+                    continue;
+                }
+            }
+        } else if !cached {
+            let Some(wt) = work_root else {
+                out.push(e);
+                continue;
+            };
+            let Some(path) = e.new_path.as_deref().or(e.old_path.as_deref()) else {
+                out.push(e);
+                continue;
+            };
+            match fs::read(wt.join(path)) {
+                Ok(b) => b,
+                Err(_) => {
+                    out.push(e);
+                    continue;
+                }
+            }
+        } else {
+            out.push(e);
+            continue;
+        };
+        let old_data = old_obj.data;
+        if grit_lib::merge_file::is_binary(&old_data) || grit_lib::merge_file::is_binary(&new_data)
+        {
+            out.push(e);
+            continue;
+        }
+        if !should_break_rewrite_pair(&old_data, &new_data, break_score) {
+            out.push(e);
+            continue;
+        }
+        let merge_ms = rewrite_merge_score(&old_data, &new_data).unwrap_or(0);
+        let dissim_pct = if merge_ms < merge_after_break_score {
+            None
+        } else {
+            rewrite_dissimilarity_index_percent(&old_data, &new_data)
+        };
+        let Some(path) = e.old_path.clone().or_else(|| e.new_path.clone()) else {
+            out.push(e);
+            continue;
+        };
+        broken_paths.insert(path.clone());
+        out.push(DiffEntry {
+            status: DiffStatus::Deleted,
+            old_path: Some(path.clone()),
+            new_path: None,
+            old_mode: e.old_mode.clone(),
+            new_mode: "000000".to_owned(),
+            old_oid: e.old_oid,
+            new_oid: zero_oid(),
+            score: dissim_pct,
+        });
+        out.push(DiffEntry {
+            status: DiffStatus::Added,
+            old_path: None,
+            new_path: Some(path),
+            old_mode: "000000".to_owned(),
+            new_mode: e.new_mode.clone(),
+            old_oid: zero_oid(),
+            new_oid: e.new_oid,
+            score: dissim_pct,
+        });
+    }
+    (out, broken_paths)
+}
+
+/// After `-B` + rename detection, drop the leftover delete at a path that is already the
+/// destination of a rename/copy (consumed break half); see `t4008-diff-break-rewrite` #4.
+fn drop_break_delete_superseded_by_rename_dest(entries: Vec<DiffEntry>) -> Vec<DiffEntry> {
+    let mut targets: HashSet<String> = HashSet::new();
+    for e in &entries {
+        if matches!(e.status, DiffStatus::Renamed | DiffStatus::Copied) {
+            if let Some(p) = e.new_path.clone() {
+                targets.insert(p);
+            }
+        }
+    }
+    let mut out: Vec<DiffEntry> = entries
+        .into_iter()
+        .filter(|e| {
+            if e.status != DiffStatus::Deleted {
+                return true;
+            }
+            let Some(p) = e.old_path.as_deref() else {
+                return true;
+            };
+            !targets.contains(p)
+        })
+        .collect();
+    out.sort_by(|a, b| a.path().cmp(b.path()));
+    out
+}
+
+/// Merge delete+add pairs that survived rename/copy back into a single modification (Git
+/// `diffcore_merge_broken`).
+fn merge_broken_rewrite_pairs(
+    entries: Vec<DiffEntry>,
+    broken_paths: &HashSet<String>,
+) -> Vec<DiffEntry> {
+    let mut slots: HashMap<String, (Option<DiffEntry>, Option<DiffEntry>)> = HashMap::new();
+    let mut others = Vec::new();
+    for e in entries {
+        if e.status == DiffStatus::Deleted {
+            if let Some(p) = e.old_path.clone() {
+                if broken_paths.contains(p.as_str()) {
+                    slots.entry(p).or_default().0 = Some(e);
+                    continue;
+                }
+            }
+        }
+        if e.status == DiffStatus::Added {
+            if let Some(p) = e.new_path.clone() {
+                if broken_paths.contains(p.as_str()) {
+                    slots.entry(p).or_default().1 = Some(e);
+                    continue;
+                }
+            }
+        }
+        others.push(e);
+    }
+    let mut merged = Vec::new();
+    for (path, (d_opt, a_opt)) in slots {
+        match (d_opt, a_opt) {
+            (Some(d), Some(a)) => {
+                merged.push(DiffEntry {
+                    status: DiffStatus::Modified,
+                    old_path: Some(path.clone()),
+                    new_path: Some(path),
+                    old_mode: d.old_mode,
+                    new_mode: a.new_mode,
+                    old_oid: d.old_oid,
+                    new_oid: a.new_oid,
+                    score: d.score.or(a.score),
+                });
+            }
+            (Some(d), None) => merged.push(d),
+            (None, Some(a)) => merged.push(a),
+            (None, None) => {}
+        }
+    }
+    others.extend(merged);
+    others.sort_by(|a, b| a.path().cmp(b.path()));
+    others
+}
+
 fn effective_index_path(repo: &Repository) -> Result<PathBuf> {
     if let Ok(raw) = std::env::var("GIT_INDEX_FILE") {
         let path = PathBuf::from(raw);
@@ -1401,6 +1765,32 @@ fn raw_change_to_diff_entry(change: &RawChange) -> DiffEntry {
         old_oid: change.old.map_or_else(zero_oid, |s| s.oid),
         new_oid: change.new.map_or_else(zero_oid, |s| s.oid),
         score: None,
+    }
+}
+
+/// For uncached `diff-index`, added paths may record `new_oid` as zero while the index holds the
+/// real blob. Git still prints the worktree blob hash on the new side of raw output (`t4008` #8).
+fn uncached_added_worktree_blob_oid(repo: &Repository, entry: &DiffEntry) -> Option<ObjectId> {
+    let wt = repo.work_tree.as_deref()?;
+    let path = entry.new_path.as_deref()?;
+    let abs = wt.join(path);
+    let meta = fs::symlink_metadata(&abs).ok()?;
+    if meta.file_type().is_symlink() {
+        let target = fs::read_link(&abs).ok()?;
+        Some(Odb::hash_object_data(
+            ObjectKind::Blob,
+            target.as_os_str().as_bytes(),
+        ))
+    } else if meta.file_type().is_file() {
+        let data = fs::read(&abs).ok()?;
+        let oid = Odb::hash_object_data(ObjectKind::Blob, &data);
+        // Uncached raw adds of the empty blob still print all-zero new OIDs (`t1501-work-tree`).
+        if oid == empty_blob_oid() {
+            return None;
+        }
+        Some(oid)
+    } else {
+        None
     }
 }
 
@@ -1486,16 +1876,24 @@ fn write_raw_diff_entry_z(
 ) -> Result<()> {
     let width = abbrev.unwrap_or(40).clamp(4, 40);
 
-    // Uncached `diff-index` additions: old side is absent in the tree (zeros). The new side is the
-    // index blob OID when the work tree still matches the index; when the file differs from the
-    // index, the diff machinery records a placeholder zero OID. Skip-worktree / assume-unchanged
-    // uses the normal OID path (t7011). See t4007-rename-3 and t1501-work-tree.
+    // Uncached `diff-index` additions: old side is absent in the tree (zeros). When the in-memory
+    // entry still uses a zero placeholder, resolve the worktree blob for raw output (t4008 #8)
+    // while skip-worktree / assume-unchanged keep index OIDs (t7011). See t1501-work-tree.
     let (old_oid_disp, new_oid_disp) = if diff_index_uncached
         && entry.status == DiffStatus::Added
         && !raw_diff_index_show_index_oid_for_added(index, entry)
         && entry.new_oid == zero_oid()
     {
-        ("0".repeat(width), "0".repeat(width))
+        let new_id = uncached_added_worktree_blob_oid(repo, entry).unwrap_or_else(zero_oid);
+        let new_disp = if new_id == zero_oid() {
+            "0".repeat(width)
+        } else {
+            match abbrev {
+                Some(min_len) => abbreviate_object_id(repo, new_id, min_len)?,
+                None => new_id.to_hex(),
+            }
+        };
+        ("0".repeat(width), new_disp)
     } else {
         let old_oid = if entry.old_oid == zero_oid() {
             "0".repeat(width)
@@ -1519,6 +1917,7 @@ fn write_raw_diff_entry_z(
     let status_str = match (entry.status, entry.score) {
         (DiffStatus::Renamed, Some(s)) => format!("R{s:03}"),
         (DiffStatus::Copied, Some(s)) => format!("C{s:03}"),
+        (DiffStatus::TypeChanged, Some(s)) => format!("T{s:03}"),
         _ => entry.status.letter().to_string(),
     };
 
@@ -1555,12 +1954,23 @@ fn render_raw_diff_entry(
 ) -> Result<String> {
     let width = abbrev.unwrap_or(40).clamp(4, 40);
 
+    // Uncached `diff-index`: when the new side is still a zero placeholder, prefer hashing the
+    // worktree for display (t4008) unless skip-worktree/assume-unchanged (t7011).
     let (old_oid_disp, new_oid_disp) = if diff_index_uncached
         && entry.status == DiffStatus::Added
         && !raw_diff_index_show_index_oid_for_added(index, entry)
         && entry.new_oid == zero_oid()
     {
-        ("0".repeat(width), "0".repeat(width))
+        let new_id = uncached_added_worktree_blob_oid(repo, entry).unwrap_or_else(zero_oid);
+        let new_disp = if new_id == zero_oid() {
+            "0".repeat(width)
+        } else {
+            match abbrev {
+                Some(min_len) => abbreviate_object_id(repo, new_id, min_len)?,
+                None => new_id.to_hex(),
+            }
+        };
+        ("0".repeat(width), new_disp)
     } else {
         let old_oid = if entry.old_oid == zero_oid() {
             "0".repeat(width)
@@ -1584,6 +1994,7 @@ fn render_raw_diff_entry(
     let status_str = match (entry.status, entry.score) {
         (DiffStatus::Renamed, Some(s)) => format!("R{:03}", s),
         (DiffStatus::Copied, Some(s)) => format!("C{:03}", s),
+        (DiffStatus::TypeChanged, Some(s)) => format!("T{:03}", s),
         _ => entry.status.letter().to_string(),
     };
 

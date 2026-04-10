@@ -2140,6 +2140,7 @@ fn apply_rename_copy_detection(
 
         detect_copies(
             odb,
+            None,
             entries,
             threshold,
             find_copies_harder,
@@ -2151,7 +2152,7 @@ fn apply_rename_copy_detection(
             .as_ref()
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(50);
-        detect_renames(odb, entries, threshold)
+        detect_renames(odb, None, entries, threshold)
     } else {
         entries
     }

@@ -7755,7 +7755,7 @@ fn remerge_diff_entries(repo: &Repository, info: &CommitInfo) -> Result<Vec<Diff
     }
     let (remerge_tree, _) = remerge_merge_tree(repo, info.parents[0], info.parents[1])?;
     let raw = diff_trees(&repo.odb, Some(&remerge_tree), Some(&info.tree), "")?;
-    Ok(detect_renames(&repo.odb, raw, 50))
+    Ok(detect_renames(&repo.odb, None, raw, 50))
 }
 
 fn commit_has_remerge_diff_status(
@@ -7859,7 +7859,7 @@ fn follow_filter(
         };
 
         let raw_entries = diff_trees(odb, parent_tree.as_ref(), Some(&info.tree), "")?;
-        let entries = detect_renames(odb, raw_entries, 50);
+        let entries = detect_renames(odb, None, raw_entries, 50);
 
         let mut touches = false;
         for entry in &entries {

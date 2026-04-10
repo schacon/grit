@@ -2017,7 +2017,7 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     };
     let entries = if let Some(threshold) = rename_threshold {
-        detect_renames(&repo.odb, entries, threshold)
+        detect_renames(&repo.odb, None, entries, threshold)
     } else {
         entries
     };

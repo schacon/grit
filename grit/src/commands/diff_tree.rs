@@ -1615,10 +1615,11 @@ fn prepare_diff_tree_entries<'a>(
         Vec::new()
     };
     let mut out = if let Some(threshold) = opts.find_renames {
-        let mut result = detect_renames(odb, entries, threshold);
+        let mut result = detect_renames(odb, None, entries, threshold);
         if let Some(copy_threshold) = opts.find_copies {
             result = lib_detect_copies(
                 odb,
+                None,
                 result,
                 copy_threshold,
                 opts.find_copies_harder,
@@ -1629,6 +1630,7 @@ fn prepare_diff_tree_entries<'a>(
     } else if let Some(copy_threshold) = opts.find_copies {
         lib_detect_copies(
             odb,
+            None,
             entries,
             copy_threshold,
             opts.find_copies_harder,

@@ -468,7 +468,7 @@ commit → check it off → move on.
 - [x] `t4035-diff-quiet` — Return value of diffs (23/23)
 - [ ] `t4213-log-tabexpand` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — log/show --expand-tabs
 - [x] `t4058-diff-duplicates` ████████████████████ 16/16 (0 left) — test tree diff when trees have duplicate entries
-- [ ] `t4008-diff-break-rewrite` ███████░░░░░░░░░░░░░ 5/14 (9 left) — Break and then rename
+- [x] `t4008-diff-break-rewrite` ████████████████████ 14/14 (0 left) — Break and then rename (`diff-index -B` break/merge, `-B -M` copy pass, typechange raw `T`, uncached worktree OIDs for rename/copy)
 
 - [x] `t4120-apply-popt` ████████████████████ 12/12 (0 left) — git apply -p handling.
 - [ ] `t4067-diff-partial-clone` ░░░░░░░░░░░░░░░░░░░░ 0/9 (9 left) — behavior of diff when reading objects in a partial clone

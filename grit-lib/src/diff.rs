@@ -1497,6 +1497,98 @@ pub fn diff_tree_to_worktree(
 
 // ── Rename detection ────────────────────────────────────────────────
 
+fn read_added_entry_bytes(
+    odb: &Odb,
+    entry: &DiffEntry,
+    work_root: Option<&Path>,
+) -> Option<Vec<u8>> {
+    if entry.new_oid != zero_oid() {
+        return odb.read(&entry.new_oid).ok().map(|obj| obj.data);
+    }
+    let path = entry.new_path.as_deref()?;
+    let root = work_root?;
+    fs::read(root.join(path)).ok()
+}
+
+fn modified_as_copy_from_sources(
+    odb: &Odb,
+    work_root: Option<&Path>,
+    e: &DiffEntry,
+    threshold: u32,
+    sources: &[(String, ObjectId, bool)],
+    source_contents: &[Option<Vec<u8>>],
+    source_tree_entries: &[(String, String, ObjectId)],
+) -> Option<DiffEntry> {
+    fn regular_file_mode(mode: &str) -> bool {
+        mode == "100644" || mode == "100755"
+    }
+
+    if e.status != DiffStatus::Modified || !regular_file_mode(&e.new_mode) {
+        return None;
+    }
+    let new_data = read_added_entry_bytes(odb, e, work_root)?;
+    let new_oid_eff = if e.new_oid != zero_oid() {
+        e.new_oid
+    } else {
+        Odb::hash_object_data(ObjectKind::Blob, &new_data)
+    };
+
+    let mut best: Option<(usize, u32)> = None;
+    for (si, (src_path, src_oid, is_deleted)) in sources.iter().enumerate() {
+        if *is_deleted {
+            continue;
+        }
+        if e.new_path.as_deref() == Some(src_path.as_str()) {
+            continue;
+        }
+        let src_mode_str = source_tree_entries
+            .iter()
+            .find(|(p, _, _)| p == src_path)
+            .map(|(_, m, _)| m.as_str())
+            .unwrap_or("100644");
+        if !regular_file_mode(src_mode_str) {
+            continue;
+        }
+
+        let score = if *src_oid == new_oid_eff {
+            100
+        } else {
+            match (&source_contents[si], Some(new_data.as_slice())) {
+                (Some(old_data), Some(nd)) => compute_similarity(old_data, nd),
+                _ => 0,
+            }
+        };
+        if score >= threshold {
+            let replace = match best {
+                None => true,
+                Some((_, s)) => score > s,
+            };
+            if replace {
+                best = Some((si, score));
+            }
+        }
+    }
+
+    let (si, score) = best?;
+    let (src_path, src_oid, _) = &sources[si];
+    let src_mode = source_tree_entries
+        .iter()
+        .find(|(p, _, _)| p == src_path)
+        .map(|(_, m, _)| m.clone())
+        .unwrap_or_else(|| e.old_mode.clone());
+
+    Some(DiffEntry {
+        status: DiffStatus::Copied,
+        old_path: Some(src_path.clone()),
+        new_path: e.new_path.clone(),
+        old_mode: src_mode,
+        new_mode: e.new_mode.clone(),
+        old_oid: *src_oid,
+        new_oid: e.new_oid,
+        score: Some(score),
+    })
+}
+
 /// Detect renames by pairing Deleted and Added entries with similar content.
 ///
 /// `threshold` is the minimum similarity percentage (0–100) for a pair to
@@ -1504,7 +1596,16 @@ pub fn diff_tree_to_worktree(
 /// content from the ODB to compute a line-level similarity score.
 ///
 /// Exact-OID matches are always 100% similar regardless of content.
-pub fn detect_renames(odb: &Odb, entries: Vec<DiffEntry>, threshold: u32) -> Vec<DiffEntry> {
+///
+/// When `work_root` is set, added entries whose `new_oid` is the zero placeholder (as in
+/// uncached `diff-index` when the work tree diverged from the index) load content from disk
+/// under that root instead of the object database.
+pub fn detect_renames(
+    odb: &Odb,
+    work_root: Option<&Path>,
+    entries: Vec<DiffEntry>,
+    threshold: u32,
+) -> Vec<DiffEntry> {
     // Split entries into deleted, added, and others.
     let mut deleted: Vec<DiffEntry> = Vec::new();
     let mut added: Vec<DiffEntry> = Vec::new();
@@ -1536,18 +1637,28 @@ pub fn detect_renames(odb: &Odb, entries: Vec<DiffEntry>, threshold: u32) -> Vec
     // Read content for all added blobs.
     let added_contents: Vec<Option<Vec<u8>>> = added
         .iter()
-        .map(|a| odb.read(&a.new_oid).ok().map(|obj| obj.data))
+        .map(|a| read_added_entry_bytes(odb, a, work_root))
         .collect();
 
     // Build a matrix of similarity scores and find the best pairings.
     // We use a greedy approach: pick the highest-scoring pair first.
     let mut scores: Vec<(u32, usize, usize)> = Vec::new();
 
+    fn is_regularish_mode(mode: &str) -> bool {
+        mode == "100644" || mode == "100755"
+    }
+
     for (di, del) in deleted.iter().enumerate() {
         for (ai, add) in added.iter().enumerate() {
             // Exact OID match → 100%
             if del.old_oid == add.new_oid {
                 scores.push((100, di, ai));
+                continue;
+            }
+
+            // Do not use line similarity across file types (e.g. regular ↔ symlink); Git keeps these
+            // as separate changes (`t4008-diff-break-rewrite` #7).
+            if !is_regularish_mode(&del.old_mode) || !is_regularish_mode(&add.new_mode) {
                 continue;
             }
 
@@ -1626,6 +1737,7 @@ pub fn detect_renames(odb: &Odb, entries: Vec<DiffEntry>, threshold: u32) -> Vec
 /// used when `find_copies_harder` is true to consider unmodified files as copy sources.
 pub fn detect_copies(
     odb: &Odb,
+    work_root: Option<&Path>,
     entries: Vec<DiffEntry>,
     threshold: u32,
     find_copies_harder: bool,
@@ -1646,13 +1758,6 @@ pub fn detect_copies(
         }
     }
 
-    if added.is_empty() {
-        let mut result = others;
-        result.extend(deleted);
-        result.sort_by(|a, b| a.path().cmp(b.path()));
-        return result;
-    }
-
     // Build source candidates: deleted files, modified files, and optionally tree entries.
     // Track which sources are from deleted files (can become renames).
     let mut sources: Vec<(String, ObjectId, bool)> = Vec::new(); // (path, oid, is_deleted)
@@ -1665,9 +1770,10 @@ pub fn detect_copies(
         }
     }
 
-    // Modified files are always candidates for -C.
+    // Modified and type-changed files are candidates for `-C` (e.g. symlink rewrite leaves the
+    // old blob available as a copy source for another path; see `t4008-diff-break-rewrite`).
     for entry in &others {
-        if entry.status == DiffStatus::Modified {
+        if matches!(entry.status, DiffStatus::Modified | DiffStatus::TypeChanged) {
             if let Some(ref old_path) = entry.old_path {
                 if !sources.iter().any(|(p, _, _)| p == old_path) {
                     sources.push((old_path.clone(), entry.old_oid, false));
@@ -1699,118 +1805,122 @@ pub fn detect_copies(
         .map(|(_, oid, _)| odb.read(oid).ok().map(|obj| obj.data))
         .collect();
 
-    // Read content for added blobs.
-    let added_contents: Vec<Option<Vec<u8>>> = added
-        .iter()
-        .map(|a| odb.read(&a.new_oid).ok().map(|obj| obj.data))
-        .collect();
-
-    // Build score matrix: (score, source_idx, added_idx)
-    let mut scores: Vec<(u32, usize, usize)> = Vec::new();
-    for (si, (src_path, src_oid, _)) in sources.iter().enumerate() {
-        for (ai, add) in added.iter().enumerate() {
-            // Never pair a path with itself as copy source (matches Git; avoids
-            // arbitrary tie-breaking when several sources share the same blob).
-            if add.new_path.as_deref() == Some(src_path.as_str()) {
-                continue;
-            }
-            if *src_oid == add.new_oid {
-                scores.push((100, si, ai));
-                continue;
-            }
-            let score = match (&source_contents[si], &added_contents[ai]) {
-                (Some(old_data), Some(new_data)) => compute_similarity(old_data, new_data),
-                _ => 0,
-            };
-            if score >= threshold {
-                scores.push((score, si, ai));
-            }
-        }
-    }
-
-    // Sort by score descending.
-    scores.sort_by(|a, b| b.0.cmp(&a.0));
-
-    // Build source->added mappings, each added file assigned to best source.
-    let mut used_added = vec![false; added.len()];
-    let mut source_to_added: HashMap<usize, Vec<(usize, u32)>> = HashMap::new();
-    for &(score, si, ai) in &scores {
-        if used_added[ai] {
-            continue;
-        }
-        used_added[ai] = true;
-        source_to_added.entry(si).or_default().push((ai, score));
-    }
-
-    // Determine which become Rename vs Copy.
-    // For each deleted source, at most one assignment becomes a Rename;
-    // the rest become Copies. Pick the last alphabetically as rename target.
-    let mut used_added2 = vec![false; added.len()];
     let mut result_entries: Vec<DiffEntry> = Vec::new();
-
-    // Track which deleted sources got a rename.
     let mut renamed_deleted: HashSet<usize> = HashSet::new();
+    let mut used_added2 = vec![false; added.len()];
 
-    // For each deleted source, pick one assignment as Rename, rest as Copy.
-    for (&si, assignments_for_src) in &source_to_added {
-        let (_, _, is_deleted) = &sources[si];
-        if *is_deleted && !assignments_for_src.is_empty() {
-            // Pick the last one (by path) as the rename target.
-            // Git tends to pick the rename as the last alphabetically.
-            let rename_ai = assignments_for_src
-                .iter()
-                .max_by_key(|(ai, _score)| added[*ai].path().to_string())
-                .map(|(ai, _)| *ai);
+    if !added.is_empty() {
+        // Read content for added blobs.
+        let added_contents: Vec<Option<Vec<u8>>> = added
+            .iter()
+            .map(|a| read_added_entry_bytes(odb, a, work_root))
+            .collect();
 
-            for &(ai, score) in assignments_for_src {
-                let (ref src_path, _, _) = sources[si];
-                let add = &added[ai];
-                let src_mode = source_tree_entries
-                    .iter()
-                    .find(|(p, _, _)| p == src_path)
-                    .map(|(_, m, _)| m.clone())
-                    .unwrap_or_else(|| add.old_mode.clone());
-
-                let is_rename = Some(ai) == rename_ai;
-                result_entries.push(DiffEntry {
-                    status: if is_rename {
-                        DiffStatus::Renamed
-                    } else {
-                        DiffStatus::Copied
-                    },
-                    old_path: Some(src_path.clone()),
-                    new_path: add.new_path.clone(),
-                    old_mode: src_mode,
-                    new_mode: add.new_mode.clone(),
-                    old_oid: sources[si].1,
-                    new_oid: add.new_oid,
-                    score: Some(score),
-                });
-                used_added2[ai] = true;
+        // Build score matrix: (score, source_idx, added_idx)
+        let mut scores: Vec<(u32, usize, usize)> = Vec::new();
+        for (si, (src_path, src_oid, _)) in sources.iter().enumerate() {
+            for (ai, add) in added.iter().enumerate() {
+                // Never pair a path with itself as copy source (matches Git; avoids
+                // arbitrary tie-breaking when several sources share the same blob).
+                if add.new_path.as_deref() == Some(src_path.as_str()) {
+                    continue;
+                }
+                let add_oid = if add.new_oid != zero_oid() {
+                    add.new_oid
+                } else if let Some(ref data) = added_contents[ai] {
+                    Odb::hash_object_data(ObjectKind::Blob, data)
+                } else {
+                    zero_oid()
+                };
+                if *src_oid == add_oid {
+                    scores.push((100, si, ai));
+                    continue;
+                }
+                let score = match (&source_contents[si], &added_contents[ai]) {
+                    (Some(old_data), Some(new_data)) => compute_similarity(old_data, new_data),
+                    _ => 0,
+                };
+                if score >= threshold {
+                    scores.push((score, si, ai));
+                }
             }
-            renamed_deleted.insert(si);
-        } else {
-            // Non-deleted source: all assignments are copies.
-            for &(ai, score) in assignments_for_src {
-                let (ref src_path, _, _) = sources[si];
-                let add = &added[ai];
-                let src_mode = source_tree_entries
-                    .iter()
-                    .find(|(p, _, _)| p == src_path)
-                    .map(|(_, m, _)| m.clone())
-                    .unwrap_or_else(|| add.old_mode.clone());
+        }
 
-                result_entries.push(DiffEntry {
-                    status: DiffStatus::Copied,
-                    old_path: Some(src_path.clone()),
-                    new_path: add.new_path.clone(),
-                    old_mode: src_mode,
-                    new_mode: add.new_mode.clone(),
-                    old_oid: sources[si].1,
-                    new_oid: add.new_oid,
-                    score: Some(score),
-                });
-                used_added2[ai] = true;
+        // Sort by score descending.
+        scores.sort_by(|a, b| b.0.cmp(&a.0));
+
+        // Build source->added mappings, each added file assigned to best source.
+        let mut used_added = vec![false; added.len()];
+        let mut source_to_added: HashMap<usize, Vec<(usize, u32)>> = HashMap::new();
+        for &(score, si, ai) in &scores {
+            if used_added[ai] {
+                continue;
+            }
+            used_added[ai] = true;
+            source_to_added.entry(si).or_default().push((ai, score));
+        }
+
+        // For each deleted source, pick one assignment as Rename, rest as Copy.
+        for (&si, assignments_for_src) in &source_to_added {
+            let (_, _, is_deleted) = &sources[si];
+            if *is_deleted && !assignments_for_src.is_empty() {
+                // Pick the last one (by path) as the rename target.
+                // Git tends to pick the rename as the last alphabetically.
+                let rename_ai = assignments_for_src
+                    .iter()
+                    .max_by_key(|(ai, _score)| added[*ai].path().to_string())
+                    .map(|(ai, _)| *ai);
+
+                for &(ai, score) in assignments_for_src {
+                    let (ref src_path, _, _) = sources[si];
+                    let add = &added[ai];
+                    let src_mode = source_tree_entries
+                        .iter()
+                        .find(|(p, _, _)| p == src_path)
+                        .map(|(_, m, _)| m.clone())
+                        .unwrap_or_else(|| add.old_mode.clone());
+
+                    let is_rename = Some(ai) == rename_ai;
+                    result_entries.push(DiffEntry {
+                        status: if is_rename {
+                            DiffStatus::Renamed
+                        } else {
+                            DiffStatus::Copied
+                        },
+                        old_path: Some(src_path.clone()),
+                        new_path: add.new_path.clone(),
+                        old_mode: src_mode,
+                        new_mode: add.new_mode.clone(),
+                        old_oid: sources[si].1,
+                        new_oid: add.new_oid,
+                        score: Some(score),
+                    });
+                    used_added2[ai] = true;
+                }
+                renamed_deleted.insert(si);
+            } else {
+                // Non-deleted source: all assignments are copies.
+                for &(ai, score) in assignments_for_src {
+                    let (ref src_path, _, _) = sources[si];
+                    let add = &added[ai];
+                    let src_mode = source_tree_entries
+                        .iter()
+                        .find(|(p, _, _)| p == src_path)
+                        .map(|(_, m, _)| m.clone())
+                        .unwrap_or_else(|| add.old_mode.clone());
+
+                    result_entries.push(DiffEntry {
+                        status: DiffStatus::Copied,
+                        old_path: Some(src_path.clone()),
+                        new_path: add.new_path.clone(),
+                        old_mode: src_mode,
+                        new_mode: add.new_mode.clone(),
+                        old_oid: sources[si].1,
+                        new_oid: add.new_oid,
+                        score: Some(score),
+                    });
+                    used_added2[ai] = true;
+                }
             }
         }
     }
@@ -1837,8 +1947,25 @@ pub fn detect_copies(
         }
     }
 
-    result.sort_by(|a, b| a.path().cmp(b.path()));
-    result
+    let mut final_result = Vec::with_capacity(result.len());
+    for e in result {
+        if let Some(c) = modified_as_copy_from_sources(
+            odb,
+            work_root,
+            &e,
+            threshold,
+            &sources,
+            &source_contents,
+            source_tree_entries,
+        ) {
+            final_result.push(c);
+        } else {
+            final_result.push(e);
+        }
+    }
+
+    final_result.sort_by(|a, b| a.path().cmp(b.path()));
+    final_result
 }
 
 /// Apply Git-style rename and optional copy detection for index↔worktree diffs.
@@ -1857,7 +1984,7 @@ pub fn status_apply_rename_copy_detection(
     copies: bool,
     head_tree: Option<&ObjectId>,
 ) -> Result<Vec<DiffEntry>> {
-    let after_renames = detect_renames(odb, unstaged_raw, threshold);
+    let after_renames = detect_renames(odb, None, unstaged_raw, threshold);
     if !copies {
         return Ok(after_renames);
     }
@@ -1870,6 +1997,7 @@ pub fn status_apply_rename_copy_detection(
     };
     Ok(detect_copies(
         odb,
+        None,
         after_renames,
         threshold,
         false,
@@ -2758,9 +2886,16 @@ pub fn count_git_lines(data: &[u8]) -> usize {
     count
 }
 
-const DIFF_MAX_SCORE: u64 = 60_000;
+/// Internal maximum diff score used by Git rename/break heuristics (`MAX_SCORE` in `diffcore.h`).
+pub const GIT_DIFF_MAX_SCORE: u64 = 60_000;
+const DIFF_MAX_SCORE: u64 = GIT_DIFF_MAX_SCORE;
 const DIFF_MINIMUM_BREAK_SIZE: usize = 400;
 const DIFF_DEFAULT_BREAK_SCORE: u64 = 30_000;
+/// Default break threshold (`DEFAULT_BREAK_SCORE` in `diffcore.h`), internal 0–[`GIT_DIFF_MAX_SCORE`] scale.
+pub const GIT_DIFF_DEFAULT_BREAK_SCORE: u64 = DIFF_DEFAULT_BREAK_SCORE;
+/// Default merge threshold after a break (`DEFAULT_MERGE_SCORE` in `diffcore.h`): pairs broken for
+/// rename/copy but not consumed are merged back when deletion-weight is below this (60% by default).
+pub const GIT_DIFF_DEFAULT_MERGE_SCORE_AFTER_BREAK: u64 = 36_000;
 const DIFF_HASHBASE: u32 = 107_927;
 
 #[derive(Clone, Copy, Default)]
@@ -2968,6 +3103,51 @@ pub fn diffcore_count_changes(old: &[u8], new: &[u8]) -> (u64, u64) {
 #[must_use]
 pub fn should_break_rewrite_for_stat(old: &[u8], new: &[u8]) -> bool {
     should_break_rewrite_inner(old, new, DIFF_DEFAULT_BREAK_SCORE)
+}
+
+/// Whether an in-place blob edit should be split into delete+create for rename/copy (`should_break`
+/// in `diffcore-break.c`). `break_score` is on the internal 0–[`GIT_DIFF_MAX_SCORE`] scale (default
+/// [`DIFF_DEFAULT_BREAK_SCORE`]).
+#[must_use]
+pub fn should_break_rewrite_pair(old: &[u8], new: &[u8], break_score: u64) -> bool {
+    should_break_rewrite_inner(old, new, break_score)
+}
+
+/// Parse a single Git `parse_rename_score` token (`50`, `50%`, decimal forms) into internal
+/// 0–[`GIT_DIFF_MAX_SCORE`] units.
+pub fn parse_diff_rename_score_token(arg: &str) -> Option<u64> {
+    let mut num: u64 = 0;
+    let mut scale: u64 = 1;
+    let mut dot = false;
+    let mut saw_digit = false;
+    for ch in arg.chars() {
+        if !dot && ch == '.' {
+            scale = 1;
+            dot = true;
+            continue;
+        }
+        if ch == '%' {
+            scale = if dot { scale.saturating_mul(100) } else { 100 };
+            break;
+        }
+        if ch.is_ascii_digit() {
+            saw_digit = true;
+            if scale < 100_000 {
+                scale = scale.saturating_mul(10);
+                num = num.saturating_mul(10) + u64::from(ch as u8 - b'0');
+            }
+        } else {
+            break;
+        }
+    }
+    if !saw_digit {
+        return None;
+    }
+    Some(if num >= scale {
+        GIT_DIFF_MAX_SCORE
+    } else {
+        GIT_DIFF_MAX_SCORE * num / scale
+    })
 }
 
 /// Git `merge_score` from `diffcore-break.c` when a pair is considered broken: how much of the

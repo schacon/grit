@@ -1026,7 +1026,7 @@ fn diff_tree_pair(
     let old = old_tree.copied();
     let mut entries = diff_trees(odb, old.as_ref(), Some(new_tree), "")?;
     if rename_threshold < 100 {
-        entries = detect_renames(odb, entries, rename_threshold);
+        entries = detect_renames(odb, None, entries, rename_threshold);
     }
     Ok(filter_entries_for_paths(entries, paths))
 }
