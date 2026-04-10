@@ -7,10 +7,12 @@ use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::objects::ObjectKind;
 use grit_lib::odb::Odb;
-use grit_lib::refs::{list_refs, read_ref_file, Ref};
+use grit_lib::refs::read_ref_file;
+use grit_lib::refs::Ref;
 use grit_lib::repo::Repository;
 use std::collections::BTreeMap;
 use std::fs;
+use std::io;
 use std::path::Path;
 
 /// Arguments for `grit pack-refs`.
@@ -38,38 +40,77 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("failed to discover repository")?;
     let git_dir = &repo.git_dir;
 
-    // Collect all loose refs under refs/
-    let refs = list_refs(git_dir, "refs/").context("failed to list refs")?;
-
     // Read existing packed-refs to merge with
     let mut packed = read_existing_packed_refs(git_dir)?;
 
-    if refs.is_empty() && packed.is_empty() {
+    // Git's packed-refs format cannot represent symbolic refs. Only pack loose files that store
+    // a direct object id; leave symbolic refs loose and drop any stale packed line for the same
+    // name (matches `git pack-refs` / `refs/packed-backend.c`).
+    let mut direct_loose: Vec<String> = Vec::new();
+    walk_loose_under_refs(git_dir, "refs/", &mut |refname, path| {
+        match read_ref_file(path).context(format!("reading {refname}"))? {
+            Ref::Symbolic(_) => {
+                packed.remove(refname);
+            }
+            Ref::Direct(oid) => {
+                let peeled = peel_to_non_tag(&repo.odb, &oid);
+                packed.insert(
+                    refname.to_owned(),
+                    PackedRef {
+                        oid: oid.to_string(),
+                        peeled,
+                    },
+                );
+                direct_loose.push(refname.to_owned());
+            }
+        }
+        Ok(())
+    })?;
+
+    if packed.is_empty() {
+        let _ = fs::remove_file(git_dir.join("packed-refs"));
         return Ok(());
     }
 
-    // Add/update with loose refs
-    for (refname, oid) in &refs {
-        let peeled = peel_to_non_tag(&repo.odb, oid);
-        packed.insert(
-            refname.clone(),
-            PackedRef {
-                oid: oid.to_string(),
-                peeled,
-            },
-        );
-    }
-
-    // Write packed-refs (always rewrite to normalize header)
     write_packed_refs(git_dir, &packed).context("failed to write packed-refs")?;
 
-    // Prune loose refs unless --no-prune
     if !args.no_prune {
-        for (refname, _) in &refs {
+        for refname in &direct_loose {
             prune_loose_ref(git_dir, refname);
         }
     }
 
+    Ok(())
+}
+
+fn walk_loose_under_refs(
+    git_dir: &Path,
+    prefix: &str,
+    visit: &mut impl FnMut(&str, &Path) -> Result<()>,
+) -> Result<()> {
+    let dir = git_dir.join(prefix.trim_end_matches('/'));
+    let read = match fs::read_dir(&dir) {
+        Ok(r) => r,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+
+    for entry in read {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+        let refname = format!("{prefix}{name}");
+        let path = entry.path();
+        let meta = match fs::metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if meta.is_dir() {
+            walk_loose_under_refs(git_dir, &format!("{refname}/"), visit)?;
+        } else if meta.is_file() {
+            visit(&refname, &path)?;
+        }
+    }
     Ok(())
 }
 

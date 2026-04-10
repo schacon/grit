@@ -6,7 +6,6 @@ use std::fs;
 use std::io::{self, Read};
 use time::OffsetDateTime;
 
-use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::{
     append_reflog, delete_ref, read_head, read_symbolic_ref, resolve_ref, should_autocreate_reflog,
@@ -14,6 +13,11 @@ use grit_lib::refs::{
 };
 use grit_lib::repo::Repository;
 use std::collections::HashSet;
+
+use crate::ref_transaction_hooks::{
+    run_ref_transaction_aborted, run_ref_transaction_committed, run_ref_transaction_prepare,
+    HookUpdate,
+};
 
 /// Arguments for `grit update-ref`.
 #[derive(Debug, ClapArgs)]
@@ -91,6 +95,7 @@ pub fn run(mut args: Args) -> Result<()> {
             old_value: hook_old_value_from_expectation(expected),
             new_value: zero_oid_hex().to_owned(),
             refname: target_refname.clone(),
+            deletes_ref: true,
         };
         run_ref_transaction_prepare(&repo, &[hook_update.clone()])?;
         delete_ref(&repo.git_dir, &target_refname).context("deleting ref")?;
@@ -127,6 +132,7 @@ pub fn run(mut args: Args) -> Result<()> {
         old_value: hook_old_value_from_expectation(expected),
         new_value: new_oid.to_hex(),
         refname: target_refname.clone(),
+        deletes_ref: new_oid == zero_oid(),
     };
 
     if new_oid == zero_oid() {
@@ -722,13 +728,6 @@ fn verify_expected_old(repo: &Repository, refname: &str, expected: OldExpectatio
     Ok(())
 }
 
-#[derive(Clone)]
-struct HookUpdate {
-    old_value: String,
-    new_value: String,
-    refname: String,
-}
-
 fn hook_update_for_op(op: &BatchOp) -> Result<HookUpdate> {
     let update = match op {
         BatchOp::UpdateOid {
@@ -739,11 +738,13 @@ fn hook_update_for_op(op: &BatchOp) -> Result<HookUpdate> {
             old_value: hook_old_value_from_expectation(*expected_old),
             new_value: new_oid.to_hex(),
             refname: refname.clone(),
+            deletes_ref: *new_oid == zero_oid(),
         },
         BatchOp::CreateOid { refname, new_oid } => HookUpdate {
             old_value: zero_oid_hex().to_owned(),
             new_value: new_oid.to_hex(),
             refname: refname.clone(),
+            deletes_ref: false,
         },
         BatchOp::DeleteOid {
             refname,
@@ -752,6 +753,7 @@ fn hook_update_for_op(op: &BatchOp) -> Result<HookUpdate> {
             old_value: hook_old_value_from_expectation(*expected_old),
             new_value: zero_oid_hex().to_owned(),
             refname: refname.clone(),
+            deletes_ref: true,
         },
         BatchOp::VerifyOid {
             refname,
@@ -760,6 +762,7 @@ fn hook_update_for_op(op: &BatchOp) -> Result<HookUpdate> {
             old_value: hook_old_value_from_expectation(*expected_old),
             new_value: zero_oid_hex().to_owned(),
             refname: refname.clone(),
+            deletes_ref: false,
         },
         BatchOp::UpdateSymref {
             refname,
@@ -769,6 +772,7 @@ fn hook_update_for_op(op: &BatchOp) -> Result<HookUpdate> {
             old_value: symref_old_for_hook(expected_old.clone()),
             new_value: format!("ref:{new_target}"),
             refname: refname.clone(),
+            deletes_ref: false,
         },
         BatchOp::CreateSymref {
             refname,
@@ -777,6 +781,7 @@ fn hook_update_for_op(op: &BatchOp) -> Result<HookUpdate> {
             old_value: zero_oid_hex().to_owned(),
             new_value: format!("ref:{new_target}"),
             refname: refname.clone(),
+            deletes_ref: false,
         },
         BatchOp::DeleteSymref {
             refname,
@@ -785,6 +790,7 @@ fn hook_update_for_op(op: &BatchOp) -> Result<HookUpdate> {
             old_value: symref_old_for_hook(expected_old.clone()),
             new_value: zero_oid_hex().to_owned(),
             refname: refname.clone(),
+            deletes_ref: true,
         },
         BatchOp::VerifySymref {
             refname,
@@ -793,6 +799,7 @@ fn hook_update_for_op(op: &BatchOp) -> Result<HookUpdate> {
             old_value: symref_old_for_hook(Some(expected_old.clone())),
             new_value: zero_oid_hex().to_owned(),
             refname: refname.clone(),
+            deletes_ref: false,
         },
     };
 
@@ -813,47 +820,6 @@ fn symref_old_for_hook(expected_old: Option<SymrefOldExpectation>) -> String {
         Some(SymrefOldExpectation::MustTarget(target)) => format!("ref:{target}"),
         Some(SymrefOldExpectation::MustOid(oid)) => oid.to_hex(),
     }
-}
-
-fn run_ref_transaction_prepare(repo: &Repository, updates: &[HookUpdate]) -> Result<()> {
-    match run_ref_transaction_state(repo, "preparing", updates) {
-        HookResult::NotFound => return Ok(()),
-        HookResult::Success => {}
-        HookResult::Failed(_) => {
-            bail!("in 'preparing' phase, update aborted by the reference-transaction hook");
-        }
-    }
-
-    match run_ref_transaction_state(repo, "prepared", updates) {
-        HookResult::NotFound | HookResult::Success => Ok(()),
-        HookResult::Failed(_) => {
-            bail!("in 'prepared' phase, update aborted by the reference-transaction hook");
-        }
-    }
-}
-
-fn run_ref_transaction_committed(repo: &Repository, updates: &[HookUpdate]) {
-    let _ = run_ref_transaction_state(repo, "committed", updates);
-}
-
-fn run_ref_transaction_aborted(repo: &Repository, updates: &[HookUpdate]) {
-    let _ = run_ref_transaction_state(repo, "aborted", updates);
-}
-
-fn run_ref_transaction_state(repo: &Repository, state: &str, updates: &[HookUpdate]) -> HookResult {
-    let mut stdin_data = String::new();
-    for update in updates {
-        stdin_data.push_str(&format!(
-            "{} {} {}\n",
-            update.old_value, update.new_value, update.refname
-        ));
-    }
-    run_hook(
-        repo,
-        "reference-transaction",
-        &[state],
-        Some(stdin_data.as_bytes()),
-    )
 }
 
 pub(crate) fn resolve_reflog_identity(repo: &Repository) -> String {
