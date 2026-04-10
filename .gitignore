@@ -28,3 +28,4 @@ tests/trace.output
 tests/repo.git/
 .env
 logs/agent_*
+data/family/

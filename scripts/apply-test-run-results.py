@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-CSV_PATH = REPO / "data" / "test-files.csv"
+DEFAULT_CSV_PATH = REPO / "data" / "test-files.csv"
 GEN_DASH = REPO / "scripts" / "generate-dashboard-from-test-files.py"
 
 HEADER = [
@@ -26,12 +26,15 @@ HEADER = [
 ]
 
 
-def load_csv() -> list[dict[str, str]]:
-    if not CSV_PATH.exists():
-        print(f"ERROR: {CSV_PATH} missing. Run: python3 scripts/generate-test-files-catalog.py", file=sys.stderr)
+def load_csv(csv_path: Path) -> list[dict[str, str]]:
+    if not csv_path.exists():
+        print(
+            f"ERROR: {csv_path} missing. Run: python3 scripts/generate-test-files-catalog.py",
+            file=sys.stderr,
+        )
         sys.exit(1)
     rows: list[dict[str, str]] = []
-    with CSV_PATH.open(newline="", encoding="utf-8") as f:
+    with csv_path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
             rows.append(dict(row))
@@ -68,18 +71,26 @@ def main() -> None:
         help="TSV lines: file_base, tests_total, passed, failing, status, expect_failure",
     )
     parser.add_argument(
+        "--csv",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=f"Catalog CSV to read/update (default: {DEFAULT_CSV_PATH}).",
+    )
+    parser.add_argument(
         "--skip-dashboard",
         action="store_true",
         help="Update CSV only; skip docs dashboards (index.html, testfiles.html, test-progress.svg; caller may run generate-dashboard-from-test-files.py once at the end).",
     )
     args = parser.parse_args()
+    csv_path = args.csv if args.csv is not None else DEFAULT_CSV_PATH
     run_path = args.run_path
     if not run_path.is_file():
         print(f"ERROR: {run_path} not found", file=sys.stderr)
         sys.exit(1)
 
     updates = parse_run_file(run_path)
-    rows = load_csv()
+    rows = load_csv(csv_path)
     by_file = {r["file"]: i for i, r in enumerate(rows) if r.get("file")}
 
     for base, (total, pass_n, fail_n, status, ef) in updates.items():
@@ -96,8 +107,8 @@ def main() -> None:
         fully = "true" if total > 0 and fail_n == 0 else "false"
         row["fully_passing"] = fully
 
-    CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with CSV_PATH.open("w", newline="", encoding="utf-8") as f:
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=HEADER, delimiter="\t", lineterminator="\n")
         w.writeheader()
         for row in rows:
@@ -110,7 +121,7 @@ def main() -> None:
             check=True,
         )
         print(
-            f"Updated {CSV_PATH} and regenerated docs/index.html, docs/testfiles.html, docs/test-progress.svg"
+            f"Updated {csv_path} and regenerated docs/index.html, docs/testfiles.html, docs/test-progress.svg"
         )
 
 

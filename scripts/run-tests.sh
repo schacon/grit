@@ -6,11 +6,16 @@
 #   ./scripts/run-tests.sh t1                  # all tests/t1*.sh (glob prefix; t1xxx family)
 #   ./scripts/run-tests.sh t3200-branch.sh     # single file
 #   ./scripts/run-tests.sh t0500 t4064 t4051   # multiple prefixes, .sh paths, or mixes (order preserved, deduped)
+#   ./scripts/run-tests.sh --parallel          # all families t0–t9 in parallel (writes data/family/<d>.csv, then stitches)
 #
 # Options:
 #   --timeout N    per-file timeout (default: 120)
 #   --quiet        minimal output
 #   --from NAME    resume: skip tests before NAME (stem or .sh; first match in run order)
+#   --parallel     run one process per Git test family (t0–t9); merge into data/test-files.csv at the end
+#   --family N     only tests whose CSV group is tN (N is 0–9 or t0–t9)
+#   --output-csv PATH   merge harness results into this CSV instead of data/test-files.csv (full catalog copy updated)
+#   --no-catalog   skip generate-test-files-catalog.py (parent already refreshed the catalog)
 #
 # Skipped files (in_scope=skip in data/test-files.csv) are never run.
 # After each test file finishes, its row in data/test-files.csv is updated;
@@ -31,6 +36,10 @@ QUIET=false
 TARGET=""
 FROM=""
 POS=()
+PARALLEL=false
+FAMILY=""
+OUTPUT_CSV=""
+NO_CATALOG=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -40,6 +49,30 @@ while [[ $# -gt 0 ]]; do
     ;;
   --quiet)
     QUIET=true
+    shift
+    ;;
+  --parallel)
+    PARALLEL=true
+    shift
+    ;;
+  --family)
+    if [[ $# -lt 2 ]]; then
+      echo "ERROR: --family requires a digit 0-9 or t0-t9"
+      exit 1
+    fi
+    FAMILY="$2"
+    shift 2
+    ;;
+  --output-csv)
+    if [[ $# -lt 2 ]]; then
+      echo "ERROR: --output-csv requires a path"
+      exit 1
+    fi
+    OUTPUT_CSV="$2"
+    shift 2
+    ;;
+  --no-catalog)
+    NO_CATALOG=true
     shift
     ;;
   --from)
@@ -66,6 +99,28 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "$PARALLEL" == true ]]; then
+  PY_ARGS=(--timeout "$TIMEOUT")
+  [[ "$QUIET" == true ]] && PY_ARGS+=(--quiet)
+  [[ -n "$FROM" ]] && PY_ARGS+=(--from "$FROM")
+  exec python3 "$REPO/scripts/run-tests-parallel.py" "${PY_ARGS[@]}" -- "${POS[@]}"
+fi
+
+if [[ -n "$FAMILY" ]]; then
+  case "$FAMILY" in
+  t[0-9]|[0-9]) ;;
+  *)
+    echo "ERROR: --family must be a single digit 0-9 or t0-t9 (got: $FAMILY)"
+    exit 1
+    ;;
+  esac
+fi
+
+if [[ -n "$OUTPUT_CSV" && "$OUTPUT_CSV" != /* ]]; then
+  OUTPUT_CSV="$REPO/$OUTPUT_CSV"
+fi
+APPLY_CSV="${OUTPUT_CSV:-$CSV}"
+
 # GNU coreutils `timeout` is not installed by default on macOS; `gtimeout` may be.
 # Built after parsing `--timeout` so the wrapper uses the final TIMEOUT value.
 if command -v timeout >/dev/null 2>&1; then
@@ -87,11 +142,24 @@ cp "$BIN" "$TESTS_DIR/grit"
 chmod +x "$TESTS_DIR/grit"
 
 mkdir -p "$DATA_DIR"
-python3 "$CATALOG"
+if [[ "$NO_CATALOG" != true ]]; then
+  python3 "$CATALOG"
+fi
 
 if [[ ! -f "$CSV" ]]; then
   echo "ERROR: $CSV was not created"
   exit 1
+fi
+
+if [[ -n "$OUTPUT_CSV" && "$OUTPUT_CSV" != "$CSV" ]]; then
+  mkdir -p "$(dirname "$OUTPUT_CSV")"
+  cp "$CSV" "$OUTPUT_CSV"
+fi
+
+if [[ -n "$FAMILY" ]]; then
+  export GRIT_FAMILY_FILTER="$FAMILY"
+else
+  unset GRIT_FAMILY_FILTER 2>/dev/null || true
 fi
 
 # Build list of files to run: skip in_scope=skip
@@ -194,6 +262,29 @@ if from_stem:
         sys.exit(1)
     candidates = candidates[idx:]
 
+ff = os.environ.get("GRIT_FAMILY_FILTER", "").strip()
+def canon_family(s):
+    if not s:
+        return ""
+    if s.startswith("t") and len(s) >= 2 and s[1].isdigit():
+        return "t" + s[1]
+    if s.isdigit():
+        return "t" + s[0]
+    return ""
+
+want = canon_family(ff)
+if want:
+    file_to_group = {}
+    for row in rows:
+        fn = row.get("file", "").strip()
+        if fn:
+            file_to_group[fn] = row.get("group", "").strip()
+    candidates = [
+        c
+        for c in candidates
+        if file_to_group.get(c[:-3] if c.endswith(".sh") else c, "") == want
+    ]
+
 for c in candidates:
     print(c)
 PY
@@ -201,7 +292,9 @@ PY
 
 if [[ ${#FILES[@]} -eq 0 ]]; then
   echo "No test files to run (all skipped or no match)."
-  python3 "$GEN_DASH"
+  if [[ -z "$OUTPUT_CSV" || "$OUTPUT_CSV" == "$CSV" ]]; then
+    python3 "$GEN_DASH"
+  fi
   exit 0
 fi
 
@@ -277,7 +370,7 @@ run_one() {
 for f in "${FILES[@]}"; do
   line=$(run_one "$f")
   printf '%s\n' "$line" >"$LINE_TMP"
-  python3 "$APPLY" "$LINE_TMP" --skip-dashboard
+  python3 "$APPLY" "$LINE_TMP" --skip-dashboard --csv "$APPLY_CSV"
   if [[ "$QUIET" != true ]]; then
     base="${f%.sh}"
     pass=$(echo "$line" | cut -f3)
@@ -294,8 +387,14 @@ for f in "${FILES[@]}"; do
   fi
 done
 
-python3 "$GEN_DASH"
+if [[ -z "$OUTPUT_CSV" || "$OUTPUT_CSV" == "$CSV" ]]; then
+  python3 "$GEN_DASH"
+fi
 
 if [[ "$QUIET" != true ]]; then
-  echo "Updated $CSV and dashboards."
+  if [[ -n "$OUTPUT_CSV" && "$OUTPUT_CSV" != "$CSV" ]]; then
+    echo "Updated $APPLY_CSV (merge into main CSV with scripts/stitch-family-csvs.py if needed)."
+  else
+    echo "Updated $CSV and dashboards."
+  fi
 fi
