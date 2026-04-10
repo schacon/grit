@@ -115,6 +115,22 @@ fn decimal_width(n: usize) -> usize {
 }
 
 /// Truncate a path to fit `area_width` display columns (Git `show_stats` name scaling).
+/// Pad `s` with trailing ASCII spaces so its display width is at least `min_cols`.
+///
+/// Git's diffstat uses display-column width for the name field (`utf8_strnwidth`-style), not
+/// Rust's `{:<n$}` padding which counts Unicode scalar values.
+fn pad_name_to_display_width(s: &str, min_cols: usize) -> String {
+    let w = s.width();
+    if w >= min_cols {
+        return s.to_string();
+    }
+    let pad = min_cols - w;
+    let mut out = String::with_capacity(s.len() + pad);
+    out.push_str(s);
+    out.push_str(&" ".repeat(pad));
+    out
+}
+
 fn truncate_path_for_name_area(path: &str, area_width: usize) -> (String, usize) {
     let full_w = path.width();
     if full_w <= area_width {
@@ -251,26 +267,25 @@ pub fn write_diffstat_block(
         let prefix = opts.line_prefix;
         if f.is_binary {
             let (display_name, _) = truncate_path_for_name_area(&f.path_display, name_width);
+            let name_col = pad_name_to_display_width(&display_name, name_width);
             if prefix.is_empty() {
                 writeln!(
                     out,
-                    " {:<nw_name$} | {:>nw$} {} -> {} bytes",
-                    display_name,
+                    " {} | {:>nw$} {} -> {} bytes",
+                    name_col,
                     "Bin",
                     f.deletions,
                     f.insertions,
-                    nw_name = name_width,
                     nw = number_width
                 )?;
             } else {
                 writeln!(
                     out,
-                    "{prefix}{:<nw_name$} | {:>nw$} {} -> {} bytes",
-                    display_name,
+                    "{prefix}{} | {:>nw$} {} -> {} bytes",
+                    name_col,
                     "Bin",
                     f.deletions,
                     f.insertions,
-                    nw_name = name_width,
                     nw = number_width
                 )?;
             }
@@ -280,6 +295,7 @@ pub fn write_diffstat_block(
         let added = f.insertions;
         let deleted = f.deletions;
         let (display_name, _) = truncate_path_for_name_area(&f.path_display, name_width);
+        let name_col = pad_name_to_display_width(&display_name, name_width);
 
         let mut add = added;
         let mut del = deleted;
@@ -303,21 +319,13 @@ pub fn write_diffstat_block(
 
         let total = added + del;
         if prefix.is_empty() {
-            write!(
-                out,
-                " {:<nw_name$} | {:>nw$}",
-                display_name,
-                total,
-                nw_name = name_width,
-                nw = number_width
-            )?;
+            write!(out, " {} | {:>nw$}", name_col, total, nw = number_width)?;
         } else {
             write!(
                 out,
-                "{prefix}{:<nw_name$} | {:>nw$}",
-                display_name,
+                "{prefix}{} | {:>nw$}",
+                name_col,
                 total,
-                nw_name = name_width,
                 nw = number_width
             )?;
         }
@@ -388,4 +396,50 @@ pub fn write_diffstat_block(
     writeln!(out, "{summary}")?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pad_name_matches_git_display_columns_for_wide_chars() {
+        // Truncated path from t4073: display width 9; Git pads to name_width 10 with one space.
+        let truncated = ".../f再见";
+        assert_eq!(truncated.width(), 9);
+        let padded = pad_name_to_display_width(truncated, 10);
+        assert_eq!(padded.width(), 10);
+        assert_eq!(padded, ".../f再见 ");
+    }
+
+    #[test]
+    fn diffstat_name_width_10_matches_git_padding() {
+        let files = vec![FileStatInput {
+            path_display: "d你好/f再见".to_string(),
+            insertions: 0,
+            deletions: 0,
+            is_binary: false,
+        }];
+        let opts = DiffstatOptions {
+            total_width: 80,
+            line_prefix: "",
+            subtract_prefix_from_terminal: false,
+            stat_name_width: Some(10),
+            stat_graph_width: None,
+            stat_count: None,
+            color_add: "",
+            color_del: "",
+            color_reset: "",
+            graph_bar_slack: 0,
+            graph_prefix_budget_slack: 0,
+        };
+        let mut buf = Vec::new();
+        write_diffstat_block(&mut buf, &files, &opts).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        let line = s.lines().next().unwrap();
+        assert!(
+            line.contains(".../f再见  |"),
+            "expected two spaces before pipe like git, got {line:?}"
+        );
+    }
 }

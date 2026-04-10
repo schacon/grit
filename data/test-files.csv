@@ -758,7 +758,7 @@ t4070-diff-submodule	t4	yes	31	31	0	true	ok	0
 t4071-diff-empty-tree	t4	yes	32	29	3	false	ok	0
 t4071-diff-minimal	t4	yes	1	1	0	true	ok	0
 t4072-diff-max-depth	t4	yes	50	47	3	false	ok	0
-t4073-diff-stat-name-width	t4	yes	6	2	4	false	ok	0
+t4073-diff-stat-name-width	t4	yes	6	6	0	true	ok	0
 t4074-diff-shifted-matched-group	t4	yes	4	4	0	true	ok	0
 t4075-diff-full-index-abbrev	t4	yes	7	7	0	true	ok	0
 t4076-diff-ignore-submodules	t4	yes	4	4	0	true	ok	0
