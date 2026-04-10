@@ -7,6 +7,11 @@
 
 test_description='Compatibility with $XDG_CONFIG_HOME/git/ files'
 
+# Upstream t1306 relies on cwd surviving `cd git` in the Setup test; our default harness
+# resets to $TRASH_DIRECTORY around each case (see test-lib-tap.sh).
+TEST_LIB_INHERIT_CWD=1
+export TEST_LIB_INHERIT_CWD
+
 . ./test-lib.sh
 
 test_expect_success 'read config: xdg file exists and ~/.gitconfig doesn'\''t' '
