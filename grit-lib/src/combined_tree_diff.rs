@@ -9,6 +9,57 @@ use crate::error::Result;
 use crate::objects::{parse_commit, parse_tree, tree_entry_cmp, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
 
+/// One character per parent for raw / name-status combined output (`A`/`M`/`D`).
+#[must_use]
+pub fn combined_parent_status_char(s: CombinedParentStatus) -> char {
+    match s {
+        CombinedParentStatus::Added => 'A',
+        CombinedParentStatus::Modified => 'M',
+        CombinedParentStatus::Deleted => 'D',
+    }
+}
+
+/// Git raw combined line (`::::modes... oids... MM\tpath`).
+#[must_use]
+pub fn format_combined_raw_line(p: &CombinedDiffPath, abbrev_len: Option<usize>) -> String {
+    let n = p.parents.len();
+    let mut colons = String::with_capacity(n);
+    for _ in 0..n {
+        colons.push(':');
+    }
+    let mut modes = String::new();
+    for side in &p.parents {
+        modes.push_str(&format!("{:06o} ", side.mode));
+    }
+    modes.push_str(&format!("{:06o}", p.merge_mode));
+    let mut oids = String::new();
+    for side in &p.parents {
+        let h = format!("{}", side.oid);
+        let disp = if let Some(len) = abbrev_len {
+            &h[..len.min(h.len())]
+        } else {
+            h.as_str()
+        };
+        oids.push(' ');
+        oids.push_str(disp);
+    }
+    let rh = format!("{}", p.merge_oid);
+    let rdisp = if let Some(len) = abbrev_len {
+        &rh[..len.min(rh.len())]
+    } else {
+        rh.as_str()
+    };
+    oids.push(' ');
+    oids.push_str(rdisp);
+    oids.push(' ');
+    let status: String = p
+        .parents
+        .iter()
+        .map(|s| combined_parent_status_char(s.status))
+        .collect();
+    format!("{colons}{modes}{oids}{status}\t{}", p.path)
+}
+
 /// Per-parent coarse status in a combined diff (`A` / `M` / `D`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CombinedParentStatus {
@@ -408,14 +459,28 @@ pub fn combined_diff_paths_filtered(
         parent_trees.push(Some(c.tree));
     }
     let parent_opts: Vec<Option<ObjectId>> = parent_trees;
+    combined_diff_paths_trees(odb, commit_tree, &parent_opts, walk, find_object)
+}
+
+/// Combined diff paths when `parents` are already tree OIDs (plumbing `git diff --cc` with N+1 trees).
+pub fn combined_diff_paths_trees(
+    odb: &Odb,
+    merge_tree: &ObjectId,
+    parent_trees: &[Option<ObjectId>],
+    walk: &CombinedTreeDiffOptions,
+    find_object: Option<&ObjectId>,
+) -> Result<Vec<CombinedDiffPath>> {
+    if parent_trees.is_empty() {
+        return Ok(Vec::new());
+    }
     let mut out = Vec::new();
     ll_diff_tree_paths(
         odb,
         &mut out,
         "",
         walk,
-        Some(commit_tree),
-        &parent_opts,
+        Some(merge_tree),
+        parent_trees,
         find_object,
     )?;
     Ok(out)

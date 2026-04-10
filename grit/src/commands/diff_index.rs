@@ -902,6 +902,9 @@ fn diff_tree_vs_index(
         let new = index_map.get(&path).copied();
         match (old, new) {
             (Some(old), Some(new)) if old == new => {}
+            // Same blob OID with only mode noise: Git does not treat this as blocking
+            // `git merge` / `git checkout` (see t4038 tree-sorting merge scenario).
+            (Some(old), Some(new)) if old.oid == new.oid => {}
             (Some(old), Some(new)) => changes.push(RawChange {
                 path,
                 status: 'M',

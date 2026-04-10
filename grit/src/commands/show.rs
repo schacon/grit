@@ -10,6 +10,8 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::combined_diff_patch::CombinedDiffWsOptions;
+use grit_lib::combined_tree_diff::{combined_diff_paths_filtered, CombinedTreeDiffOptions};
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     anchored_unified_diff, detect_copies, detect_renames, diff_trees, unified_diff, zero_oid,
@@ -18,8 +20,8 @@ use grit_lib::diff::{
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::merge_diff::{
-    blob_oid_at_path, blob_text_for_diff, combined_diff_paths, format_combined_binary,
-    format_combined_textconv_patch, format_parent_patch, is_binary_for_diff, read_blob_at_path,
+    blob_oid_at_path, blob_text_for_diff, format_combined_binary, format_combined_textconv_patch,
+    format_parent_patch, is_binary_for_diff, read_blob_at_path,
 };
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -199,6 +201,22 @@ pub struct Args {
     /// Disable textconv.
     #[arg(long = "no-textconv")]
     pub no_textconv: bool,
+
+    /// Ignore whitespace at end of line in combined diffs.
+    #[arg(long = "ignore-space-at-eol")]
+    pub ignore_space_at_eol: bool,
+
+    /// Ignore changes in amount of whitespace in combined diffs.
+    #[arg(short = 'b', long = "ignore-space-change")]
+    pub ignore_space_change: bool,
+
+    /// Ignore all whitespace in combined diffs.
+    #[arg(short = 'w', long = "ignore-all-space")]
+    pub ignore_all_space: bool,
+
+    /// Ignore carriage return at end of line in combined diffs.
+    #[arg(long = "ignore-cr-at-eol")]
+    pub ignore_cr_at_eol: bool,
 
     /// Show binary diff in git binary format.
     #[arg(long = "binary")]
@@ -1157,50 +1175,78 @@ fn show_commit(
             return Ok(());
         }
 
-        if use_combined_format && parent_trees.len() == 2 {
-            let paths = combined_diff_paths(odb, &commit.tree, &commit.parents);
-            let ptrees = [parent_trees[0], parent_trees[1]];
-            for path in paths {
-                let Some(o0) = read_blob_at_path(odb, &ptrees[0], &path) else {
-                    continue;
-                };
-                let Some(o1) = read_blob_at_path(odb, &ptrees[1], &path) else {
-                    continue;
-                };
-                let Some(nr) = read_blob_at_path(odb, &commit.tree, &path) else {
-                    continue;
-                };
-                let binary = is_binary_for_diff(git_dir, &path, &o0)
-                    || is_binary_for_diff(git_dir, &path, &o1)
-                    || is_binary_for_diff(git_dir, &path, &nr);
-                if binary {
-                    let oid0 = blob_oid_at_path(odb, &ptrees[0], &path);
-                    let oid1 = blob_oid_at_path(odb, &ptrees[1], &path);
-                    let oidr = blob_oid_at_path(odb, &commit.tree, &path);
-                    if let (Some(a), Some(b), Some(c)) = (oid0, oid1, oidr) {
-                        write!(
-                            out,
-                            "{}",
-                            format_combined_binary(
-                                &path,
-                                &[a, b],
-                                &c,
-                                abbrev_len,
-                                combined_use_cc_word
-                            )
-                        )?;
+        if use_combined_format && parent_trees.len() >= 2 {
+            let walk = CombinedTreeDiffOptions {
+                recursive: true,
+                tree_in_recursive: false,
+            };
+            let paths =
+                combined_diff_paths_filtered(odb, &commit.tree, &commit.parents, &walk, None)
+                    .unwrap_or_default();
+            let quote_fully = config.quote_path_fully();
+            let ws = CombinedDiffWsOptions {
+                ignore_all_space: args.ignore_all_space,
+                ignore_space_change: args.ignore_space_change,
+                ignore_space_at_eol: args.ignore_space_at_eol,
+                ignore_cr_at_eol: args.ignore_cr_at_eol,
+            };
+            for p in paths {
+                let mut any_blob = false;
+                let mut binary = false;
+                for (i, _side) in p.parents.iter().enumerate() {
+                    if let Some(b) = read_blob_at_path(odb, &parent_trees[i], &p.path) {
+                        any_blob = true;
+                        if is_binary_for_diff(git_dir, &p.path, &b) {
+                            binary = true;
+                        }
                     }
+                }
+                if let Some(nr) = read_blob_at_path(odb, &commit.tree, &p.path) {
+                    any_blob = true;
+                    if is_binary_for_diff(git_dir, &p.path, &nr) {
+                        binary = true;
+                    }
+                }
+                if !any_blob {
+                    continue;
+                }
+                if binary {
+                    let mut po = Vec::with_capacity(p.parents.len());
+                    for (i, _side) in p.parents.iter().enumerate() {
+                        po.push(
+                            blob_oid_at_path(odb, &parent_trees[i], &p.path)
+                                .unwrap_or_else(zero_oid),
+                        );
+                    }
+                    let roid =
+                        blob_oid_at_path(odb, &commit.tree, &p.path).unwrap_or_else(zero_oid);
+                    write!(
+                        out,
+                        "{}",
+                        format_combined_binary(
+                            &p.path,
+                            &po,
+                            &roid,
+                            abbrev_len,
+                            combined_use_cc_word
+                        )
+                    )?;
                 } else if let Some(patch) = format_combined_textconv_patch(
                     git_dir,
                     &config,
                     odb,
-                    &path,
-                    &ptrees,
+                    &p.path,
+                    &parent_trees,
                     &commit.tree,
                     abbrev_len,
                     context,
                     combined_use_cc_word,
                     use_textconv,
+                    ws,
+                    false,
+                    None,
+                    &p.parents,
+                    quote_fully,
                 ) {
                     write!(out, "{patch}")?;
                 }

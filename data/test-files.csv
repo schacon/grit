@@ -716,7 +716,7 @@ t4034-diff-words	t4	yes	66	7	59	false	ok	0
 t4035-diff-quiet	t4	yes	23	23	0	true	ok	0
 t4036-format-patch-signer-mime	t4	yes	5	5	0	true	ok	0
 t4037-diff-r-t-dirs	t4	yes	2	2	0	true	ok	0
-t4038-diff-combined	t4	yes	25	6	19	false	ok	1
+t4038-diff-combined	t4	yes	26	8	17	false	ok	1
 t4039-diff-assume-unchanged	t4	yes	4	3	1	false	ok	0
 t4040-whitespace-status	t4	yes	11	9	2	false	ok	0
 t4041-diff-submodule-option	t4	yes	47	17	30	false	ok	0
