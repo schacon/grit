@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   329 |
+| Completed   |   330 |
 | In progress |     5 |
-| Remaining   |   437 |
+| Remaining   |   436 |
 | **Total**   |   771 |
 
-Task lines in `PLAN.md`: 329 completed (`[x]`), 5 in progress (`[~]`), 437 remaining (`[ ]`).
+Task lines in `PLAN.md`: 330 completed (`[x]`), 5 in progress (`[~]`), 436 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t3436-rebase-more-options` — 19/19 tests pass (`rebase`: `--ignore-whitespace` merge + state; `--committer-date-is-author-date` / `--reset-author-date` / `--ignore-date`; `break` + `--continue`; `--root` implicit squash-onto; `-r` alias; merge `-C` identity rewrite; interactive empty todo + no preemptive FF when `rebase-merges`; index reset on finish; `split_stored_author_line` pub for rebase)
 - `t4103-apply-binary` — 24/24 tests pass (`apply`: `Binary files … differ` metadata + full-index ODB postimage; zlib+Git base85 `GIT binary patch` emission in `diff-tree --binary` with full `index` OIDs; `-p` path normalization; null old OID preimage; binary worktree reads skip CRLF for NUL blobs; corrupt/unrecognized binary errors + second line for empty patch; `diff-tree --no-prefix`)
 - `t7413-submodule-is-active` — 10/10 tests pass (`test-tool submodule is-active`: `is_submodule_active` parity; `submodule.active` pathspec + `:(exclude)`; bare `submodule.active` stderr; `submodule add` skips `submodule.<name>.active` when path matches `submodule.active` wildmatch; `ConfigSet::has_key`)
 - `t3702-add-edit` — 3/3 tests pass (`git add -e`: unstaged index↔worktree patch with 7 context lines, editor via `launch_commit_editor`, `apply --cached --recount --strip=1`; empty patch / editor failure match Git)
@@ -216,4 +217,4 @@ Task lines in `PLAN.md`: 329 completed (`[x]`), 5 in progress (`[~]`), 437 remai
 
 ## What Remains
 
-437 task lines still open in `PLAN.md` (plus 5 in progress). See `PLAN.md` for the full prioritized list.
+436 task lines still open in `PLAN.md` (plus 5 in progress). See `PLAN.md` for the full prioritized list.
