@@ -1127,6 +1127,7 @@ pub fn http_fetch_pack(
         let pkt = match pkt_line::read_packet(&mut cur)? {
             None => break,
             Some(pkt_line::Packet::Flush) => break,
+            Some(pkt_line::Packet::Delim) => continue,
             Some(pkt_line::Packet::Data(s)) => s,
             Some(other) => bail!("unexpected fetch response: {other:?}"),
         };

@@ -123,6 +123,9 @@ pub struct Args {
     /// Convert a shallow repository to a complete one (remove shallow boundaries).
     #[arg(long)]
     pub unshallow: bool,
+    /// Accept and record shallow boundary updates from the remote.
+    #[arg(long = "update-shallow")]
+    pub update_shallow: bool,
 
     /// Re-fetch all objects even if they already exist locally.
     #[arg(long)]
@@ -796,12 +799,6 @@ fn fetch_remote(
     let is_bare_repo = Repository::open(git_dir, None)
         .map(|repo| repo.is_bare())
         .unwrap_or(false);
-    if !args.negotiate_only && args.unshallow {
-        let shallow_path = git_dir.join("shallow");
-        if shallow_path.exists() {
-            fs::remove_file(&shallow_path).context("removing shallow grafts for --unshallow")?;
-        }
-    }
 
     let url_key = format!("remote.{remote_name}.url");
     let legacy_remote = if url_override.is_none() && config.get(&url_key).is_none() {
@@ -1197,7 +1194,7 @@ fn fetch_remote(
 
     let remote_head_advertised_oid: Option<ObjectId>;
     let remote_head_symbolic_branch_from_transport: Option<String>;
-    let (remote_heads, remote_tags, remote_advertised) = if is_ext_url {
+    let (mut remote_heads, mut remote_tags, remote_advertised) = if is_ext_url {
         let local_git_for_ext = git_dir.to_path_buf();
         let refspec_owned_ext = refspecs.clone();
         let remote_nm_ext = remote_name.to_owned();
@@ -1401,6 +1398,31 @@ fn fetch_remote(
         (heads, tags, Vec::new())
     };
 
+    let allow_remote_shallow_updates = args.update_shallow
+        || args.depth.is_some()
+        || args.deepen.is_some()
+        || args.unshallow
+        || args.shallow_since.is_some()
+        || args.shallow_exclude.is_some();
+    let blocked_shallow_remote_refs = if allow_remote_shallow_updates {
+        HashSet::new()
+    } else if let Some(rr) = ext_resolved_remote.as_ref().or(remote_repo.as_ref()) {
+        refs_requiring_update_shallow(&rr.git_dir, git_dir)?
+    } else {
+        HashSet::new()
+    };
+    if !blocked_shallow_remote_refs.is_empty() {
+        remote_heads.retain(|(name, _)| !blocked_shallow_remote_refs.contains(name));
+        remote_tags.retain(|(name, _)| !blocked_shallow_remote_refs.contains(name));
+    }
+
+    if !args.negotiate_only && args.unshallow {
+        let shallow_path = git_dir.join("shallow");
+        if shallow_path.exists() {
+            fs::remove_file(&shallow_path).context("removing shallow grafts for --unshallow")?;
+        }
+    }
+
     let tip_oids: Vec<ObjectId> = remote_heads
         .iter()
         .chain(remote_tags.iter())
@@ -1422,6 +1444,10 @@ fn fetch_remote(
             let local_repo = Repository::open(git_dir, None)
                 .context("open repository for shallow metadata after HTTP fetch")?;
             write_shallow_info(git_dir, &remote_heads, &local_repo, depth)?;
+        }
+    } else if args.update_shallow {
+        if let Some(ref rr) = ext_resolved_remote.as_ref().or(remote_repo.as_ref()) {
+            write_remote_shallow_info_for_tips(git_dir, &rr.git_dir, &tip_oids)?;
         }
     }
 
@@ -3691,6 +3717,146 @@ fn write_shallow_info(
     entries.sort();
     let content = entries.join("\n") + "\n";
     fs::write(&shallow_path, content).context("writing shallow file")?;
+    Ok(())
+}
+
+fn read_shallow_boundary_oids(remote_git_dir: &Path) -> Result<HashSet<ObjectId>> {
+    let shallow_path = remote_git_dir.join("shallow");
+    if !shallow_path.exists() {
+        return Ok(HashSet::new());
+    }
+    let mut set = HashSet::new();
+    for line in fs::read_to_string(&shallow_path)?
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+    {
+        if let Ok(oid) = ObjectId::from_hex(line) {
+            set.insert(oid);
+        }
+    }
+    Ok(set)
+}
+
+fn oid_reaches_shallow_boundary(
+    repo: &Repository,
+    oid: ObjectId,
+    boundary_oids: &HashSet<ObjectId>,
+    memo: &mut HashMap<ObjectId, bool>,
+) -> bool {
+    if let Some(result) = memo.get(&oid) {
+        return *result;
+    }
+    if boundary_oids.contains(&oid) {
+        memo.insert(oid, true);
+        return true;
+    }
+    let Ok(obj) = repo.odb.read(&oid) else {
+        memo.insert(oid, false);
+        return false;
+    };
+    let reaches = match obj.kind {
+        ObjectKind::Commit => parse_commit(&obj.data).is_ok_and(|commit| {
+            commit
+                .parents
+                .iter()
+                .any(|parent| oid_reaches_shallow_boundary(repo, *parent, boundary_oids, memo))
+        }),
+        ObjectKind::Tag => parse_tag(&obj.data)
+            .is_ok_and(|tag| oid_reaches_shallow_boundary(repo, tag.object, boundary_oids, memo)),
+        _ => false,
+    };
+    memo.insert(oid, reaches);
+    reaches
+}
+
+fn refs_requiring_update_shallow(remote_git_dir: &Path, local_git_dir: &Path) -> Result<HashSet<String>> {
+    let boundary_oids = read_shallow_boundary_oids(remote_git_dir)?;
+    if boundary_oids.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let local_boundary_oids = read_shallow_boundary_oids(local_git_dir)?;
+    let required_new_boundaries: HashSet<ObjectId> = if local_boundary_oids.is_empty() {
+        boundary_oids.clone()
+    } else {
+        boundary_oids
+            .difference(&local_boundary_oids)
+            .copied()
+            .collect()
+    };
+    if required_new_boundaries.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let repo = Repository::open(remote_git_dir, None)
+        .with_context(|| format!("open remote repository {}", remote_git_dir.display()))?;
+    let mut blocked = HashSet::new();
+    let mut memo = HashMap::new();
+    for (refname, oid) in refs::list_refs(remote_git_dir, "refs/")? {
+        if oid_reaches_shallow_boundary(&repo, oid, &required_new_boundaries, &mut memo) {
+            blocked.insert(refname);
+        }
+    }
+    Ok(blocked)
+}
+
+fn write_remote_shallow_info_for_tips(
+    local_git_dir: &Path,
+    remote_git_dir: &Path,
+    tip_oids: &[ObjectId],
+) -> Result<()> {
+    let boundary_oids = read_shallow_boundary_oids(remote_git_dir)?;
+    if boundary_oids.is_empty() {
+        return Ok(());
+    }
+    let remote_repo = Repository::open(remote_git_dir, None)
+        .with_context(|| format!("open remote repository {}", remote_git_dir.display()))?;
+    let shallow_path = local_git_dir.join("shallow");
+    let mut local_boundaries: HashSet<ObjectId> = if shallow_path.exists() {
+        fs::read_to_string(&shallow_path)?
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .filter_map(|l| ObjectId::from_hex(l).ok())
+            .collect()
+    } else {
+        HashSet::new()
+    };
+
+    let mut stack: Vec<ObjectId> = tip_oids.to_vec();
+    let mut seen = HashSet::new();
+    while let Some(oid) = stack.pop() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        if boundary_oids.contains(&oid) {
+            local_boundaries.insert(oid);
+            continue;
+        }
+        let Ok(obj) = remote_repo.odb.read(&oid) else {
+            continue;
+        };
+        match obj.kind {
+            ObjectKind::Commit => {
+                if let Ok(commit) = parse_commit(&obj.data) {
+                    stack.extend(commit.parents);
+                }
+            }
+            ObjectKind::Tag => {
+                if let Ok(tag) = parse_tag(&obj.data) {
+                    stack.push(tag.object);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if !local_boundaries.is_empty() {
+        let mut entries: Vec<String> = local_boundaries.iter().map(ObjectId::to_hex).collect();
+        entries.sort();
+        fs::write(&shallow_path, entries.join("\n") + "\n").context("writing shallow file")?;
+    }
     Ok(())
 }
 

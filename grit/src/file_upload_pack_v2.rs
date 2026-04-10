@@ -389,6 +389,7 @@ fn drain_v2_fetch_response(stdout: &mut impl Read, sideband_all: bool) -> Result
     loop {
         let hdr = match pkt_line::read_packet(stdout)? {
             Some(pkt_line::Packet::Data(s)) => s,
+            Some(pkt_line::Packet::Delim) => continue,
             Some(pkt_line::Packet::Flush) => return Ok(()),
             None => return Ok(()),
             Some(other) => bail!("unexpected fetch response: {other:?}"),

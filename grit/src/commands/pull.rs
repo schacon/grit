@@ -284,6 +284,7 @@ pub fn run(args: Args) -> Result<()> {
         shallow_since: None,
         shallow_exclude: None,
         unshallow: false,
+        update_shallow: false,
         refetch: false,
         output: None,
         quiet: args.quiet,

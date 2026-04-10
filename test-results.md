@@ -1,5 +1,31 @@
 # Test results
 
+**2026-04-10 (fetch shallow follow-up: update-shallow wiring + v2 delim tolerance)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo clippy --fix --allow-dirty -p grit-rs -p grit-lib`: pass (reverted unrelated `grit-lib/src/repo.rs` edit)
+- `cargo test -p grit-lib --lib`: 166 passed
+- `cargo build --release -p grit-rs`: pass
+- `./scripts/run-tests.sh t5537-fetch-shallow.sh`: **10/16** (improved from previous 6/16 baseline)
+- `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: **27/37** (unchanged)
+- `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: **10/16** (unchanged)
+- Focused verbose check:
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t5537-fetch-shallow.sh -v`
+  - passing: `--update-shallow` cluster now green (`10`, `11`, `12`, `13`)
+  - remaining failures: `4`, `6`, `8`, `14`, `15`, `16`
+- Implemented in this increment:
+  - Added fetch CLI support for `--update-shallow` option and propagated through `pull` fetch args.
+  - Added local-transport shallow boundary gating for fetch updates:
+    - refs requiring remote shallow-boundary updates are filtered unless
+      `--update-shallow`/depth/deepen/unshallow/shallow-since/shallow-exclude is active.
+  - Added remote-shallow boundary materialization path for `--update-shallow` without depth/deepen:
+    - writes local `.git/shallow` entries reachable from fetched tips and present in remote shallow boundary set.
+  - Adjusted `--unshallow` handling for local remotes:
+    - only removes local `.git/shallow` when remote is actually complete (no remote shallow boundary file entries).
+  - Added protocol-v2 fetch response tolerance for section delimiter packets:
+    - treat `Packet::Delim` as section boundary separator in both HTTP and file upload-pack v2 parsers.
+
 **2026-04-10 (fetch tail completion + full t5510 green)**
 
 - `cargo fmt`: pass
