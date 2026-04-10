@@ -22,7 +22,7 @@ fn resolve_hook_path(git_dir: &Path, hook: &str) -> PathBuf {
 ///
 /// When `thin` is true, omit objects the client already has (requires matching `have` lines).
 /// For a fetch/clone with no common objects, pass `false` so the pack is self-contained.
-pub fn spawn_pack_objects_upload(git_dir: &Path, thin: bool) -> Result<Child> {
+pub fn spawn_pack_objects_upload(git_dir: &Path, thin: bool, shallow_pack: bool) -> Result<Child> {
     let protected = ConfigSet::load_protected(true).unwrap_or_default();
     let hook_raw = protected.get("uploadpack.packobjectshook");
     let grit = grit_executable();
@@ -39,6 +39,9 @@ pub fn spawn_pack_objects_upload(git_dir: &Path, thin: bool) -> Result<Child> {
         if thin {
             c.arg("--thin");
         }
+        if shallow_pack {
+            c.arg("--shallow");
+        }
         c.arg("--stdout")
             .arg("--progress")
             .arg("--delta-base-offset");
@@ -49,6 +52,9 @@ pub fn spawn_pack_objects_upload(git_dir: &Path, thin: bool) -> Result<Child> {
         if thin {
             c.arg("--thin");
         }
+        if shallow_pack {
+            c.arg("--shallow");
+        }
         c.arg("--stdout")
             .arg("--progress")
             .arg("--delta-base-offset");
@@ -56,6 +62,7 @@ pub fn spawn_pack_objects_upload(git_dir: &Path, thin: bool) -> Result<Child> {
     };
 
     cmd.current_dir(git_dir)
+        .env("GIT_DIR", git_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -70,11 +77,22 @@ pub fn spawn_pack_objects_upload(git_dir: &Path, thin: bool) -> Result<Child> {
 }
 
 /// Write the stdin Git's `pack-objects --revs` expects (`--not` + have commit OIDs).
+///
+/// When `use_shallow_pack` is true, `shallow_grafts` are written as `--shallow <oid>` lines before
+/// the positive revisions, and `--shallow` is passed on the command line so the walk cuts parent
+/// chains at those commits (matches `git upload-pack` → `git pack-objects` for shallow fetches).
 pub fn write_pack_objects_revs_stdin(
     pin: &mut impl Write,
     wants: &[ObjectId],
     have_commits: &[ObjectId],
+    shallow_grafts: &[ObjectId],
+    use_shallow_pack: bool,
 ) -> Result<()> {
+    if use_shallow_pack {
+        for g in shallow_grafts {
+            writeln!(pin, "--shallow {}", g.to_hex())?;
+        }
+    }
     for w in wants {
         writeln!(pin, "{}", w.to_hex())?;
     }

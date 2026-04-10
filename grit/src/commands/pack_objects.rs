@@ -9,7 +9,7 @@ use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use grit_lib::config::ConfigSet;
 use grit_lib::error::Error as LibError;
-use grit_lib::rev_list::{rev_list, MissingAction, RevListOptions};
+use grit_lib::rev_list::{rev_list, shallow_boundary_oids, MissingAction, RevListOptions};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeSet, HashSet};
 use std::io::{self, BufRead, IsTerminal, Write};
@@ -50,7 +50,7 @@ pub struct Args {
     #[arg(long = "shallow-file", allow_hyphen_values = true)]
     pub shallow_file: Option<String>,
 
-    /// Shallow pack (accepted for compatibility; no-op in grit).
+    /// Shallow pack: `--shallow <oid>` stdin lines cut parent chains at those commits (upload-pack).
     #[arg(long)]
     pub shallow: bool,
 
@@ -734,11 +734,22 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
         let mut exclude = BTreeSet::new();
         let mut post_not = false;
         let mut have_roots: BTreeSet<ObjectId> = BTreeSet::new();
+        // Shallow servers omit parents at `.git/shallow` boundaries; packs must not recurse past
+        // them even when the client did not send `deepen` (HTTP clone from shallow bare — t5539).
+        let mut shallow_grafts: HashSet<ObjectId> = shallow_boundary_oids(&repo.git_dir);
         for line in stdin.lock().lines() {
             let line = line?;
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
+            }
+            if args.shallow {
+                if let Some(hex) = trimmed.strip_prefix("--shallow ") {
+                    let oid = ObjectId::from_hex(hex.trim())
+                        .map_err(|e| anyhow::anyhow!("invalid --shallow oid: {e}"))?;
+                    shallow_grafts.insert(oid);
+                    continue;
+                }
             }
             if trimmed == "--not" {
                 post_not = true;
@@ -761,7 +772,7 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
                     resolve_revision(repo, neg_ref)
                         .with_context(|| format!("cannot resolve ref '{neg_ref}'"))?
                 };
-                walk_reachable(repo, &oid, &mut exclude)?;
+                walk_reachable(repo, &oid, &mut exclude, &shallow_grafts)?;
             } else {
                 let oid = if let Ok(oid) = ObjectId::from_hex(trimmed) {
                     oid
@@ -769,7 +780,7 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
                     resolve_revision(repo, trimmed)
                         .with_context(|| format!("cannot resolve ref '{trimmed}'"))?
                 };
-                walk_reachable(repo, &oid, &mut oids)?;
+                walk_reachable(repo, &oid, &mut oids, &shallow_grafts)?;
             }
         }
         for oid in &exclude {
@@ -778,7 +789,7 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
         if args.thin && !have_roots.is_empty() {
             let mut have_closure = BTreeSet::new();
             for root in &have_roots {
-                walk_reachable(repo, root, &mut have_closure)?;
+                walk_reachable(repo, root, &mut have_closure, &shallow_grafts)?;
             }
             oids.retain(|o| !have_closure.contains(o));
         }
@@ -977,7 +988,12 @@ fn collect_all_loose(odb: &Odb, oids: &mut BTreeSet<ObjectId>) -> Result<()> {
 }
 
 /// Walk reachable objects from a commit/tree/tag/blob OID.
-fn walk_reachable(repo: &Repository, oid: &ObjectId, oids: &mut BTreeSet<ObjectId>) -> Result<()> {
+fn walk_reachable(
+    repo: &Repository,
+    oid: &ObjectId,
+    oids: &mut BTreeSet<ObjectId>,
+    shallow_grafts: &HashSet<ObjectId>,
+) -> Result<()> {
     if !oids.insert(*oid) {
         return Ok(()); // already visited
     }
@@ -989,11 +1005,13 @@ fn walk_reachable(repo: &Repository, oid: &ObjectId, oids: &mut BTreeSet<ObjectI
                 for line in text.lines() {
                     if let Some(tree_hex) = line.strip_prefix("tree ") {
                         if let Ok(tree_oid) = ObjectId::from_hex(tree_hex.trim()) {
-                            walk_reachable(repo, &tree_oid, oids)?;
+                            walk_reachable(repo, &tree_oid, oids, shallow_grafts)?;
                         }
                     } else if let Some(parent_hex) = line.strip_prefix("parent ") {
-                        if let Ok(parent_oid) = ObjectId::from_hex(parent_hex.trim()) {
-                            walk_reachable(repo, &parent_oid, oids)?;
+                        if !shallow_grafts.contains(oid) {
+                            if let Ok(parent_oid) = ObjectId::from_hex(parent_hex.trim()) {
+                                walk_reachable(repo, &parent_oid, oids, shallow_grafts)?;
+                            }
                         }
                     } else if line.is_empty() {
                         break; // end of headers
@@ -1017,7 +1035,7 @@ fn walk_reachable(repo: &Repository, oid: &ObjectId, oids: &mut BTreeSet<ObjectI
                 }
                 let entry_oid = ObjectId::from_bytes(&data[nul + 1..nul + 21])
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
-                walk_reachable(repo, &entry_oid, oids)?;
+                walk_reachable(repo, &entry_oid, oids, shallow_grafts)?;
                 pos = nul + 21;
             }
         }
@@ -1027,7 +1045,7 @@ fn walk_reachable(repo: &Repository, oid: &ObjectId, oids: &mut BTreeSet<ObjectI
                 if let Some(first_line) = text.lines().next() {
                     if let Some(obj_hex) = first_line.strip_prefix("object ") {
                         if let Ok(target_oid) = ObjectId::from_hex(obj_hex.trim()) {
-                            walk_reachable(repo, &target_oid, oids)?;
+                            walk_reachable(repo, &target_oid, oids, shallow_grafts)?;
                         }
                     }
                 }

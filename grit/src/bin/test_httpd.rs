@@ -501,6 +501,10 @@ fn handle_smart_http_with_path(
         .wait_with_output()
         .map_err(|e| format!("Failed to wait for git-http-backend: {e}"))?;
 
+    if !output.status.success() || !output.stderr.is_empty() {
+        let _ = std::io::stderr().write_all(&output.stderr);
+    }
+
     // Parse CGI response (headers + body separated by blank line)
     let stdout = output.stdout;
     parse_and_send_cgi_response(stream, &stdout)

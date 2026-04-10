@@ -4270,16 +4270,18 @@ impl<'a> WalkCommitsIter<'a> {
             if !self.shallow_boundaries.contains(&oid) {
                 if self.first_parent {
                     if let Some(parent) = commit.parents.first() {
-                        let ts = if self.author_date_order {
-                            read_author_timestamp(self.odb, parent)
-                        } else {
-                            read_commit_timestamp(self.odb, parent)
-                        };
-                        self.queue.push((ts, *parent));
+                        if self.odb.read(parent).is_ok() {
+                            let ts = if self.author_date_order {
+                                read_author_timestamp(self.odb, parent)
+                            } else {
+                                read_commit_timestamp(self.odb, parent)
+                            };
+                            self.queue.push((ts, *parent));
+                        }
                     }
                 } else {
                     for parent in &commit.parents {
-                        if !self.visited.contains(parent) {
+                        if !self.visited.contains(parent) && self.odb.read(parent).is_ok() {
                             let ts = if self.author_date_order {
                                 read_author_timestamp(self.odb, parent)
                             } else {

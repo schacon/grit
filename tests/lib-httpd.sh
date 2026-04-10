@@ -147,6 +147,31 @@ start_httpd() {
 		port_arg="--port $LIB_HTTPD_PORT"
 	fi
 
+	# Smart HTTP runs `git-http-backend` → `git-upload-pack`. Use system Git only for
+	# `--advertise-refs` (ref listing / capability string); delegate negotiation and
+	# pack generation to grit so shallow deepen and multi_ack match the harness (t5539).
+	_grit_exec="${GUST_BIN:-$REAL_GIT}"
+	_real_exec_path="$("$REAL_GIT" -c safe.directory='*' --exec-path 2>/dev/null || true)"
+	if test -z "$_real_exec_path"
+	then
+		_real_exec_path="$(dirname "$REAL_GIT")"
+	fi
+	HTTPD_GIT_EXEC_PATH="$HTTPD_ROOT_PATH/git-exec"
+	mkdir -p "$HTTPD_GIT_EXEC_PATH"
+	cat >"$HTTPD_GIT_EXEC_PATH/git-upload-pack" <<EOFUP
+#!/bin/sh
+REAL_GIT='$REAL_GIT'
+GUST_BIN='$_grit_exec'
+REAL_UP='$_real_exec_path/git-upload-pack'
+case " \$* " in
+*" --advertise-refs "*) exec "\$REAL_UP" "\$@" ;;
+*) exec "\$GUST_BIN" upload-pack "\$@" ;;
+esac
+EOFUP
+	chmod +x "$HTTPD_GIT_EXEC_PATH/git-upload-pack"
+	GIT_EXEC_PATH="$HTTPD_GIT_EXEC_PATH:$_real_exec_path"
+	export GIT_EXEC_PATH
+
 	# Start server in background, capture the READY line for the port
 	"$TEST_HTTPD_BIN" \
 		--root "$HTTPD_DOCUMENT_ROOT_PATH" \

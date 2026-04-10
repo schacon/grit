@@ -2579,7 +2579,7 @@ struct CommitGraph<'r> {
 
 impl<'r> CommitGraph<'r> {
     fn new(repo: &'r Repository, first_parent_only: bool) -> Self {
-        let shallow_boundaries = load_shallow_boundaries(&repo.git_dir);
+        let shallow_boundaries = shallow_boundary_oids(&repo.git_dir);
         let graft_parents = load_graft_parents(&repo.git_dir);
         Self {
             repo,
@@ -2627,8 +2627,12 @@ impl<'r> CommitGraph<'r> {
     }
 }
 
-/// Load shallow boundary commit OIDs from `.git/shallow`.
-fn load_shallow_boundaries(git_dir: &Path) -> HashSet<ObjectId> {
+/// Commit OIDs listed in `.git/shallow` (shallow clone boundaries).
+///
+/// At each boundary commit, history is cut: parents are omitted from the object store and must
+/// not be traversed for connectivity checks (`git fsck`, `pack-objects` reachability, etc.).
+#[must_use]
+pub fn shallow_boundary_oids(git_dir: &Path) -> HashSet<ObjectId> {
     let shallow_path = git_dir.join("shallow");
     let mut set = HashSet::new();
     if let Ok(contents) = fs::read_to_string(&shallow_path) {
@@ -2642,6 +2646,221 @@ fn load_shallow_boundaries(git_dir: &Path) -> HashSet<ObjectId> {
         }
     }
     set
+}
+
+/// Shallow boundary commits on paths from `wants` when the server repository is shallow.
+///
+/// Matches Git `get_shallow_commits` with infinite depth and no client-advertised shallows: walk
+/// from wanted tips, stop parent traversal at `.git/shallow` entries, and return those boundary
+/// commits (for protocol v2 `shallow-info` and `pack-objects --shallow`).
+#[must_use]
+pub fn shallow_borders_reachable_from_wants(
+    repo: &Repository,
+    wants: &[ObjectId],
+) -> Vec<ObjectId> {
+    let boundaries = shallow_boundary_oids(&repo.git_dir);
+    if boundaries.is_empty() || wants.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<ObjectId> = Vec::new();
+    let mut seen_out = HashSet::new();
+    let mut visited = HashSet::new();
+    let mut q: VecDeque<ObjectId> = wants.iter().copied().collect();
+    while let Some(oid) = q.pop_front() {
+        if !visited.insert(oid) {
+            continue;
+        }
+        if boundaries.contains(&oid) {
+            if seen_out.insert(oid) {
+                out.push(oid);
+            }
+            continue;
+        }
+        for p in commit_parent_ids(repo, oid) {
+            q.push_back(p);
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Compute new shallow boundary commits for `upload-pack` when the client sends `deepen <n>`.
+///
+/// This approximates Git's `get_shallow_commits` / `get_shallows_or_depth` for the common case:
+/// non-`deepen-relative` fetches where the client lists its shallow commits and requests more
+/// history. Returns commit OIDs that should be sent as `shallow` lines and registered as grafts
+/// for `pack-objects --shallow`.
+///
+/// # Parameters
+///
+/// - `wants` — wanted commit OIDs (usually remote `HEAD` / ref tips).
+/// - `client_shallow` — OIDs the client advertised with `shallow <oid>` before `deepen`.
+/// - `deepen` — positive integer from the `deepen` pkt-line (`deepen 2` → `2`).
+#[must_use]
+pub fn shallow_grafts_for_upload_pack_deepen(
+    repo: &Repository,
+    wants: &[ObjectId],
+    client_shallow: &[ObjectId],
+    deepen: usize,
+) -> Vec<ObjectId> {
+    if deepen == 0 || wants.is_empty() {
+        return Vec::new();
+    }
+
+    let server_shallow = shallow_boundary_oids(&repo.git_dir);
+    let client_set: HashSet<ObjectId> = client_shallow.iter().copied().collect();
+
+    let min_hit = min_client_shallow_distance(repo, wants, &client_set, &server_shallow);
+    let base = min_hit.unwrap_or(1);
+    let target_depth = base.saturating_add(deepen);
+
+    let included = commits_within_parent_depth(repo, wants, target_depth, &server_shallow);
+    border_commits_not_in_client_shallow(repo, &included, &client_set)
+}
+
+fn commit_parent_ids(repo: &Repository, oid: ObjectId) -> Vec<ObjectId> {
+    let Ok(obj) = repo.odb.read(&oid) else {
+        return Vec::new();
+    };
+    if obj.kind != ObjectKind::Commit {
+        return Vec::new();
+    }
+    parse_commit(&obj.data)
+        .map(|c| c.parents)
+        .unwrap_or_default()
+}
+
+fn min_client_shallow_distance(
+    repo: &Repository,
+    wants: &[ObjectId],
+    client_shallow: &HashSet<ObjectId>,
+    server_shallow: &HashSet<ObjectId>,
+) -> Option<usize> {
+    if client_shallow.is_empty() {
+        return None;
+    }
+    let mut best: Option<usize> = None;
+    let mut dist: HashMap<ObjectId, usize> = HashMap::new();
+    let mut q: VecDeque<(ObjectId, usize)> = VecDeque::new();
+    for &w in wants {
+        dist.insert(w, 0);
+        q.push_back((w, 0));
+    }
+    while let Some((oid, d)) = q.pop_front() {
+        if client_shallow.contains(&oid) {
+            best = Some(best.map(|b| b.min(d)).unwrap_or(d));
+        }
+        if server_shallow.contains(&oid) {
+            continue;
+        }
+        for p in commit_parent_ids(repo, oid) {
+            let nd = d.saturating_add(1);
+            let prev = dist.get(&p).copied().unwrap_or(usize::MAX);
+            if nd < prev {
+                dist.insert(p, nd);
+                q.push_back((p, nd));
+            }
+        }
+    }
+    best
+}
+
+fn commits_within_parent_depth(
+    repo: &Repository,
+    wants: &[ObjectId],
+    max_depth: usize,
+    server_shallow: &HashSet<ObjectId>,
+) -> HashSet<ObjectId> {
+    let mut best_depth: HashMap<ObjectId, usize> = HashMap::new();
+    let mut q: VecDeque<(ObjectId, usize)> = VecDeque::new();
+    for &w in wants {
+        best_depth.insert(w, 1);
+        q.push_back((w, 1));
+    }
+    while let Some((oid, depth)) = q.pop_front() {
+        if depth > max_depth {
+            continue;
+        }
+        if best_depth.get(&oid).copied() != Some(depth) {
+            continue;
+        }
+        if depth == max_depth {
+            continue;
+        }
+        if server_shallow.contains(&oid) {
+            continue;
+        }
+        for p in commit_parent_ids(repo, oid) {
+            let nd = depth.saturating_add(1);
+            if nd > max_depth {
+                continue;
+            }
+            let prev = best_depth.get(&p).copied().unwrap_or(usize::MAX);
+            if nd < prev {
+                best_depth.insert(p, nd);
+                q.push_back((p, nd));
+            }
+        }
+    }
+    best_depth.into_keys().collect()
+}
+
+fn border_commits_not_in_client_shallow(
+    repo: &Repository,
+    included: &HashSet<ObjectId>,
+    client_shallow: &HashSet<ObjectId>,
+) -> Vec<ObjectId> {
+    let mut out = Vec::new();
+    let mut seen_out = HashSet::new();
+    for &c in included {
+        if client_shallow.contains(&c) {
+            continue;
+        }
+        let parents = commit_parent_ids(repo, c);
+        let is_border = parents.iter().any(|p| !included.contains(p));
+        if is_border && seen_out.insert(c) {
+            out.push(c);
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Shallow boundary commits for `upload-pack` when the client uses `deepen-since` and/or
+/// `deepen-not` (Git runs `rev-list --max-age=…` / `--not` and derives border commits).
+///
+/// Returns OIDs to advertise as `shallow` lines and pass to `pack-objects --shallow`.
+pub fn shallow_grafts_for_upload_pack_rev_list(
+    repo: &Repository,
+    wants: &[ObjectId],
+    client_shallow: &[ObjectId],
+    deepen_since: Option<i64>,
+    deepen_not: &[ObjectId],
+) -> Result<Vec<ObjectId>> {
+    if wants.is_empty() || (deepen_since.is_none() && deepen_not.is_empty()) {
+        return Ok(Vec::new());
+    }
+
+    let positive: Vec<String> = wants.iter().map(|o| o.to_hex()).collect();
+    let negative: Vec<String> = deepen_not
+        .iter()
+        .map(|o| format!("^{}", o.to_hex()))
+        .collect();
+
+    let options = RevListOptions {
+        since_cutoff: deepen_since,
+        missing_action: MissingAction::Allow,
+        ..Default::default()
+    };
+
+    let res = rev_list(repo, &positive, &negative, &options)?;
+    let included: HashSet<ObjectId> = res.commits.iter().copied().collect();
+    let client_set: HashSet<ObjectId> = client_shallow.iter().copied().collect();
+    Ok(border_commits_not_in_client_shallow(
+        repo,
+        &included,
+        &client_set,
+    ))
 }
 
 /// Load commit parent overrides from `.git/info/grafts`.
