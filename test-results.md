@@ -1,5 +1,16 @@
 # Test results
 
+**2026-04-10 (phase 6 / t5516 push URL rewrite parity)**  
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo clippy --fix --allow-dirty -p grit-rs`: pass (reverted unrelated clippy-only edits in non-target files before commit)
+- `cargo test -p grit-lib --lib`: pass
+- `cargo build --release -p grit-rs`: pass
+- `bash tests/t5516-fetch-push.sh --run=1,17,18,19` (harness env): all selected tests pass (`push with insteadOf`, `push with pushInsteadOf`, and explicit `pushurl` precedence)
+- `./scripts/run-tests.sh t5516-fetch-push.sh`: **62/124** (score unchanged, but push-side `insteadOf`/`pushInsteadOf` parity is now native and no longer appears in failing set)
+- `./scripts/run-tests.sh t5509-fetch-push-namespaces.sh`: **13/15** (unchanged; cases 6 and 10 continue to fail under both grit and system git in this harness)
+
 **2026-04-10 (phase 6 / t5516 push tag+force parsing parity)**  
 
 - `cargo fmt`: pass

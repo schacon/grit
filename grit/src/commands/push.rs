@@ -584,9 +584,10 @@ pub fn run(args: Args) -> Result<()> {
             // Path-based or explicit URL (including scp-style `host:path`); do not resolve as a
             // configured remote name (matches Git: t5507-remote-environment).
             remote_is_configured_name = false;
-            path_style_remote = true;
+            let rewritten = crate::url_rewrite::rewrite_push_url(&config, r);
+            path_style_remote = url_looks_like_local_path(&rewritten);
             remote_name_owned = r.clone();
-            urls = vec![r.clone()];
+            urls = vec![rewritten];
         } else {
             remote_is_configured_name = true;
             remote_name_owned = r.clone();
@@ -3000,7 +3001,11 @@ fn resolve_remote_urls(config: &ConfigSet, remote_name: &str) -> Result<(Vec<Str
     }
 
     if let Some(url) = config.get(&format!("remote.{remote_name}.url")) {
-        return Ok((vec![url.clone()], url_looks_like_local_path(&url)));
+        let rewritten = crate::url_rewrite::rewrite_push_url(config, &url);
+        return Ok((
+            vec![rewritten.clone()],
+            url_looks_like_local_path(&rewritten),
+        ));
     }
 
     if remote_name == "."
