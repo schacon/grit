@@ -15,7 +15,7 @@
 //! See `Documentation/technical/index-format.txt` in the Git source tree for
 //! the authoritative format specification.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
@@ -45,6 +45,29 @@ pub const MODE_TREE: u32 = 0o040000;
 const INDEX_EXT_SPARSE_DIRECTORIES: u32 = u32::from_be_bytes(*b"sdir");
 /// Git index extension signature `UNTR` (untracked cache).
 const INDEX_EXT_UNTRACKED: u32 = u32::from_be_bytes(*b"UNTR");
+/// Git index extension signature `REUC` (resolve undo — conflict stages before `git add`).
+const INDEX_EXT_RESOLVE_UNDO: u32 = u32::from_be_bytes(*b"REUC");
+
+/// Saved unmerged index state for one path (Git `resolve_undo_info` / `REUC` extension).
+///
+/// `modes[0]`..`modes[2]` are the index modes for merge stages 1..3; zero means that stage
+/// was absent. When `modes[i]` is non-zero, `oids[i]` holds the blob object id for that stage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolveUndoInfo {
+    /// Entry mode for stages 1, 2, 3 (Git `ce_mode`); `0` means the stage was not present.
+    pub modes: [u32; 3],
+    /// Object ids for stages 1..3; only meaningful when the corresponding `modes[i]` is non-zero.
+    pub oids: [ObjectId; 3],
+}
+
+impl Default for ResolveUndoInfo {
+    fn default() -> Self {
+        Self {
+            modes: [0, 0, 0],
+            oids: [ObjectId::zero(), ObjectId::zero(), ObjectId::zero()],
+        }
+    }
+}
 
 /// A single entry in the Git index.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,6 +209,8 @@ pub struct Index {
     pub sparse_directories: bool,
     /// Optional untracked-cache extension (`UNTR`), matching Git's `istate->untracked`.
     pub untracked_cache: Option<untracked_cache::UntrackedCache>,
+    /// Resolve-undo data (`REUC`): blob/mode for merge stages before a conflict was resolved.
+    pub resolve_undo: BTreeMap<Vec<u8>, ResolveUndoInfo>,
 }
 
 /// Options for loading an index from disk.
@@ -247,6 +272,7 @@ impl Index {
             entries: Vec::new(),
             sparse_directories: false,
             untracked_cache: None,
+            resolve_undo: BTreeMap::new(),
         }
     }
 
@@ -264,6 +290,7 @@ impl Index {
                 entries: Vec::new(),
                 sparse_directories: false,
                 untracked_cache: None,
+                resolve_undo: BTreeMap::new(),
             };
         }
 
@@ -293,6 +320,7 @@ impl Index {
             entries: Vec::new(),
             sparse_directories: false,
             untracked_cache: None,
+            resolve_undo: BTreeMap::new(),
         }
     }
 
@@ -308,6 +336,7 @@ impl Index {
                 entries: Vec::new(),
                 sparse_directories: false,
                 untracked_cache: None,
+                resolve_undo: BTreeMap::new(),
             };
         }
 
@@ -340,6 +369,7 @@ impl Index {
             entries: Vec::new(),
             sparse_directories: false,
             untracked_cache: None,
+            resolve_undo: BTreeMap::new(),
         }
     }
 
@@ -586,6 +616,7 @@ impl Index {
 
         let mut sparse_directories = false;
         let mut untracked_cache = None;
+        let mut resolve_undo = BTreeMap::new();
         while pos + 8 <= body.len() {
             let sig = u32::from_be_bytes(
                 body[pos..pos + 4]
@@ -608,6 +639,9 @@ impl Index {
             } else if sig == INDEX_EXT_UNTRACKED {
                 let ext_data = &body[pos..pos + ext_sz];
                 untracked_cache = untracked_cache::parse_untracked_extension(ext_data);
+            } else if sig == INDEX_EXT_RESOLVE_UNDO {
+                let ext_data = &body[pos..pos + ext_sz];
+                resolve_undo = parse_resolve_undo_extension(ext_data)?;
             }
             pos += ext_sz;
         }
@@ -620,6 +654,7 @@ impl Index {
             entries,
             sparse_directories,
             untracked_cache,
+            resolve_undo,
         })
     }
 
@@ -742,6 +777,12 @@ impl Index {
             out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
             out.extend_from_slice(&payload);
         }
+        if !self.resolve_undo.is_empty() {
+            let payload = write_resolve_undo_extension(&self.resolve_undo);
+            out.extend_from_slice(&INDEX_EXT_RESOLVE_UNDO.to_be_bytes());
+            out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+            out.extend_from_slice(&payload);
+        }
         Ok(())
     }
 
@@ -778,6 +819,11 @@ impl Index {
     /// conflicted file during merge/cherry-pick resolution.
     pub fn stage_file(&mut self, entry: IndexEntry) {
         let path = entry.path.clone();
+        for e in self.entries.iter() {
+            if e.path == path && e.stage() != 0 {
+                record_resolve_undo_for_entry(&mut self.resolve_undo, e);
+            }
+        }
         // Remove conflict stages first
         self.entries.retain(|e| e.path != path || e.stage() == 0);
         // Then add/replace stage-0 entry
@@ -788,6 +834,11 @@ impl Index {
     ///
     /// Returns `true` if at least one entry was removed.
     pub fn remove(&mut self, path: &[u8]) -> bool {
+        for e in self.entries.iter() {
+            if e.path == path && e.stage() != 0 {
+                record_resolve_undo_for_entry(&mut self.resolve_undo, e);
+            }
+        }
         let before = self.entries.len();
         self.entries.retain(|e| e.path != path);
         let removed = self.entries.len() < before;
@@ -821,6 +872,12 @@ impl Index {
             let ep = e.path.as_slice();
             ep.len() > plen && ep.starts_with(prefix) && ep[plen] == b'/'
         });
+        for e in self.entries.iter() {
+            let ep = e.path.as_slice();
+            if ep.len() > plen && ep.starts_with(prefix) && ep[plen] == b'/' && e.stage() != 0 {
+                record_resolve_undo_for_entry(&mut self.resolve_undo, e);
+            }
+        }
         self.entries.retain(|e| {
             let ep = e.path.as_slice();
             if ep.len() <= plen {
@@ -1642,6 +1699,125 @@ pub fn normalize_mode(raw_mode: u32) -> u32 {
     MODE_REGULAR
 }
 
+fn record_resolve_undo_for_entry(map: &mut BTreeMap<Vec<u8>, ResolveUndoInfo>, entry: &IndexEntry) {
+    let stage = entry.stage();
+    if stage == 0 || stage > 3 {
+        return;
+    }
+    let ui = map.entry(entry.path.clone()).or_default();
+    let i = (stage - 1) as usize;
+    ui.modes[i] = entry.mode;
+    ui.oids[i] = entry.oid;
+}
+
+fn parse_resolve_undo_extension(data: &[u8]) -> Result<BTreeMap<Vec<u8>, ResolveUndoInfo>> {
+    let mut out = BTreeMap::new();
+    let mut pos = 0usize;
+    while pos < data.len() {
+        let path_end = data[pos..]
+            .iter()
+            .position(|&b| b == 0)
+            .ok_or_else(|| Error::IndexError("truncated REUC path".to_owned()))?;
+        let path = data[pos..pos + path_end].to_vec();
+        pos += path_end + 1;
+
+        let mut modes = [0u32; 3];
+        for m in &mut modes {
+            let mode_end = data[pos..]
+                .iter()
+                .position(|&b| b == 0)
+                .ok_or_else(|| Error::IndexError("truncated REUC mode".to_owned()))?;
+            let mode_s = std::str::from_utf8(&data[pos..pos + mode_end])
+                .map_err(|_| Error::IndexError("REUC mode is not valid UTF-8".to_owned()))?;
+            *m = u32::from_str_radix(mode_s, 8)
+                .map_err(|_| Error::IndexError(format!("invalid REUC mode octal: {mode_s}")))?;
+            pos += mode_end + 1;
+        }
+
+        let mut oids = [ObjectId::zero(); 3];
+        for i in 0..3 {
+            if modes[i] != 0 {
+                if pos + 20 > data.len() {
+                    return Err(Error::IndexError("truncated REUC object id".to_owned()));
+                }
+                oids[i] = ObjectId::from_bytes(&data[pos..pos + 20])?;
+                pos += 20;
+            }
+        }
+        out.insert(path, ResolveUndoInfo { modes, oids });
+    }
+    Ok(out)
+}
+
+fn write_resolve_undo_extension(map: &BTreeMap<Vec<u8>, ResolveUndoInfo>) -> Vec<u8> {
+    let mut buf = Vec::new();
+    for (path, ui) in map.iter() {
+        buf.extend_from_slice(path);
+        buf.push(0);
+        for m in ui.modes {
+            buf.extend_from_slice(format!("{m:o}").as_bytes());
+            buf.push(0);
+        }
+        for i in 0..3 {
+            if ui.modes[i] != 0 {
+                buf.extend_from_slice(ui.oids[i].as_bytes());
+            }
+        }
+    }
+    buf
+}
+
+impl Index {
+    /// Re-create unmerged index entries for `path` from resolve-undo (`REUC`), matching Git's
+    /// `unmerge_index_entry` used by `git restore --merge` after a mistaken resolution.
+    ///
+    /// Returns `true` if resolve-undo had data for this path (the map entry is always consumed).
+    /// When the path is already unmerged, the index is left unchanged.
+    pub fn unmerge_from_resolve_undo(&mut self, path: &[u8]) -> bool {
+        let Some(ru) = self.resolve_undo.remove(path) else {
+            return false;
+        };
+        let has_conflict_stage = self
+            .entries
+            .iter()
+            .any(|e| e.path == path && e.stage() != 0);
+        if has_conflict_stage {
+            return true;
+        }
+        self.entries.retain(|e| !(e.path == path && e.stage() == 0));
+        for stage in 1u8..=3u8 {
+            let i = (stage - 1) as usize;
+            if ru.modes[i] == 0 {
+                continue;
+            }
+            let path_len = path.len().min(0xFFF) as u16;
+            let flags = path_len | ((stage as u16) << 12);
+            let entry = IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: ru.modes[i],
+                uid: 0,
+                gid: 0,
+                size: 0,
+                oid: ru.oids[i],
+                flags,
+                flags_extended: None,
+                path: path.to_vec(),
+            };
+            self.add_or_replace(entry);
+        }
+        self.sort();
+        if let Ok(p) = std::str::from_utf8(path) {
+            self.invalidate_untracked_cache_for_path(p);
+        }
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
@@ -1698,6 +1874,40 @@ mod tests {
         assert_eq!(loaded.entries.len(), 2);
         assert_eq!(loaded.entries[0].path, b"bar/baz.txt");
         assert_eq!(loaded.entries[1].path, b"foo.txt");
+    }
+
+    #[test]
+    fn resolve_undo_reuc_round_trip_and_unmerge() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("index");
+
+        let oid_a = ObjectId::from_bytes(&[1u8; 20]).unwrap();
+        let oid_b = ObjectId::from_bytes(&[2u8; 20]).unwrap();
+        let oid_c = ObjectId::from_bytes(&[3u8; 20]).unwrap();
+
+        let mut idx = Index::new();
+        idx.add_or_replace(make_entry("tracked.txt"));
+        let p = b"conflict.txt".to_vec();
+        for (stage, oid) in [(1u8, oid_a), (2u8, oid_b), (3u8, oid_c)] {
+            let mut e = make_entry("conflict.txt");
+            e.oid = oid;
+            e.mode = MODE_REGULAR;
+            e.flags = (p.len().min(0xFFF) as u16) | ((stage as u16) << 12);
+            idx.add_or_replace(e);
+        }
+        idx.sort();
+        idx.stage_file(make_entry("conflict.txt"));
+        idx.write(&path).unwrap();
+
+        let loaded = Index::load(&path).unwrap();
+        assert!(loaded.resolve_undo.contains_key(p.as_slice()));
+        assert!(loaded.get(p.as_slice(), 0).is_some());
+
+        let mut idx2 = loaded;
+        assert!(idx2.unmerge_from_resolve_undo(p.as_slice()));
+        assert_eq!(idx2.get(p.as_slice(), 1).map(|e| e.oid), Some(oid_a));
+        assert_eq!(idx2.get(p.as_slice(), 2).map(|e| e.oid), Some(oid_b));
+        assert_eq!(idx2.get(p.as_slice(), 3).map(|e| e.oid), Some(oid_c));
     }
 
     #[test]
