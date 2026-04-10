@@ -404,7 +404,7 @@ t1400-update-ref	t1	skip	254	0	0	false	ok	0
 t1401-symbolic-ref	t1	yes	25	25	0	true	ok	0
 t1402-check-ref-format	t1	yes	99	99	0	true	ok	0
 t1403-show-ref	t1	yes	12	12	0	true	ok	0
-t1404-update-ref-errors	t1	yes	38	1	37	false	ok	0
+t1404-update-ref-errors	t1	yes	38	38	0	true	ok	0
 t1405-main-ref-store	t1	yes	16	2	14	false	ok	0
 t1405-main-ref-store-reftable	t1	yes	29	29	0	true	ok	0
 t1406-submodule-ref-store	t1	yes	15	8	7	false	ok	0
