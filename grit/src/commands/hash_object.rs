@@ -3,7 +3,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::io::{BufRead, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use grit_lib::fsck_standalone::fsck_object;
@@ -57,7 +57,7 @@ pub fn run(args: Args) -> Result<()> {
     // We only need the odb if -w is given
     let odb = if args.write {
         let repo = Repository::discover(None).context("not a git repository")?;
-        Some(repo.odb)
+        Some(odb_for_write(&repo)?)
     } else {
         None
     };
@@ -120,6 +120,29 @@ fn validate_object_data(kind: ObjectKind, data: &[u8], literally: bool) -> Resul
         ))));
     }
     Ok(())
+}
+
+/// Object store used for `hash-object -w`.
+///
+/// When `GIT_OBJECT_DIRECTORY` is set, Git writes loose objects there instead of the repository’s
+/// primary `objects/` directory (`t7700-repack` alternate-ODB setup).
+fn odb_for_write(repo: &Repository) -> Result<Odb> {
+    let Ok(raw) = std::env::var("GIT_OBJECT_DIRECTORY") else {
+        return Ok(repo.odb.clone());
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(repo.odb.clone());
+    }
+    let p = Path::new(trimmed);
+    let abs = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("GIT_OBJECT_DIRECTORY is relative; need current directory")?
+            .join(p)
+    };
+    Ok(Odb::new(&abs))
 }
 
 fn hash_and_maybe_write(

@@ -32,6 +32,8 @@ use grit_lib::submodule_gitdir::submodule_modules_git_dir;
 use grit_lib::unicode_normalization::precompose_utf8_path;
 use similar::{Algorithm, TextDiff};
 
+use crate::commands::update_ref;
+
 /// The zero OID for reflog entries when there is no previous value.
 fn zero_oid() -> ObjectId {
     ObjectId::zero()
@@ -127,7 +129,7 @@ fn rollback_reset_after_failed_submodule_update(
     repo.write_index_at(&index_path, &mut rollback_index)
         .context("writing index during rollback")?;
     update_head_ref(&repo.git_dir, head, old_oid)?;
-    let identity = resolve_reflog_identity(repo);
+    let identity = update_ref::resolve_reflog_identity(repo);
     let msg = "reset: rolling back after submodule update failure";
     let _ = append_reflog(
         &repo.git_dir,
@@ -528,27 +530,6 @@ fn resolve_reset_first_arg_as_commit(repo: &Repository, first: &str) -> Option<S
     None
 }
 
-/// Resolve the committer identity for reflog entries.
-fn resolve_reflog_identity(repo: &Repository) -> String {
-    let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
-    let name = std::env::var("GIT_COMMITTER_NAME")
-        .ok()
-        .or_else(|| std::env::var("GIT_AUTHOR_NAME").ok())
-        .or_else(|| config.as_ref().and_then(|c| c.get("user.name")))
-        .unwrap_or_else(|| "Unknown".to_owned());
-    let email = std::env::var("GIT_COMMITTER_EMAIL")
-        .ok()
-        .or_else(|| std::env::var("GIT_AUTHOR_EMAIL").ok())
-        .or_else(|| config.as_ref().and_then(|c| c.get("user.email")))
-        .unwrap_or_default();
-    let now = time::OffsetDateTime::now_utc();
-    let epoch = now.unix_timestamp();
-    let offset = now.offset();
-    let hours = offset.whole_hours();
-    let minutes = offset.minutes_past_hour().unsigned_abs();
-    format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}")
-}
-
 /// Write reflog entries for a reset operation.
 fn write_reset_reflog(
     repo: &Repository,
@@ -557,7 +538,7 @@ fn write_reset_reflog(
     new_oid: &ObjectId,
     commit_spec: &str,
 ) {
-    let identity = resolve_reflog_identity(repo);
+    let identity = update_ref::resolve_reflog_identity(repo);
     let message = format!("reset: moving to {commit_spec}");
 
     match head {

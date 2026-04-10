@@ -16,6 +16,7 @@ use grit_lib::midx::{
     clear_pack_midx_state, write_multi_pack_index_with_options, WriteMultiPackIndexOptions,
 };
 use grit_lib::objects::ObjectId;
+use grit_lib::pack::read_pack_index;
 use grit_lib::pack_geometry::{
     collect_geometry_packs, collect_promisor_geometry_packs, compute_geometry_split,
     preferred_pack_stem_after_split, GeometricPack,
@@ -25,6 +26,7 @@ use grit_lib::prune_packed::{prune_packed_objects, PrunePackedOptions};
 use grit_lib::repo::Repository;
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -51,7 +53,11 @@ pub struct Args {
 
     /// Write a bitmap index (same as `git repack -b`). Fails when promisor packs are present or
     /// the object set is not closed (matches Git’s bitmap constraints).
-    #[arg(short = 'b', long = "write-bitmap")]
+    #[arg(
+        short = 'b',
+        long = "write-bitmap-index",
+        visible_alias = "write-bitmap"
+    )]
     pub write_bitmap: bool,
 
     /// Suppress bitmap index write (Git `repack` incremental auto-gc path).
@@ -120,7 +126,7 @@ pub struct Args {
     pub write_midx: bool,
 
     /// Repack objects inside `.keep` packs (matches `git repack --pack-kept-objects`).
-    #[arg(long = "pack-kept-objects")]
+    #[arg(long = "pack-kept-objects", action = clap::ArgAction::SetTrue)]
     pub pack_kept_objects: bool,
 
     /// Maximum pack size in bytes (forwarded to pack-objects).
@@ -132,21 +138,88 @@ pub struct Args {
     pub rest: Vec<String>,
 }
 
+fn parse_config_byte_size(raw: &str) -> Option<u64> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let upper = s.to_ascii_uppercase();
+    let (digits, mult) = if upper.ends_with('K') {
+        (&s[..s.len() - 1], 1024u64)
+    } else if upper.ends_with('M') {
+        (&s[..s.len() - 1], 1024u64 * 1024)
+    } else if upper.ends_with('G') {
+        (&s[..s.len() - 1], 1024u64 * 1024 * 1024)
+    } else {
+        (s, 1u64)
+    };
+    let n: u64 = digits.trim().parse().ok()?;
+    Some(n.saturating_mul(mult))
+}
+
+/// Git `write_bitmaps` after config / defaults: negative means “quiet bitmap” path, `>0` enables.
+fn effective_write_bitmaps_int(
+    args: &Args,
+    cfg: &ConfigSet,
+    full_repack: bool,
+    bare_repo: bool,
+) -> i32 {
+    let mut wb: i32 = if args.write_bitmap {
+        1
+    } else if args.no_write_bitmap_index {
+        0
+    } else {
+        -1
+    };
+    if wb < 0 {
+        if let Some(v) = cfg
+            .get("repack.writebitmaps")
+            .or_else(|| cfg.get("pack.writeBitmaps"))
+        {
+            wb = if v == "true" || v == "1" || v.eq_ignore_ascii_case("yes") {
+                1
+            } else {
+                0
+            };
+        }
+    }
+    if wb < 0 {
+        if !args.write_midx && (!full_repack || !bare_repo) {
+            wb = 0;
+        }
+    }
+    wb
+}
+
+/// Whether to include objects from `.keep` packs in the new pack(s), matching Git `pack_kept_objects`.
+fn resolve_pack_kept_objects(
+    args: &Args,
+    cfg: &ConfigSet,
+    full_repack: bool,
+    bare_repo: bool,
+) -> bool {
+    if args.pack_kept_objects {
+        return true;
+    }
+    if let Some(v) = cfg
+        .get("repack.packkeptobjects")
+        .or_else(|| cfg.get("repack.packKeptObjects"))
+    {
+        return v == "true" || v == "1" || v.eq_ignore_ascii_case("yes");
+    }
+    effective_write_bitmaps_int(args, cfg, full_repack, bare_repo) > 0 && !args.write_midx
+}
+
 /// Run `grit repack`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
 
-    let pack_kept_objects = if args.pack_kept_objects {
-        true
-    } else {
-        cfg.get("repack.packkeptobjects")
-            .or_else(|| cfg.get("repack.packKeptObjects"))
-            .map(|v| v == "true" || v == "1" || v.eq_ignore_ascii_case("yes"))
-            .unwrap_or(false)
-    };
-
     let geometric = args.geometric.unwrap_or(0).max(0);
+    let full_repack_early = args.all || args.repack_all_unpack || args.cruft;
+    let bare_repo = repo.work_tree.is_none();
+    let pack_kept_objects = resolve_pack_kept_objects(&args, &cfg, full_repack_early, bare_repo);
+
     if geometric > 0 && (args.all || args.repack_all_unpack) {
         anyhow::bail!("options '--geometric' and '-a' cannot be used together");
     }
@@ -154,34 +227,24 @@ pub fn run(args: Args) -> Result<()> {
         return run_geometric(&repo, &args, pack_kept_objects, geometric);
     }
 
-    if args.write_bitmap {
-        let objects_dir = repo.git_dir.join("objects");
-        if repo_treats_promisor_packs(&repo.git_dir, &cfg)
-            && !promisor_pack_object_ids(&objects_dir).is_empty()
-        {
-            anyhow::bail!("fatal: failed to write bitmap index");
-        }
-    }
     if args.cruft && args.repack_all_unpack {
         anyhow::bail!("options '-A' and '--cruft' cannot be used together");
     }
-    fn parse_byte_size_with_suffix(raw: &str) -> Option<u64> {
-        let s = raw.trim();
-        if s.is_empty() {
-            return None;
+    // Git `pack-objects` cannot combine `--write-bitmap-index` with `--filter`; repack fails once
+    // the filtered pack is incomplete for bitmap closure (`t7700-repack`).
+    if (args.all || args.repack_all_unpack)
+        && !args.cruft
+        && !args.write_midx
+        && args
+            .filter
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|s| !s.is_empty())
+    {
+        let wb = effective_write_bitmaps_int(&args, &cfg, true, bare_repo);
+        if wb > 0 {
+            anyhow::bail!("fatal: failed to write bitmap index");
         }
-        let upper = s.to_ascii_uppercase();
-        let (digits, mult) = if upper.ends_with('K') {
-            (&s[..s.len() - 1], 1024u64)
-        } else if upper.ends_with('M') {
-            (&s[..s.len() - 1], 1024u64 * 1024)
-        } else if upper.ends_with('G') {
-            (&s[..s.len() - 1], 1024u64 * 1024 * 1024)
-        } else {
-            (s, 1u64)
-        };
-        let n: u64 = digits.trim().parse().ok()?;
-        Some(n.saturating_mul(mult))
     }
     let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
     let grit_bin = grit_exe::grit_executable();
@@ -193,6 +256,7 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     let pack_dir_abs = repo.git_dir.join("objects").join("pack");
+    ensure_no_orphan_pack_indexes(&pack_dir_abs)?;
 
     let full_repack = args.all || args.repack_all_unpack || args.cruft;
     if full_repack {
@@ -200,14 +264,48 @@ pub fn run(args: Args) -> Result<()> {
     }
     let loosen_unreachable = args.repack_all_unpack && !args.cruft;
 
-    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let mut write_bitmaps = effective_write_bitmaps_int(&args, &cfg, full_repack, bare_repo);
+    let objects_dir_for_warn = repo.git_dir.join("objects");
+    let mut quiet_pack_objects_local_alt = false;
+    if args.local
+        && grit_lib::pack::read_alternates_recursive(&objects_dir_for_warn)
+            .map_or(false, |v| !v.is_empty())
+        && !args.no_write_bitmap_index
+        && write_bitmaps != 0
+    {
+        eprintln!("warning: disabling bitmap writing, as some objects are not being packed");
+        write_bitmaps = 0;
+        quiet_pack_objects_local_alt = true;
+    }
+    if write_bitmaps != 0 {
+        if repo_treats_promisor_packs(&repo.git_dir, &cfg)
+            && !promisor_pack_object_ids(&objects_dir_for_warn).is_empty()
+        {
+            anyhow::bail!("fatal: failed to write bitmap index");
+        }
+    }
+    if pack_dir_has_any_keep_file(&pack_dir_abs) {
+        write_bitmaps = 0;
+    }
+    if let Some(raw) = cfg
+        .get("pack.packsizelimit")
+        .or_else(|| cfg.get("pack.packSizeLimit"))
+    {
+        if parse_config_byte_size(&raw).map(|n| n > 0).unwrap_or(false)
+            && args.max_pack_size.is_none()
+            && write_bitmaps < 0
+        {
+            // Git disables quiet bitmaps when packs may split (`t7700-repack` auto-bitmaps test).
+            write_bitmaps = 0;
+        }
+    }
 
     let mut new_pack_names: Vec<String> = Vec::new();
 
     let max_cruft_bytes = args
         .max_cruft_size
         .as_deref()
-        .and_then(parse_byte_size_with_suffix);
+        .and_then(parse_config_byte_size);
 
     /// Lines Git `pack-objects` prints to stdout when writing packs (40 hex chars per pack).
     /// With `--filter-to`, the main pack and the filtered-out side pack each emit one line;
@@ -239,6 +337,10 @@ pub fn run(args: Args) -> Result<()> {
 
             for k in &args.keep_pack {
                 cmd.arg("--keep-pack").arg(k);
+            }
+
+            if !main_phase || !pack_kept_objects {
+                cmd.arg("--honor-pack-keep");
             }
 
             cmd.arg("--all");
@@ -293,7 +395,13 @@ pub fn run(args: Args) -> Result<()> {
 
             cmd.arg(base);
 
-            if args.quiet {
+            // Incremental repack (`repack -d` without `-a`) must stay stderr-silent (`t7700-repack`).
+            // Full repack without bitmaps must not print `pack-objects` progress (`t7700-repack`).
+            if args.quiet
+                || !full_repack
+                || (main_phase && quiet_pack_objects_local_alt)
+                || (full_repack && main_phase && write_bitmaps == 0)
+            {
                 cmd.arg("-q");
             }
             if args.aggressive {
@@ -316,8 +424,16 @@ pub fn run(args: Args) -> Result<()> {
                 cmd.arg("--exclude-promisor-objects");
             }
 
-            if args.write_bitmap {
-                cmd.arg("--write-bitmap-index");
+            if args.local {
+                cmd.arg("--local");
+            }
+
+            if main_phase {
+                if write_bitmaps > 0 {
+                    cmd.arg("--write-bitmap-index");
+                } else if write_bitmaps < 0 && !args.no_write_bitmap_index {
+                    cmd.arg("--write-bitmap-index-quiet");
+                }
             }
             if args.no_write_bitmap_index {
                 cmd.arg("--no-write-bitmap-index");
@@ -376,7 +492,13 @@ pub fn run(args: Args) -> Result<()> {
                 if main_hashes.iter().any(|h| name == format!("pack-{h}.pack")) {
                     continue;
                 }
-                stdin_lines.push(format!("-{name}"));
+                let stem = name.strip_suffix(".pack").unwrap_or(name);
+                let retained = args.keep_pack.iter().any(|k| basename_matches(k, stem));
+                if retained {
+                    stdin_lines.push(name.to_string());
+                } else {
+                    stdin_lines.push(format!("-{name}"));
+                }
             }
 
             let cruft_base = if let Some(ref et) = args.expire_to {
@@ -399,6 +521,38 @@ pub fn run(args: Args) -> Result<()> {
         let hashes = run_one_pack_objects(true, None, pack_base)?;
         for h in hashes {
             new_pack_names.push(format!("pack-{h}.pack"));
+        }
+    }
+
+    // Second `pack-objects --stdin-packs` pass for `repack --filter` (Git `write_filtered_pack`).
+    if full_repack
+        && !args.cruft
+        && args
+            .filter
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|s| !s.is_empty())
+    {
+        if let Some(last) = new_pack_names.last().cloned() {
+            let filter_dest = args
+                .filter_to
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(pack_base);
+            if let Some(h) = run_filtered_followup_pack_objects(
+                &grit_bin,
+                work_dir,
+                &repo.git_dir,
+                &pack_dir_abs,
+                &last,
+                filter_dest,
+                &args,
+                pack_kept_objects,
+                write_bitmaps,
+            )? {
+                new_pack_names.push(format!("pack-{h}.pack"));
+            }
         }
     }
 
@@ -463,7 +617,7 @@ pub fn run(args: Args) -> Result<()> {
     if args.aggressive {
         trace_argv.push("--aggressive".to_string());
     }
-    if args.write_bitmap {
+    if write_bitmaps > 0 {
         trace_argv.push("-b".to_string());
     }
     trace2_emit_git_subcommand_argv(&trace_argv);
@@ -471,6 +625,11 @@ pub fn run(args: Args) -> Result<()> {
     if args.delete_old {
         if full_repack {
             let mut keep: Vec<String> = new_pack_names.clone();
+            // `pack-objects` may append names here when `blob:none` writes a sibling pack via stdin
+            // (`write_pack_via_stdin_objects`). That pack must stay in the keep set while old packs
+            // are still retained for duplicate objects; otherwise `remove_superseded_packs_*` treats
+            // the side pack as redundant (`t7700-repack` filter tests).
+            keep.extend(take_extra_packs_recorded_for_repack(&repo.git_dir)?);
             keep.extend(args.keep_pack.iter().cloned());
             let mut extra_objects_dirs: Vec<PathBuf> = Vec::new();
             for ft in [
@@ -518,21 +677,30 @@ fn run_geometric(
     let grit_bin = grit_exe::grit_executable();
     let pack_dir = repo.git_dir.join("objects").join("pack");
     let objects_dir = repo.git_dir.join("objects");
+    ensure_no_orphan_pack_indexes(&pack_dir)?;
 
+    let bare_repo = repo.work_tree.is_none();
+    let mut write_bitmaps = effective_write_bitmaps_int(args, &cfg, false, bare_repo);
     if args.local
         && grit_lib::pack::read_alternates_recursive(&objects_dir).map_or(false, |v| !v.is_empty())
+        && !args.no_write_bitmap_index
+        && write_bitmaps != 0
     {
-        let mut want_bitmap = args.write_bitmap;
-        if !want_bitmap {
-            if let Some(v) = cfg
-                .get("repack.writebitmaps")
-                .or_else(|| cfg.get("pack.writeBitmaps"))
-            {
-                want_bitmap = v == "true" || v == "1" || v.eq_ignore_ascii_case("yes");
-            }
-        }
-        if want_bitmap && !args.no_write_bitmap_index {
-            eprintln!("warning: disabling bitmap writing, as some objects are not being packed");
+        eprintln!("warning: disabling bitmap writing, as some objects are not being packed");
+        write_bitmaps = 0;
+    }
+    if pack_dir_has_any_keep_file(&pack_dir) {
+        write_bitmaps = 0;
+    }
+    if let Some(raw) = cfg
+        .get("pack.packsizelimit")
+        .or_else(|| cfg.get("pack.packSizeLimit"))
+    {
+        if parse_config_byte_size(&raw).map(|n| n > 0).unwrap_or(false)
+            && args.max_pack_size.is_none()
+            && write_bitmaps < 0
+        {
+            write_bitmaps = 0;
         }
     }
 
@@ -578,6 +746,8 @@ fn run_geometric(
                 &stdin,
                 args,
                 &cfg,
+                pack_kept_objects,
+                write_bitmaps,
                 true,
             )?;
         }
@@ -592,6 +762,8 @@ fn run_geometric(
                 &stdin,
                 args,
                 &cfg,
+                pack_kept_objects,
+                write_bitmaps,
                 false,
             )?;
         } else if !normal.is_empty() || has_loose {
@@ -605,6 +777,8 @@ fn run_geometric(
                 &stdin,
                 args,
                 &cfg,
+                pack_kept_objects,
+                write_bitmaps,
                 false,
             )?;
         }
@@ -626,7 +800,7 @@ fn run_geometric(
                 .unwrap_or(false);
             if has_local_idx {
                 let pref_idx = preferred_pack_index(&pack_dir, pref_stem.as_deref())?;
-                let bitmap_placeholders = args.write_bitmap && !args.no_write_bitmap_index;
+                let bitmap_placeholders = write_bitmaps > 0 && !args.no_write_bitmap_index;
                 write_multi_pack_index_with_options(
                     &pack_dir,
                     &WriteMultiPackIndexOptions {
@@ -646,7 +820,7 @@ fn run_geometric(
 
     if args.write_midx {
         let pref_idx = preferred_pack_index(&pack_dir, pref_stem.as_deref())?;
-        let bitmap = args.write_bitmap
+        let bitmap = write_bitmaps > 0
             && !args.no_write_bitmap_index
             && !(args.local
                 && grit_lib::pack::read_alternates_recursive(&objects_dir)
@@ -796,6 +970,8 @@ fn run_pack_objects_stdin(
     stdin_text: &str,
     args: &Args,
     cfg: &ConfigSet,
+    pack_kept_objects: bool,
+    write_bitmaps: i32,
     is_promisor: bool,
 ) -> Result<Vec<String>> {
     let mut cmd = Command::new(grit_bin);
@@ -814,8 +990,16 @@ fn run_pack_objects_stdin(
     if args.local {
         cmd.arg("--local");
     }
-    if !pack_kept_from_config(args, cfg) {
+    if !pack_kept_objects {
         cmd.arg("--honor-pack-keep");
+    }
+    if write_bitmaps > 0 {
+        cmd.arg("--write-bitmap-index");
+    } else if write_bitmaps < 0 && !args.no_write_bitmap_index {
+        cmd.arg("--write-bitmap-index-quiet");
+    }
+    if args.no_write_bitmap_index {
+        cmd.arg("--no-write-bitmap-index");
     }
     if args.aggressive {
         cmd.arg("-f");
@@ -856,16 +1040,6 @@ fn run_pack_objects_stdin(
         .map(str::to_owned)
         .collect();
     Ok(hashes)
-}
-
-fn pack_kept_from_config(args: &Args, cfg: &ConfigSet) -> bool {
-    if args.pack_kept_objects {
-        return true;
-    }
-    cfg.get("repack.packkeptobjects")
-        .or_else(|| cfg.get("repack.packKeptObjects"))
-        .map(|v| v == "true" || v == "1" || v.eq_ignore_ascii_case("yes"))
-        .unwrap_or(false)
 }
 
 fn remove_geometry_redundant(
@@ -914,6 +1088,194 @@ fn remove_geometry_redundant(
     }
     let _ = normal_new_hashes;
 
+    Ok(())
+}
+
+/// Second `pack-objects` invocation for `repack -a -d --filter=…` (Git `write_filtered_pack`).
+///
+/// Upstream `write_filtered_pack` runs `pack-objects --stdin-packs` **without** `--filter` (Git
+/// forbids combining those options). The first pass already applied the filter; this pass packs
+/// objects present in older packs but omitted from the new main pack.
+fn run_filtered_followup_pack_objects(
+    grit_bin: &Path,
+    work_dir: &Path,
+    git_dir: &Path,
+    pack_dir: &Path,
+    new_pack_name: &str,
+    out_prefix: &str,
+    args: &Args,
+    pack_kept_objects: bool,
+    write_bitmaps: i32,
+) -> Result<Option<String>> {
+    let new_base = pack_basename(new_pack_name);
+    if !new_base.ends_with(".pack") {
+        return Ok(None);
+    }
+    let mut stdin_lines: Vec<String> = vec![format!("^{new_base}")];
+    let rd = fs::read_dir(pack_dir).map_err(|e| anyhow::anyhow!(e))?;
+    for ent in rd.flatten() {
+        let name = ent.file_name().to_string_lossy().to_string();
+        if !name.starts_with("pack-") || !name.ends_with(".pack") {
+            continue;
+        }
+        if name == new_base {
+            continue;
+        }
+        let stem = name.strip_suffix(".pack").unwrap_or(&name);
+        let kept_by_flag = args.keep_pack.iter().any(|k| basename_matches(k, stem));
+        let kept_by_file = pack_dir.join(format!("{stem}.keep")).is_file();
+        if kept_by_flag || kept_by_file {
+            if pack_kept_objects {
+                stdin_lines.push(name);
+            } else {
+                stdin_lines.push(format!("^{name}"));
+            }
+        } else {
+            stdin_lines.push(name);
+        }
+    }
+    if stdin_lines.len() <= 1 {
+        return Ok(None);
+    }
+
+    let cfg = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+
+    let mut cmd = Command::new(grit_bin);
+    cmd.current_dir(work_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .arg("pack-objects")
+        .arg("--stdin-packs")
+        .arg("--keep-true-parents")
+        .arg("--non-empty")
+        .arg(out_prefix);
+    for k in &args.keep_pack {
+        cmd.arg("--keep-pack").arg(k);
+    }
+    if args.quiet || write_bitmaps == 0 {
+        cmd.arg("-q");
+    }
+    if args.aggressive {
+        cmd.arg("-f");
+        cmd.arg("--window").arg("250");
+        cmd.arg("--depth").arg("250");
+    } else {
+        if args.force {
+            cmd.arg("-f");
+        }
+        if let Some(w) = args.window {
+            cmd.arg("--window").arg(w.to_string());
+        }
+        if let Some(d) = args.depth {
+            cmd.arg("--depth").arg(d.to_string());
+        }
+    }
+    if let Some(ref s) = args.max_pack_size {
+        cmd.arg("--max-pack-size").arg(s);
+    }
+    if repo_treats_promisor_packs(git_dir, &cfg) {
+        cmd.arg("--exclude-promisor-objects");
+    }
+    if args.local {
+        cmd.arg("--local");
+    }
+    if write_bitmaps > 0 {
+        cmd.arg("--write-bitmap-index");
+    } else if write_bitmaps < 0 && !args.no_write_bitmap_index {
+        cmd.arg("--write-bitmap-index-quiet");
+    }
+    if args.no_write_bitmap_index {
+        cmd.arg("--no-write-bitmap-index");
+    }
+
+    let mut child = cmd.spawn().context("spawn pack-objects filter follow-up")?;
+    {
+        let mut stdin = child.stdin.take().context("pack-objects stdin")?;
+        for line in &stdin_lines {
+            writeln!(stdin, "{line}")?;
+        }
+    }
+    let output = child
+        .wait_with_output()
+        .context("wait pack-objects filter follow-up")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "pack-objects (filter follow-up) failed with status {}",
+            output.status
+        );
+    }
+    let hash = output
+        .stdout
+        .split(|b| *b == b'\n')
+        .next()
+        .and_then(|line| std::str::from_utf8(line).ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    Ok(hash)
+}
+
+fn pack_dir_has_any_keep_file(pack_dir: &Path) -> bool {
+    let Ok(rd) = fs::read_dir(pack_dir) else {
+        return false;
+    };
+    for ent in rd.flatten() {
+        let n = ent.file_name().to_string_lossy().to_string();
+        if n.starts_with("pack-") && n.ends_with(".keep") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Fail repack when a parseable `.idx` has no sibling `.pack` (repository corruption; `t7700-repack`).
+/// Reads and removes `objects/info/grit-extra-packs` (one pack basename per line).
+///
+/// Populated by `pack-objects` when it writes an auxiliary pack during `--filter=blob:none`
+/// handling; `repack -d` consumes the list so it is not reused across runs.
+fn take_extra_packs_recorded_for_repack(git_dir: &Path) -> Result<Vec<String>> {
+    let path = git_dir
+        .join("objects")
+        .join("info")
+        .join("grit-extra-packs");
+    let contents = match fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    let lines: Vec<String> = contents
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    let _ = fs::remove_file(&path);
+    Ok(lines)
+}
+
+fn ensure_no_orphan_pack_indexes(pack_dir: &Path) -> Result<()> {
+    let rd = match fs::read_dir(pack_dir) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    for ent in rd {
+        let ent = ent.context("read objects/pack")?;
+        let path = ent.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("idx") {
+            continue;
+        }
+        if read_pack_index(&path).is_err() {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if !pack_dir.join(format!("{stem}.pack")).is_file() {
+            anyhow::bail!("bad object pack {stem}.pack (missing)");
+        }
+    }
     Ok(())
 }
 
@@ -1001,6 +1363,17 @@ fn remove_superseded_packs_after_full_repack(
     for name in &retained {
         if let Some(s) = by_name.get(name) {
             union_oids.extend(s.iter().copied());
+        }
+    }
+    // Objects only in `.keep` packs must count toward supersession: otherwise an old pack that
+    // duplicates a kept object is never removed (`t7700-repack` alternate + `.keep` chain).
+    for (name, oids) in &by_name {
+        let stem = name
+            .strip_suffix(".pack")
+            .unwrap_or(name.as_str())
+            .to_string();
+        if pack_dir.join(format!("{stem}.keep")).exists() {
+            union_oids.extend(oids.iter().copied());
         }
     }
     union_oids.extend(

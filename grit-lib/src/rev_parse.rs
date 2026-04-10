@@ -940,9 +940,20 @@ fn normalize_path_components(path: PathBuf) -> PathBuf {
 }
 
 fn normalize_colon_path_for_tree(repo: &Repository, raw_path: &str) -> Result<String> {
-    let work_tree = repo.work_tree.as_ref().ok_or_else(|| {
-        Error::InvalidRef("relative path syntax can't be used outside working tree".to_owned())
-    })?;
+    // In a bare repo, `<rev>:<path>` is always relative to that revision's tree root (Git does not
+    // join against a work tree). `test-tool find-pack` uses `HEAD:file` from `git -C bare.git`.
+    if repo.work_tree.is_none() {
+        let p = raw_path.trim_start_matches("./");
+        if p.is_empty() {
+            return Ok(String::new());
+        }
+        if p.starts_with("../") || p.contains("/../") {
+            return Err(Error::InvalidRef("path outside repository".to_owned()));
+        }
+        return Ok(p.replace('\\', "/").trim_end_matches('/').to_owned());
+    }
+
+    let work_tree = repo.work_tree.as_ref().expect("work tree set for non-bare");
 
     let cwd = std::env::current_dir().map_err(Error::Io)?;
     let wt_canon = work_tree.canonicalize().map_err(Error::Io)?;

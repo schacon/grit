@@ -715,24 +715,25 @@ fn run_test_tool_find_pack(rest: &[String]) -> Result<()> {
     let mut packs: Vec<String> = Vec::new();
     for idx in indexes {
         if idx.entries.iter().any(|entry| entry.oid == oid) {
-            if let Some(name) = idx.pack_path.file_name().and_then(|s| s.to_str()) {
-                packs.push(format!(".git/objects/pack/{name}"));
-            }
+            // Match upstream `test-tool find-pack`: print the real pack path (absolute when
+            // possible), not a hard-coded `.git/objects/pack/…` prefix (`t7700-repack` bare repos).
+            let p = std::fs::canonicalize(&idx.pack_path).unwrap_or(idx.pack_path);
+            packs.push(p.to_string_lossy().into_owned());
         }
     }
     packs.sort();
     packs.dedup();
 
-    if let Some(n) = expected_count {
-        if packs.len() == n {
-            return Ok(());
-        }
-        std::process::exit(1);
-    }
-
-    for path in packs {
+    for path in &packs {
         println!("{path}");
     }
+
+    if let Some(n) = expected_count {
+        if packs.len() != n {
+            std::process::exit(1);
+        }
+    }
+
     Ok(())
 }
 
