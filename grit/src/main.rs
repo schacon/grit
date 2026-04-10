@@ -2764,8 +2764,10 @@ fn preprocess_commit_argv(rest: &[String]) -> Vec<String> {
 /// `switch` / `checkout` use `-C` for `--force-create` / `-B` style branch creation, not as a
 /// directory change — do not consume those tokens here (otherwise `git switch -C topic` tries to
 /// `chdir` into `topic` and fails with `ENOENT`).
+///
+/// `commit -C <rev>` is `--reuse-message`, not a directory change (t7500).
 fn strip_subcommand_leading_change_dir(subcmd: &str, rest: &mut Vec<String>) -> Result<()> {
-    if matches!(subcmd, "switch" | "checkout") {
+    if matches!(subcmd, "switch" | "checkout" | "commit") {
         return Ok(());
     }
     while rest.len() >= 2 && rest[0] == "-C" {
