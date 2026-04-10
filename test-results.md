@@ -1,5 +1,20 @@
 # Test results
 
+**2026-04-10 (status perf phase2 / iuc index parity + UNTR check_only subtree reuse)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `bash tests/t7063-status-untracked-cache.sh --run=1-7 -v`: **7/7** (all passing in targeted parity slice)
+- `bash tests/t7063-status-untracked-cache.sh -v`: 24/58 (improved from 14/58 baseline; remaining failures pre-existing broader UNTR parity gaps)
+- `bash tests/t7519-status-fsmonitor.sh -v`: **33/33** (no fsmonitor regressions)
+- Harness snapshot:
+  - `./scripts/run-tests.sh t7063-status-untracked-cache.sh`: **24/58** (improved from 14/58)
+  - `./scripts/run-tests.sh t7519-status-fsmonitor.sh`: 27/33 (no regression)
+  - `./scripts/run-tests.sh t7508-status.sh`: 94/126 (no regression)
+  - `./scripts/run-tests.sh t7060-wtstatus.sh`: 12/17 (no regression)
+  - `./scripts/run-tests.sh t7065-status-rename.sh`: 28/28 (no regression)
+
 **2026-04-10 (status perf phase2 / untracked trace counters and root creation alignment)**
 
 - `cargo fmt`: passed

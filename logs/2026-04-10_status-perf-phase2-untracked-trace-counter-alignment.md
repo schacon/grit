@@ -29,3 +29,40 @@
   - `./scripts/run-tests.sh t7060-wtstatus.sh`: 12/17 (no regression)
   - `./scripts/run-tests.sh t7065-status-rename.sh`: 28/28
 
+## Follow-up increment — alternate index + check_only subtree parity
+
+### Additional change summary
+
+1. **Status honors `GIT_INDEX_FILE` for read/write**
+   - `grit/src/commands/status.rs` now resolves index path with `repo.index_path_for_env()?`
+   - This fixes `iuc` helper parity in `t7063` where status must read/write the temporary index.
+
+2. **Porcelain v1 branch-header auto-enable removed**
+   - Removed status-only auto-injection of `args.branch = true` for porcelain v1.
+   - Porcelain branch header now appears only when explicitly requested (`-b`) or already set by existing option/config parsing, matching upstream expectations used by `t7063`.
+
+3. **UNTR check_only tree materialization for collapsed directories**
+   - `grit-lib/src/untracked_cache.rs` now materializes collapsed-directory children as
+     in-memory `check_only` subtrees using already collected `sub_untracked` paths (no extra
+     `read_dir`).
+   - Reuses valid `check_only` subtrees on subsequent runs for collapsed dirs.
+   - Preserves expected `dump-untracked-cache` structure while keeping trace `opendir` counters aligned.
+
+4. **UNTR parse + collection consistency fixes**
+   - Parsed UNTR nodes now restore `recurse=true` baseline before bitmap application.
+   - `collect_untracked_from_cache` ignores `check_only` directories to avoid leaking hidden nested entries in normal mode.
+
+5. **FSMonitor untracked-shape regression fix**
+   - Removed unconditional top-level-only pruning of untracked paths under fsmonitor+untracked-cache.
+   - Restores direct `t7519` parity for compare-status tests while retaining reported-path filtering.
+
+### Follow-up validation
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `bash tests/t7063-status-untracked-cache.sh --run=1-7 -v`: **7/7**
+- `bash tests/t7519-status-fsmonitor.sh -v`: **33/33**
+- `./scripts/run-tests.sh t7063-status-untracked-cache.sh`: **24/58** (from 14/58)
+- `./scripts/run-tests.sh t7519-status-fsmonitor.sh`: 27/33 (no regression)
+

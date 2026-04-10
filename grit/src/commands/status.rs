@@ -387,18 +387,6 @@ pub fn run(mut args: Args) -> Result<()> {
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
 
-    let cwd_at_worktree_root = {
-        let cwd = std::env::current_dir().unwrap_or_default();
-        let cwd_canon = cwd.canonicalize().unwrap_or(cwd);
-        let wt_canon = work_tree
-            .canonicalize()
-            .unwrap_or_else(|_| work_tree.to_path_buf());
-        cwd_canon
-            .strip_prefix(&wt_canon)
-            .ok()
-            .is_some_and(|p| p.as_os_str().is_empty())
-    };
-
     let head = resolve_head(&repo.git_dir)?;
     let wt_state = wt_status_get_state(&repo.git_dir, &head, true)?;
 
@@ -493,7 +481,7 @@ pub fn run(mut args: Args) -> Result<()> {
         ));
     }
 
-    let index_path = repo.index_path();
+    let index_path = repo.index_path_for_env()?;
     let index_mtime = index_file_mtime_pair(&index_path);
     // Load index: remember sparse-index on disk, then expand placeholders for diffs.
     let mut index = match grit_lib::index::Index::load(&index_path) {
@@ -598,22 +586,6 @@ pub fn run(mut args: Args) -> Result<()> {
     let show_all_untracked = untracked_mode == "all";
     let hide_untracked = untracked_mode == "no";
 
-    // Porcelain v1: Git omits the `##` branch line when `--untracked-files=no` (e.g.
-    // `status --porcelain -uno`). Default `##` when running from the work tree root or when
-    // using `-z` (NUL-terminated porcelain); explicit `--porcelain` from a subdirectory omits
-    // `##` (t7508). `-b` / `--branch` always forces the header.
-    //
-    // With pathspecs, Git also omits the `##` line (only matching entries are shown; t6435,
-    // t7107). Empty `user_pathspecs` after `--` alone means the full tree — keep the header.
-    if args.porcelain.as_deref() == Some("v1")
-        && !args.no_branch
-        && !args.branch
-        && !hide_untracked
-        && user_pathspecs.is_empty()
-        && (cwd_at_worktree_root || args.null_terminated)
-    {
-        args.branch = true;
-    }
     let untracked_cache_enabled = index.untracked_cache.is_some();
     let fsmonitor_disabled_in_cli = is_fsmonitor_disabled_in_cli(&config);
     let (mut untracked, mut ignored_files) = if !hide_untracked {
@@ -678,12 +650,6 @@ pub fn run(mut args: Args) -> Result<()> {
         if let Some((_, reported)) = fsmonitor_query.as_ref() {
             untracked.retain(|p| fsmonitor_reported_path_matches(p, reported));
             ignored_files.retain(|p| fsmonitor_reported_path_matches(p, reported));
-        }
-        if fsmonitor_query.is_some() && ignored_mode == IgnoredMode::No && !show_all_untracked {
-            // Match Git's fsmonitor+untracked-cache status shape in normal mode:
-            // keep top-level untracked entries and collapse nested paths.
-            untracked.retain(|p| !p.contains('/'));
-            ignored_files.retain(|p| !p.contains('/'));
         }
         if fsmonitor_disabled_in_cli {
             untracked.retain(|p| !is_trace_artifact_path(p));
