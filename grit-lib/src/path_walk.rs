@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::io::Read;
+use std::path::Path;
 
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
@@ -1029,6 +1030,7 @@ fn setup_pending_objects(
 ///
 /// Returns options, positive revision specs, negative revision specs, stdin `--all`, and `--boundary`.
 pub fn parse_path_walk_cli(
+    git_dir: &Path,
     args: &[String],
 ) -> Result<(PathWalkOptions, Vec<String>, Vec<String>, bool, bool)> {
     let mut opts = PathWalkOptions::default();
@@ -1073,7 +1075,8 @@ pub fn parse_path_walk_cli(
                 "--commits" => opts.include_commits = true,
                 "--tags" => opts.include_tags = true,
                 "--stdin" => {
-                    let (pos, neg, all) = collect_revision_specs_with_stdin(&[], true)?;
+                    let (pos, neg, all, _stdin_paths) =
+                        collect_revision_specs_with_stdin(git_dir, &[], true)?;
                     stdin_all |= all;
                     positive.extend(pos);
                     negative.extend(neg);

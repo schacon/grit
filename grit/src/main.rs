@@ -1191,9 +1191,10 @@ fn run_test_tool_path_walk(rest: &[String]) -> Result<()> {
     } else {
         args
     };
-    let (opts, positive, negative, stdin_all, boundary) =
-        grit_lib::path_walk::parse_path_walk_cli(&args).context("path-walk options")?;
     let repo = grit_lib::repo::Repository::discover(None)?;
+    let (opts, positive, negative, stdin_all, boundary) =
+        grit_lib::path_walk::parse_path_walk_cli(&repo.git_dir, &args)
+            .context("path-walk options")?;
     let (lines, counts) = grit_lib::path_walk::walk_objects_by_path(
         &repo, &positive, &negative, stdin_all, boundary, &opts,
     )?;
@@ -4118,6 +4119,38 @@ pub(crate) fn preprocess_log_argv_for_spawn(rest: &[String]) -> Vec<String> {
     preprocess_log_pickaxe_args(preprocess_log_args(rest))
 }
 
+/// Remove revision pseudo-options that must not reach clap (unknown flags) but are still needed
+/// for `merge_log_revision_argv` via [`commands::log::Args::raw_argv_tail`].
+fn strip_log_revision_pseudo_for_clap(rest: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(rest.len());
+    let mut i = 0usize;
+    while i < rest.len() {
+        let a = rest[i].as_str();
+        if a == "--not" {
+            i += 1;
+            continue;
+        }
+        if a == "--glob" {
+            i += 1;
+            if i < rest.len() {
+                i += 1;
+            }
+            continue;
+        }
+        if let Some(pat) = a.strip_prefix("--glob=") {
+            if pat.is_empty() {
+                // Keep bare `--glob=` so clap can report missing value if needed; do not strip.
+                out.push(rest[i].clone());
+            }
+            i += 1;
+            continue;
+        }
+        out.push(rest[i].clone());
+        i += 1;
+    }
+    out
+}
+
 fn preprocess_log_args(rest: &[String]) -> Vec<String> {
     let rest = preprocess_git_notes_display_argv(rest, NotesDisplayDefault::OnIfUnset);
     let mut result = Vec::new();
@@ -4852,9 +4885,13 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "interpret-trailers" => commands::interpret_trailers::run_from_argv(rest),
         "last-modified" => commands::last_modified::run(parse_cmd_args(subcmd, rest)),
         "log" => {
+            let raw_tail = rest.to_vec();
             let rest = preprocess_log_remotes(rest);
-            let rest = preprocess_log_pickaxe_args(preprocess_log_args(&rest));
-            commands::log::run(parse_cmd_args(subcmd, &rest))
+            let for_clap = strip_log_revision_pseudo_for_clap(&rest);
+            let rest = preprocess_log_pickaxe_args(preprocess_log_args(&for_clap));
+            let mut parsed: commands::log::Args = parse_cmd_args(subcmd, &rest);
+            parsed.raw_argv_tail = raw_tail;
+            commands::log::run(parsed)
         }
         "ls-files" => commands::ls_files::run(parse_cmd_args(subcmd, rest)),
         "ls-remote" => commands::ls_remote::run(parse_cmd_args(subcmd, rest)),
