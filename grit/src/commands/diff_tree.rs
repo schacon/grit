@@ -1368,10 +1368,11 @@ fn print_diff(
         Vec::new()
     };
     let entries = if let Some(threshold) = opts.find_renames {
-        let mut result = detect_renames(odb, entries.to_vec(), threshold);
+        let mut result = detect_renames(odb, None, entries.to_vec(), threshold);
         if let Some(copy_threshold) = opts.find_copies {
             result = lib_detect_copies(
                 odb,
+                None,
                 result,
                 copy_threshold,
                 opts.find_copies_harder,
@@ -1383,6 +1384,7 @@ fn print_diff(
     } else if let Some(copy_threshold) = opts.find_copies {
         owned_entries = lib_detect_copies(
             odb,
+            None,
             entries.to_vec(),
             copy_threshold,
             opts.find_copies_harder,

@@ -3796,7 +3796,7 @@ fn detect_merge_renames(
             // Rename detection matrix too large, skip similarity detection
             Vec::new()
         } else {
-            detect_renames(&repo.odb, diff_entries, threshold)
+            detect_renames(&repo.odb, None, diff_entries, threshold)
         };
         for e in detected {
             if matches!(e.status, DiffStatus::Renamed) {

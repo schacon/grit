@@ -1052,7 +1052,7 @@ fn detect_side_renames(
     let detected = if n_deleted > rename_limit || n_added > rename_limit {
         Vec::new()
     } else {
-        detect_renames(&repo.odb, diff_entries.clone(), threshold)
+        detect_renames(&repo.odb, None, diff_entries.clone(), threshold)
     };
     for e in detected {
         if matches!(e.status, DiffStatus::Renamed) {
