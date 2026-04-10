@@ -10,6 +10,7 @@ use grit_lib::diff::worktree_differs_from_index_entry;
 use grit_lib::error::Error;
 use grit_lib::index::{Index, MODE_GITLINK};
 use grit_lib::objects::ObjectKind;
+use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::sparse_checkout::{
     parse_sparse_checkout_file, path_in_cone_mode_sparse_checkout, path_in_sparse_checkout_patterns,
@@ -212,7 +213,7 @@ pub fn run(args: Args) -> Result<()> {
                 let src_b_clean = src_b.trim_end_matches('/').trim_end_matches('\\');
                 if src_b_clean.starts_with(&prefix_a) {
                     bail!(
-                        "cannot move both '{}' and its parent directory '{}'",
+                        "fatal: cannot move both '{}' and its parent directory '{}'",
                         src_b_clean,
                         src_a_clean
                     );
@@ -308,6 +309,35 @@ pub fn run(args: Args) -> Result<()> {
         if src_abs.exists() {
             if src_abs.is_dir() {
                 if index.get(index_src_rel.as_bytes(), 0).is_some() {
+                    // Must match the collision rules used for normal renames. Without this,
+                    // `git mv <submodule-dir> <existing-file>` could update `.gitmodules` /
+                    // `.git/modules/` and then fail `rename(2)`, leaving the repo dirty (t7001).
+                    let dst_fs_collides = dst_abs.exists()
+                        && !(ignore_case && index_src_rel.eq_ignore_ascii_case(&dst_rel));
+                    if dst_fs_collides
+                        && !(args.force
+                            && (dst_abs.is_file() || dst_abs.is_symlink())
+                            && !dst_abs.is_dir())
+                    {
+                        if !args.force {
+                            let msg = format!(
+                                "destination exists, source='{src_rel}', destination='{dst_rel}'"
+                            );
+                            if args.skip_errors {
+                                continue;
+                            }
+                            bail!("{msg}");
+                        }
+                        if dst_abs.is_dir() {
+                            let msg = format!(
+                                "Cannot overwrite, source='{src_rel}', destination='{dst_rel}'"
+                            );
+                            if args.skip_errors {
+                                continue;
+                            }
+                            bail!("{msg}");
+                        }
+                    }
                     rows.push(MoveRow {
                         src: index_src_rel.clone(),
                         dst: dst_rel.clone(),
@@ -542,6 +572,15 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    if rows.iter().any(|r| {
+        index
+            .get(r.src.as_bytes(), 0)
+            .is_some_and(|e| e.mode == MODE_GITLINK)
+    }) && !is_staging_gitmodules_ok(&index, work_tree)
+    {
+        bail!("fatal: Please stage your changes to .gitmodules or stash them to proceed");
+    }
+
     for row in &rows {
         let needle = row.src.trim_end_matches('/');
         if needle.is_empty() {
@@ -557,7 +596,7 @@ pub fn run(args: Args) -> Result<()> {
                     continue;
                 }
                 bail!(
-                    "cannot move both '{}' and its parent directory '{}'",
+                    "fatal: cannot move both '{}' and its parent directory '{}'",
                     other.src,
                     needle
                 );
@@ -589,7 +628,7 @@ pub fn run(args: Args) -> Result<()> {
                         &repo, work_tree, &mut index, &row.src, &row.dst,
                     )?;
                     if old_name.is_none() {
-                        rename_submodule_modules_dir(&repo.git_dir, &row.src, &row.dst)?;
+                        rename_submodule_modules_dir(&repo.git_dir, &index, &row.src, &row.dst)?;
                     }
                 }
             }
@@ -775,23 +814,46 @@ fn rewrite_submodule_worktree_gitfile_for_name(
 
 /// When renaming a submodule (gitlink), update `submodule.*.path` in `.gitmodules`
 /// and refresh the `.gitmodules` blob in the index.
-/// When renaming a submodule directory, move `.git/modules/<old>` → `.git/modules/<new>` (Git
-/// stores the object database under the path name).
+/// When renaming a submodule directory, move its separate gitdir (nested under
+/// `.git/modules/<seg>/modules/...` per Git) to match the new worktree path.
 fn rename_submodule_modules_dir(
     super_git_dir: &Path,
+    index: &Index,
     old_path: &str,
     new_path: &str,
 ) -> Result<()> {
-    let old_modules = super_git_dir.join("modules").join(old_path);
+    let old_modules = submodule_modules_git_dir(super_git_dir, old_path);
     if !old_modules.is_dir() {
         return Ok(());
     }
-    let new_modules = super_git_dir.join("modules").join(new_path);
+    let new_modules = submodule_modules_git_dir(super_git_dir, new_path);
     if new_modules.exists() {
-        bail!(
-            "cannot move submodule gitdir: destination '{}' already exists",
-            new_modules.display()
-        );
+        if new_modules == old_modules {
+            return Ok(());
+        }
+        let dst_is_gitlink = index
+            .get(new_path.as_bytes(), 0)
+            .is_some_and(|e| e.mode == MODE_GITLINK);
+        if old_modules.is_dir() && !dst_is_gitlink {
+            // A prior move or `git reset` can leave an orphan `.git/modules/<dst>` while the
+            // canonical object store still lives at `.git/modules/<src>` (t7001 submodule tests).
+            fs::remove_dir_all(&new_modules).with_context(|| {
+                format!("removing stale submodule gitdir {}", new_modules.display())
+            })?;
+        } else {
+            bail!(
+                "cannot move submodule gitdir: destination '{}' already exists",
+                new_modules.display()
+            );
+        }
+    }
+    if let Some(parent) = new_modules.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "creating parent for submodule gitdir {}",
+                new_modules.display()
+            )
+        })?;
     }
     fs::rename(&old_modules, &new_modules).with_context(|| {
         format!(
@@ -803,7 +865,7 @@ fn rename_submodule_modules_dir(
     Ok(())
 }
 
-/// Point `<work_tree>/<sub_path>/.git` at `.git/modules/<sub_path>` using a relative path.
+/// Point `<work_tree>/<sub_path>/.git` at the submodule's separate gitdir using a relative path.
 fn rewrite_submodule_worktree_gitfile(
     super_git_dir: &Path,
     work_tree: &Path,
@@ -814,7 +876,7 @@ fn rewrite_submodule_worktree_gitfile(
     if !gitfile.is_file() {
         return Ok(());
     }
-    let modules_dir = super_git_dir.join("modules").join(sub_path);
+    let modules_dir = submodule_modules_git_dir(super_git_dir, sub_path);
     if !modules_dir.is_dir() {
         return Ok(());
     }
@@ -825,13 +887,13 @@ fn rewrite_submodule_worktree_gitfile(
     Ok(())
 }
 
-/// Update `core.worktree` in `.git/modules/<path>` after the submodule directory was renamed on disk.
+/// Update `core.worktree` in the submodule gitdir after the submodule directory was renamed on disk.
 fn refresh_submodule_core_worktree(
     super_git_dir: &Path,
     work_tree: &Path,
     sub_path: &str,
 ) -> Result<()> {
-    let modules_dir = super_git_dir.join("modules").join(sub_path);
+    let modules_dir = submodule_modules_git_dir(super_git_dir, sub_path);
     refresh_submodule_core_worktree_at(&modules_dir, work_tree, sub_path)
 }
 
@@ -926,8 +988,24 @@ fn update_gitmodules_submodule_path(
             .write()
             .with_context(|| format!("writing {}", path.display()))?;
         refresh_index_gitmodules(repo, work_tree, index)?;
+    } else if path.is_file() {
+        eprintln!("warning: Could not find section in .gitmodules where path={old_path}");
     }
     Ok(())
+}
+
+/// Matches Git `is_staging_gitmodules_ok`: `.gitmodules` must not differ from the index when
+/// moving submodules (otherwise staging our updates would also stage the user's edits).
+fn is_staging_gitmodules_ok(index: &Index, work_tree: &Path) -> bool {
+    let Some(entry) = index.get(b".gitmodules", 0) else {
+        return true;
+    };
+    let path = work_tree.join(".gitmodules");
+    let Ok(data) = fs::read(&path) else {
+        return true;
+    };
+    let oid = Odb::hash_object_data(ObjectKind::Blob, &data);
+    oid == entry.oid
 }
 
 fn refresh_index_gitmodules(repo: &Repository, work_tree: &Path, index: &mut Index) -> Result<()> {

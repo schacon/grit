@@ -4935,8 +4935,26 @@ pub(crate) fn checkout_index_to_worktree(
                 && old_map
                     .get(old_path.as_slice())
                     .is_some_and(|e| e.mode == MODE_GITLINK && abs.join(".git").exists());
-            if !skip_populated_submodule {
-                let _ = std::fs::remove_dir_all(&abs);
+            if skip_populated_submodule {
+                // keep populated submodule dirs when checkout preserves dropped gitlinks
+            } else if old_map.get(old_path.as_slice()).is_some_and(|e| {
+                e.mode == MODE_GITLINK && !git_dir_is_nested_modules_repo(&repo.git_dir)
+            }) {
+                // Git `remove_or_warn` for gitlinks: `rmdir` only; warn if non-empty (t7001-mv).
+                match std::fs::remove_dir(&abs) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => {
+                        eprintln!("warning: unable to rmdir '{rel}': {e}");
+                    }
+                }
+            } else {
+                let is_populated_submodule = old_map
+                    .get(old_path.as_slice())
+                    .is_some_and(|e| e.mode == MODE_GITLINK && abs.join(".git").exists());
+                if !is_populated_submodule {
+                    let _ = std::fs::remove_dir_all(&abs);
+                }
             }
         }
         remove_empty_parent_dirs(work_tree, &abs);
@@ -4984,8 +5002,25 @@ pub(crate) fn checkout_index_to_worktree(
                         && old_map
                             .get(old_path.as_slice())
                             .is_some_and(|e| e.mode == MODE_GITLINK && abs.join(".git").exists());
-                    if !skip_populated_submodule {
-                        let _ = std::fs::remove_dir_all(&abs);
+                    if skip_populated_submodule {
+                        // keep populated submodule dirs when checkout preserves dropped gitlinks
+                    } else if old_map.get(old_path.as_slice()).is_some_and(|e| {
+                        e.mode == MODE_GITLINK && !git_dir_is_nested_modules_repo(&repo.git_dir)
+                    }) {
+                        match std::fs::remove_dir(&abs) {
+                            Ok(()) => {}
+                            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                            Err(e) => {
+                                eprintln!("warning: unable to rmdir '{rel}': {e}");
+                            }
+                        }
+                    } else {
+                        let is_populated_submodule = old_map
+                            .get(old_path.as_slice())
+                            .is_some_and(|e| e.mode == MODE_GITLINK && abs.join(".git").exists());
+                        if !is_populated_submodule {
+                            let _ = std::fs::remove_dir_all(&abs);
+                        }
                     }
                 }
                 remove_empty_parent_dirs(work_tree, &abs);
