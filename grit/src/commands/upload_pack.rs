@@ -331,7 +331,7 @@ fn advertise_refs_with_caps(repo: &Repository, server_proto: u8) -> Result<()> {
 
 fn list_all_refs(git_dir: &Path) -> Result<Vec<(String, ObjectId)>> {
     let mut result = Vec::new();
-    for prefix in &["refs/heads/", "refs/tags/", "refs/remotes/"] {
+    for prefix in &["refs/heads/", "refs/tags/", "refs/remotes/", "refs/notes/"] {
         if let Ok(entries) = refs::list_refs(git_dir, prefix) {
             result.extend(entries);
         }

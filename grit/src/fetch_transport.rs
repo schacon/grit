@@ -302,7 +302,15 @@ pub(crate) fn collect_wants(
             .map(|(a, _)| a)
             .unwrap_or(spec_clean);
         if src.contains('*') {
-            bail!("glob refspec in upload-pack fetch not supported");
+            for (refname, oid) in advertised {
+                if *oid == zero_oid() {
+                    continue;
+                }
+                if let Some(_matched) = match_glob_refspec_src(src, refname) {
+                    push_want_unique(&mut wants, *oid);
+                }
+            }
+            continue;
         }
         let remote_ref = if src.starts_with("refs/") {
             src.to_string()
@@ -324,6 +332,24 @@ pub(crate) fn collect_wants(
         wants.push(oid);
     }
     Ok(wants)
+}
+
+/// Match `src` against `refname` when `src` contains a single `*` (Git refspec glob).
+/// Returns `Some(())` when the ref matches; the matched segment is not needed for want collection.
+fn match_glob_refspec_src(src: &str, refname: &str) -> Option<()> {
+    let star_pos = src.find('*')?;
+    if src[star_pos + 1..].contains('*') {
+        return None;
+    }
+    let prefix = &src[..star_pos];
+    let suffix = &src[star_pos + 1..];
+    if !refname.starts_with(prefix) || !refname.ends_with(suffix) {
+        return None;
+    }
+    if refname.len() < prefix.len() + suffix.len() {
+        return None;
+    }
+    Some(())
 }
 
 /// Pushes `oid` onto `wants` if it is not already present (order-preserving).

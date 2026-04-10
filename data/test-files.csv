@@ -579,7 +579,7 @@ t3304-notes-mixed	t3	yes	6	6	0	true	ok	0
 t3305-notes-fanout	t3	yes	7	7	0	true	ok	0
 t3306-notes-prune	t3	yes	12	6	6	false	ok	0
 t3307-notes-man	t3	yes	3	3	0	true	ok	0
-t3308-notes-merge	t3	yes	19	4	15	false	ok	0
+t3308-notes-merge	t3	yes	19	19	0	true	ok	0
 t3309-notes-merge-auto-resolve	t3	yes	31	31	0	true	ok	0
 t3310-notes-merge-manual-resolve	t3	yes	22	20	2	false	ok	0
 t3311-notes-merge-fanout	t3	yes	24	17	7	false	ok	0
