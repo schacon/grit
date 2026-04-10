@@ -1373,6 +1373,17 @@ PY
       exec "$_grit" -C "$global_c_dir" test-tool submodule "$@"
     fi
     exec "$_grit" test-tool submodule "$@" ;;
+  ref-store)
+    shift
+    _grit="${GUST_BIN:-$SCRIPT_DIR/grit}"
+    if [ ! -x "$_grit" ]; then
+      echo "test-tool ref-store: no grit binary (set GUST_BIN or build: tests/grit)" >&2
+      exit 1
+    fi
+    if [ -n "$global_c_dir" ]; then
+      exec "$_grit" -C "$global_c_dir" test-tool ref-store "$@"
+    fi
+    exec "$_grit" test-tool ref-store "$@" ;;
   *)
     exec git test-tool "$@" ;;
 esac
