@@ -20,10 +20,16 @@ use grit_lib::rev_parse::{peel_to_commit_for_merge_base, resolve_revision};
 use grit_lib::unpack_objects::{unpack_objects, UnpackOptions};
 
 use crate::commands::index_pack;
-use crate::file_upload_pack_v2::{read_pkt_lines_until_flush, skip_v2_section_until_boundary};
-use crate::grit_exe::grit_executable;
+use crate::file_upload_pack_v2::{
+    cap_lines_for_bundle_request, drain_bundle_uri_response, read_pkt_lines_until_flush,
+    read_v2_capability_block, server_advertises_bundle_uri, skip_v2_section_until_boundary,
+    transfer_bundle_uri_enabled, v2_fetch_supports_sideband_all, write_bundle_uri_command,
+    write_v2_fetch_request,
+};
+use crate::grit_exe::{grit_executable, strip_trace2_env};
 use crate::pkt_line;
 use crate::protocol_wire;
+use crate::trace2_transfer;
 use crate::wire_trace;
 
 thread_local! {
@@ -54,6 +60,11 @@ pub(crate) fn parse_leading_shell_env_assignments(template: &str) -> (Vec<(Strin
         if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             break;
         }
+        let val = val
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| val.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+            .unwrap_or(val);
         env_pairs.push((key.to_string(), val.to_string()));
         rest = rest[token.len()..].trim_start();
     }
@@ -167,6 +178,15 @@ fn v2_ls_refs_for_fetch(
     Ok((advertised, head_symref))
 }
 
+fn extract_server_sid_from_caps(caps: &str) -> Option<&str> {
+    for cap in caps.split_whitespace() {
+        if let Some(rest) = cap.strip_prefix("session-id=") {
+            return Some(rest);
+        }
+    }
+    None
+}
+
 fn parse_ref_advertisement_line(line: &str) -> Option<(ObjectId, String, &str)> {
     let line = line.trim_end_matches('\n');
     if line.len() < 40 {
@@ -193,9 +213,18 @@ fn parse_ref_advertisement_line(line: &str) -> Option<(ObjectId, String, &str)> 
 
 pub(crate) fn read_advertisement(
     child_stdout: &mut impl Read,
-) -> Result<(Vec<(String, ObjectId)>, Option<String>)> {
+) -> Result<(
+    Vec<(String, ObjectId)>,
+    Option<String>,
+    bool,
+    bool,
+    Option<String>,
+)> {
     let mut out = Vec::new();
     let mut head_symref: Option<String> = None;
+    let mut saw_version_1_line = false;
+    let mut saw_version_2_capability = false;
+    let mut server_sid: Option<String> = None;
     loop {
         match pkt_line::read_packet(child_stdout)? {
             None => break,
@@ -203,15 +232,31 @@ pub(crate) fn read_advertisement(
             Some(pkt_line::Packet::Data(line)) => {
                 let line = line.trim_end_matches('\n');
                 if let Some(ver) = line.strip_prefix("version ") {
-                    if ver.trim().parse::<u8>().is_ok() {
+                    if let Ok(n) = ver.trim().parse::<u8>() {
                         trace_packet_fetch('<', line);
+                        if n == 1 {
+                            saw_version_1_line = true;
+                        }
+                        if n == 2 {
+                            saw_version_2_capability = true;
+                        }
                         continue;
                     }
                 }
                 trace_packet_fetch('<', line);
                 let Some((oid, refname, caps)) = parse_ref_advertisement_line(line) else {
+                    if server_sid.is_none() {
+                        if let Some(rest) = line.strip_prefix("session-id=") {
+                            server_sid = Some(rest.trim().to_owned());
+                        }
+                    }
                     continue;
                 };
+                if server_sid.is_none() {
+                    if let Some(sid) = extract_server_sid_from_caps(caps) {
+                        server_sid = Some(sid.to_owned());
+                    }
+                }
                 if refname == "HEAD" {
                     for cap in caps.split_whitespace() {
                         if let Some(target) = cap.strip_prefix("symref=HEAD:") {
@@ -224,7 +269,13 @@ pub(crate) fn read_advertisement(
             _ => {}
         }
     }
-    Ok((out, head_symref))
+    Ok((
+        out,
+        head_symref,
+        saw_version_1_line,
+        saw_version_2_capability,
+        server_sid,
+    ))
 }
 
 /// When the child speaks protocol v2, [`read_advertisement`] only skips capability lines and never
@@ -373,6 +424,7 @@ pub(crate) fn spawn_upload_pack_with_proto(
 
     let Some(cmd_template) = cmd_template else {
         let mut c = Command::new(grit_executable());
+        strip_trace2_env(&mut c);
         c.arg("upload-pack")
             .arg(rp.as_ref())
             .env_remove("GIT_TRACE_PACKET")
@@ -388,6 +440,7 @@ pub(crate) fn spawn_upload_pack_with_proto(
     let (leading_env, after_env) = parse_leading_shell_env_assignments(cmd_template);
     if after_env.contains("git-upload-pack") {
         let mut c = Command::new(grit_executable());
+        strip_trace2_env(&mut c);
         for (k, v) in leading_env {
             c.env(k, v);
         }
@@ -406,6 +459,7 @@ pub(crate) fn spawn_upload_pack_with_proto(
     let trimmed = cmd_template.trim();
     if trimmed == "grit-upload-pack" || trimmed.ends_with("/grit-upload-pack") {
         let mut c = Command::new(trimmed);
+        strip_trace2_env(&mut c);
         c.arg(rp.as_ref())
             .env_remove("GIT_TRACE_PACKET")
             .stdin(Stdio::piped())
@@ -420,6 +474,7 @@ pub(crate) fn spawn_upload_pack_with_proto(
     let full_cmd = cmd_template.replace('\'', "'\"'\"'");
     let script = format!("{full_cmd} '{rp_escaped}'");
     let mut c = Command::new("sh");
+    strip_trace2_env(&mut c);
     c.arg("-c")
         .arg(&script)
         .env_remove("GIT_TRACE_PACKET")
@@ -613,8 +668,18 @@ fn read_v2_fetch_pack_response(stdout: &mut impl Read, out: &mut Vec<u8>) -> Res
             }
             "packfile" => {
                 read_sideband_pack_until_done(stdout, out)?;
+                // Match `file_upload_pack_v2::drain_v2_fetch_response`: consume trailing pkt-line
+                // after the pack so `upload-pack` can finish the v2 response and exit.
                 let _ = pkt_line::read_packet(stdout)?;
-                return Ok(());
+                loop {
+                    match pkt_line::read_packet(stdout)? {
+                        None | Some(pkt_line::Packet::Flush) => return Ok(()),
+                        Some(pkt_line::Packet::Data(line)) => {
+                            trace_packet_fetch('<', line.trim_end());
+                        }
+                        Some(other) => bail!("unexpected v2 tail packet: {other:?}"),
+                    }
+                }
             }
             other => bail!("unexpected v2 fetch section: {other}"),
         }
@@ -659,14 +724,32 @@ pub fn fetch_via_upload_pack_skipping(
     Option<String>,
     Option<ObjectId>,
 )> {
-    // Force v0 advertisement (immediate ref pkt-lines). v2 stops after `version 2` until `ls-refs`,
-    // which leaves `read_advertisement` with an empty ref list and breaks fetch.
-    let mut child = spawn_upload_pack_with_proto(upload_pack_cmd, remote_repo_path, 0)?;
+    let client_proto = protocol_wire::effective_client_protocol_version();
+    let mut child = spawn_upload_pack_with_proto(upload_pack_cmd, remote_repo_path, client_proto)?;
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 
-    // Must match `spawn_upload_pack`: the child is always protocol v0 (`GIT_PROTOCOL` cleared).
-    let (mut advertised, head_symref) = read_advertisement(&mut stdout)?;
+    let (mut advertised, head_symref, v2_caps) = if client_proto == 2 {
+        let caps = read_v2_capability_block(&mut stdout).context("read v2 capabilities")?;
+        trace2_transfer::emit_negotiated_version_client_fetch_v2();
+        if let Some(rest) = caps.iter().find_map(|l| l.strip_prefix("session-id=")) {
+            trace2_transfer::emit_server_sid(rest);
+        }
+        if server_advertises_bundle_uri(&caps) && transfer_bundle_uri_enabled() {
+            let cap_send = cap_lines_for_bundle_request(&caps);
+            write_bundle_uri_command(&mut stdin, &cap_send)?;
+            drain_bundle_uri_response(&mut stdout)?;
+        }
+        let pair = v2_ls_refs_for_fetch(&mut stdin, &mut stdout)?;
+        (pair.0, pair.1, Some(caps))
+    } else {
+        let (adv, hsym, saw_v1, _, server_sid) = read_advertisement(&mut stdout)?;
+        trace2_transfer::emit_negotiated_version_client_fetch(saw_v1);
+        if let Some(ref sid) = server_sid {
+            trace2_transfer::emit_server_sid(sid);
+        }
+        (adv, hsym, None)
+    };
     if !has_cli_refspecs {
         merge_remote_refs_into_upload_pack_advertisement(remote_repo_path, &mut advertised)?;
     }
@@ -727,13 +810,36 @@ pub fn fetch_via_upload_pack_skipping(
         .find(|(n, _)| n == "HEAD")
         .map(|(_, o)| *o);
 
-    let pack_buf = fetch_upload_pack_negotiate_pack_bytes_with_streams(
-        local_git_dir,
-        &advertised,
-        &mut stdin,
-        &mut stdout,
-        &wants,
-    )?;
+    let pack_buf = if client_proto == 2 {
+        let caps = v2_caps.context("internal: missing v2 capability list")?;
+        let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
+        let sideband_all = v2_fetch_supports_sideband_all(&caps);
+        let client_sid = trace2_transfer::transfer_advertise_sid_enabled(local_git_dir)
+            .then(trace2_transfer::trace2_session_id_wire_once);
+        write_v2_fetch_request(
+            &mut stdin,
+            &default_hash,
+            &wants,
+            sideband_all,
+            client_sid.as_deref(),
+        )?;
+        // Close stdin so `upload-pack` v2 sees EOF after this fetch; otherwise `serve_loop`
+        // blocks for the next command while we block reading the pack response (deadlock).
+        drop(stdin);
+        let mut buf = Vec::new();
+        read_v2_fetch_pack_response(&mut stdout, &mut buf)?;
+        buf
+    } else {
+        let buf = fetch_upload_pack_negotiate_pack_bytes_with_streams(
+            local_git_dir,
+            &advertised,
+            &mut stdin,
+            &mut stdout,
+            &wants,
+        )?;
+        drop(stdin);
+        buf
+    };
 
     let status = child.wait()?;
     if !status.success() {
@@ -807,7 +913,15 @@ fn fetch_upload_pack_negotiate_pack_bytes(
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 
-    let (advertised, _head_symref) = read_advertisement(&mut stdout)?;
+    let (advertised, _head_symref, saw_v1, saw_v2, server_sid) = read_advertisement(&mut stdout)?;
+    if saw_v2 {
+        trace2_transfer::emit_negotiated_version_client_fetch_v2();
+    } else {
+        trace2_transfer::emit_negotiated_version_client_fetch(saw_v1);
+    }
+    if let Some(ref sid) = server_sid {
+        trace2_transfer::emit_server_sid(sid);
+    }
     let pack_buf = fetch_upload_pack_negotiate_pack_bytes_with_streams(
         local_git_dir,
         &advertised,
@@ -815,6 +929,7 @@ fn fetch_upload_pack_negotiate_pack_bytes(
         &mut stdout,
         wants,
     )?;
+    drop(stdin);
 
     let status = child.wait()?;
     if !status.success() {
@@ -845,9 +960,13 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     let first_want = wants[0];
     let agent = crate::version_string();
     // Match `git fetch-pack` capability order on the first `want` line (see pkt traces in t5700).
-    let caps = format!(
+    let mut caps = format!(
         " multi_ack_detailed side-band-64k thin-pack no-progress include-tag ofs-delta deepen-since deepen-not agent=git/{agent}"
     );
+    if trace2_transfer::transfer_advertise_sid_enabled(local_git_dir) {
+        caps.push_str(" session-id=");
+        caps.push_str(&trace2_transfer::trace2_session_id_wire_once());
+    }
     let mut req = Vec::new();
     if std::env::var("GIT_TRACE_PACKET")
         .ok()
@@ -1144,7 +1263,15 @@ pub fn fetch_via_git_protocol_skipping(
         .replace('\n', "");
     trace_packet_fetch('>', &trace_show);
 
-    let (advertised, head_symref) = read_advertisement(&mut stream)?;
+    let (advertised, head_symref, saw_v1, saw_v2, server_sid) = read_advertisement(&mut stream)?;
+    if saw_v2 {
+        trace2_transfer::emit_negotiated_version_client_fetch_v2();
+    } else {
+        trace2_transfer::emit_negotiated_version_client_fetch(saw_v1);
+    }
+    if let Some(ref sid) = server_sid {
+        trace2_transfer::emit_server_sid(sid);
+    }
     if advertised.is_empty() {
         bail!("nothing to fetch (advertised 0 ref(s))");
     }

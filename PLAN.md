@@ -642,7 +642,7 @@ commit → check it off → move on.
 - [ ] `t5604-clone-reference` ███████████░░░░░░░░░ 20/34 (14 left) — test clone --reference
 - [ ] `t5533-push-cas` ███████░░░░░░░░░░░░░ 9/23 (14 left) — compare & swap push force/delete safety
 - [ ] `t5407-post-rewrite-hook` ███░░░░░░░░░░░░░░░░░ 3/17 (14 left) — Test the post-rewrite hook.
-- [ ] `t5705-session-id-in-capabilities` ██░░░░░░░░░░░░░░░░░░ 2/17 (15 left) — session ID in capabilities
+- [x] `t5705-session-id-in-capabilities` — session ID in capabilities (17/17)
 - [ ] `t5814-proto-disable-ext` ████████░░░░░░░░░░░░ 11/27 (16 left) — test disabling of remote-helper paths in clone/fetch
 - [ ] `t5333-pseudo-merge-bitmaps` ██░░░░░░░░░░░░░░░░░░ 2/18 (16 left) — pseudo-merge bitmaps
 - [ ] `t5331-pack-objects-stdin` ░░░░░░░░░░░░░░░░░░░░ 0/16 (16 left) — pack-objects --stdin

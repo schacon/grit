@@ -36,6 +36,8 @@ pub struct ServerCaps {
     object_format: String,
     advertise_object_info: bool,
     advertise_bundle_uri: bool,
+    advertise_session_id: bool,
+    session_id_value: String,
 }
 
 impl ServerCaps {
@@ -46,12 +48,22 @@ impl ServerCaps {
 
         let advertise_object_info = read_config_bool(git_dir, "transfer.advertiseObjectInfo");
         let advertise_bundle_uri = read_config_bool(git_dir, "uploadpack.advertiseBundleURIs");
+        let advertise_session_id = read_config_bool(git_dir, "transfer.advertiseSID")
+            || read_config_bool(git_dir, "transfer.advertisesid")
+            || read_config_bool(git_dir, "transfer.advertiseSid");
+        let session_id_value = if advertise_session_id {
+            crate::trace2_transfer::trace2_session_id_wire_once()
+        } else {
+            String::new()
+        };
 
         Self {
             agent,
             object_format: "sha1".to_owned(),
             advertise_object_info,
             advertise_bundle_uri,
+            advertise_session_id,
+            session_id_value,
         }
     }
 
@@ -68,6 +80,9 @@ impl ServerCaps {
         }
         if self.advertise_bundle_uri {
             pkt_line::write_line(w, "bundle-uri")?;
+        }
+        if self.advertise_session_id {
+            pkt_line::write_line(w, &format!("session-id={}", self.session_id_value))?;
         }
         pkt_line::write_flush(w)?;
         w.flush()
@@ -87,6 +102,7 @@ impl ServerCaps {
         cap.starts_with("agent=")
             || cap.starts_with("object-format=")
             || cap.starts_with("server-option=")
+            || cap.starts_with("session-id=")
     }
 }
 
@@ -140,6 +156,7 @@ pub fn process_one_v2_request(
 
     let mut command: Option<String> = None;
     let mut client_object_format: Option<String> = None;
+    let mut client_session_id: Option<String> = None;
 
     for line in &header_lines {
         if let Some(cmd) = line.strip_prefix("command=") {
@@ -149,6 +166,8 @@ pub fn process_one_v2_request(
             command = Some(cmd.to_owned());
         } else if let Some(fmt) = line.strip_prefix("object-format=") {
             client_object_format = Some(fmt.to_owned());
+        } else if let Some(sid) = line.strip_prefix("session-id=") {
+            client_session_id = Some(sid.to_owned());
         } else if caps.is_valid_capability(line) {
         } else {
             bail!("unknown capability '{line}'");
@@ -172,6 +191,12 @@ pub fn process_one_v2_request(
     if !caps.is_valid_command(&cmd) {
         eprintln!("fatal: invalid command '{cmd}'");
         std::process::exit(128);
+    }
+
+    if matches!(cmd.as_str(), "ls-refs" | "fetch") {
+        if let Some(ref sid) = client_session_id {
+            crate::trace2_transfer::emit_client_sid(sid);
+        }
     }
 
     let flush_err = match cmd.as_str() {
@@ -332,6 +357,10 @@ fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()
                 wants.push(
                     ObjectId::from_hex(hex).with_context(|| format!("invalid want oid: {hex}"))?,
                 );
+                let feats = rest.strip_prefix(hex).unwrap_or("").trim();
+                if let Some(sid) = crate::trace2_transfer::extract_session_id_feature(feats) {
+                    crate::trace2_transfer::emit_client_sid(sid);
+                }
             }
             s if s.starts_with("have ") => {
                 let hex = s.strip_prefix("have ").unwrap_or("").trim();

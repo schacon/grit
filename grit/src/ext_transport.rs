@@ -327,7 +327,16 @@ pub fn fetch_via_ext_skipping(
         write_git_daemon_request(&mut stdin, service, repo_path, spec.git_vhost.as_deref())?;
     }
 
-    let (advertised, head_symref) = fetch_transport::read_advertisement(&mut stdout)?;
+    let (advertised, head_symref, saw_v1, saw_v2, server_sid) =
+        fetch_transport::read_advertisement(&mut stdout)?;
+    if saw_v2 {
+        crate::trace2_transfer::emit_negotiated_version_client_fetch_v2();
+    } else {
+        crate::trace2_transfer::emit_negotiated_version_client_fetch(saw_v1);
+    }
+    if let Some(ref sid) = server_sid {
+        crate::trace2_transfer::emit_server_sid(sid);
+    }
     let wants = compute_wants(&advertised)?;
     if wants.is_empty() {
         if refspecs.is_empty() && advertised.is_empty() {
@@ -387,6 +396,7 @@ pub fn fetch_via_ext_skipping(
         &mut stdout,
         &wants,
     )?;
+    drop(stdin);
 
     let status = child.wait()?;
     if !status.success() {

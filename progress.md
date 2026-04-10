@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 330 completed (`[x]`), 5 in progress (`[~]`), 436 remai
 
 ## Recently completed
 
+- `t5705-session-id-in-capabilities` — 17/17 tests pass (trace2 `transfer` `negotiated-version` / `server-sid` / `client-sid`; `transfer.advertiseSID` on upload-pack, receive-pack, and protocol v2; local fetch v2 handshake + stdin close; `send_pack` `HEAD:dst` + `git-receive-pack` → grit; strip trace2 env + quoted env paths in upload-pack spawn; harness CSV refreshed)
 - `t6101-rev-parse-parents` — 38/38 tests pass (`rev-parse`: `^@` / `^!` / `^-` parent shorthands, graft-aware `^N` navigation, `tags/<name>` DWIM, `--symbolic` ASIS mode + two-dot range ordering; leading `^` uninteresting revisions; `rev-list` `^@`/`^-` expansion with grafts; shared `load_graft_parents`; `expand_rev_token_circ_bang` for merge commits)
 - `t2030-unresolve-info` — 9/14 harness tests pass (index `REUC`, `ls-files --resolve-undo`, `update-index --unresolve` / `--clear-resolve-undo`, checkout/fsck/reset/merge wiring; rerere + final gc/fsck block still failing)
 - `t0035-safe-bare-repository` — 12/12 tests pass (`worktree add`: Git `dwim_orphan` / `can_use_local_refs` so empty repos infer `--orphan`; path-only add prefers existing `refs/heads/<basename>` then HEAD then remote DWIM; `submodule add`: separate git dir under `.git/modules/<--name>` not path basename)

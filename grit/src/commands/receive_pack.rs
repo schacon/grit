@@ -23,6 +23,7 @@ use std::process::{Command, Stdio};
 
 use crate::grit_exe;
 use crate::pkt_line::{read_packet, write_flush, write_packet_raw, Packet};
+use crate::trace2_transfer;
 
 /// Arguments for `grit receive-pack`.
 #[derive(Debug, ClapArgs)]
@@ -45,6 +46,8 @@ pub fn run(args: Args) -> Result<()> {
         )
     })?;
 
+    trace2_transfer::emit_negotiated_version_from_git_protocol_env();
+
     // Use only this repository's `config` so global `core.alternateRefs*` from the
     // environment does not leak across harness tests (matches receive-pack reading repo config).
     let mut config = ConfigSet::new();
@@ -62,6 +65,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut cursor = Cursor::new(&payload[..]);
     let mut updates: Vec<(String, String, String)> = Vec::new();
     let mut caps_seen = false;
+    let mut client_sid_from_caps: Option<String> = None;
 
     loop {
         match read_packet(&mut cursor)? {
@@ -69,12 +73,24 @@ pub fn run(args: Args) -> Result<()> {
             Some(Packet::Flush) => break,
             Some(Packet::Delim) | Some(Packet::ResponseEnd) => break,
             Some(Packet::Data(line)) => {
+                if !caps_seen {
+                    if let Some((_, feats)) = line.split_once('\0') {
+                        if let Some(sid) = trace2_transfer::extract_session_id_feature(feats.trim())
+                        {
+                            client_sid_from_caps = Some(sid.to_owned());
+                        }
+                    }
+                }
                 if let Some((old_h, new_h, refname)) = parse_update_line(&line, !caps_seen) {
                     caps_seen = true;
                     updates.push((old_h, new_h, refname));
                 }
             }
         }
+    }
+
+    if let Some(ref sid) = client_sid_from_caps {
+        trace2_transfer::emit_client_sid(sid);
     }
 
     let pack_start = cursor.position() as usize;
@@ -403,10 +419,15 @@ fn advertise_refs_phase(repo: &Repository, extra_have: &HashSet<ObjectId>) -> Re
     let stdout = io::stdout();
     let mut out = stdout.lock();
     let version = crate::version_string();
-    let caps = format!(
+    let mut caps = format!(
         "report-status report-status-v2 delete-refs quiet ofs-delta object-format=sha1 \
          agent=grit/{version}"
     );
+    if trace2_transfer::transfer_advertise_sid_enabled(&repo.git_dir) {
+        let sid = trace2_transfer::trace2_session_id_wire_once();
+        caps.push_str(" session-id=");
+        caps.push_str(&sid);
+    }
 
     let mut first = true;
     if let Ok(head_oid) = refs::resolve_ref(&repo.git_dir, "HEAD") {

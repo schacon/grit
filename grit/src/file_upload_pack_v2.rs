@@ -152,12 +152,12 @@ pub(crate) fn read_v2_capability_block(stdout: &mut impl Read) -> Result<Vec<Str
     Ok(caps)
 }
 
-fn server_advertises_bundle_uri(caps: &[String]) -> bool {
+pub(crate) fn server_advertises_bundle_uri(caps: &[String]) -> bool {
     caps.iter()
         .any(|c| c == "bundle-uri" || c.starts_with("bundle-uri="))
 }
 
-fn cap_lines_for_bundle_request(caps: &[String]) -> Vec<String> {
+pub(crate) fn cap_lines_for_bundle_request(caps: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for line in caps {
         if line.starts_with("agent=") {
@@ -169,7 +169,7 @@ fn cap_lines_for_bundle_request(caps: &[String]) -> Vec<String> {
     out
 }
 
-fn write_bundle_uri_command(stdin: &mut impl Write, cap_send: &[String]) -> Result<()> {
+pub(crate) fn write_bundle_uri_command(stdin: &mut impl Write, cap_send: &[String]) -> Result<()> {
     trace_packet_git('>', "command=bundle-uri");
     pkt_line::write_line(stdin, "command=bundle-uri")?;
     for line in cap_send {
@@ -184,7 +184,7 @@ fn write_bundle_uri_command(stdin: &mut impl Write, cap_send: &[String]) -> Resu
     Ok(())
 }
 
-fn drain_bundle_uri_response(stdout: &mut impl Read) -> Result<()> {
+pub(crate) fn drain_bundle_uri_response(stdout: &mut impl Read) -> Result<()> {
     loop {
         match pkt_line::read_packet(stdout).context("read bundle-uri response")? {
             None => break,
@@ -263,11 +263,20 @@ fn collect_want_oids_from_ls_refs(buf: &[u8]) -> Result<Vec<ObjectId>> {
     Ok(wants)
 }
 
+/// True when the server's `fetch=` capability advertises `sideband-all`.
+pub(crate) fn v2_fetch_supports_sideband_all(caps: &[String]) -> bool {
+    caps.iter().any(|c| {
+        c.strip_prefix("fetch=")
+            .is_some_and(|rest| rest.split_whitespace().any(|w| w == "sideband-all"))
+    })
+}
+
 pub(crate) fn write_v2_fetch_request(
     stdin: &mut impl Write,
     object_format: &str,
     wants: &[ObjectId],
     sideband_all: bool,
+    session_id_on_wire: Option<&str>,
 ) -> Result<()> {
     trace_packet_git('>', "command=fetch");
     pkt_line::write_line(stdin, "command=fetch")?;
@@ -291,7 +300,12 @@ pub(crate) fn write_v2_fetch_request(
         pkt_line::write_line(stdin, "sideband-all")?;
     }
 
-    let caps = " multi_ack_detailed thin-pack ofs-delta side-band-64k no-progress";
+    let mut caps = " multi_ack_detailed thin-pack ofs-delta side-band-64k no-progress".to_owned();
+    if let Some(sid) = session_id_on_wire {
+        let esc = crate::trace2_transfer::json_escape_trace_value(sid);
+        caps.push_str(" session-id=");
+        caps.push_str(&esc);
+    }
     for w in wants {
         let line = format!("want {}{}", w.to_hex(), caps);
         trace_packet_git('>', line.trim_end());
@@ -539,6 +553,7 @@ pub(crate) fn clone_preflight_file_v2_if_needed(
         &default_hash,
         &wants,
         fetch_supports_sideband_all,
+        None,
     )?;
     drop(stdin);
     drain_v2_fetch_response(&mut stdout, fetch_supports_sideband_all)?;

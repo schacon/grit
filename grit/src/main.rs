@@ -41,6 +41,7 @@ mod protocol_wire;
 mod ref_transaction_hooks;
 mod ssh_transport;
 mod test_tool_pack_deltas;
+mod trace2_transfer;
 mod trace_packet;
 mod transport_passthrough;
 mod wire_trace;
