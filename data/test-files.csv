@@ -1294,7 +1294,7 @@ t8009-blame-vs-topicbranches	t8	yes	2	2	0	true	ok	0
 t8010-cat-file-batch	t8	yes	26	26	0	true	ok	0
 t8010-cat-file-filters	t8	yes	9	9	0	true	ok	0
 t8011-blame-split-file	t8	yes	10	10	0	true	ok	0
-t8012-blame-colors	t8	yes	120	50	70	false	ok	0
+t8012-blame-colors	t8	yes	120	120	0	true	ok	0
 t8013-blame-ignore-revs	t8	yes	19	18	1	false	ok	0
 t8014-blame-ignore-fuzzy	t8	yes	16	16	0	true	ok	0
 t8015-blame-diff-algorithm	t8	yes	7	7	0	true	ok	0

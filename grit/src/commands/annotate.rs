@@ -116,6 +116,7 @@ pub fn run(mut args: Args) -> Result<()> {
         line_range: args.line_range,
         long_hash: args.long_hash,
         suppress: args.suppress,
+        compat_annotate_output: false,
         email: args.email,
         porcelain: args.porcelain,
         line_porcelain: args.line_porcelain,
