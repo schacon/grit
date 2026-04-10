@@ -1203,7 +1203,7 @@ t7406-submodule-update	t7	yes	70	15	55	false	ok	0
 t7407-submodule-foreach	t7	yes	23	19	4	false	ok	0
 t7408-submodule-reference	t7	yes	16	5	11	false	ok	0
 t7409-submodule-detached-work-tree	t7	yes	3	2	1	false	ok	0
-t7411-submodule-config	t7	yes	20	4	16	false	ok	0
+t7411-submodule-config	t7	yes	20	20	0	true	ok	0
 t7412-submodule-absorbgitdirs	t7	yes	12	5	7	false	ok	0
 t7413-submodule-is-active	t7	yes	10	2	8	false	ok	0
 t7414-submodule-mistakes	t7	yes	5	5	0	true	ok	0

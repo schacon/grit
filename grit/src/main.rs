@@ -4418,6 +4418,8 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 "path-utils" => run_test_tool_path_utils(&rest[1..]),
                 "subprocess" => run_test_tool_subprocess(&rest[1..]),
                 "submodule" => run_test_tool_submodule(rest),
+                "submodule-config" => run_test_tool_submodule_config(rest),
+                "submodule-nested-repo-config" => run_test_tool_submodule_nested_repo_config(rest),
                 "config" => run_test_tool_config(&rest[1..]),
                 "parse-options" => {
                     let args = preprocess_test_tool_args(rest)?;
@@ -5030,6 +5032,93 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
         }
         other => bail!("test-tool path-utils: unknown subcommand '{other}'"),
     }
+}
+
+/// `test-tool submodule-config` — Git `t7411-submodule-config` helper (`test-submodule-config.c`).
+fn run_test_tool_submodule_config(rest: &[String]) -> Result<()> {
+    let args = preprocess_test_tool_args(rest)?;
+    if args.first().map(|s| s.as_str()) != Some("submodule-config") {
+        bail!("internal error: test-tool submodule-config dispatcher");
+    }
+    let mut i = 1usize;
+    let mut lookup_name = false;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if !a.starts_with("--") {
+            break;
+        }
+        if a == "--name" {
+            lookup_name = true;
+        } else {
+            bail!("unknown option: {a}");
+        }
+        i += 1;
+    }
+    let pairs = &args[i..];
+    if pairs.len() % 2 != 0 {
+        bail!("Wrong number of arguments.");
+    }
+    let repo = grit_lib::repo::Repository::discover(None).context("not a git repository")?;
+    let mut cache = grit_lib::submodule_config_cache::SubmoduleConfigCache::new();
+    let mut chunk = 0usize;
+    while chunk < pairs.len() {
+        let commit_spec = pairs[chunk].as_str();
+        let path_or_name = pairs[chunk + 1].as_str();
+        let treeish = if commit_spec.is_empty() {
+            None
+        } else {
+            // `resolve_revision("HEAD")` follows the detached `HEAD` symref in this harness;
+            // Git's submodule-blob label uses the branch tip (`git rev-parse HEAD` on a branch).
+            let rev = if commit_spec == "HEAD" {
+                grit_lib::state::resolve_head(&repo.git_dir)
+                    .map_err(|_| anyhow::anyhow!("Commit not found."))?
+                    .oid()
+                    .copied()
+                    .ok_or_else(|| anyhow::anyhow!("Commit not found."))?
+            } else {
+                grit_lib::rev_parse::resolve_revision(&repo, commit_spec)
+                    .map_err(|_| anyhow::anyhow!("Commit not found."))?
+            };
+            let tree = grit_lib::rev_parse::peel_to_tree(&repo, rev)
+                .map_err(|e| anyhow::anyhow!("Commit not found. ({e})"))?;
+            Some((rev, tree))
+        };
+        let sub = if lookup_name {
+            cache
+                .submodule_from_name(&repo, treeish, path_or_name)
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+        } else {
+            cache
+                .submodule_from_path(&repo, treeish, path_or_name)
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+        };
+        let Some(sub) = sub else {
+            bail!("Submodule not found.");
+        };
+        println!("Submodule name: '{}' for path '{}'", sub.name, sub.path);
+        chunk += 2;
+    }
+    Ok(())
+}
+
+/// `test-tool submodule-nested-repo-config` — nested `.gitmodules` reader (`test-submodule-nested-repo-config.c`).
+fn run_test_tool_submodule_nested_repo_config(rest: &[String]) -> Result<()> {
+    let args = preprocess_test_tool_args(rest)?;
+    if args.first().map(|s| s.as_str()) != Some("submodule-nested-repo-config") {
+        bail!("internal error: test-tool submodule-nested-repo-config dispatcher");
+    }
+    if args.len() != 3 {
+        bail!("Wrong number of arguments.");
+    }
+    let repo = grit_lib::repo::Repository::discover(None).context("not a git repository")?;
+    let wt = repo.work_tree.as_ref().context("bare repository")?;
+    grit_lib::submodule_config_cache::SubmoduleConfigCache::print_config_from_nested_gitmodules(
+        &repo,
+        wt.as_path(),
+        &args[1],
+        &args[2],
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 /// Handle `test-tool submodule` subcommands.

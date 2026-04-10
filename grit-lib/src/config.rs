@@ -387,6 +387,37 @@ impl Parser {
 /// This checks the value portion (after `=`) for a trailing `\` that is
 /// outside quotes and outside an inline comment. If the `\` is after
 /// a `#` or `;` that starts a comment, it does NOT count as continuation.
+/// True when the value portion (after the first `=`) ends inside an unclosed double-quoted span.
+///
+/// Mirrors Git config continuation rules: a line ending with an open `"` continues on the next
+/// physical line. Outside quotes, `#` / `;` start comments and the line is complete.
+fn entry_line_value_has_unclosed_quote(line: &str) -> bool {
+    let trimmed = line.trim();
+    let Some(eq_pos) = trimmed.find('=') else {
+        return false;
+    };
+    let raw_value = trimmed[eq_pos + 1..].trim_start();
+    let mut in_quote = false;
+    let mut last_was_backslash = false;
+    for ch in raw_value.chars() {
+        match ch {
+            '"' if !last_was_backslash => {
+                in_quote = !in_quote;
+                last_was_backslash = false;
+            }
+            '\\' if in_quote && !last_was_backslash => {
+                last_was_backslash = true;
+                continue;
+            }
+            '#' | ';' if !in_quote && !last_was_backslash => return false,
+            _ => {
+                last_was_backslash = false;
+            }
+        }
+    }
+    in_quote
+}
+
 fn value_line_continues(line: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
@@ -628,6 +659,19 @@ fatal: bad config variable 'fetch.negotiationalgorithm' in file '{file_disp}' at
                 idx += 1;
             }
 
+            while entry_line_value_has_unclosed_quote(&logical_line) && idx < raw_lines.len() {
+                let next = raw_lines[idx].trim_start();
+                logical_line.push_str(next);
+                idx += 1;
+            }
+            if entry_line_value_has_unclosed_quote(&logical_line) {
+                let file_disp = config_error_path_display(path);
+                return Err(Error::ConfigError(format!(
+                    "bad config line {} in file '{file_disp}'",
+                    start_idx + 1
+                )));
+            }
+
             if let Some((key, value)) = parser.try_parse_entry(&logical_line) {
                 if key == "fetch.negotiationalgorithm" && value.is_none() {
                     let file_disp = config_error_path_display(path);
@@ -654,6 +698,83 @@ fatal: bad config variable 'fetch.negotiationalgorithm' in file '{file_disp}' at
             raw_lines,
             include_origin: ConfigIncludeOrigin::Disk,
         })
+    }
+
+    /// Like [`Self::parse`] for `.gitmodules`, but on an unclosed-quote / bad line returns entries
+    /// parsed **before** that line plus the one-based line number of the bad logical line.
+    ///
+    /// Git streams config and still applies entries from valid preceding lines; submodule-config
+    /// tests rely on that when a later `.gitmodules` line is malformed.
+    pub fn parse_gitmodules_best_effort(
+        path: &Path,
+        content: &str,
+        scope: ConfigScope,
+    ) -> (Vec<ConfigEntry>, Option<usize>) {
+        let raw_lines: Vec<String> = content
+            .lines()
+            .map(|l| l.strip_suffix('\r').unwrap_or(l))
+            .map(String::from)
+            .collect();
+        let mut entries = Vec::new();
+        let mut parser = Parser::new();
+
+        let mut idx = 0;
+        while idx < raw_lines.len() {
+            let start_idx = idx;
+            let line = &raw_lines[idx];
+            idx += 1;
+
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') || trimmed.starts_with(';') {
+                continue;
+            }
+
+            let mut inline_remainder = None;
+            if parser.try_parse_section_with_remainder(line, &mut inline_remainder) {
+                if let Some(remainder) = inline_remainder {
+                    if let Some((key, value)) = parser.try_parse_entry(remainder) {
+                        entries.push(ConfigEntry {
+                            key,
+                            value,
+                            scope,
+                            file: Some(path.to_path_buf()),
+                            line: start_idx + 1,
+                        });
+                    }
+                }
+                continue;
+            }
+
+            let mut logical_line = line.clone();
+            while value_line_continues(&logical_line) && idx < raw_lines.len() {
+                let t = logical_line.trim_end();
+                logical_line = t[..t.len() - 1].to_string();
+                let next = raw_lines[idx].trim_start();
+                logical_line.push_str(next);
+                idx += 1;
+            }
+
+            while entry_line_value_has_unclosed_quote(&logical_line) && idx < raw_lines.len() {
+                let next = raw_lines[idx].trim_start();
+                logical_line.push_str(next);
+                idx += 1;
+            }
+            if entry_line_value_has_unclosed_quote(&logical_line) {
+                return (entries, Some(start_idx + 1));
+            }
+
+            if let Some((key, value)) = parser.try_parse_entry(&logical_line) {
+                entries.push(ConfigEntry {
+                    key,
+                    value,
+                    scope,
+                    file: Some(path.to_path_buf()),
+                    line: start_idx + 1,
+                });
+            }
+        }
+
+        (entries, None)
     }
 
     /// Parse like [`Self::parse`] but record a non-disk include origin (blob, stdin, command line).
