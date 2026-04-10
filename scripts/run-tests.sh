@@ -247,6 +247,7 @@ run_one() {
         ${utf8_nfd_to_nfc:+GIT_TEST_UTF8_NFD_TO_NFC=$utf8_nfd_to_nfc} \
         GUST_BIN="$BIN" \
         GIT_TEST_BUILTIN_HASH=sha1 \
+        GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main \
         GIT_SOURCE_DIR="$REPO/git" \
         GIT_CONFIG_NOSYSTEM=1 \
         GIT_CONFIG_PARAMETERS= \

@@ -15,7 +15,8 @@ use grit_lib::git_date::parse::parse_date;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::index::{Index, MODE_GITLINK, MODE_TREE};
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
-use grit_lib::refs::{append_reflog, list_refs};
+use grit_lib::reflog::read_reflog;
+use grit_lib::refs::{append_reflog, list_refs, write_ref};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{detect_in_progress, resolve_head, HeadState};
@@ -1131,78 +1132,104 @@ pub fn run(mut args: Args) -> Result<()> {
             if let Some(parent) = ref_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::write(&ref_path, format!("{}\n", commit_oid.to_hex()))?;
+            write_ref(&repo.git_dir, &refname, &commit_oid)?;
             fs::write(repo.git_dir.join("HEAD"), format!("ref: {refname}\n"))?;
             amend_reattached_ref = Some(refname);
         }
     }
 
-    // Write reflog entries
-    {
-        let msg = if head.is_unborn() {
-            format!(
-                "commit (initial): {}",
-                commit_data.message.lines().next().unwrap_or("")
-            )
-        } else if args.amend {
-            format!(
-                "commit (amend): {}",
-                commit_data.message.lines().next().unwrap_or("")
-            )
-        } else {
-            format!(
-                "commit: {}",
-                commit_data.message.lines().next().unwrap_or("")
-            )
-        };
-        match &head {
-            HeadState::Branch { refname, .. } => {
-                let _ = append_reflog(
-                    &repo.git_dir,
-                    refname,
-                    &old_oid,
-                    &commit_oid,
-                    &commit_data.committer,
-                    &msg,
-                    false,
-                );
-                let _ = append_reflog(
-                    &repo.git_dir,
-                    "HEAD",
-                    &old_oid,
-                    &commit_oid,
-                    &commit_data.committer,
-                    &msg,
-                    false,
-                );
-            }
-            _ => {
-                let _ = append_reflog(
-                    &repo.git_dir,
-                    "HEAD",
-                    &old_oid,
-                    &commit_oid,
-                    &commit_data.committer,
-                    &msg,
-                    false,
-                );
-            }
-        }
-        if let Some(ref refname) = amend_reattached_ref {
-            let _ = append_reflog(
+    let reflog_msg = if head.is_unborn() {
+        format!(
+            "commit (initial): {}",
+            commit_data.message.lines().next().unwrap_or("")
+        )
+    } else if args.amend {
+        format!(
+            "commit (amend): {}",
+            commit_data.message.lines().next().unwrap_or("")
+        )
+    } else {
+        format!(
+            "commit: {}",
+            commit_data.message.lines().next().unwrap_or("")
+        )
+    };
+
+    match &head {
+        HeadState::Branch { refname, .. } => {
+            append_reflog(
                 &repo.git_dir,
                 refname,
                 &old_oid,
                 &commit_oid,
                 &commit_data.committer,
-                &msg,
+                &reflog_msg,
                 false,
-            );
+            )?;
+            append_reflog(
+                &repo.git_dir,
+                "HEAD",
+                &old_oid,
+                &commit_oid,
+                &commit_data.committer,
+                &reflog_msg,
+                false,
+            )?;
         }
+        _ => {
+            append_reflog(
+                &repo.git_dir,
+                "HEAD",
+                &old_oid,
+                &commit_oid,
+                &commit_data.committer,
+                &reflog_msg,
+                false,
+            )?;
+        }
+    }
+    if let Some(ref refname) = amend_reattached_ref {
+        append_reflog(
+            &repo.git_dir,
+            refname,
+            &old_oid,
+            &commit_oid,
+            &commit_data.committer,
+            &reflog_msg,
+            false,
+        )?;
     }
 
     let _ = grit_lib::rerere::rerere_post_commit(&repo);
-    let _ = crate::commands::maintenance::run_auto_after_commit(&repo, args.quiet);
+    if std::env::var("GIT_TEST_NO_MAINT_AFTER_COMMIT")
+        .ok()
+        .as_deref()
+        != Some("1")
+    {
+        let _ = crate::commands::maintenance::run_auto_after_commit(&repo, args.quiet);
+    }
+
+    if let HeadState::Branch { refname, .. } = &head {
+        let head_ok = read_reflog(&repo.git_dir, "HEAD")
+            .ok()
+            .and_then(|e| e.last().map(|l| l.new_oid == commit_oid))
+            .unwrap_or(false);
+        let branch_ok = read_reflog(&repo.git_dir, refname)
+            .ok()
+            .and_then(|e| e.last().map(|l| l.new_oid == commit_oid))
+            .unwrap_or(false);
+        if head_ok && !branch_ok {
+            append_reflog(
+                &repo.git_dir,
+                refname,
+                &old_oid,
+                &commit_oid,
+                &commit_data.committer,
+                &reflog_msg,
+                true,
+            )?;
+        }
+    }
     cleanup_merge_state(&repo.git_dir);
     if resume_pick_after_cp {
         try_resume_pick_sequence_after_commit(&repo)?;
@@ -3347,17 +3374,7 @@ fn format_git_timestamp(dt: OffsetDateTime) -> String {
 fn update_head(git_dir: &Path, head: &HeadState, commit_oid: &ObjectId) -> Result<()> {
     match head {
         HeadState::Branch { refname, .. } => {
-            // Update the ref that HEAD points to
-            if grit_lib::reftable::is_reftable_repo(git_dir) {
-                grit_lib::reftable::reftable_write_ref(git_dir, refname, commit_oid, None, None)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-            } else {
-                let ref_path = git_dir.join(refname);
-                if let Some(parent) = ref_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(&ref_path, format!("{}\n", commit_oid.to_hex()))?;
-            }
+            write_ref(git_dir, refname, commit_oid)?;
         }
         HeadState::Detached { .. } | HeadState::Invalid => {
             // Write directly to HEAD

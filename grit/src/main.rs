@@ -4406,7 +4406,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "shell" => commands::shell::run(parse_cmd_args(subcmd, rest)),
         "shortlog" => commands::shortlog::run(parse_cmd_args(subcmd, rest)),
         "show" => commands::show::run(parse_cmd_args(subcmd, rest)),
-        "show-branch" => commands::show_branch::run(parse_cmd_args(subcmd, rest)),
+        "show-branch" => commands::show_branch::run_raw(rest),
         "show-index" => commands::show_index::run(parse_cmd_args(subcmd, rest)),
         "show-ref" => commands::show_ref::run(parse_cmd_args(subcmd, rest)),
         "sparse-checkout" => commands::sparse_checkout::run(parse_cmd_args(

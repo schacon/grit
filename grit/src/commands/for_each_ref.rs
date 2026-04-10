@@ -129,9 +129,11 @@ struct RefEntry {
     object_name: String,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SortField {
     RefName,
+    /// `version:refname` — Git-style natural/version sort of the refname.
+    RefNameVersion,
     ObjectName,
     ObjectType,
     Raw,
@@ -428,13 +430,20 @@ fn parse_sort_key(raw: &str) -> Result<SortKey> {
     } else {
         (false, raw)
     };
-    let field = match key {
-        "refname" => SortField::RefName,
-        "objectname" => SortField::ObjectName,
-        "objecttype" => SortField::ObjectType,
-        "raw" => SortField::Raw,
-        "raw:size" => SortField::RawSize,
-        _ => bail!("unsupported sort key: {raw}"),
+    let field = if let Some(rest) = key.strip_prefix("version:") {
+        match rest {
+            "refname" => SortField::RefNameVersion,
+            _ => bail!("unsupported sort key: {raw}"),
+        }
+    } else {
+        match key {
+            "refname" => SortField::RefName,
+            "objectname" => SortField::ObjectName,
+            "objecttype" => SortField::ObjectType,
+            "raw" => SortField::Raw,
+            "raw:size" => SortField::RawSize,
+            _ => bail!("unsupported sort key: {raw}"),
+        }
     };
     Ok(SortKey { field, descending })
 }
@@ -672,6 +681,7 @@ fn compare_on_key(
     let value = |entry: &RefEntry| -> String {
         match field {
             SortField::RefName => entry.name.clone(),
+            SortField::RefNameVersion => entry.name.clone(),
             SortField::ObjectName => entry.object_name.clone(),
             SortField::ObjectType => {
                 if let Some(oid) = entry.oid {
@@ -707,11 +717,81 @@ fn compare_on_key(
     };
     let mut left_val = value(left);
     let mut right_val = value(right);
+    if field == SortField::RefNameVersion {
+        return compare_refname_version(&left_val, &right_val, ignore_case);
+    }
     if ignore_case {
         left_val.make_ascii_lowercase();
         right_val.make_ascii_lowercase();
     }
     left_val.cmp(&right_val)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum VersionToken {
+    Str(String),
+    Num(u64),
+}
+
+fn tokenize_refname_version(s: &str, ignore_case: bool) -> Vec<VersionToken> {
+    let s = if ignore_case {
+        s.to_ascii_lowercase()
+    } else {
+        s.to_owned()
+    };
+    let b = s.as_bytes();
+    let mut i = 0usize;
+    let mut out = Vec::new();
+    while i < b.len() {
+        if b[i].is_ascii_digit() {
+            let start = i;
+            while i < b.len() && b[i].is_ascii_digit() {
+                i += 1;
+            }
+            let n = std::str::from_utf8(&b[start..i])
+                .ok()
+                .and_then(|x| x.parse::<u64>().ok())
+                .unwrap_or(0);
+            out.push(VersionToken::Num(n));
+        } else {
+            let start = i;
+            while i < b.len() && !b[i].is_ascii_digit() {
+                i += 1;
+            }
+            out.push(VersionToken::Str(
+                String::from_utf8_lossy(&b[start..i]).into_owned(),
+            ));
+        }
+    }
+    out
+}
+
+fn compare_refname_version(a: &str, b: &str, ignore_case: bool) -> Ordering {
+    let ta = tokenize_refname_version(a, ignore_case);
+    let tb = tokenize_refname_version(b, ignore_case);
+    let len = ta.len().max(tb.len());
+    for k in 0..len {
+        match (ta.get(k), tb.get(k)) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(VersionToken::Str(sa)), Some(VersionToken::Str(sb))) => {
+                let c = sa.cmp(sb);
+                if c != Ordering::Equal {
+                    return c;
+                }
+            }
+            (Some(VersionToken::Num(na)), Some(VersionToken::Num(nb))) => {
+                let c = na.cmp(nb);
+                if c != Ordering::Equal {
+                    return c;
+                }
+            }
+            (Some(VersionToken::Str(_)), Some(VersionToken::Num(_))) => return Ordering::Less,
+            (Some(VersionToken::Num(_)), Some(VersionToken::Str(_))) => return Ordering::Greater,
+        }
+    }
+    Ordering::Equal
 }
 
 fn validate_format_quoting(format: &str, quote: Option<QuoteStyle>) -> Result<(), String> {

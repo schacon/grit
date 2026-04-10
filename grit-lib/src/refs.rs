@@ -727,10 +727,11 @@ pub fn append_reflog(
     Ok(())
 }
 
-/// Filesystem path to the reflog file for `refname`.
+/// Filesystem path to the reflog file for `refname` (same layout as [`append_reflog`]).
 ///
 /// Branch and tag reflogs live under the shared [`common_dir`] when the repository uses a
-/// `commondir` link (linked worktrees / `git clone --shared` member repos).
+/// `commondir` link (linked worktrees / `git clone --shared` member repos); `HEAD` stays under
+/// `git_dir`.
 #[must_use]
 pub fn reflog_file_path(git_dir: &Path, refname: &str) -> PathBuf {
     ref_storage_dir(git_dir, refname).join("logs").join(refname)

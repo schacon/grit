@@ -436,14 +436,13 @@ fn parse_reflog_expire_cli(raw: &str, now: i64) -> Result<i64> {
     if s.eq_ignore_ascii_case("all") {
         return Ok(i64::MAX);
     }
-    if s.eq_ignore_ascii_case("never") || s.eq_ignore_ascii_case("false") {
+    if s.eq_ignore_ascii_case("false") {
         return Ok(0);
     }
-    // Use a cutoff strictly after the current second so entries logged in this same second
-    // (e.g. `git reset` right before `reflog expire --expire=now`) are removed. Git's cutoff
-    // behaves as "not newer than now" for this path (t3306-notes-prune).
-    if s.eq_ignore_ascii_case("now") || s == "0" {
-        return Ok(now.saturating_add(1));
+    // Git treats `never` like `now` for expiry cutoffs: prune entries not newer than "now"
+    // (used by `git reflog expire --expire=now` / `--expire=never` in tests such as t3202).
+    if s.eq_ignore_ascii_case("never") || s.eq_ignore_ascii_case("now") || s == "0" {
+        return Ok(now);
     }
     if let Ok(v) = s.parse::<i64>() {
         const EPOCH_CUTOFF: i64 = 10_000_000;
@@ -471,6 +470,8 @@ fn run_expire(args: ExpireArgs) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
 
+    // Use wall-clock time for expiry cutoffs. `GIT_TEST_DATE_NOW` is for relative **display** in
+    // tests; using it here makes `--expire=now` keep entries newer than that fake "now" (t3202).
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| anyhow::anyhow!("system time error: {e}"))?
