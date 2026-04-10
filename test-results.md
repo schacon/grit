@@ -1,5 +1,19 @@
 # Test results
 
+**2026-04-10 (status perf phase4 / sparse fsmonitor ensure_full_index trace parity)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `bash tests/t7519-status-fsmonitor.sh -v`: **33/33** (all passing)
+- Harness-equivalent env replay (`GIT_CONFIG_NOSYSTEM=1`, `GRIT_TEST_LIB_SUMMARY=1`, etc):
+  - `bash tests/t7519-status-fsmonitor.sh -v`: 27/33 (existing `.gitconfig` tracked-file artifact in that env; sparse-index test 33 now passing)
+- `./scripts/run-tests.sh t7519-status-fsmonitor.sh`: 27/33
+- `./scripts/run-tests.sh t7063-status-untracked-cache.sh`: 14/58
+- `./scripts/run-tests.sh t7508-status.sh`: 94/126
+- `./scripts/run-tests.sh t7060-wtstatus.sh`: 12/17
+- `./scripts/run-tests.sh t7065-status-rename.sh`: 28/28
+
 **2026-04-10 (status perf phase4 / read-cache helper + fsmonitor config guard)**
 
 - `cargo fmt`: passed

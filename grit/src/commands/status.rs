@@ -338,6 +338,40 @@ fn fsmonitor_reported_path_matches(path: &str, reported: &BTreeSet<Vec<u8>>) -> 
     })
 }
 
+fn sparse_reported_paths_require_full_index(
+    repo: &Repository,
+    config: &ConfigSet,
+    reported: &BTreeSet<Vec<u8>>,
+) -> bool {
+    let sparse_enabled = config
+        .get("core.sparseCheckout")
+        .is_some_and(|v| v.eq_ignore_ascii_case("true"));
+    let sparse_index_enabled = config
+        .get("index.sparse")
+        .is_some_and(|v| v.eq_ignore_ascii_case("true"));
+    let cone_enabled = config
+        .get("core.sparseCheckoutCone")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(true);
+    if !sparse_enabled || !sparse_index_enabled {
+        return false;
+    }
+
+    let (cone_ok, cone, non_cone) =
+        grit_lib::sparse_checkout::load_sparse_checkout(&repo.git_dir, cone_enabled);
+    let effective_cone = cone_ok;
+    reported.iter().any(|p| {
+        let path = String::from_utf8_lossy(p);
+        let normalized = path.trim_end_matches('/');
+        !grit_lib::sparse_checkout::path_in_sparse_checkout(
+            normalized,
+            effective_cone,
+            cone.as_ref(),
+            &non_cone,
+        )
+    })
+}
+
 /// Run the `status` command.
 pub fn run(mut args: Args) -> Result<()> {
     if !git_optional_locks_enabled() {
@@ -511,6 +545,16 @@ pub fn run(mut args: Args) -> Result<()> {
         query_status_fsmonitor_paths(work_tree, &config, index.fsmonitor_last_update.as_deref());
     if let Some((new_token, _)) = fsmonitor_query.as_ref() {
         index.fsmonitor_last_update = Some(new_token.clone());
+    }
+    if let (Some(trace2_event), Some((_, reported))) = (
+        std::env::var("GIT_TRACE2_EVENT")
+            .ok()
+            .filter(|v| !v.trim().is_empty()),
+        fsmonitor_query.as_ref(),
+    ) {
+        if sparse_reported_paths_require_full_index(&repo, &config, reported) {
+            let _ = crate::trace2_region_json(&trace2_event, "index", "ensure_full_index");
+        }
     }
 
     // Diff: staged (index vs HEAD tree), narrowed to pathspecs before rename detection.
