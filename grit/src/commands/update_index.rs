@@ -634,6 +634,36 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
             continue;
         }
 
+        // Assume-valid / skip-worktree bit updates must run before the skip-worktree short-circuit
+        // below; otherwise `--no-skip-worktree` could never clear the bit (t2104).
+        if args.assume_unchanged {
+            if let Some(e) = index.get_mut(&rel_bytes, 0) {
+                e.set_assume_unchanged(true);
+            }
+            continue;
+        }
+        if args.no_assume_unchanged {
+            if let Some(e) = index.get_mut(&rel_bytes, 0) {
+                e.set_assume_unchanged(false);
+            }
+            continue;
+        }
+        if args.skip_worktree {
+            if let Some(e) = index.get_mut(&rel_bytes, 0) {
+                e.set_skip_worktree(true);
+                if e.flags_extended.is_some() {
+                    index.version = 3;
+                }
+            }
+            continue;
+        }
+        if args.no_skip_worktree {
+            if let Some(e) = index.get_mut(&rel_bytes, 0) {
+                e.set_skip_worktree(false);
+            }
+            continue;
+        }
+
         // Git `read-cache.c:process_path`: skip-worktree entries are not refreshed from disk.
         // Plain `update-index <path>` is a no-op; `--remove` drops the index entry even when
         // the file still exists, unless `--ignore-skip-worktree-entries` is set.
@@ -663,34 +693,6 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
                 continue;
             }
             // File exists on disk — fall through to update it in the index.
-        }
-
-        if args.assume_unchanged {
-            if let Some(e) = index.get_mut(&rel_bytes, 0) {
-                e.set_assume_unchanged(true);
-            }
-            continue;
-        }
-        if args.no_assume_unchanged {
-            if let Some(e) = index.get_mut(&rel_bytes, 0) {
-                e.set_assume_unchanged(false);
-            }
-            continue;
-        }
-        if args.skip_worktree {
-            if let Some(e) = index.get_mut(&rel_bytes, 0) {
-                e.set_skip_worktree(true);
-                if e.flags_extended.is_some() {
-                    index.version = 3;
-                }
-            }
-            continue;
-        }
-        if args.no_skip_worktree {
-            if let Some(e) = index.get_mut(&rel_bytes, 0) {
-                e.set_skip_worktree(false);
-            }
-            continue;
         }
 
         // --chmod=+x or --chmod=-x without --add: change the mode of an existing entry.
