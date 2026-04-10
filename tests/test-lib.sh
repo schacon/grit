@@ -204,10 +204,11 @@ test_lib_restore_path () {
 setup_trash
 
 # Persist test_tick across subshell boundaries via a state file.
-# Store tick file in trash root so it works when .git is a gitfile; keep OID
-# cache alongside other test metadata.
-_TICK_FILE="$TRASH_DIRECTORY/.test_tick"
-TEST_OID_CACHE_FILE="$TRASH_DIRECTORY/.test_oid_cache"
+# Prefer `.git/.test_tick` so `git status` never lists it (t7508 compares full
+# ignored/untracked output). Fall back to the resolved git-dir for gitfile
+# worktrees, then trash root when there is no repository yet.
+_TICK_FILE="$TRASH_DIRECTORY/.git/.test_tick"
+TEST_OID_CACHE_FILE="$TRASH_DIRECTORY/.git/.test_oid_cache"
 
 test_tick () {
 	local _tick_file="$_TICK_FILE"
@@ -218,6 +219,8 @@ test_tick () {
 		if test -n "$_gitdir"
 		then
 			_tick_file="${_gitdir%/}/.test_tick"
+		else
+			_tick_file="$TRASH_DIRECTORY/.test_tick"
 		fi
 	fi
 	if test -z "${test_tick+set}"

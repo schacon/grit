@@ -7,13 +7,13 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
-    diff_index_to_tree, diff_index_to_worktree, status_apply_rename_copy_detection, DiffEntry,
-    DiffStatus,
+    diff_index_to_tree, diff_index_to_worktree, diff_trees, status_apply_rename_copy_detection,
+    DiffEntry, DiffStatus,
 };
 use grit_lib::error::Error;
 use grit_lib::git_date::parse::parse_date;
 use grit_lib::hooks::{run_hook, HookResult};
-use grit_lib::index::Index;
+use grit_lib::index::{Index, MODE_GITLINK, MODE_TREE};
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::refs::{append_reflog, list_refs};
 use grit_lib::repo::Repository;
@@ -624,6 +624,11 @@ pub fn run(mut args: Args) -> Result<()> {
             }
         },
     };
+
+    // `git commit --dry-run <pathspec>` prints the commit tree that would be recorded (partial
+    // merge) and omits the "Changes not staged" section (t7508).
+    let dry_run_pathspec_status = args.dry_run && !args.pathspec.is_empty() && head.oid().is_some();
+
     let mut parents = Vec::new();
     let old_head_oid = head.oid().cloned();
 
@@ -702,8 +707,14 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
 
-    let mut staged = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
-    let unstaged_raw = if let Some(wt) = work_tree {
+    let mut staged = if dry_run_pathspec_status {
+        diff_trees(&repo.odb, head_tree.as_ref(), Some(&tree_oid), "")?
+    } else {
+        diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?
+    };
+    let unstaged_raw = if dry_run_pathspec_status {
+        Vec::new()
+    } else if let Some(wt) = work_tree {
         diff_index_to_worktree(&repo.odb, &index, wt)?
     } else {
         Vec::new()
@@ -757,6 +768,9 @@ pub fn run(mut args: Args) -> Result<()> {
             &in_progress,
             pathspec_matched.as_ref(),
             no_ab,
+            args.amend,
+            &index_path,
+            &index,
         )?;
         // Match Git: `commit --dry-run` exits 1 when there is nothing to commit (after printing status).
         // Merge commits are allowed even when the index matches `HEAD^{tree}` (e.g. resolving
@@ -1310,6 +1324,9 @@ fn print_dry_run(
     in_progress: &[grit_lib::state::InProgressOperation],
     pathspec_matched: Option<&HashSet<Vec<u8>>>,
     no_ahead_behind: bool,
+    amend: bool,
+    index_path: &Path,
+    loaded_index: &Index,
 ) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -1395,10 +1412,34 @@ fn print_dry_run(
     if !staged_show.is_empty() {
         writeln!(out)?;
         writeln!(out, "Changes to be committed:")?;
-        writeln!(out, "  (use \"git restore --staged <file>...\" to unstage)")?;
+        if amend {
+            writeln!(
+                out,
+                "  (use \"git restore --source=HEAD^1 --staged <file>...\" to unstage)"
+            )?;
+        } else {
+            writeln!(out, "  (use \"git restore --staged <file>...\" to unstage)")?;
+        }
         for entry in &staged_show {
             let label = status_label_staged(entry.status);
             writeln!(out, "\t{label}:   {}", entry.path())?;
+        }
+    }
+
+    if let Some(limit) = crate::commands::status::parse_submodule_summary_limit(config) {
+        let head_spec = if amend { "HEAD^" } else { "HEAD" };
+        let txt = crate::commands::status::run_submodule_summary_text(
+            repo,
+            index_path,
+            limit,
+            true,
+            Some(head_spec),
+        )?;
+        if !txt.trim().is_empty() {
+            writeln!(out)?;
+            writeln!(out, "Submodule changes to be committed:")?;
+            writeln!(out)?;
+            write!(out, "{txt}")?;
         }
     }
 
@@ -1432,8 +1473,71 @@ fn print_dry_run(
     }
 
     let mut all_untracked: Vec<String> = untracked.to_vec();
-    all_untracked.extend(extra_untracked);
+    all_untracked.extend(extra_untracked.iter().cloned());
     all_untracked.sort();
+
+    if pathspec_matched.is_some() {
+        let mut suppressed_roots: BTreeSet<String> = BTreeSet::new();
+        if let Some(matched) = pathspec_matched {
+            for ie in &loaded_index.entries {
+                if ie.stage() != 0 || ie.mode == MODE_TREE || ie.mode == MODE_GITLINK {
+                    continue;
+                }
+                let p = String::from_utf8_lossy(&ie.path).into_owned();
+                if matched.contains(p.as_bytes()) {
+                    continue;
+                }
+                let Some(parent) = Path::new(&p)
+                    .parent()
+                    .and_then(|x| x.to_str())
+                    .map(str::to_owned)
+                else {
+                    continue;
+                };
+                if !parent.is_empty() {
+                    suppressed_roots.insert(parent);
+                }
+            }
+        }
+        for p in &extra_untracked {
+            let Some(parent) = Path::new(p)
+                .parent()
+                .and_then(|x| x.to_str())
+                .map(str::to_owned)
+            else {
+                continue;
+            };
+            if parent.is_empty() {
+                continue;
+            }
+            suppressed_roots.insert(parent);
+        }
+        let mut collapsed: Vec<String> = Vec::new();
+        let mut used_suppressed: BTreeSet<String> = BTreeSet::new();
+        for p in &all_untracked {
+            if p.ends_with('/') {
+                collapsed.push(p.clone());
+                continue;
+            }
+            let mut under = false;
+            for root in &suppressed_roots {
+                let prefix = format!("{root}/");
+                if p == root || p.starts_with(&prefix) {
+                    used_suppressed.insert(root.clone());
+                    under = true;
+                    break;
+                }
+            }
+            if !under {
+                collapsed.push(p.clone());
+            }
+        }
+        for root in used_suppressed {
+            collapsed.push(format!("{root}/"));
+        }
+        collapsed.sort();
+        all_untracked = collapsed;
+    }
 
     if !all_untracked.is_empty() {
         writeln!(out)?;
