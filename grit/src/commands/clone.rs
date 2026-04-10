@@ -1117,6 +1117,8 @@ pub fn run(mut args: Args) -> Result<()> {
         let filter_spec = args.filter.as_deref().unwrap_or("blob:none");
         materialize_blob_none_partial_layout(&dest)
             .context("materializing partial-clone object layout")?;
+        repack_partial_clone_skeleton_into_promisor_pack(&dest, &remote_name)
+            .context("repacking partial-clone skeleton into promisor pack")?;
         initialize_partial_clone_state(&source, &dest, &remote_name, filter_spec)
             .context("initializing partial-clone promisor state")?;
     }
@@ -2028,6 +2030,8 @@ fn run_http_clone(args: Args) -> Result<()> {
     if partial_blob_none_http {
         materialize_blob_none_partial_layout(&dest)
             .context("materializing partial-clone object layout")?;
+        repack_partial_clone_skeleton_into_promisor_pack(&dest, &remote_name)
+            .context("repacking partial-clone skeleton into promisor pack")?;
         initialize_partial_clone_state_http(&dest, &remote_name, "blob:none")?;
     }
 
@@ -2189,6 +2193,8 @@ fn initialize_partial_clone_state_http(
         &format!("remote.{remote_name}.partialclonefilter"),
         filter_spec,
     )?;
+    config.set("core.repositoryformatversion", "1")?;
+    config.set("extensions.partialclone", remote_name)?;
     config.write().context("writing config")?;
     Ok(())
 }
@@ -2706,6 +2712,8 @@ fn run_ssh_clone(args: Args) -> Result<()> {
     if partial_blob_none {
         materialize_blob_none_partial_layout(&dest)
             .context("materializing partial-clone object layout")?;
+        repack_partial_clone_skeleton_into_promisor_pack(&dest, &remote_name)
+            .context("repacking partial-clone skeleton into promisor pack")?;
         initialize_partial_clone_state(&source, &dest, &remote_name, "blob:none")
             .context("initializing partial-clone promisor state")?;
     }
@@ -4026,7 +4034,7 @@ fn materialize_blob_none_partial_layout(dest: &Repository) -> Result<()> {
             Ok(o) => o,
             Err(_) => continue,
         };
-        let _ = dest.odb.write(obj.kind, &obj.data)?;
+        let _ = dest.odb.write_loose_materialize(obj.kind, &obj.data)?;
     }
 
     let pack_dir = dest.git_dir.join("objects/pack");
@@ -4123,6 +4131,111 @@ fn collect_reachable_skeleton_and_blobs(
     Ok((skeleton, blobs))
 }
 
+/// After [`materialize_blob_none_partial_layout`], loose commits/trees remain. Pack them into a
+/// single promisor pack (plus `.idx` and `.promisor`) so the layout matches Git partial clones
+/// (`t5616-partial-clone`).
+fn repack_partial_clone_skeleton_into_promisor_pack(
+    dest: &Repository,
+    remote_name: &str,
+) -> Result<()> {
+    let (skeleton, _) = collect_reachable_skeleton_and_blobs(dest)?;
+    if skeleton.is_empty() {
+        return Ok(());
+    }
+
+    let pack_dir = dest.git_dir.join("objects/pack");
+    let oids: Vec<ObjectId> = skeleton.iter().copied().collect();
+    crate::commands::pack_objects::write_partial_clone_promisor_pack(dest, &pack_dir, &oids)
+        .context("writing promisor pack for partial clone")?;
+
+    let mut written_pack: Option<PathBuf> = None;
+    for entry in fs::read_dir(&pack_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "pack")
+            && path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("pack-") && n.ends_with(".pack"))
+        {
+            written_pack = Some(path);
+            break;
+        }
+    }
+    let Some(pack_path) = written_pack else {
+        bail!("partial clone promisor pack was not written");
+    };
+    let stem = pack_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| anyhow::anyhow!("invalid promisor pack name"))?;
+    let promisor_path = pack_dir.join(format!("{stem}.promisor"));
+    let promisor_body = partial_clone_promisor_file_contents(&dest.git_dir, remote_name)?;
+    fs::write(&promisor_path, promisor_body).context("write .promisor file")?;
+
+    for oid in &skeleton {
+        let hex = oid.to_hex();
+        if hex.len() < 3 {
+            continue;
+        }
+        let loose = dest.git_dir.join("objects").join(&hex[..2]).join(&hex[2..]);
+        let _ = fs::remove_file(loose);
+    }
+
+    Ok(())
+}
+
+/// Build `.promisor` file body: `oid refname` lines for refs the initial fetch advertised,
+/// matching `fetch-pack` / `write_promisor_file`.
+fn partial_clone_promisor_file_contents(git_dir: &Path, remote_name: &str) -> Result<String> {
+    let head_oid = match refs::resolve_ref(git_dir, "HEAD") {
+        Ok(o) => o.to_hex(),
+        Err(_) => return Ok(String::new()),
+    };
+
+    let mut lines: Vec<String> = vec![format!("{head_oid} HEAD")];
+
+    let head_path = git_dir.join("HEAD");
+    if let Ok(content) = fs::read_to_string(&head_path) {
+        let content = content.trim_end_matches('\n');
+        if let Some(target) = content.strip_prefix("ref: ") {
+            let target = target.trim();
+            if target.starts_with("refs/heads/") {
+                lines.push(format!("{head_oid} {target}"));
+                return Ok(format!("{}\n", lines.join("\n")));
+            }
+        }
+    }
+
+    if let Ok(main_oid) = refs::resolve_ref(git_dir, "refs/heads/main") {
+        if main_oid.to_hex() == head_oid {
+            lines.push(format!("{head_oid} refs/heads/main"));
+            return Ok(format!("{}\n", lines.join("\n")));
+        }
+    }
+
+    let remote_main = format!("refs/remotes/{remote_name}/main");
+    if let Ok(oid) = refs::resolve_ref(git_dir, &remote_main) {
+        if oid.to_hex() == head_oid {
+            lines.push(format!("{head_oid} refs/heads/main"));
+            return Ok(format!("{}\n", lines.join("\n")));
+        }
+    }
+
+    let heads = refs::list_refs(git_dir, "refs/heads/").map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut matching: Vec<&str> = heads
+        .iter()
+        .filter(|(_, oid)| oid.to_hex() == head_oid)
+        .map(|(name, _)| name.as_str())
+        .collect();
+    matching.sort();
+    if let Some(name) = matching.first() {
+        lines.push(format!("{head_oid} {name}"));
+    }
+
+    Ok(format!("{}\n", lines.join("\n")))
+}
+
 /// Initialize internal promisor metadata for `--filter=blob:none` clones.
 ///
 /// This records reachable blob OIDs in a marker file so commands can emulate
@@ -4156,6 +4269,8 @@ fn initialize_partial_clone_state(
         &format!("remote.{remote_name}.partialclonefilter"),
         filter_spec,
     )?;
+    config.set("core.repositoryformatversion", "1")?;
+    config.set("extensions.partialclone", remote_name)?;
     config.write().context("writing config")?;
 
     Ok(())

@@ -56,6 +56,28 @@ fn read_zlib_loose_payload(mut file: fs::File) -> Result<Vec<u8>> {
     }
 }
 
+/// True when `oid` is stored as a loose object or in a **non-promisor** local pack.
+fn exists_materialized_in_objects_dir(objects_dir: &Path, oid: &ObjectId) -> bool {
+    let loose = objects_dir
+        .join(oid.loose_prefix())
+        .join(oid.loose_suffix());
+    if loose.exists() {
+        return true;
+    }
+    let Ok(indexes) = pack::read_local_pack_indexes(objects_dir) else {
+        return false;
+    };
+    for idx in &indexes {
+        if idx.pack_path.with_extension("promisor").is_file() {
+            continue;
+        }
+        if idx.entries.iter().any(|e| e.oid == *oid) {
+            return true;
+        }
+    }
+    false
+}
+
 /// A loose-object database rooted at a given `objects/` directory.
 #[derive(Debug, Clone)]
 pub struct Odb {
@@ -106,6 +128,11 @@ impl Odb {
     /// `GIT_ALTERNATE_OBJECT_DIRECTORIES`. Used for partial-clone bookkeeping where
     /// objects reachable via alternates are still treated as "missing" until copied locally.
     ///
+    /// Objects stored **only** in promisor packs (sibling `.promisor` marker next to the
+    /// `.pack`) are treated as absent: Git considers them fetchable on demand, and
+    /// `rev-list --missing=print` lists them until materialized as loose objects or a
+    /// non-promisor pack.
+    ///
     /// The empty tree object is treated as present without a loose file (matches Git).
     #[must_use]
     pub fn exists_local(&self, oid: &ObjectId) -> bool {
@@ -113,7 +140,7 @@ impl Odb {
         if oid.to_hex() == EMPTY_TREE {
             return true;
         }
-        self.exists_in_dir(&self.objects_dir, oid)
+        exists_materialized_in_objects_dir(&self.objects_dir, oid)
     }
 
     /// Check whether an object exists in the loose store or any pack file.
@@ -128,7 +155,7 @@ impl Odb {
         if hex == EMPTY_TREE_CANON || hex == EMPTY_TREE_LEGACY {
             return true;
         }
-        if self.exists_local(oid) {
+        if self.exists_in_dir(&self.objects_dir, oid) {
             return true;
         }
         // Check alternates from info/alternates file.
@@ -340,6 +367,44 @@ impl Odb {
         fs::create_dir_all(prefix_dir)?;
 
         // Write to a temp file in the same directory, then rename atomically.
+        let tmp_path = prefix_dir.join(format!("tmp_{}", oid.loose_suffix()));
+        {
+            let tmp_file = fs::File::create(&tmp_path)?;
+            let mut encoder = ZlibEncoder::new(tmp_file, Compression::default());
+            encoder
+                .write_all(&store_bytes)
+                .map_err(|e| Error::Zlib(e.to_string()))?;
+            encoder.finish().map_err(|e| Error::Zlib(e.to_string()))?;
+        }
+        fs::rename(&tmp_path, &path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o444));
+        }
+
+        Ok(oid)
+    }
+
+    /// Write a loose object file when it is missing, even if [`Self::exists`] is true because
+    /// the object lives only in a pack.
+    ///
+    /// Used when materializing a partial-clone layout: objects must be duplicated as loose files
+    /// before local packs are removed.
+    pub fn write_loose_materialize(&self, kind: ObjectKind, data: &[u8]) -> Result<ObjectId> {
+        let store_bytes = build_store_bytes(kind, data);
+        let oid = hash_bytes(&store_bytes);
+        let path = self.object_path(&oid);
+        if path.exists() {
+            let _ = self.freshen_object(&oid);
+            return Ok(oid);
+        }
+
+        let prefix_dir = path
+            .parent()
+            .ok_or_else(|| Error::PathError("object path has no parent".to_owned()))?;
+        fs::create_dir_all(prefix_dir)?;
+
         let tmp_path = prefix_dir.join(format!("tmp_{}", oid.loose_suffix()));
         {
             let tmp_file = fs::File::create(&tmp_path)?;

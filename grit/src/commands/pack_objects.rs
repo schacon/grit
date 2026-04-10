@@ -1598,3 +1598,37 @@ static CRC32_TABLE: [u32; 256] = {
     }
     table
 };
+
+/// Write `pack-<hash>.pack` and `pack-<hash>.idx` under `pack_dir` containing exactly `oids`
+/// (full objects, no deltas). Used by partial clone to materialize a promisor pack without
+/// spawning a subprocess.
+pub(crate) fn write_partial_clone_promisor_pack(
+    repo: &Repository,
+    pack_dir: &Path,
+    oids: &[ObjectId],
+) -> Result<()> {
+    std::fs::create_dir_all(pack_dir)?;
+    let mut sorted: Vec<ObjectId> = oids.to_vec();
+    sorted.sort_by_key(|o| o.to_hex());
+    sorted.dedup();
+
+    let mut write_entries: Vec<PackWriteEntry> = Vec::with_capacity(sorted.len());
+    for oid in &sorted {
+        let obj = read_object_from_repo(repo, oid)?;
+        write_entries.push(PackWriteEntry::Full(PackEntry {
+            oid: *oid,
+            kind: obj.kind,
+            data: obj.data,
+        }));
+    }
+
+    let pack_bytes = build_pack(&write_entries)?;
+    let pack_hash = hex::encode(&pack_bytes[pack_bytes.len() - 20..]);
+    let pack_path = pack_dir.join(format!("pack-{pack_hash}.pack"));
+    let idx_path = pack_dir.join(format!("pack-{pack_hash}.idx"));
+
+    std::fs::write(&pack_path, &pack_bytes)?;
+    let idx_bytes = build_idx_for_pack(&pack_bytes, &write_entries)?;
+    std::fs::write(&idx_path, &idx_bytes)?;
+    Ok(())
+}

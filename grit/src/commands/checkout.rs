@@ -2441,6 +2441,23 @@ fn switch_to_tree(
         None => return Ok(()),
     };
 
+    let cfg = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    if grit_lib::promisor::repo_treats_promisor_packs(&repo.git_dir, &cfg)
+        && !crate::commands::promisor_hydrate::git_no_lazy_fetch_env_disables_lazy()?
+    {
+        if let Some(p) =
+            crate::commands::promisor_hydrate::find_promisor_source(&cfg, &repo.git_dir)?
+        {
+            crate::commands::promisor_hydrate::hydrate_tree_blobs_from_promisor(
+                repo,
+                &p,
+                *target_tree_oid,
+            )
+            .context("hydrating checkout tree from promisor remote")?;
+            let _ = crate::commands::promisor_hydrate::trim_promisor_marker_to_missing_local(repo);
+        }
+    }
+
     let index_path = repo.index_path();
     let old_index = repo.load_index_at(&index_path).context("loading index")?;
 

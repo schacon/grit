@@ -265,6 +265,7 @@ pub fn run(args: Args) -> Result<()> {
         remote: Some(remote_name.to_owned()),
         refspecs: args.refspecs.clone(),
         filter: None,
+        no_filter: false,
         all: false,
         multiple: false,
         tags: false,

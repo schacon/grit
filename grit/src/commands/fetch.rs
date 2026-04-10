@@ -77,6 +77,10 @@ pub struct Args {
     #[arg(long = "filter", value_name = "FILTER-SPEC")]
     pub filter: Option<String>,
 
+    /// Do not apply a list-objects filter (overrides `--filter` and inherited partial-clone filter).
+    #[arg(long = "no-filter")]
+    pub no_filter: bool,
+
     /// Deepen history of a shallow clone back to a date.
     #[arg(long, value_name = "DATE")]
     pub shallow_since: Option<String>,
@@ -240,6 +244,11 @@ pub fn run(mut args: Args) -> Result<()> {
 
     if result.is_ok() && should_recurse_fetch_submodules(&config, &args) {
         super::submodule::recursive_fetch_submodules(true)?;
+    }
+    if result.is_ok() && args.no_filter {
+        if let Ok(repo) = Repository::open(&git_dir, None) {
+            let _ = crate::commands::promisor_hydrate::trim_promisor_marker_to_missing_local(&repo);
+        }
     }
     result
 }
@@ -1614,7 +1623,14 @@ fn fetch_remote(
         fs::write(&fetch_head_path, content).context("writing FETCH_HEAD")?;
     }
 
-    if args.filter.as_deref() == Some("blob:none") {
+    let inherited_blob_none = !args.no_filter
+        && args.filter.is_none()
+        && config
+            .get(&format!("remote.{tracking_remote_name}.partialclonefilter"))
+            .as_deref()
+            == Some("blob:none")
+        && grit_lib::promisor::repo_treats_promisor_packs(git_dir, &config);
+    if !args.no_filter && (args.filter.as_deref() == Some("blob:none") || inherited_blob_none) {
         apply_blob_none_filter(git_dir, remote_repo.as_ref(), &remote_heads)
             .context("applying blob:none filter")?;
     }
@@ -1756,6 +1772,7 @@ fn collect_blob_sets_for_tree(
             )?;
             continue;
         }
+        all_blobs.insert(entry.oid);
         let blob_obj = match odb.read(&entry.oid) {
             Ok(obj) => obj,
             Err(_) => continue,
@@ -1763,7 +1780,6 @@ fn collect_blob_sets_for_tree(
         if blob_obj.kind != ObjectKind::Blob {
             continue;
         }
-        all_blobs.insert(entry.oid);
         if sparse_path_is_included(patterns, &rel_path) {
             keep_blobs.insert(entry.oid);
         }
@@ -2114,9 +2130,9 @@ pub(crate) fn copy_reachable_objects(
         let obj = src_odb.read(&oid).with_context(|| {
             format!("missing object {} while copying from remote", oid.to_hex())
         })?;
-        if !dst_odb.exists(&oid) {
+        if !dst_odb.exists_local(&oid) {
             dst_odb
-                .write(obj.kind, &obj.data)
+                .write_loose_materialize(obj.kind, &obj.data)
                 .with_context(|| format!("write object {}", oid.to_hex()))?;
         }
         match obj.kind {
