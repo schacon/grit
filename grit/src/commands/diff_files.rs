@@ -945,6 +945,9 @@ fn print_patch_from_diff_entry(
     abbrev: Option<usize>,
     indent_heuristic: bool,
 ) -> Result<()> {
+    let quote_path_fully = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+        .unwrap_or_default()
+        .quote_path_fully();
     let (old_content, new_content) = load_patch_contents_for_diff_entry(entry, repo, work_tree)?;
     let old_path = entry
         .old_path
@@ -1027,6 +1030,7 @@ fn print_patch_from_diff_entry(
             display_path,
             3,
             indent_heuristic,
+            quote_path_fully,
         );
         let body: String = patch.lines().skip(2).map(|l| format!("\n{l}")).collect();
         println!("{header}\n--- {old_label}\n+++ {new_label}{body}");

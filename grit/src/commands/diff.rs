@@ -30,7 +30,7 @@ use grit_lib::diff::{
     detect_renames, diff_index_to_tree, diff_index_to_worktree, diff_slice_ops_compacted,
     diff_tree_to_worktree, diff_trees, diffcore_count_changes, empty_blob_oid, format_stat_line,
     resolve_indent_heuristic, rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat,
-    unified_diff, unified_diff_histogram_hunks_only,
+    unified_diff_histogram_hunks_only, unified_diff_with_prefix,
     unified_diff_with_prefix_and_funcname_and_algorithm, zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
@@ -46,6 +46,7 @@ use grit_lib::merge_diff::{
 };
 use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
+use grit_lib::quote_path::{format_diff_path_with_prefix, quote_c_style};
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::is_symmetric_diff;
 use grit_lib::rev_parse::{
@@ -567,6 +568,7 @@ fn no_index_unified_patch_body(
     algorithm: similar::Algorithm,
     use_git_histogram: bool,
     indent_heuristic: bool,
+    quote_path_fully: bool,
 ) -> String {
     let old_slots = no_index_build_line_slots(old_bytes, mode);
     let new_slots = no_index_build_line_slots(new_bytes, mode);
@@ -600,12 +602,18 @@ fn no_index_unified_patch_body(
         let old_label = if old_path == "/dev/null" {
             "--- /dev/null\n".to_string()
         } else {
-            format!("--- a/{old_path}\n")
+            format!(
+                "--- {}\n",
+                format_diff_path_with_prefix("a/", old_path, quote_path_fully)
+            )
         };
         let new_label = if new_path == "/dev/null" {
             "+++ /dev/null\n".to_string()
         } else {
-            format!("+++ b/{new_path}\n")
+            format!(
+                "+++ {}\n",
+                format_diff_path_with_prefix("b/", new_path, quote_path_fully)
+            )
         };
         let mut output = String::new();
         output.push_str(&old_label);
@@ -623,12 +631,18 @@ fn no_index_unified_patch_body(
     let old_label = if old_path == "/dev/null" {
         "--- /dev/null\n".to_string()
     } else {
-        format!("--- a/{old_path}\n")
+        format!(
+            "--- {}\n",
+            format_diff_path_with_prefix("a/", old_path, quote_path_fully)
+        )
     };
     let new_label = if new_path == "/dev/null" {
         "+++ /dev/null\n".to_string()
     } else {
-        format!("+++ b/{new_path}\n")
+        format!(
+            "+++ {}\n",
+            format_diff_path_with_prefix("b/", new_path, quote_path_fully)
+        )
     };
 
     let line_body_for_patch = |line: &[u8]| -> String {
@@ -1194,8 +1208,15 @@ struct DirstatFile {
 }
 
 /// Write the `diff --git` line for `git diff --no-index`.
-fn write_no_index_diff_git_line(out: &mut String, path_a: &str, path_b: &str) {
-    let _ = writeln!(out, "diff --git a/{path_a} b/{path_b}");
+fn write_no_index_diff_git_line(
+    out: &mut String,
+    path_a: &str,
+    path_b: &str,
+    quote_path_fully: bool,
+) {
+    let a = format_diff_path_with_prefix("a/", path_a, quote_path_fully);
+    let b = format_diff_path_with_prefix("b/", path_b, quote_path_fully);
+    let _ = writeln!(out, "diff --git {a} {b}");
 }
 
 fn abbrev_oid_hex(data: &[u8], abbrev_len: usize) -> String {
@@ -1298,6 +1319,7 @@ pub(crate) fn unstaged_patch_for_add_edit(
         true,
         &src_prefix,
         &dst_prefix,
+        diff_config.quote_path_fully(),
         None,
         submodule_ignore_flags_from_diff_arg(ignore_sm),
         None,
@@ -2706,6 +2728,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     !args.no_textconv,
                     &src_prefix,
                     &dst_prefix,
+                    quote_path_fully,
                     args.submodule.as_deref(),
                     submodule_ignore_flags_from_diff_arg(ignore_sm),
                     line_ignore,
@@ -2924,6 +2947,7 @@ fn run_diff_blob_vs_file(
             !args.no_textconv,
             src_prefix,
             dst_prefix,
+            quote_path_fully,
             args.submodule.as_deref(),
             submodule_ignore_flags_from_diff_arg(
                 args.ignore_submodules.as_deref().unwrap_or("none"),
@@ -3027,19 +3051,21 @@ fn run_diff_two_paths(
         .unwrap_or_else(|_| grit_lib::config::ConfigSet::new());
     let indent_h =
         resolve_indent_heuristic(&diff_cfg, args.indent_heuristic, args.no_indent_heuristic);
+    let quote_path_fully = diff_cfg.quote_path_fully();
 
-    let old_label = format!("{src_prefix}{path_in_repo}");
-    let new_label = format!("{dst_prefix}{path_other}");
-    let patch = unified_diff(
+    let patch = unified_diff_with_prefix(
         text_a.as_ref(),
         text_b.as_ref(),
-        &old_label,
-        &new_label,
+        path_in_repo,
+        path_other,
         context_lines,
+        0,
+        src_prefix,
+        dst_prefix,
         indent_h,
+        quote_path_fully,
     );
 
-    let diff_cfg = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let mut out = io::stdout().lock();
     let show_patch = !args.no_patch;
     if show_patch {
@@ -3153,6 +3179,7 @@ fn run_no_index(args: Args) -> Result<()> {
                 .unwrap_or_else(|_| grit_lib::config::ConfigSet::new())
         })
         .unwrap_or_default();
+    let quote_path_fully = diff_config.quote_path_fully();
     let ignore_case_attrs = diff_config
         .get("core.ignorecase")
         .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "1"));
@@ -3374,6 +3401,7 @@ fn run_no_index(args: Args) -> Result<()> {
             &diff_algo_ctx,
             diff_algo_cli,
             indent_heuristic,
+            quote_path_fully,
         )
     } else if use_anchored {
         anchored_unified_diff(
@@ -3386,6 +3414,7 @@ fn run_no_index(args: Args) -> Result<()> {
             line_algo_anchored,
             line_hist_anchored,
             indent_heuristic,
+            quote_path_fully,
         )
     } else {
         // Diff the textconv (or UTF-8 lossy) view so hunks match what we compare for exit status
@@ -3401,6 +3430,7 @@ fn run_no_index(args: Args) -> Result<()> {
             algo_sim,
             algo_hist,
             indent_heuristic,
+            quote_path_fully,
         )
     };
 
@@ -3420,8 +3450,10 @@ fn run_no_index(args: Args) -> Result<()> {
         "100644"
     };
 
+    let git_a = format_diff_path_with_prefix("a/", paths[0].as_str(), quote_path_fully);
+    let git_b = format_diff_path_with_prefix("b/", paths[1].as_str(), quote_path_fully);
     if use_color_patch {
-        writeln!(out, "{BOLD}diff --git a/{} b/{}{RESET}", paths[0], paths[1])?;
+        writeln!(out, "{BOLD}diff --git {git_a} {git_b}{RESET}")?;
         writeln!(
             out,
             "{BOLD}index {old_abbrev}..{new_abbrev} {mode_str}{RESET}"
@@ -3459,7 +3491,7 @@ fn run_no_index(args: Args) -> Result<()> {
             }
         }
     } else {
-        writeln!(out, "diff --git a/{} b/{}", paths[0], paths[1])?;
+        writeln!(out, "diff --git {git_a} {git_b}")?;
         writeln!(out, "index {old_abbrev}..{new_abbrev} {mode_str}")?;
         write!(out, "{diff_body}")?;
     }
@@ -3536,6 +3568,7 @@ fn run_no_index_dirs(args: Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
                 .unwrap_or_else(|_| grit_lib::config::ConfigSet::new())
         })
         .unwrap_or_default();
+    let quote_path_fully = diff_config.quote_path_fully();
     let ignore_case_attrs = diff_config
         .get("core.ignorecase")
         .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "1"));
@@ -3623,7 +3656,9 @@ fn run_no_index_dirs(args: Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
         } else {
             rel.as_str()
         };
-        writeln!(out, "diff --git a/{rel} b/{rel}")?;
+        let git_old = format_diff_path_with_prefix("a/", rel.as_str(), quote_path_fully);
+        let git_new = format_diff_path_with_prefix("b/", rel.as_str(), quote_path_fully);
+        writeln!(out, "diff --git {git_old} {git_new}")?;
         let mode_a = fa
             .symlink_metadata()
             .ok()
@@ -3673,6 +3708,7 @@ fn run_no_index_dirs(args: Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
             algo,
             use_git_histogram,
             indent_heuristic,
+            quote_path_fully,
         );
         write!(out, "{patch}")?;
     }
@@ -4961,7 +4997,7 @@ fn find_func_context(header: &str, old_lines: &[&str]) -> Option<String> {
 
 #[allow(dead_code)]
 fn write_diff_header(out: &mut impl Write, entry: &DiffEntry, use_color: bool) -> Result<()> {
-    write_diff_header_with_abbrev(out, entry, use_color, 7)
+    write_diff_header_with_abbrev(out, entry, use_color, 7, true)
 }
 
 #[allow(dead_code)]
@@ -4970,8 +5006,17 @@ fn write_diff_header_with_abbrev(
     entry: &DiffEntry,
     use_color: bool,
     abbrev_len: usize,
+    quote_path_fully: bool,
 ) -> Result<()> {
-    write_diff_header_with_prefix(out, entry, use_color, abbrev_len, "a/", "b/")
+    write_diff_header_with_prefix(
+        out,
+        entry,
+        use_color,
+        abbrev_len,
+        "a/",
+        "b/",
+        quote_path_fully,
+    )
 }
 
 fn write_diff_header_with_prefix(
@@ -4981,6 +5026,7 @@ fn write_diff_header_with_prefix(
     abbrev_len: usize,
     src_prefix: &str,
     dst_prefix: &str,
+    quote_path_fully: bool,
 ) -> Result<()> {
     let old_path = entry
         .old_path
@@ -4992,10 +5038,21 @@ fn write_diff_header_with_prefix(
         .unwrap_or(entry.old_path.as_deref().unwrap_or(""));
 
     let (b, r) = if use_color { (BOLD, RESET) } else { ("", "") };
-    writeln!(
-        out,
-        "{b}diff --git {src_prefix}{old_path} {dst_prefix}{new_path}{r}"
-    )?;
+    let old_git = if old_path.is_empty() {
+        format!("{src_prefix}")
+    } else if old_path == "/dev/null" {
+        "/dev/null".to_string()
+    } else {
+        format_diff_path_with_prefix(src_prefix, old_path, quote_path_fully)
+    };
+    let new_git = if new_path.is_empty() {
+        format!("{dst_prefix}")
+    } else if new_path == "/dev/null" {
+        "/dev/null".to_string()
+    } else {
+        format_diff_path_with_prefix(dst_prefix, new_path, quote_path_fully)
+    };
+    writeln!(out, "{b}diff --git {old_git} {new_git}{r}")?;
 
     let abbr = |oid: &ObjectId| -> String {
         let hex = oid.to_hex();
@@ -5060,8 +5117,16 @@ fn write_diff_header_with_prefix(
         DiffStatus::Renamed => {
             let sim = entry.score.unwrap_or(100);
             writeln!(out, "{b}similarity index {sim}%{r}")?;
-            writeln!(out, "{b}rename from {old_path}{r}")?;
-            writeln!(out, "{b}rename to {new_path}{r}")?;
+            writeln!(
+                out,
+                "{b}rename from {}{r}",
+                quote_c_style(old_path, quote_path_fully)
+            )?;
+            writeln!(
+                out,
+                "{b}rename to {}{r}",
+                quote_c_style(new_path, quote_path_fully)
+            )?;
             if entry.old_oid != entry.new_oid {
                 writeln!(
                     out,
@@ -5074,8 +5139,16 @@ fn write_diff_header_with_prefix(
         DiffStatus::Copied => {
             let sim = entry.score.unwrap_or(100);
             writeln!(out, "{b}similarity index {sim}%{r}")?;
-            writeln!(out, "{b}copy from {old_path}{r}")?;
-            writeln!(out, "{b}copy to {new_path}{r}")?;
+            writeln!(
+                out,
+                "{b}copy from {}{r}",
+                quote_c_style(old_path, quote_path_fully)
+            )?;
+            writeln!(
+                out,
+                "{b}copy to {}{r}",
+                quote_c_style(new_path, quote_path_fully)
+            )?;
             if entry.old_oid != entry.new_oid {
                 writeln!(
                     out,
@@ -5189,6 +5262,7 @@ fn write_typechange_blob_symlink_split_patch(
     algo_ctx: &DiffAlgoContext,
     algo_cli: Option<CliDiffAlgo>,
 ) -> Result<()> {
+    let quote_path_fully = algo_ctx.config.quote_path_fully();
     let path = entry.old_path.clone().or_else(|| entry.new_path.clone());
     let del = DiffEntry {
         status: DiffStatus::Deleted,
@@ -5200,7 +5274,15 @@ fn write_typechange_blob_symlink_split_patch(
         new_oid: zero_oid(),
         score: None,
     };
-    write_diff_header_with_prefix(out, &del, use_color, abbrev_len, src_prefix, dst_prefix)?;
+    write_diff_header_with_prefix(
+        out,
+        &del,
+        use_color,
+        abbrev_len,
+        src_prefix,
+        dst_prefix,
+        quote_path_fully,
+    )?;
     write_blob_to_blob_patch_fragment(
         out,
         old_blob_text,
@@ -5229,7 +5311,15 @@ fn write_typechange_blob_symlink_split_patch(
         new_oid: entry.new_oid,
         score: None,
     };
-    write_diff_header_with_prefix(out, &add, use_color, abbrev_len, src_prefix, dst_prefix)?;
+    write_diff_header_with_prefix(
+        out,
+        &add,
+        use_color,
+        abbrev_len,
+        src_prefix,
+        dst_prefix,
+        quote_path_fully,
+    )?;
     write_blob_to_blob_patch_fragment(
         out,
         "",
@@ -5268,6 +5358,7 @@ fn write_typechange_symlink_blob_split_patch(
     algo_ctx: &DiffAlgoContext,
     algo_cli: Option<CliDiffAlgo>,
 ) -> Result<()> {
+    let quote_path_fully = algo_ctx.config.quote_path_fully();
     let path = entry.old_path.clone().or_else(|| entry.new_path.clone());
     let del = DiffEntry {
         status: DiffStatus::Deleted,
@@ -5279,7 +5370,15 @@ fn write_typechange_symlink_blob_split_patch(
         new_oid: zero_oid(),
         score: None,
     };
-    write_diff_header_with_prefix(out, &del, use_color, abbrev_len, src_prefix, dst_prefix)?;
+    write_diff_header_with_prefix(
+        out,
+        &del,
+        use_color,
+        abbrev_len,
+        src_prefix,
+        dst_prefix,
+        quote_path_fully,
+    )?;
     write_blob_to_blob_patch_fragment(
         out,
         old_symlink_text,
@@ -5308,7 +5407,15 @@ fn write_typechange_symlink_blob_split_patch(
         new_oid: entry.new_oid,
         score: None,
     };
-    write_diff_header_with_prefix(out, &add, use_color, abbrev_len, src_prefix, dst_prefix)?;
+    write_diff_header_with_prefix(
+        out,
+        &add,
+        use_color,
+        abbrev_len,
+        src_prefix,
+        dst_prefix,
+        quote_path_fully,
+    )?;
     write_blob_to_blob_patch_fragment(
         out,
         "",
@@ -5347,6 +5454,7 @@ fn write_blob_to_blob_patch_fragment(
     suppress_incomplete_highlight_after_plus: bool,
 ) -> Result<()> {
     let indent_heuristic = resolve_indent_heuristic(algo_ctx.config.as_ref(), false, false);
+    let quote_path_fully = algo_ctx.config.quote_path_fully();
     let (algo, use_git_histogram) = diff_algorithm_for_path(path_for_attrs, algo_cli, algo_ctx);
     let func_matcher = matcher_for_path_parsed(
         algo_ctx.config.as_ref(),
@@ -5369,6 +5477,7 @@ fn write_blob_to_blob_patch_fragment(
         algo,
         use_git_histogram,
         indent_heuristic,
+        quote_path_fully,
     );
     let patch = if suppress_blank_empty {
         strip_blank_context_trailing_space(&patch)
@@ -5403,6 +5512,7 @@ fn write_patch_with_prefix(
     use_textconv: bool,
     src_prefix: &str,
     dst_prefix: &str,
+    quote_path_fully: bool,
     submodule_fmt: Option<&str>,
     submodule_ignore: SubmoduleIgnoreFlags,
     line_ignore: Option<&[Regex]>,
@@ -5566,17 +5676,31 @@ fn write_patch_with_prefix(
             continue;
         }
 
-        write_diff_header_with_prefix(out, entry, use_color, abbrev_len, src_prefix, dst_prefix)?;
+        write_diff_header_with_prefix(
+            out,
+            entry,
+            use_color,
+            abbrev_len,
+            src_prefix,
+            dst_prefix,
+            quote_path_fully,
+        )?;
 
         // Submodule gitlink (mode 160000): emit `Subproject commit` hunks like Git — the ODB
         // does not store these as blobs in the superproject (`git apply` / t4137 rely on this).
         if entry.old_mode == "160000" || entry.new_mode == "160000" {
             let (old_label, new_label) = match entry.status {
-                DiffStatus::Added => ("/dev/null".to_owned(), format!("{dst_prefix}{new_path}")),
-                DiffStatus::Deleted => (format!("{src_prefix}{old_path}"), "/dev/null".to_owned()),
+                DiffStatus::Added => (
+                    "/dev/null".to_owned(),
+                    format_diff_path_with_prefix(dst_prefix, new_path, quote_path_fully),
+                ),
+                DiffStatus::Deleted => (
+                    format_diff_path_with_prefix(src_prefix, old_path, quote_path_fully),
+                    "/dev/null".to_owned(),
+                ),
                 _ => (
-                    format!("{src_prefix}{old_path}"),
-                    format!("{dst_prefix}{new_path}"),
+                    format_diff_path_with_prefix(src_prefix, old_path, quote_path_fully),
+                    format_diff_path_with_prefix(dst_prefix, new_path, quote_path_fully),
                 ),
             };
             writeln!(out, "--- {old_label}")?;
@@ -5648,11 +5772,9 @@ fn write_patch_with_prefix(
                     new_path,
                 )?;
             } else {
-                writeln!(
-                    out,
-                    "Binary files {}{} and {}{} differ",
-                    src_prefix, old_path, dst_prefix, new_path
-                )?;
+                let bo = format_diff_path_with_prefix(src_prefix, old_path, quote_path_fully);
+                let bn = format_diff_path_with_prefix(dst_prefix, new_path, quote_path_fully);
+                writeln!(out, "Binary files {bo} and {bn} differ")?;
             }
             continue;
         }
@@ -5729,7 +5851,7 @@ fn write_patch_with_prefix(
                 if display_old == "/dev/null" {
                     "/dev/null".to_owned()
                 } else {
-                    format!("{src_prefix}{display_old}")
+                    format_diff_path_with_prefix(src_prefix, display_old, quote_path_fully)
                 }
             )?;
             writeln!(
@@ -5738,7 +5860,7 @@ fn write_patch_with_prefix(
                 if display_new == "/dev/null" {
                     "/dev/null".to_owned()
                 } else {
-                    format!("{dst_prefix}{display_new}")
+                    format_diff_path_with_prefix(dst_prefix, display_new, quote_path_fully)
                 }
             )?;
             writeln!(out, "@@ -?,? +{new_start},{new_lc} @@")?;
@@ -5789,6 +5911,7 @@ fn write_patch_with_prefix(
                 algo_ctx,
                 algo_cli,
                 indent_heuristic,
+                quote_path_fully,
             );
             let patch = if suppress_blank_empty {
                 strip_blank_context_trailing_space(&patch)
@@ -5820,6 +5943,7 @@ fn write_patch_with_prefix(
                 algo,
                 use_git_histogram,
                 indent_heuristic,
+                quote_path_fully,
             );
             let patch = if suppress_blank_empty {
                 strip_blank_context_trailing_space(&patch)
@@ -6601,6 +6725,7 @@ fn word_diff_generate_patch(
     algo_ctx: &DiffAlgoContext,
     algo_cli: Option<CliDiffAlgo>,
     indent_heuristic: bool,
+    quote_path_fully: bool,
 ) -> String {
     let path_for_algo = if old_path == "/dev/null" {
         new_path
@@ -6630,6 +6755,7 @@ fn word_diff_generate_patch(
         algo,
         use_git_histogram,
         indent_heuristic,
+        quote_path_fully,
     );
 
     let mut out = String::new();
@@ -7478,6 +7604,7 @@ pub(crate) fn check_whitespace_errors(
     }
     let mut has_errors = false;
     let indent_heuristic = resolve_indent_heuristic(config, false, false);
+    let quote_path_fully = config.quote_path_fully();
 
     for entry in entries {
         if entry.status == DiffStatus::Deleted {
@@ -7535,6 +7662,7 @@ pub(crate) fn check_whitespace_errors(
             similar::Algorithm::Myers,
             false,
             indent_heuristic,
+            quote_path_fully,
         );
 
         let patch_lines: Vec<&str> = patch.lines().collect();

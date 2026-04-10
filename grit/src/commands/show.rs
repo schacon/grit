@@ -1415,6 +1415,8 @@ fn show_commit(
         }
     }
 
+    let quote_path_fully = config.quote_path_fully();
+
     // Default: full unified diff (first parent or root)
     for entry in &diff_entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
@@ -1503,6 +1505,7 @@ fn show_commit(
                 line_algo,
                 false,
                 indent_heuristic,
+                quote_path_fully,
             )
         } else {
             unified_diff(
@@ -1512,6 +1515,7 @@ fn show_commit(
                 new_path,
                 context,
                 indent_heuristic,
+                quote_path_fully,
             )
         };
         write!(out, "{patch}")?;

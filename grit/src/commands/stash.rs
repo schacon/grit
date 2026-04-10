@@ -1481,6 +1481,7 @@ pub(crate) fn partial_unified_for_op_range(
         path,
         context,
         indent_heuristic,
+        false,
     );
     let mut tail: String = full
         .lines()
@@ -4268,6 +4269,7 @@ fn show_tree_diff(
                         algorithm,
                         false,
                         false,
+                        false,
                     );
                     print!("{patch}");
                 }
@@ -4297,6 +4299,7 @@ fn show_tree_diff(
                     algorithm,
                     false,
                     false,
+                    false,
                 );
                 print!("{patch}");
             }
@@ -4323,6 +4326,7 @@ fn show_tree_diff(
                     "b/",
                     None,
                     algorithm,
+                    false,
                     false,
                     false,
                 );

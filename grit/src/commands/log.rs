@@ -5555,6 +5555,7 @@ fn commit_pickaxe_matches(
                 entry.new_path.as_deref().unwrap_or(path),
                 3,
                 indent_heuristic_from_config(&config),
+                config.quote_path_fully(),
             );
             if pickaxe_g_matches_diff_lines(re, &patch) {
                 return Ok(true);
@@ -7521,6 +7522,7 @@ fn log_write_patch_entry(
         src_pfx,
         dst_pfx,
         indent_heuristic,
+        config.quote_path_fully(),
     );
     let patch = apply_diff_output_indicators(&patch, args);
     write!(out, "{patch}")?;

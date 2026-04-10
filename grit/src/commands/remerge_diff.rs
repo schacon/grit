@@ -663,6 +663,7 @@ fn emit_patch_for_entry(
         new_path,
         context_lines,
         indent_heuristic,
+        config.quote_path_fully(),
     );
     write!(out, "{patch}")?;
     Ok(())

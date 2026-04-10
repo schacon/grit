@@ -1061,7 +1061,15 @@ fn format_single_patch(
         } else {
             read_blob_content(odb, &entry.new_oid)
         };
-        let patch = unified_diff(&old_content, &new_content, old_path, new_path, 3, true);
+        let patch = unified_diff(
+            &old_content,
+            &new_content,
+            old_path,
+            new_path,
+            3,
+            true,
+            config.quote_path_fully(),
+        );
         diff_text.push_str(&patch);
     }
 

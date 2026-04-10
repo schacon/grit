@@ -216,6 +216,7 @@ fn show_diff(
     let dst = result_bytes(repo, macros, rules, odb, entry)?;
     let old_s = String::from_utf8_lossy(&src);
     let new_s = String::from_utf8_lossy(&dst);
+    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let patch = unified_diff(
         old_s.as_ref(),
         new_s.as_ref(),
@@ -223,6 +224,7 @@ fn show_diff(
         &entry.path,
         3,
         true,
+        cfg.quote_path_fully(),
     );
     Ok(trim_diff_header(&patch))
 }

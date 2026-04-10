@@ -790,7 +790,7 @@ t4116-apply-reverse	t4	yes	7	6	1	false	ok	0
 t4117-apply-reject	t4	yes	8	5	3	false	ok	0
 t4118-apply-empty-context	t4	yes	3	3	0	true	ok	0
 t4119-apply-config	t4	yes	11	3	8	false	ok	0
-t4120-apply-popt	t4	yes	12	5	7	false	ok	0
+t4120-apply-popt	t4	yes	12	12	0	true	ok	0
 t4121-apply-diffs	t4	yes	2	2	0	true	ok	0
 t4122-apply-symlink-inside	t4	yes	7	7	0	true	ok	0
 t4123-apply-shrink	t4	yes	2	2	0	true	ok	0

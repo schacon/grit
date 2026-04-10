@@ -2958,6 +2958,7 @@ pub(crate) fn write_patch_entry_inner(
         "",
         "",
         indent_heuristic,
+        quote_fully,
     );
     write!(out, "{patch}")?;
 

@@ -97,20 +97,39 @@ pub fn unified_diff_histogram_with_prefix_and_funcname(
     src_prefix: &str,
     dst_prefix: &str,
     funcname_matcher: Option<&FuncnameMatcher>,
+    quote_path_fully: bool,
 ) -> String {
+    use crate::quote_path::format_diff_path_with_prefix;
+
     let body =
         histogram_unified_body_raw(old_content, new_content, context_lines, inter_hunk_context);
 
     let mut output = String::new();
     if old_path == "/dev/null" {
         output.push_str("--- /dev/null\n");
+    } else if src_prefix.is_empty() {
+        output.push_str(&format!("--- {old_path}\n"));
     } else {
-        output.push_str(&format!("--- {src_prefix}{old_path}\n"));
+        output.push_str("--- ");
+        output.push_str(&format_diff_path_with_prefix(
+            src_prefix,
+            old_path,
+            quote_path_fully,
+        ));
+        output.push('\n');
     }
     if new_path == "/dev/null" {
         output.push_str("+++ /dev/null\n");
+    } else if dst_prefix.is_empty() {
+        output.push_str(&format!("+++ {new_path}\n"));
     } else {
-        output.push_str(&format!("+++ {dst_prefix}{new_path}\n"));
+        output.push_str("+++ ");
+        output.push_str(&format_diff_path_with_prefix(
+            dst_prefix,
+            new_path,
+            quote_path_fully,
+        ));
+        output.push('\n');
     }
 
     let old_lines: Vec<&str> = old_content.lines().collect();
@@ -2237,6 +2256,7 @@ pub fn unified_diff(
     new_path: &str,
     context_lines: usize,
     indent_heuristic: bool,
+    quote_path_fully: bool,
 ) -> String {
     unified_diff_with_prefix(
         old_content,
@@ -2248,6 +2268,7 @@ pub fn unified_diff(
         "a/",
         "b/",
         indent_heuristic,
+        quote_path_fully,
     )
 }
 
@@ -2266,6 +2287,7 @@ pub fn unified_diff_with_prefix(
     src_prefix: &str,
     dst_prefix: &str,
     indent_heuristic: bool,
+    quote_path_fully: bool,
 ) -> String {
     unified_diff_with_prefix_and_funcname(
         old_content,
@@ -2278,6 +2300,7 @@ pub fn unified_diff_with_prefix(
         dst_prefix,
         None,
         indent_heuristic,
+        quote_path_fully,
     )
 }
 
@@ -2295,6 +2318,7 @@ pub fn unified_diff_with_prefix_and_funcname(
     dst_prefix: &str,
     funcname_matcher: Option<&FuncnameMatcher>,
     indent_heuristic: bool,
+    quote_path_fully: bool,
 ) -> String {
     unified_diff_with_prefix_and_funcname_and_algorithm(
         old_content,
@@ -2309,6 +2333,7 @@ pub fn unified_diff_with_prefix_and_funcname(
         similar::Algorithm::Myers,
         false,
         indent_heuristic,
+        quote_path_fully,
     )
 }
 
@@ -2328,6 +2353,7 @@ pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
     algorithm: similar::Algorithm,
     use_git_histogram: bool,
     indent_heuristic: bool,
+    quote_path_fully: bool,
 ) -> String {
     if use_git_histogram {
         return unified_diff_histogram_with_prefix_and_funcname(
@@ -2340,9 +2366,11 @@ pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
             src_prefix,
             dst_prefix,
             funcname_matcher,
+            quote_path_fully,
         );
     }
 
+    use crate::quote_path::format_diff_path_with_prefix;
     use similar::{group_diff_ops, udiff::UnifiedDiffHunk, TextDiff};
 
     let diff = TextDiff::configure()
@@ -2358,13 +2386,31 @@ pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
     let mut output = String::new();
     if old_path == "/dev/null" {
         output.push_str("--- /dev/null\n");
+    } else if src_prefix.is_empty() {
+        // Callers (e.g. `diff-tree`, `diff-index`) may pass a fully formatted token
+        // (already includes `a/` and any C-style quoting).
+        output.push_str(&format!("--- {old_path}\n"));
     } else {
-        output.push_str(&format!("--- {src_prefix}{old_path}\n"));
+        output.push_str("--- ");
+        output.push_str(&format_diff_path_with_prefix(
+            src_prefix,
+            old_path,
+            quote_path_fully,
+        ));
+        output.push('\n');
     }
     if new_path == "/dev/null" {
         output.push_str("+++ /dev/null\n");
+    } else if dst_prefix.is_empty() {
+        output.push_str(&format!("+++ {new_path}\n"));
     } else {
-        output.push_str(&format!("+++ {dst_prefix}{new_path}\n"));
+        output.push_str("+++ ");
+        output.push_str(&format_diff_path_with_prefix(
+            dst_prefix,
+            new_path,
+            quote_path_fully,
+        ));
+        output.push('\n');
     }
 
     let old_lines: Vec<&str> = old_content.lines().collect();
@@ -2430,7 +2476,9 @@ pub fn anchored_unified_diff(
     algorithm: similar::Algorithm,
     use_git_histogram: bool,
     indent_heuristic: bool,
+    quote_path_fully: bool,
 ) -> String {
+    use crate::quote_path::format_diff_path_with_prefix;
     use similar::TextDiff;
 
     let old_lines: Vec<&str> = old_content.lines().collect();
@@ -2479,6 +2527,7 @@ pub fn anchored_unified_diff(
             algorithm,
             use_git_histogram,
             indent_heuristic,
+            quote_path_fully,
         );
     }
 
@@ -2602,12 +2651,24 @@ pub fn anchored_unified_diff(
     if old_path == "/dev/null" {
         output.push_str("--- /dev/null\n");
     } else {
-        output.push_str(&format!("--- a/{old_path}\n"));
+        output.push_str("--- ");
+        output.push_str(&format_diff_path_with_prefix(
+            "a/",
+            old_path,
+            quote_path_fully,
+        ));
+        output.push('\n');
     }
     if new_path == "/dev/null" {
         output.push_str("+++ /dev/null\n");
     } else {
-        output.push_str(&format!("+++ b/{new_path}\n"));
+        output.push_str("+++ ");
+        output.push_str(&format_diff_path_with_prefix(
+            "b/",
+            new_path,
+            quote_path_fully,
+        ));
+        output.push('\n');
     }
 
     // Group ops into hunks with context
