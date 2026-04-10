@@ -92,6 +92,9 @@ pub fn run(args: Args) -> Result<()> {
     let mut use_bitmap_index = false;
     let mut unpacked_only = false;
     let mut test_bitmap = false;
+    let mut cli_topo_order = false;
+    let mut cli_date_order = false;
+    let mut cli_author_date_order = false;
 
     let mut i = 0usize;
     while i < args.args.len() {
@@ -113,8 +116,11 @@ pub fn run(args: Args) -> Result<()> {
                 "--first-parent" => options.first_parent = true,
                 "--ancestry-path" => options.ancestry_path = true,
                 "--simplify-by-decoration" => options.simplify_by_decoration = true,
-                "--topo-order" => options.ordering = OrderingMode::Topo,
-                "--date-order" => options.ordering = OrderingMode::Date,
+                "--topo-order" => cli_topo_order = true,
+                "--date-order" => cli_date_order = true,
+                "--author-date-order" => cli_author_date_order = true,
+                "--exclude-first-parent-only" => options.exclude_first_parent_only = true,
+                "--show-pulls" => options.show_pulls = true,
                 "--reverse" => options.reverse = true,
                 "--count" => options.count = true,
                 "--parents" => {
@@ -162,7 +168,7 @@ pub fn run(args: Args) -> Result<()> {
                 "--full-history" => options.full_history = true,
                 "--sparse" => options.sparse = true,
                 "--dense" => { /* default behavior, no-op */ }
-                "--simplify-merges" => { /* accepted but not fully implemented */ }
+                "--simplify-merges" => options.simplify_merges = true,
                 "--left-right" => options.left_right = true,
                 "--left-only" => options.left_only = true,
                 "--right-only" => options.right_only = true,
@@ -506,6 +512,23 @@ pub fn run(args: Args) -> Result<()> {
                 }
             }
         }
+    }
+
+    if options.simplify_merges {
+        cli_topo_order = true;
+    }
+    if cli_topo_order {
+        options.ordering = if cli_author_date_order {
+            OrderingMode::AuthorDateTopo
+        } else {
+            OrderingMode::Topo
+        };
+    } else if cli_date_order || cli_author_date_order {
+        options.ordering = if cli_author_date_order {
+            OrderingMode::AuthorDateWalk
+        } else {
+            OrderingMode::DateOrderWalk
+        };
     }
 
     if options.simplify_by_decoration {

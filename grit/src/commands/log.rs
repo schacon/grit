@@ -123,6 +123,10 @@ pub struct Args {
     #[arg(long = "ancestry-path")]
     pub ancestry_path: bool,
 
+    /// Bottom commit for `--ancestry-path=<rev>` (parsed from argv in `run`, not clap).
+    #[arg(skip)]
+    pub ancestry_path_bottom: Option<String>,
+
     /// Only show commits that are decorated (have refs).
     #[arg(long = "simplify-by-decoration")]
     pub simplify_by_decoration: bool,
@@ -549,6 +553,18 @@ pub struct Args {
     #[arg(long = "parents")]
     pub show_parents: bool,
 
+    /// Show full diff for merges (path-limited log; matches `git log --full-diff`).
+    #[arg(long = "full-diff")]
+    pub full_diff: bool,
+
+    /// When excluding commits, only follow first parents (matches `git log --exclude-first-parent-only`).
+    #[arg(long = "exclude-first-parent-only")]
+    pub exclude_first_parent_only: bool,
+
+    /// Show first-parent merge commits that pulled in path changes (matches `git log --show-pulls`).
+    #[arg(long = "show-pulls")]
+    pub show_pulls: bool,
+
     /// Write normal log output to a file; diff still goes to stdout.
     #[arg(long = "output", value_name = "file")]
     pub output_path: Option<PathBuf>,
@@ -750,6 +766,9 @@ fn merge_diff_is_dense_combined(args: &Args, is_merge: bool, git_dir: &Path) -> 
 fn merge_diff_is_separate(args: &Args, is_merge: bool, git_dir: &Path) -> Result<bool> {
     if !is_merge {
         return Ok(false);
+    }
+    if args.full_diff {
+        return Ok(true);
     }
     Ok(effective_merge_diff_format(args, true, git_dir)? == MergeDiffFormat::Separate)
 }
@@ -1488,6 +1507,261 @@ fn graph_show_remainder_lines(
     Ok(())
 }
 
+fn run_rev_list_log(
+    repo: &Repository,
+    args: &Args,
+    patch_context: usize,
+    author_res: &[Regex],
+    committer_res: &[Regex],
+    grep_res: &[Regex],
+    use_color: bool,
+) -> Result<()> {
+    let mut implied_pathspecs: Vec<String> = Vec::new();
+    let mut revision_specs = Vec::new();
+    for rev in &args.revisions {
+        if rev == "--" {
+            break;
+        }
+        if rev.starts_with('-') && !rev.starts_with('^') {
+            continue;
+        }
+        if let Some(stripped) = rev.strip_prefix('^') {
+            match resolve_revision_as_commit(repo, stripped) {
+                Ok(_) => revision_specs.push(rev.clone()),
+                Err(_err) if is_likely_pathspec_during_rev_parse(stripped) => {
+                    implied_pathspecs.push(stripped.to_owned())
+                }
+                Err(_err) => match resolve_revision_as_commit_after_precompose(repo, stripped) {
+                    Ok(_) => revision_specs.push(rev.clone()),
+                    Err(_err)
+                        if grit_lib::precompose_config::effective_core_precomposeunicode(Some(
+                            &repo.git_dir,
+                        )) && grit_lib::unicode_normalization::has_non_ascii_utf8(stripped) =>
+                    {
+                        implied_pathspecs.push(stripped.to_owned());
+                    }
+                    Err(err) => return Err(err.into()),
+                },
+            }
+        } else {
+            match resolve_revision_as_commit(repo, rev) {
+                Ok(_) => revision_specs.push(rev.clone()),
+                Err(_err) if is_likely_pathspec_during_rev_parse(rev) => {
+                    implied_pathspecs.push(rev.clone())
+                }
+                Err(_err) => match resolve_revision_as_commit_after_precompose(repo, rev) {
+                    Ok(_) => revision_specs.push(rev.clone()),
+                    Err(_err)
+                        if grit_lib::precompose_config::effective_core_precomposeunicode(Some(
+                            &repo.git_dir,
+                        )) && grit_lib::unicode_normalization::has_non_ascii_utf8(rev) =>
+                    {
+                        implied_pathspecs.push(rev.clone());
+                    }
+                    Err(err) => return Err(err.into()),
+                },
+            }
+        }
+    }
+
+    if !implied_pathspecs.is_empty() {
+        validate_pathspec_scope(repo, &implied_pathspecs)?;
+    }
+
+    let mut combined_pathspecs = args.pathspecs.clone();
+    combined_pathspecs.extend(implied_pathspecs);
+    combined_pathspecs = resolve_effective_pathspecs(repo, &combined_pathspecs)?;
+
+    let (core_commit_graph, cg_read_paths, cg_changed_ver) = load_bloom_walk_config(&repo.git_dir);
+    let use_bloom = core_commit_graph
+        && !combined_pathspecs.is_empty()
+        && grit_lib::pathspec::pathspecs_allow_bloom(&combined_pathspecs);
+
+    let ordering = if args.topo_order || args.simplify_merges {
+        if args.author_date_order {
+            OrderingMode::AuthorDateTopo
+        } else {
+            OrderingMode::Topo
+        }
+    } else if args.date_order || args.author_date_order {
+        if args.author_date_order {
+            OrderingMode::AuthorDateWalk
+        } else {
+            OrderingMode::DateOrderWalk
+        }
+    } else {
+        OrderingMode::Default
+    };
+
+    let mut options = RevListOptions {
+        all_refs: args.all,
+        first_parent: args.first_parent,
+        ancestry_path: args.ancestry_path,
+        ancestry_path_bottoms: if let Some(ref b) = args.ancestry_path_bottom {
+            vec![resolve_revision_as_commit(repo, b.as_str())?]
+        } else {
+            Vec::new()
+        },
+        skip: args.skip.unwrap_or(0),
+        max_count: args.max_count,
+        ordering,
+        reverse: args.reverse,
+        boundary: args.boundary,
+        full_history: args.full_history,
+        sparse: args.sparse,
+        simplify_merges: args.simplify_merges,
+        show_pulls: args.show_pulls,
+        exclude_first_parent_only: args.exclude_first_parent_only,
+        paths: combined_pathspecs.clone(),
+        use_commit_graph_bloom: use_bloom,
+        commit_graph_read_changed_paths: cg_read_paths,
+        commit_graph_changed_paths_version: cg_changed_ver,
+        ..RevListOptions::default()
+    };
+
+    if args.no_merges {
+        options.max_parents = Some(1);
+    }
+    if args.merges {
+        options.min_parents = Some(2);
+    }
+
+    let (mut positive_specs, negative_specs, stdin_all_refs) =
+        collect_revision_specs_with_stdin(&revision_specs, false)
+            .map_err(|e| anyhow::anyhow!("failed to parse revision arguments: {e}"))?;
+    if stdin_all_refs {
+        options.all_refs = true;
+    }
+    if positive_specs.is_empty() && !options.all_refs {
+        positive_specs.push("HEAD".to_owned());
+    }
+
+    let result = rev_list(repo, &positive_specs, &negative_specs, &options)
+        .map_err(|e| anyhow::anyhow!("rev-list failed: {e}"))?;
+
+    let format_requires_decorations = args
+        .format
+        .as_deref()
+        .map(|fmt| {
+            let template = fmt
+                .strip_prefix("format:")
+                .or_else(|| fmt.strip_prefix("tformat:"))
+                .unwrap_or(fmt);
+            template.contains("%d") || template.contains("%D")
+        })
+        .unwrap_or(false);
+    let (show_decorations, decorate_full) =
+        resolve_decoration_display(args, format_requires_decorations);
+    let decoration_map_for_display = if show_decorations {
+        Some(collect_decorations(repo, decorate_full)?)
+    } else {
+        None
+    };
+
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    let mut notes_cache = NotesMapCache::new(repo);
+    let is_format_separator = args
+        .format
+        .as_deref()
+        .map(|f| f.starts_with("format:"))
+        .unwrap_or(false);
+    let show_diff = args.patch
+        || args.patch_u
+        || !args.stat.is_empty()
+        || args.name_only
+        || args.name_status
+        || args.raw
+        || args.cc
+        || args.merge_diff_c
+        || args.remerge_diff
+        || args.patch_with_stat;
+
+    let mut shown = 0usize;
+    for oid in result.commits {
+        let obj = repo.odb.read(&oid)?;
+        let commit = parse_commit(&obj.data)?;
+        let info = CommitInfo {
+            tree: commit.tree,
+            parents: commit.parents.clone(),
+            author: commit.author.clone(),
+            committer: commit.committer.clone(),
+            message: commit.message.clone(),
+        };
+
+        let author_ok =
+            author_res.is_empty() || author_res.iter().any(|re| re.is_match(&info.author));
+        if !author_ok {
+            continue;
+        }
+        let committer_ok =
+            committer_res.is_empty() || committer_res.iter().any(|re| re.is_match(&info.committer));
+        if !committer_ok {
+            continue;
+        }
+        let msg_ok = if grep_res.is_empty() {
+            true
+        } else {
+            let m = if args.all_match {
+                grep_res.iter().all(|re| re.is_match(&info.message))
+            } else {
+                grep_res.iter().any(|re| re.is_match(&info.message))
+            };
+            if args.invert_grep {
+                !m
+            } else {
+                m
+            }
+        };
+        if !msg_ok {
+            continue;
+        }
+
+        if is_format_separator && shown > 0 {
+            if args.null_terminator {
+                write!(out, "\0")?;
+            } else {
+                writeln!(out)?;
+            }
+        }
+
+        format_commit(
+            &mut out,
+            &oid,
+            &info,
+            args,
+            decoration_map_for_display.as_ref(),
+            use_color,
+            &mut notes_cache,
+            &repo.odb,
+            None,
+            false,
+            None,
+            None,
+            None,
+        )?;
+
+        if show_diff {
+            write_commit_diff(
+                &mut out,
+                repo,
+                &oid,
+                &info,
+                args,
+                &combined_pathspecs,
+                None,
+                decoration_map_for_display.as_ref(),
+                use_color,
+                &mut notes_cache,
+                patch_context,
+            )?;
+        }
+        shown += 1;
+    }
+
+    Ok(())
+}
+
 fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result<()> {
     let mut implied_pathspecs: Vec<String> = Vec::new();
     let mut revision_specs = Vec::new();
@@ -1560,11 +1834,27 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
     let mut options = RevListOptions {
         all_refs: args.all,
         first_parent: args.first_parent,
+        ancestry_path: args.ancestry_path,
+        ancestry_path_bottoms: if let Some(ref b) = args.ancestry_path_bottom {
+            vec![resolve_revision_as_commit(repo, b.as_str())?]
+        } else {
+            Vec::new()
+        },
         simplify_by_decoration: false,
         skip: args.skip.unwrap_or(0),
         max_count: args.max_count,
-        ordering: if args.date_order {
-            OrderingMode::Date
+        ordering: if args.topo_order || args.simplify_merges {
+            if args.author_date_order {
+                OrderingMode::AuthorDateTopo
+            } else {
+                OrderingMode::Topo
+            }
+        } else if args.date_order || args.author_date_order {
+            if args.author_date_order {
+                OrderingMode::AuthorDateWalk
+            } else {
+                OrderingMode::DateOrderWalk
+            }
         } else {
             OrderingMode::Topo
         },
@@ -1572,6 +1862,9 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
         boundary: args.boundary,
         full_history: args.full_history,
         sparse: args.sparse,
+        simplify_merges: args.simplify_merges,
+        show_pulls: args.show_pulls,
+        exclude_first_parent_only: args.exclude_first_parent_only,
         paths: if args.follow {
             Vec::new()
         } else {
@@ -1651,7 +1944,8 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
     let mut graph_parent_targets = included.clone();
     graph_parent_targets.extend(ordered_boundaries.iter().copied());
     let simplify_graph_parents =
-        args.simplify_by_decoration && combined_pathspecs.is_empty() && !args.full_history;
+        (args.simplify_by_decoration && combined_pathspecs.is_empty() && !args.full_history)
+            || (args.simplify_merges && !combined_pathspecs.is_empty());
     // Path-limited history: when walking through commits omitted from the simplified list,
     // follow only the first parent so graph edges match Git's parent rewriting for `--graph`.
     // `--full-history` alone keeps full parent connectivity (t6016 case 6); with
@@ -2915,6 +3209,15 @@ pub fn run(mut args: Args) -> Result<()> {
     }
     normalize_log_merge_diff_args(&mut args, &repo.git_dir)?;
     validate_log_pickaxe_options(&repo, &args)?;
+
+    for raw in std::env::args() {
+        if let Some(rest) = raw.strip_prefix("--ancestry-path=") {
+            if !rest.is_empty() {
+                args.ancestry_path_bottom = Some(rest.to_owned());
+            }
+        }
+    }
+
     let patch_context = if let Some(u) = args.unified {
         u
     } else {
@@ -3046,6 +3349,42 @@ pub fn run(mut args: Args) -> Result<()> {
 
     if args.graph {
         return run_graph_log(&repo, &args, patch_context);
+    }
+
+    let effective_for_rev_list = resolve_effective_pathspecs(&repo, &args.pathspecs)?;
+    let wants_rev_list_walk = !args.follow
+        && !args.branches
+        && !args.source
+        && args.pickaxe_grep.is_none()
+        && args.pickaxe_string.is_none()
+        && args.diff_filter.is_none()
+        && args.find_object.is_none()
+        && args.since.is_none()
+        && args.until.is_none()
+        && args.since_as_filter.is_none()
+        && !args.simplify_by_decoration
+        && !args.boundary
+        && (args.topo_order
+            || args.date_order
+            || args.author_date_order
+            || args.full_history
+            || args.simplify_merges
+            || args.sparse
+            || args.ancestry_path
+            || args.exclude_first_parent_only
+            || args.show_pulls
+            || args.full_diff
+            || !effective_for_rev_list.is_empty());
+    if wants_rev_list_walk {
+        return run_rev_list_log(
+            &repo,
+            &args,
+            patch_context,
+            &author_res,
+            &committer_res,
+            &grep_res,
+            use_color,
+        );
     }
 
     // Determine starting points and excluded commits.

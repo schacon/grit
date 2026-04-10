@@ -2442,7 +2442,7 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
                         path: raw_path.clone(),
                         base_index_pos: 0,
                     };
-                    index.add_or_replace(entry);
+                    index.stage_file(entry);
                     changed = true;
                 }
                 continue;
@@ -2456,11 +2456,11 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
                 fs::read(&abs_path)?
             };
             let oid = repo.odb.write(ObjectKind::Blob, &data)?;
-            let has_unmerged = index
+            let has_unmerged_for_path = index
                 .entries
                 .iter()
                 .any(|e| e.path == raw_path && e.stage() != 0);
-            if !has_unmerged
+            if !has_unmerged_for_path
                 && index
                     .entries
                     .iter()

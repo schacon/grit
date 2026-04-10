@@ -400,12 +400,16 @@ fn url_decode(s: &str) -> String {
 /// Ordering mode for commit output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderingMode {
-    /// Reverse-chronological by commit date.
+    /// Reverse-chronological by committer date (default `rev-list` / `log` when no ordering flags).
     Default,
-    /// Topological ordering with date tie-breaks.
+    /// Commit-date heap walk (`--date-order` without `--topo-order`; matches Git for `t6012`).
+    DateOrderWalk,
+    /// Author-date heap walk (`--author-date-order` without `--topo-order`).
+    AuthorDateWalk,
+    /// Topological walk with committer-date tie-breaks (`--topo-order`, `--simplify-merges`).
     Topo,
-    /// Date-order variant (same constraints as topo for this subset).
-    Date,
+    /// Topological walk with author-date tie-breaks (`--topo-order --author-date-order`).
+    AuthorDateTopo,
 }
 
 /// Parsed and normalized options for rev-list traversal.
@@ -465,6 +469,12 @@ pub struct RevListOptions {
     pub full_history: bool,
     /// Sparse mode: don't prune non-matching commits.
     pub sparse: bool,
+    /// Further simplify history after path limiting (`--simplify-merges`).
+    pub simplify_merges: bool,
+    /// Include "diverted" merge commits on the first-parent spine (`--show-pulls`).
+    pub show_pulls: bool,
+    /// When walking excluded commits, only follow the first parent (`--exclude-first-parent-only`).
+    pub exclude_first_parent_only: bool,
     /// Object filter for `--filter=<spec>`.
     pub filter: Option<ObjectFilter>,
     /// Raw `--filter=` argument strings in order (for `GIT_TRACE` when Git combines multiple filters).
@@ -486,6 +496,9 @@ pub struct RevListOptions {
     /// With `--use-bitmap-index`, emit OID-only object lines (no paths / trailing space) for filters
     /// that match Git's bitmap object formatting.
     pub bitmap_oid_only_objects: bool,
+    /// Reorder path-limited results for graph-friendly parent ordering (Git `log` / `rev-list`).
+    /// Internal dense passes for `--sparse` set this to `false` to avoid recursion.
+    pub path_graph_reorder: bool,
     /// Exclude commits with committer date strictly after this Unix timestamp (`--until` / `--before`).
     pub until_cutoff: Option<i64>,
     /// Exclude commits with committer date strictly before this Unix timestamp (`--since` / `--after`).
@@ -534,6 +547,9 @@ impl Default for RevListOptions {
             paths: Vec::new(),
             full_history: false,
             sparse: false,
+            simplify_merges: false,
+            show_pulls: false,
+            exclude_first_parent_only: false,
             filter: None,
             filter_raw_specs: Vec::new(),
             filter_provided_objects: false,
@@ -544,6 +560,7 @@ impl Default for RevListOptions {
             use_bitmap_index: false,
             unpacked_only: false,
             bitmap_oid_only_objects: false,
+            path_graph_reorder: true,
             until_cutoff: None,
             since_cutoff: None,
             include_reflog_entries: false,
@@ -678,6 +695,8 @@ pub fn rev_list(
     };
     let excluded = if exclude.is_empty() {
         HashSet::new()
+    } else if options.exclude_first_parent_only {
+        walk_closure_first_parent_only(&mut graph, &exclude)?
     } else {
         walk_closure(&mut graph, &exclude)?
     };
@@ -701,6 +720,12 @@ pub fn rev_list(
         limit_to_ancestry(&mut graph, &mut included, &bottoms)?;
     }
 
+    // Git: `--ancestry-path` implies `--full-history` for path-limited walks.
+    // `--simplify-merges` with pathspecs uses a full parent walk first, then simplifies merges.
+    let path_effective_full = options.full_history
+        || options.ancestry_path
+        || (options.simplify_merges && !options.paths.is_empty());
+
     // Filter by parent count (--merges, --no-merges, --min-parents, --max-parents)
     if options.min_parents.is_some() || options.max_parents.is_some() {
         let min_p = options.min_parents.unwrap_or(0);
@@ -712,15 +737,21 @@ pub fn rev_list(
     }
 
     let mut ordered = match options.ordering {
-        OrderingMode::Default => {
+        OrderingMode::Default | OrderingMode::DateOrderWalk | OrderingMode::AuthorDateWalk => {
             let tips: Vec<ObjectId> = include
                 .iter()
                 .copied()
                 .filter(|oid| included.contains(oid))
                 .collect();
-            date_order_walk(&mut graph, &tips, &included)?
+            date_order_walk(
+                &mut graph,
+                &tips,
+                &included,
+                options.ordering == OrderingMode::AuthorDateWalk,
+            )?
         }
-        OrderingMode::Topo | OrderingMode::Date => topo_sort(&mut graph, &included)?,
+        OrderingMode::Topo => topo_sort(&mut graph, &included, false)?,
+        OrderingMode::AuthorDateTopo => topo_sort(&mut graph, &included, true)?,
     };
 
     // Path filtering: keep only commits that modify given paths
@@ -765,8 +796,10 @@ pub fn rev_list(
                 &mut graph,
                 *oid,
                 paths,
-                options.full_history,
+                path_effective_full,
                 options.sparse,
+                options.simplify_merges,
+                options.show_pulls,
                 bloom_chain.as_ref(),
                 read_changed,
                 bloom_version,
@@ -775,6 +808,32 @@ pub fn rev_list(
             )
             .unwrap_or(false)
         });
+    }
+
+    if !options.paths.is_empty() && options.simplify_merges && !ordered.is_empty() {
+        ordered = simplify_merges_commit_list(repo, &ordered)?;
+    }
+
+    // Git-style path-limited parent reordering (dense history and `--sparse` only). Pure
+    // `--full-history` walks keep rev-list order (`t6012` full-history path expectations).
+    let path_needs_graph_reorder = !options.paths.is_empty()
+        && options.path_graph_reorder
+        && (!options.full_history || options.sparse);
+    if path_needs_graph_reorder && !ordered.is_empty() {
+        if options.sparse {
+            let mut dense_opts = options.clone();
+            dense_opts.sparse = false;
+            dense_opts.path_graph_reorder = false;
+            let dense_result = rev_list(repo, positive_specs, negative_specs, &dense_opts)?;
+            let dense_ordered = reorder_path_limited_graph_commits(
+                repo,
+                &dense_result.commits,
+                options.first_parent,
+            )?;
+            ordered = expand_sparse_path_limited_graph_history(repo, &dense_ordered)?;
+        } else {
+            ordered = reorder_path_limited_graph_commits(repo, &ordered, options.first_parent)?;
+        }
     }
 
     // Left-right classification for symmetric diffs
@@ -796,13 +855,7 @@ pub fn rev_list(
             for &oid in &ordered {
                 let from_left = left_reach.contains(&oid);
                 let from_right = right_reach.contains(&oid);
-                if from_left && !from_right {
-                    left_right_map.insert(oid, true);
-                } else if from_right && !from_left {
-                    left_right_map.insert(oid, false);
-                } else {
-                    left_right_map.insert(oid, false);
-                }
+                left_right_map.insert(oid, from_left && !from_right);
             }
         }
     }
@@ -2348,6 +2401,29 @@ fn walk_closure(graph: &mut CommitGraph<'_>, starts: &[ObjectId]) -> Result<Hash
     Ok(seen)
 }
 
+/// Like [`walk_closure`] but follows only the first parent from each start (Git
+/// `--exclude-first-parent-only` for excluded tips).
+fn walk_closure_first_parent_only(
+    graph: &mut CommitGraph<'_>,
+    starts: &[ObjectId],
+) -> Result<HashSet<ObjectId>> {
+    let mut seen = HashSet::new();
+    let mut queue = VecDeque::new();
+    for &start in starts {
+        queue.push_back(start);
+    }
+    while let Some(oid) = queue.pop_front() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        let parents = graph.parents_of(oid)?;
+        if let Some(&p) = parents.first() {
+            queue.push_back(p);
+        }
+    }
+    Ok(seen)
+}
+
 /// BFS walk that returns both the set and the discovery order.
 fn walk_closure_ordered(
     graph: &mut CommitGraph<'_>,
@@ -2381,6 +2457,7 @@ fn date_order_walk(
     graph: &mut CommitGraph<'_>,
     tips: &[ObjectId],
     selected: &HashSet<ObjectId>,
+    author_dates: bool,
 ) -> Result<Vec<ObjectId>> {
     let mut unfinished_children: HashMap<ObjectId, usize> =
         selected.iter().map(|&oid| (oid, 0usize)).collect();
@@ -2399,7 +2476,7 @@ fn date_order_walk(
         if selected.contains(&tip) {
             heap.push(CommitDateKey {
                 oid: tip,
-                date: graph.committer_time(tip),
+                date: graph.sort_key(tip, author_dates),
             });
         }
     }
@@ -2422,7 +2499,7 @@ fn date_order_walk(
             if *count == 0 {
                 heap.push(CommitDateKey {
                     oid: parent,
-                    date: graph.committer_time(parent),
+                    date: graph.sort_key(parent, author_dates),
                 });
             }
         }
@@ -2431,7 +2508,11 @@ fn date_order_walk(
     Ok(out)
 }
 
-fn topo_sort(graph: &mut CommitGraph<'_>, selected: &HashSet<ObjectId>) -> Result<Vec<ObjectId>> {
+fn topo_sort(
+    graph: &mut CommitGraph<'_>,
+    selected: &HashSet<ObjectId>,
+    author_dates: bool,
+) -> Result<Vec<ObjectId>> {
     let mut child_count: HashMap<ObjectId, usize> = selected.iter().map(|&oid| (oid, 0)).collect();
 
     for &oid in selected {
@@ -2453,7 +2534,7 @@ fn topo_sort(graph: &mut CommitGraph<'_>, selected: &HashSet<ObjectId>) -> Resul
         if count == 0 {
             ready.push(Reverse(CommitDateKey {
                 oid,
-                date: graph.committer_time(oid),
+                date: graph.sort_key(oid, author_dates),
             }));
         }
     }
@@ -2471,7 +2552,7 @@ fn topo_sort(graph: &mut CommitGraph<'_>, selected: &HashSet<ObjectId>) -> Resul
                 if *count == 0 {
                     ready.push(Reverse(CommitDateKey {
                         oid: parent,
-                        date: graph.committer_time(parent),
+                        date: graph.sort_key(parent, author_dates),
                     }));
                 }
             }
@@ -2479,6 +2560,277 @@ fn topo_sort(graph: &mut CommitGraph<'_>, selected: &HashSet<ObjectId>) -> Resul
     }
 
     Ok(out)
+}
+
+fn simplify_merges_commit_list(repo: &Repository, commits: &[ObjectId]) -> Result<Vec<ObjectId>> {
+    let selected: HashSet<ObjectId> = commits.iter().copied().collect();
+    let mut out = Vec::new();
+    for oid in commits {
+        let raw_parents = load_commit(repo, *oid)?.parents;
+        let direct: Vec<ObjectId> = raw_parents
+            .iter()
+            .copied()
+            .filter(|p| selected.contains(p))
+            .collect();
+        if raw_parents.len() > 1 && direct.len() <= 1 {
+            continue;
+        }
+        if direct.len() <= 1 {
+            out.push(*oid);
+            continue;
+        }
+        let mut simplified = graph_simplify_parent_list_lib(repo, &selected, &direct)?;
+        simplified.sort_unstable();
+        simplified.dedup();
+        if simplified.len() > 1 {
+            out.push(*oid);
+        }
+    }
+    Ok(out)
+}
+
+fn graph_simplify_parent_list_lib(
+    repo: &Repository,
+    selected: &HashSet<ObjectId>,
+    parents: &[ObjectId],
+) -> Result<Vec<ObjectId>> {
+    let mut out = Vec::new();
+    for parent in parents {
+        if parent_reachable_via_others_lib(repo, selected, *parent, parents)? {
+            continue;
+        }
+        out.push(*parent);
+    }
+    Ok(out)
+}
+
+fn parent_reachable_via_others_lib(
+    repo: &Repository,
+    selected: &HashSet<ObjectId>,
+    target: ObjectId,
+    parents: &[ObjectId],
+) -> Result<bool> {
+    for parent in parents {
+        if *parent == target {
+            continue;
+        }
+        if graph_reaches_lib(repo, selected, *parent, target)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn graph_reaches_lib(
+    repo: &Repository,
+    selected: &HashSet<ObjectId>,
+    start: ObjectId,
+    target: ObjectId,
+) -> Result<bool> {
+    let mut stack = vec![start];
+    let mut seen = HashSet::new();
+    while let Some(oid) = stack.pop() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        if oid == target {
+            return Ok(true);
+        }
+        let mut parents = load_commit(repo, oid)?.parents;
+        parents.retain(|p| selected.contains(p));
+        stack.extend(parents);
+    }
+    Ok(false)
+}
+
+fn load_raw_parents_lib(repo: &Repository, oid: ObjectId) -> Result<Vec<ObjectId>> {
+    Ok(load_commit(repo, oid)?.parents)
+}
+
+fn first_parent_of_commit_lib(repo: &Repository, oid: ObjectId) -> Result<Option<ObjectId>> {
+    let parents = load_raw_parents_lib(repo, oid)?;
+    Ok(parents.first().copied())
+}
+
+fn first_parent_anchor_in_set_lib(
+    repo: &Repository,
+    start: ObjectId,
+    anchors: &HashSet<ObjectId>,
+) -> Result<Option<ObjectId>> {
+    let mut seen = HashSet::new();
+    let mut cursor = Some(start);
+    while let Some(oid) = cursor {
+        if !seen.insert(oid) {
+            break;
+        }
+        if anchors.contains(&oid) {
+            return Ok(Some(oid));
+        }
+        cursor = first_parent_of_commit_lib(repo, oid)?;
+    }
+    Ok(None)
+}
+
+fn collect_visible_parent_for_graph_lib(
+    repo: &Repository,
+    candidate: ObjectId,
+    included: &HashSet<ObjectId>,
+    first_parent_only: bool,
+    seen: &mut HashSet<ObjectId>,
+    out: &mut Vec<ObjectId>,
+) -> Result<()> {
+    if !seen.insert(candidate) {
+        return Ok(());
+    }
+    if included.contains(&candidate) {
+        out.push(candidate);
+        return Ok(());
+    }
+    let mut parents = load_raw_parents_lib(repo, candidate)?;
+    if parents.is_empty() {
+        return Ok(());
+    }
+    if parents.len() > 1 {
+        parents.truncate(1);
+    }
+    for parent in parents {
+        collect_visible_parent_for_graph_lib(repo, parent, included, first_parent_only, seen, out)?;
+    }
+    Ok(())
+}
+
+fn visible_parents_for_graph_lib(
+    repo: &Repository,
+    oid: ObjectId,
+    included: &HashSet<ObjectId>,
+    first_parent_only: bool,
+) -> Result<Vec<ObjectId>> {
+    let mut direct = load_raw_parents_lib(repo, oid)?;
+    if first_parent_only && direct.len() > 1 {
+        direct.truncate(1);
+    }
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for parent in direct {
+        collect_visible_parent_for_graph_lib(
+            repo,
+            parent,
+            included,
+            first_parent_only,
+            &mut seen,
+            &mut out,
+        )?;
+    }
+    let mut dedup = HashSet::new();
+    out.retain(|parent| dedup.insert(*parent));
+    Ok(out)
+}
+
+fn reorder_path_limited_graph_commits(
+    repo: &Repository,
+    commits: &[ObjectId],
+    first_parent_only: bool,
+) -> Result<Vec<ObjectId>> {
+    if commits.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let included: HashSet<ObjectId> = commits.iter().copied().collect();
+    let mut chain = Vec::new();
+    let mut chain_seen = HashSet::new();
+    let mut cursor = Some(commits[0]);
+    while let Some(oid) = cursor {
+        if !included.contains(&oid) || !chain_seen.insert(oid) {
+            break;
+        }
+        chain.push(oid);
+        let visible = visible_parents_for_graph_lib(repo, oid, &included, first_parent_only)?;
+        cursor = visible.first().copied();
+    }
+
+    let chain_set: HashSet<ObjectId> = chain.iter().copied().collect();
+    let mut grouped: HashMap<Option<ObjectId>, Vec<ObjectId>> = HashMap::new();
+    for oid in commits {
+        if chain_set.contains(oid) {
+            continue;
+        }
+        let anchor = first_parent_anchor_in_set_lib(repo, *oid, &chain_set)?;
+        grouped.entry(anchor).or_default().push(*oid);
+    }
+
+    let mut ordered = Vec::new();
+    for chain_oid in chain {
+        if let Some(group) = grouped.remove(&Some(chain_oid)) {
+            ordered.extend(group);
+        }
+        ordered.push(chain_oid);
+    }
+    if let Some(group) = grouped.remove(&None) {
+        ordered.extend(group);
+    }
+    for (_anchor, group) in grouped {
+        ordered.extend(group);
+    }
+    Ok(ordered)
+}
+
+fn expand_sparse_path_limited_graph_history(
+    repo: &Repository,
+    commits: &[ObjectId],
+) -> Result<Vec<ObjectId>> {
+    if commits.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut expanded = Vec::new();
+    let mut seen = HashSet::new();
+    let mut push_unique = |oid: ObjectId, out: &mut Vec<ObjectId>| {
+        if seen.insert(oid) {
+            out.push(oid);
+        }
+    };
+
+    for window in commits.windows(2) {
+        let from = window[0];
+        let to = window[1];
+        push_unique(from, &mut expanded);
+
+        let mut cursor = first_parent_of_commit_lib(repo, from)?;
+        let mut chain = Vec::new();
+        let mut found_target = false;
+        let mut local_seen = HashSet::new();
+        while let Some(oid) = cursor {
+            if !local_seen.insert(oid) {
+                break;
+            }
+            if oid == to {
+                found_target = true;
+                break;
+            }
+            chain.push(oid);
+            cursor = first_parent_of_commit_lib(repo, oid)?;
+        }
+        if found_target {
+            for oid in chain {
+                push_unique(oid, &mut expanded);
+            }
+        }
+    }
+
+    if let Some(&last) = commits.last() {
+        push_unique(last, &mut expanded);
+        let mut cursor = first_parent_of_commit_lib(repo, last)?;
+        let mut tail_seen = HashSet::new();
+        while let Some(oid) = cursor {
+            if !tail_seen.insert(oid) {
+                break;
+            }
+            push_unique(oid, &mut expanded);
+            cursor = first_parent_of_commit_lib(repo, oid)?;
+        }
+    }
+
+    Ok(expanded)
 }
 
 fn limit_to_ancestry(
@@ -2511,7 +2863,12 @@ fn limit_to_ancestry(
     Ok(())
 }
 
-/// Check if a commit modifies any of the given paths compared to its first parent.
+/// Check if a commit modifies any of the given paths compared to its parents.
+///
+/// `simplify_merges` / `show_pulls` mirror Git's path-limited `try_to_simplify_commit` behavior
+/// for merge commits when `--full-history` is active (including the implicit full history from
+/// `--simplify-merges` or `--ancestry-path`).
+#[allow(clippy::too_many_arguments)]
 fn commit_touches_paths(
     repo: &Repository,
     graph: &mut CommitGraph<'_>,
@@ -2519,6 +2876,8 @@ fn commit_touches_paths(
     paths: &[String],
     full_history: bool,
     sparse: bool,
+    simplify_merges: bool,
+    show_pulls: bool,
     bloom_chain: Option<&CommitGraphChain>,
     read_changed_paths: bool,
     changed_paths_version: i32,
@@ -2591,16 +2950,18 @@ fn commit_touches_paths(
         return Ok(false);
     }
 
-    // Merge commit simplification for default dense history:
-    // if exactly one parent is TREESAME for the requested paths, omit this
-    // merge commit and let traversal effectively follow that parent.
+    // Merge commit: dense history omits the merge when exactly one parent is TREESAME.
     let mut treesame_parents = 0usize;
     let mut differs_any = false;
-    for parent_oid in &parents {
+    let mut first_parent_differs = false;
+    for (nth, parent_oid) in parents.iter().enumerate() {
         let parent = load_commit(repo, *parent_oid)?;
         let parent_map: HashMap<String, ObjectId> =
             flatten_tree(repo, parent.tree, "")?.into_iter().collect();
         let differs = path_differs_for_specs(&commit_map, &parent_map, paths);
+        if nth == 0 {
+            first_parent_differs = differs;
+        }
         if differs {
             differs_any = true;
         } else {
@@ -2608,8 +2969,30 @@ fn commit_touches_paths(
         }
     }
 
+    // `--full-history`: keep merges that are TREESAME to every parent for the pathspec (Git
+    // `revision.c` still walks them for path-limited output; `t6012` expects them in the list).
+    if full_history && !simplify_merges && parents.len() > 1 && treesame_parents == parents.len() {
+        return Ok(true);
+    }
+
     if !full_history && treesame_parents == 1 {
         return Ok(false);
+    }
+
+    if full_history && simplify_merges {
+        if treesame_parents == parents.len() {
+            return Ok(sparse);
+        }
+        if treesame_parents > 0 && !differs_any {
+            return Ok(sparse);
+        }
+        if show_pulls && first_parent_differs && treesame_parents > 0 {
+            return Ok(true);
+        }
+        if treesame_parents == 1 {
+            return Ok(false);
+        }
+        return Ok(differs_any || sparse);
     }
 
     if differs_any {
@@ -2741,6 +3124,7 @@ struct CommitGraph<'r> {
     first_parent_only: bool,
     parents: HashMap<ObjectId, Vec<ObjectId>>,
     committer_time: HashMap<ObjectId, i64>,
+    author_time: HashMap<ObjectId, i64>,
     shallow_boundaries: HashSet<ObjectId>,
     graft_parents: HashMap<ObjectId, Vec<ObjectId>>,
 }
@@ -2754,6 +3138,7 @@ impl<'r> CommitGraph<'r> {
             first_parent_only,
             parents: HashMap::new(),
             committer_time: HashMap::new(),
+            author_time: HashMap::new(),
             shallow_boundaries,
             graft_parents,
         }
@@ -2769,6 +3154,21 @@ impl<'r> CommitGraph<'r> {
             return 0;
         }
         self.committer_time.get(&oid).copied().unwrap_or(0)
+    }
+
+    fn author_time(&mut self, oid: ObjectId) -> i64 {
+        if self.populate(oid).is_err() {
+            return 0;
+        }
+        self.author_time.get(&oid).copied().unwrap_or(0)
+    }
+
+    fn sort_key(&mut self, oid: ObjectId, author: bool) -> i64 {
+        if author {
+            self.author_time(oid)
+        } else {
+            self.committer_time(oid)
+        }
     }
 
     fn populate(&mut self, oid: ObjectId) -> Result<()> {
@@ -2790,6 +3190,8 @@ impl<'r> CommitGraph<'r> {
         }
         self.committer_time
             .insert(oid, committer_unix_seconds_for_ordering(&commit.committer));
+        self.author_time
+            .insert(oid, committer_unix_seconds_for_ordering(&commit.author));
         self.parents.insert(oid, parents);
         Ok(())
     }
