@@ -221,7 +221,7 @@ t11310-check-ignore-global	t1	yes	34	34	0	true	ok	0
 t11320-diff-no-index-exit	t1	yes	36	36	0	true	ok	0
 t11330-diff-cached-color	t1	yes	37	37	0	true	ok	0
 t11340-diff-tree-root-commit	t1	yes	30	30	0	true	ok	0
-t11380-log-graph-all	t1	yes	33	29	4	false	ok	0
+t11380-log-graph-all	t1	yes	33	33	0	true	ok	0
 t11390-log-diff-tree-raw	t1	yes	32	32	0	true	ok	0
 t11400-rev-list-max-count	t1	yes	33	33	0	true	ok	0
 t11410-rev-list-first-parent	t1	yes	31	31	0	true	ok	0
