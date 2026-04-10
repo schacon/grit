@@ -940,6 +940,16 @@ fn diff_paths_relative(from: &Path, to: &Path) -> PathBuf {
 
 /// Collect untracked and ignored paths, matching Git's `dir.c` + `wt-status.c` behavior
 /// for `--ignored` / `--untracked-files` combinations.
+pub(crate) fn collect_untracked_normal_for_status(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &Path,
+) -> Result<Vec<String>> {
+    let (untracked, _) =
+        collect_untracked_and_ignored(repo, index, work_tree, IgnoredMode::No, false, &[])?;
+    Ok(untracked)
+}
+
 fn collect_untracked_and_ignored(
     repo: &Repository,
     index: &Index,

@@ -21,6 +21,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{detect_in_progress, resolve_head, HeadState};
 
+use crate::branch_tracking::{format_tracking_info, AheadBehindMode};
 use crate::commands::cherry_pick::try_resume_pick_sequence_after_commit;
 use crate::commands::revert::try_resume_revert_sequence_after_commit;
 use grit_lib::write_tree::{
@@ -740,7 +741,7 @@ pub fn run(mut args: Args) -> Result<()> {
     staged.retain(|e| !unmerged_keys.contains(e.path()));
     unstaged.retain(|e| !unmerged_keys.contains(e.path()));
     let untracked = if let Some(wt) = work_tree {
-        find_untracked_files(wt, &index)?
+        find_untracked_files(&repo, wt, &index)?
     } else {
         Vec::new()
     };
@@ -1379,6 +1380,20 @@ fn print_dry_run(
     } else {
         None
     };
+    let ab_mode = if no_ahead_behind {
+        AheadBehindMode::Quick
+    } else {
+        AheadBehindMode::Full
+    };
+    let header_ends_with_blank = match head {
+        HeadState::Branch {
+            short_name,
+            oid: Some(_),
+            ..
+        } => !format_tracking_info(repo, short_name, ab_mode, show_hints)?.is_empty(),
+        HeadState::Branch { oid: None, .. } => true,
+        HeadState::Detached { .. } | HeadState::Invalid => false,
+    };
     crate::commands::status::write_status_branch_header(
         &mut out,
         head,
@@ -1406,6 +1421,14 @@ fn print_dry_run(
         }
         writeln!(out)?;
     }
+    let mut printed_body_section = merge_active;
+    let mut begin_section = |out: &mut std::io::StdoutLock<'_>| -> Result<()> {
+        if printed_body_section || !header_ends_with_blank {
+            writeln!(out)?;
+        }
+        printed_body_section = true;
+        Ok(())
+    };
 
     let (staged_show, unstaged_show, extra_untracked) = if let Some(matched) = pathspec_matched {
         let mut staged_in = Vec::new();
@@ -1440,7 +1463,7 @@ fn print_dry_run(
     };
 
     if !staged_show.is_empty() {
-        writeln!(out)?;
+        begin_section(&mut out)?;
         writeln!(out, "Changes to be committed:")?;
         if amend {
             writeln!(
@@ -1466,7 +1489,7 @@ fn print_dry_run(
             Some(head_spec),
         )?;
         if !txt.trim().is_empty() {
-            writeln!(out)?;
+            begin_section(&mut out)?;
             writeln!(out, "Submodule changes to be committed:")?;
             writeln!(out)?;
             write!(out, "{txt}")?;
@@ -1486,7 +1509,7 @@ fn print_dry_run(
     }
 
     if !unstaged_show.is_empty() {
-        writeln!(out)?;
+        begin_section(&mut out)?;
         writeln!(out, "Changes not staged for commit:")?;
         writeln!(
             out,
@@ -1524,9 +1547,19 @@ fn print_dry_run(
                 else {
                     continue;
                 };
-                if !parent.is_empty() {
-                    suppressed_roots.insert(parent);
+                if parent.is_empty() {
+                    continue;
                 }
+                let prefix = format!("{parent}/");
+                let parent_has_matched_path = matched.iter().any(|m| {
+                    std::str::from_utf8(m)
+                        .map(|ms| ms == parent || ms.starts_with(&prefix))
+                        .unwrap_or(false)
+                });
+                if parent_has_matched_path {
+                    continue;
+                }
+                suppressed_roots.insert(parent);
             }
         }
         for p in &extra_untracked {
@@ -1570,7 +1603,7 @@ fn print_dry_run(
     }
 
     if !all_untracked.is_empty() {
-        writeln!(out)?;
+        begin_section(&mut out)?;
         writeln!(out, "Untracked files:")?;
         writeln!(
             out,
@@ -1579,6 +1612,9 @@ fn print_dry_run(
         for path in &all_untracked {
             writeln!(out, "\t{path}")?;
         }
+    }
+    if printed_body_section {
+        writeln!(out)?;
     }
 
     if !unmerged.is_empty() && staged_show.is_empty() {
@@ -1612,54 +1648,8 @@ fn status_label_unstaged(status: DiffStatus) -> &'static str {
 }
 
 /// Find untracked files in the working tree.
-fn find_untracked_files(work_tree: &Path, index: &Index) -> Result<Vec<String>> {
-    let tracked: BTreeSet<String> = index
-        .entries
-        .iter()
-        .map(|ie| String::from_utf8_lossy(&ie.path).to_string())
-        .collect();
-
-    let mut untracked = Vec::new();
-    walk_untracked(work_tree, work_tree, &tracked, &mut untracked)?;
-    untracked.sort();
-    Ok(untracked)
-}
-
-fn walk_untracked(
-    dir: &Path,
-    work_tree: &Path,
-    tracked: &BTreeSet<String>,
-    out: &mut Vec<String>,
-) -> Result<()> {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(()),
-    };
-    let mut sorted: Vec<_> = entries.filter_map(|e| e.ok()).collect();
-    sorted.sort_by_key(|e| e.file_name());
-    for entry in sorted {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name == ".git" {
-            continue;
-        }
-        let rel = path
-            .strip_prefix(work_tree)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| name);
-        if path.is_dir() {
-            let prefix = format!("{rel}/");
-            let has_tracked = tracked.iter().any(|t| t.starts_with(&prefix));
-            if has_tracked {
-                walk_untracked(&path, work_tree, tracked, out)?;
-            } else {
-                out.push(format!("{rel}/"));
-            }
-        } else if !tracked.contains(&rel) {
-            out.push(rel);
-        }
-    }
-    Ok(())
+fn find_untracked_files(repo: &Repository, work_tree: &Path, index: &Index) -> Result<Vec<String>> {
+    crate::commands::status::collect_untracked_normal_for_status(repo, index, work_tree)
 }
 
 /// Apply pathspec staging to `index` in memory (no disk write).

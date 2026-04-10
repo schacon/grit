@@ -1167,7 +1167,7 @@ t7061-status-staged	t7	yes	26	26	0	true	ok	0
 t7061-wtstatus-ignore	t7	yes	25	0	25	false	ok	0
 t7062-status-worktree	t7	yes	26	26	0	true	ok	0
 t7062-wtstatus-ignorecase	t7	yes	1	1	0	true	ok	0
-t7063-status-untracked-cache	t7	yes	58	34	24	false	ok	0
+t7063-status-untracked-cache	t7	yes	58	58	0	true	ok	0
 t7064-wtstatus-pv2	t7	yes	28	28	0	true	ok	0
 t7065-status-rename	t7	yes	28	28	0	true	ok	0
 t7066-status-ignored	t7	yes	32	30	2	false	ok	0
@@ -1230,7 +1230,7 @@ t7505-prepare-commit-msg	t7	yes	30	29	1	false	ok	0
 t7505-prepare-commit-msg-hook	t7	yes	23	7	16	false	ok	0
 t7506-status-submodule	t7	yes	40	6	34	false	ok	0
 t7507-commit-verbose	t7	yes	45	45	0	true	ok	0
-t7508-status	t7	yes	126	94	32	false	ok	0
+t7508-status	t7	yes	126	96	30	false	ok	0
 t7509-commit-authorship	t7	yes	12	4	8	false	ok	0
 t7510-signed-commit	t7	skip	28	0	0	false	ok	0
 t7511-status-index	t7	yes	24	24	0	true	ok	0
