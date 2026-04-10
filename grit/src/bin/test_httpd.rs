@@ -22,6 +22,9 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use time::format_description;
+use time::OffsetDateTime;
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     let config = parse_args(&args);
@@ -250,13 +253,60 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
     })
 }
 
+/// Apache `%b` field for combined logs. Upstream `strip_access_log` strips a trailing
+/// ` [1-9][0-9]+` but leaves ` -`, which becomes the ` -` suffix on some t5561 lines.
+fn apache_response_bytes_field(method: &str, path: &str, status: u16) -> &'static str {
+    if status == 404 || status == 403 {
+        return "-";
+    }
+    if method.eq_ignore_ascii_case("POST") {
+        return "-";
+    }
+    if status == 200
+        && (path.contains("/objects/info/alternates")
+            || path.contains("/objects/info/http-alternates"))
+    {
+        return "-";
+    }
+    "1"
+}
+
+fn format_httpd_access_timestamp() -> String {
+    static FMT: std::sync::OnceLock<
+        Option<Vec<time::format_description::BorrowedFormatItem<'static>>>,
+    > = std::sync::OnceLock::new();
+    let fmt = FMT.get_or_init(|| {
+        format_description::parse("[day]/[month repr:short]/[year]:[hour]:[minute]:[second]").ok()
+    });
+    let dt = OffsetDateTime::now_utc();
+    if let Some(f) = fmt {
+        if let Ok(s) = dt.format(f) {
+            return format!("{s} +0000");
+        }
+    }
+    "01/Jan/1970:00:00:00 +0000".to_string()
+}
+
 fn log_access(config: &Config, method: &str, path: &str, query: &str, status: u16) {
     use std::fs::OpenOptions;
-    let line = if query.is_empty() {
-        format!("{} {} HTTP/1.1 {}", method, path, status)
+
+    let uri = if query.is_empty() {
+        path.to_string()
     } else {
-        format!("{} {}?{} HTTP/1.1 {}", method, path, query, status)
+        format!("{path}?{query}")
     };
+    let bytes_field = apache_response_bytes_field(method, path, status);
+    let ts = format_httpd_access_timestamp();
+    // One space after the method in the quoted request line; `strip_access_log` adds a second
+    // space after `GET` only (matches Apache + upstream t5561/t5551 expectations).
+    let line = format!(
+        "127.0.0.1 - - [{ts}] \"{method} {uri} HTTP/1.1\" {status} {bytes_field}",
+        ts = ts,
+        method = method,
+        uri = uri,
+        status = status,
+        bytes_field = bytes_field
+    );
     if let Ok(mut f) = OpenOptions::new()
         .create(true)
         .append(true)
@@ -308,28 +358,25 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
     // Route: /auth/smart/, /auth-push/smart/, /auth-fetch/smart/
     for pfx in &["/auth/smart", "/auth-push/smart", "/auth-fetch/smart"] {
         if req.path.starts_with(&format!("{}/", pfx)) {
-            let r = handle_smart_http_with_path(&mut stream, &req, config, pfx);
-            log_access(
-                config,
-                &req.method,
-                &req.path,
-                &req.query,
-                if r.is_ok() { 200 } else { 500 },
-            );
-            return r;
+            let r = handle_smart_http_with_path(&mut stream, &req, config, pfx, true);
+            let status = r.as_ref().map_or(500, |&s| s);
+            log_access(config, &req.method, &req.path, &req.query, status);
+            return r.map(|_| ());
         }
+    }
+    // Route: /smart_noexport/<repo> — same as Apache: no GIT_HTTP_EXPORT_ALL (t5561)
+    if req.path.starts_with("/smart_noexport/") {
+        let r = handle_smart_http_with_path(&mut stream, &req, config, "/smart_noexport", false);
+        let status = r.as_ref().map_or(500, |&s| s);
+        log_access(config, &req.method, &req.path, &req.query, status);
+        return r.map(|_| ());
     }
     // Route: /smart/<repo> → git-http-backend CGI
     if req.path.starts_with("/smart/") {
         let r = handle_smart_http(&mut stream, &req, config);
-        log_access(
-            config,
-            &req.method,
-            &req.path,
-            &req.query,
-            if r.is_ok() { 200 } else { 500 },
-        );
-        return r;
+        let status = r.as_ref().map_or(500, |&s| s);
+        log_access(config, &req.method, &req.path, &req.query, status);
+        return r.map(|_| ());
     }
 
     // Route: /dumb/<path> → static file serving
@@ -441,8 +488,12 @@ fn guess_content_type(path: &str) -> String {
     }
 }
 
-fn handle_smart_http(stream: &mut TcpStream, req: &Request, config: &Config) -> Result<(), String> {
-    handle_smart_http_with_path(stream, req, config, "/smart")
+fn handle_smart_http(
+    stream: &mut TcpStream,
+    req: &Request,
+    config: &Config,
+) -> Result<u16, String> {
+    handle_smart_http_with_path(stream, req, config, "/smart", true)
 }
 
 fn handle_smart_http_with_path(
@@ -450,7 +501,8 @@ fn handle_smart_http_with_path(
     req: &Request,
     config: &Config,
     prefix: &str,
-) -> Result<(), String> {
+    export_all: bool,
+) -> Result<u16, String> {
     let smart_path = &req.path[prefix.len()..]; // e.g., /repo.git/info/refs
 
     let path_translated = format!("{}{}", config.root.display(), smart_path);
@@ -460,12 +512,17 @@ fn handle_smart_http_with_path(
         .env("QUERY_STRING", &req.query)
         .env("PATH_TRANSLATED", &path_translated)
         .env("GIT_PROJECT_ROOT", config.root.to_string_lossy().as_ref())
-        .env("GIT_HTTP_EXPORT_ALL", "1")
         .env("PATH_INFO", smart_path)
         .env("SERVER_PROTOCOL", "HTTP/1.1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    if export_all {
+        cmd.env("GIT_HTTP_EXPORT_ALL", "1");
+    } else {
+        cmd.env_remove("GIT_HTTP_EXPORT_ALL");
+    }
 
     if let Some(ct) = req.headers.get("content-type") {
         cmd.env("CONTENT_TYPE", ct);
@@ -506,7 +563,7 @@ fn handle_smart_http_with_path(
     parse_and_send_cgi_response(stream, &stdout)
 }
 
-fn parse_and_send_cgi_response(stream: &mut TcpStream, cgi_output: &[u8]) -> Result<(), String> {
+fn parse_and_send_cgi_response(stream: &mut TcpStream, cgi_output: &[u8]) -> Result<u16, String> {
     // Find the header/body separator (blank line: \r\n\r\n or \n\n)
     let mut header_end = None;
     let mut body_start = None;
@@ -533,7 +590,8 @@ fn parse_and_send_cgi_response(stream: &mut TcpStream, cgi_output: &[u8]) -> Res
         (Some(he), Some(bs)) => (&cgi_output[..he], &cgi_output[bs..]),
         _ => {
             // No headers found, treat everything as body
-            return send_response(stream, 200, "OK", &[], cgi_output);
+            send_response(stream, 200, "OK", &[], cgi_output)?;
+            return Ok(200);
         }
     };
 
@@ -576,7 +634,7 @@ fn parse_and_send_cgi_response(stream: &mut TcpStream, cgi_output: &[u8]) -> Res
         .map_err(|e| e.to_string())?;
     stream.write_all(body).map_err(|e| e.to_string())?;
     stream.flush().map_err(|e| e.to_string())?;
-    Ok(())
+    Ok(status_code)
 }
 
 fn send_response(
