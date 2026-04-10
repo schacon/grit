@@ -219,7 +219,7 @@ test_expect_success 'mode-only change with diff --cached --stat shows 0 changes'
      grit diff --cached --stat >../actual
     ) &&
     grep "1 file changed" actual &&
-    ! grep "insertion" actual
+    grep "0 insertions(+), 0 deletions(-)" actual
 '
 
 test_expect_success 'commit mode-only change' '
