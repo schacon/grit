@@ -7,15 +7,18 @@ use crate::explicit_exit::ExplicitExit;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
+use grit_lib::index::MODE_TREE;
 use grit_lib::merge_base::{is_ancestor, merge_bases_first_vs_rest};
-use grit_lib::objects::{parse_commit, ObjectId};
+use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{rev_list, OrderingMode, RevListOptions};
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rev_list::{rev_list, split_revision_token, OrderingMode, RevListOptions};
+use grit_lib::rev_parse::{resolve_revision, resolve_revision_as_commit};
 use std::collections::HashSet;
 use std::fs;
-use std::io::{stdin, IsTerminal, Write};
+use std::io::{stdin, stdout, IsTerminal, Write};
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -77,6 +80,38 @@ fn bisect_state_dir(git_dir: &Path) -> PathBuf {
     refs::common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf())
 }
 
+/// Returns `Ok(())` when every tree reachable from `commit_oid` exists in the object database.
+///
+/// Matches Git's `unable to read tree` error used by bisect when a commit points at a missing tree.
+fn verify_commit_tree_fully_readable(repo: &Repository, commit_oid: ObjectId) -> Result<()> {
+    let object = repo
+        .odb
+        .read(&commit_oid)
+        .with_context(|| format!("read commit {commit_oid}"))?;
+    if object.kind != ObjectKind::Commit {
+        bail!("fatal: unable to read tree ({commit_oid})");
+    }
+    let commit = parse_commit(&object.data)?;
+    verify_tree_fully_readable(repo, commit.tree)
+}
+
+fn verify_tree_fully_readable(repo: &Repository, tree_oid: ObjectId) -> Result<()> {
+    let object = repo
+        .odb
+        .read(&tree_oid)
+        .map_err(|_| anyhow::anyhow!("fatal: unable to read tree ({tree_oid})"))?;
+    if object.kind != ObjectKind::Tree {
+        return Ok(());
+    }
+    let entries = parse_tree(&object.data)?;
+    for entry in entries {
+        if entry.mode == MODE_TREE {
+            verify_tree_fully_readable(repo, entry.oid)?;
+        }
+    }
+    Ok(())
+}
+
 /// `true` when `git_dir` is a linked worktree's administrative directory (`…/worktrees/<id>`),
 /// which contains a `commondir` file. The primary repository's `.git` does not.
 fn is_linked_worktree_git_dir(git_dir: &Path) -> bool {
@@ -105,6 +140,14 @@ fn hello_sed_p_env(work_dir: &Path) -> Option<String> {
 }
 
 /// Parse one line of `BISECT_NAMES` (shell-quoted words) into pathspec tokens.
+fn first_bisect_replay_token_and_rest(line: &str) -> (&str, &str) {
+    let s = line.trim_start();
+    let word_end = s.find(char::is_whitespace).unwrap_or_else(|| s.len());
+    let word = &s[..word_end];
+    let rest = s[word_end..].trim_start();
+    (word, rest)
+}
+
 fn parse_bisect_names_line(line: &str) -> Result<Vec<String>> {
     let line = line.trim();
     if line.is_empty() {
@@ -188,13 +231,15 @@ fn check_term_format(term: &str, orig: &str) -> Result<()> {
     if RESERVED.contains(&term) {
         bail!("can't use the builtin command '{term}' as a term");
     }
-    if orig == "bad" && matches!(term, "bad" | "new") {
-        return Ok(());
+    // Match `check_term_format` in Git's `bisect.c`: forbid swapping the canonical
+    // good/bad words onto the opposite role; allow aliases new/old for bad/good.
+    if orig != "bad" && matches!(term, "bad" | "new") {
+        bail!("can't change the meaning of the term '{orig}'");
     }
-    if orig == "good" && matches!(term, "good" | "old") {
-        return Ok(());
+    if orig != "good" && matches!(term, "good" | "old") {
+        bail!("can't change the meaning of the term '{orig}'");
     }
-    bail!("can't change the meaning of the term '{orig}'");
+    Ok(())
 }
 
 fn write_terms_file(git_dir: &Path, bad: &str, good: &str) -> Result<()> {
@@ -243,6 +288,18 @@ fn log_commit_line(git_dir: &Path, label: &str, oid: ObjectId, subject: &str) ->
     append_bisect_log_raw(git_dir, &format!("# {label}: [{oid}] {subject}"))
 }
 
+fn bisect_state_is_bad_side(terms: &BisectTerms, state: &str) -> bool {
+    state == terms.term_bad
+        || (terms.term_bad == "bad" && state == "bad")
+        || (terms.term_bad == "new" && state == "new")
+}
+
+fn bisect_state_is_good_side(terms: &BisectTerms, state: &str) -> bool {
+    state == terms.term_good
+        || (terms.term_good == "good" && state == "good")
+        || (terms.term_good == "old" && state == "old")
+}
+
 fn bisect_write(
     repo: &Repository,
     git_dir: &Path,
@@ -251,12 +308,14 @@ fn bisect_write(
     rev: &str,
     nolog: bool,
 ) -> Result<()> {
-    let oid = resolve_revision(repo, rev)
+    let oid = resolve_revision_as_commit(repo, rev)
         .with_context(|| format!("couldn't get the oid of the rev '{rev}'"))?;
-    let tag = if state == terms.term_bad {
+    let tag = if bisect_state_is_bad_side(terms, state) {
         format!("refs/bisect/{}", terms.term_bad)
-    } else if state == terms.term_good || state == "skip" {
-        format!("refs/bisect/{state}-{oid}")
+    } else if bisect_state_is_good_side(terms, state) {
+        format!("refs/bisect/{}-{oid}", terms.term_good)
+    } else if state == "skip" {
+        format!("refs/bisect/skip-{oid}")
     } else {
         bail!("Bad bisect_write argument: {state}");
     };
@@ -400,6 +459,21 @@ fn ensure_bisecting(git_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// True when `BISECT_START` exists and is non-empty (Git: `bisect_autostart` gate).
+fn bisect_start_nonempty(git_dir: &Path) -> bool {
+    let p = bisect_state_dir(git_dir).join("BISECT_START");
+    fs::read_to_string(p)
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn ensure_bisect_start_present(git_dir: &Path) -> Result<()> {
+    if bisect_start_nonempty(git_dir) {
+        return Ok(());
+    }
+    bail!("You need to start by \"git bisect start\"\n");
+}
+
 fn expected_rev_matches(git_dir: &Path, oid: ObjectId) -> bool {
     let path = bisect_state_dir(git_dir).join("BISECT_EXPECTED_REV");
     let Ok(s) = fs::read_to_string(path) else {
@@ -497,6 +571,7 @@ fn check_merge_bases(
         if no_checkout {
             refs::write_ref(git_dir, "BISECT_HEAD", &mb)?;
         } else {
+            verify_commit_tree_fully_readable(repo, mb)?;
             detach_head(repo, &mb, false).with_context(|| format!("checkout {}", mb.to_hex()))?;
         }
         bisect_checkout_show_commit(repo, mb)?;
@@ -755,6 +830,7 @@ fn bisect_next_all(repo: &Repository, git_dir: &Path, terms: &BisectTerms) -> Re
     if no_checkout {
         refs::write_ref(git_dir, "BISECT_HEAD", &mid_oid)?;
     } else {
+        verify_commit_tree_fully_readable(repo, mid_oid)?;
         detach_head(repo, &mid_oid, false)
             .with_context(|| format!("checkout {}", mid_oid.to_hex()))?;
     }
@@ -814,6 +890,7 @@ fn cmd_next(repo: &Repository, args: &[String]) -> Result<()> {
     }
     let git_dir = &repo.git_dir;
     ensure_bisecting(git_dir)?;
+    ensure_bisect_start_present(git_dir)?;
     let terms = BisectTerms::read(git_dir);
     match bisect_next_check(git_dir, &terms, Some(&terms.term_good), false)? {
         BisectNextGate::Proceed => {}
@@ -976,7 +1053,7 @@ fn cmd_start(repo: &Repository, args: &[String]) -> Result<()> {
                 bail!("unrecognized option: '{a}'");
             }
             _ => {
-                if resolve_revision(repo, arg).is_ok() {
+                if resolve_revision_as_commit(repo, arg).is_ok() {
                     positional_revs.push(arg.clone());
                     i += 1;
                 } else if has_double_dash {
@@ -1060,19 +1137,33 @@ fn cmd_start(repo: &Repository, args: &[String]) -> Result<()> {
         write_terms_file(git_dir, &terms.term_bad, &terms.term_good)?;
     }
 
-    let mut log = fs::OpenOptions::new()
+    fs::OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open(state_dir.join("BISECT_LOG"))?;
+    if !no_checkout {
+        let start_oid = resolve_revision_as_commit(repo, &start_point)?;
+        verify_commit_tree_fully_readable(repo, start_oid)?;
+    }
     if !positional_revs.is_empty() {
+        if !no_checkout {
+            let bad_oid = resolve_revision_as_commit(repo, &positional_revs[0])?;
+            verify_commit_tree_fully_readable(repo, bad_oid)?;
+            for g in &positional_revs[1..] {
+                let oid = resolve_revision_as_commit(repo, g)?;
+                verify_commit_tree_fully_readable(repo, oid)?;
+            }
+        }
         let bad_rev = positional_revs[0].clone();
         bisect_write(repo, git_dir, &terms, &terms.term_bad, &bad_rev, true)?;
         for g in &positional_revs[1..] {
             bisect_write(repo, git_dir, &terms, &terms.term_good, g, true)?;
         }
-        writeln!(log, "git bisect start {}", sq_quote_argv(&raw_for_log))?;
-        drop(log);
+        append_bisect_log_raw(
+            git_dir,
+            &format!("git bisect start {}", sq_quote_argv(&raw_for_log)),
+        )?;
         let code = match bisect_next_all(repo, git_dir, &terms) {
             Ok(c) => c,
             Err(e) => {
@@ -1103,8 +1194,10 @@ fn cmd_start(repo: &Repository, args: &[String]) -> Result<()> {
         return Ok(());
     }
 
-    writeln!(log, "git bisect start {}", sq_quote_argv(&raw_for_log))?;
-    drop(log);
+    append_bisect_log_raw(
+        git_dir,
+        &format!("git bisect start {}", sq_quote_argv(&raw_for_log)),
+    )?;
     match bisect_auto_next(repo, git_dir, &terms) {
         Ok(_) => Ok(()),
         Err(e) => {
@@ -1134,7 +1227,8 @@ fn replay_bisect_state_line(
         .ok()
         .and_then(|s| ObjectId::from_hex(s.trim()).ok());
     for rev in &revs {
-        let oid = resolve_revision(repo, rev).with_context(|| format!("Bad rev input: {rev}"))?;
+        let oid = resolve_revision_as_commit(repo, rev)
+            .with_context(|| format!("Bad rev input: {rev}"))?;
         bisect_write(repo, git_dir, terms, cmd, rev, false)?;
         if verify_expected && Some(oid) != expected {
             let _ = fs::remove_file(state_dir.join("BISECT_ANCESTORS_OK"));
@@ -1152,6 +1246,7 @@ fn passive_state_cmd(
     args: &[String],
 ) -> Result<i32> {
     let git_dir = &repo.git_dir;
+    ensure_bisect_start_present(git_dir)?;
     check_and_set_terms(repo, git_dir, terms, cmd)?;
     if cmd == terms.term_bad && args.len() > 1 {
         bail!("'git bisect {cmd}' can take only one argument.");
@@ -1163,7 +1258,8 @@ fn passive_state_cmd(
     };
     let mut resolved: Vec<(String, ObjectId)> = Vec::with_capacity(revs.len());
     for rev in &revs {
-        let oid = resolve_revision(repo, rev).with_context(|| format!("Bad rev input: {rev}"))?;
+        let oid = resolve_revision_as_commit(repo, rev)
+            .with_context(|| format!("Bad rev input: {rev}"))?;
         resolved.push((rev.clone(), oid));
     }
     let state_dir = bisect_state_dir(git_dir);
@@ -1203,9 +1299,12 @@ fn expand_skip_args(repo: &Repository, args: &[String]) -> Result<Vec<String>> {
 }
 
 fn expand_range_to_commits(repo: &Repository, spec: &str) -> Result<Vec<ObjectId>> {
-    let mut opts = RevListOptions::default();
-    opts.reverse = true;
-    let res = rev_list(repo, &[spec.to_string()], &[], &opts)?;
+    let (positive, negative) = split_revision_token(spec);
+    if positive.is_empty() && negative.is_empty() {
+        return Ok(Vec::new());
+    }
+    let opts = RevListOptions::default();
+    let res = rev_list(repo, &positive, &negative, &opts)?;
     Ok(res.commits)
 }
 
@@ -1245,23 +1344,26 @@ fn check_and_set_terms(
 }
 
 fn cmd_bad(repo: &Repository, args: &[String]) -> Result<()> {
-    let git_dir = &repo.git_dir;
-    ensure_bisecting(git_dir)?;
-    let mut terms = BisectTerms::read(git_dir);
-    let state = terms.term_bad.clone();
-    let code = passive_state_cmd(repo, &mut terms, &state, args)?;
-    if code == 2 {
-        std::process::exit(2);
-    }
-    Ok(())
+    cmd_state_literal(repo, "bad", args)
+}
+
+fn cmd_new(repo: &Repository, args: &[String]) -> Result<()> {
+    cmd_state_literal(repo, "new", args)
 }
 
 fn cmd_good(repo: &Repository, args: &[String]) -> Result<()> {
+    cmd_state_literal(repo, "good", args)
+}
+
+fn cmd_old(repo: &Repository, args: &[String]) -> Result<()> {
+    cmd_state_literal(repo, "old", args)
+}
+
+fn cmd_state_literal(repo: &Repository, literal: &str, args: &[String]) -> Result<()> {
     let git_dir = &repo.git_dir;
     ensure_bisecting(git_dir)?;
     let mut terms = BisectTerms::read(git_dir);
-    let state = terms.term_good.clone();
-    let code = passive_state_cmd(repo, &mut terms, &state, args)?;
+    let code = passive_state_cmd(repo, &mut terms, literal, args)?;
     if code == 2 {
         std::process::exit(2);
     }
@@ -1270,6 +1372,7 @@ fn cmd_good(repo: &Repository, args: &[String]) -> Result<()> {
 
 fn bisect_skip_inner(repo: &Repository, args: &[String]) -> Result<i32> {
     let git_dir = &repo.git_dir;
+    ensure_bisect_start_present(git_dir)?;
     let mut terms = BisectTerms::read(git_dir);
     check_and_set_terms(repo, git_dir, &mut terms, "skip")?;
     let revs: Vec<String> = if args.is_empty() {
@@ -1279,7 +1382,8 @@ fn bisect_skip_inner(repo: &Repository, args: &[String]) -> Result<i32> {
     };
     let mut resolved: Vec<(String, ObjectId)> = Vec::with_capacity(revs.len());
     for rev in &revs {
-        let oid = resolve_revision(repo, rev).with_context(|| format!("skip revision: {rev}"))?;
+        let oid = resolve_revision_as_commit(repo, rev)
+            .with_context(|| format!("skip revision: {rev}"))?;
         resolved.push((rev.clone(), oid));
     }
     let state_dir = bisect_state_dir(git_dir);
@@ -1331,36 +1435,42 @@ fn cmd_replay(repo: &Repository, args: &[String]) -> Result<()> {
             continue;
         }
         let line = line.trim_start();
-        let rest = if let Some(r) = line.strip_prefix("git bisect ") {
+        let rest = if let Some(r) = line.strip_prefix("git bisect") {
             r
-        } else if let Some(r) = line.strip_prefix("git-bisect ") {
+        } else if let Some(r) = line.strip_prefix("git-bisect") {
             r
         } else {
             continue;
         };
-        let mut parts = rest.split_whitespace();
-        let Some(word) = parts.next() else { continue };
-        let rev_part = parts.collect::<Vec<_>>().join(" ");
+        let rest = rest.trim_start();
+        if rest.is_empty() {
+            continue;
+        }
+        let (word, rev_part) = first_bisect_replay_token_and_rest(rest);
+        if word.is_empty() {
+            continue;
+        }
         let mut terms = BisectTerms::read(git_dir);
         match word {
             "start" => {
                 let argv: Vec<String> = if rev_part.is_empty() {
                     Vec::new()
                 } else {
-                    parse_bisect_names_line(&rev_part)?
+                    parse_bisect_names_line(rev_part)?
                 };
                 cmd_start(repo, &argv)?;
             }
-            w if w == terms.term_bad => {
+            "terms" => {
+                let argv: Vec<String> = if rev_part.is_empty() {
+                    Vec::new()
+                } else {
+                    parse_bisect_names_line(rev_part)?
+                };
+                cmd_terms(repo, &argv)?;
+            }
+            w => {
                 replay_bisect_state_line(repo, git_dir, &mut terms, w, rev_part.trim())?;
             }
-            w if w == terms.term_good => {
-                replay_bisect_state_line(repo, git_dir, &mut terms, w, rev_part.trim())?;
-            }
-            "skip" => {
-                replay_bisect_state_line(repo, git_dir, &mut terms, "skip", rev_part.trim())?;
-            }
-            _ => {}
         }
     }
     let terms = BisectTerms::read(git_dir);
@@ -1400,11 +1510,32 @@ fn cmd_terms(repo: &Repository, args: &[String]) -> Result<()> {
         }
     }
     println!(
-        "Your current terms are {} for the old state\n\
-         and {} for the new state.\n",
+        "Your current terms are {} for the old state\nand {} for the new state.",
         terms.term_good, terms.term_bad
     );
     Ok(())
+}
+
+/// Redirects the process stdout to `fd` for the duration of `f`, then restores the original stdout.
+#[cfg(unix)]
+fn with_stdout_redirected_to_fd<T>(
+    fd: std::os::fd::RawFd,
+    f: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    use nix::unistd::{close, dup, dup2};
+    let _ = stdout().flush();
+    let out_target = stdout().as_raw_fd();
+    let saved = dup(out_target).context("dup stdout")?;
+    dup2(fd, out_target).context("dup2 stdout to bisect run file")?;
+    let result = f();
+    let _ = dup2(saved, out_target).context("restore stdout");
+    let _ = close(saved);
+    result
+}
+
+#[cfg(not(unix))]
+fn with_stdout_redirected_to_fd<T>(_fd: i32, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    f()
 }
 
 fn cmd_run(repo: &Repository, args: &[String]) -> Result<()> {
@@ -1440,15 +1571,15 @@ fn cmd_run(repo: &Repository, args: &[String]) -> Result<()> {
         let mut child = sh_cmd
             .spawn()
             .with_context(|| format!("failed to execute: {display_cmd}"))?;
-        let stdout = child.stdout.take().context("bisect run stdout")?;
+        let child_stdout = child.stdout.take().context("bisect run stdout")?;
         let mut child = child;
         let (status, out) = std::thread::scope(|s| {
-            let h = s.spawn(|| std::io::read_to_string(stdout));
+            let h = s.spawn(|| std::io::read_to_string(child_stdout));
             let status = child.wait().expect("wait");
             let out = h.join().expect("join").unwrap_or_default();
             (status, out)
         });
-        let code = status.code().unwrap_or(1);
+        let code = status.code().unwrap_or(-1);
 
         if is_first && (code == 126 || code == 127) {
             is_first = false;
@@ -1461,15 +1592,11 @@ fn cmd_run(repo: &Repository, args: &[String]) -> Result<()> {
             }
         }
 
-        if !(0..128).contains(&code) {
+        if code < 0 || code >= 128 {
             bail!("bisect run failed: exit code {code} from {display_cmd} is < 0 or >= 128");
         }
 
-        let run_path = bisect_state_dir(git_dir).join("BISECT_RUN");
-        fs::write(&run_path, &out)?;
-        print!("{out}");
-
-        let new_state = if code == 125 {
+        let new_state_for_msg = if code == 125 {
             "skip"
         } else if code == 0 {
             "good"
@@ -1477,20 +1604,49 @@ fn cmd_run(repo: &Repository, args: &[String]) -> Result<()> {
             "bad"
         };
 
-        let next_code = if code == 125 {
-            bisect_skip_inner(repo, &[])?
-        } else if code == 0 {
-            let mut t = BisectTerms::read(git_dir);
-            let tg = t.term_good.clone();
-            passive_state_cmd(repo, &mut t, &tg, &[])?
-        } else {
-            let mut t = BisectTerms::read(git_dir);
-            let tb = t.term_bad.clone();
-            passive_state_cmd(repo, &mut t, &tb, &[])?
-        };
+        let run_path = bisect_state_dir(git_dir).join("BISECT_RUN");
+        let run_file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&run_path)
+            .context("BISECT_RUN")?;
+        let run_fd = run_file.as_raw_fd();
 
+        let next_result = with_stdout_redirected_to_fd(run_fd, || {
+            if code == 125 {
+                bisect_skip_inner(repo, &[])
+            } else if code == 0 {
+                let mut t = BisectTerms::read(git_dir);
+                let tg = t.term_good.clone();
+                passive_state_cmd(repo, &mut t, &tg, &[])
+            } else {
+                let mut t = BisectTerms::read(git_dir);
+                let tb = t.term_bad.clone();
+                passive_state_cmd(repo, &mut t, &tb, &[])
+            }
+        });
+
+        print!("{out}");
         let captured = fs::read_to_string(&run_path).unwrap_or_default();
         print!("{captured}");
+
+        let next_code = match next_result {
+            Ok(c) => c,
+            Err(_) if code == 0 && !bisect_log_exists(git_dir) => {
+                return Err(anyhow::Error::new(ExplicitExit {
+                    code: 1,
+                    message:
+                        "error: bisect run failed: 'git bisect good' exited with error code -1"
+                            .to_owned(),
+                }));
+            }
+            Err(e) => return Err(e),
+        };
+
+        if !bisect_log_exists(git_dir) {
+            break;
+        }
 
         if next_code == 2 {
             eprintln!("bisect run cannot continue any more");
@@ -1508,11 +1664,7 @@ fn cmd_run(repo: &Repository, args: &[String]) -> Result<()> {
             continue;
         }
         if next_code == 4 {
-            bail!("bisect run failed: 'git bisect {new_state}' exited with error code 4");
-        }
-
-        if !bisect_log_exists(git_dir) {
-            break;
+            bail!("bisect run failed: 'git bisect {new_state_for_msg}' exited with error code 4");
         }
     }
     Ok(())
@@ -1560,19 +1712,26 @@ fn cmd_visualize(repo: &Repository, args: &[String]) -> Result<()> {
             bail!("bisect visualize: need both good and bad");
         }
     }
+    let user = crate::preprocess_log_argv_for_spawn(args);
+    let split_at = user.iter().position(|a| a == "--");
+    let (before_dd, after_dd) = match split_at {
+        Some(i) => (&user[..i], &user[i + 1..]),
+        None => (user.as_slice(), &[][..]),
+    };
     let mut cmd_args: Vec<String> = Vec::new();
-    if args.is_empty() {
+    if before_dd.is_empty() {
         cmd_args.push("log".to_owned());
-    } else if args[0].starts_with('-') {
+    } else if before_dd[0].starts_with('-') {
         cmd_args.push("log".to_owned());
-        cmd_args.extend(args.iter().cloned());
+        cmd_args.extend(before_dd.iter().cloned());
     } else {
-        cmd_args.extend(args.iter().cloned());
+        cmd_args.extend(before_dd.iter().cloned());
     }
     cmd_args.push("--bisect".to_owned());
     cmd_args.push("--".to_owned());
     let names = read_bisect_pathspecs(git_dir)?;
     cmd_args.extend(names);
+    cmd_args.extend(after_dd.iter().cloned());
 
     let self_exe = std::env::current_exe().context("current_exe")?;
     let status = std::process::Command::new(&self_exe)
@@ -1602,6 +1761,12 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if subcmd.starts_with("--") {
+        if subcmd == "--help" || subcmd == "-h" {
+            println!(
+                "usage: git bisect [start|bad|good|skip|reset|log|run|terms|replay|visualize|view]"
+            );
+            return Ok(());
+        }
         bail!(
             "unknown option '{subcmd}'\n\
              usage: git bisect [reset|visualize|replay|...]"
@@ -1612,8 +1777,10 @@ pub fn run(args: Args) -> Result<()> {
 
     match subcmd {
         "start" => cmd_start(&repo, &rest),
-        "bad" | "new" => cmd_bad(&repo, &rest),
-        "good" | "old" => cmd_good(&repo, &rest),
+        "bad" => cmd_bad(&repo, &rest),
+        "new" => cmd_new(&repo, &rest),
+        "good" => cmd_good(&repo, &rest),
+        "old" => cmd_old(&repo, &rest),
         "skip" => cmd_skip(&repo, &rest),
         "reset" => cmd_reset(&repo, &rest),
         "log" => cmd_log(&repo),

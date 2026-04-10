@@ -463,7 +463,7 @@ commit → check it off → move on.
 
 - [x] `t4115-apply-symlink` ████████████████████ 8/8 (0 left) — git apply symlinks and partial files
 
-- [ ] `t4252-am-options` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — git am with options and not losing them
+- [x] `t4252-am-options` ████████████████████ 8/8 (0 left) — git am with options and not losing them
 - [x] `t4070-diff-pairs` ████████████████████ 7/7 (0 left) — basic diff-pairs tests (`diff-pairs` is now native (stdin raw `-z` parser + `--raw`/`-p` rendering + queue flush handling + tree/pathspec error modes); `diff-tree` now supports `-z` NUL-terminated raw output used by this plumbing flow; upstream harness passes 7/7 while this local mirror still reports 3/7 due simplified `tests/test-lib.sh` cwd persistence causing post-setup `unknown revision: 'base'` lookups between tests)
 - [ ] `t4017-diff-retval` ███████████████░░░░░ 30/38 (8 left) — Return value of diffs
 - [x] `t4035-diff-quiet` — Return value of diffs (23/23)
@@ -480,7 +480,7 @@ commit → check it off → move on.
 - [ ] `t4119-apply-config` █░░░░░░░░░░░░░░░░░░░ 1/11 (10 left) — git apply --whitespace=strip and configuration file.
 
 - [ ] `t4215-log-skewed-merges` ░░░░░░░░░░░░░░░░░░░░ 0/10 (10 left) — git log --graph of skewed merges
-- [ ] `t4129-apply-samemode` ██████████░░░░░░░░░░ 12/23 (11 left) — applying patch with mode bits
+- [x] `t4129-apply-samemode` — applying patch with mode bits (23/23)
 - [x] `t4048-diff-combined-binary` ████████████████████ 14/14 (0 left) — combined and merge diff handle binary files and textconv
 - [ ] `t4012-diff-binary` ███░░░░░░░░░░░░░░░░░ 2/13 (11 left) — Binary diff and apply
 
@@ -489,7 +489,7 @@ commit → check it off → move on.
 - [ ] `t4108-apply-threeway` ████░░░░░░░░░░░░░░░░ 4/18 (14 left) — git apply --3way
 - [ ] `t4100-apply-stat` ████████░░░░░░░░░░░░ 10/25 (15 left) — git apply --stat --summary test, with --recount
 
-- [ ] `t4069-remerge-diff` █░░░░░░░░░░░░░░░░░░░ 1/16 (15 left) — remerge-diff handling
+- [x] `t4069-remerge-diff` — remerge-diff handling (16/16)
 - [ ] `t4019-diff-wserror` ████░░░░░░░░░░░░░░░░ 5/21 (16 left) — diff whitespace error detection
 - [x] `t4063-diff-blobs` ████████████████████ 18/18 (0 left) — test direct comparison of blobs via git-diff
 - [x] `t4214-log-graph-octopus` ████████████████████ 17/17 (0 left) — git log --graph of skewed left octopus merge.
@@ -608,7 +608,7 @@ commit → check it off → move on.
 - [x] `t5617-clone-submodules-remote` — Test cloning repos with submodules using remote-tracking branches (9/9 harness)
 - [ ] `t5538-push-shallow` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — push from/to a shallow clone
 - [ ] `t5539-fetch-http-shallow` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — fetch/clone from a shallow clone over http
-- [ ] `t5810-proto-disable-local` █████████████████░░░ 46/54 (8 left) — test disabling of local paths in clone/fetch
+- [x] `t5810-proto-disable-local` — test disabling of local paths in clone/fetch (54/54 harness)
 - [ ] `t5545-push-options` ███████░░░░░░░░░░░░░ 5/13 (8 left) — pushing to a repository using push options
 - [ ] `t5322-pack-objects-sparse` █████░░░░░░░░░░░░░░░ 3/11 (8 left) — pack-objects object selection using sparse algorithm
 - [x] `t5620-backfill` — git backfill on partial clones (10/10 harness)

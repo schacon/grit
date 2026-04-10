@@ -28,6 +28,7 @@ mod fetch_submodule_record;
 mod fetch_submodule_recurse;
 mod fetch_transport;
 mod file_upload_pack_v2;
+mod git_binary_base85;
 mod git_column;
 mod git_commit_encoding;
 mod git_daemon_url;
@@ -50,6 +51,7 @@ mod test_tool_run_command;
 mod trace2_transfer;
 mod trace_packet;
 mod transport_passthrough;
+mod transport_path;
 mod wire_trace;
 
 /// Return the version string, e.g. `"2.47.0.grit"`.
@@ -1182,6 +1184,51 @@ fn test_tool_usage() -> Result<()> {
 
 /// `test-tool online-cpus` — print the number of processors Git would consider "online"
 /// (matches `git/t/helper/test-online-cpus.c` using `std::thread::available_parallelism`).
+fn run_test_tool_path_walk(rest: &[String]) -> Result<()> {
+    let args = preprocess_test_tool_args(rest)?;
+    let args = if args.first().map(String::as_str) == Some("path-walk") {
+        args[1..].to_vec()
+    } else {
+        args
+    };
+    let (opts, positive, negative, stdin_all, boundary) =
+        grit_lib::path_walk::parse_path_walk_cli(&args).context("path-walk options")?;
+    let repo = grit_lib::repo::Repository::discover(None)?;
+    let (lines, counts) = grit_lib::path_walk::walk_objects_by_path(
+        &repo, &positive, &negative, stdin_all, boundary, &opts,
+    )?;
+
+    fn kind_str(k: grit_lib::objects::ObjectKind) -> &'static str {
+        match k {
+            grit_lib::objects::ObjectKind::Blob => "blob",
+            grit_lib::objects::ObjectKind::Tree => "tree",
+            grit_lib::objects::ObjectKind::Commit => "commit",
+            grit_lib::objects::ObjectKind::Tag => "tag",
+        }
+    }
+
+    for line in lines {
+        let suf = if line.uninteresting {
+            ":UNINTERESTING"
+        } else {
+            ""
+        };
+        println!(
+            "{}:{}:{}:{}{}",
+            line.batch,
+            kind_str(line.object_kind),
+            line.path,
+            line.oid.to_hex(),
+            suf
+        );
+    }
+    println!(
+        "commits:{}\ntrees:{}\nblobs:{}\ntags:{}",
+        counts.commits, counts.trees, counts.blobs, counts.tags
+    );
+    Ok(())
+}
+
 fn run_test_tool_online_cpus(rest: &[String]) -> Result<()> {
     let _ = preprocess_test_tool_args(rest)?;
     let n = std::thread::available_parallelism()
@@ -3859,6 +3906,33 @@ fn preprocess_diff_args(rest: &[String]) -> Vec<String> {
 /// Preprocess log arguments: convert `-<N>` shorthand to `-n <N>`, and make bare `-L` visible to clap.
 /// Map `git log` pickaxe `-G` / `-S` (including glued forms) to hidden long options so `-G` stays
 /// free for `--basic-regexp` on `--grep`.
+/// Split glued pickaxe argv like `-Sneedle` into `-S` + `needle`.
+///
+/// POSIX `/bin/sh` parses `-S"not present"` as a single token `-Snot present`, which clap would
+/// reject as an unknown short flag. Git accepts the glued form (t4069-remerge-diff).
+fn preprocess_show_argv(rest: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(rest.len() + 2);
+    let mut i = 0usize;
+    while i < rest.len() {
+        let arg = rest[i].as_str();
+        if arg == "--" {
+            out.extend_from_slice(&rest[i..]);
+            break;
+        }
+        if let Some(needle) = arg.strip_prefix("-S") {
+            if !needle.is_empty() {
+                out.push("-S".to_owned());
+                out.push(needle.to_owned());
+                i += 1;
+                continue;
+            }
+        }
+        out.push(rest[i].clone());
+        i += 1;
+    }
+    out
+}
+
 fn preprocess_log_pickaxe_args(rest: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(rest.len() + 4);
     let mut i = 0usize;
@@ -4037,6 +4111,11 @@ fn preprocess_git_notes_display_argv(
     );
     std::env::remove_var("GIT_GRIT_LOG_NOTES_EXTRA");
     out
+}
+
+/// Preprocess `git log` argv fragments (before clap) for spawning a child `grit log` process.
+pub(crate) fn preprocess_log_argv_for_spawn(rest: &[String]) -> Vec<String> {
+    preprocess_log_pickaxe_args(preprocess_log_args(rest))
 }
 
 fn preprocess_log_args(rest: &[String]) -> Vec<String> {
@@ -4606,7 +4685,11 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
             commands::archive::run_from_argv(rest)
         }
         "backfill" => commands::backfill::run(parse_cmd_args(subcmd, rest)),
-        "bisect" => commands::bisect::run(parse_cmd_args(subcmd, rest)),
+        // Bisect is parsed manually: upstream tests pass unknown `--bisect-*` flags that must
+        // reach `bisect::run` as Git-style "unknown option" errors, not clap parse failures.
+        "bisect" => commands::bisect::run(commands::bisect::Args {
+            args: rest.to_vec(),
+        }),
         "blame" => commands::blame::run(parse_cmd_args(subcmd, &preprocess_blame_argv(rest))),
         "branch" => commands::branch::run(parse_cmd_args(subcmd, rest)),
         "bugreport" => commands::bugreport::run(parse_cmd_args(subcmd, rest)),
@@ -4908,6 +4991,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "shell" => commands::shell::run(parse_cmd_args(subcmd, rest)),
         "shortlog" => commands::shortlog::run(parse_cmd_args(subcmd, rest)),
         "show" => {
+            let rest = preprocess_show_argv(rest);
             let mut saw_bare_pretty = false;
             let mut explicit_pretty = false;
             let mut i = 0usize;
@@ -4948,7 +5032,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
             } else {
                 std::env::remove_var("GIT_GRIT_SHOW_EXPLICIT_PRETTY");
             }
-            let rest = preprocess_git_notes_display_argv(rest, NotesDisplayDefault::OnIfUnset);
+            let rest = preprocess_git_notes_display_argv(&rest, NotesDisplayDefault::OnIfUnset);
             commands::show::run(parse_cmd_args(subcmd, &rest))
         }
         "show-branch" => commands::show_branch::run_raw(rest),
@@ -5051,6 +5135,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 "find-pack" => run_test_tool_find_pack(rest),
                 "partial-clone" => run_test_tool_partial_clone(rest),
                 "ref-store" => run_test_tool_ref_store(rest),
+                "path-walk" => run_test_tool_path_walk(rest),
                 "online-cpus" => run_test_tool_online_cpus(rest),
                 "lazy-init-name-hash" => run_test_tool_lazy_init_name_hash(rest),
                 "rot13-filter" => commands::test_tool_rot13_filter::run(&rest[1..]),

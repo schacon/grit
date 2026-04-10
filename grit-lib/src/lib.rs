@@ -72,6 +72,7 @@ pub mod pack_name_hash;
 pub mod pack_rev;
 pub mod parse_options_test_tool;
 pub mod patch_ids;
+pub mod path_walk;
 pub mod pathspec;
 pub mod precompose_config;
 pub mod promisor;

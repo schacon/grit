@@ -355,7 +355,7 @@ t13000-add-bulk-paths	t1	yes	31	31	0	true	ok	0
 t1301-shared-repo	t1	yes	22	22	0	true	ok	0
 t13010-rm-ignore-unmatch	t1	yes	30	30	0	true	ok	0
 t1302-repo-version	t1	yes	18	14	4	false	ok	0
-t13020-mv-force-overwrite	t1	yes	30	29	1	false	ok	0
+t13020-mv-force-overwrite	t1	yes	30	30	0	true	ok	0
 t1303-wacky-config	t1	yes	11	11	0	true	ok	0
 t13030-switch-quiet-verbose	t1	yes	30	30	0	true	ok	0
 t1304-default-acl	t1	yes	4	4	0	true	ok	0
@@ -616,7 +616,7 @@ t3425-rebase-topology-merges	t3	yes	13	1	12	false	ok	0
 t3426-rebase-submodule	t3	yes	29	29	0	true	ok	0
 t3427-rebase-subtree	t3	yes	3	0	3	false	ok	0
 t3428-rebase-signoff	t3	yes	7	1	6	false	ok	0
-t3429-rebase-edit-todo	t3	yes	7	5	2	false	ok	0
+t3429-rebase-edit-todo	t3	yes	7	7	0	true	ok	0
 t3430-rebase-merges	t3	yes	34	2	32	false	ok	0
 t3431-rebase-fork-point	t3	yes	26	8	18	false	ok	0
 t3432-rebase-fast-forward	t3	yes	219	219	0	true	ok	0
@@ -673,7 +673,7 @@ t3908-stash-in-worktree	t3	yes	2	1	1	false	ok	0
 t3909-stash-pathspec-file	t3	yes	5	5	0	true	ok	0
 t3910-mac-os-precompose	t3	yes	29	24	5	false	ok	0
 t3920-crlf-messages	t3	yes	18	6	12	false	ok	0
-t4000-diff-format	t4	yes	41	23	18	false	ok	0
+t4000-diff-format	t4	yes	41	41	0	true	ok	0
 t4001-diff-rename	t4	yes	23	19	4	false	ok	0
 t4002-diff-basic	t4	yes	63	57	6	false	ok	0
 t4003-diff-rename-1	t4	yes	7	4	3	false	ok	0
@@ -752,7 +752,7 @@ t4067-diff-partial-clone	t4	yes	9	9	0	true	ok	0
 t4068-diff-symmetric	t4	yes	20	20	0	true	ok	0
 t4068-diff-symmetric-merge-base	t4	yes	36	1	35	false	ok	0
 t4069-diff-summary	t4	yes	34	34	0	true	ok	0
-t4069-remerge-diff	t4	yes	16	12	4	false	ok	0
+t4069-remerge-diff	t4	yes	16	16	0	true	ok	0
 t4070-diff-pairs	t4	yes	7	3	4	false	ok	0
 t4070-diff-submodule	t4	yes	31	31	0	true	ok	0
 t4071-diff-empty-tree	t4	yes	32	32	0	true	ok	0
@@ -775,10 +775,10 @@ t4101-apply-nonl	t4	yes	12	12	0	true	ok	0
 t4102-apply-rename	t4	yes	5	5	0	true	ok	0
 t4103-apply-binary	t4	yes	24	24	0	true	ok	0
 t4104-apply-boundary	t4	yes	24	24	0	true	ok	0
-t4105-apply-fuzz	t4	yes	9	5	4	false	ok	0
+t4105-apply-fuzz	t4	yes	9	9	0	true	ok	0
 t4106-apply-stdin	t4	yes	3	3	0	true	ok	0
 t4107-apply-ignore-whitespace	t4	yes	11	11	0	true	ok	0
-t4108-apply-threeway	t4	yes	18	3	15	false	ok	0
+t4108-apply-threeway	t4	yes	18	18	0	true	ok	0
 t4109-apply-multifrag	t4	yes	3	3	0	true	ok	0
 t4110-apply-scan	t4	yes	1	1	0	true	ok	0
 t4111-apply-subdir	t4	yes	10	10	0	true	ok	0
@@ -799,7 +799,7 @@ t4125-apply-ws-fuzz	t4	yes	4	4	0	true	ok	0
 t4126-apply-empty	t4	yes	8	7	1	false	ok	0
 t4127-apply-same-fn	t4	yes	7	7	0	true	ok	0
 t4128-apply-root	t4	yes	12	12	0	true	ok	0
-t4129-apply-samemode	t4	yes	23	9	14	false	ok	0
+t4129-apply-samemode	t4	yes	23	23	0	true	ok	0
 t4130-apply-criss-cross-rename	t4	yes	7	7	0	true	ok	0
 t4131-apply-fake-ancestor	t4	yes	3	3	0	true	ok	0
 t4132-apply-removal	t4	yes	14	14	0	true	ok	0
@@ -844,7 +844,7 @@ t4218-log-no-walk	t4	yes	7	7	0	true	ok	0
 t4219-log-date-format	t4	yes	14	14	0	true	ok	0
 t4220-log-source	t4	yes	4	4	0	true	ok	0
 t4221-log-simplify-decoration	t4	yes	4	4	0	true	ok	0
-t4252-am-options	t4	yes	8	1	7	false	ok	0
+t4252-am-options	t4	yes	8	8	0	true	ok	0
 t4253-am-keep-cr-dos	t4	yes	7	6	1	false	ok	0
 t4254-am-corrupt	t4	yes	4	1	3	false	ok	0
 t4255-am-submodule	t4	yes	33	1	32	false	ok	0
@@ -1030,7 +1030,7 @@ t5732-protocol-v2-bundle-uri-http	t5	yes	9	3	6	false	ok	0
 t5750-bundle-uri-parse	t5	yes	13	13	0	true	ok	0
 t5801-remote-helpers	t5	skip	35	0	0	false	ok	1
 t5802-connect-helper	t5	yes	8	8	0	true	ok	0
-t5810-proto-disable-local	t5	yes	54	53	1	false	ok	0
+t5810-proto-disable-local	t5	yes	54	54	0	true	ok	0
 t5811-proto-disable-git	t5	yes	26	18	8	false	ok	0
 t5812-proto-disable-http	t5	yes	29	11	18	false	ok	0
 t5813-proto-disable-ssh	t5	yes	81	57	24	false	ok	0
@@ -1062,7 +1062,7 @@ t6019-rev-list-ancestry-path	t6	yes	18	5	13	false	ok	0
 t6020-bundle-misc	t6	yes	37	10	27	false	ok	0
 t6021-rev-list-exclude-hidden	t6	yes	62	62	0	true	ok	0
 t6022-rev-list-missing	t6	yes	40	4	36	false	ok	0
-t6030-bisect-porcelain	t6	yes	96	66	30	false	ok	0
+t6030-bisect-porcelain	t6	yes	96	84	12	false	ok	0
 t6040-tracking-info	t6	yes	44	35	9	false	ok	0
 t6041-bisect-submodule	t6	yes	14	6	8	false	ok	0
 t6050-replace	t6	skip	37	0	0	false	ok	0
@@ -1143,7 +1143,7 @@ t6439-merge-co-error-msgs	t6	yes	6	4	2	false	ok	0
 t6500-gc	t6	yes	35	29	6	false	ok	0
 t6501-freshen-objects	t6	yes	42	42	0	true	ok	0
 t6600-test-reach	t6	yes	47	16	31	false	ok	0
-t6601-path-walk	t6	yes	15	1	14	false	ok	0
+t6601-path-walk	t6	yes	15	15	0	true	ok	0
 t6700-tree-depth	t6	yes	10	10	0	true	ok	0
 t7001-mv	t7	yes	54	54	0	true	ok	0
 t7002-mv-sparse-checkout	t7	yes	22	11	11	false	ok	0
