@@ -395,9 +395,11 @@ pub fn run(mut args: Args) -> Result<()> {
                 } else if let Err(e) = fs::remove_file(&abs_path) {
                     bail!("cannot remove '{path_str}': {e}");
                 }
-                // Submodule gitdirs live under `.git/modules/<path>`; remove them so a path
-                // can be reused as a regular directory (matches Git's `git rm` behaviour).
-                if removed_was_gitlink {
+                // Submodule gitdirs live under `.git/modules/<path>`; remove them when the work
+                // tree entry is removed (matches Git's `git rm` without `--cached`).
+                // `git rm --cached` only unstages; it must keep `.git/modules/` so the submodule
+                // can be checked out again (`t7112-reset-submodule` / `reset_work_tree_to_interested`).
+                if removed_was_gitlink && !args.cached {
                     let modules_gitdir = submodule_modules_git_dir(&repo.git_dir, path_str);
                     if modules_gitdir.exists() {
                         let _ = fs::remove_dir_all(&modules_gitdir);

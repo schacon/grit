@@ -1035,6 +1035,11 @@ pub fn resolve_treeish_blob_at_path(repo: &Repository, spec: &str) -> Result<Tre
     };
 
     let (oid, mode_str) = walk_tree_to_blob_entry(repo, &tree_oid, &clean_path)?;
+    if mode_str == "160000" {
+        return Err(Error::InvalidRef(format!(
+            "'{clean_path}' is a gitlink, not a blob"
+        )));
+    }
     Ok(TreeishBlobAtPath {
         path: clean_path,
         oid,
@@ -1042,7 +1047,11 @@ pub fn resolve_treeish_blob_at_path(repo: &Repository, spec: &str) -> Result<Tre
     })
 }
 
-/// Walk from `tree_oid` to the leaf named by `path` and return blob OID + mode string.
+/// Walk from `tree_oid` to the leaf named by `path` and return OID + mode string.
+///
+/// Used for `rev:path` resolution ([`resolve_tree_path`]): the leaf may be a blob, symlink,
+/// or gitlink (submodule). Callers that need a blob only (e.g. [`resolve_treeish_blob_at_path`])
+/// must reject mode `160000` after this returns.
 fn walk_tree_to_blob_entry(
     repo: &Repository,
     tree_oid: &ObjectId,
@@ -1065,11 +1074,6 @@ fn walk_tree_to_blob_entry(
             if rest.is_empty() {
                 if entry.mode == crate::index::MODE_TREE {
                     return Err(Error::InvalidRef(format!("'{path}' is a tree, not a blob")));
-                }
-                if entry.mode == crate::index::MODE_GITLINK {
-                    return Err(Error::InvalidRef(format!(
-                        "'{path}' is a gitlink, not a blob"
-                    )));
                 }
                 return Ok((entry.oid, entry.mode_str()));
             }

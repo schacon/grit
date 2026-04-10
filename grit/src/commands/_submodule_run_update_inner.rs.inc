@@ -141,8 +141,10 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
                     let _ = fs::remove_dir(&modules_dir);
                 }
 
-                let clone_url =
-                    config_last_value(&local_cfg, &url_key).unwrap_or_else(|| m.url.clone());
+                let clone_url = effective_submodule_clone_url(
+                    &config_last_value(&local_cfg, &url_key).unwrap_or_else(|| m.url.clone()),
+                    &m.url,
+                );
 
                 if sub_path.exists() {
                     let _ = fs::remove_dir_all(&sub_path);

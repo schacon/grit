@@ -22,7 +22,8 @@ use grit_lib::ident::parse_signature_times;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::merge_trees::{
-    merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation, WhitespaceMergeOptions,
+    merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation,
+    WhitespaceMergeOptions,
 };
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
@@ -1340,6 +1341,8 @@ pub(crate) fn abort_cherry_pick_or_revert() -> Result<()> {
             no_refresh: false,
             refresh: true,
             patch: false,
+            recurse_submodules: None,
+            no_recurse_submodules: false,
             rest: vec![stored_oid.to_hex()],
             skip_sequencer_head_cleanup: true,
         })?;
@@ -1360,6 +1363,8 @@ pub(crate) fn abort_cherry_pick_or_revert() -> Result<()> {
         no_refresh: false,
         refresh: true,
         patch: false,
+        recurse_submodules: None,
+        no_recurse_submodules: false,
         rest: vec!["HEAD".to_owned()],
         skip_sequencer_head_cleanup: true,
     })?;

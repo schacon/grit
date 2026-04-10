@@ -1190,7 +1190,7 @@ t7107-reset-pathspec-file	t7	yes	11	1	10	false	ok	0
 t7110-reset-merge	t7	yes	21	9	12	false	ok	0
 t7110-reset-modes	t7	yes	20	20	0	true	ok	0
 t7111-reset-table	t7	yes	42	34	8	false	ok	0
-t7112-reset-submodule	t7	yes	76	24	52	false	ok	0
+t7112-reset-submodule	t7	yes	82	24	52	false	ok	0
 t7113-post-index-change-hook	t7	yes	4	1	3	false	ok	0
 t7201-co	t7	yes	46	17	29	false	ok	0
 t7300-clean	t7	yes	55	54	1	false	ok	0

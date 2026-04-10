@@ -14,8 +14,10 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::process::Command;
 
 use grit_lib::config::ConfigSet;
+use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -26,12 +28,128 @@ use grit_lib::rev_parse::{
     revision_spec_contains_ancestry_navigation, split_treeish_colon,
 };
 use grit_lib::state::{resolve_head, HeadState};
+use grit_lib::submodule_gitdir::submodule_modules_git_dir;
 use grit_lib::unicode_normalization::precompose_utf8_path;
 use similar::{Algorithm, TextDiff};
 
 /// The zero OID for reflog entries when there is no previous value.
 fn zero_oid() -> ObjectId {
     ObjectId::zero()
+}
+
+/// Whether `reset` should recurse into submodules after updating the superproject work tree.
+/// True when argv included `--recurse-submodules` and it was not negated to off.
+///
+/// Git only relaxes certain safety checks for explicit `--recurse-submodules`; `submodule.recurse`
+/// alone should not skip "submodule would be overwritten" for plain `reset --keep` (`t7112`).
+fn explicit_recurse_submodules_cli_on(args: &Args) -> bool {
+    let Some(ref v) = args.recurse_submodules else {
+        return false;
+    };
+    let l = v.trim().to_ascii_lowercase();
+    !matches!(l.as_str(), "no" | "off" | "false" | "0")
+}
+
+fn effective_reset_recurse_submodules(repo: &Repository, args: &Args) -> Result<bool> {
+    if args.no_recurse_submodules {
+        return Ok(false);
+    }
+    if let Some(v) = args.recurse_submodules.as_deref() {
+        let l = v.trim().to_ascii_lowercase();
+        if matches!(l.as_str(), "no" | "off" | "false" | "0") {
+            return Ok(false);
+        }
+        if matches!(l.as_str(), "yes" | "on" | "true" | "1" | "") {
+            return Ok(true);
+        }
+        bail!("bad --recurse-submodules argument: {v}");
+    }
+    if let Ok(cfg) = ConfigSet::load(Some(&repo.git_dir), true) {
+        if let Some(v) = cfg.get("submodule.recurse") {
+            let l = v.to_ascii_lowercase();
+            if l == "true" || l == "1" || l == "yes" {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn submodule_update_after_reset(repo: &Repository) -> Result<()> {
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("submodule recursion requires a work tree"))?;
+    let grit_bin = crate::grit_exe::grit_executable();
+    let mut cmd = Command::new(&grit_bin);
+    crate::grit_exe::strip_trace2_env(&mut cmd);
+    let status = cmd
+        .args(["submodule", "update", "--init", "--recursive"])
+        .current_dir(work_tree)
+        .status()
+        .context("spawning submodule update after reset")?;
+    if !status.success() {
+        bail!("Submodule update failed after reset");
+    }
+    Ok(())
+}
+
+/// Restore HEAD, index, and work tree to `old_oid` after a failed `submodule update`.
+///
+/// `broken_index` is the superproject index that was built for the attempted target commit (before
+/// the index file was written). `failed_tip` is the commit HEAD was moved to.
+fn rollback_reset_after_failed_submodule_update(
+    repo: &Repository,
+    head: &HeadState,
+    old_oid: &ObjectId,
+    failed_tip: &ObjectId,
+    broken_index: &Index,
+    recurse_submodules: bool,
+) -> Result<()> {
+    let tree_oid = commit_to_tree(repo, old_oid)?;
+    let tree_entries = tree_to_flat_entries(repo, &tree_oid, "")?;
+    let mut rollback_index = Index::new();
+    rollback_index.entries = tree_entries;
+    rollback_index.sort();
+    let index_path = repo.index_path();
+    let old_before = repo
+        .load_index_at(&index_path)
+        .unwrap_or_else(|_| Index::new());
+    preserve_index_cache_flags_from(&old_before, &mut rollback_index);
+    checkout_index_to_worktree(
+        repo,
+        broken_index,
+        &mut rollback_index,
+        None,
+        recurse_submodules,
+        recurse_submodules,
+    )?;
+    repo.write_index_at(&index_path, &mut rollback_index)
+        .context("writing index during rollback")?;
+    update_head_ref(&repo.git_dir, head, old_oid)?;
+    let identity = resolve_reflog_identity(repo);
+    let msg = "reset: rolling back after submodule update failure";
+    let _ = append_reflog(
+        &repo.git_dir,
+        "HEAD",
+        failed_tip,
+        old_oid,
+        &identity,
+        msg,
+        false,
+    );
+    if let HeadState::Branch { refname, .. } = head {
+        let _ = append_reflog(
+            &repo.git_dir,
+            refname,
+            failed_tip,
+            old_oid,
+            &identity,
+            msg,
+            false,
+        );
+    }
+    Ok(())
 }
 
 /// When rebuilding the index from a tree (`reset` mixed/hard/merge), preserve cache-entry flags
@@ -125,6 +243,20 @@ pub struct Args {
     #[arg(short = 'p', long = "patch")]
     pub patch: bool,
 
+    /// After updating the working tree, run `submodule update --init --recursive` (Git-compatible
+    /// bool-ish values when `=VALUE` is given).
+    #[arg(
+        long = "recurse-submodules",
+        num_args = 0..=1,
+        default_missing_value = "true",
+        require_equals = true
+    )]
+    pub recurse_submodules: Option<String>,
+
+    /// Disable submodule recursion even when `submodule.recurse` is set.
+    #[arg(long = "no-recurse-submodules")]
+    pub no_recurse_submodules: bool,
+
     /// Remaining positional arguments: `[<commit>] [--] [<path>…]`.
     #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
     pub rest: Vec<String>,
@@ -203,6 +335,18 @@ fn normalize_reset_trailing_args(args: &mut Args) {
                 args.refresh = true;
                 args.rest.remove(i);
             }
+            "--no-recurse-submodules" => {
+                args.no_recurse_submodules = true;
+                args.rest.remove(i);
+            }
+            s if s == "--recurse-submodules" || s.starts_with("--recurse-submodules=") => {
+                if let Some(eq) = s.find('=') {
+                    args.recurse_submodules = Some(s[eq + 1..].to_owned());
+                } else {
+                    args.recurse_submodules = Some("true".to_owned());
+                }
+                args.rest.remove(i);
+            }
             _ => {
                 i += 1;
             }
@@ -219,6 +363,13 @@ pub fn run(mut args: Args) -> Result<()> {
     let mode = parse_mode(&args)?;
 
     let repo = Repository::discover(None).context("not a git repository")?;
+
+    if args.recurse_submodules.is_some() && args.patch {
+        bail!("options '--recurse-submodules' and '--patch' cannot be used together");
+    }
+    if args.recurse_submodules.is_some() && mode == ResetMode::Mixed {
+        bail!("fatal: --recurse-submodules cannot be used with --mixed");
+    }
 
     // Handle -p (patch mode): interactive partial unstaging / index application vs a treeish.
     if args.patch {
@@ -282,7 +433,10 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
                 | "--intent-to-add"
                 | "--no-refresh"
                 | "--refresh"
-        ) {
+                | "--no-recurse-submodules"
+        ) || a == "--recurse-submodules"
+            || a.starts_with("--recurse-submodules=")
+        {
             i += 1;
             continue;
         }
@@ -327,8 +481,9 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
         let paths: Vec<String> = rest[1..]
             .iter()
             .filter(|a| {
+                let s = a.as_str();
                 !matches!(
-                    a.as_str(),
+                    s,
                     "--soft"
                         | "--mixed"
                         | "--hard"
@@ -340,7 +495,9 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
                         | "--intent-to-add"
                         | "--no-refresh"
                         | "--refresh"
-                )
+                        | "--no-recurse-submodules"
+                ) && s != "--recurse-submodules"
+                    && !s.starts_with("--recurse-submodules=")
             })
             .cloned()
             .collect();
@@ -508,7 +665,10 @@ fn split_reset_patch_args(repo: &Repository, rest: &[String]) -> Result<(String,
                 | "--intent-to-add"
                 | "--no-refresh"
                 | "--refresh"
-        ) {
+                | "--no-recurse-submodules"
+        ) || a == "--recurse-submodules"
+            || a.starts_with("--recurse-submodules=")
+        {
             i += 1;
             continue;
         }
@@ -543,8 +703,9 @@ fn split_reset_patch_args(repo: &Repository, rest: &[String]) -> Result<(String,
         let paths: Vec<String> = rest[1..]
             .iter()
             .filter(|a| {
+                let s = a.as_str();
                 !matches!(
-                    a.as_str(),
+                    s,
                     "--soft"
                         | "--mixed"
                         | "--hard"
@@ -556,7 +717,9 @@ fn split_reset_patch_args(repo: &Repository, rest: &[String]) -> Result<(String,
                         | "--intent-to-add"
                         | "--no-refresh"
                         | "--refresh"
-                )
+                        | "--no-recurse-submodules"
+                ) && s != "--recurse-submodules"
+                    && !s.starts_with("--recurse-submodules=")
             })
             .cloned()
             .collect();
@@ -1043,7 +1206,14 @@ fn reset_commit(
                     };
                     let mut new_index = Index::new();
                     if let Some(_wt) = &repo.work_tree {
-                        checkout_index_to_worktree(repo, &old_index, &mut new_index.clone(), None)?;
+                        checkout_index_to_worktree(
+                            repo,
+                            &old_index,
+                            &mut new_index.clone(),
+                            None,
+                            false,
+                            false,
+                        )?;
                     }
                     repo.write_index_at(&index_path, &mut new_index)
                         .context("writing index")?;
@@ -1061,9 +1231,13 @@ fn reset_commit(
         bail!("fatal: mixed reset is not allowed in a bare repository");
     }
 
+    let recurse_submodules = effective_reset_recurse_submodules(repo, extra)?;
+
+    let allow_gitlink_overwrite = explicit_recurse_submodules_cli_on(extra);
+
     // For --keep, we need to check safety before making any changes.
     if mode == ResetMode::Keep {
-        check_keep_safety(repo, &head, &target_oid)?;
+        check_keep_safety(repo, &head, &target_oid, allow_gitlink_overwrite)?;
     }
 
     // `--merge` matches Git's twoway merge reset: refuse when the working tree
@@ -1071,7 +1245,7 @@ fn reset_commit(
     // the target (e.g. cherry-pick --abort after a local edit to an unrelated
     // file). When HEAD already matches the target, this is a no-op check.
     if mode == ResetMode::Merge {
-        check_keep_safety(repo, &head, &target_oid)?;
+        check_keep_safety(repo, &head, &target_oid, allow_gitlink_overwrite)?;
     }
 
     // Get the old OID for reflog and ORIG_HEAD.
@@ -1129,10 +1303,11 @@ fn reset_commit(
             bail!("fatal: this operation must be run in a work tree");
         }
         if repo.work_tree.is_some() {
-            let wt = repo.work_tree.as_deref().expect("worktree checked above");
+            let _wt = repo.work_tree.as_deref().expect("worktree checked above");
             if mode == ResetMode::Merge || mode == ResetMode::Keep {
-                let obstruction = find_untracked_obstruction(wt, &old_index, &new_index);
-                if let Some((path, is_dir)) = obstruction {
+                if let Some((path, is_dir)) =
+                    find_untracked_obstruction(repo, &old_index, &new_index)?
+                {
                     if is_dir {
                         bail!("Updating '{}' would lose untracked files in it", path);
                     } else {
@@ -1140,12 +1315,26 @@ fn reset_commit(
                     }
                 }
             }
-            checkout_index_to_worktree(
+            if let Err(e) = checkout_index_to_worktree(
                 repo,
                 &old_index,
                 &mut new_index,
                 Some((&target_oid, Some(commit_spec))),
-            )?;
+                recurse_submodules,
+                recurse_submodules,
+            ) {
+                if recurse_submodules {
+                    let _ = rollback_reset_after_failed_submodule_update(
+                        repo,
+                        &head,
+                        &old_oid,
+                        &target_oid,
+                        &new_index,
+                        recurse_submodules,
+                    );
+                }
+                return Err(e);
+            }
         }
         if !quiet {
             print_head_message(repo, &target_oid)?;
@@ -1181,6 +1370,43 @@ fn reset_commit(
         }
     }
 
+    if recurse_submodules
+        && (mode == ResetMode::Hard || mode == ResetMode::Keep || mode == ResetMode::Merge)
+    {
+        repo.write_index_at(&index_path, &mut new_index)
+            .context("writing index before submodule update")?;
+        if let Err(e) = submodule_update_after_reset(repo) {
+            let _ = rollback_reset_after_failed_submodule_update(
+                repo,
+                &head,
+                &old_oid,
+                &target_oid,
+                &new_index,
+                recurse_submodules,
+            );
+            return Err(e);
+        }
+        if let Some(ref wt) = repo.work_tree {
+            for entry in &mut new_index.entries {
+                if entry.stage() != 0 {
+                    continue;
+                }
+                let path_str = String::from_utf8_lossy(&entry.path);
+                let abs = wt.join(path_str.as_ref());
+                if let Ok(meta) = std::fs::symlink_metadata(&abs) {
+                    use std::os::unix::fs::MetadataExt as _;
+                    entry.ctime_sec = meta.ctime() as u32;
+                    entry.ctime_nsec = meta.ctime_nsec() as u32;
+                    entry.mtime_sec = meta.mtime() as u32;
+                    entry.mtime_nsec = meta.mtime_nsec() as u32;
+                    entry.dev = meta.dev() as u32;
+                    entry.ino = meta.ino() as u32;
+                    entry.size = meta.size() as u32;
+                }
+            }
+        }
+    }
+
     repo.write_index_at(&index_path, &mut new_index)
         .context("writing index")?;
     crate::commands::sparse_checkout::reapply_sparse_checkout_if_configured(repo)?;
@@ -1189,7 +1415,12 @@ fn reset_commit(
 
 /// Check if `--keep` is safe: refuse if there are local uncommitted changes
 /// to files that differ between HEAD and the target.
-fn check_keep_safety(repo: &Repository, head: &HeadState, target_oid: &ObjectId) -> Result<()> {
+fn check_keep_safety(
+    repo: &Repository,
+    head: &HeadState,
+    target_oid: &ObjectId,
+    allow_gitlink_path_overwrite: bool,
+) -> Result<()> {
     let head_oid = match head.oid() {
         Some(oid) => *oid,
         None => return Ok(()), // unborn branch, nothing to protect
@@ -1254,6 +1485,24 @@ fn check_keep_safety(repo: &Repository, head: &HeadState, target_oid: &ObjectId)
     for path in &changed_paths {
         let path_str = String::from_utf8_lossy(path);
 
+        // Replacing a checked-out submodule (gitlink) with a regular file or a directory of files
+        // would destroy the submodule work tree; `reset --keep` / `--merge` must fail (`t7112`).
+        // With `--recurse-submodules`, Git allows the destructive transition (tests replace
+        // submodule with file / directory).
+        if !allow_gitlink_path_overwrite {
+            if let Some(h) = head_map.get(path) {
+                if h.mode == MODE_GITLINK && target_replaces_gitlink_path(path, &target_map) {
+                    let abs_path = work_tree.join(path_str.as_ref());
+                    if abs_path.is_dir() && abs_path.join(".git").exists() {
+                        bail!(
+                            "Entry '{}' would be overwritten by merge. Cannot merge.",
+                            path_str
+                        );
+                    }
+                }
+            }
+        }
+
         // Check index vs HEAD.
         let head_entry = head_map.get(path);
         let idx_entry = index_map.get(path);
@@ -1278,7 +1527,19 @@ fn check_keep_safety(repo: &Repository, head: &HeadState, target_oid: &ObjectId)
         // Check working tree vs index.
         let abs_path = work_tree.join(&*path_str);
         if let Some(idx_e) = idx_entry {
-            if abs_path.exists() {
+            if idx_e.mode == MODE_GITLINK {
+                if abs_path.is_file() || abs_path.is_symlink() {
+                    bail!("Entry '{}' not uptodate. Cannot merge.", path_str);
+                }
+                let dot_git = abs_path.join(".git");
+                if abs_path.is_dir() && dot_git.exists() {
+                    if let Some(wt_oid) = read_submodule_head_commit_oid(&abs_path) {
+                        if wt_oid != idx_e.oid {
+                            bail!("Entry '{}' not uptodate. Cannot merge.", path_str);
+                        }
+                    }
+                }
+            } else if abs_path.exists() {
                 // Compare file content with index entry.
                 if let Ok(content) = std::fs::read(&abs_path) {
                     let worktree_oid = hash_blob_content(&content);
@@ -1293,7 +1554,36 @@ fn check_keep_safety(repo: &Repository, head: &HeadState, target_oid: &ObjectId)
         } else if abs_path.exists() {
             // Untracked file would be overwritten.
             let target_entry = target_map.get(path);
-            if target_entry.is_some() {
+            if let Some(te) = target_entry {
+                if te.mode == MODE_GITLINK {
+                    let meta = std::fs::symlink_metadata(&abs_path).ok();
+                    let is_dir = meta.is_some_and(|m| m.file_type().is_dir());
+                    if is_dir && worktree_dir_is_empty_for_new_gitlink(&abs_path) {
+                        continue;
+                    }
+                    if is_dir && head_tracked_directory_prefix(path, &head_map) {
+                        if gitlink_replaces_clean_tracked_directory(
+                            repo, &work_tree, path, &head_map, &index_map,
+                        )? {
+                            continue;
+                        }
+                    }
+                    let is_untracked_plain_file = std::fs::symlink_metadata(&abs_path)
+                        .map(|m| m.file_type().is_file())
+                        .unwrap_or(false);
+                    if is_untracked_plain_file {
+                        if let Ok(mut im) = IgnoreMatcher::from_repository(repo) {
+                            // Pass no index: the path is not in HEAD/index; exclude rules must apply.
+                            if im
+                                .check_path(repo, None, path_str.as_ref(), false)
+                                .map(|(ig, _)| ig)
+                                .unwrap_or(false)
+                            {
+                                continue;
+                            }
+                        }
+                    }
+                }
                 bail!(
                     "Entry '{}' would be overwritten by merge. Cannot merge.",
                     path_str
@@ -1310,12 +1600,54 @@ fn hash_blob_content(data: &[u8]) -> ObjectId {
     Odb::hash_object_data(ObjectKind::Blob, data)
 }
 
+/// True when `target` will replace a gitlink at `path` with a non-submodule tree entry.
+fn target_replaces_gitlink_path(path: &[u8], target_map: &HashMap<Vec<u8>, &IndexEntry>) -> bool {
+    match target_map.get(path) {
+        Some(e) => e.mode != MODE_GITLINK,
+        None => false,
+    }
+}
+
+/// Read the commit OID currently checked out in a submodule work tree (via its `.git` file/dir).
+fn read_submodule_head_commit_oid(submodule_worktree: &Path) -> Option<ObjectId> {
+    let dot_git = submodule_worktree.join(".git");
+    if !dot_git.exists() {
+        return None;
+    }
+    let git_dir = if dot_git.is_file() {
+        let content = std::fs::read_to_string(&dot_git).ok()?;
+        let line = content.strip_prefix("gitdir: ")?.trim();
+        let p = Path::new(line);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            submodule_worktree.join(p)
+        }
+    } else {
+        dot_git
+    };
+    let head_txt = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head_txt = head_txt.trim();
+    let oid_hex = if let Some(name) = head_txt.strip_prefix("ref: ") {
+        std::fs::read_to_string(git_dir.join(name))
+            .ok()?
+            .trim()
+            .to_owned()
+    } else {
+        head_txt.to_owned()
+    };
+    ObjectId::from_hex(oid_hex.trim()).ok()
+}
+
 pub(crate) fn check_untracked_cherry_pick_obstruction(
     work_tree: &Path,
     old_index: &Index,
     merged_index: &Index,
 ) -> Result<()> {
-    if let Some((path, _is_dir)) = find_untracked_obstruction(work_tree, old_index, merged_index) {
+    let Ok(repo) = Repository::discover(Some(work_tree)) else {
+        return Ok(());
+    };
+    if let Some((path, _is_dir)) = find_untracked_obstruction(&repo, old_index, merged_index)? {
         bail!(
             "The following untracked working tree files would be overwritten by merge:\n\t{path}\nPlease move or remove them before you merge."
         );
@@ -1323,12 +1655,137 @@ pub(crate) fn check_untracked_cherry_pick_obstruction(
     Ok(())
 }
 
-fn find_untracked_obstruction(
+/// True when `HEAD` records tracked paths under `dir_path/` (flattened tree paths).
+fn head_tracked_directory_prefix(
+    dir_path: &[u8],
+    head_map: &HashMap<Vec<u8>, &IndexEntry>,
+) -> bool {
+    let mut prefix = dir_path.to_vec();
+    prefix.push(b'/');
+    head_map.keys().any(|k| k.starts_with(&prefix))
+}
+
+/// True when every `HEAD` path under `dir_path/` matches the index and the work tree matches the index.
+fn gitlink_replaces_clean_tracked_directory(
+    repo: &Repository,
     work_tree: &Path,
+    dir_path: &[u8],
+    head_map: &HashMap<Vec<u8>, &IndexEntry>,
+    index_map: &HashMap<Vec<u8>, &IndexEntry>,
+) -> Result<bool> {
+    let mut prefix = dir_path.to_vec();
+    prefix.push(b'/');
+    for (p, h) in head_map {
+        if !p.starts_with(&prefix) {
+            continue;
+        }
+        let Some(i) = index_map.get(p) else {
+            return Ok(false);
+        };
+        if h.oid != i.oid || h.mode != i.mode {
+            return Ok(false);
+        }
+        let path_str = String::from_utf8_lossy(p);
+        let abs = work_tree.join(path_str.as_ref());
+        if h.mode == MODE_SYMLINK {
+            if !abs.is_symlink() {
+                return Ok(false);
+            }
+            let target = std::fs::read_link(&abs)?;
+            let obj = repo.odb.read(&i.oid)?;
+            let expected = String::from_utf8_lossy(&obj.data);
+            if target.to_string_lossy() != expected.as_ref() {
+                return Ok(false);
+            }
+        } else if h.mode == MODE_GITLINK {
+            return Ok(false);
+        } else {
+            if !abs.is_file() {
+                return Ok(false);
+            }
+            let disk = std::fs::read(&abs)?;
+            if hash_blob_content(&disk) != i.oid {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+
+/// True when `dir` exists, is a directory, and contains nothing except `.` / `..` / `.git`.
+///
+/// Git allows `reset --keep` / `--merge` to place a submodule gitlink where the user created an
+/// empty directory first, or where only a leftover `.git` file/dir remains (`t7112-reset-submodule`).
+fn worktree_dir_is_empty_for_new_gitlink(dir: &Path) -> bool {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for e in read.flatten() {
+        let name = e.file_name();
+        if name == "." || name == ".." {
+            continue;
+        }
+        if name == ".git" {
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
+fn open_submodule_repo_for_ignore(super_repo: &Repository, sub_rel: &str) -> Option<Repository> {
+    let wt = super_repo.work_tree.as_ref()?;
+    let sm_dir = wt.join(sub_rel);
+    let modules = submodule_modules_git_dir(&super_repo.git_dir, sub_rel);
+    Repository::open(&modules, Some(&sm_dir))
+        .or_else(|_| Repository::discover(Some(&sm_dir)))
+        .ok()
+}
+
+fn path_is_ignored_for_obstruction(
+    super_repo: &Repository,
+    ign: &mut IgnoreMatcher,
+    old_index: &Index,
+    rel: &str,
+    is_dir: bool,
+    old_paths: &HashSet<Vec<u8>>,
+) -> bool {
+    // Use `old_index`: `new_index` may already list paths we're about to materialize (e.g. a new
+    // gitlink), which would wrongly make `check_path` treat disk paths as "tracked" and not
+    // ignorable (`t7112` `.git/info/exclude`).
+    if let Ok((true, _)) = ign.check_path(super_repo, Some(old_index), rel, is_dir) {
+        return true;
+    }
+    if let Some(slash) = rel.find('/') {
+        let prefix = &rel[..slash];
+        let suffix = &rel[slash + 1..];
+        if old_paths.contains(prefix.as_bytes()) {
+            if let Some(sub_repo) = open_submodule_repo_for_ignore(super_repo, prefix) {
+                if let Ok(mut sub_ign) = IgnoreMatcher::from_repository(&sub_repo) {
+                    let sub_index = sub_repo.load_index().ok();
+                    if let Ok((true, _)) =
+                        sub_ign.check_path(&sub_repo, sub_index.as_ref(), suffix, is_dir)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+fn find_untracked_obstruction(
+    repo: &Repository,
     old_index: &Index,
     new_index: &Index,
-) -> Option<(String, bool)> {
+) -> Result<Option<(String, bool)>> {
+    let work_tree = repo
+        .work_tree
+        .as_ref()
+        .context("obstruction check needs work tree")?;
     let old_paths: HashSet<Vec<u8>> = old_index.entries.iter().map(|e| e.path.clone()).collect();
+    let mut ignore_matcher = IgnoreMatcher::from_repository(repo).ok();
 
     for entry in &new_index.entries {
         if entry.stage() != 0 {
@@ -1371,10 +1828,18 @@ fn find_untracked_obstruction(
         let is_dir = std::fs::symlink_metadata(&abs)
             .map(|m| m.file_type().is_dir())
             .unwrap_or(false);
-        return Some((rel, is_dir));
+        if is_dir && entry.mode == MODE_GITLINK && worktree_dir_is_empty_for_new_gitlink(&abs) {
+            continue;
+        }
+        if let Some(ref mut im) = ignore_matcher {
+            if path_is_ignored_for_obstruction(repo, im, old_index, &rel, is_dir, &old_paths) {
+                continue;
+            }
+        }
+        return Ok(Some((rel, is_dir)));
     }
 
-    None
+    Ok(None)
 }
 
 /// Print "Unstaged changes after reset:" with modified files (mixed mode).
@@ -1739,6 +2204,8 @@ fn checkout_index_to_worktree(
     old_index: &Index,
     new_index: &mut Index,
     smudge: Option<(&ObjectId, Option<&str>)>,
+    recurse_submodules: bool,
+    force_submodule_removal: bool,
 ) -> Result<()> {
     let work_tree = match &repo.work_tree {
         Some(p) => p.clone(),
@@ -1754,6 +2221,12 @@ fn checkout_index_to_worktree(
 
     let old_paths: HashSet<Vec<u8>> = old_index.entries.iter().map(|e| e.path.clone()).collect();
     let new_paths: HashSet<Vec<u8>> = new_index.entries.iter().map(|e| e.path.clone()).collect();
+    let old_map: HashMap<&[u8], &IndexEntry> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| (e.path.as_slice(), e))
+        .collect();
 
     // Remove paths that are no longer present in the new index.
     // Sort by descending path length so nested files are removed before parent directories
@@ -1763,6 +2236,23 @@ fn checkout_index_to_worktree(
     for old_path in to_drop {
         let rel = String::from_utf8_lossy(&old_path).into_owned();
         let abs = work_tree.join(&rel);
+        if let Some(oe) = old_map.get(old_path.as_slice()) {
+            if oe.mode == MODE_GITLINK {
+                if force_submodule_removal {
+                    remove_submodule_worktree_for_reset(
+                        repo,
+                        &work_tree,
+                        &rel,
+                        recurse_submodules,
+                        true,
+                    )?;
+                    remove_empty_parent_dirs(&work_tree, &abs);
+                }
+                // Without `--recurse-submodules`, match Git: keep the submodule work tree on disk
+                // when the gitlink disappears from the index (`t7112`).
+                continue;
+            }
+        }
         remove_worktree_path_best_effort(&abs);
         remove_empty_parent_dirs(&work_tree, &abs);
     }
@@ -1796,30 +2286,64 @@ fn checkout_index_to_worktree(
             std::fs::create_dir_all(parent)?;
         }
 
-        if entry.mode == MODE_GITLINK {
-            // Submodules are represented as gitlinks: their OIDs are commit
-            // objects in the submodule's object store, not blobs in ours.
-            // Materialize only the directory path in the superproject.
-            if abs_path.is_file() || abs_path.is_symlink() {
-                std::fs::remove_file(&abs_path)?;
-            } else if abs_path.is_dir() && abs_path.join(".git").exists() {
-                if let Ok(meta) = std::fs::symlink_metadata(&abs_path) {
-                    use std::os::unix::fs::MetadataExt;
-                    entry.ctime_sec = meta.ctime() as u32;
-                    entry.ctime_nsec = meta.ctime_nsec() as u32;
-                    entry.mtime_sec = meta.mtime() as u32;
-                    entry.mtime_nsec = meta.mtime_nsec() as u32;
-                    entry.dev = meta.dev() as u32;
-                    entry.ino = meta.ino() as u32;
-                    entry.uid = meta.uid();
-                    entry.gid = meta.gid();
-                    entry.size = meta.len() as u32;
+        if let Some(old_e) = old_map.get(entry.path.as_slice()) {
+            if old_e.mode == MODE_GITLINK && entry.mode != MODE_GITLINK {
+                let dot_git = abs_path.join(".git");
+                let submodule_checked_out = abs_path.exists() && dot_git.exists();
+                if !force_submodule_removal {
+                    if submodule_checked_out {
+                        bail!("Cannot update submodule:\n{path_str}");
+                    }
+                } else {
+                    remove_submodule_worktree_for_reset(
+                        repo,
+                        &work_tree,
+                        &path_str,
+                        recurse_submodules,
+                        false,
+                    )?;
                 }
-                continue;
-            } else if abs_path.is_dir() {
-                std::fs::remove_dir_all(&abs_path)?;
             }
-            std::fs::create_dir_all(&abs_path)?;
+        }
+
+        if entry.mode == MODE_GITLINK {
+            if recurse_submodules {
+                let force_populate = match old_map.get(entry.path.as_slice()) {
+                    None => true,
+                    Some(old) => old.mode != MODE_GITLINK || old.oid != entry.oid,
+                };
+                crate::commands::checkout::checkout_gitlink_worktree_entry(
+                    repo,
+                    &work_tree,
+                    &path_str,
+                    &entry.oid,
+                    force_populate,
+                )?;
+            } else {
+                // Submodules are represented as gitlinks: their OIDs are commit
+                // objects in the submodule's object store, not blobs in ours.
+                // Materialize only the directory path in the superproject.
+                if abs_path.is_file() || abs_path.is_symlink() {
+                    std::fs::remove_file(&abs_path)?;
+                } else if abs_path.is_dir() && abs_path.join(".git").exists() {
+                    if let Ok(meta) = std::fs::symlink_metadata(&abs_path) {
+                        use std::os::unix::fs::MetadataExt;
+                        entry.ctime_sec = meta.ctime() as u32;
+                        entry.ctime_nsec = meta.ctime_nsec() as u32;
+                        entry.mtime_sec = meta.mtime() as u32;
+                        entry.mtime_nsec = meta.mtime_nsec() as u32;
+                        entry.dev = meta.dev() as u32;
+                        entry.ino = meta.ino() as u32;
+                        entry.uid = meta.uid();
+                        entry.gid = meta.gid();
+                        entry.size = meta.len() as u32;
+                    }
+                    continue;
+                } else if abs_path.is_dir() {
+                    std::fs::remove_dir_all(&abs_path)?;
+                }
+                std::fs::create_dir_all(&abs_path)?;
+            }
 
             if let Ok(meta) = std::fs::symlink_metadata(&abs_path) {
                 use std::os::unix::fs::MetadataExt;
@@ -1910,6 +2434,54 @@ fn checkout_index_to_worktree(
         }
     }
 
+    Ok(())
+}
+
+/// Remove a submodule work tree (and nested submodules when `recurse_submodules`) before dropping
+/// a gitlink from the superproject index (`reset --recurse-submodules`).
+///
+/// When `remove_modules_git_dir` is true, also remove `.git/modules/<rel>` after clearing the
+/// work tree (used when the gitlink is removed from the index entirely). When replacing a gitlink
+/// with a tracked blob at the same path, pass `false` so user state under `.git/modules` (e.g.
+/// `info/exclude`) is preserved (`t7112-reset-submodule`).
+fn remove_submodule_worktree_for_reset(
+    super_repo: &Repository,
+    super_work_tree: &Path,
+    rel: &str,
+    recurse_submodules: bool,
+    remove_modules_git_dir: bool,
+) -> Result<()> {
+    let sm_dir = super_work_tree.join(rel);
+    let modules_git = submodule_modules_git_dir(&super_repo.git_dir, rel);
+    let dot_git = sm_dir.join(".git");
+    let had_in_tree_git_dir = sm_dir.exists() && dot_git.is_dir();
+    if sm_dir.exists() && dot_git.is_dir() {
+        let _ =
+            crate::commands::submodule::absorb_submodule_dot_git_dir_into_modules(super_repo, rel);
+    }
+    if sm_dir.exists() && dot_git.exists() {
+        if let Ok(sub_repo) = Repository::open(&modules_git, Some(&sm_dir)) {
+            let sub_index_path = sub_repo.index_path();
+            let sub_old = sub_repo
+                .load_index_at(&sub_index_path)
+                .unwrap_or_else(|_| Index::new());
+            let mut sub_new = Index::new();
+            checkout_index_to_worktree(
+                &sub_repo,
+                &sub_old,
+                &mut sub_new,
+                None,
+                recurse_submodules,
+                recurse_submodules,
+            )?;
+        }
+    }
+    if remove_modules_git_dir && !had_in_tree_git_dir && modules_git.exists() {
+        let _ = std::fs::remove_dir_all(&modules_git);
+    }
+    if sm_dir.exists() {
+        remove_worktree_path_best_effort(&sm_dir);
+    }
     Ok(())
 }
 
