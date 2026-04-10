@@ -466,6 +466,7 @@ pub fn run(mut args: Args) -> Result<()> {
             IgnoredMode::Matching => UntrackedIgnoredMode::Matching,
         };
         let mut uc_slot = index.untracked_cache.take();
+        let mut untracked_from_cache: Option<Vec<String>> = None;
         let trace_perf = std::env::var("GIT_TRACE2_PERF")
             .ok()
             .filter(|s| !s.is_empty());
@@ -474,7 +475,7 @@ pub fn run(mut args: Args) -> Result<()> {
             if !ident_ok {
                 eprintln!("warning: untracked cache is disabled on this system or location");
             } else {
-                let _ = untracked_cache::refresh_untracked_cache_for_status(
+                let refresh_ok = untracked_cache::refresh_untracked_cache_for_status(
                     &repo,
                     &index,
                     work_tree,
@@ -482,7 +483,11 @@ pub fn run(mut args: Args) -> Result<()> {
                     uc,
                     show_all_untracked,
                     uc_mode,
-                );
+                )
+                .is_ok();
+                if refresh_ok && ignored_mode == IgnoredMode::No {
+                    untracked_from_cache = Some(untracked_cache::collect_untracked_from_cache(uc));
+                }
                 if let Some(ref p) = trace_perf {
                     let _ = emit_read_directory_trace(p, Some(uc));
                 }
@@ -491,7 +496,17 @@ pub fn run(mut args: Args) -> Result<()> {
             let _ = emit_read_directory_trace(p, None);
         }
         index.untracked_cache = uc_slot;
-        collect_untracked_and_ignored(&repo, &index, work_tree, ignored_mode, show_all_untracked)?
+        if let Some(untracked) = untracked_from_cache {
+            (untracked, Vec::new())
+        } else {
+            collect_untracked_and_ignored(
+                &repo,
+                &index,
+                work_tree,
+                ignored_mode,
+                show_all_untracked,
+            )?
+        }
     } else {
         (Vec::new(), Vec::new())
     };

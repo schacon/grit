@@ -797,6 +797,41 @@ pub fn refresh_untracked_cache_for_status(
     Ok(())
 }
 
+/// Collect untracked paths from a populated untracked cache tree.
+///
+/// The returned paths are repository-relative and match the cache shape built by
+/// [`refresh_untracked_cache_for_status`], including collapsed `dir/` entries in
+/// normal untracked mode and fully expanded file paths in `-uall` mode.
+#[must_use]
+pub fn collect_untracked_from_cache(uc: &UntrackedCache) -> Vec<String> {
+    fn walk(dir: &UntrackedCacheDir, rel: &str, out: &mut Vec<String>) {
+        for name in &dir.untracked {
+            if rel.is_empty() {
+                out.push(name.clone());
+            } else {
+                out.push(format!("{rel}/{name}"));
+            }
+        }
+        let mut children: Vec<&UntrackedCacheDir> = dir.dirs.iter().filter(|d| d.recurse).collect();
+        children.sort_by(|a, b| a.name.cmp(&b.name));
+        for child in children {
+            let child_rel = if rel.is_empty() {
+                child.name.clone()
+            } else {
+                format!("{rel}/{}", child.name)
+            };
+            walk(child, &child_rel, out);
+        }
+    }
+
+    let mut out = Vec::new();
+    if let Some(root) = uc.root.as_ref() {
+        walk(root, "", &mut out);
+    }
+    out.sort();
+    out
+}
+
 fn read_directory_recursive(
     repo: &Repository,
     index: &Index,

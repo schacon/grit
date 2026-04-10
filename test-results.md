@@ -1,5 +1,14 @@
 # Test results
 
+**2026-04-10 (status perf phase2 / untracked cache collection fast-path)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo test -p grit-lib --lib`: 166 passed
+- `./scripts/run-tests.sh t7063-status-untracked-cache.sh`: 12/58
+- `./scripts/run-tests.sh t7508-status.sh`: 48/126
+- `./scripts/run-tests.sh t7060-wtstatus.sh`: 10/17
+- `./scripts/run-tests.sh t7519-status-fsmonitor.sh`: 8/33
+
 **2026-04-10 (t5705 / session ID in capabilities)**
 
 - `cargo test -p grit-lib --lib`: 160 passed
