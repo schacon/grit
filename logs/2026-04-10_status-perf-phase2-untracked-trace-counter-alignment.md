@@ -66,3 +66,48 @@
 - `./scripts/run-tests.sh t7063-status-untracked-cache.sh`: **24/58** (from 14/58)
 - `./scripts/run-tests.sh t7519-status-fsmonitor.sh`: 27/33 (no regression)
 
+## Follow-up increment — UNTR mode-bypass and invalidation parity refinement
+
+### Additional change summary
+
+1. **Status-side UNTR bypass parity for explicit `-u*` overrides**
+   - `grit/src/commands/status.rs` now bypasses untracked-cache refresh only when
+     explicit CLI `-u*` conflicts with cache mode and cache mode matches current config,
+     aligning with upstream mode-switch behavior in `t7063`.
+   - When bypassing, trace emission now writes only `....path:` (no zero counters), matching
+     expected `get_relevant_traces` output.
+
+2. **Cache traversal excludes `check_only` nodes from recursion output**
+   - `grit-lib/src/untracked_cache.rs` cache-source traversal now filters recursive children
+     with `d.recurse && !d.check_only`, preventing hidden check-only subtrees from being
+     walked into visible untracked output.
+
+3. **UNTR `show_all` expansion parity**
+   - For `-uall` refreshes, directory handling now goes directly through
+     `read_directory_recursive(..., show_all=true)` to produce full file-level entries and
+     expected trace-open counts.
+
+4. **Per-directory `.gitignore` change invalidation and OID persistence**
+   - Added per-directory ignore-file OID tracking in `read_directory_recursive`.
+   - On OID changes for valid nodes, mark gitignore invalidation and clear cached untracked
+     entries recursively for that node, matching trace and dump expectations around test 17+.
+   - Persist directory exclude OIDs (with root/special handling) so UNTR dump lines match
+     expected root/exclude hash shape in `t7063` fixtures.
+
+5. **Invalidation preserves check-only placeholders**
+   - `invalidate_directory()` no longer clears `recurse` bit on `check_only` children, preserving
+     expected serialized placeholder nodes across index path invalidations (tests 20+ shape checks).
+
+### Follow-up validation
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `bash tests/t7063-status-untracked-cache.sh --run=1-20 -v`: **passes through 19/20; only test 20 remains failing**
+- `bash tests/t7519-status-fsmonitor.sh -v`: **33/33** (no regression)
+- `./scripts/run-tests.sh t7063-status-untracked-cache.sh`: **34/58** (from 24/58)
+- `./scripts/run-tests.sh t7519-status-fsmonitor.sh`: 27/33 (no regression)
+- `./scripts/run-tests.sh t7508-status.sh`: 94/126 (no regression)
+- `./scripts/run-tests.sh t7060-wtstatus.sh`: 12/17 (no regression)
+- `./scripts/run-tests.sh t7065-status-rename.sh`: 28/28 (no regression)
+

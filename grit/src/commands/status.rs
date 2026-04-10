@@ -587,6 +587,12 @@ pub fn run(mut args: Args) -> Result<()> {
     let hide_untracked = untracked_mode == "no";
 
     let untracked_cache_enabled = index.untracked_cache.is_some();
+    let untracked_mode_overridden = args.untracked.is_some();
+    let requested_uc_flags = if show_all_untracked {
+        0
+    } else {
+        untracked_cache::DIR_SHOW_OTHER_DIRECTORIES | untracked_cache::DIR_HIDE_EMPTY_DIRECTORIES
+    };
     let fsmonitor_disabled_in_cli = is_fsmonitor_disabled_in_cli(&config);
     let (mut untracked, mut ignored_files) = if !hide_untracked {
         let uc_mode = match ignored_mode {
@@ -600,30 +606,42 @@ pub fn run(mut args: Args) -> Result<()> {
             .ok()
             .filter(|s| !s.is_empty());
         if let Some(uc) = uc_slot.as_mut() {
-            let ident_ok = ident_matches_worktree(uc, work_tree);
-            if !ident_ok {
-                eprintln!("warning: untracked cache is disabled on this system or location");
-            } else {
-                let refresh_ok = untracked_cache::refresh_untracked_cache_for_status(
-                    &repo,
-                    &index,
-                    work_tree,
-                    &config,
-                    uc,
-                    show_all_untracked,
-                    uc_mode,
-                )
-                .is_ok();
-                if refresh_ok && ignored_mode == IgnoredMode::No {
-                    untracked_from_cache = Some(
-                        untracked_cache::collect_untracked_from_cache(uc)
-                            .into_iter()
-                            .filter(|p| status_path_matches(p, &user_pathspecs))
-                            .collect(),
-                    );
-                }
+            // Git bypasses UNTR only for explicit CLI `-u*` overrides that conflict with the
+            // cache mode currently stored in the index (t7063: -uall / -unormal bypass tests).
+            // Config-driven mode changes (`status.showUntrackedFiles`) still refresh/populate UNTR.
+            let bypass_untracked_cache = untracked_mode_overridden
+                && uc.dir_flags != requested_uc_flags
+                && uc.dir_flags == untracked_cache::dir_flags_from_config(&config);
+            if bypass_untracked_cache {
                 if let Some(ref p) = trace_perf {
-                    let _ = emit_read_directory_trace(p, Some(uc));
+                    let _ = emit_read_directory_trace(p, None);
+                }
+            } else {
+                let ident_ok = ident_matches_worktree(uc, work_tree);
+                if !ident_ok {
+                    eprintln!("warning: untracked cache is disabled on this system or location");
+                } else {
+                    let refresh_ok = untracked_cache::refresh_untracked_cache_for_status(
+                        &repo,
+                        &index,
+                        work_tree,
+                        &config,
+                        uc,
+                        show_all_untracked,
+                        uc_mode,
+                    )
+                    .is_ok();
+                    if refresh_ok && ignored_mode == IgnoredMode::No {
+                        untracked_from_cache = Some(
+                            untracked_cache::collect_untracked_from_cache(uc)
+                                .into_iter()
+                                .filter(|p| status_path_matches(p, &user_pathspecs))
+                                .collect(),
+                        );
+                    }
+                    if let Some(ref p) = trace_perf {
+                        let _ = emit_read_directory_trace(p, Some(uc));
+                    }
                 }
             }
         } else if let Some(ref p) = trace_perf {
@@ -3413,39 +3431,34 @@ fn emit_read_directory_trace(
         .create(true)
         .append(true)
         .open(path)?;
-    let (node, gi, di, op) = uc.map_or((0u64, 0u64, 0u64, 0u64), |u| {
-        (
-            u.dir_created,
-            u.gitignore_invalidated,
-            u.dir_invalidated,
-            u.dir_opened,
-        )
-    });
     // Field 9 must match upstream `t7063` / `get_relevant_traces` (Git abbreviates `read_directory`).
     writeln!(
         file,
         "{} grit:0  | d0 | main                     | {:<12} |     |           |           | read_directo | ....path:",
         now, "data"
     )?;
+    let Some(uc) = uc else {
+        return Ok(());
+    };
     writeln!(
         file,
         "{} grit:0  | d0 | main                     | {:<12} |     |           |           | read_directo | ....node-creation:{}",
-        now, "data", node
+        now, "data", uc.dir_created
     )?;
     writeln!(
         file,
         "{} grit:0  | d0 | main                     | {:<12} |     |           |           | read_directo | ....gitignore-invalidation:{}",
-        now, "data", gi
+        now, "data", uc.gitignore_invalidated
     )?;
     writeln!(
         file,
         "{} grit:0  | d0 | main                     | {:<12} |     |           |           | read_directo | ....directory-invalidation:{}",
-        now, "data", di
+        now, "data", uc.dir_invalidated
     )?;
     writeln!(
         file,
         "{} grit:0  | d0 | main                     | {:<12} |     |           |           | read_directo | ....opendir:{}",
-        now, "data", op
+        now, "data", uc.dir_opened
     )?;
     Ok(())
 }

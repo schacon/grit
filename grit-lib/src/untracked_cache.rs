@@ -557,7 +557,15 @@ fn file_stat_and_blob_oid(path: &Path) -> Result<(StatDataDisk, ObjectId)> {
             let mut f = fs::File::open(path).map_err(Error::Io)?;
             let mut buf = Vec::new();
             f.read_to_end(&mut buf).map_err(Error::Io)?;
-            let oid = Odb::hash_object_data(ObjectKind::Blob, &buf);
+            let oid = if buf.is_empty() {
+                Odb::hash_object_data(ObjectKind::Blob, &buf)
+            } else {
+                // Match Git's exclude-file oid normalization used by the untracked cache:
+                // parsed non-empty ignore files carry a trailing newline sentinel.
+                let mut normalized = buf;
+                normalized.push(b'\n');
+                Odb::hash_object_data(ObjectKind::Blob, &normalized)
+            };
             Ok((st, oid))
         }
         Err(_) => Ok((StatDataDisk::default(), ObjectId::zero())),
@@ -589,10 +597,20 @@ fn invalidate_directory(uc: &mut UntrackedCache, dir: &mut UntrackedCacheDir) {
     }
 }
 
+fn mark_check_only_placeholders(dir: &mut UntrackedCacheDir) {
+    for child in &mut dir.dirs {
+        if child.check_only {
+            child.recurse = true;
+        }
+        mark_check_only_placeholders(child);
+    }
+}
+
 pub fn invalidate_path(uc: &mut UntrackedCache, path: &str) {
     let Some(mut root) = uc.root.take() else {
         return;
     };
+    mark_check_only_placeholders(&mut root);
     let _ = invalidate_one_component(uc, &mut root, path);
     uc.root = Some(root);
 }
@@ -742,12 +760,17 @@ pub fn refresh_untracked_cache_for_status(
         DIR_SHOW_OTHER_DIRECTORIES | DIR_HIDE_EMPTY_DIRECTORIES
     };
 
+    let mut mode_switched = false;
     if uc.dir_flags != requested_flags && uc.dir_flags != dir_flags_from_config(config) {
         *uc = UntrackedCache::new_shell(requested_flags, untracked_cache_ident(work_tree));
+        mode_switched = true;
     }
     uc.dir_flags = requested_flags;
 
     fill_exclude_oids(repo, work_tree, config, uc)?;
+    if mode_switched {
+        uc.gitignore_invalidated += 1;
+    }
 
     let tracked: BTreeSet<String> = index
         .entries
@@ -846,6 +869,21 @@ fn read_directory_recursive(
     abs: &Path,
     uc: &mut UntrackedCache,
 ) -> Result<()> {
+    let parent_exclude_path = if rel.is_empty() {
+        work_tree.join(".gitignore")
+    } else {
+        work_tree.join(rel).join(".gitignore")
+    };
+    let parent_exclude_oid = file_stat_and_blob_oid(&parent_exclude_path)
+        .map(|(_, oid)| oid)
+        .unwrap_or_else(|_| ObjectId::zero());
+    let parent_exclude_changed = parent_exclude_oid != ucd.exclude_oid;
+    if ucd.valid && parent_exclude_changed {
+        uc.dir_invalidated += 1;
+        uc.gitignore_invalidated += 1;
+        do_invalidate_gitignore(ucd);
+    }
+
     let use_disk = !valid_cached_dir(ucd, abs, check_only);
     let mut src = if use_disk {
         invalidate_directory(uc, ucd);
@@ -857,7 +895,12 @@ fn read_directory_recursive(
         };
         DirSource::Disk(fs::read_dir(&p).map_err(Error::Io)?)
     } else {
-        let mut child_dirs: Vec<_> = ucd.dirs.iter().filter(|d| d.recurse).cloned().collect();
+        let mut child_dirs: Vec<_> = ucd
+            .dirs
+            .iter()
+            .filter(|d| d.recurse && !d.check_only)
+            .cloned()
+            .collect();
         child_dirs.sort_by(|a, b| a.name.cmp(&b.name));
         let mut child_files = ucd.untracked.clone();
         child_files.sort();
@@ -976,6 +1019,7 @@ fn read_directory_recursive(
 
     let meta = fs::symlink_metadata(abs).map_err(Error::Io)?;
     ucd.stat_data = stat_data_from_meta(&meta);
+    ucd.exclude_oid = parent_exclude_oid;
     ucd.valid = true;
     // Match Git's in-memory read_directory behavior: `check_only` directories are kept in
     // the UNTR tree but are not recursively traversed on subsequent status runs.
@@ -1049,13 +1093,37 @@ fn visit_untracked_directory_uc(
         }
     }
 
+    if show_all {
+        let child = lookup_or_create_child(parent_ucd, &name, uc);
+        return read_directory_recursive(
+            repo,
+            index,
+            work_tree,
+            tracked,
+            gitlinks,
+            matcher,
+            ignored_mode,
+            true,
+            false,
+            child,
+            rel,
+            abs,
+            uc,
+        );
+    }
+
     if !show_all {
-        let reuse_collapsed = parent_ucd
+        let reuse_collapsed_index = parent_ucd
             .dirs
             .iter()
-            .find(|d| d.name == name && d.recurse && d.check_only)
-            .is_some_and(|d| valid_cached_dir(d, abs, true));
-        if reuse_collapsed {
+            .find(|d| d.name == name && d.check_only)
+            .and_then(|target| parent_ucd.dirs.iter().position(|d| std::ptr::eq(d, target)))
+            .filter(|&idx| valid_cached_dir(&parent_ucd.dirs[idx], abs, true));
+        if let Some(idx) = reuse_collapsed_index {
+            // `invalidate_directory()` clears child recurse bits on parent refresh.
+            // When reusing a collapsed check-only node, restore recurse so it persists
+            // in the serialized UNTR tree (t7063 dump expectations).
+            parent_ucd.dirs[idx].recurse = true;
             let collapsed = format!("{name}/");
             if !parent_ucd.untracked.iter().any(|u| u == &collapsed) {
                 parent_ucd.untracked.push(collapsed);
@@ -1082,25 +1150,6 @@ fn visit_untracked_directory_uc(
         uc,
     )?;
 
-    if show_all {
-        let child = lookup_or_create_child(parent_ucd, &name, uc);
-        return read_directory_recursive(
-            repo,
-            index,
-            work_tree,
-            tracked,
-            gitlinks,
-            matcher,
-            ignored_mode,
-            true,
-            false,
-            child,
-            rel,
-            abs,
-            uc,
-        );
-    }
-
     if !sub_untracked.is_empty() && !sub_ignored.is_empty() {
         let child = lookup_or_create_child(parent_ucd, &name, uc);
         return read_directory_recursive(
@@ -1121,6 +1170,42 @@ fn visit_untracked_directory_uc(
     }
 
     if sub_untracked.is_empty() && !sub_ignored.is_empty() {
+        if let Some(child) = parent_ucd
+            .dirs
+            .iter_mut()
+            .find(|d| d.name == name && d.check_only)
+        {
+            // Keep existing collapsed check-only placeholders present in the cache tree
+            // even when the directory becomes fully ignored after exclude updates.
+            child.recurse = true;
+            child.valid = true;
+            child.untracked.clear();
+            child.dirs.clear();
+            child.exclude_oid = ObjectId::zero();
+            if let Ok(meta) = fs::symlink_metadata(abs) {
+                child.stat_data = stat_data_from_meta(&meta);
+            }
+        }
+        return Ok(());
+    }
+
+    if sub_untracked.is_empty() && sub_ignored.is_empty() {
+        if let Some(child) = parent_ucd
+            .dirs
+            .iter_mut()
+            .find(|d| d.name == name && d.check_only)
+        {
+            // Preserve existing placeholder nodes for directories that now contain no
+            // untracked entries but are part of an already-materialized check-only subtree.
+            child.recurse = true;
+            child.valid = true;
+            child.untracked.clear();
+            child.dirs.clear();
+            child.exclude_oid = ObjectId::zero();
+            if let Ok(meta) = fs::symlink_metadata(abs) {
+                child.stat_data = stat_data_from_meta(&meta);
+            }
+        }
         return Ok(());
     }
 
@@ -1150,6 +1235,8 @@ fn populate_check_only_subtree(
 ) {
     root.untracked.clear();
     root.dirs.clear();
+    // Keep check-only directories in UNTR output shape (Git writes them with `recurse` set),
+    // but runtime scans skip them via `!d.check_only` in cache traversal.
     root.recurse = true;
     root.check_only = true;
     root.valid = true;

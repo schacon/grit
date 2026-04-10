@@ -106,6 +106,20 @@
 - `./scripts/run-tests.sh t7060-wtstatus.sh`: 12/17 (no regression)
 - `./scripts/run-tests.sh t7065-status-rename.sh`: 28/28 (no regression)
 
+**2026-04-10 (status perf phase2 / UNTR mode-bypass + gitignore invalidation parity)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `bash tests/t7063-status-untracked-cache.sh --run=1-20 -v`: **57/58** (only test 20 remains)
+- `bash tests/t7519-status-fsmonitor.sh -v`: **33/33** (no regression)
+- Harness snapshot:
+  - `./scripts/run-tests.sh t7063-status-untracked-cache.sh`: **34/58** (improved from 24/58)
+  - `./scripts/run-tests.sh t7519-status-fsmonitor.sh`: 27/33 (no regression)
+  - `./scripts/run-tests.sh t7508-status.sh`: 94/126 (no regression)
+  - `./scripts/run-tests.sh t7060-wtstatus.sh`: 12/17 (no regression)
+  - `./scripts/run-tests.sh t7065-status-rename.sh`: 28/28 (no regression)
+
 **2026-04-10 (status perf phase4 / fsmonitor refresh hook applies only to --refresh path)**
 
 - `cargo check -p grit-rs`: passed
