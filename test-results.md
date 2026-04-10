@@ -1,5 +1,21 @@
 # Test results
 
+**2026-04-10 (fetch atomic transaction + prune/lock parity pass)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `cargo build --release -p grit-rs`: pass
+- `./scripts/run-tests.sh t5510-fetch.sh`: **178/215** (improved from 174/215 before this iteration)
+- `GUST_BIN=/workspace/target/release/grit bash tests/t5510-fetch.sh -v`: confirms atomic cluster progress
+  - now passing: 31, 33, 34, 35
+  - remaining in atomic cluster: 32 (`reference-transaction` expected extra preparing line for `refs/remotes/origin/HEAD`)
+- Key changes in this increment:
+  - staged + transactional `--atomic` ref updates/deletes in fetch (single apply point + hook phases),
+  - packed-refs rewrite lock path switched to `packed-refs.new` with `create_new(true)` semantics,
+  - loose ref and symref lockfiles now use create-new lock semantics,
+  - prune semantics aligned for explicit CLI refspecs vs prune-tags/pruneTags config interactions.
+
 **2026-04-10 (fetch glob wants + prune scope refinement)**
 
 - `cargo check -p grit-rs`: pass
