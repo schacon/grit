@@ -20,6 +20,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
 use crate::grit_exe;
 
 use crate::commands::sparse_advice::{emit_dirty_sparse_advice, emit_sparse_path_advice};
@@ -604,7 +607,7 @@ pub fn run(args: Args) -> Result<()> {
                 }
             }
             if src_abs.exists() {
-                fs::rename(&src_abs, &dst_abs)
+                rename_worktree_path(&src_abs, &dst_abs, ignore_case, &row.src, &row.dst)
                     .with_context(|| format!("renaming '{}' failed", row.src))?;
             }
             if row_is_gitlink {
@@ -666,8 +669,14 @@ pub fn run(args: Args) -> Result<()> {
                             fs::create_dir_all(parent)?;
                         }
                         if src_abs.exists() {
-                            fs::rename(&src_abs, &dst_abs)
-                                .with_context(|| format!("renaming '{}' failed", row.src))?;
+                            rename_worktree_path(
+                                &src_abs,
+                                &dst_abs,
+                                ignore_case,
+                                &row.src,
+                                &row.dst,
+                            )
+                            .with_context(|| format!("renaming '{}' failed", row.src))?;
                         }
                         dirty_advice.push(row.dst.clone());
                     }
@@ -979,4 +988,96 @@ fn normalise_path(path: &str) -> String {
         }
     }
     parts.join("/")
+}
+
+/// When the work tree is on a case-insensitive volume, `rename("a", "A")` can fail or no-op because
+/// both paths resolve to the same directory entry. Git relies on `core.ignorecase` plus a
+/// two-step rename via a temporary name (see `t13320-mv-case-sensitive` on macOS/Windows).
+fn rename_worktree_path(
+    src: &Path,
+    dst: &Path,
+    ignore_case_config: bool,
+    src_rel: &str,
+    dst_rel: &str,
+) -> std::io::Result<()> {
+    if needs_case_only_two_step_rename(src, dst, ignore_case_config, src_rel, dst_rel)? {
+        rename_via_intermediate_temp(src, dst)
+    } else {
+        fs::rename(src, dst)
+    }
+}
+
+fn needs_case_only_two_step_rename(
+    src: &Path,
+    dst: &Path,
+    ignore_case_config: bool,
+    src_rel: &str,
+    dst_rel: &str,
+) -> std::io::Result<bool> {
+    if src_rel == dst_rel {
+        return Ok(false);
+    }
+    if !src_rel.eq_ignore_ascii_case(dst_rel) {
+        return Ok(false);
+    }
+    if ignore_case_config {
+        return Ok(true);
+    }
+    same_filesystem_identity(src, dst)
+}
+
+#[cfg(unix)]
+fn same_filesystem_identity(a: &Path, b: &Path) -> std::io::Result<bool> {
+    let ma = match fs::metadata(a) {
+        Ok(m) => m,
+        Err(_) => return Ok(false),
+    };
+    let mb = match fs::metadata(b) {
+        Ok(m) => m,
+        Err(_) => return Ok(false),
+    };
+    Ok(ma.dev() == mb.dev() && ma.ino() == mb.ino())
+}
+
+#[cfg(not(unix))]
+fn same_filesystem_identity(_a: &Path, _b: &Path) -> std::io::Result<bool> {
+    Ok(false)
+}
+
+fn rename_via_intermediate_temp(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let parent = dst
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let stem = dst
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let pid = std::process::id();
+    for n in 0u64..10_000 {
+        let inter = parent.join(format!(".grit-mv-case-{pid}-{n}-{stem}"));
+        if inter == src || inter == dst {
+            continue;
+        }
+        match fs::rename(src, &inter) {
+            Ok(()) => match fs::rename(&inter, dst) {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    let _ = fs::rename(&inter, src);
+                    return Err(e);
+                }
+            },
+            Err(e)
+                if e.kind() == std::io::ErrorKind::AlreadyExists
+                    || e.kind() == std::io::ErrorKind::NotFound =>
+            {
+                continue;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not allocate a unique intermediate path for case-only rename",
+    ))
 }

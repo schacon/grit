@@ -389,7 +389,7 @@ t13280-tag-list-format	t1	yes	34	34	0	true	ok	0
 t13290-commit-allow-empty-msg	t1	yes	30	30	0	true	ok	0
 t13300-add-executable-bit	t1	yes	32	32	0	true	ok	0
 t13310-rm-sparse-checkout	t1	yes	31	31	0	true	ok	0
-t13320-mv-case-sensitive	t1	yes	30	29	1	false	ok	0
+t13320-mv-case-sensitive	t1	yes	30	30	0	true	ok	0
 t13330-switch-reflog-entry	t1	yes	30	29	1	false	ok	0
 t13340-restore-merge-conflict	t1	yes	30	30	0	true	ok	0
 t13350-reset-orphan-branch	t1	yes	30	30	0	true	ok	0

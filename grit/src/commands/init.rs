@@ -578,6 +578,14 @@ fn create_git_dir(git_dir: &Path, opts: CreateGitDirOptions<'_>) -> Result<()> {
         fs::write(&config_path, config_content)?;
     }
 
+    // git/setup.c: if `.git/config` is visible as `CoNfIg`, the filesystem is case-insensitive.
+    if !is_reinit && !bare && fs::metadata(git_dir.join("CoNfIg")).is_ok() {
+        let content = fs::read_to_string(&config_path)?;
+        let mut cfg = ConfigFile::parse(&config_path, &content, ConfigScope::Local)?;
+        cfg.set("core.ignorecase", "true")?;
+        cfg.write()?;
+    }
+
     // Write description (only on fresh init)
     let desc_path = git_dir.join("description");
     if !desc_path.exists() {
