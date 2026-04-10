@@ -3839,6 +3839,10 @@ fn preprocess_diff_args(rest: &[String]) -> Vec<String> {
                 result.push("--word-diff=plain".to_owned());
                 i += 1;
             }
+        } else if arg == "--color-words" {
+            // Keep paths separate: only `=<regex>` carries a pattern (matches Git / clap `require_equals`).
+            result.push("--color-words=".to_owned());
+            i += 1;
         } else if let Some(n) = arg.strip_prefix("-U") {
             // `-U<N>` without a space
             result.push(format!("--unified={n}"));
