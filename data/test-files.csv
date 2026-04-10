@@ -932,7 +932,7 @@ t5512-ls-remote	t5	yes	40	16	24	false	ok	0
 t5513-fetch-track	t5	yes	2	1	1	false	ok	0
 t5514-fetch-multiple	t5	yes	25	3	22	false	ok	0
 t5515-fetch-merge-logic	t5	yes	65	1	64	false	ok	0
-t5516-fetch-push	t5	yes	124	40	84	false	ok	0
+t5516-fetch-push	t5	yes	124	52	72	false	ok	0
 t5517-push-mirror	t5	yes	13	7	6	false	ok	0
 t5518-fetch-exit-status	t5	yes	3	2	1	false	ok	0
 t5519-push-alternates	t5	yes	8	7	1	false	ok	0
@@ -963,14 +963,14 @@ t5540-http-push-webdav	t5	skip	0	0	0	false	ok	2
 t5541-http-push-smart	t5	skip	20	0	0	false	timeout	0
 t5541-remote-subcommands	t5	yes	5	4	1	false	ok	0
 t5542-push-advanced	t5	yes	4	4	0	true	ok	0
-t5542-push-http-shallow	t5	yes	3	1	2	false	ok	0
+t5542-push-http-shallow	t5	yes	3	3	0	true	ok	0
 t5543-atomic-push	t5	yes	13	13	0	true	ok	0
 t5544-pack-objects-hook	t5	yes	7	3	4	false	ok	0
 t5545-push-options	t5	yes	13	13	0	true	ok	0
 t5546-receive-limits	t5	yes	17	14	3	false	ok	0
 t5547-push-quarantine	t5	yes	6	5	1	false	ok	0
 t5548-push-porcelain	t5	skip	11	0	0	false	ok	0
-t5549-fetch-push-http	t5	yes	3	0	3	false	ok	0
+t5549-fetch-push-http	t5	yes	3	3	0	true	ok	0
 t5550-http-fetch-dumb	t5	skip	57	0	0	false	ok	0
 t5551-http-fetch-smart	t5	skip	36	0	0	false	timeout	6
 t5552-skipping-fetch-negotiator	t5	yes	0	0	0	false	timeout	0

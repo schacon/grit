@@ -1,5 +1,17 @@
 # Test results
 
+**2026-04-10 (phase 5 / HTTP shallow push + fsck parity)**
+
+- `cargo build --release -p grit-rs`: pass
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo clippy --fix --allow-dirty -p grit-rs`: pass (reverted unrelated formatting-only edits before commit)
+- `cargo test -p grit-lib --lib`: 166 passed
+- `./scripts/run-tests.sh t5549-fetch-push-http.sh`: 3/3
+- `./scripts/run-tests.sh t5542-push-http-shallow.sh`: 3/3
+- `./scripts/run-tests.sh t5545-push-options.sh`: 13/13
+- `./scripts/run-tests.sh t5516-fetch-push.sh`: 52/124 (broad integration baseline; not a regression target for this slice)
+
 **2026-04-10 (phase 4 / atomic push parity)**
 
 - `cargo check -p grit-rs`: pass

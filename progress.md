@@ -6,15 +6,17 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   340 |
+| Completed   |   342 |
 | In progress |     5 |
-| Remaining   |   426 |
+| Remaining   |   424 |
 | **Total**   |   771 |
 
-Task lines in `PLAN.md`: 340 completed (`[x]`), 5 in progress (`[~]`), 426 remaining (`[ ]`).
+Task lines in `PLAN.md`: 342 completed (`[x]`), 5 in progress (`[~]`), 424 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5542-push-http-shallow` — 3/3 tests pass (shallow HTTP push no longer triggers false `missing tree ... (referenced by ...)` fsck failures: `fsck` reachability walk now honors `.git/shallow` boundaries as synthetic roots and stops traversing parent links beyond those commits, matching Git's shallow semantics)
+- `t5549-fetch-push-http` — 3/3 tests pass (HTTP fetch/push suite re-verified green in current implementation)
 - `t5543-atomic-push` — 13/13 tests pass (`push --atomic`: mirror rollback/report ordering parity for hook rejections, non-fast-forward parenthetical now reports `non-fast-forward`, and `--receive-pack=<wrapper>` path-style failure-path handling delegates through real `git push` while preserving grit-side reporting semantics)
 - `t5545-push-options` — 13/13 tests pass (`push`: config-backed `push.pushOption` defaults now feed hook/env propagation and remote push-options checks; recursive submodule push now forwards effective options; `submodule add` now reattaches checkout from detached HEAD to the remote default branch when possible so nested on-demand pushes update `main` like Git)
 - `t5533-push-cas` — 23/23 tests pass (`push`: `--force-if-includes`, `push.useForceIfIncludes`, explicit `<ref>:<expect>` disable behavior, reflog-aware includes checks, forced-update output markers for CAS-driven rewrites, and proper lease interactions with `--force` / delete / multi-ref pushes)

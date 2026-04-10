@@ -506,6 +506,25 @@ fn missing_object_kind_for_referrer(odb: &Odb, referrer: Option<ObjectId>) -> &'
     }
 }
 
+/// Load shallow boundary commit OIDs from `$GIT_DIR/shallow`.
+fn load_shallow_boundaries(git_dir: &Path) -> HashSet<ObjectId> {
+    let shallow_path = git_dir.join("shallow");
+    let Ok(contents) = fs::read_to_string(&shallow_path) else {
+        return HashSet::new();
+    };
+
+    contents
+        .lines()
+        .filter_map(|line| {
+            let hex = line.trim();
+            if hex.is_empty() {
+                return None;
+            }
+            ObjectId::from_hex(hex).ok()
+        })
+        .collect()
+}
+
 /// Walk all reachable objects from refs and HEAD.
 /// Returns (reachable set, set of OIDs whose content was validated).
 fn walk_reachable(
@@ -526,6 +545,7 @@ fn walk_reachable(
     let mut reachable = HashSet::new();
     let mut validated = HashSet::new();
     let mut queue: VecDeque<(ObjectId, Option<ObjectId>)> = VecDeque::new();
+    let shallow_boundaries = load_shallow_boundaries(repo.git_dir.as_path());
 
     // Seed from HEAD.
     if let Ok(head_oid) = refs::resolve_ref(&repo.git_dir, "HEAD") {
@@ -627,8 +647,12 @@ fn walk_reachable(
             ObjectKind::Commit => {
                 if let Ok(commit) = parse_commit(&obj.data) {
                     queue.push_back((commit.tree, Some(oid)));
-                    for parent in commit.parents {
-                        queue.push_back((parent, Some(oid)));
+                    // In shallow repositories, commits listed in `.git/shallow` are treated as
+                    // synthetic roots: traversal must not follow their parent links.
+                    if !shallow_boundaries.contains(&oid) {
+                        for parent in commit.parents {
+                            queue.push_back((parent, Some(oid)));
+                        }
                     }
                 }
             }

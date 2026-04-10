@@ -560,7 +560,7 @@ commit → check it off → move on.
 
 - [x] `t5405-send-pack-rewind` ████████████████████ 3/3 (0 left) — forced push to replace commit we do not have
 - [x] `t5524-pull-msg` ████████████████████ 3/3 (0 left) — git pull message generation
-- [ ] `t5542-push-http-shallow` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — push from/to a shallow clone over http
+- [x] `t5542-push-http-shallow` ████████████████████ 3/3 (0 left) — push from/to a shallow clone over http (fsck in shallow repos now treats `.git/shallow` commits as synthetic roots, preventing false missing-tree diagnostics after HTTP pushes)
 - [x] `t5321-pack-large-objects` ████████████████████ 2/2 (0 left) — git pack-object with large delta metadata (`GIT_TEST_OE_DELTA_SIZE` path exercised by `pack-objects` REF_DELTA reuse)
 - [ ] `t5557-http-get` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — test downloading a file by URL
 - [ ] `t5565-push-multiple` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — push to group
@@ -571,7 +571,7 @@ commit → check it off → move on.
 - [ ] `t5536-fetch-conflicts` ███████████░░░░░░░░░ 4/7 (3 left) — fetch handles conflicting refspecs correctly
 - [x] `t5308-pack-detect-duplicates` ████████████████████ 6/6 (0 left) — handling of duplicate objects in incoming packfiles
 - [x] `t5309-pack-delta-cycles` ████████████████████ 7/7 (0 left) — test index-pack handling of delta cycles in packfiles
-- [ ] `t5549-fetch-push-http` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — fetch/push functionality using the HTTP protocol
+- [x] `t5549-fetch-push-http` ████████████████████ 3/3 (0 left) — fetch/push functionality using the HTTP protocol (re-verified passing in current push transport implementation)
 - [x] `t5704-protocol-violations` ████████████████████ 3/3 — Test responses to violations of the network protocol. In most
 
 - [x] `t5002-archive-attr-pattern` — git archive attribute pattern tests (19/19)
