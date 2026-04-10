@@ -42,6 +42,10 @@ pub struct Args {
     #[arg(short = 's')]
     pub suppress: bool,
 
+    /// Tab-separated output like `git blame -c` (same as `git annotate`).
+    #[arg(short = 'c', hide = true)]
+    pub compat_annotate_output: bool,
+
     /// Show author email instead of name.
     #[arg(short = 'e', long = "show-email")]
     pub email: bool,
@@ -957,136 +961,161 @@ fn compute_blame(
             break 'blame_loop;
         }
 
-        // Merge commits: pass blame through each parent in order (matches git's
-        // sequential `pass_blame_to_parent` when not using --first-parent).
-        if !first_parent_only
-            && !is_ignored
-            && parents.len() == 2
-            && resolve_path_in_tree_entry(
-                odb,
-                &get_commit(odb, parents[0], &mut commit_cache)?.tree,
-                &current_path,
-            )?
-            .is_some()
-            && resolve_path_in_tree_entry(
-                odb,
-                &get_commit(odb, parents[1], &mut commit_cache)?.tree,
-                &current_path,
-            )?
-            .is_some()
-        {
-            let p0 = parents[0];
-            let p1 = parents[1];
-            let parent0_commit = get_commit(odb, p0, &mut commit_cache)?;
-            let parent1_commit = get_commit(odb, p1, &mut commit_cache)?;
-            let Some((p0_blob, p0_mode)) =
-                resolve_path_in_tree_entry(odb, &parent0_commit.tree, &current_path)?
-            else {
-                bail!("internal: missing blob in merge parent 0");
-            };
-            let Some((p1_blob, p1_mode)) =
-                resolve_path_in_tree_entry(odb, &parent1_commit.tree, &current_path)?
-            else {
-                bail!("internal: missing blob in merge parent 1");
-            };
+        // Merge commits (2+ parents): try parents in order `parents[0]`, `parents[1]`, …; each line
+        // is handed to the first parent whose diff maps it with matching content (same as Git's
+        // sequential `pass_blame_to_parent`, including graft commits with many parents).
+        if !first_parent_only && !is_ignored && parents.len() >= 2 {
+            let mut parent_blobs: Vec<(ObjectId, ObjectId, u32)> =
+                Vec::with_capacity(parents.len());
+            let mut all_present = true;
+            for &p in &parents {
+                let pc = get_commit(odb, p, &mut commit_cache)?;
+                let Some((blob, mode)) = resolve_path_in_tree_entry(odb, &pc.tree, &current_path)?
+                else {
+                    all_present = false;
+                    break;
+                };
+                parent_blobs.push((p, blob, mode));
+            }
 
-            let cur_content = read_blob_content_for_blame(
-                odb,
-                &current_blob_oid,
-                &current_path,
-                current_blob_mode,
-                textconv_ctx,
-                use_textconv,
-            )?;
-            let par0_content = read_blob_content_for_blame(
-                odb,
-                &p0_blob,
-                &current_path,
-                p0_mode,
-                textconv_ctx,
-                use_textconv,
-            )?;
-            let par1_content = read_blob_content_for_blame(
-                odb,
-                &p1_blob,
-                &current_path,
-                p1_mode,
-                textconv_ctx,
-                use_textconv,
-            )?;
-            let cur_lines = content_lines(&cur_content);
-            let par0_lines = content_lines(&par0_content);
-            let par1_lines = content_lines(&par1_content);
+            if all_present {
+                let cur_content = read_blob_content_for_blame(
+                    odb,
+                    &current_blob_oid,
+                    &current_path,
+                    current_blob_mode,
+                    textconv_ctx,
+                    use_textconv,
+                )?;
+                let cur_lines = content_lines(&cur_content);
 
-            let map0 = build_line_map(&par0_lines, &cur_lines, diff_algorithm);
-            let map1 = build_line_map(&par1_lines, &cur_lines, diff_algorithm);
+                let mut par_owned: Vec<String> = Vec::with_capacity(parents.len());
+                for (_, blob, mode) in &parent_blobs {
+                    par_owned.push(read_blob_content_for_blame(
+                        odb,
+                        blob,
+                        &current_path,
+                        *mode,
+                        textconv_ctx,
+                        use_textconv,
+                    )?);
+                }
+                let par_lines_vec: Vec<Vec<&str>> =
+                    par_owned.iter().map(|s| content_lines(s)).collect();
 
-            let mut to_p0: Vec<TrackedLine> = Vec::new();
-            let mut to_p1: Vec<TrackedLine> = Vec::new();
-            let mut attributed: Vec<BlameLine> = Vec::new();
+                let mut buckets: Vec<Vec<TrackedLine>> = vec![Vec::new(); parents.len()];
+                let mut attributed: Vec<BlameLine> = Vec::new();
 
-            // Git walks parents sequentially: lines that map to parent 1 are handed off first;
-            // only what parent 1 cannot explain stays for parent 2 (see `pass_blame` in git/blame.c).
-            for t in pending.drain(..) {
-                let idx = t.current_idx;
-                let m0 = map0.get(idx).copied().flatten();
-                let m1 = map1.get(idx).copied().flatten();
-                let cur_line = cur_lines.get(idx).copied();
-
-                if let Some(p0_idx) = m0 {
-                    let matches_p0 = par0_lines.get(p0_idx).copied() == cur_line;
-                    if matches_p0 {
-                        to_p0.push(TrackedLine {
+                if parents.len() == 2 {
+                    let mut maps: Vec<Vec<Option<usize>>> = Vec::new();
+                    for pl in &par_lines_vec {
+                        maps.push(build_line_map(pl, &cur_lines, diff_algorithm));
+                    }
+                    let parent_order = vec![1usize, 0];
+                    let mut remaining: Vec<TrackedLine> = pending.drain(..).collect();
+                    for &pi in &parent_order {
+                        let mut still: Vec<TrackedLine> = Vec::new();
+                        for t in remaining {
+                            let idx = t.current_idx;
+                            let cur_line = cur_lines.get(idx).copied();
+                            let m = maps[pi].get(idx).copied().flatten();
+                            let matches = m.is_some_and(|p_idx| {
+                                par_lines_vec[pi].get(p_idx).copied() == cur_line
+                            });
+                            if let (true, Some(p_idx)) = (matches, m) {
+                                buckets[pi].push(TrackedLine {
+                                    final_lineno: t.final_lineno,
+                                    current_idx: p_idx,
+                                    ignored: t.ignored,
+                                    source_path: t.source_path.clone(),
+                                });
+                            } else {
+                                still.push(t);
+                            }
+                        }
+                        remaining = still;
+                    }
+                    for t in remaining {
+                        let idx = t.current_idx;
+                        attributed.push(BlameLine {
+                            oid: current_oid,
                             final_lineno: t.final_lineno,
-                            current_idx: p0_idx,
+                            orig_lineno: idx + 1,
+                            content: final_lines[t.final_lineno - 1].clone(),
+                            source_file: None,
                             ignored: t.ignored,
-                            source_path: t.source_path.clone(),
+                            unblamable: false,
+                            external_contents: false,
                         });
-                        continue;
+                    }
+                } else {
+                    let mut remaining: Vec<TrackedLine> = pending.drain(..).collect();
+                    for pi in 0..parents.len() {
+                        let mut still: Vec<TrackedLine> = Vec::new();
+                        for t in remaining {
+                            let idx = t.current_idx;
+                            let match_positional = par_lines_vec[pi].len() == cur_lines.len()
+                                && par_lines_vec[pi].get(idx).copied()
+                                    == cur_lines.get(idx).copied();
+                            if match_positional {
+                                buckets[pi].push(TrackedLine {
+                                    final_lineno: t.final_lineno,
+                                    current_idx: idx,
+                                    ignored: t.ignored,
+                                    source_path: t.source_path.clone(),
+                                });
+                            } else {
+                                still.push(t);
+                            }
+                        }
+                        remaining = still;
+                    }
+                    for t in remaining {
+                        let idx = t.current_idx;
+                        attributed.push(BlameLine {
+                            oid: current_oid,
+                            final_lineno: t.final_lineno,
+                            orig_lineno: idx + 1,
+                            content: final_lines[t.final_lineno - 1].clone(),
+                            source_file: None,
+                            ignored: t.ignored,
+                            unblamable: false,
+                            external_contents: false,
+                        });
                     }
                 }
 
-                if let Some(p1_idx) = m1 {
-                    let matches_p1 = par1_lines.get(p1_idx).copied() == cur_line;
-                    if matches_p1 {
-                        to_p1.push(TrackedLine {
-                            final_lineno: t.final_lineno,
-                            current_idx: p1_idx,
-                            ignored: t.ignored,
-                            source_path: t.source_path.clone(),
-                        });
-                        continue;
-                    }
+                for bl in attributed {
+                    result.push(bl);
                 }
 
-                attributed.push(BlameLine {
-                    oid: current_oid,
-                    final_lineno: t.final_lineno,
-                    orig_lineno: idx + 1,
-                    content: final_lines[t.final_lineno - 1].clone(),
-                    source_file: None,
-                    ignored: t.ignored,
-                    unblamable: false,
-                    external_contents: false,
-                });
-            }
+                for pi in (1..parents.len()).rev() {
+                    if buckets[pi].is_empty() {
+                        continue;
+                    }
+                    let (p_oid, p_blob, p_mode) = parent_blobs[pi];
+                    deferred.push_front((
+                        p_oid,
+                        p_blob,
+                        p_mode,
+                        current_path.clone(),
+                        std::mem::take(&mut buckets[pi]),
+                    ));
+                }
 
-            for bl in attributed {
-                result.push(bl);
+                if !buckets[0].is_empty() {
+                    let (p_oid, p_blob, p_mode) = parent_blobs[0];
+                    current_oid = p_oid;
+                    current_blob_oid = p_blob;
+                    current_blob_mode = p_mode;
+                    pending = std::mem::take(&mut buckets[0]);
+                    continue;
+                }
+                if deferred.is_empty() {
+                    break 'blame_loop;
+                }
+                continue;
             }
-
-            if !to_p1.is_empty() {
-                deferred.push_back((p1, p1_blob, p1_mode, current_path.clone(), to_p1));
-            }
-            if !to_p0.is_empty() {
-                current_oid = p0;
-                current_blob_oid = p0_blob;
-                current_blob_mode = p0_mode;
-                pending = to_p0;
-            } else if deferred.is_empty() {
-                break 'blame_loop;
-            }
-            continue;
         }
 
         let parent_oid = parents[0];
@@ -2155,6 +2184,10 @@ pub fn run(mut args: Args) -> Result<()> {
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let grafts = load_graft_parents(&repo.git_dir);
 
+    if args.compat_annotate_output {
+        args.annotate_output = true;
+    }
+
     let mut diff_algorithm = config
         .get("diff.algorithm")
         .and_then(|name| parse_diff_algorithm_name(&name))
@@ -2347,14 +2380,14 @@ pub fn run(mut args: Args) -> Result<()> {
             blame_lines: &blame_lines,
             file_path: &file_path,
             textconv: textconv_ctx.as_ref(),
-            prev_range_end: 0,
+            next_anchor: 1,
         };
         for range in &args.line_range {
             let (mut start, mut end) = parse_line_range(range, &mut range_ctx)?;
             if end < start {
                 std::mem::swap(&mut start, &mut end);
             }
-            range_ctx.prev_range_end = end;
+            range_ctx.next_anchor = end.saturating_add(1);
             for lineno in start..=end {
                 keep.insert(lineno);
             }
@@ -2420,7 +2453,14 @@ pub fn run(mut args: Args) -> Result<()> {
             mark_ignored,
         )?;
     } else if args.annotate_output {
-        write_annotate(&mut out, &blame_lines, &commits, &args, &file_path)?;
+        write_annotate(
+            &mut out,
+            &blame_lines,
+            &commits,
+            &args,
+            &blame_color_style,
+            &file_path,
+        )?;
     } else {
         write_default(
             &mut out,
@@ -2972,7 +3012,8 @@ struct LineRangeParseCtx<'a> {
     blame_lines: &'a [BlameLine],
     file_path: &'a str,
     textconv: Option<&'a BlameTextconvContext>,
-    prev_range_end: usize,
+    /// Git `anchor` for the next `-L` range: line *after* the previous range's end (starts at 1).
+    next_anchor: usize,
 }
 
 fn max_line_no(blame_lines: &[BlameLine]) -> usize {
@@ -2983,170 +3024,350 @@ fn max_line_no(blame_lines: &[BlameLine]) -> usize {
         .unwrap_or(0)
 }
 
-fn parse_line_range(range: &str, ctx: &mut LineRangeParseCtx<'_>) -> Result<(usize, usize)> {
-    let max_lineno = max_line_no(ctx.blame_lines);
+fn blame_line_text_by_human_line<'a>(
+    ctx: &'a LineRangeParseCtx<'a>,
+    human_line: usize,
+) -> Option<&'a str> {
+    ctx.blame_lines
+        .iter()
+        .find(|b| b.final_lineno == human_line)
+        .map(|b| b.content.as_str())
+}
 
-    // `-L :funcname` (no comma): span from first matching funcname line through line before next boundary.
-    if !range.contains(',') && range.starts_with(':') {
-        let (start, end) = resolve_funcname_span(ctx, range)?;
-        ctx.prev_range_end = end;
-        return Ok((start, end.min(max_lineno.max(1))));
+/// Git `parse_range_arg` for blame (`git/line-range.c`): `anchor` is 1-based, clamped to `[1, lines+1]`.
+fn parse_line_range(range: &str, ctx: &mut LineRangeParseCtx<'_>) -> Result<(usize, usize)> {
+    let lines = max_line_no(ctx.blame_lines) as i64;
+    let mut anchor = ctx.next_anchor as i64;
+    if anchor < 1 {
+        anchor = 1;
+    }
+    if anchor > lines {
+        anchor = lines + 1;
     }
 
-    let (start_spec, end_spec) = match range.split_once(',') {
-        Some((start, end)) => (start, Some(end)),
+    if range.starts_with(':') || range.starts_with("^:") {
+        let (begin, end) = parse_range_funcname_git(range, ctx, lines, anchor)?;
+        return git_range_to_output(begin, end, lines);
+    }
+
+    let (start_rest, end_part) = match range.split_once(',') {
+        Some((s, e)) => (s, Some(e)),
         None => (range, None),
     };
 
-    let start = if start_spec.is_empty() {
-        1
+    let mut begin = 0i64;
+    if start_rest.is_empty() {
+        begin = 1;
     } else {
-        parse_line_spec(start_spec, ctx, None, LineAnchor::Default)?
-    };
-    if max_lineno > 0 && start > max_lineno {
-        bail!("file has only {max_lineno} lines");
+        parse_loc_git(start_rest, ctx, lines, -(anchor), &mut begin, true)?;
     }
 
-    // `-L N` without comma: from N through end of file (git line-range-format).
-    let end = match end_spec {
-        None => max_lineno.max(1),
-        Some(spec) if spec.is_empty() => max_lineno.max(1),
-        Some(spec) => parse_line_spec(spec, ctx, Some(start), LineAnchor::AfterStart)?,
-    };
-
-    let end = if max_lineno == 0 {
-        end
-    } else {
-        end.min(max_lineno)
-    };
-    Ok((start, end))
-}
-
-#[derive(Clone, Copy)]
-enum LineAnchor {
-    Default,
-    AfterStart,
-}
-
-/// Parse a single line-range endpoint (git `blame -L` / line-range-format).
-fn parse_line_spec(
-    spec: &str,
-    ctx: &mut LineRangeParseCtx<'_>,
-    relative_to: Option<usize>,
-    anchor: LineAnchor,
-) -> Result<usize> {
-    let max_lineno = max_line_no(ctx.blame_lines);
-
-    if spec == "$" {
-        return Ok(max_lineno);
-    }
-
-    // +N means "relative offset from start" (end only)
-    if let Some(offset_str) = spec.strip_prefix('+') {
-        if offset_str.is_empty() {
-            bail!("invalid +N offset: cannot parse integer from empty string");
-        }
-        let offset: usize = offset_str.parse().context("invalid +N offset")?;
-        let base = relative_to.unwrap_or(1);
-        return Ok(base + offset - 1);
-    }
-
-    // -N means "relative negative offset from start" (end only), or negative regex anchor
-    if let Some(offset_str) = spec.strip_prefix('-') {
-        if let Ok(offset) = offset_str.parse::<usize>() {
-            let base = relative_to.unwrap_or(1);
-            return Ok(base.saturating_sub(offset).max(1));
-        }
-    }
-
-    // :funcname — when paired with a numeric/other end (e.g. `-L3,:pat`)
-    if let Some(fname) = spec.strip_prefix(':') {
-        let pat = fname.strip_prefix('^').unwrap_or(fname);
-        let search_from = if fname.starts_with('^') {
-            1
+    let mut end = 0i64;
+    if let Some(end_spec) = end_part {
+        if end_spec.is_empty() {
+            end = lines;
         } else {
-            match anchor {
-                LineAnchor::Default => {
-                    if ctx.prev_range_end > 0 {
-                        ctx.prev_range_end + 1
-                    } else {
-                        1
-                    }
-                }
-                LineAnchor::AfterStart => relative_to.unwrap_or(1),
-            }
-        };
-        return find_funcname_start_line(ctx, pat, search_from);
-    }
-
-    // ^/regex/ — absolute from file start
-    if let Some(rest) = spec.strip_prefix("^/") {
-        if let Some(pat) = rest.strip_suffix('/') {
-            return find_regex_line(ctx, pat, 1, true);
+            parse_loc_git(end_spec, ctx, lines, begin + 1, &mut end, true)?;
         }
     }
 
-    // /regex/
-    if spec.starts_with('/') && spec.ends_with('/') && spec.len() > 2 {
-        let pattern = &spec[1..spec.len() - 1];
-        let search_start = match anchor {
-            LineAnchor::Default => {
-                if ctx.prev_range_end > 0 {
-                    ctx.prev_range_end
-                } else {
-                    0
-                }
-            }
-            LineAnchor::AfterStart => relative_to.unwrap_or(0),
-        };
-        return find_regex_line(ctx, pattern, search_start, false);
+    // Git `parse_range_arg`: swap only when both endpoints are non-zero.
+    if begin != 0 && end != 0 && end < begin {
+        std::mem::swap(&mut begin, &mut end);
     }
 
-    // Plain number
-    let n: usize = spec.parse().context("invalid line number")?;
-    if n == 0 {
-        bail!("invalid line number: invalid digit found in string");
+    git_range_to_output(begin, end, lines)
+}
+
+fn git_range_to_output(begin: i64, end: i64, lines: i64) -> Result<(usize, usize)> {
+    let mut bottom = begin;
+    let mut top = end;
+
+    // Match `git/builtin/blame.c` after `parse_range_arg`.
+    if (lines == 0 && (top != 0 || bottom != 0)) || (lines > 0 && bottom > lines) {
+        bail!("file has only {lines} lines");
     }
-    Ok(n)
+
+    if bottom < 1 {
+        bottom = 1;
+    }
+    if top < 1 || top > lines {
+        top = lines;
+    }
+
+    Ok((bottom as usize, top as usize))
+}
+
+fn parse_loc_git(
+    spec: &str,
+    ctx: &LineRangeParseCtx<'_>,
+    lines: i64,
+    mut begin: i64,
+    ret: &mut i64,
+    want_result: bool,
+) -> Result<()> {
+    if spec == "$" {
+        if want_result {
+            *ret = lines;
+        }
+        return Ok(());
+    }
+
+    // Relative +N / -N when `begin >= 1` (Git line-range.c).
+    if begin >= 1 && (spec.starts_with('+') || spec.starts_with('-')) {
+        let (sign, digits) = if spec.starts_with('+') {
+            (1i64, &spec[1..])
+        } else {
+            (-1i64, &spec[1..])
+        };
+        if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+            bail!("invalid -L range");
+        }
+        let num: i64 = digits.parse().unwrap_or(0);
+        let num = sign * num;
+        if want_result {
+            if num == 0 {
+                bail!("-L invalid empty range");
+            }
+            *ret = if num > 0 {
+                begin + num - 2
+            } else if begin + num > 0 {
+                begin + num
+            } else {
+                1
+            };
+        }
+        return Ok(());
+    }
+
+    if let Ok((n, rest)) = parse_leading_i64(spec) {
+        if !rest.is_empty() {
+            bail!("invalid -L range");
+        }
+        if want_result {
+            if n <= 0 {
+                bail!("-L invalid line number: {n}");
+            }
+            *ret = n;
+        }
+        return Ok(());
+    }
+
+    if begin < 0 {
+        if !spec.starts_with('^') {
+            begin = -begin;
+        } else {
+            begin = 1;
+            let spec = spec.strip_prefix('^').unwrap_or(spec);
+            return parse_loc_regex_git(spec, ctx, lines, begin, ret, want_result);
+        }
+    }
+
+    parse_loc_regex_git(spec, ctx, lines, begin, ret, want_result)
+}
+
+fn parse_leading_i64(s: &str) -> Result<(i64, &str)> {
+    let s = s.trim_start();
+    if s.is_empty() {
+        return Err(anyhow::anyhow!("empty"));
+    }
+    let mut end = 0usize;
+    let bytes = s.as_bytes();
+    if bytes[0] == b'+' || bytes[0] == b'-' {
+        end = 1;
+    }
+    while end < bytes.len() && bytes[end].is_ascii_digit() {
+        end += 1;
+    }
+    if end == 0 || (end == 1 && (bytes[0] == b'+' || bytes[0] == b'-')) {
+        return Err(anyhow::anyhow!("not a number"));
+    }
+    let (num_s, rest) = s.split_at(end);
+    let n: i64 = num_s.parse().map_err(|_| anyhow::anyhow!("parse"))?;
+    Ok((n, rest))
+}
+
+fn parse_loc_regex_git(
+    spec: &str,
+    ctx: &LineRangeParseCtx<'_>,
+    lines: i64,
+    begin: i64,
+    ret: &mut i64,
+    want_result: bool,
+) -> Result<()> {
+    if !spec.starts_with('/') {
+        bail!("invalid -L range");
+    }
+    let Some(closing) = find_regex_closing_slash(spec) else {
+        bail!("invalid -L range");
+    };
+    let pattern = &spec[1..closing];
+    let after = &spec[closing + 1..];
+    if !after.is_empty() {
+        bail!("invalid -L range");
+    }
+
+    if !want_result {
+        return Ok(());
+    }
+
+    let re = compile_blame_line_regex(pattern)?;
+    if lines <= 0 {
+        bail!(
+            "-L parameter '{pattern}' starting at line {}: no match",
+            begin.max(1)
+        );
+    }
+
+    let start_human = begin.max(1) as usize;
+    let end_human = lines as usize;
+    for human in start_human..=end_human {
+        let Some(line_text) = blame_line_text_by_human_line(ctx, human) else {
+            continue;
+        };
+        if re.is_match(line_text) {
+            *ret = human as i64;
+            return Ok(());
+        }
+    }
+
+    bail!(
+        "-L parameter '{pattern}' starting at line {}: no match",
+        begin.max(1)
+    );
+}
+
+fn find_regex_closing_slash(spec: &str) -> Option<usize> {
+    let bytes = spec.as_bytes();
+    let mut i = 1usize;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b'/' {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn parse_range_funcname_git(
+    range: &str,
+    ctx: &LineRangeParseCtx<'_>,
+    lines: i64,
+    anchor: i64,
+) -> Result<(i64, i64)> {
+    let mut body = range;
+    let mut func_anchor = anchor;
+    if body.starts_with('^') {
+        func_anchor = 1;
+        body = &body[1..];
+    }
+    if !body.starts_with(':') {
+        bail!("invalid -L funcname range");
+    }
+    let Some((pattern, rest)) = parse_funcname_pattern(body) else {
+        bail!("invalid -L funcname range");
+    };
+    if !rest.is_empty() {
+        bail!("invalid -L funcname range");
+    }
+
+    let search_from: usize = if func_anchor < 1 {
+        1
+    } else if func_anchor > lines {
+        ((lines + 1).max(1)) as usize
+    } else {
+        func_anchor as usize
+    };
+
+    let start = find_funcname_start_line(ctx, pattern, search_from)?;
+    let start_i = start as i64;
+    let end = funcname_hunk_end(ctx, start) as i64;
+    if lines > 0 && start_i > lines {
+        bail!("-L parameter '{pattern}' matches at EOF");
+    }
+    Ok((start_i, end))
+}
+
+fn parse_funcname_pattern(body: &str) -> Option<(&str, &str)> {
+    let body = body.strip_prefix(':')?;
+    if body.is_empty() {
+        return None;
+    }
+    let bytes = body.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b':' {
+            return Some((&body[..i], &body[i + 1..]));
+        }
+        i += 1;
+    }
+    Some((body, ""))
 }
 
 fn compile_blame_line_regex(pattern: &str) -> Result<Regex> {
     Regex::new(pattern).with_context(|| format!("invalid regex in -L: {pattern}"))
 }
 
-fn find_regex_line(
-    ctx: &LineRangeParseCtx<'_>,
-    pattern: &str,
-    search_start: usize,
-    absolute: bool,
-) -> Result<usize> {
-    let re = compile_blame_line_regex(pattern)?;
-    let try_scan = |start: usize| -> Option<usize> {
-        for bl in ctx.blame_lines {
-            if bl.final_lineno > start && re.is_match(bl.content.as_str()) {
-                return Some(bl.final_lineno);
-            }
-        }
-        None
-    };
-
-    if let Some(ln) = try_scan(search_start) {
-        return Ok(ln);
+fn default_userdiff_driver_for_path(path: &str) -> Option<&'static str> {
+    let base = path.rsplit('/').next().unwrap_or(path);
+    if base.ends_with(".c")
+        || base.ends_with(".h")
+        || base.ends_with(".cc")
+        || base.ends_with(".cpp")
+        || base.ends_with(".cxx")
+        || base.ends_with(".hpp")
+    {
+        return Some("cpp");
     }
-    if !absolute && search_start > 0 {
-        if let Some(ln) = try_scan(0) {
-            return Ok(ln);
-        }
-    }
-    bail!("no line matching pattern: {pattern}");
+    None
 }
 
 fn funcname_matcher_for_blame(ctx: &LineRangeParseCtx<'_>) -> Option<userdiff::FuncnameMatcher> {
-    ctx.textconv
-        .and_then(|tc| userdiff::matcher_for_path(&tc.config, &tc.attrs, ctx.file_path).ok())
+    let tc = ctx.textconv?;
+    if let Ok(Some(m)) = userdiff::matcher_for_path(&tc.config, &tc.attrs, ctx.file_path) {
+        return Some(m);
+    }
+    let driver = default_userdiff_driver_for_path(ctx.file_path)?;
+    userdiff::matcher_for_driver(&tc.config, driver)
+        .ok()
         .flatten()
 }
 
+/// Git `match_funcname` with no userdiff driver: `isalpha(*bol) || *bol == '_' || *bol == '$'`
+/// (uses the line start as in the file — no leading-whitespace skip).
+fn blame_line_looks_like_funcname_boundary(line: &str) -> bool {
+    let Some(c) = line.as_bytes().first().copied() else {
+        return false;
+    };
+    c.is_ascii_alphabetic() || c == b'_' || c == b'$'
+}
+
+fn blame_file_text_and_line_starts(blame_lines: &[BlameLine]) -> (String, Vec<usize>) {
+    let mut sorted: Vec<&BlameLine> = blame_lines.iter().collect();
+    sorted.sort_by_key(|b| b.final_lineno);
+    let mut full = String::new();
+    let mut offsets = Vec::with_capacity(sorted.len());
+    for bl in sorted {
+        offsets.push(full.len());
+        full.push_str(&bl.content);
+        full.push('\n');
+    }
+    (full, offsets)
+}
+
+fn line_number_at_byte(offsets: &[usize], bol: usize) -> usize {
+    offsets.partition_point(|&o| o <= bol).max(1)
+}
+
+/// Git `find_funcname_matching_regexp` + first acceptable `match_funcname` (`git/line-range.c`).
 fn find_funcname_start_line(
     ctx: &LineRangeParseCtx<'_>,
     pattern: &str,
@@ -3154,57 +3375,107 @@ fn find_funcname_start_line(
 ) -> Result<usize> {
     let re = compile_blame_line_regex(pattern)?;
     let matcher = funcname_matcher_for_blame(ctx);
+    let (full_text, line_offsets) = blame_file_text_and_line_starts(ctx.blame_lines);
+    if full_text.is_empty() || line_offsets.is_empty() {
+        bail!("no line matching pattern: {pattern}");
+    }
 
-    for bl in ctx.blame_lines {
-        if bl.final_lineno < search_from {
-            continue;
+    let start_byte = if search_from == 0 || search_from > line_offsets.len() {
+        full_text.len()
+    } else {
+        line_offsets[search_from - 1]
+    };
+    let mut pos = start_byte;
+    while pos < full_text.len() {
+        let slice = &full_text[pos..];
+        let Some(m) = re.find(slice) else {
+            break;
+        };
+        let abs_match_start = pos + m.start();
+        let abs_match_end = pos + m.end();
+        let bol = full_text[..abs_match_start]
+            .rfind('\n')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let mut eol = abs_match_end;
+        while eol < full_text.len() && full_text.as_bytes()[eol] != b'\n' {
+            eol += 1;
         }
-        if !re.is_match(bl.content.as_str()) {
-            continue;
+        let line_body = &full_text[bol..eol];
+        let is_fn = match &matcher {
+            Some(m) => m
+                .match_line(line_body.trim_start_matches(|c| c == ' ' || c == '\t'))
+                .is_some(),
+            None => blame_line_looks_like_funcname_boundary(line_body),
+        };
+        if is_fn {
+            return Ok(line_number_at_byte(&line_offsets, bol));
         }
-        if matcher
-            .as_ref()
-            .is_some_and(|m| m.match_line(&bl.content).is_none())
-        {
-            continue;
-        }
-        return Ok(bl.final_lineno);
+        pos = if eol < full_text.len() {
+            eol + 1
+        } else {
+            full_text.len()
+        };
     }
 
     bail!("no line matching pattern: {pattern}");
 }
 
+fn funcname_hunk_end_cpp_braces(ctx: &LineRangeParseCtx<'_>, start: usize) -> Option<usize> {
+    let mut lines: Vec<&BlameLine> = ctx
+        .blame_lines
+        .iter()
+        .filter(|b| b.final_lineno >= start)
+        .collect();
+    lines.sort_by_key(|b| b.final_lineno);
+    let mut depth = 0i32;
+    let mut started = false;
+    for bl in lines {
+        for &b in bl.content.as_bytes() {
+            match b {
+                b'{' => {
+                    depth += 1;
+                    started = true;
+                }
+                b'}' => {
+                    depth -= 1;
+                    if started && depth == 0 {
+                        return Some(bl.final_lineno);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
 fn funcname_hunk_end(ctx: &LineRangeParseCtx<'_>, start: usize) -> usize {
     let max_ln = max_line_no(ctx.blame_lines);
-    let Some(matcher) = funcname_matcher_for_blame(ctx) else {
-        return max_ln;
-    };
-    for bl in ctx.blame_lines {
+    if default_userdiff_driver_for_path(ctx.file_path) == Some("cpp") {
+        if let Some(end_ln) = funcname_hunk_end_cpp_braces(ctx, start) {
+            return end_ln;
+        }
+    }
+
+    let matcher = funcname_matcher_for_blame(ctx);
+    let mut lines: Vec<&BlameLine> = ctx.blame_lines.iter().collect();
+    lines.sort_by_key(|b| b.final_lineno);
+    for bl in lines {
         if bl.final_lineno <= start {
             continue;
         }
-        if matcher.match_line(&bl.content).is_some() {
+        let is_boundary = match &matcher {
+            Some(m) => m
+                .match_line(bl.content.trim_start_matches(|c| c == ' ' || c == '\t'))
+                .is_some(),
+            None => blame_line_looks_like_funcname_boundary(&bl.content),
+        };
+        if is_boundary {
             return bl.final_lineno.saturating_sub(1).max(start);
         }
     }
     max_ln
-}
-
-fn resolve_funcname_span(ctx: &mut LineRangeParseCtx<'_>, range: &str) -> Result<(usize, usize)> {
-    let body = range
-        .strip_prefix(':')
-        .ok_or_else(|| anyhow::anyhow!("internal: expected :funcname range"))?;
-    let absolute = body.strip_prefix('^').unwrap_or(body);
-    let search_from = if body.starts_with('^') {
-        1
-    } else if ctx.prev_range_end > 0 {
-        ctx.prev_range_end + 1
-    } else {
-        1
-    };
-    let start = find_funcname_start_line(ctx, absolute, search_from)?;
-    let end = funcname_hunk_end(ctx, start);
-    Ok((start, end))
 }
 
 fn write_porcelain(
@@ -3299,15 +3570,23 @@ fn write_porcelain(
     Ok(())
 }
 
-/// `git annotate` output: tab-separated fields, 8-digit hash, parenthetical block padded like git.
+/// `git blame -c` / `git annotate` output: tab-separated fields and parenthetical block padded like git.
 fn write_annotate(
     out: &mut impl Write,
     lines: &[BlameLine],
     commits: &HashMap<ObjectId, CommitData>,
     args: &Args,
+    color_style: &BlameColorStyle,
     _file_path: &str,
 ) -> Result<()> {
     let zero = grit_lib::diff::zero_oid();
+    let hash_len = if args.no_abbrev || args.long_hash {
+        40
+    } else if let Some(n) = args.abbrev {
+        n.max(4)
+    } else {
+        8
+    };
 
     let mut author_field_width: usize = 10;
     for bl in lines {
@@ -3315,11 +3594,29 @@ fn write_annotate(
         author_field_width = author_field_width.max(w);
     }
 
+    let use_color = args.color_lines || args.color_by_age;
+    let mut prev_oid: Option<ObjectId> = None;
+
     for bl in lines {
+        let hex = bl.oid.to_hex();
         let hash = if bl.oid == zero || bl.external_contents {
-            "00000000".to_string()
+            let zlen = hash_len.min(40);
+            "0".repeat(zlen)
         } else {
-            bl.oid.to_hex()[..8].to_string()
+            hex[..hash_len.min(hex.len())].to_string()
+        };
+
+        let (color_start, color_end) = if args.color_by_age {
+            let commit = &commits[&bl.oid];
+            let ai = parse_author_field(&commit.author);
+            let c = age_color_for_timestamp(ai.timestamp, &color_style.age_buckets);
+            (c, RESET)
+        } else if args.color_lines && prev_oid == Some(bl.oid) {
+            (color_style.repeated_lines_ansi.as_str(), RESET)
+        } else if use_color {
+            ("", "")
+        } else {
+            ("", "")
         };
 
         let (author_display, ts) = annotate_author_and_time(bl, commits, args);
@@ -3327,10 +3624,11 @@ fn write_annotate(
 
         writeln!(
             out,
-            "{hash}\t({author_padded}\t{ts}\t{lineno}){content}",
+            "{color_start}{hash}\t({author_padded}\t{ts}\t{lineno}){content}{color_end}",
             lineno = bl.final_lineno,
             content = bl.content,
         )?;
+        prev_oid = Some(bl.oid);
     }
     Ok(())
 }

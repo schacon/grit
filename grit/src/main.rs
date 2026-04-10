@@ -2756,6 +2756,23 @@ fn preprocess_commit_argv(rest: &[String]) -> Vec<String> {
     out
 }
 
+/// Upstream annotate/blame tests use `-h <rev>` as the starting revision. Clap maps `-h` to help, so
+/// rewrite to a leading revision token before parsing (same intent as `commands::annotate::run`).
+fn preprocess_blame_h_rev(rest: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(rest.len());
+    let mut i = 0usize;
+    while i < rest.len() {
+        if rest[i] == "-h" && i + 1 < rest.len() && !rest[i + 1].starts_with('-') {
+            out.push(rest[i + 1].clone());
+            i += 2;
+        } else {
+            out.push(rest[i].clone());
+            i += 1;
+        }
+    }
+    out
+}
+
 /// Strip leading `-C <dir>` pairs from `rest` and `chdir` for each (Git allows `-C` after the subcommand).
 ///
 /// Do not confuse this with `diff-tree -C` / `diff-index -C` (find copies): the next token there is
@@ -2807,6 +2824,8 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
     let mut argv = vec![format!("git {subcmd}")];
     let rest_for_parse = if subcmd == "commit" {
         preprocess_commit_argv(rest)
+    } else if subcmd == "blame" {
+        preprocess_blame_h_rev(rest)
     } else {
         rest.to_vec()
     };

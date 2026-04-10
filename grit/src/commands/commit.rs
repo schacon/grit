@@ -2639,7 +2639,8 @@ fn resolve_author(
             .date
             .as_deref()
             .map(String::from)
-            .or_else(|| std::env::var("GIT_AUTHOR_DATE").ok());
+            .or_else(|| std::env::var("GIT_AUTHOR_DATE").ok())
+            .filter(|s| !s.trim().is_empty());
         let timestamp = match date_str {
             Some(d) => parse_date_to_git_timestamp(&d).unwrap_or(d),
             None => format_git_timestamp(now),
@@ -2683,7 +2684,8 @@ fn resolve_author(
         .date
         .as_deref()
         .map(String::from)
-        .or_else(|| std::env::var("GIT_AUTHOR_DATE").ok());
+        .or_else(|| std::env::var("GIT_AUTHOR_DATE").ok())
+        .filter(|s| !s.trim().is_empty());
 
     let timestamp = match date_str {
         Some(d) => parse_date_to_git_timestamp(&d).unwrap_or(d),
