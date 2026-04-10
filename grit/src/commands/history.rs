@@ -1,10 +1,13 @@
 //! `grit history` — history rewriting (reword, etc.).
 
-use crate::commands::commit::{cleanup_edited_commit_message, launch_commit_editor};
+use crate::commands::commit::{
+    cleanup_edited_commit_message, comment_line_prefix_full, launch_commit_editor,
+};
 use crate::commands::replay::replay_commits_onto;
 use crate::commands::update_ref::resolve_reflog_identity;
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Parser, Subcommand};
+use grit_lib::config::ConfigSet;
 use grit_lib::diff::{diff_trees, DiffEntry, DiffStatus};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::{
@@ -334,7 +337,9 @@ fn edit_reword_message(repo: &Repository, commit: &CommitData) -> Result<String>
     launch_commit_editor(repo, &edit_path)?;
 
     let edited = fs::read_to_string(&edit_path).context("reading COMMIT_EDITMSG")?;
-    Ok(cleanup_edited_commit_message(&edited))
+    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let prefix = comment_line_prefix_full(&cfg);
+    Ok(cleanup_edited_commit_message(&edited, prefix.as_ref()))
 }
 
 fn append_tree_diff_status(
