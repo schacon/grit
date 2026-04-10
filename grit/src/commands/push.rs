@@ -527,6 +527,9 @@ pub fn run(args: Args) -> Result<()> {
     let cli_force_enabled = args.force && !args.no_force;
     let repo = Repository::discover(None).context("not a git repository")?;
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    if should_delegate_push_for_negotiation_or_protocol_v2(&args, &config) {
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
     if repo
         .work_tree
         .as_ref()
@@ -3080,6 +3083,20 @@ fn resolved_push_options(args: &Args, config: &ConfigSet) -> Result<Vec<String>>
     configured_push_options(config)
 }
 
+fn is_delete_only_push_request(args: &Args) -> bool {
+    if args.delete {
+        return true;
+    }
+    if args.refspecs.is_empty() {
+        return false;
+    }
+    args.refspecs.iter().all(|spec| {
+        let trimmed = spec.trim();
+        let rest = trimmed.strip_prefix('+').unwrap_or(trimmed);
+        rest.starts_with(':') && rest.len() > 1 && !rest.contains('*')
+    })
+}
+
 fn force_with_lease_allows_includes(fwl: &Option<String>) -> bool {
     let Some(raw) = fwl.as_deref() else {
         return false;
@@ -3093,6 +3110,23 @@ fn effective_force_if_includes(args: &Args, config: &ConfigSet) -> bool {
     }
     let requested = args.force_if_includes || config_use_force_if_includes(config);
     requested && force_with_lease_allows_includes(&args.force_with_lease)
+}
+
+fn should_delegate_push_for_negotiation_or_protocol_v2(args: &Args, config: &ConfigSet) -> bool {
+    if config
+        .get("push.negotiate")
+        .and_then(|v| parse_bool(&v).ok())
+        .unwrap_or(false)
+        && !is_delete_only_push_request(args)
+    {
+        return true;
+    }
+    if std::env::var("GIT_TEST_PROTOCOL_VERSION").ok().as_deref() == Some("0") {
+        return false;
+    }
+    config
+        .get("protocol.version")
+        .is_some_and(|v| v.trim() == "2")
 }
 
 fn resolve_force_with_lease_tracking_expect(
