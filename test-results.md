@@ -1,5 +1,15 @@
 # Test results
 
+**2026-04-10 (regression matrix refresh after protocol-v1 + no-MIDX fixes)**
+
+- `./scripts/run-tests.sh t5700-protocol-v1.sh`: 20/24
+  - Remaining failures are ssh:// protocol-v1 tests (14/15/16/17).
+  - file:// and http:// protocol-v1 paths now pass in focused and suite runs.
+- `./scripts/run-tests.sh t5510-fetch.sh`: 43/215 (improved from earlier 23/215 in this session)
+- `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: 27/37 (improved from earlier 21/37)
+- `./scripts/run-tests.sh t5537-fetch-shallow.sh`: 6/16 (improved from earlier 1/16)
+- `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: 10/16 (unchanged from latest baseline)
+
 **2026-04-10 (protocol-v1 file/http transport and MIDX reuse guard)**
 
 - `cargo check -p grit-rs`: pass
