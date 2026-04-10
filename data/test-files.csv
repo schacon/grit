@@ -1339,7 +1339,7 @@ t8410-diff-files-worktree	t8	yes	35	35	0	true	ok	0
 t8420-cat-file-filters	t8	yes	33	33	0	true	ok	0
 t8430-hash-object-stdin	t8	yes	28	28	0	true	ok	0
 t8450-merge-base-complex	t8	yes	35	35	0	true	ok	0
-t8460-commit-tree-multi	t8	yes	27	26	1	false	ok	0
+t8460-commit-tree-multi	t8	yes	27	27	0	true	ok	0
 t8470-stripspace-extra	t8	yes	33	33	0	true	ok	0
 t8480-check-ignore-extra	t8	yes	31	31	0	true	ok	0
 t8490-ls-remote-extra	t8	yes	32	32	0	true	ok	0
