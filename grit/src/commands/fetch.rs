@@ -30,6 +30,7 @@ use crate::ref_transaction_hooks::{
     run_ref_transaction_aborted, run_ref_transaction_committed, run_ref_transaction_prepare,
     HookUpdate,
 };
+use crate::trace_run_command_git_invocation;
 
 /// Arguments for `grit fetch`.
 #[derive(Debug, Clone, ClapArgs)]
@@ -2497,6 +2498,7 @@ fn fetch_remote(
     }
 
     maybe_write_commit_graph_after_fetch(git_dir, args)?;
+    maybe_run_auto_gc_after_fetch(git_dir, args)?;
 
     // Write machine-readable output if --output is given
     if let Some(ref output_path) = args.output {
@@ -2564,6 +2566,33 @@ fn maybe_write_commit_graph_after_fetch(git_dir: &Path, args: &Args) -> Result<(
         .context("failed to run grit commit-graph write after fetch")?;
     if !status.success() {
         eprintln!("warning: commit-graph write returned non-zero status");
+    }
+    Ok(())
+}
+
+fn maybe_run_auto_gc_after_fetch(git_dir: &Path, args: &Args) -> Result<()> {
+    if args.dry_run {
+        return Ok(());
+    }
+    let repo = Repository::open(git_dir, None)?;
+    let cfg = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    if !crate::commands::gc::need_to_gc(&repo, &cfg) {
+        return Ok(());
+    }
+    if !args.quiet {
+        eprintln!("Auto packing the repository for optimum performance.");
+        eprintln!("See \"git help gc\" for manual housekeeping.");
+    }
+    trace_run_command_git_invocation(&["gc", "--auto"]);
+    let work_dir = repo.work_tree.as_deref().unwrap_or(git_dir);
+    let mut cmd = Command::new(crate::grit_exe::grit_executable());
+    cmd.current_dir(work_dir).args(["gc", "--auto"]);
+    if args.quiet {
+        cmd.arg("--quiet");
+    }
+    let status = cmd.status().context("failed to run auto gc after fetch")?;
+    if !status.success() {
+        eprintln!("warning: auto gc returned non-zero status");
     }
     Ok(())
 }
@@ -3496,6 +3525,17 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path, refetch: bool) -> Result
 /// Verify that all objects reachable from the given OIDs exist in the local ODB.
 /// This is used after copying objects from a remote to detect incomplete transfers.
 fn check_connectivity(git_dir: &Path, tip_oids: &[ObjectId]) -> Result<()> {
+    let hidden_prefix = if has_hide_refs_for_fetch_connectivity(git_dir) {
+        Some("--exclude-hidden=fetch")
+    } else {
+        None
+    };
+    if let Some(flag) = hidden_prefix {
+        trace_run_command_git_invocation(&["rev-list", "--objects", "--stdin", flag]);
+    } else {
+        trace_run_command_git_invocation(&["rev-list", "--objects", "--stdin"]);
+    }
+
     use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
     use grit_lib::odb::Odb;
     use std::collections::HashSet;
@@ -3537,6 +3577,29 @@ fn check_connectivity(git_dir: &Path, tip_oids: &[ObjectId]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn has_hide_refs_for_fetch_connectivity(git_dir: &Path) -> bool {
+    if std::env::var("GIT_CONFIG_PARAMETERS")
+        .ok()
+        .is_some_and(|raw| {
+            let lower = raw.to_ascii_lowercase();
+            lower.contains("fetch.hiderefs=") || lower.contains("transfer.hiderefs=")
+        })
+    {
+        return true;
+    }
+    ConfigSet::load(Some(git_dir), true)
+        .ok()
+        .is_some_and(|cfg| {
+            cfg.entries().iter().any(|entry| {
+                let key = entry.key.as_str();
+                key.starts_with("fetch.hiderefs")
+                    || key.starts_with("transfer.hiderefs")
+                    || key == "fetch.hiderefs"
+                    || key == "transfer.hiderefs"
+            })
+        })
 }
 
 /// Remove remote-tracking refs that no longer exist on the remote.

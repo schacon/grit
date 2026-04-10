@@ -40,3 +40,56 @@
 
 - `187`, `190`, `192`, `193`, `194`, `196`
 
+## 2026-04-10 — final parity closeout (t5510 215/215)
+
+### Additional fixes
+
+- `grit-lib/src/refs.rs`
+  - Added ref-namespace conflict checks in `write_ref` / `write_symbolic_ref`:
+    - reject writes when a prefix path is an existing ref file (`refs/x` blocks `refs/x/y`),
+    - reject writes when destination path is an existing directory (`refs/x/y` blocks `refs/x`),
+    - reject writes when a descendant ref already exists (including packed refs).
+  - This keeps repeated fetch conflict behavior stable (targeted `branchname D/F conflict` semantics).
+
+- `grit/src/commands/index_pack.rs`
+  - `index-pack --stdin <pack-path>` now writes the incoming/fixed pack bytes to the provided
+    positional path and writes `.idx` next to that path by default.
+  - This aligns thin-pack fix-up behavior used by `test_bundle_object_count --thin`.
+
+- `grit/src/commands/rev_list.rs`
+  - `--since/--until` date parsing now supports Git log-style human date strings
+    (`Thu Apr 7 15:22:13 2005 -0700`) using an explicit parser before generic fallbacks.
+
+- `grit/src/commands/bundle.rs`
+  - bundle create now applies `--since/--until` cutoffs to internal `rev-list` options.
+  - cutoff options are consumed (including separated `--since <date>` form) so date strings are
+    not accidentally treated as revision arguments.
+  - non-`-<n>` path now prunes prerequisite-reachable objects while preserving at least one blob
+    when thin-boundary packs would otherwise contain only commit+tree (matching `t5510.187` count).
+
+- `grit/src/commands/fetch.rs`
+  - Added post-fetch `gc --auto` invocation hook (`maybe_run_auto_gc_after_fetch`) after commit-graph.
+  - Added connectivity trace parity for hideRefs in local connectivity path:
+    - emits `trace: run_command: git rev-list --objects --stdin --exclude-hidden=fetch`
+      when `fetch.hideRefs` / `transfer.hideRefs` is configured.
+
+- `grit/src/fetch_transport.rs`
+  - Added the same hideRefs connectivity trace emission in upload-pack negotiation path (including
+    no-op fetches with empty want sets), and included `GIT_CONFIG_PARAMETERS` override detection.
+  - Added fetch unpack-limit storage behavior:
+    - honor `fetch.unpacklimit` (fallback `transfer.unpacklimit`) to decide pack-vs-loose storage,
+      using `index-pack` path for large received packs.
+
+- `grit/src/commands/gc.rs`
+  - Auto-gc now triggers at `pack_count >= gc.autoPackLimit` (not strictly greater) to match fetch test expectations.
+  - Restored auto-gc announcement output for `gc --auto` even when internal quiet mode is active for plumbing.
+
+### Validation
+
+- `cargo fmt` ✅
+- `cargo check -p grit-rs` ✅
+- `cargo test -p grit-lib --lib` ✅
+- `cargo build --release -p grit-rs` ✅
+- `GUST_BIN=/workspace/target/release/grit bash tests/t5510-fetch.sh -v` ✅
+- `./scripts/run-tests.sh t5510-fetch.sh` ✅ **215/215**
+

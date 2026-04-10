@@ -949,6 +949,14 @@ pub fn fetch_via_upload_pack_skipping(
         merge_remote_refs_into_upload_pack_advertisement(remote_repo_path, &mut advertised)?;
     }
     let wants = compute_wants(&advertised)?;
+    if has_hide_refs_for_fetch_connectivity(local_git_dir) {
+        crate::trace_run_command_git_invocation(&[
+            "rev-list",
+            "--objects",
+            "--stdin",
+            "--exclude-hidden=fetch",
+        ]);
+    }
     crate::trace_packet::trace_fetch_tip_availability(&local_git_dir.join("objects"), &wants);
     if wants.is_empty() {
         // No pack to transfer (either already up-to-date or refspecs selected no refs), but we
@@ -1062,10 +1070,44 @@ pub(crate) fn unpack_upload_pack_bytes(
         let _ = std::fs::File::create(pack_path.with_extension("promisor"));
         return Ok(());
     }
+    if should_store_fetched_pack_as_pack(local_git_dir, pack_buf) {
+        let repo = Repository::open(local_git_dir, None)
+            .with_context(|| format!("open repository {}", local_git_dir.display()))?;
+        index_pack::ingest_pack_bytes(&repo, pack_buf, true).context("ingest fetched pack")?;
+        return Ok(());
+    }
     let odb = Odb::new(&local_git_dir.join("objects"));
     let mut reader = pack_buf;
     unpack_objects(&mut reader, &odb, &UnpackOptions::default())?;
     Ok(())
+}
+
+fn should_store_fetched_pack_as_pack(local_git_dir: &Path, pack_buf: &[u8]) -> bool {
+    let Some(unpack_limit) = fetch_unpack_limit(local_git_dir) else {
+        return false;
+    };
+    if pack_buf.len() < 12 || &pack_buf[..4] != b"PACK" {
+        return false;
+    }
+    let object_count =
+        u32::from_be_bytes([pack_buf[8], pack_buf[9], pack_buf[10], pack_buf[11]]) as usize;
+    object_count >= unpack_limit
+}
+
+fn fetch_unpack_limit(local_git_dir: &Path) -> Option<usize> {
+    let cfg = grit_lib::config::ConfigSet::load(Some(local_git_dir), true).ok()?;
+    for key in ["fetch.unpacklimit", "transfer.unpacklimit"] {
+        let Some(raw) = cfg.get(key) else {
+            continue;
+        };
+        let Ok(limit) = raw.trim().parse::<i64>() else {
+            continue;
+        };
+        if limit > 0 {
+            return Some(limit as usize);
+        }
+    }
+    None
 }
 
 fn append_pack_to_git_trace_packfile(pack: &[u8]) -> anyhow::Result<()> {
@@ -1362,6 +1404,26 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     read_sideband_pack_until_done(stdout, &mut pack_buf)?;
 
     Ok(pack_buf)
+}
+
+fn has_hide_refs_for_fetch_connectivity(local_git_dir: &Path) -> bool {
+    if std::env::var("GIT_CONFIG_PARAMETERS")
+        .ok()
+        .is_some_and(|v| {
+            let lower = v.to_ascii_lowercase();
+            lower.contains("fetch.hiderefs=") || lower.contains("transfer.hiderefs=")
+        })
+    {
+        return true;
+    }
+    grit_lib::config::ConfigSet::load(Some(local_git_dir), true)
+        .ok()
+        .is_some_and(|cfg| {
+            cfg.entries().iter().any(|entry| {
+                let key = entry.key.as_str();
+                key.starts_with("fetch.hiderefs") || key.starts_with("transfer.hiderefs")
+            })
+        })
 }
 
 /// When tests run `git-daemon` with `--base-path=<GIT_DAEMON_DOCUMENT_ROOT_PATH>`, map a

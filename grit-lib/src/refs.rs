@@ -272,6 +272,40 @@ fn packed_ref_name_exists(git_dir: &Path, refname: &str) -> Result<bool> {
     Ok(false)
 }
 
+fn refname_namespace_conflicts(existing: &str, candidate: &str) -> bool {
+    if existing == candidate {
+        return false;
+    }
+    existing
+        .strip_prefix(candidate)
+        .is_some_and(|rest| rest.starts_with('/'))
+        || candidate
+            .strip_prefix(existing)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+fn packed_ref_namespace_conflict(git_dir: &Path, refname: &str) -> Result<bool> {
+    let packed = git_dir.join("packed-refs");
+    let content = match fs::read_to_string(&packed) {
+        Ok(c) => c,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(Error::Io(e)),
+    };
+    for line in content.lines() {
+        if line.is_empty() || line.starts_with('#') || line.starts_with('^') {
+            continue;
+        }
+        let mut parts = line.split_whitespace();
+        let _oid = parts.next();
+        if let Some(name) = parts.next() {
+            if refname_namespace_conflicts(name, refname) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// Returns true if `packed-refs` in the ref storage directory for `refname` contains that name.
 ///
 /// Used to mirror Git's `is_packed_transaction_needed` behaviour: deleting a ref may open a nested
@@ -365,6 +399,11 @@ pub fn write_symbolic_ref(git_dir: &Path, refname: &str, target: &str) -> Result
         return crate::reftable::reftable_write_symref(git_dir, refname, target, None, None);
     }
     let storage_dir = ref_storage_dir(git_dir, refname);
+    if packed_ref_namespace_conflict(&storage_dir, refname)? {
+        return Err(Error::InvalidRef(format!(
+            "cannot update ref '{refname}': reference namespace conflict"
+        )));
+    }
     let path = storage_dir.join(refname);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -388,6 +427,11 @@ pub fn write_ref(git_dir: &Path, refname: &str, oid: &ObjectId) -> Result<()> {
         return crate::reftable::reftable_write_ref(git_dir, refname, oid, None, None);
     }
     let storage_dir = ref_storage_dir(git_dir, refname);
+    if packed_ref_namespace_conflict(&storage_dir, refname)? {
+        return Err(Error::InvalidRef(format!(
+            "cannot update ref '{refname}': reference namespace conflict"
+        )));
+    }
     let path = storage_dir.join(refname);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;

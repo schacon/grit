@@ -1,5 +1,21 @@
 # Test results
 
+**2026-04-10 (fetch tail completion + full t5510 green)**
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `cargo build --release -p grit-rs`: pass
+- `GUST_BIN=/workspace/target/release/grit bash tests/t5510-fetch.sh -v`: **215/215**
+- `./scripts/run-tests.sh t5510-fetch.sh`: **215/215**
+  - `data/test-files.csv` refreshed and dashboards regenerated (`docs/index.html`, `docs/testfiles.html`, `docs/test-progress.svg`).
+- Final fixes in this completion slice:
+  - fetch connectivity trace parity for hideRefs (`--exclude-hidden=fetch`) now emitted in upload-pack path.
+  - auto-gc message parity in `gc --auto` restored for fetch-triggered auto maintenance.
+  - unpack-limit storage parity for fetch now honors `fetch.unpacklimit` over `transfer.unpacklimit` and stores packs via `index-pack` when threshold is met.
+  - bundle `--since/--until` date parsing aligned with Git human date format for rev filtering.
+  - boundary-bundle object selection tuned to preserve thin-pack expected object count in `t5510.187`.
+
 **2026-04-10 (fetch bundle/parity follow-up + prune tail progress)**
 
 - `cargo fmt`: pass

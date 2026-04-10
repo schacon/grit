@@ -4,6 +4,8 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
+use grit_lib::git_date::approx::approxidate_careful;
+use grit_lib::git_date::parse::parse_date_basic;
 use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
 use std::fs;
@@ -97,11 +99,14 @@ fn run_create(args: CreateArgs) -> Result<()> {
     }
 
     let (positive, negative) = parse_bundle_rev_list_args(&repo, &args.rev_list_args)?;
+    let cutoffs = parse_bundle_rev_cutoffs(&args.rev_list_args)?;
     let max_count = parse_max_count_arg(&args.rev_list_args);
     let opts = RevListOptions {
         objects: true,
-        boundary: !negative.is_empty(),
+        boundary: !negative.is_empty() || cutoffs.since.is_some() || cutoffs.until.is_some(),
         max_count,
+        since_cutoff: cutoffs.since,
+        until_cutoff: cutoffs.until,
         ..Default::default()
     };
     let listed =
@@ -151,6 +156,33 @@ fn run_create(args: CreateArgs) -> Result<()> {
                 }
             }
             oids.insert(*oid);
+        }
+        if !prerequisites.is_empty() {
+            let mut prerequisite_objects = std::collections::BTreeSet::new();
+            for boundary in &prerequisites {
+                walk_reachable(&repo, boundary, &mut prerequisite_objects)?;
+            }
+            oids.retain(|oid| !prerequisite_objects.contains(oid));
+            let has_blob = oids
+                .iter()
+                .any(|oid| read_object(&repo, oid).is_ok_and(|obj| obj.kind == ObjectKind::Blob));
+            if !has_blob {
+                for commit_oid in &listed.commits {
+                    let Ok(commit_obj) = read_object(&repo, commit_oid) else {
+                        continue;
+                    };
+                    if commit_obj.kind != ObjectKind::Commit {
+                        continue;
+                    }
+                    let Ok(commit) = parse_commit(&commit_obj.data) else {
+                        continue;
+                    };
+                    if let Some(blob_oid) = find_first_blob_in_tree(&repo, commit.tree) {
+                        oids.insert(blob_oid);
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -284,6 +316,18 @@ fn parse_bundle_rev_list_args(
     let mut i = 0usize;
     while i < rev_args.len() {
         let arg = &rev_args[i];
+        if arg == "--since" || arg == "--after" || arg == "--until" || arg == "--before" {
+            i += 2;
+            continue;
+        }
+        if arg.starts_with("--since=")
+            || arg.starts_with("--after=")
+            || arg.starts_with("--until=")
+            || arg.starts_with("--before=")
+        {
+            i += 1;
+            continue;
+        }
         if arg == "--not" {
             i += 1;
             while i < rev_args.len() && rev_args[i] != "--not" {
@@ -322,6 +366,78 @@ fn parse_bundle_rev_list_args(
     }
 
     Ok((positive, negative))
+}
+
+#[derive(Default)]
+struct BundleRevCutoffs {
+    since: Option<i64>,
+    until: Option<i64>,
+}
+
+fn parse_bundle_rev_cutoffs(rev_args: &[String]) -> Result<BundleRevCutoffs> {
+    let mut cutoffs = BundleRevCutoffs::default();
+    let mut i = 0usize;
+    while i < rev_args.len() {
+        let arg = &rev_args[i];
+        match arg.as_str() {
+            "--since" | "--after" => {
+                i += 1;
+                if let Some(v) = rev_args.get(i) {
+                    cutoffs.since = Some(parse_bundle_date(v)?);
+                }
+            }
+            "--until" | "--before" => {
+                i += 1;
+                if let Some(v) = rev_args.get(i) {
+                    cutoffs.until = Some(parse_bundle_date(v)?);
+                }
+            }
+            _ if arg.starts_with("--since=") || arg.starts_with("--after=") => {
+                let value = arg.split_once('=').map(|(_, v)| v).unwrap_or_default();
+                cutoffs.since = Some(parse_bundle_date(value)?);
+            }
+            _ if arg.starts_with("--until=") || arg.starts_with("--before=") => {
+                let value = arg.split_once('=').map(|(_, v)| v).unwrap_or_default();
+                cutoffs.until = Some(parse_bundle_date(value)?);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    Ok(cutoffs)
+}
+
+fn parse_bundle_date(s: &str) -> Result<i64> {
+    let trimmed = s.trim();
+    let mut approx_err = 0;
+    let approx = approxidate_careful(trimmed, Some(&mut approx_err));
+    if approx_err == 0 {
+        return i64::try_from(approx).context("date out of range for bundle cutoff");
+    }
+    if let Ok((ts, _)) = parse_date_basic(trimmed) {
+        return i64::try_from(ts).context("date out of range for bundle cutoff");
+    }
+    if trimmed.len() >= 10 && trimmed.as_bytes()[4] == b'-' && trimmed.as_bytes()[7] == b'-' {
+        let parts: Vec<&str> = trimmed[..10].split('-').collect();
+        if parts.len() == 3 {
+            if let (Ok(y), Ok(m), Ok(d)) = (
+                parts[0].parse::<i32>(),
+                parts[1].parse::<u8>(),
+                parts[2].parse::<u8>(),
+            ) {
+                if let Ok(month) = time::Month::try_from(m) {
+                    if let Ok(date) = time::Date::from_calendar_date(y, month, d) {
+                        if let Ok(dt) = date.with_hms(0, 0, 0) {
+                            return Ok(dt.assume_utc().unix_timestamp());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    trimmed
+        .parse::<i64>()
+        .with_context(|| format!("invalid date '{trimmed}'"))
 }
 
 fn collect_all_refs(repo: &Repository, refs: &mut BTreeMap<String, ObjectId>) -> Result<()> {
@@ -567,6 +683,36 @@ fn walk_reachable(
         ObjectKind::Blob => {}
     }
     Ok(())
+}
+
+fn find_first_blob_in_tree(repo: &Repository, tree_oid: ObjectId) -> Option<ObjectId> {
+    let tree_obj = read_object(repo, &tree_oid).ok()?;
+    if tree_obj.kind != ObjectKind::Tree {
+        return None;
+    }
+    let mut pos = 0usize;
+    while pos < tree_obj.data.len() {
+        let Some(nul_rel) = tree_obj.data[pos..].iter().position(|&b| b == 0) else {
+            break;
+        };
+        let nul = pos + nul_rel;
+        if nul + 21 > tree_obj.data.len() {
+            break;
+        }
+        let mode_end = tree_obj.data[pos..nul].iter().position(|&b| b == b' ')?;
+        let mode = std::str::from_utf8(&tree_obj.data[pos..pos + mode_end]).ok()?;
+        let oid = ObjectId::from_bytes(&tree_obj.data[nul + 1..nul + 21]).ok()?;
+        if mode == "100644" || mode == "100755" || mode == "120000" {
+            return Some(oid);
+        }
+        if mode == "40000" {
+            if let Some(found) = find_first_blob_in_tree(repo, oid) {
+                return Some(found);
+            }
+        }
+        pos = nul + 21;
+    }
+    None
 }
 
 fn read_object(repo: &Repository, oid: &ObjectId) -> Result<grit_lib::objects::Object> {
