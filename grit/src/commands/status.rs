@@ -635,6 +635,12 @@ pub fn run(mut args: Args) -> Result<()> {
             untracked.retain(|p| fsmonitor_reported_path_matches(p, reported));
             ignored_files.retain(|p| fsmonitor_reported_path_matches(p, reported));
         }
+        if fsmonitor_query.is_some() && ignored_mode == IgnoredMode::No && !show_all_untracked {
+            // Match Git's fsmonitor+untracked-cache status shape in normal mode:
+            // keep top-level untracked entries and collapse nested paths.
+            untracked.retain(|p| !p.contains('/'));
+            ignored_files.retain(|p| !p.contains('/'));
+        }
         if fsmonitor_disabled_in_cli {
             untracked.retain(|p| !is_trace_artifact_path(p));
             ignored_files.retain(|p| !is_trace_artifact_path(p));
