@@ -519,6 +519,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 .unwrap_or(true);
             let precompose_unicode =
                 grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir));
+            let sparse_state = crate::commands::add::AddSparseState::load(&repo, &config);
             let add_cfg = crate::commands::add::AddConfig {
                 core_filemode,
                 precompose_unicode,
@@ -526,6 +527,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 conv: grit_lib::crlf::ConversionConfig::from_config(&config),
                 attrs: grit_lib::crlf::load_gitattributes(wt),
                 config,
+                sparse: sparse_state,
+                include_sparse: false,
             };
             Some(crate::commands::add::stage_pathspecs_for_commit(
                 &repo,

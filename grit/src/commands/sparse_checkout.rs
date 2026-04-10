@@ -19,7 +19,6 @@ use grit_lib::sparse_checkout::{
     sparse_checkout_lines_look_like_expanded_cone, ConePatterns, ConeWorkspace, NonConePatterns,
 };
 use grit_lib::state::resolve_head;
-use std::collections::HashSet;
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -399,10 +398,9 @@ fn cmd_set(repo: &Repository, args: &SetArgs) -> Result<()> {
         .get("core.sparseCheckoutCone")
         .and_then(|v| v.parse::<bool>().ok())
         .unwrap_or(true);
-    let cone = cone_opt.unwrap_or(prev_cone);
+    let mut cone = cone_opt.unwrap_or(prev_cone);
 
     set_sparse_config(repo, true)?;
-    set_cone_config(repo, cone)?;
     if let Some(enable) = sparse_idx_opt {
         set_sparse_index_config(repo, enable)?;
     }
@@ -412,7 +410,18 @@ fn cmd_set(repo: &Repository, args: &SetArgs) -> Result<()> {
         if args.stdin {
             let stdin = io::stdin();
             let mut stdin = stdin.lock();
-            let lines = read_stdin_lines(&mut stdin)?;
+            let mut lines = read_stdin_lines(&mut stdin)?;
+            if cone
+                && lines.iter().any(|l| {
+                    let t = l.trim();
+                    !t.is_empty() && !t.starts_with('#') && t.starts_with('!')
+                })
+            {
+                cone = false;
+                set_cone_config(repo, false)?;
+            } else {
+                set_cone_config(repo, cone)?;
+            }
             if cone {
                 let mut dirs = Vec::new();
                 for line in lines {
@@ -431,7 +440,6 @@ fn cmd_set(repo: &Repository, args: &SetArgs) -> Result<()> {
                 )?;
                 apply_sparse_patterns(repo, &patterns, true)?;
             } else {
-                let mut lines = lines;
                 if lines.is_empty() {
                     lines = vec!["/*".to_string(), "!/*/".to_string()];
                 }
@@ -445,6 +453,12 @@ fn cmd_set(repo: &Repository, args: &SetArgs) -> Result<()> {
             }
             Ok(())
         } else {
+            if cone && args.patterns.iter().any(|p| p.starts_with('!')) {
+                cone = false;
+                set_cone_config(repo, false)?;
+            } else {
+                set_cone_config(repo, cone)?;
+            }
             let mut pats = args.patterns.clone();
             sanitize_set_paths(
                 repo,
@@ -1156,9 +1170,14 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String], cone_mode: bool
                 }
             }
         } else {
+            // Paths explicitly materialized in the work tree (`skip-worktree` cleared, e.g.
+            // `git update-index --no-skip-worktree` or `git add --sparse`) must not be deleted
+            // when sparse rules are reapplied (`git reset` → `reapply_sparse_checkout_if_configured`).
+            let preserve_worktree_file =
+                !entry.skip_worktree() && fs::symlink_metadata(work_tree.join(&path_str)).is_ok();
             entry.set_skip_worktree(true);
             let full_path = work_tree.join(&path_str);
-            if full_path.exists() {
+            if full_path.exists() && !preserve_worktree_file {
                 let _ = fs::remove_file(&full_path);
                 if let Some(parent) = full_path.parent() {
                     remove_empty_dirs_up_to(parent, work_tree);
@@ -1197,95 +1216,6 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String], cone_mode: bool
     repo.write_index_at(&index_path, &mut index)
         .context("writing index")?;
 
-    // Remove untracked paths outside the sparse cone (Git `sparse_checkout_set` / t7012).
-    let indexed_paths: HashSet<String> = index
-        .entries
-        .iter()
-        .map(|e| String::from_utf8_lossy(&e.path).into_owned())
-        .collect();
-    remove_untracked_outside_sparse(
-        work_tree,
-        work_tree,
-        &indexed_paths,
-        patterns,
-        effective_cone,
-        cone_struct.as_ref(),
-        &non_cone,
-    )?;
-
-    Ok(())
-}
-
-fn remove_untracked_outside_sparse(
-    work_tree: &Path,
-    current: &Path,
-    indexed_paths: &HashSet<String>,
-    patterns: &[String],
-    effective_cone: bool,
-    cone_struct: Option<&ConePatterns>,
-    non_cone: &NonConePatterns,
-) -> Result<()> {
-    let Ok(read_dir) = fs::read_dir(current) else {
-        return Ok(());
-    };
-    for ent in read_dir {
-        let ent = ent.context("reading work tree directory")?;
-        let path = ent.path();
-        let rel = path
-            .strip_prefix(work_tree)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        if rel == ".git" || rel.starts_with(".git/") {
-            continue;
-        }
-        let meta = fs::symlink_metadata(&path).context("stat work tree path")?;
-        if meta.is_dir() {
-            remove_untracked_outside_sparse(
-                work_tree,
-                &path,
-                indexed_paths,
-                patterns,
-                effective_cone,
-                cone_struct,
-                non_cone,
-            )?;
-            if fs::read_dir(&path)
-                .map(|mut d| d.next().is_none())
-                .unwrap_or(false)
-            {
-                let included = if effective_cone {
-                    path_in_sparse_checkout(&rel, true, cone_struct, non_cone)
-                } else {
-                    path_in_sparse_checkout_lines(&rel, patterns)
-                };
-                if !included && !indexed_paths.contains(&rel) {
-                    let _ = fs::remove_dir(&path);
-                    if let Some(parent) = path.parent() {
-                        remove_empty_dirs_up_to(parent, work_tree);
-                    }
-                }
-            }
-            continue;
-        }
-        if !meta.is_file() && !meta.file_type().is_symlink() {
-            continue;
-        }
-        if indexed_paths.contains(&rel) {
-            continue;
-        }
-        let included = if effective_cone {
-            path_in_sparse_checkout(&rel, true, cone_struct, non_cone)
-        } else {
-            path_in_sparse_checkout_lines(&rel, patterns)
-        };
-        if !included {
-            let _ = fs::remove_file(&path);
-            if let Some(parent) = path.parent() {
-                remove_empty_dirs_up_to(parent, work_tree);
-            }
-        }
-    }
     Ok(())
 }
 

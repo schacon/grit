@@ -38,6 +38,10 @@ pub struct Args {
     /// Allow adding otherwise ignored files.
     #[arg(short = 'f', long = "force")]
     pub force: bool,
+
+    /// Allow updating index entries outside the sparse-checkout definition (and skip-worktree).
+    #[arg(long = "sparse")]
+    pub sparse: bool,
 }
 
 /// Run the `stage` command by delegating to `add`.
@@ -58,6 +62,7 @@ pub fn run(args: Args) -> Result<()> {
         renormalize: false,
         refresh: false,
         ignore_errors: false,
+        sparse: args.sparse,
         ignore_missing: false,
         no_warn_embedded_repo: false,
         pathspec_from_file: None,
