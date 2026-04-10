@@ -408,7 +408,7 @@ fn collect_untracked(
             Err(_) => continue,
         };
         let is_dir = file_type.is_dir();
-        let is_symlink = file_type.is_symlink();
+        let _is_symlink = file_type.is_symlink();
 
         if !pathspecs.is_empty() {
             if is_dir {
@@ -628,25 +628,10 @@ fn collect_untracked(
                 }
             }
         } else {
-            let rel_for_track = if is_symlink {
-                if let Ok(target) = fs::read_link(&path) {
-                    let abs_target = path
-                        .parent()
-                        .map(|p| p.join(&target))
-                        .unwrap_or_else(|| target.clone());
-                    abs_target
-                        .strip_prefix(work_tree)
-                        .ok()
-                        .map(path_to_slash)
-                        .unwrap_or(rel.clone())
-                } else {
-                    rel.clone()
-                }
-            } else {
-                rel.clone()
-            };
-
-            if is_tracked(tracked, index, work_tree, &rel_for_track) {
+            // Track by the dentry path (`symlink`), not the symlink target (`.git`). Using the
+            // resolved target made tracked symlinks look untracked and `git clean -dfx` removed
+            // them (regressed t4115-apply-symlink between subtests).
+            if is_tracked(tracked, index, work_tree, &rel) {
                 continue;
             }
 

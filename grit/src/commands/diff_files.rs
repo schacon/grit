@@ -1097,6 +1097,14 @@ fn print_patch_from_diff_entry(
                     entry.old_mode, entry.new_mode
                 ));
             }
+            // `git diff-files -p` includes an `index old..new <mode>` line for content changes
+            // even when the mode is unchanged (required by t4115-apply-symlink symlink diffs).
+            header.push_str(&format!(
+                "\nindex {}..{} {}",
+                abbrev_oid_for_patch(&entry.old_oid, abbrev),
+                abbrev_oid_for_patch(&entry.new_oid, abbrev),
+                entry.new_mode
+            ));
         }
     }
 
@@ -1228,8 +1236,24 @@ fn load_patch_contents_for_diff_entry(
     } else {
         let path = entry.new_path.as_deref().unwrap_or(entry.path());
         let abs = work_tree.join(path);
-        match fs::read(&abs) {
-            Ok(bytes) => String::from_utf8(bytes).unwrap_or_default(),
+        match fs::symlink_metadata(&abs) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let target = fs::read_link(&abs)?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::ffi::OsStrExt;
+                    String::from_utf8_lossy(target.as_os_str().as_bytes()).into_owned()
+                }
+                #[cfg(not(unix))]
+                {
+                    target.to_string_lossy().into_owned()
+                }
+            }
+            Ok(_) => match fs::read(&abs) {
+                Ok(bytes) => String::from_utf8(bytes).unwrap_or_default(),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+                Err(e) => return Err(e.into()),
+            },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(e) => return Err(e.into()),
         }
@@ -1347,6 +1371,14 @@ fn read_worktree_info_fast(
             }
         }
         return Ok(WorktreeStatus::Missing);
+    }
+
+    // Symlinks: when lstat matches the index, skip readlink+hash (matches Git `ce_match_stat`;
+    // needed so `diff-files` agrees with `apply` after symlink-only updates — see t4115).
+    if canonicalize_mode(index_entry.mode) == MODE_SYMLINK && meta.file_type().is_symlink() {
+        if stat_matches(index_entry, &meta) {
+            return Ok(WorktreeStatus::Unchanged);
+        }
     }
 
     // Fast path: if stat info matches the index, file is unchanged.
