@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use crate::pkt_line::{read_packet, write_flush, Packet};
+use crate::wire_trace;
 
 /// Upstream `git send-pack` usage synopsis (exit 129 when options are incompatible).
 const SEND_PACK_USAGE: &str = "usage: git send-pack [--mirror] [--dry-run] [--force]\n\
@@ -301,7 +302,7 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-fn write_pkt_line(w: &mut impl Write, payload: &[u8]) -> io::Result<()> {
+pub(crate) fn write_pkt_line(w: &mut impl Write, payload: &[u8]) -> io::Result<()> {
     let n = payload.len() + 4;
     write!(w, "{:04x}", n)?;
     w.write_all(payload)
@@ -348,7 +349,9 @@ fn spawn_receive_pack(receive_cmd: &str, remote_path: &Path) -> Result<Child> {
     cmd.spawn().context("spawn receive-pack")
 }
 
-fn read_advertisement(r: &mut impl Read) -> Result<(HashSet<ObjectId>, bool, Vec<ObjectId>)> {
+pub(crate) fn read_advertisement(
+    r: &mut impl Read,
+) -> Result<(HashSet<ObjectId>, bool, Vec<ObjectId>)> {
     let mut haves = HashSet::new();
     let mut advertised = Vec::new();
     let mut server_sideband = false;
@@ -358,6 +361,8 @@ fn read_advertisement(r: &mut impl Read) -> Result<(HashSet<ObjectId>, bool, Vec
             Some(Packet::Flush) => break,
             Some(Packet::Delim) | Some(Packet::ResponseEnd) => break,
             Some(Packet::Data(line)) => {
+                let trace_line = line.trim_end_matches('\n').replace('\0', "\\0");
+                wire_trace::trace_packet_push('<', &trace_line);
                 if let Some(oid) = parse_dot_have_line(&line) {
                     haves.insert(oid);
                 }
@@ -384,13 +389,13 @@ fn parse_advertised_ref_oid(line: &str) -> Option<ObjectId> {
     // `HEAD` appears on the first pkt-line alongside capabilities; it may be detached at the
     // same OID as the branch being pushed. Feeding it to pack-objects as `^<oid>` would exclude
     // the whole thin pack (t5410 with grit receive-pack advertising detached HEAD).
-    if name == ".have" || name == "HEAD" || name.starts_with("capabilities") {
+    if name == "HEAD" || name.starts_with("capabilities") {
         return None;
     }
     ObjectId::from_hex(hex).ok()
 }
 
-fn peel_advertised_commits(repo: &Repository, oids: &[ObjectId]) -> Vec<ObjectId> {
+pub(crate) fn peel_advertised_commits(repo: &Repository, oids: &[ObjectId]) -> Vec<ObjectId> {
     use grit_lib::objects::{parse_tag, ObjectKind};
     let mut out = Vec::new();
     let mut seen_commits = HashSet::new();

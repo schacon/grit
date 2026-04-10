@@ -29,6 +29,22 @@ thread_local! {
     static PACKET_TRACE_IDENTITY: Cell<&'static str> = const { Cell::new("fetch") };
 }
 
+fn pass_git_namespace_env(c: &mut Command) {
+    if let Some(ns) = grit_lib::ref_namespace::raw_git_namespace_from_env() {
+        c.env("GIT_NAMESPACE", ns);
+    }
+}
+
+fn apply_git_namespace_for_child(c: &mut Command, argv_namespace: Option<&str>) {
+    if let Some(ns) = argv_namespace {
+        if !ns.is_empty() {
+            c.env("GIT_NAMESPACE", ns);
+        }
+    } else {
+        pass_git_namespace_env(c);
+    }
+}
+
 fn peel_commit_oid_for_negotiation(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
     peel_to_commit_for_merge_base(repo, oid).map_err(|e| match e {
         grit_lib::error::Error::InvalidRef(msg) => anyhow::anyhow!(msg),
@@ -350,6 +366,7 @@ pub(crate) fn spawn_upload_pack_with_proto(
     cmd_template: Option<&str>,
     repo_path: &Path,
     client_proto: u8,
+    argv_git_namespace: Option<&str>,
 ) -> Result<std::process::Child> {
     let repo_path = repo_path
         .canonicalize()
@@ -369,10 +386,10 @@ pub(crate) fn spawn_upload_pack_with_proto(
         let mut c = Command::new(grit_executable());
         c.arg("upload-pack")
             .arg(rp.as_ref())
-            .env_remove("GIT_TRACE_PACKET")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
+        apply_git_namespace_for_child(&mut c, argv_git_namespace);
         apply_proto_env(&mut c);
         return c
             .spawn()
@@ -387,10 +404,10 @@ pub(crate) fn spawn_upload_pack_with_proto(
         }
         c.arg("upload-pack")
             .arg(rp.as_ref())
-            .env_remove("GIT_TRACE_PACKET")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
+        apply_git_namespace_for_child(&mut c, argv_git_namespace);
         apply_proto_env(&mut c);
         return c
             .spawn()
@@ -401,10 +418,10 @@ pub(crate) fn spawn_upload_pack_with_proto(
     if trimmed == "grit-upload-pack" || trimmed.ends_with("/grit-upload-pack") {
         let mut c = Command::new(trimmed);
         c.arg(rp.as_ref())
-            .env_remove("GIT_TRACE_PACKET")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
+        apply_git_namespace_for_child(&mut c, argv_git_namespace);
         apply_proto_env(&mut c);
         return c
             .spawn()
@@ -416,10 +433,10 @@ pub(crate) fn spawn_upload_pack_with_proto(
     let mut c = Command::new("sh");
     c.arg("-c")
         .arg(&script)
-        .env_remove("GIT_TRACE_PACKET")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
+    apply_git_namespace_for_child(&mut c, argv_git_namespace);
     apply_proto_env(&mut c);
     c.spawn()
         .with_context(|| format!("failed to spawn upload-pack: {script}"))
@@ -440,7 +457,97 @@ pub(crate) fn spawn_upload_pack(
     // defaults to `protocol.version=2` for HTTP/file v2 — otherwise `upload-pack` enters the v2
     // path and rejects v0 `want` lines as "unknown capability" (t0411 lazy-fetch re-enable).
     // Force protocol 0 on the wire so the ref advertisement matches [`read_advertisement`] (t5501).
-    spawn_upload_pack_with_proto(cmd_template, repo_path, 0)
+    spawn_upload_pack_with_proto(cmd_template, repo_path, 0, None)
+}
+
+/// Spawn `receive-pack` for local pipe negotiation (e.g. `ext::` push).
+///
+/// Uses protocol v0 ref advertisement on the wire (`GIT_PROTOCOL` cleared when `client_proto` is 0).
+pub(crate) fn spawn_receive_pack_with_proto(
+    cmd_template: Option<&str>,
+    repo_path: &Path,
+    client_proto: u8,
+    argv_git_namespace: Option<&str>,
+) -> Result<std::process::Child> {
+    let repo_path = repo_path
+        .canonicalize()
+        .unwrap_or_else(|_| repo_path.to_path_buf());
+    let rp = repo_path.to_string_lossy();
+    let rp_escaped = rp.replace('\'', "'\"'\"'");
+
+    let apply_proto_env = |c: &mut Command| {
+        if client_proto == 0 {
+            c.env_remove("GIT_PROTOCOL");
+        } else {
+            protocol_wire::merge_git_protocol_env_for_child(c, client_proto);
+        }
+    };
+
+    let Some(cmd_template) = cmd_template else {
+        let mut c = Command::new(grit_executable());
+        c.arg("receive-pack")
+            .arg(rp.as_ref())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        apply_git_namespace_for_child(&mut c, argv_git_namespace);
+        apply_proto_env(&mut c);
+        return c
+            .spawn()
+            .with_context(|| format!("failed to spawn grit receive-pack for {}", rp));
+    };
+
+    let (leading_env, after_env) = parse_leading_shell_env_assignments(cmd_template);
+    if after_env.contains("git-receive-pack") || after_env.contains("git receive-pack") {
+        let mut c = Command::new(grit_executable());
+        for (k, v) in leading_env {
+            c.env(k, v);
+        }
+        c.arg("receive-pack")
+            .arg(rp.as_ref())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        apply_git_namespace_for_child(&mut c, argv_git_namespace);
+        apply_proto_env(&mut c);
+        return c
+            .spawn()
+            .with_context(|| format!("failed to spawn grit receive-pack for {}", rp));
+    }
+
+    let trimmed = cmd_template.trim();
+    if trimmed == "grit-receive-pack" || trimmed.ends_with("/grit-receive-pack") {
+        let mut c = Command::new(trimmed);
+        c.arg(rp.as_ref())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        apply_git_namespace_for_child(&mut c, argv_git_namespace);
+        apply_proto_env(&mut c);
+        return c
+            .spawn()
+            .with_context(|| format!("failed to spawn '{} {}'", trimmed, rp));
+    }
+
+    let full_cmd = cmd_template.replace('\'', "'\"'\"'");
+    let script = format!("{full_cmd} '{rp_escaped}'");
+    let mut c = Command::new("sh");
+    c.arg("-c")
+        .arg(&script)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    apply_git_namespace_for_child(&mut c, argv_git_namespace);
+    apply_proto_env(&mut c);
+    c.spawn()
+        .with_context(|| format!("failed to spawn receive-pack: {script}"))
+}
+
+pub(crate) fn spawn_receive_pack(
+    cmd_template: Option<&str>,
+    repo_path: &Path,
+) -> Result<std::process::Child> {
+    spawn_receive_pack_with_proto(cmd_template, repo_path, 0, None)
 }
 
 pub(crate) fn drain_child_stdout_to_eof(r: &mut impl Read) -> std::io::Result<()> {
@@ -654,7 +761,7 @@ pub fn fetch_via_upload_pack_skipping(
 )> {
     // Force v0 advertisement (immediate ref pkt-lines). v2 stops after `version 2` until `ls-refs`,
     // which leaves `read_advertisement` with an empty ref list and breaks fetch.
-    let mut child = spawn_upload_pack_with_proto(upload_pack_cmd, remote_repo_path, 0)?;
+    let mut child = spawn_upload_pack_with_proto(upload_pack_cmd, remote_repo_path, 0, None)?;
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 

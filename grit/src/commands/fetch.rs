@@ -776,7 +776,7 @@ fn fetch_remote(
             cli_refspecs_owned.clone()
         };
         let remote_gd_ext = ext_upload_pack_git_dir.clone();
-        let (heads, tags, _, _) = crate::fetch_transport::with_packet_trace_identity(
+        let (heads, tags, _, _, _) = crate::fetch_transport::with_packet_trace_identity(
             "fetch",
             || {
                 crate::ext_transport::fetch_via_ext_skipping(
@@ -784,6 +784,7 @@ fn fetch_remote(
                     &url,
                     "git-upload-pack",
                     upload_pack_refspecs,
+                    false,
                     move |adv| {
                         if has_cli_ext {
                             let Some(ref gd) = remote_gd_ext else {

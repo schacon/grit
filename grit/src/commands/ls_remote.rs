@@ -68,6 +68,16 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let repo_path_str = effective_path.to_string_lossy();
+    if repo_path_str.starts_with("ext::") {
+        if args
+            .upload_pack
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
+        {
+            bail!("ls-remote: --upload-pack is not supported with ext:: URLs");
+        }
+        return run_ls_remote_ext(repo_path_str.as_ref(), &args);
+    }
     let is_file_url = repo_path_str.starts_with("file://");
     if is_file_url && crate::file_upload_pack_v2::client_wants_protocol_v2() {
         let path = PathBuf::from(
@@ -114,6 +124,53 @@ pub fn run(args: Args) -> Result<()> {
         println!("{}\t{}", entry.oid, entry.name);
     }
 
+    Ok(())
+}
+
+fn run_ls_remote_ext(url: &str, args: &Args) -> Result<()> {
+    let git_dir = Repository::discover(None).ok().map(|r| r.git_dir);
+    crate::protocol::check_protocol_allowed("ext", git_dir.as_deref())?;
+    let (advertised, head_symref) = crate::ext_transport::read_ext_upload_pack_advertisement(url)?;
+    let mut entries: Vec<RefEntry> = Vec::new();
+    for (refname, oid) in advertised {
+        if refname == "HEAD" && !args.symref {
+            if args.patterns.is_empty() {
+                continue;
+            }
+            if !grit_lib::ls_remote::ref_matches_ls_remote_patterns("HEAD", &args.patterns) {
+                continue;
+            }
+        }
+        let raw = if refname == "HEAD" && args.symref {
+            if let Some(sr) = head_symref.as_deref() {
+                format!("{}\t{}\0symref=HEAD:{}\n", oid.to_hex(), refname, sr)
+            } else {
+                format!("{}\t{}\n", oid.to_hex(), refname)
+            }
+        } else {
+            format!("{}\t{}\n", oid.to_hex(), refname)
+        };
+        entries.extend(parse_v0_ref_advertisement_line(&raw, args)?);
+    }
+    entries.sort_by(|a, b| {
+        let rank = |n: &str| if n == "HEAD" { 0 } else { 1 };
+        match rank(&a.name).cmp(&rank(&b.name)) {
+            std::cmp::Ordering::Equal => a.name.cmp(&b.name),
+            o => o,
+        }
+    });
+    if entries.is_empty() {
+        return Ok(());
+    }
+    if args.quiet {
+        return Ok(());
+    }
+    for entry in &entries {
+        if let Some(target) = &entry.symref_target {
+            println!("ref: {target}\t{}", entry.name);
+        }
+        println!("{}\t{}", entry.oid, entry.name);
+    }
     Ok(())
 }
 

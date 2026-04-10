@@ -8,8 +8,10 @@ use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::zero_oid;
+use grit_lib::hide_refs;
 use grit_lib::merge_base;
 use grit_lib::objects::ObjectId;
+use grit_lib::ref_namespace;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
@@ -244,24 +246,49 @@ fn write_ref_advertisement(w: &mut impl Write, git_dir: &Path) -> Result<()> {
         .map(|s| s.to_ascii_lowercase())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "sha1".to_owned());
+    let hide = hide_refs::hide_ref_patterns_uploadpack(&set);
+    let head_sym = refs::read_symbolic_ref(git_dir, "HEAD")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "refs/heads/main".to_owned());
+    let head_sym_caps = ref_namespace::strip_namespace_prefix(&head_sym).into_owned();
     let caps = format!(
         "multi_ack thin-pack side-band side-band-64k ofs-delta shallow deepen-since deepen-not \
          deepen-relative no-progress include-tag multi_ack_detailed allow-tip-sha1-in-want \
          allow-reachable-sha1-in-want no-done symref=HEAD:{} filter object-format={object_format} \
          agent=git/{} ref-in-want",
-        refs::read_symbolic_ref(git_dir, "HEAD")
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "refs/heads/main".to_owned()),
-        version,
+        head_sym_caps, version,
     );
 
     let mut first = true;
+    let ns_active = ref_namespace::ref_storage_prefix().is_some();
     if let Ok(head_oid) = refs::resolve_ref(git_dir, "HEAD") {
-        let line = format!("{}\tHEAD\0{}\n", head_oid.to_hex(), caps);
-        let len = 4 + line.len();
-        write!(w, "{:04x}{}", len, line)?;
-        first = false;
+        let full_head = ref_namespace::storage_ref_name("HEAD");
+        if hide_refs::ref_is_hidden("HEAD", &full_head, &hide) {
+            first = true;
+        } else if ns_active {
+            if let Ok(Some(target)) = refs::read_symbolic_ref(git_dir, "HEAD") {
+                let display_target = ref_namespace::strip_namespace_prefix(&target);
+                let sym_caps = caps.replace(
+                    &format!("symref=HEAD:{head_sym_caps}"),
+                    &format!("symref=HEAD:{display_target}"),
+                );
+                let line = format!("{}\tHEAD\0{sym_caps}\n", head_oid.to_hex());
+                let len = 4 + line.len();
+                write!(w, "{:04x}{}", len, line)?;
+                first = false;
+            } else {
+                let line = format!("{}\tHEAD\0{caps}\n", head_oid.to_hex());
+                let len = 4 + line.len();
+                write!(w, "{:04x}{}", len, line)?;
+                first = false;
+            }
+        } else {
+            let line = format!("{}\tHEAD\0{caps}\n", head_oid.to_hex());
+            let len = 4 + line.len();
+            write!(w, "{:04x}{}", len, line)?;
+            first = false;
+        }
     } else {
         // Unborn or dangling `HEAD` symref: Git omits a `HEAD` advertisement and may use the
         // first non-branch/non-tag ref as the capability carrier (see `t5700` branchless remote).
@@ -271,16 +298,27 @@ fn write_ref_advertisement(w: &mut impl Write, git_dir: &Path) -> Result<()> {
             .filter(|(n, _)| !n.starts_with("refs/heads/") && !n.starts_with("refs/tags/"))
             .collect();
         if !non_standard.is_empty() {
-            for (i, (refname, oid)) in non_standard.iter().enumerate() {
-                let line = if i == 0 {
-                    format!("{}\t{}\0{}\n", oid.to_hex(), refname, caps)
+            let mut cap_next = first;
+            let mut wrote_any = false;
+            for (refname, oid) in non_standard {
+                let full = ref_namespace::storage_ref_name(&refname);
+                if hide_refs::ref_is_hidden(&refname, &full, &hide) {
+                    continue;
+                }
+                let display = ref_namespace::strip_namespace_prefix(&refname);
+                let line = if cap_next {
+                    cap_next = false;
+                    format!("{}\t{}\0{}\n", oid.to_hex(), display, caps)
                 } else {
-                    format!("{}\t{}\n", oid.to_hex(), refname)
+                    format!("{}\t{}\n", oid.to_hex(), display)
                 };
                 let len = 4 + line.len();
                 write!(w, "{:04x}{}", len, line)?;
+                wrote_any = true;
             }
-            first = false;
+            if wrote_any {
+                first = false;
+            }
         } else if let Ok(HeadState::Detached { oid }) = resolve_head(git_dir) {
             let line = format!("{}\tHEAD\0{}\n", oid.to_hex(), caps);
             let len = 4 + line.len();
@@ -302,13 +340,18 @@ fn write_ref_advertisement(w: &mut impl Write, git_dir: &Path) -> Result<()> {
 
     let all_refs = list_all_refs(git_dir)?;
     for (refname, oid) in &all_refs {
+        let full = ref_namespace::storage_ref_name(refname);
+        if hide_refs::ref_is_hidden(refname, &full, &hide) {
+            continue;
+        }
+        let display = ref_namespace::strip_namespace_prefix(refname);
         if first {
-            let line = format!("{}\t{}\0{}\n", oid.to_hex(), refname, caps);
+            let line = format!("{}\t{}\0{}\n", oid.to_hex(), display, caps);
             let len = 4 + line.len();
             write!(w, "{:04x}{}", len, line)?;
             first = false;
         } else {
-            let line = format!("{}\t{}\n", oid.to_hex(), refname);
+            let line = format!("{}\t{}\n", oid.to_hex(), display);
             let len = 4 + line.len();
             write!(w, "{:04x}{}", len, line)?;
         }
@@ -331,7 +374,11 @@ fn advertise_refs_with_caps(repo: &Repository, server_proto: u8) -> Result<()> {
 
 fn list_all_refs(git_dir: &Path) -> Result<Vec<(String, ObjectId)>> {
     let mut result = Vec::new();
-    for prefix in &["refs/heads/", "refs/tags/", "refs/remotes/"] {
+    let mut prefixes = vec!["refs/heads/", "refs/tags/", "refs/remotes/"];
+    if ref_namespace::ref_storage_prefix().is_none() {
+        prefixes.push("refs/namespaces/");
+    }
+    for prefix in prefixes {
         if let Ok(entries) = refs::list_refs(git_dir, prefix) {
             result.extend(entries);
         }

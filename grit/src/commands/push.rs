@@ -661,9 +661,18 @@ fn push_to_url(
             wire_trace::trace_packet_push('>', &show);
         }
     }
+    let is_ext_url = url.starts_with("ext::");
+    if is_ext_url {
+        crate::protocol::check_protocol_allowed("ext", Some(&repo.git_dir))?;
+    }
     let remote_path = if url.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", Some(&repo.git_dir))?;
         crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    } else if is_ext_url {
+        let Some(p) = crate::ext_transport::try_resolve_ext_upload_pack_git_dir(url) else {
+            bail!("ext:: push requires a URL that runs `grit receive-pack <path>` (or equivalent)");
+        };
+        p
     } else if crate::ssh_transport::is_configured_ssh_url(url) {
         crate::protocol::check_protocol_allowed("ssh", Some(&repo.git_dir))?;
         let spec = crate::ssh_transport::parse_ssh_url(url)?;
@@ -1476,6 +1485,185 @@ fn push_to_url(
         if let HookResult::Failed(code) = result {
             bail!("pre-push hook declined the push (exit code {code})");
         }
+    }
+
+    if is_ext_url {
+        if args.atomic {
+            bail!("ext:: push does not support --atomic");
+        }
+        if !args.push_option.is_empty() {
+            bail!("ext:: push does not support --push-option");
+        }
+
+        if args.dry_run {
+            for (i, update) in updates.iter().enumerate() {
+                if pre_reject[i].is_some() {
+                    continue;
+                }
+                let old_hex = update
+                    .old_oid
+                    .as_ref()
+                    .map(|o| o.to_hex())
+                    .unwrap_or_else(|| "0".repeat(40));
+                if let Some(new_oid) = update.new_oid {
+                    println!(
+                        "{}..{}\t{} (dry run)",
+                        &old_hex[..7],
+                        &new_oid.to_hex()[..7],
+                        update.remote_ref,
+                    );
+                } else {
+                    println!("delete\t{} (dry run)", update.remote_ref);
+                }
+            }
+            return Ok(());
+        }
+
+        let force_batch = args.force || updates.iter().any(|u| u.refspec_force);
+        let mut ext_list: Vec<crate::ext_transport::ExtPushUpdate<'_>> = Vec::new();
+        for (i, u) in updates.iter().enumerate() {
+            if pre_reject[i].is_some() {
+                continue;
+            }
+            // Git's send-pack still talks to `receive-pack` over `ext::` for refs that are already
+            // up to date (flush + capabilities replay, advertisement, and hideRefs checks).
+            ext_list.push(crate::ext_transport::ExtPushUpdate {
+                remote_ref: u.remote_ref.as_str(),
+                old_oid: u.old_oid,
+                new_oid: u.new_oid,
+            });
+        }
+
+        if !args.quiet && !args.porcelain {
+            eprintln!("To {url}");
+        }
+
+        let push_ref_display_short = |u: &RefUpdate| -> String {
+            if u.remote_ref.starts_with("refs/heads/") {
+                u.remote_ref["refs/heads/".len()..].to_owned()
+            } else if u.remote_ref.starts_with("refs/tags/") {
+                u.remote_ref["refs/tags/".len()..].to_owned()
+            } else {
+                u.remote_ref.clone()
+            }
+        };
+        let report_ref_rejection =
+            |u: &RefUpdate, bracket: &'static str, parenthetical: &str, args: &Args| {
+                if args.porcelain || args.quiet {
+                    return;
+                }
+                let dst = push_ref_display_short(u);
+                let src = u
+                    .local_ref
+                    .as_deref()
+                    .and_then(|r| r.strip_prefix("refs/heads/"))
+                    .or_else(|| {
+                        u.local_ref
+                            .as_deref()
+                            .and_then(|r| r.strip_prefix("refs/tags/"))
+                    })
+                    .unwrap_or(u.local_ref.as_deref().unwrap_or("(delete)"));
+                let tag_delete_style =
+                    u.remote_ref.starts_with("refs/tags/") && u.local_ref.is_none();
+                if tag_delete_style {
+                    eprintln!(" ! [{bracket}] {dst} ({parenthetical})");
+                } else {
+                    eprintln!(" ! [{bracket}] {src} -> {dst} ({parenthetical})");
+                }
+            };
+
+        let mut rejected: Vec<(&RefUpdate, String)> = Vec::new();
+        if args.atomic && pre_reject.iter().any(|p| p.is_some()) {
+            for (i, update) in updates.iter().enumerate() {
+                if let Some(msg) = &pre_reject[i] {
+                    eprintln!("{msg}");
+                    let paren = if msg.contains("tag already exists") {
+                        "failed"
+                    } else if msg.contains("tip of your current branch is behind") {
+                        "non-fast-forward"
+                    } else {
+                        "failed"
+                    };
+                    report_ref_rejection(update, "rejected", paren, args);
+                    rejected.push((update, paren.to_owned()));
+                } else if let Some((paren, bracket)) = &atomic_cascade[i] {
+                    report_ref_rejection(update, bracket, paren.as_str(), args);
+                    rejected.push((update, paren.clone()));
+                }
+            }
+            if !rejected.is_empty() {
+                bail!("failed to push some refs to '{url}'");
+            }
+            return Ok(());
+        }
+
+        for (i, update) in updates.iter().enumerate() {
+            if let Some(msg) = &pre_reject[i] {
+                eprintln!("{msg}");
+                let paren = if msg.contains("tag already exists") {
+                    "failed"
+                } else if msg.contains("tip of your current branch is behind") {
+                    "non-fast-forward"
+                } else {
+                    "failed"
+                };
+                report_ref_rejection(update, "rejected", paren, args);
+                rejected.push((update, paren.to_owned()));
+            } else if let Some((paren, bracket)) = &atomic_cascade[i] {
+                report_ref_rejection(update, bracket, paren.as_str(), args);
+                rejected.push((update, paren.clone()));
+            }
+        }
+        if !rejected.is_empty() {
+            bail!("failed to push some refs to '{url}'");
+        }
+
+        if !ext_list.is_empty() {
+            crate::ext_transport::push_via_ext(repo, url, &ext_list, force_batch)
+                .with_context(|| format!("ext:: push to '{url}'"))?;
+        }
+
+        let applied_updates: Vec<(&RefUpdate, Option<ObjectId>)> = updates
+            .iter()
+            .enumerate()
+            .filter_map(|(i, u)| {
+                if pre_reject[i].is_some() {
+                    return None;
+                }
+                match (&u.old_oid, &u.new_oid) {
+                    (Some(a), Some(b)) if a == b => None,
+                    _ => Some((u, u.old_oid)),
+                }
+            })
+            .collect();
+
+        if args.set_upstream {
+            use std::collections::BTreeMap;
+            let mut upstream_by_branch: BTreeMap<String, String> = BTreeMap::new();
+            for (update, _) in &applied_updates {
+                let Some(local_ref) = update.local_ref.as_deref() else {
+                    continue;
+                };
+                let Some(branch_name) = local_ref.strip_prefix("refs/heads/") else {
+                    continue;
+                };
+                if !update.remote_ref.starts_with("refs/heads/") {
+                    continue;
+                }
+                upstream_by_branch.insert(branch_name.to_owned(), update.remote_ref.clone());
+            }
+            for (branch, merge_ref) in upstream_by_branch {
+                let track_short = merge_ref
+                    .strip_prefix("refs/heads/")
+                    .unwrap_or(merge_ref.as_str());
+                set_upstream_config(&repo.git_dir, &branch, remote_name, &merge_ref)?;
+                if !args.quiet {
+                    eprintln!("branch '{branch}' set up to track '{remote_name}/{track_short}'.");
+                }
+            }
+        }
+
+        return Ok(());
     }
 
     // Write push options file for the remote (local transport simulation)

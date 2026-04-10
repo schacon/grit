@@ -8,10 +8,12 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{parse_bool, ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::connectivity::{diagnose_push_connectivity_failure, push_tip_connected_to_refs};
+use grit_lib::hide_refs;
 use grit_lib::hooks::{run_hook_in_git_dir, HookResult};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::ObjectId;
 use grit_lib::pack::read_alternates_recursive;
+use grit_lib::ref_namespace;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
@@ -23,6 +25,7 @@ use std::process::{Command, Stdio};
 
 use crate::grit_exe;
 use crate::pkt_line::{read_packet, write_flush, write_packet_raw, Packet};
+use crate::wire_trace;
 
 /// Arguments for `grit receive-pack`.
 #[derive(Debug, ClapArgs)]
@@ -55,6 +58,8 @@ pub fn run(args: Args) -> Result<()> {
 
     advertise_refs_phase(&repo, &extra_have)?;
 
+    let hide_patterns = hide_refs::hide_ref_patterns_receive(&config);
+
     let mut stdin = io::stdin();
     let mut payload = Vec::new();
     stdin.read_to_end(&mut payload)?;
@@ -74,6 +79,20 @@ pub fn run(args: Args) -> Result<()> {
                     updates.push((old_h, new_h, refname));
                 }
             }
+        }
+    }
+
+    let zero_oid_early = "0".repeat(40);
+    let mut hidden_rejects: Vec<String> = Vec::new();
+    for (_old_h, new_h, refname) in &updates {
+        let full = ref_namespace::storage_ref_name(refname);
+        if hide_refs::ref_is_hidden(refname, &full, &hide_patterns) {
+            if new_h == &zero_oid_early {
+                eprintln!("remote: error: deny deleting a hidden ref");
+            } else {
+                eprintln!("remote: error: deny updating a hidden ref");
+            }
+            hidden_rejects.push(refname.clone());
         }
     }
 
@@ -110,7 +129,7 @@ pub fn run(args: Args) -> Result<()> {
     if !args.skip_connectivity_check {
         if let Some(ref err) = pack_parse_err {
             for (_old_hex, new_hex, refname) in &updates {
-                if new_hex != &zero_oid {
+                if new_hex != &zero_oid && !hidden_rejects.iter().any(|r| r == refname) {
                     connectivity_failed.push(refname.clone());
                 }
             }
@@ -119,6 +138,9 @@ pub fn run(args: Args) -> Result<()> {
             let pack_ref = pack_map.as_ref();
             for (_old_hex, new_hex, refname) in &updates {
                 if new_hex == &zero_oid {
+                    continue;
+                }
+                if hidden_rejects.iter().any(|r| r == refname) {
                     continue;
                 }
                 let tip = match ObjectId::from_hex(new_hex) {
@@ -178,7 +200,7 @@ pub fn run(args: Args) -> Result<()> {
 
     if let Some(ref e) = unpack_to_odb_err {
         for (_old_hex, new_hex, refname) in &updates {
-            if new_hex != &zero_oid {
+            if new_hex != &zero_oid && !hidden_rejects.iter().any(|r| r == refname) {
                 if !connectivity_failed.iter().any(|r| r == refname) {
                     connectivity_failed.push(refname.clone());
                 }
@@ -211,18 +233,25 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    write_status_lines(&updates, &connectivity_failed, &zero_oid, &unpack_status)?;
+    write_status_lines(
+        &updates,
+        &connectivity_failed,
+        &hidden_rejects,
+        &zero_oid,
+        &unpack_status,
+    )?;
 
-    if !connectivity_failed.is_empty() {
+    if !connectivity_failed.is_empty() || !hidden_rejects.is_empty() {
         return Ok(());
     }
 
-    run_hooks_and_update_refs(&repo, &updates, &zero_oid)
+    run_hooks_and_update_refs(&repo, &config, &updates, &zero_oid)
 }
 
 fn write_status_lines(
     updates: &[(String, String, String)],
-    failed: &[String],
+    connectivity_failed: &[String],
+    hidden_failed: &[String],
     zero_oid: &str,
     unpack_status: &[u8],
 ) -> Result<()> {
@@ -233,7 +262,12 @@ fn write_status_lines(
         if new_hex == zero_oid {
             continue;
         }
-        if failed.iter().any(|f| f == refname) {
+        if hidden_failed.iter().any(|f| f == refname) {
+            write_packet_raw(
+                &mut out,
+                format!("ng {refname} failed to update ref\n").as_bytes(),
+            )?;
+        } else if connectivity_failed.iter().any(|f| f == refname) {
             write_packet_raw(
                 &mut out,
                 format!("ng {refname} missing necessary objects\n").as_bytes(),
@@ -409,34 +443,57 @@ fn advertise_refs_phase(repo: &Repository, extra_have: &HashSet<ObjectId>) -> Re
         "report-status report-status-v2 delete-refs quiet ofs-delta object-format=sha1 \
          agent=grit/{version}"
     );
+    let cfg = ConfigSet::load(Some(&repo.git_dir), false).unwrap_or_default();
+    let hide = hide_refs::hide_ref_patterns_receive(&cfg);
 
     let mut first = true;
     if let Ok(head_oid) = refs::resolve_ref(&repo.git_dir, "HEAD") {
-        let line = format!("{} HEAD\0{caps}\n", head_oid.to_hex());
-        let len = 4 + line.len();
-        write!(out, "{:04x}{}", len, line)?;
-        first = false;
+        let full = ref_namespace::storage_ref_name("HEAD");
+        if !hide_refs::ref_is_hidden("HEAD", &full, &hide) {
+            let line = format!("{} HEAD\0{caps}\n", head_oid.to_hex());
+            wire_trace::trace_packet_receive_pack('>', line.trim_end_matches('\n'));
+            let len = 4 + line.len();
+            write!(out, "{:04x}{}", len, line)?;
+            first = false;
+        }
     }
 
     let mut seen_have: HashSet<ObjectId> = HashSet::new();
-    let all_refs = list_all_refs(&repo.git_dir)?;
+    let all_refs = refs::list_refs_physical(&repo.git_dir, "refs/")?;
     for (refname, oid) in &all_refs {
+        let display = if let Some(logical) = ref_namespace::logical_ref_name_from_storage(refname) {
+            let full = ref_namespace::storage_ref_name(&logical);
+            if hide_refs::ref_is_hidden(&logical, &full, &hide) {
+                continue;
+            }
+            // Match Git `show_ref_cb`: every namespaced ref is advertised under its logical name,
+            // even when multiple refs share the same object id (t5509 hideRefs + packed-refs).
+            let _ = seen_have.insert(*oid);
+            logical
+        } else {
+            if !seen_have.insert(*oid) {
+                continue;
+            }
+            ".have".to_owned()
+        };
         if first {
-            let line = format!("{} {refname}\0{caps}\n", oid.to_hex());
+            let line = format!("{} {display}\0{caps}\n", oid.to_hex());
+            wire_trace::trace_packet_receive_pack('>', line.trim_end_matches('\n'));
             let len = 4 + line.len();
             write!(out, "{:04x}{}", len, line)?;
             first = false;
         } else {
-            let line = format!("{} {refname}\n", oid.to_hex());
+            let line = format!("{} {display}\n", oid.to_hex());
+            wire_trace::trace_packet_receive_pack('>', line.trim_end_matches('\n'));
             let len = 4 + line.len();
             write!(out, "{:04x}{}", len, line)?;
         }
-        seen_have.insert(*oid);
     }
 
     for h in extra_have {
         if seen_have.insert(*h) {
             let line = format!("{} .have\n", h.to_hex());
+            wire_trace::trace_packet_receive_pack('>', line.trim_end_matches('\n'));
             let len = 4 + line.len();
             write!(out, "{:04x}{}", len, line)?;
         }
@@ -444,6 +501,7 @@ fn advertise_refs_phase(repo: &Repository, extra_have: &HashSet<ObjectId>) -> Re
 
     if first {
         let line = format!("0000000000000000000000000000000000000000 capabilities^{{}}\0{caps}\n");
+        wire_trace::trace_packet_receive_pack('>', line.trim_end_matches('\n'));
         let len = 4 + line.len();
         write!(out, "{:04x}{}", len, line)?;
     }
@@ -451,16 +509,6 @@ fn advertise_refs_phase(repo: &Repository, extra_have: &HashSet<ObjectId>) -> Re
     write_flush(&mut out)?;
     out.flush()?;
     Ok(())
-}
-
-fn list_all_refs(git_dir: &Path) -> Result<Vec<(String, ObjectId)>> {
-    let mut result = Vec::new();
-    for prefix in &["refs/heads/", "refs/tags/", "refs/remotes/"] {
-        if let Ok(entries) = refs::list_refs(git_dir, prefix) {
-            result.extend(entries);
-        }
-    }
-    Ok(result)
 }
 
 fn open_repo(path: &Path) -> Result<Repository> {
@@ -473,6 +521,7 @@ fn open_repo(path: &Path) -> Result<Repository> {
 
 fn run_hooks_and_update_refs(
     repo: &Repository,
+    remote_config: &ConfigSet,
     updates: &[(String, String, String)],
     zero_oid: &str,
 ) -> Result<()> {
@@ -498,14 +547,13 @@ fn run_hooks_and_update_refs(
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    let remote_config = ConfigSet::load(Some(&repo.git_dir), false)?;
     let deny_deletes = config_bool_any(
-        &remote_config,
+        remote_config,
         &["receive.denyDeletes", "receive.denydeletes"],
         false,
     );
     let deny_nff = config_bool_any(
-        &remote_config,
+        remote_config,
         &["receive.denyNonFastForwards", "receive.denynonfastforwards"],
         false,
     );
@@ -581,7 +629,7 @@ fn run_hooks_and_update_refs(
     for (old_hex, new_hex, refname) in updates {
         check_receive_update_policy(
             repo,
-            &remote_config,
+            remote_config,
             refname,
             old_hex,
             new_hex,
@@ -622,6 +670,19 @@ fn run_hooks_and_update_refs(
                 ObjectId::from_hex(new_hex).with_context(|| format!("invalid oid: {new_hex}"))?;
             refs::write_ref(&repo.git_dir, refname, &new_oid)
                 .with_context(|| format!("updating ref {refname}"))?;
+            if let Some(wt) = repo.work_tree.as_ref() {
+                if let Ok(HeadState::Branch {
+                    refname: head_br, ..
+                }) = resolve_head(&repo.git_dir)
+                {
+                    if head_br == *refname {
+                        let deny = read_receive_deny_current(&remote_config);
+                        if matches!(deny, ReceiveDenyAction::UpdateInstead) {
+                            checkout_worktree_to_commit(wt, new_oid)?;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -704,6 +765,30 @@ fn read_receive_deny_delete_current(cfg: &ConfigSet) -> ReceiveDenyAction {
     }
 }
 
+fn read_receive_deny_current(cfg: &ConfigSet) -> ReceiveDenyAction {
+    let v = cfg
+        .get("receive.denyCurrentBranch")
+        .or_else(|| cfg.get("receive.denycurrentbranch"));
+    match v.as_deref().map(str::trim) {
+        None => ReceiveDenyAction::Unconfigured,
+        Some(s) => parse_receive_deny_action(Some(s)),
+    }
+}
+
+fn checkout_worktree_to_commit(wt: &Path, oid: ObjectId) -> Result<()> {
+    let status = Command::new(grit_exe::grit_executable())
+        .current_dir(wt)
+        .args(["checkout", "-q", "-f", &oid.to_hex()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .status()
+        .context("spawn grit checkout for receive.denyCurrentBranch updateInstead")?;
+    if !status.success() {
+        bail!("failed to update work tree to {}", oid.to_hex());
+    }
+    Ok(())
+}
+
 fn check_receive_update_policy(
     repo: &Repository,
     cfg: &ConfigSet,
@@ -763,6 +848,47 @@ fn check_receive_update_policy(
         if old_oid != new_oid && !is_ancestor(repo, old_oid, new_oid)? {
             eprintln!("error: denying non-fast-forward {refname} (you should pull first)");
             bail!("non-fast-forward");
+        }
+    }
+
+    if !is_delete && !repo.is_bare() {
+        if let Some(head) = head_branch {
+            if refname == head {
+                let head_oid_ok = refs::resolve_ref(&repo.git_dir, head).is_ok();
+                let deny = read_receive_deny_current(cfg);
+                if !head_oid_ok && matches!(deny, ReceiveDenyAction::UpdateInstead) {
+                    return Ok(());
+                }
+                match deny {
+                    ReceiveDenyAction::Ignore | ReceiveDenyAction::UpdateInstead => {}
+                    ReceiveDenyAction::Warn => {
+                        eprintln!("warning: updating the current branch");
+                    }
+                    ReceiveDenyAction::Refuse => {
+                        eprintln!("error: refusing to update checked out branch: {refname}");
+                        bail!("branch is currently checked out");
+                    }
+                    ReceiveDenyAction::Unconfigured => {
+                        eprintln!(
+                            "error: refusing to update checked out branch: {refname}\n\
+                             error: By default, updating the current branch in a non-bare repository\n\
+                             is denied, because it will make the index and work tree inconsistent\n\
+                             with what you pushed, and will require 'git reset --hard' to match\n\
+                             the work tree to HEAD.\n\
+                             \n\
+                             You can set the 'receive.denyCurrentBranch' configuration variable\n\
+                             to 'ignore' or 'warn' in the remote repository to allow pushing into\n\
+                             its current branch; however, this is not recommended unless you\n\
+                             arranged to update its work tree to match what you pushed in some\n\
+                             other way.\n\
+                             \n\
+                             To squelch this message and still keep the default behaviour, set\n\
+                             'receive.denyCurrentBranch' configuration variable to 'refuse'."
+                        );
+                        bail!("branch is currently checked out");
+                    }
+                }
+            }
         }
     }
 
