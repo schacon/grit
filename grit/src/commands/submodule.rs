@@ -551,6 +551,10 @@ pub struct SyncArgs {
     #[arg(long)]
     pub recursive: bool,
 
+    /// Prefix for nested submodule paths in status output (internal; matches `git submodule--helper sync`).
+    #[arg(long = "super-prefix", value_name = "PREFIX")]
+    pub super_prefix: Option<String>,
+
     /// Restrict to specific submodule paths.
     #[arg(value_name = "PATH")]
     pub paths: Vec<String>,
@@ -2153,21 +2157,19 @@ fn resolve_submodule_super_url(
         return Ok(raw_url.to_string());
     }
 
-    let super_git = superproject_git_dir_for_nested_modules(repo_git_dir)
+    // Use this repository's git dir for `remote.*.url` (matches Git's `resolve_relative_url`: it
+    // reads `the_repository`, not the outer superproject). Nested sync runs with `git_dir` under
+    // `.git/modules/<name>/` and must use that config—using only the top-level `.git` breaks
+    // recursive sync (t7403).
+    let outer_git = superproject_git_dir_for_nested_modules(repo_git_dir)
         .unwrap_or_else(|| repo_git_dir.to_path_buf());
-    let super_wt = super_git
+    let outer_wt = outer_git
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| work_tree.to_path_buf());
 
-    let mut base = default_remote_url_raw(&super_git)
-        .unwrap_or_else(|| super_wt.to_string_lossy().into_owned());
-    if url_is_local_not_ssh(&base)
-        && !is_absolute_path_url(&base)
-        && (base.starts_with("./") || base.starts_with("../"))
-    {
-        base = canonicalize_local_remote_url_base(&super_wt, &super_git, &base);
-    }
+    let base = default_remote_url_raw(repo_git_dir)
+        .unwrap_or_else(|| outer_wt.to_string_lossy().into_owned());
     git_relative_url(&base, raw_url, None)
 }
 
@@ -2181,21 +2183,15 @@ fn resolve_submodule_sub_origin_url(
     if !raw_url.starts_with("./") && !raw_url.starts_with("../") {
         return Ok(raw_url.to_string());
     }
-    let super_git = superproject_git_dir_for_nested_modules(repo_git_dir)
+    let outer_git = superproject_git_dir_for_nested_modules(repo_git_dir)
         .unwrap_or_else(|| repo_git_dir.to_path_buf());
-    let super_wt = super_git
+    let outer_wt = outer_git
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| work_tree.to_path_buf());
 
-    let mut base = default_remote_url_raw(&super_git)
-        .unwrap_or_else(|| super_wt.to_string_lossy().into_owned());
-    if url_is_local_not_ssh(&base)
-        && !is_absolute_path_url(&base)
-        && (base.starts_with("./") || base.starts_with("../"))
-    {
-        base = canonicalize_local_remote_url_base(&super_wt, &super_git, &base);
-    }
+    let base = default_remote_url_raw(repo_git_dir)
+        .unwrap_or_else(|| outer_wt.to_string_lossy().into_owned());
     let up = submodule_up_path(submodule_path);
     let up_ref = (!up.is_empty()).then_some(up.as_str());
     git_relative_url(&base, raw_url, up_ref)
@@ -2213,32 +2209,6 @@ fn superproject_git_dir_for_nested_modules(git_dir: &Path) -> Option<PathBuf> {
         p = parent.to_path_buf();
     }
     None
-}
-
-/// Superproject work tree when `git_dir` is under `.git/modules/<name>/` (else `None`).
-fn superproject_work_tree_for_nested_git_dir(git_dir: &Path) -> Option<PathBuf> {
-    superproject_git_dir_for_nested_modules(git_dir).and_then(|g| g.parent().map(Path::to_path_buf))
-}
-
-/// Join and canonicalize a possibly-relative remote URL; uses the submodule's work tree, or the
-/// outer superproject tree for paths under `.git/modules/` (so `../sub` matches Git).
-fn canonicalize_local_remote_url_base(work_tree: &Path, git_dir: &Path, url: &str) -> String {
-    if !url_is_local_not_ssh(url)
-        || is_absolute_path_url(url)
-        || (!url.starts_with("./") && !url.starts_with("../"))
-    {
-        return url.to_string();
-    }
-    let base_dir = superproject_work_tree_for_nested_git_dir(git_dir)
-        .unwrap_or_else(|| work_tree.to_path_buf());
-    let joined = base_dir.join(url);
-    let joined_s = joined.to_string_lossy().into_owned();
-    joined
-        .canonicalize()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| {
-            crate::git_path::normalize_path_copy(&joined_s).unwrap_or_else(|_| url.to_string())
-        })
 }
 
 /// Raw `remote.<default>.url` from config (may be `../sub`); matches Git's
@@ -2272,8 +2242,14 @@ fn count_slashes_in_submodule_path(path: &str) -> usize {
     path.bytes().filter(|&b| b == b'/').count()
 }
 
+/// Strip a leading `./` so `./dir/sub` matches Git's cache path `dir/sub` for `get_up_path`.
+fn submodule_path_for_up_path(path: &str) -> &str {
+    path.strip_prefix("./").unwrap_or(path)
+}
+
 /// Git's `get_up_path(path)` for submodule URL resolution (`relative_url` `up_path`).
 fn submodule_up_path(path: &str) -> String {
+    let path = submodule_path_for_up_path(path);
     let mut s = String::new();
     for _ in 0..count_slashes_in_submodule_path(path) {
         s.push_str("../");
@@ -2407,9 +2383,29 @@ fn resolve_path_components(base_path: &str, relative: &str) -> String {
     format!("/{}", parts.join("/"))
 }
 
+/// Display path for `submodule sync` messages (`get_submodule_displaypath` in Git).
+fn submodule_sync_display_path(
+    work_tree: &Path,
+    cwd: &Path,
+    super_prefix: Option<&str>,
+    submodule_path: &str,
+) -> String {
+    if let Some(sp) = super_prefix {
+        let base = sp.trim_end_matches('/');
+        if base.is_empty() {
+            submodule_path.to_string()
+        } else {
+            format!("{base}/{submodule_path}")
+        }
+    } else {
+        rev_parse::to_relative_path(&work_tree.join(submodule_path), cwd).replace('\\', "/")
+    }
+}
+
 fn run_sync(args: &SyncArgs, quiet: bool) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
+    let cwd = std::env::current_dir().context("failed to read current directory")?;
     let modules = parse_gitmodules(work_tree)?;
     let selected = filter_submodules(&modules, &args.paths);
 
@@ -2433,7 +2429,9 @@ fn run_sync(args: &SyncArgs, quiet: bool) -> Result<()> {
         let super_url = resolve_submodule_super_url(work_tree, &repo.git_dir, &m.url)?;
         config.set(&url_key, &super_url)?;
         if !quiet {
-            eprintln!("Synchronizing submodule url for '{}'", m.path);
+            let display_path =
+                submodule_sync_display_path(work_tree, &cwd, args.super_prefix.as_deref(), &m.path);
+            println!("Synchronizing submodule url for '{display_path}'");
         }
 
         // Submodule working tree remote: relative_url with get_up_path (see git submodule sync).
@@ -2464,15 +2462,25 @@ fn run_sync(args: &SyncArgs, quiet: bool) -> Result<()> {
             if sub_path.join(".git").exists() {
                 let nested = parse_gitmodules(&sub_path).unwrap_or_default();
                 if !nested.is_empty() {
-                    // Use the grit binary for recursive sync in nested submodules.
+                    let parent_display = submodule_sync_display_path(
+                        work_tree,
+                        &cwd,
+                        args.super_prefix.as_deref(),
+                        &m.path,
+                    );
+                    let child_super = format!("{}/", parent_display.trim_end_matches('/'));
                     let grit_bin =
                         std::env::current_exe().unwrap_or_else(|_| PathBuf::from("grit"));
-                    let _status = grit_subprocess(&grit_bin)
-                        .arg("submodule")
+                    let mut cmd = grit_subprocess(&grit_bin);
+                    cmd.arg("submodule")
                         .arg("sync")
                         .arg("--recursive")
-                        .current_dir(&sub_path)
-                        .status();
+                        .arg(format!("--super-prefix={child_super}"))
+                        .current_dir(&sub_path);
+                    if quiet {
+                        cmd.arg("--quiet");
+                    }
+                    let _status = cmd.status();
                 }
             }
         }

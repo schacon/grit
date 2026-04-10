@@ -1015,9 +1015,21 @@ fn walk_reachable(repo: &Repository, oid: &ObjectId, oids: &mut BTreeSet<ObjectI
                 if nul + 21 > data.len() {
                     break;
                 }
+                let mode_end = data[pos..nul]
+                    .iter()
+                    .position(|&b| b == b' ')
+                    .map(|i| pos + i)
+                    .ok_or_else(|| anyhow::anyhow!("corrupt tree object"))?;
+                let mode = std::str::from_utf8(&data[pos..mode_end])
+                    .map_err(|_| anyhow::anyhow!("corrupt tree object"))?;
                 let entry_oid = ObjectId::from_bytes(&data[nul + 1..nul + 21])
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
-                walk_reachable(repo, &entry_oid, oids)?;
+                // Git submodules are tree entries with mode 160000 (commit gitlink). The
+                // referenced commit lives in the submodule's object store, not the superproject;
+                // `git pack-objects` must not traverse into it (matches Git; fixes fetch/pull).
+                if mode != "160000" {
+                    walk_reachable(repo, &entry_oid, oids)?;
+                }
                 pos = nul + 21;
             }
         }
