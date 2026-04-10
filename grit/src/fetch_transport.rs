@@ -338,12 +338,29 @@ pub(crate) fn collect_wants(
             && refname.ends_with(suffix)
     }
 
-    fn normalize_non_oid_src(src: &str) -> String {
-        if src.starts_with("refs/") {
-            src.to_string()
-        } else {
-            format!("refs/heads/{src}")
+    fn resolve_advertised_source_ref(
+        src: &str,
+        advertised: &[(String, ObjectId)],
+    ) -> Option<String> {
+        if src.is_empty() || src == "HEAD" {
+            return Some("HEAD".to_owned());
         }
+        if src.starts_with("refs/") {
+            return Some(src.to_owned());
+        }
+        let candidates = [
+            format!("refs/{src}"),
+            format!("refs/tags/{src}"),
+            format!("refs/heads/{src}"),
+            format!("refs/remotes/{src}"),
+            format!("refs/remotes/{src}/HEAD"),
+        ];
+        for cand in candidates {
+            if advertised.iter().any(|(name, _)| name == &cand) {
+                return Some(cand);
+            }
+        }
+        Some(format!("refs/heads/{src}"))
     }
 
     if refspecs.is_empty() {
@@ -379,7 +396,10 @@ pub(crate) fn collect_wants(
         .filter_map(|spec| spec.strip_prefix('^'))
         .map(refspec_src)
         .filter(|src| !src.is_empty())
-        .map(normalize_non_oid_src)
+        .map(|src| {
+            resolve_advertised_source_ref(src, advertised)
+                .unwrap_or_else(|| format!("refs/heads/{src}"))
+        })
         .collect();
 
     let is_excluded = |refname: &str| -> bool {
@@ -395,7 +415,8 @@ pub(crate) fn collect_wants(
         }
         let src = refspec_src(spec);
         if src.contains('*') {
-            let pattern = normalize_non_oid_src(src);
+            let pattern = resolve_advertised_source_ref(src, advertised)
+                .unwrap_or_else(|| format!("refs/heads/{src}"));
             for (name, oid) in advertised {
                 if refspec_pattern_matches(&pattern, name) && !is_excluded(name) {
                     wants.push(*oid);
@@ -406,7 +427,7 @@ pub(crate) fn collect_wants(
         let oid = if src.len() == 40 && src.chars().all(|c| c.is_ascii_hexdigit()) {
             ObjectId::from_hex(src)
                 .with_context(|| format!("invalid object id in refspec: {src}"))?
-        } else if src == "HEAD" {
+        } else if src.is_empty() || src == "HEAD" {
             let resolved = advertised
                 .iter()
                 .find(|(n, _)| n == "HEAD")
@@ -428,18 +449,12 @@ pub(crate) fn collect_wants(
             }
             resolved
         } else {
-            let remote_ref = normalize_non_oid_src(src);
+            let remote_ref = resolve_advertised_source_ref(src, advertised)
+                .unwrap_or_else(|| format!("refs/heads/{src}"));
             let resolved = advertised
                 .iter()
                 .find(|(n, _)| n == &remote_ref)
                 .map(|(_, o)| *o)
-                .or_else(|| {
-                    let tag_ref = format!("refs/tags/{src}");
-                    advertised
-                        .iter()
-                        .find(|(n, _)| n == &tag_ref)
-                        .map(|(_, o)| *o)
-                })
                 .with_context(|| format!("could not find remote ref '{remote_ref}'"))?;
             if is_excluded(&remote_ref) {
                 continue;

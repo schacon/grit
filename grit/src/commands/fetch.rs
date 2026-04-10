@@ -720,7 +720,9 @@ fn fetch_remote(
     url_override: Option<&str>,
     args: &Args,
 ) -> Result<()> {
-    let is_bare_repo = git_dir.join("objects").is_dir() && git_dir.join("HEAD").is_file();
+    let is_bare_repo = Repository::open(git_dir, None)
+        .map(|repo| repo.is_bare())
+        .unwrap_or(false);
     if !args.negotiate_only && args.unshallow {
         let shallow_path = git_dir.join("shallow");
         if shallow_path.exists() {
@@ -744,6 +746,12 @@ fn fetch_remote(
     // Determine remote URL: CLI path, config, `.git/remotes/<name>`, or `.git/branches/<name>`.
     let url = if let Some(u) = url_override {
         u.to_owned()
+    } else if let Some(u) = config
+        .get_all(&url_key)
+        .into_iter()
+        .find(|v| !v.trim().is_empty())
+    {
+        u
     } else if let Some(u) = config.get(&url_key) {
         u
     } else if let Some(leg) = &legacy_remote {
@@ -751,7 +759,7 @@ fn fetch_remote(
     } else if let Some(br) = &branches_remote {
         br.url.clone()
     } else {
-        bail!("remote '{remote_name}' not found; no such remote");
+        bail!("fatal: '{remote_name}' does not appear to be a git repository");
     };
 
     let is_ext_url = url.starts_with("ext::");
@@ -1451,11 +1459,18 @@ fn fetch_remote(
                         }
                     }
                 } else {
-                    let remote_ref = if src.starts_with("refs/") {
-                        src.clone()
-                    } else {
-                        format!("refs/heads/{src}")
-                    };
+                    let remote_ref = resolve_advertised_ref_for_fetch_src(
+                        &src,
+                        &remote_all_refs,
+                        remote_symbolic_head_branch.as_deref(),
+                    )
+                    .unwrap_or_else(|| {
+                        if src.starts_with("refs/") {
+                            src.clone()
+                        } else {
+                            format!("refs/heads/{src}")
+                        }
+                    });
                     let local_ref = normalize_fetch_refspec_dst(&dst);
                     if let Some(prev_src) = dst_to_src.get(&local_ref) {
                         if prev_src != &remote_ref {
@@ -1505,11 +1520,23 @@ fn fetch_remote(
                         let local_ref = dst.replacen('*', matched, 1);
                         updated_refs.push(local_ref.clone());
                         let old_oid = read_ref_oid(git_dir, &local_ref);
+                        if local_ref.starts_with("refs/heads/")
+                            && !args.update_head_ok
+                            && !is_bare_repo
+                        {
+                            if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
+                                bail!(
+                                    "refusing to fetch into branch '{}' checked out at '{}'",
+                                    local_ref,
+                                    wt_path
+                                );
+                            }
+                        }
                         if old_oid.as_ref() == Some(remote_oid) {
                             continue;
                         }
 
-                        // Check fast-forward for wildcard updates too; `--atomic` expects any
+                        // Check fast-forward for wildcard updates; `--atomic` expects any
                         // non-fast-forward to abort the entire fetch.
                         if let Some(ref old) = old_oid {
                             if old != remote_oid && !(force || args.force) {
@@ -1527,34 +1554,6 @@ fn fetch_remote(
                         if !has_updates && !args.quiet {
                             eprintln!("From {display_url}");
                             has_updates = true;
-                        }
-
-                        // Refuse to update a ref that's checked out in a worktree (unless
-                        // `--update-head-ok`, matching Git's fetch safety valve).
-                        if local_ref.starts_with("refs/heads/")
-                            && !args.update_head_ok
-                            && !is_bare_repo
-                        {
-                            if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
-                                bail!(
-                                    "refusing to fetch into branch '{}' checked out at '{}'",
-                                    local_ref,
-                                    wt_path
-                                );
-                            }
-                        }
-                        // Check fast-forward: reject non-ff updates unless forced.
-                        if let Some(ref old) = old_oid {
-                            if old != remote_oid && !(force || args.force) {
-                                let is_ff = merge_base::is_ancestor(&ff_repo, *old, *remote_oid)
-                                    .unwrap_or(false);
-                                if !is_ff {
-                                    eprintln!(
-                                        " ! [rejected]        {refname} -> {local_ref} (non-fast-forward)"
-                                    );
-                                    bail!("cannot fast-forward ref '{local_ref}'");
-                                }
-                            }
                         }
                         apply_single_ref_update(
                             args,
@@ -1603,38 +1602,27 @@ fn fetch_remote(
             let (remote_oid, resolved_remote_ref): (ObjectId, Option<String>) =
                 if let Ok(oid) = ObjectId::from_hex(src.as_str()) {
                     (oid, None)
-                } else if src == "HEAD" {
-                    let head_oid = remote_head_advertised_oid
-                        .or_else(|| find_remote_ref_oid("HEAD"))
-                        .or_else(|| {
-                            remote_symbolic_head_branch
-                                .as_deref()
-                                .and_then(|b| find_remote_ref_oid(&format!("refs/heads/{b}")))
-                        })
-                        .with_context(|| "couldn't find remote ref 'HEAD'".to_string())?;
-                    (head_oid, Some("HEAD".to_string()))
                 } else {
-                    let remote_ref = if src.starts_with("refs/") {
-                        src.clone()
-                    } else {
-                        format!("refs/heads/{src}")
-                    };
-                    if let Some(oid) = find_remote_ref_oid(&remote_ref) {
-                        (oid, Some(remote_ref))
-                    } else if !src.starts_with("refs/") {
-                        let tag_ref = format!("refs/tags/{src}");
-                        (
-                            find_remote_ref_oid(&tag_ref)
-                                .with_context(|| format!("couldn't find remote ref '{}'", src))?,
-                            Some(tag_ref),
-                        )
-                    } else {
-                        bail!("couldn't find remote ref '{src}'");
-                    }
+                    let resolved_ref = resolve_advertised_ref_for_fetch_src(
+                        &src,
+                        &remote_all_refs,
+                        remote_symbolic_head_branch.as_deref(),
+                    )
+                    .with_context(|| format!("couldn't find remote ref '{src}'"))?;
+                    let oid = remote_oid_for_resolved_ref(
+                        &resolved_ref,
+                        &find_remote_ref_oid,
+                        remote_head_advertised_oid,
+                        remote_symbolic_head_branch.as_deref(),
+                    )
+                    .with_context(|| format!("couldn't find remote ref '{src}'"))?;
+                    (oid, Some(resolved_ref))
                 };
 
             let branch_label = if ObjectId::from_hex(src.as_str()).is_ok() {
                 src.as_str()
+            } else if src.is_empty() {
+                "HEAD"
             } else if let Some(rest) = src.strip_prefix("refs/heads/") {
                 rest
             } else if let Some(rest) = src.strip_prefix("refs/tags/") {
@@ -1675,9 +1663,25 @@ fn fetch_remote(
             // If a destination is specified, write the ref there
             if !dst.is_empty() {
                 let local_ref = normalize_fetch_refspec_dst(&dst);
+                ensure_head_ref_target_is_commit(
+                    remote_repo,
+                    &local_ref,
+                    remote_oid,
+                    src.as_str(),
+                    &resolved_remote_ref,
+                )?;
                 updated_refs.push(local_ref.clone());
 
                 let old_oid = read_ref_oid(git_dir, &local_ref);
+                if local_ref.starts_with("refs/heads/") && !args.update_head_ok && !is_bare_repo {
+                    if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
+                        bail!(
+                            "refusing to fetch into branch '{}' checked out at '{}'",
+                            local_ref,
+                            wt_path
+                        );
+                    }
+                }
 
                 // Check fast-forward: reject non-ff updates unless forced
                 if let Some(ref old) = old_oid {
@@ -1695,18 +1699,6 @@ fn fetch_remote(
                     if !has_updates && !args.quiet {
                         eprintln!("From {display_url}");
                         has_updates = true;
-                    }
-
-                    // Check if branch is checked out in a worktree before updating.
-                    if local_ref.starts_with("refs/heads/") && !args.update_head_ok && !is_bare_repo
-                    {
-                        if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
-                            bail!(
-                                "refusing to fetch into branch '{}' checked out at '{}'",
-                                local_ref,
-                                wt_path
-                            );
-                        }
                     }
                     apply_single_ref_update(
                         args,
@@ -3097,18 +3089,101 @@ fn fetch_object_copy_roots(
 
 /// Resolve a short or full remote ref name for fetch (CLI refspec source side).
 fn resolve_remote_ref_for_fetch_src(remote_git_dir: &Path, src: &str) -> Result<String> {
+    if src.is_empty() || src == "HEAD" {
+        return Ok("HEAD".to_owned());
+    }
     if src.starts_with("refs/") {
         return Ok(src.to_owned());
+    }
+    let candidates = [
+        format!("refs/{src}"),
+        format!("refs/tags/{src}"),
+        format!("refs/heads/{src}"),
+        format!("refs/remotes/{src}"),
+        format!("refs/remotes/{src}/HEAD"),
+    ];
+    for cand in candidates {
+        if refs::resolve_ref(remote_git_dir, &cand).is_ok() {
+            return Ok(cand);
+        }
     }
     let heads_ref = format!("refs/heads/{src}");
     if refs::resolve_ref(remote_git_dir, &heads_ref).is_ok() {
         return Ok(heads_ref);
     }
-    let tags_ref = format!("refs/tags/{src}");
-    if refs::resolve_ref(remote_git_dir, &tags_ref).is_ok() {
-        return Ok(tags_ref);
-    }
     Ok(heads_ref)
+}
+
+fn resolve_advertised_ref_for_fetch_src(
+    src: &str,
+    remote_all_refs: &[(String, ObjectId)],
+    remote_symbolic_head_branch: Option<&str>,
+) -> Option<String> {
+    if src.is_empty() || src == "HEAD" {
+        return Some("HEAD".to_owned());
+    }
+    if src.starts_with("refs/") {
+        return Some(src.to_owned());
+    }
+    let mut candidates = vec![
+        format!("refs/{src}"),
+        format!("refs/tags/{src}"),
+        format!("refs/heads/{src}"),
+        format!("refs/remotes/{src}"),
+        format!("refs/remotes/{src}/HEAD"),
+    ];
+    if let Some(branch) = remote_symbolic_head_branch {
+        candidates.push(format!("refs/heads/{branch}"));
+    }
+    candidates
+        .into_iter()
+        .find(|cand| remote_all_refs.iter().any(|(name, _)| name == cand))
+}
+
+fn remote_oid_for_resolved_ref(
+    resolved_ref: &str,
+    find_remote_ref_oid: &dyn Fn(&str) -> Option<ObjectId>,
+    remote_head_advertised_oid: Option<ObjectId>,
+    remote_symbolic_head_branch: Option<&str>,
+) -> Option<ObjectId> {
+    if resolved_ref == "HEAD" {
+        remote_head_advertised_oid
+            .or_else(|| find_remote_ref_oid("HEAD"))
+            .or_else(|| {
+                remote_symbolic_head_branch
+                    .and_then(|b| find_remote_ref_oid(&format!("refs/heads/{b}")))
+            })
+    } else {
+        find_remote_ref_oid(resolved_ref)
+    }
+}
+
+fn ensure_head_ref_target_is_commit(
+    remote_repo: Option<&Repository>,
+    local_ref: &str,
+    remote_oid: ObjectId,
+    src: &str,
+    resolved_remote_ref: &Option<String>,
+) -> Result<()> {
+    if !local_ref.starts_with("refs/heads/") {
+        return Ok(());
+    }
+    let Some(repo) = remote_repo else {
+        return Ok(());
+    };
+    let Ok(obj) = repo.odb.read(&remote_oid) else {
+        return Ok(());
+    };
+    if obj.kind == ObjectKind::Commit {
+        return Ok(());
+    }
+    let shown_src = resolved_remote_ref.as_deref().unwrap_or(src);
+    bail!(
+        "object {} from '{}' is not a commit; cannot update '{}'",
+        remote_oid.to_hex(),
+        shown_src,
+        local_ref
+    );
 }
 
 /// Copy all objects (loose + packs) from remote to local.
