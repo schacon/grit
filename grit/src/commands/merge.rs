@@ -6008,6 +6008,51 @@ fn materialize_unmerged_entries_for_remerge_tree(
     Ok(())
 }
 
+/// Apply merge-ort directory rename adjustment to `ours` and `theirs` entry maps before a replay
+/// merge, matching [`merge_trees`] when `merge.directoryRenames` is enabled.
+///
+/// [`merge_trees`] runs this pass internally; [`merge_trees_for_replay`] disables that pass to
+/// avoid double-handling with replay’s rename cache. Call this helper when replay needs directory
+/// rename detection (e.g. `git rebase` with `merge.directoryRenames=true`).
+pub(crate) fn replay_preprocess_directory_renames_for_trees(
+    repo: &Repository,
+    base: &HashMap<Vec<u8>, IndexEntry>,
+    ours: &HashMap<Vec<u8>, IndexEntry>,
+    theirs: &HashMap<Vec<u8>, IndexEntry>,
+    merge_directory_renames_mode: MergeDirectoryRenamesMode,
+    rename_options: MergeRenameOptions,
+) -> (HashMap<Vec<u8>, IndexEntry>, HashMap<Vec<u8>, IndexEntry>) {
+    if !merge_directory_renames_enabled_for_mode(repo, merge_directory_renames_mode) {
+        return (ours.clone(), theirs.clone());
+    }
+    let (mut ours_renames, mut theirs_renames) =
+        detect_merge_renames(repo, base, ours, theirs, rename_options);
+    let mut ours_entries = ours.clone();
+    let mut theirs_entries = theirs.clone();
+
+    let ours_dir_renames = merge_directory_rename_maps(
+        build_directory_rename_map(&ours_renames),
+        infer_pure_directory_renames(base, &ours_entries),
+    );
+    let theirs_dir_renames = merge_directory_rename_maps(
+        build_directory_rename_map(&theirs_renames),
+        infer_pure_directory_renames(base, &theirs_entries),
+    );
+    apply_directory_renames_to_side(
+        base,
+        &mut ours_entries,
+        &mut ours_renames,
+        &theirs_dir_renames,
+    );
+    apply_directory_renames_to_side(
+        base,
+        &mut theirs_entries,
+        &mut theirs_renames,
+        &ours_dir_renames,
+    );
+    (ours_entries, theirs_entries)
+}
+
 /// Perform a single three-way tree merge with merge-ort style rename handling.
 ///
 /// This is a thin wrapper over the internal merge engine used by `merge` and

@@ -6,7 +6,7 @@
 //! `--ref-action=print`.
 
 use crate::commands::merge::{
-    merge_trees_for_replay, MergeDirectoryRenamesMode, MergeRenameOptions,
+    merge_trees_for_replay, MergeDirectoryRenamesMode, MergeRenameOptions, ReplayTreeMergeResult,
 };
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
@@ -419,6 +419,97 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
+/// One cherry-pick-style tree merge with an empty upstream rename cache (`git rebase`, `git am --3way`).
+///
+/// Uses merge-ort directory-rename preprocess then [`merge_trees_for_replay`] with directory
+/// renames disabled inside the engine (t3401, t6429 part 2).
+pub(crate) fn merge_trees_for_single_cherry_pick(
+    repo: &Repository,
+    base_tree: ObjectId,
+    ours_tree: ObjectId,
+    theirs_tree: ObjectId,
+    picked_oid: &ObjectId,
+    parent_oid: &ObjectId,
+    head_oid: &ObjectId,
+) -> Result<ReplayTreeMergeResult> {
+    let merge_renormalize = read_merge_renormalize(repo);
+    let directory_renames = read_directory_renames(repo);
+    let rename_opts = MergeRenameOptions::from_config(repo);
+    let mut cached_upstream_renames: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
+
+    let base_entries_raw = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
+    let ours_entries = tree_to_map(tree_to_index_entries(repo, &ours_tree, "")?);
+    let theirs_entries_raw = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
+
+    let changed_paths = collect_changed_paths(&base_entries_raw, &theirs_entries_raw);
+    if should_refresh_upstream_rename_cache(
+        &base_entries_raw,
+        &theirs_entries_raw,
+        &cached_upstream_renames,
+    ) {
+        let detected = detect_side_renames(repo, &base_entries_raw, &ours_entries, true)?;
+        cached_upstream_renames = filter_renames_for_changed_paths(detected, &changed_paths);
+    }
+
+    if likely_has_rename_candidates(&base_entries_raw, &theirs_entries_raw) {
+        let topic_renames =
+            detect_side_renames(repo, &base_entries_raw, &theirs_entries_raw, true)?;
+        for (old, new) in &topic_renames {
+            if cached_upstream_renames.get(old) == Some(new) {
+                cached_upstream_renames.remove(old);
+            }
+        }
+    }
+
+    let base_entries = apply_cached_renames(
+        &base_entries_raw,
+        &cached_upstream_renames,
+        &ours_entries,
+        Some(&base_entries_raw),
+    );
+    let theirs_entries = apply_cached_renames(
+        &theirs_entries_raw,
+        &cached_upstream_renames,
+        &ours_entries,
+        Some(&base_entries_raw),
+    );
+
+    let dir_renames_preprocess_mode = if directory_renames {
+        MergeDirectoryRenamesMode::FromConfig
+    } else {
+        MergeDirectoryRenamesMode::Disabled
+    };
+    let (ours_for_merge, theirs_for_merge) =
+        crate::commands::merge::replay_preprocess_directory_renames_for_trees(
+            repo,
+            &base_entries,
+            &ours_entries,
+            &theirs_entries,
+            dir_renames_preprocess_mode,
+            rename_opts,
+        );
+
+    merge_trees_for_replay(
+        repo,
+        &base_entries,
+        &ours_for_merge,
+        &theirs_for_merge,
+        &short_oid(*picked_oid),
+        &short_oid(*parent_oid),
+        &head_oid.to_hex(),
+        &picked_oid.to_hex(),
+        MergeFavor::None,
+        None,
+        merge_renormalize,
+        false,
+        false,
+        false,
+        false,
+        MergeDirectoryRenamesMode::Disabled,
+        rename_opts,
+    )
+}
+
 /// Replay `commits` (oldest first) onto `onto`, returning the new tip and a map from each
 /// source commit OID to its replayed OID (used by `grit replay` and `grit history reword`).
 pub(crate) fn replay_commits_onto(
@@ -428,11 +519,6 @@ pub(crate) fn replay_commits_onto(
 ) -> Result<(ObjectId, HashMap<ObjectId, ObjectId>)> {
     let merge_renormalize = read_merge_renormalize(repo);
     let directory_renames = read_directory_renames(repo);
-    // `replay` already applies upstream/topic rename detection and cached renames before
-    // calling `merge_trees`. Running merge-ort directory rename handling again inside
-    // `merge_trees` can incorrectly relocate recreated paths (e.g. `olddir/unrelated` →
-    // `newdir/unrelated` in t6429 part 2). Match sequencer-style replay by disabling the
-    // inner directory-rename pass.
     let merge_dir_mode = MergeDirectoryRenamesMode::Disabled;
     let rename_opts = MergeRenameOptions::from_config(repo);
 
@@ -658,10 +744,20 @@ fn read_merge_renormalize(repo: &Repository) -> bool {
 }
 
 fn read_directory_renames(repo: &Repository) -> bool {
+    // Replay/sequencer enables directory-rename *preprocess* only when this key is set
+    // explicitly (Git documents `merge.directoryRenames`; tests use `-c` or repo config).
+    // Do not mirror merge-ort's "default on when unset" here — that changes replay caching
+    // and trace expectations (t6429) without matching upstream replay integration yet.
     ConfigSet::load(Some(&repo.git_dir), true)
         .ok()
-        .and_then(|c| c.get("merge.directoryRenames"))
-        .map(|v| v == "true" || v == "1")
+        .and_then(|c| {
+            c.get("merge.directoryRenames")
+                .or_else(|| c.get("merge.directoryrenames"))
+        })
+        .map(|v| {
+            let t = v.trim().to_ascii_lowercase();
+            matches!(t.as_str(), "true" | "yes" | "on" | "1" | "conflict" | "")
+        })
         .unwrap_or(false)
 }
 
