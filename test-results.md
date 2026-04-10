@@ -1,5 +1,14 @@
 # Test results
 
+**2026-04-10 (status perf phase3 / ignored-directory prune)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo test -p grit-lib --lib`: 166 passed
+- `./scripts/run-tests.sh t0008-ignores.sh`: 219/398
+- `./scripts/run-tests.sh t7067-status-untracked-dir.sh`: 32/33
+- `./scripts/run-tests.sh t7063-status-untracked-cache.sh`: 12/58
+- `./scripts/run-tests.sh t7508-status.sh`: 48/126
+
 **2026-04-10 (status perf phase2 / untracked cache collection fast-path)**
 
 - `cargo check -p grit-rs`: passed

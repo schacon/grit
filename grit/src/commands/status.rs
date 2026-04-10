@@ -950,6 +950,12 @@ fn visit_untracked_directory(
         return Ok(());
     }
 
+    // Fast prune: in default ignored mode, a directory excluded as a directory cannot contribute
+    // visible untracked paths (and tracked descendants were handled above).
+    if ignored_mode == IgnoredMode::No && matcher.check_path(repo, Some(index), rel, true)?.0 {
+        return Ok(());
+    }
+
     // Git `dir.c`: with `--ignored=matching` and full untracked listing, an excluded
     // directory is reported as a single path without enumerating children (unless
     // tracked files force a full walk — handled above).

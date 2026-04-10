@@ -1015,6 +1015,14 @@ fn visit_untracked_directory_uc(
         );
     }
 
+    // Fast prune for default ignored mode: an excluded directory cannot surface untracked
+    // entries unless tracked descendants exist (handled above).
+    if ignored_mode == UntrackedIgnoredMode::No
+        && matcher.check_path(repo, Some(index), rel, true)?.0
+    {
+        return Ok(());
+    }
+
     if ignored_mode == UntrackedIgnoredMode::Matching
         && show_all
         && matcher.check_path(repo, Some(index), rel, true)?.0
@@ -1201,6 +1209,14 @@ fn visit_untracked_directory_collect(
             ignored_out,
             uc,
         );
+    }
+
+    // Fast prune for default ignored mode: excluded directories cannot contribute visible
+    // untracked entries when there are no tracked descendants.
+    if ignored_mode == UntrackedIgnoredMode::No
+        && matcher.check_path(repo, Some(index), rel, true)?.0
+    {
+        return Ok(());
     }
 
     if ignored_mode == UntrackedIgnoredMode::Matching
