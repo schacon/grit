@@ -1329,7 +1329,7 @@ t8320-config-global-local	t8	yes	34	34	0	true	ok	0
 t8330-switch-track	t8	yes	30	12	18	false	ok	0
 t8340-restore-staged	t8	yes	27	16	11	false	ok	0
 t8350-checkout-index-force	t8	yes	30	30	0	true	ok	0
-t8360-read-tree-twoway	t8	yes	25	20	5	false	ok	0
+t8360-read-tree-twoway	t8	yes	25	25	0	true	ok	0
 t8370-mktree-roundtrip	t8	yes	26	26	0	true	ok	0
 t8380-name-rev-deep	t8	yes	31	31	0	true	ok	0
 t8390-diff-tree-stat	t8	yes	37	37	0	true	ok	0

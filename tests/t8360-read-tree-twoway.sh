@@ -39,7 +39,7 @@ test_expect_success 'two-way merge from base to target' '
 	grit ls-files --stage >out &&
 	grep "fileA" out &&
 	grep "fileD" out &&
-	test_must_fail grep "fileC" out
+	! grep "fileC" out
 '
 
 test_expect_success 'two-way merge updates fileA content in index' '
@@ -183,9 +183,9 @@ test_expect_success 'read-tree without -m replaces index entirely' '
 	rm -f .git/index &&
 	grit read-tree "$TARGET" &&
 	grit ls-files --stage >out &&
-	grep "fileA" out &&
-	grep "fileD" out &&
-	test_must_fail grep "fileC" out
+		grep "fileA" out &&
+		grep "fileD" out &&
+		! grep "fileC" out
 '
 
 test_expect_success 'read-tree single tree resets index' '
