@@ -773,7 +773,7 @@ t4096-diff-newline	t4	yes	33	33	0	true	ok	0
 t4100-apply-stat	t4	yes	25	0	25	false	ok	0
 t4101-apply-nonl	t4	yes	12	12	0	true	ok	0
 t4102-apply-rename	t4	yes	5	5	0	true	ok	0
-t4103-apply-binary	t4	yes	24	8	16	false	ok	0
+t4103-apply-binary	t4	yes	24	24	0	true	ok	0
 t4104-apply-boundary	t4	yes	24	24	0	true	ok	0
 t4105-apply-fuzz	t4	yes	9	5	4	false	ok	0
 t4106-apply-stdin	t4	yes	3	3	0	true	ok	0

@@ -13,6 +13,7 @@ use grit_lib::combined_tree_diff::{
     combined_diff_paths_filtered, CombinedDiffPath, CombinedParentStatus, CombinedTreeDiffOptions,
 };
 use grit_lib::config::ConfigSet;
+use grit_lib::delta_encode::{encode_lcp_delta, encode_prefix_extension_delta};
 use grit_lib::diff::{
     count_changes, detect_copies as lib_detect_copies, detect_renames, diff_trees,
     diff_trees_show_tree_entries, format_raw, format_raw_abbrev, unified_diff_with_prefix,
@@ -29,8 +30,11 @@ use grit_lib::quote_path::{format_diff_path_with_prefix, quote_c_style};
 use grit_lib::repo::{resolve_dot_git, Repository};
 
 use crate::commands::diff_index::write_diff_index_name_status;
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
 use grit_lib::rev_parse::resolve_revision;
 use regex::Regex;
+use std::io::Write as IoWrite;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
@@ -107,6 +111,8 @@ struct Options {
     rename_limit: Option<usize>,
     /// Show full object IDs in patch headers (--full-index).
     full_index: bool,
+    /// Omit `a/` and `b/` prefixes on diff paths (--no-prefix).
+    no_prefix: bool,
     /// Also show raw format with patch (--patch-with-raw).
     patch_with_raw: bool,
     /// Also show stat with patch (--patch-with-stat).
@@ -167,6 +173,7 @@ impl Default for Options {
             find_copies_harder: false,
             rename_limit: None,
             full_index: false,
+            no_prefix: false,
             patch_with_raw: false,
             patch_with_stat: false,
             summary: false,
@@ -257,6 +264,7 @@ fn parse_options(repo: &Repository, argv: &[String]) -> Result<Options> {
                 "-z" => opts.nul_terminated = true,
                 "--remerge-diff" => opts.remerge_diff = true,
                 "--full-index" => opts.full_index = true,
+                "--no-prefix" => opts.no_prefix = true,
                 _ if arg.starts_with("--max-depth=") => {
                     let val = &arg["--max-depth=".len()..];
                     opts.max_depth = Some(
@@ -1468,6 +1476,8 @@ fn print_diff(
                     opts.context_lines,
                     opts.abbrev,
                     opts.full_index,
+                    opts.no_prefix,
+                    opts.binary,
                     git_dir,
                     quote_fully,
                 )?;
@@ -1559,6 +1569,102 @@ fn write_summary(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> {
 }
 
 /// Write a unified-diff block for one entry.
+fn zlib_compress_raw(input: &[u8]) -> Result<Vec<u8>> {
+    let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+    IoWrite::write_all(&mut enc, input).map_err(|e| anyhow::anyhow!("zlib compress: {e}"))?;
+    enc.finish()
+        .map_err(|e| anyhow::anyhow!("zlib compress finish: {e}"))
+}
+
+fn encode_len_byte(n: usize) -> char {
+    if (1..=26).contains(&n) {
+        return (b'A' + (n as u8) - 1) as char;
+    }
+    if (27..=52).contains(&n) {
+        return (b'a' + (n as u8) - 27) as char;
+    }
+    '?'
+}
+
+fn git_encode_85(encoded: &mut Vec<u8>, data: &[u8]) {
+    const EN85: &[u8] =
+        b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~";
+    let mut pos = 0usize;
+    let mut bytes = data.len();
+    while bytes > 0 {
+        let mut acc: u32 = 0;
+        let mut cnt = 24i32;
+        while cnt >= 0 {
+            let ch = u32::from(data[pos]);
+            acc |= ch << cnt;
+            pos += 1;
+            bytes -= 1;
+            if bytes == 0 {
+                break;
+            }
+            cnt -= 8;
+        }
+        let mut group = [0u8; 5];
+        for cnt in (0..=4).rev() {
+            let val = acc % 85;
+            acc /= 85;
+            group[cnt] = EN85[val as usize];
+        }
+        encoded.extend_from_slice(&group);
+    }
+}
+
+fn emit_base85_line(out: &mut impl Write, line_payload: &[u8]) -> Result<()> {
+    let n = line_payload.len();
+    let len_ch = encode_len_byte(n);
+    write!(out, "{len_ch}")?;
+    let mut enc = Vec::new();
+    git_encode_85(&mut enc, line_payload);
+    out.write_all(&enc)?;
+    writeln!(out)?;
+    Ok(())
+}
+
+fn write_wrapped_base85(out: &mut impl Write, data: &[u8]) -> Result<()> {
+    let mut pos = 0usize;
+    while pos < data.len() {
+        let take = (data.len() - pos).min(52);
+        emit_base85_line(out, &data[pos..pos + take])?;
+        pos += take;
+    }
+    Ok(())
+}
+
+fn emit_git_binary_patch(out: &mut impl Write, old_raw: &[u8], new_raw: &[u8]) -> Result<()> {
+    let delta_plain = encode_prefix_extension_delta(old_raw, new_raw)
+        .or_else(|_| encode_lcp_delta(old_raw, new_raw))
+        .unwrap_or_default();
+    if delta_plain.is_empty() {
+        let compressed = zlib_compress_raw(new_raw)?;
+        writeln!(out, "GIT binary patch")?;
+        writeln!(out, "literal {}", new_raw.len())?;
+        write_wrapped_base85(out, &compressed)?;
+        writeln!(out)?;
+        writeln!(out, "literal 0")?;
+        writeln!(out, "HcmV?d00001")?;
+        writeln!(out)?;
+    } else {
+        let forward = zlib_compress_raw(&delta_plain)?;
+        let reverse_delta = encode_prefix_extension_delta(new_raw, old_raw)
+            .or_else(|_| encode_lcp_delta(new_raw, old_raw))
+            .unwrap_or_default();
+        let reverse = zlib_compress_raw(&reverse_delta)?;
+        writeln!(out, "GIT binary patch")?;
+        writeln!(out, "delta {}", delta_plain.len())?;
+        write_wrapped_base85(out, &forward)?;
+        writeln!(out)?;
+        writeln!(out, "delta {}", reverse_delta.len())?;
+        write_wrapped_base85(out, &reverse)?;
+        writeln!(out)?;
+    }
+    Ok(())
+}
+
 fn write_patch_entry(
     out: &mut impl Write,
     odb: &Odb,
@@ -1566,6 +1672,8 @@ fn write_patch_entry(
     context_lines: usize,
     abbrev: Option<usize>,
     full_index: bool,
+    no_prefix: bool,
+    binary_patch: bool,
     git_dir: &Path,
     quote_fully: bool,
 ) -> Result<bool> {
@@ -1582,11 +1690,13 @@ fn write_patch_entry(
 
     let old_hex = entry.old_oid.to_hex();
     let new_hex = entry.new_oid.to_hex();
-    let old_abbrev = abbrev_oid(&old_hex, abbrev, full_index);
-    let new_abbrev = abbrev_oid(&new_hex, abbrev, full_index);
+    let index_full = full_index || binary_patch;
+    let old_abbrev = abbrev_oid(&old_hex, abbrev, index_full);
+    let new_abbrev = abbrev_oid(&new_hex, abbrev, index_full);
 
-    let git_old = format_diff_path_with_prefix("a/", old_path, quote_fully);
-    let git_new = format_diff_path_with_prefix("b/", new_path, quote_fully);
+    let (old_pfx, new_pfx) = if no_prefix { ("", "") } else { ("a/", "b/") };
+    let git_old = format_diff_path_with_prefix(old_pfx, old_path, quote_fully);
+    let git_new = format_diff_path_with_prefix(new_pfx, new_path, quote_fully);
 
     writeln!(out, "diff --git {git_old} {git_new}")?;
 
@@ -1645,29 +1755,33 @@ fn write_patch_entry(
     if is_binary_for_diff(git_dir, path_for_attrs, old_raw)
         || is_binary_for_diff(git_dir, path_for_attrs, new_raw)
     {
-        let bo = if entry.status == DiffStatus::Added {
-            "/dev/null".to_owned()
+        if binary_patch {
+            emit_git_binary_patch(out, old_raw, new_raw)?;
         } else {
-            format_diff_path_with_prefix("a/", old_path, quote_fully)
-        };
-        let bn = if entry.status == DiffStatus::Deleted {
-            "/dev/null".to_owned()
-        } else {
-            format_diff_path_with_prefix("b/", new_path, quote_fully)
-        };
-        writeln!(out, "Binary files {bo} and {bn} differ")?;
+            let bo = if entry.status == DiffStatus::Added {
+                "/dev/null".to_owned()
+            } else {
+                format_diff_path_with_prefix(old_pfx, old_path, quote_fully)
+            };
+            let bn = if entry.status == DiffStatus::Deleted {
+                "/dev/null".to_owned()
+            } else {
+                format_diff_path_with_prefix(new_pfx, new_path, quote_fully)
+            };
+            writeln!(out, "Binary files {bo} and {bn} differ")?;
+        }
         return Ok(false);
     }
 
     let display_old = if entry.status == DiffStatus::Added {
         "/dev/null".to_owned()
     } else {
-        format_diff_path_with_prefix("a/", old_path, quote_fully)
+        format_diff_path_with_prefix(old_pfx, old_path, quote_fully)
     };
     let display_new = if entry.status == DiffStatus::Deleted {
         "/dev/null".to_owned()
     } else {
-        format_diff_path_with_prefix("b/", new_path, quote_fully)
+        format_diff_path_with_prefix(new_pfx, new_path, quote_fully)
     };
     let patch = unified_diff_with_prefix(
         &old_content,

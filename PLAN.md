@@ -492,7 +492,7 @@ commit → check it off → move on.
 - [ ] `t4019-diff-wserror` ████░░░░░░░░░░░░░░░░ 5/21 (16 left) — diff whitespace error detection
 - [x] `t4063-diff-blobs` ████████████████████ 18/18 (0 left) — test direct comparison of blobs via git-diff
 - [x] `t4214-log-graph-octopus` ████████████████████ 17/17 (0 left) — git log --graph of skewed left octopus merge.
-- [ ] `t4103-apply-binary` █████░░░░░░░░░░░░░░░ 7/24 (17 left) — git apply handling binary patches
+- [x] `t4103-apply-binary` ████████████████████ 24/24 (0 left) — git apply handling binary patches
 
 - [ ] `t4300-merge-tree` ████░░░░░░░░░░░░░░░░ 5/22 (17 left) — git merge-tree
 - [x] `t4135-apply-weird-filenames` ███████████████████░ 19/20 (1 left) — git apply with weird postimage filenames (traditional + git headers: timestamps, C-quoted paths, `/dev/null`; one `test_expect_failure` quote case remains)

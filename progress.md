@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 329 completed (`[x]`), 5 in progress (`[~]`), 437 remai
 
 ## Recently completed
 
+- `t4103-apply-binary` — 24/24 tests pass (`apply`: `Binary files … differ` metadata + full-index ODB postimage; zlib+Git base85 `GIT binary patch` emission in `diff-tree --binary` with full `index` OIDs; `-p` path normalization; null old OID preimage; binary worktree reads skip CRLF for NUL blobs; corrupt/unrecognized binary errors + second line for empty patch; `diff-tree --no-prefix`)
 - `t7413-submodule-is-active` — 10/10 tests pass (`test-tool submodule is-active`: `is_submodule_active` parity; `submodule.active` pathspec + `:(exclude)`; bare `submodule.active` stderr; `submodule add` skips `submodule.<name>.active` when path matches `submodule.active` wildmatch; `ConfigSet::has_key`)
 - `t3702-add-edit` — 3/3 tests pass (`git add -e`: unstaged index↔worktree patch with 7 context lines, editor via `launch_commit_editor`, `apply --cached --recount --strip=1`; empty patch / editor failure match Git)
 - `t3905-stash-include-untracked` — 34/34 tests pass (`stash -u`/`-a`: ignore-aware untracked discovery + pathspecs/`:(glob)`; `GIT_INDEX_FILE` honored in `Repository::load_index` for `write-tree`; `stash show` global `-u`/`-p`, duplicate detection, bare OID resolve, Git-aligned stat/patch; porcelain v1 without forced `##`; clean pathspec uses lib matcher; `ls-files` magic pathspecs use lib matcher)
