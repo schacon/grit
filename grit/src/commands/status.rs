@@ -3458,27 +3458,27 @@ fn emit_read_directory_trace(
     // Field 9 must match upstream `t7063` / `get_relevant_traces` (Git abbreviates `read_directory`).
     writeln!(
         file,
-        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | ....path:",
+        "{} grit:0  | d0 | main                     | {:<12} |     |           |           | read_directo | ....path:",
         now, "data"
     )?;
     writeln!(
         file,
-        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | ....node-creation:{}",
+        "{} grit:0  | d0 | main                     | {:<12} |     |           |           | read_directo | ....node-creation:{}",
         now, "data", node
     )?;
     writeln!(
         file,
-        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | ....gitignore-invalidation:{}",
+        "{} grit:0  | d0 | main                     | {:<12} |     |           |           | read_directo | ....gitignore-invalidation:{}",
         now, "data", gi
     )?;
     writeln!(
         file,
-        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | ....directory-invalidation:{}",
+        "{} grit:0  | d0 | main                     | {:<12} |     |           |           | read_directo | ....directory-invalidation:{}",
         now, "data", di
     )?;
     writeln!(
         file,
-        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | ....opendir:{}",
+        "{} grit:0  | d0 | main                     | {:<12} |     |           |           | read_directo | ....opendir:{}",
         now, "data", op
     )?;
     Ok(())

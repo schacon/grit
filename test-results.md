@@ -1,5 +1,18 @@
 # Test results
 
+**2026-04-10 (status perf phase2 / untracked trace counters and root creation alignment)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `bash tests/t7063-status-untracked-cache.sh --run=1-4 -v`: 3/4 (test 4 still failing due to `iuc` porcelain branch/header mismatch; trace counters now emit under `read_directo` and root `dir_created` overcount removed)
+- `bash tests/t7519-status-fsmonitor.sh -v`: 33/33 (no regression)
+- `./scripts/run-tests.sh t7063-status-untracked-cache.sh`: 14/58
+- `./scripts/run-tests.sh t7519-status-fsmonitor.sh`: 27/33
+- `./scripts/run-tests.sh t7508-status.sh`: 94/126
+- `./scripts/run-tests.sh t7060-wtstatus.sh`: 12/17
+- `./scripts/run-tests.sh t7065-status-rename.sh`: 28/28
+
 **2026-04-10 (status perf phase4 / sparse fsmonitor ensure_full_index trace parity)**
 
 - `cargo fmt`: passed

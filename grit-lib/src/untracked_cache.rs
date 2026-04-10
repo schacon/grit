@@ -770,7 +770,6 @@ pub fn refresh_untracked_cache_for_status(
 
     if uc.root.is_none() {
         uc.root = Some(UntrackedCacheDir::new(String::new()));
-        uc.dir_created += 1;
     }
     let mut root = uc
         .root
