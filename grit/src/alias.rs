@@ -366,11 +366,7 @@ pub(crate) fn find_git_external_helper(cmd: &str, exec_path: Option<&Path>) -> O
 
 fn try_exec_dashed(cmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<bool> {
     let ext_cmd = format!("git-{cmd}");
-    let exec_path = opts.exec_path.clone().or_else(|| {
-        std::env::current_exe()
-            .ok()
-            .and_then(|e| e.parent().map(|p| p.to_path_buf()))
-    });
+    let exec_path = crate::git_exec_path_for_helpers(opts.exec_path.as_deref());
     if let Some(ext_path) = find_git_external_helper(cmd, exec_path.as_deref()) {
         let status = std::process::Command::new(&ext_path)
             .args(rest.iter())
