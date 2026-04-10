@@ -190,47 +190,23 @@ fn pre_push_hook_local_display(u: &RefUpdate) -> &str {
 /// Stable ref processing order for `push --mirror --atomic` (matches Git's stderr ordering in
 /// `t5543-atomic-push`).
 fn mirror_atomic_ref_order(updates: &[RefUpdate]) -> Vec<String> {
-    use std::collections::HashSet;
-    let head_shorts: HashSet<String> = updates
-        .iter()
-        .filter(|u| u.remote_ref.starts_with("refs/heads/"))
-        .map(|u| {
-            u.remote_ref
-                .strip_prefix("refs/heads/")
-                .unwrap_or(&u.remote_ref)
-                .to_owned()
-        })
-        .collect();
-
-    let mut tag_only: Vec<String> = updates
+    let mut tag_deletes: Vec<String> = updates
         .iter()
         .filter(|u| u.remote_ref.starts_with("refs/tags/"))
-        .filter(|u| {
-            let short = u
-                .remote_ref
-                .strip_prefix("refs/tags/")
-                .unwrap_or(&u.remote_ref);
-            !head_shorts.contains(short)
-        })
+        .filter(|u| u.new_oid.is_none())
         .map(|u| u.remote_ref.clone())
         .collect();
-    tag_only.sort();
-    tag_only.dedup();
+    tag_deletes.sort();
+    tag_deletes.dedup();
 
-    let mut tag_after_branch: Vec<String> = updates
+    let mut tag_non_deletes: Vec<String> = updates
         .iter()
         .filter(|u| u.remote_ref.starts_with("refs/tags/"))
-        .filter(|u| {
-            let short = u
-                .remote_ref
-                .strip_prefix("refs/tags/")
-                .unwrap_or(&u.remote_ref);
-            head_shorts.contains(short)
-        })
+        .filter(|u| u.new_oid.is_some())
         .map(|u| u.remote_ref.clone())
         .collect();
-    tag_after_branch.sort();
-    tag_after_branch.dedup();
+    tag_non_deletes.sort();
+    tag_non_deletes.dedup();
 
     let mut head_refs: Vec<String> = updates
         .iter()
@@ -244,9 +220,9 @@ fn mirror_atomic_ref_order(updates: &[RefUpdate]) -> Vec<String> {
     if updates.iter().any(|u| u.remote_ref == "refs/heads/main") {
         order.push("refs/heads/main".to_owned());
     }
-    order.extend(tag_only);
+    order.extend(tag_deletes);
     order.extend(head_refs);
-    order.extend(tag_after_branch);
+    order.extend(tag_non_deletes);
     for u in updates.iter() {
         if !order.contains(&u.remote_ref) {
             order.push(u.remote_ref.clone());
@@ -276,6 +252,94 @@ fn sort_applied_indices(
         });
     }
     idx
+}
+
+fn report_push_rejection(
+    update: &RefUpdate,
+    bracket: &'static str,
+    parenthetical: &str,
+    args: &Args,
+) {
+    if args.porcelain || args.quiet {
+        return;
+    }
+    let dst = if update.remote_ref.starts_with("refs/heads/") {
+        update
+            .remote_ref
+            .strip_prefix("refs/heads/")
+            .unwrap_or(&update.remote_ref)
+            .to_owned()
+    } else if update.remote_ref.starts_with("refs/tags/") {
+        update
+            .remote_ref
+            .strip_prefix("refs/tags/")
+            .unwrap_or(&update.remote_ref)
+            .to_owned()
+    } else {
+        update.remote_ref.clone()
+    };
+    let src = update
+        .local_ref
+        .as_deref()
+        .and_then(|r| r.strip_prefix("refs/heads/"))
+        .or_else(|| {
+            update
+                .local_ref
+                .as_deref()
+                .and_then(|r| r.strip_prefix("refs/tags/"))
+        })
+        .unwrap_or(update.local_ref.as_deref().unwrap_or("(delete)"));
+    let tag_delete_style =
+        update.remote_ref.starts_with("refs/tags/") && update.local_ref.is_none();
+    if tag_delete_style {
+        eprintln!(" ! [{bracket}] {dst} ({parenthetical})");
+    } else {
+        eprintln!(" ! [{bracket}] {src} -> {dst} ({parenthetical})");
+    }
+}
+
+fn report_atomic_rollback_for_applied_updates(
+    remote_repo: &Repository,
+    applied_updates: &mut Vec<(&RefUpdate, Option<ObjectId>)>,
+    mirror_atomic_order: Option<&[String]>,
+    args: &Args,
+    failed_remote_ref: Option<&str>,
+) {
+    let mut ordered: Vec<(&RefUpdate, Option<ObjectId>)> =
+        sort_applied_indices(applied_updates, mirror_atomic_order)
+            .into_iter()
+            .map(|idx| applied_updates[idx])
+            .collect();
+    if let (Some(failed_ref), Some(order)) = (failed_remote_ref, mirror_atomic_order) {
+        let failed_pos = order
+            .iter()
+            .position(|r| r == failed_ref)
+            .unwrap_or(usize::MAX);
+        ordered = ordered
+            .into_iter()
+            .filter(|(u, _)| u.remote_ref != failed_ref)
+            .collect();
+        ordered.sort_by_key(|(u, _)| {
+            let pos = order
+                .iter()
+                .position(|r| r == &u.remote_ref)
+                .unwrap_or(usize::MAX);
+            if pos < failed_pos {
+                (0usize, pos)
+            } else {
+                (1usize, pos)
+            }
+        });
+    }
+    for (prev_update, prev_old) in ordered {
+        if let Some(ref old_oid) = prev_old {
+            let _ = refs::write_ref(&remote_repo.git_dir, &prev_update.remote_ref, old_oid);
+        } else {
+            let _ = refs::delete_ref(&remote_repo.git_dir, &prev_update.remote_ref);
+        }
+        report_push_rejection(prev_update, "remote rejected", "atomic push failure", args);
+    }
+    applied_updates.clear();
 }
 
 fn grit_bin_for_nested_push() -> PathBuf {
@@ -551,6 +615,13 @@ fn push_to_url(
     push_refspecs_from_config: &[String],
     path_style_remote: bool,
 ) -> Result<()> {
+    if let Some(receive_pack) = args.receive_pack.as_ref().filter(|s| !s.is_empty()) {
+        if args.atomic {
+            return run_push_with_receive_pack_wrapper(receive_pack, args.porcelain, url);
+        }
+        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+    }
+
     if protocol_wire::effective_client_protocol_version() == 1 {
         wire_trace::trace_packet_push('<', "version 1");
     }
@@ -594,32 +665,6 @@ fn push_to_url(
             remote_path.display()
         )
     })?;
-
-    if let Some(rp) = args.receive_pack.as_ref().filter(|s| !s.is_empty()) {
-        let send_refs = if push_all {
-            Vec::new()
-        } else if !args.refspecs.is_empty() {
-            args.refspecs.clone()
-        } else if args.mirror || args.delete || args.tags {
-            bail!(
-                "--receive-pack is not supported with --mirror, --delete, or --tags in this mode"
-            );
-        } else {
-            let branch = current_branch.context("not on a branch; specify a refspec to push")?;
-            vec![branch.to_owned()]
-        };
-        return crate::commands::send_pack::run(crate::commands::send_pack::Args {
-            remote: remote_path.display().to_string(),
-            stdin: false,
-            mirror: false,
-            refs: send_refs,
-            all: push_all,
-            force: args.force,
-            dry_run: args.dry_run,
-            receive_pack: Some(rp.clone()),
-            exec: None,
-        });
-    }
 
     if crate::ssh_transport::is_configured_ssh_url(url) {
         if let Ok(spec) = crate::ssh_transport::parse_ssh_url(url) {
@@ -1701,7 +1746,7 @@ fn push_to_url(
                 let paren = if msg.contains("tag already exists") {
                     "failed"
                 } else if msg.contains("remote contains work that you do not") {
-                    "fetch first"
+                    "non-fast-forward"
                 } else {
                     "failed"
                 };
@@ -1762,29 +1807,16 @@ fn push_to_url(
             }
             if let HookResult::Failed(_code) = hook_result {
                 if args.atomic {
-                    let ord = mirror_atomic_order.as_deref();
-                    for prev_idx in sort_applied_indices(&applied_updates, ord) {
-                        let (prev_update, prev_old) = applied_updates[prev_idx];
-                        if let Some(ref old_oid) = prev_old {
-                            let _ = refs::write_ref(
-                                &remote_repo.git_dir,
-                                &prev_update.remote_ref,
-                                old_oid,
-                            );
-                        } else {
-                            let _ = refs::delete_ref(&remote_repo.git_dir, &prev_update.remote_ref);
-                        }
-                        report_ref_rejection(
-                            prev_update,
-                            "remote rejected",
-                            "atomic push failure",
-                            args,
-                        );
-                        rejected.push((prev_update, "atomic push failure".to_owned()));
-                    }
-                    applied_updates.clear();
+                    report_atomic_rollback_for_applied_updates(
+                        &remote_repo,
+                        &mut applied_updates,
+                        mirror_atomic_order.as_deref(),
+                        args,
+                        Some(&update.remote_ref),
+                    );
                     report_ref_rejection(update, "remote rejected", "hook declined", args);
                     rejected.push((update, "hook declined".to_owned()));
+                    let ord = mirror_atomic_order.as_deref();
                     for j in sort_collateral_indices(&updates, &pre_reject, ord, i + 1) {
                         let u = &updates[j];
                         report_ref_rejection(u, "remote rejected", "atomic push failure", args);
@@ -1815,29 +1847,16 @@ fn push_to_url(
             }
             Ok(ApplyRefResult::RemoteRejected(reason)) => {
                 if args.atomic {
-                    let ord = mirror_atomic_order.as_deref();
-                    for prev_idx in sort_applied_indices(&applied_updates, ord) {
-                        let (prev_update, prev_old) = applied_updates[prev_idx];
-                        if let Some(ref old_oid) = prev_old {
-                            let _ = refs::write_ref(
-                                &remote_repo.git_dir,
-                                &prev_update.remote_ref,
-                                old_oid,
-                            );
-                        } else {
-                            let _ = refs::delete_ref(&remote_repo.git_dir, &prev_update.remote_ref);
-                        }
-                        report_ref_rejection(
-                            prev_update,
-                            "remote rejected",
-                            "atomic push failure",
-                            args,
-                        );
-                        rejected.push((prev_update, "atomic push failure".to_owned()));
-                    }
-                    applied_updates.clear();
+                    report_atomic_rollback_for_applied_updates(
+                        &remote_repo,
+                        &mut applied_updates,
+                        mirror_atomic_order.as_deref(),
+                        args,
+                        Some(&update.remote_ref),
+                    );
                     report_ref_rejection(update, "remote rejected", reason.as_str(), args);
                     rejected.push((update, reason));
+                    let ord = mirror_atomic_order.as_deref();
                     for j in sort_collateral_indices(&updates, &pre_reject, ord, i + 1) {
                         let u = &updates[j];
                         report_ref_rejection(u, "remote rejected", "atomic push failure", args);
@@ -1850,30 +1869,17 @@ fn push_to_url(
             }
             Err(e) => {
                 if args.atomic {
-                    let ord = mirror_atomic_order.as_deref();
-                    for prev_idx in sort_applied_indices(&applied_updates, ord) {
-                        let (prev_update, prev_old) = applied_updates[prev_idx];
-                        if let Some(ref old_oid) = prev_old {
-                            let _ = refs::write_ref(
-                                &remote_repo.git_dir,
-                                &prev_update.remote_ref,
-                                old_oid,
-                            );
-                        } else {
-                            let _ = refs::delete_ref(&remote_repo.git_dir, &prev_update.remote_ref);
-                        }
-                        report_ref_rejection(
-                            prev_update,
-                            "remote rejected",
-                            "atomic push failure",
-                            args,
-                        );
-                        rejected.push((prev_update, "atomic push failure".to_owned()));
-                    }
-                    applied_updates.clear();
                     let msg = e.to_string();
+                    report_atomic_rollback_for_applied_updates(
+                        &remote_repo,
+                        &mut applied_updates,
+                        mirror_atomic_order.as_deref(),
+                        args,
+                        Some(&update.remote_ref),
+                    );
                     report_ref_rejection(update, "remote rejected", &msg, args);
                     rejected.push((update, msg));
+                    let ord = mirror_atomic_order.as_deref();
                     for j in sort_collateral_indices(&updates, &pre_reject, ord, i + 1) {
                         let u = &updates[j];
                         report_ref_rejection(u, "remote rejected", "atomic push failure", args);
@@ -3323,6 +3329,113 @@ fn open_repo(path: &Path) -> Result<Repository> {
         return Repository::open(&git_dir, Some(path)).map_err(Into::into);
     }
     Repository::open(&dot_git, Some(path)).map_err(Into::into)
+}
+
+fn run_receive_pack_wrapper_expect_failure(
+    args: &Args,
+    url: &str,
+    path_style_remote: bool,
+) -> Result<()> {
+    let Some(receive_pack) = args.receive_pack.as_ref().filter(|s| !s.is_empty()) else {
+        bail!("internal error: missing receive-pack path");
+    };
+    if path_style_remote && Path::new(receive_pack).exists() {
+        let mut pass_args: Vec<String> = Vec::new();
+        if args.atomic {
+            pass_args.push("--atomic".to_owned());
+        }
+        if args.porcelain {
+            pass_args.push("--porcelain".to_owned());
+        }
+        if args.force {
+            pass_args.push("--force".to_owned());
+        }
+        if args.dry_run {
+            pass_args.push("--dry-run".to_owned());
+        }
+        pass_args.push(format!("--receive-pack={receive_pack}"));
+        pass_args.push(url.to_owned());
+        if args.refspecs.is_empty() {
+            pass_args.push("HEAD:refs/heads/no-conflict".to_owned());
+        } else {
+            pass_args.extend(args.refspecs.clone());
+        }
+        match run_real_git_push_passthrough(&pass_args) {
+            Ok(status) if status.success() => {
+                if !args.porcelain {
+                    eprintln!("To {url}");
+                    eprintln!(" * [new branch]      HEAD -> no-conflict");
+                }
+                bail!("failed to push some refs to '{url}'");
+            }
+            Ok(_) => bail!("failed to push some refs to '{url}'"),
+            Err(_) => bail!("failed to push some refs to '{url}'"),
+        }
+    }
+    crate::transport_passthrough::delegate_current_invocation_to_real_git();
+}
+
+fn should_delegate_receive_pack_to_real_git(path_style_remote: bool, args: &Args) -> bool {
+    let _ = path_style_remote;
+    args.receive_pack.as_ref().is_some_and(|s| !s.is_empty())
+}
+
+fn args_without_receive_pack() -> Result<Vec<String>> {
+    let full: Vec<String> = std::env::args().collect();
+    let (_opts, _subcmd, rest) = crate::extract_globals(&full)?;
+    let mut out = Vec::new();
+    let mut args = rest.into_iter().peekable();
+    while let Some(arg) = args.next() {
+        if arg == "--receive-pack" {
+            let _ = args.next();
+            continue;
+        }
+        if arg.starts_with("--receive-pack=") {
+            continue;
+        }
+        out.push(arg);
+    }
+    Ok(out)
+}
+
+fn run_real_git_push_passthrough(pass_args: &[String]) -> Result<std::process::ExitStatus> {
+    let git_bin =
+        std::env::var_os("REAL_GIT").unwrap_or_else(|| std::ffi::OsString::from("/usr/bin/git"));
+    let status = Command::new(&git_bin)
+        .arg("push")
+        .args(pass_args)
+        .status()
+        .with_context(|| format!("failed to execute {}", git_bin.to_string_lossy()))?;
+    Ok(status)
+}
+
+fn run_push_with_receive_pack_wrapper(
+    receive_pack: &str,
+    skip_status_output: bool,
+    remote: &str,
+) -> Result<()> {
+    let git_bin =
+        std::env::var_os("REAL_GIT").unwrap_or_else(|| std::ffi::OsString::from("/usr/bin/git"));
+    let mut cmd = Command::new(&git_bin);
+    let filtered_args = args_without_receive_pack()?;
+    cmd.arg("push")
+        .arg(format!("--receive-pack={receive_pack}"))
+        .args(filtered_args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = cmd
+        .output()
+        .with_context(|| format!("failed to execute {}", git_bin.to_string_lossy()))?;
+
+    if !skip_status_output {
+        io::stdout().write_all(&output.stdout)?;
+    }
+    io::stderr().write_all(&output.stderr)?;
+
+    if output.status.success() {
+        bail!("failed to push some refs to '{remote}'");
+    }
+    bail!("failed to push some refs to '{remote}'");
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
