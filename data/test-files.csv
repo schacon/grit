@@ -362,7 +362,7 @@ t1304-default-acl	t1	yes	4	4	0	true	ok	0
 t13040-restore-quiet-progress	t1	yes	30	30	0	true	ok	0
 t1305-config-include	t1	yes	37	35	2	false	ok	0
 t13050-reset-hard-untracked	t1	yes	30	30	0	true	ok	0
-t1306-xdg-files	t1	yes	21	20	1	false	ok	0
+t1306-xdg-files	t1	yes	21	21	0	true	ok	0
 t13060-cherry-pick-mainline	t1	yes	31	31	0	true	ok	0
 t1307-config-blob	t1	yes	13	12	1	false	ok	0
 t13070-for-each-ref-points-at	t1	yes	32	32	0	true	ok	0
