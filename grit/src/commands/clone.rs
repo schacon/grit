@@ -7,7 +7,7 @@ use crate::protocol_wire;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
-use grit_lib::config::{global_config_paths_pub, ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::zero_oid;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
@@ -1827,14 +1827,12 @@ fn http_url_basename(url: &str) -> String {
     u.rsplit('/').next().unwrap_or("repo").to_string()
 }
 
-/// Config layers for HTTP clone before the new repo exists: global + `-c` overrides only.
+/// Config layers for HTTP clone before the new repo exists.
+///
+/// Includes system/global plus command-line `-c` overrides from `GIT_CONFIG_PARAMETERS`, then
+/// applies clone-specific `-c` entries from `args.config`.
 fn clone_http_client_config(args: &Args) -> Result<ConfigSet> {
-    let mut set = ConfigSet::new();
-    for path in global_config_paths_pub() {
-        if let Ok(Some(f)) = ConfigFile::from_path(&path, ConfigScope::Global) {
-            set.merge(&f);
-        }
-    }
+    let mut set = ConfigSet::load(None, true).unwrap_or_default();
     for entry in &args.config {
         if let Some((key, value)) = entry.split_once('=') {
             set.add_command_override(key.trim(), value.trim())?;

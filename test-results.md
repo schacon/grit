@@ -1,5 +1,13 @@
 # Test results
 
+**2026-04-10 (fetch HTTP transport / protocol header control)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `GUST_BIN=/workspace/target/release/grit bash tests/t5700-protocol-v1.sh`: 9/24 passed
+  - Notable for this increment: HTTP protocol-v1 checks improved/held (`clone with http:// using protocol v1` passed and trace-based `Git-Protocol: version=1` assertion in that test remained green).
+  - Remaining failures in this file are pre-existing across non-HTTP and broader v1 behavior.
+
 **2026-04-10 (t5705 / session ID in capabilities)**
 
 - `cargo test -p grit-lib --lib`: 160 passed

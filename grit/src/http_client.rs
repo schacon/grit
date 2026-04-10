@@ -24,6 +24,7 @@ pub struct HttpClientContext {
     transport: Transport,
     trace_curl: Option<TraceCurl>,
     proxy_raw: Option<String>,
+    git_protocol_header: Option<String>,
     post_buffer: usize,
     credential_use_http_path: bool,
     credential_username: Option<String>,
@@ -84,12 +85,35 @@ fn last_command_line_config_value(rest: &[String], want_key: &str) -> Option<Str
     out
 }
 
+fn parse_protocol_version(value: &str) -> Option<u8> {
+    match value.trim() {
+        "0" => Some(0),
+        "1" => Some(1),
+        "2" => Some(2),
+        _ => None,
+    }
+}
+
+fn resolve_git_protocol_header(config: &ConfigSet) -> Option<String> {
+    let version = config
+        .get("protocol.version")
+        .as_deref()
+        .and_then(parse_protocol_version)
+        .unwrap_or_else(crate::protocol_wire::effective_client_protocol_version);
+    match version {
+        0 => None,
+        1 => Some("version=1".to_string()),
+        _ => Some("version=2".to_string()),
+    }
+}
+
 impl HttpClientContext {
     /// Build transport from merged Git config (`http.proxy`, etc.).
     pub fn from_config_set(config: &ConfigSet) -> Result<Self> {
         let trace_curl = trace_curl_from_env();
         let proxy_raw = config.get("http.proxy");
         let transport = build_transport(config)?;
+        let git_protocol_header = resolve_git_protocol_header(config);
         let post_buffer = config
             .get("http.postBuffer")
             .as_deref()
@@ -108,6 +132,7 @@ impl HttpClientContext {
             transport,
             trace_curl,
             proxy_raw,
+            git_protocol_header,
             post_buffer,
             credential_use_http_path,
             credential_username,
@@ -121,9 +146,23 @@ impl HttpClientContext {
 
     /// Perform GET, returning the response body. Fails on HTTP status >= 400.
     pub fn get(&self, url: &str) -> Result<Vec<u8>> {
+        self.get_with_git_protocol(url, self.git_protocol_header.as_deref())
+    }
+
+    /// Perform GET with an explicit `Git-Protocol` header override.
+    ///
+    /// Passing `None` suppresses the header entirely for the request.
+    pub fn get_with_git_protocol(
+        &self,
+        url: &str,
+        git_protocol_header: Option<&str>,
+    ) -> Result<Vec<u8>> {
         self.trace_proxy_auth_header();
         self.trace_request_start("GET", url);
-        let mut first = self.http_get_once(url, None)?;
+        if let Some(v) = git_protocol_header {
+            self.trace_outgoing_header(&format!("Git-Protocol: {v}"));
+        }
+        let mut first = self.http_get_once(url, None, git_protocol_header)?;
         self.trace_response_status(first.status, &first.reason);
         if first.status != 401 {
             if first.status >= 400 {
@@ -143,7 +182,8 @@ impl HttpClientContext {
         }
 
         self.trace_auth_header();
-        let retry = self.http_get_once(url, Some(&auth.authorization_header()))?;
+        let retry =
+            self.http_get_once(url, Some(&auth.authorization_header()), git_protocol_header)?;
         let mut credential_input = self.credential_input_for_url(url)?;
         credential_input.insert("username".to_string(), auth.username.clone());
         credential_input.insert("password".to_string(), auth.password.clone());
@@ -165,10 +205,33 @@ impl HttpClientContext {
         accept: &str,
         body: &[u8],
     ) -> Result<Vec<u8>> {
+        self.post_with_git_protocol(
+            url,
+            content_type,
+            accept,
+            body,
+            self.git_protocol_header.as_deref(),
+        )
+    }
+
+    /// Perform POST with an explicit `Git-Protocol` header override.
+    ///
+    /// Passing `None` suppresses the header entirely for the request.
+    pub fn post_with_git_protocol(
+        &self,
+        url: &str,
+        content_type: &str,
+        accept: &str,
+        body: &[u8],
+        git_protocol_header: Option<&str>,
+    ) -> Result<Vec<u8>> {
         self.trace_proxy_auth_header();
         self.trace_request_start("POST", url);
         self.trace_outgoing_header(&format!("Content-Type: {content_type}"));
         self.trace_outgoing_header(&format!("Accept: {accept}"));
+        if let Some(v) = git_protocol_header {
+            self.trace_outgoing_header(&format!("Git-Protocol: {v}"));
+        }
         let (payload, gzip_enabled) = self.encode_post_payload(body)?;
         if gzip_enabled {
             self.trace_outgoing_header("Content-Encoding: gzip");
@@ -189,6 +252,7 @@ impl HttpClientContext {
             None,
             gzip_enabled,
             chunked,
+            git_protocol_header,
         )?;
         self.trace_response_status(first.status, &first.reason);
         if first.status != 401 {
@@ -217,6 +281,7 @@ impl HttpClientContext {
             Some(&auth.authorization_header()),
             gzip_enabled,
             chunked,
+            git_protocol_header,
         )?;
         let mut credential_input = self.credential_input_for_url(url)?;
         credential_input.insert("username".to_string(), auth.username.clone());
@@ -231,13 +296,20 @@ impl HttpClientContext {
         Ok(retry.body)
     }
 
-    fn http_get_once(&self, url: &str, auth_header: Option<&str>) -> Result<RawHttpResponse> {
+    fn http_get_once(
+        &self,
+        url: &str,
+        auth_header: Option<&str>,
+        git_protocol_header: Option<&str>,
+    ) -> Result<RawHttpResponse> {
         match &self.transport {
             Transport::Ureq(agent) => {
                 let mut req = agent
                     .get(url)
-                    .set("Git-Protocol", "version=2")
                     .set("User-Agent", &crate::http_smart::agent_header());
+                if let Some(v) = git_protocol_header {
+                    req = req.set("Git-Protocol", v);
+                }
                 if let Some(v) = auth_header {
                     req = req.set("Authorization", v);
                 }
@@ -275,11 +347,16 @@ impl HttpClientContext {
                 proxy_port,
                 proxy_basic,
             } => {
-                let req = build_proxy_get_request(url, proxy_basic.as_deref(), auth_header)?;
+                let req = build_proxy_get_request(
+                    url,
+                    proxy_basic.as_deref(),
+                    auth_header,
+                    git_protocol_header,
+                )?;
                 http_over_tcp_forward(proxy_host, *proxy_port, &req)
             }
             Transport::SocksUnix { socket_path } => {
-                let req = build_get_request(url, auth_header)?;
+                let req = build_get_request(url, auth_header, git_protocol_header)?;
                 http_over_socks_unix(socket_path, url, &req)
             }
         }
@@ -294,6 +371,7 @@ impl HttpClientContext {
         auth_header: Option<&str>,
         gzip_enabled: bool,
         chunked: bool,
+        git_protocol_header: Option<&str>,
     ) -> Result<RawHttpResponse> {
         match &self.transport {
             Transport::Ureq(agent) => {
@@ -301,8 +379,10 @@ impl HttpClientContext {
                     .post(url)
                     .set("Content-Type", content_type)
                     .set("Accept", accept)
-                    .set("Git-Protocol", "version=2")
                     .set("User-Agent", &crate::http_smart::agent_header());
+                if let Some(v) = git_protocol_header {
+                    req = req.set("Git-Protocol", v);
+                }
                 if gzip_enabled {
                     req = req.set("Content-Encoding", "gzip");
                 }
@@ -358,6 +438,7 @@ impl HttpClientContext {
                     auth_header,
                     gzip_enabled,
                     chunked,
+                    git_protocol_header,
                 )?;
                 http_over_tcp_forward(proxy_host, *proxy_port, &req)
             }
@@ -370,6 +451,7 @@ impl HttpClientContext {
                     auth_header,
                     gzip_enabled,
                     chunked,
+                    git_protocol_header,
                 )?;
                 http_over_socks_unix(socket_path, url, &req)
             }
@@ -628,18 +710,21 @@ fn build_proxy_get_request(
     target_url: &str,
     proxy_basic: Option<&str>,
     auth_header: Option<&str>,
+    git_protocol_header: Option<&str>,
 ) -> Result<Vec<u8>> {
     let parsed = Url::parse(target_url).with_context(|| format!("bad URL {target_url}"))?;
     let host = host_header_value(&parsed);
     let mut s = format!(
         "GET {target_url} HTTP/1.1\r\n\
          Host: {host}\r\n\
-         Git-Protocol: version=2\r\n\
          User-Agent: {}\r\n\
          Connection: close\r\n\
          Accept: */*\r\n",
         crate::http_smart::agent_header()
     );
+    if let Some(v) = git_protocol_header {
+        s.push_str(&format!("Git-Protocol: {v}\r\n"));
+    }
     if let Some(b) = proxy_basic {
         s.push_str(&format!("Proxy-Authorization: Basic {b}\r\n"));
     }
@@ -659,6 +744,7 @@ fn build_proxy_post_request(
     auth_header: Option<&str>,
     gzip_enabled: bool,
     chunked: bool,
+    git_protocol_header: Option<&str>,
 ) -> Result<Vec<u8>> {
     let parsed = Url::parse(target_url).with_context(|| format!("bad URL {target_url}"))?;
     let host = host_header_value(&parsed);
@@ -667,11 +753,13 @@ fn build_proxy_post_request(
          Host: {host}\r\n\
          Content-Type: {content_type}\r\n\
          Accept: {accept}\r\n\
-         Git-Protocol: version=2\r\n\
          User-Agent: {}\r\n\
          Connection: close\r\n",
         crate::http_smart::agent_header()
     );
+    if let Some(v) = git_protocol_header {
+        head.push_str(&format!("Git-Protocol: {v}\r\n"));
+    }
     if let Some(b) = proxy_basic {
         head.push_str(&format!("Proxy-Authorization: Basic {b}\r\n"));
     }
@@ -696,20 +784,29 @@ fn build_proxy_post_request(
     Ok(out)
 }
 
-fn build_get_request(url: &str, auth_header: Option<&str>) -> Result<Vec<u8>> {
+fn build_get_request(
+    url: &str,
+    auth_header: Option<&str>,
+    git_protocol_header: Option<&str>,
+) -> Result<Vec<u8>> {
     let parsed = Url::parse(url).with_context(|| format!("bad URL {url}"))?;
     let path_q = url_path_and_query(&parsed);
     let host = host_header_value(&parsed);
     let mut s = format!(
         "GET {path_q} HTTP/1.1\r\n\
          Host: {host}\r\n\
-         Git-Protocol: version=2\r\n\
          User-Agent: {}\r\n\
          Connection: close\r\n\
          Accept: */*\r\n\
          \r\n",
         crate::http_smart::agent_header()
     );
+    if let Some(v) = git_protocol_header {
+        let marker = "\r\n\r\n";
+        if let Some(pos) = s.find(marker) {
+            s.insert_str(pos, &format!("Git-Protocol: {v}\r\n"));
+        }
+    }
     if let Some(a) = auth_header {
         let marker = "\r\n\r\n";
         if let Some(pos) = s.find(marker) {
@@ -727,6 +824,7 @@ fn build_post_request(
     auth_header: Option<&str>,
     gzip_enabled: bool,
     chunked: bool,
+    git_protocol_header: Option<&str>,
 ) -> Result<Vec<u8>> {
     let parsed = Url::parse(url).with_context(|| format!("bad URL {url}"))?;
     let path_q = url_path_and_query(&parsed);
@@ -736,12 +834,17 @@ fn build_post_request(
          Host: {host}\r\n\
          Content-Type: {content_type}\r\n\
          Accept: {accept}\r\n\
-         Git-Protocol: version=2\r\n\
          User-Agent: {}\r\n\
          Connection: close\r\n\
          \r\n",
         crate::http_smart::agent_header()
     );
+    if let Some(v) = git_protocol_header {
+        let marker = "\r\n\r\n";
+        if let Some(pos) = head.find(marker) {
+            head.insert_str(pos, &format!("Git-Protocol: {v}\r\n"));
+        }
+    }
     if let Some(a) = auth_header {
         let marker = "\r\n\r\n";
         if let Some(pos) = head.find(marker) {
