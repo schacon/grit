@@ -19,7 +19,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
-use grit_lib::diff::{self, count_changes, diff_index_to_tree, DiffEntry};
+use grit_lib::diff::{
+    self, count_changes, diff_index_to_tree, diff_index_to_worktree, DiffEntry, DiffStatus,
+};
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK, MODE_TREE};
 use grit_lib::merge_base::{
@@ -38,13 +40,17 @@ use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::whitespace_rule::{fix_blob_bytes, parse_whitespace_rule, WS_DEFAULT_RULE};
 use grit_lib::write_tree::write_tree_from_index;
 
-use super::checkout::check_dirty_worktree;
+use super::checkout::{
+    check_dirty_worktree, checkout_index_to_worktree, refuse_populated_submodule_tree_replacement,
+};
 use super::cherry_pick::{
     bail_if_df_merge_would_remove_cwd, preflight_cherry_pick_cwd_obstruction,
 };
 use super::commit::split_stored_author_line;
+use super::merge::refresh_index_stat_cache_from_worktree;
 use super::replay::merge_trees_for_single_cherry_pick;
 use super::stash;
+use super::submodule::parse_gitmodules_with_repo;
 use crate::ident::{resolve_email, resolve_name, IdentRole};
 
 #[derive(Clone, Copy, Debug)]
@@ -2211,6 +2217,48 @@ fn apply_autostash_after_ff(repo: &Repository, autostash_oid: &ObjectId) -> Resu
     Ok(())
 }
 
+/// Drop unstaged gitlink diffs for paths covered by `submodule.<name>.ignore=dirty|all`, matching
+/// Git's rebase dirty check (t3426 `rebase interactive ignores modified submodules`).
+fn filter_unstaged_gitlinks_for_submodule_ignore(
+    repo: &Repository,
+    cfg: &ConfigSet,
+    mut entries: Vec<DiffEntry>,
+) -> Result<Vec<DiffEntry>> {
+    let Some(wt) = repo.work_tree.as_deref() else {
+        return Ok(entries);
+    };
+    let modules = parse_gitmodules_with_repo(wt, Some(repo)).unwrap_or_default();
+    if modules.is_empty() {
+        return Ok(entries);
+    }
+
+    entries.retain(|e| {
+        if e.old_mode != "160000" || e.new_mode != "160000" {
+            return true;
+        }
+        if !matches!(e.status, DiffStatus::Modified | DiffStatus::TypeChanged) {
+            return true;
+        }
+        let path = e.path();
+        let Some(sm) = modules.iter().find(|m| m.path == path || m.name == path) else {
+            return true;
+        };
+        let key = format!("submodule.{}.ignore", sm.name);
+        let raw = cfg.get(&key).or_else(|| sm.ignore.clone());
+        let Some(ref v) = raw else {
+            return true;
+        };
+        let v = v.trim();
+        // `dirty` / `all` suppress unstaged gitlink noise in the superproject (including when the
+        // submodule's checked-out commit differs from the recorded gitlink).
+        if v.eq_ignore_ascii_case("dirty") || v.eq_ignore_ascii_case("all") {
+            return false;
+        }
+        true
+    });
+    Ok(entries)
+}
+
 // ── Main rebase flow ────────────────────────────────────────────────
 
 fn do_rebase(
@@ -2269,8 +2317,17 @@ fn do_rebase(
             let obj = repo.odb.read(oid).ok()?;
             parse_commit(&obj.data).ok().map(|c| c.tree)
         });
-        let staged = grit_lib::diff::diff_index_to_tree(&repo.odb, &idx, head_tree.as_ref())?;
-        let unstaged = grit_lib::diff::diff_index_to_worktree(&repo.odb, &idx, work_tree)?;
+        let ignore_submodules_all = config
+            .get("diff.ignoreSubmodules")
+            .as_deref()
+            .is_some_and(|v| v.eq_ignore_ascii_case("all"));
+        let mut staged = diff_index_to_tree(&repo.odb, &idx, head_tree.as_ref())?;
+        let mut unstaged = diff_index_to_worktree(&repo.odb, &idx, work_tree)?;
+        if ignore_submodules_all {
+            staged.retain(|e| e.old_mode != "160000" && e.new_mode != "160000");
+            unstaged.retain(|e| e.old_mode != "160000" && e.new_mode != "160000");
+        }
+        unstaged = filter_unstaged_gitlinks_for_submodule_ignore(&repo, &config, unstaged)?;
         let dirty = !staged.is_empty() || !unstaged.is_empty();
         if dirty {
             if !want_autostash {
@@ -2659,10 +2716,6 @@ fn do_rebase(
     let ident = reflog_identity(&repo);
     let ra = rebase_reflog_action();
     let start_msg = format!("{ra} (start): checkout {onto_name_for_state}");
-    // Git records `(start)` on HEAD only; the branch ref keeps its pre-rebase tip until `(finish)`.
-    let _ = append_reflog(
-        git_dir, "HEAD", &head_oid, &onto_oid, &ident, &start_msg, false,
-    );
 
     let checkout_onto = || -> Result<()> {
         let onto_obj = repo.odb.read(&onto_oid)?;
@@ -2674,14 +2727,17 @@ fn do_rebase(
         let old_index = load_index(&repo)?;
         if let Some(wt) = &repo.work_tree {
             check_dirty_worktree(&repo, &old_index, &idx, wt, &head)?;
+            // Fail before touching the work tree: `checkout_index_to_worktree` may apply partial
+            // updates before refusal deep inside (t3426 `test_superproject_content` after failed rebase).
+            refuse_populated_submodule_tree_replacement(&old_index, &idx, wt)?;
         }
 
+        // Update the work tree before moving HEAD or writing the new index so a failure (e.g.
+        // submodule replacement refusal) does not strand HEAD on `onto` with a mismatched tree
+        // (breaks `reset_work_tree_to` / `rm -rf` in t3426).
         if let Some(wt) = &repo.work_tree {
-            preflight_cherry_pick_cwd_obstruction(&repo, wt, &idx, &BTreeMap::new(), None)?;
-        }
-        repo.write_index(&mut idx)?;
-        if let Some(wt) = &repo.work_tree {
-            checkout_merged_index(&repo, wt, &old_index, &idx)?;
+            checkout_merged_index(&repo, wt, &old_index, &idx, true)?;
+            refresh_index_stat_cache_from_worktree(&repo, &mut idx)?;
         }
 
         fs::write(git_dir.join("HEAD"), format!("{}\n", onto_oid.to_hex()))?;
@@ -2689,7 +2745,7 @@ fn do_rebase(
             git_dir.join("ORIG_HEAD"),
             format!("{}\n", head_oid.to_hex()),
         )?;
-
+        repo.write_index(&mut idx)?;
         run_post_checkout_hook(&repo, &head_oid, &onto_oid)?;
         Ok(())
     };
@@ -2701,6 +2757,12 @@ fn do_rebase(
         let _ = fs::remove_dir_all(&rb_dir);
         return Err(e);
     }
+
+    // Record `(start)` only after HEAD/index/worktree successfully match `onto` (t3426: failed
+    // rewind must not append a misleading HEAD move to the reflog).
+    let _ = append_reflog(
+        git_dir, "HEAD", &head_oid, &onto_oid, &ident, &start_msg, false,
+    );
 
     eprintln!(
         "rebasing {} commits onto {}",
@@ -2739,9 +2801,6 @@ fn fast_forward_rebase(
     let ident = reflog_identity(repo);
     let ra = rebase_reflog_action();
     let start_msg = format!("{ra} (start): checkout {onto_name}");
-    let _ = append_reflog(
-        git_dir, "HEAD", &head_oid, &onto_oid, &ident, &start_msg, false,
-    );
 
     let onto_obj = repo.odb.read(&onto_oid)?;
     let onto_commit = parse_commit(&onto_obj.data)?;
@@ -2752,10 +2811,9 @@ fn fast_forward_rebase(
     let old_index = load_index(repo)?;
     if let Some(wt) = &repo.work_tree {
         preflight_cherry_pick_cwd_obstruction(repo, wt, &idx, &BTreeMap::new(), None)?;
-    }
-    repo.write_index(&mut idx)?;
-    if let Some(wt) = &repo.work_tree {
-        checkout_merged_index(repo, wt, &old_index, &idx)?;
+        refuse_populated_submodule_tree_replacement(&old_index, &idx, wt)?;
+        checkout_merged_index(repo, wt, &old_index, &idx, true)?;
+        refresh_index_stat_cache_from_worktree(repo, &mut idx)?;
     }
 
     fs::write(git_dir.join("HEAD"), format!("{}\n", onto_oid.to_hex()))?;
@@ -2763,6 +2821,11 @@ fn fast_forward_rebase(
         git_dir.join("ORIG_HEAD"),
         format!("{}\n", head_oid.to_hex()),
     )?;
+    repo.write_index(&mut idx)?;
+
+    let _ = append_reflog(
+        git_dir, "HEAD", &head_oid, &onto_oid, &ident, &start_msg, false,
+    );
 
     run_post_checkout_hook(repo, &head_oid, &onto_oid)?;
 
@@ -3621,7 +3684,9 @@ fn cherry_pick_for_rebase(
                 }
                 repo.write_index(&mut idx)?;
                 if let Some(wt) = &repo.work_tree {
-                    checkout_merged_index(repo, wt, &old_index, &idx)?;
+                    checkout_merged_index(repo, wt, &old_index, &idx, true)?;
+                    refresh_index_stat_cache_from_worktree(repo, &mut idx)?;
+                    repo.write_index(&mut idx)?;
                 }
                 let upstream_matches_onto = match (
                     rebase_upstream_oid(rb_dir),
@@ -3753,7 +3818,9 @@ fn cherry_pick_for_rebase(
                 }
                 repo.write_index(&mut idx)?;
                 if let Some(wt) = &repo.work_tree {
-                    checkout_merged_index(repo, wt, &old_index, &idx)?;
+                    checkout_merged_index(repo, wt, &old_index, &idx, true)?;
+                    refresh_index_stat_cache_from_worktree(repo, &mut idx)?;
+                    repo.write_index(&mut idx)?;
                 }
                 let (template, _enc, _raw) = if root_rebase {
                     let msg = message_for_root_replayed_commit(repo, &commit, true);
@@ -3873,10 +3940,16 @@ fn cherry_pick_for_rebase(
 
     // Update worktree
     if let Some(wt) = &repo.work_tree {
-        checkout_merged_index(repo, wt, &old_index, &merged_index)?;
+        if let Err(e) = checkout_merged_index(repo, wt, &old_index, &merged_index, true) {
+            let mut restore = old_index.clone();
+            let _ = repo.write_index(&mut restore);
+            return Err(e);
+        }
         if has_conflicts {
             write_rebase_conflict_files(wt, &merge_conflict_files)?;
         }
+        refresh_index_stat_cache_from_worktree(repo, &mut merged_index)?;
+        repo.write_index(&mut merged_index)?;
     }
 
     if has_conflicts {
@@ -4771,7 +4844,9 @@ fn do_skip() -> Result<()> {
         }
         repo.write_index(&mut index)?;
         if let Some(wt) = &repo.work_tree {
-            checkout_merged_index(&repo, wt, &old_index, &index)?;
+            checkout_merged_index(&repo, wt, &old_index, &index, false)?;
+            refresh_index_stat_cache_from_worktree(&repo, &mut index)?;
+            repo.write_index(&mut index)?;
         }
     }
 
@@ -4883,7 +4958,9 @@ fn do_abort() -> Result<()> {
     repo.write_index(&mut index)?;
 
     if let Some(wt) = &repo.work_tree {
-        checkout_merged_index(&repo, wt, &old_index, &index)?;
+        checkout_merged_index(&repo, wt, &old_index, &index, false)?;
+        refresh_index_stat_cache_from_worktree(&repo, &mut index)?;
+        repo.write_index(&mut index)?;
     }
 
     if let Some(oid) = autostash_oid {
@@ -5312,82 +5389,54 @@ pub(crate) fn checkout_merged_index(
     work_tree: &Path,
     old_index: &Index,
     index: &Index,
+    refuse_populated_submodule_replacement: bool,
 ) -> Result<()> {
-    let old_stage0: HashMap<Vec<u8>, &IndexEntry> = old_index
-        .entries
-        .iter()
-        .filter(|e| e.stage() == 0)
-        .map(|e| (e.path.clone(), e))
-        .collect();
-
-    let new_paths: HashSet<Vec<u8>> = index
-        .entries
-        .iter()
-        .filter(|e| e.stage() == 0)
-        .map(|e| e.path.clone())
-        .collect();
-
-    for entry in &old_index.entries {
-        if entry.stage() == 0 && !new_paths.contains(&entry.path) {
-            let path_str = String::from_utf8_lossy(&entry.path).into_owned();
-            if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, &path_str) {
-                bail!("Refusing to remove the current working directory:\n{path_str}\n");
-            }
-            let abs_path = work_tree.join(&path_str);
-            if abs_path.exists() || abs_path.is_symlink() {
-                if abs_path.is_dir() {
-                    let _ = fs::remove_dir_all(&abs_path);
-                } else {
-                    let _ = fs::remove_file(&abs_path);
-                }
-                remove_empty_parent_dirs(work_tree, &abs_path);
-            }
-        }
+    let has_unmerged = index.entries.iter().any(|e| e.stage() != 0);
+    if refuse_populated_submodule_replacement && !has_unmerged {
+        refuse_populated_submodule_tree_replacement(old_index, index, work_tree)?;
     }
-    let mut written = HashSet::new();
+    if !has_unmerged {
+        return checkout_index_to_worktree(repo, old_index, index, work_tree, false, false, true);
+    }
 
+    let mut stage0_only = Index::new();
+    stage0_only.version = index.version;
+    stage0_only.sparse_directories = index.sparse_directories;
+    stage0_only.untracked_cache = index.untracked_cache.clone();
+    stage0_only.entries = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .cloned()
+        .collect();
+    stage0_only.sort();
+    if refuse_populated_submodule_replacement {
+        refuse_populated_submodule_tree_replacement(old_index, &stage0_only, work_tree)?;
+    }
+    checkout_index_to_worktree(repo, old_index, &stage0_only, work_tree, false, false, true)?;
+
+    let mut written: HashSet<Vec<u8>> = HashSet::new();
     for entry in &index.entries {
+        if entry.stage() != 2 || written.contains(&entry.path) {
+            continue;
+        }
+        let has_stage0 = index
+            .entries
+            .iter()
+            .any(|e| e.path == entry.path && e.stage() == 0);
+        if has_stage0 {
+            continue;
+        }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let abs_path = work_tree.join(&path_str);
-
-        if entry.stage() == 0 {
-            if let Some(prev) = old_stage0.get(&entry.path) {
-                if same_blob(prev, entry) {
-                    written.insert(entry.path.clone());
-                    continue;
-                }
-            }
-            write_entry_to_worktree(repo, work_tree, &path_str, &abs_path, entry)?;
-            written.insert(entry.path.clone());
-        } else if entry.stage() == 2 && !written.contains(&entry.path) {
-            write_entry_to_worktree(repo, work_tree, &path_str, &abs_path, entry)?;
-            written.insert(entry.path.clone());
-        }
+        write_unmerged_stage2_to_worktree(repo, work_tree, &path_str, &abs_path, entry)?;
+        written.insert(entry.path.clone());
     }
 
     Ok(())
 }
 
-fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
-    let cwd_rel = grit_lib::worktree_cwd::process_cwd_repo_relative(work_tree);
-    let mut current = path.parent();
-    while let Some(dir) = current {
-        if dir == work_tree {
-            break;
-        }
-        if let Some(ref cr) = cwd_rel {
-            if grit_lib::worktree_cwd::cwd_would_be_removed_with_dir(work_tree, dir, cr) {
-                break;
-            }
-        }
-        match fs::remove_dir(dir) {
-            Ok(()) => current = dir.parent(),
-            Err(_) => break,
-        }
-    }
-}
-
-fn write_entry_to_worktree(
+fn write_unmerged_stage2_to_worktree(
     repo: &Repository,
     work_tree: &Path,
     path_str: &str,
@@ -5397,10 +5446,6 @@ fn write_entry_to_worktree(
     if let Some(parent) = abs_path.parent() {
         fs::create_dir_all(parent)?;
     }
-
-    // Gitlink (submodule) entries: ensure the directory exists but don't
-    // try to check out content — the OID references a commit in the
-    // submodule's own object store.
     if entry.mode == 0o160000 {
         if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, path_str) {
             bail!("Refusing to remove the current working directory:\n{path_str}\n");
@@ -5413,9 +5458,10 @@ fn write_entry_to_worktree(
         fs::create_dir_all(abs_path)?;
         return Ok(());
     }
-
-    let obj = repo.odb.read(&entry.oid)?;
-
+    let obj = repo
+        .odb
+        .read(&entry.oid)
+        .context("reading object for checkout")?;
     if entry.mode == MODE_SYMLINK {
         let target =
             String::from_utf8(obj.data).map_err(|_| anyhow::anyhow!("symlink not UTF-8"))?;
@@ -5441,6 +5487,5 @@ fn write_entry_to_worktree(
             fs::set_permissions(abs_path, perms)?;
         }
     }
-
     Ok(())
 }

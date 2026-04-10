@@ -7,6 +7,7 @@
 //! - `checkout [<tree-ish>] -- <paths>` — restore specific files.
 //! - `-f` / `--force` — discard local changes when switching.
 
+use crate::explicit_exit::ExplicitExit;
 use crate::grit_exe;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
@@ -32,7 +33,8 @@ use grit_lib::odb::Odb;
 use grit_lib::refs::{self, append_reflog};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{
-    abbreviate_object_id, resolve_revision, resolve_upstream_symbolic_name, upstream_suffix_info,
+    abbreviate_object_id, resolve_revision, resolve_revision_without_index_dwim,
+    resolve_upstream_symbolic_name, upstream_suffix_info,
 };
 use grit_lib::sparse_checkout::apply_sparse_checkout_skip_worktree;
 use grit_lib::state::{resolve_head, HeadState};
@@ -2223,7 +2225,7 @@ fn create_orphan_branch(
         let mut new_index = Index::new();
         new_index.entries = new_entries;
         new_index.sort();
-        checkout_index_to_worktree(repo, &old_index, &new_index, work_tree, true)?;
+        checkout_index_to_worktree(repo, &old_index, &new_index, work_tree, true, true, true)?;
         repo.write_index(&mut new_index).context("writing index")?;
     } else {
         // No start point: match `git checkout --orphan` — HEAD becomes unborn but the index
@@ -2259,7 +2261,7 @@ fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> 
         .count();
 
     // Remove files that are in old index but not in new, and write all entries
-    checkout_index_to_worktree(repo, &old_index, &new_index, &work_tree, true)?;
+    checkout_index_to_worktree(repo, &old_index, &new_index, &work_tree, true, true, true)?;
 
     // Force-write every entry to the worktree
     for entry in &new_index.entries {
@@ -2599,7 +2601,7 @@ fn switch_to_tree(
 
     // Perform the actual working tree update.
     // When force, write all entries even if OID matches (to restore dirty files).
-    checkout_index_to_worktree(repo, &old_index, &new_index, &work_tree, force)?;
+    checkout_index_to_worktree(repo, &old_index, &new_index, &work_tree, force, true, true)?;
 
     // Update stat info in the new index to match the freshly checked-out files
     for entry in &mut new_index.entries {
@@ -2976,6 +2978,15 @@ pub(crate) fn check_dirty_worktree(
                     // practical outcome of `rm <path>` before switching and keeps the
                     // upstream cherry-pick/revert tests (e.g. t3501) working.
                     if untracked_path_matches_index_entry(repo, &abs_path, new_entry)? {
+                        continue;
+                    }
+                    // Git refuses checkout when a submodule gitlink would replace an untracked path
+                    // (t3426: `>sub1` before rebasing onto `add_sub1`). Do not auto-remove like we do
+                    // for ordinary files (t3501 cherry-pick / orphan cleanup).
+                    if new_entry.mode == MODE_GITLINK
+                        && (abs_path.is_file() || abs_path.is_symlink())
+                    {
+                        untracked_conflicts.push(rel_path.into_owned());
                         continue;
                     }
                     if abs_path.is_file() || abs_path.is_symlink() {
@@ -4552,8 +4563,11 @@ fn maybe_setup_tracking(
 
 /// Resolve a revision spec to a commit OID, peeling through tags.
 fn resolve_to_commit(repo: &Repository, spec: &str) -> Result<ObjectId> {
-    let oid =
-        resolve_revision(repo, spec).with_context(|| format!("unknown revision: '{spec}'"))?;
+    // Use plumbing-style resolution: a bare token must not be treated as an index path (t3426:
+    // `submodule update` runs `checkout <gitlink>` in the submodule while `GIT_DIR` still points at
+    // the superproject — index DWIM would read the superproject index and fail on the gitlink).
+    let oid = resolve_revision_without_index_dwim(repo, spec)
+        .with_context(|| format!("unknown revision: '{spec}'"))?;
     peel_to_commit(repo, oid)
 }
 
@@ -4704,14 +4718,119 @@ fn find_recursive(
 // Working tree helpers
 // ---------------------------------------------------------------------------
 
+/// Rebase-style checkout must not replace a submodule gitlink with ordinary tree paths (t3426).
+///
+/// Uses `old_index` gitlinks so we still refuse when the work tree only has an empty placeholder
+/// (no `.git`) after a prior rebase-style checkout.
+/// Used by `git rebase` only — do not call from `revert`/`checkout` (three-way merges may stage
+/// paths under submodule prefixes without intending submodule replacement; t3426 setup uses revert).
+pub(crate) fn refuse_populated_submodule_tree_replacement(
+    old_index: &Index,
+    new_index: &Index,
+    work_tree: &std::path::Path,
+) -> Result<()> {
+    let old_gitlinks: Vec<&[u8]> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0 && e.mode == MODE_GITLINK)
+        .map(|e| e.path.as_slice())
+        .collect();
+
+    for gpath in &old_gitlinks {
+        let g = *gpath;
+        let rel = String::from_utf8_lossy(g);
+        for ne in new_index.entries.iter().filter(|e| e.stage() == 0) {
+            if ne.path == g {
+                if ne.mode != MODE_GITLINK {
+                    return Err(anyhow::Error::new(ExplicitExit {
+                        code: 128,
+                        message: format!(
+                            "error: refusing to replace submodule at '{rel}' with tracked non-submodule content"
+                        ),
+                    }));
+                }
+                continue;
+            }
+            if ne.path.len() > g.len() && ne.path.starts_with(g) && ne.path[g.len()] == b'/' {
+                return Err(anyhow::Error::new(ExplicitExit {
+                    code: 128,
+                    message: format!(
+                        "error: refusing to replace submodule at '{rel}' with directory content"
+                    ),
+                }));
+            }
+        }
+    }
+
+    // Also block when the work tree still has a populated checkout but the index transition dropped
+    // the gitlink without going through `old_index` (defensive).
+    for ne in new_index.entries.iter().filter(|e| e.stage() == 0) {
+        if ne.mode == MODE_GITLINK {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&ne.path);
+        if path_str.is_empty() {
+            continue;
+        }
+        let mut prefix = PathBuf::new();
+        for component in path_str.split('/') {
+            if component.is_empty() {
+                continue;
+            }
+            prefix.push(component);
+            let abs = work_tree.join(&prefix);
+            if !abs.join(".git").exists() {
+                continue;
+            }
+            let prefix_bytes = prefix.to_string_lossy().replace('\\', "/").into_bytes();
+            if old_gitlinks.iter().any(|gp| *gp == prefix_bytes.as_slice()) {
+                continue;
+            }
+            if ne.path == prefix_bytes {
+                return Err(anyhow::Error::new(ExplicitExit {
+                    code: 128,
+                    message: format!(
+                        "error: refusing to replace populated submodule at '{path_str}' with tracked non-submodule content"
+                    ),
+                }));
+            }
+            if ne.path.len() > prefix_bytes.len()
+                && ne.path.starts_with(&prefix_bytes)
+                && ne.path[prefix_bytes.len()] == b'/'
+            {
+                let p = String::from_utf8_lossy(&prefix_bytes);
+                return Err(anyhow::Error::new(ExplicitExit {
+                    code: 128,
+                    message: format!(
+                        "error: refusing to replace populated submodule at '{p}' with directory content"
+                    ),
+                }));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Update the working tree from old_index to new_index: remove deleted files,
 /// add new files, update modified files.
-fn checkout_index_to_worktree(
+///
+/// Used by `git checkout` and by rebase/revert when applying a merged index.
+///
+/// When `populate_gitlinks` is false, gitlink entries only ensure an empty directory exists (no
+/// `git checkout` in the submodule). Matches Git for `rebase` worktree updates (t3426).
+///
+/// When `preserve_dropped_gitlink_dirs` is true (default for `git checkout`), paths that were
+/// gitlinks in `old_index` but absent from `new_index` are left on disk. When false (`git revert`),
+/// those directories are removed so later checkouts are not blocked (lib-submodule-update.sh).
+///
+pub(crate) fn checkout_index_to_worktree(
     repo: &Repository,
     old_index: &Index,
     new_index: &Index,
     work_tree: &std::path::Path,
     force_write_all: bool,
+    populate_gitlinks: bool,
+    preserve_dropped_gitlink_dirs: bool,
 ) -> Result<()> {
     let old_stage0: HashSet<Vec<u8>> = old_index
         .entries
@@ -4748,12 +4867,15 @@ fn checkout_index_to_worktree(
 
     // Remove paths that are no longer present in the new index.
     for old_path in old_stage0.difference(&new_stage0) {
-        if let Some(old_entry) = old_map.get(old_path.as_slice()) {
-            // Superproject: do not delete submodule work trees for gitlinks dropped from the index
-            // (Git keeps them on disk; t7300-clean). Nested submodule repos under `.git/modules/`
-            // still use normal removal so `git checkout` can refresh the nested worktree.
-            if old_entry.mode == MODE_GITLINK && !git_dir_is_nested_modules_repo(&repo.git_dir) {
-                continue;
+        if preserve_dropped_gitlink_dirs {
+            if let Some(old_entry) = old_map.get(old_path.as_slice()) {
+                // Superproject: do not delete submodule work trees for gitlinks dropped from the index
+                // (Git keeps them on disk; t7300-clean). Nested submodule repos under `.git/modules/`
+                // still use normal removal so `git checkout` can refresh the nested worktree.
+                if old_entry.mode == MODE_GITLINK && !git_dir_is_nested_modules_repo(&repo.git_dir)
+                {
+                    continue;
+                }
             }
         }
         let rel = String::from_utf8_lossy(old_path).into_owned();
@@ -4780,12 +4902,11 @@ fn checkout_index_to_worktree(
         if abs.is_file() || abs.is_symlink() {
             let _ = std::fs::remove_file(&abs);
         } else if abs.is_dir() {
-            // Removing a gitlink from the index must not delete a populated submodule checkout
-            // (directory with `.git`), matching Git and `t4137-apply-submodule`.
-            let is_populated_submodule = old_map
-                .get(old_path.as_slice())
-                .is_some_and(|e| e.mode == MODE_GITLINK && abs.join(".git").exists());
-            if !is_populated_submodule {
+            let skip_populated_submodule = preserve_dropped_gitlink_dirs
+                && old_map
+                    .get(old_path.as_slice())
+                    .is_some_and(|e| e.mode == MODE_GITLINK && abs.join(".git").exists());
+            if !skip_populated_submodule {
                 let _ = std::fs::remove_dir_all(&abs);
             }
         }
@@ -4799,11 +4920,13 @@ fn checkout_index_to_worktree(
                 .get(old_path.as_slice())
                 .is_some_and(|e| e.skip_worktree())
             {
-                if let Some(old_entry) = old_map.get(old_path.as_slice()) {
-                    if old_entry.mode == MODE_GITLINK
-                        && !git_dir_is_nested_modules_repo(&repo.git_dir)
-                    {
-                        continue;
+                if preserve_dropped_gitlink_dirs {
+                    if let Some(old_entry) = old_map.get(old_path.as_slice()) {
+                        if old_entry.mode == MODE_GITLINK
+                            && !git_dir_is_nested_modules_repo(&repo.git_dir)
+                        {
+                            continue;
+                        }
                     }
                 }
                 let rel = String::from_utf8_lossy(old_path).into_owned();
@@ -4828,10 +4951,11 @@ fn checkout_index_to_worktree(
                 if abs.is_file() || abs.is_symlink() {
                     let _ = std::fs::remove_file(&abs);
                 } else if abs.is_dir() {
-                    let is_populated_submodule = old_map
-                        .get(old_path.as_slice())
-                        .is_some_and(|e| e.mode == MODE_GITLINK && abs.join(".git").exists());
-                    if !is_populated_submodule {
+                    let skip_populated_submodule = preserve_dropped_gitlink_dirs
+                        && old_map
+                            .get(old_path.as_slice())
+                            .is_some_and(|e| e.mode == MODE_GITLINK && abs.join(".git").exists());
+                    if !skip_populated_submodule {
                         let _ = std::fs::remove_dir_all(&abs);
                     }
                 }
@@ -4853,11 +4977,27 @@ fn checkout_index_to_worktree(
         // in the submodule's object store, not blobs in ours.
         if entry.mode == MODE_GITLINK {
             let rel = String::from_utf8_lossy(&entry.path).into_owned();
-            let force_populate = match old_map.get(entry.path.as_slice()) {
-                None => true,
-                Some(old) => old.mode != MODE_GITLINK || old.oid != entry.oid,
-            };
-            checkout_gitlink_worktree_entry(repo, work_tree, &rel, &entry.oid, force_populate)?;
+            let abs_path = work_tree.join(&rel);
+            if populate_gitlinks {
+                let force_populate = match old_map.get(entry.path.as_slice()) {
+                    None => true,
+                    Some(old) => old.mode != MODE_GITLINK || old.oid != entry.oid,
+                };
+                checkout_gitlink_worktree_entry(repo, work_tree, &rel, &entry.oid, force_populate)?;
+            } else {
+                // Rebase/revert: empty placeholder only; preserve populated submodule dirs (t3426).
+                if abs_path.join(".git").exists() {
+                    std::fs::create_dir_all(&abs_path)?;
+                } else if abs_path.is_file() || abs_path.is_symlink() {
+                    let _ = std::fs::remove_file(&abs_path);
+                    std::fs::create_dir_all(&abs_path)?;
+                } else if abs_path.is_dir() {
+                    let _ = std::fs::remove_dir_all(&abs_path);
+                    std::fs::create_dir_all(&abs_path)?;
+                } else {
+                    std::fs::create_dir_all(&abs_path)?;
+                }
+            }
             continue;
         }
 

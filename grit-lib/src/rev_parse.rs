@@ -861,6 +861,19 @@ pub fn resolve_revision_for_range_end(repo: &Repository, spec: &str) -> Result<O
     resolve_revision_impl(repo, spec, true, true, true, false, false, false, true)
 }
 
+/// Like [`resolve_revision_for_range_end`], but does not resolve a bare filename as an index path.
+///
+/// Matches plumbing-style revision parsing (`git rev-parse` without index DWIM). Used when a
+/// token must not be confused with a tracked path that happens to match a branch name (e.g.
+/// `git reset --hard` after `submodule update` when the submodule has a branch `sub1` and the
+/// superproject index lists path `sub1`).
+pub fn resolve_revision_for_range_end_without_index_dwim(
+    repo: &Repository,
+    spec: &str,
+) -> Result<ObjectId> {
+    resolve_revision_impl(repo, spec, false, true, true, false, false, false, true)
+}
+
 /// First argument to `commit-tree`: ambiguous short hex uses tree-ish rules (blob vs tree).
 pub fn resolve_revision_for_commit_tree_tree(repo: &Repository, spec: &str) -> Result<ObjectId> {
     resolve_revision_impl(repo, spec, true, false, true, false, true, false, true)
@@ -896,6 +909,28 @@ pub fn try_parse_double_dot_log_range(
         resolve_revision_for_range_end(repo, "HEAD")?
     } else {
         resolve_revision_for_range_end(repo, right)?
+    };
+    let left_c = peel_to_commit_for_merge_base(repo, left_tip)?;
+    let right_c = peel_to_commit_for_merge_base(repo, right_tip)?;
+    Ok(Some((left_c, right_c)))
+}
+
+fn try_parse_double_dot_log_range_without_index_dwim(
+    repo: &Repository,
+    spec: &str,
+) -> Result<Option<(ObjectId, ObjectId)>> {
+    let Some((left, right)) = split_double_dot_range(spec) else {
+        return Ok(None);
+    };
+    let left_tip = if left.is_empty() {
+        resolve_revision_for_range_end_without_index_dwim(repo, "HEAD")?
+    } else {
+        resolve_revision_for_range_end_without_index_dwim(repo, left)?
+    };
+    let right_tip = if right.is_empty() {
+        resolve_revision_for_range_end_without_index_dwim(repo, "HEAD")?
+    } else {
+        resolve_revision_for_range_end_without_index_dwim(repo, right)?
     };
     let left_c = peel_to_commit_for_merge_base(repo, left_tip)?;
     let right_c = peel_to_commit_for_merge_base(repo, right_tip)?;
@@ -941,6 +976,40 @@ pub fn resolve_revision_as_commit(repo: &Repository, spec: &str) -> Result<Objec
         return Ok(tip);
     }
     let oid = resolve_revision_for_range_end(repo, spec)?;
+    peel_to_commit_for_merge_base(repo, oid)
+}
+
+/// Like [`resolve_revision_as_commit`], but never treats a bare path as an index revision.
+///
+/// Use when distinguishing the first `git reset` argument from pathspecs: a submodule work tree
+/// may have a branch whose name equals a path recorded in the **superproject** index (t3426).
+pub fn resolve_revision_as_commit_without_index_dwim(
+    repo: &Repository,
+    spec: &str,
+) -> Result<ObjectId> {
+    if let Some((left, right)) = split_triple_dot_range(spec) {
+        let left_tip = if left.is_empty() {
+            resolve_revision_for_range_end_without_index_dwim(repo, "HEAD")?
+        } else {
+            resolve_revision_for_range_end_without_index_dwim(repo, left)?
+        };
+        let right_tip = if right.is_empty() {
+            resolve_revision_for_range_end_without_index_dwim(repo, "HEAD")?
+        } else {
+            resolve_revision_for_range_end_without_index_dwim(repo, right)?
+        };
+        let left_c = peel_to_commit_for_merge_base(repo, left_tip)?;
+        let right_c = peel_to_commit_for_merge_base(repo, right_tip)?;
+        let bases = crate::merge_base::merge_bases_first_vs_rest(repo, left_c, &[right_c])?;
+        return bases
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::ObjectNotFound(format!("no merge base for '{spec}'")));
+    }
+    if let Some((_excl, tip)) = try_parse_double_dot_log_range_without_index_dwim(repo, spec)? {
+        return Ok(tip);
+    }
+    let oid = resolve_revision_for_range_end_without_index_dwim(repo, spec)?;
     peel_to_commit_for_merge_base(repo, oid)
 }
 

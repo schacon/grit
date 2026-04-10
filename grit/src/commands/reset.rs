@@ -25,7 +25,8 @@ use grit_lib::refs::{append_reflog, resolve_ref, write_ref};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{
     abbreviate_object_id, resolve_revision, resolve_revision_as_commit,
-    revision_spec_contains_ancestry_navigation, split_treeish_colon,
+    resolve_revision_as_commit_without_index_dwim, revision_spec_contains_ancestry_navigation,
+    split_treeish_colon,
 };
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::submodule_gitdir::submodule_modules_git_dir;
@@ -516,7 +517,7 @@ fn resolve_reset_first_arg_as_commit(repo: &Repository, first: &str) -> Option<S
     if first == "HEAD" || first == "@" {
         return Some("HEAD".to_owned());
     }
-    if resolve_revision_as_commit(repo, first).is_ok() {
+    if resolve_revision_as_commit_without_index_dwim(repo, first).is_ok() {
         return Some(first.to_owned());
     }
     if first.contains('/') || first.starts_with('.') {

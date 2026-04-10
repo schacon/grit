@@ -1179,7 +1179,7 @@ fn apply_am_format_patch_tree_merge(repo: &Repository, patch: &MboxPatch) -> Res
 
     let old_index = load_index(repo)?;
     repo.write_index(&mut merged_index)?;
-    checkout_merged_index(repo, work_tree, &old_index, &merged_index)?;
+    checkout_merged_index(repo, work_tree, &old_index, &merged_index, false)?;
     if has_conflicts {
         fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
         write_rebase_conflict_files(work_tree, &conflict_files)?;

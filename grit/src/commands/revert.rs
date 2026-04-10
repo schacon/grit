@@ -36,10 +36,11 @@ use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
 
+use super::checkout::checkout_index_to_worktree;
 use super::cherry_pick::{
     bail_if_df_merge_would_remove_cwd, preflight_cherry_pick_cwd_obstruction,
 };
-use super::merge::cleanup_message;
+use super::merge::{cleanup_message, refresh_index_stat_cache_from_worktree};
 use super::sequencer::{
     append_merge_msg_conflict_footer, rollback_is_safe, sequencer_is_pick_sequence,
     sequencer_is_revert_sequence, strip_first_sequencer_todo_line, unmerged_paths,
@@ -408,6 +409,8 @@ fn reset_revert_to_head_tree(repo: &Repository, git_dir: &Path) -> Result<()> {
     repo.write_index_at(&index_path, &mut new_index)?;
     if let Some(wt) = &repo.work_tree {
         checkout_merged_index(repo, wt, &old_index, &new_index, &BTreeMap::new())?;
+        refresh_index_stat_cache_from_worktree(repo, &mut new_index)?;
+        repo.write_index_at(&index_path, &mut new_index)?;
     }
     Ok(())
 }
@@ -879,6 +882,9 @@ fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
         .context("writing index")?;
 
     checkout_merged_index(repo, work_tree, &old_index, &merged_index, &conflict_map)?;
+    refresh_index_stat_cache_from_worktree(repo, &mut merged_index)?;
+    repo.write_index_at(&index_path, &mut merged_index)
+        .context("refreshing index stat cache after revert checkout")?;
 
     let (title_line, body_suffix) =
         merge_commit_message_for_revert(&commit, commit_oid, use_reference, comment_char);
@@ -1410,10 +1416,6 @@ fn tree_to_index_entries(
 }
 
 /// Write merged index entries to the working tree.
-fn same_blob_revert(a: &IndexEntry, b: &IndexEntry) -> bool {
-    a.oid == b.oid && a.mode == b.mode
-}
-
 fn checkout_merged_index(
     repo: &Repository,
     work_tree: &Path,
@@ -1421,85 +1423,56 @@ fn checkout_merged_index(
     index: &Index,
     conflict_content: &BTreeMap<Vec<u8>, ObjectId>,
 ) -> Result<()> {
-    let old_stage0: HashMap<Vec<u8>, &IndexEntry> = old_index
-        .entries
-        .iter()
-        .filter(|e| e.stage() == 0)
-        .map(|e| (e.path.clone(), e))
-        .collect();
-
-    let new_paths: HashSet<Vec<u8>> = index
-        .entries
-        .iter()
-        .filter(|e| e.stage() == 0)
-        .map(|e| e.path.clone())
-        .collect();
-
-    // Remove files that were in the old index but not in the new one.
-    for entry in &old_index.entries {
-        if entry.stage() == 0 && !new_paths.contains(&entry.path) {
-            let path_str = String::from_utf8_lossy(&entry.path).into_owned();
-            if grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree, &path_str) {
-                bail!("Refusing to remove the current working directory:\n{path_str}\n");
-            }
-            let abs_path = work_tree.join(&path_str);
-            if abs_path.exists() || abs_path.is_symlink() {
-                if abs_path.is_dir() {
-                    let _ = fs::remove_dir_all(&abs_path);
-                } else {
-                    let _ = fs::remove_file(&abs_path);
-                }
-                remove_empty_parent_dirs(work_tree, &abs_path);
-            }
-        }
+    let has_unmerged = index.entries.iter().any(|e| e.stage() != 0);
+    if !has_unmerged {
+        return checkout_index_to_worktree(repo, old_index, index, work_tree, false, false, false);
     }
-    let mut written = HashSet::new();
 
+    let mut stage0_only = Index::new();
+    stage0_only.version = index.version;
+    stage0_only.sparse_directories = index.sparse_directories;
+    stage0_only.untracked_cache = index.untracked_cache.clone();
+    stage0_only.entries = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .cloned()
+        .collect();
+    stage0_only.sort();
+    checkout_index_to_worktree(
+        repo,
+        old_index,
+        &stage0_only,
+        work_tree,
+        false,
+        false,
+        false,
+    )?;
+
+    let mut written: HashSet<Vec<u8>> = HashSet::new();
     for entry in &index.entries {
+        if entry.stage() != 2 || written.contains(&entry.path) {
+            continue;
+        }
+        let has_stage0 = index
+            .entries
+            .iter()
+            .any(|e| e.path == entry.path && e.stage() == 0);
+        if has_stage0 {
+            continue;
+        }
+
+        let mut e = entry.clone();
+        if let Some(marker_oid) = conflict_content.get(&entry.path) {
+            e.oid = *marker_oid;
+        }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let abs_path = work_tree.join(&path_str);
-
-        if entry.stage() == 0 {
-            if let Some(prev) = old_stage0.get(&entry.path) {
-                if same_blob_revert(prev, entry) {
-                    written.insert(entry.path.clone());
-                    continue;
-                }
-            }
-            write_entry_to_worktree(repo, work_tree, &path_str, &abs_path, entry)?;
-            written.insert(entry.path.clone());
-        } else if entry.stage() == 2 && !written.contains(&entry.path) {
-            if let Some(marker_oid) = conflict_content.get(&entry.path) {
-                let mut marker_entry = entry.clone();
-                marker_entry.oid = *marker_oid;
-                write_entry_to_worktree(repo, work_tree, &path_str, &abs_path, &marker_entry)?;
-            } else {
-                write_entry_to_worktree(repo, work_tree, &path_str, &abs_path, entry)?;
-            }
-            written.insert(entry.path.clone());
-        }
+        write_entry_to_worktree(repo, work_tree, &path_str, &abs_path, &e)?;
+        written.insert(entry.path.clone());
     }
 
     Ok(())
-}
-
-fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
-    let cwd_rel = grit_lib::worktree_cwd::process_cwd_repo_relative(work_tree);
-    let mut current = path.parent();
-    while let Some(dir) = current {
-        if dir == work_tree {
-            break;
-        }
-        if let Some(ref cr) = cwd_rel {
-            if grit_lib::worktree_cwd::cwd_would_be_removed_with_dir(work_tree, dir, cr) {
-                break;
-            }
-        }
-        match fs::remove_dir(dir) {
-            Ok(()) => current = dir.parent(),
-            Err(_) => break,
-        }
-    }
 }
 
 fn write_entry_to_worktree(
