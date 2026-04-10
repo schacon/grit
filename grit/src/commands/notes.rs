@@ -8,13 +8,12 @@ use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use merge3::{Merge3, StandardMarkers};
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::diff::{diff_trees, zero_oid, DiffStatus};
 use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, serialize_tree, tree_entry_cmp, CommitData,
@@ -134,6 +133,14 @@ pub enum NotesSubcommand {
         #[arg(long)]
         abort: bool,
 
+        /// More verbose output (repeat for more detail; matches Git).
+        #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
+        verbose: u8,
+
+        /// Quieter output (repeat for less; matches Git).
+        #[arg(short = 'q', long = "quiet", action = clap::ArgAction::Count)]
+        quiet: u8,
+
         /// Merge strategy (manual, ours, theirs, union, cat_sort_uniq).
         #[arg(short = 's', long = "strategy")]
         strategy: Option<String>,
@@ -176,23 +183,37 @@ pub fn run(args: Args) -> Result<()> {
         format!("refs/notes/{notes_ref}")
     };
 
-    // Validate the notes ref — refuse refs outside refs/notes/.
-    if notes_ref.starts_with("refs/heads/") || notes_ref.starts_with("refs/remotes/") {
-        bail!(
-            "refusing to {} notes in {}",
-            match &args.command {
-                Some(NotesSubcommand::Add { .. }) => "add",
-                Some(NotesSubcommand::Edit { .. }) => "edit",
-                Some(NotesSubcommand::Append { .. }) => "append",
-                Some(NotesSubcommand::Remove { .. }) => "remove",
-                Some(NotesSubcommand::Copy { .. }) => "copy",
-                _ => "use",
-            },
-            notes_ref
-        );
+    // Match Git's `init_notes_check`: notes must live under `refs/notes/` (prefix includes a slash
+    // after `notes`, so `refs/notes` and `refs/heads/main` are rejected).
+    if !notes_ref.starts_with("refs/notes/") {
+        let verb = match &args.command {
+            Some(NotesSubcommand::Add { .. }) => "add",
+            Some(NotesSubcommand::Edit { .. }) => "edit",
+            Some(NotesSubcommand::Append { .. }) => "append",
+            Some(NotesSubcommand::Remove { .. }) => "remove",
+            Some(NotesSubcommand::Copy { .. }) => "copy",
+            Some(NotesSubcommand::Merge { .. }) => "merge",
+            Some(NotesSubcommand::Prune { .. }) => "prune",
+            Some(NotesSubcommand::List { .. }) => "use",
+            Some(NotesSubcommand::Show { .. }) => "show",
+            Some(NotesSubcommand::GetRef) => "use",
+            None => "use",
+        };
+        bail!("refusing to {verb} notes in {notes_ref} (outside of refs/notes/)");
     }
     if notes_ref == "/" {
         bail!("refusing to use notes ref '/'");
+    }
+    // Reject refnames Git cannot store as a single ref (revision syntax like `y:path`, `foo^{`, etc.).
+    // `refs/notes/y:` still starts with `refs/notes/` but must fail like upstream `refs_read_ref`.
+    let tail = notes_ref
+        .strip_prefix("refs/notes/")
+        .expect("checked refs/notes/ prefix");
+    if tail.is_empty() || tail.ends_with('/') {
+        bail!("Failed to resolve local notes ref '{notes_ref}'");
+    }
+    if tail.contains(':') || tail.contains('^') || tail.contains('{') {
+        bail!("Failed to resolve local notes ref '{notes_ref}'");
     }
 
     match args.command {
@@ -233,6 +254,8 @@ pub fn run(args: Args) -> Result<()> {
         Some(NotesSubcommand::Merge {
             commit,
             abort,
+            verbose,
+            quiet,
             strategy,
             source_ref,
         }) => merge_notes_dispatch(
@@ -240,6 +263,8 @@ pub fn run(args: Args) -> Result<()> {
             &notes_ref,
             commit,
             abort,
+            verbose,
+            quiet,
             strategy.as_deref(),
             source_ref.as_deref(),
         ),
@@ -1021,12 +1046,23 @@ fatal: unable to parse 'notes.mergeStrategy' from command-line config"
     })
 }
 
-fn note_path_to_object_id(path: &str) -> Option<ObjectId> {
-    let compact: String = path.chars().filter(|c| *c != '/').collect();
-    if compact.len() != 40 || !compact.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
+/// Map annotated object → note blob OID for one notes tree (any fanout layout).
+fn notes_tree_blob_by_object(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+) -> Result<HashMap<ObjectId, ObjectId>> {
+    let mut flat = Vec::new();
+    collect_notes_tree_entries(repo, tree_oid, b"", &mut flat)?;
+    let mut map = HashMap::new();
+    for entry in flat {
+        let Some(hex) = note_object_name(&entry.path) else {
+            continue;
+        };
+        let obj = ObjectId::from_hex(&hex)
+            .map_err(|e| anyhow::anyhow!("invalid note object id in tree: {e}"))?;
+        map.insert(obj, entry.oid);
     }
-    ObjectId::from_hex(&compact).ok()
+    Ok(map)
 }
 
 fn diff_note_blob_changes(
@@ -1034,35 +1070,28 @@ fn diff_note_blob_changes(
     old_tree: Option<&ObjectId>,
     new_tree: Option<&ObjectId>,
 ) -> Result<Vec<(ObjectId, Option<ObjectId>, Option<ObjectId>)>> {
-    let entries = diff_trees(&repo.odb, old_tree, new_tree, "")?;
+    let old_map = match old_tree {
+        Some(t) => notes_tree_blob_by_object(repo, t)?,
+        None => HashMap::new(),
+    };
+    let new_map = match new_tree {
+        Some(t) => notes_tree_blob_by_object(repo, t)?,
+        None => HashMap::new(),
+    };
+    let keys: BTreeSet<ObjectId> = old_map.keys().chain(new_map.keys()).copied().collect();
     let mut out = Vec::new();
-    for e in entries {
-        let Some(obj) = e
-            .path()
-            .parse::<ObjectId>()
-            .ok()
-            .or_else(|| note_path_to_object_id(e.path()))
-        else {
-            continue;
-        };
-        match e.status {
-            DiffStatus::Added => {
-                if e.new_oid != zero_oid() {
-                    out.push((obj, None, Some(e.new_oid)));
-                }
-            }
-            DiffStatus::Deleted => {
-                if e.old_oid != zero_oid() {
-                    out.push((obj, Some(e.old_oid), None));
-                }
-            }
-            DiffStatus::Modified | DiffStatus::TypeChanged => {
-                out.push((obj, Some(e.old_oid), Some(e.new_oid)));
+    for obj in keys {
+        let o_old = old_map.get(&obj).copied();
+        let o_new = new_map.get(&obj).copied();
+        match (o_old, o_new) {
+            (None, Some(new_b)) => out.push((obj, None, Some(new_b))),
+            (Some(old_b), None) => out.push((obj, Some(old_b), None)),
+            (Some(old_b), Some(new_b)) if old_b != new_b => {
+                out.push((obj, Some(old_b), Some(new_b)));
             }
             _ => {}
         }
     }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(out)
 }
 
@@ -1667,6 +1696,8 @@ fn merge_notes_dispatch(
     notes_ref: &str,
     do_commit: bool,
     do_abort: bool,
+    verbose: u8,
+    quiet: u8,
     strategy: Option<&str>,
     source_ref: Option<&str>,
 ) -> Result<()> {
@@ -1688,6 +1719,10 @@ fn merge_notes_dispatch(
     }
     let src_raw = source_ref.expect("checked");
     let remote_ref = expand_notes_ref(src_raw);
+    let verbosity = i32::from(verbose).saturating_sub(i32::from(quiet));
+    if verbosity > 0 {
+        eprintln!("Merging notes from {remote_ref} into {notes_ref}");
+    }
     let strategy = if let Some(s) = strategy {
         parse_notes_merge_strategy_cli(s)?
     } else {

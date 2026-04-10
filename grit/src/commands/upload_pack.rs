@@ -792,7 +792,12 @@ fn advertise_refs_with_caps(repo: &Repository, server_proto: u8) -> Result<()> {
 
 fn list_all_refs(git_dir: &Path) -> Result<Vec<(String, ObjectId)>> {
     let mut result = Vec::new();
-    let mut prefixes = vec!["refs/heads/", "refs/tags/", "refs/remotes/"];
+    let mut prefixes = vec![
+        "refs/heads/",
+        "refs/tags/",
+        "refs/remotes/",
+        "refs/notes/",
+    ];
     if ref_namespace::ref_storage_prefix().is_none() {
         prefixes.push("refs/namespaces/");
     }
