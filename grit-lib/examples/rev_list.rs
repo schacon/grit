@@ -29,6 +29,7 @@ fn make_initial_commit(repo: &Repository) -> grit_lib::error::Result<grit_lib::o
         flags: (path.len().min(0xfff)) as u16,
         flags_extended: None,
         path,
+        base_index_pos: 0,
     };
     let mut index = Index::new();
     index.add_or_replace(entry);

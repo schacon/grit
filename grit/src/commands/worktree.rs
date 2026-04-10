@@ -920,6 +920,7 @@ fn add_worktree_tree_to_index(
                 flags: path.len().min(0xfff) as u16,
                 flags_extended: None,
                 path: path.into_bytes(),
+                base_index_pos: 0,
             });
         } else {
             // Stat the file from the work tree if available
@@ -952,6 +953,7 @@ fn add_worktree_tree_to_index(
                 oid: entry.oid,
                 flags: path.len().min(0xfff) as u16,
                 path: path.into_bytes(),
+                base_index_pos: 0,
             });
         }
     }

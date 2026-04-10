@@ -316,6 +316,7 @@ mod tests {
             flags: path.len().min(0xFFF) as u16,
             flags_extended: None,
             path: path.as_bytes().to_vec(),
+            base_index_pos: 0,
         }
     }
 

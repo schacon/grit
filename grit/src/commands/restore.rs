@@ -280,6 +280,7 @@ fn do_restore_staged(
                         flags: path_len,
                         flags_extended: None,
                         path: path_bytes.to_vec(),
+                        base_index_pos: 0,
                     };
                     index.add_or_replace(entry);
                     Ok(true)

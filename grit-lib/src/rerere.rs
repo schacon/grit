@@ -636,6 +636,7 @@ fn stage_resolved_path(repo: &Repository, index: &mut Index, path: &str) -> Resu
             flags: 0,
             flags_extended: None,
             path: path_b,
+            base_index_pos: 0,
         });
     let mut entry = template;
     entry.oid = oid;

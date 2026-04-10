@@ -4409,6 +4409,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                 "hexdump" => run_test_tool_hexdump(rest),
                 "chmtime" => run_test_tool_chmtime(&rest[1..]),
                 "dump-untracked-cache" => run_test_tool_dump_untracked_cache(),
+                "dump-split-index" => run_test_tool_dump_split_index(&rest[1..]),
                 "userdiff" => run_test_tool_userdiff(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
                 "ref-store" => run_test_tool_ref_store(rest),
@@ -5158,6 +5159,29 @@ fn run_test_tool_submodule(rest: &[String]) -> Result<()> {
 }
 
 /// `test-tool dump-untracked-cache` — matches `git/t/helper/test-dump-untracked-cache.c`.
+fn run_test_tool_dump_split_index(rest: &[String]) -> Result<()> {
+    use grit_lib::index::Index;
+    use grit_lib::repo::Repository;
+    use grit_lib::split_index::format_dump_split_index_file;
+    use std::path::PathBuf;
+
+    let path = rest
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("usage: test-tool dump-split-index <index-file>"))?;
+    let _repo = Repository::discover(None).context("not a git repository")?;
+    let p = PathBuf::from(path);
+    let p = if p.is_absolute() {
+        p
+    } else {
+        std::env::current_dir().context("cwd")?.join(p)
+    };
+    let data = std::fs::read(&p).with_context(|| format!("read {}", p.display()))?;
+    let idx = Index::parse(&data).context("parse index")?;
+    let out = format_dump_split_index_file(&data, &idx).context("dump split index")?;
+    print!("{out}");
+    Ok(())
+}
+
 fn run_test_tool_dump_untracked_cache() -> Result<()> {
     use grit_lib::index::Index;
     use grit_lib::repo::Repository;

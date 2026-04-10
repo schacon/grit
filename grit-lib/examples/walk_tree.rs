@@ -62,6 +62,7 @@ fn main() -> grit_lib::error::Result<()> {
             flags: (rel.len().min(0xfff)) as u16,
             flags_extended: None,
             path: rel.to_vec(),
+            base_index_pos: 0,
         };
         index.add_or_replace(entry);
     }

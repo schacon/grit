@@ -68,6 +68,7 @@ pub fn run(args: Args) -> Result<()> {
         ShowPrefix,
         ShowCdup,
         ShowGitDir,
+        ShowSharedIndexPath,
         ShowGitCommonDir,
         ShowAbsoluteGitDir,
         ShowRefFormat,
@@ -158,6 +159,8 @@ pub fn run(args: Args) -> Result<()> {
                 abbrev_ref = true;
             } else if arg == "--git-dir" {
                 actions.push(Action::ShowGitDir);
+            } else if arg == "--shared-index-path" {
+                actions.push(Action::ShowSharedIndexPath);
             } else if arg == "--git-common-dir" {
                 actions.push(Action::ShowGitCommonDir);
             } else if arg == "--absolute-git-dir" {
@@ -564,6 +567,32 @@ pub fn run(args: Args) -> Result<()> {
                     println!("{}", rel.display());
                 } else {
                     println!("{}", to_relative_path(git_dir, &cwd));
+                }
+            }
+            Action::ShowSharedIndexPath => {
+                let Some(current) = repo.as_ref() else {
+                    bail!("not a git repository (or any of the parent directories)");
+                };
+                let index_path = std::env::var("GIT_INDEX_FILE")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+                    .map(|raw| {
+                        let p = std::path::PathBuf::from(raw);
+                        if p.is_absolute() {
+                            p
+                        } else {
+                            cwd.join(p)
+                        }
+                    })
+                    .unwrap_or_else(|| current.index_path());
+                let data = std::fs::read(&index_path).context("Could not read the index")?;
+                let idx =
+                    grit_lib::index::Index::parse(&data).context("Could not read the index")?;
+                if let Some(base) = idx.split_index_base_oid() {
+                    let shared = current
+                        .git_dir
+                        .join(format!("sharedindex.{}", base.to_hex()));
+                    println!("{}", to_relative_path(shared.as_path(), &cwd));
                 }
             }
             Action::ShowGitCommonDir => {

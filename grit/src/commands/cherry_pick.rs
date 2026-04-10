@@ -22,7 +22,8 @@ use grit_lib::ident::parse_signature_times;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::merge_trees::{
-    merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation, WhitespaceMergeOptions,
+    merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation,
+    WhitespaceMergeOptions,
 };
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
@@ -1932,6 +1933,7 @@ fn tree_to_index_entries(
                 flags: path_bytes.len().min(0xFFF) as u16,
                 flags_extended: None,
                 path: path_bytes,
+                base_index_pos: 0,
             });
         }
     }

@@ -81,6 +81,7 @@ pub mod rev_parse;
 #[cfg(unix)]
 pub mod simple_ipc;
 pub mod sparse_checkout;
+pub mod split_index;
 pub mod unicode_normalization;
 pub mod untracked_cache;
 #[cfg(not(unix))]

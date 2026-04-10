@@ -1230,6 +1230,7 @@ fn stage_unmerged_am_conflicts(repo: &Repository, conflicts: &[AmConflictStages]
                         flags,
                         flags_extended: None,
                         path: path_bytes.clone(),
+                        base_index_pos: 0,
                     });
                 }
             }
@@ -1266,6 +1267,7 @@ fn stage_unmerged_am_conflicts(repo: &Repository, conflicts: &[AmConflictStages]
                         flags,
                         flags_extended: None,
                         path: path_bytes.clone(),
+                        base_index_pos: 0,
                     });
                 }
             }
@@ -1607,6 +1609,7 @@ fn stage_affected_files(repo: &Repository, affected_paths: &[String]) -> Result<
             flags: (path_bytes.len().min(0xFFF)) as u16,
             flags_extended: None,
             path: path_bytes,
+            base_index_pos: 0,
         };
         index.add_or_replace(entry);
     }
@@ -3672,6 +3675,7 @@ fn tree_to_index_entries(
                 flags: path_bytes.len().min(0xFFF) as u16,
                 flags_extended: None,
                 path: path_bytes,
+                base_index_pos: 0,
             });
         }
     }

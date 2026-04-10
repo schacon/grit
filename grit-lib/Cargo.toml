@@ -28,3 +28,4 @@ libc.workspace = true
 unicode-width.workspace = true
 encoding_rs = "0.8.35"
 icu_normalizer.workspace = true
+filetime.workspace = true

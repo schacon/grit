@@ -1280,6 +1280,7 @@ fn stage_gitlink(
         flags: rel_path.len().min(0xFFF) as u16,
         flags_extended: None,
         path: rel_path.as_bytes().to_vec(),
+        base_index_pos: 0,
     };
     index.add_or_replace(entry);
 
@@ -1410,6 +1411,7 @@ pub(crate) fn stage_file(
             flags: rel_path.len().min(0xFFF) as u16,
             flags_extended: None,
             path: rel_path.as_bytes().to_vec(),
+            base_index_pos: 0,
         };
         entry.set_intent_to_add(true);
         index.add_or_replace(entry);

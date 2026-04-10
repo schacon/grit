@@ -1055,6 +1055,7 @@ fn do_stash_patch_push(
             flags: 0,
             flags_extended: None,
             path: path_bytes.to_vec(),
+            base_index_pos: 0,
         });
     }
 
@@ -1136,6 +1137,7 @@ fn do_stash_patch_push(
                         flags: 0,
                         flags_extended: None,
                         path: path_bytes.to_vec(),
+                        base_index_pos: 0,
                     });
                 }
             } else {
@@ -1379,6 +1381,7 @@ fn do_push_pathspec(
                 flags: 0,
                 flags_extended: None,
                 path: entry.path.as_bytes().to_vec(),
+                base_index_pos: 0,
             });
         }
         for path in &matched_paths {
@@ -1407,6 +1410,7 @@ fn do_push_pathspec(
                     flags: 0,
                     flags_extended: None,
                     path: path.as_bytes().to_vec(),
+                    base_index_pos: 0,
                 });
             } else {
                 wt_index.remove(path.as_bytes());
@@ -2594,6 +2598,7 @@ fn apply_stash_impl(
                         flags,
                         flags_extended: None,
                         path: path_bytes.to_vec(),
+                        base_index_pos: 0,
                     });
                 }
             }
@@ -2636,6 +2641,7 @@ fn apply_stash_impl(
                     flags: path_bytes.len().min(0xFFF) as u16,
                     flags_extended: None,
                     path: path_bytes.to_vec(),
+                    base_index_pos: 0,
                 };
                 // Do not replace unmerged index entries: `stage_file` strips stages 1–3, which
                 // would hide merge conflicts after stash apply (t9903 conflict prompt).
@@ -2774,6 +2780,7 @@ fn add_stage_entry(
         flags,
         flags_extended: None,
         path: path.to_vec(),
+        base_index_pos: 0,
     });
 }
 
@@ -3633,6 +3640,7 @@ fn create_worktree_tree(odb: &Odb, index: &Index, work_tree: &Path) -> Result<Ob
                         flags,
                         flags_extended: None,
                         path: path_bytes.to_vec(),
+                        base_index_pos: 0,
                     });
                 }
             }
@@ -3710,6 +3718,7 @@ fn capture_dir_as_entries(
                     flags: path_bytes.len().min(0xFFF) as u16,
                     flags_extended: None,
                     path: path_bytes.to_vec(),
+                    base_index_pos: 0,
                 });
             }
         }
@@ -3748,6 +3757,7 @@ fn build_index_from_tree(odb: &Odb, entries: &[FlatTreeEntry]) -> Result<Index> 
             flags,
             flags_extended: None,
             path: entry.path.as_bytes().to_vec(),
+            base_index_pos: 0,
         });
     }
     index.sort();

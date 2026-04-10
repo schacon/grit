@@ -3932,6 +3932,7 @@ fn build_fake_ancestor_file(patches: &[FilePatch], args: &Args, out_path: &Path)
             flags: ((adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
             flags_extended: None,
             path: adjusted.into_bytes(),
+            base_index_pos: 0,
         };
         fake.add_or_replace(entry);
     }
@@ -4848,6 +4849,7 @@ fn apply_to_index(
                 flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
                 flags_extended: None,
                 path: target_adjusted.clone().into_bytes(),
+                base_index_pos: 0,
             };
             if fp.is_rename && source_adjusted != target_adjusted {
                 index.remove(source_adjusted.as_bytes());
@@ -4876,6 +4878,7 @@ fn apply_to_index(
                     flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
                     flags_extended: None,
                     path: target_adjusted.into_bytes(),
+                    base_index_pos: 0,
                 };
                 index.add_or_replace(entry);
                 continue;
@@ -4931,6 +4934,7 @@ fn apply_to_index(
                 flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
                 flags_extended: None,
                 path: target_adjusted.clone().into_bytes(),
+                base_index_pos: 0,
             };
             if fp.is_rename && source_adjusted != target_adjusted {
                 index.remove(source_adjusted.as_bytes());
@@ -5012,6 +5016,7 @@ fn apply_to_index(
             flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
             flags_extended: None,
             path: target_adjusted.clone().into_bytes(),
+            base_index_pos: 0,
         };
 
         if fp.is_rename && source_adjusted != target_adjusted {
@@ -5091,6 +5096,7 @@ fn apply_intent_to_add_entries(patches: &[FilePatch], args: &Args) -> Result<()>
             flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
             flags_extended: None,
             path: target_adjusted.into_bytes(),
+            base_index_pos: 0,
         };
         entry.set_intent_to_add(true);
         index.add_or_replace(entry);

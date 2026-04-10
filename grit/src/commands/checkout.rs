@@ -3765,6 +3765,7 @@ checking out of the index."
                             flags: path_bytes.len().min(0xFFF) as u16,
                             flags_extended: None,
                             path: path_bytes,
+                            base_index_pos: 0,
                         };
                         index.add_or_replace(entry);
                         index_modified = true;
@@ -4553,6 +4554,7 @@ fn tree_to_flat_entries(
                 flags: path_bytes.len().min(0xFFF) as u16,
                 flags_extended: None,
                 path: path_bytes,
+                base_index_pos: 0,
             });
         }
     }
