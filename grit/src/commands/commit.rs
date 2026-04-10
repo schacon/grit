@@ -712,11 +712,14 @@ pub fn run(mut args: Args) -> Result<()> {
             no_ab,
         )?;
         // Match Git: `commit --dry-run` exits 1 when there is nothing to commit (after printing status).
+        // Merge commits are allowed even when the index matches `HEAD^{tree}` (e.g. resolving
+        // modify/delete by keeping our version — tree unchanged but we still record the merge).
         if !args.allow_empty
             && !args.amend
             && !skip_index_tree_vs_parent
             && staged.is_empty()
             && !parents.is_empty()
+            && parents.len() == 1
         {
             let parent_obj = repo.odb.read(&parents[0])?;
             let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)?;
@@ -743,6 +746,7 @@ pub fn run(mut args: Args) -> Result<()> {
         && !skip_index_tree_vs_parent
         && staged.is_empty()
         && !parents.is_empty()
+        && parents.len() == 1
     {
         let parent_obj = repo.odb.read(&parents[0])?;
         let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)?;
