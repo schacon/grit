@@ -423,7 +423,7 @@ pub fn run(mut args: Args) -> Result<()> {
         .collect();
     // Detect renames among staged entries when enabled.
     let staged = if let Some(threshold) = status_rename_threshold {
-        detect_renames(&repo.odb, staged_raw.clone(), threshold)
+        detect_renames_for_status(&repo.odb, staged_raw.clone(), threshold)
     } else {
         staged_raw.clone()
     };
@@ -442,7 +442,7 @@ pub fn run(mut args: Args) -> Result<()> {
         .filter(|entry| status_path_matches(entry.path(), &user_pathspecs))
         .collect();
     let unstaged = if let Some(threshold) = status_rename_threshold {
-        detect_renames(&repo.odb, unstaged_raw.clone(), threshold)
+        detect_renames_for_status(&repo.odb, unstaged_raw.clone(), threshold)
     } else {
         unstaged_raw.clone()
     };
@@ -3054,6 +3054,42 @@ fn resolve_status_rename_threshold(args: &Args, config: &ConfigSet) -> Option<u3
         }
         None => Some(50),
     }
+}
+
+/// Rename detection for `status` with a bounded candidate matrix.
+///
+/// Git's rename pairing is roughly O(deletes × adds). For very large refactors, this can dominate
+/// status runtime. Keep behavior identical for normal-sized sets, but skip rename detection when
+/// the candidate matrix exceeds a practical budget.
+fn detect_renames_for_status(
+    odb: &grit_lib::odb::Odb,
+    entries: Vec<DiffEntry>,
+    threshold: u32,
+) -> Vec<DiffEntry> {
+    const STATUS_RENAME_MATRIX_BUDGET: usize = 50_000;
+    const STATUS_RENAME_CANDIDATE_LIMIT: usize = 2_000;
+
+    let mut deleted = 0usize;
+    let mut added = 0usize;
+    for entry in &entries {
+        match entry.status {
+            DiffStatus::Deleted => deleted += 1,
+            DiffStatus::Added => added += 1,
+            _ => {}
+        }
+    }
+
+    if deleted == 0 || added == 0 {
+        return entries;
+    }
+
+    if deleted.saturating_add(added) > STATUS_RENAME_CANDIDATE_LIMIT
+        || deleted.saturating_mul(added) > STATUS_RENAME_MATRIX_BUDGET
+    {
+        return entries;
+    }
+
+    detect_renames(odb, entries, threshold)
 }
 
 /// Find untracked files in the working tree (raw, before ignore filtering).

@@ -9,6 +9,13 @@
 - `./scripts/run-tests.sh t7060-wtstatus.sh`: 10/17
 - `./scripts/run-tests.sh t7519-status-fsmonitor.sh`: 8/33
 
+**2026-04-10 (status perf phase5 / rename detection budget)**
+
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `./scripts/run-tests.sh t7065-status-rename.sh`: 27/28
+- `./scripts/run-tests.sh t7508-status.sh`: 48/126
+
 **2026-04-10 (t5705 / session ID in capabilities)**
 
 - `cargo test -p grit-lib --lib`: 160 passed
