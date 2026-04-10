@@ -279,19 +279,49 @@ pub fn run(args: Args) -> Result<()> {
 
     let attrs_for_eol = grit_lib::crlf::load_gitattributes(work_tree);
 
+    for (i, spec) in pathspec_filter.iter().enumerate() {
+        let s = match spec {
+            Pathspec::Literal(b) => String::from_utf8_lossy(b).into_owned(),
+            Pathspec::Glob(g) => g.clone(),
+            Pathspec::Magic(m) => m.clone(),
+        };
+        if grit_lib::pathspec::pathspec_is_exclude_only(&s) {
+            matched_index[i] = true;
+            matched_others[i] = true;
+        }
+    }
+
     let mut last_dedup_path: Option<Vec<u8>> = None;
     for entry in &index.entries {
         if entry.overlay_tree_skip_output() {
             continue;
         }
-        // Filter by pathspec
+        // Filter by pathspec (Git OR for positives, AND with negated excludes).
         if !pathspec_filter.is_empty() {
-            let idx = pathspec_filter
+            let path_str = String::from_utf8_lossy(&entry.path);
+            let specs: Vec<String> = pathspec_filter
                 .iter()
-                .position(|spec| spec.matches(&entry.path));
-            match idx {
-                Some(i) => matched_index[i] = true,
-                None => continue,
+                .map(|spec| match spec {
+                    Pathspec::Literal(b) => String::from_utf8_lossy(b).into_owned(),
+                    Pathspec::Glob(g) => g.clone(),
+                    Pathspec::Magic(m) => m.clone(),
+                })
+                .collect();
+            if !grit_lib::pathspec::matches_pathspec_set_for_object_ls_tree(
+                &specs,
+                path_str.as_ref(),
+                entry.mode,
+                &attrs_for_eol,
+            ) {
+                continue;
+            }
+            for (i, spec) in pathspec_filter.iter().enumerate() {
+                if grit_lib::pathspec::pathspec_is_exclude_only(&specs[i]) {
+                    continue;
+                }
+                if spec.matches(&entry.path) {
+                    matched_index[i] = true;
+                }
             }
         }
 
@@ -487,14 +517,31 @@ pub fn run(args: Args) -> Result<()> {
         untracked.sort();
 
         let mut filtered_untracked: Vec<Vec<u8>> = Vec::new();
+        let specs_strings: Vec<String> = pathspec_filter
+            .iter()
+            .map(|spec| match spec {
+                Pathspec::Literal(b) => String::from_utf8_lossy(b).into_owned(),
+                Pathspec::Glob(g) => g.clone(),
+                Pathspec::Magic(m) => m.clone(),
+            })
+            .collect();
+
         for path_bytes in &untracked {
             if !pathspec_filter.is_empty() {
-                let idx = pathspec_filter
-                    .iter()
-                    .position(|spec| spec.matches(path_bytes));
-                match idx {
-                    Some(_) => {}
-                    None => continue,
+                let path_str = String::from_utf8_lossy(path_bytes);
+                let mode = if path_str.ends_with('/') {
+                    0o040000
+                } else {
+                    0o100644
+                };
+                let path_for_match = path_str.trim_end_matches('/');
+                if !grit_lib::pathspec::matches_pathspec_set_for_object_ls_tree(
+                    &specs_strings,
+                    path_for_match,
+                    mode,
+                    &attrs_for_eol,
+                ) {
+                    continue;
                 }
             }
 
@@ -520,6 +567,9 @@ pub fn run(args: Args) -> Result<()> {
 
             if !pathspec_filter.is_empty() {
                 for (i, spec) in pathspec_filter.iter().enumerate() {
+                    if grit_lib::pathspec::pathspec_is_exclude_only(&specs_strings[i]) {
+                        continue;
+                    }
                     if spec.matches(path_bytes) {
                         matched_others[i] = true;
                     }

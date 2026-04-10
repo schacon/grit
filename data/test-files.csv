@@ -555,7 +555,7 @@ t3060-ls-files-with-tree	t3	yes	8	8	0	true	ok	0
 t3070-wildmatch	t3	yes	1901	1901	0	true	ok	3
 t3100-ls-tree-restrict	t3	yes	14	14	0	true	ok	0
 t3101-ls-tree-dirname	t3	yes	19	18	1	false	ok	0
-t3102-ls-tree-wildcards	t3	yes	4	2	2	false	ok	0
+t3102-ls-tree-wildcards	t3	yes	4	4	0	true	ok	0
 t3103-ls-tree-misc	t3	yes	10	10	0	true	ok	0
 t3104-ls-tree-format	t3	yes	19	19	0	true	ok	0
 t3105-ls-tree-output	t3	yes	60	60	0	true	ok	0

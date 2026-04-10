@@ -6,7 +6,11 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
+use grit_lib::crlf::AttrRule;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind, TreeEntry};
+use grit_lib::pathspec::{
+    matches_pathspec_set_for_object_ls_tree, pathspec_wants_descent_into_tree,
+};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::abbreviate_object_id;
@@ -286,6 +290,11 @@ pub fn run(mut args: Args) -> Result<()> {
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let max_tree_depth = resolve_max_tree_depth(&config)?;
     let quote_fully = config.quote_path_fully();
+    let attr_rules = if let Some(ref wt) = repo.work_tree {
+        grit_lib::crlf::load_gitattributes(wt)
+    } else {
+        Vec::new()
+    };
 
     apply_ls_tree_implications(&mut args);
 
@@ -295,6 +304,8 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Resolve pathspecs relative to cwd within the work tree, then express
     // them as repo-root-relative paths so the tree walk can match correctly.
+    // Resolve cwd-relative pathspecs to repo-root-relative paths (join cwd prefix inside the work
+    // tree, then normalize `..` — see t3102 `../a[a]` from a subdirectory).
     if !args.paths.is_empty() && !args.full_tree {
         if let Some(ref wt) = repo.work_tree {
             let cwd = std::env::current_dir().context("resolving cwd")?;
@@ -366,15 +377,21 @@ pub fn run(mut args: Args) -> Result<()> {
     });
     let use_full_paths = args.full_name || args.full_tree || at_repo_root;
 
+    let cwd_rel = if use_full_paths {
+        None
+    } else {
+        cwd_relative_to_work_tree(&repo)?
+    };
+
     // Git narrows the listing to the tree object for the current directory (see `read_tree` +
-    // pathspec prefix). Without this, we would list the repository root and fake "relative" names
-    // with `../`, which breaks bash completion (`__gitcomp_directories`) and differs from Git.
+    // pathspec prefix). Pathspec arguments disable narrowing: `read_tree` matches against the full
+    // tree so patterns like `../a[a]` from a subdirectory still resolve (t3102).
     let mut narrowed_prefix = String::new();
-    if !use_full_paths {
-        if let Some(cwd_rel) = cwd_relative_to_work_tree(&repo)? {
+    if !use_full_paths && args.paths.is_empty() {
+        if let Some(ref cwd_rel) = cwd_rel {
             if !cwd_rel.is_empty() {
                 let Some((oid, pfx)) =
-                    descend_tree_to_path(&repo, tree_oid, String::new(), &cwd_rel)?
+                    descend_tree_to_path(&repo, tree_oid, String::new(), cwd_rel)?
                 else {
                     return Ok(());
                 };
@@ -392,10 +409,16 @@ pub fn run(mut args: Args) -> Result<()> {
     // Prefix for paths under `list_tree` (repo-root-relative), and cwd-relative display adjustment.
     let (list_prefix, cwd_prefix) = if use_full_paths {
         (String::new(), None)
-    } else if narrowed_prefix.is_empty() {
-        (String::new(), None)
-    } else {
+    } else if !narrowed_prefix.is_empty() {
         (narrowed_prefix.clone(), Some(narrowed_prefix))
+    } else if let Some(ref rel) = cwd_rel {
+        if !rel.is_empty() {
+            (String::new(), Some(rel.clone()))
+        } else {
+            (String::new(), None)
+        }
+    } else {
+        (String::new(), None)
     };
 
     list_tree(
@@ -409,6 +432,7 @@ pub fn run(mut args: Args) -> Result<()> {
         term,
         cwd_prefix.as_deref(),
         quote_fully,
+        &attr_rules,
     )?;
 
     Ok(())
@@ -448,6 +472,7 @@ fn list_tree(
     term: u8,
     cwd_prefix: Option<&str>,
     quote_fully: bool,
+    attr_rules: &[AttrRule],
 ) -> Result<()> {
     if depth > max_tree_depth {
         bail!(
@@ -470,19 +495,14 @@ fn list_tree(
         let is_tree = entry.mode == 0o040000;
         let is_submodule = file_type_mask(entry.mode) == 0o160000;
 
-        // Apply path filter
+        // Apply path filter (Git pathspec semantics, including `:(exclude)` and literal `[` paths).
         if !args.paths.is_empty() {
-            let matches = args.paths.iter().any(|p| {
-                let has_trailing_slash = p.ends_with('/');
-                let ps = p.strip_suffix('/').unwrap_or(p.as_str());
-                // Trailing-slash pathspec only matches trees, not blobs
-                if has_trailing_slash && !is_tree && full_name == ps {
-                    return false;
-                }
-                full_name == ps
-                    || full_name.starts_with(&format!("{ps}/"))
-                    || ps.starts_with(&format!("{full_name}/"))
-            });
+            let matches = matches_pathspec_set_for_object_ls_tree(
+                &args.paths,
+                &full_name,
+                entry.mode,
+                attr_rules,
+            );
             if !matches {
                 continue;
             }
@@ -490,11 +510,10 @@ fn list_tree(
             // Exact match without trailing slash shows the tree entry itself.
             // Trailing slash or deeper path means descend into the tree.
             let is_ancestor = is_tree
-                && args.paths.iter().any(|p| {
-                    let ps = p.strip_suffix('/').unwrap_or(p.as_str());
-                    ps.starts_with(&format!("{full_name}/"))
-                        || (p.ends_with('/') && ps == full_name)
-                });
+                && args
+                    .paths
+                    .iter()
+                    .any(|p| pathspec_wants_descent_into_tree(p, &full_name));
             if is_tree && is_ancestor && !args.recursive {
                 // Match Git's `read_tree` + `show_recursive`: with pathspecs we descend into prefix
                 // trees even without `-r`. `-t` then lists those intermediate trees (see t3100).
@@ -514,6 +533,7 @@ fn list_tree(
                     term,
                     cwd_prefix,
                     quote_fully,
+                    attr_rules,
                 )?;
                 continue;
             }
@@ -536,6 +556,7 @@ fn list_tree(
                 term,
                 cwd_prefix,
                 quote_fully,
+                attr_rules,
             )?;
             continue;
         }

@@ -263,6 +263,118 @@ pub fn pathspecs_allow_bloom(specs: &[String]) -> bool {
         .all(|s| !s.is_empty() && bloom_lookup_prefix_with_cwd(s, None).is_some())
 }
 
+/// True when `spec` is a negated `:(exclude)` / `:!` pattern after global pathspec flags.
+#[must_use]
+pub fn pathspec_is_exclude_only(spec: &str) -> bool {
+    let (elem_magic, _) = parse_element_magic(spec);
+    combine_magic(elem_magic).exclude
+}
+
+/// Whether tree-walking should recurse into directory `full_name` for pathspec `spec` without
+/// `-r` (Git `read_tree` / `show_recursive` “interesting” descent).
+///
+/// Exclude-only patterns never trigger descent alone.
+#[must_use]
+pub fn pathspec_wants_descent_into_tree(spec: &str, full_name: &str) -> bool {
+    if pathspec_is_exclude_only(spec) {
+        return false;
+    }
+    let (elem_magic, raw_pattern) = parse_element_magic(spec);
+    let magic = combine_magic(elem_magic);
+    if magic.exclude {
+        return false;
+    }
+    let pattern = strip_top_magic(raw_pattern);
+    let pattern = pattern.strip_prefix("./").unwrap_or(pattern);
+    if pattern.is_empty() || pattern == "." {
+        return true;
+    }
+    let dir_prefix = format!("{full_name}/");
+    if pattern.starts_with(&dir_prefix) {
+        return true;
+    }
+    let probe = format!("{full_name}/.__grit_ls_tree_probe__");
+    matches_ls_tree_pathspec(spec, &probe, 0o100644, &[])
+}
+
+/// Like [`matches_pathspec_set_for_object`], but uses [`matches_ls_tree_pathspec`] for each
+/// element so `ls-files` / index filtering agrees with `ls-tree` on patterns such as `a[a]`.
+#[must_use]
+pub fn matches_pathspec_set_for_object_ls_tree(
+    specs: &[String],
+    path: &str,
+    mode: u32,
+    attr_rules: &[AttrRule],
+) -> bool {
+    if specs.is_empty() {
+        return true;
+    }
+    let mut positives: Vec<&str> = Vec::new();
+    let mut excludes: Vec<&str> = Vec::new();
+    for s in specs {
+        if pathspec_is_exclude_only(s) {
+            excludes.push(s.as_str());
+        } else {
+            positives.push(s.as_str());
+        }
+    }
+    let positive_ok = if positives.is_empty() {
+        true
+    } else {
+        positives
+            .iter()
+            .any(|s| matches_ls_tree_pathspec(s, path, mode, attr_rules))
+    };
+    if !positive_ok {
+        return false;
+    }
+    for ex in excludes {
+        if matches_ls_tree_pathspec(ex, path, mode, attr_rules) {
+            return false;
+        }
+    }
+    true
+}
+
+/// True if `path` matches the combined pathspec list: any positive spec (or all paths when there
+/// are only excludes, matching Git `parse_pathspec`), and not matched by any exclude spec.
+#[must_use]
+pub fn matches_pathspec_set_for_object(
+    specs: &[String],
+    path: &str,
+    mode: u32,
+    attr_rules: &[AttrRule],
+) -> bool {
+    if specs.is_empty() {
+        return true;
+    }
+    let mut positives: Vec<&str> = Vec::new();
+    let mut excludes: Vec<&str> = Vec::new();
+    for s in specs {
+        if pathspec_is_exclude_only(s) {
+            excludes.push(s.as_str());
+        } else {
+            positives.push(s.as_str());
+        }
+    }
+    let positive_ok = if positives.is_empty() {
+        true
+    } else {
+        positives
+            .iter()
+            .any(|s| matches_pathspec_for_object(s, path, mode, attr_rules))
+    };
+    if !positive_ok {
+        return false;
+    }
+    for ex in excludes {
+        if matches_pathspec_for_object(ex, path, mode, attr_rules) {
+            return false;
+        }
+    }
+    true
+}
+
 /// True if `path` is matched by `spec` (Git pathspec syntax, including magic and globals).
 #[must_use]
 pub fn pathspec_matches(spec: &str, path: &str) -> bool {
@@ -372,6 +484,20 @@ fn literal_prefix_match(pattern: &str, path: &str) -> bool {
     path == pattern || path.starts_with(&format!("{pattern}/"))
 }
 
+/// Literal pathspec match for `ls-tree` when the pattern has no `*`/`?` (brackets stay literal).
+fn ls_tree_literal_match(pattern: &str, path: &str, ctx: PathspecMatchContext) -> bool {
+    if let Some(prefix) = pattern.strip_suffix('/') {
+        if path.starts_with(&format!("{prefix}/")) {
+            return true;
+        }
+        if path == prefix {
+            return ctx.is_directory || ctx.is_git_submodule;
+        }
+        return false;
+    }
+    path == pattern || path.starts_with(&format!("{pattern}/"))
+}
+
 /// Optional path metadata for literal pathspecs with a trailing `/` (tree-walk / diff-tree).
 ///
 /// Git treats `dir/` as “directory or git submodule only”: a regular file `dir`
@@ -467,6 +593,90 @@ pub fn context_from_mode_bits(mode: u32) -> PathspecMatchContext {
     }
 }
 
+/// Pathspec matching for `ls-tree` after Git forces `pathspec.has_wildcard = 0` (`ls-tree.c`).
+///
+/// Metacharacters `*` / `?` still participate in [`wildmatch`]; `[` and `\\` are **not** glob
+/// starters unless a `*` or `?` appears — so `a[a]` matches the literal directory `a[a]` (t3102),
+/// while `a*` matches `a/one`, `aa/two`, `a[a]/three`, …
+#[must_use]
+pub fn matches_ls_tree_pathspec(
+    spec: &str,
+    path: &str,
+    mode: u32,
+    attr_rules: &[AttrRule],
+) -> bool {
+    let (elem_magic, raw_pattern) = parse_element_magic(spec);
+    let mut magic = combine_magic(elem_magic);
+    magic.exclude = false;
+
+    if magic.literal && magic.glob {
+        return false;
+    }
+
+    let ctx = context_from_mode_bits(mode);
+    let is_dir_for_attr = path.ends_with('/') || ctx.is_directory || ctx.is_git_submodule;
+
+    if let Some(ref attr) = magic.attr_name {
+        if !path_has_gitattribute(attr_rules, path, is_dir_for_attr, attr) {
+            return false;
+        }
+    }
+
+    let pattern = strip_top_magic(raw_pattern);
+    let path_for_match = if let Some(prefix) = magic.prefix.as_deref() {
+        if !path.starts_with(prefix) {
+            return false;
+        }
+        &path[prefix.len()..]
+    } else {
+        path
+    };
+
+    if magic.literal || magic.glob || magic.icase {
+        return pathspec_matches_tail(pattern, path_for_match, magic);
+    }
+
+    let spec_nfc: Cow<'_, str> = if pathspec_precompose_enabled() {
+        precompose_utf8_path(pattern)
+    } else {
+        Cow::Borrowed(pattern)
+    };
+    let path_nfc: Cow<'_, str> = if pathspec_precompose_enabled() {
+        precompose_utf8_path(path_for_match)
+    } else {
+        Cow::Borrowed(path_for_match)
+    };
+    let pattern = spec_nfc.as_ref();
+    let path = path_nfc.as_ref();
+
+    let trimmed = pattern.strip_prefix("./").unwrap_or(pattern);
+    if trimmed == "." || trimmed.is_empty() {
+        return true;
+    }
+
+    let uses_star_or_question = trimmed.contains('*') || trimmed.contains('?');
+    if !uses_star_or_question {
+        return ls_tree_literal_match(trimmed, path, ctx);
+    }
+
+    let nwl = simple_length(trimmed);
+    let flags = 0u32;
+    if nwl == trimmed.len() {
+        return wildmatch(trimmed.as_bytes(), path.as_bytes(), flags);
+    }
+    let lit = trimmed.as_bytes().get(..nwl).unwrap_or_default();
+    let path_b = path.as_bytes();
+    if path_b.len() < nwl {
+        return false;
+    }
+    if &path_b[..nwl] != lit {
+        return false;
+    }
+    let pat_rest = &trimmed[nwl..];
+    let path_rest = &path[nwl..];
+    wildmatch(pat_rest.as_bytes(), path_rest.as_bytes(), flags)
+}
+
 /// Match a pathspec against a tree path, using `.gitattributes` for `:(attr:...)`.
 ///
 /// Used by `git archive` style tree walks: `mode` supplies directory/gitlink context for
@@ -479,12 +689,10 @@ pub fn matches_pathspec_for_object(
     attr_rules: &[AttrRule],
 ) -> bool {
     let (elem_magic, raw_pattern) = parse_element_magic(spec);
-    let magic = combine_magic(elem_magic);
+    let mut magic = combine_magic(elem_magic);
+    magic.exclude = false;
 
     if magic.literal && magic.glob {
-        return false;
-    }
-    if magic.exclude {
         return false;
     }
 
@@ -538,6 +746,21 @@ mod tree_entry_pathspec_tests {
         ));
         assert!(matches_pathspec("file0", "file0"));
         assert!(!matches_pathspec("path", "path1/file1"));
+    }
+
+    #[test]
+    fn ls_tree_bracket_in_name_is_literal_prefix() {
+        assert!(matches_ls_tree_pathspec(
+            "a[a]",
+            "a[a]/three",
+            0o100644,
+            &[]
+        ));
+        assert!(!matches_pathspec_with_context(
+            "a[a]",
+            "a[a]/three",
+            PathspecMatchContext::default()
+        ));
     }
 
     #[test]
