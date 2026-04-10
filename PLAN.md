@@ -685,7 +685,7 @@ commit → check it off → move on.
 - [ ] `t5318-commit-graph` ███░░░░░░░░░░░░░░░░░ 19/109 (90 left) — commit graph
 - [ ] `t5601-clone` ███░░░░░░░░░░░░░░░░░ 21/115 (94 left) — 
 - [ ] `t5505-remote` ██░░░░░░░░░░░░░░░░░░ 16/130 (114 left) — git remote porcelain-ish
-- [ ] `t5516-fetch-push` █░░░░░░░░░░░░░░░░░░░ 60/124 (64 left) — Basic fetch/push functionality.
+- [ ] `t5516-fetch-push` █░░░░░░░░░░░░░░░░░░░ 62/124 (62 left) — Basic fetch/push functionality.
 
 - [ ] `t5411-proc-receive-hook` ██████████░░░░░░░░░░ 193/354 (161 left) — Test proc-receive hook
 - [~] `t5310-pack-bitmaps` ███████████░░░░░░░░░ 127/236 (109 left) — exercise basic bitmap functionality (fast-import bulk + name-hash; pack bitmap I/O still missing)

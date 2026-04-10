@@ -16,6 +16,7 @@ Task lines in `PLAN.md`: 345 completed (`[x]`), 5 in progress (`[~]`), 421 remai
 ## Recently completed
 
 - `t5531-deep-submodule-push` — 29/29 tests pass (checkout worktree update now preserves populated gitlink directories by default when a gitlink path disappears from the target index; only nested `.git/modules/*` repositories may force-remove those directories for directory/file transitions, which keeps embedded-submodule `.git` checkouts intact across branch switches and restores full deep recursive push parity)
+- `t5516-fetch-push` — 62/124 tests pass (push now rejects inconsistent aliased ref updates before writing refs and supports `--no-force` parsing plus `git push <remote> tag <name>` shorthand expansion to `refs/tags/<name>:refs/tags/<name>`; this clears both `force pushing required to update lightweight tag` and `... annotated tag` cases while keeping remaining push/fetch parity gaps in-progress)
 - `t5516-fetch-push` — 59/124 tests pass (fetch now rejects `--no-ipv4` / `--no-ipv6` with Git-style `unknown option` diagnostics and applies `url.<base>.insteadOf` rewrite rules when resolving fetch remotes, fixing the `fetch with insteadOf` parity case; suite remains in-progress)
 - `t5516-fetch-push` — 60/124 tests pass (push now rejects inconsistent updates into aliased refs by checking remote symbolic-ref targets before applying updates and bailing with `refusing inconsistent update between symref ... and its target ...`; this fixes the `push into aliased refs (inconsistent)` case)
 

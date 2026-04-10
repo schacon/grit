@@ -53,6 +53,10 @@ pub struct Args {
     #[arg(short = 'f', long = "force")]
     pub force: bool,
 
+    /// Disable --force from config/CLI while still honoring per-refspec '+' force.
+    #[arg(long = "no-force", hide = true)]
+    pub no_force: bool,
+
     /// Push all tags.
     #[arg(long = "tags")]
     pub tags: bool,
@@ -520,6 +524,7 @@ pub fn run(args: Args) -> Result<()> {
     if args.no_ipv6 {
         bail!("unknown option `no-ipv6'");
     }
+    let cli_force_enabled = args.force && !args.no_force;
     let repo = Repository::discover(None).context("not a git repository")?;
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     if repo
@@ -631,6 +636,7 @@ pub fn run(args: Args) -> Result<()> {
             effective_mirror,
             &push_refspecs_from_config,
             path_style_remote,
+            cli_force_enabled,
         )?;
     }
 
@@ -710,6 +716,7 @@ fn push_to_url(
     effective_mirror: bool,
     push_refspecs_from_config: &[String],
     path_style_remote: bool,
+    cli_force_enabled: bool,
 ) -> Result<()> {
     if url.starts_with("ext::") {
         crate::transport_passthrough::delegate_current_invocation_to_real_git();
@@ -912,8 +919,11 @@ fn push_to_url(
         )?;
 
         // Explicit refspecs
-        for spec in &args.refspecs {
+        let mut spec_idx = 0usize;
+        while spec_idx < args.refspecs.len() {
+            let spec = &args.refspecs[spec_idx];
             if spec.starts_with('^') {
+                spec_idx += 1;
                 continue;
             }
             // Strip leading '+' force prefix
@@ -922,13 +932,23 @@ fn push_to_url(
             } else {
                 (false, spec.as_str())
             };
-            let (src, dst) = parse_refspec(spec_clean);
+            let (src, dst, consumed) = if spec_clean == "tag" {
+                let Some(name) = args.refspecs.get(spec_idx + 1) else {
+                    bail!("missing tag name after 'tag'");
+                };
+                let full = format!("refs/tags/{name}");
+                (full.clone(), full, 2)
+            } else {
+                let (src, dst) = parse_refspec(spec_clean);
+                (src, dst, 1)
+            };
 
             // Empty src (e.g. ":branch") means delete
             if src.is_empty() {
                 let remote_ref = normalize_ref(&dst);
                 let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
                 if old_oid.is_none() {
+                    spec_idx += consumed;
                     continue;
                 }
                 let expected_oid = resolve_force_with_lease_expect(
@@ -946,6 +966,7 @@ fn push_to_url(
                     refspec_force: per_refspec_force,
                     pre_push_local_name: None,
                 });
+                spec_idx += consumed;
                 continue;
             }
 
@@ -997,6 +1018,7 @@ fn push_to_url(
                 }
                 // Copy symbolic refs matching the glob pattern
                 copy_symrefs_push(&repo.git_dir, &remote_repo.git_dir, spec_clean, &dst)?;
+                spec_idx += consumed;
                 continue;
             }
 
@@ -1037,6 +1059,7 @@ fn push_to_url(
                 refspec_force: per_refspec_force,
                 pre_push_local_name,
             });
+            spec_idx += consumed;
         }
     } else if !push_refspecs_from_config.is_empty() {
         let lines = push_refspecs_from_config;
@@ -1440,7 +1463,7 @@ fn push_to_url(
     let mut pre_reject: Vec<Option<String>> = vec![None; updates.len()];
     for (i, update) in updates.iter().enumerate() {
         let mut includes_override_for_lease = false;
-        if !args.force && !update.refspec_force {
+        if !cli_force_enabled && !update.refspec_force {
             match force_with_lease_expectation_for_remote_ref(
                 &args.force_with_lease,
                 &repo.git_dir,
@@ -1491,7 +1514,7 @@ fn push_to_url(
             }
         }
         if force_if_includes
-            && !args.force
+            && !cli_force_enabled
             && !update.refspec_force
             && update.remote_ref.starts_with("refs/heads/")
             && update.old_oid.is_some()
@@ -1514,7 +1537,7 @@ fn push_to_url(
             if old == new {
                 continue;
             }
-            if !args.force
+            if !cli_force_enabled
                 && !update.refspec_force
                 && args.force_with_lease.is_none()
                 && !update.remote_ref.starts_with("refs/tags/")
@@ -1529,7 +1552,7 @@ fn push_to_url(
                         .to_string(),
                 );
             }
-            if !args.force
+            if !cli_force_enabled
                 && !update.refspec_force
                 && args.force_with_lease.is_none()
                 && update.remote_ref.starts_with("refs/tags/")
@@ -2448,6 +2471,7 @@ fn apply_ref_update(
     pushing_config: &ConfigSet,
     remote_config: &ConfigSet,
 ) -> Result<ApplyRefResult> {
+    let cli_force_enabled = args.force && !args.no_force;
     if let Err(reason) =
         check_receive_pack_policy(remote_repo, remote_config, pushing_config, update)
     {
@@ -2509,7 +2533,7 @@ fn apply_ref_update(
                     Some(old)
                         if old != new_oid
                             && update.remote_ref.starts_with("refs/heads/")
-                            && ((args.force || update.refspec_force)
+                            && ((cli_force_enabled || update.refspec_force)
                                 || is_ancestor(repo, *old, *new_oid)
                                     .map(|ff| !ff)
                                     .unwrap_or(false)) =>
@@ -2533,7 +2557,7 @@ fn apply_ref_update(
                     Some(old)
                         if old != new_oid
                             && update.remote_ref.starts_with("refs/heads/")
-                            && ((args.force || update.refspec_force)
+                            && ((cli_force_enabled || update.refspec_force)
                                 || is_ancestor(repo, *old, *new_oid)
                                     .map(|ff| !ff)
                                     .unwrap_or(false)) =>
@@ -3525,7 +3549,7 @@ fn run_receive_pack_wrapper_expect_failure(
         if args.porcelain {
             pass_args.push("--porcelain".to_owned());
         }
-        if args.force {
+        if args.force && !args.no_force {
             pass_args.push("--force".to_owned());
         }
         if args.dry_run {

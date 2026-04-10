@@ -1,5 +1,14 @@
 # Test results
 
+**2026-04-10 (phase 6 / t5516 push tag+force parsing parity)**  
+
+- `cargo fmt`: pass
+- `cargo check -p grit-rs`: pass
+- `cargo clippy --fix --allow-dirty -p grit-rs`: pass (reverted unrelated formatting-only edits before commit)
+- `cargo test -p grit-lib --lib`: pass
+- `cargo build --release -p grit-rs`: pass
+- `./scripts/run-tests.sh t5516-fetch-push.sh`: **62/124** (up from 60/124; fixed `git push --no-force` parsing and `git push <remote> tag <name>` refspec shorthand expansion, which clears tests 85 and 86)
+
 **2026-04-10 (phase 6 / t5516 aliased ref consistency on push)**
 
 - `cargo fmt`: pass
