@@ -100,9 +100,11 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
         ignore_space_at_eol: input.ignore_space_at_eol,
         ignore_cr_at_eol: input.ignore_cr_at_eol,
     };
-    let base_compare_lines = normalize_lines_for_compare(&base_lines, &ws_mode);
-    let ours_compare_lines = normalize_lines_for_compare(&ours_lines, &ws_mode);
-    let theirs_compare_lines = normalize_lines_for_compare(&theirs_lines, &ws_mode);
+    // Ignore trailing `\n` / `\r\n` / `\r` when diffing (git `xdl_recmatch`), so clean merges
+    // match `git merge-file` when only the final newline differs (t6403).
+    let base_compare_lines = lines_for_merge_diff_compare(&base_lines, &ws_mode);
+    let ours_compare_lines = lines_for_merge_diff_compare(&ours_lines, &ws_mode);
+    let theirs_compare_lines = lines_for_merge_diff_compare(&theirs_lines, &ws_mode);
 
     let algo = input
         .diff_algorithm
@@ -127,6 +129,14 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
     if !matches!(input.style, ConflictStyle::ZealousDiff3) {
         hunks = merge_adjacent_replace_and_trailing_insert_conflicts(hunks);
     }
+    // Match `git merge-file` (`XDL_MERGE_ZEALOUS_ALNUM`): refine then simplify conflicts.
+    if !matches!(
+        input.style,
+        ConflictStyle::Diff3 | ConflictStyle::ZealousDiff3
+    ) {
+        hunks = refine_conflicts_by_subdiff(hunks, algo, &ws_mode);
+        hunks = simplify_non_conflicts_between_conflicts(hunks, true);
+    }
     // Git keeps adjacent conflict regions separate when identical lines appear
     // between them (e.g. t4200-rerere); do not merge Conflict+gap+Conflict.
     hunks = coalesce_nearby_conflicts(hunks, 3, false);
@@ -142,19 +152,35 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
 
     let mut content: Vec<u8> = Vec::new();
     let mut conflicts = 0usize;
+    let mut ours_line_pos = 0usize;
+    let mut theirs_line_pos = 0usize;
 
     for (idx, hunk) in hunks.iter().enumerate() {
         match hunk {
-            Hunk::Unchanged(lines) => append_lines(&mut content, lines),
-            Hunk::OnlyOurs { ours, .. } => append_lines(&mut content, ours),
-            Hunk::OnlyTheirs { theirs, .. } => append_lines(&mut content, theirs),
+            Hunk::Unchanged(lines) => {
+                append_lines(&mut content, lines);
+                ours_line_pos += lines.len();
+                theirs_line_pos += lines.len();
+            }
+            Hunk::OnlyOurs { ours, .. } => {
+                append_lines(&mut content, ours);
+                ours_line_pos += ours.len();
+            }
+            Hunk::OnlyTheirs { theirs, .. } => {
+                append_lines(&mut content, theirs);
+                theirs_line_pos += theirs.len();
+            }
             Hunk::Conflict { base, ours, theirs } => {
+                let conflict_ours_start = ours_line_pos;
+                let conflict_theirs_start = theirs_line_pos;
                 match input.favor {
                     MergeFavor::Ours => {
                         append_lines(&mut content, ours);
+                        ours_line_pos += ours.len();
                     }
                     MergeFavor::Theirs => {
                         append_lines(&mut content, theirs);
+                        theirs_line_pos += theirs.len();
                     }
                     MergeFavor::Union => {
                         append_lines(&mut content, ours);
@@ -168,6 +194,8 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
                             content.push(b'\n');
                         }
                         append_lines(&mut content, theirs);
+                        ours_line_pos += ours.len();
+                        theirs_line_pos += theirs.len();
                     }
                     MergeFavor::None => {
                         conflicts += 1;
@@ -198,6 +226,15 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
                             if prefix_len > 0 {
                                 append_lines(&mut content, &ours[..prefix_len]);
                             }
+                            let i1 = conflict_ours_start + prefix_len;
+                            let i2 = conflict_theirs_start + prefix_len;
+                            let needs_cr = conflict_markers_need_cr_at(
+                                &ours_lines,
+                                &theirs_lines,
+                                &base_lines,
+                                i1,
+                                i2,
+                            );
                             emit_conflict(
                                 &mut content,
                                 base,
@@ -208,12 +245,14 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
                                 input.label_theirs,
                                 input.style,
                                 marker,
+                                needs_cr,
                             );
                             if suffix_len > 0 {
                                 append_lines(&mut content, &ours[ours.len() - suffix_len..]);
                             }
                         } else if matches!(input.style, ConflictStyle::Merge) {
-                            let (prefix_len, suffix_len) = common_prefix_suffix(ours, theirs);
+                            let (prefix_len, suffix_len) =
+                                common_prefix_suffix_merge_lines(ours, theirs);
                             let pre = &ours[..prefix_len];
                             let suf_start = ours.len().saturating_sub(suffix_len);
                             let o_mid = &ours[prefix_len..suf_start];
@@ -221,6 +260,15 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
                                 &theirs[prefix_len..theirs.len().saturating_sub(suffix_len)];
                             let suf = &ours[suf_start..];
                             append_lines(&mut content, pre);
+                            let i1 = conflict_ours_start + prefix_len;
+                            let i2 = conflict_theirs_start + prefix_len;
+                            let needs_cr = conflict_markers_need_cr_at(
+                                &ours_lines,
+                                &theirs_lines,
+                                &base_lines,
+                                i1,
+                                i2,
+                            );
                             emit_conflict(
                                 &mut content,
                                 base,
@@ -231,9 +279,17 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
                                 input.label_theirs,
                                 input.style,
                                 marker,
+                                needs_cr,
                             );
                             append_lines(&mut content, suf);
                         } else {
+                            let needs_cr = conflict_markers_need_cr_at(
+                                &ours_lines,
+                                &theirs_lines,
+                                &base_lines,
+                                conflict_ours_start,
+                                conflict_theirs_start,
+                            );
                             emit_conflict(
                                 &mut content,
                                 base,
@@ -244,8 +300,11 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
                                 input.label_theirs,
                                 input.style,
                                 marker,
+                                needs_cr,
                             );
                         }
+                        ours_line_pos += ours.len();
+                        theirs_line_pos += theirs.len();
                     }
                 }
             }
@@ -318,49 +377,50 @@ fn emit_conflict(
     label_theirs: &str,
     style: ConflictStyle,
     marker: usize,
+    needs_cr: bool,
 ) {
     let open = "<".repeat(marker);
     let eq = "=".repeat(marker);
     let close = ">".repeat(marker);
-    let marker_terminator: &[u8] = b"\n";
+    let marker_eol: &[u8] = if needs_cr { b"\r\n" } else { b"\n" };
 
     // Ensure ours section starts on a new line if the previous content didn't
     // end with one.
-    if !out.is_empty() && !out.ends_with(b"\n") {
-        out.extend_from_slice(marker_terminator);
+    if !out.is_empty() && !out.ends_with(b"\n") && !out.ends_with(b"\r\n") {
+        out.extend_from_slice(marker_eol);
     }
 
-    write_conflict_marker_line(out, &open, Some(label_ours), marker_terminator);
+    write_conflict_marker_line(out, &open, Some(label_ours), marker_eol);
     for line in ours {
         out.extend_from_slice(line);
     }
     // Ensure separator starts on its own line.
     if out.last().copied() != Some(b'\n') {
-        out.extend_from_slice(marker_terminator);
+        out.extend_from_slice(marker_eol);
     }
     match style {
         ConflictStyle::Diff3 | ConflictStyle::ZealousDiff3 => {
             let pipe = "|".repeat(marker);
-            write_conflict_marker_line(out, &pipe, Some(label_base), marker_terminator);
+            write_conflict_marker_line(out, &pipe, Some(label_base), marker_eol);
             for line in base {
                 out.extend_from_slice(line);
             }
             if out.last().copied() != Some(b'\n') {
-                out.extend_from_slice(marker_terminator);
+                out.extend_from_slice(marker_eol);
             }
-            write_conflict_marker_line(out, &eq, None, marker_terminator);
+            write_conflict_marker_line(out, &eq, None, marker_eol);
         }
         ConflictStyle::Merge => {
-            write_conflict_marker_line(out, &eq, None, marker_terminator);
+            write_conflict_marker_line(out, &eq, None, marker_eol);
         }
     }
     for line in theirs {
         out.extend_from_slice(line);
     }
     if out.last().copied() != Some(b'\n') {
-        out.extend_from_slice(marker_terminator);
+        out.extend_from_slice(marker_eol);
     }
-    write_conflict_marker_line(out, &close, Some(label_theirs), marker_terminator);
+    write_conflict_marker_line(out, &close, Some(label_theirs), marker_eol);
 }
 
 fn write_conflict_marker_line(out: &mut Vec<u8>, marker: &str, label: Option<&str>, eol: &[u8]) {
@@ -370,6 +430,233 @@ fn write_conflict_marker_line(out: &mut Vec<u8>, marker: &str, label: Option<&st
         out.extend_from_slice(label.as_bytes());
     }
     out.extend_from_slice(eol);
+}
+
+/// Strip trailing `\n`, `\r\n`, or lone `\r` from a logical line (content kept for output).
+fn strip_line_terminator(line: &[u8]) -> &[u8] {
+    if line.ends_with(b"\r\n") {
+        return &line[..line.len() - 2];
+    }
+    if line.ends_with(b"\n") {
+        return &line[..line.len() - 1];
+    }
+    if line.ends_with(b"\r") {
+        return &line[..line.len() - 1];
+    }
+    line
+}
+
+/// Compare two lines ignoring trailing newline / CR conventions (matches git `xdl_recmatch` for EOL).
+fn merge_line_equal(a: &[u8], b: &[u8]) -> bool {
+    strip_line_terminator(a) == strip_line_terminator(b)
+}
+
+fn common_prefix_suffix_merge_lines(ours: &[Vec<u8>], theirs: &[Vec<u8>]) -> (usize, usize) {
+    let mut prefix = 0usize;
+    while prefix < ours.len()
+        && prefix < theirs.len()
+        && merge_line_equal(&ours[prefix], &theirs[prefix])
+    {
+        prefix += 1;
+    }
+
+    let mut suffix = 0usize;
+    while suffix < ours.len().saturating_sub(prefix)
+        && suffix < theirs.len().saturating_sub(prefix)
+        && merge_line_equal(
+            &ours[ours.len() - 1 - suffix],
+            &theirs[theirs.len() - 1 - suffix],
+        )
+    {
+        suffix += 1;
+    }
+
+    (prefix, suffix)
+}
+
+/// Git `is_eol_crlf` for a single logical line in our representation.
+fn is_eol_crlf_line(line: &[u8]) -> i8 {
+    if line.ends_with(b"\r\n") {
+        return 1;
+    }
+    if line.ends_with(b"\n") {
+        return 0;
+    }
+    -1
+}
+
+/// Git `is_cr_needed` using indices into the full postimages / ancestor (see `xmerge.c`).
+fn conflict_markers_need_cr_at(
+    ours_lines: &[Vec<u8>],
+    theirs_lines: &[Vec<u8>],
+    base_lines: &[Vec<u8>],
+    i1: usize,
+    i2: usize,
+) -> bool {
+    let mut needs = if i1 > 0 {
+        is_eol_crlf_line(ours_lines[i1 - 1].as_slice())
+    } else {
+        -1
+    };
+    if needs > 0 {
+        let t0 = if i2 > 0 {
+            is_eol_crlf_line(theirs_lines[i2 - 1].as_slice())
+        } else {
+            -1
+        };
+        if t0 >= 0 {
+            needs = t0;
+        }
+    }
+    if needs > 0 && !base_lines.is_empty() {
+        needs = is_eol_crlf_line(base_lines[0].as_slice());
+    }
+    needs > 0
+}
+
+fn line_contains_alnum(line: &[u8]) -> bool {
+    strip_line_terminator(line)
+        .iter()
+        .any(|b| b.is_ascii_alphanumeric())
+}
+
+/// `true` when git `xdl_simplify_non_conflicts` would **not** merge `Conflict + gap + Conflict`.
+///
+/// Git merges the outer conflicts when the gap is "small enough" unless `simplify_if_no_alnum`
+/// (`XDL_MERGE_ZEALOUS < level`) requires keeping gaps that are long **and** alphanumeric.
+fn gap_blocks_merge_between_conflicts(gap: &[Vec<u8>], simplify_if_no_alnum: bool) -> bool {
+    if gap.len() <= 3 {
+        return false;
+    }
+    !simplify_if_no_alnum || gap.iter().any(|l| line_contains_alnum(l.as_slice()))
+}
+
+fn merge_two_adjacent_conflicts(left: &Hunk, right: &Hunk) -> Option<Hunk> {
+    let Hunk::Conflict {
+        base: b1,
+        ours: o1,
+        theirs: t1,
+    } = left
+    else {
+        return None;
+    };
+    let Hunk::Conflict {
+        base: b2,
+        ours: o2,
+        theirs: t2,
+    } = right
+    else {
+        return None;
+    };
+    let mut merged_base = b1.clone();
+    merged_base.extend(b2.iter().cloned());
+    let mut merged_ours = o1.clone();
+    merged_ours.extend(o2.iter().cloned());
+    let mut merged_theirs = t1.clone();
+    merged_theirs.extend(t2.iter().cloned());
+    Some(Hunk::Conflict {
+        base: merged_base,
+        ours: merged_ours,
+        theirs: merged_theirs,
+    })
+}
+
+/// Git `xdl_simplify_non_conflicts` for our hunk list.
+fn simplify_non_conflicts_between_conflicts(
+    hunks: Vec<Hunk>,
+    simplify_if_no_alnum: bool,
+) -> Vec<Hunk> {
+    let mut out: Vec<Hunk> = Vec::with_capacity(hunks.len());
+    let mut i = 0usize;
+    while i < hunks.len() {
+        let Hunk::Conflict { .. } = &hunks[i] else {
+            out.push(hunks[i].clone());
+            i += 1;
+            continue;
+        };
+        let mut merged = hunks[i].clone();
+        let mut j = i;
+        loop {
+            let Some(Hunk::Unchanged(gap)) = hunks.get(j + 1) else {
+                break;
+            };
+            let Some(Hunk::Conflict { .. }) = hunks.get(j + 2) else {
+                break;
+            };
+            if gap_blocks_merge_between_conflicts(gap, simplify_if_no_alnum) {
+                break;
+            }
+            let Some(m) = merge_two_adjacent_conflicts(&merged, &hunks[j + 2]) else {
+                break;
+            };
+            merged = m;
+            j += 2;
+        }
+        out.push(merged);
+        i = j + 1;
+    }
+    out
+}
+
+/// Split a conflict into sub-hunks by diffing the two sides (git `xdl_refine_conflicts`).
+fn refine_conflicts_by_subdiff(
+    hunks: Vec<Hunk>,
+    algo: Algorithm,
+    ws_mode: &WhitespaceMode,
+) -> Vec<Hunk> {
+    let mut out = Vec::with_capacity(hunks.len());
+    for h in hunks {
+        let Hunk::Conflict { base, ours, theirs } = h else {
+            out.push(h);
+            continue;
+        };
+        if ours.is_empty() || theirs.is_empty() {
+            out.push(Hunk::Conflict { base, ours, theirs });
+            continue;
+        }
+        let o_cmp = normalize_lines_for_compare(&ours, ws_mode);
+        let t_cmp = normalize_lines_for_compare(&theirs, ws_mode);
+        let sub_ops = similar::capture_diff_slices(algo, &o_cmp, &t_cmp);
+        if sub_ops.len() == 1 && sub_ops[0].tag() == DiffTag::Equal {
+            out.push(Hunk::Unchanged(ours));
+            continue;
+        }
+        for op in &sub_ops {
+            let old = op.old_range();
+            let new_ = op.new_range();
+            match op.tag() {
+                DiffTag::Equal => {
+                    if !old.is_empty() {
+                        out.push(Hunk::Unchanged(ours[old.start..old.end].to_vec()));
+                    }
+                }
+                DiffTag::Delete => {
+                    if !old.is_empty() {
+                        out.push(Hunk::OnlyOurs {
+                            base: Vec::new(),
+                            ours: ours[old.start..old.end].to_vec(),
+                        });
+                    }
+                }
+                DiffTag::Insert => {
+                    if !new_.is_empty() {
+                        out.push(Hunk::OnlyTheirs {
+                            base: Vec::new(),
+                            theirs: theirs[new_.start..new_.end].to_vec(),
+                        });
+                    }
+                }
+                DiffTag::Replace => {
+                    out.push(Hunk::Conflict {
+                        base: Vec::new(),
+                        ours: ours[old.start..old.end].to_vec(),
+                        theirs: theirs[new_.start..new_.end].to_vec(),
+                    });
+                }
+            }
+        }
+    }
+    out
 }
 
 /// A classified merge region (owns its lines).
@@ -451,10 +738,14 @@ fn compute_hunks(
             {
                 end += 1;
             }
+            let terminator_only_diff = base.len() == ours.len()
+                && (pos..end).all(|i| merge_line_equal(&base[i], &ours[i]))
+                && (pos..end).any(|i| base[i] != ours[i]);
             let unchanged_lines = if ws_mode.ignore_all_space
                 || ws_mode.ignore_space_change
                 || ws_mode.ignore_space_at_eol
                 || ws_mode.ignore_cr_at_eol
+                || terminator_only_diff
             {
                 &ours[pos..end]
             } else {
@@ -933,6 +1224,13 @@ fn normalize_lines_for_compare(lines: &[Vec<u8>], mode: &WhitespaceMode) -> Vec<
     lines
         .iter()
         .map(|line| normalize_line_for_compare(line, mode))
+        .collect()
+}
+
+fn lines_for_merge_diff_compare(lines: &[Vec<u8>], mode: &WhitespaceMode) -> Vec<Vec<u8>> {
+    lines
+        .iter()
+        .map(|line| normalize_line_for_compare(strip_line_terminator(line), mode))
         .collect()
 }
 
