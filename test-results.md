@@ -1,5 +1,16 @@
 # Test results
 
+# Test results
+
+**2026-04-10 (fetch HTTP v0/v1 stateless negotiation / Phase B.2 partial)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `GIT_TRACE_CURL=1 GUST_BIN=/workspace/target/release/grit bash tests/t5700-protocol-v1.sh --run=19,20,22`: failing (`20` passes, `22` still fails due to content mismatch in this harness)
+  - `tests/trash.t5700-protocol-v1/log` now includes protocol-v1 packet trace lines for HTTP v0/v1 fallback:
+    - `packet:          git< version 1`
+  - The HTTP fetch transport path is now exercising v0/v1 negotiation with local `have` lines and server v1 trace visibility.
+
 **2026-04-10 (fetch HTTP v0/v1 discovery fallback / Phase B.1)**
 
 - `cargo check -p grit-rs`: pass

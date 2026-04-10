@@ -139,6 +139,7 @@ fn parse_v0_v1_advertisement(
             Some(pkt_line::Packet::Data(line)) => {
                 let line = line.trim_end_matches('\n');
                 if line.starts_with("version ") {
+                    crate::trace_packet::trace_packet_git('<', line);
                     continue;
                 }
                 let (payload, cap_part) = match line.split_once('\0') {
@@ -206,6 +207,12 @@ fn discover_http_protocol(pkt_body: &[u8]) -> Result<HttpDiscovery> {
     }
     let (advertised, caps) = parse_v0_v1_advertisement(pkt_body)?;
     Ok(HttpDiscovery::V0V1 { advertised, caps })
+}
+
+fn trace_http_v0_v1_negotiated(client: &crate::http_client::HttpClientContext) {
+    if matches!(client.git_protocol_header(), Some("version=1")) {
+        crate::trace_packet::trace_packet_git('<', "version 1");
+    }
 }
 
 fn cap_lines_for_client_request(caps: &[String]) -> Vec<String> {
@@ -399,11 +406,65 @@ fn fetch_pack_v0_v1_stateless_http(
     let all_advertised = advertised.to_vec();
 
     let fetch_caps = build_fetch_caps_v0(caps);
+    let want_set: HashSet<ObjectId> = wants.iter().copied().collect();
+    let local_repo = Repository::open(local_git_dir, None)
+        .with_context(|| format!("open {}", local_git_dir.display()))?;
+    let mut negotiator = SkippingNegotiator::new(local_repo);
+
+    for w in &wants {
+        if negotiator.repo().odb.read(w).is_ok() {
+            negotiator.add_tip(*w)?;
+        }
+    }
+    let mut tips: Vec<ObjectId> = Vec::new();
+    for prefix in ["refs/heads/", "refs/tags/"] {
+        if let Ok(entries) = refs::list_refs(local_git_dir, prefix) {
+            for (name, oid) in entries {
+                let tip = if let Ok(resolved) = resolve_revision(negotiator.repo(), &name) {
+                    resolved
+                } else {
+                    oid
+                };
+                if negotiator.repo().odb.read(&tip).is_err() {
+                    continue;
+                }
+                tips.push(tip);
+            }
+        }
+    }
+    if let Ok(h) = refs::resolve_ref(local_git_dir, "HEAD") {
+        if negotiator.repo().odb.read(&h).is_ok() {
+            tips.push(h);
+        }
+    }
+    tips.sort_by_key(|o| o.to_hex());
+    tips.dedup();
+    for t in tips {
+        if want_set.contains(&t) {
+            continue;
+        }
+        if negotiator.repo().odb.read(&t).is_err() {
+            continue;
+        }
+        negotiator.add_tip(t)?;
+    }
+    for e in advertised {
+        if want_set.contains(&e.oid) {
+            continue;
+        }
+        if negotiator.repo().odb.read(&e.oid).is_ok() {
+            negotiator.known_common(e.oid)?;
+        }
+    }
+
     let mut req = Vec::new();
     let first = wants[0];
     pkt_line::write_line_to_vec(&mut req, &format!("want {}{}", first.to_hex(), fetch_caps))?;
     for w in wants.iter().skip(1) {
         pkt_line::write_line_to_vec(&mut req, &format!("want {}", w.to_hex()))?;
+    }
+    while let Some(oid) = negotiator.next_have()? {
+        pkt_line::write_line_to_vec(&mut req, &format!("have {}", oid.to_hex()))?;
     }
     pkt_line::write_line_to_vec(&mut req, "done")?;
     pkt_line::write_flush(&mut req)?;
@@ -422,7 +483,10 @@ fn fetch_pack_v0_v1_stateless_http(
     if let Some(pkt_line::Packet::Data(line)) = pkt_line::read_packet(&mut cur)? {
         let line = line.trim_end_matches('\n').to_string();
         if line.starts_with("ERR ") {
-            bail!("remote upload-pack error: {}", line.trim_start_matches("ERR "));
+            bail!(
+                "remote upload-pack error: {}",
+                line.trim_start_matches("ERR ")
+            );
         }
         first_pkt = Some(line);
     }
@@ -494,6 +558,7 @@ pub fn http_fetch_pack(
     filter_active: bool,
     client: &crate::http_client::HttpClientContext,
 ) -> Result<(Vec<LsRefEntry>, Vec<LsRefEntry>, Vec<LsRefEntry>)> {
+    trace_http_v0_v1_negotiated(client);
     let base = repo_url.trim_end_matches('/');
     let mut refs_url = format!("{base}/info/refs");
     refs_url.push_str(if refs_url.contains('?') { "&" } else { "?" });
