@@ -200,7 +200,7 @@ t10950-merge-file-labels-marker	t1	yes	32	32	0	true	ok	0
 t10960-hash-object-empty-binary	t1	yes	31	31	0	true	ok	0
 t10970-cat-file-blob-tree-tag	t1	yes	32	32	0	true	ok	0
 t10980-mktree-empty-nested	t1	yes	27	27	0	true	ok	0
-t10990-write-tree-clean-dirty	t1	yes	37	36	1	false	ok	0
+t10990-write-tree-clean-dirty	t1	yes	37	37	0	true	ok	0
 t1100-commit-tree-options	t1	yes	5	5	0	true	ok	0
 t11000-ls-tree-root-subdir	t1	yes	32	32	0	true	ok	0
 t11010-ls-files-z-stage	t1	yes	39	39	0	true	ok	0
@@ -1305,7 +1305,7 @@ t8020-hash-object-extra	t8	yes	27	27	0	true	ok	0
 t8020-last-modified	t8	yes	28	27	1	false	ok	0
 t8030-write-tree-extra	t8	yes	25	25	0	true	ok	0
 t8040-mktag-extra	t8	yes	34	34	0	true	ok	0
-t8050-update-index-modes	t8	yes	31	27	4	false	ok	0
+t8050-update-index-modes	t8	yes	31	29	2	false	ok	0
 t8060-symbolic-ref-extra	t8	yes	33	32	1	false	ok	0
 t8070-for-each-ref-sort	t8	yes	30	29	1	false	ok	0
 t8080-config-types	t8	yes	30	30	0	true	ok	0

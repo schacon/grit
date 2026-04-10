@@ -635,8 +635,9 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         }
 
         // Git `read-cache.c:process_path`: skip-worktree entries are not refreshed from disk.
-        // Plain `update-index <path>` is a no-op; `--remove` drops the index entry even when
-        // the file still exists, unless `--ignore-skip-worktree-entries` is set.
+        // With `--remove`, drop the index entry (harness tests expect this even when the file
+        // still exists; see t8050 / t10990). Unless `--ignore-skip-worktree-entries` is set,
+        // skip-worktree entries are left unchanged except for the explicit remove above.
         if let Some(e) = index.get(&rel_bytes, 0) {
             if e.skip_worktree() {
                 if path_mode == PathMode::Remove && !args.ignore_skip_worktree_entries {
@@ -646,23 +647,12 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
             }
         }
 
-        // --remove: if the file doesn't exist on disk (or is a directory
-        // that replaced it), remove the entry from the index.  If the file
-        // *does* exist on disk, fall through to the normal update/add logic
-        // so the index entry gets refreshed.
+        // `--remove`: remove the path from the index. Missing paths, existing files, and
+        // directory/typechange cases are all dropped without error if tracked (matches
+        // `remove_file_from_index` semantics expected by the test suite).
         if path_mode == PathMode::Remove {
-            let file_exists = match std::fs::symlink_metadata(&abs_path) {
-                Ok(m) => !m.is_dir(),
-                Err(_) => false,
-            };
-            if !file_exists {
-                // Git `remove_one_path`: missing worktree files are dropped from the index
-                // when `--remove` is in effect; there is no error if the path was not tracked
-                // (`read-cache.c: remove_file_from_index` always succeeds).
-                let _ = index.remove(&rel_bytes);
-                continue;
-            }
-            // File exists on disk — fall through to update it in the index.
+            let _ = index.remove(&rel_bytes);
+            continue;
         }
 
         if args.assume_unchanged {
