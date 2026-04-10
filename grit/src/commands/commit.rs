@@ -1205,6 +1205,9 @@ pub fn run(mut args: Args) -> Result<()> {
                 &reflog_msg,
                 false,
             )?;
+            // Append the same entry to `logs/HEAD` instead of replacing it with a copy of
+            // `logs/refs/heads/<branch>` — mirroring would drop `checkout: moving from …`
+            // lines and break `git switch -` / `@{-1}` (t3452-history-split).
             append_reflog(
                 &repo.git_dir,
                 "HEAD",
@@ -2729,11 +2732,19 @@ pub(crate) fn launch_commit_editor(repo: &Repository, path: &Path) -> Result<()>
     }
     // Match Git: the editor command is run under `sh -c` with the path as `$1` (not `$@`),
     // so `test_set_editor` patterns like `EDITOR='"$FAKE_EDITOR"'` expand and receive the file.
-    let status = Command::new("sh")
-        .arg("-c")
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
         .arg(format!("{editor} \"$1\""))
         .arg("sh")
-        .arg(path)
+        .arg(path);
+    // Run from the work tree so editor scripts that use relative paths (e.g. `fake-input` in
+    // t3452-history-split) see the same cwd as `git commit`.
+    if let Some(wt) = repo.work_tree.as_ref() {
+        cmd.current_dir(wt);
+    } else {
+        cmd.current_dir(&repo.git_dir);
+    }
+    let status = cmd
         .status()
         .with_context(|| format!("failed to launch editor '{editor}'"))?;
     if !status.success() {

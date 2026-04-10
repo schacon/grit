@@ -10,7 +10,7 @@ use grit_lib::merge_base::{ancestor_closure, is_ancestor};
 use grit_lib::objects::{
     parse_commit, parse_tag, tag_header_field, tag_object_line_oid, ObjectId, ObjectKind,
 };
-use grit_lib::refs::read_head;
+use grit_lib::refs::{read_head, resolve_ref};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use std::cmp::Ordering;
@@ -73,6 +73,9 @@ fn run_with_invocation(args: Args, inv: ForEachRefInvocation) -> Result<()> {
     }
 
     let mut refs = collect_refs(&repo.git_dir)?;
+    if opts.include_root_refs {
+        append_root_and_pseudorefs(&repo.git_dir, &mut refs)?;
+    }
     refs.retain(|entry| ref_matches_patterns(&entry.name, &patterns, opts.ignore_case));
     refs.retain(|entry| {
         opts.exclude.is_empty()
@@ -169,6 +172,7 @@ struct Options {
     stdin: bool,
     ignore_case: bool,
     quote_style: Option<QuoteStyle>,
+    include_root_refs: bool,
 }
 
 #[derive(Debug)]
@@ -187,7 +191,7 @@ fn usage_command(inv: ForEachRefInvocation) -> &'static str {
 
 fn full_usage_line(inv: ForEachRefInvocation) -> String {
     format!(
-        "usage: {} [--count=<count>] [--sort=<key>] [--format=<format>] [--points-at=<object>] [--merged[=<object>]] [--no-merged[=<object>]] [--contains[=<object>]] [--no-contains[=<object>]] [--exclude=<pattern>] [--stdin] [<pattern>...]",
+        "usage: {} [--count=<count>] [--sort=<key>] [--format=<format>] [--points-at=<object>] [--merged[=<object>]] [--no-merged[=<object>]] [--contains[=<object>]] [--no-contains[=<object>]] [--exclude=<pattern>] [--include-root-refs] [--stdin] [<pattern>...]",
         usage_command(inv)
     )
 }
@@ -208,6 +212,11 @@ fn parse_args(args: Vec<String>, inv: ForEachRefInvocation) -> Result<Options> {
         }
         if arg == "--ignore-case" {
             opts.ignore_case = true;
+            i += 1;
+            continue;
+        }
+        if arg == "--include-root-refs" {
+            opts.include_root_refs = true;
             i += 1;
             continue;
         }
@@ -452,6 +461,72 @@ fn read_patterns_from_stdin() -> Result<Vec<String>> {
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
     Ok(input.lines().map(|line| line.to_owned()).collect())
+}
+
+fn push_ref_if_new(refs: &mut Vec<RefEntry>, entry: RefEntry) {
+    if !refs.iter().any(|r| r.name == entry.name) {
+        refs.push(entry);
+    }
+}
+
+fn append_root_and_pseudorefs(git_dir: &Path, refs: &mut Vec<RefEntry>) -> Result<()> {
+    if grit_lib::reftable::is_reftable_repo(git_dir) {
+        if let Ok(oid) = resolve_ref(git_dir, "HEAD") {
+            push_ref_if_new(
+                refs,
+                RefEntry {
+                    name: "HEAD".to_owned(),
+                    oid: Some(oid),
+                    object_name: oid.to_string(),
+                },
+            );
+        }
+        return Ok(());
+    }
+
+    if let Ok(oid) = resolve_ref(git_dir, "HEAD") {
+        push_ref_if_new(
+            refs,
+            RefEntry {
+                name: "HEAD".to_owned(),
+                oid: Some(oid),
+                object_name: oid.to_string(),
+            },
+        );
+    }
+
+    let read_dir = match fs::read_dir(git_dir) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    for ent in read_dir.flatten() {
+        let Ok(ft) = ent.file_type() else {
+            continue;
+        };
+        if !ft.is_file() {
+            continue;
+        }
+        let name = ent.file_name().to_string_lossy().to_string();
+        if name == "HEAD" {
+            continue;
+        }
+        let is_pseudo = name.ends_with("_HEAD") || name == "FETCH_HEAD" || name == "ORIG_HEAD";
+        if !is_pseudo {
+            continue;
+        }
+        if let Ok(oid) = resolve_ref(git_dir, &name) {
+            push_ref_if_new(
+                refs,
+                RefEntry {
+                    name: name.clone(),
+                    oid: Some(oid),
+                    object_name: oid.to_string(),
+                },
+            );
+        }
+    }
+    Ok(())
 }
 
 fn collect_refs(git_dir: &Path) -> Result<Vec<RefEntry>> {

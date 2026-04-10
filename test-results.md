@@ -5,6 +5,11 @@
 - `cargo test -p grit-lib --lib`: 160 passed
 - `./scripts/run-tests.sh t5327-multi-pack-bitmaps-rev.sh`: 314/314 passed (expected after merge)
 
+**2026-04-10 (t3452 / history split)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t3452-history-split.sh`: 25/25 passed
+
 **2026-04-10 (t5532 / fetch proxy)**
 
 - `cargo test -p grit-lib --lib`: 160 passed

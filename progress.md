@@ -15,6 +15,7 @@ Task lines in `PLAN.md`: 330 completed (`[x]`), 5 in progress (`[~]`), 436 remai
 
 ## Recently completed
 
+- `t3452-history-split` — 25/25 tests pass (`history split`; `refs list --include-root-refs`; commit editor + reflog fixes; checkout `switch -`; `log --graph --branches` ordering)
 - `t5327-multi-pack-bitmaps-rev` — 314/314 tests pass (MIDX `.rev` + bitmap harness: fast-import symbolic HEAD, rev-list bitmap/trace, clone/fetch partial + bare layout, `multi-pack-index write` flags, `pack-objects` reachability/progress/REF_DELTA bases, `test-tool read-midx --show-objects`)
 - `t7514-commit-patch` — 3/3 tests pass (`commit -p` / `commit -i`: interactive index↔worktree hunks, `GIT_EDITOR` for `e`, EOF-after-edit stages like Git; `--dry-run -p` without writing index; `-a`/`-i`/`-o` conflicts with `-p` like Git; `edit_bytes_tempfile` respects `GIT_EDITOR` / non-tty)
 - `t5532-fetch-proxy` — 5/5 tests pass (`core.gitproxy` / `GIT_PROXY_COMMAND` for `git://`: spawn proxy with host+port, validate `-` hostnames before proxy; default glob `remote.*.fetch` uses checked-out branch for FETCH_HEAD for-merge like Git; harness sets absolute `PERL_PATH` for valid shebangs)

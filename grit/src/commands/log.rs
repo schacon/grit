@@ -1172,6 +1172,131 @@ fn extract_epoch_from_ident(ident: &str) -> i64 {
 
 /// When `git log --graph <tip> --branches` is used, Git prefers `<tip>` as the leftmost
 /// branch tip when it is incomparable with the current first commit (t3451-history-reword).
+/// `git log --graph --branches` with no explicit revisions: walk `HEAD`'s first-parent chain and,
+/// at each step, list parallel branch tips (descendants of the next FP parent that are not
+/// ancestors of the current FP commit). Order the current commit vs parallel tips by comparing
+/// the lexicographically smallest local branch name at each tip (`t3452-history-split` tests 8,
+/// 10, 11).
+fn reorder_graph_all_branches_no_explicit_rev(
+    repo: &Repository,
+    commits: &[ObjectId],
+) -> Result<Vec<ObjectId>> {
+    let head = grit_lib::refs::resolve_ref(&repo.git_dir, "HEAD")?;
+    let set: std::collections::HashSet<ObjectId> = commits.iter().copied().collect();
+    if !set.contains(&head) {
+        return Ok(commits.to_vec());
+    }
+
+    let mut tips_at_oid: std::collections::HashMap<ObjectId, Vec<String>> =
+        std::collections::HashMap::new();
+    for (refname, oid) in grit_lib::refs::list_refs(&repo.git_dir, "refs/heads/")? {
+        let short = refname
+            .strip_prefix("refs/heads/")
+            .unwrap_or(&refname)
+            .to_owned();
+        tips_at_oid.entry(oid).or_default().push(short);
+    }
+    for v in tips_at_oid.values_mut() {
+        v.sort();
+    }
+    let min_branch = |oid: ObjectId| -> String {
+        tips_at_oid
+            .get(&oid)
+            .and_then(|v| v.first().cloned())
+            .unwrap_or_else(|| "\u{10ffff}".to_owned())
+    };
+    let sort_parallel = |repo: &Repository, v: &mut Vec<ObjectId>| {
+        v.sort_by(|a, b| {
+            let ta = read_commit_timestamp(&repo.odb, a);
+            let tb = read_commit_timestamp(&repo.odb, b);
+            tb.cmp(&ta).then_with(|| b.cmp(a))
+        });
+    };
+
+    let mut fp_chain: Vec<ObjectId> = Vec::new();
+    let mut cur = head;
+    loop {
+        if !set.contains(&cur) {
+            break;
+        }
+        fp_chain.push(cur);
+        let obj = repo.odb.read(&cur)?;
+        let c = parse_commit(&obj.data)?;
+        let Some(&p) = c.parents.first() else {
+            break;
+        };
+        cur = p;
+    }
+
+    let on_fp: std::collections::HashSet<ObjectId> = fp_chain.iter().copied().collect();
+    let mut out: Vec<ObjectId> = Vec::with_capacity(commits.len());
+    let mut used: std::collections::HashSet<ObjectId> = std::collections::HashSet::new();
+
+    for window in fp_chain.windows(2) {
+        let cur_win = window[0];
+        let next_win = window[1];
+
+        let mut side: Vec<ObjectId> = commits
+            .iter()
+            .copied()
+            .filter(|&oid| {
+                if oid == next_win || oid == cur_win || on_fp.contains(&oid) || used.contains(&oid)
+                {
+                    return false;
+                }
+                is_ancestor(repo, next_win, oid).unwrap_or(false)
+                    && !is_ancestor(repo, oid, cur_win).unwrap_or(false)
+            })
+            .collect();
+
+        let cur_key = min_branch(cur_win);
+        let cur_has_branch = tips_at_oid.contains_key(&cur_win);
+        let side_key = side
+            .iter()
+            .map(|&o| min_branch(o))
+            .min()
+            .unwrap_or_else(|| "\u{10ffff}".to_owned());
+        sort_parallel(repo, &mut side);
+
+        // Intermediate FP commits often have no refs pointing at them; keep the main line first
+        // before parallel tips (t3452 test 8: ours-b → ours-a → split-me).
+        let side_first = !side.is_empty() && cur_has_branch && side_key < cur_key;
+
+        if side_first {
+            for oid in &side {
+                if used.insert(*oid) {
+                    out.push(*oid);
+                }
+            }
+            if used.insert(cur_win) {
+                out.push(cur_win);
+            }
+        } else {
+            if used.insert(cur_win) {
+                out.push(cur_win);
+            }
+            for oid in side {
+                if used.insert(oid) {
+                    out.push(oid);
+                }
+            }
+        }
+    }
+
+    if let Some(&last) = fp_chain.last() {
+        if used.insert(last) {
+            out.push(last);
+        }
+    }
+
+    for &oid in commits {
+        if !used.contains(&oid) {
+            out.push(oid);
+        }
+    }
+    Ok(out)
+}
+
 fn prefer_explicit_tip_first_in_graph_walk(
     repo: &Repository,
     args: &Args,
@@ -1324,6 +1449,8 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
         }
     }
 
+    let user_revision_specs_len = revision_specs.len();
+
     if args.branches {
         let mut seen: std::collections::HashSet<String> = revision_specs.iter().cloned().collect();
         for (_, oid) in grit_lib::refs::list_refs(&repo.git_dir, "refs/heads/")? {
@@ -1391,6 +1518,10 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
 
     if args.branches {
         prefer_explicit_tip_first_in_graph_walk(repo, args, &mut result.commits)?;
+    }
+
+    if args.branches && user_revision_specs_len == 0 {
+        result.commits = reorder_graph_all_branches_no_explicit_rev(repo, &result.commits)?;
     }
 
     if args.simplify_by_decoration {
