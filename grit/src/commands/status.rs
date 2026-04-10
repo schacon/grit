@@ -429,7 +429,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // `##` (t7508). `-b` / `--branch` always forces the header.
     //
     // With pathspecs, Git also omits the `##` line (only matching entries are shown; t6435,
-    // t7107). Empty `user_pathspecs` after `--` alone means the full tree — keep the header.
+    // t7107, t0008). Empty `user_pathspecs` after `--` alone means the full tree — keep the header.
     if args.porcelain.as_deref() == Some("v1")
         && !args.no_branch
         && !args.branch

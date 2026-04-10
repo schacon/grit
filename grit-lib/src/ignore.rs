@@ -280,6 +280,19 @@ fn load_gitignore_for_dir(
         format!("{dir}/.gitignore")
     };
 
+    // In-tree `.gitignore` must not be a symlink (Git follows symlinks for global/info excludes
+    // only). Match Git's warning and skip the file (t0008).
+    if path.exists() {
+        if let Ok(meta) = fs::symlink_metadata(&path) {
+            if meta.file_type().is_symlink() {
+                warnings.push(format!(
+                    "warning: unable to access '{source_display}': Too many levels of symbolic links"
+                ));
+                return Ok(Vec::new());
+            }
+        }
+    }
+
     if let Some(content) = read_optional_text(&path)? {
         return parse_gitignore_content(&content, &source_display, dir, warnings);
     }

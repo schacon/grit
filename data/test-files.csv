@@ -8,7 +8,7 @@ t0004-unwritable	t0	yes	9	9	0	true	ok	0
 t0005-signals	t0	yes	5	5	0	true	ok	0
 t0006-date	t0	yes	129	129	0	true	ok	0
 t0007-git-var	t0	yes	27	26	1	false	ok	0
-t0008-ignores	t0	yes	398	396	2	false	ok	0
+t0008-ignores	t0	yes	398	398	0	true	ok	0
 t0009-git-dir-validation	t0	yes	6	6	0	true	ok	0
 t0010-racy-git	t0	yes	10	10	0	true	ok	0
 t0012-help	t0	yes	123	119	4	false	ok	0
