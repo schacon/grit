@@ -118,9 +118,25 @@ case "$1" in
     done
     ;;
   sha1)
+    shift
+    # Match git's test-hash: optional "-b" writes raw 20-byte digest (used by lib-pack.sh pack_trailer).
+    if [ "$1" = "-b" ]; then
+      exec python3 -c 'import hashlib,sys; sys.stdout.buffer.write(hashlib.sha1(sys.stdin.buffer.read()).digest())'
+    fi
     sha1sum | cut -d' ' -f1 ;;
   sha256)
+    shift
+    if [ "$1" = "-b" ]; then
+      exec python3 -c 'import hashlib,sys; sys.stdout.buffer.write(hashlib.sha256(sys.stdin.buffer.read()).digest())'
+    fi
     sha256sum | cut -d' ' -f1 ;;
+  pack-deltas)
+    shift
+    _grit="${GUST_BIN:-$SCRIPT_DIR/grit}"
+    if [ -n "$global_c_dir" ]; then
+      exec "$_grit" -C "$global_c_dir" test-tool pack-deltas "$@"
+    fi
+    exec "$_grit" test-tool pack-deltas "$@" ;;
   genrandom)
     shift
     exec "$SCRIPT_DIR/grit" test-tool genrandom "$@" ;;
