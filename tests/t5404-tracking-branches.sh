@@ -5,6 +5,10 @@ test_description='tracking branch update checks for git push'
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
+# Upstream Git leaves cwd in clone `aa` after prepare; harness would reset to trash without this.
+TEST_LIB_INHERIT_CWD=1
+export TEST_LIB_INHERIT_CWD
+
 . ./test-lib.sh
 
 test_expect_success 'setup' '
