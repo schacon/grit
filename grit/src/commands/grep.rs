@@ -20,6 +20,7 @@ use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{discover_optional, resolve_revision, show_prefix, split_treeish_colon};
+use grit_lib::sparse_checkout::clear_skip_worktree_from_present_files;
 use grit_lib::wildmatch::wildmatch;
 
 use crate::pathspec::resolve_pathspec;
@@ -1070,7 +1071,10 @@ fn grep_worktree(
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot grep in bare repository"))?;
 
-    let index = repo.load_index().context("loading index")?;
+    let mut index = repo.load_index().context("loading index")?;
+    // Match Git: present files clear skip-worktree for in-memory grep (superproject and nested
+    // submodules — t7817 `sub/B/b` with cone sparse inside `sub`).
+    clear_skip_worktree_from_present_files(&repo.git_dir, work_tree, &mut index);
     let diff_attrs = load_diff_attrs(work_tree);
     let mut seen_stage0 = std::collections::HashSet::new();
     let mut unmerged_worktree_grepped = std::collections::HashSet::new();
@@ -1200,6 +1204,12 @@ fn grep_worktree(
             continue;
         }
         if !seen_stage0.insert(path_str.clone()) {
+            continue;
+        }
+
+        // `git grep` on the work tree never reads the index for paths that have both
+        // assume-unchanged and skip-worktree (t7817).
+        if entry.assume_unchanged() && entry.skip_worktree() {
             continue;
         }
 

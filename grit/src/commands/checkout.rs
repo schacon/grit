@@ -2525,7 +2525,7 @@ fn switch_to_tree(
         new_index.sort();
     }
 
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut new_index);
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, repo.work_tree.as_deref(), &mut new_index);
 
     // Perform the actual working tree update.
     // When force, write all entries even if OID matches (to restore dirty files).

@@ -9,7 +9,7 @@ use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::config::{ConfigFile, ConfigScope};
 use grit_lib::error::Error as GritError;
 use grit_lib::ignore::path_in_sparse_checkout as path_in_sparse_checkout_lines;
-use grit_lib::index::MODE_TREE;
+use grit_lib::index::{MODE_GITLINK, MODE_TREE};
 use grit_lib::objects::parse_commit;
 use grit_lib::repo::Repository;
 use grit_lib::sparse_checkout::{
@@ -686,10 +686,12 @@ fn cmd_disable(repo: &Repository) -> Result<()> {
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
 
+    // Match Git `sparse_checkout_disable`: build an in-memory `/*` pattern list to expand the
+    // work tree to a full checkout, but do **not** overwrite `info/sparse-checkout` with only
+    // `/*` — that would erase stored rules like `!b` and break a later `sparse-checkout init`
+    // (t7817).
     set_sparse_config(repo, true)?;
     set_sparse_index_config(repo, false)?;
-
-    write_sparse_file(repo, "/*\n")?;
 
     let patterns = vec!["/*".to_string()];
     apply_sparse_patterns(repo, &patterns, false)?;
@@ -776,7 +778,13 @@ fn cmd_check_rules(repo: &Repository, args: &CheckRulesArgs) -> Result<()> {
             }
             let path = String::from_utf8_lossy(&line);
             let path = path.as_ref();
-            if path_in_sparse_checkout(path, effective_cone, cone_pat.as_ref(), &non_cone) {
+            if path_in_sparse_checkout(
+                path,
+                effective_cone,
+                cone_pat.as_ref(),
+                &non_cone,
+                repo.work_tree.as_deref(),
+            ) {
                 out.write_all(line.as_slice())?;
                 out.write_all(&[0])?;
             }
@@ -793,7 +801,13 @@ fn cmd_check_rules(repo: &Repository, args: &CheckRulesArgs) -> Result<()> {
             }
             let path = String::from_utf8_lossy(&line);
             let path = path.as_ref();
-            if path_in_sparse_checkout(path, effective_cone, cone_pat.as_ref(), &non_cone) {
+            if path_in_sparse_checkout(
+                path,
+                effective_cone,
+                cone_pat.as_ref(),
+                &non_cone,
+                repo.work_tree.as_deref(),
+            ) {
                 writeln!(out, "{path}")?;
             }
         }
@@ -1117,9 +1131,15 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String], cone_mode: bool
         // Non-cone mode must use Git's `path_in_sparse_checkout` (parent walk + last-match),
         // not `NonConePatterns::path_included` (sequential toggles). See t3602-rm-sparse-checkout.
         let matches = if effective_cone {
-            path_in_sparse_checkout(&path_str, true, cone_struct.as_ref(), &non_cone)
+            path_in_sparse_checkout(
+                &path_str,
+                true,
+                cone_struct.as_ref(),
+                &non_cone,
+                Some(work_tree),
+            )
         } else {
-            path_in_sparse_checkout_lines(&path_str, patterns)
+            path_in_sparse_checkout_lines(&path_str, patterns, Some(work_tree))
         };
 
         if matches {
@@ -1198,23 +1218,85 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String], cone_mode: bool
         .iter()
         .map(|e| String::from_utf8_lossy(&e.path).into_owned())
         .collect();
+    let gitlink_paths: HashSet<String> = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0 && e.mode == MODE_GITLINK)
+        .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+        .collect();
     remove_untracked_outside_sparse(
         work_tree,
         work_tree,
         &indexed_paths,
+        &gitlink_paths,
         patterns,
         effective_cone,
         cone_struct.as_ref(),
         &non_cone,
     )?;
 
+    // Submodule work trees keep their own `info/sparse-checkout`. After the superproject applies
+    // sparsity we skip cleaning inside gitlink dirs (so we do not delete `sub/B/b`), so re-run the
+    // submodule's sparse rules so paths like `sub/A` are pruned (t7817).
+    for entry in &index.entries {
+        if entry.stage() != 0 || entry.mode != MODE_GITLINK {
+            continue;
+        }
+        let rel = String::from_utf8_lossy(&entry.path);
+        let included = if effective_cone {
+            path_in_sparse_checkout(
+                rel.as_ref(),
+                true,
+                cone_struct.as_ref(),
+                &non_cone,
+                Some(work_tree),
+            )
+        } else {
+            path_in_sparse_checkout_lines(rel.as_ref(), patterns, Some(work_tree))
+        };
+        if !included {
+            continue;
+        }
+        let sub_wt = work_tree.join(rel.as_ref());
+        if let Ok(sub_repo) = open_gitlink_worktree_repo(&sub_wt) {
+            let _ = reapply_sparse_checkout_if_configured(&sub_repo);
+        }
+    }
+
     Ok(())
+}
+
+fn open_gitlink_worktree_repo(sub_work_tree: &Path) -> Result<Repository> {
+    let git_path = sub_work_tree.join(".git");
+    if !git_path.try_exists().context("stat submodule .git")? {
+        bail!("missing .git in {}", sub_work_tree.display());
+    }
+    if git_path.is_dir() {
+        Repository::open(&git_path, Some(sub_work_tree)).context("open submodule repository")
+    } else {
+        let content =
+            fs::read_to_string(&git_path).with_context(|| git_path.display().to_string())?;
+        let gitdir = content
+            .trim()
+            .strip_prefix("gitdir: ")
+            .ok_or_else(|| anyhow::anyhow!("invalid gitdir file {}", git_path.display()))?;
+        let gitdir_path = if Path::new(gitdir).is_absolute() {
+            PathBuf::from(gitdir)
+        } else {
+            sub_work_tree.join(gitdir)
+        };
+        let gitdir_path = gitdir_path
+            .canonicalize()
+            .with_context(|| format!("resolve gitdir {}", gitdir_path.display()))?;
+        Repository::open(&gitdir_path, Some(sub_work_tree)).context("open submodule repository")
+    }
 }
 
 fn remove_untracked_outside_sparse(
     work_tree: &Path,
     current: &Path,
     indexed_paths: &HashSet<String>,
+    gitlink_paths: &HashSet<String>,
     patterns: &[String],
     effective_cone: bool,
     cone_struct: Option<&ConePatterns>,
@@ -1231,15 +1313,24 @@ fn remove_untracked_outside_sparse(
             .unwrap_or(&path)
             .to_string_lossy()
             .replace('\\', "/");
-        if rel == ".git" || rel.starts_with(".git/") {
+        // Skip the main repo's `.git` and every nested `.git` (e.g. `sub/.git` for submodules).
+        if rel == ".git"
+            || rel.starts_with(".git/")
+            || rel.ends_with("/.git")
+            || rel.contains("/.git/")
+        {
             continue;
         }
         let meta = fs::symlink_metadata(&path).context("stat work tree path")?;
         if meta.is_dir() {
+            if gitlink_paths.contains(&rel) {
+                continue;
+            }
             remove_untracked_outside_sparse(
                 work_tree,
                 &path,
                 indexed_paths,
+                gitlink_paths,
                 patterns,
                 effective_cone,
                 cone_struct,
@@ -1250,9 +1341,9 @@ fn remove_untracked_outside_sparse(
                 .unwrap_or(false)
             {
                 let included = if effective_cone {
-                    path_in_sparse_checkout(&rel, true, cone_struct, non_cone)
+                    path_in_sparse_checkout(&rel, true, cone_struct, non_cone, Some(work_tree))
                 } else {
-                    path_in_sparse_checkout_lines(&rel, patterns)
+                    path_in_sparse_checkout_lines(&rel, patterns, Some(work_tree))
                 };
                 if !included && !indexed_paths.contains(&rel) {
                     let _ = fs::remove_dir(&path);
@@ -1270,9 +1361,9 @@ fn remove_untracked_outside_sparse(
             continue;
         }
         let included = if effective_cone {
-            path_in_sparse_checkout(&rel, true, cone_struct, non_cone)
+            path_in_sparse_checkout(&rel, true, cone_struct, non_cone, Some(work_tree))
         } else {
-            path_in_sparse_checkout_lines(&rel, patterns)
+            path_in_sparse_checkout_lines(&rel, patterns, Some(work_tree))
         };
         if !included {
             let _ = fs::remove_file(&path);
@@ -1295,7 +1386,7 @@ pub(crate) fn path_matches_sparse_patterns(
     if cone_mode {
         return grit_lib::sparse_checkout::path_matches_sparse_patterns(path, patterns, cone_mode);
     }
-    path_in_sparse_checkout_lines(path, patterns)
+    path_in_sparse_checkout_lines(path, patterns, None)
 }
 
 fn list_files_under_dir(dir: &Path, work_tree: &Path) -> Result<Vec<String>> {

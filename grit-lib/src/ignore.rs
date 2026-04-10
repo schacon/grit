@@ -646,21 +646,28 @@ impl SparsePattern {
             return None;
         }
 
-        let mut anchored = false;
-        if let Some(rest) = raw.strip_prefix('/') {
-            anchored = true;
-            raw = rest.to_owned();
+        // Git `parse_path_pattern`: trailing `/` sets `PATTERN_FLAG_MUSTBEDIR` and shortens the
+        // active pattern length without turning `/*` into an empty body (that would drop the rule).
+        let mut directory_only = false;
+        if raw.len() > 1 && raw.ends_with('/') {
+            directory_only = true;
+            raw.pop();
         }
         if raw.is_empty() {
             return None;
         }
 
-        let mut directory_only = false;
-        if let Some(rest) = raw.strip_suffix('/') {
-            directory_only = true;
+        let mut anchored = false;
+        if let Some(rest) = raw.strip_prefix('/') {
+            anchored = true;
             raw = rest.to_owned();
         }
-        if raw.is_empty() {
+        // After `/*` → pop `/` we get `"/"` then strip leading `/` → empty. Git keeps this as the
+        // root glob `*` (include all top-level names in non-cone sparse files).
+        if raw.is_empty() && anchored && directory_only {
+            raw = "*".to_owned();
+            directory_only = false;
+        } else if raw.is_empty() {
             return None;
         }
 
@@ -684,9 +691,21 @@ fn sparse_pattern_matches(p: &SparsePattern, pathname: &str, as_directory: bool)
     if p.directory_only && !as_directory {
         return false;
     }
+    // On-disk `!/*/` parses as directory-only anchored `*`. For regular files we exclude nested
+    // paths only (`dir/c`, not `a`). When walking parents (`as_directory`), Git still matches this
+    // pattern against directory paths like `dir` so `dir/c` can be excluded (t7817).
+    if p.directory_only && p.anchored && !p.has_slash && p.body == "*" {
+        let trimmed = pathname.trim_end_matches('/');
+        return trimmed.contains('/') || as_directory;
+    }
     if !p.has_slash && !p.anchored {
         sparse_unanchored_basename_matches(&p.body, pathname)
             || wildmatch(p.body.as_bytes(), pathname.as_bytes(), WM_PATHNAME)
+    } else if p.anchored && !p.has_slash && p.body == "*" && !p.directory_only {
+        // Sparse line `/*`: include only top-level paths (one segment). `WM_PATHNAME` keeps `*`
+        // from matching `/`, but we match against the bare pathname; require no `/` so `dir/c` is
+        // not included by `/*` alone (t7817 — excluded via `!/*/` on the parent directory pass).
+        !pathname.contains('/')
     } else {
         wildmatch(p.body.as_bytes(), pathname.as_bytes(), WM_PATHNAME)
     }
@@ -729,7 +748,7 @@ fn sparse_list_last_match(
 /// each step uses last-match-wins over patterns; `UNDECIDED` falls back to the parent
 /// directory until the decision is made or the path is rejected at the top level.
 #[must_use]
-pub fn path_in_sparse_checkout(path: &str, lines: &[String]) -> bool {
+pub fn path_in_sparse_checkout(path: &str, lines: &[String], work_tree: Option<&Path>) -> bool {
     if path.is_empty() {
         return true;
     }
@@ -746,19 +765,18 @@ pub fn path_in_sparse_checkout(path: &str, lines: &[String]) -> bool {
 
     loop {
         let pathname = &path[..end];
+        let dtype_is_dir = work_tree.is_some_and(|wt| wt.join(pathname).is_dir()) || as_directory;
 
-        match sparse_list_last_match(pathname, as_directory, &parsed) {
+        match sparse_list_last_match(pathname, dtype_is_dir, &parsed) {
             Some(true) => return true,
             Some(false) => return false,
             None => {
-                if end == 0 {
+                let Some(slash) = path[..end].rfind('/') else {
+                    // Top-level path with no matching rule: Git stops here (UNDECIDED → excluded),
+                    // not at an empty pathname.
                     return false;
-                }
-                if let Some(slash) = path[..end].rfind('/') {
-                    end = slash;
-                } else {
-                    end = 0;
-                }
+                };
+                end = slash;
                 as_directory = true;
             }
         }

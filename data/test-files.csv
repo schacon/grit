@@ -1278,7 +1278,7 @@ t7813-grep-icase-iso	t7	yes	2	2	0	true	ok	0
 t7814-grep-recurse-submodules	t7	yes	27	19	8	false	ok	7
 t7815-grep-binary	t7	yes	22	22	0	true	ok	0
 t7816-grep-binary-pattern	t7	yes	145	145	0	true	ok	0
-t7817-grep-sparse-checkout	t7	yes	8	5	3	false	ok	0
+t7817-grep-sparse-checkout	t7	yes	8	8	0	true	ok	0
 t7818-grep-extended	t7	yes	11	8	3	false	ok	0
 t7900-maintenance	t7	yes	72	31	41	false	ok	0
 t7901-stash-resolve-merge	t7	yes	7	7	0	true	ok	0

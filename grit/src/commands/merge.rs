@@ -989,7 +989,7 @@ fn merge_unborn(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> 
     let mut index = Index::new();
     index.entries = entries;
     index.sort();
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut index);
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, repo.work_tree.as_deref(), &mut index);
 
     if let Some(ref wt) = repo.work_tree {
         checkout_entries(
@@ -1033,7 +1033,7 @@ fn do_fast_forward(
     let current_index = repo.load_index()?;
     let old_tree = commit_tree(repo, head_oid)?;
     let mut new_index = compose_fast_forward_index(repo, commit.tree, old_tree, &current_index)?;
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut new_index);
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, repo.work_tree.as_deref(), &mut new_index);
     let old_entries = tree_to_map(tree_to_index_entries(repo, &old_tree, "")?);
     let index_dirty_vs_head = diff_index::index_cached_differs_from_head(repo)?;
     let index_already_at_target = index_matches_commit_tree(repo, merge_oid)?;
@@ -1542,7 +1542,11 @@ Aborting"
         None,
         None,
     )?;
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut merge_result.index);
+    apply_sparse_checkout_skip_worktree(
+        &repo.git_dir,
+        repo.work_tree.as_deref(),
+        &mut merge_result.index,
+    );
 
     let append_strategy_failed = std::env::var("GIT_MERGE_VERBOSITY")
         .ok()
@@ -2561,7 +2565,7 @@ fn do_octopus_merge(
     final_index.entries = current_tree_entries;
     final_index.sort();
     compose_octopus_final_index(&pre_merge_index, &mut final_index);
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut final_index);
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, repo.work_tree.as_deref(), &mut final_index);
     repo.write_index(&mut final_index)?;
 
     let sparse_on = sparse_checkout_enabled(&repo.git_dir);
@@ -2882,7 +2886,7 @@ fn do_strategy_theirs(
     let mut new_index = Index::new();
     new_index.entries = entries;
     new_index.sort();
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut new_index);
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, repo.work_tree.as_deref(), &mut new_index);
 
     if let Some(ref wt) = repo.work_tree {
         let old_tree = commit_tree(repo, head_oid)?;
@@ -3097,7 +3101,7 @@ fn do_squash(
     let mut new_index = Index::new();
     new_index.entries = entries;
     new_index.sort();
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut new_index);
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, repo.work_tree.as_deref(), &mut new_index);
 
     if let Some(ref wt) = repo.work_tree {
         checkout_entries(
@@ -3148,6 +3152,35 @@ fn do_squash_from_merge(
     Ok(())
 }
 
+/// Remove work tree paths that are `skip-worktree` in `index` so merge abort does not leave
+/// conflict-marker files that `checkout_entries` skipped (sparse-checkout, t7817).
+fn remove_skip_worktree_paths_from_worktree(work_tree: &Path, index: &Index) -> Result<()> {
+    for entry in &index.entries {
+        if entry.stage() != 0 || !entry.skip_worktree() {
+            continue;
+        }
+        if entry.mode == MODE_TREE {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&entry.path);
+        let abs = work_tree.join(path_str.as_ref());
+        let meta = match fs::symlink_metadata(&abs) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if entry.mode == MODE_GITLINK && meta.is_dir() && abs.join(".git").exists() {
+            continue;
+        }
+        if meta.is_dir() {
+            let _ = fs::remove_dir_all(&abs);
+        } else {
+            let _ = fs::remove_file(&abs);
+        }
+        remove_empty_parent_dirs_merge(work_tree, &abs);
+    }
+    Ok(())
+}
+
 /// Abort an in-progress merge.
 fn merge_abort() -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
@@ -3175,16 +3208,17 @@ fn merge_abort() -> Result<()> {
     let mut index = Index::new();
     index.entries = entries;
     index.sort();
-    apply_sparse_checkout_skip_worktree(&repo.git_dir, &mut index);
+    apply_sparse_checkout_skip_worktree(&repo.git_dir, repo.work_tree.as_deref(), &mut index);
 
+    let sparse_on = sparse_checkout_enabled(&repo.git_dir);
     if let Some(ref wt) = repo.work_tree {
-        checkout_entries(
-            &repo,
-            wt,
-            &index,
-            None,
-            sparse_checkout_enabled(&repo.git_dir),
-        )?;
+        checkout_entries(&repo, wt, &index, None, sparse_on)?;
+        // `checkout_entries` skips skip-worktree paths, so conflict markers left in the work tree
+        // (e.g. t7817 file `b` outside the sparse cone) are not overwritten. Remove them so
+        // `git checkout main` and later `git grep --cached` see a consistent tree (matches Git).
+        if sparse_on {
+            remove_skip_worktree_paths_from_worktree(wt, &index)?;
+        }
     }
     refresh_index_stat_cache_from_worktree(&repo, &mut index)?;
     repo.write_index(&mut index)?;
