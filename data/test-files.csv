@@ -72,7 +72,7 @@ t0300-credentials	t0	skip	56	0	0	false	ok	0
 t0301-credential-cache	t0	skip	52	6	46	false	ok	0
 t0302-credential-store	t0	skip	65	5	60	false	ok	0
 t0303-credential-external	t0	skip	23	23	0	true	ok	0
-t0410-partial-clone	t0	yes	38	17	21	false	ok	0
+t0410-partial-clone	t0	yes	38	38	0	true	ok	0
 t0411-clone-from-partial	t0	yes	7	3	4	false	ok	0
 t0450-txt-doc-vs-help	t0	yes	548	536	12	false	ok	0
 t0500-progress-display	t0	yes	16	16	0	true	ok	0

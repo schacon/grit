@@ -769,7 +769,16 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
                     resolve_revision(repo, trimmed)
                         .with_context(|| format!("cannot resolve ref '{trimmed}'"))?
                 };
-                walk_reachable(repo, &oid, &mut oids)?;
+                // Git upload-pack may `want` a raw tree/blob OID (lazy fetch). Those roots must
+                // pack only that object, not the subtree/closure (`t0410` tree fetch without blobs).
+                // Commits (and annotated tags, which `walk_reachable` peels) still use a full walk.
+                let obj = read_object_from_repo(repo, &oid)?;
+                match obj.kind {
+                    ObjectKind::Commit | ObjectKind::Tag => walk_reachable(repo, &oid, &mut oids)?,
+                    ObjectKind::Tree | ObjectKind::Blob => {
+                        oids.insert(oid);
+                    }
+                }
             }
         }
         for oid in &exclude {

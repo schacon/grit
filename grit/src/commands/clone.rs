@@ -594,6 +594,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let partial_blob_none = matches!(args.filter.as_deref(), Some("blob:none"))
         || (partial_blob_limit_zero && uploadpack_filter_allowed(&source.git_dir))
         || inherited_partial_clone_filter_spec(&source.git_dir).as_deref() == Some("blob:none");
+    let pack_filter_active = clone_pack_filter_active(&args, Some(&source.git_dir));
 
     // `repo_path_str` strips `file://`; use the original URL for transport detection.
     if args.repository.starts_with("file://")
@@ -774,6 +775,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 upload_cmd,
                 |adv| crate::fetch_transport::collect_wants(adv, &[]),
                 false,
+                pack_filter_active,
             )
         });
         match fetch_res {
@@ -928,6 +930,7 @@ pub fn run(mut args: Args) -> Result<()> {
             upload_cmd,
             |adv| crate::fetch_transport::collect_wants(adv, &[]),
             false,
+            pack_filter_active,
         ) {
             Ok(_) => {
                 propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
@@ -1268,6 +1271,7 @@ pub fn run(mut args: Args) -> Result<()> {
 fn run_git_clone(args: Args) -> Result<()> {
     let remote_name = resolve_remote_name(&args)?;
     let ref_storage = resolved_clone_ref_storage(&args)?;
+    let filter_active = clone_pack_filter_active(&args, None);
     let url = args.repository.clone();
     let parsed = crate::fetch_transport::parse_git_url(&url)?;
     let path_tail = parsed.path.trim_start_matches('/');
@@ -1343,7 +1347,12 @@ fn run_git_clone(args: Args) -> Result<()> {
     };
 
     let fetch_res = crate::fetch_transport::with_packet_trace_identity("clone", || {
-        crate::fetch_transport::fetch_via_git_protocol_skipping(&dest.git_dir, &url, &[])
+        crate::fetch_transport::fetch_via_git_protocol_skipping(
+            &dest.git_dir,
+            &url,
+            &[],
+            filter_active,
+        )
     });
 
     let (source_head_symref, _source_head_oid, head_branch) = match fetch_res {
@@ -1533,6 +1542,7 @@ fn run_git_clone(args: Args) -> Result<()> {
 fn run_ext_clone(args: Args) -> Result<()> {
     let remote_name = resolve_remote_name(&args)?;
     let ref_storage = resolved_clone_ref_storage(&args)?;
+    let filter_active = clone_pack_filter_active(&args, None);
     let url = args.repository.clone();
     let target_name = args.directory.clone().unwrap_or_else(|| "repo".to_string());
     let target_path = PathBuf::from(&target_name);
@@ -1605,6 +1615,7 @@ fn run_ext_clone(args: Args) -> Result<()> {
             "git-upload-pack",
             &[],
             |adv| crate::fetch_transport::collect_wants(adv, &[]),
+            filter_active,
         )
     });
 
@@ -1801,6 +1812,7 @@ fn run_http_clone(args: Args) -> Result<()> {
     crate::http_smart::clear_trace2_https_url_dedup();
 
     let remote_name = resolve_remote_name(&args)?;
+    let filter_active = clone_pack_filter_active(&args, None);
     let repo_url = args.repository.clone();
     let target_name = args
         .directory
@@ -1892,8 +1904,12 @@ fn run_http_clone(args: Args) -> Result<()> {
         vec![]
     };
 
-    let (remote_heads, remote_tags, adv) =
-        crate::http_smart::http_fetch_pack(&dest.git_dir, &repo_url, &refspec_for_fetch)?;
+    let (remote_heads, remote_tags, adv) = crate::http_smart::http_fetch_pack(
+        &dest.git_dir,
+        &repo_url,
+        &refspec_for_fetch,
+        filter_active,
+    )?;
 
     if args.bare {
         for e in &remote_heads {
@@ -2253,6 +2269,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
     let partial_blob_none = matches!(args.filter.as_deref(), Some("blob:none"))
         || (partial_blob_limit_zero && uploadpack_filter_allowed(&source.git_dir))
         || inherited_partial_clone_filter_spec(&source.git_dir).as_deref() == Some("blob:none");
+    let pack_filter_active = clone_pack_filter_active(&args, Some(&source.git_dir));
 
     if effective_reject_shallow(&args) && source_repo_is_shallow(&source.git_dir) {
         bail!("source repository is shallow, reject to clone.");
@@ -2401,6 +2418,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                 upload_cmd,
                 |adv| crate::fetch_transport::collect_wants(adv, &[]),
                 false,
+                pack_filter_active,
             )
         });
         match fetch_res {
@@ -2549,6 +2567,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
             upload_cmd,
             |adv| crate::fetch_transport::collect_wants(adv, &[]),
             false,
+            pack_filter_active,
         ) {
             Ok(_) => {
                 propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
@@ -3278,6 +3297,23 @@ fn uploadpack_filter_allowed(git_dir: &Path) -> bool {
             .or_else(|| set.get_bool("uploadPack.allowFilter")),
         Some(Ok(true))
     )
+}
+
+/// True when a non-empty `--filter` was passed and the upload-pack source is known to allow
+/// filtering (or unknown, for transports without a local repo path).
+fn clone_pack_filter_active(args: &Args, source_git_dir: Option<&Path>) -> bool {
+    if args
+        .filter
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .is_none()
+    {
+        return false;
+    }
+    match source_git_dir {
+        Some(gd) => uploadpack_filter_allowed(gd),
+        None => true,
+    }
 }
 
 fn setup_remote_mirror_fetch_and_url(

@@ -135,6 +135,7 @@ pub fn run(args: Args) -> Result<()> {
                 "--end-of-options" => end_of_options = true,
                 "--objects" => options.objects = true,
                 "--objects-edge" => options.objects = true,
+                "--objects-edge-aggressive" => options.objects = true,
                 "--use-bitmap-index" => use_bitmap_index = true,
                 "--test-bitmap" => test_bitmap = true,
                 "--unpacked" => unpacked_only = true,
@@ -161,6 +162,13 @@ pub fn run(args: Args) -> Result<()> {
                         "allow-any" | "allow-promisor" => MissingAction::Allow,
                         _ => bail!("unsupported value for --missing: {value}"),
                     };
+                }
+                "--ignore-missing" => {
+                    options.ignore_missing = true;
+                    options.missing_action = MissingAction::Allow;
+                }
+                "--exclude-promisor-objects" => {
+                    options.exclude_promisor_objects = true;
                 }
                 "--no-object-names" => options.no_object_names = true,
                 "--object-names" => options.no_object_names = false,
@@ -837,7 +845,10 @@ fn validate_rev_list_tree_depth(
 ) -> Result<()> {
     let mut seen_trees = HashSet::new();
     for oid in commits {
-        let object = repo.odb.read(oid)?;
+        let object = match repo.odb.read(oid) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
         let commit = parse_commit(&object.data)?;
         validate_tree_depth_limit(repo, commit.tree, 0, max_tree_depth, &mut seen_trees)?;
     }
@@ -861,7 +872,14 @@ fn validate_tree_depth_limit(
             max_tree_depth
         );
     }
-    let object = repo.odb.read(&tree_oid)?;
+    let object = match repo.odb.read(&tree_oid) {
+        Ok(o) => o,
+        Err(_) => {
+            // Partial clones may omit trees (promisor / missing); do not fail max-tree-depth
+            // validation for objects that are not present locally (`t0410`).
+            return Ok(());
+        }
+    };
     let entries = parse_tree(&object.data)?;
     for entry in entries {
         if entry.mode == 0o040000 {

@@ -11,11 +11,9 @@ use std::sync::{Mutex, OnceLock};
 use anyhow::{bail, Context, Result};
 use grit_lib::fetch_negotiator::SkippingNegotiator;
 use grit_lib::objects::ObjectId;
-use grit_lib::odb::Odb;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
-use grit_lib::unpack_objects::{unpack_objects, UnpackOptions};
 
 use crate::http_bundle_uri::strip_v0_service_advertisement_if_present;
 use crate::pkt_line;
@@ -307,6 +305,7 @@ pub fn http_fetch_pack(
     local_git_dir: &Path,
     repo_url: &str,
     refspecs: &[String],
+    filter_active: bool,
 ) -> Result<(Vec<LsRefEntry>, Vec<LsRefEntry>, Vec<LsRefEntry>)> {
     let base = repo_url.trim_end_matches('/');
     let mut refs_url = format!("{base}/info/refs");
@@ -463,9 +462,7 @@ pub fn http_fetch_pack(
         if pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK" {
             bail!("did not receive a pack file from HTTP fetch");
         }
-        let odb = Odb::new(&local_git_dir.join("objects"));
-        let mut reader: &[u8] = pack_buf;
-        unpack_objects(&mut reader, &odb, &UnpackOptions::default())?;
+        crate::fetch_transport::unpack_upload_pack_bytes(local_git_dir, pack_buf, filter_active)?;
         Ok(())
     };
 

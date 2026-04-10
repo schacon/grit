@@ -93,6 +93,48 @@ pub fn promisor_pack_object_ids(objects_dir: &Path) -> HashSet<ObjectId> {
     ids
 }
 
+/// Every `tag.object` OID for tag objects stored in promisor packs (the peeled target).
+///
+/// Used for `rev-list --exclude-promisor-objects` when a missing commit was promised only via an
+/// annotated tag object still in the promisor pack (t0410).
+#[must_use]
+pub fn promisor_pack_peeled_tag_targets(repo: &Repository) -> HashSet<ObjectId> {
+    let seeds = promisor_pack_object_ids(&repo.git_dir.join("objects"));
+    let mut out = HashSet::new();
+    for oid in seeds {
+        let Ok(obj) = repo.odb.read(&oid) else {
+            continue;
+        };
+        if obj.kind != ObjectKind::Tag {
+            continue;
+        }
+        let Ok(t) = parse_tag(&obj.data) else {
+            continue;
+        };
+        out.insert(t.object);
+    }
+    out
+}
+
+/// Promisor pack member OIDs plus peeled tag targets (one hop from each tag in the pack).
+#[must_use]
+pub fn promisor_pack_and_tag_targets(repo: &Repository) -> Result<HashSet<ObjectId>> {
+    let seeds = promisor_pack_object_ids(&repo.git_dir.join("objects"));
+    let mut out = seeds.clone();
+    for oid in seeds {
+        let obj = match repo.odb.read(&oid) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        if obj.kind != ObjectKind::Tag {
+            continue;
+        }
+        let t = parse_tag(&obj.data)?;
+        out.insert(t.object);
+    }
+    Ok(out)
+}
+
 /// Objects considered "promisor" for traversal, matching Git's `is_promisor_object` set:
 /// every object in promisor packs plus referenced OIDs (commit tree/parents, tag targets,
 /// tree entry OIDs), and [`read_promisor_missing_oids`] entries.

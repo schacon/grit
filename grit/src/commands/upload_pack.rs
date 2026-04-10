@@ -9,7 +9,7 @@ use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::zero_oid;
 use grit_lib::merge_base;
-use grit_lib::objects::ObjectId;
+use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
@@ -192,12 +192,21 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    let already_have_all = want_unique.iter().all(|w| client_known.contains(w));
+    // Only short-circuit to an empty pack when every `want` is a commit the client already has.
+    // `client_known` includes blob OIDs reachable from `have` commits (server-side walk), but a
+    // partial-clone client may still lack those blobs — never treat a blob/tree `want` as
+    // satisfied by that set (t0410 lazy fetch).
+    let already_have_all = wants_include_only_commits(&repo, &want_unique)
+        && want_unique.iter().all(|w| client_known.contains(w));
     if already_have_all {
         let pack = crate::pack_objects_upload::empty_packfile_v2_bytes();
         crate::pack_objects_upload::write_sideband_64k(&mut out, &pack)?;
     } else {
-        let thin = !client_have_commits.is_empty();
+        // Thin packs subtract the full closure of `have` commits. That is only safe when every
+        // `want` is a commit OID; blob/tree lazy-fetch wants must use a self-contained pack
+        // (t0410 partial-clone explicit wants).
+        let thin =
+            !client_have_commits.is_empty() && wants_include_only_commits(&repo, &want_unique);
         let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(&repo.git_dir, thin)?;
         {
             let mut pin = child.stdin.take().context("pack-objects stdin")?;
@@ -213,6 +222,19 @@ pub fn run(args: Args) -> Result<()> {
     pkt_line::write_flush(&mut out)?;
     out.flush()?;
     Ok(())
+}
+
+/// Returns `true` when every wanted OID resolves to a commit object in the server ODB.
+fn wants_include_only_commits(repo: &Repository, wants: &[ObjectId]) -> bool {
+    for w in wants {
+        let Ok(obj) = repo.odb.read(w) else {
+            return false;
+        };
+        if obj.kind != ObjectKind::Commit {
+            return false;
+        }
+    }
+    true
 }
 
 fn merge_ancestors_into(

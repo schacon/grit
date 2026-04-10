@@ -7,7 +7,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::ConfigSet;
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::merge_base;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -84,6 +84,10 @@ pub struct Args {
     /// Deepen history of a shallow clone excluding a revision.
     #[arg(long, value_name = "REV")]
     pub shallow_exclude: Option<String>,
+
+    /// Convert a shallow repository to a complete one (remove shallow boundaries).
+    #[arg(long)]
+    pub unshallow: bool,
 
     /// Re-fetch all objects even if they already exist locally.
     #[arg(long)]
@@ -500,6 +504,13 @@ fn fetch_remote(
     url_override: Option<&str>,
     args: &Args,
 ) -> Result<()> {
+    if args.unshallow {
+        let shallow_path = git_dir.join("shallow");
+        if shallow_path.exists() {
+            fs::remove_file(&shallow_path).context("removing shallow grafts for --unshallow")?;
+        }
+    }
+
     let url_key = format!("remote.{remote_name}.url");
     let legacy_remote = if url_override.is_none() && config.get(&url_key).is_none() {
         read_git_remotes_file(git_dir, remote_name)
@@ -764,6 +775,12 @@ fn fetch_remote(
         None
     };
 
+    let filter_active = args
+        .filter
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .is_some();
+
     let (remote_heads, remote_tags) = if is_ext_url {
         let local_git_for_ext = git_dir.to_path_buf();
         let refspec_owned_ext = refspecs.clone();
@@ -805,6 +822,7 @@ fn fetch_remote(
                             crate::fetch_transport::collect_wants(adv, &[])
                         }
                     },
+                    filter_active,
                 )
             },
         )?;
@@ -813,12 +831,17 @@ fn fetch_remote(
         crate::protocol::check_protocol_allowed("git", Some(git_dir))?;
         let (heads, tags, _, _) =
             crate::fetch_transport::with_packet_trace_identity("fetch", || {
-                crate::fetch_transport::fetch_via_git_protocol_skipping(git_dir, &url, cli_refspecs)
+                crate::fetch_transport::fetch_via_git_protocol_skipping(
+                    git_dir,
+                    &url,
+                    cli_refspecs,
+                    filter_active,
+                )
             })?;
         (heads, tags)
     } else if is_http_url {
         let (heads, tags, _adv) =
-            crate::http_smart::http_fetch_pack(git_dir, &url, upload_pack_refspecs)?;
+            crate::http_smart::http_fetch_pack(git_dir, &url, upload_pack_refspecs, filter_active)?;
         crate::bundle_uri::maybe_apply_bundle_uri_after_http_fetch(git_dir, &url, None)?;
         let heads: Vec<(String, ObjectId)> = heads.into_iter().map(|e| (e.name, e.oid)).collect();
         let tags: Vec<(String, ObjectId)> = tags.into_iter().map(|e| (e.name, e.oid)).collect();
@@ -858,6 +881,7 @@ fn fetch_remote(
             upload_pack_cmd.as_deref(),
             compute_wants,
             has_cli_refspecs,
+            filter_active,
         )?;
         // If upload-pack advertised no branch tips (or negotiation returned early) but the remote
         // repository has `refs/heads/*` on disk, read them directly so `refs/remotes/` updates
@@ -1643,6 +1667,93 @@ fn fetch_remote(
         fs::write(output_path, content).context("writing --output file")?;
     }
 
+    if args.filter.is_some() {
+        apply_partial_clone_fetch_config(git_dir, remote_name, args.filter.as_deref())?;
+    }
+
+    Ok(())
+}
+
+/// Known `extensions.*` keys Git accepts in v0 repos (`setup.c` `handle_extension_v0`).
+const EXTENSIONS_V0: &[&str] = &["noop", "preciousobjects", "partialclone", "worktreeconfig"];
+
+/// Known v1 extensions (`setup.c` `handle_extension`); on a v0 repo these block upgrading to v1.
+const EXTENSIONS_V1_ONLY: &[&str] = &[
+    "noop-v1",
+    "objectformat",
+    "compatobjectformat",
+    "refstorage",
+    "relativeworktrees",
+    "submodulepathconfig",
+];
+
+/// Before bumping `core.repositoryformatversion` to `1` for partial clone, match Git's
+/// `upgrade_repository_format` / `verify_repository_format` (`t0410` with `DEFAULT_REPO_FORMAT`).
+fn verify_repository_format_allows_upgrade_to_v1(git_dir: &Path) -> Result<()> {
+    let cfg = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    let version_str = cfg.get("core.repositoryformatversion");
+    let version: i32 = version_str
+        .as_deref()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
+
+    let mut unknown: Vec<String> = Vec::new();
+    let mut v1_only: Vec<String> = Vec::new();
+    for e in cfg.entries() {
+        let key = e.key.as_str();
+        let Some(ext) = key.strip_prefix("extensions.") else {
+            continue;
+        };
+        if EXTENSIONS_V0.iter().any(|k| *k == ext) {
+            continue;
+        }
+        if EXTENSIONS_V1_ONLY.iter().any(|k| *k == ext) {
+            v1_only.push(ext.to_string());
+            continue;
+        }
+        unknown.push(ext.to_string());
+    }
+
+    if version == 0 && !unknown.is_empty() {
+        bail!(
+            "cannot upgrade repository format: unknown extension {}",
+            unknown[0]
+        );
+    }
+    if version == 0 && !v1_only.is_empty() {
+        bail!(
+            "repo version is 0, but v1-only extension found:\n\t{}",
+            v1_only[0]
+        );
+    }
+    if version >= 1 && !unknown.is_empty() {
+        bail!("unknown repository extension found:\n\t{}", unknown[0]);
+    }
+    Ok(())
+}
+
+/// After `git fetch --filter=…`, record promisor remote metadata (t0410 partial clone).
+fn apply_partial_clone_fetch_config(
+    git_dir: &Path,
+    remote_name: &str,
+    filter: Option<&str>,
+) -> Result<()> {
+    let Some(spec) = filter.filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    verify_repository_format_allows_upgrade_to_v1(git_dir)?;
+    let config_path = git_dir.join("config");
+    let mut config_file = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    config_file.set("core.repositoryformatversion", "1")?;
+    config_file.set("extensions.partialclone", remote_name)?;
+    config_file.set(&format!("remote.{remote_name}.promisor"), "true")?;
+    config_file.set(&format!("remote.{remote_name}.partialclonefilter"), spec)?;
+    config_file
+        .write()
+        .context("writing promisor config after fetch")?;
     Ok(())
 }
 
