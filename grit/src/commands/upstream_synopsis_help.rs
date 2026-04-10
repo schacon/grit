@@ -84,7 +84,11 @@ fn print_rev_parse_brief_help_stdout() -> io::Result<()> {
     Ok(())
 }
 
-/// If `rest` is exactly `-h` or `--help`, print the upstream synopsis and exit. Otherwise no-op.
+/// If `rest` is exactly `-h`, `--help`, or `--help-all`, print the upstream synopsis and exit.
+/// Otherwise no-op.
+///
+/// `--help-all` matches the short synopsis (`-h`) and exit **129** (t1517). Long `--help` alone
+/// exits **0** so POSIX `&&` chains keep working (t0450).
 ///
 /// Matches Git's streams: most commands use **stdout**; `git rev-parse -h` uses **stderr** with an
 /// extra trailer line.
@@ -93,7 +97,7 @@ pub(crate) fn try_print_upstream_help_and_exit(subcmd: &str, rest: &[String]) {
         return;
     }
     let flag = rest[0].as_str();
-    if flag != "-h" && flag != "--help" {
+    if flag != "-h" && flag != "--help" && flag != "--help-all" {
         return;
     }
     let long_help = flag == "--help";

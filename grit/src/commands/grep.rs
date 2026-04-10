@@ -342,9 +342,20 @@ fn run_inner(pattern_tokens: Vec<PatternToken>, mut args: Args) -> Result<()> {
             bail!("fatal: cannot use --attr-source or GIT_ATTR_SOURCE without repo");
         }
     }
-    let repo = Repository::discover(None).context("not a git repository")?;
 
-    let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
+    let mut repo: Option<Repository> = None;
+    if args.no_index {
+        if args.cached {
+            bail!("fatal: --cached cannot be used with --no-index");
+        }
+    } else {
+        repo = Some(Repository::discover(None).context("not a git repository")?);
+    }
+
+    let config = match &repo {
+        Some(r) => ConfigSet::load(Some(&r.git_dir), true).ok(),
+        None => ConfigSet::load(None, true).ok(),
+    };
 
     // Apply grep config settings
     {
@@ -438,33 +449,39 @@ fn run_inner(pattern_tokens: Vec<PatternToken>, mut args: Args) -> Result<()> {
 
     // Positional: [pattern] [tree-ish] [-- pathspec...] — pattern only when no peeled `-e`/`-f`.
     let has_peeled_patterns = !pattern_tokens.is_empty();
+    let repo_ref = repo.as_ref();
     let (first_pos_pattern, tree_ish, mut pathspecs) =
-        parse_positional(&args, &repo, has_peeled_patterns)?;
+        parse_positional(&args, repo_ref, has_peeled_patterns)?;
     let cwd = std::env::current_dir().context("cannot get current directory")?;
-    pathspecs = pathspecs_relative_to_cwd(&repo, &pathspecs);
+    if let Some(r) = repo_ref {
+        pathspecs = pathspecs_relative_to_cwd(r, &pathspecs);
+    }
     // Git `parse_pathspec` with `PATHSPEC_PREFER_CWD`: no explicit paths => limit to cwd (t7811).
     // Use `.` so `resolve_pathspec` maps it to the current prefix only once (not `subdir/subdir`).
     if pathspecs.is_empty()
         && !args.no_index
         && !args.cached
         && tree_ish.is_none()
-        && repo.work_tree.is_some()
+        && repo_ref.and_then(|r| r.work_tree.as_ref()).is_some()
     {
-        let pfx = show_prefix(&repo, &cwd);
-        if !pfx.is_empty() {
-            pathspecs.push(".".to_string());
+        if let Some(r) = repo_ref {
+            let pfx = show_prefix(r, &cwd);
+            if !pfx.is_empty() {
+                pathspecs.push(".".to_string());
+            }
         }
     }
-    let pathspec_prefix = repo
-        .work_tree
-        .as_ref()
-        .map(|_| show_prefix(&repo, &cwd))
-        .filter(|p| !p.is_empty())
-        .map(|mut p| {
-            p.pop();
-            p
-        });
-    pathspecs = if let Some(wt) = repo.work_tree.as_ref() {
+    let pathspec_prefix = repo_ref.and_then(|r| {
+        r.work_tree
+            .as_ref()
+            .map(|_| show_prefix(r, &cwd))
+            .filter(|p| !p.is_empty())
+            .map(|mut p| {
+                p.pop();
+                p
+            })
+    });
+    pathspecs = if let Some(wt) = repo_ref.and_then(|r| r.work_tree.as_ref()) {
         pathspecs
             .into_iter()
             .map(|p| resolve_pathspec(&p, wt, pathspec_prefix.as_deref()))
@@ -473,20 +490,21 @@ fn run_inner(pattern_tokens: Vec<PatternToken>, mut args: Args) -> Result<()> {
         pathspecs
     };
 
-    let single_rev_path =
+    let single_rev_path = repo_ref.and_then(|r| {
         (!args.no_index && !args.cached && tree_ish.is_none() && pathspecs.len() == 1)
             .then(|| pathspecs[0].as_str())
             .and_then(split_treeish_colon)
             .filter(|(rev, path)| !rev.is_empty() && !path.is_empty())
             .and_then(|(rev, path)| {
                 let spec = format!("{rev}:{path}");
-                let oid = resolve_revision(&repo, &spec)
-                    .or_else(|_| resolve_ref(&repo.git_dir, &spec))
-                    .or_else(|_| resolve_ref(&repo.git_dir, &format!("refs/heads/{spec}")))
+                let oid = resolve_revision(r, &spec)
+                    .or_else(|_| resolve_ref(&r.git_dir, &spec))
+                    .or_else(|_| resolve_ref(&r.git_dir, &format!("refs/heads/{spec}")))
                     .ok()?;
-                let obj = repo.odb.read(&oid).ok()?;
+                let obj = r.odb.read(&oid).ok()?;
                 (obj.kind == ObjectKind::Blob).then(|| (rev.to_string(), path.to_string()))
-            });
+            })
+    });
 
     let mut pattern_tokens = pattern_tokens;
     if pattern_tokens.is_empty() {
@@ -546,35 +564,9 @@ fn run_inner(pattern_tokens: Vec<PatternToken>, mut args: Args) -> Result<()> {
     // Tracks whether we need a "--" separator before the next context group
     let mut need_sep = false;
 
-    let found_any;
-    if let Some((rev, file_path)) = single_rev_path {
-        let diff_attrs = if let Some(ref wt) = repo.work_tree {
-            let wt_attrs = load_diff_attrs(wt);
-            if wt_attrs.is_empty() {
-                load_diff_attrs_from_index(&repo)
-            } else {
-                wt_attrs
-            }
-        } else {
-            load_diff_attrs_from_index(&repo)
-        };
-        let rev_path_label = format!("{rev}:{file_path}");
-        found_any = grep_one_blob_at_revision(
-            &repo,
-            &rev,
-            &file_path,
-            &rev_path_label,
-            &compiled,
-            &args,
-            &diff_attrs,
-            &mut need_sep,
-            out,
-            &mut open_paths,
-        )?;
-    } else if args.no_index {
-        // --no-index: walk the filesystem instead of using the index
+    let found_any = if args.no_index {
         let start_dir = std::env::current_dir().context("cannot get current directory")?;
-        found_any = grep_filesystem(
+        grep_filesystem(
             &start_dir,
             "",
             &compiled,
@@ -583,75 +575,98 @@ fn run_inner(pattern_tokens: Vec<PatternToken>, mut args: Args) -> Result<()> {
             &mut need_sep,
             out,
             &mut open_paths,
-        )?;
-    } else if let Some(tree_spec) = &tree_ish {
-        // Search a tree object
-        let oid = resolve_revision(&repo, tree_spec)
-            .or_else(|_| resolve_ref(&repo.git_dir, tree_spec))
-            .or_else(|_| resolve_ref(&repo.git_dir, &format!("refs/heads/{tree_spec}")))
-            .with_context(|| format!("not a valid revision: '{tree_spec}'"))?;
-
-        let obj = repo.odb.read(&oid)?;
-        let tree_oid = if obj.kind == ObjectKind::Commit {
-            let commit = parse_commit(&obj.data)?;
-            commit.tree
-        } else if obj.kind == ObjectKind::Tree {
-            oid
-        } else {
-            bail!("'{}' is not a tree-ish", tree_spec);
-        };
-
-        let tree_obj = repo.odb.read(&tree_oid)?;
-        // Load diff attrs: try working tree, then index
-        let diff_attrs = if let Some(ref wt) = repo.work_tree {
-            let wt_attrs = load_diff_attrs(wt);
-            if wt_attrs.is_empty() {
-                load_diff_attrs_from_index(&repo)
-            } else {
-                wt_attrs
-            }
-        } else {
-            load_diff_attrs_from_index(&repo)
-        };
-        found_any = grep_tree(
-            &repo,
-            &tree_obj.data,
-            "",
-            0,
-            &compiled,
-            &args,
-            &pathspecs,
-            Some(tree_spec),
-            &mut need_sep,
-            out,
-            &diff_attrs,
-            &mut open_paths,
-        )?;
-    } else if args.cached {
-        // Search index blobs (--cached)
-        found_any = grep_cached(
-            &repo,
-            "",
-            &compiled,
-            &args,
-            &pathspecs,
-            &mut need_sep,
-            out,
-            &mut open_paths,
-        )?;
+        )?
     } else {
-        // Search working tree (tracked files from index)
-        found_any = grep_worktree(
-            &repo,
-            "",
-            &compiled,
-            &args,
-            &pathspecs,
-            &mut need_sep,
-            out,
-            &mut open_paths,
-        )?;
-    }
+        let repo = repo.as_ref().context("not a git repository")?;
+        if let Some((rev, file_path)) = single_rev_path {
+            let diff_attrs = if let Some(ref wt) = repo.work_tree {
+                let wt_attrs = load_diff_attrs(wt);
+                if wt_attrs.is_empty() {
+                    load_diff_attrs_from_index(repo)
+                } else {
+                    wt_attrs
+                }
+            } else {
+                load_diff_attrs_from_index(repo)
+            };
+            let rev_path_label = format!("{rev}:{file_path}");
+            grep_one_blob_at_revision(
+                repo,
+                &rev,
+                &file_path,
+                &rev_path_label,
+                &compiled,
+                &args,
+                &diff_attrs,
+                &mut need_sep,
+                out,
+                &mut open_paths,
+            )?
+        } else if let Some(tree_spec) = &tree_ish {
+            let oid = resolve_revision(repo, tree_spec)
+                .or_else(|_| resolve_ref(&repo.git_dir, tree_spec))
+                .or_else(|_| resolve_ref(&repo.git_dir, &format!("refs/heads/{tree_spec}")))
+                .with_context(|| format!("not a valid revision: '{tree_spec}'"))?;
+
+            let obj = repo.odb.read(&oid)?;
+            let tree_oid = if obj.kind == ObjectKind::Commit {
+                let commit = parse_commit(&obj.data)?;
+                commit.tree
+            } else if obj.kind == ObjectKind::Tree {
+                oid
+            } else {
+                bail!("'{}' is not a tree-ish", tree_spec);
+            };
+
+            let tree_obj = repo.odb.read(&tree_oid)?;
+            let diff_attrs = if let Some(ref wt) = repo.work_tree {
+                let wt_attrs = load_diff_attrs(wt);
+                if wt_attrs.is_empty() {
+                    load_diff_attrs_from_index(repo)
+                } else {
+                    wt_attrs
+                }
+            } else {
+                load_diff_attrs_from_index(repo)
+            };
+            grep_tree(
+                repo,
+                &tree_obj.data,
+                "",
+                0,
+                &compiled,
+                &args,
+                &pathspecs,
+                Some(tree_spec),
+                &mut need_sep,
+                out,
+                &diff_attrs,
+                &mut open_paths,
+            )?
+        } else if args.cached {
+            grep_cached(
+                repo,
+                "",
+                &compiled,
+                &args,
+                &pathspecs,
+                &mut need_sep,
+                out,
+                &mut open_paths,
+            )?
+        } else {
+            grep_worktree(
+                repo,
+                "",
+                &compiled,
+                &args,
+                &pathspecs,
+                &mut need_sep,
+                out,
+                &mut open_paths,
+            )?
+        }
+    };
 
     if found_any {
         if let Some(paths) = open_paths {
@@ -961,15 +976,7 @@ fn grep_cached(
                     );
                     let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
                     if grep_content(
-                        &rel,
-                        None,
-                        None,
-                        &content,
-                        compiled,
-                        args,
-                        need_sep,
-                        out,
-                        open_paths,
+                        &rel, None, None, &content, compiled, args, need_sep, out, open_paths,
                     )? {
                         found_any = true;
                     }
@@ -1002,15 +1009,7 @@ fn grep_cached(
                 );
                 let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
                 if grep_content(
-                    &rel,
-                    None,
-                    None,
-                    &content,
-                    compiled,
-                    args,
-                    need_sep,
-                    out,
-                    open_paths,
+                    &rel, None, None, &content, compiled, args, need_sep, out, open_paths,
                 )? {
                     found_any = true;
                 }
@@ -1046,15 +1045,7 @@ fn grep_cached(
                 );
                 let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
                 if grep_content(
-                    &rel,
-                    None,
-                    None,
-                    &content,
-                    compiled,
-                    args,
-                    need_sep,
-                    out,
-                    open_paths,
+                    &rel, None, None, &content, compiled, args, need_sep, out, open_paths,
                 )? {
                     found_any = true;
                 }
@@ -1087,15 +1078,7 @@ fn grep_cached(
             );
             let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
             if grep_content(
-                &rel,
-                None,
-                None,
-                &content,
-                compiled,
-                args,
-                need_sep,
-                out,
-                open_paths,
+                &rel, None, None, &content, compiled, args, need_sep, out, open_paths,
             )? {
                 found_any = true;
             }
@@ -1852,7 +1835,10 @@ fn open_submodule_repo(sub_path: &Path) -> Result<Repository> {
 }
 
 /// Try to resolve a string as a revision (commit/tree).
-fn is_revision(repo: &Repository, spec: &str) -> bool {
+fn is_revision(repo: Option<&Repository>, spec: &str) -> bool {
+    let Some(repo) = repo else {
+        return false;
+    };
     let oid = resolve_revision(repo, spec)
         .or_else(|_| resolve_ref(&repo.git_dir, spec))
         .or_else(|_| resolve_ref(&repo.git_dir, &format!("refs/heads/{spec}")));
@@ -1871,7 +1857,7 @@ fn is_revision(repo: &Repository, spec: &str) -> bool {
 /// Parse positional arguments into (optional first pattern, tree_ish, pathspecs).
 fn parse_positional(
     args: &Args,
-    repo: &Repository,
+    repo: Option<&Repository>,
     has_peeled_patterns: bool,
 ) -> Result<(Option<String>, Option<String>, Vec<String>)> {
     let positional = &args.positional;
@@ -2796,15 +2782,7 @@ fn grep_tree(
                 );
                 let rel = cwd_strip_repo_rel(repo, &full_name, args);
                 if grep_content(
-                    &rel,
-                    None,
-                    tree_name,
-                    &content,
-                    compiled,
-                    args,
-                    need_sep,
-                    out,
-                    open_paths,
+                    &rel, None, tree_name, &content, compiled, args, need_sep, out, open_paths,
                 )? {
                     found = true;
                 }

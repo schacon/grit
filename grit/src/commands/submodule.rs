@@ -54,7 +54,7 @@ fn split_submodule_leading_flags(rest: &[String]) -> (SubmoduleTopOpts, Vec<Stri
     while i < rest.len() {
         let a = rest[i].as_str();
         match a {
-            "-h" | "--help" => break,
+            "-h" | "--help" | "--help-all" => break,
             "--quiet" | "-q" => {
                 top.quiet = true;
                 i += 1;

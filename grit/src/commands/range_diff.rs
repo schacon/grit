@@ -83,9 +83,20 @@ struct Patch {
     shown: bool,
 }
 
+const RANGE_DIFF_HELP_TEXT: &str = include_str!("../../upstream_range_diff_help.txt");
+
 /// Parse argv after `range-diff` and run (used from `main` so `--` / pathspecs work).
 pub fn run_with_rest(rest: &[String]) -> Result<()> {
-    crate::commands::upstream_synopsis_help::try_print_upstream_help_and_exit("range-diff", rest);
+    if rest.len() == 1 {
+        let a = rest[0].as_str();
+        if matches!(a, "-h" | "--help" | "--help-all") {
+            print!("{RANGE_DIFF_HELP_TEXT}");
+            if a == "--help" {
+                return Ok(());
+            }
+            std::process::exit(129);
+        }
+    }
     let mut argv = vec!["grit range-diff".to_string()];
     argv.extend(rest.iter().cloned());
     let args = Args::try_parse_from(&argv).map_err(|e| anyhow::anyhow!("{e}"))?;

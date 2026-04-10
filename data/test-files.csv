@@ -190,7 +190,7 @@ t10880-reset-hard-soft-path	t1	yes	31	31	0	true	ok	0
 t10890-cherry-pick-message	t1	yes	30	30	0	true	ok	0
 t1090-sparse-checkout-scope	t1	yes	7	7	0	true	ok	0
 t10900-for-each-ref-pattern-sort	t1	yes	34	34	0	true	ok	0
-t1091-sparse-checkout-builtin	t1	yes	77	24	52	false	ok	1
+t1091-sparse-checkout-builtin	t1	yes	76	24	52	false	ok	1
 t10910-show-ref-tags-branches	t1	yes	35	35	0	true	ok	0
 t1092-sparse-checkout-compatibility	t1	yes	106	49	57	false	ok	0
 t10920-update-ref-create-delete	t1	yes	29	29	0	true	ok	0
@@ -451,7 +451,7 @@ t1512-rev-parse-disambiguation	t1	yes	38	34	4	false	ok	0
 t1513-rev-parse-prefix	t1	yes	11	9	2	false	ok	0
 t1514-rev-parse-push	t1	yes	9	8	1	false	ok	0
 t1515-rev-parse-outside-repo	t1	yes	4	4	0	true	ok	0
-t1517-outside-repo	t1	yes	181	90	91	false	ok	0
+t1517-outside-repo	t1	yes	195	195	0	true	ok	0
 t1600-index	t1	yes	7	7	0	true	ok	0
 t1601-index-bogus	t1	yes	4	4	0	true	ok	0
 t1700-split-index	t1	yes	29	29	0	true	ok	0
@@ -619,7 +619,7 @@ t3428-rebase-signoff	t3	yes	7	1	6	false	ok	0
 t3429-rebase-edit-todo	t3	yes	7	5	2	false	ok	0
 t3430-rebase-merges	t3	yes	34	2	32	false	ok	0
 t3431-rebase-fork-point	t3	yes	26	8	18	false	ok	0
-t3432-rebase-fast-forward	t3	yes	225	219	0	true	ok	0
+t3432-rebase-fast-forward	t3	yes	219	219	0	true	ok	0
 t3433-rebase-across-mode-change	t3	yes	4	4	0	true	ok	0
 t3434-rebase-i18n	t3	yes	6	3	3	false	ok	0
 t3435-rebase-gpg-sign	t3	skip	11	0	0	false	ok	0
@@ -945,7 +945,7 @@ t5524-pull-msg	t5	yes	3	3	0	true	ok	0
 t5525-fetch-tagopt	t5	yes	5	5	0	true	ok	0
 t5526-fetch-submodules	t5	yes	56	16	40	false	ok	0
 t5527-fetch-odd-refs	t5	yes	5	5	0	true	ok	0
-t5528-push-default	t5	yes	32	31	0	true	ok	1
+t5528-push-default	t5	yes	31	31	0	true	ok	1
 t5529-push-errors	t5	yes	8	8	0	true	ok	0
 t5530-upload-pack-error	t5	yes	11	3	8	false	ok	0
 t5531-deep-nested-push	t5	yes	4	4	0	true	ok	0
@@ -1113,12 +1113,12 @@ t6412-merge-large-rename	t6	yes	10	10	0	true	ok	0
 t6413-merge-crlf	t6	yes	3	2	1	false	ok	0
 t6414-merge-rename-nocruft	t6	yes	3	3	0	true	ok	0
 t6415-merge-dir-to-symlink	t6	yes	24	9	15	false	ok	0
-t6416-recursive-corner-cases	t6	yes	40	23	14	false	ok	3
+t6416-recursive-corner-cases	t6	yes	37	23	14	false	ok	3
 t6417-merge-ours-theirs	t6	yes	7	7	0	true	ok	0
 t6418-merge-text-auto	t6	yes	11	9	2	false	ok	0
 t6419-merge-ignorecase	t6	yes	0	0	0	false	ok	0
 t6421-merge-partial-clone	t6	yes	3	0	3	false	ok	0
-t6422-merge-rename-corner-cases	t6	yes	26	11	9	false	ok	6
+t6422-merge-rename-corner-cases	t6	yes	20	11	9	false	ok	6
 t6423-merge-rename-directories	t6	yes	80	29	51	false	ok	2
 t6424-merge-unrelated-index-changes	t6	yes	19	18	1	false	ok	0
 t6425-merge-rename-delete	t6	yes	1	1	0	true	ok	0
@@ -1190,7 +1190,7 @@ t7107-reset-pathspec-file	t7	yes	11	1	10	false	ok	0
 t7110-reset-merge	t7	yes	21	9	12	false	ok	0
 t7110-reset-modes	t7	yes	20	20	0	true	ok	0
 t7111-reset-table	t7	yes	42	34	8	false	ok	0
-t7112-reset-submodule	t7	yes	82	24	52	false	ok	0
+t7112-reset-submodule	t7	yes	76	24	52	false	ok	0
 t7113-post-index-change-hook	t7	yes	4	1	3	false	ok	0
 t7201-co	t7	yes	46	17	29	false	ok	0
 t7300-clean	t7	yes	55	54	1	false	ok	0

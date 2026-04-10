@@ -66,6 +66,7 @@ pub mod hook;
 pub mod http_backend;
 pub mod http_fetch;
 pub mod http_push;
+pub mod imap_send;
 pub mod index_pack;
 pub mod init;
 pub mod interpret_trailers;
