@@ -51,6 +51,7 @@ mod test_tool_run_command;
 mod trace2_transfer;
 mod trace_packet;
 mod transport_passthrough;
+mod transport_path;
 mod wire_trace;
 
 /// Return the version string, e.g. `"2.47.0.grit"`.
