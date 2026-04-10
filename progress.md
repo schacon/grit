@@ -19,6 +19,7 @@ Task lines in `PLAN.md`: 358 completed (`[x]`), 6 in progress (`[~]`), 408 remai
 
 ## Recently completed
 
+- `t5536-fetch-conflicts` — 7/7 tests pass (`fetch`: glob CLI refspecs expand in upload-pack/HTTP `want` negotiation so ref-update conflict detection runs; `fatal: Cannot fetch both …` for arg-vs-arg)
 - `t5549-fetch-push-http` — 3/3 tests pass (HTTP smart push: trace2 `write_pack_file` object counts with/without `push.negotiate`; v0 fallback warnings match Git via `test_cmp`; `test_config` + `test_when_finished` cleanup aligned with upstream)
 - `t5410-receive-pack` — 5/5 tests pass (`receive-pack --skip-connectivity-check`: unpack with `strict=false` so thin packs store the tip without requiring parent objects in the ODB; normal path keeps strict unpack + connectivity)
 - `t3438-rebase-broken-files` — 9/9 tests pass (`rebase-merge/author-script` written on conflict; strict parse on `rebase --continue`; apply backend preflight for writable `.git/rebased-patches`)

@@ -404,6 +404,28 @@ fn merge_remote_refs_into_upload_pack_advertisement(
     Ok(())
 }
 
+/// Match a refspec source pattern with at most one `*` against `refname`.
+///
+/// Returns the wildcard segment when the pattern uses `*`, or `Some(refname)` for an exact match.
+pub(crate) fn match_glob_star_pattern<'a>(pattern: &str, refname: &'a str) -> Option<&'a str> {
+    if let Some(star_pos) = pattern.find('*') {
+        let prefix = &pattern[..star_pos];
+        let suffix = &pattern[star_pos + 1..];
+        if refname.starts_with(prefix)
+            && refname.ends_with(suffix)
+            && refname.len() >= prefix.len() + suffix.len()
+        {
+            Some(&refname[prefix.len()..refname.len() - suffix.len()])
+        } else {
+            None
+        }
+    } else if pattern == refname {
+        Some(refname)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn collect_wants(
     advertised: &[(String, ObjectId)],
     refspecs: &[String],
@@ -446,11 +468,14 @@ pub(crate) fn collect_wants(
             .map(|(a, _)| a)
             .unwrap_or(spec_clean);
         if src.contains('*') {
-            for (refname, oid) in advertised {
+            for (name, oid) in advertised {
                 if *oid == zero_oid() {
                     continue;
                 }
-                if let Some(_matched) = match_glob_refspec_src(src, refname) {
+                if name == "HEAD" {
+                    continue;
+                }
+                if match_glob_star_pattern(src, name).is_some() {
                     push_want_unique(&mut wants, *oid);
                 }
             }
@@ -481,24 +506,6 @@ pub(crate) fn collect_wants(
         wants.push(oid);
     }
     Ok(wants)
-}
-
-/// Match `src` against `refname` when `src` contains a single `*` (Git refspec glob).
-/// Returns `Some(())` when the ref matches; the matched segment is not needed for want collection.
-fn match_glob_refspec_src(src: &str, refname: &str) -> Option<()> {
-    let star_pos = src.find('*')?;
-    if src[star_pos + 1..].contains('*') {
-        return None;
-    }
-    let prefix = &src[..star_pos];
-    let suffix = &src[star_pos + 1..];
-    if !refname.starts_with(prefix) || !refname.ends_with(suffix) {
-        return None;
-    }
-    if refname.len() < prefix.len() + suffix.len() {
-        return None;
-    }
-    Some(())
 }
 
 /// Pushes `oid` onto `wants` if it is not already present (order-preserving).
