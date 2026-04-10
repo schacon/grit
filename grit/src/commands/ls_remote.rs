@@ -78,6 +78,10 @@ pub fn run(args: Args) -> Result<()> {
         }
         return run_ls_remote_ext(repo_path_str.as_ref(), &args);
     }
+    if repo_path_str.starts_with("git://") && crate::file_upload_pack_v2::client_wants_protocol_v2()
+    {
+        return crate::file_upload_pack_v2::ls_remote_git_v2(repo_path_str.as_ref(), &args);
+    }
     let is_file_url = repo_path_str.starts_with("file://");
     if is_file_url && crate::file_upload_pack_v2::client_wants_protocol_v2() {
         let path = PathBuf::from(

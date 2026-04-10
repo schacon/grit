@@ -1402,7 +1402,7 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
 /// `git://host:port/repo` URL to that on-disk repository so local commands can open it.
 pub fn try_local_path_for_git_daemon_url(url: &str) -> Option<std::path::PathBuf> {
     let root = std::env::var("GIT_DAEMON_DOCUMENT_ROOT_PATH").ok()?;
-    let parsed = parse_git_url(url).ok()?;
+    let parsed = crate::git_daemon_url::parse_git_url(url).ok()?;
     let rel = parsed.path.trim_start_matches('/');
     if rel.is_empty() {
         return None;
@@ -1410,64 +1410,10 @@ pub fn try_local_path_for_git_daemon_url(url: &str) -> Option<std::path::PathBuf
     Some(std::path::Path::new(&root).join(rel))
 }
 
-/// Parsed `git://host[:port]/path` (path includes leading `/`).
-pub struct GitDaemonUrl {
-    pub host: String,
-    pub port: u16,
-    pub path: String,
-}
-
-/// Parse `git://` URLs for the native Git daemon transport.
-pub fn parse_git_url(url: &str) -> Result<GitDaemonUrl> {
-    let rest = url
-        .strip_prefix("git://")
-        .with_context(|| format!("not a git:// URL: {url}"))?;
-    let (authority, path_part) = rest
-        .find('/')
-        .map(|i| (&rest[..i], &rest[i..]))
-        .unwrap_or((rest, "/"));
-    if path_part.is_empty() || path_part == "/" {
-        bail!("git:// URL missing repository path");
-    }
-    let path = path_part.to_string();
-    let (host, port) = if authority.starts_with('[') {
-        let end = authority
-            .find(']')
-            .with_context(|| format!("invalid git:// authority: {authority}"))?;
-        let host = authority[1..end].to_string();
-        let port = if let Some(p) = authority[end + 1..].strip_prefix(':') {
-            p.parse::<u16>()
-                .with_context(|| format!("invalid port in git:// URL: {url}"))?
-        } else {
-            9418
-        };
-        (host, port)
-    } else if let Some((h, p)) = authority.rsplit_once(':') {
-        let h = h.trim_end_matches(':');
-        if p.is_empty() {
-            (h.to_string(), 9418)
-        } else if p.chars().all(|c| c.is_ascii_digit()) {
-            (
-                h.to_string(),
-                p.parse::<u16>()
-                    .with_context(|| format!("invalid port in git:// URL: {url}"))?,
-            )
-        } else {
-            (authority.to_string(), 9418)
-        }
-    } else {
-        (authority.to_string(), 9418)
-    };
-    if host.is_empty() {
-        bail!("git:// URL has empty host");
-    }
-    Ok(GitDaemonUrl { host, port, path })
-}
-
 fn fetch_git_daemon_upload_pack_over_streams(
     local_git_dir: &Path,
     refspecs: &[String],
-    parsed: &GitDaemonUrl,
+    parsed: &crate::git_daemon_url::GitDaemonUrl,
     stream_w: &mut impl Write,
     stream: &mut impl Read,
     filter_active: bool,
@@ -1477,26 +1423,9 @@ fn fetch_git_daemon_upload_pack_over_streams(
     Option<String>,
     Option<ObjectId>,
 )> {
-    let client_proto = protocol_wire::effective_client_protocol_version();
-    let virtual_host = std::env::var("GIT_OVERRIDE_VIRTUAL_HOST")
-        .unwrap_or_else(|_| format!("{}:{}", parsed.host, parsed.port));
-    let mut inner: Vec<u8> = Vec::new();
-    inner.extend_from_slice(b"git-upload-pack ");
-    inner.extend_from_slice(parsed.path.as_bytes());
-    inner.push(0);
-    inner.extend_from_slice(b"host=");
-    inner.extend_from_slice(virtual_host.as_bytes());
-    inner.push(0);
-    if client_proto > 0 {
-        inner.push(0);
-        inner.extend_from_slice(format!("version={client_proto}\0").as_bytes());
-    }
-    pkt_line::write_packet_raw(stream_w, &inner).context("write git:// request")?;
-    stream_w.flush().ok();
-
-    let trace_show = String::from_utf8_lossy(&inner)
-        .replace('\0', "\\0")
-        .replace('\n', "");
+    let trace_show = crate::git_daemon_url::write_git_daemon_upload_pack_handshake(
+        stream_w, parsed,
+    )?;
     trace_packet_fetch('>', &trace_show);
 
     let (advertised, head_symref, saw_v1, saw_v2, server_sid, _) = read_advertisement(stream)?;
@@ -1578,7 +1507,7 @@ pub fn fetch_via_git_protocol_skipping(
     Option<String>,
     Option<ObjectId>,
 )> {
-    let parsed = parse_git_url(url)?;
+    let parsed = crate::git_daemon_url::parse_git_url(url)?;
     if looks_like_command_line_option(&parsed.host) {
         bail!("strange hostname '{}' blocked", parsed.host);
     }

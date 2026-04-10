@@ -1382,7 +1382,7 @@ fn run_git_clone(args: Args) -> Result<()> {
     let ref_storage = resolved_clone_ref_storage(&args)?;
     let filter_active = clone_pack_filter_active(&args, None);
     let url = args.repository.clone();
-    let parsed = crate::fetch_transport::parse_git_url(&url)?;
+    let parsed = crate::git_daemon_url::parse_git_url(&url)?;
     let path_tail = parsed.path.trim_start_matches('/');
     let base = Path::new(path_tail)
         .file_name()

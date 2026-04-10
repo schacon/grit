@@ -1,6 +1,9 @@
 //! Protocol v2 over local `grit upload-pack` for `file://` URLs (tests, `ls-remote`, clone).
+//!
+//! Also supports `git://` against a real `git-daemon` (or compatible) for the same v2 flows.
 
 use std::io::{Cursor, Read, Write};
+use std::net::Shutdown;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -633,6 +636,105 @@ pub(crate) fn fetch_bundle_uri_lines_file(repo_url: &str) -> Result<Vec<(String,
             "upload-pack exited with status {}",
             status.code().unwrap_or(-1)
         );
+    }
+    Ok(pairs)
+}
+
+/// Protocol v2 `ls-remote` over `git://` (system `git-daemon` + upstream `upload-pack`).
+pub(crate) fn ls_remote_git_v2(url: &str, args: &crate::commands::ls_remote::Args) -> Result<()> {
+    let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
+    let (mut stdin, mut stdout, _) = crate::git_daemon_url::connect_git_daemon_upload_pack(url)?;
+    let caps = read_v2_capability_block(&mut stdout)?;
+    let bundle_advertised = server_advertises_bundle_uri(&caps);
+
+    if bundle_advertised && transfer_bundle_uri_enabled() {
+        let cap_send = cap_lines_for_bundle_request(&caps);
+        write_bundle_uri_command(&mut stdin, &cap_send)?;
+        drain_bundle_uri_response(&mut stdout)?;
+    }
+
+    pkt_line::write_line(&mut stdin, "command=ls-refs")?;
+    trace_packet_git('>', "command=ls-refs");
+    let agent = format!("agent=git/{}-", crate::version_string());
+    pkt_line::write_line(&mut stdin, &agent)?;
+    trace_packet_git('>', agent.trim_end());
+    pkt_line::write_line(&mut stdin, &format!("object-format={default_hash}"))?;
+    trace_packet_git('>', &format!("object-format={default_hash}"));
+    pkt_line::write_delim(&mut stdin)?;
+    trace_packet_git('>', "0001");
+    if args.symref {
+        pkt_line::write_line(&mut stdin, "symrefs")?;
+        trace_packet_git('>', "symrefs");
+    }
+    if !args.refs_only {
+        pkt_line::write_line(&mut stdin, "peel")?;
+        trace_packet_git('>', "peel");
+    }
+    if args.heads {
+        pkt_line::write_line(&mut stdin, "ref-prefix refs/heads/")?;
+        trace_packet_git('>', "ref-prefix refs/heads/");
+    }
+    if args.tags {
+        pkt_line::write_line(&mut stdin, "ref-prefix refs/tags/")?;
+        trace_packet_git('>', "ref-prefix refs/tags/");
+    }
+    for p in &args.patterns {
+        let line = format!("ref-prefix {p}");
+        pkt_line::write_line(&mut stdin, &line)?;
+        trace_packet_git('>', &line);
+    }
+    pkt_line::write_flush(&mut stdin)?;
+    trace_packet_git('>', "0000");
+    stdin.flush()?;
+    let mut buf = Vec::new();
+    read_pkt_lines_until_flush(&mut stdout, &mut buf, 512 * 1024)
+        .context("read v2 ls-refs response (git://)")?;
+    let _ = stdin.shutdown(Shutdown::Write);
+    let mut drain = Vec::new();
+    let _ = stdout.take(64 * 1024).read_to_end(&mut drain);
+
+    let entries = crate::commands::ls_remote::parse_v2_ls_refs_output(&buf, args)?;
+    if entries.is_empty() {
+        return Ok(());
+    }
+    if args.quiet {
+        return Ok(());
+    }
+    for entry in &entries {
+        if let Some(target) = &entry.symref_target {
+            println!("ref: {target}\t{}", entry.name);
+        }
+        println!("{}\t{}", entry.oid, entry.name);
+    }
+    Ok(())
+}
+
+/// Fetch `bundle.*` lines from a `git://` remote via upload-pack v2.
+pub(crate) fn fetch_bundle_uri_lines_git(repo_url: &str) -> Result<Vec<(String, String)>> {
+    let (mut stdin, mut stdout, _) =
+        crate::git_daemon_url::connect_git_daemon_upload_pack(repo_url)?;
+    let caps = read_v2_capability_block(&mut stdout)?;
+    if !server_advertises_bundle_uri(&caps) {
+        bail!("server does not advertise bundle-uri");
+    }
+    let cap_send = cap_lines_for_bundle_request(&caps);
+    write_bundle_uri_command(&mut stdin, &cap_send)?;
+    let _ = stdin.shutdown(Shutdown::Write);
+    let mut pairs = Vec::new();
+    loop {
+        match pkt_line::read_packet(&mut stdout).context("read bundle-uri response")? {
+            None => break,
+            Some(pkt_line::Packet::Flush) => break,
+            Some(pkt_line::Packet::Data(line)) => {
+                trace_packet_git('<', &line);
+                let (k, v) = line
+                    .split_once('=')
+                    .filter(|(k, v)| !k.is_empty() && !v.is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("malformed bundle-uri line: {line}"))?;
+                pairs.push((k.to_string(), v.to_string()));
+            }
+            Some(other) => bail!("unexpected bundle-uri packet: {other:?}"),
+        }
     }
     Ok(pairs)
 }
