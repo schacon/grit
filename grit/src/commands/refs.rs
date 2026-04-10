@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
 use grit_lib::refs::RawRefLookup;
+use grit_lib::refs_fsck::{format_refs_fsck_line, refs_fsck, RefsFsckSeverity};
 use grit_lib::repo::Repository;
 
 /// Arguments for `grit refs`.
@@ -72,72 +73,34 @@ fn run_refs_exists(repo: &Repository, reference: &str) -> Result<()> {
     }
 }
 
-/// Verify that all refs in the repository point to valid objects.
+/// Verify ref database consistency (`git refs verify`).
 fn verify_refs(repo: &Repository) -> Result<()> {
-    let mut errors = 0;
-
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-    let bad_ref_name_level = config
-        .get("fsck.badRefName")
-        .unwrap_or_default()
-        .to_lowercase();
 
     if grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
+        let mut errors = 0;
+        let bad_ref_name_level = config
+            .get("fsck.badRefName")
+            .unwrap_or_default()
+            .to_lowercase();
         verify_reftable_stacks(repo)?;
         errors += verify_reftable_refs(repo, &bad_ref_name_level)?;
-    } else {
-        let refs_dir = repo.git_dir.join("refs");
-
-        // Check HEAD
-        let head_path = repo.git_dir.join("HEAD");
-        if head_path.exists() {
-            let content = fs::read_to_string(&head_path).context("reading HEAD")?;
-            let trimmed = content.trim();
-            if let Some(target) = trimmed.strip_prefix("ref: ") {
-                let ref_path = repo.git_dir.join(target);
-                if !ref_path.exists() {
-                    // Symbolic ref to nonexistent ref is OK (empty repo, detached, etc.)
-                }
-            } else if trimmed.len() >= 40 {
-                // Direct OID — verify it exists
-                if let Ok(oid) = grit_lib::objects::ObjectId::from_hex(trimmed) {
-                    if !repo.odb.exists(&oid) {
-                        eprintln!("error: HEAD points to missing object {trimmed}");
-                        errors += 1;
-                    }
-                }
-            }
+        if errors > 0 {
+            std::process::exit(1);
         }
-
-        // Walk refs directory
-        if refs_dir.is_dir() {
-            errors += verify_refs_dir(repo, &refs_dir, &bad_ref_name_level)?;
-        }
-
-        // Check packed-refs
-        let packed_refs = repo.git_dir.join("packed-refs");
-        if packed_refs.exists() {
-            let content = fs::read_to_string(&packed_refs).context("reading packed-refs")?;
-            for line in content.lines() {
-                if line.starts_with('#') || line.starts_with('^') || line.is_empty() {
-                    continue;
-                }
-                if let Some((hex, name)) = line.split_once(' ') {
-                    if let Ok(oid) = grit_lib::objects::ObjectId::from_hex(hex) {
-                        if !repo.odb.exists(&oid) {
-                            eprintln!("error: {name} points to missing object {hex}");
-                            errors += 1;
-                        }
-                    }
-                }
-            }
-        }
+        return Ok(());
     }
 
+    let mut errors = 0;
+    for issue in refs_fsck(repo, &repo.odb, &config, false)? {
+        eprintln!("{}", format_refs_fsck_line(&issue));
+        if issue.severity == RefsFsckSeverity::Error {
+            errors += 1;
+        }
+    }
     if errors > 0 {
         std::process::exit(1);
     }
-
     Ok(())
 }
 
@@ -323,80 +286,6 @@ fn verify_reftable_refs(repo: &Repository, bad_ref_name_level: &str) -> Result<u
         }
     }
 
-    Ok(errors)
-}
-
-fn verify_refs_dir(repo: &Repository, dir: &Path, bad_ref_name_level: &str) -> Result<usize> {
-    let mut errors = 0;
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            errors += verify_refs_dir(repo, &path, bad_ref_name_level)?;
-        } else if path.is_file() {
-            // Check ref name validity
-            let ref_name = path
-                .strip_prefix(&repo.git_dir)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .to_string();
-            if grit_lib::check_ref_format::check_refname_format(
-                &ref_name,
-                &grit_lib::check_ref_format::RefNameOptions {
-                    allow_onelevel: false,
-                    refspec_pattern: false,
-                    normalize: false,
-                },
-            )
-            .is_err()
-            {
-                if bad_ref_name_level == "warn" {
-                    eprintln!("warning: {ref_name}: badRefName: invalid refname format");
-                } else if bad_ref_name_level == "ignore" {
-                    // skip
-                } else {
-                    eprintln!("error: {ref_name}: badRefName: invalid refname format");
-                    errors += 1;
-                }
-            }
-
-            let content = fs::read_to_string(&path)
-                .with_context(|| format!("reading ref {}", path.display()))?;
-            let trimmed = content.trim();
-            if let Some(target) = trimmed.strip_prefix("ref: ") {
-                // Validate symbolic ref target
-                if grit_lib::check_ref_format::check_refname_format(
-                    target,
-                    &grit_lib::check_ref_format::RefNameOptions {
-                        allow_onelevel: false,
-                        refspec_pattern: false,
-                        normalize: false,
-                    },
-                )
-                .is_err()
-                {
-                    let name = path.strip_prefix(&repo.git_dir).unwrap_or(&path);
-                    eprintln!(
-                        "error: {}: badReferentName: points to invalid refname '{}'",
-                        name.display(),
-                        target
-                    );
-                    errors += 1;
-                }
-            } else if trimmed.len() >= 40 {
-                if let Ok(oid) = grit_lib::objects::ObjectId::from_hex(trimmed) {
-                    if !repo.odb.exists(&oid) {
-                        let name = path.strip_prefix(&repo.git_dir).unwrap_or(&path);
-                        eprintln!(
-                            "error: {} points to missing object {trimmed}",
-                            name.display()
-                        );
-                        errors += 1;
-                    }
-                }
-            }
-        }
-    }
     Ok(errors)
 }
 

@@ -704,6 +704,10 @@ fn ref_storage_dir(git_dir: &Path, refname: &str) -> PathBuf {
     if refname == "HEAD" || refname == "NOTES_MERGE_PARTIAL" || refname == "NOTES_MERGE_REF" {
         return git_dir.to_path_buf();
     }
+    // `refs/worktree/*` is private to each linked checkout (Git: `files_ref_store` per worktree).
+    if refname.starts_with("refs/worktree/") {
+        return git_dir.to_path_buf();
+    }
     common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf())
 }
 

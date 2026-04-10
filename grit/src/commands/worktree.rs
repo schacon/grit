@@ -627,6 +627,9 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     // Create the admin directory: .git/worktrees/<name>/
     fs::create_dir_all(&wt_admin)
         .with_context(|| format!("cannot create '{}'", wt_admin.display()))?;
+    // Per-worktree loose refs (`refs/worktree/...`) live here; Git always creates `refs/`.
+    fs::create_dir_all(wt_admin.join("refs"))
+        .with_context(|| format!("cannot create '{}'", wt_admin.join("refs").display()))?;
 
     // Write gitdir file — points the admin dir back to the worktree's .git file
     let gitdir_content = format!("{}\n", wt_path.join(".git").display());
