@@ -264,6 +264,16 @@ pub fn run(args: Args) -> Result<()> {
     }
     let loosen_unreachable = args.repack_all_unpack && !args.cruft;
 
+    let pack_line_hex_len = if cfg
+        .get("extensions.objectformat")
+        .or_else(|| cfg.get("extensions.objectFormat"))
+        .is_some_and(|v| v.eq_ignore_ascii_case("sha256"))
+    {
+        64usize
+    } else {
+        40usize
+    };
+
     let mut write_bitmaps = effective_write_bitmaps_int(&args, &cfg, full_repack, bare_repo);
     let objects_dir_for_warn = repo.git_dir.join("objects");
     let mut quiet_pack_objects_local_alt = false;
@@ -307,18 +317,18 @@ pub fn run(args: Args) -> Result<()> {
         .as_deref()
         .and_then(parse_config_byte_size);
 
-    /// Lines Git `pack-objects` prints to stdout when writing packs (40 hex chars per pack).
+    /// Lines Git `pack-objects` prints to stdout when writing packs (40 hex chars for SHA-1,
+    /// 64 for SHA-256).
     /// With `--filter-to`, the main pack and the filtered-out side pack each emit one line;
     /// `git repack` / `finish_pack_objects_cmd` records every line.
-    fn pack_hashes_from_pack_objects_stdout(stdout: &[u8]) -> Vec<String> {
-        const SHA1_HEX: usize = 40;
+    fn pack_hashes_from_pack_objects_stdout(stdout: &[u8], hex_len: usize) -> Vec<String> {
         let mut out = Vec::new();
         for line in stdout.split(|b| *b == b'\n') {
             let Ok(s) = std::str::from_utf8(line) else {
                 continue;
             };
             let s = s.trim();
-            if s.len() == SHA1_HEX && s.chars().all(|c| c.is_ascii_hexdigit()) {
+            if s.len() == hex_len && s.chars().all(|c| c.is_ascii_hexdigit()) {
                 out.push(s.to_string());
             }
         }
@@ -455,7 +465,10 @@ pub fn run(args: Args) -> Result<()> {
                 if !output.status.success() {
                     anyhow::bail!("pack-objects failed with status {}", output.status);
                 }
-                return Ok(pack_hashes_from_pack_objects_stdout(&output.stdout));
+                return Ok(pack_hashes_from_pack_objects_stdout(
+                    &output.stdout,
+                    pack_line_hex_len,
+                ));
             }
 
             let output = cmd.output().context("failed to run grit pack-objects")?;
@@ -463,7 +476,10 @@ pub fn run(args: Args) -> Result<()> {
                 anyhow::bail!("pack-objects failed with status {}", output.status);
             }
 
-            Ok(pack_hashes_from_pack_objects_stdout(&output.stdout))
+            Ok(pack_hashes_from_pack_objects_stdout(
+                &output.stdout,
+                pack_line_hex_len,
+            ))
         };
 
     if args.cruft && full_repack {
@@ -1335,7 +1351,13 @@ fn union_oids_from_flat_pack_index_dirs(dirs: &[PathBuf]) -> Result<HashSet<Obje
                 continue;
             }
             if let Ok(idx) = grit_lib::pack::read_pack_index(&path) {
-                out.extend(idx.entries.iter().map(|e| e.oid));
+                out.extend(idx.entries.iter().filter_map(|e| {
+                    if e.oid.len() == 20 {
+                        ObjectId::from_bytes(&e.oid).ok()
+                    } else {
+                        None
+                    }
+                }));
             }
         }
     }
@@ -1368,7 +1390,17 @@ fn remove_superseded_packs_after_full_repack(
         if !name.ends_with(".pack") {
             continue;
         }
-        let oids: HashSet<ObjectId> = idx.entries.iter().map(|e| e.oid).collect();
+        let oids: HashSet<ObjectId> = idx
+            .entries
+            .iter()
+            .filter_map(|e| {
+                if e.oid.len() == 20 {
+                    ObjectId::from_bytes(&e.oid).ok()
+                } else {
+                    None
+                }
+            })
+            .collect();
         by_name.insert(name, oids);
     }
 
@@ -1540,7 +1572,17 @@ fn remove_superseded_packs_incremental(
         if !name.ends_with(".pack") {
             continue;
         }
-        let oids: std::collections::HashSet<_> = idx.entries.iter().map(|e| e.oid).collect();
+        let oids: std::collections::HashSet<grit_lib::objects::ObjectId> = idx
+            .entries
+            .iter()
+            .filter_map(|e| {
+                if e.oid.len() == 20 {
+                    grit_lib::objects::ObjectId::from_bytes(&e.oid).ok()
+                } else {
+                    None
+                }
+            })
+            .collect();
         pack_to_oids.push((name, oids));
     }
 

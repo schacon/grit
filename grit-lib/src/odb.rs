@@ -214,7 +214,11 @@ impl Odb {
         }
         if let Ok(indexes) = pack::read_local_pack_indexes(objects_dir) {
             for idx in &indexes {
-                if idx.entries.iter().any(|e| e.oid == *oid) {
+                if idx
+                    .entries
+                    .iter()
+                    .any(|e| pack::pack_index_entry_matches_sha1_oid(e, oid))
+                {
                     return true;
                 }
             }
@@ -545,7 +549,11 @@ fn freshen_object_in_objects_dir(objects_dir: &Path, oid: &ObjectId) -> bool {
         return false;
     };
     for idx in &indexes {
-        if idx.entries.iter().any(|e| e.oid == *oid) {
+        if idx
+            .entries
+            .iter()
+            .any(|e| pack::pack_index_entry_matches_sha1_oid(e, oid))
+        {
             return touch_path_mtime(&idx.pack_path);
         }
     }

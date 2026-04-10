@@ -726,7 +726,11 @@ fn run_test_tool_find_pack(rest: &[String]) -> Result<()> {
 
     let mut packs: Vec<String> = Vec::new();
     for idx in indexes {
-        if idx.entries.iter().any(|entry| entry.oid == oid) {
+        if idx
+            .entries
+            .iter()
+            .any(|entry| grit_lib::pack::pack_index_entry_matches_sha1_oid(entry, &oid))
+        {
             // Match upstream `test-tool find-pack`: print the real pack path (absolute when
             // possible), not a hard-coded `.git/objects/pack/…` prefix (`t7700-repack` bare repos).
             let p = std::fs::canonicalize(&idx.pack_path).unwrap_or(idx.pack_path);

@@ -1161,17 +1161,25 @@ fn collect_packed_object_sizes(objects_dir: &Path) -> Result<HashMap<ObjectId, u
             Ok(meta) => meta.len(),
             Err(_) => continue,
         };
+        let trailer = idx.hash_bytes as u64;
         let mut offsets: Vec<(u64, ObjectId)> = idx
             .entries
             .into_iter()
-            .map(|entry| (entry.offset, entry.oid))
+            .filter_map(|entry| {
+                if entry.oid.len() != 20 {
+                    return None;
+                }
+                ObjectId::from_bytes(&entry.oid)
+                    .ok()
+                    .map(|oid| (entry.offset, oid))
+            })
             .collect();
         offsets.sort_by_key(|(offset, _)| *offset);
         for (pos, (offset, oid)) in offsets.iter().enumerate() {
             let next_offset = offsets
                 .get(pos + 1)
                 .map(|(next, _)| *next)
-                .unwrap_or_else(|| pack_size.saturating_sub(20));
+                .unwrap_or_else(|| pack_size.saturating_sub(trailer));
             if next_offset < *offset {
                 continue;
             }

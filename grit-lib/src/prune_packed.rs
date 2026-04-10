@@ -109,7 +109,11 @@ fn collect_packed_ids(objects_dir: &Path) -> Result<HashSet<ObjectId>> {
     let mut ids = HashSet::new();
     for idx in indexes {
         for entry in idx.entries {
-            ids.insert(entry.oid);
+            if entry.oid.len() == 20 {
+                if let Ok(oid) = crate::objects::ObjectId::from_bytes(&entry.oid) {
+                    ids.insert(oid);
+                }
+            }
         }
     }
     Ok(ids)

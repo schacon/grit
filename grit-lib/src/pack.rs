@@ -5,10 +5,10 @@
 
 use crate::error::{Error, Result};
 use crate::objects::{Object, ObjectId, ObjectKind};
-use crate::odb::Odb;
 use crate::unpack_objects::apply_delta;
 use flate2::read::ZlibDecoder;
 use sha1::{Digest, Sha1};
+use sha2::Sha256;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io;
@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 /// A parsed entry from an index file.
 #[derive(Debug, Clone)]
 pub struct PackIndexEntry {
-    /// Object identifier.
-    pub oid: ObjectId,
+    /// Raw object identifier (`20` bytes for SHA-1, `32` for SHA-256).
+    pub oid: Vec<u8>,
     /// Byte offset of the object in the corresponding `.pack`.
     pub offset: u64,
 }
@@ -31,6 +31,8 @@ pub struct PackIndex {
     pub idx_path: PathBuf,
     /// Absolute path to the `.pack` file.
     pub pack_path: PathBuf,
+    /// OID width in bytes (`20` for SHA-1, `32` for SHA-256).
+    pub hash_bytes: usize,
     /// Parsed entries in index order.
     pub entries: Vec<PackIndexEntry>,
 }
@@ -41,8 +43,8 @@ pub struct PackIndex {
 /// those entries.  Version-2 index files always carry a CRC32.
 #[derive(Debug, Clone)]
 pub struct ShowIndexEntry {
-    /// Object identifier.
-    pub oid: ObjectId,
+    /// Raw object identifier (20 or 32 bytes).
+    pub oid: Vec<u8>,
     /// Byte offset of the object in the corresponding `.pack` file.
     pub offset: u64,
     /// CRC32 of the compressed object data (v2 only).
@@ -113,7 +115,7 @@ fn show_index_v1(buf: &[u8], pos: &mut usize, hash_size: usize) -> Result<Vec<Sh
             )));
         }
         let offset = read_u32_be(buf, pos)? as u64;
-        let oid = ObjectId::from_bytes(&buf[*pos..*pos + hash_size])?;
+        let oid = buf[*pos..*pos + hash_size].to_vec();
         *pos += hash_size;
         entries.push(ShowIndexEntry {
             oid,
@@ -139,14 +141,14 @@ fn show_index_v2(buf: &[u8], pos: &mut usize, hash_size: usize) -> Result<Vec<Sh
     let object_count = fanout[255] as usize;
 
     // OID table.
-    let mut oids = Vec::with_capacity(object_count);
+    let mut oids: Vec<Vec<u8>> = Vec::with_capacity(object_count);
     for i in 0..object_count {
         if *pos + hash_size > buf.len() {
             return Err(Error::CorruptObject(format!(
-                "unable to read sha1 {i}/{object_count}: truncated"
+                "unable to read oid {i}/{object_count}: truncated"
             )));
         }
-        let oid = ObjectId::from_bytes(&buf[*pos..*pos + hash_size])?;
+        let oid = buf[*pos..*pos + hash_size].to_vec();
         *pos += hash_size;
         oids.push(oid);
     }
@@ -191,7 +193,7 @@ fn show_index_v2(buf: &[u8], pos: &mut usize, hash_size: usize) -> Result<Vec<Sh
 
     let mut next_large = 0usize;
     let mut entries = Vec::with_capacity(object_count);
-    for (i, oid) in oids.into_iter().enumerate() {
+    for (i, oid) in oids.iter().enumerate() {
         let raw = offsets32[i];
         let offset = if (raw & 0x8000_0000) == 0 {
             raw as u64
@@ -209,7 +211,7 @@ fn show_index_v2(buf: &[u8], pos: &mut usize, hash_size: usize) -> Result<Vec<Sh
             off
         };
         entries.push(ShowIndexEntry {
-            oid,
+            oid: oid.clone(),
             offset,
             crc32: Some(crcs[i]),
         });
@@ -278,7 +280,11 @@ pub fn collect_local_pack_info(objects_dir: &Path) -> Result<LocalPackInfo> {
         info.object_count += idx.entries.len();
         info.size_bytes += pack_meta.len() + idx_meta.len();
         for entry in idx.entries {
-            info.object_ids.insert(entry.oid);
+            if entry.oid.len() == 20 {
+                if let Ok(oid) = ObjectId::from_bytes(&entry.oid) {
+                    info.object_ids.insert(oid);
+                }
+            }
         }
     }
     Ok(info)
@@ -322,8 +328,11 @@ pub fn read_pack_index(idx_path: &Path) -> Result<PackIndex> {
     }
     let object_count = fanout[255] as usize;
 
+    let idx_file_len = bytes.len();
+    let hash_bytes = detect_idx_hash_bytes_v2(idx_file_len, pos, object_count, idx_path)?;
+
     let need = pos
-        .saturating_add(object_count * 20)
+        .saturating_add(object_count * hash_bytes)
         .saturating_add(object_count * 4)
         .saturating_add(object_count * 4)
         .saturating_add(40);
@@ -334,11 +343,11 @@ pub fn read_pack_index(idx_path: &Path) -> Result<PackIndex> {
         )));
     }
 
-    let mut oids = Vec::with_capacity(object_count);
+    let mut oids: Vec<Vec<u8>> = Vec::with_capacity(object_count);
     for _ in 0..object_count {
-        let oid = ObjectId::from_bytes(&bytes[pos..pos + 20])?;
-        pos += 20;
-        oids.push(oid);
+        let slice = &bytes[pos..pos + hash_bytes];
+        pos += hash_bytes;
+        oids.push(slice.to_vec());
     }
 
     // Skip CRC table.
@@ -405,8 +414,93 @@ pub fn read_pack_index(idx_path: &Path) -> Result<PackIndex> {
     Ok(PackIndex {
         idx_path: idx_path.to_path_buf(),
         pack_path,
+        hash_bytes,
         entries,
     })
+}
+
+/// Infer OID width for a version-2 index using Git's file-size bounds (`packfile.c` `load_idx`).
+///
+/// The first OID byte cannot disambiguate SHA-1 vs SHA-256 (both use the same fanout slot for
+/// small repos), so we require the total `.idx` size to match exactly one `(hashsz, large_offset_count)` pair.
+fn detect_idx_hash_bytes_v2(
+    idx_file_len: usize,
+    fanout_end: usize,
+    object_count: usize,
+    idx_path: &Path,
+) -> Result<usize> {
+    if object_count == 0 {
+        return Ok(20);
+    }
+    if idx_file_len < 20 {
+        return Err(Error::CorruptObject(format!(
+            "index file {} missing checksum",
+            idx_path.display()
+        )));
+    }
+    let body_without_checksum = idx_file_len.saturating_sub(20);
+
+    for &hb in &[20usize, 32] {
+        // Body is everything before the 20-byte SHA-1 index checksum: tables, optional 64-bit
+        // offset extension, then `hb`-byte pack checksum (see `packfile.c` `load_idx`).
+        let min_body = fanout_end
+            .saturating_add(object_count.saturating_mul(hb + 4 + 4))
+            .saturating_add(hb);
+        if body_without_checksum < min_body {
+            continue;
+        }
+        let mut max_body = min_body;
+        if object_count > 0 {
+            max_body = max_body.saturating_add((object_count - 1).saturating_mul(8));
+        }
+        if body_without_checksum > max_body {
+            continue;
+        }
+        let extra = body_without_checksum.saturating_sub(min_body);
+        if extra % 8 != 0 {
+            continue;
+        }
+        return Ok(hb);
+    }
+
+    Err(Error::CorruptObject(format!(
+        "wrong index v2 file size in {}",
+        idx_path.display()
+    )))
+}
+
+#[must_use]
+pub fn oid_bytes_to_hex(oid: &[u8]) -> String {
+    hex::encode(oid)
+}
+
+/// True when `entry` stores a SHA-1 OID matching `oid` (SHA-256 pack entries are ignored).
+#[must_use]
+pub fn pack_index_entry_matches_sha1_oid(entry: &PackIndexEntry, oid: &ObjectId) -> bool {
+    entry.oid.len() == 20 && entry.oid.as_slice() == oid.as_bytes().as_slice()
+}
+
+/// Hash canonical loose object bytes (`kind SP size NUL data`) with the repo hash width.
+pub fn hash_object_bytes(kind: ObjectKind, data: &[u8], hash_bytes: usize) -> Result<Vec<u8>> {
+    let header = format!("{} {}\0", kind, data.len());
+    match hash_bytes {
+        20 => {
+            let mut hasher = Sha1::new();
+            hasher.update(header.as_bytes());
+            hasher.update(data);
+            Ok(hasher.finalize().to_vec())
+        }
+        32 => {
+            use sha2::Digest as _;
+            let mut hasher = Sha256::new();
+            hasher.update(header.as_bytes());
+            hasher.update(data);
+            Ok(hasher.finalize().to_vec())
+        }
+        other => Err(Error::CorruptObject(format!(
+            "unsupported object hash width: {other}"
+        ))),
+    }
 }
 
 /// A pack object type as encoded in the packed stream header.
@@ -444,8 +538,8 @@ impl PackedType {
 /// A decoded object header record used by `verify-pack`.
 #[derive(Debug, Clone)]
 pub struct VerifyObjectRecord {
-    /// Object ID from the index.
-    pub oid: ObjectId,
+    /// Object ID from the index (20 or 32 raw bytes).
+    pub oid: Vec<u8>,
     /// Type from the pack stream header.
     pub packed_type: PackedType,
     /// Uncompressed object size from the pack header.
@@ -457,7 +551,7 @@ pub struct VerifyObjectRecord {
     /// Delta chain depth, if deltified.
     pub depth: Option<u64>,
     /// Base object for ref-delta objects.
-    pub base_oid: Option<ObjectId>,
+    pub base_oid: Option<Vec<u8>>,
 }
 
 /// Verify one pack/index pair and optionally return object records.
@@ -469,26 +563,48 @@ pub fn verify_pack_and_collect(idx_path: &Path) -> Result<Vec<VerifyObjectRecord
     let idx = read_pack_index(idx_path)?;
     let idx_file_bytes = fs::read(idx_path).map_err(Error::Io)?;
     let pack_bytes = fs::read(&idx.pack_path).map_err(Error::Io)?;
-    if pack_bytes.len() < 12 + 20 {
+    let hb = idx.hash_bytes;
+    if pack_bytes.len() < 12 + hb {
         return Err(Error::CorruptObject(format!(
             "pack file {} is too small",
             idx.pack_path.display()
         )));
     }
-    let pack_end = pack_bytes.len() - 20;
-    {
-        let mut h = Sha1::new();
-        h.update(&pack_bytes[..pack_end]);
-        let digest = h.finalize();
-        if digest.as_slice() != &pack_bytes[pack_end..] {
+    let pack_end = pack_bytes.len() - hb;
+    match hb {
+        20 => {
+            let mut h = Sha1::new();
+            h.update(&pack_bytes[..pack_end]);
+            let digest = h.finalize();
+            if digest.as_slice() != &pack_bytes[pack_end..] {
+                return Err(Error::CorruptObject(format!(
+                    "pack trailing checksum mismatch for {}",
+                    idx.pack_path.display()
+                )));
+            }
+        }
+        32 => {
+            use sha2::Digest as _;
+            let mut h = Sha256::new();
+            h.update(&pack_bytes[..pack_end]);
+            let digest = h.finalize();
+            if digest.as_slice() != &pack_bytes[pack_end..] {
+                return Err(Error::CorruptObject(format!(
+                    "pack trailing checksum mismatch for {}",
+                    idx.pack_path.display()
+                )));
+            }
+        }
+        _ => {
             return Err(Error::CorruptObject(format!(
-                "pack trailing checksum mismatch for {}",
+                "unsupported OID width {} for pack {}",
+                hb,
                 idx.pack_path.display()
             )));
         }
     }
-    if idx_file_bytes.len() >= 40 {
-        let embedded = &idx_file_bytes[idx_file_bytes.len() - 40..idx_file_bytes.len() - 20];
+    if idx_file_bytes.len() >= hb + 20 {
+        let embedded = &idx_file_bytes[idx_file_bytes.len() - (hb + 20)..idx_file_bytes.len() - 20];
         if embedded != &pack_bytes[pack_end..] {
             return Err(Error::CorruptObject(format!(
                 "pack checksum in index does not match {}",
@@ -518,26 +634,26 @@ pub fn verify_pack_and_collect(idx_path: &Path) -> Result<Vec<VerifyObjectRecord
         )));
     }
 
-    let mut by_offset: BTreeMap<u64, ObjectId> = BTreeMap::new();
+    let mut by_offset: BTreeMap<u64, Vec<u8>> = BTreeMap::new();
     for entry in &idx.entries {
-        by_offset.insert(entry.offset, entry.oid);
+        by_offset.insert(entry.offset, entry.oid.clone());
     }
     let offsets: Vec<u64> = by_offset.keys().copied().collect();
     if offsets.is_empty() {
         return Ok(Vec::new());
     }
 
-    let mut by_oid: HashMap<ObjectId, usize> = HashMap::new();
+    let mut by_oid: HashMap<Vec<u8>, usize> = HashMap::new();
     let mut records: Vec<VerifyObjectRecord> = Vec::with_capacity(offsets.len());
     for (i, offset) in offsets.iter().copied().enumerate() {
-        let oid = by_offset.get(&offset).copied().ok_or_else(|| {
+        let oid = by_offset.get(&offset).cloned().ok_or_else(|| {
             Error::CorruptObject(format!("missing object id for offset {}", offset))
         })?;
         let next_off = offsets
             .get(i + 1)
             .copied()
-            .unwrap_or((pack_bytes.len() - 20) as u64);
-        if next_off <= offset || next_off > (pack_bytes.len() - 20) as u64 {
+            .unwrap_or((pack_bytes.len() - hb) as u64);
+        if next_off <= offset || next_off > (pack_bytes.len() - hb) as u64 {
             return Err(Error::CorruptObject(format!(
                 "invalid object boundaries at offset {} in {}",
                 offset,
@@ -546,18 +662,18 @@ pub fn verify_pack_and_collect(idx_path: &Path) -> Result<Vec<VerifyObjectRecord
         }
         let mut p = offset as usize;
         let (packed_type, size) = parse_pack_object_header(&pack_bytes, &mut p)?;
-        let mut base_oid = None;
+        let mut base_oid: Option<Vec<u8>> = None;
         let mut depth = None;
 
         match packed_type {
             PackedType::RefDelta => {
-                if p + 20 > pack_bytes.len() {
+                if p + hb > pack_bytes.len() {
                     return Err(Error::CorruptObject(format!(
                         "truncated ref-delta base at offset {}",
                         offset
                     )));
                 }
-                base_oid = Some(ObjectId::from_bytes(&pack_bytes[p..p + 20])?);
+                base_oid = Some(pack_bytes[p..p + hb].to_vec());
             }
             PackedType::OfsDelta => {
                 let base_offset = parse_ofs_delta_base(&pack_bytes, &mut p, offset)?;
@@ -573,7 +689,7 @@ pub fn verify_pack_and_collect(idx_path: &Path) -> Result<Vec<VerifyObjectRecord
 
         let size_in_pack = next_off - offset;
         records.push(VerifyObjectRecord {
-            oid,
+            oid: oid.clone(),
             packed_type,
             size,
             size_in_pack,
@@ -584,30 +700,30 @@ pub fn verify_pack_and_collect(idx_path: &Path) -> Result<Vec<VerifyObjectRecord
         by_oid.insert(oid, i);
     }
 
-    // Fill ref-delta depths in a second pass once all base objects are known.
     for i in 0..records.len() {
         if records[i].packed_type != PackedType::RefDelta {
             continue;
         }
         let base = records[i]
             .base_oid
+            .as_ref()
             .ok_or_else(|| Error::CorruptObject("ref-delta missing base oid".to_owned()))?;
         let base_depth = by_oid
-            .get(&base)
-            .and_then(|idx| records.get(*idx))
+            .get(base)
+            .and_then(|ix| records.get(*ix))
             .and_then(|r| r.depth)
             .unwrap_or(0);
         records[i].depth = Some(base_depth + 1);
     }
 
-    // Confirm each index OID matches the resolved object bytes (catches swapped .idx/.pack pairs).
     for entry in &idx.entries {
-        let obj = read_object_from_pack(&idx, &entry.oid)?;
-        let computed = Odb::hash_object_data(obj.kind, &obj.data);
-        if computed != entry.oid {
+        let obj = read_object_from_pack_bytes(&pack_bytes, &idx, &entry.oid)?;
+        let computed = hash_object_bytes(obj.kind, &obj.data, hb)?;
+        if computed.as_slice() != entry.oid.as_slice() {
             return Err(Error::CorruptObject(format!(
                 "pack object hash mismatch at offset {} (index says {})",
-                entry.offset, entry.oid
+                entry.offset,
+                oid_bytes_to_hex(&entry.oid)
             )));
         }
     }
@@ -731,21 +847,25 @@ fn read_pack_object_at(
             Ok((base_kind, result))
         }
         PackedType::RefDelta => {
-            if pos + 20 > pack_bytes.len() {
+            let hb = idx.hash_bytes;
+            if pos + hb > pack_bytes.len() {
                 return Err(Error::CorruptObject(
                     "truncated ref-delta base OID".to_owned(),
                 ));
             }
-            let base_oid = ObjectId::from_bytes(&pack_bytes[pos..pos + 20])?;
-            pos += 20;
+            let base_raw = pack_bytes[pos..pos + hb].to_vec();
+            pos += hb;
             let delta_data = decompress_pack_data(pack_bytes, &mut pos, size)?;
             // Find the base in the same pack index
             let base_entry = idx
                 .entries
                 .iter()
-                .find(|e| e.oid == base_oid)
+                .find(|e| e.oid == base_raw)
                 .ok_or_else(|| {
-                    Error::CorruptObject(format!("ref-delta base {} not found in pack", base_oid))
+                    Error::CorruptObject(format!(
+                        "ref-delta base {} not found in pack",
+                        oid_bytes_to_hex(&base_raw)
+                    ))
                 })?;
             let (base_kind, base_data) =
                 read_pack_object_at(pack_bytes, base_entry.offset, idx, depth + 1)?;
@@ -767,11 +887,25 @@ pub fn read_object_from_pack(idx: &PackIndex, oid: &ObjectId) -> Result<Object> 
     let entry = idx
         .entries
         .iter()
-        .find(|e| e.oid == *oid)
+        .find(|e| e.oid.len() == 20 && e.oid.as_slice() == oid.as_bytes().as_slice())
         .ok_or_else(|| Error::ObjectNotFound(oid.to_hex()))?;
 
     let pack_bytes = fs::read(&idx.pack_path).map_err(Error::Io)?;
-    let (kind, data) = read_pack_object_at(&pack_bytes, entry.offset, idx, 0)?;
+    read_object_from_pack_bytes(&pack_bytes, idx, &entry.oid)
+}
+
+/// Resolve an object from already-loaded pack bytes (used by `verify-pack`).
+pub fn read_object_from_pack_bytes(
+    pack_bytes: &[u8],
+    idx: &PackIndex,
+    oid: &[u8],
+) -> Result<Object> {
+    let entry = idx
+        .entries
+        .iter()
+        .find(|e| e.oid.as_slice() == oid)
+        .ok_or_else(|| Error::ObjectNotFound(oid_bytes_to_hex(oid)))?;
+    let (kind, data) = read_pack_object_at(pack_bytes, entry.offset, idx, 0)?;
     Ok(Object::new(kind, data))
 }
 
@@ -783,7 +917,11 @@ pub fn read_object_from_pack(idx: &PackIndex, oid: &ObjectId) -> Result<Object> 
 pub fn read_object_from_packs(objects_dir: &Path, oid: &ObjectId) -> Result<Object> {
     let indexes = read_local_pack_indexes(objects_dir)?;
     for idx in &indexes {
-        if idx.entries.iter().any(|e| e.oid == *oid) {
+        if idx
+            .entries
+            .iter()
+            .any(|e| e.oid.len() == 20 && e.oid.as_slice() == oid.as_bytes().as_slice())
+        {
             return read_object_from_pack(idx, oid);
         }
     }
@@ -808,29 +946,40 @@ pub fn packed_ref_delta_reuse_slice(
     let mut indexes = read_local_pack_indexes(objects_dir)?;
     sort_pack_indexes_oldest_first(&mut indexes);
     for idx in indexes {
-        let Some(entry) = idx.entries.iter().find(|e| e.oid == *oid) else {
+        let Some(entry) = idx
+            .entries
+            .iter()
+            .find(|e| e.oid.len() == 20 && e.oid.as_slice() == oid.as_bytes().as_slice())
+        else {
             continue;
         };
+        let hb = idx.hash_bytes;
+        if hb != 20 {
+            continue;
+        }
         let pack_bytes = fs::read(&idx.pack_path).map_err(Error::Io)?;
         let mut p = entry.offset as usize;
         let (packed_type, _size) = parse_pack_object_header(&pack_bytes, &mut p)?;
         let base = match packed_type {
             PackedType::RefDelta => {
-                if p + 20 > pack_bytes.len() {
+                if p + hb > pack_bytes.len() {
                     return Err(Error::CorruptObject(
                         "truncated ref-delta base oid while scanning for reuse".to_owned(),
                     ));
                 }
-                let oid = ObjectId::from_bytes(&pack_bytes[p..p + 20])?;
-                p += 20;
-                oid
+                let bo = ObjectId::from_bytes(&pack_bytes[p..p + hb])?;
+                p += hb;
+                bo
             }
             PackedType::OfsDelta => {
                 let base_off = parse_ofs_delta_base(&pack_bytes, &mut p, entry.offset)?;
                 let Some(base_entry) = idx.entries.iter().find(|e| e.offset == base_off) else {
                     continue;
                 };
-                base_entry.oid
+                if base_entry.oid.len() != 20 {
+                    continue;
+                }
+                ObjectId::from_bytes(base_entry.oid.as_slice())?
             }
             _ => {
                 // Same OID may exist as a full object in an older pack and as a delta in a newer
@@ -843,7 +992,7 @@ pub fn packed_ref_delta_reuse_slice(
         }
         let zlib_start = p;
         let mut end_pos = zlib_start;
-        if skip_one_pack_object(&pack_bytes, &mut end_pos, entry.offset).is_err() {
+        if skip_one_pack_object(&pack_bytes, &mut end_pos, entry.offset, hb).is_err() {
             continue;
         }
         let compressed = &pack_bytes[zlib_start..end_pos];
@@ -887,7 +1036,14 @@ pub fn packed_delta_base_oid(objects_dir: &Path, oid: &ObjectId) -> Result<Optio
     let mut indexes = read_local_pack_indexes(objects_dir)?;
     sort_pack_indexes_newest_first(&mut indexes);
     for idx in &indexes {
-        let Some(entry) = idx.entries.iter().find(|e| e.oid == *oid) else {
+        if idx.hash_bytes != 20 {
+            continue;
+        }
+        let Some(entry) = idx
+            .entries
+            .iter()
+            .find(|e| e.oid.len() == 20 && e.oid.as_slice() == oid.as_bytes().as_slice())
+        else {
             continue;
         };
         let pack_bytes = fs::read(&idx.pack_path).map_err(Error::Io)?;
@@ -895,10 +1051,11 @@ pub fn packed_delta_base_oid(objects_dir: &Path, oid: &ObjectId) -> Result<Optio
         let (packed_type, _) = parse_pack_object_header(&pack_bytes, &mut p)?;
         match packed_type {
             PackedType::RefDelta => {
-                if p + 20 > pack_bytes.len() {
+                let hb = idx.hash_bytes;
+                if p + hb > pack_bytes.len() {
                     return Err(Error::CorruptObject("truncated ref-delta base".to_owned()));
                 }
-                return Ok(Some(ObjectId::from_bytes(&pack_bytes[p..p + 20])?));
+                return Ok(Some(ObjectId::from_bytes(&pack_bytes[p..p + hb])?));
             }
             PackedType::OfsDelta => {
                 let base_off = parse_ofs_delta_base(&pack_bytes, &mut p, entry.offset)?;
@@ -906,7 +1063,7 @@ pub fn packed_delta_base_oid(objects_dir: &Path, oid: &ObjectId) -> Result<Optio
                     .entries
                     .iter()
                     .find(|e| e.offset == base_off)
-                    .map(|e| e.oid));
+                    .and_then(|e| ObjectId::from_bytes(e.oid.as_slice()).ok()));
             }
             _ => continue,
         }
@@ -1011,15 +1168,26 @@ fn parse_ofs_delta_base(bytes: &[u8], pos: &mut usize, this_offset: u64) -> Resu
 /// `object_start_offset` is the byte offset of this object within the pack file
 /// (used for `OFS_DELTA` base resolution).
 /// Raw bytes of one packed object (header + zlib payload) starting at `object_start_offset`.
+///
+/// `hash_bytes` is the ref-delta base OID width in this pack (`20` for SHA-1, `32` for SHA-256).
 #[must_use]
-pub fn slice_one_pack_object(bytes: &[u8], object_start_offset: u64) -> Result<&[u8]> {
+pub fn slice_one_pack_object(
+    bytes: &[u8],
+    object_start_offset: u64,
+    hash_bytes: usize,
+) -> Result<&[u8]> {
     let start = object_start_offset as usize;
     let mut pos = start;
-    skip_one_pack_object(bytes, &mut pos, object_start_offset)?;
+    skip_one_pack_object(bytes, &mut pos, object_start_offset, hash_bytes)?;
     Ok(&bytes[start..pos])
 }
 
-pub fn skip_one_pack_object(bytes: &[u8], pos: &mut usize, object_start_offset: u64) -> Result<()> {
+pub fn skip_one_pack_object(
+    bytes: &[u8],
+    pos: &mut usize,
+    object_start_offset: u64,
+    hash_bytes: usize,
+) -> Result<()> {
     let (packed_type, size) = parse_pack_object_header(bytes, pos)?;
     match packed_type {
         PackedType::Commit | PackedType::Tree | PackedType::Blob | PackedType::Tag => {
@@ -1030,10 +1198,10 @@ pub fn skip_one_pack_object(bytes: &[u8], pos: &mut usize, object_start_offset: 
             *pos += dec.total_in() as usize;
         }
         PackedType::RefDelta => {
-            if *pos + 20 > bytes.len() {
+            if *pos + hash_bytes > bytes.len() {
                 return Err(Error::CorruptObject("truncated ref-delta base oid".into()));
             }
-            *pos += 20;
+            *pos += hash_bytes;
             let mut dec = ZlibDecoder::new(&bytes[*pos..]);
             let mut tmp = Vec::with_capacity(size as usize);
             dec.read_to_end(&mut tmp)
@@ -1085,5 +1253,11 @@ fn read_u64_be(bytes: &[u8], pos: &mut usize) -> Result<u64> {
 /// Read all object IDs from a `.idx` file.
 pub fn read_idx_object_ids(idx_path: &Path) -> Result<Vec<ObjectId>> {
     let index = read_pack_index(idx_path)?;
-    Ok(index.entries.into_iter().map(|e| e.oid).collect())
+    let mut out = Vec::new();
+    for e in index.entries {
+        if e.oid.len() == 20 {
+            out.push(ObjectId::from_bytes(&e.oid)?);
+        }
+    }
+    Ok(out)
 }

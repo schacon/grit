@@ -2,7 +2,9 @@
 
 use anyhow::{bail, Result};
 use clap::Args as ClapArgs;
-use grit_lib::pack::verify_pack_and_collect;
+use grit_lib::config::ConfigSet;
+use grit_lib::pack::{oid_bytes_to_hex, verify_pack_and_collect};
+use grit_lib::repo::Repository;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -17,7 +19,7 @@ pub struct Args {
     #[arg(short = 's', long = "stat-only")]
     pub stat_only: bool,
 
-    /// Hash algorithm selector (accepted for compatibility; currently ignored).
+    /// Hash algorithm selector (used when verifying outside a matching repository).
     #[arg(long = "object-format")]
     pub object_format: Option<String>,
 
@@ -29,33 +31,62 @@ pub struct Args {
 /// Run `grit verify-pack`.
 pub fn run(args: Args) -> Result<()> {
     if let Some(fmt) = &args.object_format {
-        if fmt != "sha1" {
+        if fmt != "sha1" && fmt != "sha256" {
             bail!("unsupported object format: {fmt}");
         }
     }
 
+    let repo_is_sha256 = Repository::discover(None)
+        .ok()
+        .and_then(|r| ConfigSet::load(Some(&r.git_dir), true).ok())
+        .is_some_and(|c| {
+            c.get("extensions.objectformat")
+                .or_else(|| c.get("extensions.objectFormat"))
+                .is_some_and(|v| v.eq_ignore_ascii_case("sha256"))
+        });
+    let effective_sha256 = args.object_format.as_deref() == Some("sha256") || repo_is_sha256;
+
     let mut any_error = false;
     for input in &args.packs {
         let idx_path = normalize_to_idx(input);
+        if !effective_sha256 {
+            match grit_lib::pack::read_pack_index(&idx_path) {
+                Ok(idx) => {
+                    if idx.hash_bytes == 32 {
+                        eprintln!("wrong index v2 file size in {}", idx_path.display());
+                        eprintln!(
+                            "fatal: Cannot open existing pack idx file for '{}'",
+                            normalize_to_pack(input).display()
+                        );
+                        any_error = true;
+                        continue;
+                    }
+                }
+                Err(_) => {
+                    any_error = true;
+                    continue;
+                }
+            }
+        }
         match verify_pack_and_collect(&idx_path) {
             Ok(records) => {
                 if args.verbose && !args.stat_only {
                     for rec in &records {
-                        if let Some(base_oid) = rec.base_oid {
+                        if let Some(ref base_oid) = rec.base_oid {
                             println!(
                                 "{} {} {} {} {} {} {}",
-                                rec.oid,
+                                oid_bytes_to_hex(&rec.oid),
                                 rec.packed_type.as_str(),
                                 rec.size,
                                 rec.size_in_pack,
                                 rec.offset,
                                 rec.depth.unwrap_or(1),
-                                base_oid
+                                oid_bytes_to_hex(base_oid)
                             );
                         } else if let Some(depth) = rec.depth {
                             println!(
                                 "{} {} {} {} {} {}",
-                                rec.oid,
+                                oid_bytes_to_hex(&rec.oid),
                                 rec.packed_type.as_str(),
                                 rec.size,
                                 rec.size_in_pack,
@@ -65,7 +96,7 @@ pub fn run(args: Args) -> Result<()> {
                         } else {
                             println!(
                                 "{} {} {} {} {}",
-                                rec.oid,
+                                oid_bytes_to_hex(&rec.oid),
                                 rec.packed_type.as_str(),
                                 rec.size,
                                 rec.size_in_pack,

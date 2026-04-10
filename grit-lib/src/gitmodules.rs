@@ -1049,7 +1049,11 @@ pub fn oids_from_copied_object_paths(copied: &[PathBuf]) -> Result<HashSet<Objec
         if name.ends_with(".idx") {
             let idx = read_pack_index(p)?;
             for e in &idx.entries {
-                out.insert(e.oid);
+                if e.oid.len() == 20 {
+                    if let Ok(oid) = ObjectId::from_bytes(&e.oid) {
+                        out.insert(oid);
+                    }
+                }
             }
             continue;
         }

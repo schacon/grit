@@ -655,7 +655,11 @@ fn collect_all_loose_object_ids(objects_dir: &Path, oids: &mut BTreeSet<ObjectId
 fn collect_pack_object_ids(objects_dir: &Path, oids: &mut BTreeSet<ObjectId>) -> Result<()> {
     for idx in pack::read_local_pack_indexes(objects_dir)? {
         for e in idx.entries {
-            oids.insert(e.oid);
+            if e.oid.len() == 20 {
+                if let Ok(oid) = ObjectId::from_bytes(&e.oid) {
+                    oids.insert(oid);
+                }
+            }
         }
     }
     Ok(())
@@ -716,15 +720,18 @@ fn append_packed_disk_entries(objects_dir: &Path, out: &mut Vec<(ObjectId, u64)>
             Ok(meta) => meta.len(),
             Err(_) => continue,
         };
-        let trailer = idx
-            .entries
-            .first()
-            .map(|e| pack_checksum_trailer_len(&e.oid))
-            .unwrap_or(20);
+        let trailer = idx.hash_bytes as u64;
         let mut offsets: Vec<(u64, ObjectId)> = idx
             .entries
             .into_iter()
-            .map(|entry| (entry.offset, entry.oid))
+            .filter_map(|entry| {
+                if entry.oid.len() != 20 {
+                    return None;
+                }
+                ObjectId::from_bytes(&entry.oid)
+                    .ok()
+                    .map(|oid| (entry.offset, oid))
+            })
             .collect();
         offsets.sort_by_key(|(offset, _)| *offset);
         for (pos, (offset, oid)) in offsets.iter().enumerate() {
@@ -1616,13 +1623,6 @@ fn apply_format(
         .replace("%(objectmode)", object_mode)
         .replace("%(rest)", rest)
         .replace("%(deltabase)", deltabase_hex)
-}
-
-fn pack_checksum_trailer_len(sample_oid: &ObjectId) -> u64 {
-    match sample_oid.to_hex().len() {
-        64 => 32,
-        _ => 20,
-    }
 }
 
 fn append_packed_object_sizes(

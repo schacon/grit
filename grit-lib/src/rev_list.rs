@@ -2183,7 +2183,11 @@ fn packed_object_set(repo: &Repository) -> HashSet<ObjectId> {
     if let Ok(indexes) = pack::read_local_pack_indexes(objects_dir) {
         for idx in indexes {
             for e in idx.entries {
-                out.insert(e.oid);
+                if e.oid.len() == 20 {
+                    if let Ok(oid) = crate::objects::ObjectId::from_bytes(&e.oid) {
+                        out.insert(oid);
+                    }
+                }
             }
         }
     }
