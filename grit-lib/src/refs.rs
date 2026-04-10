@@ -18,8 +18,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::objects::ObjectId;
+use crate::pack;
 
 /// A symbolic or direct reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -747,6 +749,29 @@ fn ref_storage_dir(git_dir: &Path, refname: &str) -> PathBuf {
     common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf())
 }
 
+/// Normalize a ref prefix for filesystem traversal and packed-ref filtering.
+///
+/// Loose refs live in a directory tree mirroring ref names. A prefix like
+/// `refs/remotes/origin` (no trailing slash) must map to the `origin/` directory
+/// under `refs/remotes/`, not to a sibling file named `origin`. When the prefix
+/// already names a **single loose ref file** (e.g. `refs/heads/main`), keep it
+/// without a trailing slash so we read that file instead of a non-existent
+/// directory.
+fn normalize_list_refs_prefix(git_dir: &Path, prefix: &str) -> String {
+    if prefix.is_empty() {
+        return String::new();
+    }
+    if prefix.ends_with('/') {
+        return prefix.to_string();
+    }
+    let candidate = ref_storage_dir(git_dir, prefix).join(prefix);
+    if candidate.is_file() {
+        prefix.to_string()
+    } else {
+        format!("{prefix}/")
+    }
+}
+
 /// List all refs under a given prefix (e.g. `"refs/heads/"`).
 ///
 /// Dispatches to the reftable backend when `extensions.refStorage = reftable`.
@@ -757,6 +782,8 @@ fn ref_storage_dir(git_dir: &Path, refname: &str) -> PathBuf {
 ///
 /// Returns [`Error::Io`] on directory traversal errors.
 pub fn list_refs(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>> {
+    let prefix_norm = normalize_list_refs_prefix(git_dir, prefix);
+    let prefix = prefix_norm.as_str();
     if crate::reftable::is_reftable_repo(git_dir) {
         return crate::reftable::reftable_list_refs(git_dir, prefix);
     }
@@ -769,17 +796,71 @@ pub fn list_refs(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>
         if cdir != git_dir {
             collect_packed_refs_into_map(&cdir, prefix, &mut by_name)?;
             let cbase = cdir.join(prefix);
-            collect_loose_refs_into_map(&cbase, prefix, &cdir, &mut by_name)?;
+            if cbase.is_file() {
+                let refname = prefix.trim_end_matches('/');
+                if let Ok(oid) = resolve_ref(&cdir, refname) {
+                    by_name.insert(refname.to_string(), oid);
+                }
+            } else {
+                collect_loose_refs_into_map(&cbase, prefix, &cdir, &mut by_name)?;
+            }
         }
     }
 
     collect_packed_refs_into_map(git_dir, prefix, &mut by_name)?;
     let base = git_dir.join(prefix);
-    collect_loose_refs_into_map(&base, prefix, git_dir, &mut by_name)?;
+    if base.is_file() {
+        let refname = prefix.trim_end_matches('/');
+        if let Ok(oid) = resolve_ref(git_dir, refname) {
+            by_name.insert(refname.to_string(), oid);
+        }
+    } else {
+        collect_loose_refs_into_map(&base, prefix, git_dir, &mut by_name)?;
+    }
 
     let mut results: Vec<(String, ObjectId)> = by_name.into_iter().collect();
     results.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(results)
+}
+
+/// Collect commit OIDs from alternate repositories' refs, matching Git's
+/// `git for-each-ref --format=%(objectname)` on each alternate (with optional
+/// `core.alternateRefsPrefixes` arguments).
+///
+/// Order is preserved: alternates file order, then ref iteration order from
+/// [`list_refs`] under each configured prefix (or all of `refs/` when no
+/// prefixes are set). Duplicate OIDs are skipped while preserving first-seen
+/// order.
+pub fn collect_alternate_ref_oids(receiving_git_dir: &Path) -> Result<Vec<ObjectId>> {
+    let config = ConfigSet::load(Some(receiving_git_dir), true)?;
+    let objects_dir = receiving_git_dir.join("objects");
+    let alternates = pack::read_alternates_recursive(&objects_dir).unwrap_or_default();
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for alt_objects in alternates {
+        let Some(alt_git_dir) = alt_objects.parent().map(PathBuf::from) else {
+            continue;
+        };
+        if !alt_git_dir.join("refs").is_dir() {
+            continue;
+        }
+        if let Some(prefixes) = config.get("core.alternateRefsPrefixes") {
+            for part in prefixes.split_whitespace() {
+                for (_, oid) in list_refs(&alt_git_dir, part)? {
+                    if seen.insert(oid) {
+                        out.push(oid);
+                    }
+                }
+            }
+        } else {
+            for (_, oid) in list_refs(&alt_git_dir, "refs/")? {
+                if seen.insert(oid) {
+                    out.push(oid);
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// List refs matching a glob pattern (e.g. `refs/heads/topic/*`).
@@ -790,12 +871,18 @@ pub fn list_refs_glob(git_dir: &Path, pattern: &str) -> Result<Vec<(String, Obje
             Some(slash) => &pattern[..=slash],
             None => "",
         },
-        None => pattern,
+        None => {
+            if let Some(slash) = pattern.rfind('/') {
+                &pattern[..=slash]
+            } else {
+                pattern
+            }
+        }
     };
     let all = list_refs(git_dir, prefix)?;
     let mut results = Vec::new();
     for (refname, oid) in all {
-        if glob_match(pattern, &refname) {
+        if ref_matches_glob(&refname, pattern) {
             results.push((refname, oid));
         }
     }
@@ -908,6 +995,19 @@ pub fn resolve_at_n_branch(git_dir: &Path, spec: &str) -> Result<String> {
     )))
 }
 
+fn ref_name_matches_list_prefix(refname: &str, prefix: &str) -> bool {
+    if refname.starts_with(prefix) {
+        return true;
+    }
+    if prefix.ends_with('/') {
+        let trimmed = prefix.trim_end_matches('/');
+        if refname == trimmed {
+            return true;
+        }
+    }
+    false
+}
+
 fn collect_packed_refs_into_map(
     git_dir: &Path,
     prefix: &str,
@@ -927,7 +1027,7 @@ fn collect_packed_refs_into_map(
         let mut parts = line.splitn(2, ' ');
         let hash = parts.next().unwrap_or("");
         let refname = parts.next().unwrap_or("").trim();
-        if !refname.starts_with(prefix) || hash.len() != 40 {
+        if !ref_name_matches_list_prefix(refname, prefix) || hash.len() != 40 {
             continue;
         }
         let oid: ObjectId = hash.parse()?;

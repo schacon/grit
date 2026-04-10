@@ -1539,7 +1539,9 @@ pub fn reftable_list_refs(git_dir: &Path, prefix: &str) -> Result<Vec<(String, O
     let refs = stack.read_refs()?;
     let mut result = Vec::new();
     for rec in refs {
-        if rec.name.starts_with(prefix) {
+        let matches_prefix = rec.name.starts_with(prefix)
+            || (prefix.ends_with('/') && rec.name == prefix.trim_end_matches('/'));
+        if matches_prefix {
             match rec.value {
                 RefValue::Val1(oid) => result.push((rec.name, oid)),
                 RefValue::Val2(oid, _) => result.push((rec.name, oid)),

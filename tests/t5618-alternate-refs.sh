@@ -33,18 +33,21 @@ test_expect_success 'set up shared clone' '
 '
 
 test_expect_success 'rev-list --alternate-refs' '
+	cd child &&
 	git rev-list --remotes=origin >expect &&
 	git rev-list --alternate-refs >actual &&
 	test_cmp expect actual
 '
 
 test_expect_success 'rev-list --not --alternate-refs' '
+	cd child &&
 	git rev-parse HEAD >expect &&
 	git rev-list HEAD --not --alternate-refs >actual &&
 	test_cmp expect actual
 '
 
 test_expect_success 'limiting with alternateRefsPrefixes' '
+	cd child &&
 	test_config core.alternateRefsPrefixes refs/heads/one &&
 	git rev-list origin/one >expect &&
 	git rev-list --alternate-refs >actual &&
@@ -52,8 +55,10 @@ test_expect_success 'limiting with alternateRefsPrefixes' '
 '
 
 test_expect_success 'log --source shows .alternate marker' '
+	cd child &&
 	git log --oneline --source --remotes=origin >expect.orig &&
 	sed "s/origin.* /.alternate /" <expect.orig >expect &&
+	test_unconfig core.alternateRefsPrefixes &&
 	git log --oneline --source --alternate-refs >actual &&
 	test_cmp expect actual
 '

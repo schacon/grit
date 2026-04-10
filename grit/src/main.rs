@@ -3769,6 +3769,31 @@ fn preprocess_log_pickaxe_args(rest: Vec<String>) -> Vec<String> {
     out
 }
 
+fn preprocess_log_remotes(rest: &[String]) -> Vec<String> {
+    let mut result = Vec::with_capacity(rest.len());
+    let mut i = 0usize;
+    while i < rest.len() {
+        let arg = &rest[i];
+        if arg == "--" {
+            result.extend_from_slice(&rest[i..]);
+            break;
+        }
+        if arg == "--remotes" {
+            result.push("--grit-internal-remotes=".to_string());
+            i += 1;
+            continue;
+        }
+        if let Some(pat) = arg.strip_prefix("--remotes=") {
+            result.push(format!("--grit-internal-remotes={pat}"));
+            i += 1;
+            continue;
+        }
+        result.push(arg.clone());
+        i += 1;
+    }
+    result
+}
+
 fn preprocess_log_args(rest: &[String]) -> Vec<String> {
     let mut result = Vec::new();
     let mut saw_graph = false;
@@ -4458,7 +4483,8 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "interpret-trailers" => commands::interpret_trailers::run_from_argv(rest),
         "last-modified" => commands::last_modified::run(parse_cmd_args(subcmd, rest)),
         "log" => {
-            let rest = preprocess_log_pickaxe_args(preprocess_log_args(rest));
+            let rest = preprocess_log_remotes(rest);
+            let rest = preprocess_log_pickaxe_args(preprocess_log_args(&rest));
             commands::log::run(parse_cmd_args(subcmd, &rest))
         }
         "ls-files" => commands::ls_files::run(parse_cmd_args(subcmd, rest)),
