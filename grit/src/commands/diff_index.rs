@@ -1381,9 +1381,14 @@ fn write_raw_diff_entry_z(
 ) -> Result<()> {
     let width = abbrev.unwrap_or(40).clamp(4, 40);
 
+    // Uncached `diff-index` additions: old side is absent in the tree (zeros). The new side is the
+    // index blob OID when the work tree still matches the index; when the file differs from the
+    // index, the diff machinery records a placeholder zero OID. Skip-worktree / assume-unchanged
+    // uses the normal OID path (t7011). See t4007-rename-3 and t1501-work-tree.
     let (old_oid_disp, new_oid_disp) = if diff_index_uncached
         && entry.status == DiffStatus::Added
         && !raw_diff_index_show_index_oid_for_added(index, entry)
+        && entry.new_oid == zero_oid()
     {
         ("0".repeat(width), "0".repeat(width))
     } else {
@@ -1448,6 +1453,7 @@ fn render_raw_diff_entry(
     let (old_oid_disp, new_oid_disp) = if diff_index_uncached
         && entry.status == DiffStatus::Added
         && !raw_diff_index_show_index_oid_for_added(index, entry)
+        && entry.new_oid == zero_oid()
     {
         ("0".repeat(width), "0".repeat(width))
     } else {
