@@ -5,9 +5,12 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
+use grit_lib::crlf;
 use grit_lib::diff::{
-    count_changes, detect_copies, format_stat_line, rewrite_dissimilarity_index_percent,
-    should_break_rewrite_for_stat, stat_matches, unified_diff, zero_oid, DiffEntry, DiffStatus,
+    count_changes, detect_copies, format_stat_line, hash_worktree_file,
+    rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat, stat_matches, unified_diff,
+    zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
@@ -616,12 +619,24 @@ fn collect_changes(
 
     let mut changes: BTreeMap<String, Change> = BTreeMap::new();
 
+    let attr_rules = crlf::load_gitattributes_for_checkout(work_tree, "", &index, &repo.odb);
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let conv = crlf::ConversionConfig::from_config(&config);
+
     if options.stage == 0 {
         // Normal mode: compare stage-0 entries against worktree.
         // Use stat info to skip unchanged files (avoid hashing).
         for (path, (idx_mode, idx_oid, idx_entry)) in &stage0 {
             let abs = work_tree.join(path);
-            match read_worktree_info_fast(repo, &abs, idx_entry)? {
+            match read_worktree_info_fast(
+                repo,
+                &abs,
+                path.as_str(),
+                idx_entry,
+                &attr_rules,
+                &config,
+                &conv,
+            )? {
                 WorktreeStatus::Unchanged => { /* skip — stat says identical */ }
                 WorktreeStatus::Modified(wt_mode, wt_oid) => {
                     let idx_canonical = canonicalize_mode(*idx_mode);
@@ -1075,7 +1090,11 @@ fn path_component_is_not_directory(err: &std::io::Error) -> bool {
 fn read_worktree_info_fast(
     repo: &Repository,
     abs_path: &Path,
+    rel_path: &str,
     index_entry: &IndexEntry,
+    attr_rules: &[crlf::AttrRule],
+    config: &ConfigSet,
+    conv: &crlf::ConversionConfig,
 ) -> Result<WorktreeStatus> {
     if index_entry.assume_unchanged() || index_entry.skip_worktree() {
         return Ok(WorktreeStatus::Unchanged);
@@ -1098,9 +1117,9 @@ fn read_worktree_info_fast(
         Err(e) => return Err(e.into()),
     };
 
-    let _ = repo;
-
-    // Fast path: if stat info matches the index, file is unchanged.
+    // Fast path: if stat info matches the index, the file is *probably* unchanged.
+    // Git still re-hashes when size+timestamps match but content was rewritten in place
+    // ("racy git"); same-size edits after `git add` must not look clean (`t4124`).
     // But also check if the index mode differs from the worktree mode
     // (e.g., after git update-index --chmod=+x).
     if meta.file_type().is_file() && stat_matches(index_entry, &meta) {
@@ -1111,7 +1130,20 @@ fn read_worktree_info_fast(
         };
         let idx_mode = canonicalize_mode(index_entry.mode);
         if wt_mode == idx_mode {
-            return Ok(WorktreeStatus::Unchanged);
+            let file_attrs = crlf::get_file_attrs(attr_rules, rel_path, false, config);
+            let wt_oid = hash_worktree_file(
+                &repo.odb,
+                abs_path,
+                &meta,
+                conv,
+                &file_attrs,
+                rel_path,
+                Some(index_entry),
+            )?;
+            if wt_oid == index_entry.oid {
+                return Ok(WorktreeStatus::Unchanged);
+            }
+            return Ok(WorktreeStatus::Modified(wt_mode, wt_oid));
         }
         // Mode differs — report as modified with same OID.
         return Ok(WorktreeStatus::Modified(wt_mode, index_entry.oid));

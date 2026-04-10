@@ -1223,6 +1223,12 @@ pub fn convert_to_worktree(
     Ok(buf)
 }
 
+/// Whether `convert_to_worktree` would apply LF→CRLF smudge for this blob and attributes.
+#[must_use]
+pub fn would_smudge_lf_to_crlf(data: &[u8], conv: &ConversionConfig, attrs: &FileAttrs) -> bool {
+    should_convert_to_crlf(conv, attrs, data)
+}
+
 /// Decide whether to convert LF→CRLF on output.
 fn should_convert_to_crlf(conv: &ConversionConfig, attrs: &FileAttrs, data: &[u8]) -> bool {
     match attrs.crlf_legacy {
