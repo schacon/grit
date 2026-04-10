@@ -512,7 +512,7 @@ pub fn format_parent_patch(
     } else {
         blob_text_for_diff(git_dir, config, path, &new_blob, use_textconv)
     };
-    let patch = crate::diff::unified_diff(&old_t, &new_t, path, path, context);
+    let patch = crate::diff::unified_diff(&old_t, &new_t, path, path, context, true);
     out.push_str(&patch);
     Some(out)
 }

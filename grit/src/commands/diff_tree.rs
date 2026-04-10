@@ -237,6 +237,9 @@ fn spec_names_commit_or_tree(repo: &Repository, spec: &str) -> bool {
 /// Parse the raw argument vector.
 fn parse_options(repo: &Repository, argv: &[String]) -> Result<Options> {
     let mut opts = Options::default();
+    let cfg_early = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let (cli_ind, cli_no) = grit_lib::diff::parse_indent_heuristic_cli_flags(argv);
+    opts.indent_heuristic = grit_lib::diff::resolve_indent_heuristic(&cfg_early, cli_ind, cli_no);
     let mut end_of_options = false;
     let mut i = 0usize;
 
@@ -412,6 +415,8 @@ fn parse_options(repo: &Repository, argv: &[String]) -> Result<Options> {
                 }
                 "--pickaxe-regex" => opts.pickaxe_regex = true,
                 "--pickaxe-all" => opts.pickaxe_all = true,
+                "--indent-heuristic" => {}
+                "--no-indent-heuristic" => {}
                 s if s.starts_with("-S") => {
                     if s.len() > 2 {
                         opts.pickaxe_string = Some(s[2..].to_owned());
@@ -702,6 +707,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     find_object: None,
                     submodule_mode: None,
                     context_lines: opts.context_lines,
+                    indent_heuristic: opts.indent_heuristic,
                 };
                 let mut buf = Vec::new();
                 write_remerge_diff(&mut buf, repo, &commit.tree, &commit.parents, &ro)?;
@@ -981,6 +987,7 @@ fn process_stdin_commit(
             find_object: None,
             submodule_mode: None,
             context_lines: opts.context_lines,
+            indent_heuristic: opts.indent_heuristic,
         };
         let mut buf = Vec::new();
         write_remerge_diff(&mut buf, repo, &commit.tree, &parent_oids, &ro)?;
@@ -1760,6 +1767,7 @@ fn print_diff(
                     opts.binary,
                     git_dir,
                     quote_fully,
+                    opts.indent_heuristic,
                 )?;
             }
         }
@@ -1956,6 +1964,7 @@ fn write_patch_entry(
     binary_patch: bool,
     git_dir: &Path,
     quote_fully: bool,
+    indent_heuristic: bool,
 ) -> Result<bool> {
     let (old_content, new_content) = read_blob_pair(odb, entry)?;
 
@@ -2072,6 +2081,7 @@ fn write_patch_entry(
         0,
         "",
         "",
+        indent_heuristic,
     );
     write!(out, "{patch}")?;
 

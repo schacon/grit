@@ -1104,6 +1104,7 @@ fn do_stash_patch_push(
                     &cur_work,
                     &ops[s..e],
                     3,
+                    true,
                 );
 
                 writeln!(out, "diff --git a/{path} b/{path}").ok();
@@ -1364,6 +1365,7 @@ pub(crate) fn partial_unified_for_op_range(
     work_bytes: &[u8],
     op_slice: &[similar::DiffOp],
     context: usize,
+    indent_heuristic: bool,
 ) -> String {
     let head_str = String::from_utf8_lossy(head_bytes);
     let work_str = String::from_utf8_lossy(work_bytes);
@@ -1417,7 +1419,14 @@ pub(crate) fn partial_unified_for_op_range(
         }
     }
 
-    let full = unified_diff(&old_partial, &new_partial, path, path, context);
+    let full = unified_diff(
+        &old_partial,
+        &new_partial,
+        path,
+        path,
+        context,
+        indent_heuristic,
+    );
     let mut tail: String = full
         .lines()
         .skip_while(|l| !l.starts_with("@@ "))

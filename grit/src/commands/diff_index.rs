@@ -374,6 +374,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     options.submodule_format,
                     sm_ignore,
                     p,
+                    options.indent_heuristic,
                 )?;
             }
         } else if options.name_status {
@@ -811,6 +812,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                         _ => bail!("unsupported option: {arg}"),
                     };
                 }
+                "--indent-heuristic" | "--no-indent-heuristic" => {}
                 _ => bail!("unsupported option: {arg}"),
             }
             idx += 1;
@@ -1803,6 +1805,7 @@ pub(crate) fn write_submodule_diff_recursive(
     submodule_ignore: SubmoduleIgnoreFlags,
     submodule_format: SubmodulePatchFormat,
     context_lines: usize,
+    indent_heuristic: bool,
 ) -> Result<()> {
     let z = zero_oid();
     let super_wt = super_repo
@@ -1893,6 +1896,7 @@ pub(crate) fn write_submodule_diff_recursive(
                         SubmodulePatchFormat::Diff,
                         submodule_ignore,
                         &inner_full,
+                        indent_heuristic,
                     )?;
                 } else {
                     write_patch_entry_inner(
@@ -1903,6 +1907,7 @@ pub(crate) fn write_submodule_diff_recursive(
                         context_lines,
                         Some(&sub_path),
                         full_path_from_root,
+                        indent_heuristic,
                     )?;
                 }
             }
@@ -1922,6 +1927,7 @@ pub(crate) fn write_submodule_diff_recursive(
                         SubmodulePatchFormat::Diff,
                         submodule_ignore,
                         &inner_full,
+                        indent_heuristic,
                     )?;
                 } else {
                     write_patch_entry_inner(
@@ -1932,6 +1938,7 @@ pub(crate) fn write_submodule_diff_recursive(
                         context_lines,
                         None,
                         full_path_from_root,
+                        indent_heuristic,
                     )?;
                 }
             }
@@ -2001,6 +2008,7 @@ pub(crate) fn write_submodule_diff_recursive(
                     SubmodulePatchFormat::Diff,
                     submodule_ignore,
                     &inner_full,
+                    indent_heuristic,
                 )?;
             } else {
                 write_patch_entry_inner(
@@ -2011,6 +2019,7 @@ pub(crate) fn write_submodule_diff_recursive(
                     context_lines,
                     Some(&sub_path),
                     full_path_from_root,
+                    indent_heuristic,
                 )?;
             }
         }
@@ -2030,6 +2039,7 @@ pub(crate) fn write_submodule_diff_recursive(
                     SubmodulePatchFormat::Diff,
                     submodule_ignore,
                     &inner_full,
+                    indent_heuristic,
                 )?;
             } else {
                 write_patch_entry_inner(
@@ -2040,6 +2050,7 @@ pub(crate) fn write_submodule_diff_recursive(
                     context_lines,
                     None,
                     full_path_from_root,
+                    indent_heuristic,
                 )?;
             }
         }
@@ -2059,6 +2070,7 @@ pub(crate) fn write_patch_entry(
     submodule_format: SubmodulePatchFormat,
     submodule_ignore: SubmoduleIgnoreFlags,
     full_path_from_root: &str,
+    indent_heuristic: bool,
 ) -> Result<()> {
     let z = zero_oid();
 
@@ -2120,6 +2132,7 @@ pub(crate) fn write_patch_entry(
                 submodule_ignore,
                 submodule_format,
                 context_lines,
+                indent_heuristic,
             )?;
             return Ok(());
         }
@@ -2155,12 +2168,22 @@ pub(crate) fn write_patch_entry(
                 submodule_ignore,
                 submodule_format,
                 context_lines,
+                indent_heuristic,
             )?;
             return Ok(());
         }
     }
 
-    write_patch_entry_inner(out, repo, odb, entry, context_lines, work_tree, "")
+    write_patch_entry_inner(
+        out,
+        repo,
+        odb,
+        entry,
+        context_lines,
+        work_tree,
+        "",
+        indent_heuristic,
+    )
 }
 
 pub(crate) fn write_patch_entry_inner(
@@ -2171,6 +2194,7 @@ pub(crate) fn write_patch_entry_inner(
     context_lines: usize,
     work_tree: Option<&Path>,
     path_prefix: &str,
+    indent_heuristic: bool,
 ) -> Result<()> {
     use grit_lib::diff::unified_diff_with_prefix;
 
@@ -2492,6 +2516,7 @@ pub(crate) fn write_patch_entry_inner(
         0,
         "",
         "",
+        indent_heuristic,
     );
     write!(out, "{patch}")?;
 

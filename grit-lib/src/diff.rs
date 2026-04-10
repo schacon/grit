@@ -24,6 +24,8 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
+use crate::config::ConfigSet;
+use crate::diff_indent_heuristic;
 use crate::error::{Error, Result};
 use crate::index::{Index, IndexEntry};
 use crate::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind, TreeEntry};
@@ -2026,6 +2028,7 @@ pub fn unified_diff(
     old_path: &str,
     new_path: &str,
     context_lines: usize,
+    indent_heuristic: bool,
 ) -> String {
     unified_diff_with_prefix(
         old_content,
@@ -2036,6 +2039,7 @@ pub fn unified_diff(
         0,
         "a/",
         "b/",
+        indent_heuristic,
     )
 }
 
@@ -2053,6 +2057,7 @@ pub fn unified_diff_with_prefix(
     inter_hunk_context: usize,
     src_prefix: &str,
     dst_prefix: &str,
+    indent_heuristic: bool,
 ) -> String {
     unified_diff_with_prefix_and_funcname(
         old_content,
@@ -2064,6 +2069,7 @@ pub fn unified_diff_with_prefix(
         src_prefix,
         dst_prefix,
         None,
+        indent_heuristic,
     )
 }
 
@@ -2080,6 +2086,7 @@ pub fn unified_diff_with_prefix_and_funcname(
     src_prefix: &str,
     dst_prefix: &str,
     funcname_matcher: Option<&FuncnameMatcher>,
+    indent_heuristic: bool,
 ) -> String {
     unified_diff_with_prefix_and_funcname_and_algorithm(
         old_content,
@@ -2131,6 +2138,12 @@ pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
     let diff = TextDiff::configure()
         .algorithm(algorithm)
         .diff_lines(old_content, new_content);
+    let compacted_ops = diff_indent_heuristic::diff_lines_ops_compacted(
+        old_content,
+        new_content,
+        algorithm,
+        indent_heuristic,
+    );
 
     let mut output = String::new();
     if old_path == "/dev/null" {
@@ -2154,7 +2167,7 @@ pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
         .saturating_mul(2)
         .saturating_add(inter_hunk_context);
     let group_radius = max_common_gap.div_ceil(2);
-    let op_groups = group_diff_ops(diff.ops().to_vec(), group_radius);
+    let op_groups = group_diff_ops(compacted_ops, group_radius);
 
     for ops in op_groups {
         if ops.is_empty() {
@@ -2278,12 +2291,45 @@ pub fn anchored_unified_diff(
     // Each anchor line itself is a fixed context match.
 
     // Collect all diff operations
-    struct DiffOp {
+    struct LineDiffOp {
         tag: char, // ' ', '+', '-'
         line: String,
     }
 
-    let mut ops: Vec<DiffOp> = Vec::new();
+    let append_segment_diff =
+        |ops: &mut Vec<LineDiffOp>, old_seg_input: &str, new_seg_input: &str| {
+            use similar::ChangeTag;
+            let old_ls: Vec<&str> = old_seg_input.lines().collect();
+            let new_ls: Vec<&str> = new_seg_input.lines().collect();
+            if old_ls.is_empty() && new_ls.is_empty() {
+                return;
+            }
+            let seg_diff = TextDiff::configure()
+                .algorithm(algorithm)
+                .diff_slices(&old_ls, &new_ls);
+            let raw = seg_diff.ops().to_vec();
+            let compacted = diff_indent_heuristic::apply_change_compact_to_ops(
+                &raw,
+                &old_ls,
+                &new_ls,
+                indent_heuristic,
+            );
+            for op in &compacted {
+                for ch in op.iter_changes(&old_ls, &new_ls) {
+                    let t = match ch.tag() {
+                        ChangeTag::Equal => ' ',
+                        ChangeTag::Delete => '-',
+                        ChangeTag::Insert => '+',
+                    };
+                    ops.push(LineDiffOp {
+                        tag: t,
+                        line: ch.value().to_string(),
+                    });
+                }
+            }
+        };
+
+    let mut ops: Vec<LineDiffOp> = Vec::new();
     let mut old_pos = 0usize;
     let mut new_pos = 0usize;
 
@@ -2306,24 +2352,11 @@ pub fn anchored_unified_diff(
             } else {
                 format!("{}\n", new_seg_text)
             };
-            let seg_diff = TextDiff::configure()
-                .algorithm(algorithm)
-                .diff_lines(&old_seg_input, &new_seg_input);
-            for change in seg_diff.iter_all_changes() {
-                let tag = match change.tag() {
-                    similar::ChangeTag::Equal => ' ',
-                    similar::ChangeTag::Delete => '-',
-                    similar::ChangeTag::Insert => '+',
-                };
-                ops.push(DiffOp {
-                    tag,
-                    line: change.value().trim_end_matches('\n').to_string(),
-                });
-            }
+            append_segment_diff(&mut ops, &old_seg_input, &new_seg_input);
         }
 
         // The anchor line itself is always context
-        ops.push(DiffOp {
+        ops.push(LineDiffOp {
             tag: ' ',
             line: old_lines[old_anchor].to_string(),
         });
@@ -2349,20 +2382,7 @@ pub fn anchored_unified_diff(
         } else {
             format!("{}\n", new_seg_text)
         };
-        let seg_diff = TextDiff::configure()
-            .algorithm(algorithm)
-            .diff_lines(&old_seg_input, &new_seg_input);
-        for change in seg_diff.iter_all_changes() {
-            let tag = match change.tag() {
-                similar::ChangeTag::Equal => ' ',
-                similar::ChangeTag::Delete => '-',
-                similar::ChangeTag::Insert => '+',
-            };
-            ops.push(DiffOp {
-                tag,
-                line: change.value().trim_end_matches('\n').to_string(),
-            });
-        }
+        append_segment_diff(&mut ops, &old_seg_input, &new_seg_input);
     }
 
     // Now format as unified diff with hunks
