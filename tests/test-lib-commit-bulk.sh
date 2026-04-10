@@ -76,6 +76,15 @@ test_commit_bulk () {
 	done
 	total=$1
 
+	# When importing onto HEAD, use the branch ref (e.g. refs/heads/main) in the
+	# stream if HEAD is symbolic. Plain `commit HEAD` detaches HEAD and breaks
+	# scripts that run `git branch -M` immediately after (t5326 lib-bitmap setup).
+	commit_ref=$ref
+	if test "$ref" = "HEAD"
+	then
+		commit_ref=$(git -C "$indir" symbolic-ref -q HEAD) || commit_ref=HEAD
+	fi
+
 	add_from=
 	if git -C "$indir" rev-parse --quiet --verify "$ref"
 	then
@@ -88,7 +97,7 @@ test_commit_bulk () {
 		then
 			test_tick
 		fi &&
-		echo "commit $ref"
+		echo "commit $commit_ref"
 		printf 'author %s <%s> %s\n' \
 			"$GIT_AUTHOR_NAME" \
 			"$GIT_AUTHOR_EMAIL" \
@@ -102,7 +111,7 @@ test_commit_bulk () {
 		echo "EOF"
 		if test -n "$add_from"
 		then
-			echo "from $ref^0"
+			echo "from $commit_ref^0"
 			add_from=
 		fi
 		printf "M 644 inline $filename\n" $n
