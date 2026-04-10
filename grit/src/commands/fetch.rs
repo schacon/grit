@@ -804,6 +804,8 @@ fn fetch_remote(
     }
 
     let display_url = resolve_fetch_display_url(git_dir, &url, url_override, remote_repo.as_ref())?;
+    let follow_remote_head = parse_follow_remote_head(config, remote_name);
+    let include_head_ref_prefix = follow_remote_head.mode != FollowRemoteHead::Never;
     // Only remap tracking namespace for path/URL fetches (`git fetch ./repo`). When the user
     // names a configured remote (`git fetch second`), always store under that remote even if
     // its URL points at the same repository as `origin` (t5505 `remote add -f second`).
@@ -1135,6 +1137,7 @@ fn fetch_remote(
             upload_pack_cmd.as_deref(),
             compute_wants,
             has_cli_refspecs,
+            include_head_ref_prefix,
             filter_active,
         )?;
         // If upload-pack advertised no branch tips (or negotiation returned early) but the remote
@@ -1652,10 +1655,16 @@ fn fetch_remote(
         }
         let prune_updated_refs = updated_refs.clone();
 
-        // Standard path: update remote-tracking refs from remote heads
+        let refs_for_mapping: Vec<(String, ObjectId)> = if remote_advertised.is_empty() {
+            remote_heads.clone()
+        } else {
+            remote_advertised.clone()
+        };
+
+        // Standard path: update refs according to configured fetch refspecs.
         let has_merge_cfg = branch_has_merge_config_for_remote(git_dir, config, remote_name);
 
-        for (idx, (refname, advertised_oid)) in remote_heads.iter().enumerate() {
+        for (idx, (refname, advertised_oid)) in refs_for_mapping.iter().enumerate() {
             let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
             let Some(local_ref) = map_ref_through_refspecs(refname, &union_refspecs) else {
                 continue;
@@ -1670,26 +1679,28 @@ fn fetch_remote(
             };
             updated_refs.push(local_ref.clone());
 
-            let for_merge = if has_merge_cfg {
-                fetch_head_is_for_merge_with_branch(git_dir, config, remote_name, refname)
-            } else if refspecs.is_empty() {
-                // Without explicit fetch refspecs, tie FETCH_HEAD's for-merge line to the branch
-                // checked out locally when it exists on the remote. If HEAD is on a branch but the
-                // remote does not have that ref, no branch line is for-merge (do not use `idx==0`,
-                // since advertised order can put another branch first and break `FETCH_HEAD` tests).
-                match current_branch_from_head(git_dir) {
-                    Some(b) => refname == &format!("refs/heads/{b}"),
-                    None => idx == 0,
-                }
-            } else {
-                fetch_head_is_for_merge_first_refspec_only(&refspecs, idx == 0)
-            };
-            fetch_head_entries.push(fetch_head_branch_line(
-                &remote_oid,
-                branch,
-                &display_url,
-                for_merge,
-            ));
+            if refname.starts_with("refs/heads/") {
+                let for_merge = if has_merge_cfg {
+                    fetch_head_is_for_merge_with_branch(git_dir, config, remote_name, refname)
+                } else if refspecs.is_empty() {
+                    // Without explicit fetch refspecs, tie FETCH_HEAD's for-merge line to the branch
+                    // checked out locally when it exists on the remote. If HEAD is on a branch but the
+                    // remote does not have that ref, no branch line is for-merge (do not use `idx==0`,
+                    // since advertised order can put another branch first and break `FETCH_HEAD` tests).
+                    match current_branch_from_head(git_dir) {
+                        Some(b) => refname == &format!("refs/heads/{b}"),
+                        None => idx == 0,
+                    }
+                } else {
+                    fetch_head_is_for_merge_first_refspec_only(&refspecs, idx == 0)
+                };
+                fetch_head_entries.push(fetch_head_branch_line(
+                    &remote_oid,
+                    branch,
+                    &display_url,
+                    for_merge,
+                ));
+            }
 
             let old_oid = read_ref_oid(git_dir, &local_ref);
             if old_oid.as_ref() == Some(&remote_oid) {
@@ -1712,11 +1723,6 @@ fn fetch_remote(
                 branch,
             );
 
-            let tracking_print = local_ref
-                .strip_prefix("refs/remotes/")
-                .and_then(|s| s.find('/').map(|i| &s[..i]))
-                .unwrap_or("origin");
-
             if args.porcelain {
                 let zero = "0".repeat(40);
                 let old_hex = old_oid
@@ -1726,7 +1732,44 @@ fn fetch_remote(
                 let flag = if old_oid.is_none() { "*" } else { " " };
                 println!("{flag} {old_hex} {remote_oid} {local_ref}");
             } else if !args.quiet {
-                print_update(&old_oid, &remote_oid, branch, tracking_print);
+                let dst_display = local_ref
+                    .strip_prefix("refs/remotes/")
+                    .or_else(|| local_ref.strip_prefix("refs/heads/"))
+                    .or_else(|| local_ref.strip_prefix("refs/tags/"))
+                    .unwrap_or(local_ref.as_str());
+                if refname.starts_with("refs/heads/") {
+                    let src_branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+                    if old_oid.is_none() {
+                        if local_ref.starts_with("refs/remotes/") {
+                            let tracking_print = local_ref
+                                .strip_prefix("refs/remotes/")
+                                .and_then(|s| s.find('/').map(|i| &s[..i]))
+                                .unwrap_or(remote_name);
+                            eprintln!(
+                                " * [new branch]      {src_branch:<17} -> {tracking_print}/{src_branch}"
+                            );
+                        } else {
+                            eprintln!(" * [new branch]      {src_branch:<17} -> {dst_display}");
+                        }
+                    } else if let Some(old) = old_oid.as_ref() {
+                        eprintln!(
+                            "   {}..{}  {src_branch:<17} -> {dst_display}",
+                            &old.to_string()[..7],
+                            &remote_oid.to_string()[..7],
+                        );
+                    }
+                } else {
+                    let src_display = refname.strip_prefix("refs/").unwrap_or(refname);
+                    if let Some(old) = old_oid.as_ref() {
+                        eprintln!(
+                            "   {}..{}  {src_display:<17} -> {dst_display}",
+                            &old.to_string()[..7],
+                            &remote_oid.to_string()[..7],
+                        );
+                    } else {
+                        eprintln!(" * [new ref]         {src_display:<17} -> {dst_display}");
+                    }
+                }
             }
         }
         if user_passed_cli_refspecs {
@@ -1854,14 +1897,21 @@ fn fetch_remote(
     // Prune stale remote-tracking refs.
     if should_prune || should_prune_tags {
         let prune_prefixes: Vec<String> = if user_passed_cli_refspecs {
+            // For explicit CLI refspecs, prune only namespaces implied by explicit `<src>:<dst>`
+            // mappings. Source-only CLI refspecs (e.g. `main`) do not define prune destinations.
             prune_prefixes_from_cli_refspecs(cli_refspecs)
-        } else if !refspecs.is_empty() {
-            prune_prefixes_from_fetch_refspecs(&refspecs)
+        } else if explicit_refmap {
+            // With `--refmap`, pruning scope follows the explicit refmap destinations.
+            prune_prefixes_from_fetch_refspecs(&cli_tracking_refspecs)
         } else {
-            Vec::new()
+            // Otherwise, pruning scope follows the configured remote fetch refspecs.
+            prune_prefixes_from_fetch_refspecs(&cli_tracking_refspecs)
         };
 
-        if !has_updates && !args.quiet {
+        let skip_remote_tracking_prune =
+            user_passed_cli_refspecs && prune_prefixes.is_empty() && !should_prune_tags;
+
+        if !skip_remote_tracking_prune && !has_updates && !args.quiet {
             let mut will_prune = false;
             if prune_prefixes.is_empty() {
                 for rn in &coalesced_remotes {
@@ -1886,24 +1936,26 @@ fn fetch_remote(
             }
         }
 
-        if prune_prefixes.is_empty() {
-            for rn in &coalesced_remotes {
-                let prefix = format!("refs/remotes/{rn}/");
-                prune_stale_refs(git_dir, &prefix, &updated_refs, rn, args.quiet)?;
-            }
-        } else {
-            for prefix in &prune_prefixes {
-                let remote_hint = prefix
-                    .strip_prefix("refs/remotes/")
-                    .and_then(|s| s.split('/').next())
-                    .unwrap_or(remote_name);
-                prune_stale_refs(git_dir, prefix, &updated_refs, remote_hint, args.quiet)?;
+        if !skip_remote_tracking_prune {
+            if prune_prefixes.is_empty() {
+                for rn in &coalesced_remotes {
+                    let prefix = format!("refs/remotes/{rn}/");
+                    prune_stale_refs(git_dir, &prefix, &updated_refs, rn, args.quiet)?;
+                }
+            } else {
+                for prefix in &prune_prefixes {
+                    let remote_hint = prefix
+                        .strip_prefix("refs/remotes/")
+                        .and_then(|s| s.split('/').next())
+                        .unwrap_or(remote_name);
+                    prune_stale_refs(git_dir, prefix, &updated_refs, remote_hint, args.quiet)?;
+                }
             }
         }
     }
 
     // Update `refs/remotes/<remote>/HEAD` to match the remote's default branch (Git `set_head`).
-    let follow = parse_follow_remote_head(config, remote_name);
+    let follow = follow_remote_head;
     let do_set_head =
         cli_refspecs.is_empty() && !refspecs.is_empty() && follow.mode != FollowRemoteHead::Never;
     if do_set_head {

@@ -119,6 +119,7 @@ fn trace_packet_fetch(direction: char, payload: &str) {
 fn v2_ls_refs_for_fetch(
     stdin: &mut impl Write,
     stdout: &mut impl Read,
+    include_head_ref_prefix: bool,
 ) -> Result<(Vec<(String, ObjectId)>, Option<String>)> {
     let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
     let agent = format!("agent=git/{}-", crate::version_string());
@@ -136,8 +137,10 @@ fn v2_ls_refs_for_fetch(
     pkt_line::write_line(stdin, "symrefs")?;
     trace_packet_fetch('>', "peel");
     pkt_line::write_line(stdin, "peel")?;
-    trace_packet_fetch('>', "ref-prefix HEAD");
-    pkt_line::write_line(stdin, "ref-prefix HEAD")?;
+    if include_head_ref_prefix {
+        trace_packet_fetch('>', "ref-prefix HEAD");
+        pkt_line::write_line(stdin, "ref-prefix HEAD")?;
+    }
     trace_packet_fetch('>', "ref-prefix refs/heads/");
     pkt_line::write_line(stdin, "ref-prefix refs/heads/")?;
     trace_packet_fetch('>', "ref-prefix refs/tags/");
@@ -764,6 +767,7 @@ pub fn fetch_via_upload_pack_skipping(
     upload_pack_cmd: Option<&str>,
     compute_wants: impl FnOnce(&[(String, ObjectId)]) -> Result<Vec<ObjectId>>,
     has_cli_refspecs: bool,
+    include_head_ref_prefix: bool,
     filter_active: bool,
 ) -> Result<(
     Vec<(String, ObjectId)>,
@@ -787,7 +791,7 @@ pub fn fetch_via_upload_pack_skipping(
             write_bundle_uri_command(&mut stdin, &cap_send)?;
             drain_bundle_uri_response(&mut stdout)?;
         }
-        let pair = v2_ls_refs_for_fetch(&mut stdin, &mut stdout)?;
+        let pair = v2_ls_refs_for_fetch(&mut stdin, &mut stdout, include_head_ref_prefix)?;
         (pair.0, pair.1, Some(caps))
     } else {
         let (adv, hsym, saw_v1, _, server_sid) = read_advertisement(&mut stdout)?;

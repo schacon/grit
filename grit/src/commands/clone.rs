@@ -790,6 +790,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 upload_cmd,
                 |adv| crate::fetch_transport::collect_wants(adv, &[]),
                 false,
+                true,
                 pack_filter_active,
             )
         });
@@ -946,6 +947,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 upload_cmd,
                 |adv| crate::fetch_transport::collect_wants(adv, &[]),
                 false,
+                true,
                 pack_filter_active,
             )
         }) {
@@ -2475,6 +2477,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                 upload_cmd,
                 |adv| crate::fetch_transport::collect_wants(adv, &[]),
                 false,
+                true,
                 pack_filter_active,
             )
         });
@@ -2624,6 +2627,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
             upload_cmd,
             |adv| crate::fetch_transport::collect_wants(adv, &[]),
             false,
+            true,
             pack_filter_active,
         ) {
             Ok(_) => {
