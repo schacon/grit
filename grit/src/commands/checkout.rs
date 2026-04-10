@@ -2908,6 +2908,13 @@ pub(crate) fn check_dirty_worktree(
                     if untracked_path_matches_index_entry(repo, &abs_path, new_entry)? {
                         continue;
                     }
+                    // Unborn HEAD (`git fetch remote:ref` with no commits): never delete
+                    // untracked paths to make checkout succeed — Git refuses when the work
+                    // tree would be overwritten (t2015-checkout-unborn).
+                    if head_state.is_unborn() {
+                        untracked_conflicts.push(rel_path.into_owned());
+                        continue;
+                    }
                     if abs_path.is_file() || abs_path.is_symlink() {
                         let _ = std::fs::remove_file(&abs_path);
                         continue;
