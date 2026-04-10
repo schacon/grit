@@ -2105,6 +2105,44 @@ fn validate_patch_headers(patches: &[FilePatch], strip: usize) -> Result<()> {
     Ok(())
 }
 
+/// Reject patch input that Git treats as corrupt or internally inconsistent.
+///
+/// `recount` relaxes the no-op hunk check (Git recomputes line counts). `allow_empty` skips the
+/// no-op rejection for empty patch sets only; semantic no-op hunks still fail without `recount`.
+fn validate_patch_semantics(patches: &[FilePatch], recount: bool, allow_empty: bool) -> Result<()> {
+    if patches.is_empty() {
+        return Ok(());
+    }
+
+    for fp in patches {
+        if fp.is_new && fp.is_copy {
+            bail!("inconsistent header lines 2 and 3");
+        }
+        if fp.is_new && fp.is_rename {
+            bail!("inconsistent header lines 2 and 3");
+        }
+
+        if recount || fp.binary_patch.is_some() {
+            continue;
+        }
+
+        for hunk in &fp.hunks {
+            let (adds, removes) = count_hunk_changes(std::slice::from_ref(hunk));
+            if adds == 0 && removes == 0 && !hunk.lines.is_empty() {
+                let line = hunk.first_body_line + hunk.lines.len();
+                bail!("corrupt patch at line {line}");
+            }
+        }
+    }
+
+    // Match Git: a patch file with only no-op file entries is empty for apply purposes.
+    if !allow_empty && patches.iter().all(|fp| fp.hunks.is_empty()) {
+        bail!("No valid patches in input");
+    }
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Applying hunks to content
 // ---------------------------------------------------------------------------
@@ -3876,6 +3914,7 @@ pub fn run(mut args: Args) -> Result<()> {
     normalize_mismatched_diff_git_paths(&mut patches, args.strip);
     postprocess_gitlink_file_patches(&mut patches);
     validate_patch_headers(&patches, args.strip)?;
+    validate_patch_semantics(&patches, args.recount, args.allow_empty)?;
 
     if args.reverse {
         reverse_patches(&mut patches);
