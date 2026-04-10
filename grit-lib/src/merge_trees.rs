@@ -210,11 +210,20 @@ fn three_way_on_aligned_paths(
             handled_base.insert(p.clone());
         }
 
+        // When our branch still has the file at the same path as the merge base, but the side
+        // being applied renamed that path, the result must use their pathname (matches Git
+        // cherry-pick / merge-ort: e.g. base+HEAD at `file.txt`, picked commit has `renamed.txt`).
+        let out_path = if bp.as_ref().is_some_and(|b| b == &op) && tp != op {
+            tp.clone()
+        } else {
+            op.clone()
+        };
+
         merge_one_path(
             repo,
             &mut out,
             &mut conflict_content,
-            &op,
+            &out_path,
             b,
             o,
             t,
