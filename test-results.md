@@ -1,5 +1,14 @@
 # Test results
 
+**2026-04-10 (phase 6 / embedded-gitlink checkout preservation fix)**
+
+- `cargo build --release -p grit-rs`: pass
+- `./scripts/run-tests.sh t5531-deep-submodule-push.sh`: 29/29
+- `./scripts/run-tests.sh t5517-push-mirror.sh`: 13/13
+- `./scripts/run-tests.sh t5538-push-shallow.sh`: 8/8
+- `./scripts/run-tests.sh t5545-push-options.sh`: 13/13
+- `./scripts/run-tests.sh t5509-fetch-push-namespaces.sh`: 13/15
+
 **2026-04-10 (phase 6 / recurse-submodule parity delegation follow-up)**
 
 - `cargo build --release -p grit-rs`: pass

@@ -6,14 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   344 |
-| In progress |     6 |
+| Completed   |   345 |
+| In progress |     5 |
 | Remaining   |   421 |
 | **Total**   |   771 |
 
-Task lines in `PLAN.md`: 344 completed (`[x]`), 6 in progress (`[~]`), 421 remaining (`[ ]`).
+Task lines in `PLAN.md`: 345 completed (`[x]`), 5 in progress (`[~]`), 421 remaining (`[ ]`).
 
 ## Recently completed
+
+- `t5531-deep-submodule-push` — 29/29 tests pass (checkout worktree update now preserves populated gitlink directories by default when a gitlink path disappears from the target index; only nested `.git/modules/*` repositories may force-remove those directories for directory/file transitions, which keeps embedded-submodule `.git` checkouts intact across branch switches and restores full deep recursive push parity)
 
 - `t5531-deep-submodule-push` — 18/29 tests pass (`push` now delegates recursive push invocations to the system `git` binary when any recurse-submodules mode is active, improving deep submodule parity from 14/29 to 18/29 while preserving non-recursive push behavior)
 

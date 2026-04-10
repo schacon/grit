@@ -665,7 +665,7 @@ commit → check it off → move on.
 - [x] `t5317-pack-objects-filter-objects` — git pack-objects using object filtering (33/33)
 - [x] `t5318-pack-objects-revs-exclude` — pack-objects `--revs` with `^ref` exclusion and `--stdin-packs` (9/9)
 - [ ] `t5304-prune` █████░░░░░░░░░░░░░░░ 8/32 (24 left) — prune
-- [~] `t5531-deep-submodule-push` ████████████░░░░░░░░ 18/29 (11 left) — test push with submodules
+- [x] `t5531-deep-submodule-push` ████████████████████ 29/29 (0 left) — test push with submodules (preserve populated gitlink directories during checkout branch switches)
 - [ ] `t5548-push-porcelain` ░░░░░░░░░░░░░░░░░░░░ 1/25 (24 left) — Test git push porcelain output
 - [ ] `t5512-ls-remote` ███████░░░░░░░░░░░░░ 15/40 (25 left) — git ls-remote
 - [ ] `t5302-pack-index` ████░░░░░░░░░░░░░░░░ 8/36 (28 left) — pack index with 64-bit offsets and object CRC

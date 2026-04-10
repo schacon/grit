@@ -2749,6 +2749,9 @@ fn remove_disk_entries_not_in_index_under_prefixes(
             };
             let rel_str = rel.to_string_lossy().replace('\\', "/");
             let is_dir = ent.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            let rel_is_gitlink = index
+                .get(rel_str.as_bytes(), 0)
+                .is_some_and(|e| e.mode == MODE_GITLINK);
             if !is_tracked(index, &rel_str) {
                 if is_dir {
                     let _ = std::fs::remove_dir_all(&path);
@@ -2756,6 +2759,9 @@ fn remove_disk_entries_not_in_index_under_prefixes(
                     let _ = std::fs::remove_file(&path);
                 }
             } else if is_dir {
+                if rel_is_gitlink {
+                    continue;
+                }
                 walk_remove(&path, work_tree, index)?;
             }
         }
@@ -5157,7 +5163,7 @@ fn checkout_index_to_worktree(
     for old_path in to_remove_sorted {
         let force_remove_populated_submodule = old_map.get(old_path.as_slice()).is_some_and(|e| {
             e.mode == MODE_GITLINK
-                && !git_dir_is_nested_modules_repo(&repo.git_dir)
+                && git_dir_is_nested_modules_repo(&repo.git_dir)
                 && new_index_has_path_under_prefix(new_index, old_path.as_slice())
         });
 
