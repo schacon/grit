@@ -984,7 +984,7 @@ t5560-http-backend-noserver	t5	yes	14	2	12	false	ok	0
 t5561-http-backend	t5	yes	0	0	0	false	ok	0
 t5562-http-backend-content-length	t5	yes	16	10	6	false	ok	0
 t5563-simple-http-auth	t5	skip	17	0	0	false	ok	0
-t5564-http-proxy	t5	yes	8	3	5	false	ok	0
+t5564-http-proxy	t5	yes	8	8	0	true	ok	0
 t5565-push-multiple	t5	yes	2	2	0	true	ok	0
 t5570-git-daemon	t5	yes	25	14	11	false	ok	0
 t5571-pre-push-hook	t5	yes	11	10	1	false	ok	0

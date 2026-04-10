@@ -7,7 +7,7 @@ use crate::protocol_wire;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
-use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::config::{global_config_paths_pub, ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::zero_oid;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
@@ -1798,6 +1798,24 @@ fn http_url_basename(url: &str) -> String {
     u.rsplit('/').next().unwrap_or("repo").to_string()
 }
 
+/// Config layers for HTTP clone before the new repo exists: global + `-c` overrides only.
+fn clone_http_client_config(args: &Args) -> Result<ConfigSet> {
+    let mut set = ConfigSet::new();
+    for path in global_config_paths_pub() {
+        if let Ok(Some(f)) = ConfigFile::from_path(&path, ConfigScope::Global) {
+            set.merge(&f);
+        }
+    }
+    for entry in &args.config {
+        if let Some((key, value)) = entry.split_once('=') {
+            set.add_command_override(key.trim(), value.trim())?;
+        } else {
+            set.add_command_override(entry.trim(), "true")?;
+        }
+    }
+    Ok(set)
+}
+
 fn run_http_clone(args: Args) -> Result<()> {
     crate::bundle_uri::clear_http_bundle_cache();
     crate::http_smart::clear_trace2_https_url_dedup();
@@ -1901,8 +1919,14 @@ fn run_http_clone(args: Args) -> Result<()> {
         vec![]
     };
 
-    let (remote_heads, remote_tags, adv) =
-        crate::http_smart::http_fetch_pack(&dest.git_dir, &repo_url, &refspec_for_fetch)?;
+    let http_config = clone_http_client_config(&args)?;
+    let http_ctx = crate::http_client::HttpClientContext::from_config_set(&http_config)?;
+    let (remote_heads, remote_tags, adv) = crate::http_smart::http_fetch_pack(
+        &dest.git_dir,
+        &repo_url,
+        &refspec_for_fetch,
+        &http_ctx,
+    )?;
     crate::bundle_uri::maybe_apply_bundle_uri_after_http_fetch(&dest.git_dir, &repo_url, None)?;
 
     if args.bare {

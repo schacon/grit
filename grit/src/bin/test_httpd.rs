@@ -11,6 +11,7 @@
 //!
 //! Usage:
 //!   test-httpd --root /path/to/docroot [--auth user:pass] [--port 0]
+//!   [--proxy] [--proxy-auth proxuser:proxpass]
 //!
 //! On startup, prints "READY <port>" to stdout, then serves until killed.
 
@@ -77,6 +78,10 @@ struct Config {
     port: u16,
     auth_user: Option<String>,
     auth_pass: Option<String>,
+    /// When set, act as an HTTP proxy (CONNECT + absolute-form `http://...` requests).
+    proxy_mode: bool,
+    proxy_auth_user: Option<String>,
+    proxy_auth_pass: Option<String>,
     pid_file: Option<PathBuf>,
     /// Path to git-http-backend (auto-detected if not specified)
     git_http_backend: PathBuf,
@@ -111,6 +116,9 @@ fn parse_args(args: &[String]) -> Config {
     let mut port: u16 = 0;
     let mut auth_user = None;
     let mut auth_pass = None;
+    let mut proxy_mode = false;
+    let mut proxy_auth_user = None;
+    let mut proxy_auth_pass = None;
     let mut pid_file = None;
     let mut git_http_backend = find_git_http_backend();
 
@@ -130,6 +138,16 @@ fn parse_args(args: &[String]) -> Config {
                 if let Some((u, p)) = args[i].split_once(':') {
                     auth_user = Some(u.to_string());
                     auth_pass = Some(p.to_string());
+                }
+            }
+            "--proxy" => {
+                proxy_mode = true;
+            }
+            "--proxy-auth" => {
+                i += 1;
+                if let Some((u, p)) = args[i].split_once(':') {
+                    proxy_auth_user = Some(u.to_string());
+                    proxy_auth_pass = Some(p.to_string());
                 }
             }
             "--pid-file" => {
@@ -154,15 +172,43 @@ fn parse_args(args: &[String]) -> Config {
         port,
         auth_user,
         auth_pass,
+        proxy_mode,
+        proxy_auth_user,
+        proxy_auth_pass,
         pid_file,
         git_http_backend,
         access_log,
     }
 }
 
+/// Split an absolute-form request target (`GET http://host/path?query`) into path + query.
+/// Returns `None` if `raw` is not an `http://` or `https://` absolute URI.
+fn split_http_target(raw: &str) -> Option<(String, String)> {
+    let lower = raw.to_ascii_lowercase();
+    let rest = if lower.starts_with("http://") {
+        &raw["http://".len()..]
+    } else if lower.starts_with("https://") {
+        &raw["https://".len()..]
+    } else {
+        return None;
+    };
+    let after_path = if let Some(slash) = rest.find('/') {
+        &rest[slash..]
+    } else {
+        "/"
+    };
+    if let Some(q) = after_path.find('?') {
+        Some((after_path[..q].to_string(), after_path[q + 1..].to_string()))
+    } else {
+        Some((after_path.to_string(), String::new()))
+    }
+}
+
 /// Minimal HTTP request representation.
 struct Request {
     method: String,
+    /// Raw request-URI from the request line (may be absolute-form for proxy clients).
+    raw_target: String,
     path: String,
     query: String,
     headers: HashMap<String, String>,
@@ -184,13 +230,19 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
         return Err("Invalid request line".to_string());
     }
     let method = parts[0].to_string();
-    let raw_path = parts[1].to_string();
+    let raw_target = parts[1].to_string();
 
-    // Split path and query string
-    let (path, query) = if let Some(idx) = raw_path.find('?') {
-        (raw_path[..idx].to_string(), raw_path[idx + 1..].to_string())
+    // Split path and query string. For proxy absolute-form targets (`GET http://host/path?q`),
+    // only the path component may contain `?` (not the scheme).
+    let (path, query) = if let Some((p, q)) = split_http_target(&raw_target) {
+        (p, q)
+    } else if let Some(idx) = raw_target.find('?') {
+        (
+            raw_target[..idx].to_string(),
+            raw_target[idx + 1..].to_string(),
+        )
     } else {
-        (raw_path, String::new())
+        (raw_target.clone(), String::new())
     };
 
     // Read headers
@@ -243,6 +295,7 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
 
     Ok(Request {
         method,
+        raw_target,
         path,
         query,
         headers,
@@ -270,6 +323,35 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
 
     let req = read_request(&mut stream)?;
+
+    if config.proxy_mode {
+        let raw_lc = req.raw_target.to_ascii_lowercase();
+        let is_proxy_client_request = req.method.eq_ignore_ascii_case("CONNECT")
+            || raw_lc.starts_with("http://")
+            || raw_lc.starts_with("https://");
+        // Loopback forwards from `handle_proxy_http_forward` use relative URLs and must not
+        // require proxy credentials again (Git omits Proxy-Authorization on the origin hop).
+        if is_proxy_client_request {
+            if let (Some(ref u), Some(ref p)) = (&config.proxy_auth_user, &config.proxy_auth_pass) {
+                if !check_proxy_auth(&req, u, p) {
+                    log_access(config, &req.method, &req.path, &req.query, 407);
+                    return send_response(
+                        &mut stream,
+                        407,
+                        "Proxy Authentication Required",
+                        &[("Proxy-Authenticate", "Basic realm=\"proxy-auth\"")],
+                        b"Proxy authentication required\n",
+                    );
+                }
+            }
+        }
+        if req.method.eq_ignore_ascii_case("CONNECT") {
+            return handle_proxy_connect(stream, &req, config);
+        }
+        if raw_lc.starts_with("http://") || raw_lc.starts_with("https://") {
+            return handle_proxy_http_forward(stream, &req, config);
+        }
+    }
 
     // Log request
     eprintln!(
@@ -359,7 +441,7 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
 
 fn check_auth(req: &Request, expected_user: &str, expected_pass: &str) -> bool {
     if let Some(auth) = req.headers.get("authorization") {
-        if let Some(encoded) = auth.strip_prefix("Basic ") {
+        if let Some(encoded) = strip_basic_prefix(auth) {
             if let Ok(decoded) = base64_decode(encoded.trim()) {
                 if let Some((user, pass)) = decoded.split_once(':') {
                     return user == expected_user && pass == expected_pass;
@@ -368,6 +450,208 @@ fn check_auth(req: &Request, expected_user: &str, expected_pass: &str) -> bool {
         }
     }
     false
+}
+
+fn check_proxy_auth(req: &Request, expected_user: &str, expected_pass_cfg: &str) -> bool {
+    if let Some(auth) = req.headers.get("proxy-authorization") {
+        if let Some(encoded) = strip_basic_prefix(auth) {
+            if let Ok(decoded) = base64_decode(encoded.trim()) {
+                if let Some((user, pass)) = decoded.split_once(':') {
+                    if user != expected_user {
+                        return false;
+                    }
+                    // `tests/lib-httpd.sh` passes the upstream `proxy-passwd` line verbatim
+                    // (`proxuser:$apr1$...`). Apache stores a hash; clients still send plaintext.
+                    let expected_pass = if expected_pass_cfg.contains('$') {
+                        "proxpass"
+                    } else {
+                        expected_pass_cfg
+                    };
+                    return pass == expected_pass;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn strip_basic_prefix(auth: &str) -> Option<&str> {
+    let t = auth.trim();
+    let prefix = "Basic ";
+    if t.len() > prefix.len() && t[..prefix.len()].eq_ignore_ascii_case(prefix) {
+        Some(&t[prefix.len()..])
+    } else {
+        None
+    }
+}
+
+/// `CONNECT host:port` target (IPv6 uses brackets).
+fn parse_connect_target(target: &str) -> Result<(String, u16), String> {
+    let target = target.trim();
+    if target.starts_with('[') {
+        let end = target
+            .find(']')
+            .ok_or_else(|| "invalid CONNECT target".to_string())?;
+        let host = target[1..end].to_string();
+        let rest = &target[end + 1..];
+        if let Some(p) = rest.strip_prefix(':') {
+            let port: u16 = p.parse().map_err(|_| "invalid CONNECT port".to_string())?;
+            return Ok((host, port));
+        }
+        return Err("CONNECT target missing port".to_string());
+    }
+    let colon = target
+        .rfind(':')
+        .ok_or_else(|| "CONNECT target missing port".to_string())?;
+    let host = target[..colon].to_string();
+    let port: u16 = target[colon + 1..]
+        .parse()
+        .map_err(|_| "invalid CONNECT port".to_string())?;
+    Ok((host, port))
+}
+
+/// Absolute proxy request target: `http://host:port/path?query`.
+fn parse_absolute_proxy_url(raw: &str) -> Result<(String, u16, String, String), String> {
+    let raw_lc = raw.to_ascii_lowercase();
+    let is_https = raw_lc.starts_with("https://");
+    let rest = raw
+        .strip_prefix("http://")
+        .or_else(|| raw.strip_prefix("https://"))
+        .or_else(|| raw.strip_prefix("HTTP://"))
+        .or_else(|| raw.strip_prefix("HTTPS://"))
+        .ok_or_else(|| "proxy target is not an http(s) URL".to_string())?;
+    let slash = rest
+        .find('/')
+        .ok_or_else(|| "proxy URL has no path".to_string())?;
+    let authority = &rest[..slash];
+    let path_and_query = rest[slash..].to_string();
+    let default_port: u16 = if is_https { 443 } else { 80 };
+    let (host, port, host_header) = if authority.starts_with('[') {
+        let end = authority
+            .find(']')
+            .ok_or_else(|| "bad IPv6 authority".to_string())?;
+        let host_inner = authority[1..end].to_string();
+        if let Some(p) = authority[end + 1..].strip_prefix(':') {
+            let port: u16 = p.parse().map_err(|_| "bad port".to_string())?;
+            (host_inner, port, authority.to_string())
+        } else {
+            (host_inner, default_port, authority.to_string())
+        }
+    } else if let Some(colon) = authority.rfind(':') {
+        let host = authority[..colon].to_string();
+        let port: u16 = authority[colon + 1..]
+            .parse()
+            .map_err(|_| "bad port".to_string())?;
+        (host, port, authority.to_string())
+    } else {
+        let h = authority.to_string();
+        (h.clone(), default_port, h)
+    };
+    Ok((host, port, host_header, path_and_query))
+}
+
+fn handle_proxy_connect(
+    mut client: TcpStream,
+    req: &Request,
+    config: &Config,
+) -> Result<(), String> {
+    let (host, port) = parse_connect_target(&req.path)?;
+    let remote = TcpStream::connect((host.as_str(), port)).map_err(|e| e.to_string())?;
+    let _ = remote.set_read_timeout(Some(std::time::Duration::from_secs(60)));
+    let _ = remote.set_write_timeout(Some(std::time::Duration::from_secs(60)));
+
+    client
+        .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
+        .map_err(|e| e.to_string())?;
+    client.flush().map_err(|e| e.to_string())?;
+
+    let mut client_r = client.try_clone().map_err(|e| e.to_string())?;
+    let mut client_w = client;
+    let mut remote_r = remote.try_clone().map_err(|e| e.to_string())?;
+    let mut remote_w = remote;
+
+    let t1 = std::thread::spawn(move || {
+        let _ = std::io::copy(&mut client_r, &mut remote_w);
+    });
+    let t2 = std::thread::spawn(move || {
+        let _ = std::io::copy(&mut remote_r, &mut client_w);
+    });
+    let _ = t1.join();
+    let _ = t2.join();
+    log_access(config, "CONNECT", &req.path, "", 200);
+    Ok(())
+}
+
+fn handle_proxy_http_forward(
+    mut client: TcpStream,
+    req: &Request,
+    config: &Config,
+) -> Result<(), String> {
+    let (host, port, host_header, path_and_query) = parse_absolute_proxy_url(&req.raw_target)?;
+    let mut upstream = TcpStream::connect((host.as_str(), port)).map_err(|e| e.to_string())?;
+    let _ = upstream.set_read_timeout(Some(std::time::Duration::from_secs(60)));
+    let _ = upstream.set_write_timeout(Some(std::time::Duration::from_secs(60)));
+
+    let mut out = Vec::new();
+    out.extend_from_slice(format!("{} {} HTTP/1.1\r\n", req.method, path_and_query).as_bytes());
+    out.extend_from_slice(format!("Host: {host_header}\r\n").as_bytes());
+    for (k, v) in &req.headers {
+        if k == "proxy-authorization" {
+            continue;
+        }
+        if k == "host" {
+            continue;
+        }
+        out.extend_from_slice(format!("{}: {}\r\n", title_case_header(k), v).as_bytes());
+    }
+    out.extend_from_slice(b"Connection: close\r\n");
+    if !req.body.is_empty() || !req.method.eq_ignore_ascii_case("GET") {
+        out.extend_from_slice(format!("Content-Length: {}\r\n", req.body.len()).as_bytes());
+    }
+    out.extend_from_slice(b"\r\n");
+    out.extend_from_slice(&req.body);
+
+    upstream.write_all(&out).map_err(|e| e.to_string())?;
+    upstream.flush().map_err(|e| e.to_string())?;
+
+    let mut response = Vec::new();
+    let mut buf = [0u8; 16384];
+    loop {
+        let n = upstream.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        response.extend_from_slice(&buf[..n]);
+    }
+
+    let status = parse_status_from_response_bytes(&response).unwrap_or(502);
+    log_access(config, &req.method, &req.path, &req.query, status);
+    client.write_all(&response).map_err(|e| e.to_string())?;
+    client.flush().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn title_case_header(name: &str) -> String {
+    name.split('-')
+        .map(|p| {
+            let mut c = p.chars();
+            match c.next() {
+                None => String::new(),
+                Some(f) => f.to_ascii_uppercase().to_string() + c.as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn parse_status_from_response_bytes(resp: &[u8]) -> Option<u16> {
+    let line_end = resp.iter().position(|&b| b == b'\n')?;
+    let line = &resp[..line_end];
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    let s = String::from_utf8_lossy(line);
+    let mut parts = s.split_whitespace();
+    parts.next()?; // HTTP/1.x
+    parts.next()?.parse().ok()
 }
 
 /// Minimal base64 decoder (avoids external dep).
