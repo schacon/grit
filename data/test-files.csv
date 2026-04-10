@@ -748,7 +748,7 @@ t4063-diff-blobs	t4	yes	18	18	0	true	ok	0
 t4064-diff-oidfind	t4	yes	10	10	0	true	ok	0
 t4065-diff-anchored	t4	yes	7	7	0	true	ok	0
 t4066-diff-emit-delay	t4	yes	2	2	0	true	ok	0
-t4067-diff-partial-clone	t4	yes	9	2	7	false	ok	0
+t4067-diff-partial-clone	t4	yes	9	9	0	true	ok	0
 t4068-diff-symmetric	t4	yes	20	20	0	true	ok	0
 t4068-diff-symmetric-merge-base	t4	yes	36	1	35	false	ok	0
 t4069-diff-summary	t4	yes	34	34	0	true	ok	0

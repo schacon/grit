@@ -4,6 +4,7 @@
 
 use anyhow::{bail, Context, Result};
 use grit_lib::config::ConfigSet;
+use grit_lib::diff::{zero_oid, DiffEntry, DiffStatus};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::promisor::{
     read_promisor_missing_oids, repo_treats_promisor_packs, write_promisor_marker,
@@ -16,9 +17,109 @@ use std::process::Command;
 use std::sync::Once;
 
 use crate::commands::index_pack;
-use crate::fetch_transport;
+use crate::fetch_transport::{self, with_packet_trace_identity};
+use crate::trace_packet;
 
 static LAZY_FETCH_DISABLED_WARN: Once = Once::new();
+
+#[inline]
+fn promisor_local_lazy_fetch_prefers_upload_pack() -> bool {
+    trace_packet::trace_packet_dest().is_some()
+}
+
+/// What a single promisor prefetch before `diff` processing should cover (`t4067`: one `done` line).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PromisorDiffPrefetch {
+    pub rename_detection: bool,
+    pub break_rewrites: bool,
+    pub needs_blob_content: bool,
+}
+
+/// Batch-fetch missing blobs for rename detection, `--break-rewrites`, and patch/stat output.
+pub(crate) fn prefetch_promisor_for_diff_entries(
+    repo: &Repository,
+    entries: &[DiffEntry],
+    wt_for_content: Option<&Path>,
+    opts: PromisorDiffPrefetch,
+) {
+    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    if !repo_treats_promisor_packs(&repo.git_dir, &cfg) {
+        return;
+    }
+    let z = zero_oid();
+    let mut want: HashSet<ObjectId> = HashSet::new();
+
+    if opts.rename_detection {
+        let mut add_oids: HashSet<ObjectId> = HashSet::new();
+        let mut del_oids: HashSet<ObjectId> = HashSet::new();
+        for e in entries {
+            match e.status {
+                DiffStatus::Added => {
+                    if e.new_oid != z {
+                        add_oids.insert(e.new_oid);
+                    }
+                }
+                DiffStatus::Deleted => {
+                    if e.old_oid != z {
+                        del_oids.insert(e.old_oid);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let skip: HashSet<ObjectId> = add_oids.intersection(&del_oids).copied().collect();
+        for e in entries {
+            match e.status {
+                DiffStatus::Added => {
+                    if e.new_oid != z && !skip.contains(&e.new_oid) {
+                        want.insert(e.new_oid);
+                    }
+                }
+                DiffStatus::Deleted => {
+                    if e.old_oid != z && !skip.contains(&e.old_oid) {
+                        want.insert(e.old_oid);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if opts.break_rewrites {
+        for e in entries {
+            if e.status != DiffStatus::Modified {
+                continue;
+            }
+            if e.old_oid != z {
+                want.insert(e.old_oid);
+            }
+            if e.new_oid != z {
+                want.insert(e.new_oid);
+            }
+        }
+    }
+
+    if opts.needs_blob_content && wt_for_content.is_none() {
+        for e in entries {
+            if e.status == DiffStatus::Unmerged {
+                continue;
+            }
+            if e.old_oid != z {
+                want.insert(e.old_oid);
+            }
+            if e.new_oid != z {
+                want.insert(e.new_oid);
+            }
+        }
+    }
+
+    if want.is_empty() {
+        return;
+    }
+    let mut v: Vec<ObjectId> = want.into_iter().collect();
+    v.sort();
+    let _ = try_lazy_fetch_promisor_objects_batch(repo, &v);
+}
 
 /// Match Git `git_env_bool("GIT_NO_LAZY_FETCH", 0)`: unset or empty → lazy fetch allowed; `0` /
 /// `false` / `no` / `off` → allowed; truthy spellings → disabled. Invalid values error like Git.
@@ -43,23 +144,14 @@ pub(crate) fn warn_lazy_fetch_disabled_once() {
     });
 }
 
-/// Whether this process may perform promisor lazy-fetch, matching the client side of Git's
-/// `upload-pack` → `pack-objects` pairing: `upload-pack` defaults `GIT_NO_LAZY_FETCH=1` for the
-/// pack-objects child, so an **unset** variable means lazy fetch is off unless explicitly set to
-/// `0` / `false` / `no` / `off` (`t0411-clone-from-partial` test 6 vs 7).
+/// Whether a promisor client process (e.g. `git diff` after `clone --filter`) may lazy-fetch.
+///
+/// Matches [`git_no_lazy_fetch_env_disables_lazy`]: unset or empty `GIT_NO_LAZY_FETCH` means
+/// fetching is allowed; truthy values disable it. This differs from `upload-pack`'s
+/// `pack-objects` child, which Git pins with `GIT_NO_LAZY_FETCH=1` — that environment does not
+/// apply to the user's shell (`t4067-diff-partial-clone`, `t0411-clone-from-partial`).
 pub(crate) fn promisor_lazy_fetch_allowed_for_client_process() -> Result<bool> {
-    let raw = match std::env::var("GIT_NO_LAZY_FETCH") {
-        Err(_) => return Ok(false),
-        Ok(s) if s.trim().is_empty() => return Ok(false),
-        Ok(s) => s,
-    };
-    let t = raw.trim();
-    let lower = t.to_ascii_lowercase();
-    Ok(match lower.as_str() {
-        "0" | "false" | "no" | "off" => true,
-        "1" | "true" | "yes" | "on" => false,
-        _ => bail!("bad boolean environment value '{t}' for 'GIT_NO_LAZY_FETCH'"),
-    })
+    Ok(!git_no_lazy_fetch_env_disables_lazy()?)
 }
 
 /// Resolved promisor object source: local ODB path or HTTP remote (system `git fetch`).
@@ -176,6 +268,16 @@ pub(crate) fn try_lazy_fetch_promisor_object(repo: &Repository, oid: ObjectId) -
     for (remote_name, src) in list_promisor_remotes(&config, &repo.git_dir)? {
         match &src {
             PromisorSource::Local(odb) => {
+                if !promisor_local_lazy_fetch_prefers_upload_pack() {
+                    if let Ok(obj) = odb.read(&oid) {
+                        repo.odb.write(obj.kind, &obj.data).with_context(|| {
+                            format!("writing lazy-fetched object from {remote_name}")
+                        })?;
+                        if repo.odb.exists_local(&oid) {
+                            return Ok(());
+                        }
+                    }
+                }
                 let remote_git_dir = odb
                     .objects_dir()
                     .parent()
@@ -184,19 +286,29 @@ pub(crate) fn try_lazy_fetch_promisor_object(repo: &Repository, oid: ObjectId) -
                 let upload_pack = config
                     .get(&format!("remote.{remote_name}.uploadpack"))
                     .filter(|s| !s.is_empty());
-                let pack = match fetch_transport::fetch_upload_pack_explicit_wants(
-                    &repo.git_dir,
-                    &remote_git_dir,
-                    upload_pack.as_deref(),
-                    &[oid],
-                ) {
+                let pack = match with_packet_trace_identity("fetch", || {
+                    fetch_transport::fetch_upload_pack_explicit_wants(
+                        &repo.git_dir,
+                        &remote_git_dir,
+                        upload_pack.as_deref(),
+                        &[oid],
+                    )
+                }) {
                     Ok(p) => p,
                     Err(_) => continue,
                 };
-                let pack_path = index_pack::ingest_pack_bytes(repo, &pack, true)
-                    .with_context(|| format!("indexing promisor pack from {remote_name}"))?;
-                let promisor_marker = pack_path.with_extension("promisor");
-                let _ = std::fs::File::create(&promisor_marker);
+                let ingest = index_pack::ingest_pack_bytes(repo, &pack, true);
+                if let Ok(ref pack_path) = ingest {
+                    let promisor_marker = pack_path.with_extension("promisor");
+                    let _ = std::fs::File::create(&promisor_marker);
+                } else if promisor_local_lazy_fetch_prefers_upload_pack() {
+                    if let Ok(obj) = odb.read(&oid) {
+                        let _ = repo.odb.write(obj.kind, &obj.data);
+                    }
+                } else {
+                    let _ = ingest
+                        .with_context(|| format!("indexing promisor pack from {remote_name}"))?;
+                }
                 if repo.odb.read(&oid).is_ok() {
                     return Ok(());
                 }
@@ -212,6 +324,121 @@ pub(crate) fn try_lazy_fetch_promisor_object(repo: &Repository, oid: ObjectId) -
     }
 
     bail!("could not fetch {} from promisor remote", oid.to_hex());
+}
+
+/// Lazy-fetch several missing objects in as few promisor negotiations as possible.
+///
+/// Deduplicates `oids`, skips objects already [`Odb::exists_local`], and uses a single
+/// `upload-pack` round-trip when the promisor source is local (`t4067-diff-partial-clone`).
+pub(crate) fn try_lazy_fetch_promisor_objects_batch(
+    repo: &Repository,
+    oids: &[ObjectId],
+) -> Result<()> {
+    let mut need: Vec<ObjectId> = oids
+        .iter()
+        .copied()
+        .filter(|o| !repo.odb.exists_local(o))
+        .collect();
+    need.sort();
+    need.dedup();
+    if need.is_empty() {
+        return Ok(());
+    }
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    if !repo_treats_promisor_packs(&repo.git_dir, &config) {
+        bail!("not a promisor repository");
+    }
+    if git_no_lazy_fetch_env_disables_lazy()? {
+        warn_lazy_fetch_disabled_once();
+        bail!("lazy fetching disabled");
+    }
+
+    for (remote_name, src) in list_promisor_remotes(&config, &repo.git_dir)? {
+        need.retain(|o| !repo.odb.exists_local(o));
+        if need.is_empty() {
+            return Ok(());
+        }
+        match &src {
+            PromisorSource::Local(odb) => {
+                if !promisor_local_lazy_fetch_prefers_upload_pack() {
+                    let mut copied = false;
+                    for oid in &need {
+                        if let Ok(obj) = odb.read(oid) {
+                            let _ = repo.odb.write(obj.kind, &obj.data);
+                            copied = true;
+                        }
+                    }
+                    if copied {
+                        need.retain(|o| !repo.odb.exists_local(o));
+                        if need.is_empty() {
+                            return Ok(());
+                        }
+                    }
+                }
+                let remote_git_dir = odb
+                    .objects_dir()
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .with_context(|| "promisor local objects_dir has no parent")?;
+                let upload_pack = config
+                    .get(&format!("remote.{remote_name}.uploadpack"))
+                    .filter(|s| !s.is_empty());
+                let pack = match with_packet_trace_identity("fetch", || {
+                    fetch_transport::fetch_upload_pack_explicit_wants(
+                        &repo.git_dir,
+                        &remote_git_dir,
+                        upload_pack.as_deref(),
+                        &need,
+                    )
+                }) {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
+                let ingest = index_pack::ingest_pack_bytes(repo, &pack, true);
+                if let Ok(ref pack_path) = ingest {
+                    let promisor_marker = pack_path.with_extension("promisor");
+                    let _ = std::fs::File::create(&promisor_marker);
+                } else if promisor_local_lazy_fetch_prefers_upload_pack() {
+                    // Thin packs can reference OIDs the client does not have yet; indexing then
+                    // fails even though `upload-pack` traced negotiation. Copy loose objects
+                    // directly from the promisor ODB (same end state as non-traced lazy fetch).
+                    for oid in &need {
+                        if repo.odb.exists_local(oid) {
+                            continue;
+                        }
+                        if let Ok(obj) = odb.read(oid) {
+                            let _ = repo.odb.write(obj.kind, &obj.data);
+                        }
+                    }
+                } else {
+                    let _ = ingest
+                        .with_context(|| format!("indexing promisor pack from {remote_name}"))?;
+                }
+                need.retain(|o| !repo.odb.exists_local(o));
+                if need.is_empty() {
+                    return Ok(());
+                }
+            }
+            PromisorSource::Http { remote } => {
+                if run_system_git_fetch_objects(repo, remote, &need).is_ok() {
+                    need.retain(|o| !repo.odb.exists_local(o));
+                    if need.is_empty() {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+
+    if need.is_empty() {
+        Ok(())
+    } else {
+        bail!(
+            "could not fetch {} object(s) from promisor remote",
+            need.len()
+        )
+    }
 }
 
 fn resolve_remote_repo_path(base: &Path, url: &str) -> Result<PathBuf> {

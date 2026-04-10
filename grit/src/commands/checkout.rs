@@ -21,6 +21,7 @@ use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{self, MergeAttr};
 use grit_lib::diff::read_submodule_head_oid;
 use grit_lib::diff::{diff_index_to_worktree, zero_oid};
+use grit_lib::error::Error as LibError;
 use grit_lib::filter_process::{self, DelayedProcessCheckout};
 use grit_lib::hooks::{run_hook, run_reference_transaction_committed_for_head_update, HookResult};
 use grit_lib::index::{
@@ -47,6 +48,22 @@ use grit_lib::write_tree::write_tree_from_index;
 
 use crate::branch_tracking::{format_tracking_info, AheadBehindMode};
 use crate::commands::merge::execute_custom_merge_driver;
+use crate::commands::promisor_hydrate::try_lazy_fetch_promisor_object;
+
+/// Read an object for checkout, lazy-fetching from a promisor remote when missing (`t4067`).
+fn read_object_for_checkout(
+    repo: &Repository,
+    oid: &ObjectId,
+) -> Result<grit_lib::objects::Object> {
+    match repo.odb.read(oid) {
+        Ok(o) => Ok(o),
+        Err(LibError::ObjectNotFound(_)) => {
+            let _ = try_lazy_fetch_promisor_object(repo, *oid);
+            repo.odb.read(oid).context("reading object for checkout")
+        }
+        Err(e) => Err(e.into()),
+    }
+}
 
 /// Count parallel checkout worker processes to spawn for trace2 tests (`t2080`).
 ///
@@ -3962,9 +3979,7 @@ checking out of the index."
                     );
                     if w.is_ok() {
                         // Read blob size for index entry
-                        let obj = repo
-                            .odb
-                            .read(&blob_oid)
+                        let obj = read_object_for_checkout(repo, &blob_oid)
                             .with_context(|| format!("reading blob for '{rel}'"))?;
 
                         // Update index entry with actual file stat
@@ -5537,7 +5552,7 @@ fn write_blob_to_worktree(
         return Ok(true);
     }
 
-    let obj = repo.odb.read(oid).context("reading object for checkout")?;
+    let obj = read_object_for_checkout(repo, oid).context("reading object for checkout")?;
     if obj.kind != ObjectKind::Blob {
         bail!("cannot checkout non-blob at '{rel_path}'");
     }
