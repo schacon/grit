@@ -238,9 +238,16 @@ pub fn preprocess_rebase_argv(rest: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for arg in rest {
         // Clap does not accept glued `-C<n>`; Git's rebase passes this through to the apply backend.
+        // Non-numeric glued forms (e.g. `-Cnot-a-number`) must still become `-C` + value so
+        // `validate_compat_syntax` reports Git's "switch `C' expects a numerical value".
         if arg.len() > 2 && arg.starts_with("-C") && !arg.starts_with("--") {
             let suffix = &arg[2..];
-            if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) {
+            if !suffix.is_empty() {
+                if suffix.chars().all(|c| c.is_ascii_digit()) {
+                    out.push("-C".to_string());
+                    out.push(suffix.to_string());
+                    continue;
+                }
                 out.push("-C".to_string());
                 out.push(suffix.to_string());
                 continue;
@@ -2278,7 +2285,7 @@ fn fast_forward_rebase(
         bail!("internal: fast-forward branch base mismatch");
     }
 
-    println!("First, rewinding head to replay your work on top of it...");
+    eprintln!("First, rewinding head to replay your work on top of it...");
 
     let ident = reflog_identity(repo);
     let ra = rebase_reflog_action();
@@ -2701,7 +2708,7 @@ fn replay_remaining(
 
     let rewind_marker = rb_dir.join("rewind-notice");
     if !rewind_marker.exists() && !todo.is_empty() {
-        println!("First, rewinding head to replay your work on top of it...");
+        eprintln!("First, rewinding head to replay your work on top of it...");
         let _ = fs::write(&rewind_marker, "");
     }
 
