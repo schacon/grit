@@ -114,14 +114,14 @@ do
 	archimport | citool | credential-netrc | credential-libsecret | \
 	credential-osxkeychain | cvsexportcommit | cvsimport | cvsserver | \
 	daemon | \
-	difftool--helper | filter-branch | fsck-objects | get-tar-commit-id | \
+	difftool--helper | filter-branch | fsck-objects | \
 	gui | gui--askpass | \
 	http-backend | http-fetch | http-push | init-db | \
-	merge-octopus | merge-one-file | merge-resolve | mergetool | \
-	mktag | p4 | p4.py | pickaxe | remote-ftp | remote-ftps | \
+	merge-octopus | merge-one-file | merge-resolve | \
+	p4 | p4.py | pickaxe | remote-ftp | remote-ftps | \
 	remote-http | remote-https | replay | send-email | \
-	sh-i18n--envsubst | shell | show | stage | submodule | svn | \
-	upload-archive--writer | upload-pack | web--browse | whatchanged)
+	sh-i18n--envsubst | shell | stage | svn | \
+	upload-archive--writer | upload-pack | web--browse)
 		expect_outcome=expect_failure ;;
 	*)
 		expect_outcome=expect_success ;;

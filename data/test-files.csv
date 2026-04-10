@@ -451,7 +451,7 @@ t1512-rev-parse-disambiguation	t1	yes	38	34	4	false	ok	0
 t1513-rev-parse-prefix	t1	yes	11	9	2	false	ok	0
 t1514-rev-parse-push	t1	yes	9	8	1	false	ok	0
 t1515-rev-parse-outside-repo	t1	yes	4	4	0	true	ok	0
-t1517-outside-repo	t1	yes	181	90	91	false	ok	0
+t1517-outside-repo	t1	yes	195	195	0	true	ok	0
 t1600-index	t1	yes	7	7	0	true	ok	0
 t1601-index-bogus	t1	yes	4	4	0	true	ok	0
 t1700-split-index	t1	yes	29	3	26	false	ok	0
