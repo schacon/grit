@@ -482,6 +482,56 @@ impl Odb {
         Ok(oid)
     }
 
+    /// Write an object as a loose file in this object directory only.
+    ///
+    /// Unlike [`Self::write`], this ignores `info/alternates` and
+    /// `GIT_ALTERNATE_OBJECT_DIRECTORIES`: if the object exists only in an
+    /// alternate store, it is still written here. That matches how Git's
+    /// `unpack-objects` materializes every packed object into the receiving
+    /// repository even when the same OID is already reachable via alternates
+    /// (see `t5519-push-alternates`).
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::write`].
+    pub fn write_local(&self, kind: ObjectKind, data: &[u8]) -> Result<ObjectId> {
+        let store_bytes = build_store_bytes(kind, data);
+        let oid = hash_bytes(&store_bytes);
+
+        let path = self.object_path(&oid);
+        if path.exists() {
+            let _ = self.freshen_object(&oid);
+            return Ok(oid);
+        }
+        if self.exists_local(&oid) {
+            let _ = self.freshen_object(&oid);
+            return Ok(oid);
+        }
+
+        let prefix_dir = path
+            .parent()
+            .ok_or_else(|| Error::PathError("object path has no parent".to_owned()))?;
+        fs::create_dir_all(prefix_dir)?;
+
+        let tmp_path = prefix_dir.join(format!("tmp_{}", oid.loose_suffix()));
+        {
+            let tmp_file = fs::File::create(&tmp_path)?;
+            let mut encoder = ZlibEncoder::new(tmp_file, Compression::default());
+            encoder
+                .write_all(&store_bytes)
+                .map_err(|e| Error::Zlib(e.to_string()))?;
+            encoder.finish().map_err(|e| Error::Zlib(e.to_string()))?;
+        }
+        fs::rename(&tmp_path, &path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o444));
+        }
+
+        Ok(oid)
+    }
+
     /// Write an already-serialized object (header + data) to the loose store.
     ///
     /// Useful when the caller has the full store bytes (e.g. from stdin with
@@ -502,6 +552,51 @@ impl Odb {
             return Ok(oid);
         }
         if self.exists(&oid) {
+            let _ = self.freshen_object(&oid);
+            return Ok(oid);
+        }
+
+        let prefix_dir = path
+            .parent()
+            .ok_or_else(|| Error::PathError("object path has no parent".to_owned()))?;
+        fs::create_dir_all(prefix_dir)?;
+
+        let tmp_path = prefix_dir.join(format!("tmp_{}", oid.loose_suffix()));
+        {
+            let tmp_file = fs::File::create(&tmp_path)?;
+            let mut encoder = ZlibEncoder::new(tmp_file, Compression::default());
+            encoder
+                .write_all(store_bytes)
+                .map_err(|e| Error::Zlib(e.to_string()))?;
+            encoder.finish().map_err(|e| Error::Zlib(e.to_string()))?;
+        }
+        fs::rename(&tmp_path, &path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o444));
+        }
+
+        Ok(oid)
+    }
+
+    /// Like [`Self::write_raw`] but only consults this object directory, not alternates.
+    ///
+    /// See [`Self::write_local`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::write_raw`].
+    pub fn write_raw_local(&self, store_bytes: &[u8]) -> Result<ObjectId> {
+        parse_object_bytes(store_bytes)?;
+
+        let oid = hash_bytes(store_bytes);
+        let path = self.object_path(&oid);
+        if path.exists() {
+            let _ = self.freshen_object(&oid);
+            return Ok(oid);
+        }
+        if self.exists_local(&oid) {
             let _ = self.freshen_object(&oid);
             return Ok(oid);
         }

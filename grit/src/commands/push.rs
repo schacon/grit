@@ -12,6 +12,8 @@ use grit_lib::gitmodules::{oids_from_copied_object_paths, verify_gitmodules_for_
 use grit_lib::hooks::{run_hook, run_hook_capture, HookResult};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::ObjectId;
+use grit_lib::odb::Odb;
+use grit_lib::pack::read_pack_index;
 use grit_lib::push_submodules::{
     collect_changed_gitlinks_for_push, find_unpushed_submodule_paths,
     format_unpushed_submodules_error, head_ref_short_name, parse_push_recurse_submodules_arg,
@@ -23,6 +25,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse;
 use grit_lib::state::{resolve_head, HeadState};
 
+use std::collections::HashSet;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -3154,9 +3157,13 @@ fn copy_objects_recursive_with_submodules(
 
 /// Copy all objects (loose + packs) from src to dst, skipping existing.
 /// Copy objects and return the list of newly created files (for rollback).
+///
+/// Objects already reachable from `dst` via `objects/info/alternates` are not
+/// copied (`Odb::exists`), matching Git's send-pack behaviour (`t5519-push-alternates`).
 fn copy_objects_tracked(src_git_dir: &Path, dst_git_dir: &Path) -> Result<Vec<PathBuf>> {
     let src_objects = src_git_dir.join("objects");
     let dst_objects = dst_git_dir.join("objects");
+    let dst_odb = Odb::new(&dst_objects);
     let mut copied = Vec::new();
 
     if src_objects.is_dir() {
@@ -3174,6 +3181,15 @@ fn copy_objects_tracked(src_git_dir: &Path, dst_git_dir: &Path) -> Result<Vec<Pa
             for inner in fs::read_dir(entry.path())? {
                 let inner = inner?;
                 if inner.file_type()?.is_file() {
+                    let file_name = inner.file_name();
+                    let suffix = file_name.to_string_lossy();
+                    let hex = format!("{name_str}{suffix}");
+                    let Ok(oid) = ObjectId::from_hex(&hex) else {
+                        continue;
+                    };
+                    if dst_odb.exists(&oid) {
+                        continue;
+                    }
                     let dst_file = dst_dir.join(inner.file_name());
                     if !dst_file.exists() {
                         fs::create_dir_all(&dst_dir)?;
@@ -3191,16 +3207,45 @@ fn copy_objects_tracked(src_git_dir: &Path, dst_git_dir: &Path) -> Result<Vec<Pa
     let dst_pack = dst_objects.join("pack");
     if src_pack.is_dir() {
         fs::create_dir_all(&dst_pack)?;
+        let mut skip_pack_stems: HashSet<String> = HashSet::new();
         for entry in fs::read_dir(&src_pack)? {
             let entry = entry?;
-            if entry.file_type()?.is_file() {
-                let dst_file = dst_pack.join(entry.file_name());
-                if !dst_file.exists() {
-                    if fs::hard_link(entry.path(), &dst_file).is_err() {
-                        fs::copy(entry.path(), &dst_file)?;
-                    }
-                    copied.push(dst_file);
+            let path = entry.path();
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            if path.extension().and_then(|s| s.to_str()) != Some("idx") {
+                continue;
+            }
+            let skip = read_pack_index(&path)
+                .map(|idx| idx.entries.iter().all(|e| dst_odb.exists(&e.oid)))
+                .unwrap_or(false);
+            if skip {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    skip_pack_stems.insert(stem.to_owned());
                 }
+            }
+        }
+        for entry in fs::read_dir(&src_pack)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let path = entry.path();
+            let ext = path.extension().and_then(|s| s.to_str());
+            if matches!(ext, Some("idx") | Some("pack")) {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if skip_pack_stems.contains(stem) {
+                        continue;
+                    }
+                }
+            }
+            let dst_file = dst_pack.join(entry.file_name());
+            if !dst_file.exists() {
+                if fs::hard_link(entry.path(), &dst_file).is_err() {
+                    fs::copy(entry.path(), &dst_file)?;
+                }
+                copied.push(dst_file);
             }
         }
     }
