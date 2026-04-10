@@ -889,7 +889,8 @@ t5318-commit-graph	t5	skip	85	0	0	false	ok	0
 t5318-pack-objects-revs-exclude	t5	yes	9	6	3	false	ok	0
 t5319-multi-pack-index	t5	yes	98	20	78	false	ok	0
 t5320-delta-islands	t5	yes	15	2	13	false	ok	0
-t5321-pack-large-objects	t5	yes	2	0	2	false	ok	0
+t5321-pack-large-objects	t5	yes	2	2	0	true	ok	0
+t5321-repro-inner	t5	yes	0	0	0	false		0
 t5322-pack-objects-sparse	t5	yes	11	5	6	false	ok	0
 t5323-pack-redundant	t5	yes	18	18	0	true	ok	0
 t5324-split-commit-graph	t5	yes	42	9	33	false	ok	0
