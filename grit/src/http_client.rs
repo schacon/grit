@@ -144,6 +144,14 @@ impl HttpClientContext {
         Self::from_config_set(&ConfigSet::new())
     }
 
+    /// Return the configured `Git-Protocol` request header value for this context.
+    ///
+    /// Returns `None` when protocol v0 is selected and the header should be suppressed.
+    #[must_use]
+    pub fn git_protocol_header(&self) -> Option<&str> {
+        self.git_protocol_header.as_deref()
+    }
+
     /// Perform GET, returning the response body. Fails on HTTP status >= 400.
     pub fn get(&self, url: &str) -> Result<Vec<u8>> {
         self.get_with_git_protocol(url, self.git_protocol_header.as_deref())

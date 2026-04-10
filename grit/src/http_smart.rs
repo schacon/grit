@@ -63,7 +63,7 @@ pub(crate) fn agent_header() -> String {
 
 fn http_get(client: &crate::http_client::HttpClientContext, url: &str) -> Result<Vec<u8>> {
     trace2_child_start_git_remote_https(url);
-    client.get_with_git_protocol(url, Some("version=2"))
+    client.get(url)
 }
 
 fn http_get_discovery(
@@ -82,7 +82,13 @@ fn http_post(
     body: &[u8],
 ) -> Result<Vec<u8>> {
     trace2_child_start_git_remote_https(url);
-    client.post_with_git_protocol(url, content_type, accept, body, Some("version=2"))
+    client.post_with_git_protocol(
+        url,
+        content_type,
+        accept,
+        body,
+        client.git_protocol_header(),
+    )
 }
 
 fn http_post_discovery(
