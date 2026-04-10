@@ -312,6 +312,18 @@ fn fetch_positive_refspecs_are_all_globs(refspecs: &[FetchRefspec]) -> bool {
         .all(|r| !r.src.is_empty() && r.src.contains('*'))
 }
 
+/// True when the first non-negative configured fetch refspec is a glob (e.g. `refs/heads/*`).
+///
+/// Git's `get_ref_map` only uses [`fetch_head_is_for_merge_first_refspec_only`] for **non-pattern**
+/// refspecs. With a glob refspec, detached `HEAD` still gets a for-merge line on the first
+/// advertised branch (t7422-submodule-output: `git -C X pull` in a submodule checkout).
+fn fetch_head_default_uses_first_advertised_branch(refspecs: &[FetchRefspec]) -> bool {
+    let Some(first) = refspecs.iter().find(|r| !r.negative && !r.src.is_empty()) else {
+        return true;
+    };
+    first.src.contains('*')
+}
+
 /// True when `HEAD` names `refs/heads/<b>`, `branch.<b>.remote` matches `remote_name`, and
 /// `branch.<b>.merge` is set (Git `branch_has_merge_config` for default fetch).
 fn branch_has_merge_config_for_remote(
@@ -1378,7 +1390,12 @@ fn fetch_remote(
         }
 
         // Standard path: update remote-tracking refs from remote heads
-        let has_merge_cfg = branch_has_merge_config_for_remote(git_dir, config, remote_name);
+        // Git's `branch_get(NULL)` only represents a branch when `HEAD` is a symbolic ref to
+        // `refs/heads/*`. When detached, `branch_has_merge_config` is false even if
+        // `branch.<name>.{remote,merge}` exists (leftover from a prior checkout), so the first
+        // default fetch ref is marked for-merge — see `get_ref_map` in fetch.c (t7422-submodule).
+        let has_merge_cfg = current_branch_from_head(git_dir).is_some()
+            && branch_has_merge_config_for_remote(git_dir, config, remote_name);
 
         for (idx, (refname, advertised_oid)) in remote_heads.iter().enumerate() {
             let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
@@ -1405,6 +1422,13 @@ fn fetch_remote(
                 //
                 // Default `remote.*.fetch` is `refs/heads/*:refs/remotes/<name>/*` (glob). Git still
                 // uses the checked-out branch for FETCH_HEAD for-merge in that case (t5532-fetch-proxy).
+                match current_branch_from_head(git_dir) {
+                    Some(b) => refname == &format!("refs/heads/{b}"),
+                    None => idx == 0,
+                }
+            } else if fetch_head_default_uses_first_advertised_branch(&refspecs) {
+                // Glob refspec (`refs/heads/*`): same rule as an empty refspec list — match symbolic
+                // HEAD's branch when present, else first advertised head (detached submodule).
                 match current_branch_from_head(git_dir) {
                     Some(b) => refname == &format!("refs/heads/{b}"),
                     None => idx == 0,

@@ -507,18 +507,6 @@ sane_unset () {
 	done
 }
 
-test_seq () {
-	local i="$1" end="${2:-}"
-	if test -z "$end"; then
-		end=$i
-		i=1
-	fi
-	while test "$i" -le "$end"; do
-		echo "$i"
-		i=$(($i + 1))
-	done
-}
-
 test_cmp_bin () {
 	cmp "$@"
 }
@@ -692,16 +680,22 @@ test_oid () {
 }
 
 test_oid_cache () {
-	: >"$TEST_OID_CACHE_FILE"
+	{ test -n "$test_hash_algo" || test_detect_hash; } || true
+	# Append: some upstream tests (e.g. t7422) call this in a loop; truncating would keep only
+	# the last entry and break $(test_oid A) / $(test_oid B) in later cases.
 	while read -r name value
 	do
 		test -z "$name" && continue
 		case "$value" in
 		sha1:*)
-			echo "$name sha1 ${value#sha1:}" >>"$TEST_OID_CACHE_FILE"
+			oid="${value#sha1:}"
+			echo "$name sha1 $oid" >>"$TEST_OID_CACHE_FILE"
+			eval "test_oid_sha1_$name=\$oid"
 			;;
 		sha256:*)
-			echo "$name sha256 ${value#sha256:}" >>"$TEST_OID_CACHE_FILE"
+			oid="${value#sha256:}"
+			echo "$name sha256 $oid" >>"$TEST_OID_CACHE_FILE"
+			eval "test_oid_sha256_$name=\$oid"
 			;;
 		esac
 	done

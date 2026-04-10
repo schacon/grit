@@ -2582,6 +2582,17 @@ fn checkout_index_to_worktree(
                         false,
                     )?;
                 }
+                continue;
+            } else if abs_path.is_dir() {
+                // Avoid `remove_dir_all` for thousands of fresh empty placeholder dirs (synthetic
+                // submodule fixtures): an empty directory is already the desired state.
+                let mut has_entries = false;
+                if let Ok(rd) = std::fs::read_dir(&abs_path) {
+                    has_entries = rd.count() > 0;
+                }
+                if has_entries {
+                    std::fs::remove_dir_all(&abs_path)?;
+                }
             }
         }
 

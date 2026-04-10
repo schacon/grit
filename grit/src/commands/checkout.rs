@@ -3174,6 +3174,12 @@ pub(crate) fn checkout_gitlink_worktree_entry(
     let sm_dir = work_tree.join(rel);
     let modules_git = submodule_modules_git_dir(&repo.git_dir, rel);
     let has_local_module = modules_git.join("HEAD").exists();
+    // Thousands of gitlinks in one tree (e.g. synthetic submodule fixtures) are usually
+    // uninitialized: no `.git/modules/<path>/HEAD`. Skip all filesystem work in that case so
+    // `git submodule add` / `reset --hard` stay fast (t7422-submodule-output).
+    if !has_local_module {
+        return Ok(());
+    }
 
     if let Ok(meta) = std::fs::symlink_metadata(&sm_dir) {
         if meta.file_type().is_symlink() || meta.is_file() {
@@ -3190,10 +3196,6 @@ pub(crate) fn checkout_gitlink_worktree_entry(
         std::fs::create_dir_all(&sm_dir)?;
     } else if sm_dir.is_dir() {
         let _ = std::fs::create_dir_all(&sm_dir);
-    }
-
-    if !has_local_module {
-        return Ok(());
     }
 
     let modules_abs = modules_git.canonicalize().unwrap_or(modules_git);
