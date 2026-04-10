@@ -1044,7 +1044,7 @@ fn validate_worktree_updates(
         }
 
         match (old, new) {
-            (None, Some(_)) => {
+            (None, Some(new_entry)) => {
                 if allow_ignored_overwrite {
                     if let Some(ref mut matcher) = ignore_matcher {
                         let (ignored, _) = matcher
@@ -1072,6 +1072,11 @@ fn validate_worktree_updates(
                         }
                         continue;
                     }
+                }
+                // Untracked path on disk: allow when it already matches the blob we would
+                // materialize (e.g. `read-tree -m -u` after checkout left the same bytes).
+                if worktree_matches_entry(repo, new_entry, &abs_path)? {
+                    continue;
                 }
                 bail!(
                     "untracked working tree file '{}' would be overwritten by merge",
