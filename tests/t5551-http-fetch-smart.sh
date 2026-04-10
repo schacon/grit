@@ -30,7 +30,7 @@ test_expect_success 'fetch changes via http' '
 '
 test_expect_success 'used upload-pack service' '
 	strip_access_log >log &&
-	grep "GET /smart/repo.git/info/refs?service=git-upload-pack HTTP/[0-9.]* 200" log &&
+	grep "GET  /smart/repo.git/info/refs?service=git-upload-pack HTTP/[0-9.]* 200" log &&
 	grep "POST /smart/repo.git/git-upload-pack HTTP/[0-9.]* 200" log
 '
 test_expect_failure 'follow redirects (301) — needs redirect support' '

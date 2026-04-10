@@ -36,7 +36,7 @@ test_expect_success 'push to remote repository (standard)' '
 '
 test_expect_success 'used receive-pack service' '
 	strip_access_log >log &&
-	grep "GET /smart/test_repo.git/info/refs?service=git-receive-pack HTTP/[0-9.]* 200" log &&
+	grep "GET  /smart/test_repo.git/info/refs?service=git-receive-pack HTTP/[0-9.]* 200" log &&
 	grep "POST /smart/test_repo.git/git-receive-pack HTTP/[0-9.]* 200" log
 '
 test_expect_success 'push already up-to-date' '

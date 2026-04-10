@@ -283,13 +283,22 @@ stop_httpd() {
 }
 
 strip_access_log () {
-	sed -e "s/  */ /g" <"$HTTPD_ROOT_PATH/access.log"
+	sed -e "
+		s/^.* \"//
+		s/\"//
+		s/ [1-9][0-9]*\$//
+		s/^GET /GET  /
+	" "$HTTPD_ROOT_PATH"/access.log
 }
 
 check_access_log () {
+	sort "$1" >"$1".sorted &&
 	strip_access_log >access.log.stripped &&
-	if ! test -s "$1"; then test_must_be_empty access.log.stripped
-	else test_cmp "$1" access.log.stripped; fi
+	sort access.log.stripped >access.log.sorted &&
+	if ! test_cmp "$1".sorted access.log.sorted
+	then
+		test_cmp "$1" access.log.stripped
+	fi
 }
 
 test_http_push_nonff () {

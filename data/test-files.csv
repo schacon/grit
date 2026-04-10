@@ -982,7 +982,7 @@ t5557-http-get	t5	yes	2	2	0	true	ok	0
 t5558-clone-bundle-uri	t5	yes	37	21	16	false	ok	0
 t5559-http-fetch-smart-http2	t5	skip	0	0	0	false		0
 t5560-http-backend-noserver	t5	yes	14	2	12	false	ok	0
-t5561-http-backend	t5	yes	0	0	0	false	ok	0
+t5561-http-backend	t5	yes	14	14	0	true	ok	0
 t5562-http-backend-content-length	t5	yes	16	10	6	false	ok	0
 t5563-simple-http-auth	t5	skip	17	0	0	false	ok	0
 t5564-http-proxy	t5	yes	8	8	0	true	ok	0
