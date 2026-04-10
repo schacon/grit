@@ -1355,6 +1355,8 @@ pub(crate) fn abort_cherry_pick_or_revert() -> Result<()> {
             no_refresh: false,
             refresh: true,
             patch: false,
+            recurse_submodules: None,
+            no_recurse_submodules: false,
             rest: vec![stored_oid.to_hex()],
             skip_sequencer_head_cleanup: true,
         })?;
@@ -1375,6 +1377,8 @@ pub(crate) fn abort_cherry_pick_or_revert() -> Result<()> {
         no_refresh: false,
         refresh: true,
         patch: false,
+        recurse_submodules: None,
+        no_recurse_submodules: false,
         rest: vec!["HEAD".to_owned()],
         skip_sequencer_head_cleanup: true,
     })?;

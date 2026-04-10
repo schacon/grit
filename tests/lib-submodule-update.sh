@@ -231,7 +231,8 @@ reset_work_tree_to_interested () {
 		cp -r submodule_update_repo/.git/modules/sub1 submodule_update/.git/modules/sub1
 		GIT_WORK_TREE=. git -C submodule_update/.git/modules/sub1 config --unset core.worktree
 	fi &&
-	if ! test -d submodule_update/.git/modules/sub1/modules/sub2
+	if ! test -d submodule_update/.git/modules/sub1/modules/sub2 &&
+	   test -d submodule_update_repo/.git/modules/sub1/modules/sub2
 	then
 		mkdir -p submodule_update/.git/modules/sub1/modules &&
 		cp -r submodule_update_repo/.git/modules/sub1/modules/sub2 submodule_update/.git/modules/sub1/modules/sub2

@@ -3139,7 +3139,7 @@ fn checkout_record_path_result(
 /// rewritten even if HEAD already matches (needed when the path was a regular file and is now a
 /// gitlink, leaving an empty submodule directory). When false, a no-op checkout is avoided so
 /// symlinked submodule paths (e.g. `g` → `b`) do not spuriously populate the shared directory.
-fn checkout_gitlink_worktree_entry(
+pub(crate) fn checkout_gitlink_worktree_entry(
     repo: &Repository,
     work_tree: &Path,
     rel: &str,
@@ -3148,6 +3148,9 @@ fn checkout_gitlink_worktree_entry(
 ) -> Result<()> {
     let sm_dir = work_tree.join(rel);
     let modules_git = submodule_modules_git_dir(&repo.git_dir, rel);
+    if !modules_git.join("HEAD").exists() {
+        crate::commands::submodule::ensure_submodule_modules_gitdir(repo, rel)?;
+    }
     let has_local_module = modules_git.join("HEAD").exists();
 
     if let Ok(meta) = std::fs::symlink_metadata(&sm_dir) {

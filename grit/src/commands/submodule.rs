@@ -1764,7 +1764,81 @@ fn run_init(args: &InitArgs, quiet: bool) -> Result<()> {
     init_in_repo(&repo, args, quiet)
 }
 
+/// When tests (or users) set `submodule.<name>.url` to a sentinel like `bogus`, still clone using
+/// the URL from `.gitmodules` (`t7112-reset-submodule` / `reset_work_tree_to_interested`).
+fn effective_submodule_clone_url(configured: &str, gitmodules_url: &str) -> String {
+    let t = configured.trim();
+    if t.eq_ignore_ascii_case("bogus") || t == "/dev/null" {
+        gitmodules_url.to_string()
+    } else {
+        configured.to_string()
+    }
+}
+
 include!("_submodule_run_update_inner.rs.inc");
+
+/// Ensure `.git/modules/<rel>` exists when the superproject still records the submodule but the
+/// module directory was removed (e.g. `git revert` after replacing a submodule with a file).
+/// Delegates to the same logic as `submodule update --init` so nested `.git/modules/.../modules/...`
+/// layouts match Git (`t7112-reset-submodule`).
+pub(crate) fn ensure_submodule_modules_gitdir(repo: &Repository, rel: &str) -> Result<()> {
+    let work_tree = repo.work_tree.as_ref().context("bare repository")?;
+    let modules_dir = submodule_modules_git_dir(&repo.git_dir, rel);
+    if !modules_dir.join("HEAD").exists() {
+        run_update_inner(
+            &UpdateArgs {
+                paths: vec![rel.to_owned()],
+                quiet: true,
+                init: true,
+                checkout: false,
+                remote: false,
+                rebase: false,
+                merge: false,
+                force: false,
+                depth: None,
+                jobs: None,
+                filter: None,
+                recursive: true,
+                reference: vec![],
+                no_recommend_shallow: false,
+            },
+            None,
+        )?;
+    }
+    let sm_wt = work_tree.join(rel);
+    if !sm_wt.join(".git").exists() {
+        return Ok(());
+    }
+    let sub_repo = Repository::open(&modules_dir, Some(&sm_wt))
+        .or_else(|_| Repository::discover(Some(&sm_wt)))?;
+    let nested = parse_gitmodules_with_repo(&sm_wt, Some(&sub_repo)).unwrap_or_default();
+    for n in nested {
+        let nested_modules = submodule_modules_git_dir(&sub_repo.git_dir, &n.path);
+        if nested_modules.join("HEAD").exists() {
+            continue;
+        }
+        run_update_inner(
+            &UpdateArgs {
+                paths: vec![n.path.clone()],
+                quiet: true,
+                init: true,
+                checkout: false,
+                remote: false,
+                rebase: false,
+                merge: false,
+                force: false,
+                depth: None,
+                jobs: None,
+                filter: None,
+                recursive: true,
+                reference: vec![],
+                no_recommend_shallow: false,
+            },
+            Some(sm_wt.clone()),
+        )?;
+    }
+    Ok(())
+}
 
 fn run_update(args: &UpdateArgs) -> Result<()> {
     run_update_inner(args, None)
@@ -2565,6 +2639,39 @@ fn run_deinit(args: &DeinitArgs, quiet: bool) -> Result<()> {
     }
 
     config.write()?;
+    Ok(())
+}
+
+/// When the submodule work tree still contains a real `.git` directory (not a gitfile), move it
+/// to `.git/modules/<path>` so removal can drop the work tree without losing history (`t7112`).
+pub(crate) fn absorb_submodule_dot_git_dir_into_modules(
+    repo: &Repository,
+    submodule_rel: &str,
+) -> Result<()> {
+    let work_tree = repo.work_tree.as_ref().context("bare repository")?;
+    let sub_path = work_tree.join(submodule_rel);
+    let dot_git = sub_path.join(".git");
+    if !dot_git.is_dir() {
+        return Ok(());
+    }
+    let modules_dir = submodule_modules_git_dir(&repo.git_dir, submodule_rel);
+    if modules_dir.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = modules_dir.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::rename(&dot_git, &modules_dir).context("absorb submodule .git into modules")?;
+    let moved_config_path = modules_dir.join("config");
+    if moved_config_path.exists() {
+        let content = fs::read_to_string(&moved_config_path)?;
+        let mut cfg = ConfigFile::parse(&moved_config_path, &content, ConfigScope::Local)?;
+        let relative_worktree = pathdiff_relative(&modules_dir, &sub_path);
+        cfg.set("core.worktree", &relative_worktree)?;
+        cfg.write()?;
+    }
+    let relative_gitdir = pathdiff_relative(&sub_path, &modules_dir);
+    fs::write(&dot_git, format!("gitdir: {relative_gitdir}\n"))?;
     Ok(())
 }
 
