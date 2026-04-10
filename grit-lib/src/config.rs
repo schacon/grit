@@ -226,6 +226,12 @@ pub fn canonical_key(raw: &str) -> Result<String> {
 
 // ── Parser ──────────────────────────────────────────────────────────
 
+/// Display path for config diagnostics (matches [`config_error_path_display`] for public callers).
+#[must_use]
+pub fn config_file_display_for_error(path: &Path) -> String {
+    config_error_path_display(path)
+}
+
 fn config_error_path_display(path: &Path) -> String {
     if path.file_name().and_then(|s| s.to_str()) == Some("config")
         && path
@@ -644,6 +650,14 @@ fatal: bad config variable 'fetch.negotiationalgorithm' in file '{file_disp}' at
                     file: Some(path.to_path_buf()),
                     line: start_idx + 1,
                 });
+            } else if logical_line.trim().is_empty() {
+                continue;
+            } else {
+                let file_disp = config_error_path_display(path);
+                return Err(Error::Message(format!(
+                    "fatal: bad config line {} in file {file_disp}",
+                    start_idx + 1
+                )));
             }
         }
 
@@ -674,6 +688,7 @@ fatal: bad config variable 'fetch.negotiationalgorithm' in file '{file_disp}' at
     /// headers, matching how Git injects command-line configuration.
     pub fn from_git_config_parameters(path: &Path, raw: &str) -> Result<Self> {
         let mut entries = Vec::new();
+        let pseudo_path = path.to_path_buf();
         for entry in parse_config_parameters(raw) {
             if let Some((key, val)) = entry.split_once('=') {
                 let canon = canonical_key(key.trim())?;
@@ -681,7 +696,7 @@ fatal: bad config variable 'fetch.negotiationalgorithm' in file '{file_disp}' at
                     key: canon,
                     value: Some(val.to_owned()),
                     scope: ConfigScope::Command,
-                    file: None,
+                    file: Some(pseudo_path.clone()),
                     line: 0,
                 });
             } else {
@@ -690,7 +705,7 @@ fatal: bad config variable 'fetch.negotiationalgorithm' in file '{file_disp}' at
                     key: canon,
                     value: None,
                     scope: ConfigScope::Command,
-                    file: None,
+                    file: Some(pseudo_path.clone()),
                     line: 0,
                 });
             }
@@ -1420,6 +1435,22 @@ impl ConfigSet {
             .collect()
     }
 
+    /// All raw values for a key in load order, preserving `None` for bare boolean keys.
+    ///
+    /// Matches Git's multi-value list where `NULL` means a value-less / boolean-true key.
+    #[must_use]
+    pub fn get_all_raw(&self, key: &str) -> Vec<Option<String>> {
+        let canon = match canonical_key(key) {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
+        self.entries
+            .iter()
+            .filter(|e| e.key == canon)
+            .map(|e| e.value.clone())
+            .collect()
+    }
+
     /// Get a boolean value, interpreting `true`/`yes`/`on`/`1` as true and
     /// `false`/`no`/`off`/`0` as false.
     pub fn get_bool(&self, key: &str) -> Option<std::result::Result<bool, String>> {
@@ -1506,40 +1537,52 @@ impl ConfigSet {
             let system_path = std::env::var("GIT_CONFIG_SYSTEM")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|_| std::path::PathBuf::from("/etc/gitconfig"));
-            if let Ok(Some(f)) = ConfigFile::from_path(&system_path, ConfigScope::System) {
-                Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?;
+            match ConfigFile::from_path(&system_path, ConfigScope::System) {
+                Ok(Some(f)) => Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?,
+                Ok(None) => {}
+                Err(e) => return Err(e),
             }
         }
 
         // Global config (Git merges every existing file: XDG then ~/.gitconfig).
         for path in global_config_paths() {
-            if let Ok(Some(f)) = ConfigFile::from_path(&path, ConfigScope::Global) {
-                Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?;
+            match ConfigFile::from_path(&path, ConfigScope::Global) {
+                Ok(Some(f)) => Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?,
+                Ok(None) => {}
+                Err(e) => return Err(e),
             }
         }
 
         // Local config
         if let Some(gd) = git_dir {
             let local_path = gd.join("config");
-            if let Ok(Some(f)) = ConfigFile::from_path(&local_path, ConfigScope::Local) {
-                Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?;
+            match ConfigFile::from_path(&local_path, ConfigScope::Local) {
+                Ok(Some(f)) => Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?,
+                Ok(None) => {}
+                Err(e) => return Err(e),
             }
 
             // Worktree config
             let wt_path = gd.join("config.worktree");
-            if let Ok(Some(f)) = ConfigFile::from_path(&wt_path, ConfigScope::Worktree) {
-                Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?;
+            match ConfigFile::from_path(&wt_path, ConfigScope::Worktree) {
+                Ok(Some(f)) => Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?,
+                Ok(None) => {}
+                Err(e) => return Err(e),
             }
         }
 
         // Environment overrides: optional file
         if let Ok(path) = std::env::var("GIT_CONFIG") {
-            if let Ok(Some(f)) = ConfigFile::from_path(Path::new(&path), ConfigScope::Command) {
-                if proc {
-                    Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?;
-                } else {
-                    set.merge(&f);
+            match ConfigFile::from_path(Path::new(&path), ConfigScope::Command) {
+                Ok(Some(f)) => {
+                    if proc {
+                        Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?;
+                    } else {
+                        set.merge(&f);
+                    }
                 }
+                Ok(None) => {}
+                Err(e) => return Err(e),
             }
         }
 

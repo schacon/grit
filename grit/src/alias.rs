@@ -42,7 +42,14 @@ pub(crate) fn lookup_alias(name: &str, config: &ConfigSet) -> Result<Option<Stri
     for k in keys {
         if let Some(e) = last_alias_entry(config, &k) {
             if e.value.is_none() {
-                bail!("missing value for '{}'", e.key);
+                if let Some(ref p) = e.file {
+                    let disp = grit_lib::config::config_file_display_for_error(p);
+                    fatal_alias(&format!(
+                        "missing value for '{}' in file {} at line {}",
+                        e.key, disp, e.line
+                    ));
+                }
+                fatal_alias(&format!("missing value for '{}'", e.key));
             }
             return Ok(e.value.clone());
         }
@@ -232,7 +239,17 @@ pub(crate) fn run_command_with_aliases(
                 .ok()
                 .map(|r| r.git_dir)
         });
-    let config = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true)?;
+    let config = match grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) {
+        Ok(c) => c,
+        Err(e) => {
+            let s = e.to_string();
+            if s.starts_with("fatal: bad config line ") {
+                eprintln!("{s}");
+                std::process::exit(128);
+            }
+            return Err(e.into());
+        }
+    };
 
     let mut args = vec![subcmd];
     args.extend(rest);
