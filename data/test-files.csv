@@ -291,7 +291,7 @@ t12270-status-porcelain-v2	t1	yes	32	32	0	true	ok	0
 t12280-log-shortlog-format	t1	yes	36	36	0	true	ok	0
 t12290-log-cherry-mark	t1	yes	33	32	1	false	ok	0
 t12300-rev-list-merge-left-right	t1	yes	33	33	0	true	ok	0
-t12310-rev-list-simplify	t1	yes	32	30	2	false	ok	0
+t12310-rev-list-simplify	t1	yes	32	32	0	true	ok	0
 t12320-rev-parse-sq-quote	t1	yes	36	36	0	true	ok	0
 t12340-config-fixed-value	t1	yes	34	34	0	true	ok	0
 t12350-config-worktree-scope	t1	yes	33	33	0	true	ok	0
