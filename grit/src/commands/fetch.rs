@@ -8,6 +8,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{parse_bool, ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::merge_base;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -22,6 +23,11 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+
+use crate::ref_transaction_hooks::{
+    run_ref_transaction_aborted, run_ref_transaction_committed, run_ref_transaction_prepare,
+    HookUpdate,
+};
 
 /// Arguments for `grit fetch`.
 #[derive(Debug, Clone, ClapArgs)]
@@ -172,6 +178,19 @@ pub struct Args {
     /// Disable submodule recursion (overrides config).
     #[arg(long = "no-recurse-submodules")]
     pub no_recurse_submodules: bool,
+}
+
+#[derive(Clone)]
+enum PendingRefOp {
+    Write {
+        refname: String,
+        old_oid: Option<ObjectId>,
+        new_oid: ObjectId,
+    },
+    Delete {
+        refname: String,
+        old_oid: Option<ObjectId>,
+    },
 }
 
 pub fn run(mut args: Args) -> Result<()> {
@@ -1232,6 +1251,7 @@ fn fetch_remote(
 
     // Track which remote-tracking refs we updated (for prune)
     let mut updated_refs: Vec<String> = Vec::new();
+    let mut pending_atomic_ref_ops: Vec<PendingRefOp> = Vec::new();
     let mut has_updates = false;
 
     let remote_symbolic_head_branch = remote_repo
@@ -1399,6 +1419,21 @@ fn fetch_remote(
                             continue;
                         }
 
+                        // Check fast-forward for wildcard updates too; `--atomic` expects any
+                        // non-fast-forward to abort the entire fetch.
+                        if let Some(ref old) = old_oid {
+                            if old != remote_oid && !force {
+                                let is_ff = merge_base::is_ancestor(&ff_repo, *old, *remote_oid)
+                                    .unwrap_or(false);
+                                if !is_ff {
+                                    eprintln!(
+                                        " ! [rejected]        {src} -> {local_ref} (non-fast-forward)"
+                                    );
+                                    bail!("cannot fast-forward ref '{local_ref}'");
+                                }
+                            }
+                        }
+
                         if !has_updates && !args.quiet {
                             eprintln!("From {display_url}");
                             has_updates = true;
@@ -1415,8 +1450,27 @@ fn fetch_remote(
                                 );
                             }
                         }
-                        refs::write_ref(git_dir, &local_ref, remote_oid)
-                            .with_context(|| format!("updating ref {local_ref}"))?;
+                        // Check fast-forward: reject non-ff updates unless forced.
+                        if let Some(ref old) = old_oid {
+                            if old != remote_oid && !force {
+                                let is_ff = merge_base::is_ancestor(&ff_repo, *old, *remote_oid)
+                                    .unwrap_or(false);
+                                if !is_ff {
+                                    eprintln!(
+                                        " ! [rejected]        {refname} -> {local_ref} (non-fast-forward)"
+                                    );
+                                    bail!("cannot fast-forward ref '{local_ref}'");
+                                }
+                            }
+                        }
+                        apply_single_ref_update(
+                            args,
+                            git_dir,
+                            &mut pending_atomic_ref_ops,
+                            &local_ref,
+                            old_oid,
+                            *remote_oid,
+                        )?;
 
                         if !args.quiet {
                             let short = local_ref
@@ -1526,8 +1580,14 @@ fn fetch_remote(
                             );
                         }
                     }
-                    refs::write_ref(git_dir, &local_ref, &remote_oid)
-                        .with_context(|| format!("updating ref {local_ref}"))?;
+                    apply_single_ref_update(
+                        args,
+                        git_dir,
+                        &mut pending_atomic_ref_ops,
+                        &local_ref,
+                        old_oid,
+                        remote_oid,
+                    )?;
 
                     if !args.quiet {
                         let short = local_ref
@@ -1569,8 +1629,14 @@ fn fetch_remote(
                                 );
                             }
                         }
-                        refs::write_ref(git_dir, &local_ref, &remote_oid)
-                            .with_context(|| format!("updating ref {local_ref}"))?;
+                        apply_single_ref_update(
+                            args,
+                            git_dir,
+                            &mut pending_atomic_ref_ops,
+                            &local_ref,
+                            old_oid,
+                            remote_oid,
+                        )?;
                     }
                 }
             }
@@ -1719,16 +1785,24 @@ fn fetch_remote(
                 has_updates = true;
             }
 
-            refs::write_ref(git_dir, &local_ref, &remote_oid)
-                .with_context(|| format!("updating ref {local_ref}"))?;
-            let _ = append_fetch_reflog(
+            apply_single_ref_update(
+                args,
                 git_dir,
+                &mut pending_atomic_ref_ops,
                 &local_ref,
-                old_oid.as_ref(),
-                &remote_oid,
-                &url,
-                branch,
-            );
+                old_oid,
+                remote_oid,
+            )?;
+            if !args.atomic {
+                let _ = append_fetch_reflog(
+                    git_dir,
+                    &local_ref,
+                    old_oid.as_ref(),
+                    &remote_oid,
+                    &url,
+                    branch,
+                );
+            }
 
             if args.porcelain {
                 let zero = "0".repeat(40);
@@ -1808,9 +1882,18 @@ fn fetch_remote(
                 has_updates = true;
             }
 
-            refs::write_ref(git_dir, refname, remote_oid)
-                .with_context(|| format!("updating tag {refname}"))?;
-            let _ = append_fetch_reflog(git_dir, refname, old_oid.as_ref(), remote_oid, &url, "");
+            apply_single_ref_update(
+                args,
+                git_dir,
+                &mut pending_atomic_ref_ops,
+                refname,
+                old_oid,
+                *remote_oid,
+            )?;
+            if !args.atomic {
+                let _ =
+                    append_fetch_reflog(git_dir, refname, old_oid.as_ref(), remote_oid, &url, "");
+            }
 
             if !args.quiet {
                 let tag_name = refname.strip_prefix("refs/tags/").unwrap_or(refname);
@@ -1889,8 +1972,13 @@ fn fetch_remote(
                     eprintln!("From {display_url}");
                     has_updates = true;
                 }
-                refs::delete_ref(git_dir, local_tag_ref)
-                    .with_context(|| format!("pruning tag {local_tag_ref}"))?;
+                apply_single_ref_delete(
+                    args,
+                    git_dir,
+                    &mut pending_atomic_ref_ops,
+                    local_tag_ref,
+                    Some(*_oid),
+                )?;
                 if !args.quiet {
                     let tag_name = local_tag_ref
                         .strip_prefix("refs/tags/")
@@ -1952,7 +2040,15 @@ fn fetch_remote(
             if prune_prefixes.is_empty() {
                 for rn in &coalesced_remotes {
                     let prefix = format!("refs/remotes/{rn}/");
-                    prune_stale_refs(git_dir, &prefix, &updated_refs, rn, args.quiet)?;
+                    prune_stale_refs(
+                        args,
+                        git_dir,
+                        &mut pending_atomic_ref_ops,
+                        &prefix,
+                        &updated_refs,
+                        rn,
+                        args.quiet,
+                    )?;
                 }
             } else {
                 for prefix in &prune_prefixes {
@@ -1960,7 +2056,15 @@ fn fetch_remote(
                         .strip_prefix("refs/remotes/")
                         .and_then(|s| s.split('/').next())
                         .unwrap_or(remote_name);
-                    prune_stale_refs(git_dir, prefix, &updated_refs, remote_hint, args.quiet)?;
+                    prune_stale_refs(
+                        args,
+                        git_dir,
+                        &mut pending_atomic_ref_ops,
+                        prefix,
+                        &updated_refs,
+                        remote_hint,
+                        args.quiet,
+                    )?;
                 }
             }
         }
@@ -1982,7 +2086,9 @@ fn fetch_remote(
                 map_ref_through_refspecs(&head_source, &refspecs)
             };
             if let Some(mapped_default_ref) = mapped_default {
-                if refs::resolve_ref(git_dir, &mapped_default_ref).is_ok() {
+                let mapped_ref_available = refs::resolve_ref(git_dir, &mapped_default_ref).is_ok()
+                    || pending_writes_ref(&pending_atomic_ref_ops, &mapped_default_ref);
+                if mapped_ref_available {
                     let remote_head_ref = format!("refs/remotes/{remote_name}/HEAD");
                     let previous = read_remote_head_previous(git_dir, remote_name);
                     let head_missing = matches!(previous, RemoteHeadPrevious::Missing);
@@ -1994,7 +2100,17 @@ fn fetch_remote(
                     if should_write {
                         refs::write_symbolic_ref(git_dir, &remote_head_ref, &mapped_default_ref)
                             .with_context(|| format!("updating symbolic ref {remote_head_ref}"))?;
-                        updated_refs.push(remote_head_ref);
+                        updated_refs.push(remote_head_ref.clone());
+                    } else if args.atomic {
+                        let old_value =
+                            hook_old_value_remote_head_from_previous(&previous, remote_name);
+                        let repo_for_symref_hook = repository_for_ref_hooks(git_dir)?;
+                        run_prepare_only_symref_hook(
+                            &repo_for_symref_hook,
+                            &remote_head_ref,
+                            &old_value,
+                            &mapped_default_ref,
+                        )?;
                     }
                     maybe_warn_follow_remote_head(
                         &follow,
@@ -2040,6 +2156,12 @@ fn fetch_remote(
 
     if !fetch_head_entries.is_empty() {
         sort_fetch_head_lines(&mut fetch_head_entries, &fetch_head_refspecs);
+        if args.atomic {
+            if let Err(err) = apply_pending_ref_ops_atomic(git_dir, &pending_atomic_ref_ops) {
+                fetch_head_entries.clear();
+                return Err(err);
+            }
+        }
         let fetch_head_path = git_dir.join("FETCH_HEAD");
         let content = fetch_head_entries.join("\n") + "\n";
         let should_write_fetch_head = if args.dry_run {
@@ -2482,6 +2604,162 @@ fn zero_oid() -> ObjectId {
     ObjectId::from_hex("0000000000000000000000000000000000000000").expect("null oid")
 }
 
+fn hook_update_for_pending_ref_op(op: &PendingRefOp) -> HookUpdate {
+    match op {
+        PendingRefOp::Write {
+            refname,
+            old_oid,
+            new_oid,
+        } => HookUpdate {
+            old_value: old_oid
+                .as_ref()
+                .map_or_else(|| "0".repeat(40), ObjectId::to_hex),
+            new_value: new_oid.to_hex(),
+            refname: refname.clone(),
+            deletes_ref: *new_oid == zero_oid(),
+        },
+        PendingRefOp::Delete { refname, old_oid } => HookUpdate {
+            old_value: old_oid
+                .as_ref()
+                .map_or_else(|| "0".repeat(40), ObjectId::to_hex),
+            new_value: "0".repeat(40),
+            refname: refname.clone(),
+            deletes_ref: true,
+        },
+    }
+}
+
+fn apply_pending_ref_ops_atomic(git_dir: &Path, ops: &[PendingRefOp]) -> Result<()> {
+    if ops.is_empty() {
+        return Ok(());
+    }
+    let work_tree = if git_dir.file_name().is_some_and(|name| name == ".git") {
+        git_dir.parent().map(Path::to_path_buf)
+    } else {
+        None
+    };
+    let repo = Repository::open(git_dir, work_tree.as_deref())
+        .context("open repository for atomic fetch updates")?;
+    let hook_updates: Vec<HookUpdate> = ops.iter().map(hook_update_for_pending_ref_op).collect();
+    run_ref_transaction_prepare(&repo, &hook_updates)?;
+    for op in ops {
+        let apply = match op {
+            PendingRefOp::Write {
+                refname, new_oid, ..
+            } => refs::write_ref(git_dir, refname, new_oid)
+                .with_context(|| format!("updating ref {refname}")),
+            PendingRefOp::Delete { refname, .. } => {
+                refs::delete_ref(git_dir, refname).with_context(|| format!("pruning {refname}"))
+            }
+        };
+        if let Err(err) = apply {
+            run_ref_transaction_aborted(&repo, &hook_updates);
+            return Err(err);
+        }
+    }
+    run_ref_transaction_committed(&repo, &hook_updates);
+    Ok(())
+}
+
+fn apply_single_ref_update(
+    args: &Args,
+    git_dir: &Path,
+    pending_atomic_ref_ops: &mut Vec<PendingRefOp>,
+    refname: &str,
+    old_oid: Option<ObjectId>,
+    new_oid: ObjectId,
+) -> Result<()> {
+    if args.atomic {
+        pending_atomic_ref_ops.push(PendingRefOp::Write {
+            refname: refname.to_owned(),
+            old_oid,
+            new_oid,
+        });
+    } else {
+        refs::write_ref(git_dir, refname, &new_oid)
+            .with_context(|| format!("updating ref {refname}"))?;
+    }
+    Ok(())
+}
+
+fn apply_single_ref_delete(
+    args: &Args,
+    git_dir: &Path,
+    pending_atomic_ref_ops: &mut Vec<PendingRefOp>,
+    refname: &str,
+    old_oid: Option<ObjectId>,
+) -> Result<()> {
+    if args.atomic {
+        pending_atomic_ref_ops.push(PendingRefOp::Delete {
+            refname: refname.to_owned(),
+            old_oid,
+        });
+    } else {
+        refs::delete_ref(git_dir, refname).with_context(|| format!("pruning {refname}"))?;
+    }
+    Ok(())
+}
+
+fn pending_writes_ref(ops: &[PendingRefOp], refname: &str) -> bool {
+    ops.iter().any(|op| {
+        matches!(
+            op,
+            PendingRefOp::Write {
+                refname: r,
+                new_oid,
+                ..
+            } if r == refname && *new_oid != zero_oid()
+        )
+    })
+}
+
+fn hook_old_value_remote_head_from_previous(
+    previous: &RemoteHeadPrevious,
+    remote_name: &str,
+) -> String {
+    match previous {
+        RemoteHeadPrevious::Symref(prev_short) => {
+            format!("ref:refs/remotes/{remote_name}/{prev_short}")
+        }
+        RemoteHeadPrevious::DetachedOid(oid) => oid.to_hex(),
+        RemoteHeadPrevious::Missing => "0".repeat(40),
+    }
+}
+
+fn repository_for_ref_hooks(git_dir: &Path) -> Result<Repository> {
+    if let Ok(repo) = Repository::open(git_dir, None) {
+        return Ok(repo);
+    }
+    if git_dir.file_name().is_some_and(|n| n == ".git") {
+        if let Some(work_tree) = git_dir.parent() {
+            if let Ok(repo) = Repository::open(git_dir, Some(work_tree)) {
+                return Ok(repo);
+            }
+        }
+    }
+    Repository::discover(None).context("open repository for reference-transaction hooks")
+}
+
+fn run_prepare_only_symref_hook(
+    repo: &Repository,
+    refname: &str,
+    old_value: &str,
+    target: &str,
+) -> Result<()> {
+    let line = format!("{old_value} ref:{target} {refname}\n");
+    match run_hook(
+        repo,
+        "reference-transaction",
+        &["preparing"],
+        Some(line.as_bytes()),
+    ) {
+        HookResult::NotFound | HookResult::Success => Ok(()),
+        HookResult::Failed(_) => {
+            bail!("in 'preparing' phase, update aborted by the reference-transaction hook")
+        }
+    }
+}
+
 fn fetch_reflog_identity(git_dir: &Path) -> String {
     let config = ConfigSet::load(Some(git_dir), true).ok();
     let name = std::env::var("GIT_COMMITTER_NAME")
@@ -2791,16 +3069,19 @@ fn check_connectivity(git_dir: &Path, tip_oids: &[ObjectId]) -> Result<()> {
 
 /// Remove remote-tracking refs that no longer exist on the remote.
 fn prune_stale_refs(
+    args: &Args,
     git_dir: &Path,
+    pending_atomic_ref_ops: &mut Vec<PendingRefOp>,
     prefix: &str,
     current_refs: &[String],
     remote_name: &str,
     quiet: bool,
 ) -> Result<()> {
     let existing = refs::list_refs(git_dir, prefix)?;
-    for (refname, _oid) in &existing {
+    for (refname, oid) in &existing {
         if !current_refs.contains(refname) {
-            refs::delete_ref(git_dir, refname).with_context(|| format!("pruning {refname}"))?;
+            apply_single_ref_delete(args, git_dir, pending_atomic_ref_ops, refname, Some(*oid))
+                .with_context(|| format!("pruning {refname}"))?;
             if !quiet {
                 // Show short name: "origin/branch" instead of "refs/remotes/origin/branch"
                 let short = refname.strip_prefix("refs/remotes/").unwrap_or(refname);
@@ -2947,6 +3228,7 @@ fn trace_ls_refs_head_prefix() {
 }
 
 /// Previous `refs/remotes/<remote>/HEAD` state for `followRemoteHEAD` warnings.
+#[derive(Clone)]
 enum RemoteHeadPrevious {
     Symref(String),
     DetachedOid(ObjectId),

@@ -371,7 +371,14 @@ pub fn write_symbolic_ref(git_dir: &Path, refname: &str, target: &str) -> Result
     }
     let content = format!("ref: {target}\n");
     let lock = path.with_extension("lock");
-    fs::write(&lock, &content)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock)
+        .map_err(Error::Io)?;
+    use std::io::Write as _;
+    file.write_all(content.as_bytes()).map_err(Error::Io)?;
+    drop(file);
     fs::rename(&lock, &path)?;
     Ok(())
 }
@@ -388,7 +395,14 @@ pub fn write_ref(git_dir: &Path, refname: &str, oid: &ObjectId) -> Result<()> {
     let content = format!("{oid}\n");
     // Write via lock file for atomicity
     let lock = path.with_extension("lock");
-    fs::write(&lock, &content)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock)
+        .map_err(Error::Io)?;
+    use std::io::Write as _;
+    file.write_all(content.as_bytes()).map_err(Error::Io)?;
+    drop(file);
     fs::rename(&lock, &path)?;
     Ok(())
 }
