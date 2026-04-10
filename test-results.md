@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-10 (t4252 / am apply passthrough options)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t4252-am-options.sh`: 8/8 passed
+
 **2026-04-10 (t3438 / rebase broken files)**
 
 - `cargo test -p grit-lib --lib`: 160 passed

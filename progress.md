@@ -19,6 +19,7 @@ Task lines in `PLAN.md`: 358 completed (`[x]`), 6 in progress (`[~]`), 408 remai
 
 ## Recently completed
 
+- `t4252-am-options` — 8/8 tests pass (`am`: passthrough `git apply` options `-p`/`-C`, `--directory`, `--whitespace=fix`, `--ignore-space-change`, `--ignore-whitespace`, `--exclude`/`--include`, `--reject`; persist shell-quoted argv in `rebase-apply/apply-opt`; partial apply with `.rej` hunks leaves work tree dirty vs index; harness CSV/dashboards refreshed)
 - `t4115-apply-symlink` — 8/8 tests pass (`apply`: Git-style symlink safety + `index` mode parsing; plan-then-execute worktree apply; strip `a/`/`b/` from `---`/`+++` with `-p0`; `diff-files -p` index line + symlink stat fast path + readlink for patch text; `clean -dfx` no longer removes tracked symlinks that point inside the repo; `--reject` stderr lines for `Rejected hunk`)
 - `t5536-fetch-conflicts` — 7/7 tests pass (`fetch`: glob CLI refspecs expand in upload-pack/HTTP `want` negotiation so ref-update conflict detection runs; `fatal: Cannot fetch both …` for arg-vs-arg)
 - `t5549-fetch-push-http` — 3/3 tests pass (HTTP smart push: trace2 `write_pack_file` object counts with/without `push.negotiate`; v0 fallback warnings match Git via `test_cmp`; `test_config` + `test_when_finished` cleanup aligned with upstream)
