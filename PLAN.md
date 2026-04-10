@@ -129,7 +129,7 @@ commit → check it off → move on.
 - [ ] `t0602-reffiles-fsck` ██░░░░░░░░░░░░░░░░░░ 3/23 (20 left) — Test reffiles backend consistency check
 - [ ] `t1002-read-tree-m-u-2way` █░░░░░░░░░░░░░░░░░░░ 2/22 (20 left) — Two way merge with read-tree -m -u $H $M
 
-- [ ] `t1301-shared-repo` █░░░░░░░░░░░░░░░░░░░ 2/22 (20 left) — Test shared repository initialization
+- [x] `t1301-shared-repo` ████████████████████ 22/22 (0 left) — Test shared repository initialization
 - [ ] `t1011-read-tree-sparse-checkout` ░░░░░░░░░░░░░░░░░░░░ 1/23 (22 left) — sparse checkout tests
 
 - [ ] `t0600-reffiles-backend` █████░░░░░░░░░░░░░░░ 9/33 (24 left) — Test reffiles backend

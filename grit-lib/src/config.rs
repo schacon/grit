@@ -656,6 +656,17 @@ fatal: bad config variable 'fetch.negotiationalgorithm' in file '{file_disp}' at
         })
     }
 
+    /// Last value for `key` in this file only (canonical key, case-insensitive section/var like Git).
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<String> {
+        let canon = canonical_key(key).ok()?;
+        self.entries
+            .iter()
+            .rev()
+            .find(|e| e.key == canon)
+            .map(|e| e.value.clone().unwrap_or_else(|| "true".to_owned()))
+    }
+
     /// Parse like [`Self::parse`] but record a non-disk include origin (blob, stdin, command line).
     pub fn parse_with_origin(
         path: &Path,

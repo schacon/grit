@@ -151,7 +151,11 @@ pub fn run(args: Args) -> Result<()> {
         anyhow::bail!("options '--geometric' and '-a' cannot be used together");
     }
     if geometric > 0 {
-        return run_geometric(&repo, &args, pack_kept_objects, geometric);
+        let r = run_geometric(&repo, &args, pack_kept_objects, geometric);
+        if r.is_ok() {
+            let _ = grit_lib::shared_repo::refresh_repository_shared_tree(&repo.git_dir);
+        }
+        return r;
     }
 
     if args.write_bitmap {
@@ -504,6 +508,8 @@ pub fn run(args: Args) -> Result<()> {
         update_server_info::refresh_objects_info_packs(&repo)?;
     }
 
+    let _ = grit_lib::shared_repo::refresh_repository_shared_tree(&repo.git_dir);
+
     Ok(())
 }
 
@@ -680,6 +686,8 @@ fn run_geometric(
         remove_duplicate_packs_matching_alternates(&objects_dir)?;
         update_server_info::refresh_objects_info_packs(repo)?;
     }
+
+    let _ = grit_lib::shared_repo::refresh_repository_shared_tree(&repo.git_dir);
 
     Ok(())
 }

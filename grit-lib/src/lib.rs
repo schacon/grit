@@ -78,6 +78,7 @@ pub mod repo;
 pub mod rerere;
 pub mod rev_list;
 pub mod rev_parse;
+pub mod shared_repo;
 #[cfg(unix)]
 pub mod simple_ipc;
 pub mod sparse_checkout;

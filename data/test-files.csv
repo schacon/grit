@@ -352,7 +352,7 @@ t12980-tag-force-replace	t1	yes	33	33	0	true	ok	0
 t12990-commit-reuse-message	t1	yes	32	32	0	true	ok	0
 t1300-config	t1	yes	497	276	221	false	ok	0
 t13000-add-bulk-paths	t1	yes	31	31	0	true	ok	0
-t1301-shared-repo	t1	yes	22	2	20	false	ok	0
+t1301-shared-repo	t1	yes	22	22	0	true	ok	0
 t13010-rm-ignore-unmatch	t1	yes	30	30	0	true	ok	0
 t1302-repo-version	t1	yes	18	14	4	false	ok	0
 t13020-mv-force-overwrite	t1	yes	30	29	1	false	ok	0
