@@ -34,6 +34,7 @@ pub struct Args {}
 
 /// Run from raw argv after `archive` (Git-compatible option ordering).
 pub fn run_from_argv(rest: &[String]) -> Result<()> {
+    crate::commands::upstream_synopsis_help::try_print_upstream_help_and_exit("archive", rest);
     execute(parse_archive_argv(rest)?)
 }
 

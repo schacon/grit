@@ -41,10 +41,6 @@ mod trace_packet;
 mod transport_passthrough;
 mod wire_trace;
 
-mod upstream_help_builtin_synopsis {
-    include!(concat!(env!("OUT_DIR"), "/upstream_help_synopsis.rs"));
-}
-
 /// Return the version string, e.g. `"2.47.0.grit"`.
 pub fn version_string() -> String {
     "2.47.0.grit".to_owned()
@@ -2499,54 +2495,6 @@ struct ArgsWrapper<T: Args> {
     inner: T,
 }
 
-/// Split adoc synopsis into usage variants: each variant starts with a `git …` line; following
-/// lines are continuations (AsciiDoc tabs) until the next `git …` line.
-fn synopsis_variants_from_adoc(syn: &str) -> Vec<Vec<String>> {
-    let mut variants: Vec<Vec<String>> = Vec::new();
-    let mut current: Vec<String> = Vec::new();
-    for line in syn.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if trimmed.starts_with("git ") && !current.is_empty() {
-            variants.push(core::mem::take(&mut current));
-        }
-        current.push(trimmed.to_owned());
-    }
-    if !current.is_empty() {
-        variants.push(current);
-    }
-    variants
-}
-
-/// Print `git <cmd> -h` synopsis (from vendored Documentation/*.adoc), then exit.
-///
-/// Continuation lines are padded with spaces to width `git <cmd> ` (same as t0450 `align_after_nl`).
-///
-/// Git's `-h` uses exit **129** (t0450 and other tests rely on this). Long `--help` uses exit **0**
-/// so POSIX `sh` scripts can chain `git <cmd> --help && grep …` (exit codes >125 are "failure" in
-/// `test -e` / `&&` under `/bin/sh`).
-fn print_upstream_synopsis_and_exit(subcmd: &str, syn: &str, exit_code: u8) -> ! {
-    let pad = " ".repeat(format!("git {subcmd} ").len());
-    let variants = synopsis_variants_from_adoc(syn);
-    for (i, var) in variants.iter().enumerate() {
-        let Some(first) = var.first() else {
-            continue;
-        };
-        if i == 0 {
-            println!("usage: {first}");
-        } else {
-            println!("   or: {first}");
-        }
-        for cont in var.iter().skip(1) {
-            println!("{pad}{cont}");
-        }
-    }
-    println!();
-    std::process::exit(exit_code.into());
-}
-
 fn stash_explicit_subcommand(rest: &[String]) -> bool {
     const KNOWN: &[&str] = &[
         "push", "save", "list", "show", "pop", "apply", "drop", "clear", "branch", "create",
@@ -2559,10 +2507,10 @@ fn stash_explicit_subcommand(rest: &[String]) -> bool {
 
 /// After a failed parse, print upstream `or: git stash …` lines (t3903).
 fn print_stash_invalid_option_usage_header() {
-    let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin("stash") else {
+    let Some(syn) = commands::upstream_synopsis_help::synopsis_for_builtin("stash") else {
         return;
     };
-    let variants = synopsis_variants_from_adoc(syn);
+    let variants = commands::upstream_synopsis_help::synopsis_variants_from_adoc(syn);
     let pad = " ".repeat("git stash ".len());
     for (i, var) in variants.iter().enumerate() {
         if i == 0 {
@@ -2581,10 +2529,10 @@ fn print_stash_invalid_option_usage_header() {
 /// `git stash push -h` / `--help` — match t3903 expectation (`usage: git stash [push`).
 fn print_stash_push_help_upstream() -> ! {
     println!("Save changes and clean the working tree\n");
-    let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin("stash") else {
+    let Some(syn) = commands::upstream_synopsis_help::synopsis_for_builtin("stash") else {
         std::process::exit(129);
     };
-    let variants = synopsis_variants_from_adoc(syn);
+    let variants = commands::upstream_synopsis_help::synopsis_variants_from_adoc(syn);
     let pad = " ".repeat("git stash ".len());
     let push_var = variants.iter().find(|v| {
         v.first()
@@ -2791,14 +2739,16 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
         print_stash_push_help_upstream();
     }
     if rest.len() == 1 && (rest[0] == "-h" || rest[0] == "--help") {
-        if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd) {
+        if let Some(syn) = commands::upstream_synopsis_help::synopsis_for_builtin(subcmd) {
             // Most builtins use exit 129 for `-h` (t0450). `git submodule -h` exits 0 (t7400).
             let code = if subcmd == "submodule" || rest[0] == "--help" {
                 0
             } else {
                 129
             };
-            print_upstream_synopsis_and_exit(subcmd, syn, code);
+            commands::upstream_synopsis_help::print_upstream_synopsis_stdout_and_exit(
+                subcmd, syn, code,
+            );
         }
     }
 
@@ -3254,8 +3204,19 @@ fn print_list_cmds(categories: &str) {
             "list-mainporcelain" => result.extend_from_slice(&mainporcelain),
             "list-complete" => result.extend_from_slice(&complete),
             "list-all" | "builtins" | "main" => {
-                result.extend_from_slice(&mainporcelain);
-                result.extend_from_slice(&complete);
+                // Match `git --list-cmds=builtins`: `submodule` is porcelain-only (t7400) and
+                // `mergetool` is not a builtin (shell script). Both still appear under
+                // `list-mainporcelain` / `list-complete` when requested explicitly.
+                for &cmd in &mainporcelain {
+                    if cmd != "submodule" {
+                        result.push(cmd);
+                    }
+                }
+                for &cmd in &complete {
+                    if cmd != "mergetool" {
+                        result.push(cmd);
+                    }
+                }
                 result.extend_from_slice(&plumbing);
             }
             "deprecated" => {
@@ -4102,8 +4063,10 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "cat-file" => commands::cat_file::run(parse_cmd_args(subcmd, rest)),
         "check-attr" => {
             if rest.len() == 1 && (rest[0] == "-h" || rest[0] == "--help") {
-                if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd) {
-                    print_upstream_synopsis_and_exit(subcmd, syn, 129);
+                if let Some(syn) = commands::upstream_synopsis_help::synopsis_for_builtin(subcmd) {
+                    commands::upstream_synopsis_help::print_upstream_synopsis_stdout_and_exit(
+                        subcmd, syn, 129,
+                    );
                 }
             }
             commands::check_attr::run_from_argv(rest)
@@ -4154,8 +4117,10 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
             // Git grep uses -h for --no-filename, conflicting with clap's -h for help.
             // A lone `git grep -h` is Git's short help (exit 129); do not rewrite to --no-filename.
             if rest.len() == 1 && rest[0] == "-h" {
-                if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd) {
-                    print_upstream_synopsis_and_exit(subcmd, syn, 129);
+                if let Some(syn) = commands::upstream_synopsis_help::synopsis_for_builtin(subcmd) {
+                    commands::upstream_synopsis_help::print_upstream_synopsis_stdout_and_exit(
+                        subcmd, syn, 129,
+                    );
                 }
             }
             let (rest, open_in_pager, open_pager_cmd) =

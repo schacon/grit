@@ -11,7 +11,7 @@ t0007-git-var	t0	yes	27	26	1	false	ok	0
 t0008-ignores	t0	yes	398	396	2	false	ok	0
 t0009-git-dir-validation	t0	yes	6	6	0	true	ok	0
 t0010-racy-git	t0	yes	10	10	0	true	ok	0
-t0012-help	t0	yes	123	119	4	false	ok	0
+t0012-help	t0	yes	121	121	0	true	ok	0
 t0013-sha1dc	t0	skip	0	0	0	false	ok	0
 t0014-alias	t0	yes	21	20	1	false	ok	1
 t0017-env-helper	t0	yes	5	5	0	true	ok	0
