@@ -276,7 +276,7 @@ t12100-add-update-all	t1	yes	31	31	0	true	ok	0
 t12110-rm-force-recursive	t1	yes	35	35	0	true	ok	0
 t12120-mv-verbose-dryrun	t1	yes	33	33	0	true	ok	0
 t12130-switch-create-force	t1	yes	33	32	1	false	ok	0
-t12160-cherry-pick-conflict-resolve	t1	yes	34	32	2	false	ok	0
+t12160-cherry-pick-conflict-resolve	t1	yes	34	34	0	true	ok	0
 t12170-for-each-ref-count-limit	t1	yes	33	33	0	true	ok	0
 t12180-show-ref-hash-abbrev	t1	yes	33	33	0	true	ok	0
 t12190-update-ref-deref-symref	t1	yes	35	35	0	true	ok	0
