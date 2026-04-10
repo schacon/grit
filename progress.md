@@ -6,16 +6,17 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   326 |
+| Completed   |   327 |
 | In progress |     5 |
-| Remaining   |   440 |
+| Remaining   |   439 |
 | **Total**   |   771 |
 
-Task lines in `PLAN.md`: 326 completed (`[x]`), 5 in progress (`[~]`), 440 remaining (`[ ]`).
+Task lines in `PLAN.md`: 327 completed (`[x]`), 5 in progress (`[~]`), 439 remaining (`[ ]`).
 
 ## Recently completed
 
 - `t3905-stash-include-untracked` — 34/34 tests pass (`stash -u`/`-a`: ignore-aware untracked discovery + pathspecs/`:(glob)`; `GIT_INDEX_FILE` honored in `Repository::load_index` for `write-tree`; `stash show` global `-u`/`-p`, duplicate detection, bare OID resolve, Git-aligned stat/patch; porcelain v1 without forced `##`; clean pathspec uses lib matcher; `ls-files` magic pathspecs use lib matcher)
+- `t8007-cat-file-textconv` — 15/15 tests pass (`cat-file --textconv` / `--filters`: treeish:path and `:path` resolution use rev-parse diagnostics; symlink blobs skip textconv like Git; batch textconv skips driver for `120000` entries; `resolve_treeish_blob_at_path` applies missing-path diagnosis)
 - `t3309-notes-merge-auto-resolve` — 31/31 tests pass (`notes merge`: `union` / `cat_sort_uniq` blob combine like Git; successful merge commits use two parents; `notes.mergeStrategy` config errors match upstream expectations)
 - `t4063-diff-blobs` — 18/18 tests pass (`diff`: blob↔blob and `rev:path` pairs without treating blobs as trees; `HEAD:one..HEAD:two` range split; `rev:path` vs worktree file uses tree path + modes + `write_patch_with_prefix`; raw blob OID vs existing file uses filename as old path; `rev_parse::resolve_treeish_blob_at_path` for tree walks)
 - `t5524-pull-msg` — 3/3 tests pass (`git pull --no-rebase --log` merge message preserves `$` in subject lines; `--log=1` limits shortlog; harness CSV/dashboards refreshed; `PLAN.md` marked complete)
@@ -210,4 +211,4 @@ Task lines in `PLAN.md`: 326 completed (`[x]`), 5 in progress (`[~]`), 440 remai
 
 ## What Remains
 
-441 task lines still open in `PLAN.md` (plus 5 in progress). See `PLAN.md` for the full prioritized list.
+439 task lines still open in `PLAN.md` (plus 5 in progress). See `PLAN.md` for the full prioritized list.
