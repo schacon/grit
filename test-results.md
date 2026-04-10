@@ -13,7 +13,18 @@
 - Code changes in this increment:
   - HTTP v0/v1 stateless fetch now retries once without `have` lines when initial response yields no pack while
     wanted objects are missing locally.
+  - HTTP v0/v1 stateless fetch request framing now flushes after the `want` section before negotiation
+    (`have` / `done`), matching expected v1 stateless upload-pack boundaries.
   - Side-band parser improvements retained for PACK boundary handling and pre-pack flush tolerance.
+
+**2026-04-10 (fetch HTTP v1 wants/flush framing follow-up)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `GUST_BIN=/workspace/target/release/grit bash tests/t5700-protocol-v1.sh --run=19,20,22`: passed
+  - 19,20,22 all pass after v1 wants/flush boundary fix.
+- `./scripts/run-tests.sh t5700-protocol-v1.sh`: 15/24
+- `./scripts/run-tests.sh t5702-protocol-v2.sh`: 0/0 (harness timeout mode in this run)
 - Extended matrix checkpoint after this increment:
   - `./scripts/run-tests.sh t5555-http-smart-common.sh`: 10/10
   - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: 21/37 (improved from 13/37)

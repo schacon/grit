@@ -43,3 +43,15 @@
 ## Remaining issue noted
 - `t5700` case 22 (`fetch with http:// using protocol v1`) remains unresolved.
 - Current logs indicate fetch update lines are printed, but expected post-fetch ref/log validation does not yet align with harness expectations.
+
+## Follow-up fix in same phase slice
+- Adjusted HTTP v0/v1 request framing to match `fetch-pack` behavior:
+  - after writing the `want` block, now send a pkt-line **flush** (`0000`) before negotiation (`have` lines) and `done`.
+  - this avoids servers treating `done` as part of the wants section in stateless HTTP v1 paths.
+- Kept the retry-without-haves fallback for endpoints that ACK without pack on the first round.
+
+## Follow-up validation
+- `GUST_BIN=/workspace/target/release/grit bash tests/t5700-protocol-v1.sh --run=19,20,22`:
+  - now passes all selected tests (`19,20,22`).
+- `./scripts/run-tests.sh t5700-protocol-v1.sh`:
+  - improved to `15/24` in this environment (from prior `14/24` and original `9/24` baseline).

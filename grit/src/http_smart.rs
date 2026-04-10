@@ -693,6 +693,8 @@ fn fetch_pack_v0_v1_stateless_http(
         pkt_line::write_line_to_vec(&mut req, &format!("want {}", w.to_hex()))?;
     }
     append_fetch_request_extensions_v0_v1(&mut req, caps, options)?;
+    // Protocol v0/v1 request framing: terminate the `want` section before `have` / `done`.
+    pkt_line::write_flush(&mut req)?;
     if let Some(negotiator) = negotiator.as_mut() {
         while let Some(oid) = negotiator.next_have()? {
             pkt_line::write_line_to_vec(&mut req, &format!("have {}", oid.to_hex()))?;
@@ -754,6 +756,7 @@ fn fetch_pack_v0_v1_stateless_http(
             pkt_line::write_line_to_vec(&mut retry_req, &format!("want {}", w.to_hex()))?;
         }
         append_fetch_request_extensions_v0_v1(&mut retry_req, caps, options)?;
+        pkt_line::write_flush(&mut retry_req)?;
         pkt_line::write_line_to_vec(&mut retry_req, "done")?;
         pkt_line::write_flush(&mut retry_req)?;
 
