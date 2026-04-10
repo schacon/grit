@@ -2476,10 +2476,9 @@ fn run_diff_two_paths(
     let context_lines = if let Some(u) = args.unified {
         u
     } else {
-        grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
-            .ok()
-            .and_then(|cfg| cfg.get("diff.context"))
-            .and_then(|s| s.parse().ok())
+        let cfg = ConfigSet::load(Some(&repo.git_dir), true).context("loading git config")?;
+        grit_lib::config::resolve_diff_context_lines(&cfg)
+            .map_err(|m| anyhow::anyhow!(m))?
             .unwrap_or(3)
     };
 
