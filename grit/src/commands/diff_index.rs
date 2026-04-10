@@ -1288,8 +1288,20 @@ fn write_raw_diff_entry_z(
 ) -> Result<()> {
     let width = abbrev.unwrap_or(40).clamp(4, 40);
 
+    // Uncached `diff-index` additions: old side is always absent in the tree (zeros). The new side
+    // is the index blob OID when the work tree still matches the index; when the file differs from
+    // the index, the diff machinery records a placeholder zero OID (content only on disk). See
+    // t4007-rename-3 (pathspec-limited copy) and t1501-work-tree.
     let (old_oid_disp, new_oid_disp) = if diff_index_uncached && entry.status == DiffStatus::Added {
-        ("0".repeat(width), "0".repeat(width))
+        let new_oid = if entry.new_oid == zero_oid() {
+            "0".repeat(width)
+        } else {
+            match abbrev {
+                Some(min_len) => abbreviate_object_id(repo, entry.new_oid, min_len)?,
+                None => entry.new_oid.to_hex(),
+            }
+        };
+        ("0".repeat(width), new_oid)
     } else {
         let old_oid = if entry.old_oid == zero_oid() {
             "0".repeat(width)
@@ -1348,10 +1360,17 @@ fn render_raw_diff_entry(
 ) -> Result<String> {
     let width = abbrev.unwrap_or(40).clamp(4, 40);
 
-    // `diff-index` uncached raw lines for newly added paths use all-zero object ids on both sides
-    // (t1501-work-tree; matches the harness expectations for tree vs index additions).
+    // Uncached `diff-index` additions: see `write_raw_diff_entry_z`.
     let (old_oid_disp, new_oid_disp) = if diff_index_uncached && entry.status == DiffStatus::Added {
-        ("0".repeat(width), "0".repeat(width))
+        let new_oid = if entry.new_oid == zero_oid() {
+            "0".repeat(width)
+        } else {
+            match abbrev {
+                Some(min_len) => abbreviate_object_id(repo, entry.new_oid, min_len)?,
+                None => entry.new_oid.to_hex(),
+            }
+        };
+        ("0".repeat(width), new_oid)
     } else {
         let old_oid = if entry.old_oid == zero_oid() {
             "0".repeat(width)
