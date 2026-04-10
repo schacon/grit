@@ -343,6 +343,16 @@ fn parse_fsmonitor_payload(payload: &[u8]) -> Option<(String, BTreeSet<Vec<u8>>)
     Some((token, paths))
 }
 
+fn fsmonitor_path_matches_reported(path: &[u8], reported: &BTreeSet<Vec<u8>>) -> bool {
+    if reported.contains(path) {
+        return true;
+    }
+    reported.iter().any(|candidate| {
+        (path.starts_with(candidate) && path.get(candidate.len()) == Some(&b'/'))
+            || (candidate.starts_with(path) && candidate.get(path.len()) == Some(&b'/'))
+    })
+}
+
 /// Run the configured fsmonitor hook (`core.fsmonitor`) and return `(new_token, reported_paths)`.
 ///
 /// The hook is invoked with Git-compatible argv shape:
@@ -1257,13 +1267,17 @@ fn refresh_index(
         }
         let path_str = std::str::from_utf8(&entry.path)
             .map_err(|_| anyhow::anyhow!("non-UTF-8 path in index"))?;
+        let mut fsmonitor_considered = false;
         if let Some(reported) = fsmonitor_reported_paths {
-            if !reported.contains(&entry.path) {
-                if !entry.fsmonitor_valid() {
-                    entry.set_fsmonitor_valid(true);
-                    index_modified = true;
-                }
+            // Git-compatible fsmonitor refresh behavior:
+            // - entries already marked fsmonitor-valid may be skipped when they are not reported;
+            // - entries marked invalid must still be checked so refresh can either clear them
+            //   (unchanged) or keep them invalid and report "needs update" (changed).
+            if entry.fsmonitor_valid() && !fsmonitor_path_matches_reported(&entry.path, reported) {
                 continue;
+            }
+            if fsmonitor_path_matches_reported(&entry.path, reported) {
+                fsmonitor_considered = true;
             }
         }
         let path = std::path::Path::new(path_str);
@@ -1327,6 +1341,9 @@ fn refresh_index(
                     if content_changed {
                         eprintln!("{path_str}: needs update");
                         all_uptodate = false;
+                        if fsmonitor_considered {
+                            continue;
+                        }
                         if entry.fsmonitor_valid() {
                             entry.set_fsmonitor_valid(false);
                             index_modified = true;

@@ -1,5 +1,17 @@
 # Test results
 
+**2026-04-10 (status perf phase4 / refresh reported-path handling)**
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `bash tests/t7519-status-fsmonitor.sh -v`: 27/33 (`7519.12` now passing; remaining fails: 13,20,27,30,31,33)
+- `./scripts/run-tests.sh t7519-status-fsmonitor.sh`: 22/33
+- `./scripts/run-tests.sh t7063-status-untracked-cache.sh`: 14/58 (no regression)
+- `./scripts/run-tests.sh t7508-status.sh`: 94/126 (no regression)
+- `./scripts/run-tests.sh t7060-wtstatus.sh`: 12/17 (no regression)
+- `./scripts/run-tests.sh t7065-status-rename.sh`: 28/28 (no regression)
+
 **2026-04-10 (status perf phase4 / fsmonitor refresh hook applies only to --refresh path)**
 
 - `cargo check -p grit-rs`: passed
