@@ -896,8 +896,10 @@ fn do_push(opts: PushOpts) -> Result<()> {
         for f in &sorted {
             let path = work_tree.join(f);
             if path.is_dir() {
-                if !grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(work_tree.as_path(), f)
-                {
+                if !grit_lib::worktree_cwd::cwd_would_be_removed_with_repo_path(
+                    work_tree.as_path(),
+                    f,
+                ) {
                     let _ = fs::remove_dir(&path);
                 }
             } else {
