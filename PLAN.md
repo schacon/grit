@@ -836,7 +836,7 @@ commit → check it off → move on.
 - [ ] `t7525-status-rename` █████████░░░░░░░░░░░ 7/15 (8 left) — git status rename detection options
 - [ ] `t7412-submodule-absorbgitdirs` ██████░░░░░░░░░░░░░░ 4/12 (8 left) — Test submodule absorbgitdirs
 
-- [ ] `t7413-submodule-is-active` ████░░░░░░░░░░░░░░░░ 2/10 (8 left) — Test with test-tool submodule is-active
+- [x] `t7413-submodule-is-active` — Test with test-tool submodule is-active (10/10)
 
 - [x] `t7817-grep-sparse-checkout` ████████████████████ 8/8 (0 left) — grep in sparse checkout
 

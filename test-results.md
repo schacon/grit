@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-10 (t7413 / submodule is-active)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t7413-submodule-is-active.sh`: 10/10 passed
+
 **2026-04-09 (t4063 / diff blobs)**
 
 - `cargo test -p grit-lib --lib`: 155 passed
