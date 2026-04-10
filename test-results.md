@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-10 (t0012-help)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t0012-help.sh`: 121/121 passed
+
 **2026-04-10 (t5528 / push.default)**
 
 - `cargo test -p grit-lib --lib`: 160 passed

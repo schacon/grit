@@ -31,6 +31,7 @@ pub struct Args {
 
 /// Entry point from `main` after global options and `remote` subcommand name are stripped.
 pub fn run_from_argv(rest: &[String]) -> Result<()> {
+    crate::commands::upstream_synopsis_help::try_print_upstream_help_and_exit("remote", rest);
     let (verbose, rest) = consume_verbose_prefix(rest);
     if rest.is_empty() {
         return cmd_list(verbose);

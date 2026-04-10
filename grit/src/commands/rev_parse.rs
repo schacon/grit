@@ -43,6 +43,7 @@ pub struct Args {
 /// Clap strips `--` from positional lists; `git rev-parse` relies on it, so the main binary
 /// bypasses clap for this command and forwards raw args here.
 pub fn run_with_raw_args(rest: &[String]) -> Result<()> {
+    crate::commands::upstream_synopsis_help::try_print_upstream_help_and_exit("rev-parse", rest);
     run(Args {
         args: rest.to_vec(),
     })
