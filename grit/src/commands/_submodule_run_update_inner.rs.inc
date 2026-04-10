@@ -176,7 +176,20 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
                 let clone_src_str =
                     resolve_submodule_super_url(work_tree, &repo.git_dir, &clone_url)?;
 
-                let mut clone_cmd = grit_subprocess(&grit_bin);
+                // Dumb HTTP (`info/refs` without smart negotiation) is handled by system `git` in the
+                // test harness (`lib-httpd.sh` hybrid wrapper). Native grit smart HTTP v2 cannot
+                // clone those servers yet (`t5619-clone-local-ambiguous-transport`).
+                let src_trim = clone_src_str.trim_start();
+                let mut clone_cmd = if src_trim.starts_with("http://") || src_trim.starts_with("https://")
+                {
+                    let mut c = std::process::Command::new("git");
+                    c.env_remove("GIT_DIR");
+                    c.env_remove("GIT_WORK_TREE");
+                    crate::grit_exe::strip_trace2_env(&mut c);
+                    c
+                } else {
+                    grit_subprocess(&grit_bin)
+                };
                 clone_cmd
                     .arg("clone")
                     .arg("--no-checkout")

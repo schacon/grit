@@ -491,9 +491,19 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Directory or file literally named `foo:bar` must clone as a local path, not scp-style SSH
     // (`t5601-clone`); `Path::new("myhost:src")` does not exist, so real SSH URLs still pass through.
-    let repo_probe = Path::new(args.repository.trim());
-    if !args.repository.contains("://") && repo_probe.exists() {
-        // Fall through to local clone below.
+    //
+    // `Path::new("http://host/path")` is a *relative* path; a malicious tree can contain matching
+    // `http:/…` directories (`t5619-clone-local-ambiguous-transport`). Never probe existence for
+    // well-formed http(s) URLs.
+    let repo_trimmed = args.repository.trim();
+    if !(repo_trimmed.starts_with("http://") || repo_trimmed.starts_with("https://")) {
+        let repo_probe = Path::new(repo_trimmed);
+        if !args.repository.contains("://") && repo_probe.exists() {
+            // Fall through to local clone below.
+        } else if is_ssh_url(&args.repository) {
+            crate::protocol::check_protocol_allowed("ssh", None)?;
+            return run_ssh_clone(args);
+        }
     } else if is_ssh_url(&args.repository) {
         crate::protocol::check_protocol_allowed("ssh", None)?;
         return run_ssh_clone(args);
@@ -1890,9 +1900,6 @@ fn run_http_clone(args: Args) -> Result<()> {
         .with_context(|| format!("cannot create directory '{}'", target_path.display()))?;
     let template_dir = args.template.as_ref().map(PathBuf::from);
 
-    if args.separate_git_dir.is_some() {
-        bail!("--separate-git-dir is not supported for HTTP clones");
-    }
     if args.shared {
         bail!("--shared is not supported for HTTP clones");
     }
@@ -1924,6 +1931,10 @@ fn run_http_clone(args: Args) -> Result<()> {
         )
         .with_context(|| format!("failed to initialize '{}'", target_path.display()))?
     };
+
+    if args.separate_git_dir.is_some() {
+        bail!("--separate-git-dir is not supported for HTTP clones");
+    }
 
     if let Some(ref bu) = args.bundle_uri {
         // Match local `--bundle-uri`: missing HTTP resources warn and the clone still proceeds
