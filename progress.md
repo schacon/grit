@@ -13,6 +13,10 @@
 
 Task lines in `PLAN.md`: 330 completed (`[x]`), 5 in progress (`[~]`), 436 remaining (`[ ]`).
 
+## In progress
+
+- `t5319-multi-pack-index` (~14/98): MIDX read/write groundwork + `Odb` integration; CLI verify/expire/repack/bitmap still open (see `logs/2026-04-10_t5319-midx-progress.md`).
+
 ## Recently completed
 
 - `t6021-rev-list-exclude-hidden` — 62/62 tests pass (`rev-list`: `--exclude-hidden` + `transfer.hideRefs` / section `hideRefs`, `--exclude` wildmatch, `GIT_NAMESPACE` strip vs `^` full-name rules, per-`--all` exclusion snapshots and `--not` ordering, conflict with `--branches`/`--tags`/`--remotes`, empty walk when all refs hidden)

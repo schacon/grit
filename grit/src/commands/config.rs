@@ -49,8 +49,8 @@ pub struct Args {
     #[arg(long, global = true)]
     pub global: bool,
 
-    /// Run as if started in the given path (affects repo discovery for local config).
-    #[arg(short = 'C', value_name = "PATH", global = true)]
+    /// Use the given git directory (affects repo discovery for local config).
+    #[arg(long = "git-dir", value_name = "PATH", global = true)]
     pub git_dir_path: Option<PathBuf>,
 
     /// Use the repository-local config file.

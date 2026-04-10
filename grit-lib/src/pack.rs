@@ -290,13 +290,77 @@ pub fn collect_local_pack_info(objects_dir: &Path) -> Result<LocalPackInfo> {
     Ok(info)
 }
 
-/// Parse a version-2 pack index file.
-///
-/// # Errors
-///
-/// Returns [`Error::CorruptObject`] when format checks fail.
-pub fn read_pack_index(idx_path: &Path) -> Result<PackIndex> {
-    let bytes = fs::read(idx_path).map_err(Error::Io)?;
+fn verify_idx_trailing_checksum(idx_path: &Path, bytes: &[u8]) -> Result<()> {
+    if bytes.len() < 20 {
+        return Err(Error::CorruptObject(format!(
+            "index file {} missing checksum",
+            idx_path.display()
+        )));
+    }
+    let idx_body_end = bytes.len() - 20;
+    let mut h = Sha1::new();
+    h.update(&bytes[..idx_body_end]);
+    let digest = h.finalize();
+    if digest.as_slice() != &bytes[idx_body_end..] {
+        return Err(Error::CorruptObject(format!(
+            "index checksum mismatch for {}",
+            idx_path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn read_pack_index_v1(idx_path: &Path, bytes: &[u8]) -> Result<PackIndex> {
+    let mut pos = 0usize;
+    if bytes.len() < 256 * 4 + 20 {
+        return Err(Error::CorruptObject(format!(
+            "index file {} is too small",
+            idx_path.display()
+        )));
+    }
+    let mut fanout = [0u32; 256];
+    for slot in &mut fanout {
+        *slot = read_u32_be(bytes, &mut pos)?;
+    }
+    let object_count = fanout[255] as usize;
+    let need = pos
+        .saturating_add(object_count.saturating_mul(24))
+        .saturating_add(20);
+    if bytes.len() < need {
+        return Err(Error::CorruptObject(format!(
+            "truncated idx file {}",
+            idx_path.display()
+        )));
+    }
+
+    let mut entries: Vec<PackIndexEntry> = Vec::with_capacity(object_count);
+    for i in 0..object_count {
+        let offset = read_u32_be(bytes, &mut pos)? as u64;
+        let oid = bytes[pos..pos + 20].to_vec();
+        pos += 20;
+        if i > 0 && entries[i - 1].oid.cmp(&oid) != std::cmp::Ordering::Less {
+            return Err(Error::CorruptObject(format!(
+                "oid lookup out of order in {}",
+                idx_path.display()
+            )));
+        }
+        entries.push(PackIndexEntry { oid, offset });
+    }
+
+    verify_idx_trailing_checksum(idx_path, bytes)?;
+
+    let mut pack_path = idx_path.to_path_buf();
+    pack_path.set_extension("pack");
+
+    Ok(PackIndex {
+        idx_path: idx_path.to_path_buf(),
+        pack_path,
+        hash_bytes: 20,
+        entries,
+    })
+}
+
+fn read_pack_index_v2(idx_path: &Path, bytes: &[u8]) -> Result<PackIndex> {
     if bytes.len() < 8 + 256 * 4 + 40 {
         return Err(Error::CorruptObject(format!(
             "index file {} is too small",
@@ -305,15 +369,8 @@ pub fn read_pack_index(idx_path: &Path) -> Result<PackIndex> {
     }
 
     let mut pos = 0usize;
-    let magic = &bytes[pos..pos + 4];
     pos += 4;
-    if magic != [0xff, b't', b'O', b'c'] {
-        return Err(Error::CorruptObject(format!(
-            "unsupported idx signature in {}",
-            idx_path.display()
-        )));
-    }
-    let version = read_u32_be(&bytes, &mut pos)?;
+    let version = read_u32_be(bytes, &mut pos)?;
     if version != 2 {
         return Err(Error::CorruptObject(format!(
             "unsupported idx version {} in {}",
@@ -324,7 +381,7 @@ pub fn read_pack_index(idx_path: &Path) -> Result<PackIndex> {
 
     let mut fanout = [0u32; 256];
     for slot in &mut fanout {
-        *slot = read_u32_be(&bytes, &mut pos)?;
+        *slot = read_u32_be(bytes, &mut pos)?;
     }
     let object_count = fanout[255] as usize;
 
@@ -350,13 +407,12 @@ pub fn read_pack_index(idx_path: &Path) -> Result<PackIndex> {
         oids.push(slice.to_vec());
     }
 
-    // Skip CRC table.
     pos += object_count * 4;
 
     let mut offsets32 = Vec::with_capacity(object_count);
     let mut large_count = 0usize;
     for _ in 0..object_count {
-        let v = read_u32_be(&bytes, &mut pos)?;
+        let v = read_u32_be(bytes, &mut pos)?;
         if (v & 0x8000_0000) != 0 {
             large_count += 1;
         }
@@ -371,7 +427,7 @@ pub fn read_pack_index(idx_path: &Path) -> Result<PackIndex> {
     }
     let mut large_offsets = Vec::with_capacity(large_count);
     for _ in 0..large_count {
-        large_offsets.push(read_u64_be(&bytes, &mut pos)?);
+        large_offsets.push(read_u64_be(bytes, &mut pos)?);
     }
 
     let mut next_large = 0usize;
@@ -393,23 +449,7 @@ pub fn read_pack_index(idx_path: &Path) -> Result<PackIndex> {
     let mut pack_path = idx_path.to_path_buf();
     pack_path.set_extension("pack");
 
-    // Trailing 20 bytes are SHA-1 over all preceding index bytes (Git format).
-    if bytes.len() < 20 {
-        return Err(Error::CorruptObject(format!(
-            "index file {} missing checksum",
-            idx_path.display()
-        )));
-    }
-    let idx_body_end = bytes.len() - 20;
-    let mut h = Sha1::new();
-    h.update(&bytes[..idx_body_end]);
-    let digest = h.finalize();
-    if digest.as_slice() != &bytes[idx_body_end..] {
-        return Err(Error::CorruptObject(format!(
-            "index checksum mismatch for {}",
-            idx_path.display()
-        )));
-    }
+    verify_idx_trailing_checksum(idx_path, bytes)?;
 
     Ok(PackIndex {
         idx_path: idx_path.to_path_buf(),
@@ -500,6 +540,27 @@ pub fn hash_object_bytes(kind: ObjectKind, data: &[u8], hash_bytes: usize) -> Re
         other => Err(Error::CorruptObject(format!(
             "unsupported object hash width: {other}"
         ))),
+    }
+}
+
+/// Parse a pack index file (version 1 legacy or version 2).
+///
+/// # Errors
+///
+/// Returns [`Error::CorruptObject`] when format checks fail.
+pub fn read_pack_index(idx_path: &Path) -> Result<PackIndex> {
+    let bytes = fs::read(idx_path).map_err(Error::Io)?;
+    if bytes.len() < 8 {
+        return Err(Error::CorruptObject(format!(
+            "index file {} is too small",
+            idx_path.display()
+        )));
+    }
+    let magic = &bytes[0..4];
+    if magic == [0xff, b't', b'O', b'c'] {
+        read_pack_index_v2(idx_path, &bytes)
+    } else {
+        read_pack_index_v1(idx_path, &bytes)
     }
 }
 
