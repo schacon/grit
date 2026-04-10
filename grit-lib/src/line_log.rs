@@ -4,13 +4,17 @@
 //! ranges at the walk tip, map ranges across Myers line diffs toward parents,
 //! filter the revision list, and emit synthetic unified hunks.
 
+use crate::config::ConfigSet;
+use crate::crlf::{get_file_attrs, load_gitattributes, DiffAttr};
 use crate::diff::{detect_renames, diff_trees, zero_oid, DiffEntry};
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
-use regex::bytes::Regex as BytesRegex;
+use crate::userdiff::{matcher_for_driver, FuncnameMatcher};
+use regex::bytes::RegexBuilder as BytesRegexBuilder;
 use similar::{Algorithm, ChangeTag, TextDiff};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 /// Half-open line range using 0-based indices (Git internal).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -347,11 +351,20 @@ fn nth_line<'a>(data: &'a [u8], line: i64, ends: &[usize]) -> &'a [u8] {
     &data[idx..]
 }
 
-fn nth_line_end(data: &[u8], line: i64, ends: &[usize], total_lines: i64) -> usize {
-    if line >= total_lines {
-        return data.len();
-    }
-    ends[line as usize] + 1
+/// Line content as Git `nth_line` + `nth_line(line+1)` (used for funcname boundary checks).
+fn line_content_git_style<'a>(
+    data: &'a [u8],
+    line_idx: i64,
+    ends: &[usize],
+    total_lines: i64,
+) -> &'a [u8] {
+    let start = line_byte_offset(line_idx, ends);
+    let end = if line_idx + 1 >= total_lines {
+        data.len()
+    } else {
+        line_byte_offset(line_idx + 1, ends)
+    };
+    &data[start..end]
 }
 
 /// Parse one `-L` location (Git `parse_loc`). `anchor_for_regex` is `-N` for the first
@@ -364,7 +377,9 @@ fn parse_loc<'a>(
     anchor_for_regex: i64,
     rel_begin_line: i64,
 ) -> Result<(i64, &'a str)> {
-    let rel_ok = (1..=lines).contains(&rel_begin_line);
+    // Git: `if (1 <= begin && (spec[0] == '+' || spec[0] == '-'))` — the second `-L` component
+    // passes `begin = *begin + 1`, which can be `lines + 1` when the first line is the last line.
+    let rel_ok = rel_begin_line >= 1;
 
     let bytes = spec.as_bytes();
     if rel_ok && !spec.is_empty() && (bytes[0] == b'+' || bytes[0] == b'-') {
@@ -433,7 +448,10 @@ fn parse_loc<'a>(
 
     let begin0 = (anchor_line - 1).max(0).min(lines.saturating_sub(1).max(0));
     let line_start = nth_line(data, begin0, ends);
-    let re = BytesRegex::new(&pattern).map_err(|e| Error::CorruptObject(format!("regex: {e}")))?;
+    let re = BytesRegexBuilder::new(&pattern)
+        .multi_line(true)
+        .build()
+        .map_err(|e| Error::CorruptObject(format!("regex: {e}")))?;
     let mat = re
         .find(line_start)
         .ok_or_else(|| Error::CorruptObject("no match".to_owned()))?;
@@ -467,12 +485,44 @@ fn match_funcname_line(line: &[u8]) -> bool {
     c.is_ascii_alphabetic() || c == b'_' || c == b'$'
 }
 
+fn line_matches_funcname(matcher: Option<&FuncnameMatcher>, line: &[u8]) -> bool {
+    let mut end = line.len();
+    while end > 0 && (line[end - 1] == b'\n' || line[end - 1] == b'\r') {
+        end -= 1;
+    }
+    let body = &line[..end];
+    if let Some(m) = matcher {
+        let s = String::from_utf8_lossy(body);
+        m.match_line(s.as_ref()).is_some()
+    } else {
+        match_funcname_line(body)
+    }
+}
+
+/// Git only applies `userdiff` funcname rules when `diff=<driver>` is set in `.gitattributes`
+/// (`userdiff_find_by_path`); filename-based driver guessing is not used for `-L :pat:file`.
+fn funcname_matcher_for_path(
+    git_dir: &Path,
+    work_tree: Option<&Path>,
+    path: &str,
+) -> Option<FuncnameMatcher> {
+    let wt = work_tree?;
+    let rules = load_gitattributes(wt);
+    let config = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    let fa = get_file_attrs(&rules, path, false, &config);
+    let DiffAttr::Driver(ref name) = fa.diff_attr else {
+        return None;
+    };
+    matcher_for_driver(&config, name).ok().flatten()
+}
+
 fn parse_range_funcname<'a>(
     arg: &'a str,
     data: &[u8],
     ends: &[usize],
     lines: i64,
     mut anchor: i64,
+    userdiff: Option<&FuncnameMatcher>,
 ) -> Result<(i64, i64, &'a str)> {
     let mut s = arg;
     if s.starts_with('^') && s.get(1..2) == Some(":") {
@@ -506,10 +556,8 @@ fn parse_range_funcname<'a>(
         let mut line_idx = anchor0;
         let mut found_begin = None;
         while line_idx < lines {
-            let bol = nth_line(data, line_idx, ends);
-            let eol_idx = nth_line_end(data, line_idx, ends, lines);
-            let slice = &data[bol.as_ptr() as usize - data.as_ptr() as usize..eol_idx];
-            if match_funcname_line(slice) {
+            let slice = line_content_git_style(data, line_idx, ends, lines);
+            if line_matches_funcname(userdiff, slice) {
                 found_begin = Some(line_idx);
                 break;
             }
@@ -518,10 +566,8 @@ fn parse_range_funcname<'a>(
         let begin = found_begin.ok_or_else(|| Error::CorruptObject("no match".to_owned()))?;
         let mut end = begin + 1;
         while end < lines {
-            let bol = nth_line(data, end, ends);
-            let eol_idx = nth_line_end(data, end, ends, lines);
-            let slice = &data[bol.as_ptr() as usize - data.as_ptr() as usize..eol_idx];
-            if match_funcname_line(slice) {
+            let slice = line_content_git_style(data, end, ends, lines);
+            if line_matches_funcname(userdiff, slice) {
                 break;
             }
             end += 1;
@@ -531,7 +577,10 @@ fn parse_range_funcname<'a>(
     }
 
     let start_search = nth_line(data, anchor0, ends);
-    let re = BytesRegex::new(pattern).map_err(|e| Error::CorruptObject(format!("regex: {e}")))?;
+    let re = BytesRegexBuilder::new(pattern)
+        .multi_line(true)
+        .build()
+        .map_err(|e| Error::CorruptObject(format!("regex: {e}")))?;
 
     let mut p = start_search;
     let found_bol = loop {
@@ -551,7 +600,7 @@ fn parse_range_funcname<'a>(
             eol += 1;
         }
         let line_slice = &data[bol..eol.min(data.len())];
-        if match_funcname_line(line_slice) {
+        if line_matches_funcname(userdiff, line_slice) {
             break Some(bol);
         }
         p = &data[eol.min(data.len())..];
@@ -575,10 +624,8 @@ fn parse_range_funcname<'a>(
 
     let mut end = begin + 1;
     while end < lines {
-        let bol = nth_line(data, end, ends);
-        let eol_idx = nth_line_end(data, end, ends, lines);
-        let slice = &data[bol.as_ptr() as usize - data.as_ptr() as usize..eol_idx];
-        if match_funcname_line(slice) {
+        let slice = line_content_git_style(data, end, ends, lines);
+        if line_matches_funcname(userdiff, slice) {
             break;
         }
         end += 1;
@@ -647,9 +694,10 @@ fn parse_range_arg(
     ends: &[usize],
     lines: i64,
     anchor: i64,
+    userdiff: Option<&FuncnameMatcher>,
 ) -> Result<(i64, i64)> {
     let (begin, end) = if arg.starts_with(':') || arg.starts_with("^:") {
-        let (b, e, rest) = parse_range_funcname(arg, data, ends, lines, anchor)?;
+        let (b, e, rest) = parse_range_funcname(arg, data, ends, lines, anchor, userdiff)?;
         if !rest.is_empty() {
             return Err(Error::CorruptObject("malformed -L argument".to_owned()));
         }
@@ -707,7 +755,9 @@ fn parse_range_arg(
         if !rest.is_empty() {
             return Err(Error::CorruptObject("malformed -L argument".to_owned()));
         }
-        (n, n)
+        // Git leaves `end` at 0 when the comma branch is absent; `parse_lines` then sets
+        // `end = lines` ("from N through end of file").
+        (n, 0)
     };
 
     if (lines == 0 && (begin != 0 || end != 0)) || (lines > 0 && lines < begin) {
@@ -818,7 +868,8 @@ fn split_l_arg(spec: &str) -> Result<(&str, &str)> {
         return Ok((&spec[..1 + idx + 1], path));
     }
     if spec.starts_with('/') {
-        return split_regex_line_range(spec);
+        return split_regex_line_range(spec)
+            .map_err(|_| Error::CorruptObject("-L argument not 'start,end:file'".to_owned()));
     }
     let idx = spec
         .rfind(':')
@@ -883,6 +934,8 @@ fn read_blob_at_path(odb: &Odb, tree_oid: &ObjectId, path: &str) -> Result<Vec<u
 /// Parse all `-L` specs at `tip_oid` into per-file merged ranges.
 pub fn parse_line_log_ranges(
     odb: &Odb,
+    git_dir: &Path,
+    work_tree: Option<&Path>,
     tip_oid: &ObjectId,
     specs: &[String],
 ) -> Result<Vec<LineLogFile>> {
@@ -897,6 +950,7 @@ pub fn parse_line_log_ranges(
 
     for spec in specs {
         let (range_part, path) = split_l_arg(spec)?;
+        let userdiff = funcname_matcher_for_path(git_dir, work_tree, path);
         let blob_data = read_blob_at_path(odb, &tree_oid, path)?;
         let (lines, ends) = fill_line_ends(&blob_data);
 
@@ -909,7 +963,14 @@ pub fn parse_line_log_ranges(
             1
         };
 
-        let (begin, end) = parse_range_arg(range_part, &blob_data, &ends, lines, anchor)?;
+        let (begin, end) = parse_range_arg(
+            range_part,
+            &blob_data,
+            &ends,
+            lines,
+            anchor,
+            userdiff.as_ref(),
+        )?;
         line_log_insert(&mut files, path.to_owned(), begin, end);
     }
 
@@ -942,6 +1003,17 @@ fn filter_entries_for_paths(entries: Vec<DiffEntry>, paths: &[String]) -> Vec<Di
                 .unwrap_or(false)
         })
         .collect()
+}
+
+fn paths_from_range_files(range: &[LineLogFile]) -> Vec<String> {
+    let mut v: Vec<String> = range
+        .iter()
+        .filter(|f| !f.ranges.is_empty())
+        .map(|f| f.path.clone())
+        .collect();
+    v.sort();
+    v.dedup();
+    v
 }
 
 fn diff_tree_pair(
@@ -1100,7 +1172,6 @@ fn process_ranges_ordinary_commit(
     parents: &[ObjectId],
     tree_oid: &ObjectId,
     range: &[LineLogFile],
-    paths: &[String],
     rename_threshold: u32,
     state: &mut LineLogState,
     display: &mut HashMap<ObjectId, Vec<LineLogDisplay>>,
@@ -1110,7 +1181,14 @@ fn process_ranges_ordinary_commit(
     let parent_tree = parent
         .map(|p| parse_commit(&odb.read(p)?.data).map(|c| c.tree))
         .transpose()?;
-    let queue = diff_tree_pair(odb, parent_tree.as_ref(), tree_oid, paths, rename_threshold)?;
+    let path_keys = paths_from_range_files(range);
+    let queue = diff_tree_pair(
+        odb,
+        parent_tree.as_ref(),
+        tree_oid,
+        &path_keys,
+        rename_threshold,
+    )?;
     let (parent_range, disp, changed) = process_all_files(odb, &queue, range)?;
     if !disp.is_empty() {
         display.insert(commit_oid, disp);
@@ -1126,7 +1204,6 @@ fn process_ranges_merge_commit(
     parents: &[ObjectId],
     tree_oid: &ObjectId,
     range: &[LineLogFile],
-    paths: &[String],
     rename_threshold: u32,
     first_parent_only: bool,
     state: &mut LineLogState,
@@ -1140,7 +1217,8 @@ fn process_ranges_merge_commit(
     for i in 0..nparents {
         let p = parents[i];
         let ptree = parse_commit(&odb.read(&p)?.data)?.tree;
-        let queue = diff_tree_pair(odb, Some(&ptree), tree_oid, paths, rename_threshold)?;
+        let path_keys = paths_from_range_files(range);
+        let queue = diff_tree_pair(odb, Some(&ptree), tree_oid, &path_keys, rename_threshold)?;
         let (prange, _, changed_here) = process_all_files(odb, &queue, range)?;
         if !changed_here {
             state.insert(p, prange);
@@ -1157,7 +1235,8 @@ fn process_ranges_merge_commit(
 
     let p0 = parents[0];
     let ptree = parse_commit(&odb.read(&p0)?.data)?.tree;
-    let queue = diff_tree_pair(odb, Some(&ptree), tree_oid, paths, rename_threshold)?;
+    let path_keys = paths_from_range_files(range);
+    let queue = diff_tree_pair(odb, Some(&ptree), tree_oid, &path_keys, rename_threshold)?;
     // Display uses the commit-side ranges (`range`), matching Git's merge limitation.
     let (_, disp, _) = process_all_files(odb, &queue, range)?;
     if !disp.is_empty() {
@@ -1172,7 +1251,6 @@ pub fn line_log_filter_commits(
     commits: Vec<ObjectId>,
     tip: ObjectId,
     initial: Vec<LineLogFile>,
-    paths: Vec<String>,
     rename_threshold: u32,
     first_parent_only: bool,
 ) -> Result<(
@@ -1202,7 +1280,6 @@ pub fn line_log_filter_commits(
                 &parents,
                 &c.tree,
                 &range,
-                &paths,
                 rename_threshold,
                 first_parent_only,
                 &mut state,
@@ -1215,7 +1292,6 @@ pub fn line_log_filter_commits(
                 &parents,
                 &c.tree,
                 &range,
-                &paths,
                 rename_threshold,
                 &mut state,
                 &mut display_map,
