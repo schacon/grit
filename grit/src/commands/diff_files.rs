@@ -8,7 +8,7 @@ use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     count_changes, detect_copies, empty_blob_oid, format_stat_line,
-    parse_indent_heuristic_cli_flags, resolve_indent_heuristic,
+    normalize_ignore_space_change_line, parse_indent_heuristic_cli_flags, resolve_indent_heuristic,
     rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat, stat_matches,
     submodule_porcelain_flags, unified_diff, zero_oid, DiffEntry, DiffStatus,
 };
@@ -133,6 +133,9 @@ pub fn run(mut args: Args) -> Result<()> {
         diff_entries = grit_lib::diff::detect_renames(&repo.odb, None, diff_entries, threshold);
     }
 
+    diff_entries =
+        filter_diff_files_whitespace_equivalent(diff_entries, &repo, &work_tree, &options)?;
+
     if options.summary {
         print_diff_files_summary(&diff_entries)?;
     }
@@ -191,16 +194,17 @@ pub fn run(mut args: Args) -> Result<()> {
                         entry,
                         &repo,
                         &work_tree,
+                        &options,
                         options.abbrev,
                         options.indent_heuristic,
                     )?;
                 }
             }
             OutputFormat::Stat => {
-                print_stat_from_diff_entries(&diff_entries, &repo, &work_tree)?;
+                print_stat_from_diff_entries(&diff_entries, &repo, &work_tree, &options)?;
             }
             OutputFormat::NumStat => {
-                print_numstat_from_diff_entries(&diff_entries, &repo, &work_tree)?;
+                print_numstat_from_diff_entries(&diff_entries, &repo, &work_tree, &options)?;
             }
         }
     }
@@ -369,6 +373,10 @@ struct Options {
     /// Detect complete rewrites (`-B` / `--break-rewrites`) for summary/raw dissimilarity.
     break_rewrites: bool,
     indent_heuristic: bool,
+    ignore_all_space: bool,
+    ignore_space_change: bool,
+    ignore_space_at_eol: bool,
+    ignore_blank_lines: bool,
 }
 
 /// A single changed file: index side vs working tree.
@@ -410,6 +418,10 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut reverse = false;
     let mut summary = false;
     let mut break_rewrites = false;
+    let mut ignore_all_space = false;
+    let mut ignore_space_change = false;
+    let mut ignore_space_at_eol = false;
+    let mut ignore_blank_lines = false;
     let mut end_of_options = false;
 
     let mut idx = 0usize;
@@ -485,19 +497,13 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                         .with_context(|| format!("invalid --abbrev value: `{value}`"))?;
                     abbrev = Some(parsed);
                 }
+                "-w" | "--ignore-all-space" => ignore_all_space = true,
+                "-b" | "--ignore-space-change" => ignore_space_change = true,
+                "--ignore-space-at-eol" => ignore_space_at_eol = true,
+                "--ignore-blank-lines" => ignore_blank_lines = true,
                 // Silently accept diff options we don't fully implement yet
-                "-w"
-                | "--ignore-all-space"
-                | "-b"
-                | "--ignore-space-change"
-                | "--ignore-space-at-eol"
-                | "--ignore-blank-lines"
-                | "--full-index"
-                | "--no-ext-diff"
-                | "--no-prefix"
-                | "--no-abbrev"
-                | "--indent-heuristic"
-                | "--no-indent-heuristic" => {}
+                "--full-index" | "--no-ext-diff" | "--no-prefix" | "--no-abbrev" => {}
+                "--indent-heuristic" | "--no-indent-heuristic" => {}
                 "-M" | "--find-renames" => {
                     find_renames = Some(50);
                 }
@@ -594,7 +600,82 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         summary,
         break_rewrites,
         indent_heuristic: false,
+        ignore_all_space,
+        ignore_space_change,
+        ignore_space_at_eol,
+        ignore_blank_lines,
     })
+}
+
+fn diff_files_ws_any(o: &Options) -> bool {
+    o.ignore_all_space || o.ignore_space_change || o.ignore_space_at_eol || o.ignore_blank_lines
+}
+
+fn diff_files_normalize_content(s: &str, o: &Options) -> String {
+    if !diff_files_ws_any(o) {
+        return s.to_owned();
+    }
+    let mut lines: Vec<String> = s
+        .lines()
+        .map(|line| {
+            if o.ignore_all_space {
+                line.chars().filter(|c| !c.is_whitespace()).collect()
+            } else if o.ignore_space_change {
+                normalize_ignore_space_change_line(line)
+            } else if o.ignore_space_at_eol {
+                line.trim_end().to_owned()
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect();
+    if o.ignore_blank_lines {
+        lines.retain(|l| !l.trim().is_empty());
+    }
+    lines.join("\n")
+}
+
+fn diff_files_ws_content_matches_index_wt(
+    repo: &Repository,
+    idx_oid: &ObjectId,
+    wt_bytes: &[u8],
+    o: &Options,
+) -> Result<bool> {
+    let old = if *idx_oid == zero_oid() {
+        String::new()
+    } else {
+        let obj = repo.odb.read(idx_oid)?;
+        String::from_utf8_lossy(&obj.data).into_owned()
+    };
+    let new = String::from_utf8_lossy(wt_bytes).into_owned();
+    Ok(diff_files_normalize_content(&old, o) == diff_files_normalize_content(&new, o))
+}
+
+fn filter_diff_files_whitespace_equivalent(
+    entries: Vec<DiffEntry>,
+    repo: &Repository,
+    work_tree: &Path,
+    o: &Options,
+) -> Result<Vec<DiffEntry>> {
+    if !diff_files_ws_any(o) {
+        return Ok(entries);
+    }
+    let mut out = Vec::with_capacity(entries.len());
+    for e in entries {
+        if e.status != DiffStatus::Modified {
+            out.push(e);
+            continue;
+        }
+        if e.old_mode != e.new_mode {
+            out.push(e);
+            continue;
+        }
+        let (old, new) = load_patch_contents_for_diff_entry(&e, repo, work_tree)?;
+        if diff_files_normalize_content(&old, o) != diff_files_normalize_content(&new, o) {
+            out.push(e);
+        }
+    }
+    Ok(out)
 }
 
 // ── Core diff logic ──────────────────────────────────────────────────
@@ -691,18 +772,27 @@ fn collect_changes(
                     } else {
                         // Same blob and mode on disk as in the index, but index stat is
                         // uninitialized (e.g. post-`read-tree` checkout without `-u`).
-                        changes.insert(
-                            path.clone(),
-                            Change {
-                                path: path.clone(),
-                                status: 'M',
-                                old_mode: idx_canonical,
-                                new_mode: wt_mode,
-                                old_oid: *idx_oid,
-                                new_oid: wt_oid,
-                                intent_to_add: false,
-                            },
-                        );
+                        let ws_only = diff_files_ws_any(options)
+                            && fs::read(&abs).ok().is_some_and(|bytes| {
+                                diff_files_ws_content_matches_index_wt(
+                                    repo, idx_oid, &bytes, options,
+                                )
+                                .unwrap_or(false)
+                            });
+                        if !ws_only {
+                            changes.insert(
+                                path.clone(),
+                                Change {
+                                    path: path.clone(),
+                                    status: 'M',
+                                    old_mode: idx_canonical,
+                                    new_mode: wt_mode,
+                                    old_oid: *idx_oid,
+                                    new_oid: wt_oid,
+                                    intent_to_add: false,
+                                },
+                            );
+                        }
                     }
                 }
                 WorktreeStatus::Missing => {
@@ -942,6 +1032,7 @@ fn print_patch_from_diff_entry(
     entry: &DiffEntry,
     repo: &Repository,
     work_tree: &Path,
+    ws_opts: &Options,
     abbrev: Option<usize>,
     indent_heuristic: bool,
 ) -> Result<()> {
@@ -1023,17 +1114,24 @@ fn print_patch_from_diff_entry(
     {
         println!("{header}");
     } else if old_content != new_content {
-        let patch = unified_diff(
-            &old_content,
-            &new_content,
-            display_path,
-            display_path,
-            3,
-            indent_heuristic,
-            quote_path_fully,
-        );
-        let body: String = patch.lines().skip(2).map(|l| format!("\n{l}")).collect();
-        println!("{header}\n--- {old_label}\n+++ {new_label}{body}");
+        let ws_equivalent = diff_files_ws_any(ws_opts)
+            && diff_files_normalize_content(&old_content, ws_opts)
+                == diff_files_normalize_content(&new_content, ws_opts);
+        if !ws_equivalent {
+            let patch = unified_diff(
+                &old_content,
+                &new_content,
+                display_path,
+                display_path,
+                3,
+                indent_heuristic,
+                quote_path_fully,
+            );
+            let body: String = patch.lines().skip(2).map(|l| format!("\n{l}")).collect();
+            println!("{header}\n--- {old_label}\n+++ {new_label}{body}");
+        } else {
+            println!("{header}\n--- {old_label}\n+++ {new_label}");
+        }
     } else {
         println!("{header}\n--- {old_label}\n+++ {new_label}");
     }
@@ -1044,6 +1142,7 @@ fn print_stat_from_diff_entries(
     entries: &[DiffEntry],
     repo: &Repository,
     work_tree: &Path,
+    ws_opts: &Options,
 ) -> Result<()> {
     if entries.is_empty() {
         return Ok(());
@@ -1053,6 +1152,14 @@ fn print_stat_from_diff_entries(
     let mut total_del = 0usize;
     for entry in entries {
         let (old, new) = load_patch_contents_for_diff_entry(entry, repo, work_tree)?;
+        let (old, new) = if diff_files_ws_any(ws_opts) {
+            (
+                diff_files_normalize_content(&old, ws_opts),
+                diff_files_normalize_content(&new, ws_opts),
+            )
+        } else {
+            (old, new)
+        };
         let (ins, del) = count_changes(&old, &new);
         total_ins += ins;
         total_del += del;
@@ -1086,9 +1193,18 @@ fn print_numstat_from_diff_entries(
     entries: &[DiffEntry],
     repo: &Repository,
     work_tree: &Path,
+    ws_opts: &Options,
 ) -> Result<()> {
     for entry in entries {
         let (old, new) = load_patch_contents_for_diff_entry(entry, repo, work_tree)?;
+        let (old, new) = if diff_files_ws_any(ws_opts) {
+            (
+                diff_files_normalize_content(&old, ws_opts),
+                diff_files_normalize_content(&new, ws_opts),
+            )
+        } else {
+            (old, new)
+        };
         let (ins, del) = count_changes(&old, &new);
         println!("{}\t{}\t{}", ins, del, entry.path());
     }
