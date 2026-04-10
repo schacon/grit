@@ -14,6 +14,7 @@ use grit_lib::odb::Odb;
 use grit_lib::promisor::{read_promisor_missing_oids, write_promisor_marker};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::resolve_head;
 use grit_lib::state::HeadState;
 use std::collections::{HashMap, HashSet};
@@ -124,6 +125,9 @@ pub struct Args {
     /// Only negotiate, do not fetch objects.
     #[arg(long)]
     pub negotiate_only: bool,
+    /// Restrict negotiation to commits reachable from these tips.
+    #[arg(long = "negotiation-tip", value_name = "COMMIT|GLOB")]
+    pub negotiation_tip: Vec<String>,
 
     /// Allow updating the current branch head (normally refused).
     #[arg(long)]
@@ -150,8 +154,22 @@ pub struct Args {
 
 pub fn run(mut args: Args) -> Result<()> {
     if args.negotiate_only {
-        // Negotiate-only mode: just exit successfully without fetching.
-        return Ok(());
+        let recurse_requested = args
+            .recurse_submodules
+            .as_deref()
+            .map(|v| {
+                let l = v.to_ascii_lowercase();
+                l != "no" && l != "false"
+            })
+            .unwrap_or(false);
+        if recurse_requested {
+            exit_fatal(
+                "options '--negotiate-only' and '--recurse-submodules' cannot be used together",
+            );
+        }
+        if args.negotiation_tip.is_empty() {
+            exit_fatal("--negotiate-only needs one or more --negotiation-tip=*");
+        }
     }
 
     // `git fetch tag <name>` is parsed as remote=`tag` unless we lift the magic keyword.
@@ -170,6 +188,16 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let git_dir = resolve_git_dir()?;
     let config = ConfigSet::load(Some(&git_dir), true)?;
+    if args.negotiate_only {
+        let protocol_version = config
+            .get("protocol.version")
+            .as_deref()
+            .and_then(parse_protocol_version)
+            .unwrap_or_else(crate::protocol_wire::effective_client_protocol_version);
+        if protocol_version != 2 {
+            exit_fatal("negotiate-only requires protocol v2");
+        }
+    }
 
     // Validate fetch.output config if set
     if let Some(val) = config.get("fetch.output") {
@@ -370,6 +398,98 @@ fn should_recurse_fetch_submodules(config: &ConfigSet, args: &Args) -> bool {
         .unwrap_or(false)
 }
 
+fn exit_fatal(msg: &str) -> ! {
+    eprintln!("fatal: {msg}");
+    std::process::exit(128);
+}
+
+fn parse_protocol_version(value: &str) -> Option<u8> {
+    match value.trim() {
+        "0" => Some(0),
+        "1" => Some(1),
+        "2" => Some(2),
+        _ => None,
+    }
+}
+
+fn resolve_negotiation_tip_oids(git_dir: &Path, tips: &[String]) -> Result<Vec<ObjectId>> {
+    let repo = Repository::open(git_dir, None)
+        .with_context(|| format!("open repository {}", git_dir.display()))?;
+    let local_refs = refs::list_refs(git_dir, "refs/").unwrap_or_default();
+    let mut out = Vec::new();
+    for tip in tips {
+        let tip = tip.trim();
+        if tip.is_empty() {
+            continue;
+        }
+        if tip.contains('*') {
+            for (refname, oid) in &local_refs {
+                if match_glob_pattern(tip, refname).is_some() {
+                    out.push(*oid);
+                }
+            }
+            continue;
+        }
+        if let Ok(oid) = ObjectId::from_hex(tip) {
+            if repo.odb.read(&oid).is_err() {
+                exit_fatal(&format!("the object {tip} does not exist"));
+            }
+            out.push(oid);
+            continue;
+        }
+        let oid = resolve_revision(&repo, tip)
+            .with_context(|| format!("could not resolve negotiation tip '{tip}'"))?;
+        if repo.odb.read(&oid).is_err() {
+            exit_fatal(&format!("the object {tip} does not exist"));
+        }
+        out.push(oid);
+    }
+    out.sort_by_key(|o| o.to_hex());
+    out.dedup();
+    if out.is_empty() {
+        exit_fatal("--negotiate-only needs one or more --negotiation-tip=*");
+    }
+    Ok(out)
+}
+
+fn negotiate_only_common_with_remote_repo(
+    git_dir: &Path,
+    remote_repo: &Repository,
+    negotiation_tips: &[ObjectId],
+) -> Result<Vec<ObjectId>> {
+    let local_repo = Repository::open(git_dir, None)
+        .with_context(|| format!("open repository {}", git_dir.display()))?;
+    let mut remote_oids: Vec<ObjectId> = refs::list_refs(&remote_repo.git_dir, "refs/")?
+        .into_iter()
+        .map(|(_, oid)| oid)
+        .collect();
+    if let Ok(head_oid) = refs::resolve_ref(&remote_repo.git_dir, "HEAD") {
+        remote_oids.push(head_oid);
+    }
+    remote_oids.sort_by_key(|o| o.to_hex());
+    remote_oids.dedup();
+
+    let mut commons = Vec::new();
+    for tip in negotiation_tips {
+        if local_repo.odb.read(tip).is_err() {
+            continue;
+        }
+        for remote_oid in &remote_oids {
+            if local_repo.odb.read(remote_oid).is_err() {
+                continue;
+            }
+            if let Ok(mut bases) =
+                merge_base::merge_bases_first_vs_rest(&local_repo, *tip, &[*remote_oid])
+            {
+                commons.append(&mut bases);
+            }
+        }
+    }
+    commons.sort_by_key(|o| o.to_hex());
+    commons.dedup();
+    Ok(commons)
+}
+
 /// Build the upload-pack `want` list for a configured (non-CLI) fetch: only refs matched by
 /// `refspecs`, optionally following annotated tags that point at each matched branch tip, and
 /// omitting objects already present in the local ODB (so incremental fetches do not re-want old
@@ -504,7 +624,7 @@ fn fetch_remote(
     url_override: Option<&str>,
     args: &Args,
 ) -> Result<()> {
-    if args.unshallow {
+    if !args.negotiate_only && args.unshallow {
         let shallow_path = git_dir.join("shallow");
         if shallow_path.exists() {
             fs::remove_file(&shallow_path).context("removing shallow grafts for --unshallow")?;
@@ -619,6 +739,27 @@ fn fetch_remote(
         }
         Some(r)
     };
+
+    if args.negotiate_only {
+        let negotiation_tips = resolve_negotiation_tip_oids(git_dir, &args.negotiation_tip)?;
+        let common: Vec<ObjectId> = if is_http_url {
+            let http_ctx = crate::http_client::HttpClientContext::from_config_set(config)?;
+            crate::http_smart::http_negotiate_only_common(
+                git_dir,
+                &url,
+                &negotiation_tips,
+                &http_ctx,
+            )?
+        } else if let Some(rr) = remote_repo.as_ref() {
+            negotiate_only_common_with_remote_repo(git_dir, rr, &negotiation_tips)?
+        } else {
+            bail!("--negotiate-only is not supported for this transport");
+        };
+        for oid in common {
+            println!("{}", oid.to_hex());
+        }
+        return Ok(());
+    }
 
     if crate::ssh_transport::is_configured_ssh_url(&url) {
         if remote_repo.is_some() {

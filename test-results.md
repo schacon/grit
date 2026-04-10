@@ -32,6 +32,16 @@
     - `packet:          git< version 1`
   - The HTTP fetch transport path is now exercising v0/v1 negotiation with local `have` lines and server v1 trace visibility.
 
+**2026-04-10 (fetch-plan Phase E.1: --negotiate-only behavior)**
+
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `GUST_BIN=/workspace/target/release/grit bash tests/t5702-protocol-v2.sh --run=53,54,55,56,83,84,85`: partial
+  - Passed: 53,54,55,56,83,85
+  - Remaining failure: 84 (`http:// --negotiate-only without wait-for-done support`) in this environment due to `one_time_script` route not being found in our local test-httpd flow, so expected wait-for-done error assertion is not reached.
+- `./scripts/run-tests.sh t5700-protocol-v1.sh`: 9/24
+- `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: 13/37
+
 **2026-04-10 (fetch HTTP v0/v1 discovery fallback / Phase B.1)**
 
 - `cargo check -p grit-rs`: pass

@@ -10,6 +10,7 @@ use std::sync::{Mutex, OnceLock};
 
 use anyhow::{bail, Context, Result};
 use grit_lib::fetch_negotiator::SkippingNegotiator;
+use grit_lib::merge_base;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
@@ -386,6 +387,84 @@ pub fn http_ls_refs(
     )?;
 
     parse_ls_refs_v2_response(&resp)
+}
+
+/// Perform HTTP smart protocol-v2 negotiation-only common-base discovery.
+///
+/// Returns local commit IDs that are common with the remote and reachable from the provided
+/// negotiation tips. This mirrors fetch's negotiate-only behavior without downloading pack data.
+pub fn http_negotiate_only_common(
+    local_git_dir: &Path,
+    repo_url: &str,
+    negotiation_tips: &[ObjectId],
+    client: &crate::http_client::HttpClientContext,
+) -> Result<Vec<ObjectId>> {
+    let base = repo_url.trim_end_matches('/');
+    let mut refs_url = format!("{base}/info/refs");
+    refs_url.push_str(if refs_url.contains('?') { "&" } else { "?" });
+    refs_url.push_str(&format!("service={SERVICE}"));
+
+    let body = http_get(client, &refs_url)?;
+    let pkt_body = strip_v0_service_advertisement_if_present(&body)?;
+    let (caps, object_format) = match discover_http_protocol(pkt_body)? {
+        HttpDiscovery::V2 {
+            caps,
+            object_format,
+        } => (caps, object_format),
+        HttpDiscovery::V0V1 { .. } => bail!("negotiate-only requires protocol v2"),
+    };
+
+    let features = v2_fetch_features(&caps);
+    if !features.contains("wait-for-done") {
+        bail!("server does not support wait-for-done");
+    }
+
+    let mut req = Vec::new();
+    pkt_line::write_line_to_vec(&mut req, "command=ls-refs")?;
+    pkt_line::write_line_to_vec(&mut req, &format!("object-format={object_format}"))?;
+    for line in cap_lines_for_client_request(&caps) {
+        pkt_line::write_line_to_vec(&mut req, &line)?;
+    }
+    pkt_line::write_delim(&mut req)?;
+    pkt_line::write_line_to_vec(&mut req, "peel")?;
+    pkt_line::write_line_to_vec(&mut req, "symrefs")?;
+    pkt_line::write_flush(&mut req)?;
+
+    let post_url = format!("{base}/{SERVICE}");
+    let resp = http_post(
+        client,
+        &post_url,
+        &format!("application/x-{SERVICE}-request"),
+        &format!("application/x-{SERVICE}-result"),
+        &req,
+    )?;
+    let advertised = parse_ls_refs_v2_response(&resp)?;
+
+    let local_repo = Repository::open(local_git_dir, None)
+        .with_context(|| format!("open repository {}", local_git_dir.display()))?;
+    let mut remote_oids: Vec<ObjectId> = advertised.iter().map(|e| e.oid).collect();
+    remote_oids.sort_by_key(|o| o.to_hex());
+    remote_oids.dedup();
+
+    let mut commons = Vec::new();
+    for tip in negotiation_tips {
+        if local_repo.odb.read(tip).is_err() {
+            continue;
+        }
+        for remote_oid in &remote_oids {
+            if local_repo.odb.read(remote_oid).is_err() {
+                continue;
+            }
+            if let Ok(mut bases) =
+                merge_base::merge_bases_first_vs_rest(&local_repo, *tip, &[*remote_oid])
+            {
+                commons.append(&mut bases);
+            }
+        }
+    }
+    commons.sort_by_key(|o| o.to_hex());
+    commons.dedup();
+    Ok(commons)
 }
 
 fn parse_ls_refs_v2_response(data: &[u8]) -> Result<Vec<LsRefEntry>> {

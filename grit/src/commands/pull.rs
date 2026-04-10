@@ -284,6 +284,7 @@ pub fn run(args: Args) -> Result<()> {
         no_show_forced_updates: false,
         show_forced_updates: false,
         negotiate_only: false,
+        negotiation_tip: Vec::new(),
         update_head_ok: false,
         prefetch: false,
         verbose: 0,
