@@ -315,6 +315,7 @@ pub fn run(mut args: Args) -> Result<()> {
                         &mut out,
                         entry,
                         &repo,
+                        &index,
                         options.abbrev,
                         !options.cached,
                     )?;
@@ -322,6 +323,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     let line = render_raw_diff_entry(
                         entry,
                         &repo,
+                        &index,
                         options.abbrev,
                         !options.cached,
                         quote_fully,
@@ -967,6 +969,13 @@ fn diff_tree_vs_worktree(
             continue;
         }
         let path = change.path.as_str();
+        // Skip-worktree (and assume-unchanged): never refresh the recorded "new" side from disk.
+        // Git keeps the index blob OID in raw output even when the work tree differs (t7011).
+        if let Some(ie) = index_entries.get(path.as_bytes()) {
+            if ie.skip_worktree() || ie.assume_unchanged() {
+                continue;
+            }
+        }
         if worktree_matches_index_snapshot(repo, work_tree, path, index_snapshot, &index_entries)? {
             continue;
         }
@@ -1279,16 +1288,28 @@ pub(crate) fn write_diff_index_name_status(
 /// The colon-prefixed status line ends with a NUL byte (no tab before paths).
 /// For renames/copies, old and new paths are each NUL-terminated. For other
 /// statuses, a single path is NUL-terminated.
+/// True when raw `diff-index` should show real index OIDs for an added path instead of the
+/// uncached all-zero placeholder (skip-worktree / assume-unchanged; t7011).
+fn raw_diff_index_show_index_oid_for_added(index: &Index, entry: &DiffEntry) -> bool {
+    index
+        .get(entry.path().as_bytes(), 0)
+        .is_some_and(|e| e.skip_worktree() || e.assume_unchanged())
+}
+
 fn write_raw_diff_entry_z(
     out: &mut impl Write,
     entry: &DiffEntry,
     repo: &Repository,
+    index: &Index,
     abbrev: Option<usize>,
     diff_index_uncached: bool,
 ) -> Result<()> {
     let width = abbrev.unwrap_or(40).clamp(4, 40);
 
-    let (old_oid_disp, new_oid_disp) = if diff_index_uncached && entry.status == DiffStatus::Added {
+    let (old_oid_disp, new_oid_disp) = if diff_index_uncached
+        && entry.status == DiffStatus::Added
+        && !raw_diff_index_show_index_oid_for_added(index, entry)
+    {
         ("0".repeat(width), "0".repeat(width))
     } else {
         let old_oid = if entry.old_oid == zero_oid() {
@@ -1342,15 +1363,17 @@ fn write_raw_diff_entry_z(
 fn render_raw_diff_entry(
     entry: &DiffEntry,
     repo: &Repository,
+    index: &Index,
     abbrev: Option<usize>,
     diff_index_uncached: bool,
     quote_fully: bool,
 ) -> Result<String> {
     let width = abbrev.unwrap_or(40).clamp(4, 40);
 
-    // `diff-index` uncached raw lines for newly added paths use all-zero object ids on both sides
-    // (t1501-work-tree; matches the harness expectations for tree vs index additions).
-    let (old_oid_disp, new_oid_disp) = if diff_index_uncached && entry.status == DiffStatus::Added {
+    let (old_oid_disp, new_oid_disp) = if diff_index_uncached
+        && entry.status == DiffStatus::Added
+        && !raw_diff_index_show_index_oid_for_added(index, entry)
+    {
         ("0".repeat(width), "0".repeat(width))
     } else {
         let old_oid = if entry.old_oid == zero_oid() {
