@@ -19,6 +19,10 @@ use clap::Args as ClapArgs;
 use grit_lib::attributes::{
     collect_attrs_for_path, load_gitattributes_for_diff, AttrValue, ParsedGitAttributes,
 };
+use grit_lib::combined_diff_patch::CombinedDiffWsOptions;
+use grit_lib::combined_tree_diff::{
+    combined_diff_paths_trees, format_combined_raw_line, CombinedTreeDiffOptions,
+};
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{get_file_attrs, parse_gitattributes_content, DiffAttr};
 use grit_lib::diff::{
@@ -35,8 +39,9 @@ use grit_lib::merge_base::{
     merge_base_for_diff_index, merge_base_for_diff_two_commits, MergeBaseForDiffError,
 };
 use grit_lib::merge_diff::{
-    blob_text_for_diff_with_oid, combined_diff_paths, diff_textconv_active,
-    format_worktree_conflict_combined, run_textconv,
+    blob_text_for_diff_with_oid, combined_diff_paths, combined_merge_parent_blob_paths,
+    diff_textconv_active, format_combined_textconv_patch, format_worktree_conflict_combined,
+    run_textconv,
 };
 use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -1348,6 +1353,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // trailing_var_arg may capture flags like --name-only into args.
     // Move them back into the flags struct so they take effect.
     let mut want_combined_diff = false;
+    let mut combined_diff_dense = false;
     let mut extra_revs = Vec::new();
     let mut rev_idx = 0;
     while rev_idx < revs.len() {
@@ -1357,6 +1363,7 @@ pub fn run(mut args: Args) -> Result<()> {
             match r.as_str() {
                 "-c" => {
                     want_combined_diff = true;
+                    combined_diff_dense = false;
                 }
                 "--name-only" => args.name_only = true,
                 "--name-status" => args.name_status = true,
@@ -1513,6 +1520,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 }
                 "--cc" => {
                     want_combined_diff = true;
+                    combined_diff_dense = true;
                 }
                 "--find-copies-harder" => {
                     args.find_copies_harder = true;
@@ -1700,6 +1708,87 @@ pub fn run(mut args: Args) -> Result<()> {
             symmetric_left_name, symmetric_right_name, symmetric_base_name
         );
     }
+    if want_combined_diff && revs.len() >= 3 && !args.cached {
+        fn tree_oid_for_diff_spec(repo: &Repository, spec: &str) -> Result<ObjectId> {
+            commit_or_tree_oid(repo, spec)
+        }
+        let merge_tree = tree_oid_for_diff_spec(&repo, revs.last().unwrap())?;
+        let mut parent_trees = Vec::with_capacity(revs.len() - 1);
+        for s in &revs[..revs.len() - 1] {
+            parent_trees.push(tree_oid_for_diff_spec(&repo, s)?);
+        }
+        let walk = CombinedTreeDiffOptions {
+            recursive: true,
+            tree_in_recursive: false,
+        };
+        let parent_opts: Vec<Option<ObjectId>> = parent_trees.iter().copied().map(Some).collect();
+        let mut cpaths =
+            combined_diff_paths_trees(&repo.odb, &merge_tree, &parent_opts, &walk, None)?;
+        cpaths = filter_combined_paths(cpaths, &paths);
+        let has_diff = !cpaths.is_empty();
+        let abbrev_opt = if args.full_index || args.no_abbrev {
+            None
+        } else {
+            Some(args.abbrev.map(|n| n.max(4).min(40)).unwrap_or(7))
+        };
+        let mut stdout = io::stdout().lock();
+        if args.raw {
+            for p in &cpaths {
+                writeln!(stdout, "{}", format_combined_raw_line(p, abbrev_opt))?;
+            }
+        } else if emit_unified_patch && !args.no_patch {
+            let ws = CombinedDiffWsOptions {
+                ignore_all_space: args.ignore_all_space,
+                ignore_space_change: args.ignore_space_change,
+                ignore_space_at_eol: args.ignore_space_at_eol,
+                ignore_cr_at_eol: args.ignore_cr_at_eol,
+            };
+            let rename_thresh = args
+                .find_renames
+                .as_deref()
+                .map(parse_diff_rename_threshold)
+                .unwrap_or(50);
+            let patch_abbrev = abbrev_opt.unwrap_or(40);
+            for p in &cpaths {
+                let parent_blob_paths = if args.find_renames.is_some() {
+                    combined_merge_parent_blob_paths(
+                        &repo.odb,
+                        &p.path,
+                        &parent_trees,
+                        rename_thresh,
+                    )
+                } else {
+                    None
+                };
+                if let Some(patch) = format_combined_textconv_patch(
+                    &repo.git_dir,
+                    &diff_config,
+                    &repo.odb,
+                    &p.path,
+                    &parent_trees,
+                    &merge_tree,
+                    patch_abbrev,
+                    patch_context,
+                    combined_diff_dense,
+                    !args.no_textconv,
+                    ws,
+                    false,
+                    parent_blob_paths.as_deref(),
+                    &p.parents,
+                    quote_path_fully,
+                ) {
+                    write!(stdout, "{patch}")?;
+                }
+            }
+        }
+        if args.exit_code || args.quiet {
+            if has_diff {
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
+
     let work_tree = repo.work_tree.as_deref();
 
     // Load index (empty if not found)
@@ -4168,6 +4257,44 @@ fn commit_or_tree_oid(repo: &Repository, spec: &str) -> Result<ObjectId> {
             _ => bail!("object '{}' does not name a tree or commit", oid),
         }
     }
+}
+
+/// Filter combined-diff paths like [`filter_by_paths`].
+fn filter_combined_paths(
+    entries: Vec<grit_lib::combined_tree_diff::CombinedDiffPath>,
+    paths: &[String],
+) -> Vec<grit_lib::combined_tree_diff::CombinedDiffPath> {
+    if paths.is_empty() {
+        return entries;
+    }
+    let mut include_specs: Vec<&str> = Vec::new();
+    let mut exclude_inners: Vec<&str> = Vec::new();
+    for spec in paths {
+        if let Some(inner) = spec.strip_prefix(":!").or_else(|| spec.strip_prefix(":^")) {
+            exclude_inners.push(inner);
+        } else {
+            include_specs.push(spec.as_str());
+        }
+    }
+    if include_specs.is_empty() && !exclude_inners.is_empty() {
+        include_specs.push(".");
+    }
+    entries
+        .into_iter()
+        .filter(|e| {
+            let path = e.path.as_str();
+            let included = include_specs.iter().any(|spec| {
+                if spec == &"." || spec.is_empty() {
+                    return true;
+                }
+                crate::pathspec::pathspec_matches(spec, path)
+            });
+            let excluded = exclude_inners
+                .iter()
+                .any(|inner| crate::pathspec::pathspec_matches(inner, path));
+            included && !excluded
+        })
+        .collect()
 }
 
 /// Filter diff entries to only those matching the given pathspecs.

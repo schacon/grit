@@ -90,10 +90,10 @@ else
 	_test_output_base="$TEST_DIRECTORY"
 fi
 TRASH_DIRECTORY="${TRASH_DIRECTORY:-$_test_output_base/trash.$_test_basename}"
-# BIN_DIRECTORY lives *outside* the working tree so that `git clean -x`
-# (used in pristine_detach and similar helpers) cannot remove the wrapper
-# scripts.  Using a sibling directory keeps things self-contained.
-BIN_DIRECTORY="${TEST_DIRECTORY}/bin.${_test_basename}"
+# Wrapper scripts must survive `git clean` and must not live under
+# `$TEST_DIRECTORY` (some tests remove sibling paths). Use a per-host temp dir.
+_tmpbase="${TMPDIR:-/tmp}"
+BIN_DIRECTORY="${_tmpbase}/gust-test-bin.${_test_basename}.$$"
 TEST_RESULTS_DIR="${TEST_DIRECTORY}/test-results"
 
 . "$TEST_DIRECTORY"/test-lib-harness.sh
@@ -148,6 +148,9 @@ setup_trash () {
 	mkdir -p "$TRASH_DIRECTORY"
 	# BIN_DIRECTORY is outside the working tree so git clean -x cannot remove it
 	mkdir -p "$BIN_DIRECTORY"
+	# Remove stale wrappers before rewrite: avoids Linux ETXTBSY when replacing a
+	# running executable and restores wrappers if a prior run left BIN_DIRECTORY empty.
+	rm -f "$BIN_DIRECTORY/git" "$BIN_DIRECTORY/grit" "$BIN_DIRECTORY/test-tool" "$BIN_DIRECTORY/scalar" 2>/dev/null || true
 	# Write a 'git' wrapper script that calls grit (GUST_BIN is absolute path)
 	cat >"$BIN_DIRECTORY/git" <<EOF
 #!/bin/sh

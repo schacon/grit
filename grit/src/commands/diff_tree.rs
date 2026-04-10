@@ -9,8 +9,10 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use encoding_rs::Encoding;
+use grit_lib::combined_diff_patch::CombinedDiffWsOptions;
 use grit_lib::combined_tree_diff::{
-    combined_diff_paths_filtered, CombinedDiffPath, CombinedParentStatus, CombinedTreeDiffOptions,
+    combined_diff_paths_filtered, combined_diff_paths_trees, format_combined_raw_line,
+    CombinedDiffPath, CombinedParentStatus, CombinedTreeDiffOptions,
 };
 use grit_lib::config::ConfigSet;
 use grit_lib::delta_encode::{encode_lcp_delta, encode_prefix_extension_delta};
@@ -23,7 +25,7 @@ use grit_lib::merge_base::{
     merge_base_for_diff_two_commits, merge_bases_first_vs_rest, MergeBaseForDiffError,
 };
 use grit_lib::merge_diff::{
-    combined_diff_paths, format_combined_textconv_patch, is_binary_for_diff,
+    combined_merge_parent_blob_paths, format_combined_textconv_patch, is_binary_for_diff,
 };
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -151,6 +153,13 @@ struct Options {
     submodule_mode: Option<String>,
     /// Object id spec for `--find-object` (resolved against the repo before the walk).
     find_object: Option<String>,
+    /// List old paths per parent on renames (`--combined-all-paths`).
+    combined_all_paths: bool,
+    /// Whitespace options for combined patch hunks.
+    ignore_space_at_eol: bool,
+    ignore_space_change: bool,
+    ignore_all_space: bool,
+    ignore_cr_at_eol: bool,
     /// Whitespace / conflict-marker check (no raw/patch output).
     check: bool,
     /// Compare merge-base(HEAD, A) vs B trees (two commits required).
@@ -199,6 +208,11 @@ impl Default for Options {
             pickaxe_all: false,
             submodule_mode: None,
             find_object: None,
+            combined_all_paths: false,
+            ignore_space_at_eol: false,
+            ignore_space_change: false,
+            ignore_all_space: false,
+            ignore_cr_at_eol: false,
             check: false,
             merge_base: false,
         }
@@ -321,6 +335,11 @@ fn parse_options(repo: &Repository, argv: &[String]) -> Result<Options> {
                             .with_context(|| format!("invalid -U value: `{val}`"))?;
                     }
                 }
+                "--combined-all-paths" => opts.combined_all_paths = true,
+                "--ignore-space-at-eol" => opts.ignore_space_at_eol = true,
+                "-b" | "--ignore-space-change" => opts.ignore_space_change = true,
+                "-w" | "--ignore-all-space" => opts.ignore_all_space = true,
+                "--ignore-cr-at-eol" => opts.ignore_cr_at_eol = true,
                 "-M" | "--find-renames" => opts.find_renames = Some(50),
                 "-C" | "--find-copies" => {
                     opts.find_copies = Some(50);
@@ -498,7 +517,95 @@ pub fn run(mut args: Args) -> Result<()> {
 
 // ── Two-tree mode ────────────────────────────────────────────────────
 
+fn run_multi_tree_combined(
+    repo: &Repository,
+    opts: &Options,
+    out: &mut impl Write,
+    merge_tree: &ObjectId,
+    parent_trees: &[ObjectId],
+) -> Result<bool> {
+    let odb = &repo.odb;
+    let walk = CombinedTreeDiffOptions {
+        recursive: true,
+        tree_in_recursive: false,
+    };
+    let parent_opts: Vec<Option<ObjectId>> = parent_trees.iter().copied().map(Some).collect();
+    let paths = combined_diff_paths_trees(odb, merge_tree, &parent_opts, &walk, None)?;
+    let has_diff = !paths.is_empty();
+    if opts.quiet || !has_diff {
+        return Ok(has_diff);
+    }
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let quote_fully = config.quote_path_fully();
+    let abbrev_len = if opts.full_index {
+        40usize
+    } else {
+        opts.abbrev.unwrap_or(7)
+    };
+    let ws = CombinedDiffWsOptions {
+        ignore_all_space: opts.ignore_all_space,
+        ignore_space_change: opts.ignore_space_change,
+        ignore_space_at_eol: opts.ignore_space_at_eol,
+        ignore_cr_at_eol: opts.ignore_cr_at_eol,
+    };
+    let rename_thresh = opts.find_renames.unwrap_or(50);
+
+    for p in &paths {
+        match opts.format {
+            OutputFormat::Raw => {
+                if opts.nul_terminated {
+                    write_combined_raw_z(out, None, p, opts.abbrev)?;
+                } else {
+                    writeln!(out, "{}", format_combined_raw_line(p, opts.abbrev))?;
+                }
+            }
+            OutputFormat::NameOnly | OutputFormat::NameStatus => {
+                print_combined_paths(out, std::slice::from_ref(p), opts)?;
+            }
+            OutputFormat::Patch => {
+                let parent_blob_paths = if opts.combined_all_paths && opts.find_renames.is_some() {
+                    combined_merge_parent_blob_paths(odb, &p.path, parent_trees, rename_thresh)
+                } else {
+                    None
+                };
+                let ps_ref = parent_blob_paths.as_deref();
+                if let Some(patch) = format_combined_textconv_patch(
+                    &repo.git_dir,
+                    &config,
+                    odb,
+                    &p.path,
+                    parent_trees,
+                    merge_tree,
+                    abbrev_len,
+                    opts.context_lines,
+                    opts.combined_use_cc_word,
+                    false,
+                    ws,
+                    opts.combined_all_paths,
+                    ps_ref,
+                    &p.parents,
+                    quote_fully,
+                ) {
+                    write!(out, "{patch}")?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(has_diff)
+}
+
 fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<bool> {
+    if opts.combined_patch && opts.objects.len() >= 3 {
+        let merge = resolve_to_tree(repo, opts.objects.last().unwrap())?;
+        let mut parents = Vec::with_capacity(opts.objects.len() - 1);
+        for s in &opts.objects[..opts.objects.len() - 1] {
+            parents.push(resolve_to_tree(repo, s)?);
+        }
+        return run_multi_tree_combined(repo, opts, out, &merge, &parents);
+    }
+
     let (spec_a, spec_b) = if opts.reverse {
         (&opts.objects[1], &opts.objects[0])
     } else {
@@ -608,7 +715,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 && opts.combined_patch
                 && matches!(
                     opts.format,
-                    OutputFormat::NameStatus | OutputFormat::NameOnly
+                    OutputFormat::NameStatus | OutputFormat::NameOnly | OutputFormat::Raw
                 )
             {
                 let find_oid = if let Some(ref spec) = opts.find_object {
@@ -620,8 +727,8 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     None
                 };
                 let walk = CombinedTreeDiffOptions {
-                    recursive: opts.recursive,
-                    tree_in_recursive: find_oid.is_some(),
+                    recursive: true,
+                    tree_in_recursive: opts.show_trees || find_oid.is_some(),
                 };
                 let paths = combined_diff_paths_filtered(
                     &repo.odb,
@@ -634,7 +741,27 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                     write_commit_header(out, &oid, &obj.data, opts)?;
                     if has_diff {
-                        print_combined_paths(out, &paths, opts)?;
+                        match opts.format {
+                            OutputFormat::Raw => {
+                                for p in &paths {
+                                    if opts.nul_terminated {
+                                        write_combined_raw_z(
+                                            out,
+                                            Some(&oid.to_hex()),
+                                            p,
+                                            opts.abbrev,
+                                        )?;
+                                    } else {
+                                        writeln!(
+                                            out,
+                                            "{}",
+                                            format_combined_raw_line(p, opts.abbrev)
+                                        )?;
+                                    }
+                                }
+                            }
+                            _ => print_combined_paths(out, &paths, opts)?,
+                        }
                     }
                 }
             } else if commit.parents.len() > 1
@@ -642,12 +769,38 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 && opts.format == OutputFormat::Patch
             {
                 let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+                let quote_fully = config.quote_path_fully();
                 let abbrev_len = if opts.full_index {
                     40usize
                 } else {
                     opts.abbrev.unwrap_or(7)
                 };
-                let paths = combined_diff_paths(&repo.odb, &commit.tree, &commit.parents);
+                let ws = CombinedDiffWsOptions {
+                    ignore_all_space: opts.ignore_all_space,
+                    ignore_space_change: opts.ignore_space_change,
+                    ignore_space_at_eol: opts.ignore_space_at_eol,
+                    ignore_cr_at_eol: opts.ignore_cr_at_eol,
+                };
+                let rename_thresh = opts.find_renames.unwrap_or(50);
+                let find_oid = if let Some(ref spec) = opts.find_object {
+                    Some(
+                        resolve_revision(repo, spec)
+                            .with_context(|| format!("unable to resolve '{spec}'"))?,
+                    )
+                } else {
+                    None
+                };
+                let walk = CombinedTreeDiffOptions {
+                    recursive: true,
+                    tree_in_recursive: opts.show_trees || find_oid.is_some(),
+                };
+                let paths = combined_diff_paths_filtered(
+                    &repo.odb,
+                    &commit.tree,
+                    &commit.parents,
+                    &walk,
+                    find_oid.as_ref(),
+                )?;
                 has_diff = !paths.is_empty();
                 if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                     write_commit_header(out, &oid, &obj.data, opts)?;
@@ -655,19 +808,36 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     for p in &commit.parents {
                         parent_trees.push(commit_tree(&repo.odb, p)?);
                     }
-                    if parent_trees.len() == 2 {
-                        for path in paths {
+                    if parent_trees.len() >= 2 {
+                        for p in paths {
+                            let parent_blob_paths =
+                                if opts.combined_all_paths && opts.find_renames.is_some() {
+                                    combined_merge_parent_blob_paths(
+                                        &repo.odb,
+                                        &p.path,
+                                        &parent_trees,
+                                        rename_thresh,
+                                    )
+                                } else {
+                                    None
+                                };
+                            let ps_ref = parent_blob_paths.as_deref();
                             if let Some(patch) = format_combined_textconv_patch(
                                 &repo.git_dir,
                                 &config,
                                 &repo.odb,
-                                &path,
+                                &p.path,
                                 &parent_trees,
                                 &commit.tree,
                                 abbrev_len,
                                 opts.context_lines,
                                 opts.combined_use_cc_word,
                                 false,
+                                ws,
+                                opts.combined_all_paths,
+                                ps_ref,
+                                &p.parents,
+                                quote_fully,
                             ) {
                                 write!(out, "{patch}")?;
                             }
@@ -1325,6 +1495,22 @@ fn print_submodule_log_for_entry(
         }
     }
 
+    Ok(())
+}
+
+fn write_combined_raw_z(
+    out: &mut impl Write,
+    commit_hex: Option<&str>,
+    p: &CombinedDiffPath,
+    abbrev_len: Option<usize>,
+) -> Result<()> {
+    if let Some(h) = commit_hex {
+        out.write_all(h.as_bytes())?;
+        out.write_all(b"\0")?;
+    }
+    let line = format_combined_raw_line(p, abbrev_len);
+    out.write_all(line.as_bytes())?;
+    out.write_all(b"\0")?;
     Ok(())
 }
 

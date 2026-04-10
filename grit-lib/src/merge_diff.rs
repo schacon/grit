@@ -9,11 +9,14 @@ use std::process::{Command, Stdio};
 
 use tempfile::NamedTempFile;
 
+use crate::combined_diff_patch::{format_combined_diff_body, CombinedDiffWsOptions};
+use crate::combined_tree_diff::CombinedParentSide;
 use crate::config::ConfigSet;
 use crate::crlf::{get_file_attrs, load_gitattributes, DiffAttr, FileAttrs};
-use crate::diff::{diff_trees, DiffStatus};
+use crate::diff::{detect_renames, diff_trees, DiffStatus};
 use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;
+use crate::quote_path::format_diff_path_with_prefix;
 use crate::textconv_cache::{read_textconv_cache, write_textconv_cache};
 
 /// Paths that differ between the merge result tree and **every** parent tree.
@@ -58,6 +61,61 @@ pub fn combined_diff_paths(odb: &Odb, commit_tree: &ObjectId, parents: &[ObjectI
         ordered.extend(rest);
     }
     ordered
+}
+
+/// Per-parent blob paths for a combined merge path when rename detection is enabled.
+///
+/// Returns `None` when no special mapping is needed (each parent reads `merge_path`).
+#[must_use]
+pub fn combined_merge_parent_blob_paths(
+    odb: &Odb,
+    merge_path: &str,
+    parent_trees: &[ObjectId],
+    rename_threshold: u32,
+) -> Option<Vec<String>> {
+    if parent_trees.len() < 2 {
+        return None;
+    }
+    let mut per_parent: Vec<String> = Vec::with_capacity(parent_trees.len());
+    for t in parent_trees {
+        if blob_oid_at_path(odb, t, merge_path).is_some() {
+            per_parent.push(merge_path.to_string());
+        } else {
+            per_parent.push(String::new());
+        }
+    }
+    if per_parent.iter().all(|p| !p.is_empty()) {
+        return None;
+    }
+    let mut any_rename = false;
+    for (i, t) in parent_trees.iter().enumerate() {
+        if !per_parent[i].is_empty() {
+            continue;
+        }
+        let entries = diff_trees(odb, Some(t), None, merge_path).ok()?;
+        let with_rn = detect_renames(odb, entries, rename_threshold);
+        let mut found: Option<String> = None;
+        for e in with_rn {
+            if e.status != DiffStatus::Renamed {
+                continue;
+            }
+            let new_p = e.new_path.as_deref().unwrap_or("");
+            if new_p != merge_path {
+                continue;
+            }
+            let old_p = e.old_path.clone()?;
+            if blob_oid_at_path(odb, t, &old_p).is_some() {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(old_p);
+            }
+        }
+        let p = found?;
+        per_parent[i] = p;
+        any_rename = true;
+    }
+    any_rename.then_some(per_parent)
 }
 
 /// All blob paths in `tree_oid`, depth-first in Git tree entry order (for `diff` / `log`
@@ -467,11 +525,25 @@ pub fn format_combined_binary_header(
     abbrev: usize,
     use_cc_word: bool,
 ) -> String {
-    let p1 = abbrev_hex(&parent_oids[0], abbrev);
-    let p2 = abbrev_hex(&parent_oids[1], abbrev);
+    format_combined_binary_header_n(path, parent_oids, result_oid, abbrev, use_cc_word)
+}
+
+/// `index` line for N-parent combined/binary diffs (`p1,p2,...pn..result`).
+#[must_use]
+pub fn format_combined_binary_header_n(
+    path: &str,
+    parent_oids: &[ObjectId],
+    result_oid: &ObjectId,
+    abbrev: usize,
+    use_cc_word: bool,
+) -> String {
+    let idx: Vec<String> = parent_oids.iter().map(|o| abbrev_hex(o, abbrev)).collect();
     let res = abbrev_hex(result_oid, abbrev);
     let kind = if use_cc_word { "cc" } else { "combined" };
-    format!("diff --{kind} {path}\nindex {p1},{p2}..{res}\nBinary files differ\n")
+    format!(
+        "diff --{kind} {path}\nindex {}..{res}\nBinary files differ\n",
+        idx.join(",")
+    )
 }
 
 /// Full combined diff for a binary path (two parents).
@@ -482,10 +554,54 @@ pub fn format_combined_binary(
     abbrev: usize,
     use_cc_word: bool,
 ) -> String {
-    format_combined_binary_header(path, parent_oids, result_oid, abbrev, use_cc_word)
+    format_combined_binary_header_n(path, parent_oids, result_oid, abbrev, use_cc_word)
 }
 
-/// Combined text diff with textconv (two parents, single-file focus).
+fn push_combined_file_headers(
+    out: &mut String,
+    merge_path: &str,
+    parent_paths: &[String],
+    parent_sides: &[CombinedParentSide],
+    combined_all_paths: bool,
+    quote_path_fully: bool,
+) {
+    let a_prefix = "a/";
+    let b_prefix = "b/";
+    if combined_all_paths {
+        for (i, p) in parent_paths.iter().enumerate() {
+            if parent_sides
+                .get(i)
+                .is_some_and(|s| s.status == crate::combined_tree_diff::CombinedParentStatus::Added)
+            {
+                out.push_str("--- /dev/null\n");
+            } else {
+                let line = format_diff_path_with_prefix(a_prefix, p, quote_path_fully);
+                out.push_str("--- ");
+                out.push_str(&line);
+                out.push('\n');
+            }
+        }
+        let line = format_diff_path_with_prefix(b_prefix, merge_path, quote_path_fully);
+        out.push_str("+++ ");
+        out.push_str(&line);
+        out.push('\n');
+    } else {
+        let la = format_diff_path_with_prefix(a_prefix, merge_path, quote_path_fully);
+        let lb = format_diff_path_with_prefix(b_prefix, merge_path, quote_path_fully);
+        out.push_str("--- ");
+        out.push_str(&la);
+        out.push('\n');
+        out.push_str("+++ ");
+        out.push_str(&lb);
+        out.push('\n');
+    }
+}
+
+/// Combined text diff with optional textconv (N parents, single merge path).
+///
+/// `parent_blob_paths` — when set, length must match `parent_trees`; each entry is the path
+/// used to read that parent's blob (for `--combined-all-paths` rename cases). When `None`,
+/// every parent uses `path`.
 #[allow(clippy::too_many_arguments)]
 pub fn format_combined_textconv_patch(
     git_dir: &Path,
@@ -498,19 +614,34 @@ pub fn format_combined_textconv_patch(
     context: usize,
     use_cc_word: bool,
     use_textconv: bool,
+    ws: CombinedDiffWsOptions,
+    combined_all_paths: bool,
+    parent_blob_paths: Option<&[String]>,
+    parent_sides: &[CombinedParentSide],
+    quote_path_fully: bool,
 ) -> Option<String> {
-    if parent_trees.len() != 2 {
+    if parent_trees.len() < 2 {
         return None;
     }
-    let mut parent_blobs = Vec::new();
-    for t in parent_trees {
-        let b = read_blob_at_path(odb, t, path)?;
+    let parent_paths: Vec<&str> = if let Some(ps) = parent_blob_paths {
+        if ps.len() != parent_trees.len() {
+            return None;
+        }
+        ps.iter().map(|s| s.as_str()).collect()
+    } else {
+        vec![path; parent_trees.len()]
+    };
+
+    let mut parent_blobs = Vec::with_capacity(parent_trees.len());
+    let mut parent_oids = Vec::with_capacity(parent_trees.len());
+    for (i, t) in parent_trees.iter().enumerate() {
+        let p = parent_paths[i];
+        let b = read_blob_at_path(odb, t, p)?;
+        let oid = blob_oid_at_path(odb, t, p)?;
         parent_blobs.push(b);
+        parent_oids.push(oid);
     }
     let result_blob = read_blob_at_path(odb, result_tree, path)?;
-
-    let p0oid = blob_oid_at_path(odb, &parent_trees[0], path)?;
-    let p1oid = blob_oid_at_path(odb, &parent_trees[1], path)?;
     let roid = blob_oid_at_path(odb, result_tree, path)?;
 
     let textconv_for_patch = use_textconv && diff_textconv_active(git_dir, config, path);
@@ -522,40 +653,62 @@ pub fn format_combined_textconv_patch(
     {
         return Some(format_combined_binary(
             path,
-            &[p0oid, p1oid],
+            &parent_oids,
             &roid,
             abbrev,
             use_cc_word,
         ));
     }
 
-    let t0 = if textconv_for_patch {
-        blob_text_for_diff_with_oid(odb, git_dir, config, path, &parent_blobs[0], &p0oid, true)
-    } else {
-        blob_text_for_diff(git_dir, config, path, &parent_blobs[0], use_textconv)
-    };
-    let t1 = if textconv_for_patch {
-        blob_text_for_diff_with_oid(odb, git_dir, config, path, &parent_blobs[1], &p1oid, true)
-    } else {
-        blob_text_for_diff(git_dir, config, path, &parent_blobs[1], use_textconv)
-    };
+    let mut parent_texts = Vec::with_capacity(parent_trees.len());
+    for (i, blob) in parent_blobs.iter().enumerate() {
+        let p = parent_paths[i];
+        let oid = &parent_oids[i];
+        let t = if textconv_for_patch {
+            blob_text_for_diff_with_oid(odb, git_dir, config, p, blob, oid, true)
+        } else {
+            blob_text_for_diff(git_dir, config, p, blob, use_textconv)
+        };
+        parent_texts.push(t);
+    }
     let tr = if textconv_for_patch {
         blob_text_for_diff_with_oid(odb, git_dir, config, path, &result_blob, &roid, true)
     } else {
         blob_text_for_diff(git_dir, config, path, &result_blob, use_textconv)
     };
-    let p1a = abbrev_hex(&p0oid, abbrev);
-    let p2a = abbrev_hex(&p1oid, abbrev);
+
+    let idx: Vec<String> = parent_oids.iter().map(|o| abbrev_hex(o, abbrev)).collect();
     let ra = abbrev_hex(&roid, abbrev);
     let kind = if use_cc_word { "cc" } else { "combined" };
 
+    let header_paths: Vec<String> = if combined_all_paths {
+        parent_paths.iter().map(|s| (*s).to_string()).collect()
+    } else {
+        Vec::new()
+    };
+
     let mut out = String::new();
     out.push_str(&format!("diff --{kind} {path}\n"));
-    out.push_str(&format!("index {p1a},{p2a}..{ra}\n"));
-    out.push_str(&format!("--- a/{path}\n"));
-    out.push_str(&format!("+++ b/{path}\n"));
-    let _ = context;
-    out.push_str(&combined_hunk_two_parents(&t0, &t1, &tr));
+    out.push_str(&format!("index {}..{ra}\n", idx.join(",")));
+    if combined_all_paths {
+        push_combined_file_headers(
+            &mut out,
+            path,
+            &header_paths,
+            parent_sides,
+            true,
+            quote_path_fully,
+        );
+    } else {
+        push_combined_file_headers(&mut out, path, &[], parent_sides, false, quote_path_fully);
+    }
+    out.push_str(&format_combined_diff_body(
+        &parent_texts,
+        &tr,
+        context,
+        use_cc_word,
+        ws,
+    ));
     Some(out)
 }
 
@@ -609,7 +762,13 @@ pub fn format_worktree_conflict_combined(
     if wt_text.contains("<<<<<<<") && wt_text.contains(">>>>>>>") {
         out.push_str(&conflict_combined_body(&wt_for_conflict));
     } else {
-        out.push_str(&combined_hunk_two_parents(&t_ours, &t_theirs, &wt_text));
+        out.push_str(&format_combined_diff_body(
+            &[t_ours, t_theirs],
+            &wt_text,
+            3,
+            true,
+            CombinedDiffWsOptions::default(),
+        ));
     }
     out
 }
@@ -661,35 +820,6 @@ fn conflict_combined_body(wt: &str) -> String {
         i += 1;
     }
     body
-}
-
-fn combined_hunk_two_parents(a: &str, b: &str, result: &str) -> String {
-    let la: Vec<&str> = a.lines().collect();
-    let lb: Vec<&str> = b.lines().collect();
-    let lr: Vec<&str> = result.lines().collect();
-    let n = lr.len().max(la.len()).max(lb.len()).max(1);
-
-    let old_a = la.len().max(1) as u32;
-    let old_b = lb.len().max(1) as u32;
-    let new_c = lr.len().max(1) as u32;
-
-    let mut body = String::new();
-    for idx in 0..n {
-        let ra = la.get(idx).copied().unwrap_or("");
-        let rb = lb.get(idx).copied().unwrap_or("");
-        let rr = lr.get(idx).copied().unwrap_or("");
-        if ra != rr {
-            body.push_str(&format!("- {ra}\n"));
-        }
-        if rb != rr {
-            body.push_str(&format!(" -{rb}\n"));
-        }
-        if ra != rr || rb != rr {
-            body.push_str(&format!("++{rr}\n"));
-        }
-    }
-
-    format!("@@@ -1,{old_a} -1,{old_b} +1,{new_c} @@@\n{body}")
 }
 
 fn read_blob(odb: &Odb, oid: &ObjectId) -> Vec<u8> {
