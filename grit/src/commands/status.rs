@@ -524,6 +524,8 @@ pub fn run(mut args: Args) -> Result<()> {
             effective_no_ahead_behind,
             &head,
             &repo,
+            work_tree,
+            &index,
             &staged,
             &unstaged,
             &untracked,
@@ -1541,6 +1543,8 @@ fn format_short(
     effective_no_ahead_behind: bool,
     head: &HeadState,
     repo: &Repository,
+    work_tree: &Path,
+    index: &Index,
     staged: &[grit_lib::diff::DiffEntry],
     unstaged: &[grit_lib::diff::DiffEntry],
     untracked: &[String],
@@ -1608,9 +1612,29 @@ fn format_short(
         paths.insert(path);
     }
 
+    for ie in &index.entries {
+        if ie.stage() != 0 || ie.mode != MODE_GITLINK {
+            continue;
+        }
+        let path = String::from_utf8_lossy(&ie.path).into_owned();
+        paths.insert(path);
+    }
+
     for path in &paths {
         let x = staged_map.get(path).copied().unwrap_or(' ');
-        let y = unstaged_map.get(path).copied().unwrap_or(' ');
+        let mut y = unstaged_map.get(path).copied().unwrap_or(' ');
+        if let Some(ie) = index.get(path.as_bytes(), 0) {
+            if ie.mode == MODE_GITLINK {
+                let f = submodule_porcelain_flags(work_tree, path, ie.oid);
+                if f.untracked {
+                    y = '?';
+                } else if f.modified {
+                    y = 'm';
+                } else if f.new_commits && y == ' ' {
+                    y = 'M';
+                }
+            }
+        }
         write!(out, "{x}{y} ")?;
         let rename_or_copy = staged.iter().chain(unstaged.iter()).find(|e| {
             e.path() == path.as_str()

@@ -648,7 +648,7 @@ t3511-cherry-pick-x	t3	yes	22	20	2	false	ok	0
 t3512-cherry-pick-submodule	t3	yes	15	8	7	false	ok	0
 t3513-revert-submodule	t3	yes	14	5	9	false	ok	0
 t3514-cherry-pick-revert-gpg	t3	skip	2	0	0	false	ok	0
-t3600-rm	t3	yes	82	53	29	false	ok	0
+t3600-rm	t3	yes	82	69	13	false	ok	0
 t3601-rm-pathspec-file	t3	yes	5	5	0	true	ok	0
 t3602-rm-sparse-checkout	t3	yes	13	13	0	true	ok	0
 t3650-replay-basics	t3	yes	31	25	6	false	ok	0

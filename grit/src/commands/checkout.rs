@@ -4710,7 +4710,11 @@ fn checkout_index_to_worktree(
             let is_populated_submodule = old_map
                 .get(old_path.as_slice())
                 .is_some_and(|e| e.mode == MODE_GITLINK && abs.join(".git").exists());
-            if !is_populated_submodule {
+            if is_populated_submodule && abs.is_dir() {
+                if let Err(e) = std::fs::remove_dir(&abs) {
+                    eprintln!("warning: unable to rmdir '{rel}': {e}");
+                }
+            } else if !is_populated_submodule {
                 let _ = std::fs::remove_dir_all(&abs);
             }
         }
@@ -4756,7 +4760,12 @@ fn checkout_index_to_worktree(
                     let is_populated_submodule = old_map
                         .get(old_path.as_slice())
                         .is_some_and(|e| e.mode == MODE_GITLINK && abs.join(".git").exists());
-                    if !is_populated_submodule {
+                    if is_populated_submodule {
+                        if let Err(e) = std::fs::remove_dir(&abs) {
+                            let rel = String::from_utf8_lossy(old_path).into_owned();
+                            eprintln!("warning: unable to rmdir '{rel}': {e}");
+                        }
+                    } else {
                         let _ = std::fs::remove_dir_all(&abs);
                     }
                 }

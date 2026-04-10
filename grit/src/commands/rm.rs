@@ -7,11 +7,13 @@
 
 use crate::commands::cwd_pathspec;
 use crate::commands::sparse_advice::emit_sparse_path_advice;
+use crate::commands::submodule::parse_gitmodules;
+use crate::grit_exe;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::ConfigSet;
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::crlf;
-use grit_lib::diff::{read_submodule_head_oid, zero_oid};
+use grit_lib::diff::{read_submodule_head_oid, submodule_embedded_git_dir, zero_oid};
 use grit_lib::error::Error;
 use grit_lib::ignore::path_in_sparse_checkout as path_in_sparse_checkout_lines;
 use grit_lib::index::Index;
@@ -22,7 +24,15 @@ use grit_lib::sparse_checkout::{parse_sparse_checkout_file, path_in_sparse_check
 use grit_lib::submodule_gitdir::submodule_modules_git_dir;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
+
+#[derive(Debug)]
+enum RmValidationErr {
+    Die(String),
+    Grouped(RmErrorKind),
+}
 
 /// The category of a safety-check failure.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -142,6 +152,10 @@ pub fn run(mut args: Args) -> Result<()> {
     if include_specs.is_empty() && !exclude_specs.is_empty() {
         include_specs.push(".".to_string());
     }
+    if include_specs.iter().any(|s| s.is_empty()) {
+        eprintln!("fatal: empty string is not a valid pathspec. please use . instead if you meant to match all paths");
+        std::process::exit(128);
+    }
 
     let work_tree = repo
         .work_tree
@@ -190,9 +204,20 @@ pub fn run(mut args: Args) -> Result<()> {
     for pathspec in &include_specs {
         let rel = resolve_rel(pathspec, work_tree)?;
 
-        // Refuse to rm through a symlinked leading path component.
-        // e.g. if `d` is a symlink to `e`, `git rm d/f` should fail.
-        if check_symlink_in_path(work_tree, Path::new(&rel)).is_some() {
+        // Refuse `rm` through a symlinked leading path (t3600 `d`→`e`). Exception: when the index
+        // still records the path and the symlink parent is *dangling* (`d`→missing), removal
+        // proceeds like Git (t3600 broken `d` + tracked `d/f`).
+        let index_has_tracked_at_rel = index.entries.iter().any(|e| {
+            if e.stage() != 0 {
+                return false;
+            }
+            let p = String::from_utf8_lossy(&e.path);
+            p == rel || p.starts_with(&format!("{rel}/"))
+        });
+        let parent_symlink_dangling = rm_parent_symlink_is_dangling(work_tree, &rel);
+        if path_beyond_symlink_ancestor(work_tree, &rel)
+            && !(index_has_tracked_at_rel && parent_symlink_dangling)
+        {
             bail!("'{}' is beyond a symbolic link", rel);
         }
 
@@ -302,7 +327,7 @@ pub fn run(mut args: Args) -> Result<()> {
         }
 
         for path_str in eligible {
-            match safety_check(
+            match validate_rm_entry(
                 &repo,
                 &index,
                 &repo.odb,
@@ -312,8 +337,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 &args,
             ) {
                 Ok(()) => to_remove.push(path_str),
-                Err(kind) => {
-                    // Group errors by kind
+                Err(RmValidationErr::Die(msg)) => bail!(msg),
+                Err(RmValidationErr::Grouped(kind)) => {
                     if let Some(entry) = errors_by_kind.iter_mut().find(|(k, _)| *k == kind) {
                         entry.1.push(path_str);
                     } else {
@@ -334,6 +359,42 @@ pub fn run(mut args: Args) -> Result<()> {
 
     if !matched_any_eligible && exit_for_sparse_advice {
         std::process::exit(1);
+    }
+
+    if !args.dry_run && !args.cached {
+        absorb_submodule_gitdirs_for_rm(&repo, work_tree, &index, &to_remove, args.quiet)?;
+    }
+
+    if !args.cached {
+        if let Err(msg) = assert_staging_gitmodules_ok(&repo, work_tree, &index, &to_remove) {
+            bail!(msg);
+        }
+    }
+
+    if !args.force && !args.cached {
+        for path in &to_remove {
+            let is_gitlink = index
+                .entries
+                .iter()
+                .any(|e| e.path == path.as_bytes() && e.stage() == 0 && e.mode == 0o160000);
+            if !is_gitlink {
+                continue;
+            }
+            match bad_to_remove_submodule(work_tree, path, SubmoduleRmFlags::default()) {
+                Ok(false) => {}
+                Ok(true) => {
+                    if let Some(entry) = errors_by_kind
+                        .iter_mut()
+                        .find(|(k, _)| *k == RmErrorKind::LocalModifications)
+                    {
+                        entry.1.push(path.clone());
+                    } else {
+                        errors_by_kind.push((RmErrorKind::LocalModifications, vec![path.clone()]));
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     if !errors_by_kind.is_empty() {
@@ -362,56 +423,39 @@ pub fn run(mut args: Args) -> Result<()> {
         std::process::exit(1);
     }
 
-    // Phase 2: perform all removals (only reached when all checks passed).
-    let mut removed_gitlinks: BTreeSet<String> = BTreeSet::new();
+    // Phase 2: print lines, update index, then remove work tree (Git order).
+    let mut gitmodules_modified = false;
     for path_str in &to_remove {
-        let removed_was_gitlink = index
-            .entries
-            .iter()
-            .filter(|e| e.path == path_str.as_bytes())
-            .any(|e| e.mode == 0o160000);
-        if removed_was_gitlink {
-            removed_gitlinks.insert(path_str.clone());
+        if !args.quiet {
+            rm_rm_line(path_str)?;
         }
 
         if args.dry_run {
-            if !args.quiet {
-                println!("rm '{path_str}'");
-            }
             continue;
         }
 
-        if !args.cached {
-            let abs_path = work_tree.join(path_str);
-            if abs_path.exists() || abs_path.symlink_metadata().is_ok() {
-                let removed_was_gitlink = removed_gitlinks.contains(path_str);
-                let is_real_dir = fs::symlink_metadata(&abs_path)
-                    .map(|m| m.file_type().is_dir())
-                    .unwrap_or(false);
-                if is_real_dir {
-                    if let Err(e) = fs::remove_dir_all(&abs_path) {
-                        bail!("cannot remove '{path_str}': {e}");
-                    }
-                } else if let Err(e) = fs::remove_file(&abs_path) {
-                    bail!("cannot remove '{path_str}': {e}");
-                }
-                // Submodule gitdirs live under `.git/modules/<path>`; remove them so a path
-                // can be reused as a regular directory (matches Git's `git rm` behaviour).
-                if removed_was_gitlink {
-                    let modules_gitdir = submodule_modules_git_dir(&repo.git_dir, path_str);
-                    if modules_gitdir.exists() {
-                        let _ = fs::remove_dir_all(&modules_gitdir);
-                    }
-                }
-                remove_empty_parents(&abs_path, work_tree);
+        let was_gitlink = index
+            .entries
+            .iter()
+            .any(|e| e.path == path_str.as_bytes() && e.mode == 0o160000);
+        index.remove_path_all_stages(path_str.as_bytes());
+
+        if args.cached {
+            continue;
+        }
+
+        if was_gitlink {
+            remove_submodule_worktree(&repo, work_tree, path_str, args.force)?;
+            if remove_path_from_gitmodules_flow(work_tree, path_str)? {
+                gitmodules_modified = true;
             }
+        } else {
+            remove_worktree_path_for_rm(work_tree, path_str)?;
         }
+    }
 
-        index.remove(path_str.as_bytes());
-
-        if !args.quiet {
-            println!("rm '{path_str}'");
-        }
+    if gitmodules_modified {
+        refresh_index_gitmodules_blob(&repo, work_tree, &mut index)?;
     }
 
     if !args.dry_run && !to_remove.is_empty() {
@@ -478,10 +522,24 @@ fn error_message(kind: &RmErrorKind, count: usize, args: &Args) -> (String, Opti
     }
 }
 
-/// Check whether a single file can be safely removed.
-///
-/// Returns `Ok(())` when safe, `Err(kind)` with the error category otherwise.
-fn safety_check(
+fn pick_rm_index_entry<'a>(
+    index: &'a Index,
+    path_str: &str,
+) -> Option<&'a grit_lib::index::IndexEntry> {
+    let p = path_str.as_bytes();
+    if let Some(e) = index.get(p, 0) {
+        return Some(e);
+    }
+    index
+        .entries
+        .iter()
+        .find(|e| e.path == p && e.stage() == 2)
+        .or_else(|| index.entries.iter().find(|e| e.path == p && e.stage() == 1))
+        .or_else(|| index.entries.iter().find(|e| e.path == p))
+}
+
+/// `git rm` safety checks aligned with Git's `check_local_mod` in `builtin/rm.c`.
+fn validate_rm_entry(
     repo: &Repository,
     index: &Index,
     odb: &grit_lib::odb::Odb,
@@ -489,68 +547,389 @@ fn safety_check(
     path_str: &str,
     head_map: &HashMap<String, grit_lib::objects::ObjectId>,
     args: &Args,
-) -> std::result::Result<(), RmErrorKind> {
+) -> std::result::Result<(), RmValidationErr> {
+    let Some(entry) = pick_rm_index_entry(index, path_str) else {
+        return Ok(());
+    };
+
+    let abs_path = work_tree.join(path_str);
+
+    // Unmerged submodule with an embedded `.git` directory (not a gitfile): Git refuses removal
+    // even with `-f` (t3600-rm).
+    if entry.mode == 0o160000
+        && index
+            .entries
+            .iter()
+            .any(|e| e.path == path_str.as_bytes() && e.stage() != 0)
+        && !submodule_top_level_uses_gitfile(&abs_path)
+    {
+        return Err(RmValidationErr::Die(format!(
+            "fatal: could not remove '{path_str}' (submodule git directory is not using a gitfile)"
+        )));
+    }
+
     if args.force {
         return Ok(());
     }
 
-    let path_bytes = path_str.as_bytes();
-    let entry = match index.get(path_bytes, 0) {
-        Some(e) => e,
-        None => return Ok(()),
+    // Unmerged, non-gitlink: Git skips `check_local_mod` for this path.
+    if entry.stage() != 0 && entry.mode != 0o160000 {
+        return Ok(());
+    }
+
+    let meta = match fs::symlink_metadata(&abs_path) {
+        Ok(m) => Some(m),
+        Err(e)
+            if e.kind() == io::ErrorKind::NotFound || e.kind() == io::ErrorKind::NotADirectory =>
+        {
+            None
+        }
+        Err(e) => {
+            return Err(RmValidationErr::Die(format!(
+                "failed to stat '{path_str}': {e}"
+            )));
+        }
     };
+
+    if let Some(m) = &meta {
+        if m.file_type().is_dir() && entry.mode != 0o160000 {
+            return Ok(());
+        }
+    }
+
+    // Unmerged gitlink + empty work tree: safe (t3600 conflicted unpopulated submodule).
+    if entry.stage() != 0 && entry.mode == 0o160000 && is_empty_dir_path(&abs_path) {
+        return Ok(());
+    }
 
     let index_oid = entry.oid;
     let is_intent_to_add = entry.intent_to_add() || index_oid == zero_oid();
 
     if is_intent_to_add {
-        // Intent-to-add entries: only allow removal with --cached.
         if !args.cached {
-            return Err(RmErrorKind::StagedInIndex);
+            return Err(RmValidationErr::Grouped(RmErrorKind::StagedInIndex));
         }
         return Ok(());
     }
 
     let head_oid = head_map.get(path_str);
-
-    // index differs from HEAD.
     let staged_differs = match head_oid {
         None => true,
         Some(h) => h != &index_oid,
     };
 
-    // working tree differs from index.
-    let abs_path = work_tree.join(path_str);
     let worktree_differs = if entry.mode == 0o160000 {
-        read_submodule_head_oid(&abs_path).as_ref() != Some(&index_oid)
-    } else if abs_path.exists() {
+        let populated = submodule_embedded_git_dir(&abs_path).is_some();
+        let head_mismatch =
+            populated && read_submodule_head_oid(&abs_path).as_ref() != Some(&index_oid);
+        let bad = bad_to_remove_submodule(work_tree, path_str, SubmoduleRmFlags::default())
+            .map_err(|e| RmValidationErr::Die(e.to_string()))?;
+        head_mismatch || bad
+    } else if meta.is_some() {
         worktree_differs_from_index(repo, odb, &abs_path, path_str, &index_oid).unwrap_or(false)
     } else {
         false
     };
 
-    // If the file doesn't exist in the working tree at all, there is nothing
-    // to lose — allow removal without -f (matches git behaviour).
-    let file_exists = abs_path.exists();
+    let file_exists = meta.is_some();
 
     if args.cached {
-        // --cached: refuse only when index matches neither HEAD nor worktree file.
         if staged_differs && worktree_differs {
-            return Err(RmErrorKind::StagedDiffersBoth);
+            return Err(RmValidationErr::Grouped(RmErrorKind::StagedDiffersBoth));
         }
     } else {
-        // Full removal: refuse if index differs from HEAD or file differs from index.
         if staged_differs && worktree_differs {
-            return Err(RmErrorKind::StagedDiffersBoth);
+            return Err(RmValidationErr::Grouped(RmErrorKind::StagedDiffersBoth));
         }
         if staged_differs && file_exists {
-            return Err(RmErrorKind::StagedInIndex);
+            return Err(RmValidationErr::Grouped(RmErrorKind::StagedInIndex));
         }
         if worktree_differs {
-            return Err(RmErrorKind::LocalModifications);
+            return Err(RmValidationErr::Grouped(RmErrorKind::LocalModifications));
         }
     }
 
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct SubmoduleRmFlags {
+    ignore_untracked: bool,
+    include_ignored: bool,
+}
+
+impl Default for SubmoduleRmFlags {
+    fn default() -> Self {
+        Self {
+            ignore_untracked: false,
+            include_ignored: false,
+        }
+    }
+}
+
+fn bad_to_remove_submodule(
+    super_worktree: &Path,
+    rel_path: &str,
+    flags: SubmoduleRmFlags,
+) -> Result<bool> {
+    let abs = super_worktree.join(rel_path);
+    if !abs.exists() || is_empty_dir_path(&abs) {
+        return Ok(false);
+    }
+    if !submodule_top_level_uses_gitfile(&abs) {
+        return Ok(true);
+    }
+    let grit = grit_exe::grit_executable();
+    let mut cmd = Command::new(&grit);
+    grit_exe::strip_trace2_env(&mut cmd);
+    cmd.current_dir(&abs);
+    cmd.arg("status");
+    cmd.arg("--porcelain");
+    cmd.arg("--ignore-submodules=none");
+    if flags.ignore_untracked {
+        cmd.arg("-uno");
+    } else {
+        cmd.arg("-uall");
+    }
+    if flags.include_ignored {
+        cmd.arg("--ignored");
+    }
+    cmd.stdin(std::process::Stdio::null());
+    let out = cmd.output().context("spawning grit status in submodule")?;
+    if !out.status.success() {
+        bail!("could not run 'grit status' in submodule '{rel_path}'");
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    Ok(submodule_porcelain_implies_dirty(&stdout))
+}
+
+/// Git's `bad_to_remove_submodule` treats any porcelain output beyond ~2 bytes as "dirty".
+/// Grit may print a `##` branch header where Git does not; ignore those lines (t3600-rm).
+fn submodule_porcelain_implies_dirty(stdout: &str) -> bool {
+    stdout.lines().any(|l| {
+        let l = l.trim_end();
+        !l.is_empty() && !l.starts_with("## ")
+    })
+}
+
+fn submodule_top_level_uses_gitfile(submodule_worktree: &Path) -> bool {
+    let git_path = submodule_worktree.join(".git");
+    if git_path.is_file() {
+        return fs::read_to_string(&git_path)
+            .ok()
+            .is_some_and(|s| s.lines().any(|l| l.starts_with("gitdir:")));
+    }
+    false
+}
+
+fn is_empty_dir_path(path: &Path) -> bool {
+    match fs::read_dir(path) {
+        Ok(mut it) => it.next().is_none(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => true,
+        Err(_) => false,
+    }
+}
+
+fn rm_rm_line(path_str: &str) -> Result<()> {
+    let line = format!("rm '{path_str}'\n");
+    let mut out = io::stdout().lock();
+    out.write_all(line.as_bytes())?;
+    Ok(())
+}
+
+fn path_beyond_symlink_ancestor(work_tree: &Path, rel: &str) -> bool {
+    let rel_path = Path::new(rel);
+    let mut accumulated = PathBuf::new();
+    let components: Vec<_> = rel_path.components().collect();
+    for component in components.iter().take(components.len().saturating_sub(1)) {
+        accumulated.push(component);
+        let abs = work_tree.join(&accumulated);
+        if let Ok(meta) = fs::symlink_metadata(&abs) {
+            if meta.file_type().is_symlink() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// True when some parent of `rel` is a symlink whose target does not resolve (broken link).
+fn rm_parent_symlink_is_dangling(work_tree: &Path, rel: &str) -> bool {
+    let rel_path = Path::new(rel);
+    let mut accumulated = PathBuf::new();
+    let components: Vec<_> = rel_path.components().collect();
+    for component in components.iter().take(components.len().saturating_sub(1)) {
+        accumulated.push(component);
+        let abs = work_tree.join(&accumulated);
+        if let Ok(meta) = fs::symlink_metadata(&abs) {
+            if meta.file_type().is_symlink() {
+                let target = fs::read_link(&abs).unwrap_or_default();
+                let joined = abs.parent().map(|p| p.join(&target)).unwrap_or(target);
+                return fs::symlink_metadata(&joined).is_err();
+            }
+        }
+    }
+    false
+}
+
+fn absorb_submodule_gitdirs_for_rm(
+    _repo: &Repository,
+    work_tree: &Path,
+    index: &Index,
+    paths: &[String],
+    _quiet: bool,
+) -> Result<()> {
+    let grit = grit_exe::grit_executable();
+    for path_str in paths {
+        let abs = work_tree.join(path_str);
+        if !abs.is_dir() || is_empty_dir_path(&abs) {
+            continue;
+        }
+        let is_gitlink = index
+            .get(path_str.as_bytes(), 0)
+            .is_some_and(|e| e.mode == 0o160000);
+        if !is_gitlink {
+            continue;
+        }
+        let dot_git = abs.join(".git");
+        if !dot_git.is_dir() {
+            continue;
+        }
+        let mut sub = Command::new(&grit);
+        grit_exe::strip_trace2_env(&mut sub);
+        sub.arg("submodule")
+            .arg("absorbgitdirs")
+            .arg("--")
+            .arg(path_str)
+            .current_dir(work_tree)
+            .stdin(std::process::Stdio::null());
+        let _ = sub.status();
+    }
+    Ok(())
+}
+
+fn assert_staging_gitmodules_ok(
+    _repo: &Repository,
+    work_tree: &Path,
+    index: &Index,
+    to_remove: &[String],
+) -> std::result::Result<(), String> {
+    let touches_gitlink = to_remove.iter().any(|p| {
+        index
+            .entries
+            .iter()
+            .any(|e| e.path == p.as_bytes() && e.mode == 0o160000)
+    });
+    if !touches_gitlink {
+        return Ok(());
+    }
+    let gm = work_tree.join(".gitmodules");
+    let Some(entry) = index.get(b".gitmodules", 0) else {
+        return Ok(());
+    };
+    if !gm.exists() {
+        return Ok(());
+    }
+    let Ok(data) = fs::read(&gm) else {
+        return Ok(());
+    };
+    let disk_oid = Odb::hash_object_data(ObjectKind::Blob, &data);
+    if disk_oid != entry.oid {
+        return Err(
+            "please stage your changes to .gitmodules or stash them to proceed".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn remove_path_from_gitmodules_flow(work_tree: &Path, path_str: &str) -> Result<bool> {
+    let gm_path = work_tree.join(".gitmodules");
+    if !gm_path.exists() {
+        return Ok(false);
+    }
+    let modules = parse_gitmodules(work_tree)?;
+    let Some(m) = modules.iter().find(|m| m.path == path_str) else {
+        eprintln!("warning: Could not find section in .gitmodules where path={path_str}");
+        return Ok(false);
+    };
+    let content =
+        fs::read_to_string(&gm_path).with_context(|| format!("reading {}", gm_path.display()))?;
+    let mut cfg = ConfigFile::parse(&gm_path, &content, ConfigScope::Local)?;
+    let section = format!("submodule.{}", m.name);
+    let removed = cfg.remove_section(&section).unwrap_or(false);
+    if !removed {
+        eprintln!("warning: Could not remove .gitmodules entry for {path_str}");
+        return Ok(false);
+    }
+    cfg.write()
+        .with_context(|| format!("writing {}", gm_path.display()))?;
+    Ok(true)
+}
+
+fn refresh_index_gitmodules_blob(
+    repo: &Repository,
+    work_tree: &Path,
+    index: &mut Index,
+) -> Result<()> {
+    let path = work_tree.join(".gitmodules");
+    if !path.is_file() {
+        return Ok(());
+    }
+    let data = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+    let oid = repo
+        .odb
+        .write(ObjectKind::Blob, &data)
+        .context("writing .gitmodules object")?;
+    if let Some(mut entry) = index.get(b".gitmodules", 0).cloned() {
+        entry.oid = oid;
+        entry.size = data.len().try_into().unwrap_or(u32::MAX);
+        index.remove(b".gitmodules");
+        index.add_or_replace(entry);
+    }
+    Ok(())
+}
+
+fn remove_submodule_worktree(
+    repo: &Repository,
+    work_tree: &Path,
+    rel: &str,
+    force: bool,
+) -> Result<()> {
+    let abs = work_tree.join(rel);
+    if abs.exists() || fs::symlink_metadata(&abs).is_ok() {
+        if let Err(e) = fs::remove_dir_all(&abs) {
+            if force {
+                let _ = fs::remove_dir_all(&abs);
+            } else {
+                bail!("could not remove '{rel}': {e}");
+            }
+        }
+    }
+    let modules_gitdir = submodule_modules_git_dir(&repo.git_dir, rel);
+    if modules_gitdir.exists() {
+        let _ = fs::remove_dir_all(&modules_gitdir);
+    }
+    Ok(())
+}
+
+fn remove_worktree_path_for_rm(work_tree: &Path, path_str: &str) -> Result<()> {
+    let abs_path = work_tree.join(path_str);
+    if !(abs_path.exists() || fs::symlink_metadata(&abs_path).is_ok()) {
+        return Ok(());
+    }
+    let is_real_dir = fs::symlink_metadata(&abs_path)
+        .map(|m| m.file_type().is_dir())
+        .unwrap_or(false);
+    if is_real_dir {
+        fs::remove_dir_all(&abs_path).with_context(|| format!("cannot remove '{path_str}'"))?;
+    } else {
+        match fs::remove_file(&abs_path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e).with_context(|| format!("cannot remove '{path_str}'")),
+        }
+    }
+    remove_empty_parents(&abs_path, work_tree);
     Ok(())
 }
 
@@ -755,24 +1134,6 @@ fn resolve_rel(pathspec: &str, work_tree: &Path) -> Result<String> {
         bail!("pathspec '{}' resolved outside the work tree", pathspec);
     }
     Ok(pathspec_clean.to_owned())
-}
-
-/// Walk the parent components of `rel_path` (relative to `work_tree`) and
-/// return `Some(prefix)` if any of them is a symbolic link.  Only *parent*
-/// components are checked — the final path component itself may be a symlink.
-fn check_symlink_in_path(work_tree: &Path, rel_path: &Path) -> Option<std::path::PathBuf> {
-    let mut accumulated = std::path::PathBuf::new();
-    let components: Vec<_> = rel_path.components().collect();
-    for component in components.iter().take(components.len().saturating_sub(1)) {
-        accumulated.push(component);
-        let abs = work_tree.join(&accumulated);
-        if let Ok(meta) = fs::symlink_metadata(&abs) {
-            if meta.file_type().is_symlink() {
-                return Some(accumulated);
-            }
-        }
-    }
-    None
 }
 
 fn has_glob_chars(s: &str) -> bool {
