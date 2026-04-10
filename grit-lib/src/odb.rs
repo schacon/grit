@@ -27,7 +27,9 @@ use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use sha1::{Digest, Sha1};
 
+use crate::config::ConfigSet;
 use crate::error::{Error, Result};
+use crate::midx::{midx_oid_listed_in_tip, try_read_object_via_midx};
 use crate::objects::{Object, ObjectId, ObjectKind};
 use crate::pack;
 
@@ -62,6 +64,8 @@ pub struct Odb {
     objects_dir: PathBuf,
     /// Work tree root for resolving relative alternate env paths.
     work_tree: Option<PathBuf>,
+    /// When set, used to read `core.multiPackIndex` (and related) for MIDX-backed object reads.
+    config_git_dir: Option<PathBuf>,
 }
 
 impl Odb {
@@ -74,6 +78,7 @@ impl Odb {
         Self {
             objects_dir: objects_dir.to_path_buf(),
             work_tree: None,
+            config_git_dir: None,
         }
     }
 
@@ -83,6 +88,26 @@ impl Odb {
         Self {
             objects_dir: objects_dir.to_path_buf(),
             work_tree: Some(work_tree.to_path_buf()),
+            config_git_dir: None,
+        }
+    }
+
+    /// Attach a git directory so [`Self::read`] can honor `core.multiPackIndex` when resolving packed objects.
+    #[must_use]
+    pub fn with_config_git_dir(mut self, git_dir: PathBuf) -> Self {
+        self.config_git_dir = Some(git_dir);
+        self
+    }
+
+    fn core_multi_pack_index_enabled(&self) -> bool {
+        let Some(git_dir) = &self.config_git_dir else {
+            return false;
+        };
+        let cfg = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+        match cfg.get_bool("core.multiPackIndex") {
+            Some(Ok(b)) => b,
+            Some(Err(_)) => true,
+            None => true,
         }
     }
 
@@ -161,6 +186,16 @@ impl Odb {
                 if idx.entries.iter().any(|e| e.oid == *oid) {
                     return true;
                 }
+            }
+        }
+        if objects_dir == self.objects_dir.as_path()
+            && self.config_git_dir.is_some()
+            && self.core_multi_pack_index_enabled()
+        {
+            match midx_oid_listed_in_tip(objects_dir, oid) {
+                Ok(Some(true)) => return true,
+                Ok(Some(false)) | Ok(None) => {}
+                Err(_) => return false,
             }
         }
         false
@@ -261,15 +296,21 @@ impl Odb {
             }
         }
 
+        if self.config_git_dir.is_some() && self.core_multi_pack_index_enabled() {
+            if let Some(obj) = try_read_object_via_midx(&self.objects_dir, oid)? { return Ok(obj) }
+        }
+
         // Fall back to pack files.
         if let Ok(obj) = pack::read_object_from_packs(&self.objects_dir, oid) {
             return Ok(obj);
         }
 
+        let midx_alt = self.config_git_dir.is_some() && self.core_multi_pack_index_enabled();
+
         // Check alternates from info/alternates file.
         if let Ok(alts) = pack::read_alternates_recursive(&self.objects_dir) {
             for alt_dir in &alts {
-                if let Ok(obj) = Self::read_from_dir(alt_dir, oid) {
+                if let Ok(obj) = Self::read_from_dir(alt_dir, oid, midx_alt) {
                     return Ok(obj);
                 }
             }
@@ -277,7 +318,7 @@ impl Odb {
 
         // Check GIT_ALTERNATE_OBJECT_DIRECTORIES env var.
         for alt_dir in env_alternate_dirs(self.work_tree.as_deref()) {
-            if let Ok(obj) = Self::read_from_dir(&alt_dir, oid) {
+            if let Ok(obj) = Self::read_from_dir(&alt_dir, oid, midx_alt) {
                 return Ok(obj);
             }
         }
@@ -286,13 +327,18 @@ impl Odb {
     }
 
     /// Try to read an object from a specific objects directory (loose or pack).
-    fn read_from_dir(objects_dir: &Path, oid: &ObjectId) -> Result<Object> {
+    fn read_from_dir(objects_dir: &Path, oid: &ObjectId, use_midx: bool) -> Result<Object> {
         let loose = objects_dir
             .join(oid.loose_prefix())
             .join(oid.loose_suffix());
         if let Ok(file) = fs::File::open(&loose) {
             let raw = read_zlib_loose_payload(file)?;
             return parse_object_bytes(&raw);
+        }
+        if use_midx {
+            if let Some(obj) = try_read_object_via_midx(objects_dir, oid)? {
+                return Ok(obj);
+            }
         }
         pack::read_object_from_packs(objects_dir, oid)
     }

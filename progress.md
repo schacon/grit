@@ -1,17 +1,21 @@
 # Progress — Grit Test Coverage
 
-**Updated:** 2026-04-09
+**Updated:** 2026-04-10
 
 ## Counts (derived from plan.md)
 
 | Status      | Count |
 |-------------|-------|
 | Completed   |   325 |
-| In progress |     5 |
-| Remaining   |   441 |
+| In progress |     6 |
+| Remaining   |   440 |
 | **Total**   |   771 |
 
-Task lines in `PLAN.md`: 325 completed (`[x]`), 5 in progress (`[~]`), 441 remaining (`[ ]`).
+Task lines in `PLAN.md`: 325 completed (`[x]`), 6 in progress (`[~]`), 440 remaining (`[ ]`).
+
+## In progress
+
+- `t5319-multi-pack-index` (~14/98): MIDX read/write groundwork + `Odb` integration; CLI verify/expire/repack/bitmap still open (see `logs/2026-04-10_t5319-midx-progress.md`).
 
 ## Recently completed
 

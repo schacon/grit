@@ -681,7 +681,7 @@ commit → check it off → move on.
 - [ ] `t5572-pull-submodule` ██░░░░░░░░░░░░░░░░░░ 10/69 (59 left) — pull can handle submodules
 - [ ] `t5515-fetch-merge-logic` ░░░░░░░░░░░░░░░░░░░░ 1/65 (64 left) — Merge logic in fetch
 - [ ] `t5520-pull` ██░░░░░░░░░░░░░░░░░░ 10/80 (70 left) — pulling into void
-- [ ] `t5319-multi-pack-index` ████░░░░░░░░░░░░░░░░ 24/98 (74 left) — multi-pack-indexes
+- [~] `t5319-multi-pack-index` ███░░░░░░░░░░░░░░░░░ ~14/98 passing — multi-pack-indexes (MIDX read/write + v1 idx + config `-C` fix; verify/expire/repack/bitmap still open)
 - [ ] `t5318-commit-graph` ███░░░░░░░░░░░░░░░░░ 19/109 (90 left) — commit graph
 - [ ] `t5601-clone` ███░░░░░░░░░░░░░░░░░ 21/115 (94 left) — 
 - [ ] `t5505-remote` ██░░░░░░░░░░░░░░░░░░ 16/130 (114 left) — git remote porcelain-ish

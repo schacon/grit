@@ -108,9 +108,9 @@ impl Repository {
         };
 
         let odb = if let Some(ref wt) = work_tree {
-            Odb::with_work_tree(&objects_dir, wt)
+            Odb::with_work_tree(&objects_dir, wt).with_config_git_dir(git_dir.clone())
         } else {
-            Odb::new(&objects_dir)
+            Odb::new(&objects_dir).with_config_git_dir(git_dir.clone())
         };
 
         Ok(Self {
