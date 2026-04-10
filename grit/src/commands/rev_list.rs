@@ -1,17 +1,20 @@
 //! `grit rev-list` command.
 
+use crate::explicit_exit::ExplicitExit;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
+use grit_lib::error::Error as LibError;
 use grit_lib::git_date::parse::parse_date_basic;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId};
 use grit_lib::pack;
 use grit_lib::promisor::read_promisor_missing_oids;
+use grit_lib::ref_exclusions::RefExclusions;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
-    collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, render_commit,
-    render_commit_with_color, rev_list, split_symmetric_diff, tag_targets, FilterObjectKind,
-    MissingAction, ObjectFilter, OrderingMode, OutputMode, RevListOptions,
+    collect_revision_specs_with_stdin, commit_tips_from_named_refs, is_symmetric_diff, merge_bases,
+    render_commit, render_commit_with_color, rev_list, split_symmetric_diff, tag_targets,
+    FilterObjectKind, MissingAction, ObjectFilter, OrderingMode, OutputMode, RevListOptions,
 };
 use grit_lib::rev_parse::commit_parents_for_navigation;
 use std::collections::{HashMap, HashSet};
@@ -58,6 +61,18 @@ fn resolve_max_tree_depth(config: &ConfigSet) -> Result<usize> {
     Ok(depth)
 }
 
+fn reject_exclude_hidden_with_pseudo_ref(hidden: bool, other: &str) -> Result<()> {
+    if hidden {
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 129,
+            message: format!(
+                "error: options '--exclude-hidden' and '{other}' cannot be used together"
+            ),
+        }));
+    }
+    Ok(())
+}
+
 fn filter_mentions_tree_depth(f: &ObjectFilter) -> bool {
     match f {
         ObjectFilter::TreeDepth(_) => true,
@@ -102,6 +117,8 @@ pub fn run(args: Args) -> Result<()> {
     let mut use_bitmap_index = false;
     let mut unpacked_only = false;
     let mut test_bitmap = false;
+    let mut ref_exclusions = RefExclusions::default();
+    let mut all_refs_passes: Vec<(bool, RefExclusions)> = Vec::new();
 
     let mut i = 0usize;
     while i < args.args.len() {
@@ -119,7 +136,10 @@ pub fn run(args: Args) -> Result<()> {
         }
         if !end_of_options && arg.starts_with('-') {
             match arg.as_str() {
-                "--all" => options.all_refs = true,
+                "--all" => {
+                    all_refs_passes.push((not_mode, ref_exclusions.clone()));
+                    ref_exclusions.clear();
+                }
                 "--first-parent" => options.first_parent = true,
                 "--ancestry-path" => options.ancestry_path = true,
                 "--simplify-by-decoration" => options.simplify_by_decoration = true,
@@ -257,68 +277,115 @@ pub fn run(args: Args) -> Result<()> {
                     let pattern = arg.trim_start_matches("--glob=");
                     let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, pattern)
                         .context("failed to list glob refs")?;
-                    for (_, oid) in matching {
+                    let tips = commit_tips_from_named_refs(&repo, &matching, &ref_exclusions)
+                        .context("failed to expand glob refs")?;
+                    for oid in tips {
                         revision_specs.push(oid.to_hex());
                     }
+                    ref_exclusions.clear();
                 }
                 "--glob" => {
-                    // Detached option: next arg is the pattern.
                     i += 1;
                     if let Some(next) = args.args.get(i) {
                         let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, next)
                             .context("failed to list glob refs")?;
-                        for (_, oid) in matching {
+                        let tips = commit_tips_from_named_refs(&repo, &matching, &ref_exclusions)
+                            .context("failed to expand glob refs")?;
+                        for oid in tips {
                             revision_specs.push(oid.to_hex());
                         }
                     }
+                    ref_exclusions.clear();
                 }
                 "--branches" => {
+                    reject_exclude_hidden_with_pseudo_ref(
+                        ref_exclusions.hidden_configured,
+                        "--branches",
+                    )?;
                     let matching = grit_lib::refs::list_refs(&repo.git_dir, "refs/heads/")
                         .context("failed to list branch refs")?;
-                    for (_, oid) in matching {
+                    let tips = commit_tips_from_named_refs(&repo, &matching, &ref_exclusions)
+                        .context("failed to expand branch refs")?;
+                    for oid in tips {
                         revision_specs.push(oid.to_hex());
                     }
+                    ref_exclusions.clear();
                 }
                 _ if arg.starts_with("--branches=") => {
+                    reject_exclude_hidden_with_pseudo_ref(
+                        ref_exclusions.hidden_configured,
+                        "--branches",
+                    )?;
                     let pattern = arg.trim_start_matches("--branches=");
                     let full_pattern = format!("refs/heads/{pattern}");
                     let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full_pattern)
                         .context("failed to list branch refs")?;
-                    for (_, oid) in matching {
+                    let tips = commit_tips_from_named_refs(&repo, &matching, &ref_exclusions)
+                        .context("failed to expand branch refs")?;
+                    for oid in tips {
                         revision_specs.push(oid.to_hex());
                     }
+                    ref_exclusions.clear();
                 }
                 "--tags" => {
+                    reject_exclude_hidden_with_pseudo_ref(
+                        ref_exclusions.hidden_configured,
+                        "--tags",
+                    )?;
                     let matching = grit_lib::refs::list_refs(&repo.git_dir, "refs/tags/")
                         .context("failed to list tag refs")?;
-                    for (_, oid) in matching {
+                    let tips = commit_tips_from_named_refs(&repo, &matching, &ref_exclusions)
+                        .context("failed to expand tag refs")?;
+                    for oid in tips {
                         revision_specs.push(oid.to_hex());
                     }
+                    ref_exclusions.clear();
                 }
                 _ if arg.starts_with("--tags=") => {
+                    reject_exclude_hidden_with_pseudo_ref(
+                        ref_exclusions.hidden_configured,
+                        "--tags",
+                    )?;
                     let pattern = arg.trim_start_matches("--tags=");
                     let full_pattern = format!("refs/tags/{pattern}");
                     let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full_pattern)
                         .context("failed to list tag refs")?;
-                    for (_, oid) in matching {
+                    let tips = commit_tips_from_named_refs(&repo, &matching, &ref_exclusions)
+                        .context("failed to expand tag refs")?;
+                    for oid in tips {
                         revision_specs.push(oid.to_hex());
                     }
+                    ref_exclusions.clear();
                 }
                 "--remotes" => {
+                    reject_exclude_hidden_with_pseudo_ref(
+                        ref_exclusions.hidden_configured,
+                        "--remotes",
+                    )?;
                     let matching = grit_lib::refs::list_refs(&repo.git_dir, "refs/remotes/")
                         .context("failed to list remote refs")?;
-                    for (_, oid) in matching {
+                    let tips = commit_tips_from_named_refs(&repo, &matching, &ref_exclusions)
+                        .context("failed to expand remote refs")?;
+                    for oid in tips {
                         revision_specs.push(oid.to_hex());
                     }
+                    ref_exclusions.clear();
                 }
                 _ if arg.starts_with("--remotes=") => {
+                    reject_exclude_hidden_with_pseudo_ref(
+                        ref_exclusions.hidden_configured,
+                        "--remotes",
+                    )?;
                     let pattern = arg.trim_start_matches("--remotes=");
                     let full_pattern = format!("refs/remotes/{pattern}");
                     let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full_pattern)
                         .context("failed to list remote refs")?;
-                    for (_, oid) in matching {
+                    let tips = commit_tips_from_named_refs(&repo, &matching, &ref_exclusions)
+                        .context("failed to expand remote refs")?;
+                    for oid in tips {
                         revision_specs.push(oid.to_hex());
                     }
+                    ref_exclusions.clear();
                 }
                 "--alternate-refs" => {
                     for oid in grit_lib::refs::collect_alternate_ref_oids(&repo.git_dir)
@@ -429,6 +496,35 @@ pub fn run(args: Args) -> Result<()> {
                     let val = arg.split_once('=').map(|(_, v)| v).unwrap_or_default();
                     options.since_cutoff = Some(parse_rev_list_date(val)?);
                 }
+                _ if arg.starts_with("--exclude=") => {
+                    let pat = arg.trim_start_matches("--exclude=");
+                    ref_exclusions.add_excluded_ref(pat);
+                }
+                "--exclude" => {
+                    i += 1;
+                    let Some(pat) = args.args.get(i) else {
+                        bail!("--exclude requires a value");
+                    };
+                    ref_exclusions.add_excluded_ref(pat.clone());
+                }
+                _ if arg.starts_with("--exclude-hidden=") => {
+                    let section = arg.trim_start_matches("--exclude-hidden=");
+                    if ref_exclusions.hidden_configured {
+                        return Err(anyhow::Error::new(LibError::Message(
+                            "fatal: --exclude-hidden= passed more than once".to_owned(),
+                        )));
+                    }
+                    match section {
+                        "fetch" | "receive" | "uploadpack" => {
+                            ref_exclusions.load_hidden_refs_from_config(&config, section);
+                        }
+                        other => {
+                            return Err(anyhow::Error::new(LibError::Message(format!(
+                                "fatal: unsupported section for hidden refs: {other}"
+                            ))));
+                        }
+                    }
+                }
                 _ => bail!("unsupported option: {arg}"),
             }
             i += 1;
@@ -502,7 +598,11 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if options.paths.is_empty() {
-        let keep_at_least = if options.all_refs { 0 } else { 1 };
+        let keep_at_least = if !options.all_refs_passes.is_empty() || options.all_refs {
+            0
+        } else {
+            1
+        };
         let (revs, trailing_paths) =
             split_trailing_pathspecs(&repo, &revision_specs, keep_at_least);
         revision_specs = revs;
@@ -565,8 +665,11 @@ pub fn run(args: Args) -> Result<()> {
         collect_revision_specs_with_stdin(&processed_specs, read_stdin)
             .context("failed to parse revision arguments")?;
     if stdin_all_refs {
-        options.all_refs = true;
+        all_refs_passes.push((not_mode, ref_exclusions.clone()));
     }
+
+    options.ref_exclusions = ref_exclusions;
+    options.all_refs_passes = all_refs_passes;
 
     // If symmetric diff, resolve merge bases and set up positive/negative
     if let (Some(ref lhs), Some(ref rhs)) = (&symmetric_left, &symmetric_right) {

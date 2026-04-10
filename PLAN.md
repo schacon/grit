@@ -779,7 +779,7 @@ commit → check it off → move on.
 - [ ] `t6040-tracking-info` ░░░░░░░░░░░░░░░░░░░░ 1/44 (43 left) — remote tracking stats
 - [ ] `t6002-rev-list-bisect` █░░░░░░░░░░░░░░░░░░░ 4/53 (49 left) — Tests git rev-list --bisect functionality
 - [ ] `t6302-for-each-ref-filter` ███░░░░░░░░░░░░░░░░░ 12/62 (50 left) — test for-each-refs usage of ref-filter APIs
-- [ ] `t6021-rev-list-exclude-hidden` ░░░░░░░░░░░░░░░░░░░░ 0/62 (62 left) — git rev-list --exclude-hidden test
+- [x] `t6021-rev-list-exclude-hidden` — git rev-list --exclude-hidden test (62/62)
 - [ ] `t6018-rev-list-glob` ██████░░░░░░░░░░░░░░ 30/95 (65 left) — rev-list/rev-parse --glob
 - [ ] `t6423-merge-rename-directories` ██░░░░░░░░░░░░░░░░░░ 11/82 (71 left) — recursive merge with directory renames
 - [ ] `t6120-describe` █████░░░░░░░░░░░░░░░ 27/105 (78 left) — test describe

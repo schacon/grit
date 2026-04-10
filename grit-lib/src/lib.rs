@@ -73,6 +73,7 @@ pub mod promisor;
 pub mod prune_packed;
 pub mod push_submodules;
 pub mod quote_path;
+pub mod ref_exclusions;
 pub mod ref_namespace;
 pub mod reflog;
 pub mod refs;
