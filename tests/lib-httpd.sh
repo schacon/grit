@@ -59,37 +59,65 @@ REAL_GIT="${REAL_GIT:-/usr/bin/git}"
 # exercising grit for file:// and local commands (e.g. backfill).
 write_hybrid_git_wrapper () {
 	_target="$1"
+	_tmp="${_target}.new.$$"
 	_grit="${GUST_BIN:-}"
 	if test -z "$_grit"; then
 		_grit="$REAL_GIT"
 	fi
-	cat >"$_target" <<EOFWRAP
-#!/bin/sh
-REAL_GIT='$REAL_GIT'
-GUST_BIN='$_grit'
+	{
+		printf '%s\n' '#!/bin/sh'
+		printf "REAL_GIT='%s'\n" "$REAL_GIT"
+		printf "GUST_BIN='%s'\n" "$_grit"
+		cat <<'EOFWRAP'
 _http=0
-for _a in "\$@"; do
-	case "\$_a" in
+for _a in "$@"; do
+	case "$_a" in
 	http://*|https://*) _http=1; break ;;
 	esac
 done
-# After start_httpd, \$HTTPD_URL is set. Fetch/pull/push do not repeat the remote URL on the
+# After start_httpd, $HTTPD_URL is set. Fetch/pull/push do not repeat the remote URL on the
 # command line, so delegate those to real git so smart-HTTP transport keeps working in the suite.
-if test "\$_http" != 1 && test -n "\${HTTPD_URL-}"; then
-	case "\$*" in
+if test "$_http" != 1 && test -n "${HTTPD_URL-}"; then
+	case "$*" in
 	*fetch*|*pull*|*push*) _http=1 ;;
 	esac
 fi
+# HTTP fetch uses grit for bundle-uri parity (t5558), except glob refspecs (grit does not
+# support them yet; t5558 `expand incremental bundle list` uses +refs/heads/*:refs/heads/*).
+if test "$_http" = 1 && test -n "${HTTPD_URL-}"; then
+	case "$*" in
+	*fetch*)
+		case "$*" in
+		*\***) ;;
+		*) _http=0 ;;
+		esac
+		;;
+	esac
+fi
 # test-tool bundle-uri ls-remote <url> must use grit: system git has no test-tool.
-case "\$*" in
+case "$*" in
 *"test-tool"*"bundle-uri"*) _http=0 ;;
 esac
-if test "\$_http" = 1; then
-	exec "\$REAL_GIT" "\$@"
+# `git clone --bundle-uri` over HTTP is implemented in grit (t5558-clone-bundle-uri.sh).
+_clone=0
+_bundle_uri=0
+for _a in "$@"; do
+	case "$_a" in
+	clone) _clone=1 ;;
+	--bundle-uri|--bundle-uri=*) _bundle_uri=1 ;;
+	esac
+done
+if test "$_clone" = 1 && test "$_bundle_uri" = 1; then
+	_http=0
 fi
-exec "\$GUST_BIN" "\$@"
+if test "$_http" = 1; then
+	exec "$REAL_GIT" "$@"
+fi
+exec "$GUST_BIN" "$@"
 EOFWRAP
-	chmod +x "$_target"
+	} >"$_tmp"
+	chmod +x "$_tmp"
+	mv -f "$_tmp" "$_target"
 }
 
 if test -n "$BIN_DIRECTORY" && test -d "$BIN_DIRECTORY"; then

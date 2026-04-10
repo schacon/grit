@@ -817,9 +817,11 @@ fn fetch_remote(
             })?;
         (heads, tags)
     } else if is_http_url {
+        // Match Git `fetch.c`: apply `fetch.bundleURI` before the transport fetch so bundle
+        // prerequisites are not satisfied early by the pack (t5558 creationToken deepening).
+        crate::bundle_uri::maybe_apply_bundle_uri_after_http_fetch(git_dir, &url, None)?;
         let (heads, tags, _adv) =
             crate::http_smart::http_fetch_pack(git_dir, &url, upload_pack_refspecs)?;
-        crate::bundle_uri::maybe_apply_bundle_uri_after_http_fetch(git_dir, &url, None)?;
         let heads: Vec<(String, ObjectId)> = heads.into_iter().map(|e| (e.name, e.oid)).collect();
         let tags: Vec<(String, ObjectId)> = tags.into_iter().map(|e| (e.name, e.oid)).collect();
         (heads, tags)
@@ -1452,11 +1454,7 @@ fn fetch_remote(
         // Tag refs updated via explicit CLI refspecs already emitted branch-style FETCH_HEAD lines;
         // replace those with Git-shaped `tag 'name'` lines.
         fetch_head_entries.retain(|line| !line.contains("refs/tags/"));
-        let remote_repo = ext_resolved_remote.as_ref().unwrap_or_else(|| {
-            remote_repo
-                .as_ref()
-                .expect("CLI refspec fetch requires a local remote repository")
-        });
+        let remote_repo_for_tags = ext_resolved_remote.as_ref().or(remote_repo.as_ref());
         for spec in cli_refspecs {
             if spec.starts_with('^') {
                 continue;
@@ -1470,8 +1468,18 @@ fn fetch_remote(
                 continue;
             }
             let tag_name = src.strip_prefix("refs/tags/").unwrap_or(src);
-            let remote_oid = refs::resolve_ref(&remote_repo.git_dir, src)
-                .with_context(|| format!("couldn't find remote ref '{tag_name}'"))?;
+            let remote_oid = if let Some(rr) = remote_repo_for_tags {
+                refs::resolve_ref(&rr.git_dir, src)
+                    .with_context(|| format!("couldn't find remote ref '{tag_name}'"))?
+            } else if is_http_url {
+                remote_tags
+                    .iter()
+                    .find(|(r, _)| r == src)
+                    .map(|(_, o)| *o)
+                    .ok_or_else(|| anyhow::anyhow!("couldn't find remote ref '{tag_name}'"))?
+            } else {
+                bail!("CLI refspec fetch requires a local remote repository");
+            };
             fetch_head_entries.push(fetch_head_tag_line(
                 &remote_oid,
                 tag_name,

@@ -10,10 +10,13 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::connectivity::bundle_prerequisites_connected_to_refs;
 use grit_lib::fsck_standalone::fsck_object;
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
+use grit_lib::repo::Repository;
 use grit_lib::unpack_objects::{unpack_objects, UnpackOptions};
+use url::Url;
 
 use crate::http_bundle_uri::strip_v0_service_advertisement_if_present;
 use crate::pkt_line;
@@ -29,19 +32,37 @@ pub fn clear_http_bundle_cache() {
 
 fn validate_bundle_uri_token(uri: &str) -> Result<()> {
     if uri.contains('\n') || uri.contains('\r') {
-        bail!("error: bundle-uri: URI is malformed: {uri}");
+        bail!("bundle-uri: URI is malformed: {uri}");
     }
     if uri.contains(' ') {
-        bail!("error: bundle-uri: URI is malformed: {uri}");
+        bail!("bundle-uri: URI is malformed: {uri}");
     }
     Ok(())
 }
 
 fn validate_clone_directory_name(name: &str) -> Result<()> {
     if name.contains('\n') || name.contains('\r') {
-        bail!("error: bundle-uri: filename is malformed: {name}");
+        bail!("bundle-uri: filename is malformed: {name}");
     }
     Ok(())
+}
+
+/// Resolve a bundle entry `uri` against the bundle list document URL (Git `bundle-uri` behavior).
+fn resolve_bundle_entry_uri(list_uri: &str, entry_uri: &str) -> String {
+    let e = entry_uri.trim();
+    if e.starts_with("http://")
+        || e.starts_with("https://")
+        || e.starts_with("file://")
+        || e.starts_with('/')
+    {
+        return e.to_string();
+    }
+    if let Ok(base) = Url::parse(list_uri) {
+        if let Ok(j) = base.join(e) {
+            return j.into();
+        }
+    }
+    e.to_string()
 }
 
 fn read_bundle_uri_bytes(uri: &str) -> Result<Vec<u8>> {
@@ -49,10 +70,12 @@ fn read_bundle_uri_bytes(uri: &str) -> Result<Vec<u8>> {
     if uri.starts_with("http://") || uri.starts_with("https://") {
         return HTTP_BUNDLE_CACHE.with(|c| {
             let mut map = c.borrow_mut();
+            // Emit trace2 for every logical GET (including cache hits) so `GIT_TRACE2_EVENT`
+            // matches Git when the same bundle URL is applied multiple times in one command.
+            crate::http_smart::trace2_child_start_git_remote_https(uri);
             if let Some(b) = map.get(uri) {
                 return Ok(b.clone());
             }
-            crate::http_smart::trace2_child_start_git_remote_https(uri);
             let agent = format!("grit/{}", crate::version_string());
             let resp = match ureq::get(uri).set("User-Agent", &agent).call() {
                 Ok(r) => r,
@@ -168,6 +191,7 @@ fn unbundle_pack_into_repo(
     pack_start: usize,
     prerequisites: &[ObjectId],
     refs: &[(String, ObjectId)],
+    skip_if_prereqs_missing: bool,
 ) -> Result<()> {
     let odb = Odb::new(&git_dir.join("objects"));
     for p in prerequisites {
@@ -176,7 +200,13 @@ fn unbundle_pack_into_repo(
                 "warning: skipping bundle: missing prerequisite object {}",
                 p.to_hex()
             );
-            return Ok(());
+            if skip_if_prereqs_missing {
+                return Ok(());
+            }
+            bail!(
+                "bundle prerequisite {} missing from object database",
+                p.to_hex()
+            );
         }
     }
     let pack_data = &data[pack_start..];
@@ -360,7 +390,16 @@ fn apply_single_bundle_file(git_dir: &Path, data: &[u8]) -> Result<()> {
         bail!("is not a bundle");
     }
     let (refs, prerequisites, pack_start) = parse_bundle_header_refs(data)?;
-    unbundle_pack_into_repo(git_dir, data, pack_start, &prerequisites, &refs)?;
+    unbundle_pack_into_repo(git_dir, data, pack_start, &prerequisites, &refs, true)?;
+    Ok(())
+}
+
+fn apply_single_bundle_file_strict_prereqs(git_dir: &Path, data: &[u8]) -> Result<()> {
+    if !is_bundle_v2(data) {
+        bail!("is not a bundle");
+    }
+    let (refs, prerequisites, pack_start) = parse_bundle_header_refs(data)?;
+    unbundle_pack_into_repo(git_dir, data, pack_start, &prerequisites, &refs, false)?;
     Ok(())
 }
 
@@ -371,7 +410,7 @@ fn apply_bundle_from_uri(git_dir: &Path, uri: &str) -> Result<()> {
 
 fn apply_bundle_list(
     git_dir: &Path,
-    _list_uri: &str,
+    list_uri: &str,
     _list_text: &str,
     mode: BundleMode,
     _heuristic: BundleHeuristic,
@@ -379,7 +418,8 @@ fn apply_bundle_list(
 ) -> Result<()> {
     let mut any_ok = false;
     for e in entries {
-        match apply_bundle_from_uri(git_dir, &e.uri) {
+        let resolved = resolve_bundle_entry_uri(list_uri, &e.uri);
+        match apply_bundle_from_uri(git_dir, &resolved) {
             Ok(()) => {
                 any_ok = true;
             }
@@ -392,7 +432,8 @@ fn apply_bundle_list(
                 if chain_text.contains("is not a bundle") {
                     bail!("{}", err);
                 }
-                eprintln!("warning: failed to download bundle from URI '{0}'", e.uri);
+                // Match `git bundle-uri` stderr (t5558 greps this exact line for HTTP 404, etc.).
+                eprintln!("warning: failed to download bundle from URI '{}'", resolved);
             }
         }
     }
@@ -456,6 +497,12 @@ fn apply_creation_token_heuristic_clone(
         );
     }
 
+    // HTTP(S) lists: match `git fetch_bundles_by_token` (download high creationToken first;
+    // t5558 `GIT_TRACE2_EVENT` ordering).
+    if list_uri.starts_with("http://") || list_uri.starts_with("https://") {
+        return fetch_bundles_by_token(git_dir, list_uri, entries);
+    }
+
     let tokens: Vec<u64> = by_token.keys().copied().collect();
     let mut expect: u64 = 1;
     let mut max_contiguous: Option<u64> = None;
@@ -467,14 +514,15 @@ fn apply_creation_token_heuristic_clone(
         let group = by_token.get(tok).unwrap();
         let mut group_ok = true;
         for e in group {
-            match apply_bundle_from_uri(git_dir, &e.uri) {
+            let resolved = resolve_bundle_entry_uri(list_uri, &e.uri);
+            match apply_bundle_from_uri(git_dir, &resolved) {
                 Ok(()) => {}
                 Err(err) => {
                     let msg = format!("{err:#}");
                     if msg.contains("is not a bundle") {
                         bail!("{msg}");
                     }
-                    eprintln!("warning: failed to download bundle from URI '{0}'", e.uri);
+                    eprintln!("warning: failed to download bundle from URI '{resolved}'");
                     group_ok = false;
                 }
             }
@@ -530,12 +578,28 @@ pub fn apply_bundle_uri(
             .map(|c| c.to_string())
             .collect::<Vec<_>>()
             .join(": ");
-        if relax_http_download_failures
-            && (chain_text.contains("warning: failed to download bundle")
-                || e.to_string().contains("warning: failed to download bundle"))
-        {
-            eprintln!("{}", e);
-            return Ok(());
+        if relax_http_download_failures {
+            let msg = e.to_string();
+            let malformed_uri = chain_text.contains("bundle-uri: URI is malformed")
+                || msg.contains("bundle-uri: URI is malformed");
+            let malformed_name = chain_text.contains("bundle-uri: filename is malformed")
+                || msg.contains("bundle-uri: filename is malformed");
+            if malformed_uri || malformed_name {
+                if msg.starts_with("error:") {
+                    eprintln!("{msg}");
+                } else {
+                    eprintln!("error: {msg}");
+                }
+                return Ok(());
+            }
+            if chain_text.contains("warning: failed to download bundle")
+                || msg.contains("warning: failed to download bundle")
+                || chain_text.contains("failed to download bundle from URI")
+                || msg.contains("failed to download bundle from URI")
+            {
+                eprintln!("{}", e);
+                return Ok(());
+            }
         }
         if chain_text.contains("missingEmail") {
             return Ok(());
@@ -724,8 +788,39 @@ struct TokenBundleWork {
 }
 
 /// Returns `true` when unbundle failed (Git: non-zero from `unbundle_from_file`).
+///
+/// Missing prerequisites must count as failure for `fetch_bundles_by_token` so the client keeps
+/// downloading lower `creationToken` bundles. Plain `apply_single_bundle_file` skips missing
+/// prerequisites with a warning and returns `Ok` so HTTP clones can fetch objects afterward.
 fn unbundle_from_bytes(git_dir: &Path, data: &[u8]) -> bool {
-    apply_single_bundle_file(git_dir, data).is_err()
+    if !is_bundle_v2(data) {
+        return true;
+    }
+    let Ok((_, prerequisites, _)) = parse_bundle_header_refs(data) else {
+        return true;
+    };
+    let odb = Odb::new(&git_dir.join("objects"));
+    for p in &prerequisites {
+        if !odb.exists(p) {
+            eprintln!(
+                "warning: skipping bundle: missing prerequisite object {}",
+                p.to_hex()
+            );
+            return true;
+        }
+    }
+    if let Ok(repo) = Repository::open(git_dir, None) {
+        match bundle_prerequisites_connected_to_refs(&repo, &prerequisites) {
+            Ok(true) => {}
+            Ok(false) | Err(_) => {
+                eprintln!(
+                    "error: some prerequisite commits exist in the object store, but are not connected to the repository's history"
+                );
+                return true;
+            }
+        }
+    }
+    apply_single_bundle_file_strict_prereqs(git_dir, data).is_err()
 }
 
 /// Port of Git's `fetch_bundles_by_token` (`bundle-uri.c`).
@@ -771,7 +866,8 @@ fn fetch_bundles_by_token(
         }
 
         if bundles[idx].file.is_none() {
-            let dl = read_bundle_uri_bytes(&bundles[idx].uri).map_err(|_| ());
+            let resolved = resolve_bundle_entry_uri(list_uri, &bundles[idx].uri);
+            let dl = read_bundle_uri_bytes(&resolved).map_err(|_| ());
             bundles[idx].file = Some(dl);
             if bundles[idx].file.as_ref().unwrap().is_err() {
                 bundles[idx].unbundled = true;
@@ -781,9 +877,10 @@ fn fetch_bundles_by_token(
             }
             let data = bundles[idx].file.as_ref().unwrap().as_ref().unwrap();
             if !is_bundle_v2(data) {
+                let resolved = resolve_bundle_entry_uri(list_uri, &bundles[idx].uri);
                 eprintln!(
                     "warning: file downloaded from '{}' is not a bundle",
-                    bundles[idx].uri
+                    resolved
                 );
                 break;
             }
@@ -839,7 +936,18 @@ pub fn maybe_apply_bundle_uri_after_http_fetch(
     remote_url: &str,
     bundle_uri_override: Option<&str>,
 ) -> Result<()> {
-    let list_text = resolve_bundle_uri_for_fetch(git_dir, remote_url, bundle_uri_override)?;
+    let list_text = match resolve_bundle_uri_for_fetch(git_dir, remote_url, bundle_uri_override) {
+        Ok(t) => t,
+        Err(e) => {
+            let msg = format!("{e:#}");
+            if msg.contains("no bundle-uri configured")
+                || msg.contains("server does not advertise bundle-uri")
+            {
+                return Ok(());
+            }
+            return Err(e);
+        }
+    };
     let list_uri = bundle_list_uri_for_config(git_dir, remote_url);
     let (mode, heuristic, entries) = parse_bundle_list_ini(&list_text)?;
     apply_bundle_list_for_fetch(git_dir, &list_uri, &list_text, mode, heuristic, &entries)

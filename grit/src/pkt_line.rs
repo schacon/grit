@@ -90,9 +90,9 @@ pub fn read_packet(r: &mut impl Read) -> io::Result<Option<Packet>> {
             let payload_len = n - 4;
             let mut buf = vec![0u8; payload_len];
             r.read_exact(&mut buf)?;
-            // NUL is valid UTF-8; avoid lossy conversion (would break ref advertisement \0).
-            let s = String::from_utf8(buf)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            // Smart HTTP / CGI paths may emit non-UTF-8 in diagnostic pkt-lines; Git tolerates
+            // lossy decoding. NUL remains valid and is preserved.
+            let s = String::from_utf8_lossy(&buf).into_owned();
             Ok(Some(Packet::Data(
                 s.strip_suffix('\n').unwrap_or(&s).to_owned(),
             )))

@@ -10,6 +10,7 @@ use std::fs;
 use std::io::{Read, Write};
 
 use grit_lib::objects::{ObjectId, ObjectKind};
+use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, split_revision_token, RevListOptions};
 
@@ -414,32 +415,10 @@ fn parse_bundle_header(data: &[u8]) -> Result<(BTreeMap<String, ObjectId>, usize
 }
 
 fn resolve_ref(repo: &Repository, refname: &str) -> Result<ObjectId> {
-    let candidates = [
-        repo.git_dir.join(refname),
-        repo.git_dir.join("refs/heads").join(refname),
-        repo.git_dir.join("refs/tags").join(refname),
-    ];
-    for path in &candidates {
-        if path.is_file() {
-            let content = fs::read_to_string(path)?;
-            let trimmed = content.trim();
-            if trimmed.starts_with("ref: ") {
-                return resolve_ref(repo, &trimmed[5..]);
-            }
-            return ObjectId::from_hex(trimmed)
-                .map_err(|e| anyhow::anyhow!("cannot resolve ref '{refname}': {e}"));
-        }
-    }
-    if refname == "HEAD" {
-        let head = fs::read_to_string(repo.git_dir.join("HEAD"))?;
-        let trimmed = head.trim();
-        if trimmed.starts_with("ref: ") {
-            return resolve_ref(repo, &trimmed[5..]);
-        }
-        return ObjectId::from_hex(trimmed)
-            .map_err(|e| anyhow::anyhow!("cannot resolve HEAD: {e}"));
-    }
-    bail!("cannot resolve ref '{refname}'")
+    refs::resolve_ref(&repo.git_dir, refname)
+        .or_else(|_| refs::resolve_ref(&repo.git_dir, &format!("refs/heads/{refname}")))
+        .or_else(|_| refs::resolve_ref(&repo.git_dir, &format!("refs/tags/{refname}")))
+        .map_err(|e| anyhow::anyhow!("cannot resolve ref '{refname}': {e}"))
 }
 
 fn walk_reachable(

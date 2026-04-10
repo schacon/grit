@@ -772,7 +772,7 @@ fn fetch_upload_pack_negotiate_pack_bytes(
     upload_pack_cmd: Option<&str>,
     wants: &[ObjectId],
 ) -> Result<Vec<u8>> {
-    let mut child = spawn_upload_pack(upload_pack_cmd, remote_repo_path)?;
+    let mut child = spawn_upload_pack_with_proto(upload_pack_cmd, remote_repo_path, 1)?;
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 

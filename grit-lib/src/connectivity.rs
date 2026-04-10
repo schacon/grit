@@ -21,7 +21,12 @@ use crate::repo::Repository;
 fn commit_closure_from_all_refs(repo: &Repository) -> Result<HashSet<ObjectId>> {
     let mut seeds = Vec::new();
 
-    for prefix in &["refs/heads/", "refs/tags/", "refs/remotes/"] {
+    for prefix in &[
+        "refs/heads/",
+        "refs/tags/",
+        "refs/remotes/",
+        "refs/bundles/",
+    ] {
         if let Ok(entries) = refs::list_refs(&repo.git_dir, prefix) {
             for (_, oid) in entries {
                 seeds.push(oid);
@@ -70,6 +75,22 @@ fn commit_closure_from_all_refs(repo: &Repository) -> Result<HashSet<ObjectId>> 
     }
 
     Ok(seen)
+}
+
+/// Returns whether every bundle prerequisite commit is already reachable from existing refs.
+///
+/// Matches Git's `verify_bundle` connectivity check: prerequisite OIDs may exist loose in the ODB
+/// but must still lie in the commit closure of `refs/heads/`, `refs/tags/`, `refs/remotes/`, and
+/// `refs/bundles/` (so dangling objects do not satisfy prerequisites).
+pub fn bundle_prerequisites_connected_to_refs(
+    repo: &Repository,
+    prerequisites: &[ObjectId],
+) -> Result<bool> {
+    if prerequisites.is_empty() {
+        return Ok(true);
+    }
+    let closure = commit_closure_from_all_refs(repo)?;
+    Ok(prerequisites.iter().all(|p| closure.contains(p)))
 }
 
 fn peel_tag_to_object(repo: &Repository, tag_data: &[u8]) -> Result<Option<ObjectId>> {

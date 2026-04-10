@@ -37,4 +37,5 @@ encoding_rs = "0.8.35"
 hungarian.workspace = true
 ureq.workspace = true
 shell-words.workspace = true
+url.workspace = true
 atty = "0.2"
