@@ -11,13 +11,14 @@ use std::path::Path;
 /// Check whether a given protocol (e.g. "file", "git", "ssh", "https") is
 /// allowed in the current configuration context.
 ///
-/// Rules (matching git):
-/// 1. `GIT_ALLOW_PROTOCOL` env var: comma-separated whitelist.  If set, only
+/// Rules (matching git `transport.c` / `is_transport_allowed`):
+/// 1. `GIT_ALLOW_PROTOCOL` env var: colon- or comma-separated whitelist. If set, only
 ///    protocols listed there are allowed.
-/// 2. `protocol.<name>.allow` config key: "always", "never", or "user" (default
-///    varies by protocol).
-/// 3. `protocol.allow` config key: blanket default.
-/// 4. Built-in defaults: file/ssh/ext → "user", everything else → "user".
+/// 2. `protocol.<name>.allow` config key: "always", "never", or "user".
+/// 3. `protocol.allow` config key: blanket default for unknown protocol types.
+/// 4. Built-in defaults when neither (2) nor (3) applies: `http`, `https`, `git`, and
+///    `ssh` → always allowed; `ext` → never allowed; any other type (including `file`) →
+///    user-only (`GIT_PROTOCOL_FROM_USER`).
 ///
 /// `protocol.<name>.allow=user` matches Git: allowed when `GIT_PROTOCOL_FROM_USER` is
 /// unset, empty, or not one of the explicit deny values (`0`, `false`, `no`, `off`).
@@ -50,8 +51,13 @@ pub fn check_protocol_allowed(protocol: &str, git_dir: Option<&Path>) -> Result<
         return check_allow_value(protocol, val);
     }
 
-    // 4. Default: allow (user context)
-    Ok(())
+    // 4. Built-in defaults (`transport.c` `get_protocol_config`)
+    let p = protocol.to_ascii_lowercase();
+    match p.as_str() {
+        "http" | "https" | "git" | "ssh" => Ok(()),
+        "ext" => bail!("protocol '{}' is not allowed", protocol),
+        _ => check_allow_value(protocol, "user"),
+    }
 }
 
 fn check_allow_value(protocol: &str, value: &str) -> Result<()> {

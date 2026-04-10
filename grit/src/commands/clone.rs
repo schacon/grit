@@ -467,18 +467,6 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.separate_git_dir.is_some() && args.mirror {
         bail!("--separate-git-dir and --mirror are incompatible");
     }
-    if args.separate_git_dir.is_some() {
-        let repo = args.repository.as_str();
-        if repo.starts_with("ext::")
-            || is_ssh_url(repo)
-            || repo.starts_with("ssh://")
-            || repo.starts_with("git://")
-            || repo.starts_with("http://")
-            || repo.starts_with("https://")
-        {
-            bail!("--separate-git-dir is only supported for local repository clones");
-        }
-    }
 
     // `ext::` — external command bridging smart transport (git-remote-ext).
     if args.repository.starts_with("ext::") {
