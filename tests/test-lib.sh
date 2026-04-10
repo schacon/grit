@@ -1349,10 +1349,10 @@ test_atexit_handler () {
 
 test_eval_inner_ () {
 	local _eval_inner_ret
-	if test -z "${TEST_LIB_INHERIT_CWD-}"
-	then
-		cd "$TRASH_DIRECTORY" || exit 1
-	fi
+	# Do not `cd "$TRASH_DIRECTORY"` here before `eval`: upstream test scripts often run
+	# preamble commands between `test_expect_success` calls (`cd repo`, symlinks, etc.) that
+	# must remain in effect for the next body (t2300). The trailing cd below restores the trash
+	# root after each body; `test-lib-tap.sh` also cds back to trash after each test case.
 	eval "$1"
 	_eval_inner_ret=$?
 	if test -z "${TEST_LIB_INHERIT_CWD-}"

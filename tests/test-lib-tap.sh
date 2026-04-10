@@ -12,12 +12,6 @@ say() {
 	printf '%s\n' "$*" >&3
 }
 
-# Each test body may `cd` into a subdirectory; reset to the trash root before the
-# next test so relative paths like `cd repo` remain valid (matches upstream git test-lib).
-test_reset_cwd_to_trash () {
-	test -n "${TRASH_DIRECTORY-}" && cd "$TRASH_DIRECTORY" || return 0
-}
-
 test_path_exists () {
 	test "$#" -ne 1 && BUG "1 param"
 	if ! test -e "$1"
@@ -120,15 +114,10 @@ test_expect_success() {
 	fi
 	test_cleanup=:
 	test -z "$verbose" || say "expecting success of $TEST_NUMBER.$test_count '$description': $commands"
-	if test -z "${TEST_LIB_INHERIT_CWD-}"
-	then
-		test_reset_cwd_to_trash
-	fi
 	test -f "$TRASH_DIRECTORY/.test-exports" && . "$TRASH_DIRECTORY/.test-exports"
-	if test -z "${TEST_LIB_INHERIT_CWD-}"
-	then
-		cd "$TRASH_DIRECTORY" || exit 1
-	fi
+	# Do not `cd "$TRASH_DIRECTORY"` before `test_run_`: script preamble between tests may `cd`
+	# into the trash (e.g. t2300 `cd repo` before `internal-link`). Post-test cleanup below
+	# restores the trash root.
 	test_run_ "$commands"
 	result=$?
 	if test -z "${TEST_LIB_INHERIT_CWD-}"
@@ -216,16 +205,8 @@ test_expect_failure() {
 	fi
 	test_cleanup=:
 	test -z "$verbose" || say "checking known breakage of $TEST_NUMBER.$test_count '$description': $commands"
-	if test -z "${TEST_LIB_INHERIT_CWD-}"
-	then
-		test_reset_cwd_to_trash
-	fi
 	_exports_file="$TRASH_DIRECTORY/.test-exports"
 	test -f "$_exports_file" && . "$_exports_file"
-	if test -z "${TEST_LIB_INHERIT_CWD-}"
-	then
-		cd "$TRASH_DIRECTORY" || exit 1
-	fi
 	test_run_ "$commands" expecting_failure
 	result=$?
 	if test -z "${TEST_LIB_INHERIT_CWD-}"
