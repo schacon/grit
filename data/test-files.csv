@@ -412,7 +412,7 @@ t1407-worktree-ref-store	t1	skip	4	1	3	false	ok	0
 t1408-packed-refs	t1	yes	3	3	0	true	ok	0
 t1409-avoid-packing-refs	t1	yes	11	11	0	true	ok	0
 t1410-reflog	t1	yes	41	23	18	false	ok	0
-t1411-reflog-show	t1	yes	17	8	9	false	ok	0
+t1411-reflog-show	t1	yes	17	17	0	true	ok	0
 t1412-reflog-loop	t1	yes	3	3	0	true	ok	0
 t1413-reflog-detach	t1	yes	7	7	0	true	ok	0
 t1414-reflog-walk	t1	yes	12	3	9	false	ok	0

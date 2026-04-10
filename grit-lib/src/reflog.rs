@@ -723,7 +723,11 @@ pub fn expire_reflog_git(
     }
 
     if !params.dry_run && pruned > 0 {
-        fs::write(&path, kept.join(""))?;
+        if kept.is_empty() {
+            let _ = fs::remove_file(&path);
+        } else {
+            fs::write(&path, kept.join(""))?;
+        }
     }
     Ok(pruned)
 }
