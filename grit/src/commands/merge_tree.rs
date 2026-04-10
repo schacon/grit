@@ -5,9 +5,10 @@
 use anyhow::{bail, Result};
 use grit_lib::config::ConfigSet;
 use grit_lib::merge_file::MergeFavor;
+use grit_lib::merge_tree_trivial::trivial_merge_trees_stdout;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rev_parse::{peel_to_tree, resolve_revision};
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Write};
@@ -74,7 +75,7 @@ fn parse_argv(rest: &[String]) -> Result<Parsed> {
     let mut i = 0usize;
     while i < rest.len() {
         let tok = rest[i].as_str();
-        if tok == "--" {
+        if tok == "--" || tok == "--end-of-options" {
             i += 1;
             while i < rest.len() {
                 p.positionals.push(rest[i].clone());
@@ -235,6 +236,31 @@ fn run_parsed(args: Parsed) -> Result<()> {
         }
     }
 
+    let repo = Repository::discover(None)?;
+
+    if args.positionals.len() == 3
+        && !args.write_tree
+        && !args.stdin
+        && !args.trivial_merge
+        && args.merge_base.is_none()
+        && args.strategy_option.is_empty()
+    {
+        let base_s = &args.positionals[0];
+        let ours_s = &args.positionals[1];
+        let theirs_s = &args.positionals[2];
+        let base_oid = resolve_merge_tree_revision(&repo, base_s)?;
+        let ours_oid = resolve_merge_tree_revision(&repo, ours_s)?;
+        let theirs_oid = resolve_merge_tree_revision(&repo, theirs_s)?;
+        let base_tree = peel_to_tree(&repo, base_oid)?;
+        let ours_tree = peel_to_tree(&repo, ours_oid)?;
+        let theirs_tree = peel_to_tree(&repo, theirs_oid)?;
+        let text = trivial_merge_trees_stdout(&repo, base_tree, ours_tree, theirs_tree)?;
+        if !args.quiet {
+            print!("{text}");
+        }
+        return Ok(());
+    }
+
     let b1 = args.positionals.first().cloned().ok_or_else(|| {
         anyhow::Error::new(ExplicitExit {
             code: 129,
@@ -253,8 +279,6 @@ fn run_parsed(args: Parsed) -> Result<()> {
             message: USAGE_WRITE_TREE.to_string(),
         }));
     }
-
-    let repo = Repository::discover(None)?;
     let favor = parse_strategy_options(&args.strategy_option)?;
     let rename_opts = MergeRenameOptions::from_config(&repo);
     let merge_base_oid = args

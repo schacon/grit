@@ -937,7 +937,7 @@ fn normalize_colon_path_for_tree(repo: &Repository, raw_path: &str) -> Result<St
 /// Peel tags to a commit OID for merge-base computation (`A...B` and `rev-parse` output).
 pub fn peel_to_commit_for_merge_base(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
     oid = apply_peel(repo, oid, Some(""))?;
-    let obj = repo.odb.read(&oid)?;
+    let obj = repo.read_replaced(&oid)?;
     match obj.kind {
         ObjectKind::Commit => Ok(oid),
         ObjectKind::Tree => Err(Error::InvalidRef(format!(
@@ -956,7 +956,7 @@ pub fn peel_to_commit_for_merge_base(repo: &Repository, mut oid: ObjectId) -> Re
 ///
 /// Returns [`Error::ObjectNotFound`] when the object cannot be peeled to a tree (e.g. a blob).
 pub fn peel_to_tree(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
-    let obj = repo.odb.read(&oid)?;
+    let obj = repo.read_replaced(&oid)?;
     match obj.kind {
         crate::objects::ObjectKind::Tree => Ok(oid),
         crate::objects::ObjectKind::Commit => {
@@ -1048,7 +1048,7 @@ fn walk_tree_to_blob_entry(
     tree_oid: &ObjectId,
     path: &str,
 ) -> Result<(ObjectId, String)> {
-    let obj = repo.odb.read(tree_oid)?;
+    let obj = repo.read_replaced(tree_oid)?;
     let entries = crate::objects::parse_tree(&obj.data)?;
     let components: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
     if components.is_empty() {
@@ -1145,7 +1145,7 @@ fn parse_nav_steps(spec: &str) -> (&str, Vec<NavStep>) {
 /// Follow annotated tag objects to their peeled target (Git: `^` / `~` peel tags first).
 fn peel_annotated_tag_chain(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
     loop {
-        let obj = repo.odb.read(&oid)?;
+        let obj = repo.read_replaced(&oid)?;
         if obj.kind != ObjectKind::Tag {
             return Ok(oid);
         }
@@ -1160,7 +1160,7 @@ fn apply_nav_step(repo: &Repository, oid: ObjectId, step: NavStep) -> Result<Obj
         NavStep::ParentN(0) => Ok(oid),
         NavStep::ParentN(n) => {
             let oid = peel_annotated_tag_chain(repo, oid)?;
-            let obj = repo.odb.read(&oid)?;
+            let obj = repo.read_replaced(&oid)?;
             if obj.kind != ObjectKind::Commit {
                 return Err(Error::InvalidRef(format!(
                     "invalid ref: {oid} is not a commit"
@@ -1293,7 +1293,7 @@ pub fn ambiguous_object_hint_lines(
     let mut bad_hex: Vec<String> = Vec::new();
     for oid in list_all_abbrev_matches(repo, short_prefix)? {
         let hex = oid.to_hex();
-        match repo.odb.read(&oid) {
+        match repo.read_replaced(&oid) {
             Ok(obj) => {
                 let ok = peel_filter.is_none_or(|p| oid_satisfies_peel_filter(repo, oid, p));
                 if ok {
@@ -1377,7 +1377,7 @@ fn commit_reachable_closure(repo: &Repository, start: ObjectId) -> Result<HashSe
         if !seen.insert(oid) {
             continue;
         }
-        let obj = match repo.odb.read(&oid) {
+        let obj = match repo.read_replaced(&oid) {
             Ok(o) => o,
             Err(_) => continue,
         };
@@ -2581,7 +2581,7 @@ pub(crate) fn resolve_treeish_path(
     treeish: ObjectId,
     path: &str,
 ) -> Result<ObjectId> {
-    let object = repo.odb.read(&treeish)?;
+    let object = repo.read_replaced(&treeish)?;
     let mut current_tree = match object.kind {
         ObjectKind::Commit => parse_commit(&object.data)?.tree,
         ObjectKind::Tree => treeish,
@@ -2597,7 +2597,7 @@ pub(crate) fn resolve_treeish_path(
         return Ok(current_tree);
     }
     while let Some(part) = parts.next() {
-        let tree_object = repo.odb.read(&current_tree)?;
+        let tree_object = repo.read_replaced(&current_tree)?;
         if tree_object.kind != ObjectKind::Tree {
             return Err(Error::CorruptObject(format!(
                 "object {current_tree} is not a tree"
@@ -2629,7 +2629,7 @@ fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Resul
             resolve_commit_message_search_from(repo, oid, pattern)
         }
         Some("") => {
-            while let Ok(obj) = repo.odb.read(&oid) {
+            while let Ok(obj) = repo.read_replaced(&oid) {
                 if obj.kind != ObjectKind::Tag {
                     break;
                 }
@@ -2639,7 +2639,7 @@ fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Resul
         }
         Some("commit") => {
             oid = apply_peel(repo, oid, Some(""))?;
-            let obj = repo.odb.read(&oid)?;
+            let obj = repo.read_replaced(&oid)?;
             if obj.kind == ObjectKind::Commit {
                 Ok(oid)
             } else {
@@ -2649,7 +2649,7 @@ fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Resul
         Some("tree") => {
             // Peel tags, then dereference a commit to its tree.
             oid = apply_peel(repo, oid, Some(""))?;
-            let obj = repo.odb.read(&oid)?;
+            let obj = repo.read_replaced(&oid)?;
             match obj.kind {
                 ObjectKind::Tree => Ok(oid),
                 ObjectKind::Commit => Ok(parse_commit(&obj.data)?.tree),
@@ -2660,7 +2660,7 @@ fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Resul
             // ^{blob}: peel tags until we reach a blob
             let mut cur = oid;
             loop {
-                let obj = repo.odb.read(&cur)?;
+                let obj = repo.read_replaced(&cur)?;
                 match obj.kind {
                     ObjectKind::Blob => return Ok(cur),
                     ObjectKind::Tag => {
@@ -2673,7 +2673,7 @@ fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Resul
         Some("object") => Ok(oid),
         Some("tag") => {
             // ^{tag}: return if it's a tag object
-            let obj = repo.odb.read(&oid)?;
+            let obj = repo.read_replaced(&oid)?;
             if obj.kind == ObjectKind::Tag {
                 Ok(oid)
             } else {
@@ -2709,7 +2709,7 @@ Use '--' to separate paths from revisions, like this:\n\
     }
     let oid = resolve_revision_for_range_end(repo, base)?;
     let commit_oid = peel_to_commit_for_merge_base(repo, oid)?;
-    let obj = repo.odb.read(&commit_oid)?;
+    let obj = repo.read_replaced(&commit_oid)?;
     let commit = parse_commit(&obj.data)?;
     if commit.parents.len() != 1 {
         return Err(Error::Message(format!(
@@ -2773,7 +2773,7 @@ fn resolve_commit_message_search_from(
     visited.insert(start);
 
     while let Some(oid) = queue.pop_front() {
-        let obj = match repo.odb.read(&oid) {
+        let obj = match repo.read_replaced(&oid) {
             Ok(o) => o,
             Err(_) => continue,
         };
@@ -2939,7 +2939,7 @@ fn resolve_commit_message_search(
     visited.insert(start_oid);
 
     while let Some(oid) = queue.pop_front() {
-        let obj = match repo.odb.read(&oid) {
+        let obj = match repo.read_replaced(&oid) {
             Ok(o) => o,
             Err(_) => continue,
         };
