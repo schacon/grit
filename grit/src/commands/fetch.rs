@@ -2097,13 +2097,14 @@ fn fetch_remote(
                         FollowRemoteHead::Create | FollowRemoteHead::Warn => head_missing,
                         FollowRemoteHead::Always => true,
                     };
+                    let previous_for_hook = previous.clone();
                     if should_write {
                         refs::write_symbolic_ref(git_dir, &remote_head_ref, &mapped_default_ref)
                             .with_context(|| format!("updating symbolic ref {remote_head_ref}"))?;
                         updated_refs.push(remote_head_ref.clone());
                     } else if args.atomic {
                         let old_value =
-                            hook_old_value_remote_head_from_previous(&previous, remote_name);
+                            hook_old_value_remote_head_from_previous(&previous_for_hook);
                         let repo_for_symref_hook = repository_for_ref_hooks(git_dir)?;
                         run_prepare_only_symref_hook(
                             &repo_for_symref_hook,
@@ -2600,6 +2601,21 @@ fn read_loose_ref_chain(git_dir: &Path, refname: &str) -> Option<ObjectId> {
     None
 }
 
+fn read_loose_symbolic_ref_chain(git_dir: &Path, refname: &str) -> Option<String> {
+    let mut name = refname.to_string();
+    for _ in 0..20 {
+        let path = git_dir.join(&name);
+        let content = fs::read_to_string(&path).ok()?;
+        let line = content.trim_end_matches(['\n', '\r']);
+        if let Some(target) = line.strip_prefix("ref: ") {
+            name = target.trim().to_string();
+            continue;
+        }
+        return Some(name);
+    }
+    None
+}
+
 fn zero_oid() -> ObjectId {
     ObjectId::from_hex("0000000000000000000000000000000000000000").expect("null oid")
 }
@@ -2713,29 +2729,24 @@ fn pending_writes_ref(ops: &[PendingRefOp], refname: &str) -> bool {
     })
 }
 
-fn hook_old_value_remote_head_from_previous(
-    previous: &RemoteHeadPrevious,
-    remote_name: &str,
-) -> String {
+fn hook_old_value_remote_head_from_previous(previous: &RemoteHeadPrevious) -> String {
     match previous {
-        RemoteHeadPrevious::Symref(prev_short) => {
-            format!("ref:refs/remotes/{remote_name}/{prev_short}")
-        }
+        RemoteHeadPrevious::Symref(target) => format!("ref:{target}"),
         RemoteHeadPrevious::DetachedOid(oid) => oid.to_hex(),
         RemoteHeadPrevious::Missing => "0".repeat(40),
     }
 }
 
 fn repository_for_ref_hooks(git_dir: &Path) -> Result<Repository> {
-    if let Ok(repo) = Repository::open(git_dir, None) {
-        return Ok(repo);
-    }
     if git_dir.file_name().is_some_and(|n| n == ".git") {
         if let Some(work_tree) = git_dir.parent() {
             if let Ok(repo) = Repository::open(git_dir, Some(work_tree)) {
                 return Ok(repo);
             }
         }
+    }
+    if let Ok(repo) = Repository::open(git_dir, None) {
+        return Ok(repo);
     }
     Repository::discover(None).context("open repository for reference-transaction hooks")
 }
@@ -2747,12 +2758,13 @@ fn run_prepare_only_symref_hook(
     target: &str,
 ) -> Result<()> {
     let line = format!("{old_value} ref:{target} {refname}\n");
-    match run_hook(
+    let result = run_hook(
         repo,
         "reference-transaction",
         &["preparing"],
         Some(line.as_bytes()),
-    ) {
+    );
+    match result {
         HookResult::NotFound | HookResult::Success => Ok(()),
         HookResult::Failed(_) => {
             bail!("in 'preparing' phase, update aborted by the reference-transaction hook")
