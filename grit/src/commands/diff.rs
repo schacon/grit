@@ -27,9 +27,10 @@ use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{get_file_attrs, parse_gitattributes_content, DiffAttr};
 use grit_lib::diff::{
     anchored_unified_diff, count_changes, count_changes_with_algorithm, count_git_lines,
-    detect_renames, diff_index_to_tree, diff_index_to_worktree, diff_tree_to_worktree, diff_trees,
-    diffcore_count_changes, empty_blob_oid, format_stat_line, rewrite_dissimilarity_index_percent,
-    should_break_rewrite_for_stat, unified_diff, unified_diff_histogram_hunks_only,
+    detect_renames, diff_index_to_tree, diff_index_to_worktree, diff_slice_ops_compacted,
+    diff_tree_to_worktree, diff_trees, diffcore_count_changes, empty_blob_oid, format_stat_line,
+    resolve_indent_heuristic, rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat,
+    unified_diff, unified_diff_histogram_hunks_only,
     unified_diff_with_prefix_and_funcname_and_algorithm, zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
@@ -418,6 +419,7 @@ fn no_index_unified_patch_body(
     mode: &WhitespaceMode,
     algorithm: similar::Algorithm,
     use_git_histogram: bool,
+    indent_heuristic: bool,
 ) -> String {
     let old_slots = no_index_build_line_slots(old_bytes, mode);
     let new_slots = no_index_build_line_slots(new_bytes, mode);
@@ -1147,6 +1149,7 @@ pub(crate) fn unstaged_patch_for_add_edit(
         true,
         None,
         relative_prefix.as_deref(),
+        resolve_indent_heuristic(&diff_config, false, false),
     )?;
     Ok(String::from_utf8(out).context("diff patch was not valid UTF-8")?)
 }
@@ -3116,6 +3119,7 @@ fn run_no_index(args: Args) -> Result<()> {
             &args.anchored,
             line_algo_anchored,
             line_hist_anchored,
+            indent_heuristic,
         )
     } else {
         no_index_unified_patch_body(
@@ -3128,6 +3132,7 @@ fn run_no_index(args: Args) -> Result<()> {
             &ws_mode,
             algo_sim,
             algo_hist,
+            indent_heuristic,
         )
     };
 
@@ -3385,6 +3390,7 @@ fn run_no_index_dirs(args: Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
             func_matcher.as_ref(),
             algo,
             use_git_histogram,
+            indent_heuristic,
         );
         write!(out, "{patch}")?;
     }
@@ -5055,6 +5061,7 @@ fn write_blob_to_blob_patch_fragment(
     use_color: bool,
     suppress_incomplete_highlight_after_plus: bool,
 ) -> Result<()> {
+    let indent_heuristic = resolve_indent_heuristic(algo_ctx.config.as_ref(), false, false);
     let (algo, use_git_histogram) = diff_algorithm_for_path(path_for_attrs, algo_cli, algo_ctx);
     let func_matcher = matcher_for_path_parsed(
         algo_ctx.config.as_ref(),
@@ -5076,6 +5083,7 @@ fn write_blob_to_blob_patch_fragment(
         func_matcher.as_ref(),
         algo,
         use_git_histogram,
+        indent_heuristic,
     );
     let patch = if suppress_blank_empty {
         strip_blank_context_trailing_space(&patch)
@@ -5139,6 +5147,7 @@ fn write_patch_with_prefix(
                         SubmodulePatchFormat::Log,
                         submodule_ignore,
                         &path_for_attrs,
+                        indent_heuristic,
                     )?;
                     continue;
                 }
@@ -5502,6 +5511,7 @@ fn write_patch_with_prefix(
                 func_matcher.as_ref(),
                 algo,
                 use_git_histogram,
+                indent_heuristic,
             );
             let patch = if suppress_blank_empty {
                 strip_blank_context_trailing_space(&patch)
@@ -6333,6 +6343,7 @@ pub(crate) fn check_whitespace_errors(
         std::process::exit(128);
     }
     let mut has_errors = false;
+    let indent_heuristic = resolve_indent_heuristic(config, false, false);
 
     for entry in entries {
         if entry.status == DiffStatus::Deleted {
@@ -6389,6 +6400,7 @@ pub(crate) fn check_whitespace_errors(
             None,
             similar::Algorithm::Myers,
             false,
+            indent_heuristic,
         );
 
         let patch_lines: Vec<&str> = patch.lines().collect();

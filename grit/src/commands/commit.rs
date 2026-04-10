@@ -1991,6 +1991,7 @@ fn run_commit_patch_mode(
                     &cur_work,
                     &ops[s..e],
                     3,
+                    true,
                 );
 
                 writeln!(out, "diff --git a/{path} b/{path}").ok();

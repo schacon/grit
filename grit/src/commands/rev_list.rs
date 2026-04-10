@@ -551,12 +551,8 @@ pub fn run(args: Args) -> Result<()> {
         };
         if let Ok(path) = std::env::var("GIT_TRACE2_EVENT") {
             if !path.is_empty() {
-                let _ = crate::trace2_write_json_data_line(
-                    &path,
-                    "load_midx_revindex",
-                    "source",
-                    kind,
-                );
+                let _ =
+                    crate::trace2_write_json_data_line(&path, "load_midx_revindex", "source", kind);
             }
         }
         return Ok(());

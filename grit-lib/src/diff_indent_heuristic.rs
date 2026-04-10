@@ -150,11 +150,6 @@ struct SplitScore {
 }
 
 fn score_add_split(m: &SplitMeasurement, s: &mut SplitScore) {
-    
-    
-    
-    
-
     if m.pre_indent == -1 && m.pre_blank == 0 {
         s.penalty += START_OF_FILE_PENALTY;
     }

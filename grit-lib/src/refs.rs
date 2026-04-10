@@ -806,8 +806,7 @@ pub fn read_symbolic_ref(git_dir: &Path, refname: &str) -> Result<Option<String>
             Err(Error::Io(ref e))
                 if e.kind() == io::ErrorKind::NotFound
                     || e.kind() == io::ErrorKind::NotADirectory
-                    || e.kind() == io::ErrorKind::IsADirectory =>
-            {}
+                    || e.kind() == io::ErrorKind::IsADirectory => {}
             Err(e) => return Err(e),
         }
 

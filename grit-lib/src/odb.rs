@@ -366,7 +366,9 @@ impl Odb {
         }
 
         if self.config_git_dir.is_some() && self.core_multi_pack_index_enabled() {
-            if let Some(obj) = try_read_object_via_midx(&self.objects_dir, oid)? { return Ok(obj) }
+            if let Some(obj) = try_read_object_via_midx(&self.objects_dir, oid)? {
+                return Ok(obj);
+            }
         }
 
         // Fall back to pack files.

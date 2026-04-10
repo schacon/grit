@@ -935,12 +935,8 @@ pub fn fetch_via_upload_pack_skipping(
     Option<ObjectId>,
 )> {
     let client_proto = protocol_wire::effective_client_protocol_version();
-    let mut child = spawn_upload_pack_with_proto(
-        upload_pack_cmd,
-        remote_repo_path,
-        client_proto,
-        None,
-    )?;
+    let mut child =
+        spawn_upload_pack_with_proto(upload_pack_cmd, remote_repo_path, client_proto, None)?;
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 
@@ -957,7 +953,9 @@ pub fn fetch_via_upload_pack_skipping(
             drain_bundle_uri_response(&mut stdout)?;
         }
         let pair = v2_ls_refs_for_fetch(&mut stdin, &mut stdout)?;
-        let filter_sup = caps.iter().any(|l| l.split_whitespace().any(|t| t == "filter"));
+        let filter_sup = caps
+            .iter()
+            .any(|l| l.split_whitespace().any(|t| t == "filter"));
         (pair.0, pair.1, Some(caps), filter_sup)
     } else {
         let (adv, hsym, saw_v1, _, server_sid, fs) = read_advertisement(&mut stdout)?;
@@ -1493,8 +1491,7 @@ fn fetch_git_daemon_upload_pack_over_streams(
         .replace('\n', "");
     trace_packet_fetch('>', &trace_show);
 
-    let (advertised, head_symref, saw_v1, saw_v2, server_sid, _) =
-        read_advertisement(stream)?;
+    let (advertised, head_symref, saw_v1, saw_v2, server_sid, _) = read_advertisement(stream)?;
     if saw_v2 {
         trace2_transfer::emit_negotiated_version_client_fetch_v2();
     } else {

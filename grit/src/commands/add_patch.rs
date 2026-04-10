@@ -245,6 +245,7 @@ pub(crate) fn run_add_patch(
                     &cur_work,
                     &ops[s..e],
                     3,
+                    true,
                 );
 
                 writeln!(out, "diff --git a/{path_str} b/{path_str}").ok();
@@ -439,7 +440,7 @@ fn handle_deleted_file(
         let n_hunks = hunk_ranges.len();
         let (s, e) = hunk_ranges[hunk_cursor];
         let hunk_only =
-            partial_unified_for_op_range(path_str, &index_blob, &work_blob, &ops[s..e], 3);
+            partial_unified_for_op_range(path_str, &index_blob, &work_blob, &ops[s..e], 3, true);
         writeln!(out, "diff --git a/{path_str} b/{path_str}").ok();
         write!(out, "--- a/{path_str}\n+++ b/{path_str}\n").ok();
         write!(out, "{hunk_only}").ok();

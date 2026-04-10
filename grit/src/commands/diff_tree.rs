@@ -164,6 +164,8 @@ struct Options {
     check: bool,
     /// Compare merge-base(HEAD, A) vs B trees (two commits required).
     merge_base: bool,
+    /// Line-diff indent heuristic (Git `diff.indentHeuristic`).
+    indent_heuristic: bool,
 }
 
 impl Default for Options {
@@ -215,6 +217,7 @@ impl Default for Options {
             ignore_cr_at_eol: false,
             check: false,
             merge_base: false,
+            indent_heuristic: true,
         }
     }
 }

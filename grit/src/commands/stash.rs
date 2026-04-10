@@ -3961,7 +3961,7 @@ fn show_blob_diff(odb: &Odb, old_oid: &ObjectId, new_oid: &ObjectId, path: &str)
     let old_text = String::from_utf8_lossy(&old_blob.data);
     let new_text = String::from_utf8_lossy(&new_blob.data);
 
-    let u = unified_diff(&old_text, &new_text, path, path, 3);
+    let u = unified_diff(&old_text, &new_text, path, path, 3, true);
     let mut lines = u.lines();
     let _ = lines.next();
     let _ = lines.next();

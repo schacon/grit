@@ -216,7 +216,14 @@ fn show_diff(
     let dst = result_bytes(repo, macros, rules, odb, entry)?;
     let old_s = String::from_utf8_lossy(&src);
     let new_s = String::from_utf8_lossy(&dst);
-    let patch = unified_diff(old_s.as_ref(), new_s.as_ref(), &entry.path, &entry.path, 3);
+    let patch = unified_diff(
+        old_s.as_ref(),
+        new_s.as_ref(),
+        &entry.path,
+        &entry.path,
+        3,
+        true,
+    );
     Ok(trim_diff_header(&patch))
 }
 

@@ -139,6 +139,86 @@ pub fn unified_diff_histogram_with_prefix_and_funcname(
     output
 }
 
+/// `diff.indentHeuristic` from config (Git defaults to true when unset).
+#[must_use]
+pub fn indent_heuristic_from_config(config: &ConfigSet) -> bool {
+    match config.get_bool("diff.indentHeuristic") {
+        Some(Ok(b)) => b,
+        Some(Err(_)) | None => true,
+    }
+}
+
+/// Resolve indent heuristic: `--no-indent-heuristic` and `--indent-heuristic` override config.
+#[must_use]
+pub fn resolve_indent_heuristic(
+    config: &ConfigSet,
+    cli_indent_heuristic: bool,
+    cli_no_indent_heuristic: bool,
+) -> bool {
+    if cli_no_indent_heuristic {
+        false
+    } else if cli_indent_heuristic {
+        true
+    } else {
+        indent_heuristic_from_config(config)
+    }
+}
+
+/// Parse `--indent-heuristic` / `--no-indent-heuristic` from a plumbing argv slice (last occurrence wins).
+#[must_use]
+pub fn parse_indent_heuristic_cli_flags(argv: &[String]) -> (bool, bool) {
+    let mut indent_heuristic = false;
+    let mut no_indent_heuristic = false;
+    for a in argv {
+        match a.as_str() {
+            "--indent-heuristic" => {
+                indent_heuristic = true;
+                no_indent_heuristic = false;
+            }
+            "--no-indent-heuristic" => {
+                no_indent_heuristic = true;
+                indent_heuristic = false;
+            }
+            _ => {}
+        }
+    }
+    (indent_heuristic, no_indent_heuristic)
+}
+
+/// Line-diff ops for string slices after Git `xdl_change_compact` (and optional indent heuristic).
+#[must_use]
+pub fn diff_slice_ops_compacted(
+    old_lines: &[&str],
+    new_lines: &[&str],
+    algorithm: similar::Algorithm,
+    indent_heuristic: bool,
+) -> Vec<similar::DiffOp> {
+    diff_indent_heuristic::diff_slice_ops_compacted(
+        old_lines,
+        new_lines,
+        algorithm,
+        indent_heuristic,
+    )
+}
+
+/// Map each line in `new_joined` to its origin in `old_joined` after Git-style compaction (for blame).
+#[must_use]
+pub fn map_new_to_old_lines_compacted(
+    old_joined: &str,
+    new_joined: &str,
+    algorithm: similar::Algorithm,
+    indent_heuristic: bool,
+    new_line_count: usize,
+) -> Vec<Option<usize>> {
+    let ops = diff_indent_heuristic::diff_lines_ops_compacted(
+        old_joined,
+        new_joined,
+        algorithm,
+        indent_heuristic,
+    );
+    diff_indent_heuristic::map_new_to_old_from_ops(&ops, new_line_count)
+}
+
 /// The kind of change between two sides of a diff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffStatus {
@@ -2100,6 +2180,7 @@ pub fn unified_diff_with_prefix_and_funcname(
         funcname_matcher,
         similar::Algorithm::Myers,
         false,
+        indent_heuristic,
     )
 }
 
@@ -2118,6 +2199,7 @@ pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
     funcname_matcher: Option<&FuncnameMatcher>,
     algorithm: similar::Algorithm,
     use_git_histogram: bool,
+    indent_heuristic: bool,
 ) -> String {
     if use_git_histogram {
         return unified_diff_histogram_with_prefix_and_funcname(
@@ -2219,6 +2301,7 @@ pub fn anchored_unified_diff(
     anchors: &[String],
     algorithm: similar::Algorithm,
     use_git_histogram: bool,
+    indent_heuristic: bool,
 ) -> String {
     use similar::TextDiff;
 
@@ -2267,6 +2350,7 @@ pub fn anchored_unified_diff(
             None,
             algorithm,
             use_git_histogram,
+            indent_heuristic,
         );
     }
 

@@ -7229,7 +7229,16 @@ fn write_commit_diff_body(
     if show_patch {
         let config = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
         for entry in list_patch {
-            log_write_patch_entry(out, odb, git_dir, &config, entry, args, patch_context)?;
+            log_write_patch_entry(
+                out,
+                odb,
+                git_dir,
+                &config,
+                entry,
+                args,
+                patch_context,
+                indent_heuristic,
+            )?;
         }
     }
 

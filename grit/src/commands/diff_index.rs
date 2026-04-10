@@ -3,8 +3,9 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
-    detect_renames, diff_trees, read_submodule_head_oid, stat_matches,
-    submodule_commit_subject_line, zero_oid, DiffEntry, DiffStatus,
+    detect_renames, diff_trees, parse_indent_heuristic_cli_flags, read_submodule_head_oid,
+    resolve_indent_heuristic, stat_matches, submodule_commit_subject_line, zero_oid, DiffEntry,
+    DiffStatus,
 };
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK, MODE_TREE,
@@ -576,6 +577,7 @@ struct Options {
     nul_terminated: bool,
     relative: bool,
     check: bool,
+    indent_heuristic: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -831,6 +833,13 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         bail!("usage: grit diff-index [-m] [--cached] [--raw] [--quiet] [--exit-code] [--abbrev[=<n>]] <tree-ish> [<path>...]");
     };
 
+    let (cli_ind, cli_no) = parse_indent_heuristic_cli_flags(argv);
+    let indent_heuristic = resolve_indent_heuristic(
+        &ConfigSet::load(None, true).unwrap_or_default(),
+        cli_ind,
+        cli_no,
+    );
+
     Ok(Options {
         tree_ish,
         merge_base,
@@ -858,6 +867,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         nul_terminated,
         relative,
         check,
+        indent_heuristic,
     })
 }
 
@@ -2099,6 +2109,7 @@ pub(crate) fn write_patch_entry(
                 submodule_ignore,
                 submodule_format,
                 context_lines,
+                indent_heuristic,
             )?;
             let mut blob_del = entry.clone();
             blob_del.status = DiffStatus::Deleted;
@@ -2107,7 +2118,16 @@ pub(crate) fn write_patch_entry(
             blob_del.new_path = None;
             blob_del.new_mode = "000000".to_owned();
             blob_del.new_oid = z;
-            write_patch_entry_inner(out, repo, odb, &blob_del, context_lines, work_tree, "")?;
+            write_patch_entry_inner(
+                out,
+                repo,
+                odb,
+                &blob_del,
+                context_lines,
+                work_tree,
+                "",
+                indent_heuristic,
+            )?;
             return Ok(());
         }
 
@@ -2120,7 +2140,16 @@ pub(crate) fn write_patch_entry(
             blob_del.new_path = None;
             blob_del.new_mode = "000000".to_owned();
             blob_del.new_oid = z;
-            write_patch_entry_inner(out, repo, odb, &blob_del, context_lines, work_tree, "")?;
+            write_patch_entry_inner(
+                out,
+                repo,
+                odb,
+                &blob_del,
+                context_lines,
+                work_tree,
+                "",
+                indent_heuristic,
+            )?;
             write_submodule_diff_recursive(
                 out,
                 repo,

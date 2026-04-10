@@ -6,11 +6,11 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
-use grit_lib::crlf;
 use grit_lib::diff::{
-    count_changes, detect_copies, empty_blob_oid, format_stat_line, hash_worktree_file,
-    read_submodule_head_oid, rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat,
-    stat_matches, unified_diff, zero_oid, DiffEntry, DiffStatus,
+    count_changes, detect_copies, empty_blob_oid, format_stat_line,
+    parse_indent_heuristic_cli_flags, resolve_indent_heuristic,
+    rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat, stat_matches, unified_diff,
+    zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
@@ -652,44 +652,18 @@ fn collect_changes(
 
     let mut changes: BTreeMap<String, Change> = BTreeMap::new();
 
-    let attr_rules = crlf::load_gitattributes_for_checkout(work_tree, "", &index, &repo.odb);
-    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-    let conv = crlf::ConversionConfig::from_config(&config);
-
     if options.stage == 0 {
         // Normal mode: compare stage-0 entries against worktree.
         // Use stat info to skip unchanged files (avoid hashing).
         for (path, (idx_mode, idx_oid, idx_entry)) in &stage0 {
             let abs = work_tree.join(path);
-            match read_worktree_info_fast(
-                repo,
-                &abs,
-                path.as_str(),
-                idx_entry,
-                &attr_rules,
-                &config,
-                &conv,
-            )? {
+            match read_worktree_info_fast(repo, &abs, idx_entry)? {
                 WorktreeStatus::Unchanged => { /* skip — stat says identical */ }
                 WorktreeStatus::Modified(wt_mode, wt_oid) => {
                     let idx_canonical = canonicalize_mode(*idx_mode);
-                    let wt_canonical = canonicalize_mode(wt_mode);
-                    if options.ignore_submodules
-                        && idx_canonical == MODE_GITLINK
-                        && wt_canonical == MODE_GITLINK
-                        && wt_oid == *idx_oid
-                    {
-                        // `diff.ignoreSubmodules`: same recorded commit and clean submodule HEAD;
-                        // ignore untracked paths inside the checkout (t1013).
-                        continue;
-                    }
                     let content_matches = wt_oid == *idx_oid && wt_mode == idx_canonical;
-                    let stat_agrees = fs::symlink_metadata(&abs)
-                        .map(|m| stat_matches(idx_entry, &m))
-                        .unwrap_or(false);
                     if content_matches
                         && index_stat_is_trusted(idx_entry)
-                        && stat_agrees
                         && !idx_entry.intent_to_add()
                     {
                         continue;
@@ -1200,11 +1174,7 @@ fn path_component_is_not_directory(err: &std::io::Error) -> bool {
 fn read_worktree_info_fast(
     repo: &Repository,
     abs_path: &Path,
-    rel_path: &str,
     index_entry: &IndexEntry,
-    attr_rules: &[crlf::AttrRule],
-    config: &ConfigSet,
-    conv: &crlf::ConversionConfig,
 ) -> Result<WorktreeStatus> {
     if index_entry.assume_unchanged() || index_entry.skip_worktree() {
         return Ok(WorktreeStatus::Unchanged);
@@ -1227,6 +1197,8 @@ fn read_worktree_info_fast(
         Err(e) => return Err(e.into()),
     };
 
+    let _ = repo;
+
     // Intent-to-add: `ie_match_stat` in Git always reports dirty until fully staged.
     // Never treat as unchanged from stat alone (t2203 `git diff-files` vs `git diff`).
     if index_entry.intent_to_add() {
@@ -1248,16 +1220,14 @@ fn read_worktree_info_fast(
         if meta.file_type().is_dir() {
             let dot_git = abs_path.join(".git");
             if dot_git.exists() {
-                let sub_oid = read_submodule_head_oid(abs_path).unwrap_or(index_entry.oid);
+                let sub_oid = read_submodule_head(abs_path).unwrap_or(index_entry.oid);
                 return Ok(WorktreeStatus::Modified(0o160000, sub_oid));
             }
         }
         return Ok(WorktreeStatus::Missing);
     }
 
-    // Fast path: if stat info matches the index, the file is *probably* unchanged.
-    // Git still re-hashes when size+timestamps match but content was rewritten in place
-    // ("racy git"); same-size edits after `git add` must not look clean (`t4124`).
+    // Fast path: if stat info matches the index, file is unchanged.
     // But also check if the index mode differs from the worktree mode
     // (e.g., after git update-index --chmod=+x).
     if meta.file_type().is_file() && stat_matches(index_entry, &meta) {
@@ -1268,20 +1238,7 @@ fn read_worktree_info_fast(
         };
         let idx_mode = canonicalize_mode(index_entry.mode);
         if wt_mode == idx_mode {
-            let file_attrs = crlf::get_file_attrs(attr_rules, rel_path, false, config);
-            let wt_oid = hash_worktree_file(
-                &repo.odb,
-                abs_path,
-                &meta,
-                conv,
-                &file_attrs,
-                rel_path,
-                Some(index_entry),
-            )?;
-            if wt_oid == index_entry.oid {
-                return Ok(WorktreeStatus::Unchanged);
-            }
-            return Ok(WorktreeStatus::Modified(wt_mode, wt_oid));
+            return Ok(WorktreeStatus::Unchanged);
         }
         // Mode differs — report as modified with same OID.
         return Ok(WorktreeStatus::Modified(wt_mode, index_entry.oid));
@@ -1309,7 +1266,7 @@ fn read_worktree_info_fast(
         let dot_git = abs_path.join(".git");
         if dot_git.exists() {
             // Treat as a submodule (mode 160000)
-            let sub_oid = read_submodule_head_oid(abs_path).unwrap_or(index_entry.oid);
+            let sub_oid = read_submodule_head(abs_path).unwrap_or(index_entry.oid);
             return Ok(WorktreeStatus::Modified(0o160000, sub_oid));
         }
         if canonicalize_mode(index_entry.mode) == MODE_GITLINK {
@@ -1323,6 +1280,20 @@ fn read_worktree_info_fast(
     }
 
     Ok(WorktreeStatus::Missing)
+}
+
+/// Read the current HEAD commit OID of a submodule at the given path.
+fn read_submodule_head(path: &Path) -> Result<ObjectId> {
+    let head_path = path.join(".git").join("HEAD");
+    let content = std::fs::read_to_string(&head_path)?;
+    let content = content.trim();
+    if let Some(refname) = content.strip_prefix("ref: ") {
+        let ref_file = path.join(".git").join(refname);
+        let ref_content = std::fs::read_to_string(&ref_file)?;
+        Ok(ref_content.trim().parse()?)
+    } else {
+        Ok(content.parse()?)
+    }
 }
 
 /// Read mode and OID for a working-tree file; returns `None` if missing.

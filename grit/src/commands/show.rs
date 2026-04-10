@@ -14,15 +14,16 @@ use grit_lib::combined_diff_patch::CombinedDiffWsOptions;
 use grit_lib::combined_tree_diff::{combined_diff_paths_filtered, CombinedTreeDiffOptions};
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
-    anchored_unified_diff, detect_copies, detect_renames, diff_trees, unified_diff, zero_oid,
-    DiffEntry, DiffStatus,
+    anchored_unified_diff, detect_copies, detect_renames, diff_trees,
+    parse_indent_heuristic_cli_flags, resolve_indent_heuristic, unified_diff, zero_oid, DiffEntry,
+    DiffStatus,
 };
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::merge_base::merge_bases_first_vs_rest;
 use grit_lib::merge_diff::{
     blob_oid_at_path, blob_text_for_diff, blob_text_for_diff_with_oid, diff_textconv_active,
-    format_combined_binary, format_combined_textconv_patch, format_parent_patch, is_binary_for_diff,
-    read_blob_at_path,
+    format_combined_binary, format_combined_textconv_patch, format_parent_patch,
+    is_binary_for_diff, read_blob_at_path,
 };
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -1464,6 +1465,7 @@ fn show_commit(
                 &args.anchored,
                 line_algo,
                 false,
+                indent_heuristic,
             )
         } else {
             unified_diff(
