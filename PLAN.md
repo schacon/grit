@@ -611,7 +611,7 @@ commit → check it off → move on.
 - [ ] `t5545-push-options` ███████░░░░░░░░░░░░░ 5/13 (8 left) — pushing to a repository using push options
 - [ ] `t5322-pack-objects-sparse` █████░░░░░░░░░░░░░░░ 3/11 (8 left) — pack-objects object selection using sparse algorithm
 - [x] `t5620-backfill` — git backfill on partial clones (10/10 harness)
-- [ ] `t5315-pack-objects-compression` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — pack-object compression configuration
+- [x] `t5315-pack-objects-compression` ████████████████████ 9/9 — pack-object compression configuration
 - [ ] `t5506-remote-groups` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — git remote group handling
 - [x] `t5900-repo-selection` — selecting remote repo in ambiguous cases (8/8)
 - [ ] `t5582-fetch-negative-refspec` ████████░░░░░░░░░░░░ 7/16 (9 left) — 

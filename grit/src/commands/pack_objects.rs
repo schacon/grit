@@ -831,6 +831,12 @@ pub fn run(mut args: Args) -> Result<()> {
         vec![write_entries]
     };
 
+    let config = ConfigSet::load(Some(&repo.git_dir), true).context("read repository config")?;
+    let pack_zlib_level = config
+        .pack_objects_zlib_level()
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let zlib_compression = Compression::new(pack_zlib_level as u32);
+
     if args.stdout {
         if !args.quiet {
             let reused_pack = trace_pack_reused.unwrap_or(0);
@@ -844,7 +850,8 @@ pub fn run(mut args: Args) -> Result<()> {
         let stdout = io::stdout();
         let mut out = stdout.lock();
         for chunk in &chunks {
-            let pack_bytes = build_pack(chunk, use_ofs_delta, pack_hash_bytes)?;
+            let pack_bytes =
+                build_pack(chunk, use_ofs_delta, pack_hash_bytes, zlib_compression)?;
             out.write_all(&pack_bytes)?;
         }
         out.flush()?;
@@ -856,7 +863,8 @@ pub fn run(mut args: Args) -> Result<()> {
 
         let mut pack_hashes: Vec<String> = Vec::new();
         for chunk in &chunks {
-            let pack_bytes = build_pack(chunk, use_ofs_delta, pack_hash_bytes)?;
+            let pack_bytes =
+                build_pack(chunk, use_ofs_delta, pack_hash_bytes, zlib_compression)?;
             let pack_hash = hex::encode(&pack_bytes[pack_bytes.len() - pack_hash_bytes..]);
             pack_hashes.push(pack_hash.clone());
             let pack_path = format!("{base}-{pack_hash}.pack");
@@ -2506,6 +2514,7 @@ fn build_pack(
     entries: &[PackWriteEntry],
     use_ofs_delta: bool,
     pack_hash_bytes: usize,
+    zlib: Compression,
 ) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
     buf.extend_from_slice(b"PACK");
@@ -2525,7 +2534,7 @@ fn build_pack(
                     ObjectKind::Tag => 4,
                 };
                 encode_pack_object_header(&mut buf, type_code, pe.data.len());
-                let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+                let mut enc = ZlibEncoder::new(Vec::new(), zlib);
                 enc.write_all(&pe.data)?;
                 let compressed = enc.finish()?;
                 buf.extend_from_slice(&compressed);
@@ -2552,7 +2561,7 @@ fn build_pack(
                     encode_pack_object_header(&mut buf, 7, delta.len());
                     buf.extend_from_slice(base_pack.as_slice());
                 }
-                let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+                let mut enc = ZlibEncoder::new(Vec::new(), zlib);
                 enc.write_all(delta)?;
                 let compressed = enc.finish()?;
                 buf.extend_from_slice(&compressed);

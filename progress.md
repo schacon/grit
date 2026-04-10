@@ -19,6 +19,7 @@ Task lines in `PLAN.md`: 331 completed (`[x]`), 5 in progress (`[~]`), 435 remai
 
 ## Recently completed
 
+- `t5315-pack-objects-compression` — 9/9 tests pass (`pack-objects` honors `core.compression` / `pack.compression` for zlib deflate level via `ConfigSet::pack_objects_zlib_level`; harness CSV/dashboards refreshed)
 - `t5325-reverse-index` — 16/16 tests pass (RIDX `.rev` write/read: `index-pack` `--[no-]rev-index` + `pack.writeReverseIndex`, `-o` sibling `.rev`, `--rev-index --verify` hashfile errors; `pack-objects` reverse index; `cat-file %(objectsize:disk)` uses on-disk rev when `pack.readReverseIndex` true + test env hooks; `fsck` validates `.rev` with Git-ordered diagnostics)
 - `t4008-diff-break-rewrite` — 14/14 tests pass (`diff-index -B` / `--break-rewrites`, break-merge with rename/copy, `-B -M` copy-from-typechange, tree↔symlink `T` in uncached path, worktree bytes for zero-OID adds in rename detection; raw add lines show hashed blob when needed)
 - `t1301-shared-repo` — 22/22 tests pass (`init`/`re-init`: `--shared` + template `core.sharedRepository`, invalid octal dies like Git, bare init ignores parent cwd config; `update-server-info` atomic writes + `adjust_shared_perm`; `commit`/`repack` refresh shared chmod for new `.git` paths; `ConfigFile::get` for local-only shared reads; harness CSV/dashboards refreshed)
