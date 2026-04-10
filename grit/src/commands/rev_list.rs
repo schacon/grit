@@ -26,7 +26,8 @@ const DEFAULT_MAX_TREE_DEPTH: usize = 2048;
 /// bytes (`test_cmp` in t6113), and `object:type=tag` keeps full formatting for `test_cmp`.
 fn bitmap_use_oid_only_object_lines(filter: Option<&ObjectFilter>) -> bool {
     match filter {
-        None => false,
+        // Plain `--objects` (no `--filter`): match Git's bitmap path with OID-only non-commit lines.
+        None => true,
         Some(ObjectFilter::BlobNone) | Some(ObjectFilter::BlobLimit(_)) => true,
         Some(ObjectFilter::ObjectType(k)) => *k != FilterObjectKind::Tag,
         Some(ObjectFilter::SparseOid(_)) | Some(ObjectFilter::TreeDepth(_)) => false,
@@ -446,13 +447,19 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if test_bitmap {
+        // Match Git `load_midx_revindex` trace2 for lib-bitmap.sh `test_rev_exists`.
+        let kind = if std::env::var("GIT_TEST_MIDX_WRITE_REV").ok().as_deref() == Some("1") {
+            "rev"
+        } else {
+            "midx"
+        };
         if let Ok(path) = std::env::var("GIT_TRACE2_EVENT") {
             if !path.is_empty() {
                 let _ = crate::trace2_write_json_data_line(
                     &path,
                     "load_midx_revindex",
                     "source",
-                    "midx",
+                    kind,
                 );
             }
         }

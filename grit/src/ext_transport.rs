@@ -327,7 +327,7 @@ pub fn fetch_via_ext_skipping(
         write_git_daemon_request(&mut stdin, service, repo_path, spec.git_vhost.as_deref())?;
     }
 
-    let (advertised, head_symref, saw_v1, saw_v2, server_sid) =
+    let (advertised, head_symref, saw_v1, saw_v2, server_sid, _) =
         fetch_transport::read_advertisement(&mut stdout)?;
     if saw_v2 {
         crate::trace2_transfer::emit_negotiated_version_client_fetch_v2();
@@ -395,6 +395,7 @@ pub fn fetch_via_ext_skipping(
         &mut stdin,
         &mut stdout,
         &wants,
+        None::<&str>,
     )?;
     drop(stdin);
 

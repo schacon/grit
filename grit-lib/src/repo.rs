@@ -1978,6 +1978,15 @@ fn resolve_git_dir_env_path(git_dir: &Path) -> Result<PathBuf> {
     Ok(git_dir.to_path_buf())
 }
 
+/// Resolve an explicit git directory path the same way as `GIT_DIR` (including gitfile indirection).
+///
+/// # Errors
+///
+/// Returns [`Error::NotARepository`] for invalid gitfile content.
+pub fn resolve_git_directory_arg(git_dir: &Path) -> Result<PathBuf> {
+    resolve_git_dir_env_path(git_dir)
+}
+
 /// Resolves a work tree's `.git` path (directory or gitfile) to the real git directory.
 ///
 /// # Errors

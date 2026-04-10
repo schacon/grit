@@ -9,6 +9,7 @@ use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::midx::{write_multi_pack_index_with_options, WriteMultiPackIndexOptions};
 use grit_lib::repo::Repository;
 use std::fs;
+use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -45,6 +46,9 @@ pub struct WriteArgs {
     /// Write placeholder bitmap sidecar (compat with Git `--bitmap`).
     #[arg(long)]
     pub bitmap: bool,
+    /// Omit bitmap / `.rev` sidecars even when `--bitmap` would write them.
+    #[arg(long = "no-bitmap")]
+    pub no_bitmap: bool,
     /// Preferred pack basename (`pack-<hash>.idx` or `.pack`); RIDX position 0 in the MIDX.
     #[arg(long = "preferred-pack", value_name = "FILE")]
     pub preferred_pack: Option<String>,
@@ -108,6 +112,7 @@ pub fn run_from_argv(argv: &[String]) -> Result<()> {
         "write" => {
             let mut incremental = false;
             let mut bitmap = false;
+            let mut no_bitmap = false;
             let mut preferred_pack = None;
             let mut stdin_packs = false;
             let mut i = 1usize;
@@ -116,6 +121,7 @@ pub fn run_from_argv(argv: &[String]) -> Result<()> {
                 match a {
                     "--incremental" => incremental = true,
                     "--bitmap" => bitmap = true,
+                    "--no-bitmap" => no_bitmap = true,
                     "--stdin-packs" => stdin_packs = true,
                     _ if a.starts_with("--preferred-pack=") => {
                         preferred_pack = Some(a["--preferred-pack=".len()..].to_string());
@@ -136,6 +142,7 @@ pub fn run_from_argv(argv: &[String]) -> Result<()> {
                 &WriteArgs {
                     incremental,
                     bitmap,
+                    no_bitmap,
                     preferred_pack,
                     stdin_packs,
                 },
@@ -179,8 +186,7 @@ fn pack_dir(repo: &Repository) -> PathBuf {
 fn cmd_write(repo: &Repository, args: &WriteArgs) -> Result<()> {
     let write_rev = std::env::var("GIT_TEST_MIDX_WRITE_REV").ok().as_deref() == Some("1");
     let pack_names_subset_ordered = if args.stdin_packs {
-        use std::io::BufRead;
-        let stdin = std::io::stdin();
+        let stdin = io::stdin();
         let mut lines = Vec::new();
         for line in stdin.lock().lines() {
             let line = line.context("read stdin for multi-pack-index --stdin-packs")?;
@@ -193,15 +199,16 @@ fn cmd_write(repo: &Repository, args: &WriteArgs) -> Result<()> {
     } else {
         None
     };
+    let write_bitmaps = args.bitmap && !args.no_bitmap;
     write_multi_pack_index_with_options(
         &pack_dir(repo),
         &WriteMultiPackIndexOptions {
             preferred_pack_idx: None,
             preferred_pack_name: args.preferred_pack.clone(),
             pack_names_subset_ordered,
-            write_bitmap_placeholders: args.bitmap,
+            write_bitmap_placeholders: write_bitmaps,
             incremental: args.incremental,
-            write_rev_placeholder: write_rev,
+            write_rev_placeholder: write_rev && write_bitmaps,
         },
     )
     .map_err(|e| anyhow::anyhow!("{e}"))

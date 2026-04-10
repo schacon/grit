@@ -4,7 +4,7 @@
 //! negotiates want/have (protocol v0, `multi_ack_detailed`), then streams a
 //! packfile (side-band-64k) to the client.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::zero_oid;
@@ -115,6 +115,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut deepen_since: Option<i64> = None;
     let mut deepen_not: Vec<ObjectId> = Vec::new();
     let mut use_thin_pack_cli = false;
+    let mut list_objects_filter: Option<String> = None;
 
     loop {
         match next_upload_pack_packet(&mut stdin, &mut pending)? {
@@ -135,6 +136,13 @@ pub fn run(args: Args) -> Result<()> {
                 break;
             }
             Some(pkt_line::Packet::Data(line)) => {
+                if let Some(spec) = line.strip_prefix("filter ") {
+                    if list_objects_filter.is_some() {
+                        bail!("duplicate filter line from fetch client");
+                    }
+                    list_objects_filter = Some(spec.trim().to_owned());
+                    continue;
+                }
                 // One pkt-line payload may concatenate many commands without `\n` (stateless HTTP).
                 let mut pos = 0usize;
                 while pos < line.len() {
@@ -413,6 +421,7 @@ pub fn run(args: Args) -> Result<()> {
             &repo.git_dir,
             thin,
             shallow_pack,
+            list_objects_filter.as_deref(),
         )?;
         {
             let mut pin = child.stdin.take().context("pack-objects stdin")?;

@@ -17,7 +17,9 @@ use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{peel_to_commit_for_merge_base, resolve_revision};
+use grit_lib::rev_parse::{
+    peel_to_commit_for_merge_base, resolve_revision, try_peel_to_commit_for_merge_base,
+};
 use grit_lib::unpack_objects::{unpack_objects, UnpackOptions};
 
 use crate::commands::index_pack;
@@ -42,6 +44,14 @@ fn peel_commit_oid_for_negotiation(repo: &Repository, oid: ObjectId) -> Result<O
         grit_lib::error::Error::InvalidRef(msg) => anyhow::anyhow!(msg),
         other => other.into(),
     })
+}
+
+/// Like [`peel_commit_oid_for_negotiation`], but tags that peel to non-commits are skipped.
+fn try_peel_commit_oid_for_negotiation(
+    repo: &Repository,
+    oid: ObjectId,
+) -> Result<Option<ObjectId>> {
+    try_peel_to_commit_for_merge_base(repo, oid).map_err(|e| e.into())
 }
 
 /// Split a simple upload-pack command string into leading `VAR=value` tokens (shell-style, no
@@ -279,12 +289,14 @@ pub(crate) fn read_advertisement(
     bool,
     bool,
     Option<String>,
+    bool,
 )> {
     let mut out = Vec::new();
     let mut head_symref: Option<String> = None;
     let mut saw_version_1_line = false;
     let mut saw_version_2_capability = false;
     let mut server_sid: Option<String> = None;
+    let mut filter_supported = false;
     loop {
         match pkt_line::read_packet(child_stdout)? {
             None => break,
@@ -324,6 +336,9 @@ pub(crate) fn read_advertisement(
                         }
                     }
                 }
+                if caps.split_whitespace().any(|c| c == "filter") {
+                    filter_supported = true;
+                }
                 out.push((refname, oid));
             }
             _ => {}
@@ -335,6 +350,7 @@ pub(crate) fn read_advertisement(
         saw_version_1_line,
         saw_version_2_capability,
         server_sid,
+        filter_supported,
     ))
 }
 
@@ -778,6 +794,7 @@ pub fn fetch_via_upload_pack_skipping(
     compute_wants: impl FnOnce(&[(String, ObjectId)]) -> Result<Vec<ObjectId>>,
     has_cli_refspecs: bool,
     filter_active: bool,
+    list_objects_filter: Option<&str>,
 ) -> Result<(
     Vec<(String, ObjectId)>,
     Vec<(String, ObjectId)>,
@@ -789,7 +806,8 @@ pub fn fetch_via_upload_pack_skipping(
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 
-    let (mut advertised, head_symref, v2_caps) = if client_proto == 2 {
+    let (mut advertised, head_symref, v2_caps, filter_supported_from_advert) = if client_proto == 2
+    {
         let caps = read_v2_capability_block(&mut stdout).context("read v2 capabilities")?;
         trace2_transfer::emit_negotiated_version_client_fetch_v2();
         if let Some(rest) = caps.iter().find_map(|l| l.strip_prefix("session-id=")) {
@@ -801,14 +819,15 @@ pub fn fetch_via_upload_pack_skipping(
             drain_bundle_uri_response(&mut stdout)?;
         }
         let pair = v2_ls_refs_for_fetch(&mut stdin, &mut stdout)?;
-        (pair.0, pair.1, Some(caps))
+        let filter_sup = caps.iter().any(|l| l.split_whitespace().any(|t| t == "filter"));
+        (pair.0, pair.1, Some(caps), filter_sup)
     } else {
-        let (adv, hsym, saw_v1, _, server_sid) = read_advertisement(&mut stdout)?;
+        let (adv, hsym, saw_v1, _, server_sid, fs) = read_advertisement(&mut stdout)?;
         trace2_transfer::emit_negotiated_version_client_fetch(saw_v1);
         if let Some(ref sid) = server_sid {
             trace2_transfer::emit_server_sid(sid);
         }
-        (adv, hsym, None)
+        (adv, hsym, None, fs)
     };
     if !has_cli_refspecs {
         merge_remote_refs_into_upload_pack_advertisement(remote_repo_path, &mut advertised)?;
@@ -870,6 +889,11 @@ pub fn fetch_via_upload_pack_skipping(
         .find(|(n, _)| n == "HEAD")
         .map(|(_, o)| *o);
 
+    let filter_spec = list_objects_filter
+        .filter(|_| filter_supported_from_advert)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
     let pack_buf = if client_proto == 2 {
         let caps = v2_caps.context("internal: missing v2 capability list")?;
         let default_hash = std::env::var("GIT_DEFAULT_HASH").unwrap_or_else(|_| "sha1".to_owned());
@@ -896,6 +920,7 @@ pub fn fetch_via_upload_pack_skipping(
             &mut stdin,
             &mut stdout,
             &wants,
+            filter_spec,
         )?;
         drop(stdin);
         buf
@@ -973,7 +998,8 @@ fn fetch_upload_pack_negotiate_pack_bytes(
     let mut stdin = child.stdin.take().context("upload-pack stdin")?;
     let mut stdout = child.stdout.take().context("upload-pack stdout")?;
 
-    let (advertised, _head_symref, saw_v1, saw_v2, server_sid) = read_advertisement(&mut stdout)?;
+    let (advertised, _head_symref, saw_v1, saw_v2, server_sid, _) =
+        read_advertisement(&mut stdout)?;
     if saw_v2 {
         trace2_transfer::emit_negotiated_version_client_fetch_v2();
     } else {
@@ -988,6 +1014,7 @@ fn fetch_upload_pack_negotiate_pack_bytes(
         &mut stdin,
         &mut stdout,
         wants,
+        None::<&str>,
     )?;
     drop(stdin);
 
@@ -1011,6 +1038,7 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     stdin: &mut impl Write,
     stdout: &mut impl Read,
     wants: &[ObjectId],
+    list_objects_filter: Option<&str>,
 ) -> Result<Vec<u8>> {
     let local_repo = Repository::open(local_git_dir, None)
         .with_context(|| format!("open local repository {}", local_git_dir.display()))?;
@@ -1026,6 +1054,9 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     if trace2_transfer::transfer_advertise_sid_enabled(local_git_dir) {
         caps.push_str(" session-id=");
         caps.push_str(&trace2_transfer::trace2_session_id_wire_once());
+    }
+    if list_objects_filter.is_some() {
+        caps.push_str(" filter");
     }
     let mut req = Vec::new();
     if std::env::var("GIT_TRACE_PACKET")
@@ -1055,6 +1086,11 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
         trace_packet_fetch('>', line.as_str());
         pkt_line::write_line_to_vec(&mut req, &line)?;
     }
+    if let Some(spec) = list_objects_filter {
+        let line = format!("filter {spec}");
+        trace_packet_fetch('>', line.as_str());
+        pkt_line::write_line_to_vec(&mut req, &line)?;
+    }
     req.extend_from_slice(b"0000");
     stdin.write_all(&req).context("write wants")?;
     stdin.flush()?;
@@ -1069,16 +1105,18 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
                 oid
             };
             if negotiator.repo().odb.read(&t).is_ok() {
-                let c = peel_commit_oid_for_negotiation(negotiator.repo(), t)?;
-                negotiator.add_tip(c)?;
+                if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), t)? {
+                    negotiator.add_tip(c)?;
+                }
             }
         }
     }
 
     for w in wants {
         if negotiator.repo().odb.read(w).is_ok() {
-            let c = peel_commit_oid_for_negotiation(negotiator.repo(), *w)?;
-            negotiator.add_tip(c)?;
+            if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), *w)? {
+                negotiator.add_tip(c)?;
+            }
         }
     }
 
@@ -1094,19 +1132,25 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
                 if negotiator.repo().odb.read(&tip).is_err() {
                     continue;
                 }
-                tips.push(peel_commit_oid_for_negotiation(negotiator.repo(), tip)?);
+                if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), tip)? {
+                    tips.push(c);
+                }
             }
         }
     }
     if let Ok(h) = refs::resolve_ref(local_git_dir, "HEAD") {
         if negotiator.repo().odb.read(&h).is_ok() {
-            tips.push(peel_commit_oid_for_negotiation(negotiator.repo(), h)?);
+            if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), h)? {
+                tips.push(c);
+            }
         }
     }
     for sym in ["HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] {
         if let Ok(oid) = resolve_revision(negotiator.repo(), sym) {
             if negotiator.repo().odb.read(&oid).is_ok() {
-                tips.push(peel_commit_oid_for_negotiation(negotiator.repo(), oid)?);
+                if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), oid)? {
+                    tips.push(c);
+                }
             }
         }
     }
@@ -1129,8 +1173,9 @@ pub(crate) fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
             continue;
         }
         if negotiator.repo().odb.read(oid).is_ok() {
-            let c = peel_commit_oid_for_negotiation(negotiator.repo(), *oid)?;
-            negotiator.known_common(c)?;
+            if let Some(c) = try_peel_commit_oid_for_negotiation(negotiator.repo(), *oid)? {
+                negotiator.known_common(c)?;
+            }
         }
     }
 
@@ -1310,7 +1355,8 @@ fn fetch_git_daemon_upload_pack_over_streams(
         .replace('\n', "");
     trace_packet_fetch('>', &trace_show);
 
-    let (advertised, head_symref, saw_v1, saw_v2, server_sid) = read_advertisement(stream)?;
+    let (advertised, head_symref, saw_v1, saw_v2, server_sid, _) =
+        read_advertisement(stream)?;
     if saw_v2 {
         trace2_transfer::emit_negotiated_version_client_fetch_v2();
     } else {
@@ -1355,6 +1401,7 @@ fn fetch_git_daemon_upload_pack_over_streams(
         stream_w,
         stream,
         &wants,
+        None::<&str>,
     )?;
 
     if !pack_buf.is_empty() && (pack_buf.len() < 12 || &pack_buf[0..4] != b"PACK") {

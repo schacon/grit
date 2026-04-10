@@ -95,7 +95,12 @@ fn valid_remote_name(name: &str) -> bool {
 
 fn resolve_git_dir() -> Result<PathBuf> {
     if let Ok(dir) = std::env::var("GIT_DIR") {
-        return Ok(PathBuf::from(dir));
+        let cwd = std::env::current_dir().context("cannot determine current directory")?;
+        let mut p = PathBuf::from(dir);
+        if p.is_relative() {
+            p = cwd.join(p);
+        }
+        return grit_lib::repo::resolve_git_directory_arg(&p).map_err(|e| anyhow::anyhow!(e));
     }
     let cwd = std::env::current_dir().context("cannot determine current directory")?;
     let mut cur = cwd.as_path();

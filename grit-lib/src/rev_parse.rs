@@ -1305,6 +1305,21 @@ pub fn peel_to_commit_for_merge_base(repo: &Repository, mut oid: ObjectId) -> Re
     }
 }
 
+/// Like [`peel_to_commit_for_merge_base`], but returns `Ok(None)` when the peeled object is not a
+/// commit (e.g. a tag pointing at a blob). Used by upload-pack fetch negotiation.
+pub fn try_peel_to_commit_for_merge_base(
+    repo: &Repository,
+    oid: ObjectId,
+) -> Result<Option<ObjectId>> {
+    let oid = apply_peel(repo, oid, Some(""))?;
+    let obj = repo.odb.read(&oid)?;
+    match obj.kind {
+        ObjectKind::Commit => Ok(Some(oid)),
+        ObjectKind::Tree | ObjectKind::Blob => Ok(None),
+        ObjectKind::Tag => Err(Error::InvalidRef("unexpected tag after peel".to_owned())),
+    }
+}
+
 /// Peel `oid` to the tree it represents (commits → root tree, tags → recursively, tree → identity).
 ///
 /// # Errors

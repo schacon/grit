@@ -346,6 +346,7 @@ fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()
     let mut client_shallow: Vec<ObjectId> = Vec::new();
     let mut wait_for_done = false;
     let mut seen_done = false;
+    let mut list_objects_filter: Option<String> = None;
 
     for arg in args {
         match arg.as_str() {
@@ -388,7 +389,12 @@ fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()
                 || s.starts_with("deepen-since ")
                 || s.starts_with("deepen-not ") => {}
             s if s.starts_with("want-ref ") => {}
-            s if s.starts_with("filter ") => {}
+            s if s.starts_with("filter ") => {
+                let spec = s.strip_prefix("filter ").unwrap_or("").trim();
+                if !spec.is_empty() {
+                    list_objects_filter = Some(spec.to_owned());
+                }
+            }
             s if s.starts_with("packfile-uris ") => {}
             s if s.starts_with("sideband-all") => {}
             other => bail!("unexpected line: '{other}'"),
@@ -444,8 +450,12 @@ fn cmd_fetch(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()
 
     pkt_line::write_line(out, "packfile")?;
     let thin = !have_oids.is_empty();
-    let mut child =
-        crate::pack_objects_upload::spawn_pack_objects_upload(git_dir, thin, shallow_pack)?;
+    let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(
+        git_dir,
+        thin,
+        shallow_pack,
+        list_objects_filter.as_deref(),
+    )?;
     {
         let mut pin = child
             .stdin

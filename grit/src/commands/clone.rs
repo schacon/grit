@@ -779,6 +779,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 |adv| crate::fetch_transport::collect_wants(adv, &[]),
                 false,
                 pack_filter_active,
+                upload_pack_list_objects_filter_for_clone(args.filter.as_deref(), &source.git_dir),
             )
         });
         match fetch_res {
@@ -935,6 +936,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 |adv| crate::fetch_transport::collect_wants(adv, &[]),
                 false,
                 pack_filter_active,
+                upload_pack_list_objects_filter_for_clone(args.filter.as_deref(), &source.git_dir),
             )
         }) {
             Ok(_) => {
@@ -2459,6 +2461,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                 |adv| crate::fetch_transport::collect_wants(adv, &[]),
                 false,
                 pack_filter_active,
+                upload_pack_list_objects_filter_for_clone(args.filter.as_deref(), &source.git_dir),
             )
         });
         match fetch_res {
@@ -2608,6 +2611,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
             |adv| crate::fetch_transport::collect_wants(adv, &[]),
             false,
             pack_filter_active,
+            upload_pack_list_objects_filter_for_clone(args.filter.as_deref(), &source.git_dir),
         ) {
             Ok(_) => {
                 propagate_extensions_object_format(&source.git_dir, &dest.git_dir)?;
@@ -3437,6 +3441,19 @@ fn uploadpack_filter_allowed(git_dir: &Path) -> bool {
             .or_else(|| set.get_bool("uploadPack.allowFilter")),
         Some(Ok(true))
     )
+}
+
+/// When cloning with `--filter=blob:none` and the source allows upload-pack filtering, negotiate
+/// the same filter over the v0 fetch protocol so `pack-objects` omits tree blobs (t5327).
+fn upload_pack_list_objects_filter_for_clone<'a>(
+    filter: Option<&'a str>,
+    source_git_dir: &Path,
+) -> Option<&'a str> {
+    if matches!(filter, Some("blob:none")) && uploadpack_filter_allowed(source_git_dir) {
+        filter
+    } else {
+        None
+    }
 }
 
 /// True when a non-empty `--filter` was passed and the upload-pack source is known to allow

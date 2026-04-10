@@ -793,6 +793,11 @@ fn fetch_remote(
         .as_deref()
         .filter(|s| !s.trim().is_empty())
         .is_some();
+    let list_objects_filter = args
+        .filter
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
 
     let (remote_heads, remote_tags) = if is_ext_url {
         let local_git_for_ext = git_dir.to_path_buf();
@@ -906,6 +911,7 @@ fn fetch_remote(
             compute_wants,
             has_cli_refspecs,
             filter_active,
+            list_objects_filter,
         )?;
         // If upload-pack advertised no branch tips (or negotiation returned early) but the remote
         // repository has `refs/heads/*` on disk, read them directly so `refs/remotes/` updates
