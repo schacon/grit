@@ -1369,6 +1369,8 @@ fn run_git_clone(args: Args) -> Result<()> {
             &dest.git_dir,
             &url,
             &[],
+            None,
+            Some(&target_path),
             filter_active,
         )
     });

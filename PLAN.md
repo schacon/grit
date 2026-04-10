@@ -546,7 +546,7 @@ commit → check it off → move on.
 - [ ] `t5547-push-quarantine` ████████████████░░░░ 5/6 (1 left) — check quarantine of objects during push
 - [ ] `t5307-pack-missing-commit` ████████████████░░░░ 4/5 (1 left) — pack should notice missing commit objects
 - [ ] `t5525-fetch-tagopt` ████████████████░░░░ 4/5 (1 left) — tagopt variable affects 
-- [ ] `t5532-fetch-proxy` ████████████████░░░░ 4/5 (1 left) — fetching via git:// using core.gitproxy
+- [x] `t5532-fetch-proxy` — fetching via git:// using core.gitproxy
 - [ ] `t5330-no-lazy-fetch-with-commit-graph` ███████████████░░░░░ 3/4 (1 left) — test for no lazy fetch with the commit-graph
 - [ ] `t5522-pull-symlink` ███████████████░░░░░ 3/4 (1 left) — pulling from symlinked subdir
 - [ ] `t5406-remote-rejects` █████████████░░░░░░░ 2/3 (1 left) — remote push rejects are reported by client

@@ -299,6 +299,19 @@ fn fetch_head_is_for_merge_first_refspec_only(
     !first.src.contains('*')
 }
 
+/// True when every positive fetch refspec uses a glob in its source (e.g. `refs/heads/*`).
+/// For such refspecs Git does not use "first listed ref is for-merge"; it ties FETCH_HEAD to the
+/// current branch when present on the remote (same as having no explicit refspecs).
+fn fetch_positive_refspecs_are_all_globs(refspecs: &[FetchRefspec]) -> bool {
+    let positives: Vec<&FetchRefspec> = refspecs.iter().filter(|r| !r.negative).collect();
+    if positives.is_empty() {
+        return false;
+    }
+    positives
+        .iter()
+        .all(|r| !r.src.is_empty() && r.src.contains('*'))
+}
+
 /// True when `HEAD` names `refs/heads/<b>`, `branch.<b>.remote` matches `remote_name`, and
 /// `branch.<b>.merge` is set (Git `branch_has_merge_config` for default fetch).
 fn branch_has_merge_config_for_remote(
@@ -556,7 +569,7 @@ fn fetch_remote(
         PathBuf::new()
     } else if url.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", Some(git_dir))?;
-        crate::transport_passthrough::delegate_current_invocation_to_real_git();
+        PathBuf::new()
     } else if crate::ssh_transport::is_configured_ssh_url(&url) {
         crate::protocol::check_protocol_allowed("ssh", Some(git_dir))?;
         let spec = crate::ssh_transport::parse_ssh_url(&url)?;
@@ -829,12 +842,15 @@ fn fetch_remote(
         (heads, tags)
     } else if url.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", Some(git_dir))?;
+        let proxy_cwd = configured_remote_base(git_dir);
         let (heads, tags, _, _) =
             crate::fetch_transport::with_packet_trace_identity("fetch", || {
                 crate::fetch_transport::fetch_via_git_protocol_skipping(
                     git_dir,
                     &url,
                     cli_refspecs,
+                    Some(config),
+                    Some(&proxy_cwd),
                     filter_active,
                 )
             })?;
@@ -1375,11 +1391,14 @@ fn fetch_remote(
 
             let for_merge = if has_merge_cfg {
                 fetch_head_is_for_merge_with_branch(git_dir, config, remote_name, refname)
-            } else if refspecs.is_empty() {
+            } else if refspecs.is_empty() || fetch_positive_refspecs_are_all_globs(&refspecs) {
                 // Without explicit fetch refspecs, tie FETCH_HEAD's for-merge line to the branch
                 // checked out locally when it exists on the remote. If HEAD is on a branch but the
                 // remote does not have that ref, no branch line is for-merge (do not use `idx==0`,
                 // since advertised order can put another branch first and break `FETCH_HEAD` tests).
+                //
+                // Default `remote.*.fetch` is `refs/heads/*:refs/remotes/<name>/*` (glob). Git still
+                // uses the checked-out branch for FETCH_HEAD for-merge in that case (t5532-fetch-proxy).
                 match current_branch_from_head(git_dir) {
                     Some(b) => refname == &format!("refs/heads/{b}"),
                     None => idx == 0,

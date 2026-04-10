@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-10 (t5532 / fetch proxy)**
+
+- `cargo test -p grit-lib --lib`: 160 passed
+- `./scripts/run-tests.sh t5532-fetch-proxy.sh`: 5/5 passed
+
 **2026-04-10 (t5705 / session ID in capabilities)**
 
 - `cargo test -p grit-lib --lib`: 160 passed
