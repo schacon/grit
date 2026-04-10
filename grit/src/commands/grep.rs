@@ -439,8 +439,21 @@ fn run_inner(pattern_tokens: Vec<PatternToken>, mut args: Args) -> Result<()> {
     let has_peeled_patterns = !pattern_tokens.is_empty();
     let (first_pos_pattern, tree_ish, mut pathspecs) =
         parse_positional(&args, &repo, has_peeled_patterns)?;
-    pathspecs = pathspecs_relative_to_cwd(&repo, &pathspecs);
     let cwd = std::env::current_dir().context("cannot get current directory")?;
+    pathspecs = pathspecs_relative_to_cwd(&repo, &pathspecs);
+    // Git `parse_pathspec` with `PATHSPEC_PREFER_CWD`: no explicit paths => limit to cwd (t7811).
+    // Use `.` so `resolve_pathspec` maps it to the current prefix only once (not `subdir/subdir`).
+    if pathspecs.is_empty()
+        && !args.no_index
+        && !args.cached
+        && tree_ish.is_none()
+        && repo.work_tree.is_some()
+    {
+        let pfx = show_prefix(&repo, &cwd);
+        if !pfx.is_empty() {
+            pathspecs.push(".".to_string());
+        }
+    }
     let pathspec_prefix = repo
         .work_tree
         .as_ref()
@@ -645,9 +658,11 @@ fn run_inner(pattern_tokens: Vec<PatternToken>, mut args: Args) -> Result<()> {
                 Some(s) if !s.is_empty() => s.clone(),
                 _ => resolve_git_pager(&config),
             };
-            let work_dir = std::env::current_dir().context("cannot get current directory")?;
+            // Git runs the pager with the same cwd as `git grep` (t7811 `run from subdir`);
+            // file arguments are paths relative to that cwd, same as normal `-l` output.
+            let pager_cwd = std::env::current_dir().context("cannot get current directory")?;
             run_open_in_pager(
-                &work_dir,
+                pager_cwd.as_path(),
                 &pager_cmd,
                 &atom_strings,
                 args.ignore_case,
@@ -725,13 +740,14 @@ fn run_open_in_pager(
         } else {
             format!("{pager_cmd} \"$@\"")
         };
-        Command::new(&shell)
-            .current_dir(work_dir)
-            .arg("-c")
-            .arg(&script)
-            .args(extra.iter())
-            .args(files.iter())
-            .status()
+        // Match Git's `prepare_shell_cmd` (git/run-command.c): with extra argv, use
+        // `sh -c 'cmd "$@"' cmd ...` so `$0` is the pager and files are in `$@`.
+        let mut cmd = Command::new(&shell);
+        cmd.current_dir(work_dir).arg("-c").arg(&script);
+        if !files.is_empty() {
+            cmd.arg(pager_cmd);
+        }
+        cmd.args(extra.iter()).args(files.iter()).status()
     } else {
         Command::new(pager_cmd)
             .current_dir(work_dir)
@@ -790,6 +806,7 @@ fn grep_one_blob_at_revision(
             );
             return grep_content(
                 &rel,
+                None,
                 Some(rev),
                 &content,
                 compiled,
@@ -831,6 +848,7 @@ fn grep_one_blob_at_revision(
     );
     grep_content(
         &rel,
+        None,
         Some(rev),
         &content,
         compiled,
@@ -942,7 +960,15 @@ fn grep_cached(
                     );
                     let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
                     if grep_content(
-                        &rel, None, &content, compiled, args, need_sep, out, open_paths,
+                        &rel,
+                        None,
+                        None,
+                        &content,
+                        compiled,
+                        args,
+                        need_sep,
+                        out,
+                        open_paths,
                     )? {
                         found_any = true;
                     }
@@ -975,7 +1001,15 @@ fn grep_cached(
                 );
                 let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
                 if grep_content(
-                    &rel, None, &content, compiled, args, need_sep, out, open_paths,
+                    &rel,
+                    None,
+                    None,
+                    &content,
+                    compiled,
+                    args,
+                    need_sep,
+                    out,
+                    open_paths,
                 )? {
                     found_any = true;
                 }
@@ -1011,7 +1045,15 @@ fn grep_cached(
                 );
                 let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
                 if grep_content(
-                    &rel, None, &content, compiled, args, need_sep, out, open_paths,
+                    &rel,
+                    None,
+                    None,
+                    &content,
+                    compiled,
+                    args,
+                    need_sep,
+                    out,
+                    open_paths,
                 )? {
                     found_any = true;
                 }
@@ -1044,7 +1086,15 @@ fn grep_cached(
             );
             let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
             if grep_content(
-                &rel, None, &content, compiled, args, need_sep, out, open_paths,
+                &rel,
+                None,
+                None,
+                &content,
+                compiled,
+                args,
+                need_sep,
+                out,
+                open_paths,
             )? {
                 found_any = true;
             }
@@ -1155,6 +1205,7 @@ fn grep_worktree(
                     if grep_content(
                         &rel,
                         None,
+                        None,
                         &content_str,
                         compiled,
                         args,
@@ -1182,6 +1233,7 @@ fn grep_worktree(
                 let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
                 if grep_content(
                     &rel,
+                    None,
                     None,
                     &content_str,
                     compiled,
@@ -1234,6 +1286,7 @@ fn grep_worktree(
                     if grep_content(
                         &rel,
                         None,
+                        None,
                         &content_str,
                         compiled,
                         args,
@@ -1274,6 +1327,7 @@ fn grep_worktree(
                 if grep_content(
                     &rel,
                     None,
+                    None,
                     &content_str,
                     compiled,
                     args,
@@ -1311,6 +1365,7 @@ fn grep_worktree(
                 if grep_content(
                     &rel,
                     None,
+                    None,
                     &content_str,
                     compiled,
                     args,
@@ -1338,6 +1393,7 @@ fn grep_worktree(
             let rel = worktree_display_rel(repo, path_prefix, &path_str, args);
             if grep_content(
                 &rel,
+                None,
                 None,
                 &content_str,
                 compiled,
@@ -1736,6 +1792,7 @@ fn grep_filesystem(
                 let content_str = String::from_utf8_lossy(&content);
                 if grep_content(
                     &display_path,
+                    None,
                     None,
                     &content_str,
                     compiled,
@@ -2333,10 +2390,14 @@ fn line_prefix(
 }
 
 /// Search content of a single file. Returns true if any match found.
-/// `relative_path` is repo-relative (may be cwd-stripped for work tree / tree search).
+/// `relative_path` is the path shown in grep output (cwd-relative when not `--full-name`).
+/// `pager_open_path`, when set, overrides the path collected for `--open-files-in-pager` (normally
+/// the same as `relative_path`). Pass `None` so the pager receives `relative_path` (cwd-relative
+/// like Git's `-l` output).
 /// `rev_label` is e.g. `Some("HEAD")` for object-store grep (`HEAD:path` in output).
 fn grep_content(
     relative_path: &str,
+    pager_open_path: Option<&str>,
     rev_label: Option<&str>,
     content: &str,
     compiled: &CompiledGrep,
@@ -2401,7 +2462,14 @@ fn grep_content(
     if args.files_with_matches {
         if has_match {
             if let Some(paths) = open_paths {
-                paths.push(relative_path.to_string());
+                // Pager argv must be plain paths; `fmt_name` adds ANSI (t7811 color.grep.* + -O).
+                let open_base = pager_open_path.unwrap_or(relative_path);
+                let open_quoted = path_for_output(open_base, args);
+                let open_full = match rev_label {
+                    Some(r) => format!("{r}:{open_quoted}"),
+                    None => open_quoted,
+                };
+                paths.push(open_full);
             } else {
                 writeln!(out, "{}", fmt_name(&display_name, color))?;
             }
@@ -2718,7 +2786,15 @@ fn grep_tree(
                 );
                 let rel = cwd_strip_repo_rel(repo, &full_name, args);
                 if grep_content(
-                    &rel, tree_name, &content, compiled, args, need_sep, out, open_paths,
+                    &rel,
+                    None,
+                    tree_name,
+                    &content,
+                    compiled,
+                    args,
+                    need_sep,
+                    out,
+                    open_paths,
                 )? {
                     found = true;
                 }
