@@ -572,7 +572,7 @@ commit → check it off → move on.
 - [ ] `t5536-fetch-conflicts` ███████████░░░░░░░░░ 4/7 (3 left) — fetch handles conflicting refspecs correctly
 - [x] `t5308-pack-detect-duplicates` ████████████████████ 6/6 (0 left) — handling of duplicate objects in incoming packfiles
 - [x] `t5309-pack-delta-cycles` ████████████████████ 7/7 (0 left) — test index-pack handling of delta cycles in packfiles
-- [ ] `t5549-fetch-push-http` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — fetch/push functionality using the HTTP protocol
+- [x] `t5549-fetch-push-http` ████████████████████ 3/3 (0 left) — fetch/push functionality using the HTTP protocol
 - [x] `t5704-protocol-violations` ████████████████████ 3/3 — Test responses to violations of the network protocol. In most
 
 - [x] `t5002-archive-attr-pattern` — git archive attribute pattern tests (19/19)

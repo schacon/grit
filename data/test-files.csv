@@ -970,7 +970,7 @@ t5545-push-options	t5	yes	13	5	8	false	ok	0
 t5546-receive-limits	t5	yes	17	14	3	false	ok	0
 t5547-push-quarantine	t5	yes	6	5	1	false	ok	0
 t5548-push-porcelain	t5	skip	11	0	0	false	ok	0
-t5549-fetch-push-http	t5	yes	3	0	3	false	ok	0
+t5549-fetch-push-http	t5	yes	3	3	0	true	ok	0
 t5550-http-fetch-dumb	t5	skip	57	0	0	false	ok	0
 t5551-http-fetch-smart	t5	skip	36	0	0	false	timeout	6
 t5552-skipping-fetch-negotiator	t5	yes	0	0	0	false	timeout	0
