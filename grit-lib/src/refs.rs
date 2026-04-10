@@ -498,8 +498,17 @@ fn remove_packed_ref(git_dir: &Path, refname: &str) -> Result<()> {
     }
 
     if changed {
-        let lock = packed_path.with_extension("lock");
-        fs::write(&lock, &out).map_err(Error::Io)?;
+        // Match Git's packed-refs rewrite lock path (`packed-refs.new`).
+        // Tests expect prune/delete to fail when this lock already exists.
+        let lock = packed_path.with_extension("new");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock)
+            .map_err(Error::Io)?;
+        use std::io::Write as _;
+        file.write_all(out.as_bytes()).map_err(Error::Io)?;
+        drop(file);
         fs::rename(&lock, &packed_path).map_err(Error::Io)?;
     }
 

@@ -928,7 +928,9 @@ fn fetch_remote(
         configured_prune
     };
     // Like Git, prune-tags only takes effect when pruning is enabled.
+    // When any CLI refspec is explicitly provided, --prune-tags and pruneTags config are ignored.
     let should_prune_tags = should_prune
+        && !user_passed_cli_refspecs
         && (if args.prune_tags {
             true
         } else {
@@ -1909,12 +1911,17 @@ fn fetch_remote(
             // With `--refmap`, pruning scope follows the explicit refmap destinations.
             prune_prefixes_from_fetch_refspecs(&cli_tracking_refspecs)
         } else {
-            // Otherwise, pruning scope follows the configured remote fetch refspecs.
-            prune_prefixes_from_fetch_refspecs(&cli_tracking_refspecs)
+            // Otherwise, pruning scope follows the configured fetch refspecs in this repository.
+            prune_prefixes_from_fetch_refspecs(&refspecs)
         };
 
+        let has_tracking_prune_scope = refspecs.iter().any(|s| {
+            !s.negative
+                && !s.dst.is_empty()
+                && normalize_fetch_refspec_dst(&s.dst).starts_with("refs/remotes/")
+        });
         let skip_remote_tracking_prune =
-            user_passed_cli_refspecs && prune_prefixes.is_empty() && !should_prune_tags;
+            prune_prefixes.is_empty() && (user_passed_cli_refspecs || !has_tracking_prune_scope);
 
         if !skip_remote_tracking_prune && !has_updates && !args.quiet {
             let mut will_prune = false;
