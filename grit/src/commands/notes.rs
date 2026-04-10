@@ -1725,12 +1725,12 @@ or abort the merge with 'git notes merge --abort'.",
 fn prune_notes(repo: &Repository, notes_ref: &str, dry_run: bool, verbose: bool) -> Result<()> {
     let entries = read_notes_tree(repo, notes_ref)?;
     let mut kept = Vec::new();
-    let mut pruned = false;
+    let mut pruned_oids: Vec<String> = Vec::new();
 
     for entry in &entries {
         let name = display_note_path(entry);
         // The note name is the hex OID of the annotated object
-        let obj_exists = if let Ok(oid) = ObjectId::from_hex(&name) {
+        let obj_exists = if let Ok(oid) = ObjectId::from_hex(name.as_ref()) {
             repo.odb.read(&oid).is_ok()
         } else {
             // Non-hex name — keep it
@@ -1740,14 +1740,18 @@ fn prune_notes(repo: &Repository, notes_ref: &str, dry_run: bool, verbose: bool)
         if obj_exists {
             kept.push(entry.clone());
         } else {
-            pruned = true;
-            if verbose || dry_run {
-                eprintln!("Removing notes for non-existent object {}", name);
-            }
+            pruned_oids.push(name.into_owned());
         }
     }
 
-    if pruned && !dry_run {
+    // Match git: `-n` and/or `-v` print each pruned object's full hex to stdout (see notes.c).
+    if verbose || dry_run {
+        for oid_hex in &pruned_oids {
+            println!("{oid_hex}");
+        }
+    }
+
+    if !pruned_oids.is_empty() && !dry_run {
         write_notes_commit(repo, notes_ref, &kept, "Notes removed by 'git notes prune'")?;
     }
 

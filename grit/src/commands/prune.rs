@@ -10,7 +10,6 @@ use grit_lib::config::ConfigSet;
 use grit_lib::diff::zero_oid;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
-use grit_lib::pack::read_local_pack_indexes;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use std::collections::{HashSet, VecDeque};
@@ -199,7 +198,7 @@ fn parse_relative_time(s: &str) -> Option<SystemTime> {
 fn collect_reachable(
     repo: &Repository,
     odb: &Odb,
-    objects_dir: &Path,
+    _objects_dir: &Path,
 ) -> Result<HashSet<ObjectId>> {
     let mut reachable = HashSet::new();
     let mut queue: VecDeque<ObjectId> = VecDeque::new();
@@ -219,14 +218,10 @@ fn collect_reachable(
     // Seed from reflogs.
     collect_reflog_oids(&repo.git_dir, &mut queue);
 
-    // Also mark all packed object IDs as reachable — we can't read their
-    // contents to walk their children, but they definitely exist and anything
-    // they reference is reachable.  This is conservative: we may keep a few
-    // extra loose objects, but we never incorrectly prune a reachable one.
-    let packed_ids = collect_packed_ids(objects_dir)?;
-    reachable.extend(&packed_ids);
-
-    // BFS walk.
+    // BFS walk. Objects in packs are read via [`Odb::read`] when reached from
+    // refs/reflogs; we do **not** treat every packed OID as reachable (that
+    // would keep unreachable commits alive after `git gc --prune=now`, breaking
+    // `git notes prune` and similar).
     while let Some(oid) = queue.pop_front() {
         if !reachable.insert(oid) {
             continue;
@@ -374,16 +369,4 @@ fn scan_loose_objects(objects_dir: &Path) -> Result<Vec<(ObjectId, std::path::Pa
     }
 
     Ok(objects)
-}
-
-/// Collect all object IDs present in local pack indexes.
-fn collect_packed_ids(objects_dir: &Path) -> Result<HashSet<ObjectId>> {
-    let indexes = read_local_pack_indexes(objects_dir)?;
-    let mut ids = HashSet::new();
-    for idx in indexes {
-        for entry in idx.entries {
-            ids.insert(entry.oid);
-        }
-    }
-    Ok(ids)
 }

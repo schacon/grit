@@ -1282,7 +1282,10 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
     let mut oids = BTreeSet::new();
 
     if args.all {
-        let use_reachable_only = !args.incremental && pack_all_use_reachable_closure_only(args);
+        // Incremental repack (`--all --unpacked --incremental`) packs loose objects not yet in a
+        // pack. Full `--all` (e.g. `git gc` / `repack -a`) must use the ref closure only (Git
+        // `--all` semantics), not every object under `.git/objects`.
+        let use_reachable_only = !args.incremental;
         if use_reachable_only {
             let v = reachable_objects_for_full_repack(repo, args)?;
             oids.extend(v);
@@ -1312,7 +1315,11 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
         // objects from those packs minus exclusions (order-independent; `git repack --filter`).
         let pack_dir = repo.odb.objects_dir().join("pack");
         let mut exclude: HashSet<ObjectId> = HashSet::new();
-        for trimmed in stdin_lines.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        for trimmed in stdin_lines
+            .iter()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
             if !trimmed.starts_with('^') {
                 continue;
             }
@@ -1324,7 +1331,11 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
                 exclude.insert(entry.oid);
             }
         }
-        for trimmed in stdin_lines.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        for trimmed in stdin_lines
+            .iter()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
             if trimmed.starts_with('^') {
                 continue;
             }

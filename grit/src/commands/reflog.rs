@@ -21,7 +21,7 @@ use grit_lib::reflog::{
     delete_reflog_entries, expire_reflog_git, load_gc_reflog_expire_config,
     mark_stalefix_reachable, read_reflog, reflog_exists, reflog_path, ReflogExpireParams,
 };
-use grit_lib::refs::{append_reflog, resolve_ref};
+use grit_lib::refs::{append_reflog, read_symbolic_ref, resolve_ref};
 use grit_lib::repo::Repository;
 
 /// Arguments for `grit reflog`.
@@ -439,8 +439,11 @@ fn parse_reflog_expire_cli(raw: &str, now: i64) -> Result<i64> {
     if s.eq_ignore_ascii_case("never") || s.eq_ignore_ascii_case("false") {
         return Ok(0);
     }
+    // Use a cutoff strictly after the current second so entries logged in this same second
+    // (e.g. `git reset` right before `reflog expire --expire=now`) are removed. Git's cutoff
+    // behaves as "not newer than now" for this path (t3306-notes-prune).
     if s.eq_ignore_ascii_case("now") || s == "0" {
-        return Ok(now);
+        return Ok(now.saturating_add(1));
     }
     if let Ok(v) = s.parse::<i64>() {
         const EPOCH_CUTOFF: i64 = 10_000_000;
@@ -494,7 +497,7 @@ fn run_expire(args: ExpireArgs) -> Result<()> {
         Some(s) => Some(parse_reflog_expire_cli(s, now)?),
     };
 
-    let refs_to_expire: Vec<String> = if args.all {
+    let mut refs_to_expire: Vec<String> = if args.all {
         grit_lib::reflog::list_reflog_refs(&repo.git_dir).map_err(|e| anyhow::anyhow!("{e}"))?
     } else if !args.refs.is_empty() {
         let mut v = Vec::new();
@@ -505,6 +508,21 @@ fn run_expire(args: ExpireArgs) -> Result<()> {
     } else {
         vec![dwim_reflog_ref(&repo, "HEAD")?]
     };
+
+    // When `HEAD`'s reflog is expired (default or explicit `... HEAD`), Git also expires the
+    // branch reflog `HEAD` points at. Otherwise `logs/refs/heads/*` still mentions discarded
+    // commits and `git prune` keeps them (t3306-notes-prune).
+    if refs_to_expire.iter().any(|n| n == "HEAD") {
+        if let Ok(Some(target)) = read_symbolic_ref(&repo.git_dir, "HEAD") {
+            let t = target.trim();
+            if t.starts_with("refs/")
+                && reflog_exists(&repo.git_dir, t)
+                && !refs_to_expire.iter().any(|n| n == t)
+            {
+                refs_to_expire.push(t.to_string());
+            }
+        }
+    }
 
     let params = ReflogExpireParams {
         stale_fix: args.stale_fix,
