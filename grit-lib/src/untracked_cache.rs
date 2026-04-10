@@ -593,16 +593,30 @@ fn invalidate_directory(uc: &mut UntrackedCache, dir: &mut UntrackedCacheDir) {
     dir.valid = false;
     dir.untracked.clear();
     for d in &mut dir.dirs {
-        d.recurse = false;
+        // Preserve collapsed placeholders across parent invalidation so their
+        // cache nodes remain available for dump-shape parity on the next scan.
+        d.recurse = d.check_only;
     }
 }
 
-fn mark_check_only_placeholders(dir: &mut UntrackedCacheDir) {
-    for child in &mut dir.dirs {
-        if child.check_only {
-            child.recurse = true;
+fn tracked_ignore_blob_oid(index: &Index, rel_path: &str) -> Option<ObjectId> {
+    let entry = index.get(rel_path.as_bytes(), 0)?;
+    if entry.mode == MODE_GITLINK {
+        return None;
+    }
+    Some(entry.oid)
+}
+
+fn invalidate_one_directory_for_path(uc: &mut UntrackedCache, dir: &mut UntrackedCacheDir) {
+    if dir.valid {
+        uc.dir_invalidated += 1;
+    }
+    dir.valid = false;
+    dir.untracked.clear();
+    for d in &mut dir.dirs {
+        if d.check_only {
+            d.recurse = true;
         }
-        mark_check_only_placeholders(child);
     }
 }
 
@@ -610,7 +624,6 @@ pub fn invalidate_path(uc: &mut UntrackedCache, path: &str) {
     let Some(mut root) = uc.root.take() else {
         return;
     };
-    mark_check_only_placeholders(&mut root);
     let _ = invalidate_one_component(uc, &mut root, path);
     uc.root = Some(root);
 }
@@ -626,14 +639,14 @@ fn invalidate_one_component(
         if let Some(d) = dir.dirs.iter_mut().find(|x| x.name == comp) {
             let ret = invalidate_one_component(uc, d, tail);
             if ret {
-                invalidate_directory(uc, dir);
+                invalidate_one_directory_for_path(uc, dir);
             }
             ret
         } else {
             false
         }
     } else {
-        invalidate_directory(uc, dir);
+        invalidate_one_directory_for_path(uc, dir);
         uc.dir_flags & DIR_SHOW_OTHER_DIRECTORIES != 0
     }
 }
@@ -869,14 +882,25 @@ fn read_directory_recursive(
     abs: &Path,
     uc: &mut UntrackedCache,
 ) -> Result<()> {
-    let parent_exclude_path = if rel.is_empty() {
-        work_tree.join(".gitignore")
+    let parent_exclude_rel = if rel.is_empty() {
+        ".gitignore".to_string()
     } else {
-        work_tree.join(rel).join(".gitignore")
+        format!("{rel}/.gitignore")
     };
-    let parent_exclude_oid = file_stat_and_blob_oid(&parent_exclude_path)
-        .map(|(_, oid)| oid)
-        .unwrap_or_else(|_| ObjectId::zero());
+    let parent_exclude_path = work_tree.join(&parent_exclude_rel);
+    let tracked_ignore_oid = tracked_ignore_blob_oid(index, &parent_exclude_rel);
+    let parent_exclude_oid = match fs::metadata(&parent_exclude_path) {
+        Ok(_) => {
+            if tracked_ignore_oid.is_some() {
+                ObjectId::zero()
+            } else {
+                file_stat_and_blob_oid(&parent_exclude_path)
+                    .map(|(_, oid)| oid)
+                    .unwrap_or_else(|_| ObjectId::zero())
+            }
+        }
+        Err(_) => tracked_ignore_oid.unwrap_or_else(ObjectId::zero),
+    };
     let parent_exclude_changed = parent_exclude_oid != ucd.exclude_oid;
     if ucd.valid && parent_exclude_changed {
         uc.dir_invalidated += 1;
@@ -1019,7 +1043,9 @@ fn read_directory_recursive(
 
     let meta = fs::symlink_metadata(abs).map_err(Error::Io)?;
     ucd.stat_data = stat_data_from_meta(&meta);
-    ucd.exclude_oid = parent_exclude_oid;
+    if use_disk {
+        ucd.exclude_oid = parent_exclude_oid;
+    }
     ucd.valid = true;
     // Match Git's in-memory read_directory behavior: `check_only` directories are kept in
     // the UNTR tree but are not recursively traversed on subsequent status runs.
@@ -1120,13 +1146,15 @@ fn visit_untracked_directory_uc(
             .and_then(|target| parent_ucd.dirs.iter().position(|d| std::ptr::eq(d, target)))
             .filter(|&idx| valid_cached_dir(&parent_ucd.dirs[idx], abs, true));
         if let Some(idx) = reuse_collapsed_index {
-            // `invalidate_directory()` clears child recurse bits on parent refresh.
-            // When reusing a collapsed check-only node, restore recurse so it persists
-            // in the serialized UNTR tree (t7063 dump expectations).
+            let candidate = &parent_ucd.dirs[idx];
+            let has_visible =
+                check_only_tree_has_visible_untracked(repo, index, matcher, rel, candidate)?;
             parent_ucd.dirs[idx].recurse = true;
-            let collapsed = format!("{name}/");
-            if !parent_ucd.untracked.iter().any(|u| u == &collapsed) {
-                parent_ucd.untracked.push(collapsed);
+            if has_visible {
+                let collapsed = format!("{name}/");
+                if !parent_ucd.untracked.iter().any(|u| u == &collapsed) {
+                    parent_ucd.untracked.push(collapsed);
+                }
             }
             return Ok(());
         }
@@ -1307,6 +1335,41 @@ fn sort_untracked_tree(dir: &mut UntrackedCacheDir) {
     for child in &mut dir.dirs {
         sort_untracked_tree(child);
     }
+}
+
+fn check_only_tree_has_visible_untracked(
+    repo: &Repository,
+    index: &Index,
+    matcher: &mut IgnoreMatcher,
+    rel: &str,
+    dir: &UntrackedCacheDir,
+) -> Result<bool> {
+    let prefix = if rel.is_empty() {
+        String::new()
+    } else {
+        format!("{rel}/")
+    };
+
+    for file in &dir.untracked {
+        let path = format!("{prefix}{file}");
+        let (is_ignored, _) = matcher.check_path(repo, Some(index), &path, false)?;
+        if !is_ignored {
+            return Ok(true);
+        }
+    }
+
+    for child in &dir.dirs {
+        let child_rel = if rel.is_empty() {
+            child.name.clone()
+        } else {
+            format!("{rel}/{}", child.name)
+        };
+        if check_only_tree_has_visible_untracked(repo, index, matcher, &child_rel, child)? {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 fn visit_untracked_node_full(

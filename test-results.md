@@ -1,5 +1,23 @@
 # Test results
 
+**2026-04-10 (status perf phase2 / UNTR invalidation + check_only reuse parity)**  
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `bash tests/t7063-status-untracked-cache.sh --run=1-40 -v`: reduced to **3 failures** (`32`, `33`, `37`)
+- `bash tests/t7063-status-untracked-cache.sh -v`: **52/58** passing (remaining: `32`, `33`, `37`, `43`, `47`, `49`)
+- `bash tests/t7519-status-fsmonitor.sh -v`: no `not ok` lines (stable)
+- `bash tests/t7065-status-rename.sh -v`: **28/28** (stable)
+
+**2026-04-10 (status perf phase2 / sparse non-cone bracket glob)**  
+
+- `cargo fmt`: passed
+- `cargo check -p grit-rs`: passed
+- `cargo build --release -p grit-rs`: passed
+- `bash tests/t7063-status-untracked-cache.sh --run=30-31 -v`: sparse setup now follows expected non-cone behavior for `done/[a-z]*` wildcard matching (setup succeeds in full-sequence context)
+- `bash tests/t7519-status-fsmonitor.sh --run=1-5 -v`: 5/5 pass (no regression in sampled slice)
+
 **2026-04-10 (status perf phase2 / iuc index parity + UNTR check_only subtree reuse)**
 
 - `cargo fmt`: passed
