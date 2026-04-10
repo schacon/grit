@@ -683,12 +683,6 @@ fn apply_list_objects_filter(entries: &mut Vec<PackEntry>, filter: Option<&str>)
     }
 }
 
-fn pack_all_use_reachable_closure_only(args: &Args) -> bool {
-    // Default `pack-objects --all` walks the full ODB (loose + all packs). The first pass of
-    // `repack --cruft` is the exception: it must match Git’s main pack (ref closure only).
-    args.reachability_all
-}
-
 /// Collect object IDs from stdin or `--all`.
 fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
     if args.all && args.unpacked && args.incremental {
@@ -702,7 +696,10 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
     let mut oids = BTreeSet::new();
 
     if args.all {
-        let use_reachable_only = !args.incremental && pack_all_use_reachable_closure_only(args);
+        // Incremental repack (`--all --unpacked --incremental`) packs loose objects not yet in a
+        // pack. Full `--all` (e.g. `git gc` / `repack -a`) must use the ref closure only (Git
+        // `--all` semantics), not every object under `.git/objects`.
+        let use_reachable_only = !args.incremental;
         if use_reachable_only {
             let v = reachable_objects_for_full_repack(repo, args)?;
             oids.extend(v);

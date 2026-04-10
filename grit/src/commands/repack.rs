@@ -486,7 +486,24 @@ pub fn run(args: Args) -> Result<()> {
                     }
                 }
             }
-            remove_superseded_packs_after_full_repack(&pack_dir_abs, &keep, &extra_objects_dirs)?;
+            // Plain `repack -a` / `git gc` (no cruft, no `-A`) rewrites the reachable closure into one
+            // pack; every other local pack is redundant. The union-based remover kept old packs that
+            // still held OIDs missing from the new pack (unreachable objects), which prevented
+            // `git prune --expire=now` from dropping them (t3306-notes-prune).
+            let simple_full_repack = args.all
+                && !args.cruft
+                && !args.repack_all_unpack
+                && args
+                    .filter
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(|f| f.is_empty());
+            remove_superseded_packs_after_full_repack(
+                &pack_dir_abs,
+                &keep,
+                &extra_objects_dirs,
+                simple_full_repack,
+            )?;
         } else {
             let new_pack_name = new_pack_names.first().cloned().context("no pack written")?;
             remove_superseded_packs_incremental(&pack_dir_abs, &new_pack_name, &args.keep_pack)?;
@@ -937,6 +954,7 @@ fn remove_superseded_packs_after_full_repack(
     pack_dir: &Path,
     initial_keep: &[String],
     extra_objects_dirs: &[PathBuf],
+    simple_full_repack: bool,
 ) -> Result<()> {
     let objects_dir = pack_dir
         .parent()
@@ -963,6 +981,29 @@ fn remove_superseded_packs_after_full_repack(
         .iter()
         .map(|k| pack_basename(k).to_string())
         .collect();
+
+    if simple_full_repack && extra_objects_dirs.is_empty() {
+        for name in by_name.keys() {
+            if retained.contains(name) {
+                continue;
+            }
+            let stem = name
+                .strip_suffix(".pack")
+                .unwrap_or(name.as_str())
+                .to_string();
+            if pack_dir.join(format!("{stem}.keep")).exists() {
+                continue;
+            }
+            if pack_dir.join(format!("{stem}.promisor")).exists() {
+                continue;
+            }
+            let _ = fs::remove_file(pack_dir.join(name));
+            let _ = fs::remove_file(pack_dir.join(format!("{stem}.idx")));
+            let _ = fs::remove_file(pack_dir.join(format!("{stem}.promisor")));
+            remove_pack_sidecars(pack_dir, &stem);
+        }
+        return Ok(());
+    }
 
     let mut union_oids: HashSet<ObjectId> = HashSet::new();
     for name in &retained {
