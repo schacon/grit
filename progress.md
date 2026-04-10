@@ -19,6 +19,7 @@ Task lines in `PLAN.md`: 332 completed (`[x]`), 5 in progress (`[~]`), 434 remai
 
 ## Recently completed
 
+- `t5410-receive-pack` — 5/5 tests pass (`receive-pack --skip-connectivity-check`: unpack with `strict=false` so thin packs store the tip without requiring parent objects in the ODB; normal path keeps strict unpack + connectivity)
 - `t3438-rebase-broken-files` — 9/9 tests pass (`rebase-merge/author-script` written on conflict; strict parse on `rebase --continue`; apply backend preflight for writable `.git/rebased-patches`)
 - `t3405-rebase-malformed` — 5/5 tests pass (`rebase -i` reword: strip `#` lines like `git commit` after editor, abort on whitespace-only message; harness CSV refreshed)
 - `t5611-clone-config` — 13/13 harness tests pass (`clone -c` / `git -c` effective during local ref copy + checkout: merged config with `GIT_CONFIG_PARAMETERS`; custom `remote.*.fetch` + default refspec ordering in `.git/config`; CRLF smudge on clone checkout; `ConfigSet::merge_set` + public `parse_config_parameters`)
