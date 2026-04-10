@@ -4264,6 +4264,14 @@ fn merge_trees(
     // First pass: handle rename cases
     // Case 1: ours renamed base_path → ours_new_path; theirs may have modified base_path
     for (base_path, ours_new_path) in &ours_renames {
+        if let Some(oe) = ours_entries.get(ours_new_path) {
+            if oe.mode != MODE_TREE && path_has_tree_descendant(&theirs_entries, ours_new_path) {
+                // Their side has paths under our rename destination (e.g. `newfile/realfile`).
+                // A plain rename+content merge at `newfile` would clash with directory/file
+                // handling (t6422 rename/directory).
+                continue;
+            }
+        }
         handled_paths.insert(base_path.clone());
         // The new path on ours side is handled here too (don't treat as add/add)
         handled_paths.insert(ours_new_path.clone());
@@ -5073,6 +5081,8 @@ fn merge_trees(
         repo,
         their_name,
         ours_label,
+        &base,
+        &ours_renames,
         &ours_entries,
         &theirs_entries,
         &mut index,
@@ -5081,6 +5091,14 @@ fn merge_trees(
         &mut conflict_descriptions,
         &mut conflict_files,
         &mut has_conflicts,
+        favor,
+        diff_algorithm,
+        merge_renormalize,
+        ignore_all_space,
+        ignore_space_change,
+        ignore_space_at_eol,
+        ignore_cr_at_eol,
+        auto_merge_paths.as_deref_mut(),
     )?;
 
     // Second pass: handle non-rename paths
@@ -6283,6 +6301,8 @@ fn apply_directory_file_conflicts(
     repo: &Repository,
     their_name: &str,
     ours_label: &str,
+    base: &HashMap<Vec<u8>, IndexEntry>,
+    ours_renames: &HashMap<Vec<u8>, Vec<u8>>,
     ours_entries: &HashMap<Vec<u8>, IndexEntry>,
     theirs_entries: &HashMap<Vec<u8>, IndexEntry>,
     index: &mut Index,
@@ -6291,6 +6311,14 @@ fn apply_directory_file_conflicts(
     conflict_descriptions: &mut Vec<ConflictDescription>,
     conflict_files: &mut Vec<(String, Vec<u8>)>,
     has_conflicts: &mut bool,
+    favor: MergeFavor,
+    diff_algorithm: Option<&str>,
+    merge_renormalize: bool,
+    ignore_all_space: bool,
+    ignore_space_change: bool,
+    ignore_space_at_eol: bool,
+    ignore_cr_at_eol: bool,
+    mut auto_merge_paths: Option<&mut Vec<String>>,
 ) -> Result<()> {
     let mut df_cases: Vec<(Vec<u8>, bool)> = Vec::new();
     for path in all_paths {
@@ -6321,7 +6349,6 @@ fn apply_directory_file_conflicts(
 
         let branch_desc = if file_is_ours { ours_label } else { their_name };
         let new_path_str = format!("{}~{}", String::from_utf8_lossy(&path), branch_desc);
-        let new_path = new_path_str.as_bytes().to_vec();
 
         let body = format!(
             "directory in the way of {} from {}; moving it to {} instead.",
@@ -6360,10 +6387,90 @@ fn apply_directory_file_conflicts(
             auto_merge_hint_path: None,
         });
 
-        index.entries.retain(|e| e.path != path);
+        let path_str = String::from_utf8_lossy(&path).to_string();
+
+        // When our side renamed a tracked file into `path` and their side still has that file
+        // at the old path (now a directory on their side), merge-ort three-way merges the blob
+        // at `path` with `base` + `theirs` at the rename source (t6422 rename/directory).
+        if file_is_ours {
+            if let Some((base_path, _)) = ours_renames
+                .iter()
+                .find(|(_, dest)| dest.as_slice() == path.as_slice())
+            {
+                if let (Some(be), Some(te_old)) =
+                    (base.get(base_path), theirs_entries.get(base_path))
+                {
+                    let base_path_str = String::from_utf8_lossy(base_path);
+                    let ours_merge_label = format!("{ours_label}:{path_str}");
+                    let theirs_merge_label = format!("{their_name}:{base_path_str}");
+                    match try_content_merge(
+                        repo,
+                        &path_str,
+                        be,
+                        file_entry,
+                        te_old,
+                        &ours_merge_label,
+                        "",
+                        &theirs_merge_label,
+                        favor,
+                        diff_algorithm,
+                        merge_renormalize,
+                        ignore_all_space,
+                        ignore_space_change,
+                        ignore_space_at_eol,
+                        ignore_cr_at_eol,
+                        auto_merge_paths.as_deref_mut(),
+                    )? {
+                        ContentMergeResult::Clean(merged_oid, mode) => {
+                            index.remove(&path);
+                            let mut merged_entry = file_entry.clone();
+                            merged_entry.path = path.clone();
+                            merged_entry.oid = merged_oid;
+                            merged_entry.mode = mode;
+                            stage_entry(index, &merged_entry, 2);
+                            let merged_obj = repo.odb.read(&merged_oid)?;
+                            conflict_files.push((new_path_str.clone(), merged_obj.data));
+                            *has_conflicts = true;
+                            continue;
+                        }
+                        ContentMergeResult::Conflict(content)
+                        | ContentMergeResult::BinaryConflict(content) => {
+                            index.remove(&path);
+                            let tilde_path = new_path_str.as_bytes().to_vec();
+                            let mut be_here = be.clone();
+                            be_here.path = tilde_path.clone();
+                            stage_entry(index, &be_here, 1);
+                            let mut oe_here = file_entry.clone();
+                            oe_here.path = tilde_path.clone();
+                            stage_entry(index, &oe_here, 2);
+                            let mut te_here = te_old.clone();
+                            te_here.path = tilde_path.clone();
+                            stage_entry(index, &te_here, 3);
+                            conflict_files.push((new_path_str.clone(), content.clone()));
+                            conflict_descriptions.push(ConflictDescription {
+                                kind: "content",
+                                body: format!("Merge conflict in {path_str}"),
+                                subject_path: new_path_str.clone(),
+                                remerge_anchor_path: None,
+                                rename_rr_ours_dest: None,
+                                rename_rr_theirs_dest: None,
+                                auto_merge_hint_path: None,
+                            });
+                            *has_conflicts = true;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Like merge-ort: keep the unmerged index entry at the original path (`path`); the
+        // displaced blob is checked out under `path~<branch>` so tests (t6422) can compare
+        // `newfile~HEAD` while `git ls-files -u` reports a single line at `newfile`.
+        index.remove(&path);
         let stage = if file_is_ours { 2u8 } else { 3u8 };
         let mut staged = file_entry.clone();
-        staged.path = new_path.clone();
+        staged.path = path.clone();
         stage_entry(index, &staged, stage);
 
         if let Ok(obj) = repo.odb.read(&file_entry.oid) {
@@ -6883,8 +6990,19 @@ fn remove_deleted_files(
         .map(|e| e.path.as_slice())
         .collect();
     for (path, old_entry) in old_entries {
+        let has_nested_under = new_index.entries.iter().any(|e| {
+            e.path.starts_with(path)
+                && e.path.len() > path.len()
+                && e.path.get(path.len()) == Some(&b'/')
+        });
         if new_paths.contains(path.as_slice()) {
-            continue;
+            // Unmerged entries keep `path` in the index even when the result needs `path/` as a
+            // directory (t6422 rename/directory). Drop a tracked file at `path` so children
+            // like `path/sub` can be materialized.
+            if !(has_nested_under && old_entry.mode != MODE_TREE && old_entry.mode != MODE_GITLINK)
+            {
+                continue;
+            }
         }
         if sparse_checkout {
             if let Some(ne) = new_index
@@ -6897,11 +7015,6 @@ fn remove_deleted_files(
                 }
             }
         }
-        let has_nested_under = new_index.entries.iter().any(|e| {
-            e.path.starts_with(path)
-                && e.path.len() > path.len()
-                && e.path.get(path.len()) == Some(&b'/')
-        });
         // Submodule removed from the superproject: keep the on-disk work tree.
         if old_entry.mode == MODE_GITLINK && !has_nested_under {
             continue;
