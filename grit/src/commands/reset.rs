@@ -739,6 +739,7 @@ fn reset_patch(repo: &Repository, rest: &[String]) -> Result<()> {
                 &index_bytes,
                 &ops[s..e],
                 3,
+                true,
             );
 
             writeln!(out, "diff --git a/{path_str} b/{path_str}").ok();

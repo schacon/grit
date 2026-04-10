@@ -13,8 +13,8 @@ use grit_lib::commit_graph_file::{
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{get_file_attrs, load_gitattributes, DiffAttr};
 use grit_lib::diff::{
-    count_changes, diff_trees, diff_trees_show_tree_entries, format_raw, unified_diff, zero_oid,
-    DiffEntry, DiffStatus,
+    count_changes, diff_trees, diff_trees_show_tree_entries, format_raw,
+    indent_heuristic_from_config, unified_diff, zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::git_date::parse::parse_date_basic;
@@ -5022,6 +5022,7 @@ fn commit_pickaxe_matches(
                 entry.old_path.as_deref().unwrap_or(path),
                 entry.new_path.as_deref().unwrap_or(path),
                 3,
+                indent_heuristic_from_config(&config),
             );
             if pickaxe_g_matches_diff_lines(re, &patch) {
                 return Ok(true);
@@ -6644,6 +6645,8 @@ fn write_commit_diff(
 ) -> Result<()> {
     let odb = &repo.odb;
     let git_dir = &repo.git_dir;
+    let log_config = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    let indent_heuristic = indent_heuristic_from_config(&log_config);
     let is_merge = info.parents.len() > 1;
 
     if !log_commit_needs_diff_output(args, info, git_dir)? {
@@ -6665,6 +6668,7 @@ fn write_commit_diff(
             find_object: find_oid,
             submodule_mode: None,
             context_lines: patch_context,
+            indent_heuristic,
         };
         return write_remerge_diff(out, repo, &info.tree, &info.parents, &opts);
     }
@@ -6720,6 +6724,7 @@ fn write_commit_diff(
                 show_patch,
                 false,
                 patch_context,
+                indent_heuristic,
             )?;
         }
         return Ok(());
@@ -6771,6 +6776,7 @@ fn write_commit_diff(
         show_patch,
         is_merge,
         patch_context,
+        indent_heuristic,
     )?;
 
     Ok(())
@@ -6787,6 +6793,7 @@ fn write_commit_diff_body(
     show_patch: bool,
     treat_as_merge_for_format: bool,
     patch_context: usize,
+    indent_heuristic: bool,
 ) -> Result<()> {
     let combined_style = merge_diff_is_combined_style(args, treat_as_merge_for_format, git_dir)?;
     let list_raw_name = if combined_style {
@@ -6841,7 +6848,7 @@ fn write_commit_diff_body(
 
     if show_patch {
         for entry in list_patch {
-            log_write_patch_entry(out, odb, entry, args, patch_context)?;
+            log_write_patch_entry(out, odb, entry, args, patch_context, indent_heuristic)?;
         }
     }
 
@@ -6855,6 +6862,7 @@ fn log_write_patch_entry(
     entry: &DiffEntry,
     args: &Args,
     context_lines: usize,
+    indent_heuristic: bool,
 ) -> Result<()> {
     let old_path = entry
         .old_path
@@ -6954,6 +6962,7 @@ fn log_write_patch_entry(
         0,
         src_pfx,
         dst_pfx,
+        indent_heuristic,
     );
     let patch = apply_diff_output_indicators(&patch, args);
     write!(out, "{patch}")?;

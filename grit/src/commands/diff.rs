@@ -23,10 +23,11 @@ use grit_lib::crlf::{
 };
 use grit_lib::diff::{
     anchored_unified_diff, count_changes, count_changes_with_algorithm, count_git_lines,
-    detect_renames, diff_index_to_tree, diff_index_to_worktree, diff_tree_to_worktree, diff_trees,
-    diffcore_count_changes, empty_blob_oid, rewrite_dissimilarity_index_percent,
-    should_break_rewrite_for_stat, unified_diff,
-    unified_diff_with_prefix_and_funcname_and_algorithm, zero_oid, DiffEntry, DiffStatus,
+    detect_renames, diff_index_to_tree, diff_index_to_worktree, diff_slice_ops_compacted,
+    diff_tree_to_worktree, diff_trees, diffcore_count_changes, empty_blob_oid,
+    resolve_indent_heuristic, rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat,
+    unified_diff, unified_diff_with_prefix_and_funcname_and_algorithm, zero_oid, DiffEntry,
+    DiffStatus,
 };
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::error::Error;
@@ -45,7 +46,7 @@ use grit_lib::rev_parse::{
 };
 use grit_lib::userdiff::matcher_for_path_parsed;
 use regex::Regex;
-use similar::{ChangeTag, TextDiff};
+use similar::{group_diff_ops, udiff::UnifiedDiffHunk, ChangeTag, TextDiff};
 use std::fmt::Write as FmtWrite;
 use std::sync::Arc;
 
@@ -416,6 +417,7 @@ fn no_index_unified_patch_body(
     context_lines: usize,
     mode: &WhitespaceMode,
     algorithm: similar::Algorithm,
+    indent_heuristic: bool,
 ) -> String {
     let old_slots = no_index_build_line_slots(old_bytes, mode);
     let new_slots = no_index_build_line_slots(new_bytes, mode);
@@ -440,6 +442,8 @@ fn no_index_unified_patch_body(
     let diff = TextDiff::configure()
         .algorithm(algorithm)
         .diff_slices(&old_compare, &new_compare);
+    let compacted_ops =
+        diff_slice_ops_compacted(&old_compare, &new_compare, algorithm, indent_heuristic);
 
     let old_label = if old_path == "/dev/null" {
         "--- /dev/null\n".to_string()
@@ -467,12 +471,23 @@ fn no_index_unified_patch_body(
     output.push_str(&old_label);
     output.push_str(&new_label);
 
-    for hunk in diff
-        .unified_diff()
-        .context_radius(context_lines)
-        .iter_hunks()
-    {
-        output.push_str(&format!("{}\n", hunk.header()));
+    let max_common_gap = context_lines.saturating_mul(2);
+    let group_radius = max_common_gap.div_ceil(2);
+    let op_groups = group_diff_ops(compacted_ops, group_radius);
+
+    for ops in op_groups {
+        if ops.is_empty() {
+            continue;
+        }
+        let hunk = UnifiedDiffHunk::new(ops, &diff, false);
+        let hunk_str = format!("{hunk}");
+        let Some(first_newline) = hunk_str.find('\n') else {
+            output.push_str(&hunk_str);
+            continue;
+        };
+        let header_line = &hunk_str[..first_newline];
+        output.push_str(header_line);
+        output.push('\n');
         for change in hunk.iter_changes() {
             match change.tag() {
                 ChangeTag::Equal => {
@@ -1113,6 +1128,11 @@ pub fn run(mut args: Args) -> Result<()> {
     let diff_algo_cli = parse_cli_diff_algorithm_from_argv();
 
     let emit_unified_patch = diff_emit_unified_patch_from_argv(&raw_args);
+    let indent_heuristic = resolve_indent_heuristic(
+        &diff_config_early,
+        args.indent_heuristic,
+        args.no_indent_heuristic,
+    );
 
     let cwd = env::current_dir().context("failed to read current directory")?;
     let pathspec_prefix = repo
@@ -1158,6 +1178,7 @@ pub fn run(mut args: Args) -> Result<()> {
             diff_algo_cli,
             &cwd,
             quote_path_fully,
+            indent_heuristic,
         );
     }
 
@@ -1189,6 +1210,7 @@ pub fn run(mut args: Args) -> Result<()> {
                             diff_algo_cli,
                             &cwd,
                             quote_path_fully,
+                            indent_heuristic,
                         );
                     }
                 }
@@ -2178,6 +2200,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     args.no_ext_diff,
                     external_diff_cmd.as_deref(),
                     relative_prefix_for_paths.as_deref(),
+                    indent_heuristic,
                 )?;
             }
         }
@@ -2206,6 +2229,7 @@ fn run_diff_blob_vs_file(
     diff_algo_cli: Option<similar::Algorithm>,
     cwd: &Path,
     quote_path_fully: bool,
+    indent_heuristic: bool,
 ) -> Result<()> {
     let wt = repo
         .work_tree
@@ -2395,6 +2419,7 @@ fn run_diff_blob_vs_file(
             args.no_ext_diff,
             external_diff_cmd.as_deref(),
             relative_prefix_for_paths.as_deref(),
+            indent_heuristic,
         )?;
     }
 
@@ -2483,6 +2508,11 @@ fn run_diff_two_paths(
             .unwrap_or(3)
     };
 
+    let diff_cfg = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+        .unwrap_or_else(|_| grit_lib::config::ConfigSet::new());
+    let indent_h =
+        resolve_indent_heuristic(&diff_cfg, args.indent_heuristic, args.no_indent_heuristic);
+
     let old_label = format!("{src_prefix}{path_in_repo}");
     let new_label = format!("{dst_prefix}{path_other}");
     let patch = unified_diff(
@@ -2491,6 +2521,7 @@ fn run_diff_two_paths(
         &old_label,
         &new_label,
         context_lines,
+        indent_h,
     );
 
     let mut out = io::stdout().lock();
@@ -2620,6 +2651,11 @@ fn run_no_index(args: Args) -> Result<()> {
         ignore_case_attrs,
     };
     let diff_algo_cli = parse_cli_diff_algorithm_from_argv();
+    let indent_heuristic = resolve_indent_heuristic(
+        diff_algo_ctx.config.as_ref(),
+        args.indent_heuristic,
+        args.no_indent_heuristic,
+    );
 
     // Read file or symlink target (for symlinks, read the target path as content)
     let read_path_or_symlink = |p: &Path, name: &str| -> Result<Vec<u8>> {
@@ -2773,6 +2809,7 @@ fn run_no_index(args: Args) -> Result<()> {
             context_lines,
             &args.anchored,
             line_algo_anchored,
+            indent_heuristic,
         )
     } else {
         no_index_unified_patch_body(
@@ -2783,6 +2820,7 @@ fn run_no_index(args: Args) -> Result<()> {
             context_lines,
             &ws_mode,
             algo_no_index,
+            indent_heuristic,
         )
     };
 
@@ -2918,6 +2956,11 @@ fn run_no_index_dirs(args: Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
         ignore_case_attrs,
     };
     let diff_algo_cli = parse_cli_diff_algorithm_from_argv();
+    let indent_heuristic = resolve_indent_heuristic(
+        diff_algo_ctx.config.as_ref(),
+        args.indent_heuristic,
+        args.no_indent_heuristic,
+    );
     let patch_abbrev = if args.full_index {
         40usize
     } else if let Some(n) = args.abbrev {
@@ -3038,6 +3081,7 @@ fn run_no_index_dirs(args: Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
             "b/",
             func_matcher.as_ref(),
             algo,
+            indent_heuristic,
         );
         write!(out, "{patch}")?;
     }
@@ -4454,6 +4498,7 @@ fn write_patch_with_prefix(
     no_ext_diff: bool,
     external_diff_cmd: Option<&str>,
     relative_prefix: Option<&str>,
+    indent_heuristic: bool,
 ) -> Result<()> {
     for entry in entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
@@ -4485,6 +4530,7 @@ fn write_patch_with_prefix(
                         true,
                         submodule_ignore,
                         &path_for_attrs,
+                        indent_heuristic,
                     )?;
                     continue;
                 }
@@ -4716,6 +4762,7 @@ fn write_patch_with_prefix(
                 display_old,
                 display_new,
                 context_lines,
+                indent_heuristic,
             );
             let patch = if suppress_blank_empty {
                 strip_blank_context_trailing_space(&patch)
@@ -4748,6 +4795,7 @@ fn write_patch_with_prefix(
                 dst_prefix,
                 func_matcher.as_ref(),
                 algo,
+                indent_heuristic,
             );
             let patch = if suppress_blank_empty {
                 strip_blank_context_trailing_space(&patch)
@@ -4806,8 +4854,9 @@ fn word_diff_output(
     old_path: &str,
     new_path: &str,
     context_lines: usize,
+    indent_heuristic: bool,
 ) -> String {
-    use similar::{ChangeTag, TextDiff};
+    use similar::{Algorithm, ChangeTag, TextDiff};
 
     let mut output = String::new();
     output.push_str(&format!("--- a/{old_path}\n"));
@@ -4816,68 +4865,32 @@ fn word_diff_output(
     let old_lines: Vec<&str> = old_content.lines().collect();
     let new_lines: Vec<&str> = new_content.lines().collect();
 
-    let line_diff = TextDiff::from_slices(&old_lines, &new_lines);
+    let line_diff = TextDiff::configure()
+        .algorithm(Algorithm::Myers)
+        .diff_slices(&old_lines, &new_lines);
+    let compacted =
+        diff_slice_ops_compacted(&old_lines, &new_lines, Algorithm::Myers, indent_heuristic);
+    let max_common_gap = context_lines.saturating_mul(2);
+    let group_radius = max_common_gap.div_ceil(2);
+    let op_groups = group_diff_ops(compacted, group_radius);
 
-    for hunk in line_diff
-        .unified_diff()
-        .context_radius(context_lines)
-        .iter_hunks()
-    {
-        // Write the hunk header with function context.
+    for ops in op_groups {
+        if ops.is_empty() {
+            continue;
+        }
+        let hunk = UnifiedDiffHunk::new(ops, &line_diff, false);
         let hunk_str = format!("{hunk}");
-        if let Some(header_end) = hunk_str.find('\n') {
-            let header = &hunk_str[..header_end];
-            output.push_str(header);
-            // Add function context (like Git does).
-            if let Some(func) = find_func_context(header, &old_lines) {
-                output.push(' ');
-                output.push_str(&func);
-            }
-            output.push('\n');
+        let Some(header_end) = hunk_str.find('\n') else {
+            output.push_str(&hunk_str);
+            continue;
+        };
+        let header = &hunk_str[..header_end];
+        output.push_str(header);
+        if let Some(func) = find_func_context(header, &old_lines) {
+            output.push(' ');
+            output.push_str(&func);
         }
-
-        // Process each change in the hunk
-        for change in hunk.iter_changes() {
-            match change.tag() {
-                ChangeTag::Equal => {
-                    output.push_str(change.value());
-                    output.push('\n');
-                }
-                ChangeTag::Delete => {
-                    // Look for a corresponding insert to do word-level diff
-                    // For simplicity, output the whole line as deleted
-                    // We'll handle paired changes below
-                }
-                ChangeTag::Insert => {}
-            }
-        }
-    }
-
-    // Simpler approach: use the similar crate's word-level diff directly
-    output.clear();
-    output.push_str(&format!("--- a/{old_path}\n"));
-    output.push_str(&format!("+++ b/{new_path}\n"));
-
-    // Build unified diff with word-level changes within each hunk
-    let line_diff = TextDiff::from_lines(old_content, new_content);
-
-    for hunk in line_diff
-        .unified_diff()
-        .context_radius(context_lines)
-        .iter_hunks()
-    {
-        // Write hunk header with function context.
-        let hunk_str = format!("{hunk}");
-        if let Some(header_end) = hunk_str.find('\n') {
-            let header = &hunk_str[..header_end];
-            output.push_str(header);
-            let old_lines_for_ctx: Vec<&str> = old_content.lines().collect();
-            if let Some(func) = find_func_context(header, &old_lines_for_ctx) {
-                output.push(' ');
-                output.push_str(&func);
-            }
-            output.push('\n');
-        }
+        output.push('\n');
 
         // Collect changes and pair deletions with insertions
         let changes: Vec<_> = hunk.iter_changes().collect();

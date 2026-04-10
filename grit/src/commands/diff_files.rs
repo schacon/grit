@@ -5,8 +5,10 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     count_changes, detect_copies, empty_blob_oid, format_stat_line,
+    parse_indent_heuristic_cli_flags, resolve_indent_heuristic,
     rewrite_dissimilarity_index_percent, should_break_rewrite_for_stat, stat_matches, unified_diff,
     zero_oid, DiffEntry, DiffStatus,
 };
@@ -41,7 +43,10 @@ pub fn run(mut args: Args) -> Result<()> {
     if grit_lib::precompose_config::effective_core_precomposeunicode(Some(&repo.git_dir)) {
         crate::precompose::precompose_plumbing_argv(&mut args.args);
     }
-    let options = parse_options(&args.args)?;
+    let mut options = parse_options(&args.args)?;
+    let diff_cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let (cli_ind, cli_no) = parse_indent_heuristic_cli_flags(&args.args);
+    options.indent_heuristic = resolve_indent_heuristic(&diff_cfg, cli_ind, cli_no);
 
     let Some(work_tree) = repo.work_tree.clone() else {
         bail!("this operation must be run in a work tree");
@@ -181,7 +186,13 @@ pub fn run(mut args: Args) -> Result<()> {
             }
             OutputFormat::Patch => {
                 for entry in &diff_entries {
-                    print_patch_from_diff_entry(entry, &repo, &work_tree, options.abbrev)?;
+                    print_patch_from_diff_entry(
+                        entry,
+                        &repo,
+                        &work_tree,
+                        options.abbrev,
+                        options.indent_heuristic,
+                    )?;
                 }
             }
             OutputFormat::Stat => {
@@ -356,6 +367,7 @@ struct Options {
     summary: bool,
     /// Detect complete rewrites (`-B` / `--break-rewrites`) for summary/raw dissimilarity.
     break_rewrites: bool,
+    indent_heuristic: bool,
 }
 
 /// A single changed file: index side vs working tree.
@@ -482,7 +494,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 | "--full-index"
                 | "--no-ext-diff"
                 | "--no-prefix"
-                | "--no-abbrev" => {}
+                | "--no-abbrev"
+                | "--indent-heuristic"
+                | "--no-indent-heuristic" => {}
                 "-M" | "--find-renames" => {
                     find_renames = Some(50);
                 }
@@ -578,6 +592,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         reverse,
         summary,
         break_rewrites,
+        indent_heuristic: false,
     })
 }
 
@@ -927,6 +942,7 @@ fn print_patch_from_diff_entry(
     repo: &Repository,
     work_tree: &Path,
     abbrev: Option<usize>,
+    indent_heuristic: bool,
 ) -> Result<()> {
     let (old_content, new_content) = load_patch_contents_for_diff_entry(entry, repo, work_tree)?;
     let old_path = entry
@@ -1003,7 +1019,14 @@ fn print_patch_from_diff_entry(
     {
         println!("{header}");
     } else if old_content != new_content {
-        let patch = unified_diff(&old_content, &new_content, display_path, display_path, 3);
+        let patch = unified_diff(
+            &old_content,
+            &new_content,
+            display_path,
+            display_path,
+            3,
+            indent_heuristic,
+        );
         let body: String = patch.lines().skip(2).map(|l| format!("\n{l}")).collect();
         println!("{header}\n--- {old_label}\n+++ {new_label}{body}");
     } else {

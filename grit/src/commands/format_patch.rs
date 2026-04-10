@@ -7,7 +7,9 @@
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
-use grit_lib::diff::{count_changes, diff_trees, unified_diff, zero_oid};
+use grit_lib::diff::{
+    count_changes, diff_trees, indent_heuristic_from_config, unified_diff, zero_oid,
+};
 use grit_lib::diffstat::{
     write_diffstat_block, DiffstatOptions, FileStatInput, FORMAT_PATCH_STAT_WIDTH,
 };
@@ -524,6 +526,7 @@ pub fn run(mut args: Args) -> Result<()> {
             &opts,
             include_base,
             &log_output_encoding,
+            indent_heuristic_from_config(&config),
         )?;
 
         if args.stdout {
@@ -964,6 +967,7 @@ fn format_single_patch(
     opts: &PatchOptions,
     include_base: bool,
     log_output_encoding: &str,
+    indent_heuristic: bool,
 ) -> Result<String> {
     let mut out = String::new();
     let charset_label = rfc2047_charset_label(log_output_encoding);
@@ -1003,7 +1007,14 @@ fn format_single_patch(
         write_diff_header_to_string(&mut diff_text, entry);
         let old_content = read_blob_content(odb, &entry.old_oid);
         let new_content = read_blob_content(odb, &entry.new_oid);
-        let patch = unified_diff(&old_content, &new_content, old_path, new_path, 3);
+        let patch = unified_diff(
+            &old_content,
+            &new_content,
+            old_path,
+            new_path,
+            3,
+            indent_heuristic,
+        );
         diff_text.push_str(&patch);
     }
 

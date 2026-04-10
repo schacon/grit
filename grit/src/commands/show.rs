@@ -12,8 +12,8 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
-    anchored_unified_diff, detect_copies, detect_renames, diff_trees, unified_diff, zero_oid,
-    DiffEntry,
+    anchored_unified_diff, detect_copies, detect_renames, diff_trees,
+    parse_indent_heuristic_cli_flags, resolve_indent_heuristic, unified_diff, zero_oid, DiffEntry,
 };
 use grit_lib::diffstat::{terminal_columns, write_diffstat_block, DiffstatOptions, FileStatInput};
 use grit_lib::merge_base::merge_bases_first_vs_rest;
@@ -208,6 +208,14 @@ pub struct Args {
     #[arg(long = "numstat")]
     pub numstat: bool,
 
+    /// Enable indent heuristic (plumbing compatibility; also parsed from argv).
+    #[arg(long = "indent-heuristic", hide = true)]
+    pub indent_heuristic: bool,
+
+    /// Disable indent heuristic.
+    #[arg(long = "no-indent-heuristic", hide = true)]
+    pub no_indent_heuristic: bool,
+
     /// Show diff against a mechanical re-merge of the parents (merge commits).
     #[arg(long = "remerge-diff")]
     pub remerge_diff: bool,
@@ -258,6 +266,14 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
     maybe_warn_deprecated_grafts(&repo)?;
+
+    let diff_cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let (argv_ind, argv_no) = parse_indent_heuristic_cli_flags(&args.objects);
+    let indent_heuristic = resolve_indent_heuristic(
+        &diff_cfg,
+        args.indent_heuristic || argv_ind,
+        args.no_indent_heuristic || argv_no,
+    );
 
     let mut raw_objects = args.objects.clone();
     while let Some(first) = raw_objects.first() {
@@ -347,6 +363,7 @@ pub fn run(mut args: Args) -> Result<()> {
             find_object: find_oid,
             submodule_mode: args.submodule.as_deref(),
             context_lines: args.unified.unwrap_or(3),
+            indent_heuristic,
         };
 
         let mut candidates: BTreeSet<ObjectId> = BTreeSet::new();
@@ -397,6 +414,7 @@ pub fn run(mut args: Args) -> Result<()> {
             find_object: None,
             submodule_mode: args.submodule.as_deref(),
             context_lines: args.unified.unwrap_or(3),
+            indent_heuristic,
         };
 
         let mut remerge_shown = false;
@@ -415,6 +433,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 &pathspecs,
                 Some(&emit_opts),
                 None,
+                indent_heuristic,
             )?;
             remerge_shown = true;
         }
@@ -469,6 +488,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     &pathspecs,
                     None,
                     Some(parent_oid),
+                    indent_heuristic,
                 )?;
                 shown = true;
             }
@@ -516,7 +536,16 @@ pub fn run(mut args: Args) -> Result<()> {
                         writeln!(out)?;
                     }
                     show_commit(
-                        &mut out, &repo, &oid, &obj.data, &args, &notes_map, &pathspecs, None, None,
+                        &mut out,
+                        &repo,
+                        &oid,
+                        &obj.data,
+                        &args,
+                        &notes_map,
+                        &pathspecs,
+                        None,
+                        None,
+                        indent_heuristic,
                     )?;
                     shown = true;
                 }
@@ -541,7 +570,16 @@ pub fn run(mut args: Args) -> Result<()> {
                 writeln!(out)?;
             }
             show_commit(
-                &mut out, &repo, &oid, &obj.data, &args, &notes_map, &pathspecs, None, None,
+                &mut out,
+                &repo,
+                &oid,
+                &obj.data,
+                &args,
+                &notes_map,
+                &pathspecs,
+                None,
+                None,
+                indent_heuristic,
             )?;
             shown = true;
         }
@@ -562,11 +600,28 @@ pub fn run(mut args: Args) -> Result<()> {
         match obj.kind {
             ObjectKind::Commit => {
                 show_commit(
-                    &mut out, &repo, &oid, &obj.data, &args, &notes_map, &pathspecs, None, None,
+                    &mut out,
+                    &repo,
+                    &oid,
+                    &obj.data,
+                    &args,
+                    &notes_map,
+                    &pathspecs,
+                    None,
+                    None,
+                    indent_heuristic,
                 )?;
             }
             ObjectKind::Tag => {
-                show_tag(&mut out, &repo, spec, &obj.data, &args, &notes_map)?;
+                show_tag(
+                    &mut out,
+                    &repo,
+                    spec,
+                    &obj.data,
+                    &args,
+                    &notes_map,
+                    indent_heuristic,
+                )?;
             }
             ObjectKind::Tree => {
                 show_tree_named(&mut out, &repo, spec, oid)?;
@@ -712,9 +767,11 @@ fn show_commit(
     pathspecs: &[String],
     remerge_emit_opts: Option<&crate::commands::remerge_diff::RemergeDiffOptions<'_>>,
     merge_from_parent: Option<ObjectId>,
+    indent_heuristic: bool,
 ) -> Result<()> {
     let odb = &repo.odb;
     let commit = parse_commit(data).context("parsing commit")?;
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let hex = oid.to_hex();
 
     if args.oneline || args.format.as_deref() == Some("oneline") {
@@ -742,6 +799,7 @@ fn show_commit(
                         find_object: find_oid,
                         submodule_mode: args.submodule.as_deref(),
                         context_lines: args.unified.unwrap_or(3),
+                        indent_heuristic,
                     };
                     write_remerge_diff(&mut remerge_buf, repo, &commit.tree, &commit.parents, &o)?;
                 }
@@ -902,6 +960,7 @@ fn show_commit(
                     find_object: find_oid,
                     submodule_mode: args.submodule.as_deref(),
                     context_lines: args.unified.unwrap_or(3),
+                    indent_heuristic,
                 };
                 write_remerge_diff(out, repo, &commit.tree, &commit.parents, &o)?;
             }
@@ -909,7 +968,6 @@ fn show_commit(
         return Ok(());
     }
 
-    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let abbrev_len = if args.no_abbrev {
         40usize
     } else {
@@ -1267,9 +1325,17 @@ fn show_commit(
                 context,
                 &args.anchored,
                 line_algo,
+                indent_heuristic,
             )
         } else {
-            unified_diff(&old_content, &new_content, old_path, new_path, context)
+            unified_diff(
+                &old_content,
+                &new_content,
+                old_path,
+                new_path,
+                context,
+                indent_heuristic,
+            )
         };
         write!(out, "{patch}")?;
     }
@@ -1499,6 +1565,7 @@ fn show_tag(
     data: &[u8],
     args: &Args,
     notes_map: &HashMap<ObjectId, Vec<u8>>,
+    indent_heuristic: bool,
 ) -> Result<()> {
     let odb = &repo.odb;
     let tag = parse_tag(data).context("parsing tag")?;
@@ -1535,10 +1602,19 @@ fn show_tag(
                 &[],
                 None,
                 None,
+                indent_heuristic,
             )?;
         }
         ObjectKind::Tag => {
-            show_tag(out, repo, "", &tagged_obj.data, args, notes_map)?;
+            show_tag(
+                out,
+                repo,
+                "",
+                &tagged_obj.data,
+                args,
+                notes_map,
+                indent_heuristic,
+            )?;
         }
         ObjectKind::Tree => {
             let tree_oid = peel_to_tree(repo, tag.object).context("peeling tag to tree")?;

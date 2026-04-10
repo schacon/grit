@@ -23,11 +23,93 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
+use crate::config::ConfigSet;
+use crate::diff_indent_heuristic;
 use crate::error::{Error, Result};
 use crate::index::{Index, IndexEntry};
 use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
 use crate::userdiff::FuncnameMatcher;
+
+/// `diff.indentHeuristic` from config (Git defaults to true when unset).
+#[must_use]
+pub fn indent_heuristic_from_config(config: &ConfigSet) -> bool {
+    match config.get_bool("diff.indentHeuristic") {
+        Some(Ok(b)) => b,
+        Some(Err(_)) | None => true,
+    }
+}
+
+/// Resolve indent heuristic: `--no-indent-heuristic` and `--indent-heuristic` override config.
+#[must_use]
+pub fn resolve_indent_heuristic(
+    config: &ConfigSet,
+    cli_indent_heuristic: bool,
+    cli_no_indent_heuristic: bool,
+) -> bool {
+    if cli_no_indent_heuristic {
+        false
+    } else if cli_indent_heuristic {
+        true
+    } else {
+        indent_heuristic_from_config(config)
+    }
+}
+
+/// Parse `--indent-heuristic` / `--no-indent-heuristic` from a plumbing argv slice (last occurrence wins).
+#[must_use]
+pub fn parse_indent_heuristic_cli_flags(argv: &[String]) -> (bool, bool) {
+    let mut indent_heuristic = false;
+    let mut no_indent_heuristic = false;
+    for a in argv {
+        match a.as_str() {
+            "--indent-heuristic" => {
+                indent_heuristic = true;
+                no_indent_heuristic = false;
+            }
+            "--no-indent-heuristic" => {
+                no_indent_heuristic = true;
+                indent_heuristic = false;
+            }
+            _ => {}
+        }
+    }
+    (indent_heuristic, no_indent_heuristic)
+}
+
+/// Line-diff ops for string slices after Git `xdl_change_compact` (and optional indent heuristic).
+#[must_use]
+pub fn diff_slice_ops_compacted(
+    old_lines: &[&str],
+    new_lines: &[&str],
+    algorithm: similar::Algorithm,
+    indent_heuristic: bool,
+) -> Vec<similar::DiffOp> {
+    diff_indent_heuristic::diff_slice_ops_compacted(
+        old_lines,
+        new_lines,
+        algorithm,
+        indent_heuristic,
+    )
+}
+
+/// Map each line in `new_joined` to its origin in `old_joined` after Git-style compaction (for blame).
+#[must_use]
+pub fn map_new_to_old_lines_compacted(
+    old_joined: &str,
+    new_joined: &str,
+    algorithm: similar::Algorithm,
+    indent_heuristic: bool,
+    new_line_count: usize,
+) -> Vec<Option<usize>> {
+    let ops = diff_indent_heuristic::diff_lines_ops_compacted(
+        old_joined,
+        new_joined,
+        algorithm,
+        indent_heuristic,
+    );
+    diff_indent_heuristic::map_new_to_old_from_ops(&ops, new_line_count)
+}
 
 /// The kind of change between two sides of a diff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1859,6 +1941,7 @@ pub fn unified_diff(
     old_path: &str,
     new_path: &str,
     context_lines: usize,
+    indent_heuristic: bool,
 ) -> String {
     unified_diff_with_prefix(
         old_content,
@@ -1869,6 +1952,7 @@ pub fn unified_diff(
         0,
         "a/",
         "b/",
+        indent_heuristic,
     )
 }
 
@@ -1886,6 +1970,7 @@ pub fn unified_diff_with_prefix(
     inter_hunk_context: usize,
     src_prefix: &str,
     dst_prefix: &str,
+    indent_heuristic: bool,
 ) -> String {
     unified_diff_with_prefix_and_funcname(
         old_content,
@@ -1897,6 +1982,7 @@ pub fn unified_diff_with_prefix(
         src_prefix,
         dst_prefix,
         None,
+        indent_heuristic,
     )
 }
 
@@ -1913,6 +1999,7 @@ pub fn unified_diff_with_prefix_and_funcname(
     src_prefix: &str,
     dst_prefix: &str,
     funcname_matcher: Option<&FuncnameMatcher>,
+    indent_heuristic: bool,
 ) -> String {
     unified_diff_with_prefix_and_funcname_and_algorithm(
         old_content,
@@ -1925,6 +2012,7 @@ pub fn unified_diff_with_prefix_and_funcname(
         dst_prefix,
         funcname_matcher,
         similar::Algorithm::Myers,
+        indent_heuristic,
     )
 }
 
@@ -1942,12 +2030,19 @@ pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
     dst_prefix: &str,
     funcname_matcher: Option<&FuncnameMatcher>,
     algorithm: similar::Algorithm,
+    indent_heuristic: bool,
 ) -> String {
     use similar::{group_diff_ops, udiff::UnifiedDiffHunk, TextDiff};
 
     let diff = TextDiff::configure()
         .algorithm(algorithm)
         .diff_lines(old_content, new_content);
+    let compacted_ops = diff_indent_heuristic::diff_lines_ops_compacted(
+        old_content,
+        new_content,
+        algorithm,
+        indent_heuristic,
+    );
 
     let mut output = String::new();
     if old_path == "/dev/null" {
@@ -1971,7 +2066,7 @@ pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
         .saturating_mul(2)
         .saturating_add(inter_hunk_context);
     let group_radius = max_common_gap.div_ceil(2);
-    let op_groups = group_diff_ops(diff.ops().to_vec(), group_radius);
+    let op_groups = group_diff_ops(compacted_ops, group_radius);
 
     for ops in op_groups {
         if ops.is_empty() {
@@ -2021,6 +2116,7 @@ pub fn anchored_unified_diff(
     context_lines: usize,
     anchors: &[String],
     algorithm: similar::Algorithm,
+    indent_heuristic: bool,
 ) -> String {
     use similar::TextDiff;
 
@@ -2068,6 +2164,7 @@ pub fn anchored_unified_diff(
             "b/",
             None,
             algorithm,
+            indent_heuristic,
         );
     }
 
@@ -2092,12 +2189,45 @@ pub fn anchored_unified_diff(
     // Each anchor line itself is a fixed context match.
 
     // Collect all diff operations
-    struct DiffOp {
+    struct LineDiffOp {
         tag: char, // ' ', '+', '-'
         line: String,
     }
 
-    let mut ops: Vec<DiffOp> = Vec::new();
+    let append_segment_diff =
+        |ops: &mut Vec<LineDiffOp>, old_seg_input: &str, new_seg_input: &str| {
+            use similar::ChangeTag;
+            let old_ls: Vec<&str> = old_seg_input.lines().collect();
+            let new_ls: Vec<&str> = new_seg_input.lines().collect();
+            if old_ls.is_empty() && new_ls.is_empty() {
+                return;
+            }
+            let seg_diff = TextDiff::configure()
+                .algorithm(algorithm)
+                .diff_slices(&old_ls, &new_ls);
+            let raw = seg_diff.ops().to_vec();
+            let compacted = diff_indent_heuristic::apply_change_compact_to_ops(
+                &raw,
+                &old_ls,
+                &new_ls,
+                indent_heuristic,
+            );
+            for op in &compacted {
+                for ch in op.iter_changes(&old_ls, &new_ls) {
+                    let t = match ch.tag() {
+                        ChangeTag::Equal => ' ',
+                        ChangeTag::Delete => '-',
+                        ChangeTag::Insert => '+',
+                    };
+                    ops.push(LineDiffOp {
+                        tag: t,
+                        line: ch.value().to_string(),
+                    });
+                }
+            }
+        };
+
+    let mut ops: Vec<LineDiffOp> = Vec::new();
     let mut old_pos = 0usize;
     let mut new_pos = 0usize;
 
@@ -2120,24 +2250,11 @@ pub fn anchored_unified_diff(
             } else {
                 format!("{}\n", new_seg_text)
             };
-            let seg_diff = TextDiff::configure()
-                .algorithm(algorithm)
-                .diff_lines(&old_seg_input, &new_seg_input);
-            for change in seg_diff.iter_all_changes() {
-                let tag = match change.tag() {
-                    similar::ChangeTag::Equal => ' ',
-                    similar::ChangeTag::Delete => '-',
-                    similar::ChangeTag::Insert => '+',
-                };
-                ops.push(DiffOp {
-                    tag,
-                    line: change.value().trim_end_matches('\n').to_string(),
-                });
-            }
+            append_segment_diff(&mut ops, &old_seg_input, &new_seg_input);
         }
 
         // The anchor line itself is always context
-        ops.push(DiffOp {
+        ops.push(LineDiffOp {
             tag: ' ',
             line: old_lines[old_anchor].to_string(),
         });
@@ -2163,20 +2280,7 @@ pub fn anchored_unified_diff(
         } else {
             format!("{}\n", new_seg_text)
         };
-        let seg_diff = TextDiff::configure()
-            .algorithm(algorithm)
-            .diff_lines(&old_seg_input, &new_seg_input);
-        for change in seg_diff.iter_all_changes() {
-            let tag = match change.tag() {
-                similar::ChangeTag::Equal => ' ',
-                similar::ChangeTag::Delete => '-',
-                similar::ChangeTag::Insert => '+',
-            };
-            ops.push(DiffOp {
-                tag,
-                line: change.value().trim_end_matches('\n').to_string(),
-            });
-        }
+        append_segment_diff(&mut ops, &old_seg_input, &new_seg_input);
     }
 
     // Now format as unified diff with hunks

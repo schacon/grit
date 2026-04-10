@@ -22,6 +22,7 @@ pub(crate) struct RemergeDiffOptions<'a> {
     pub find_object: Option<ObjectId>,
     pub submodule_mode: Option<&'a str>,
     pub context_lines: usize,
+    pub indent_heuristic: bool,
 }
 
 fn path_matches_pathspecs(pathspecs: &[String], path: &str) -> bool {
@@ -451,6 +452,7 @@ pub(crate) fn write_remerge_diff(
                     e,
                     use_textconv,
                     opts.context_lines,
+                    opts.indent_heuristic,
                 )?;
                 continue;
             }
@@ -473,6 +475,7 @@ pub(crate) fn write_remerge_diff(
                 e,
                 use_textconv,
                 opts.context_lines,
+                opts.indent_heuristic,
             )?;
         } else if d.kind == "file/directory" {
             let old_path = d.subject_path.as_str();
@@ -529,6 +532,7 @@ pub(crate) fn write_remerge_diff(
                                 &del,
                                 use_textconv,
                                 opts.context_lines,
+                                opts.indent_heuristic,
                             )?;
                         }
                     }
@@ -608,6 +612,7 @@ pub(crate) fn write_remerge_diff(
             e,
             use_textconv,
             opts.context_lines,
+            opts.indent_heuristic,
         )?;
     }
 
@@ -622,6 +627,7 @@ fn emit_patch_for_entry(
     e: &DiffEntry,
     use_textconv: bool,
     context_lines: usize,
+    indent_heuristic: bool,
 ) -> Result<()> {
     let old_path = e.old_path.as_deref().unwrap_or("/dev/null");
     let new_path = e.new_path.as_deref().unwrap_or("/dev/null");
@@ -656,6 +662,7 @@ fn emit_patch_for_entry(
         old_path,
         new_path,
         context_lines,
+        indent_heuristic,
     );
     write!(out, "{patch}")?;
     Ok(())

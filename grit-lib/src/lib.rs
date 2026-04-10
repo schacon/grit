@@ -29,6 +29,7 @@ pub mod connectivity;
 pub mod crlf;
 pub mod delta_encode;
 pub mod diff;
+mod diff_indent_heuristic;
 pub mod diffstat;
 pub mod error;
 mod ewah_bitmap;
