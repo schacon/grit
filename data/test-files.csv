@@ -992,7 +992,7 @@ t5572-pull-submodule	t5	yes	69	22	47	false	ok	0
 t5573-pull-verify-signatures	t5	skip	16	0	0	false	ok	0
 t5574-fetch-output	t5	yes	14	1	13	false	ok	0
 t5580-unc-paths	t5	skip	8	0	0	false	ok	0
-t5581-http-curl-verbose	t5	yes	2	1	1	false	ok	0
+t5581-http-curl-verbose	t5	yes	2	2	0	true	ok	0
 t5582-fetch-negative-refspec	t5	yes	16	9	7	false	ok	0
 t5583-push-branches	t5	yes	8	8	0	true	ok	0
 t5600-clone-fail-cleanup	t5	yes	14	11	3	false	ok	0

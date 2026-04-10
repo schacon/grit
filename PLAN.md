@@ -552,7 +552,7 @@ commit → check it off → move on.
 - [ ] `t5406-remote-rejects` █████████████░░░░░░░ 2/3 (1 left) — remote push rejects are reported by client
 - [x] `t5314-pack-cycle-detection` — test handling of inter-pack delta cycles during repack
 
-- [ ] `t5581-http-curl-verbose` ██████████░░░░░░░░░░ 1/2 (1 left) — test GIT_CURL_VERBOSE
+- [x] `t5581-http-curl-verbose` — test GIT_CURL_VERBOSE (test-httpd: `/error_git_upload_pack` routing + 500 upload-pack)
 - [ ] `t5554-noop-fetch-negotiator` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — test noop fetch negotiator
 - [ ] `t5615-alternate-env` ███████████████░░░░░ 7/9 (2 left) — handling of alternates in environment variables
 - [ ] `t5527-fetch-odd-refs` ████████████░░░░░░░░ 3/5 (2 left) — test fetching of oddly-named refs
