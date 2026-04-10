@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   328 |
+| Completed   |   329 |
 | In progress |     5 |
-| Remaining   |   438 |
+| Remaining   |   437 |
 | **Total**   |   771 |
 
-Task lines in `PLAN.md`: 328 completed (`[x]`), 5 in progress (`[~]`), 438 remaining (`[ ]`).
+Task lines in `PLAN.md`: 329 completed (`[x]`), 5 in progress (`[~]`), 437 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t7413-submodule-is-active` — 10/10 tests pass (`test-tool submodule is-active`: `is_submodule_active` parity; `submodule.active` pathspec + `:(exclude)`; bare `submodule.active` stderr; `submodule add` skips `submodule.<name>.active` when path matches `submodule.active` wildmatch; `ConfigSet::has_key`)
 - `t3702-add-edit` — 3/3 tests pass (`git add -e`: unstaged index↔worktree patch with 7 context lines, editor via `launch_commit_editor`, `apply --cached --recount --strip=1`; empty patch / editor failure match Git)
 - `t3905-stash-include-untracked` — 34/34 tests pass (`stash -u`/`-a`: ignore-aware untracked discovery + pathspecs/`:(glob)`; `GIT_INDEX_FILE` honored in `Repository::load_index` for `write-tree`; `stash show` global `-u`/`-p`, duplicate detection, bare OID resolve, Git-aligned stat/patch; porcelain v1 without forced `##`; clean pathspec uses lib matcher; `ls-files` magic pathspecs use lib matcher)
 - `t8007-cat-file-textconv` — 15/15 tests pass (`cat-file --textconv` / `--filters`: treeish:path and `:path` resolution use rev-parse diagnostics; symlink blobs skip textconv like Git; batch textconv skips driver for `120000` entries; `resolve_treeish_blob_at_path` applies missing-path diagnosis)
@@ -212,4 +213,4 @@ Task lines in `PLAN.md`: 328 completed (`[x]`), 5 in progress (`[~]`), 438 remai
 
 ## What Remains
 
-438 task lines still open in `PLAN.md` (plus 5 in progress). See `PLAN.md` for the full prioritized list.
+437 task lines still open in `PLAN.md` (plus 5 in progress). See `PLAN.md` for the full prioritized list.
