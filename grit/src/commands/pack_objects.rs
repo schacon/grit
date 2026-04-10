@@ -1002,23 +1002,14 @@ fn walk_reachable(repo: &Repository, oid: &ObjectId, oids: &mut BTreeSet<ObjectI
             }
         }
         ObjectKind::Tree => {
-            // Parse tree entries: mode SP name NUL 20-byte-oid
-            let data = &obj.data;
-            let mut pos = 0;
-            while pos < data.len() {
-                // Find the NUL.
-                let nul = data[pos..]
-                    .iter()
-                    .position(|&b| b == 0)
-                    .map(|i| pos + i)
-                    .ok_or_else(|| anyhow::anyhow!("corrupt tree object"))?;
-                if nul + 21 > data.len() {
-                    break;
+            let entries = parse_tree(&obj.data).map_err(|e| anyhow::anyhow!("{e}"))?;
+            for entry in entries {
+                // Submodule / gitlink: the OID names a commit in another repository; it is not
+                // stored in this ODB. Recursing would fail pack-objects (see t3050-subprojects-fetch).
+                if entry.mode == 0o160000 {
+                    continue;
                 }
-                let entry_oid = ObjectId::from_bytes(&data[nul + 1..nul + 21])
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-                walk_reachable(repo, &entry_oid, oids)?;
-                pos = nul + 21;
+                walk_reachable(repo, &entry.oid, oids)?;
             }
         }
         ObjectKind::Tag => {
