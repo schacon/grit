@@ -3122,9 +3122,11 @@ fn run_no_index(args: Args) -> Result<()> {
             indent_heuristic,
         )
     } else {
+        // Diff the textconv (or UTF-8 lossy) view so hunks match what we compare for exit status
+        // and stats; raw blob bytes would ignore `diff.<driver>.textconv` in the patch body (t4042).
         no_index_unified_patch_body(
-            &data_a,
-            &data_b,
+            text_a.as_bytes(),
+            text_b.as_bytes(),
             paths[0].as_str(),
             paths[1].as_str(),
             context_lines,
