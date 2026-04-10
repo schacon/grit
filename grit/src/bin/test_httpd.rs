@@ -401,6 +401,18 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
             return r;
         }
     }
+    // Route: /one_time_script/<repo> -> git-http-backend CGI output transformed once.
+    if req.path.starts_with("/one_time_script/") {
+        let r = handle_one_time_script_smart(&mut stream, &req, config);
+        log_access(
+            config,
+            &req.method,
+            &req.path,
+            &req.query,
+            if r.is_ok() { 200 } else { 500 },
+        );
+        return r;
+    }
     // Route: /smart/<repo> → git-http-backend CGI
     if req.path.starts_with("/smart/") {
         let r = handle_smart_http(&mut stream, &req, config);
@@ -735,6 +747,65 @@ fn handle_smart_http_with_path(
     config: &Config,
     prefix: &str,
 ) -> Result<(), String> {
+    let output = run_smart_http_cgi_output(req, config, prefix)?;
+    parse_and_send_cgi_response(stream, &output)
+}
+
+fn one_time_script_path(config: &Config) -> std::path::PathBuf {
+    config.root.parent().map_or_else(
+        || config.root.join("one-time-script"),
+        |p| p.join("one-time-script"),
+    )
+}
+
+fn handle_one_time_script_smart(
+    stream: &mut TcpStream,
+    req: &Request,
+    config: &Config,
+) -> Result<(), String> {
+    let script_path = one_time_script_path(config);
+    if !script_path.exists() {
+        return send_response(stream, 404, "Not Found", &[], b"Not Found\n");
+    }
+    let cgi_output = run_smart_http_cgi_output(req, config, "/one_time_script")?;
+    let transformed = apply_one_time_script(&script_path, &cgi_output)?;
+    parse_and_send_cgi_response(stream, &transformed)
+}
+
+fn apply_one_time_script(script_path: &Path, input: &[u8]) -> Result<Vec<u8>, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let tmp_path = std::env::temp_dir().join(format!(
+        "test-httpd-one-time-script-{}-{stamp}.pkt",
+        std::process::id()
+    ));
+    fs::write(&tmp_path, input).map_err(|e| e.to_string())?;
+    let output = Command::new(script_path)
+        .arg(&tmp_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("Failed to execute one-time-script: {e}"))?;
+    let _ = fs::remove_file(&tmp_path);
+    let _ = fs::remove_file(script_path);
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "one-time-script exited with status {}: {}",
+            output.status.code().unwrap_or(-1),
+            err.trim()
+        ));
+    }
+    Ok(output.stdout)
+}
+
+fn run_smart_http_cgi_output(
+    req: &Request,
+    config: &Config,
+    prefix: &str,
+) -> Result<Vec<u8>, String> {
     let smart_path = &req.path[prefix.len()..]; // e.g., /repo.git/info/refs
 
     let path_translated = format!("{}{}", config.root.display(), smart_path);
@@ -784,10 +855,7 @@ fn handle_smart_http_with_path(
     let output = child
         .wait_with_output()
         .map_err(|e| format!("Failed to wait for git-http-backend: {e}"))?;
-
-    // Parse CGI response (headers + body separated by blank line)
-    let stdout = output.stdout;
-    parse_and_send_cgi_response(stream, &stdout)
+    Ok(output.stdout)
 }
 
 fn parse_and_send_cgi_response(stream: &mut TcpStream, cgi_output: &[u8]) -> Result<(), String> {

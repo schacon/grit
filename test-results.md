@@ -1,5 +1,21 @@
 # Test results
 
+**2026-04-10 (fetch-plan Phase E.4: one_time_script HTTP route parity)**n+
+- `cargo check -p grit-rs`: pass
+- `cargo test -p grit-lib --lib`: 166 passed
+- `GUST_BIN=/workspace/target/release/grit bash tests/t5702-protocol-v2.sh --run=83,84,85`: partial
+  - Passed: 83,85
+  - Remaining failure: 84 still fails in this environment despite implementing `/one_time_script/*`
+    routing in `test_httpd`; verbose run shows setup creating `server/` outside HTTP docroot
+    (`$HTTPD_DOCUMENT_ROOT_PATH`) and then cloning from `/one_time_script/server`, so the endpoint
+    resolves to a missing repository path before the wait-for-done assertion is reached.
+- Regression checkpoint:
+  - `./scripts/run-tests.sh t5700-protocol-v1.sh`: 9/24
+  - `./scripts/run-tests.sh t5558-clone-bundle-uri.sh`: 13/37
+  - `./scripts/run-tests.sh t5555-http-smart-common.sh`: 10/10
+  - `./scripts/run-tests.sh t5562-http-backend-content-length.sh`: 0/16 (pre-existing; `git http-backend`
+    still intentionally unimplemented in grit command path)
+
 **2026-04-10 (fetch-plan Phase E.2: ls-remote over HTTP)**
 
 - `cargo check -p grit-rs`: pass
