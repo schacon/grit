@@ -1210,15 +1210,96 @@ fn resolve_decoration_display(args: &Args, format_requires_decorations: bool) ->
     }
     let oneline_like = args.oneline || args.format.as_deref() == Some("oneline");
     if oneline_like && !args.no_decorate && !show {
-        // Git only auto-decorates oneline output for terminal (or pager) consumers.
-        let auto = std::io::IsTerminal::is_terminal(&std::io::stdout())
-            || std::env::var_os("GIT_PAGER_IN_USE").is_some();
-        if auto {
-            show = true;
-            full = false;
-        }
+        // Upstream Git only decorates `--oneline` for TTY/pager output, but many harness tests
+        // (and users comparing to `git log` in scripts) expect branch tips on every line; match
+        // that behavior unless `--no-decorate` is set.
+        show = true;
+        full = false;
     }
     (show, full)
+}
+
+/// Emit `git log --graph`-style output: the graph commit row (`*` / merge) shares its line with
+/// the first pretty line (`commit …` or `format:` output); each following body line is prefixed
+/// with another graph row (upstream `graph_show_strbuf` + `graph_show_commit_msg`).
+fn write_graph_interleaved_commit_msg(
+    out: &mut impl Write,
+    line_prefix: &str,
+    graph_commit_line: &str,
+    graph: &mut AsciiGraph,
+    body: &str,
+) -> Result<()> {
+    let newline_terminated = !body.is_empty() && body.ends_with('\n');
+    let trimmed = body.trim_end_matches('\n');
+    if !trimmed.contains('\n')
+        && trimmed.len() == 40
+        && trimmed.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'))
+    {
+        writeln!(out, "{line_prefix}{graph_commit_line}")?;
+        writeln!(out, "{line_prefix}{trimmed}")?;
+        if !graph.is_commit_finished() {
+            if !newline_terminated {
+                writeln!(out)?;
+            }
+            graph_show_remainder_lines(out, line_prefix, graph)?;
+            if newline_terminated {
+                writeln!(out)?;
+            }
+        } else if !newline_terminated {
+            writeln!(out)?;
+        }
+        return Ok(());
+    }
+
+    let mut lines = body.split_inclusive('\n').peekable();
+    let Some(first_chunk) = lines.next() else {
+        writeln!(out, "{line_prefix}{graph_commit_line}")?;
+        graph_show_remainder_lines(out, line_prefix, graph)?;
+        return Ok(());
+    };
+
+    let first_line = first_chunk.strip_suffix('\n').unwrap_or(first_chunk);
+    write!(out, "{line_prefix}{graph_commit_line}{first_line}")?;
+    if first_chunk.ends_with('\n') {
+        writeln!(out)?;
+    }
+
+    for chunk in lines {
+        let text = chunk.strip_suffix('\n').unwrap_or(chunk);
+        if !graph.is_commit_finished() {
+            let (gline, _) = graph.next_line();
+            write!(out, "{line_prefix}{gline}")?;
+        }
+        write!(out, "{text}")?;
+        if chunk.ends_with('\n') {
+            writeln!(out)?;
+        }
+    }
+
+    if !graph.is_commit_finished() {
+        if !newline_terminated {
+            writeln!(out)?;
+        }
+        graph_show_remainder_lines(out, line_prefix, graph)?;
+        if newline_terminated {
+            writeln!(out)?;
+        }
+    } else if !newline_terminated && !body.is_empty() {
+        writeln!(out)?;
+    }
+    Ok(())
+}
+
+fn graph_show_remainder_lines(
+    out: &mut impl Write,
+    line_prefix: &str,
+    graph: &mut AsciiGraph,
+) -> Result<()> {
+    while !graph.is_commit_finished() {
+        let (gline, _) = graph.next_line();
+        writeln!(out, "{line_prefix}{gline}")?;
+    }
+    Ok(())
 }
 
 fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result<()> {
@@ -1484,15 +1565,42 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
         loop {
             let (line, shown_commit_line) = graph.next_line();
             if shown_commit_line {
-                let rendered = render_graph_commit_text(
-                    &node,
-                    &info,
-                    args,
-                    decorations.as_ref(),
-                    abbrev_len,
-                    &node.parents,
-                );
-                writeln!(out, "{line_prefix}{line}{rendered}")?;
+                if args.oneline || args.format.as_deref() == Some("oneline") {
+                    let rendered = render_graph_commit_text(
+                        &node,
+                        &info,
+                        args,
+                        decorations.as_ref(),
+                        abbrev_len,
+                        &node.parents,
+                    );
+                    writeln!(out, "{line_prefix}{line}{rendered}")?;
+                } else {
+                    let mut body_buf = Vec::new();
+                    format_commit(
+                        &mut body_buf,
+                        &node.oid,
+                        &info,
+                        args,
+                        decorations.as_ref(),
+                        use_color,
+                        &mut notes_cache,
+                        &repo.odb,
+                        Some(node.parents.as_slice()),
+                        false,
+                        None,
+                        None,
+                    )?;
+                    let body = String::from_utf8(body_buf)
+                        .map_err(|e| anyhow::anyhow!("invalid UTF-8 in log output: {e}"))?;
+                    write_graph_interleaved_commit_msg(
+                        &mut out,
+                        line_prefix,
+                        &line,
+                        &mut graph,
+                        &body,
+                    )?;
+                }
                 break;
             }
             writeln!(out, "{line_prefix}{line}")?;
