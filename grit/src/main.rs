@@ -115,8 +115,10 @@ fn main() {
                 exit_code = 128;
             } else {
                 let display = format!("{e:#}");
-                if display.starts_with("fatal:") {
-                    eprintln!("{display}");
+                if let Some(rest) = display.strip_prefix("fatal:") {
+                    // Downstream errors may already include the `fatal:` prefix; avoid
+                    // double-prefixing (t3705 greps `fatal: pathspec ...`).
+                    eprintln!("fatal:{rest}");
                     exit_code = 128;
                 } else {
                     eprintln!("error: {display}");

@@ -3,13 +3,14 @@
 //! Stages files from the working tree into the index so they will be
 //! included in the next commit.
 
+use crate::commands::sparse_advice::emit_sparse_path_advice;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::attributes::{parse_gitattributes_file_content, validate_rules_for_add};
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{self, ConversionConfig, GitAttributes};
 use grit_lib::error::Error;
-use grit_lib::ignore::IgnoreMatcher;
+use grit_lib::ignore::{path_in_sparse_checkout as path_in_sparse_checkout_lines, IgnoreMatcher};
 use grit_lib::index::{entry_from_metadata, normalize_mode, Index, IndexEntry};
 #[allow(unused_imports)]
 use grit_lib::objects::ObjectId;
@@ -17,6 +18,10 @@ use grit_lib::objects::ObjectKind;
 use grit_lib::odb::Odb;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
+use grit_lib::sparse_checkout::{
+    effective_cone_mode_for_sparse_file, parse_sparse_checkout_file,
+    path_in_sparse_checkout_patterns,
+};
 use grit_lib::unicode_normalization::{precompose_utf8_path, precompose_utf8_segment};
 use grit_lib::wildmatch::wildmatch;
 use std::collections::HashSet;
@@ -24,6 +29,20 @@ use std::fs;
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+
+/// Error marker when adding a **new** path that lies outside the sparse-checkout definition.
+#[derive(Debug, Clone)]
+struct AddOutsideSparse {
+    path: String,
+}
+
+impl std::fmt::Display for AddOutsideSparse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "outside sparse-checkout: {}", self.path)
+    }
+}
+
+impl std::error::Error for AddOutsideSparse {}
 
 fn resolved_env_index_path(repo: &Repository) -> PathBuf {
     if let Ok(raw) = std::env::var("GIT_INDEX_FILE") {
@@ -103,6 +122,10 @@ pub struct Args {
     /// Continue adding files when some cannot be added.
     #[arg(long = "ignore-errors")]
     pub ignore_errors: bool,
+
+    /// Allow updating index entries outside the sparse-checkout definition (and skip-worktree).
+    #[arg(long = "sparse")]
+    pub sparse: bool,
 
     /// Suppress warning for non-existent pathspecs (with --refresh).
     #[arg(long = "ignore-missing")]
@@ -236,6 +259,8 @@ pub fn run(mut args: Args) -> Result<()> {
     let prefix = crate::pathspec::pathdiff(&cwd, work_tree);
     die_if_in_unpopulated_submodule(&index, prefix.as_deref());
 
+    let sparse_state = AddSparseState::load(&repo, &config);
+
     // Validate empty string pathspecs
     for ps in &args.pathspec {
         if ps.is_empty() {
@@ -260,11 +285,36 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // --refresh mode
     if args.refresh {
-        return run_refresh(&repo, &mut index, work_tree, prefix.as_deref(), &args);
+        return run_refresh(
+            &repo,
+            &mut index,
+            work_tree,
+            prefix.as_deref(),
+            &args,
+            &sparse_state,
+        );
     }
 
-    // --chmod with no pathspecs: do nothing (don't error, just return)
+    // --chmod with no pathspecs: update all matching index entries (Git chmod_pathspec).
     if args.chmod.is_some() && args.pathspec.is_empty() {
+        let flip = match args.chmod.as_deref() {
+            Some("+x") => b'+',
+            Some("-x") => b'-',
+            Some(other) => bail!("unrecognized --chmod value: {}", other),
+            None => bail!("internal: chmod without value"),
+        };
+        let mut _sparse_chmod: Vec<String> = Vec::new();
+        chmod_index_entries(
+            &mut index,
+            &args,
+            None,
+            flip,
+            &sparse_state,
+            &mut _sparse_chmod,
+            work_tree,
+            prefix.as_deref(),
+            precompose_unicode,
+        )?;
         if !args.dry_run {
             write_index_or_lock_err(&repo, &mut index, &index_path)?;
         }
@@ -292,6 +342,8 @@ pub fn run(mut args: Args) -> Result<()> {
         conv,
         attrs,
         config: config.clone(),
+        sparse: sparse_state.clone(),
+        include_sparse: args.sparse,
     };
 
     // --renormalize: re-apply clean conversion to tracked files
@@ -307,8 +359,63 @@ pub fn run(mut args: Args) -> Result<()> {
         );
     }
 
+    if args.chmod.is_some() && !args.pathspec.is_empty() {
+        let flip = match args.chmod.as_deref() {
+            Some("+x") => b'+',
+            Some("-x") => b'-',
+            Some(other) => bail!("unrecognized --chmod value: {}", other),
+            None => bail!("internal: chmod without value"),
+        };
+        let mut sparse_chmod: Vec<String> = Vec::new();
+        chmod_index_entries(
+            &mut index,
+            &args,
+            Some(&args.pathspec),
+            flip,
+            &sparse_state,
+            &mut sparse_chmod,
+            work_tree,
+            prefix.as_deref(),
+            precompose_unicode,
+        )?;
+        sparse_chmod.sort();
+        sparse_chmod.dedup();
+        if !sparse_chmod.is_empty() {
+            emit_sparse_path_advice(&mut std::io::stderr(), &add_cfg.config, &sparse_chmod)?;
+            if !args.dry_run {
+                write_index_or_lock_err(&repo, &mut index, &index_path)?;
+            }
+            std::process::exit(1);
+        }
+        if !args.dry_run {
+            write_index_or_lock_err(&repo, &mut index, &index_path)?;
+        }
+        return Ok(());
+    }
+
+    let mut exit_for_sparse_advice = false;
+    let mut sparse_advice_paths: Vec<String> = Vec::new();
+
     let is_root_pathspec = args.pathspec.iter().any(|p| p == ":/");
     if args.all || args.pathspec.iter().any(|p| p == ".") || is_root_pathspec {
+        if !args.sparse {
+            for spec in &args.pathspec {
+                if spec == "." || spec == ":/" {
+                    let resolved =
+                        crate::pathspec::resolve_pathspec(spec, work_tree, prefix.as_deref());
+                    if pathspec_only_matches_sparse_blocked(
+                        spec,
+                        &resolved,
+                        &index,
+                        work_tree,
+                        &sparse_state,
+                        precompose_unicode,
+                    ) {
+                        sparse_advice_paths.push(spec.clone());
+                    }
+                }
+            }
+        }
         let effective_prefix = if is_root_pathspec {
             None
         } else {
@@ -323,6 +430,7 @@ pub fn run(mut args: Args) -> Result<()> {
             &repo,
             &mut ignore_matcher,
             &add_cfg,
+            &mut sparse_advice_paths,
         )?;
     } else if args.update {
         update_tracked(
@@ -333,8 +441,25 @@ pub fn run(mut args: Args) -> Result<()> {
             &args,
             &repo,
             &add_cfg,
+            &mut sparse_advice_paths,
         )?;
     } else {
+        if !args.sparse {
+            for spec in &args.pathspec {
+                let resolved =
+                    crate::pathspec::resolve_pathspec(spec, work_tree, prefix.as_deref());
+                if pathspec_only_matches_sparse_blocked(
+                    spec,
+                    &resolved,
+                    &index,
+                    work_tree,
+                    &sparse_state,
+                    precompose_unicode,
+                ) {
+                    sparse_advice_paths.push(spec.clone());
+                }
+            }
+        }
         let mut had_errors = false;
         let mut had_ignored = false;
         for pathspec in &args.pathspec {
@@ -376,6 +501,10 @@ pub fn run(mut args: Args) -> Result<()> {
                             return Err(e);
                         }
                     }
+                    Err(AddPathError::OutsideSparse(path)) => {
+                        sparse_advice_paths.push(path);
+                        had_errors = true;
+                    }
                     Err(AddPathError::Other(e)) => {
                         if add_cfg.ignore_errors {
                             eprintln!("warning: {e}");
@@ -395,6 +524,19 @@ pub fn run(mut args: Args) -> Result<()> {
             bail!("some ignored files could not be added");
         }
         if had_errors {
+            sparse_advice_paths.sort();
+            sparse_advice_paths.dedup();
+            if !sparse_advice_paths.is_empty() {
+                emit_sparse_path_advice(
+                    &mut std::io::stderr(),
+                    &add_cfg.config,
+                    &sparse_advice_paths,
+                )?;
+                if !args.dry_run {
+                    write_index_or_lock_err(&repo, &mut index, &index_path)?;
+                }
+                std::process::exit(1);
+            }
             if !args.dry_run {
                 write_index_or_lock_err(&repo, &mut index, &index_path)?;
             }
@@ -407,11 +549,181 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
+    sparse_advice_paths.sort();
+    sparse_advice_paths.dedup();
+    if !sparse_advice_paths.is_empty() {
+        emit_sparse_path_advice(
+            &mut std::io::stderr(),
+            &add_cfg.config,
+            &sparse_advice_paths,
+        )?;
+        exit_for_sparse_advice = true;
+    }
+
     if !args.dry_run {
         write_index_or_lock_err(&repo, &mut index, &index_path)?;
     }
 
+    if exit_for_sparse_advice {
+        std::process::exit(1);
+    }
+
     Ok(())
+}
+
+/// Sparse-checkout state for `git add` (matches `path_in_sparse_checkout` / `core.sparseCheckout`).
+#[derive(Clone)]
+pub(crate) struct AddSparseState {
+    sparse_enabled: bool,
+    /// Whether cone-style pattern matching applies to `patterns` (Git `effective_cone_mode_for_sparse_file`).
+    effective_cone: bool,
+    patterns: Vec<String>,
+}
+
+impl AddSparseState {
+    pub(crate) fn load(repo: &Repository, config: &ConfigSet) -> Self {
+        let sparse_enabled = config
+            .get("core.sparseCheckout")
+            .map(|v| v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let cone_cfg = config
+            .get("core.sparseCheckoutCone")
+            .and_then(|v| v.parse::<bool>().ok())
+            .unwrap_or(true);
+        let patterns: Vec<String> = if sparse_enabled {
+            let sc_path = repo.git_dir.join("info").join("sparse-checkout");
+            match fs::read_to_string(&sc_path) {
+                Ok(s) => parse_sparse_checkout_file(&s),
+                Err(_) => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+        let effective_cone = effective_cone_mode_for_sparse_file(cone_cfg, &patterns);
+        Self {
+            sparse_enabled,
+            effective_cone,
+            patterns,
+        }
+    }
+
+    /// Whether `path` is inside the sparse-checkout definition (always true when sparse is off).
+    ///
+    /// Non-cone mode uses Git's `path_in_sparse_checkout` (parent walk + last-match), not sequential
+    /// `NonConePatterns` toggles — required for `t3705` / `git sparse-checkout set a` with file `a`.
+    fn path_in_sparse_definition(&self, path: &str) -> bool {
+        if !self.sparse_enabled || self.patterns.is_empty() {
+            return true;
+        }
+        if self.effective_cone {
+            path_in_sparse_checkout_patterns(path, &self.patterns, true)
+        } else {
+            path_in_sparse_checkout_lines(path, &self.patterns)
+        }
+    }
+
+    /// When `--sparse` is not set, refuse to update this path (skip-worktree or outside sparse cone).
+    fn add_update_blocked(
+        &self,
+        include_sparse: bool,
+        index_entry: Option<&IndexEntry>,
+        path: &str,
+    ) -> bool {
+        if include_sparse {
+            return false;
+        }
+        if let Some(e) = index_entry {
+            if e.skip_worktree() {
+                return true;
+            }
+        }
+        if self.sparse_enabled && !self.path_in_sparse_definition(path) {
+            return true;
+        }
+        false
+    }
+}
+
+/// Match a user pathspec against an index path (Git `ce_path_match` semantics for `.` and globs).
+fn pathspec_matches_index_path(spec: &str, resolved_under_cwd: &str, index_path: &str) -> bool {
+    if spec == "." {
+        if resolved_under_cwd.is_empty() {
+            return true;
+        }
+        return index_path == resolved_under_cwd
+            || index_path.starts_with(&format!("{resolved_under_cwd}/"));
+    }
+    crate::pathspec::pathspec_matches(spec, index_path)
+}
+
+/// `true` when some stage-0 index path matches the pathspec and is allowed to update without `--sparse`.
+fn pathspec_has_dense_index_match(
+    spec: &str,
+    resolved: &str,
+    index: &Index,
+    sparse: &AddSparseState,
+) -> bool {
+    for ie in &index.entries {
+        if ie.stage() != 0 {
+            continue;
+        }
+        let p = String::from_utf8_lossy(&ie.path);
+        if !pathspec_matches_index_path(spec, resolved, p.as_ref()) {
+            continue;
+        }
+        if !sparse.add_update_blocked(false, Some(ie), p.as_ref()) {
+            return true;
+        }
+    }
+    false
+}
+
+/// True if `spec` matches at least one path we could update without `--sparse` (index or work tree).
+fn pathspec_has_unblocked_target(
+    spec: &str,
+    resolved: &str,
+    index: &Index,
+    work_tree: &Path,
+    sparse: &AddSparseState,
+    precompose_unicode: bool,
+) -> bool {
+    if pathspec_has_dense_index_match(spec, resolved, index, sparse) {
+        return true;
+    }
+    for rel in expand_glob_pathspec(resolved, work_tree, precompose_unicode) {
+        if rel.is_empty() {
+            continue;
+        }
+        let ie = index.get(rel.as_bytes(), 0);
+        if !sparse.add_update_blocked(false, ie, rel.as_str()) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Pathspec matched only skip-worktree / outside-sparse index entries (Git `matches_skip_worktree`).
+fn pathspec_only_matches_sparse_blocked(
+    spec: &str,
+    resolved: &str,
+    index: &Index,
+    work_tree: &Path,
+    sparse: &AddSparseState,
+    precompose_unicode: bool,
+) -> bool {
+    if pathspec_has_unblocked_target(spec, resolved, index, work_tree, sparse, precompose_unicode) {
+        return false;
+    }
+    index.entries.iter().any(|ie| {
+        if ie.stage() != 0 {
+            return false;
+        }
+        let p = String::from_utf8_lossy(&ie.path);
+        if !pathspec_matches_index_path(spec, resolved, p.as_ref()) {
+            return false;
+        }
+        sparse.add_update_blocked(false, Some(ie), p.as_ref())
+    })
 }
 
 pub(crate) struct AddConfig {
@@ -421,6 +733,8 @@ pub(crate) struct AddConfig {
     pub conv: ConversionConfig,
     pub attrs: GitAttributes,
     pub config: ConfigSet,
+    pub sparse: AddSparseState,
+    pub include_sparse: bool,
 }
 
 /// Stage pathspecs the same way `git commit <paths>` does (recursive dirs, CRLF clean, etc.).
@@ -566,12 +880,105 @@ enum AddPathError {
     Ignored(String),
     IoError(anyhow::Error),
     Other(anyhow::Error),
+    /// New file path is outside the sparse-checkout definition (needs advice + exit 1).
+    OutsideSparse(String),
 }
 
 impl From<anyhow::Error> for AddPathError {
     fn from(e: anyhow::Error) -> Self {
         AddPathError::Other(e)
     }
+}
+
+/// Apply `--chmod` to index entries matching optional pathspecs (Git `chmod_pathspec`).
+///
+/// When `pathspecs` is `None`, every stage-0 entry is considered. Appends to `sparse_advice_out`
+/// pathspecs that only matched skip-worktree / outside-sparse entries (caller prints advice and exits).
+fn chmod_index_entries(
+    index: &mut Index,
+    args: &Args,
+    pathspecs: Option<&[String]>,
+    flip: u8,
+    sparse: &AddSparseState,
+    sparse_advice_out: &mut Vec<String>,
+    work_tree: &Path,
+    prefix: Option<&str>,
+    _precompose_unicode: bool,
+) -> Result<()> {
+    if let Some(ps) = pathspecs {
+        if !args.sparse {
+            for spec in ps {
+                let resolved = crate::pathspec::resolve_pathspec(spec, work_tree, prefix);
+                let mut matched_any = false;
+                let mut all_blocked = true;
+                for ie in &index.entries {
+                    if ie.stage() != 0 {
+                        continue;
+                    }
+                    let p = String::from_utf8_lossy(&ie.path);
+                    if !pathspec_matches_index_path(spec, &resolved, p.as_ref()) {
+                        continue;
+                    }
+                    matched_any = true;
+                    let blocked = sparse.add_update_blocked(false, Some(ie), p.as_ref())
+                        || (sparse.sparse_enabled && !sparse.path_in_sparse_definition(p.as_ref()));
+                    if !blocked {
+                        all_blocked = false;
+                        break;
+                    }
+                }
+                if matched_any && all_blocked {
+                    sparse_advice_out.push(spec.clone());
+                }
+            }
+        }
+    }
+
+    for ie in &mut index.entries {
+        if ie.stage() != 0 {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&ie.path);
+        let matches_spec = match pathspecs {
+            None => true,
+            Some(p) => p.iter().any(|spec| {
+                let resolved = crate::pathspec::resolve_pathspec(spec, work_tree, prefix);
+                pathspec_matches_index_path(spec, &resolved, path_str.as_ref())
+            }),
+        };
+        if !matches_spec {
+            continue;
+        }
+        if sparse.add_update_blocked(args.sparse, Some(ie), path_str.as_ref()) {
+            continue;
+        }
+        // Without `--sparse`, paths outside the sparse definition stay blocked even if
+        // `skip-worktree` was cleared locally (`git update-index --no-skip-worktree`).
+        if !args.sparse
+            && sparse.sparse_enabled
+            && !sparse.path_in_sparse_definition(path_str.as_ref())
+        {
+            continue;
+        }
+        let is_symlink = ie.mode == 0o120000;
+        let is_reg = ie.mode & 0o170000 == 0o100000;
+        if !is_reg {
+            if is_symlink {
+                eprintln!(
+                    "error: cannot chmod {} '{}'",
+                    if flip == b'+' { "+x" } else { "-x" },
+                    path_str
+                );
+            }
+            continue;
+        }
+        if args.dry_run {
+            continue;
+        }
+        ie.mode = if flip == b'+' { 0o100755 } else { 0o100644 };
+    }
+
+    Ok(())
 }
 
 /// Run --refresh: update stat info in the index.
@@ -581,19 +988,26 @@ fn run_refresh(
     work_tree: &Path,
     prefix: Option<&str>,
     args: &Args,
+    sparse: &AddSparseState,
 ) -> Result<()> {
+    let mut sparse_advice: Vec<String> = Vec::new();
     if args.pathspec.is_empty() {
         // Refresh all entries
         for ie in &mut index.entries {
+            if ie.stage() != 0 {
+                continue;
+            }
             let path_str = String::from_utf8_lossy(&ie.path).to_string();
             if let Some(p) = prefix {
                 if !path_str.starts_with(p) {
                     continue;
                 }
             }
+            if sparse.add_update_blocked(args.sparse, Some(ie), path_str.as_str()) {
+                continue;
+            }
             let abs_path = work_tree.join(&path_str);
             if let Ok(meta) = fs::symlink_metadata(&abs_path) {
-                // Update stat fields but keep oid/mode
                 ie.ctime_sec = meta.ctime() as u32;
                 ie.ctime_nsec = meta.ctime_nsec() as u32;
                 ie.mtime_sec = meta.mtime() as u32;
@@ -606,35 +1020,64 @@ fn run_refresh(
             }
         }
     } else {
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
         for pathspec in &args.pathspec {
             let resolved = crate::pathspec::resolve_pathspec(pathspec, work_tree, prefix);
-            let found = index.entries.iter_mut().any(|ie| {
-                let path_str = String::from_utf8_lossy(&ie.path);
-                if path_str == resolved || path_str.starts_with(&format!("{resolved}/")) {
-                    let abs_path = work_tree.join(path_str.as_ref());
-                    if let Ok(meta) = fs::symlink_metadata(&abs_path) {
-                        ie.ctime_sec = meta.ctime() as u32;
-                        ie.ctime_nsec = meta.ctime_nsec() as u32;
-                        ie.mtime_sec = meta.mtime() as u32;
-                        ie.mtime_nsec = meta.mtime_nsec() as u32;
-                        ie.dev = meta.dev() as u32;
-                        ie.ino = meta.ino() as u32;
-                        ie.uid = meta.uid();
-                        ie.gid = meta.gid();
-                        ie.size = meta.len() as u32;
-                    }
-                    true
-                } else {
-                    false
+            let mut matched_any = false;
+            let mut all_matches_blocked = true;
+            let mut refreshed = false;
+            for ie in &mut index.entries {
+                if ie.stage() != 0 {
+                    continue;
                 }
-            });
-            if !found && !args.ignore_missing {
+                let path_str = String::from_utf8_lossy(&ie.path);
+                if path_str != resolved && !path_str.starts_with(&format!("{resolved}/")) {
+                    continue;
+                }
+                matched_any = true;
+                if sparse.add_update_blocked(args.sparse, Some(ie), path_str.as_ref()) {
+                    continue;
+                }
+                all_matches_blocked = false;
+                let abs_path = work_tree.join(path_str.as_ref());
+                if let Ok(meta) = fs::symlink_metadata(&abs_path) {
+                    ie.ctime_sec = meta.ctime() as u32;
+                    ie.ctime_nsec = meta.ctime_nsec() as u32;
+                    ie.mtime_sec = meta.mtime() as u32;
+                    ie.mtime_nsec = meta.mtime_nsec() as u32;
+                    ie.dev = meta.dev() as u32;
+                    ie.ino = meta.ino() as u32;
+                    ie.uid = meta.uid();
+                    ie.gid = meta.gid();
+                    ie.size = meta.len() as u32;
+                    refreshed = true;
+                }
+            }
+            if !matched_any && !args.ignore_missing {
                 eprintln!(
                     "fatal: pathspec '{}' did not match any file(s) known to git",
                     pathspec
                 );
                 std::process::exit(128);
             }
+            if matched_any && all_matches_blocked && !args.sparse {
+                sparse_advice.push(pathspec.clone());
+            } else if matched_any && !all_matches_blocked && !refreshed && !args.ignore_missing {
+                eprintln!(
+                    "fatal: pathspec '{}' did not match any file(s) known to git",
+                    pathspec
+                );
+                std::process::exit(128);
+            }
+        }
+        if !sparse_advice.is_empty() {
+            sparse_advice.sort();
+            sparse_advice.dedup();
+            emit_sparse_path_advice(&mut std::io::stderr(), &config, &sparse_advice)?;
+            if !args.dry_run {
+                write_index_or_lock_err(repo, index, &resolved_env_index_path(repo))?;
+            }
+            std::process::exit(1);
         }
     }
 
@@ -651,7 +1094,7 @@ fn run_renormalize(
     odb: &Odb,
     index: &mut Index,
     work_tree: &Path,
-    _prefix: Option<&str>,
+    prefix: Option<&str>,
     args: &Args,
     add_cfg: &AddConfig,
 ) -> Result<()> {
@@ -666,12 +1109,18 @@ fn run_renormalize(
             if ie.stage() != 0 {
                 return false;
             }
+            let path_str = String::from_utf8_lossy(&ie.path);
+            if add_cfg.sparse.add_update_blocked(
+                add_cfg.include_sparse,
+                Some(ie),
+                path_str.as_ref(),
+            ) {
+                return false;
+            }
             if args.pathspec.is_empty() {
                 return true;
             }
-            let path_str = String::from_utf8_lossy(&ie.path);
             args.pathspec.iter().any(|ps| {
-                // Simple glob/prefix match
                 let ps_clean = ps.trim_end_matches('*').trim_end_matches('/');
                 path_str.starts_with(ps_clean) || glob_matches_simple(ps, &path_str)
             })
@@ -679,29 +1128,75 @@ fn run_renormalize(
         .map(|ie| (ie.path.clone(), ie.oid, ie.mode))
         .collect();
 
-    for (path, oid, _mode) in entries {
+    for (path, oid, mode) in entries {
         let rel_path = String::from_utf8_lossy(&path).to_string();
         let file_attrs = crlf::get_file_attrs(&attrs, &rel_path, false, &add_cfg.config);
 
-        // Read current blob content
-        let obj = odb.read(&oid).context("reading blob for renormalize")?;
-        if obj.kind != ObjectKind::Blob {
-            continue;
-        }
-
-        // Apply clean conversion
-        let converted = match crlf::convert_to_git(&obj.data, &rel_path, &add_cfg.conv, &file_attrs)
-        {
-            Ok(c) => c,
-            Err(_) => continue,
+        let wt_path = work_tree.join(&rel_path);
+        let (prior_blob, raw_for_clean): (Vec<u8>, Vec<u8>) = if mode == 0o120000 {
+            let target = fs::read_link(&wt_path)
+                .with_context(|| format!("reading symlink for renormalize '{rel_path}'"))?;
+            let raw = target.to_string_lossy().into_owned().into_bytes();
+            let obj = odb.read(&oid).context("reading blob for renormalize")?;
+            if obj.kind != ObjectKind::Blob {
+                continue;
+            }
+            (obj.data, raw)
+        } else if fs::symlink_metadata(&wt_path).is_ok() {
+            let raw = fs::read(&wt_path)
+                .with_context(|| format!("reading work tree for renormalize '{rel_path}'"))?;
+            let obj = odb.read(&oid).context("reading blob for renormalize")?;
+            if obj.kind != ObjectKind::Blob {
+                continue;
+            }
+            (obj.data, raw)
+        } else {
+            let obj = odb.read(&oid).context("reading blob for renormalize")?;
+            if obj.kind != ObjectKind::Blob {
+                continue;
+            }
+            let d = obj.data.clone();
+            (d.clone(), d)
         };
 
-        // If content changed, write new blob and update index
-        if converted != obj.data {
+        let converted =
+            match crlf::convert_to_git(&raw_for_clean, &rel_path, &add_cfg.conv, &file_attrs) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+        if converted != prior_blob {
             let new_oid = odb.write(ObjectKind::Blob, &converted)?;
             if let Some(entry) = index.get_mut(path.as_slice(), 0) {
                 entry.oid = new_oid;
             }
+        }
+    }
+
+    if !add_cfg.include_sparse {
+        let mut sparse_renorm: Vec<String> = Vec::new();
+        for spec in &args.pathspec {
+            let resolved = crate::pathspec::resolve_pathspec(spec, work_tree, prefix);
+            if pathspec_only_matches_sparse_blocked(
+                spec,
+                &resolved,
+                index,
+                work_tree,
+                &add_cfg.sparse,
+                add_cfg.precompose_unicode,
+            ) {
+                sparse_renorm.push(spec.clone());
+            }
+        }
+        if !sparse_renorm.is_empty() {
+            sparse_renorm.sort();
+            sparse_renorm.dedup();
+            emit_sparse_path_advice(&mut std::io::stderr(), &add_cfg.config, &sparse_renorm)?;
+            if !args.dry_run {
+                let index_path = resolved_env_index_path(repo);
+                write_index_or_lock_err(repo, index, &index_path)?;
+            }
+            std::process::exit(1);
         }
     }
 
@@ -734,12 +1229,14 @@ fn add_all(
     repo: &Repository,
     ignore_matcher: &mut Option<IgnoreMatcher>,
     add_cfg: &AddConfig,
+    sparse_advice_paths: &mut Vec<String>,
 ) -> Result<()> {
     let scan_root = match prefix {
         Some(p) if !p.is_empty() => work_tree.join(p),
         _ => work_tree.to_path_buf(),
     };
 
+    let mut skipped_outside_sparse = false;
     let mut paths: Vec<(String, PathBuf)> = Vec::new();
     walk_directory(
         &scan_root,
@@ -756,6 +1253,12 @@ fn add_all(
         paths.iter().map(|(r, _)| r.as_str()).collect();
 
     for (rel_path, abs_path) in &paths {
+        if add_cfg.sparse.sparse_enabled
+            && !add_cfg.sparse.path_in_sparse_definition(rel_path.as_str())
+        {
+            skipped_outside_sparse = true;
+            continue;
+        }
         if let Err(e) = stage_file(
             odb,
             index,
@@ -772,6 +1275,13 @@ fn add_all(
                 return Err(e);
             }
         }
+    }
+
+    if args.pathspec.iter().any(|s| s == ".")
+        && prefix.map(|p| p.is_empty()).unwrap_or(true)
+        && skipped_outside_sparse
+    {
+        sparse_advice_paths.push(".".to_string());
     }
 
     // Handle deletions: index entries whose files are not in the worktree scan
@@ -819,6 +1329,7 @@ fn update_tracked(
     args: &Args,
     repo: &Repository,
     add_cfg: &AddConfig,
+    sparse_advice_paths: &mut Vec<String>,
 ) -> Result<()> {
     // If explicit pathspecs given with -u, validate that each matches a tracked file.
     let explicit_pathspecs = !args.pathspec.is_empty();
@@ -886,6 +1397,13 @@ fn update_tracked(
         .collect();
 
     for (raw_path, path_str) in &tracked {
+        let ie = index.get(raw_path.as_slice(), 0);
+        if add_cfg
+            .sparse
+            .add_update_blocked(add_cfg.include_sparse, ie, path_str)
+        {
+            continue;
+        }
         let abs_path = work_tree.join(path_str);
         // Use symlink_metadata so a symlink whose target was removed still counts as
         // present (`exists()` follows the link and returns false).
@@ -932,6 +1450,22 @@ fn update_tracked(
             }
             if !args.dry_run {
                 index.remove(raw_path);
+            }
+        }
+    }
+
+    if explicit_pathspecs && !add_cfg.include_sparse {
+        for spec in &args.pathspec {
+            let resolved = crate::pathspec::resolve_pathspec(spec, work_tree, prefix);
+            if pathspec_only_matches_sparse_blocked(
+                spec,
+                &resolved,
+                index,
+                work_tree,
+                &add_cfg.sparse,
+                add_cfg.precompose_unicode,
+            ) {
+                sparse_advice_paths.push(spec.clone());
             }
         }
     }
@@ -1029,7 +1563,13 @@ fn add_path(
     if fs::symlink_metadata(&abs_path).is_err() {
         let path_bytes = path.as_bytes();
         // Check if it's an index entry that needs to be removed
-        if index.get(path_bytes, 0).is_some() {
+        if let Some(ie) = index.get(path_bytes, 0) {
+            if add_cfg
+                .sparse
+                .add_update_blocked(args.sparse, Some(ie), path)
+            {
+                return Ok(());
+            }
             if !args.dry_run {
                 index.remove(path_bytes);
             }
@@ -1043,12 +1583,12 @@ fn add_path(
         if has_unmerged {
             // Can't resolve a conflict if file doesn't exist
             return Err(AddPathError::Other(anyhow::anyhow!(
-                "pathspec '{}' did not match any files",
+                "fatal: pathspec '{}' did not match any files",
                 path
             )));
         }
         return Err(AddPathError::Other(anyhow::anyhow!(
-            "pathspec '{}' did not match any files",
+            "fatal: pathspec '{}' did not match any files",
             path
         )));
     }
@@ -1058,6 +1598,7 @@ fn add_path(
     let is_real_dir = fs::symlink_metadata(&abs_path)
         .map(|m| m.file_type().is_dir())
         .unwrap_or(false);
+
     if is_real_dir {
         // Check if the directory itself is ignored (reject unless -f)
         if !args.force {
@@ -1114,6 +1655,9 @@ fn add_path(
                 &StageFileContext::from(args),
                 add_cfg,
             ) {
+                if let Some(a) = e.downcast_ref::<AddOutsideSparse>() {
+                    return Err(AddPathError::OutsideSparse(a.path.clone()));
+                }
                 if add_cfg.ignore_errors {
                     eprintln!("warning: {e}");
                 } else {
@@ -1152,7 +1696,13 @@ fn add_path(
             &StageFileContext::from(args),
             add_cfg,
         )
-        .map_err(AddPathError::IoError)?;
+        .map_err(|e| {
+            if let Some(a) = e.downcast_ref::<AddOutsideSparse>() {
+                AddPathError::OutsideSparse(a.path.clone())
+            } else {
+                AddPathError::IoError(e)
+            }
+        })?;
     }
 
     Ok(())
@@ -1338,6 +1888,30 @@ pub(crate) fn stage_file(
     ctx: &StageFileContext<'_>,
     add_cfg: &AddConfig,
 ) -> Result<()> {
+    let (preserve_skip_worktree, sparse_blocked) = match index.get(rel_path.as_bytes(), 0) {
+        Some(e) => (
+            e.skip_worktree(),
+            add_cfg
+                .sparse
+                .add_update_blocked(add_cfg.include_sparse, Some(e), rel_path),
+        ),
+        None => (
+            false,
+            add_cfg
+                .sparse
+                .add_update_blocked(add_cfg.include_sparse, None, rel_path),
+        ),
+    };
+    if sparse_blocked {
+        // Tracked entries: skip updating (Git `update_callback`); new paths: refuse (t3705).
+        if index.get(rel_path.as_bytes(), 0).is_some() {
+            return Ok(());
+        }
+        return Err(anyhow::Error::from(AddOutsideSparse {
+            path: rel_path.to_string(),
+        }));
+    }
+
     if ctx.dry_run {
         if ctx.chmod.is_some() {
             // Don't actually stage, just check if the file exists
@@ -1503,7 +2077,7 @@ pub(crate) fn stage_file(
     let mut entry = entry_from_metadata(&meta, rel_path.as_bytes(), oid, final_mode);
     entry.mode = final_mode; // Ensure mode override sticks
     entry.set_assume_unchanged(false);
-    entry.set_skip_worktree(false);
+    entry.set_skip_worktree(preserve_skip_worktree);
     // Use stage_file which also clears conflict stages (1, 2, 3) for the same
     // path — this is how `git add` resolves merge/cherry-pick conflicts.
     index.stage_file(entry);

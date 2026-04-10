@@ -89,6 +89,10 @@ pub struct Args {
     #[arg(long)]
     pub long: bool,
 
+    /// Show debugging data for each cache entry (ctime/mtime/dev/ino/uid/gid/size/flags).
+    #[arg(long)]
+    pub debug: bool,
+
     /// Show sparse directory placeholders in the index (do not expand sparse index).
     #[arg(long)]
     pub sparse: bool,
@@ -396,6 +400,9 @@ pub fn run(args: Args) -> Result<()> {
 
             write!(out, "i/{index_eol} w/{wt_eol} attr/{attr_str}\t{name}")?;
             out.write_all(&[term])?;
+            if args.debug {
+                write_ls_files_debug(&mut out, entry)?;
+            }
         } else if let Some(ref fmt) = args.format {
             // Custom format output
             let display =
@@ -417,6 +424,9 @@ pub fn run(args: Args) -> Result<()> {
                 .replace("%(path)", &name);
             write!(out, "{}", line)?;
             out.write_all(&[term])?;
+            if args.debug {
+                write_ls_files_debug(&mut out, entry)?;
+            }
         } else if show_stage {
             let display =
                 format_ls_display_path(args.full_name, &cwd, work_tree, &entry.path, &cwd_prefix)?;
@@ -434,6 +444,9 @@ pub fn run(args: Args) -> Result<()> {
                 qname
             )?;
             out.write_all(&[term])?;
+            if args.debug {
+                write_ls_files_debug(&mut out, entry)?;
+            }
         } else if show_cached || args.deleted || args.modified {
             // Deduplicate: skip if same path as last printed.
             // With -t flag, don't deduplicate unmerged entries (stage != 0)
@@ -463,6 +476,9 @@ pub fn run(args: Args) -> Result<()> {
                 write!(out, "{} ", et)?;
                 write!(out, "{qname}")?;
                 out.write_all(&[term])?;
+            }
+            if args.debug {
+                write_ls_files_debug(&mut out, entry)?;
             }
         }
     }
@@ -1200,6 +1216,17 @@ fn pathspec_escapes_repo(pathspec: &std::path::Path) -> bool {
 fn path_to_bytes(path: &std::path::Path) -> Vec<u8> {
     use std::os::unix::ffi::OsStrExt;
     path.as_os_str().as_bytes().to_vec()
+}
+
+/// Git `ls-files --debug` cache-entry dump (`builtin/ls-files.c` `print_debug`).
+fn write_ls_files_debug(out: &mut impl Write, entry: &IndexEntry) -> io::Result<()> {
+    let flags_u32 = (entry.flags as u32) | ((entry.flags_extended.unwrap_or(0) as u32) << 16);
+    writeln!(out, "  ctime: {}:{}", entry.ctime_sec, entry.ctime_nsec)?;
+    writeln!(out, "  mtime: {}:{}", entry.mtime_sec, entry.mtime_nsec)?;
+    writeln!(out, "  dev: {}\tino: {}", entry.dev, entry.ino)?;
+    writeln!(out, "  uid: {}\tgid: {}", entry.uid, entry.gid)?;
+    writeln!(out, "  size: {}\tflags: {:x}", entry.size, flags_u32)?;
+    Ok(())
 }
 
 /// Collapse file paths into unique top-level directory entries.
