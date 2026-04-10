@@ -445,7 +445,7 @@ t1506-rev-parse-diagnosis	t1	yes	30	30	0	true	ok	0
 t1507-rev-parse-upstream	t1	yes	29	28	1	false	ok	0
 t1508-at-combinations	t1	yes	35	22	13	false	ok	0
 t1509-root-work-tree	t1	yes	0	0	0	false	ok	0
-t1510-repo-setup	t1	yes	109	105	4	false	ok	0
+t1510-repo-setup	t1	yes	109	109	0	true	ok	0
 t1511-rev-parse-caret	t1	yes	17	11	6	false	ok	0
 t1512-rev-parse-disambiguation	t1	yes	38	34	4	false	ok	0
 t1513-rev-parse-prefix	t1	yes	11	9	2	false	ok	0
