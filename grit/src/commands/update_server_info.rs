@@ -8,12 +8,18 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
+use grit_lib::shared_repo::{adjust_shared_perm_path, shared_repository_from_config_value};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
+use std::io::Write;
 use std::path::Path;
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 /// Arguments for `grit update-server-info`.
 #[derive(Debug, ClapArgs)]
@@ -26,11 +32,14 @@ pub struct Args {
 
 /// Run the `update-server-info` command.
 pub fn run(args: Args) -> Result<()> {
-    let _ = args;
     let repo = Repository::discover(None)?;
+    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let shared_repo =
+        shared_repository_from_config_value(cfg.get("core.sharedRepository").as_deref())
+            .map_err(|msg| anyhow::anyhow!(msg))?;
 
-    update_info_refs(&repo, args.force)?;
-    update_info_packs(&repo)?;
+    update_info_refs(&repo, args.force, shared_repo)?;
+    update_info_packs(&repo, shared_repo)?;
 
     Ok(())
 }
@@ -38,7 +47,7 @@ pub fn run(args: Args) -> Result<()> {
 // ── info/refs ────────────────────────────────────────────────────────
 
 /// Write `info/refs` — one line per ref: `<hex-oid>\t<refname>\n`.
-fn update_info_refs(repo: &Repository, force: bool) -> Result<()> {
+fn update_info_refs(repo: &Repository, force: bool, shared_repo: i32) -> Result<()> {
     let info_dir = repo.git_dir.join("info");
     fs::create_dir_all(&info_dir).with_context(|| format!("creating {}", info_dir.display()))?;
 
@@ -48,17 +57,16 @@ fn update_info_refs(repo: &Repository, force: bool) -> Result<()> {
         out.push_str(&format!("{oid}\t{name}\n"));
     }
 
-    // Only write if content changed (preserves mtime when no-op), unless --force
     let refs_path = info_dir.join("refs");
-    if force {
-        fs::write(&refs_path, out).context("writing info/refs")?;
-    } else {
+    if !force {
         let existing = fs::read_to_string(&refs_path).unwrap_or_default();
-        if existing != out {
-            fs::write(&refs_path, out).context("writing info/refs")?;
+        if existing == out {
+            return Ok(());
         }
     }
 
+    write_atomic_with_shared_perm(&refs_path, out.as_bytes(), shared_repo)
+        .context("writing info/refs")?;
     Ok(())
 }
 
@@ -124,10 +132,14 @@ fn collect_loose_refs(
 /// Write `objects/info/packs` — one `P <pack-name>.pack\n` per pack file.
 /// Rewrite `objects/info/packs` from `.pack` files in `objects/pack` (e.g. after repack).
 pub fn refresh_objects_info_packs(repo: &Repository) -> Result<()> {
-    update_info_packs(repo)
+    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let shared_repo =
+        shared_repository_from_config_value(cfg.get("core.sharedRepository").as_deref())
+            .map_err(|msg| anyhow::anyhow!(msg))?;
+    update_info_packs(repo, shared_repo)
 }
 
-fn update_info_packs(repo: &Repository) -> Result<()> {
+fn update_info_packs(repo: &Repository, shared_repo: i32) -> Result<()> {
     let objects_dir = repo.odb.objects_dir();
     let info_dir = objects_dir.join("info");
     fs::create_dir_all(&info_dir).with_context(|| format!("creating {}", info_dir.display()))?;
@@ -156,7 +168,30 @@ fn update_info_packs(repo: &Repository) -> Result<()> {
         out.push('\n');
     }
 
-    fs::write(info_dir.join("packs"), out).context("writing objects/info/packs")?;
+    let packs_path = info_dir.join("packs");
+    write_atomic_with_shared_perm(&packs_path, out.as_bytes(), shared_repo)
+        .context("writing objects/info/packs")?;
 
+    Ok(())
+}
+
+/// Write via a temp file in the same directory, then rename into place (matches Git `update_info_file`).
+fn write_atomic_with_shared_perm(path: &Path, content: &[u8], shared_repo: i32) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let mut builder = tempfile::Builder::new();
+    #[cfg(unix)]
+    {
+        builder.permissions(fs::Permissions::from_mode(0o666));
+    }
+    let mut tmp = builder.tempfile_in(parent)?;
+    tmp.write_all(content)?;
+    tmp.flush()?;
+    tmp.as_file().sync_all()?;
+    adjust_shared_perm_path(shared_repo, tmp.path())?;
+    tmp.persist(path).map_err(|e| e.error)?;
     Ok(())
 }

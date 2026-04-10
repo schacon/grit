@@ -20,6 +20,7 @@ use grit_lib::reflog::read_reflog;
 use grit_lib::refs::{append_reflog, list_refs, write_ref};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
+use grit_lib::shared_repo::refresh_repository_shared_tree;
 use grit_lib::state::{detect_in_progress, resolve_head, HeadState};
 
 use crate::commands::cherry_pick::try_resume_pick_sequence_after_commit;
@@ -1380,6 +1381,8 @@ pub fn run(mut args: Args) -> Result<()> {
             }
         }
     }
+
+    let _ = refresh_repository_shared_tree(&repo.git_dir);
 
     Ok(())
 }

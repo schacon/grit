@@ -88,6 +88,7 @@ pub mod resolve_undo;
 pub mod rev_list;
 pub mod rev_parse;
 pub mod shallow;
+pub mod shared_repo;
 #[cfg(unix)]
 pub mod simple_ipc;
 pub mod sparse_checkout;

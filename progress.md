@@ -6,12 +6,12 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   330 |
+| Completed   |   331 |
 | In progress |     5 |
-| Remaining   |   436 |
+| Remaining   |   435 |
 | **Total**   |   771 |
 
-Task lines in `PLAN.md`: 330 completed (`[x]`), 5 in progress (`[~]`), 436 remaining (`[ ]`).
+Task lines in `PLAN.md`: 331 completed (`[x]`), 5 in progress (`[~]`), 435 remaining (`[ ]`).
 
 ## In progress
 
@@ -20,6 +20,7 @@ Task lines in `PLAN.md`: 330 completed (`[x]`), 5 in progress (`[~]`), 436 remai
 ## Recently completed
 
 - `t4008-diff-break-rewrite` — 14/14 tests pass (`diff-index -B` / `--break-rewrites`, break-merge with rename/copy, `-B -M` copy-from-typechange, tree↔symlink `T` in uncached path, worktree bytes for zero-OID adds in rename detection; raw add lines show hashed blob when needed)
+- `t1301-shared-repo` — 22/22 tests pass (`init`/`re-init`: `--shared` + template `core.sharedRepository`, invalid octal dies like Git, bare init ignores parent cwd config; `update-server-info` atomic writes + `adjust_shared_perm`; `commit`/`repack` refresh shared chmod for new `.git` paths; `ConfigFile::get` for local-only shared reads; harness CSV/dashboards refreshed)
 - `t5404-tracking-branches` — 7/7 tests pass (harness: `TEST_LIB_INHERIT_CWD=1` so cwd stays in clone `aa` after `prepare pushable branches`, matching upstream Git; push/tracking behavior already correct)
 - `t3416-rebase-onto-threedots` — 18/18 tests pass (`rebase`: `--onto` with `A...B` requires a unique merge base; `--keep-base` uses synthesized `upstream...branch` onto + upstream=onto when reapplying cherry-picks; `--keep-base` + `--onto` rejected; interactive `--keep-base --no-reapply-cherry-picks` still filters patch-id duplicates)
 - `t5581-http-curl-verbose` — 2/2 tests pass (test-httpd strips `/error_git_upload_pack` for smart routing like Apache; POST `.../git-upload-pack` returns 500 Intentional Breakage so `GIT_CURL_VERBOSE` clone logs match upstream grep)
